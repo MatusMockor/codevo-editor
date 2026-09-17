@@ -190,7 +190,11 @@ export function useAgentThreadNavigation({
     retainedCandidate === undefined &&
     [...(authoritativeRemoteProjectKeys ?? [])].some((rootKey) => {
       const retained = projectSelections.current.get(rootKey);
-      return retained?.threadId === pendingSelection.id || rootKey === pendingProjectKey;
+      return (
+        retained?.threadId === pendingSelection.id ||
+        rootKey === pendingProjectKey ||
+        rootKey === rememberedRemoteProjectKey(pendingSelection.ownerKey)
+      );
     });
   const selectedThreadId =
     retainedOwnerMismatch || pendingSelectionMissing ? null : storedSelectedThreadId;
@@ -230,7 +234,11 @@ export function useAgentThreadNavigation({
   }, [threadViews]);
   const selectedThread =
     threadViews.find((view) => view.thread.threadId === selectedThreadId) ?? null;
-  const selectedProjectRootKey = selectedThread?.thread.owner.rootKey ?? null;
+  const selectedProjectRootKey =
+    selectedThread === null
+      ? null
+      : (agentRailScopeEntryFor(scopeEntries, selectedThread.thread.owner.rootKey)
+          ?.projectRootKey ?? selectedThread.thread.owner.rootKey);
   useLayoutEffect(() => {
     const pending = pendingRemoteSelection.current;
     if (pending === null || selectedThread === null) return;
@@ -252,8 +260,7 @@ export function useAgentThreadNavigation({
   useLayoutEffect(() => {
     const selectedProject = projects.find(
       (project) =>
-        project.rootKey ===
-        (selectedThread?.thread.owner.rootKey ?? scopeState.railScope?.projectRootKey),
+        project.rootKey === (selectedProjectRootKey ?? scopeState.railScope?.projectRootKey),
     );
     if (selectedProject !== undefined && (selectedThread !== null || selectedThreadId === null)) {
       rememberProjectSelection(
@@ -261,7 +268,14 @@ export function useAgentThreadNavigation({
         selectedProject,
         selectedThread !== null &&
           (selectedThread.thread.archived ||
-            !projectOwnsRememberedThread(selectedProject, selectedThread))
+            !projects.some(
+              (member) =>
+                (member.rootKey === selectedProject.rootKey ||
+                  scopeEntries
+                    .find((entry) => entry.projectRootKey === selectedProject.rootKey)
+                    ?.memberProjectRootKeys?.includes(member.rootKey)) &&
+                projectOwnsRememberedThread(member, selectedThread),
+            ))
           ? null
           : selectedThreadId,
         selectedThread === null ? null : JSON.stringify(selectedThread.thread.owner),
@@ -277,7 +291,15 @@ export function useAgentThreadNavigation({
           : JSON.stringify(selectedThread.thread.owner),
       scopeState,
     };
-  }, [projects, scopeState, selectedThreadId, selectedThread, session]);
+  }, [
+    projects,
+    scopeEntries,
+    selectedProjectRootKey,
+    scopeState,
+    selectedThreadId,
+    selectedThread,
+    session,
+  ]);
   const railScope = scopeState.railScope;
   const composerScope = useMemo(
     () => resolveComposerScope(scopeState, projects),
@@ -367,6 +389,21 @@ export function useAgentThreadNavigation({
     (threadId: string, reveal?: AgentThreadRevealRequest) => {
       pendingRemoteSelection.current = null;
       setSelectedThreadId(threadId);
+      const selected = committedThreadViews.current.find(
+        (view) => view.thread.threadId === threadId,
+      );
+      const entry = selected
+        ? agentRailScopeEntryFor(scopeEntries, selected.thread.owner.rootKey)
+        : null;
+      if (entry !== null) {
+        const scope = agentRailScopeFromEntry(entry);
+        setScopeState((current) => ({
+          ...current,
+          intent: "automatic",
+          railScope: scope,
+          authority: captureScopeAuthority(scope, projects),
+        }));
+      }
       setPendingSearchReveal(null);
       if (reveal !== undefined) {
         const target = committedThreadViews.current.find(
@@ -379,7 +416,7 @@ export function useAgentThreadNavigation({
       }
       if (threadId !== selectedThreadId) closeFind();
     },
-    [closeFind, selectedThreadId],
+    [closeFind, selectedThreadId, scopeEntries, projects],
   );
 
   const setRailScope = useCallback(
@@ -401,7 +438,11 @@ export function useAgentThreadNavigation({
       if (captured === undefined || live === undefined) return false;
       if (captured.ownerId !== live.ownerId || captured.generation !== live.generation)
         return false;
-      const railScope = { projectRootKey: live.rootKey, repositoryRoot: live.rootPath };
+      const entry = agentRailScopeEntryFor(scopeEntries, live.rootKey);
+      const railScope =
+        entry === null
+          ? { projectRootKey: live.rootKey, repositoryRoot: live.rootPath }
+          : agentRailScopeFromEntry(entry);
       const authority = captureScopeAuthority(railScope, currentProjectsRef.current);
       if (authority === null) return false;
       if (storedScopeState.railScope?.projectRootKey !== projectRootKey) {
@@ -410,6 +451,7 @@ export function useAgentThreadNavigation({
           live,
           committedThreadViews.current,
           authoritativeRemoteProjectKeys?.has(projectRootKey) ?? false,
+          projects.filter((member) => entry?.memberProjectRootKeys?.includes(member.rootKey)),
         );
         pendingRemoteSelection.current = retained?.threadId?.startsWith("remote-thread:")
           ? { id: retained.threadId, ownerKey: retained.threadOwnerKey }
@@ -425,7 +467,12 @@ export function useAgentThreadNavigation({
       }));
       return true;
     },
-    [authoritativeRemoteProjectKeys, projects, storedScopeState.railScope?.projectRootKey],
+    [
+      authoritativeRemoteProjectKeys,
+      projects,
+      scopeEntries,
+      storedScopeState.railScope?.projectRootKey,
+    ],
   );
 
   const closePalette = useCallback(() => {
@@ -566,6 +613,9 @@ function reconcileScopeState(
   const scope = current.railScope;
   const entry = scope === null ? null : agentRailScopeEntryFor(entries, scope.projectRootKey);
   if (scope !== null && entry !== null && scopeAuthorityIntact(current, scope, projects)) {
+    const members = entry.memberProjectRootKeys;
+    if (JSON.stringify(scope.memberProjectRootKeys) !== JSON.stringify(members))
+      return { ...current, order, railScope: agentRailScopeFromEntry(entry) };
     return ordered ? current : { ...current, order };
   }
   const next =
@@ -655,4 +705,17 @@ function resolveComposerScope(
     ownerId: authority.ownerId,
     generation: authority.generation,
   };
+}
+
+function rememberedRemoteProjectKey(ownerKey: string | null): string | null {
+  if (ownerKey === null || ownerKey.length > 32768) return null;
+  try {
+    const owner: unknown = JSON.parse(ownerKey);
+    if (typeof owner !== "object" || owner === null || !("rootKey" in owner)) return null;
+    return typeof owner.rootKey === "string" && owner.rootKey.startsWith("remote:")
+      ? owner.rootKey
+      : null;
+  } catch {
+    return null;
+  }
 }

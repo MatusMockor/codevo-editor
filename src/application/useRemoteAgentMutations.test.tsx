@@ -343,6 +343,21 @@ describe("automatic instruction snapshots", () => {
       vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[2]?.[0],
     ).toMatchObject({ instructions: instructionSnapshot("edited") });
   });
+  it.each(["Cannot read rules", "x".repeat(2000), { detail: "private" }])(
+    "handles native instruction failures safely: %s",
+    async (failure) => {
+      const gw = synchronizingGateway();
+      gw.collectInstructions.mockRejectedValue(failure);
+      const h = await render(gw);
+      await act(async () => {
+        await h.current().start(request, target);
+      });
+      expect(gw.createTask).not.toHaveBeenCalled();
+      expect(h.report).toHaveBeenCalledWith(
+        failure === "Cannot read rules" ? failure : "Remote execution failed.",
+      );
+    },
+  );
   it("does not dispatch when collecting fails or the server lacks support", async () => {
     const gw = synchronizingGateway();
     gw.collectInstructions.mockRejectedValue(new Error("Cannot read rules"));

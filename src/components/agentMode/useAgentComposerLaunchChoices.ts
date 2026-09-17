@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { LaunchChoice, LaunchScope } from "./agentComposerLaunch";
 
@@ -9,14 +9,18 @@ interface Choices {
 }
 
 /** Remember visited draft choices without transferring an existing conversation's provider. */
-export function useAgentComposerLaunchChoices(scope: LaunchScope) {
+export function useAgentComposerLaunchChoices(
+  scope: LaunchScope,
+  displayedDefault: AgentLaunchOptions | null = null,
+) {
   const [choices, setChoices] = useState<Choices>(() => ({ scopes: new Map(), lastDraft: null }));
+  const latestDraft = useRef<Choices["lastDraft"]>(null);
   const isDraft = !scope.key.startsWith("thread:");
   const environment = draftEnvironment(scope.rootKey);
   const remembered = choices.scopes.get(scope.key);
   const inherited =
-    isDraft && choices.lastDraft !== null && choices.lastDraft.environment !== environment
-      ? { key: scope.key, launch: choices.lastDraft.choice.launch }
+    isDraft && latestDraft.current !== null && latestDraft.current.environment !== environment
+      ? { key: scope.key, launch: latestDraft.current.choice.launch }
       : null;
   const choice = remembered ?? inherited;
   const inheritedLaunch = remembered === undefined ? (inherited?.launch ?? null) : null;
@@ -31,8 +35,15 @@ export function useAgentComposerLaunchChoices(scope: LaunchScope) {
           },
     );
   }, [scope.key, inheritedLaunch]);
+  // Defaults may hydrate asynchronously. Keep them live for this draft; retain only a
+  // snapshot for a future environment switch rather than freezing the current fallback.
+  useLayoutEffect(() => {
+    if (!isDraft || choice !== null || displayedDefault === null) return;
+    latestDraft.current = { environment, choice: { key: scope.key, launch: displayedDefault } };
+  }, [isDraft, choice, displayedDefault, environment, scope.key]);
   const change = useCallback(
     (launch: AgentLaunchOptions) => {
+      if (isDraft) latestDraft.current = { environment, choice: { key: scope.key, launch } };
       setChoices((previous) => {
         const next = { key: scope.key, launch };
         const scopes = rememberChoice(previous.scopes, next);

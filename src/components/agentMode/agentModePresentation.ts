@@ -73,6 +73,7 @@ export interface AgentRepositoryGroup {
 }
 
 export interface AgentProjectGroup {
+  readonly memberProjectRootKeys?: ReadonlyArray<string>;
   readonly projectRootKey: string;
   readonly kind: AgentProjectGroupKind;
   readonly label: string;

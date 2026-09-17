@@ -383,6 +383,21 @@ describe("remote surface boundary", () => {
       SURFACE_REMOTE_UNAVAILABLE_REASON,
     );
   });
+  it("rejects metadata-only remote conversation identities as local terminals", () => {
+    const local = surfaceThreadView();
+    const remote = {
+      ...local,
+      thread: { ...local.thread, threadId: "remote-thread:server:conversation" },
+    };
+    expect(agentThreadCheckoutRoot(remote, [])).toBeNull();
+    expect(agentSurfaceBlockedReason("terminal", remote, true, SURFACE_FIXTURE_ROOT)).toBe(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+    expect(() => agentSurfaceTerminalLaunchTargetFor(remote.thread.threadId, "in-place")).toThrow(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+  });
+
   it("never interprets a server checkout as local filesystem or terminal authority", () => {
     const local = surfaceThreadView();
     const remote = { ...local, thread: { ...local.thread, threadId: "remote:server:task" } };

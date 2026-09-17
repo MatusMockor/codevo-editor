@@ -28,8 +28,14 @@ describe("composer model choices across execution environments", () => {
     root = createRoot(host);
   });
   afterEach(() => act(() => root.unmount()));
-  function Harness({ scope }: { scope: LaunchScope }) {
-    current = useAgentComposerLaunchChoices(scope);
+  function Harness({
+    scope,
+    displayedDefault = null,
+  }: {
+    scope: LaunchScope;
+    displayedDefault?: AgentLaunchOptions | null;
+  }) {
+    current = useAgentComposerLaunchChoices(scope, displayedDefault);
     return null;
   }
   function render(rootKey: string, thread = false) {
@@ -37,6 +43,22 @@ describe("composer model choices across execution environments", () => {
     act(() => root.render(<Harness scope={scope} />));
     return scope;
   }
+  it("carries the displayed persisted/default Claude launch to a server without requiring a new model click", () => {
+    const localScope = { rootKey: "/local", key: "root:/local", seed: null };
+    act(() => root.render(<Harness scope={localScope} displayedDefault={claude} />));
+    expect(current.choice).toBeNull();
+    act(() =>
+      root.render(<Harness scope={localScope} displayedDefault={{ ...claude, model: "sonnet" }} />),
+    );
+    expect(current.choice).toBeNull();
+    const serverScope = {
+      rootKey: "remote:a:runner:project",
+      key: "root:remote:a:runner:project",
+      seed: null,
+    };
+    act(() => root.render(<Harness scope={serverScope} displayedDefault={codex} />));
+    expect(current.choice?.launch).toEqual({ ...claude, model: "sonnet" });
+  });
   it("carries the draft model onto an unvisited server and restores explicit A/B choices", () => {
     render("/local");
     act(() => current.change(codex));

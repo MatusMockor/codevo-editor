@@ -1,4 +1,5 @@
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
+import { RemoteProjectLinksSettings } from "../../remoteRunner/RemoteProjectLinksSettings";
 import { RemoteInstructionSettings } from "../../remoteRunner/RemoteInstructionSettings";
 import { RemoteRunnerExecutionPolicy } from "../../remoteRunner/RemoteRunnerExecutionPolicy";
 import { useState, type FormEvent } from "react";
@@ -168,6 +169,15 @@ export function EnvironmentsSettingsPage({
                   {server.username}@{server.host}:{server.port} ·{" "}
                   {server.connected ? "Connected" : "Disconnected"}
                 </p>
+                {remote.gateway && (
+                  <RemoteProjectLinksSettings
+                    key={`projects:${server.id}:${server.connected}`}
+                    gateway={remote.gateway}
+                    serverId={server.id}
+                    connected={server.connected}
+                    projects={projects}
+                  />
+                )}
                 {remote.gateway && (
                   <RemoteInstructionSettings
                     key={`${server.id}:${server.connected}`}

@@ -41,11 +41,13 @@ export type AgentRowStatus =
 export type AgentRowVariant = "card" | "slim";
 
 export interface AgentRailScope {
+  readonly memberProjectRootKeys?: ReadonlyArray<string>;
   readonly projectRootKey: string;
   readonly repositoryRoot: string;
 }
 
 export interface AgentRailScopeEntry {
+  readonly memberProjectRootKeys?: ReadonlyArray<string>;
   readonly value: string;
   readonly label: string;
   readonly projectRootKey: string;
@@ -226,6 +228,7 @@ export function agentRailScopeEntries(
     const repositoryRoot = group.rootPath ?? group.repos[0]?.repositoryRoot ?? null;
     if (repositoryRoot === null) continue;
     entries.push({
+      memberProjectRootKeys: group.memberProjectRootKeys,
       value: agentRailScopeValue(group.projectRootKey),
       label: group.label,
       projectRootKey: group.projectRootKey,
@@ -250,14 +253,24 @@ export function agentRailScopeEntryValue(scope: AgentRailScope | null): string {
 }
 
 export function agentRailScopeFromEntry(entry: AgentRailScopeEntry): AgentRailScope {
-  return { projectRootKey: entry.projectRootKey, repositoryRoot: entry.repositoryRoot };
+  return {
+    projectRootKey: entry.projectRootKey,
+    repositoryRoot: entry.repositoryRoot,
+    memberProjectRootKeys: entry.memberProjectRootKeys,
+  };
 }
 
 export function agentRailScopeEntryFor(
   entries: ReadonlyArray<AgentRailScopeEntry>,
   projectRootKey: string,
 ): AgentRailScopeEntry | null {
-  return entries.find((candidate) => candidate.projectRootKey === projectRootKey) ?? null;
+  return (
+    entries.find(
+      (candidate) =>
+        candidate.projectRootKey === projectRootKey ||
+        candidate.memberProjectRootKeys?.includes(projectRootKey),
+    ) ?? null
+  );
 }
 
 export function agentRailDefaultScopeEntry(
@@ -312,7 +325,10 @@ export function agentRailScopeLabel(
 
 function scopeIncludes(scope: AgentRailScope | null, view: AgentThreadView): boolean {
   if (scope === null) return false;
-  return view.thread.owner.rootKey === scope.projectRootKey;
+  return (
+    scope.projectRootKey === view.thread.owner.rootKey ||
+    scope.memberProjectRootKeys?.includes(view.thread.owner.rootKey) === true
+  );
 }
 
 function compareByRecency(left: AgentThreadView, right: AgentThreadView): number {

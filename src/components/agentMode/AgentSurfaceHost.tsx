@@ -14,9 +14,11 @@ import {
 import {
   isRemoteAgentSurfaceThread,
   SURFACE_REMOTE_UNAVAILABLE_REASON,
+  SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
   type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
+import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 
 export type AgentSurfaceHostAgents = Pick<
@@ -29,6 +31,8 @@ export interface AgentSurfaceHostProps {
   readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
+  readonly remoteDraft?: boolean;
+  readonly remoteSurface?: AgentRemoteSurface | null;
   readonly threadRootPath: string | null;
   readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
@@ -56,6 +60,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   onSwitchScope,
   onTrustScope,
   projects = [],
+  remoteDraft = false,
+  remoteSurface = null,
   scope,
   thread,
   threadRootPath,
@@ -64,8 +70,25 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   const surfaceEnterClass = useSurfaceEnterClass();
   const activation = chrome.workspaceActivation;
   const remote =
+    (thread === null && remoteDraft) ||
     isRemoteAgentSurfaceThread(thread) ||
     (scope.kind !== "none" && scope.projectRootKey.startsWith("remote:"));
+  const remoteContext =
+    remote &&
+    remoteSurface !== null &&
+    (thread === null
+      ? remoteDraft && remoteSurface.scope.taskId === undefined
+      : thread.execution !== undefined &&
+        thread.execution.serverId === remoteSurface.scope.serverId &&
+        thread.execution.runnerId === remoteSurface.scope.runnerId &&
+        thread.execution.projectId === remoteSurface.scope.projectId &&
+        thread.execution.latestTaskId === remoteSurface.scope.taskId)
+      ? remoteSurface
+      : null;
+  const remoteActiveAvailable =
+    layout.activeSurface !== null &&
+    layout.activeSurface !== "diff" &&
+    remoteSurfaceSupports(remoteContext, layout.activeSurface);
   const available =
     !remote &&
     scope.kind === "repository" &&
@@ -75,10 +98,15 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       (activation.state.kind === "ready" && activation.state.rootPath === scope.rootPath));
   const unavailable =
     available ||
-    (remote && (layout.activeSurface === "diff" || layout.activeSurface === null)) ? null : (
+    remoteActiveAvailable ||
+    (remote &&
+      (layout.activeSurface === null ||
+        (layout.activeSurface === "diff" && thread !== null))) ? null : (
       <div className="agent-note" role="status">
         {remote
-          ? SURFACE_REMOTE_UNAVAILABLE_REASON
+          ? thread === null && layout.activeSurface === "diff"
+            ? SURFACE_REMOTE_NO_THREAD_DESCRIPTION
+            : SURFACE_REMOTE_UNAVAILABLE_REASON
           : activation?.state.kind === "failed"
             ? activation.state.message
             : activation?.state.kind === "pending"
@@ -212,6 +240,9 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     >
       <AgentSurfacePanel
         unavailable={unavailable}
+        remote={remote}
+        remoteSurface={remoteContext}
+        remoteTerminalTheme={chrome.terminal?.terminalTheme}
         history={{
           scope: historyScope,
           repositories: historyRepositories,
@@ -223,6 +254,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         chooserAutoFocus={chooserAutoFocus}
         diff={diff}
         projectDiff={
+          !remote &&
           thread === null &&
           scope.kind === "repository" &&
           scope.rootPath === workspaceRoot &&

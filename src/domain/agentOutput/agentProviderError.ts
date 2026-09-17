@@ -31,6 +31,8 @@ export type AgentProviderErrorDetail =
       readonly provider: AgentCliKind;
       readonly model: string;
     }
+  | { readonly kind: "authenticationRequired"; readonly provider: AgentCliKind }
+  | { readonly kind: "protocolFailure"; readonly provider: AgentCliKind }
   | { readonly kind: "advisory"; readonly provider: AgentCliKind; readonly text: string }
   | { readonly kind: "unknown" };
 
@@ -47,7 +49,8 @@ export function classifyAgentProviderError(
 ): AgentProviderError {
   const message = boundedUtf8Text(unwrappedMessage(raw), MAX_AGENT_PROVIDER_ERROR_MESSAGE_BYTES);
   const detail = advisoryDetail(message, provider) ??
-    unsupportedModelDetail(message, provider) ?? { kind: "unknown" };
+    unsupportedModelDetail(message, provider) ??
+    launchFailureDetail(message, provider) ?? { kind: "unknown" };
 
   return {
     detail,
@@ -70,6 +73,10 @@ export function agentProviderErrorHeadline(
 
     return `${subject} cannot run ${detail.model}. Update ${name} and try again.`;
   }
+  if (detail.kind === "authenticationRequired")
+    return `${agentProviderDisplayName(detail.provider)} needs you to sign in again.`;
+  if (detail.kind === "protocolFailure")
+    return `${agentProviderDisplayName(detail.provider)} could not start or resume this conversation.`;
   if (detail.kind === "advisory") return detail.text;
   if (detail.kind === "unknown") return error.message;
 
@@ -121,6 +128,23 @@ function jsonErrorMessage(text: string): string | null {
   return null;
 }
 
+function launchFailureDetail(
+  message: string,
+  provider: AgentCliKind,
+): AgentProviderErrorDetail | null {
+  if (message === "provider_protocol_failed") return { kind: "protocolFailure", provider };
+  if (
+    message === "authentication_failed" ||
+    (provider === "claudeCode" &&
+      /^Failed to authenticate: OAuth session expired and could not be refreshed[.!]?$/iu.test(
+        message,
+      ))
+  ) {
+    return { kind: "authenticationRequired", provider };
+  }
+  return null;
+}
+
 function advisoryDetail(message: string, provider: AgentCliKind): AgentProviderErrorDetail | null {
   const advisory = KNOWN_AGENT_PROVIDER_ADVISORIES.find(
     (known) => known.provider === provider && known.text === message,
@@ -160,6 +184,9 @@ function mentionedProvider(mention: string): AgentCliKind | null {
 function errorSignature(detail: AgentProviderErrorDetail, message: string): string {
   if (detail.kind === "unsupportedModelForCliVersion") {
     return `unsupportedModelForCliVersion:${detail.provider}:${detail.model}`;
+  }
+  if (detail.kind === "authenticationRequired" || detail.kind === "protocolFailure") {
+    return `${detail.kind}:${detail.provider}`;
   }
   if (detail.kind === "advisory") {
     return `advisory:${detail.provider}:${normalizedMessage(detail.text)}`;

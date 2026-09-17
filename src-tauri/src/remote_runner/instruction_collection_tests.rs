@@ -57,6 +57,9 @@ fn rejects_external_and_non_markdown_imports() {
         "@/tmp/secret.md",
         "@~/.claude/secret.md",
         "@.env",
+        "@\"param\"",
+        "@param/secret.txt",
+        "@param",
     ] {
         let fixture = Fixture::new();
         fixture.write("project/CLAUDE.md", import);
@@ -189,4 +192,19 @@ fn import_stamp_rejects_replaced_unscanned_global_ancestor() {
     .unwrap();
     fixture.write("global/docs/nested/helper.md", "replacement rules");
     assert!(stamp.validate().is_err());
+}
+
+#[test]
+fn prose_docblock_annotations_are_not_instruction_imports() {
+    let fixture = Fixture::new();
+    fixture.write("global/CLAUDE.md", "Only tooling annotations (e.g. @param/@var type annotations, @throws) are allowed.\n@docs/general.md\n@param.md\n@throws.md");
+    fixture.write("global/docs/general.md", "Keep instructions.");
+    fixture.write("global/param.md", "Parameter rules.");
+    fixture.write("global/throws.md", "Exception rules.");
+    fixture.write("project/CLAUDE.md", "Project rules.");
+    let snapshot = fixture.snapshot().unwrap();
+    assert_eq!(snapshot.files.len(), 5);
+    for path in ["docs/general.md", "param.md", "throws.md"] {
+        assert!(snapshot.files.iter().any(|file| file.path == path));
+    }
 }

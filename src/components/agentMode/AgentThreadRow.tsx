@@ -121,7 +121,9 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           ) : (
             <span className="agent-row__title">{model.title}</span>
           )}
-          {view.execution?.kind === "remote" && <RemoteThreadIndicator />}
+          {view.execution?.kind === "remote" && (
+            <RemoteThreadIndicator serverId={view.execution.serverId} />
+          )}
           {importedLabel !== null && <ImportedBadge label={importedLabel} />}
           <span className="agent-row__time agent-num">
             <AgentCompactRelativeTime epochMs={thread.updatedAtEpochMs} />
@@ -184,7 +186,9 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           </span>
         </div>
         <div className="agent-row__line2">
-          {view.execution?.kind === "remote" && <RemoteThreadIndicator />}
+          {view.execution?.kind === "remote" && (
+            <RemoteThreadIndicator serverId={view.execution.serverId} />
+          )}
           {renaming ? (
             <RenameInput
               initial={thread.title}

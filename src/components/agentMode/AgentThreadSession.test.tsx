@@ -745,6 +745,27 @@ describe("AgentThreadSession", () => {
     );
   });
 
+  it("directs authentication recovery to the server and keeps protocol codes in details", () => {
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        remote: true,
+        turns: [
+          turn("agt-1-t1", "Hello", { kind: "failed", message: "authentication_failed" }, [
+            { kind: "error", message: "authentication_failed" },
+          ]),
+        ],
+      }),
+    });
+    expect(host.querySelector(".agent-finale__body")?.textContent).toBe(
+      "Claude Code needs you to sign in again.",
+    );
+    expect(host.querySelector(".agent-note")?.textContent).toContain(
+      "Sign in to the provider on the server",
+    );
+    expect((host.querySelector("details.agent-raw") as HTMLDetailsElement).open).toBe(false);
+  });
+
   it("targets server upgrades and hides the runner wrapper after a provider failure", () => {
     const message = "The 'gpt-6-astra' model requires a newer version of Codex.";
     render({

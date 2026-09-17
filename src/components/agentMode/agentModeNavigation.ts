@@ -6,7 +6,11 @@ export function agentThreadsInScope(
   scope: AgentRailScope | null,
 ): ReadonlyArray<AgentThreadView> {
   if (scope === null) return [];
-  return views.filter((view) => view.thread.owner.rootKey === scope.projectRootKey);
+  return views.filter(
+    (view) =>
+      view.thread.owner.rootKey === scope.projectRootKey ||
+      scope.memberProjectRootKeys?.includes(view.thread.owner.rootKey) === true,
+  );
 }
 
 export function orderedRailThreadIds(

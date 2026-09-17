@@ -13,13 +13,21 @@ import type { ComposerScope } from "./agentComposerTarget";
 import { agentSurfaceTargetGone } from "./agentModePresentation";
 
 export const SURFACE_REMOTE_UNAVAILABLE_REASON =
-  "This panel is not available for server threads yet.";
+  "This server panel is unavailable. Check the server connection and runner version.";
+
+export const SURFACE_REMOTE_CAPABILITIES_DESCRIPTION =
+  "Server panels are unavailable. Check the server connection and update the runner if needed.";
+export const SURFACE_REMOTE_NO_PROJECT_DESCRIPTION =
+  "Select a server project, or connect this project to a server project in Settings → Environments.";
+export const SURFACE_REMOTE_NO_THREAD_DESCRIPTION =
+  "Select a server conversation to review its changes.";
 
 export function isRemoteAgentSurfaceThread(thread: AgentThreadView | null): boolean {
   return (
     thread !== null &&
     (thread.execution?.kind === "remote" ||
       thread.thread.threadId.startsWith("remote:") ||
+      thread.thread.threadId.startsWith("remote-thread:") ||
       thread.thread.owner.rootKey.startsWith("remote:"))
   );
 }
@@ -199,7 +207,8 @@ export function agentSurfaceTerminalLaunchTargetFor(
   threadId: string,
   isolation: AgentThreadTarget["isolation"],
 ): TerminalLaunchTarget {
-  if (threadId.startsWith("remote:")) throw new Error(SURFACE_REMOTE_UNAVAILABLE_REASON);
+  if (threadId.startsWith("remote:") || threadId.startsWith("remote-thread:"))
+    throw new Error(SURFACE_REMOTE_UNAVAILABLE_REASON);
   if (isolation !== "worktree") return DEFAULT_TERMINAL_LAUNCH_TARGET;
   return terminalLaunchTargetForThread(threadId);
 }

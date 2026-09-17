@@ -47,6 +47,7 @@ export function restorableProjectThread(
   project: AgentProjectDescriptor,
   threads: ReadonlyArray<AgentThreadView>,
   authoritativeInventory = false,
+  memberProjects: ReadonlyArray<AgentProjectDescriptor> = [],
 ): AgentProjectSelection | null {
   if (selection === null || selection.threadId === null) return null;
   const candidate = threads.find((view) => view.thread.threadId === selection.threadId);
@@ -55,9 +56,9 @@ export function restorableProjectThread(
       ? selection
       : null;
   const thread = candidate.thread;
-  return projectOwnsRememberedThread(project, candidate) &&
+  return (projectOwnsRememberedThread(project, candidate) ||
+    memberProjects.some((member) => projectOwnsRememberedThread(member, candidate))) &&
     !thread.archived &&
-    thread.owner.rootKey === project.rootKey &&
     JSON.stringify(thread.owner) === selection.threadOwnerKey
     ? selection
     : null;

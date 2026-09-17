@@ -1,3 +1,4 @@
+import type { RemoteRunnerSurfacesGateway } from "../../domain/remoteRunnerSurfaces";
 import { useState, type ReactNode } from "react";
 import { useRemoteRunnerConnections } from "../../application/useRemoteRunnerConnections";
 import type { RemoteRunnerGateway } from "../../domain/remoteRunner";
@@ -9,9 +10,11 @@ export function RemoteRunnerProvider({
   children,
   gateway,
   metadataRepository,
+  surfacesGateway,
 }: {
   readonly children: ReactNode;
   readonly gateway: RemoteRunnerGateway;
+  readonly surfacesGateway?: RemoteRunnerSurfacesGateway | null;
   readonly metadataRepository?: RemoteAgentMetadataRepository;
 }) {
   const connections = useRemoteRunnerConnections({ gateway });
@@ -19,7 +22,14 @@ export function RemoteRunnerProvider({
 
   return (
     <RemoteRunnerContext.Provider
-      value={{ ...connections, gateway, selectedServerId, selectServer, metadataRepository }}
+      value={{
+        ...connections,
+        gateway,
+        surfacesGateway,
+        selectedServerId,
+        selectServer,
+        metadataRepository,
+      }}
     >
       {children}
     </RemoteRunnerContext.Provider>

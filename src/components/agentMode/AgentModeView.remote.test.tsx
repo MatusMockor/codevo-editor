@@ -2,7 +2,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RemoteRunnerSurfacesGateway } from "../../domain/remoteRunnerSurfaces";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../../domain/remoteRunner";
+import {
+  saveRemoteProjectLink,
+  removeRemoteProjectLink,
+} from "../../application/remoteProjectLinks";
 import { remoteAgentThreadKey } from "../../application/remoteAgentProjection";
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
 import { waitForReact } from "../../test/reactTestLifecycle";
@@ -113,6 +118,7 @@ describe("original agent workbench with remote execution", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    removeRemoteProjectLink("remote:linux:runner:project");
     vi.restoreAllMocks();
   });
 
@@ -183,8 +189,10 @@ describe("original agent workbench with remote execution", () => {
     expect(gateway.createTask).not.toHaveBeenCalled();
   });
 
-  it("keeps local and remote threads in the original UI and continues the same conversation from its normal composer", async () => {
+  it("keeps linked local and remote threads together while switching launch targets and continuing exact conversations", async () => {
+    saveRemoteProjectLink("remote:linux:runner:project", SURFACE_FIXTURE_ROOT);
     const gateway = gatewayFixture();
+    const surfacesGateway = surfaceGatewayFixture();
     const startThread = vi.fn();
     const sendFollowUp = vi.fn();
     const revealPath = vi.fn();
@@ -198,7 +206,7 @@ describe("original agent workbench with remote execution", () => {
     });
     act(() =>
       root.render(
-        <RemoteRunnerProvider gateway={gateway}>
+        <RemoteRunnerProvider gateway={gateway} surfacesGateway={surfacesGateway}>
           <AgentModeView
             agents={{ ...local, providerManagement: unconfiguredAgentProviderManagement() }}
             projects={[projectFixture()]}
@@ -236,7 +244,16 @@ describe("original agent workbench with remote execution", () => {
     await waitForReact(() =>
       expect(host.querySelector(`[data-thread-id="${remoteThreadId}"]`)).not.toBeNull(),
     );
+    await waitForReact(() =>
+      expect(surfacesGateway.capabilities).toHaveBeenCalledWith({
+        serverId: "linux",
+        runnerId: "runner",
+        projectId: "project",
+      }),
+    );
     expect(host.querySelectorAll(`[data-thread-id="${remoteThreadId}"]`)).toHaveLength(1);
+    expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
     expect(host.querySelector('[aria-label="Remote tasks"]')).toBeNull();
     selectWorkspace.mockClear();
     refreshShipStatus.mockClear();
@@ -246,6 +263,14 @@ describe("original agent workbench with remote execution", () => {
     expect(host.querySelector('aside[aria-label="Agent threads"]')).toBe(originalSidebar);
     expect(host.textContent).toContain("First remote prompt");
     expect(host.textContent).toContain("Second remote prompt");
+    await waitForReact(() =>
+      expect(surfacesGateway.capabilities).toHaveBeenCalledWith({
+        serverId: "linux",
+        runnerId: "runner",
+        projectId: "project",
+        taskId: "second",
+      }),
+    );
     expect(host.querySelector('[aria-label="Runs on server"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Local instruction source"]')).toBeNull();
     expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
@@ -271,6 +296,16 @@ describe("original agent workbench with remote execution", () => {
     );
     await waitForReact(() => expect(host.querySelectorAll("[data-agent-turn]")).toHaveLength(3));
     expect(host.querySelectorAll(`[data-thread-id="${remoteThreadId}"]`)).toHaveLength(1);
+    expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
+    await waitForReact(() =>
+      expect(surfacesGateway.capabilities).toHaveBeenLastCalledWith({
+        serverId: "linux",
+        runnerId: "runner",
+        projectId: "project",
+        taskId: "third",
+      }),
+    );
     expect(startThread).not.toHaveBeenCalled();
     expect(sendFollowUp).not.toHaveBeenCalled();
     expect(revealPath).not.toHaveBeenCalled();
@@ -280,7 +315,7 @@ describe("original agent workbench with remote execution", () => {
         ([project]) => project === null || !project.rootKey.startsWith("remote:"),
       ),
     ).toBe(true);
-    click(host.querySelector('[aria-label="New thread in Server app"]')!);
+    click(host.querySelector('[aria-label="New thread in app"]')!);
     click(host.querySelector('[aria-label="Run on: Linux server"]')!);
     click(
       Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
@@ -292,97 +327,138 @@ describe("original agent workbench with remote execution", () => {
     expect(host.querySelector(".agent-composer")).toBe(originalComposer);
     expect(gateway.createTask).not.toHaveBeenCalled();
   });
-  it("starts a new server conversation through the original composer and registered project", async () => {
-    const gateway = gatewayFixture();
-    const draft = task({
-      id: "new",
-      sequence: 3,
-      status: "draft",
-      projectId: undefined,
-      parts: [{ type: "text", text: "New remote prompt" }],
-    });
-    const started = { ...draft, projectId: "project", status: "queued" as const };
-    gateway.createTask.mockResolvedValue({ task: draft, created: true });
-    gateway.startTask.mockResolvedValue(started);
-    gateway.getTask.mockImplementation(async ({ taskId }: { taskId: string }) =>
-      taskId === "new" ? started : task({ id: taskId }),
-    );
-    const startThread = vi.fn();
-    const sendFollowUp = vi.fn();
-    const revealPath = vi.fn();
-    const local = threadsSurfaceFixture({
-      threads: [surfaceThreadView()],
-      agentCliKind: "codex",
-      startThread,
-      sendFollowUp,
-    });
-    await act(async () =>
-      root.render(
-        <RemoteRunnerProvider gateway={gateway}>
-          <AgentModeView
-            agents={{ ...local, providerManagement: unconfiguredAgentProviderManagement() }}
-            projects={[projectFixture()]}
-            workspaceRoot={SURFACE_FIXTURE_ROOT}
-            overflowRootPaths={[]}
-            providerEnabled={{ claudeCode: true, codex: true }}
-            chrome={chromeFixture({ revealPath })}
-            onTrustProject={() => undefined}
-            onReleaseProject={() => undefined}
-            onOpenEnvironmentSettings={() => undefined}
-          />
-        </RemoteRunnerProvider>,
-      ),
-    );
-    const sidebar = host.querySelector('aside[aria-label="Agent threads"]');
-    const composer = host.querySelector(".agent-composer");
-    click(host.querySelector('[aria-label="Run on: This computer"]')!);
-    click(
-      Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
-        entry.textContent?.includes("Linux server"),
-      )!,
-    );
-    await waitForReact(() =>
-      expect(host.querySelector('[aria-label="New thread in Server app"]')).not.toBeNull(),
-    );
-    const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-        textarea,
-        "New remote prompt",
+  it.each(["codex", "claude"] as const)(
+    "starts a %s server conversation through the linked project without replacing the sidebar",
+    async (provider) => {
+      saveRemoteProjectLink("remote:linux:runner:project", SURFACE_FIXTURE_ROOT);
+      const gateway = gatewayFixture();
+      const expectedLaunch =
+        provider === "codex"
+          ? launch
+          : ({
+              provider: "claudeCode",
+              model: "claude-opus-5",
+              mode: "bypassPermissions",
+              effort: "high",
+              context: "1m",
+              fastMode: false,
+              thinkingMode: false,
+            } as const);
+      const draft = task({
+        provider,
+        launch: expectedLaunch,
+        id: "new",
+        sequence: 3,
+        status: "draft",
+        projectId: undefined,
+        parts: [{ type: "text", text: "New remote prompt" }],
+      });
+      const started = { ...draft, projectId: "project", status: "queued" as const };
+      gateway.createTask.mockResolvedValue({ task: draft, created: true });
+      gateway.startTask.mockResolvedValue(started);
+      gateway.getTask.mockImplementation(async ({ taskId }: { taskId: string }) =>
+        taskId === "new" ? started : task({ id: taskId }),
       );
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const submit = host.querySelector<HTMLButtonElement>('.agent-composer button[type="submit"]')!;
-    await waitForReact(() => expect(submit.disabled).toBe(false));
-    click(submit);
-    await waitForReact(() => expect(gateway.startTask).toHaveBeenCalledTimes(1));
-    expect(gateway.createTask).toHaveBeenCalledExactlyOnceWith({
-      serverId: "linux",
-      idempotencyKey: expect.any(String),
-      provider: "codex",
-      launch,
-      parts: [{ type: "text", text: "New remote prompt" }],
-    });
-    expect(gateway.startTask).toHaveBeenCalledExactlyOnceWith({
-      serverId: "linux",
-      taskId: "new",
-      projectId: "project",
-    });
-    const newThreadId = remoteAgentThreadKey("linux", "runner", "new");
-    await waitForReact(() =>
-      expect(
-        host.querySelector(`section[aria-label="Agent thread ${newThreadId}"]`),
-      ).not.toBeNull(),
-    );
-    expect(host.querySelectorAll(`[data-thread-id="${newThreadId}"]`)).toHaveLength(1);
-    expect(host.querySelector('aside[aria-label="Agent threads"]')).toBe(sidebar);
-    expect(host.querySelector(".agent-composer")).toBe(composer);
-    expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
-    expect(startThread).not.toHaveBeenCalled();
-    expect(sendFollowUp).not.toHaveBeenCalled();
-    expect(revealPath).not.toHaveBeenCalled();
-    expect(gateway.continueTask).not.toHaveBeenCalled();
-  });
+      const startThread = vi.fn();
+      const sendFollowUp = vi.fn();
+      const revealPath = vi.fn();
+      const local = threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        agentCliKind: "codex",
+        startThread,
+        sendFollowUp,
+      });
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway}>
+            <AgentModeView
+              agents={{
+                ...local,
+                providerManagement: {
+                  ...unconfiguredAgentProviderManagement(),
+                  admissionAuthority: (provider) => ({
+                    provider,
+                    revision: 0,
+                    providerGeneration: 1,
+                    disposition: { kind: "ready" },
+                  }),
+                },
+              }}
+              projects={[projectFixture()]}
+              workspaceRoot={SURFACE_FIXTURE_ROOT}
+              overflowRootPaths={[]}
+              providerEnabled={{ claudeCode: true, codex: true }}
+              chrome={chromeFixture({ revealPath })}
+              onTrustProject={() => undefined}
+              onReleaseProject={() => undefined}
+              onOpenEnvironmentSettings={() => undefined}
+            />
+          </RemoteRunnerProvider>,
+        ),
+      );
+      const sidebar = host.querySelector('aside[aria-label="Agent threads"]');
+      const composer = host.querySelector(".agent-composer");
+      if (provider === "claude") {
+        click(host.querySelector("#agent-launch-model")!);
+        click(host.querySelector('[role="dialog"] button[data-provider="claudeCode"]')!);
+        click(host.querySelector('[role="option"][data-value="claude-opus-5"]')!);
+        expect(host.querySelector<HTMLElement>("#agent-launch-model")?.dataset.value).toBe(
+          "claude-opus-5",
+        );
+      }
+      click(host.querySelector('[aria-label="Run on: This computer"]')!);
+      click(
+        Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
+          entry.textContent?.includes("Linux server"),
+        )!,
+      );
+      await waitForReact(() =>
+        expect(host.querySelector('[aria-label="New thread in app"]')).not.toBeNull(),
+      );
+      expect(host.textContent).toContain("What should we build in app?");
+      const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+          textarea,
+          "New remote prompt",
+        );
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const submit = host.querySelector<HTMLButtonElement>(
+        '.agent-composer button[type="submit"]',
+      )!;
+      await waitForReact(() => expect(submit.disabled).toBe(false));
+      click(submit);
+      await waitForReact(() => expect(gateway.startTask).toHaveBeenCalledTimes(1));
+      expect(gateway.createTask).toHaveBeenCalledExactlyOnceWith({
+        serverId: "linux",
+        idempotencyKey: expect.any(String),
+        provider,
+        launch: expectedLaunch,
+        ...(provider === "claude" ? { instructions: { version: 1, files: [] } } : {}),
+        parts: [{ type: "text", text: "New remote prompt" }],
+      });
+      expect(gateway.startTask).toHaveBeenCalledExactlyOnceWith({
+        serverId: "linux",
+        taskId: "new",
+        projectId: "project",
+      });
+      const newThreadId = remoteAgentThreadKey("linux", "runner", "new");
+      await waitForReact(() =>
+        expect(
+          host.querySelector(`section[aria-label="Agent thread ${newThreadId}"]`),
+        ).not.toBeNull(),
+      );
+      expect(host.querySelectorAll(`[data-thread-id="${newThreadId}"]`)).toHaveLength(1);
+      expect(host.querySelector('aside[aria-label="Agent threads"]')).toBe(sidebar);
+      expect(host.querySelector(".agent-composer")).toBe(composer);
+      expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
+      expect(startThread).not.toHaveBeenCalled();
+      expect(sendFollowUp).not.toHaveBeenCalled();
+      expect(revealPath).not.toHaveBeenCalled();
+      expect(gateway.continueTask).not.toHaveBeenCalled();
+    },
+  );
   it("keeps an empty local composer unbound when connected server projects arrive", async () => {
     const gateway = gatewayFixture();
     const startThread = vi.fn();
@@ -442,4 +518,21 @@ describe("original agent workbench with remote execution", () => {
 });
 function click(element: Element) {
   act(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+function surfaceGatewayFixture(): RemoteRunnerSurfacesGateway {
+  return {
+    capabilities: vi.fn().mockResolvedValue({ files: true, history: true, terminal: true }),
+    listDirectory: vi.fn(),
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+    history: vi.fn(),
+    commitFiles: vi.fn(),
+    commitDiff: vi.fn(),
+    openTerminal: vi.fn(),
+    pollTerminal: vi.fn(),
+    writeTerminal: vi.fn(),
+    resizeTerminal: vi.fn(),
+    closeTerminal: vi.fn(),
+  };
 }

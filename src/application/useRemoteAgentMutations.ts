@@ -12,7 +12,10 @@ import type {
   RemoteRunnerProvider,
   RemoteRunnerTask,
 } from "../domain/remoteRunner";
-import { isRemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
+import {
+  isRemoteRunnerRequestRejectedError,
+  remoteRunnerErrorMessage,
+} from "../domain/remoteRunnerErrors";
 import { agentLaunchWithoutBrowser, type AgentLaunchOptions } from "../domain/agentLaunch";
 
 export interface RemoteAgentMutationTarget {
@@ -287,9 +290,7 @@ export function useRemoteAgentMutations(options: Options) {
         options.report(
           pending.current.has(targetKey)
             ? "Remote execution was not confirmed. Retry the same message to recover it safely."
-            : error instanceof Error
-              ? error.message
-              : "Remote execution failed.",
+            : remoteRunnerErrorMessage(error, "Remote execution failed."),
         );
       }
       return null;
@@ -331,7 +332,7 @@ export function useRemoteAgentMutations(options: Options) {
       options.publish(target.serverId, stopped);
     } catch (error) {
       if (valid())
-        options.report(error instanceof Error ? error.message : "Could not stop remote execution.");
+        options.report(remoteRunnerErrorMessage(error, "Could not stop remote execution."));
     } finally {
       active.current = false;
       if (mounted.current) setBusy(false);

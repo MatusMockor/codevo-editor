@@ -7,6 +7,39 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.51] - 2026-09-18
+
+### Added
+
+- Browse and edit server workspace files with conflict detection and retained
+  unsaved changes. Compare local edits with the current server version before saving.
+- Open a real server terminal, reconnect to a running session, resize it and review
+  retained output. Closing a panel leaves the server terminal running.
+- Browse server Git history and inspect commit file changes in the diff viewer.
+- Connect matching local and server projects in Settings > Environments so their
+  threads share one sidebar group, with server threads marked by an icon.
+
+### Fixed
+
+- Preserve the selected provider and model when switching execution environments,
+  including defaults loaded after the composer opens.
+- Keep panel selection scoped to its conversation and prevent stale remote replies
+  from appearing in another project or a local editor panel.
+- Explain expired provider authentication and protocol failures in the context of
+  the actual execution environment.
+- Keep documentation annotations in Claude rules from being mistaken for file
+  imports, and retain actionable native error messages when remote launch fails.
+- Keep remote comparison models alive until their editor detaches, and give
+  server history diffs a visible editor area.
+
+### Compatibility
+
+- Remote Files, History and Terminal require the updated Codevo runner. Text editing
+  currently supports files up to 64 KiB; terminal support provides one primary
+  session per project/task. Sessions survive client disconnects, not runner restarts.
+- Project connections are explicit; similarly named repositories are not joined
+  automatically.
+
 ## [0.2.0-beta.50] - 2026-09-17
 
 ### Added

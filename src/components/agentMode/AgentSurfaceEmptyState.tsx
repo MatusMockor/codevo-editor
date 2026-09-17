@@ -4,14 +4,21 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import {
   SURFACE_FILES_THREAD_DESCRIPTION,
+  SURFACE_REMOTE_CAPABILITIES_DESCRIPTION,
+  SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
+  SURFACE_REMOTE_NO_PROJECT_DESCRIPTION,
+  isRemoteAgentSurfaceThread,
   agentSurfaceBlockedReason,
   agentSurfaceFilesDescription,
   type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
+import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 
 export interface AgentSurfaceEmptyStateProps {
   readonly thread: AgentThreadView | null;
+  readonly remote?: boolean;
+  readonly remoteSurface?: AgentRemoteSurface | null;
   readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
@@ -51,15 +58,30 @@ const CARDS: ReadonlyArray<SurfaceCard> = [
 
 export function AgentSurfaceEmptyState({
   autoFocus = false,
+  remote = false,
+  remoteSurface = null,
   onChooseSurface,
   scope,
   thread,
   workspaceRoot,
   workspaceTrusted,
 }: AgentSurfaceEmptyStateProps) {
+  const server = remote || isRemoteAgentSurfaceThread(thread);
+  const unavailableSurfaces = (["files", "terminal", "history"] as const).filter(
+    (kind) => !remoteSurfaceSupports(remoteSurface, kind),
+  );
+  const unavailableMessage =
+    thread === null && remoteSurface === null
+      ? SURFACE_REMOTE_NO_PROJECT_DESCRIPTION
+      : (remoteSurface?.message ??
+        (unavailableSurfaces.length === 3
+          ? SURFACE_REMOTE_CAPABILITIES_DESCRIPTION
+          : `Server ${unavailableSurfaces.map((kind) => kind[0].toUpperCase() + kind.slice(1)).join(", ")} ${unavailableSurfaces.length === 1 ? "is" : "are"} not available.`));
   const containerRef = useRef<HTMLDivElement>(null);
   const blockedReason = (kind: AgentSurfaceKind): string | null =>
-    agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot, scope);
+    server && kind !== "diff" && remoteSurfaceSupports(remoteSurface, kind)
+      ? null
+      : agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot, scope);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -71,7 +93,13 @@ export function AgentSurfaceEmptyState({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const surface = agentSurfaceForHotkey(event.key);
-    if (surface === null || blockedReason(surface) !== null) return;
+    if (
+      surface === null ||
+      (server &&
+        (surface === "diff" ? thread === null : !remoteSurfaceSupports(remoteSurface, surface))) ||
+      blockedReason(surface) !== null
+    )
+      return;
     event.preventDefault();
     onChooseSurface(surface);
   };
@@ -91,12 +119,17 @@ export function AgentSurfaceEmptyState({
           <p className="agent-surface-empty__hint">Choose what to show in the right panel.</p>
         </header>
         <div className="agent-surface-empty__cards">
-          {AGENT_SURFACE_KINDS.map((kind) => {
+          {AGENT_SURFACE_KINDS.filter(
+            (kind) =>
+              !server ||
+              (kind === "diff" ? thread !== null : remoteSurfaceSupports(remoteSurface, kind)),
+          ).map((kind) => {
             const card = CARDS.find((candidate) => candidate.kind === kind) ?? CARDS[0];
             const reason = blockedReason(kind);
             const Icon = card.icon;
-            const description =
-              kind === "files"
+            const description = server
+              ? card.description
+              : kind === "files"
                 ? agentSurfaceFilesDescription(thread, scope)
                 : thread === null && kind === "diff"
                   ? "Review changes in this project."
@@ -134,6 +167,14 @@ export function AgentSurfaceEmptyState({
             );
           })}
         </div>
+        {server && (remoteSurface?.message || unavailableSurfaces.length > 0) && (
+          <p className="agent-surface-empty__hint" role="status">
+            {thread === null && remoteSurface !== null && (
+              <>{SURFACE_REMOTE_NO_THREAD_DESCRIPTION} </>
+            )}
+            {unavailableMessage}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -252,6 +252,7 @@ pub fn run() {
             crate::remote_runner::read_remote_agent_artifact,
             crate::remote_runner::list_remote_agent_questions,
             crate::remote_runner::answer_remote_agent_question,
+            crate::remote_runner::remote_runner_surface,
             crate::remote_runner::remote_runner_list_task_files,
             crate::remote_runner::remote_runner_get_task_file_diff,
             #[cfg(feature = "perf-capture")]

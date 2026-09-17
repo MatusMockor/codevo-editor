@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTheme } from "../../domain/settings";
 import type { FileEntry } from "../../domain/workspace";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import type { AgentRemoteSurface } from "./agentRemoteSurface";
 import { AgentSurfaceHost, type AgentSurfaceHostProps } from "./AgentSurfaceHost";
 import { NO_AGENT_SURFACE_SCOPE, type AgentSurfaceScope } from "./agentSurfacePolicy";
 import {
@@ -33,6 +34,18 @@ vi.mock("@xterm/addon-fit", async () =>
   (await import("./agentSurfaceTerminalTestSupport")).fitAddonMockModule(),
 );
 
+vi.mock("../remoteRunner/RemoteFilesPanel", () => ({
+  RemoteFilesPanel: ({ scope }: { scope: { taskId?: string } }) => (
+    <div data-remote-files={scope.taskId ?? "project"} />
+  ),
+}));
+vi.mock("../remoteRunner/RemoteGitHistoryPanel", () => ({
+  RemoteGitHistoryPanel: () => <div data-remote-history />,
+}));
+vi.mock("../remoteRunner/RemoteTerminalPanel", () => ({
+  RemoteTerminalPanel: () => <div data-remote-terminal />,
+}));
+
 const TABLIST = '[role="tablist"][aria-label="Terminal sessions"]';
 const FILES_LAYOUT = { openSurfaces: ["files"], activeSurface: "files" } as const;
 const OTHER_ROOT = "/workspace/other";
@@ -54,6 +67,95 @@ describe("AgentSurfaceHost", () => {
     host.remove();
   });
 
+  it("renders supported server panels only through their remote gateway", async () => {
+    const remoteSurface = readyRemoteSurface();
+    const local = surfaceThreadView();
+    const thread = {
+      ...local,
+      execution: {
+        kind: "remote" as const,
+        ...remoteSurface.scope,
+        taskId: undefined,
+        conversationId: "conversation",
+        latestTaskId: "task",
+        resume: null,
+      },
+    };
+    const readDirectory = vi.fn(listing);
+    const gateway = fakeTerminalGateway();
+    for (const activeSurface of ["files", "history", "terminal"] as const) {
+      render({
+        thread,
+        remoteSurface,
+        chrome: {
+          ...filesChrome(recordedLayoutState(FILES_LAYOUT), { files: { readDirectory } }),
+          terminal: chrome(gateway).terminal,
+        },
+        layout: { openSurfaces: ["files", "history", "terminal"], activeSurface },
+      });
+      await waitForReact(() =>
+        expect(host.querySelector(`[data-remote-${activeSurface}]`)).not.toBeNull(),
+      );
+      expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
+      expect(host.textContent).not.toContain("not available");
+    }
+    expect(readDirectory).not.toHaveBeenCalled();
+    expect(gateway.start).not.toHaveBeenCalled();
+    render({ thread, remoteSurface, layout: { openSurfaces: [], activeSurface: null } });
+    const cards = Array.from(host.querySelectorAll<HTMLButtonElement>(".agent-surface-card"));
+    expect(cards).toHaveLength(4);
+    expect(cards.every((card) => !card.disabled)).toBe(true);
+    expect(host.textContent).not.toContain("not supported");
+    render({
+      thread,
+      remoteSurface: {
+        ...remoteSurface,
+        capabilities: { ...remoteSurface.capabilities, terminal: false },
+      },
+      layout: { openSurfaces: [], activeSurface: null },
+    });
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      "Server Terminal is not available.",
+    );
+    render({
+      thread: null,
+      remoteDraft: true,
+      remoteSurface: { ...remoteSurface, scope: { ...remoteSurface.scope, taskId: undefined } },
+      layout: FILES_LAYOUT,
+    });
+    await waitForReact(() =>
+      expect(host.querySelector('[data-remote-files="project"]')).not.toBeNull(),
+    );
+    expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
+  });
+
+  it("rejects remote surface authority belonging to another task or runner", async () => {
+    const remoteSurface = readyRemoteSurface();
+    const local = surfaceThreadView();
+    const execution = {
+      kind: "remote" as const,
+      serverId: "server",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: "conversation",
+      latestTaskId: "task",
+      resume: null,
+    };
+    for (const scope of [
+      { ...remoteSurface.scope, taskId: "foreign" },
+      { ...remoteSurface.scope, runnerId: "replacement" },
+    ]) {
+      render({
+        thread: { ...local, execution },
+        remoteSurface: { ...remoteSurface, scope },
+        layout: FILES_LAYOUT,
+      });
+      await act(async () => Promise.resolve());
+      expect(host.querySelector("[data-remote-files]")).toBeNull();
+      expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
+    }
+  });
+
   it("uses the original changes surface with remote facade callbacks", async () => {
     const local = surfaceThreadView();
     const thread = {
@@ -68,7 +170,40 @@ describe("AgentSurfaceHost", () => {
       layout: { openSurfaces: ["diff"], activeSurface: "diff" },
     });
     await waitForReact(() => expect(showChanges).toHaveBeenCalledWith(thread.thread.threadId));
-    expect(host.textContent).not.toContain("This panel is not available for server threads yet.");
+    expect(host.textContent).not.toContain(
+      "This server panel is unavailable. Check the server connection and runner version.",
+    );
+  });
+
+  it("does not mount hidden local surface bodies retained from the previous project", async () => {
+    const local = surfaceThreadView();
+    const thread = {
+      ...local,
+      changeSummary: null,
+      thread: { ...local.thread, threadId: "remote-thread:server:conversation" },
+    };
+    const gateway = fakeTerminalGateway();
+    const readDirectory = vi.fn(listing);
+    for (const activeSurface of ["diff", null] as const) {
+      render({
+        chrome: {
+          ...filesChrome(recordedLayoutState(FILES_LAYOUT), { files: { readDirectory } }),
+          terminal: chrome(gateway).terminal,
+        },
+        thread,
+        layout: { openSurfaces: ["files", "diff", "terminal", "history"], activeSurface },
+      });
+      await act(async () => Promise.resolve());
+      expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
+      expect(host.querySelector('[data-surface-panel="files"]')).toBeNull();
+      expect(host.querySelector('[data-surface-panel="terminal"]')).toBeNull();
+      expect(host.querySelector('[data-surface-panel="history"]')).toBeNull();
+      expect(
+        Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent),
+      ).toEqual(["Diff"]);
+    }
+    expect(readDirectory).not.toHaveBeenCalled();
+    expect(gateway.start).not.toHaveBeenCalled();
   });
 
   it("blocks remote threads even when their projected roots match the local workspace", async () => {
@@ -82,7 +217,62 @@ describe("AgentSurfaceHost", () => {
     });
     await act(async () => Promise.resolve());
     expect(gateway.start).not.toHaveBeenCalled();
-    expect(host.textContent).toContain("This panel is not available for server threads yet.");
+    expect(host.textContent).toContain(
+      "This server panel is unavailable. Check the server connection and runner version.",
+    );
+  });
+
+  it("retains the server draft context without exposing local project surfaces", async () => {
+    const gateway = fakeTerminalGateway();
+    const readDirectory = vi.fn(listing);
+    const base = {
+      ...filesChrome(recordedLayoutState(FILES_LAYOUT), { files: { readDirectory } }),
+      terminal: chrome(gateway).terminal,
+      projectDiff: {
+        rootPath: SURFACE_FIXTURE_ROOT,
+        status: {
+          rootPath: SURFACE_FIXTURE_ROOT,
+          branch: "private-local-branch",
+          changes: [],
+          isRepository: true,
+        },
+        repositoryStatuses: [],
+        loading: false,
+        diff: null,
+        diffLoading: false,
+        onRefresh: vi.fn(),
+        onPreviewChange: vi.fn(),
+        onOpenChange: vi.fn(),
+        onClosePreview: vi.fn(),
+      },
+    };
+    for (const activeSurface of ["files", "history", "terminal", "diff", null] as const) {
+      render({
+        chrome: base,
+        thread: null,
+        remoteDraft: true,
+        scope: surfaceRepositoryScope(),
+        layout: { openSurfaces: ["files", "diff", "terminal", "history"], activeSurface },
+      });
+      await act(async () => Promise.resolve());
+      expect(host.textContent).not.toContain("Select an available project");
+      expect(host.querySelector(".agent-surface__editor-slot")).toBeNull();
+      expect(host.querySelector('[aria-label="Open Files surface"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Project diff"]')).toBeNull();
+      expect(host.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    }
+    expect(readDirectory).not.toHaveBeenCalled();
+    expect(gateway.start).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected local thread even if the new-thread draft targets the server", async () => {
+    const gateway = fakeTerminalGateway();
+    render({
+      chrome: chrome(gateway),
+      remoteDraft: true,
+      layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
+    });
+    await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
   });
 
   it("starts the thread terminal on the registered workspace root, not the thread checkout", async () => {
@@ -645,5 +835,30 @@ function defaultProps(): AgentSurfaceHostProps {
     onCloseSurfaceTab: () => undefined,
     onTrustScope: () => undefined,
     onSwitchScope: null,
+  };
+}
+
+function readyRemoteSurface(): AgentRemoteSurface {
+  const unused = vi.fn(async (): Promise<never> => {
+    throw new Error("Unexpected gateway call");
+  });
+  return {
+    paneKey: "server-conversation",
+    scope: { serverId: "server", runnerId: "runner", projectId: "project", taskId: "task" },
+    capabilities: { files: true, history: true, terminal: true },
+    gateway: {
+      capabilities: unused,
+      listDirectory: unused,
+      readFile: unused,
+      writeFile: unused,
+      history: unused,
+      commitFiles: unused,
+      commitDiff: unused,
+      openTerminal: unused,
+      pollTerminal: unused,
+      writeTerminal: unused,
+      resizeTerminal: unused,
+      closeTerminal: unused,
+    },
   };
 }

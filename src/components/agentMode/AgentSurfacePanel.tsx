@@ -16,10 +16,31 @@ import type { AgentSurfaceDiffProps } from "./AgentSurfaceDiff";
 import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
 import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "./AgentSurfaceTerminal";
-import { agentSurfaceBlockedReason, type AgentSurfaceScope } from "./agentSurfacePolicy";
+import {
+  agentSurfaceBlockedReason,
+  isRemoteAgentSurfaceThread,
+  type AgentSurfaceScope,
+} from "./agentSurfacePolicy";
 import { useWorkbenchFrameEditorState } from "../workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
+import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
+
+const RemoteFilesPanel = lazy(() =>
+  import("../remoteRunner/RemoteFilesPanel").then((module) => ({
+    default: module.RemoteFilesPanel,
+  })),
+);
+const RemoteGitHistoryPanel = lazy(() =>
+  import("../remoteRunner/RemoteGitHistoryPanel").then((module) => ({
+    default: module.RemoteGitHistoryPanel,
+  })),
+);
+const RemoteTerminalPanel = lazy(() =>
+  import("../remoteRunner/RemoteTerminalPanel").then((module) => ({
+    default: module.RemoteTerminalPanel,
+  })),
+);
 
 export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
 
@@ -48,6 +69,9 @@ export type AgentSurfaceTerminalPanelProps = Omit<
 
 export interface AgentSurfacePanelProps {
   readonly unavailable?: ReactNode;
+  readonly remote?: boolean;
+  readonly remoteSurface?: AgentRemoteSurface | null;
+  readonly remoteTerminalTheme?: AgentSurfaceTerminalPanelProps["terminalTheme"];
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
   readonly scope: AgentSurfaceScope;
@@ -92,6 +116,9 @@ function nextAgentSurfaceTabIndex(key: string, count: number, current: number): 
 
 export function AgentSurfacePanel({
   unavailable = null,
+  remote = false,
+  remoteSurface = null,
+  remoteTerminalTheme,
   chooserAutoFocus,
   diff,
   projectDiff = null,
@@ -111,11 +138,24 @@ export function AgentSurfacePanel({
   workspaceRoot,
   workspaceTrusted,
 }: AgentSurfacePanelProps) {
-  const { activeSurface, openSurfaces } = layout;
+  const server = remote || isRemoteAgentSurfaceThread(thread);
+  const openSurfaces = server
+    ? layout.openSurfaces.filter((kind) =>
+        kind === "diff" ? thread !== null : remoteSurfaceSupports(remoteSurface, kind),
+      )
+    : layout.openSurfaces;
+  const activeSurface =
+    server &&
+    layout.activeSurface !== null &&
+    (layout.activeSurface === "diff"
+      ? thread === null
+      : !remoteSurfaceSupports(remoteSurface, layout.activeSurface))
+      ? null
+      : layout.activeSurface;
   const [treeVisible, setTreeVisible] = useState(true);
   const documentOpen = useWorkbenchFrameEditorState() === "documents";
   const filesActive =
-    unavailable === null && !hidden && activeSurface === "files" && fileTree !== null;
+    !server && unavailable === null && !hidden && activeSurface === "files" && fileTree !== null;
   const treeShown = filesActive && (treeVisible || !documentOpen);
   const treeToggleShown = filesActive && documentOpen;
   useWorkbenchFrameTreeReport(treeShown);
@@ -197,7 +237,7 @@ export function AgentSurfacePanel({
             })}
           </div>
         )}
-        {unavailable === null && activeSurface === "files" && !hidden && (
+        {!server && unavailable === null && activeSurface === "files" && !hidden && (
           <WorkbenchEditorTabsPortalTarget />
         )}
         {activeSurface !== "files" && <span className="agent-session__spacer" />}
@@ -219,6 +259,8 @@ export function AgentSurfacePanel({
         {unavailable === null && chooserShown && (
           <AgentSurfaceEmptyState
             autoFocus={chooserAutoFocus && !hidden}
+            remote={server}
+            remoteSurface={remoteSurface}
             onChooseSurface={onOpenSurface}
             onTrustWorkspace={onTrustWorkspace}
             scope={scope}
@@ -238,22 +280,35 @@ export function AgentSurfacePanel({
               key={kind}
               role="tabpanel"
             >
-              <SurfaceBody
-                diff={diff}
-                projectDiff={projectDiff}
-                scope={scope}
-                fileTree={fileTree}
-                history={history}
-                historyActive={!hidden && activeSurface === "history"}
-                kind={kind}
-                terminal={terminal}
-                terminalActive={!hidden && activeSurface === "terminal"}
-                terminalLayoutRevision={terminalLayoutRevision}
-                thread={thread}
-                treeShown={treeShown}
-                workspaceRoot={workspaceRoot}
-                workspaceTrusted={workspaceTrusted}
-              />
+              {server && kind !== "diff" && remoteSurface?.gateway ? (
+                <Suspense fallback={<p className="agent-note">Opening server panel…</p>}>
+                  <RemoteSurfaceBody
+                    key={JSON.stringify(remoteSurface.scope)}
+                    kind={kind}
+                    surface={remoteSurface}
+                    active={!hidden && activeSurface === kind}
+                    terminalTheme={remoteTerminalTheme}
+                    monacoTheme={diff?.monacoTheme}
+                  />
+                </Suspense>
+              ) : (
+                <SurfaceBody
+                  diff={diff}
+                  projectDiff={projectDiff}
+                  scope={scope}
+                  fileTree={fileTree}
+                  history={history}
+                  historyActive={!hidden && activeSurface === "history"}
+                  kind={kind}
+                  terminal={terminal}
+                  terminalActive={!hidden && activeSurface === "terminal"}
+                  terminalLayoutRevision={terminalLayoutRevision}
+                  thread={thread}
+                  treeShown={treeShown}
+                  workspaceRoot={workspaceRoot}
+                  workspaceTrusted={workspaceTrusted}
+                />
+              )}
             </div>
           ))}
       </div>
@@ -371,4 +426,40 @@ function agentSurfaceMask(surface: AgentSurfaceKind): number {
     case "history":
       return 8;
   }
+}
+
+function RemoteSurfaceBody({
+  kind,
+  surface,
+  active,
+  terminalTheme,
+  monacoTheme,
+}: {
+  readonly kind: "files" | "history" | "terminal";
+  readonly surface: AgentRemoteSurface;
+  readonly active: boolean;
+  readonly terminalTheme: AgentSurfaceTerminalPanelProps["terminalTheme"] | undefined;
+  readonly monacoTheme: AgentSurfaceDiffPanelProps["monacoTheme"] | undefined;
+}) {
+  if (surface.gateway === null) return null;
+  if (kind === "files")
+    return (
+      <RemoteFilesPanel scope={surface.scope} gateway={surface.gateway} monacoTheme={monacoTheme} />
+    );
+  if (kind === "history")
+    return active ? (
+      <RemoteGitHistoryPanel
+        scope={surface.scope}
+        gateway={surface.gateway}
+        monacoTheme={monacoTheme}
+      />
+    ) : null;
+  return (
+    <RemoteTerminalPanel
+      scope={surface.scope}
+      gateway={surface.gateway}
+      terminalTheme={terminalTheme}
+      isActive={active}
+    />
+  );
 }

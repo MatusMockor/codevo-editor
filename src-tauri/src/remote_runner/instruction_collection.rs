@@ -360,7 +360,12 @@ fn imports(content: &str) -> Result<Vec<String>, String> {
                     cursor += 1;
                 }
                 let value: String = chars[start..cursor].iter().collect();
-                if !value.is_empty() {
+                let docblock_annotation = !quoted
+                    && !trimmed.starts_with('@')
+                    && value.split('/').all(|part| {
+                        matches!(part.trim_start_matches('@'), "param" | "var" | "throws")
+                    });
+                if !value.is_empty() && !docblock_annotation {
                     if result.len() >= 128 {
                         return Err("Too many instruction imports".into());
                     }

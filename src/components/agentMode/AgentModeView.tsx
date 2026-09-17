@@ -1,3 +1,4 @@
+import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
 import { AgentThreadQuestions } from "./AgentThreadQuestions";
 import type {
@@ -8,6 +9,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "reac
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { PanelLeftOpen } from "lucide-react";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+import { useRemoteProjectLinks } from "../../application/useRemoteProjectLinks";
+import { groupedEnvironmentProjects, environmentComposerScope } from "./agentEnvironmentProjects";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
 import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
 import { deferredFollowUpsForThread } from "../../application/agentDeferredFollowUps";
@@ -198,17 +201,23 @@ function LocalAgentModeView({
   authoritativeRemoteProjectKeys: ReadonlySet<string>;
 }) {
   const surfaceEnterClass = useSurfaceEnterClass();
+  const remoteContext = useRemoteRunnerContext();
   usePreloadAgentMarkdownRenderer();
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
   const [goToTurnSignal, setGoToTurnSignal] = useState(0);
   const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);
 
   const presentationThreads = useAgentThreadPresentationViews(agents.threads);
-  const groups = useMemo(
+  const projectLinks = useRemoteProjectLinks();
+  const executionGroups = useMemo(
     () => agentProjectGroups(projects, presentationThreads, agents.orphanedWorktrees),
     [projects, agents.orphanedWorktrees, presentationThreads],
   );
 
+  const groups = useMemo(
+    () => groupedEnvironmentProjects(executionGroups, projects, projectLinks),
+    [executionGroups, projects, projectLinks],
+  );
   const externalSessions = agents.externalSessions ?? null;
   const navigation = useAgentThreadNavigation({
     agents,
@@ -239,30 +248,25 @@ function LocalAgentModeView({
     (selectedThread === null && selectedServerId !== null)
       ? REMOTE_PROVIDERS_ENABLED
       : providerEnabled;
-  const setProjectScope = navigation.setProjectScope;
-  const composerScopeRoot = navigation.composerScope?.projectRootKey ?? null;
-  useEffect(() => {
-    if (selectedThreadId !== null) return;
-    const prefix =
-      selectedServerId === null ? null : `remote:${encodeURIComponent(selectedServerId)}:`;
-    if (
-      composerScopeRoot !== null &&
-      (prefix === null
-        ? !composerScopeRoot.startsWith("remote:")
-        : composerScopeRoot.startsWith(prefix))
-    )
-      return;
-    const project = projects.find((entry) =>
-      prefix === null ? !entry.rootKey.startsWith("remote:") : entry.rootKey.startsWith(prefix),
-    );
-    if (project !== undefined) setProjectScope(project.rootKey);
-  }, [composerScopeRoot, projects, selectedServerId, selectedThreadId, setProjectScope]);
   const surfaceThread = useAgentSurfacePresentationView(selectedThread);
   const surfaceThreadRootPath = useMemo(
     () => (surfaceThread === null ? null : agentThreadCheckoutRoot(surfaceThread, projects)),
     [projects, surfaceThread],
   );
-  const composerScope = navigation.composerScope;
+  const composerScope = useMemo(
+    () =>
+      selectedThread === null
+        ? environmentComposerScope(navigation.composerScope, groups, projects, selectedServerId)
+        : navigation.composerScope,
+    [selectedThread, navigation.composerScope, groups, projects, selectedServerId],
+  );
+  const remoteSurface = useRemoteSurfaceContext({
+    remote: remoteContext,
+    thread: selectedThread,
+    selectedThreadId,
+    draftProjectRootKey:
+      composerScope?.kind === "missing" ? null : (composerScope?.projectRootKey ?? null),
+  });
   const selectedProject =
     projects.find(
       (project) =>
@@ -334,11 +338,11 @@ function LocalAgentModeView({
   );
   const composer = useAgentComposerControllerState({
     agents,
-    groups,
+    groups: executionGroups,
     promptRestore,
     projects: composerProjects,
     providerEnabled: effectiveProviderEnabled,
-    railScope: navigation.composerScope,
+    railScope: composerScope,
     selectedThread,
     onClearSelectedThread: navigation.clearSelectedThread,
     onThreadStarted: navigation.selectStartedThread,
@@ -375,7 +379,13 @@ function LocalAgentModeView({
   const startNewThread = composer.startNewThread;
 
   const shipActions = useAgentShipActions({ agents, selectedThread });
-  const surface = useAgentSurfaceLayout({ chrome, selectedThread, workspaceRoot });
+  const surface = useAgentSurfaceLayout({
+    chrome,
+    selectedThread,
+    workspaceRoot,
+    remoteSurface,
+    remotePaneKey: remoteSurface?.paneKey ?? (resolvingRemoteThread ? selectedThreadId : null),
+  });
   const { layout, openSurface, toggleMaximized, toggleRail, toggleRightPanel } = surface;
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scriptsTarget = useMemo(
@@ -479,7 +489,14 @@ function LocalAgentModeView({
     chrome.addProject?.cancelSelection?.();
     setProjectSelectionIntent((current) => current + 1);
     if (!navigation.setProjectScope(scope.projectRootKey)) return;
-    onSelectProjectEnvironment(scope.projectRootKey);
+    if (
+      !groups.some(
+        (group) =>
+          group.projectRootKey === scope.projectRootKey &&
+          group.memberProjectRootKeys !== undefined,
+      )
+    )
+      onSelectProjectEnvironment(scope.projectRootKey);
     composer.clearDraftTarget();
   });
   const newProjectThread = useAgentLatestCallback(() => {
@@ -487,7 +504,14 @@ function LocalAgentModeView({
     setProjectSelectionIntent((current) => current + 1);
     const target = navigation.newThreadTarget();
     if (target === null) return;
-    onSelectProjectEnvironment(target.projectRootKey);
+    if (
+      !groups.some(
+        (group) =>
+          group.projectRootKey === target.projectRootKey &&
+          group.memberProjectRootKeys !== undefined,
+      )
+    )
+      onSelectProjectEnvironment(target.projectRootKey);
     composer.clearSelection();
   });
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
@@ -570,10 +594,21 @@ function LocalAgentModeView({
           },
     [composerTargetProjectRootKey, composerTargetRepositoryRoot],
   );
-  const headerProject = useMemo(
-    () => agentThreadHeaderProject(selectedThread, groups, projects, headerFallback),
-    [groups, headerFallback, projects, selectedThread],
-  );
+  const headerProject = useMemo(() => {
+    const header = agentThreadHeaderProject(
+      selectedThread,
+      executionGroups,
+      projects,
+      headerFallback,
+    );
+    if (header === null) return null;
+    const group = groups.find(
+      (entry) =>
+        entry.projectRootKey === header.projectRootKey ||
+        entry.memberProjectRootKeys?.includes(header.projectRootKey),
+    );
+    return group ? { ...header, label: group.label } : header;
+  }, [groups, executionGroups, headerFallback, projects, selectedThread]);
   const scopeEntries = navigation.scopeEntries;
   const headerTerminalSessionsTarget = useMemo(() => {
     if (headerProject === null) return railTerminalSessionsTarget;
@@ -758,7 +793,7 @@ function LocalAgentModeView({
                         void agents.externalHistory?.load(sessionThread.thread.threadId);
                       }
                 }
-                composerRepositoryLabel={composer.composerLabel}
+                composerRepositoryLabel={headerProject?.label ?? composer.composerLabel}
                 findHitIndex={navigation.findHitIndex}
                 findHits={find.open ? find.hits : undefined}
                 findQuery={find.open ? find.query : undefined}
@@ -863,6 +898,8 @@ function LocalAgentModeView({
       {surface.surfaceHost.mounted && (
         <AgentSurfaceHost
           agents={surfaceAgents}
+          remoteDraft={surfaceThread === null && selectedServerId !== null}
+          remoteSurface={remoteSurface}
           chooserAutoFocus={surface.chooserRequested}
           chrome={chrome}
           hidden={surface.surfaceHost.hidden}

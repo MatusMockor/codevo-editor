@@ -80,6 +80,7 @@ async function bootstrap(): Promise<void> {
     { strictModeEnabled },
     { RemoteRunnerProvider },
     { TauriRemoteRunnerGateway },
+    { TauriRemoteRunnerSurfacesGateway },
     { BrowserRemoteAgentMetadataRepository },
   ] = await Promise.all([
     import("react"),
@@ -90,6 +91,7 @@ async function bootstrap(): Promise<void> {
     import("./perfLaneRenderMode"),
     import("./components/remoteRunner/RemoteRunnerProvider"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
+    import("./infrastructure/tauriRemoteRunnerSurfacesGateway"),
     import("./infrastructure/browserRemoteAgentMetadataRepository"),
   ]);
 
@@ -100,6 +102,7 @@ async function bootstrap(): Promise<void> {
     title: "Codevo Editor hit an unexpected error",
     children: React.createElement(RemoteRunnerProvider, {
       gateway: new TauriRemoteRunnerGateway(),
+      surfacesGateway: new TauriRemoteRunnerSurfacesGateway(),
       metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),
       children: React.createElement(App),
     }),

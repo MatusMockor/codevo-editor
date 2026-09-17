@@ -1,3 +1,4 @@
+import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useState, type ComponentType, type KeyboardEvent } from "react";
 import {
   CircleCheck,
@@ -93,14 +94,16 @@ export function RenameInput({
   );
 }
 
-export function RemoteThreadIndicator() {
+export function RemoteThreadIndicator({ serverId }: { readonly serverId?: string }) {
+  const remote = useRemoteRunnerContext();
+  const name = remote?.servers.find((server) => server.id === serverId)?.name;
   return (
     <span
       aria-label="Runs on server"
       className="agent-row__icon"
       role="img"
       style={{ display: "inline-flex", alignSelf: "center", marginInlineEnd: 4 }}
-      title="Runs on server"
+      title={name === undefined ? "Runs on server" : `Runs on ${name}`}
     >
       <Server aria-hidden="true" size={13} />
     </span>

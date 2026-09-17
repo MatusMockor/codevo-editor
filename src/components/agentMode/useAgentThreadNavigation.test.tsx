@@ -9,6 +9,7 @@ import type {
   ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { groupedEnvironmentProjects } from "./agentEnvironmentProjects";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
@@ -32,6 +33,7 @@ describe("useAgentThreadNavigation", () => {
   let host: HTMLDivElement;
   let root: Root;
   let captured: AgentThreadNavigation | null;
+  let projectLinks: ReadonlyMap<string, string>;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -40,6 +42,7 @@ describe("useAgentThreadNavigation", () => {
     document.body.append(host);
     root = createRoot(host);
     captured = null;
+    projectLinks = new Map();
   });
 
   afterEach(() => {
@@ -653,6 +656,29 @@ describe("useAgentThreadNavigation", () => {
     expect(current().selectedThreadId).toBe(remote.thread.threadId);
   });
 
+  it("remembers a linked remote conversation under its local project and clears missing remote history only after exact inventory", () => {
+    const remoteRoot = "remote:server:runner:project";
+    projectLinks = new Map([[remoteRoot, SURFACE_FIXTURE_ROOT]]);
+    const remote = viewInProject("remote-thread:server:runner:conversation", remoteRoot);
+    const projects = [
+      projectFixture(),
+      project(remoteRoot, "remote"),
+      project(OTHER_ROOT, "other"),
+    ];
+    render(threadsSurfaceFixture({ threads: [remote] }), projects);
+    act(() => current().selectThread(remote.thread.threadId));
+    expect(current().railScope?.projectRootKey).toBe(SURFACE_FIXTURE_ROOT);
+    act(() => current().setProjectScope(OTHER_ROOT));
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    expect(current().selectedThreadId).toBe(remote.thread.threadId);
+    act(() => current().setProjectScope(OTHER_ROOT));
+    render(threadsSurfaceFixture(), projects);
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    expect(current().selectedThreadId).toBe(remote.thread.threadId);
+    render(threadsSurfaceFixture(), projects, null, undefined, new Set([remoteRoot]));
+    expect(current().selectedThreadId).toBeNull();
+  });
+
   it("does not rebind a stale selected thread to a replacement project owner", () => {
     const a = view("a");
     const b = project(OTHER_ROOT, "api");
@@ -775,7 +801,12 @@ describe("useAgentThreadNavigation", () => {
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   }) {
     const groups = useMemo(
-      () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
+      () =>
+        groupedEnvironmentProjects(
+          agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
+          projects,
+          projectLinks,
+        ),
       [agents.orphanedWorktrees, agents.threads, projects],
     );
     captured = useAgentThreadNavigation({

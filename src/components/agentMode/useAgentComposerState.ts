@@ -297,7 +297,20 @@ export function useAgentComposerControllerState({
     () => resolveLaunchScope(selectedThread, launchProjectRootKey),
     [selectedThread, launchProjectRootKey],
   );
-  const { choice: launchChoice, change: changeLaunch } = useAgentComposerLaunchChoices(launchScope);
+  const defaultLaunch = useMemo(
+    () =>
+      resolveComposerLaunch(
+        null,
+        launchScope,
+        composerProviderKind(selectedThread, agents.agentCliKind, providerEnabled),
+        agents.lastUsedLaunch,
+      ),
+    [launchScope, selectedThread, agents.agentCliKind, agents.lastUsedLaunch, providerEnabled],
+  );
+  const { choice: launchChoice, change: changeLaunch } = useAgentComposerLaunchChoices(
+    launchScope,
+    defaultLaunch,
+  );
   const selectedLaunchProvider =
     launchChoice !== null && launchChoice.key === launchScope?.key
       ? launchChoice.launch.provider

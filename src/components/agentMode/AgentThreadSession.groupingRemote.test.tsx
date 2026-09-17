@@ -6,6 +6,7 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
 import { AgentThreadSession } from "./AgentThreadSession";
+import { waitForReact } from "../../test/reactTestLifecycle";
 
 import {
   appendRemoteAgentTranscript,
@@ -134,7 +135,7 @@ describe("remote grouped activity", () => {
     );
     expect(host.querySelector(".agent-tool-row__output")?.textContent).toBe("linux-1");
   });
-  it("groups replayed Claude MCP calls by integration without crossing prose", () => {
+  it("groups replayed Claude MCP calls by integration without crossing prose", async () => {
     function call(id: string, name: string) {
       return [
         {
@@ -165,7 +166,7 @@ describe("remote grouped activity", () => {
     );
     expect(summaries).toHaveLength(2);
     expect(summaries.every((b) => b.textContent?.includes("2 calls"))).toBe(true);
-    expect(host.textContent).toContain("Now inspect the next page.");
+    await waitForReact(() => expect(host.textContent).toContain("Now inspect the next page."));
   });
   it("keeps a remote command failure visible after successful turn settlement", () => {
     const events = remote("codex", [

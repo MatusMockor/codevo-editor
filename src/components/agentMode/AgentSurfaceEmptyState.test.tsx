@@ -12,6 +12,8 @@ import {
   SURFACE_FILES_PROJECT_DESCRIPTION,
   SURFACE_FILES_UNTRUSTED_DESCRIPTION,
   SURFACE_NO_PROJECT_REASON,
+  SURFACE_REMOTE_CAPABILITIES_DESCRIPTION,
+  SURFACE_REMOTE_NO_PROJECT_DESCRIPTION,
 } from "./agentSurfacePolicy";
 import { surfaceRepositoryScope, surfaceThreadView } from "./agentSurfaceTestFixtures";
 
@@ -99,6 +101,50 @@ describe("AgentSurfaceEmptyState", () => {
     expect(
       host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
     ).toBe(false);
+  });
+
+  it("shows only supported server actions with one capability explanation", () => {
+    const local = surfaceThreadView();
+    const onChooseSurface = vi.fn();
+    render({
+      thread: {
+        ...local,
+        thread: { ...local.thread, threadId: "remote-thread:server:conversation" },
+      },
+      onChooseSurface,
+    });
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(1);
+    expect(host.querySelector('[aria-label="Open Diff surface"]')).not.toBeNull();
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      SURFACE_REMOTE_CAPABILITIES_DESCRIPTION,
+    );
+    expect(host.querySelectorAll(".agent-surface-card__reason")).toHaveLength(0);
+    expect(host.textContent).toContain("Check the server connection");
+    expect(host.textContent).not.toContain("not supported in the editor");
+    act(() => {
+      for (const key of ["f", "t", "h", "d"])
+        host
+          .querySelector('[role="group"]')
+          ?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+    expect(onChooseSurface.mock.calls).toEqual([["diff"]]);
+  });
+
+  it("does not offer local tools or project changes for a server draft", () => {
+    const onChooseSurface = vi.fn();
+    render({ thread: null, remote: true, onChooseSurface });
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(0);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      SURFACE_REMOTE_NO_PROJECT_DESCRIPTION,
+    );
+    expect(host.textContent).not.toContain("not supported in the editor");
+    expect(host.textContent).not.toContain("Select a server conversation");
+    act(() =>
+      host
+        .querySelector('[role="group"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true })),
+    );
+    expect(onChooseSurface).not.toHaveBeenCalled();
   });
 
   function filesDescription(): string {

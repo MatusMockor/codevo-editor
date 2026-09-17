@@ -190,3 +190,27 @@ describe("sameAgentProviderError", () => {
     expect(sameAgentProviderError(first, second)).toBe(false);
   });
 });
+
+describe("launch failure guidance", () => {
+  it("recognizes the expired server login without claiming a model update fixes it", () => {
+    const error = classifyAgentProviderError(
+      "Failed to authenticate: OAuth session expired and could not be refreshed",
+      "claudeCode",
+    );
+    expect(error.detail.kind).toBe("authenticationRequired");
+    expect(agentProviderErrorHeadline(error, null)).toBe("Claude Code needs you to sign in again.");
+  });
+  it("does not mistake an arbitrary tool authentication message for provider login", () => {
+    expect(
+      classifyAgentProviderError("MCP failed to authenticate: OAuth session expired", "claudeCode")
+        .detail.kind,
+    ).toBe("unknown");
+  });
+  it("makes the protocol failure readable while retaining its technical detail", () => {
+    const error = classifyAgentProviderError("provider_protocol_failed", "codex");
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "Codex could not start or resume this conversation.",
+    );
+    expect(error.raw).toBe("provider_protocol_failed");
+  });
+});

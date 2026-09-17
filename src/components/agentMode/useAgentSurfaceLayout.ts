@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import {
   DEFAULT_AGENT_RAIL_WIDTH,
+  agentWorkbenchLayoutReducer,
+  type AgentWorkbenchLayoutAction,
   type AgentSurfaceKind,
   type AgentWorkbenchLayout,
 } from "../../domain/agentWorkbenchLayout";
@@ -10,12 +12,15 @@ import {
   type AgentSurfaceHostPlacement,
 } from "../workbenchShellPlacement";
 import { agentSurfaceBlockedReason } from "./agentSurfacePolicy";
+import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 
 export interface AgentSurfaceLayoutOptions {
   readonly chrome: Pick<AgentWorkbenchChrome, "layout" | "workspaceTrusted">;
   readonly selectedThread: AgentThreadView | null;
   readonly workspaceRoot: string | null;
+  readonly remoteSurface?: AgentRemoteSurface | null;
+  readonly remotePaneKey?: string | null;
 }
 
 export interface AgentSurfaceLayout {
@@ -37,9 +42,59 @@ export function useAgentSurfaceLayout({
   chrome,
   selectedThread,
   workspaceRoot,
+  remoteSurface = null,
+  remotePaneKey = null,
 }: AgentSurfaceLayoutOptions): AgentSurfaceLayout {
-  const layout = chrome.layout.layout;
-  const dispatchLayout = chrome.layout.dispatch;
+  const execution = selectedThread?.execution;
+  const paneKey =
+    remoteSurface?.paneKey ??
+    remotePaneKey ??
+    (execution === undefined
+      ? null
+      : JSON.stringify([
+          execution.serverId,
+          execution.runnerId,
+          execution.projectId,
+          execution.conversationId,
+        ]));
+  const [selections, setSelections] = useState<
+    ReadonlyMap<string, Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">>
+  >(() => new Map());
+  const baseLayout = chrome.layout.layout;
+  const selection =
+    paneKey === null
+      ? null
+      : (selections.get(paneKey) ?? { openSurfaces: [], activeSurface: null });
+  const layout = selection === null ? baseLayout : { ...baseLayout, ...selection };
+  const originalDispatch = chrome.layout.dispatch;
+  const dispatchLayout = useCallback(
+    (action: AgentWorkbenchLayoutAction) => {
+      if (
+        paneKey !== null &&
+        (action.kind === "openSurface" ||
+          action.kind === "activateSurface" ||
+          action.kind === "closeSurfaceTab")
+      ) {
+        setSelections((current) => {
+          const saved = current.get(paneKey) ?? { openSurfaces: [], activeSurface: null };
+          const updated = agentWorkbenchLayoutReducer({ ...baseLayout, ...saved }, action);
+          const next = new Map(current);
+          next.delete(paneKey);
+          next.set(paneKey, {
+            openSurfaces: updated.openSurfaces,
+            activeSurface: updated.activeSurface,
+          });
+          if (next.size > 128) next.delete(next.keys().next().value!);
+          return next;
+        });
+        if (action.kind !== "closeSurfaceTab" && baseLayout.rightPanel === "closed")
+          originalDispatch({ kind: "toggleRightPanel" });
+        return;
+      }
+      originalDispatch(action);
+    },
+    [paneKey, baseLayout, originalDispatch],
+  );
   const [chooserRequested, setChooserRequested] = useState(false);
   const openSurface = useCallback(
     (surface: AgentSurfaceKind) => {
@@ -65,8 +120,11 @@ export function useAgentSurfaceLayout({
   const workspaceTrusted = chrome.workspaceTrusted;
   const surfaceBlocked = useCallback(
     (surface: AgentSurfaceKind) =>
-      agentSurfaceBlockedReason(surface, selectedThread, workspaceTrusted, workspaceRoot) !== null,
-    [selectedThread, workspaceRoot, workspaceTrusted],
+      surface !== "diff" && remoteSurfaceSupports(remoteSurface, surface)
+        ? false
+        : agentSurfaceBlockedReason(surface, selectedThread, workspaceTrusted, workspaceRoot) !==
+          null,
+    [selectedThread, workspaceRoot, workspaceTrusted, remoteSurface],
   );
   const toggleRightPanel = useCallback(() => {
     setChooserRequested(false);

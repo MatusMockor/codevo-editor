@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import {
+  saveRemoteProjectLink,
+  removeRemoteProjectLink,
+} from "../../application/remoteProjectLinks";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -99,9 +103,11 @@ describe("Escape in an actual server conversation composer", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    removeRemoteProjectLink("remote:linux:runner:project");
     vi.restoreAllMocks();
   });
   async function mount() {
+    saveRemoteProjectLink("remote:linux:runner:project", SURFACE_FIXTURE_ROOT);
     const gateway = gatewayFixture();
     const local = threadsSurfaceFixture({
       threads: [surfaceThreadView()],

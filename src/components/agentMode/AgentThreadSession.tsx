@@ -1153,15 +1153,30 @@ function AgentProviderErrorHint({
   readonly error: AgentProviderError;
   readonly context: AgentTurnErrorContext;
 }): ReactNode {
-  if (error.detail.kind !== "unsupportedModelForCliVersion") return null;
+  const kind = error.detail.kind;
+  if (
+    kind !== "unsupportedModelForCliVersion" &&
+    kind !== "authenticationRequired" &&
+    kind !== "protocolFailure"
+  )
+    return null;
+  const remote = context.executionTarget === "remote";
+  const hint =
+    kind === "authenticationRequired"
+      ? remote
+        ? "Sign in to the provider on the server running this thread, then try again."
+        : "Sign in to the provider on this computer, then try again."
+      : kind === "protocolFailure"
+        ? remote
+          ? "The server could not continue the provider session. Check the runner on that server and try again."
+          : "The provider session could not continue. Check the provider CLI and try again."
+        : remote
+          ? "Update the CLI on the server running this thread, then try again."
+          : "Open Settings > Agents to update it.";
 
   return (
     <>
-      <p className="agent-note">
-        {context.executionTarget === "remote"
-          ? "Update the CLI on the server running this thread, then try again."
-          : "Open Settings > Agents to update it."}
-      </p>
+      <p className="agent-note">{hint}</p>
       <details className="agent-raw">
         <summary className="agent-raw__toggle">Provider message</summary>
         <pre className="agent-raw__lines">{error.raw}</pre>

@@ -178,6 +178,36 @@ exist only on the server and have never been managed by synchronization are not
 deleted merely because the first local snapshot omits them; review such existing
 server rules separately.
 
+## Server workspace panels and project connections
+
+On a compatible runner, Files, Terminal, Diff and History use the server project
+or the exact selected conversation checkout. They never substitute the local
+project's filesystem for a server checkout. Opening a new server draft uses its
+registered project; an existing conversation keeps its own execution environment.
+
+Files supports bounded directory browsing and editing text up to 64 KiB. Unsaved
+edits survive panel switches during the app session. Saves compare the version
+read from the server; a conflict retains the draft and offers comparison with the
+current server text. Binary files, symbolic links and oversized text are not
+editable here. Save or discard a dirty file before selecting another file.
+
+History lists commits, changed files and read-only file comparisons. Large lists
+are paginated and partial results are identified. Diff continues to show the
+conversation's cumulative workspace changes.
+
+Terminal provides one primary shell per project/task. Closing the panel or
+switching away disconnects its view without stopping the shell; explicit Close
+stops it. Reopening reconnects and replays bounded output. A runner restart ends
+its terminal sessions; Reconnect starts a replacement. Multiple terminal tabs are
+not supported in this release.
+
+Use **Settings > Environments > Project connections** to associate a server
+project with its matching local project. Linked projects share a sidebar group
+and server threads carry an environment icon. This explicit association is
+separate from Claude instruction synchronization; equal names alone never link
+projects. A missing or ambiguous execution target blocks a new run instead of
+silently choosing a different repository.
+
 ## History, reconnect and results
 
 Connection settings are saved locally. After restarting the editor, saved servers
