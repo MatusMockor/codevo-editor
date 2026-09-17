@@ -32,6 +32,7 @@ export interface UnifiedAgentThreadsOptions {
   readonly selectedServerId: string | null;
   readonly workspaceOwner: string | null;
   readonly selectedThreadId: string | null;
+  readonly selectedProjectRootKey?: string | null;
   readonly localProjects: readonly AgentProjectDescriptor[];
   readonly metadataRepository?: RemoteAgentMetadataRepository;
   readonly imageSurface?: AgentImageSurfacePort | null;
@@ -47,6 +48,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     workspaceOwner,
     selectedThreadId,
     localProjects,
+    selectedProjectRootKey = null,
   } = options;
   const configuration = JSON.stringify(servers);
   const authority = useRef({
@@ -55,6 +57,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     configuration,
     selectedServerId,
     selectedThreadId,
+    selectedProjectRootKey,
     generation: 1,
   });
   if (
@@ -62,7 +65,8 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     authority.current.workspaceOwner !== workspaceOwner ||
     authority.current.configuration !== configuration ||
     authority.current.selectedServerId !== selectedServerId ||
-    authority.current.selectedThreadId !== selectedThreadId
+    authority.current.selectedThreadId !== selectedThreadId ||
+    authority.current.selectedProjectRootKey !== selectedProjectRootKey
   ) {
     authority.current = {
       gateway,
@@ -70,6 +74,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       configuration,
       selectedServerId,
       selectedThreadId,
+      selectedProjectRootKey,
       generation:
         authority.current.generation +
         Number(
@@ -91,8 +96,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     (captured: object) => mounted.current && authority.current === captured,
     [],
   );
-  const [notice, setNotice] = useState<string | null>(null);
-  const report = useCallback((message: string) => setNotice(message), []);
+  const [noticeState, setNotice] = useState<{ owner: object; message: string } | null>(null);
+  const notice = noticeState?.owner === owner ? noticeState.message : null;
+  const report = useCallback(
+    (message: string) => {
+      if (valid(owner)) setNotice({ owner, message });
+    },
+    [owner, valid],
+  );
   const reportError = useCallback(
     (_source: string, error: unknown) =>
       report(error instanceof Error ? error.message : "The server operation failed."),
@@ -229,7 +240,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const projected = useMemo(() => {
     const views: AgentThreadView[] = [];
     const nextProjections = new Map<string, RemoteAgentProjection>();
-    let error: string | null = null;
+    const errors = new Map<string, string>();
     for (const snapshot of inventory.snapshots) {
       if (snapshot.descriptor === null) continue;
       const key = `${snapshot.serverId}\u0000${snapshot.descriptor.runnerId}`;
@@ -253,13 +264,15 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           if (presented) views.push(presented);
         }
       } catch (failure) {
-        error =
+        errors.set(
+          snapshot.serverId,
           failure instanceof Error
             ? failure.message
-            : "Remote conversation history is unavailable.";
+            : "Remote conversation history is unavailable.",
+        );
       }
     }
-    return { views, error, nextProjections };
+    return { views, errors, nextProjections };
   }, [inventory.snapshots, projectMetadata, attachmentValues]);
   useLayoutEffect(() => {
     projections.current = projected.nextProjections;
@@ -406,7 +419,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     remoteAttachments.attachmentImages,
   );
   const remoteError =
-    projected.error ??
+    projected.errors.get(effectiveServerId ?? "") ??
     metadata.persistenceError ??
     inventory.snapshots.find((snapshot) => snapshot.serverId === effectiveServerId)?.error ??
     null;
@@ -455,12 +468,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         else await local.externalHistory?.load(id);
       },
     },
-    notice:
-      notice !== null
+    notice: remoteMode
+      ? notice !== null
         ? remoteAgentNotice(notice)
         : remoteError !== null
           ? remoteAgentNotice(remoteError)
-          : local.notice,
+          : null
+      : local.notice,
     deferredFollowUps,
     removeDeferredFollowUp: (threadId, id) => {
       if (isRemoteAgentIdentity(threadId)) void pendingMessages.remove(threadId, id);
@@ -573,7 +587,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     },
     dismissNotice: () => {
       setNotice(null);
-      local.dismissNotice();
+      if (!remoteMode) local.dismissNotice();
     },
   };
   const stableAgents = useRemoteAgentStableSurface(agents);

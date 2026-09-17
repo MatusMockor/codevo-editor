@@ -423,6 +423,147 @@ describe("AgentComposer attachments", () => {
     );
   });
 
+  it("opens draft images locally and on the server without submitting or revealing a file", () => {
+    const onSubmit = vi.fn();
+    for (const executionServerId of [null, "linux"]) {
+      render({
+        executionServerId,
+        onSubmit,
+        attachments: surface({ drafts: [previewImageDraft()] }),
+      });
+      const trigger = host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Preview shot.webp"]',
+      )!;
+      act(() => {
+        trigger.focus();
+        trigger.click();
+      });
+      expect(document.querySelector(".agent-lightbox__image")?.getAttribute("src")).toBe(
+        PREVIEW_URL,
+      );
+      expect(document.querySelector(".agent-lightbox__reveal")).toBeNull();
+      expect(document.activeElement?.getAttribute("aria-label")).toBe("Close");
+      act(() =>
+        document
+          .querySelector('[role="dialog"]')!
+          .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+      );
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("navigates multiple draft screenshots and closes from the backdrop", () => {
+    const second = draft({
+      ...previewImageDraft(),
+      draftId: "second",
+      name: "second.png",
+      previewUrl: "blob:second",
+    });
+    render({ attachments: surface({ drafts: [previewImageDraft(), second] }) });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Preview second.png"]')!.click(),
+    );
+    expect(document.querySelector(".agent-lightbox__image")?.getAttribute("src")).toBe(
+      "blob:second",
+    );
+    act(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Previous image"]')!.click(),
+    );
+    expect(document.querySelector(".agent-lightbox__image")?.getAttribute("src")).toBe(PREVIEW_URL);
+    act(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close image"]')!.click(),
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("traps focus with the draft-only controls", () => {
+    render({ attachments: surface({ drafts: [previewImageDraft()] }) });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Preview shot.webp"]')!.click(),
+    );
+    for (const shiftKey of [false, true]) {
+      const event = new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => document.activeElement!.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(true);
+      expect(document.activeElement?.getAttribute("aria-label")).toBe("Close");
+    }
+  });
+
+  it("does not open a preview when removing a draft", () => {
+    const remove = vi.fn();
+    render({ attachments: surface({ drafts: [previewImageDraft()], remove }) });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Remove shot.webp"]')!.click(),
+    );
+    expect(remove).toHaveBeenCalledWith("draft-preview");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("closes a preview after sending, removal, or URL replacement and does not resurrect it", () => {
+    for (const replacement of [
+      [],
+      [draft({ ...previewImageDraft(), previewUrl: "blob:replacement" })],
+    ]) {
+      render({ attachments: surface({ drafts: [previewImageDraft()] }) });
+      act(() =>
+        host.querySelector<HTMLButtonElement>('button[aria-label="Preview shot.webp"]')!.click(),
+      );
+      render({ attachments: surface({ drafts: replacement }) });
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      render({ attachments: surface({ drafts: [previewImageDraft()] }) });
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    }
+  });
+
+  it("closes on project, server and prompt owner changes even when draft IDs match", () => {
+    const attachments = surface({ drafts: [previewImageDraft()] });
+    for (const changed of [
+      { attachmentTargetKey: "/other" },
+      { executionServerId: "linux" },
+      { promptOwnerKey: "other-thread" },
+    ]) {
+      render({ attachments });
+      act(() =>
+        host.querySelector<HTMLButtonElement>('button[aria-label="Preview shot.webp"]')!.click(),
+      );
+      render({ attachments, ...changed });
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      render({ attachments });
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    }
+  });
+
+  it("recovers a broken thumbnail when its URL is replaced", () => {
+    render({ attachments: surface({ drafts: [previewImageDraft()] }) });
+    act(() =>
+      host.querySelector(".agent-composer-attachment__preview")!.dispatchEvent(new Event("error")),
+    );
+    expect(
+      host.querySelector<HTMLButtonElement>('button[aria-label="Preview shot.webp"]')!.disabled,
+    ).toBe(true);
+    render({
+      attachments: surface({
+        drafts: [draft({ ...previewImageDraft(), previewUrl: "blob:replacement" })],
+      }),
+    });
+    expect(
+      host.querySelector<HTMLButtonElement>('button[aria-label="Preview shot.webp"]')!.disabled,
+    ).toBe(false);
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Preview shot.webp"]')!.click(),
+    );
+    expect(document.querySelector(".agent-lightbox__image")?.getAttribute("src")).toBe(
+      "blob:replacement",
+    );
+  });
+
   it("hides the attachment entry points when no project owns the draft", () => {
     render({ attachments: surface({}), attachmentTargetKey: null });
 

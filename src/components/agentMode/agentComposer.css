@@ -343,6 +343,9 @@
 }
 
 .agent-composer-attachment__thumb {
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
   display: inline-grid;
   place-items: center;
   width: 56px;
@@ -351,6 +354,15 @@
   border-radius: var(--agent-radius-md);
   background: var(--agent-well);
   color: var(--agent-text-muted);
+}
+
+.agent-composer-attachment__thumb:disabled {
+  cursor: default;
+}
+
+.agent-composer-attachment__thumb:focus-visible {
+  outline: 2px solid var(--agent-accent);
+  outline-offset: 2px;
 }
 
 .agent-composer-attachment__preview {

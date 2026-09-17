@@ -237,7 +237,7 @@ describe("AgentModeView", () => {
     expect(onOpenSourceControl).toHaveBeenCalledTimes(1);
   });
 
-  it("reports an already-current settlement with the installed version, not a new offer", () => {
+  it("leaves already-current provider settlements to the workbench notification host", () => {
     render({
       agents: surface({
         providerManagement: {
@@ -247,7 +247,7 @@ describe("AgentModeView", () => {
       }),
     });
 
-    expect(host.textContent).toContain("The updater ran but Claude Code is still on v2.1.261.");
+    expect(host.textContent).not.toContain("The updater ran but Claude Code is still on v2.1.261.");
     expect(host.textContent).not.toContain("updated to v2.1.261");
   });
 

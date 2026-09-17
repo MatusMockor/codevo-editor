@@ -552,6 +552,7 @@ export function AgentComposer({
       >
         {attachments !== null && (
           <AgentComposerAttachments
+            key={JSON.stringify([attachmentTargetKey, executionServerId, promptOwnerKey])}
             drafts={attachments.drafts}
             onDismissRefusal={attachments.dismissRefusal}
             onRemove={attachments.remove}

@@ -116,6 +116,71 @@ describe("original agent workbench with remote execution", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps explicit project navigation authoritative after a failed server turn", async () => {
+    const gateway = gatewayFixture();
+    gateway.listTasks.mockImplementation(async () => ({
+      items: [task({ status: "failed" })],
+      nextCursor: null,
+    }));
+    const selectWorkspace = vi.fn();
+    act(() =>
+      root.render(
+        <RemoteRunnerProvider gateway={gateway}>
+          <AgentModeView
+            agents={{
+              ...threadsSurfaceFixture(),
+              providerManagement: unconfiguredAgentProviderManagement(),
+            }}
+            projects={[projectFixture()]}
+            workspaceRoot={SURFACE_FIXTURE_ROOT}
+            overflowRootPaths={[]}
+            providerEnabled={{ claudeCode: true, codex: true }}
+            chrome={chromeFixture({
+              workspaceActivation: {
+                select: selectWorkspace,
+                state: { kind: "none", rootPath: null },
+                retry: () => undefined,
+              },
+            })}
+            onTrustProject={() => undefined}
+            onReleaseProject={() => undefined}
+            onOpenEnvironmentSettings={() => undefined}
+          />
+        </RemoteRunnerProvider>,
+      ),
+    );
+    await waitForReact(() => expect(gateway.listProjects).toHaveBeenCalled());
+    const chooseProject = (name: string) => {
+      click(host.querySelector("button#agent-rail-scope")!);
+      const row = [...host.querySelectorAll('#agent-rail-scope-list [role="menuitemradio"]')].find(
+        (entry) => entry.textContent?.includes(name),
+      );
+      expect(row).toBeDefined();
+      click(row!);
+    };
+    chooseProject("Server app");
+    await waitForReact(() =>
+      expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull(),
+    );
+    click(host.querySelector(`[data-thread-id="${remoteThreadId}"]`)!);
+    await waitForReact(() => expect(host.textContent).toContain("First remote prompt"));
+    chooseProject("app");
+    await waitForReact(() =>
+      expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull(),
+    );
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).not.toContain("Server app");
+    expect(selectWorkspace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ rootKey: SURFACE_FIXTURE_ROOT }),
+    );
+    chooseProject("Server app");
+    await waitForReact(() =>
+      expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull(),
+    );
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("Server app");
+    expect(gateway.createTask).not.toHaveBeenCalled();
+  });
+
   it("keeps local and remote threads in the original UI and continues the same conversation from its normal composer", async () => {
     const gateway = gatewayFixture();
     const startThread = vi.fn();

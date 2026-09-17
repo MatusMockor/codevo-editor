@@ -1,6 +1,8 @@
 import { memo, useState } from "react";
 import { AlertTriangle, FileText, ImageIcon, Link2, Loader2, X } from "lucide-react";
 import type { AgentComposerAttachmentDraft } from "../../application/useAgentComposerAttachments";
+import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
+import { useAgentComposerPreview } from "./useAgentComposerPreview";
 import { formatAgentAttachmentBytes } from "./agentTurnAttachmentPresentation";
 
 export interface AgentComposerAttachmentsProps {
@@ -16,15 +18,28 @@ export const AgentComposerAttachments = memo(function AgentComposerAttachments({
   onDismissRefusal,
   onRemove,
 }: AgentComposerAttachmentsProps) {
+  const preview = useAgentComposerPreview(drafts);
   if (drafts.length === 0 && refusal === null) return null;
 
   return (
     <div className="agent-composer__attachments">
+      <AgentAttachmentLightbox
+        canReveal={false}
+        entry={preview.entry}
+        images={preview.images}
+        onClose={preview.close}
+        onSelect={preview.select}
+      />
       {drafts.length > 0 && (
         <ul aria-label="Attachments" className="agent-composer__attachment-list">
           {drafts.map((draft) => (
             <li key={draft.draftId}>
-              <AgentComposerAttachment draft={draft} onRemove={onRemove} />
+              <AgentComposerAttachment
+                key={draft.previewUrl}
+                draft={draft}
+                onPreview={preview.open}
+                onRemove={onRemove}
+              />
             </li>
           ))}
         </ul>
@@ -48,11 +63,15 @@ export const AgentComposerAttachments = memo(function AgentComposerAttachments({
 
 function AgentComposerAttachment({
   draft,
+  onPreview,
   onRemove,
 }: {
   readonly draft: AgentComposerAttachmentDraft;
+  onPreview(draft: AgentComposerAttachmentDraft, origin: HTMLElement): void;
   onRemove(draftId: string): void;
 }) {
+  const [broken, setBroken] = useState(false);
+  const canPreview = draft.state === "ready" && draft.previewUrl !== null && !broken;
   const image = draft.kind === "image" && draft.state !== "failed";
   return (
     <div
@@ -68,9 +87,19 @@ function AgentComposerAttachment({
       title={attachmentTitle(draft)}
     >
       {image ? (
-        <span className="agent-composer-attachment__thumb">
-          <AgentComposerAttachmentThumb draft={draft} />
-        </span>
+        <button
+          type="button"
+          className="agent-composer-attachment__thumb"
+          aria-label={`Preview ${draft.name}`}
+          disabled={!canPreview}
+          onClick={(event) => onPreview(draft, event.currentTarget)}
+        >
+          <AgentComposerAttachmentThumb
+            draft={draft}
+            broken={broken}
+            onError={() => setBroken(true)}
+          />
+        </button>
       ) : (
         <>
           <AgentComposerAttachmentGlyph draft={draft} />
@@ -92,8 +121,15 @@ function AgentComposerAttachment({
   );
 }
 
-function AgentComposerAttachmentThumb({ draft }: { readonly draft: AgentComposerAttachmentDraft }) {
-  const [broken, setBroken] = useState(false);
+function AgentComposerAttachmentThumb({
+  draft,
+  broken,
+  onError,
+}: {
+  readonly draft: AgentComposerAttachmentDraft;
+  readonly broken: boolean;
+  onError(): void;
+}) {
   const previewUrl = draft.previewUrl;
 
   if (draft.state === "staging" || previewUrl === null || broken) {
@@ -109,7 +145,7 @@ function AgentComposerAttachmentThumb({ draft }: { readonly draft: AgentComposer
     <img
       alt={draft.name}
       className="agent-composer-attachment__preview"
-      onError={() => setBroken(true)}
+      onError={onError}
       src={previewUrl}
     />
   );

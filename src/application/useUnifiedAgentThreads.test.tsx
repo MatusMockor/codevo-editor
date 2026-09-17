@@ -163,6 +163,72 @@ async function setup() {
   };
 }
 describe("unified original agent surface", () => {
+  it("keeps local warnings out of a server conversation", async () => {
+    const h = await setup();
+    const local = {
+      ...h.local,
+      notice: { kind: "warning" as const, message: "Local working tree is dirty", action: null },
+    };
+    await h.render({ local });
+    expect(h.current.agents.notice?.message).toBe("Local working tree is dirty");
+    await h.render({ selectedServerId: server.id });
+    expect(h.current.agents.notice).toBeNull();
+    await h.render({ selectedThreadId: remoteId, selectedServerId: null });
+    expect(h.current.agents.notice).toBeNull();
+  });
+  it("owns pre-thread errors by project generation and never revives them after A to B to A", async () => {
+    const h = await setup();
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    await act(async () => {
+      await h.current.agents.startThread({ ...start, prompt: "" });
+    });
+    expect(h.current.agents.notice?.message).toContain("Enter a prompt");
+    await h.render({ selectedProjectRootKey: "other-project" });
+    expect(h.current.agents.notice).toBeNull();
+    await h.render({ selectedProjectRootKey: projectKey });
+    expect(h.current.agents.notice).toBeNull();
+  });
+  it("does not publish a late start error after switching projects and returning", async () => {
+    const h = await setup();
+    let reject!: (reason: Error) => void;
+    h.gw.createTask.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    let pending!: ReturnType<typeof h.current.agents.startThread>;
+    await act(async () => {
+      pending = h.current.agents.startThread(start);
+    });
+    await h.render({ selectedProjectRootKey: "other-project" });
+    await h.render({ selectedProjectRootKey: projectKey });
+    await act(async () => {
+      reject(new Error("Old request failed"));
+      await pending;
+    });
+    expect(h.current.agents.notice).toBeNull();
+    const originalKey = h.gw.createTask.mock.calls[0]![0].idempotencyKey;
+    await act(async () => {
+      expect(await h.current.agents.startThread(start)).not.toBeNull();
+    });
+    expect(h.gw.createTask.mock.calls[1]![0].idempotencyKey).toBe(originalKey);
+  });
+  it("does not duplicate a failed task into an operation notice", async () => {
+    const h = await setup();
+    h.gw.startTask.mockResolvedValueOnce(task({ id: "new", sequence: 3, status: "failed" }));
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    await act(async () => {
+      await h.current.agents.startThread(start);
+    });
+    expect(h.current.agents.notice).toBeNull();
+    expect(
+      h.current.agents.threads.find((view) => view.execution?.latestTaskId === "new")?.thread
+        .turns[0]?.status.kind,
+    ).toBe("failed");
+  });
+
   it("keeps local and grouped remote conversations in the same rail across environment selection", async () => {
     const h = await setup();
     expect(h.current.agents.threads.map((view) => view.thread.threadId)).toEqual([
@@ -244,6 +310,7 @@ describe("unified original agent surface", () => {
   });
   it("never opens local tools for a remote conversation", async () => {
     const h = await setup();
+    await h.render({ selectedThreadId: remoteId });
     await act(async () => {
       await h.current.agents.showChanges(remoteId);
       await h.current.agents.openChangedFile(remoteId, surfaceChangedFile("src/app.ts"));

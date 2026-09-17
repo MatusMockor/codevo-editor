@@ -17,10 +17,7 @@ import {
   type AgentThreadScriptTarget,
 } from "../../application/useAgentThreadScripts";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
-import type {
-  AgentProviderManagementSurface,
-  AgentProviderManagementToast,
-} from "../../application/useAgentProviderManagement";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
 import type { AgentCliKind } from "../../domain/agentTask";
@@ -60,6 +57,7 @@ import {
   type AgentRailScope,
 } from "./agentSidebarPresentation";
 import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
+import { useScopedAgentNotice } from "./useScopedAgentNotice";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentAddProject } from "./useAgentAddProject";
 import {
@@ -113,6 +111,7 @@ const IDLE_ACCOUNT_USAGE = {
 } as const;
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const NOOP_CLOSE_PROJECT = () => undefined;
+const NOOP_SELECTED_PROJECT = () => undefined;
 const NO_REMOTE_SERVERS: readonly import("../../domain/remoteRunner").RemoteRunnerServer[] = [];
 const REMOTE_PROVIDERS_ENABLED = { claudeCode: true, codex: true } as const;
 
@@ -127,6 +126,20 @@ export function AgentModeView(props: AgentModeViewProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
     props.navigationSession?.current.selectedThreadId ?? null,
   );
+  const [selectedProjectRootKey, setSelectedProjectRootKey] = useState<string | null>(null);
+  const selectProjectEnvironment = useCallback(
+    (rootKey: string) => {
+      if (!rootKey.startsWith("remote:")) {
+        remote?.selectServer(null);
+        return;
+      }
+      const server = remote?.servers.find((entry) =>
+        rootKey.startsWith(`remote:${encodeURIComponent(entry.id)}:`),
+      );
+      if (server !== undefined) remote?.selectServer(server.id);
+    },
+    [remote],
+  );
   const unified = useUnifiedAgentThreads({
     local: props.agents,
     gateway: remote?.gateway ?? null,
@@ -134,6 +147,7 @@ export function AgentModeView(props: AgentModeViewProps) {
     selectedServerId: remote?.selectedServerId ?? null,
     workspaceOwner: props.workspaceRoot,
     selectedThreadId,
+    selectedProjectRootKey,
     localProjects: props.projects,
     metadataRepository: remote?.metadataRepository,
     imageSurface: props.imageSurface ?? null,
@@ -144,6 +158,8 @@ export function AgentModeView(props: AgentModeViewProps) {
       agents={remote === null ? props.agents : { ...props.agents, ...unified.agents }}
       projects={remote === null ? props.projects : unified.projects}
       onSelectedThreadChange={setSelectedThreadId}
+      onSelectedProjectChange={remote === null ? NOOP_SELECTED_PROJECT : setSelectedProjectRootKey}
+      onSelectProjectEnvironment={selectProjectEnvironment}
       selectedServerId={remote?.selectedServerId ?? null}
     />
   );
@@ -170,14 +186,17 @@ function LocalAgentModeView({
   viewCommands = null,
   workspaceRoot,
   onSelectedThreadChange,
+  onSelectedProjectChange,
+  onSelectProjectEnvironment,
   selectedServerId,
 }: AgentModeViewProps & {
   onSelectedThreadChange(threadId: string | null): void;
+  onSelectedProjectChange(rootKey: string | null): void;
+  onSelectProjectEnvironment(rootKey: string): void;
   selectedServerId: string | null;
 }) {
   const surfaceEnterClass = useSurfaceEnterClass();
   usePreloadAgentMarkdownRenderer();
-  const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
   const [goToTurnSignal, setGoToTurnSignal] = useState(0);
   const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);
@@ -246,6 +265,20 @@ function LocalAgentModeView({
       (project) =>
         project.rootKey === (selectedThread?.thread.owner.rootKey ?? composerScope?.projectRootKey),
     ) ?? null;
+  const selectedRootKey = selectedProject?.rootKey ?? null;
+  useLayoutEffect(
+    () => onSelectedProjectChange(selectedRootKey),
+    [onSelectedProjectChange, selectedRootKey],
+  );
+  const [localNotice, setLocalNotice] = useScopedAgentNotice(
+    JSON.stringify([
+      selectedServerId,
+      selectedThreadId,
+      selectedRootKey,
+      selectedProject?.ownerId,
+      selectedProject?.generation,
+    ]),
+  );
   const selectWorkspace = chrome.workspaceActivation?.select;
   useEffect(() => {
     if (selectWorkspace === undefined) return;
@@ -401,7 +434,7 @@ function LocalAgentModeView({
       cancelSessionImport();
       void externalSessions.open({ rootKey: projectRootKey, repositoryRoot });
     },
-    [cancelSessionImport, externalSessions, terminalSessionsPalette],
+    [cancelSessionImport, externalSessions, setLocalNotice, terminalSessionsPalette],
   );
   const closeTerminalSessions = useCallback(() => {
     cancelSessionImport();
@@ -443,6 +476,7 @@ function LocalAgentModeView({
     chrome.addProject?.cancelSelection?.();
     setProjectSelectionIntent((current) => current + 1);
     if (!navigation.setProjectScope(scope.projectRootKey)) return;
+    onSelectProjectEnvironment(scope.projectRootKey);
     if (sessionThread !== null && sessionThread.thread.owner.rootKey !== scope.projectRootKey) {
       navigation.clearSelectedThread();
     }
@@ -451,14 +485,16 @@ function LocalAgentModeView({
   const newProjectThread = useAgentLatestCallback(() => {
     chrome.addProject?.cancelSelection?.();
     setProjectSelectionIntent((current) => current + 1);
-    if (navigation.newThreadTarget() === null) return;
+    const target = navigation.newThreadTarget();
+    if (target === null) return;
+    onSelectProjectEnvironment(target.projectRootKey);
     composer.clearSelection();
   });
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
   const closeSurfaceTab = useAgentLatestCallback(surface.closeSurfaceTab);
   const openSurfaceCommand = useAgentLatestCallback(openSurface);
   const toggleRightPanelCommand = useAgentLatestCallback(toggleRightPanel);
-  const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), []);
+  const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), [setLocalNotice]);
   const revealAgentAttachment = agents.revealAttachment;
   const revealAttachment = useCallback(
     (threadId: string, attachmentId: string): void => {
@@ -491,8 +527,7 @@ function LocalAgentModeView({
   );
   useAgentViewCommands(viewCommands, commandHandlers);
 
-  const managementNotice = providerNotice(agents.providerManagement.toast);
-  const notice = localNotice ?? agents.notice ?? managementNotice;
+  const notice = localNotice ?? agents.notice;
   const dismissNotice = useCallback(() => {
     if (localNotice !== null) {
       setLocalNotice(null);
@@ -502,8 +537,7 @@ function LocalAgentModeView({
       agents.dismissNotice();
       return;
     }
-    agents.providerManagement.dismissToast();
-  }, [agents, localNotice]);
+  }, [agents, localNotice, setLocalNotice]);
 
   const addProjectSelectionIdentity = useMemo(
     () => ({ selectedThreadId, projectSelectionIntent }),
@@ -511,6 +545,7 @@ function LocalAgentModeView({
   );
   const selectAddedProject = useAgentLatestCallback((project: AgentProjectDescriptor) => {
     if (!navigation.setProjectScope(project.rootKey)) return;
+    onSelectProjectEnvironment(project.rootKey);
     navigation.clearSelectedThread();
     composer.clearSelection();
   });
@@ -620,13 +655,6 @@ function LocalAgentModeView({
         className={["agent-mode", surfaceEnterClass].filter(Boolean).join(" ")}
         data-slot="agent"
       >
-        {notice && (
-          <AgentNoticeBar
-            notice={notice}
-            onConfigure={() => agents.configureAgentCli()}
-            onDismiss={dismissNotice}
-          />
-        )}
         <AgentClockProvider nowTickMs={nowTickMs}>
           <div className="agent-mode__grid">
             {layout.rail === "collapsed" ? (
@@ -766,6 +794,15 @@ function LocalAgentModeView({
                     projects={projects}
                   />
                 )}
+              {notice && (
+                <div className="agent-thread-notice">
+                  <AgentNoticeBar
+                    notice={notice}
+                    onConfigure={() => agents.configureAgentCli()}
+                    onDismiss={dismissNotice}
+                  />
+                </div>
+              )}
               <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
               <AgentComposerController
                 contextUsage={contextUsage}
@@ -852,53 +889,6 @@ function LocalAgentModeView({
       )}
     </>
   );
-}
-
-function providerNotice(toast: AgentProviderManagementToast | null): AgentTasksNotice | null {
-  if (toast === null) return null;
-  switch (toast.kind) {
-    case "updateAvailable":
-      return null;
-    case "updateSucceeded":
-      return {
-        kind: "info",
-        message: `${providerLabel(toast.provider)} updated to v${toast.version}.`,
-        action: null,
-      };
-    case "updateAlreadyCurrent":
-      return {
-        kind: "info",
-        message: `The updater ran but ${providerLabel(toast.provider)} is still on v${toast.version}.`,
-        action: null,
-      };
-    case "updateFailed":
-      return {
-        kind: "error",
-        message: `${providerLabel(toast.provider)} update failed. Open Settings for details.`,
-        action: null,
-      };
-    default:
-      return unsupportedProviderManagementToast(toast);
-  }
-}
-
-function providerLabel(provider: "claudeCode" | "codex"): string {
-  switch (provider) {
-    case "claudeCode":
-      return "Claude Code";
-    case "codex":
-      return "Codex";
-    default:
-      return unsupportedProvider(provider);
-  }
-}
-
-function unsupportedProviderManagementToast(toast: never): never {
-  throw new TypeError(`Unsupported provider management toast: ${String(toast)}`);
-}
-
-function unsupportedProvider(provider: never): never {
-  throw new TypeError(`Unsupported provider: ${String(provider)}`);
 }
 
 function scriptTarget(view: AgentThreadView): AgentThreadScriptTarget {

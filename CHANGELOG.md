@@ -7,6 +7,24 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.48] - 2026-09-17
+
+### Added
+
+- Open screenshot previews directly from the message composer before sending.
+  Navigate between images with arrow keys, close with Escape, and keep the draft
+  unchanged. The same preview works with local and server execution selected.
+
+### Fixed
+
+- Keep explicit project selections instead of jumping back to the previously
+  selected server project. Project and execution environment now change together.
+- Show operation errors beside the relevant composer instead of across the top
+  of the application. Prevent stale errors from appearing after switching projects.
+- Close outdated image previews when attachments are removed, sent, replaced,
+  or their project, thread or execution environment changes.
+- Avoid duplicating provider update notifications inside conversations.
+
 ## [0.2.0-beta.47] - 2026-09-16
 
 ### Added

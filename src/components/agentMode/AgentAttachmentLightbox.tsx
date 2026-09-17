@@ -21,6 +21,7 @@ export const AGENT_LIGHTBOX_NEXT_LABEL = "Next image";
 export interface AgentAttachmentLightboxProps {
   readonly entry: AgentAttachmentLightboxEntry | null;
   readonly images: AgentTurnAttachmentImagePort | null;
+  readonly canReveal?: boolean;
   onClose(): void;
   onSelect(index: number): void;
 }
@@ -28,6 +29,7 @@ export interface AgentAttachmentLightboxProps {
 export function AgentAttachmentLightbox({
   entry,
   images,
+  canReveal = true,
   onClose,
   onSelect,
 }: AgentAttachmentLightboxProps) {
@@ -46,6 +48,7 @@ export function AgentAttachmentLightbox({
 
   return createPortal(
     <AgentAttachmentLightboxDialog
+      canReveal={canReveal}
       entry={entry}
       images={images}
       onClose={onClose}
@@ -58,6 +61,7 @@ export function AgentAttachmentLightbox({
 }
 
 function AgentAttachmentLightboxDialog({
+  canReveal,
   entry,
   images,
   onClose,
@@ -65,6 +69,7 @@ function AgentAttachmentLightboxDialog({
   request,
   url,
 }: {
+  readonly canReveal: boolean;
   readonly entry: AgentAttachmentLightboxEntry;
   readonly images: AgentTurnAttachmentImagePort;
   readonly request: AgentAttachmentLightboxRequest;
@@ -153,15 +158,17 @@ function AgentAttachmentLightboxDialog({
           <span aria-live="polite" className="agent-lightbox__name" title={request.name}>
             {request.name}
           </span>
-          <button
-            className="agent-lightbox__reveal"
-            onClick={() => images.reveal(request.attachmentId)}
-            ref={revealRef}
-            type="button"
-          >
-            <ExternalLink aria-hidden="true" size={14} />
-            <span>{AGENT_LIGHTBOX_REVEAL_LABEL}</span>
-          </button>
+          {canReveal && (
+            <button
+              className="agent-lightbox__reveal"
+              onClick={() => images.reveal(request.attachmentId)}
+              ref={revealRef}
+              type="button"
+            >
+              <ExternalLink aria-hidden="true" size={14} />
+              <span>{AGENT_LIGHTBOX_REVEAL_LABEL}</span>
+            </button>
+          )}
         </div>
       </div>
       {navigable && (

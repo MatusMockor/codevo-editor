@@ -689,3 +689,15 @@
   background: var(--agent-live);
   color: var(--agent-live-contrast);
 }
+
+.agent-thread-notice {
+  min-width: 0;
+  padding: 0 24px 8px;
+}
+
+.agent-thread-notice > .agent-notice {
+  max-width: 768px;
+  margin: 0 auto;
+  border-radius: var(--agent-radius-lg);
+  overflow-wrap: anywhere;
+}
