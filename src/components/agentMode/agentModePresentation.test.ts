@@ -1532,6 +1532,50 @@ describe("agentWorkSummary subagent double counting", () => {
 });
 
 describe("subagent presentation review regressions", () => {
+  it("keeps a background launch acknowledgement running until confirmed completion", () => {
+    const events: AgentTurnEvent[] = [
+      { kind: "toolCall", toolId: "parent", name: "Agent", inputSummary: "Run tests" },
+      { kind: "subagent", status: "starting", toolId: "parent", taskId: "task" },
+      { kind: "toolResult", toolId: "parent", outputSummary: "Launched", isError: false },
+    ];
+    expect(agentTurnSubagentSummary(events)).toMatchObject({ running: 1, completed: 0 });
+    events.push({ kind: "subagent", status: "running", taskId: "task", durationMs: 604_000 });
+    expect(agentTurnSubagentSummary(events)).toMatchObject({
+      running: 1,
+      completed: 0,
+      entries: [{ state: "running", durationMs: 604_000 }],
+    });
+    events.push({ kind: "subagent", status: "completed", taskId: "task" });
+    expect(agentTurnSubagentSummary(events)).toMatchObject({ running: 0, completed: 1 });
+    events.push({ kind: "subagent", status: "running", taskId: "task" });
+    expect(agentTurnSubagentSummary(events)).toMatchObject({ running: 0, completed: 1 });
+  });
+
+  it("honors lifecycle telemetry first even when it arrives after the launch result", () => {
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: "parent", name: "Agent", inputSummary: "Run tests" },
+        { kind: "toolResult", toolId: "parent", outputSummary: "Launched", isError: false },
+        { kind: "subagent", status: "running", toolId: "parent" },
+      ]),
+    ).toMatchObject({ running: 1, completed: 0 });
+  });
+
+  it.each(["telemetry", "tool"])("retains %s failure despite late successful events", (source) => {
+    const failure: AgentTurnEvent =
+      source === "telemetry"
+        ? { kind: "subagent", status: "failed", toolId: "parent" }
+        : { kind: "toolResult", toolId: "parent", outputSummary: "Failed", isError: true };
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: "parent", name: "Agent", inputSummary: "Run tests" },
+        failure,
+        { kind: "subagent", status: "completed", toolId: "parent" },
+        { kind: "subagent", status: "running", toolId: "parent" },
+      ]),
+    ).toMatchObject({ running: 0, completed: 0, failed: 1 });
+  });
+
   it("keeps a reported failure even when the spawn tool result was not an error", () => {
     expect(
       agentTurnSubagentSummary([

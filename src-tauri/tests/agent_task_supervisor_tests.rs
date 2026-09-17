@@ -849,9 +849,10 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         "the claude prompt travels on stdin, never in argv or ps output"
     );
     assert_eq!(claude.cwd(), directory.as_path());
-    for (key, _) in claude.env() {
+    for (key, value) in claude.env() {
         assert!(
-            AGENT_TASK_INHERITED_ENV.contains(&key.as_str()),
+            AGENT_TASK_INHERITED_ENV.contains(&key.as_str())
+                || (key == "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS" && value == "0"),
             "unexpected env key {key}"
         );
     }

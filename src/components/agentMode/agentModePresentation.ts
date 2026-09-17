@@ -681,6 +681,7 @@ function applySubagentEvent(
   if (event.totalTokens !== undefined) draft.totalTokens = event.totalTokens;
   if (event.toolUses !== undefined) draft.toolUses = event.toolUses;
   if (event.lastToolName !== undefined) draft.lastToolName = event.lastToolName;
+  if (draft.telemetryState === "failed") return;
   if (event.status === "completed" || event.status === "failed") {
     draft.telemetryState = event.status;
     return;
@@ -753,7 +754,8 @@ function subagentEntry(draft: SubagentDraft): AgentSubagentEntry {
 
 function subagentDraftState(draft: SubagentDraft): AgentSubagentState {
   if (draft.resultState === "failed" || draft.telemetryState === "failed") return "failed";
-  return draft.resultState ?? draft.telemetryState ?? "running";
+  // A background spawn result acknowledges launch, not completion of the task.
+  return draft.telemetryState ?? draft.resultState ?? "running";
 }
 
 function countSubagentState(

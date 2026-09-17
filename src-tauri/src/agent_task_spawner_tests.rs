@@ -110,6 +110,42 @@ fn codex_default() -> AgentLaunchOptions {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn claude_waits_for_background_work_on_new_and_resumed_invocations_only() {
+    let environment = vec![("HOME".to_string(), "/home/editor".to_string())];
+    for resume_session_id in [None, Some(SESSION_ID)] {
+        for (invocation, launch) in [
+            (AgentCliInvocation::ClaudeCode, claude_default()),
+            (AgentCliInvocation::CodexExec, codex_default()),
+        ] {
+            let identity = agent_provider::process::executable_identity("/bin/sh")
+                .expect("retained shell identity");
+            let plan = plan_agent_invocation_with_authority_and_environment(
+                identity,
+                AgentInvocationRequest {
+                    invocation,
+                    prompt: "finish the task",
+                    cwd: Path::new("/tmp"),
+                    resume_session_id,
+                    launch,
+                    attachments: Vec::new(),
+                },
+                environment.clone(),
+            )
+            .expect("plan");
+            let mut expected = environment.clone();
+            if invocation == AgentCliInvocation::ClaudeCode {
+                expected.push((
+                    "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS".to_string(),
+                    "0".to_string(),
+                ));
+            }
+            assert_eq!(plan.env(), expected);
+        }
+    }
+}
+
 #[test]
 fn effective_path_replaces_only_path_in_the_agent_allowlist() {
     let environment = vec![

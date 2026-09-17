@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.50] - 2026-09-17
+
+### Added
+
+- Group consecutive commands, file operations and MCP calls into collapsible
+  activity summaries for local and server conversations. Keep running activity
+  visible and preserve separate subagent and conversation boundaries.
+- Page long activity groups in batches of 50 without nested scrolling, and retain
+  disclosure state as the conversation updates.
+
+### Fixed
+
+- Prevent Claude Code from terminating background subagents after ten minutes.
+  Local task execution now permits runs up to twelve hours while retaining Stop.
+- Keep subagent progress authoritative after launch acknowledgements instead of
+  showing background work as completed too early.
+- Keep failed activities outside collapsed groups and show attention counts in
+  work summaries. Settle completed child sessions without stale running labels.
+
 ## [0.2.0-beta.49] - 2026-09-17
 
 ### Added

@@ -1,3 +1,10 @@
+import {
+  AgentToolDisclosureContext,
+  useAgentToolDisclosure,
+  useAgentTurnToolDisclosure,
+} from "./AgentToolDisclosure";
+import { AgentActivityItems } from "./AgentActivityItems";
+import { agentActivityAttentionCount } from "./agentActivityGrouping";
 import { AgentArtifactPreviewScope } from "./AgentOutputArtifacts";
 import type {
   AgentArtifactLoader,
@@ -6,10 +13,8 @@ import type {
 import { AgentTurnArtifacts, type AgentArtifactScope } from "./AgentTurnArtifacts";
 import { AgentThreadUsage } from "./AgentThreadUsage";
 import {
-  createContext,
   memo,
   useCallback,
-  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -96,7 +101,6 @@ import {
   agentTurnProjection,
   agentTurnSubagentSummary,
   agentTurnWorkFold,
-  isAgentSubagentToolItem,
   type AgentRawLine,
   type AgentTurnLiveActivity,
   type AgentSubagentEntry,
@@ -705,21 +709,24 @@ const AgentTurnView = memo(function AgentTurnView({
                 turn={turn}
               />
             )}
-            {(workFold?.visibleItems ?? projection.items)
-              .filter((item) => !isAgentSubagentToolItem(item))
-              .map((item) => (
+            <AgentActivityItems
+              items={workFold?.visibleItems ?? projection.items}
+              currentEventKey={
+                highlight?.current?.kind === "event" ? `e${highlight.current.eventIndex}` : null
+              }
+              renderItem={(item) => (
                 <AgentTurnItemView
                   attachmentImages={attachmentImages}
                   errorContext={errorContext}
                   highlight={itemHighlight(highlight, item.key)}
                   groupHighlight={highlight}
                   item={item}
-                  key={item.key}
                   prose={prose}
                   stream={stream}
                   textClipboard={textClipboard}
                 />
-              ))}
+              )}
+            />
             {workFold === null && liveStatus}
             {compaction.kind === "failed" && (
               <p className="agent-note agent-note--warning" role="status">
@@ -826,29 +833,39 @@ function AgentTurnWork({
     </>
   );
   return (
-    <details className="agent-work" open={running || undefined}>
+    <details
+      className="agent-work"
+      open={running || agentActivityAttentionCount(items) > 0 || undefined}
+    >
       <summary className="agent-work__summary">
         <span className="agent-work__title">{title}</span>
-        <span className="agent-work__counts">{summary}</span>
+        <span className="agent-work__counts">
+          {summary}
+          {agentActivityAttentionCount(items) > 0 &&
+            ` · ${agentActivityAttentionCount(items)} need attention`}
+        </span>
         <ChevronDown aria-hidden="true" className="agent-work__chevron" size={14} />
       </summary>
       <div className="agent-work__events">
         {subagents !== null && <AgentSubagentList entries={subagents.entries} />}
-        {items
-          .filter((item) => !isAgentSubagentToolItem(item))
-          .map((item) => (
+        <AgentActivityItems
+          items={items}
+          currentEventKey={
+            highlight?.current?.kind === "event" ? `e${highlight.current.eventIndex}` : null
+          }
+          renderItem={(item) => (
             <AgentTurnItemView
               attachmentImages={attachmentImages}
               errorContext={errorContext}
               highlight={itemHighlight(highlight, item.key)}
               groupHighlight={highlight}
               item={item}
-              key={item.key}
               prose={prose}
               stream={stream}
               textClipboard={textClipboard}
             />
-          ))}
+          )}
+        />
         {liveStatus}
       </div>
     </details>
@@ -937,7 +954,12 @@ function AgentTurnItemView({
                     occurrence: cursor.occurrence,
                   },
           };
-    const childProjection = agentTurnProjection(group.events, childIndex < 0 ? null : childIndex);
+    const childProjection = agentTurnProjection(
+      group.events,
+      childIndex < 0 ? null : childIndex,
+      null,
+      group.state === "completed" ? "settled" : group.state === "failed" ? "stopped" : "running",
+    );
     const childHiddenCount = group.hiddenCount + childProjection.hiddenCount;
     return (
       <details
@@ -947,25 +969,31 @@ function AgentTurnItemView({
       >
         <summary className="agent-microlabel">
           {group.path} · {group.state}
+          {agentActivityAttentionCount(childProjection.items) > 0 &&
+            ` · ${agentActivityAttentionCount(childProjection.items)} need attention`}
           {group.durationMs !== null && ` · ${agentTurnDurationLabel(group.durationMs)}`}
         </summary>
         <AgentThreadUsage usage={group.usage} />
         {childHiddenCount > 0 && (
           <p className="agent-note">{childHiddenCount} subagent events hidden</p>
         )}
-        {childProjection.items.map((child) => (
-          <AgentTurnItemView
-            key={child.key}
-            item={child}
-            attachmentImages={null}
-            errorContext={errorContext}
-            highlight={itemHighlight(childHighlight, child.key)}
-            groupHighlight={childHighlight}
-            prose={prose}
-            stream={stream}
-            textClipboard={textClipboard}
-          />
-        ))}
+        <AgentActivityItems
+          items={childProjection.items}
+          scope={group.agentThreadId}
+          currentEventKey={childIndex < 0 ? null : `e${childIndex}`}
+          renderItem={(child) => (
+            <AgentTurnItemView
+              item={child}
+              attachmentImages={null}
+              errorContext={errorContext}
+              highlight={itemHighlight(childHighlight, child.key)}
+              groupHighlight={childHighlight}
+              prose={prose}
+              stream={stream}
+              textClipboard={textClipboard}
+            />
+          )}
+        />
       </details>
     );
   }
@@ -1191,38 +1219,6 @@ function toolRowClassName(status: AgentToolRowStatus): string {
 
 function unsupportedToolRowStatus(status: never): never {
   throw new TypeError(`Unsupported agent tool row status: ${String(status)}.`);
-}
-
-interface AgentToolDisclosure {
-  readonly expanded: ReadonlySet<string>;
-  readonly toggle: (toolId: string) => void;
-}
-
-const AgentToolDisclosureContext = createContext<AgentToolDisclosure | null>(null);
-
-function useAgentToolDisclosure(toolId: string): {
-  readonly expanded: boolean;
-  readonly toggle: () => void;
-} {
-  const shared = useContext(AgentToolDisclosureContext);
-  const [local, setLocal] = useState(false);
-  const toggleLocal = useCallback(() => setLocal((open) => !open), []);
-  const toggleShared = useCallback(() => shared?.toggle(toolId), [shared, toolId]);
-  if (shared === null) return { expanded: local, toggle: toggleLocal };
-  return { expanded: shared.expanded.has(toolId), toggle: toggleShared };
-}
-
-function useAgentTurnToolDisclosure(): AgentToolDisclosure {
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
-  const toggle = useCallback((toolId: string) => {
-    setExpanded((open) => {
-      const next = new Set(open);
-      if (next.delete(toolId)) return next;
-      next.add(toolId);
-      return next;
-    });
-  }, []);
-  return useMemo(() => ({ expanded, toggle }), [expanded, toggle]);
 }
 
 function AgentToolRow({ item }: { readonly item: Extract<AgentTurnItem, { kind: "tool" }> }) {

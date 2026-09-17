@@ -37,7 +37,8 @@ use std::{
 };
 
 pub const MAX_AGENT_OUTPUT_CHUNK_BYTES: usize = 8 * 1024;
-pub const AGENT_TASK_MAX_RUNTIME: Duration = Duration::from_secs(3600);
+// Match the runner's bounded multi-hour task policy.
+pub const AGENT_TASK_MAX_RUNTIME: Duration = Duration::from_secs(12 * 60 * 60);
 pub const MAX_AGENT_TASK_FAILURE_BYTES: usize = 4 * 1024;
 pub const MAX_QUEUED_AGENT_TASK_EVENTS: usize = 256;
 pub const MAX_UNACKNOWLEDGED_AGENT_OUTPUT_EVENTS: usize = 64;

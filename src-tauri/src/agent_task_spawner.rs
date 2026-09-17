@@ -276,7 +276,7 @@ pub struct AgentInvocationRequest<'a> {
 fn plan_agent_invocation_with_authority_and_environment(
     executable_identity: agent_provider::process::ExecutableIdentity,
     request: AgentInvocationRequest<'_>,
-    environment: Vec<(String, String)>,
+    mut environment: Vec<(String, String)>,
 ) -> Result<AgentTaskSpawnPlan, String> {
     let AgentInvocationRequest {
         invocation,
@@ -317,6 +317,15 @@ fn plan_agent_invocation_with_authority_and_environment(
         launch,
         &attachment_paths,
     );
+    if invocation == AgentCliInvocation::ClaudeCode {
+        // Claude print mode otherwise terminates background agents after ten minutes.
+        // The task supervisor owns the bounded runtime and explicit cancellation.
+        environment.retain(|(key, _)| key != "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS");
+        environment.push((
+            "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS".to_string(),
+            "0".to_string(),
+        ));
+    }
     Ok(AgentTaskSpawnPlan {
         program: executable_identity.canonical_path.clone(),
         executable_identity,

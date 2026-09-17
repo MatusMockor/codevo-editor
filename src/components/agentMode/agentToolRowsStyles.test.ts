@@ -118,7 +118,7 @@ describe("agent tool row styles", () => {
     expect(declaration(".agent-tool-row__detail", "border-radius")).toBe("var(--agent-radius-md)");
     expect(declaration(".agent-tool-row__detail", "font-family")).toBe("var(--agent-mono)");
     expect(declaration(".agent-tool-row__detail", "font-size")).toBe("var(--agent-fs-2xs)");
-    expect(declaration(".agent-tool-row__detail", "max-height")).toBe("260px");
+    expect(declaration(".agent-tool-row__detail", "max-height")).toBeNull();
     expect(declaration(".agent-tool-row__detail[hidden]", "display")).toBe("none");
     expect(declaration(".agent-tool-row__command", "white-space")).toBe("pre-wrap");
     expect(declaration(".agent-tool-row__output", "white-space")).toBe("pre-wrap");

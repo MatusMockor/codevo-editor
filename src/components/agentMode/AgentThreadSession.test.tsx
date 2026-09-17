@@ -527,7 +527,9 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-work__counts")?.textContent).toBe("2 subagents");
+    expect(host.querySelector(".agent-work__counts")?.textContent).toBe(
+      "2 subagents · 1 need attention",
+    );
 
     const rows = [...host.querySelectorAll('[aria-label="Subagents"] .agent-subagent')];
 

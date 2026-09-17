@@ -112,7 +112,6 @@
 
 .agent-tool-row__detail {
   display: grid;
-  overflow: auto;
   gap: 6px;
   border-radius: var(--agent-radius-md);
   background: var(--agent-code-background);
@@ -121,7 +120,6 @@
   font-size: var(--agent-fs-2xs);
   line-height: var(--agent-lh-row);
   margin: 2px 0 6px;
-  max-height: 260px;
   padding: 8px 10px;
 }
 
