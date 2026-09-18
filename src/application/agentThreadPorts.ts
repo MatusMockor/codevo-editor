@@ -205,6 +205,7 @@ export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 export interface RemoteAgentThreadExecution {
   readonly interactiveQuestions?: boolean;
   readonly pendingMessages?: boolean;
+  readonly taskSteering?: boolean;
   readonly kind: "remote";
   readonly serverId: string;
   readonly runnerId: string;
@@ -338,6 +339,8 @@ export interface AgentThreadsSurface {
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
   readonly deferredFollowUps: DeferredFollowUps;
   resumeDeferredFollowUps?(threadId: string): Promise<void>;
+  hasUnconfirmedMessage?(threadId: string): boolean;
+  discardUnconfirmedMessage?(threadId: string): void;
   sendDeferredFollowUpNow?(threadId: string, id: string): Promise<void>;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;

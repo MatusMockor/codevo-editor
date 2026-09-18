@@ -89,6 +89,25 @@ describe("AgentsSettingsPage", () => {
     expect(draftRef.current).toBe(newer);
   });
 
+  it("changes follow-up delivery independently of provider and workspace", () => {
+    const onUpdateAppSettings = vi.fn();
+    render({ hasWorkspace: false, onUpdateAppSettings });
+    const select = host.querySelector<HTMLSelectElement>(
+      '[data-settings-row="agents.followUpBehavior"] select',
+    );
+    if (!select) throw new Error("Missing follow-up delivery selector");
+    expect(select.disabled).toBe(false);
+    expect(select.value).toBe("queue");
+    setSelect(select, "steer");
+    expect(lastCall(onUpdateAppSettings)).toMatchObject({
+      agentFollowUpBehavior: "steer",
+      agentCliKind: "claudeCode",
+    });
+    expect(select.value).toBe("steer");
+    setSelect(select, "queue");
+    expect(lastCall(onUpdateAppSettings).agentFollowUpBehavior).toBe("queue");
+  });
+
   it("renders exactly the agents registry rows in their registry order", () => {
     render();
 
@@ -704,7 +723,7 @@ describe("AgentsSettingsPage", () => {
   }
 
   function isolationPicker(): HTMLSelectElement {
-    return selectAt(1);
+    return selectAt(2);
   }
 
   function selectAt(index: number): HTMLSelectElement {

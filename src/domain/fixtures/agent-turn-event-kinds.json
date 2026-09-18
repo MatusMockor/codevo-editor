@@ -1,0 +1,214 @@
+{
+  "kinds": {
+    "assistantText": {
+      "kind": "assistantText",
+      "text": "done",
+      "parentToolId": "toolu_01parent"
+    },
+    "backgroundTask": {
+      "kind": "backgroundTask",
+      "taskId": "bgt_01shell",
+      "status": "running",
+      "taskType": "shell",
+      "description": "npm run dev"
+    },
+    "contextCompaction": {
+      "kind": "contextCompaction",
+      "beforeTokens": 100000,
+      "afterTokens": 20000
+    },
+    "contextCompactionStatus": {
+      "kind": "contextCompactionStatus",
+      "status": "compacting",
+      "message": "Compacting the conversation"
+    },
+    "contextUsage": {
+      "kind": "contextUsage",
+      "model": "claude-opus-4",
+      "inputTokens": 1000,
+      "contextWindow": 200000
+    },
+    "error": {
+      "kind": "error",
+      "message": "the agent exited unexpectedly"
+    },
+    "queued": {
+      "kind": "queued",
+      "threadId": "agt-t1-0001",
+      "clientUserMessageId": null
+    },
+    "reasoning": {
+      "kind": "reasoning",
+      "text": "weighing the options"
+    },
+    "result": {
+      "kind": "result",
+      "text": "finished",
+      "isError": false,
+      "usage": {
+        "inputTokens": 10,
+        "outputTokens": 20,
+        "contextTokens": 30,
+        "costUsd": 0.25,
+        "scope": "thread",
+        "cachedInputTokens": 5,
+        "reasoningOutputTokens": 2
+      },
+      "durationMs": 2000
+    },
+    "subagent": {
+      "kind": "subagent",
+      "status": "completed",
+      "toolId": "toolu_01sub",
+      "taskId": "task_01sub",
+      "subagentType": "Explore",
+      "description": "Search the repository",
+      "durationMs": 1200,
+      "totalTokens": 900,
+      "toolUses": 4,
+      "lastToolName": "Grep"
+    },
+    "subagentActivity": {
+      "kind": "subagentActivity",
+      "agentThreadId": "agt-sub-0001",
+      "agentPath": "src/domain",
+      "activity": "started"
+    },
+    "subagentEvent": {
+      "kind": "subagentEvent",
+      "agentThreadId": "agt-sub-0001",
+      "event": {
+        "kind": "assistantText",
+        "text": "nested reply"
+      }
+    },
+    "subagentTurnDone": {
+      "kind": "subagentTurnDone",
+      "agentThreadId": "agt-sub-0001",
+      "durationMs": 1500,
+      "isError": false
+    },
+    "subagentUsage": {
+      "kind": "subagentUsage",
+      "agentThreadId": "agt-sub-0001",
+      "usage": {
+        "inputTokens": 7,
+        "outputTokens": 9,
+        "contextTokens": 11
+      }
+    },
+    "toolCall": {
+      "kind": "toolCall",
+      "toolId": "toolu_01call",
+      "name": "Bash",
+      "inputSummary": "ls -la",
+      "description": "List files",
+      "parentToolId": "toolu_01parent"
+    },
+    "toolResult": {
+      "kind": "toolResult",
+      "toolId": "toolu_01call",
+      "outputSummary": "3 entries",
+      "isError": false,
+      "parentToolId": "toolu_01parent"
+    },
+    "unknownLine": {
+      "kind": "unknownLine",
+      "stream": "stdout",
+      "raw": "unstructured noise",
+      "clipped": false
+    },
+    "userMessage": {
+      "kind": "userMessage",
+      "text": "please continue"
+    }
+  },
+  "variants": [
+    {
+      "kind": "assistantText",
+      "text": "done"
+    },
+    {
+      "kind": "backgroundTask",
+      "taskId": "bgt_01monitor",
+      "status": "starting",
+      "taskType": "monitor"
+    },
+    {
+      "kind": "userMessage",
+      "text": "look at this",
+      "attachments": [
+        {
+          "kind": "image",
+          "attachmentId": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+          "name": "square.png",
+          "mime": "image/png",
+          "bytes": 204800,
+          "width": 1280,
+          "height": 720,
+          "storedPath": "/data/agent-attachments/threads/agt-t1-0001/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png"
+        },
+        {
+          "kind": "file",
+          "attachmentId": "112233445566778899001122334455aa",
+          "name": "notes.txt",
+          "bytes": 4096,
+          "storedPath": "/data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt"
+        }
+      ]
+    },
+    {
+      "kind": "subagentEvent",
+      "agentThreadId": "agt-sub-0001",
+      "event": {
+        "kind": "assistantText",
+        "text": "nested reply",
+        "parentToolId": "toolu_01parent"
+      }
+    },
+    {
+      "kind": "subagentEvent",
+      "agentThreadId": "agt-sub-0001",
+      "event": {
+        "kind": "toolResult",
+        "toolId": "toolu_01call",
+        "outputSummary": "3 entries",
+        "isError": false
+      }
+    },
+    {
+      "kind": "toolCall",
+      "toolId": "toolu_01call",
+      "name": "Bash",
+      "inputSummary": "ls -la"
+    },
+    {
+      "kind": "toolResult",
+      "toolId": "toolu_01call",
+      "outputSummary": "3 entries",
+      "isError": false
+    },
+    {
+      "kind": "subagent",
+      "status": "starting",
+      "taskId": "task_01sub"
+    },
+    {
+      "kind": "result",
+      "text": "finished",
+      "isError": false,
+      "usage": null
+    },
+    {
+      "kind": "contextCompactionStatus",
+      "status": "idle",
+      "message": null
+    },
+    {
+      "kind": "contextUsage",
+      "model": "claude-opus-4",
+      "inputTokens": null,
+      "contextWindow": null
+    }
+  ]
+}

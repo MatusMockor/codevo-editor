@@ -14,7 +14,9 @@ use std::{sync::Arc, time::Instant};
 pub(super) type AgentTaskResultWatch = (Arc<AgentTaskInputSlot>, ResultLineDetector);
 
 pub(super) fn result_watch(input: Option<Arc<AgentTaskInputSlot>>) -> Option<AgentTaskResultWatch> {
-    Some((input?, ResultLineDetector::new()))
+    let input = input?;
+    let detector = ResultLineDetector::new().with_lifecycle(input.claude_lifecycle());
+    Some((input, detector))
 }
 
 pub(super) struct AgentTaskStopTargets {

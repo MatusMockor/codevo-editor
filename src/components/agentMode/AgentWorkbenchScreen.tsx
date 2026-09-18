@@ -516,6 +516,7 @@ export function AgentWorkbenchScreen({
 
   return (
     <AgentModeView
+      followUpBehavior={appSettings.agentFollowUpBehavior}
       questionGateway={DEFAULT_QUESTION_GATEWAY}
       artifactLoader={DEFAULT_ARTIFACT_LOADER}
       artifactPreview={DEFAULT_ARTIFACT_PREVIEW}

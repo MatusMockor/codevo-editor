@@ -1,3 +1,5 @@
+import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
+import { agentSubagentDisclosureEntries } from "./agentSubagentDisclosurePresentation";
 import {
   AgentToolDisclosureContext,
   useAgentToolDisclosure,
@@ -102,12 +104,9 @@ import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
   agentTurnProjection,
-  agentTurnSubagentSummary,
   agentTurnWorkFold,
   type AgentRawLine,
   type AgentTurnLiveActivity,
-  type AgentSubagentEntry,
-  type AgentSubagentSummary,
   type AgentTurnItem,
 } from "./agentModePresentation";
 import {
@@ -613,7 +612,10 @@ const AgentTurnView = memo(function AgentTurnView({
     () => agentTurnProjection(turn.events, revealEventIndex, workspaceRoot, settlement),
     [turn.events, revealEventIndex, workspaceRoot, settlement],
   );
-  const subagents = useMemo(() => agentTurnSubagentSummary(turn.events), [turn.events]);
+  const subagents = useMemo(
+    () => agentSubagentDisclosureEntries(turn.events, turn.subagentLifecycle, settlement),
+    [turn.events, turn.subagentLifecycle, settlement],
+  );
   const running = settlement === "running";
   const [streamed, setStreamed] = useState(running);
 
@@ -715,10 +717,10 @@ const AgentTurnView = memo(function AgentTurnView({
           )}
 
           <div className="agent-turn__events">
-            {subagents !== null && <AgentSubagentBanner summary={subagents} />}
-            {workFold === null && subagents !== null && (
-              <AgentSubagentList entries={subagents.entries} />
-            )}
+            <AgentSubagentDisclosure
+              entries={subagents}
+              truncated={turn.subagentLifecycle?.truncated}
+            />
             {workFold !== null && (
               <AgentTurnWork
                 compacting={compacting}
@@ -732,7 +734,6 @@ const AgentTurnView = memo(function AgentTurnView({
                 prose={prose}
                 running={foregroundRunning}
                 stream={stream}
-                subagents={subagents}
                 summary={workFold.summary}
                 textClipboard={textClipboard}
                 turn={turn}
@@ -826,7 +827,6 @@ function AgentTurnWork({
   prose,
   running,
   stream,
-  subagents,
   summary,
   textClipboard,
   turn,
@@ -841,7 +841,6 @@ function AgentTurnWork({
   readonly backgroundOnly: boolean;
   readonly running: boolean;
   readonly stream: AgentProseStream;
-  readonly subagents: AgentSubagentSummary | null;
   readonly summary: string;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
@@ -876,7 +875,6 @@ function AgentTurnWork({
         <ChevronDown aria-hidden="true" className="agent-work__chevron" size={14} />
       </summary>
       <div className="agent-work__events">
-        {subagents !== null && <AgentSubagentList entries={subagents.entries} />}
         <AgentActivityItems
           items={items}
           currentEventKey={
@@ -898,48 +896,6 @@ function AgentTurnWork({
         {liveStatus}
       </div>
     </details>
-  );
-}
-
-function AgentSubagentList({ entries }: { readonly entries: ReadonlyArray<AgentSubagentEntry> }) {
-  return (
-    <ul aria-label="Subagents" className="agent-subagent-list">
-      {entries.map((entry) => (
-        <li className="agent-subagent" key={entry.toolId}>
-          <span className="agent-subagent__name">{entry.name}</span>
-          <span className="agent-subagent__description">{entry.description}</span>
-          <span className={`agent-subagent__state agent-subagent__state--${entry.state}`}>
-            {subagentStateLabel(entry.state)}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function subagentStateLabel(state: AgentSubagentEntry["state"]): string {
-  if (state === "running") return "working";
-  if (state === "failed") return "failed";
-  return "completed";
-}
-
-function AgentSubagentBanner({ summary }: { readonly summary: AgentSubagentSummary }) {
-  const states = [
-    summary.running > 0 ? `${summary.running} working` : null,
-    summary.completed > 0 ? `${summary.completed} completed` : null,
-    summary.failed > 0 ? `${summary.failed} failed` : null,
-  ].filter((state): state is string => state !== null);
-  return (
-    <div className="agent-subagents" role="status">
-      <span
-        aria-hidden="true"
-        className={`agent-subagents__dot${summary.running > 0 ? " agent-subagents__dot--live" : ""}${summary.failed > 0 && summary.running === 0 ? " agent-subagents__dot--failed" : ""}`}
-      />
-      <span className="agent-subagents__label">
-        Started {summary.total} subagent{summary.total === 1 ? "" : "s"}
-      </span>
-      <span className="agent-subagents__status">{states.join(" · ")}</span>
-    </div>
   );
 }
 

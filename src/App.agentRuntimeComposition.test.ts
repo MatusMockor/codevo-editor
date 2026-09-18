@@ -9,7 +9,10 @@ describe("App agent and updater composition", () => {
       "utf8",
     );
 
-    expect(source).toContain("agentCliDiscoveryGateway,");
+    const gateways = readFileSync(new URL("./workbenchComposition.ts", import.meta.url), "utf8");
+    expect(source).toContain("...agentControllerGateways,");
+    expect(gateways).toContain("agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway()");
+    expect(gateways).toContain("agentQuestionGateway: new TauriAgentQuestionGateway()");
     expect(source).not.toContain("agentCliVersionGateway");
     expect(source).toMatch(
       /<WorkbenchOverlayDialogsHost\s+composition=\{workbenchComposition\.appUpdater\}/u,

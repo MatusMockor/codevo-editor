@@ -34,6 +34,7 @@ import {
   emptyAgentThreadsState,
   type AgentThread,
   type AgentThreadsAction,
+  type AgentTurnEvent,
   type AgentThreadsState,
 } from "../domain/agentThread";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
@@ -91,6 +92,7 @@ const OWNER_B = "workspace-b";
 const SESSION_ID = "sess-0001-abcd";
 
 interface Environment {
+  hasPendingThreadInput?: (threadId: string) => Promise<boolean>;
   flushThread?: (threadId: string) => Promise<boolean>;
   codexTransport?: CodexTransport;
   activeRoot: string;
@@ -2327,6 +2329,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     };
     const dependencies: AgentTurnDispatchDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
+      hasPendingThreadInput: (threadId) =>
+        environment.hasPendingThreadInput?.(threadId) ?? Promise.resolve(false),
       agentAttachmentGateway: attachmentGateway as unknown as AgentAttachmentGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       get projects() {
@@ -2796,6 +2800,204 @@ describe("useAgentTurnDispatch steering", () => {
       harness.unmount();
     },
   );
+
+  function appendBoundary(
+    harness: ReturnType<typeof renderDispatch>,
+    threadId: string,
+    sequence: number,
+    events: AgentTurnEvent[],
+  ): void {
+    const thread = harness.thread(threadId);
+    harness.dispatchAction({
+      kind: "turnEventsAppended",
+      threadId,
+      turnId: harness.turnIdOf(threadId, 0),
+      workspaceId: OWNER_A,
+      repositoryRoot: ROOT_A,
+      isolation: thread.target.isolation,
+      worktreePath: thread.target.worktreePath,
+      outputSequence: sequence,
+      events,
+      sessionId: SESSION_ID,
+      supervisorTruncated: false,
+    });
+  }
+
+  it("delivers only one queued head per new tool completion, not on old history or rerenders", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "toolResult", toolId: "old", outputSummary: "done", isError: false },
+      ]),
+    );
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" });
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    await act(async () =>
+      appendBoundary(harness, threadId, 2, [
+        { kind: "toolResult", toolId: "new", outputSummary: "done", isError: false },
+      ]),
+    );
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1));
+    expect(harness.agent.steerAgentTask.mock.calls[0][0].prompt).toBe("first");
+    await act(async () => harness.rerender());
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      appendBoundary(harness, threadId, 3, [
+        { kind: "toolResult", toolId: "next", outputSummary: "done", isError: false },
+      ]),
+    );
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(2));
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("delivers a queued message while foreground is settled and background work remains alive", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "result", text: "Monitoring", isError: false, usage: null },
+      ]),
+    );
+    await steerOnce(harness, { threadId, prompt: "change the monitor", delivery: "queued" });
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1));
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("waits for a fresh boundary when another message is queued after a settled-background steer", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "result", text: "monitoring", isError: false, usage: null },
+      ]),
+    );
+    expect(await steerOnce(harness, { threadId, prompt: "new work", delivery: "immediate" })).toBe(
+      "sent",
+    );
+    expect(harness.turn(threadId, 0).foregroundSettled).toBe(false);
+    await steerOnce(harness, { threadId, prompt: "next work", delivery: "queued" });
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      appendBoundary(harness, threadId, 2, [
+        { kind: "toolResult", toolId: "new", outputSummary: "done", isError: false },
+      ]),
+    );
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(2));
+    harness.unmount();
+  });
+
+  it("waits for exit after closed input without retrying on unrelated output", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "toolResult", toolId: "new", outputSummary: "done", isError: false },
+      ]),
+    );
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1));
+    await act(async () =>
+      appendBoundary(harness, threadId, 2, [
+        { kind: "toolResult", toolId: "next", outputSummary: "done", isError: false },
+      ]),
+    );
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).not.toBe("paused");
+    await act(async () =>
+      harness.emitStatus(harness.turnIdOf(threadId, 0), 2, { kind: "exited", exitCode: 0 }),
+    );
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].prompt).toBe("first");
+    harness.unmount();
+  });
+
+  it("holds a due queue for a pending question and retries once it is answered", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    let blocked = true;
+    harness.environment.hasPendingThreadInput = async () => blocked;
+    await steerOnce(harness, { threadId, prompt: "after question", delivery: "queued" });
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "toolResult", toolId: "new", outputSummary: "done", isError: false },
+      ]),
+    );
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).not.toBe("paused");
+    blocked = false;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("revalidates Stop while awaiting question preflight before immediate delivery", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const gate = createDeferred<boolean>();
+    harness.environment.hasPendingThreadInput = () => gate.promise;
+    let sending: Promise<AgentSteerOutcome> | undefined;
+    await act(async () => {
+      sending = harness.hook().steer({ threadId, prompt: "now", delivery: "immediate" });
+    });
+    await act(() => harness.hook().stop(threadId));
+    await act(async () => {
+      gate.resolve(false);
+      await sending;
+    });
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("bounds an unresponsive pending-request check and ignores its late result", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const gate = createDeferred<boolean>();
+    harness.environment.hasPendingThreadInput = () => gate.promise;
+    vi.useFakeTimers();
+    try {
+      let sending: Promise<AgentSteerOutcome> | undefined;
+      await act(async () => {
+        sending = harness.hook().steer({ threadId, prompt: "now", delivery: "immediate" });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(await sending).toBe("kept");
+      await act(async () => gate.resolve(false));
+      expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels delivery when a queued head is removed during pending-request preflight", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await steerOnce(harness, { threadId, prompt: "remove me", delivery: "queued" });
+    const entry = harness.hook().deferredFollowUps.get(threadId)![0];
+    const gate = createDeferred<boolean>();
+    harness.environment.hasPendingThreadInput = () => gate.promise;
+    let sending: Promise<void> | undefined;
+    await act(async () => {
+      sending = harness.hook().sendDeferredFollowUpNow(threadId, entry.id);
+    });
+    await act(async () => harness.hook().removeDeferredFollowUp(threadId, entry.id));
+    await act(async () => {
+      gate.resolve(false);
+      await sending;
+    });
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
 
   it("sends a queued message immediately only when explicitly requested", async () => {
     const harness = renderDispatch();

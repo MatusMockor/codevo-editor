@@ -28,6 +28,12 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       refreshIsolationStatus: (...args) => current.current.refreshIsolationStatus(...args),
       startThread: (...args) => current.current.startThread(...args),
       sendFollowUp: (...args) => current.current.sendFollowUp(...args),
+      hasUnconfirmedMessage: (threadId: string) =>
+        current.current.hasUnconfirmedMessage?.(threadId) === true,
+      discardUnconfirmedMessage: (threadId: string) =>
+        current.current.discardUnconfirmedMessage?.(threadId),
+      sendDeferredFollowUpNow: (threadId: string, id: string) =>
+        current.current.sendDeferredFollowUpNow?.(threadId, id) ?? Promise.resolve(),
       steer: (...args) => current.current.steer(...args),
       removeDeferredFollowUp: (...args) => current.current.removeDeferredFollowUp(...args),
       takeDeferredFollowUp: (...args) => current.current.takeDeferredFollowUp(...args),

@@ -1,3 +1,7 @@
+import {
+  normalizeAgentFollowUpBehavior,
+  type AgentFollowUpBehavior,
+} from "./agentFollowUpBehavior";
 import type { IntelligenceMode } from "./workspace";
 import { defaultKeymapSettings, normalizeKeymapSettings, type KeymapSettings } from "./keymap";
 import { normalizeUserSnippets, type UserSnippet } from "./snippets";
@@ -146,6 +150,7 @@ export interface AppSettings {
   appUpdaterSkippedVersion: string | null;
   agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
+  agentFollowUpBehavior: AgentFollowUpBehavior;
   agentAppearanceVariant: AgentAppearanceVariant;
   agentThreadFontSize: number;
   agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
@@ -506,6 +511,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     appUpdaterSkippedVersion: normalizeAppUpdaterSkippedVersion(value.appUpdaterSkippedVersion),
     agentCliPaths,
     agentCliKind,
+    agentFollowUpBehavior: normalizeAgentFollowUpBehavior(value.agentFollowUpBehavior),
     agentAppearanceVariant: normalizeAgentAppearanceVariant(value.agentAppearanceVariant),
     agentThreadFontSize:
       value.agentThreadFontSize === undefined

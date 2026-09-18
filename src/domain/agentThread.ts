@@ -1,6 +1,11 @@
+import {
+  retainAgentSubagentLifecycle,
+  type AgentSubagentLifecycle,
+} from "./agentSubagentLifecycle";
 import type { AgentAttachment } from "./agentAttachment";
 import type { AgentLaunchOptions } from "./agentLaunch";
 import {
+  MAX_AGENT_STEERS_PER_TURN,
   isAgentSessionId,
   isTerminalAgentTaskStatus,
   type AgentCliKind,
@@ -153,6 +158,7 @@ export type AgentTurnEvent =
   | { readonly kind: "reasoning"; readonly text: string }
   | {
       readonly kind: "userMessage";
+      readonly remoteMessageId?: string;
       readonly text: string;
       readonly attachments?: ReadonlyArray<AgentAttachment>;
     }
@@ -225,6 +231,10 @@ export interface AgentTurn {
   readonly eventsTruncated: boolean;
   readonly lastStatusSequence: number;
   readonly lastOutputSequence: number;
+  /** Runtime-only delivery cursor; independent of the retained output window. */
+  readonly queueBoundarySequence?: number;
+  readonly foregroundSettled?: boolean;
+  readonly subagentLifecycle?: AgentSubagentLifecycle;
   readonly streamMetrics?: AgentTurnStreamMetrics | null;
   readonly launch: AgentLaunchOptions | null;
   readonly cliVersion: string | null;
@@ -694,6 +704,11 @@ function appendTurnEvents(
     events: merged.events,
     eventsTruncated: turn.eventsTruncated || merged.truncated || action.supervisorTruncated,
     lastOutputSequence: action.outputSequence,
+    ...queueDeliveryProgress(turn, action.events, action.outputSequence),
+    subagentLifecycle: retainAgentSubagentLifecycle(
+      turn.subagentLifecycle ?? retainAgentSubagentLifecycle(undefined, turn.events),
+      action.events,
+    ),
     streamMetrics: mergeAgentTurnStreamMetrics(
       turn.streamMetrics ?? null,
       action.streamMetricsDelta ?? null,
@@ -725,9 +740,11 @@ export function steerCount(turn: AgentTurn): number {
 }
 
 export function agentTurnAcceptsSteerBytes(turn: AgentTurn, bytes: number): boolean {
-  if (turn.eventsTruncated) return false;
-  if (turn.events.length >= MAX_AGENT_EVENTS_PER_TURN) return false;
-  return agentTurnEventsUtf8Bytes(turn.events) + bytes <= MAX_AGENT_EVENT_BYTES_PER_TURN;
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return false;
+  const messages = turn.events.filter((event) => event.kind === "userMessage");
+  if (messages.length >= MAX_AGENT_STEERS_PER_TURN) return false;
+  // Output retention must not prevent new user input: old output can be evicted.
+  return agentTurnEventsUtf8Bytes(messages) + bytes <= MAX_AGENT_EVENT_BYTES_PER_TURN;
 }
 
 function appendSteeredMessage(
@@ -741,11 +758,41 @@ function appendSteeredMessage(
   if (isTerminalAgentTurnStatus(turn.status)) return state;
   if (UTF8_ENCODER.encode(action.event.text).byteLength > MAX_AGENT_EVENT_TEXT_BYTES) return state;
   if (!agentTurnAcceptsSteerBytes(turn, agentTurnEventUtf8Bytes(action.event))) return state;
-  const updatedTurn: AgentTurn = { ...turn, events: [...turn.events, action.event] };
+  const merged = mergeTurnEvents(turn.events, [action.event]);
+  const updatedTurn: AgentTurn = {
+    ...turn,
+    events: merged.events,
+    foregroundSettled: false,
+    eventsTruncated: turn.eventsTruncated || merged.truncated,
+  };
   const turns = thread.turns.map((candidate, position) =>
     position === index ? updatedTurn : candidate,
   );
   return replaceThread(state, { ...thread, turns });
+}
+
+function queueDeliveryProgress(
+  turn: AgentTurn,
+  events: ReadonlyArray<AgentTurnEvent>,
+  outputSequence: number,
+): Pick<AgentTurn, "queueBoundarySequence" | "foregroundSettled"> {
+  let queueBoundarySequence = turn.queueBoundarySequence ?? 0;
+  let foregroundSettled = turn.foregroundSettled ?? false;
+  for (const event of events) {
+    if (event.kind === "result") {
+      foregroundSettled = !event.isError;
+      queueBoundarySequence = event.isError ? (turn.queueBoundarySequence ?? 0) : outputSequence;
+    } else if (event.kind === "toolResult" && event.parentToolId === undefined) {
+      queueBoundarySequence = outputSequence;
+    } else if (
+      event.kind === "userMessage" ||
+      ((event.kind === "assistantText" || event.kind === "toolCall") &&
+        event.parentToolId === undefined)
+    ) {
+      foregroundSettled = false;
+    }
+  }
+  return { queueBoundarySequence, foregroundSettled };
 }
 
 function mergeAgentTurnStreamMetrics(

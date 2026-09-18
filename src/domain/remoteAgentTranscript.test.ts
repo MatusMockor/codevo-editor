@@ -159,3 +159,85 @@ it.each([true, false])(
     expect(final.eventsTruncated).toBe(true);
   },
 );
+it("projects durable accepted inputs once and keeps them through output eviction", () => {
+  const input: RemoteRunnerEvent = {
+    taskId: "task",
+    sequence: 1,
+    createdAt: "2026-09-13T00:00:00Z",
+    type: "task.input",
+    messageId: "message-1",
+    parts: [{ type: "text", text: "Look here" }],
+  };
+  const transcript = appendRemoteAgentTranscript(
+    createRemoteAgentTranscript("task", "claude"),
+    [
+      input,
+      { ...input, sequence: 2 },
+      ...Array.from({ length: 600 }, (_, i) => event(i + 3, `noise ${i}\n`)),
+    ],
+    { complete: false, terminal: false },
+  );
+  expect(transcript.events.filter((event) => event.kind === "userMessage")).toEqual([
+    { kind: "userMessage", remoteMessageId: "message-1", text: "Look here" },
+  ]);
+});
+it("keeps observed subagent lifecycle after its raw display event is evicted", () => {
+  const spawn =
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "spawn-1", name: "Agent", input: { description: "Review" } },
+        ],
+      },
+    }) + "\n";
+  const transcript = appendRemoteAgentTranscript(
+    createRemoteAgentTranscript("task", "claude"),
+    [event(1, spawn), ...Array.from({ length: 600 }, (_, i) => event(i + 2, `noise ${i}\n`))],
+    { complete: false, terminal: false },
+  );
+  expect(transcript.events.some((event) => event.kind === "toolCall")).toBe(false);
+  expect(transcript.subagentLifecycle?.entries).toContainEqual(
+    expect.objectContaining({ toolId: "spawn-1", state: "running" }),
+  );
+});
+it("retains all 32 maximum-size accepted inputs independently of the output byte budget", () => {
+  const inputs: RemoteRunnerEvent[] = Array.from({ length: 32 }, (_, i) => ({
+    type: "task.input",
+    taskId: "task",
+    sequence: i + 1,
+    createdAt: "2026-09-13T00:00:00Z",
+    messageId: `message-${i}`,
+    parts: [{ type: "text", text: "x".repeat(48_000) }],
+  }));
+  const first = appendRemoteAgentTranscript(createRemoteAgentTranscript("task", "claude"), inputs, {
+    complete: false,
+    terminal: false,
+  });
+  const second = appendRemoteAgentTranscript(
+    first,
+    Array.from({ length: 600 }, (_, i) => event(i + 33, `noise ${i}\n`)),
+    { complete: false, terminal: false },
+  );
+  const messages = second.events.filter((item) => item.kind === "userMessage");
+  expect(messages).toHaveLength(32);
+  expect(messages[31]).toMatchObject({ remoteMessageId: "message-31", text: "x".repeat(48_000) });
+  expect(messages.every((item) => item.text.length === 48_000)).toBe(true);
+  expect(second.eventsTruncated).toBe(true);
+});
+it("rejects a server exceeding its accepted-input contract instead of silently omitting a message", () => {
+  const inputs: RemoteRunnerEvent[] = Array.from({ length: 33 }, (_, i) => ({
+    type: "task.input",
+    taskId: "task",
+    sequence: i + 1,
+    createdAt: "2026-09-13T00:00:00Z",
+    messageId: `message-${i}`,
+    parts: [{ type: "text", text: "message" }],
+  }));
+  expect(() =>
+    appendRemoteAgentTranscript(createRemoteAgentTranscript("task", "claude"), inputs, {
+      complete: false,
+      terminal: false,
+    }),
+  ).toThrow("accepted message limit");
+});

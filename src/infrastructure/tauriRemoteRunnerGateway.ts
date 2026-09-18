@@ -29,6 +29,8 @@ export const REMOTE_RUNNER_COMMANDS = {
   cancelTask: "remote_runner_cancel_task",
   getTaskResume: "remote_runner_get_task_resume",
   continueTask: "remote_runner_continue_task",
+  steerTask: "remote_runner_steer_task",
+  steerPendingMessage: "remote_runner_steer_pending_message",
   listPendingMessages: "remote_runner_list_pending_messages",
   enqueueMessage: "remote_runner_enqueue_message",
   cancelPendingMessage: "remote_runner_cancel_pending_message",
@@ -131,6 +133,18 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   continueTask(request: R.RemoteRunnerContinueTaskRequest) {
     return this.call("continueTask", request);
+  }
+  async steerTask(request: R.RemoteRunnerSteerTaskRequest) {
+    const response = await this.call("steerTask", request);
+    if (response.taskId !== request.taskId || response.messageId !== request.idempotencyKey)
+      throw new Error("Runner returned a different steering message.");
+    return response;
+  }
+  async steerPendingMessage(request: R.RemoteRunnerSteerPendingRequest) {
+    const response = await this.call("steerPendingMessage", request);
+    if (response.taskId !== request.taskId || response.messageId !== request.pendingId)
+      throw new Error("Runner returned a different steering message.");
+    return response;
   }
   listPendingMessages(request: R.RemoteRunnerTaskRequest) {
     return this.call("listPendingMessages", request);

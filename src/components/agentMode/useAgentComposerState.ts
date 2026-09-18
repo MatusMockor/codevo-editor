@@ -5,7 +5,10 @@ import {
   type AgentComposerDraftStore,
 } from "../../application/agentComposerDrafts";
 import { mergeRestoredPrompt } from "../../application/agentQueuedMessageEdit";
-import { agentThreadAcceptsQueuedMessage } from "../../application/agentTurnAdmission";
+import {
+  agentThreadAcceptsQueuedMessage,
+  agentThreadIsSteerable,
+} from "../../application/agentTurnAdmission";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
@@ -437,7 +440,7 @@ export function useAgentComposerControllerState({
             setSteering(true);
             try {
               const outcome = await steerThread({
-                delivery: "queued",
+                delivery: submission.delivery ?? "queued",
                 ...prepared.request,
                 threadId: authority.threadId,
                 prompt,
@@ -538,6 +541,13 @@ export function useAgentComposerControllerState({
   const composerProps: AgentComposerControllerProps = {
     attachments,
     attachmentTargetKey,
+    immediateBlockedReason:
+      selectedThread !== null &&
+      selectedThread.execution?.kind !== "remote" &&
+      composerMode.kind === "steer" &&
+      !agentThreadIsSteerable(selectedThread.thread)
+        ? "This session supports queued messages only. Use the Codex app-server transport to send now."
+        : null,
     draftKey: agentComposerDraftKey(selectedThread, target),
     promptRestore,
     promptOwnerKey: JSON.stringify([

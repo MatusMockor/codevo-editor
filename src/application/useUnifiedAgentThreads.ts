@@ -12,6 +12,7 @@ import {
 } from "./remoteAgentProjection";
 import { useRemoteHistorySearchPort } from "./useRemoteHistorySearchPort";
 import { useRemoteAgentInventory } from "./useRemoteAgentInventory";
+import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
@@ -188,6 +189,10 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     const load = async () => {
       for (const snapshot of inventory.snapshots)
         for (const task of snapshot.tasks) {
+          const inputParts = (snapshot.replays.get(task.id) ?? [])
+            .filter((event) => event.type === "task.input")
+            .flatMap((event) => event.parts ?? []);
+          const allParts = [...task.parts, ...inputParts];
           if (
             remoteAgentThreadKey(
               snapshot.serverId,
@@ -195,25 +200,35 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
               task.conversationId ?? task.id,
             ) !== selectedThreadId ||
             task.projectId === undefined ||
-            !task.parts.some((part) => part.type === "attachment")
+            !allParts.some((part) => part.type === "attachment")
           )
             continue;
           const key = `${snapshot.serverId}\u0000${task.id}`;
-          if (attachmentValues.has(key)) continue;
+          const existing = attachmentValues.get(key) ?? [];
+          const missing = allParts.filter(
+            (part) =>
+              part.type === "attachment" &&
+              !existing.some(
+                (attachment) =>
+                  attachment.kind === "image" &&
+                  attachment.attachmentId === part.attachmentId.replace(/-/g, ""),
+              ),
+          );
+          if (!missing.length) continue;
           const attachmentOwner = resolveOwner(
             remoteAgentProjectKey(snapshot.serverId, task.runnerId, task.projectId),
           );
           if (attachmentOwner === null) continue;
           try {
             const attachments = await attachmentPort.current.loadTaskAttachments(
-              task,
+              { ...task, parts: missing.slice(0, 8) },
               snapshot.serverId,
               attachmentOwner,
             );
             if (disposed || !valid(owner)) return;
             setAttachmentState((previous) => {
               const values = new Map(previous.owner === owner ? previous.values : []);
-              values.set(key, attachments);
+              values.set(key, [...existing, ...attachments]);
               while (values.size > 512) values.delete(values.keys().next().value!);
               return { owner, values };
             });
@@ -256,6 +271,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           ...snapshot,
           runnerId: snapshot.descriptor.runnerId,
           pendingMessagesSupported: snapshot.descriptor.capabilities.pendingMessages === true,
+          taskSteeringSupported: snapshot.descriptor.capabilities.taskSteering === true,
           interactiveQuestionsSupported:
             snapshot.descriptor.capabilities.interactiveQuestions === true,
           attachmentsByTask,
@@ -290,6 +306,18 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     resolveAttachments: remoteAttachments.resolve,
   });
   const pendingMessages = useRemotePendingMessages({
+    gateway,
+    owner,
+    valid,
+    snapshots: inventory.snapshots,
+    views: remoteById,
+    resolveAttachments: remoteAttachments.resolve,
+    publish: inventory.publishPending,
+    refresh: inventory.refresh,
+    report,
+  });
+  const remoteSteer = useRemoteAgentSteer({
+    selectedThreadId,
     gateway,
     owner,
     valid,
@@ -490,7 +518,19 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       if (isRemoteAgentIdentity(threadId)) await pendingMessages.resume(threadId);
       else await local.resumeDeferredFollowUps?.(threadId);
     },
-    dispatching: local.dispatching || mutations.busy || pendingMessages.busy,
+    hasUnconfirmedMessage: (threadId) =>
+      isRemoteAgentIdentity(threadId)
+        ? remoteSteer.hasUnconfirmed(threadId)
+        : local.hasUnconfirmedMessage?.(threadId) === true,
+    discardUnconfirmedMessage: (threadId) => {
+      if (isRemoteAgentIdentity(threadId)) remoteSteer.discardUnconfirmed(threadId);
+      else local.discardUnconfirmedMessage?.(threadId);
+    },
+    sendDeferredFollowUpNow: async (threadId, id) => {
+      if (isRemoteAgentIdentity(threadId)) await remoteSteer.sendPending(threadId, id);
+      else await local.sendDeferredFollowUpNow?.(threadId, id);
+    },
+    dispatching: local.dispatching || mutations.busy || pendingMessages.busy || remoteSteer.busy,
     agentCliConfigured: remoteMode ? serverReady : local.agentCliConfigured,
     agentCliKind: selectedRemote?.thread.provider.kind ?? local.agentCliKind,
     agentCliVersion: remoteMode ? null : local.agentCliVersion,
@@ -557,6 +597,10 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     },
     sendFollowUp: async (request) => {
       if (!isRemoteAgentIdentity(request.threadId)) return local.sendFollowUp(request);
+      if (remoteSteer.hasUnconfirmed(request.threadId)) {
+        report("Retry the original immediate message before sending another message.");
+        return false;
+      }
       const target = targetForThread(request.threadId);
       const view = remoteById.get(request.threadId);
       if (view?.thread.provider.kind !== request.launch.provider || view.thread.archived)
@@ -581,7 +625,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     steer: async (request) => {
       if (isRemoteAgentIdentity(request.threadId)) {
         if (request.delivery === "immediate") {
-          report("Server messages are queued for the next turn.");
+          if (pendingMessages.hasUnconfirmed(request.threadId)) {
+            report("Retry the original queued message before changing its delivery.");
+            return "kept";
+          }
+          return (await remoteSteer.send(request)) ? "sent" : "kept";
+        }
+        if (remoteSteer.hasUnconfirmed(request.threadId)) {
+          report("Retry the original immediate message before changing its delivery.");
           return "kept";
         }
         return (await pendingMessages.enqueue(request)) ? "deferred" : "kept";

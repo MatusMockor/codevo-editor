@@ -1,3 +1,7 @@
+import {
+  classifyClaudeSubagentTelemetry,
+  type ClaudeSubagentClassification,
+} from "./claudeSubagentClassification";
 import type { AgentCliKind, AgentTaskOutputStream } from "../agentTask";
 import type { AgentAccountUsageObservation } from "../agentAccountUsage";
 import {
@@ -33,6 +37,7 @@ export interface AgentOutputParserState {
   readonly stdout: AgentOutputPendingLine;
   readonly stderr: AgentOutputPendingLine;
   readonly emittedToolIds: ReadonlySet<string>;
+  readonly claudeSubagentClassification?: ClaudeSubagentClassification;
   readonly sessionId: string | null;
 }
 
@@ -54,6 +59,7 @@ interface AgentOutputLineStrategy {
 interface ParsedLines {
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly emittedToolIds: ReadonlySet<string>;
+  readonly claudeSubagentClassification?: ClaudeSubagentClassification;
   readonly capturedSessionId: string | null;
   readonly reportedSessionId: string | null;
   readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
@@ -100,6 +106,7 @@ export function feedAgentOutput(
     state: {
       ...withPendingLine(state, stream, split.state),
       emittedToolIds: parsed.emittedToolIds,
+      claudeSubagentClassification: parsed.claudeSubagentClassification,
       sessionId: parsed.capturedSessionId,
     },
     events: [...overflowEvents, ...parsed.events],
@@ -129,6 +136,7 @@ function parseLines(
 ): ParsedLines {
   const events: AgentTurnEvent[] = [];
   let emittedToolIds = state.emittedToolIds;
+  let claudeSubagentClassification = state.claudeSubagentClassification;
   let capturedSessionId = state.sessionId;
   let reportedSessionId: string | null = null;
   let sessionFallback: AgentSessionFallback | undefined;
@@ -157,7 +165,14 @@ function parseLines(
       if (capturedSessionId !== null) continue;
       sessionFallback = parsed.result.sessionFallback;
     }
-    events.push(...parsed.result.events);
+    if (state.kind === "claudeCode") {
+      const classified = classifyClaudeSubagentTelemetry(
+        claudeSubagentClassification,
+        parsed.result.events,
+      );
+      claudeSubagentClassification = classified.state;
+      events.push(...classified.events);
+    } else events.push(...parsed.result.events);
     const candidate = parsed.result.sessionId;
     if (candidate === null || candidate === capturedSessionId) continue;
     reportedSessionId = candidate;
@@ -166,6 +181,7 @@ function parseLines(
   return {
     events,
     emittedToolIds,
+    claudeSubagentClassification,
     capturedSessionId,
     reportedSessionId,
     accountUsage,

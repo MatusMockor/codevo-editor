@@ -1359,3 +1359,29 @@
 .agent-composer__compact-panel .agent-model-picker__dialog {
   flex-direction: row;
 }
+
+.agent-composer__alternate {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-composer__alternate:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.agent-composer__alternate:hover:not(:disabled) {
+  background: var(--agent-hover);
+}
+
+.agent-composer__alternate:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}

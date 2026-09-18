@@ -609,42 +609,75 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("queues for the running thread from the composer and stops it from the Stop control", async () => {
-    const steer = vi.fn(async () => "sent" as const);
-    const sendFollowUp = vi.fn(async () => true);
-    const stop = vi.fn(async () => undefined);
+  it.each(["queue", "steer"] as const)(
+    "uses the %s preference during a run and keeps Stop available",
+    async (followUpBehavior) => {
+      const steer = vi.fn(async () => "sent" as const);
+      const sendFollowUp = vi.fn(async () => true);
+      const stop = vi.fn(async () => undefined);
+      render({
+        followUpBehavior,
+        agents: surface({
+          sendFollowUp,
+          steer,
+          stop,
+          threads: [
+            threadView({
+              threadId: "agt-1",
+              status: { kind: "running" },
+              launch: defaultAgentComposerLaunch("claudeCode"),
+            }),
+          ],
+        }),
+      });
+
+      clickText("Refactor the parser");
+
+      expect(host.textContent).not.toContain("This thread is still running");
+      expect(promptField().placeholder).toBe(
+        followUpBehavior === "queue"
+          ? "Queue a message for the next turn"
+          : "Send a message to the running agent",
+      );
+
+      typePrompt("also run the tests");
+      await submitFormAsync();
+
+      expect(steer).toHaveBeenCalledWith({
+        delivery: followUpBehavior === "queue" ? "queued" : "immediate",
+        threadId: "agt-1",
+        prompt: "also run the tests",
+      });
+      expect(sendFollowUp).not.toHaveBeenCalled();
+
+      click("button.agent-composer__stop");
+      expect(stop).toHaveBeenCalledWith("agt-1");
+    },
+  );
+
+  it("dismisses uncertain delivery only through the exact conversation action", () => {
+    const discardUnconfirmedMessage = vi.fn();
+    const hasUnconfirmedMessage = (id: string): boolean => id === "agt-1";
     render({
       agents: surface({
-        sendFollowUp,
-        steer,
-        stop,
         threads: [
-          threadView({
-            threadId: "agt-1",
-            status: { kind: "running" },
-            launch: defaultAgentComposerLaunch("claudeCode"),
-          }),
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2", title: "Second task" }),
         ],
+        notice: { kind: "warning", message: "Delivery failed", action: null },
+        discardUnconfirmedMessage,
+        hasUnconfirmedMessage,
       }),
     });
-
     clickText("Refactor the parser");
-
-    expect(host.textContent).not.toContain("This thread is still running");
-    expect(promptField().placeholder).toBe("Queue a message for the next turn");
-
-    typePrompt("also run the tests");
-    await submitFormAsync();
-
-    expect(steer).toHaveBeenCalledWith({
-      delivery: "queued",
-      threadId: "agt-1",
-      prompt: "also run the tests",
-    });
-    expect(sendFollowUp).not.toHaveBeenCalled();
-
-    click("button.agent-composer__stop");
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(host.textContent).toContain("The agent may already have received your message.");
+    click('button[aria-label="Dismiss agent notice"]');
+    expect(discardUnconfirmedMessage).not.toHaveBeenCalled();
+    clickText("Second task");
+    expect(host.textContent).not.toContain("Dismiss unconfirmed message");
+    clickText("Refactor the parser");
+    clickText("Dismiss unconfirmed message");
+    expect(discardUnconfirmedMessage).toHaveBeenCalledExactlyOnceWith("agt-1");
   });
 
   it("renders the deferred follow-ups of the selected thread and removes one on request", () => {

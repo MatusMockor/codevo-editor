@@ -123,6 +123,7 @@ export interface WorkbenchControllerAgentsOptions {
     | "agentProviderSignInGateway"
     | "agentRootLeaseGateway"
     | "agentTaskGateway"
+    | "agentQuestionGateway"
     | "gitWorktreeGateway"
   >;
   readonly openFileRef: WorkbenchControllerOpenFileRef;
@@ -270,6 +271,7 @@ export function useWorkbenchControllerAgents(
     agentCliDiscoveryGateway:
       options.options.agentCliDiscoveryGateway ?? unavailableAgentCliDiscoveryGateway,
     agentTaskGateway: options.options.agentTaskGateway,
+    agentQuestionGateway: options.options.agentQuestionGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.options.gitWorktreeGateway,
     editorBridge,

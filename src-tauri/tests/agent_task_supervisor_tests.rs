@@ -3804,3 +3804,6 @@ exit 0
     drop(registry);
     fs::remove_dir_all(cwd).expect("fixture cleanup");
 }
+
+#[path = "support/agent_task_steer_eof_tests.rs"]
+mod steer_eof;

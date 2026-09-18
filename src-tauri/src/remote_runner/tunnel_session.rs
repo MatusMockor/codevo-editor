@@ -189,7 +189,11 @@ impl Session {
         let request = tunnel_http::prepare(method, path, body, headers)?;
         let result = tauri::async_runtime::block_on(async {
             tokio::time::timeout(
-                TIMEOUT,
+                if path.ends_with("/steer") {
+                    std::time::Duration::from_secs(60)
+                } else {
+                    TIMEOUT
+                },
                 tunnel_http::request(
                     &self.client,
                     &self.token,

@@ -179,7 +179,9 @@ describe("App docked text search integration", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-  });
+    // Module transformation is fixture setup, not part of the interaction deadline.
+    await import("./App");
+  }, 60_000);
 
   afterEach(() => {
     act(() => root.unmount());

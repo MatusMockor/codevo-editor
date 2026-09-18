@@ -1,3 +1,4 @@
+import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import type { RemoteReplayGap } from "./remoteAgentReplayWindow";
 import {
   agentThreadAttention,
@@ -40,12 +41,14 @@ export function remoteAgentThreadKey(
 export interface RemoteAgentProjectionInput {
   readonly interactiveQuestionsSupported?: boolean;
   readonly pendingMessagesSupported?: boolean;
+  readonly taskSteeringSupported?: boolean;
   readonly serverId: string;
   readonly runnerId: string;
   readonly projects: readonly RemoteRunnerProject[];
   readonly tasks: readonly RemoteRunnerTask[];
   readonly replays: ReadonlyMap<string, readonly RemoteRunnerEvent[]>;
   readonly resumes: ReadonlyMap<string, RemoteRunnerTaskResume>;
+  readonly subagentLifecycles?: ReadonlyMap<string, AgentSubagentLifecycle>;
   readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete?: ReadonlySet<string>;
   readonly replayTruncated?: ReadonlySet<string>;
@@ -227,7 +230,32 @@ function projectConversation(
         status: turnStatus(task, transcript),
         startedAtEpochMs: timestamp(task.createdAt),
         endedAtEpochMs: transcript.finished ? transcript.endedAtEpochMs : null,
-        events: transcript.events,
+        events: !transcript.events.some(
+          (event) => event.kind === "userMessage" && event.remoteMessageId,
+        )
+          ? transcript.events
+          : transcript.events.map((event) => {
+              if (event.kind !== "userMessage" || !event.remoteMessageId) return event;
+              const message = input.replays
+                .get(task.id)
+                ?.find(
+                  (item) => item.type === "task.input" && item.messageId === event.remoteMessageId,
+                );
+              const ids = new Set(
+                message?.parts
+                  ?.filter((part) => part.type === "attachment")
+                  .map((part) => part.attachmentId.replace(/-/g, "")),
+              );
+              return {
+                ...event,
+                attachments: input.attachmentsByTask
+                  ?.get(task.id)
+                  ?.filter(
+                    (attachment) => attachment.kind === "image" && ids.has(attachment.attachmentId),
+                  ),
+              };
+            }),
+        subagentLifecycle: input.subagentLifecycles?.get(task.id) ?? transcript.subagentLifecycle,
         eventsTruncated: transcript.eventsTruncated,
         lastStatusSequence: transcript.lastRunnerSequence,
         lastOutputSequence: transcript.outputOrdinal,
@@ -237,7 +265,21 @@ function projectConversation(
         },
         launch: task.launch ?? null,
         cliVersion: null,
-        attachments: input.attachmentsByTask?.get(task.id),
+        attachments: !(input.replays.get(task.id) ?? []).some(
+          (event) => event.type === "task.input",
+        )
+          ? input.attachmentsByTask?.get(task.id)
+          : input.attachmentsByTask
+              ?.get(task.id)
+              ?.filter(
+                (attachment) =>
+                  attachment.kind === "image" &&
+                  task.parts.some(
+                    (part) =>
+                      part.type === "attachment" &&
+                      part.attachmentId.replace(/-/g, "") === attachment.attachmentId,
+                  ),
+              ),
       };
     }),
     turnsTruncated:
@@ -264,6 +306,7 @@ function projectConversation(
     execution: {
       kind: "remote",
       pendingMessages: input.pendingMessagesSupported === true,
+      taskSteering: input.taskSteeringSupported === true,
       interactiveQuestions: input.interactiveQuestionsSupported === true,
       serverId: input.serverId,
       runnerId: input.runnerId,

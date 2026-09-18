@@ -114,10 +114,7 @@ import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
 const {
-  agentCliDiscoveryGateway,
-  agentProviderGateway,
-  agentProviderSignInGateway,
-  agentRootLeaseGateway,
+  agentControllerGateways,
   artisanRoutesGateway,
   cancelJavaScriptTypeScriptLanguageServerRequest,
   cursorStore,
@@ -244,10 +241,7 @@ function App() {
     settingsGateway,
     workbenchPrompter,
     {
-      agentCliDiscoveryGateway,
-      agentProviderGateway,
-      agentProviderSignInGateway,
-      agentRootLeaseGateway,
+      ...agentControllerGateways,
       editorMenuCommandRunner,
       editorCursorStore: cursorStore,
       cancelJavaScriptTypeScriptLanguageServerRequest,

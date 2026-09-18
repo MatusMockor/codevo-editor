@@ -92,6 +92,7 @@ export {
 
 export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
+  readonly hasPendingThreadInput?: (threadId: string) => Promise<boolean>;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly preflightInPlace: (

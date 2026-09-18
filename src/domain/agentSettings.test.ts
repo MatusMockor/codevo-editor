@@ -35,6 +35,7 @@ describe("defaultAgentAppSettings", () => {
       agentCliKind: "claudeCode",
       agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
+      agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),

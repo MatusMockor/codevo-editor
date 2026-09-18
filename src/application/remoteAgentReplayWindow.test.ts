@@ -28,3 +28,16 @@ it("keeps array identity below the cap and tracks a full eviction independently 
     gap: { throughSequence: 1, startsAtLineBoundary: true },
   });
 });
+it("retains accepted input independently of evicted output with a 32 message bound", () => {
+  const inputs: RemoteRunnerEvent[] = Array.from({ length: 33 }, (_, i) => ({
+    taskId: "task",
+    sequence: i + 1,
+    createdAt: "date",
+    type: "task.input",
+    messageId: `message-${i}`,
+    parts: [{ type: "text", text: "message" }],
+  }));
+  const result = retainRemoteReplayWindow([...inputs, event(34, "large output")], 0);
+  expect(result.events).toEqual(inputs.slice(1));
+  expect(result.truncated).toBe(true);
+});

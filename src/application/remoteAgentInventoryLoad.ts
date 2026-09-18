@@ -1,3 +1,4 @@
+import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import { retainRemoteReplayWindow, type RemoteReplayGap } from "./remoteAgentReplayWindow";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import type {
@@ -27,6 +28,7 @@ export interface RemoteAgentInventorySnapshot {
   readonly replays: ReadonlyMap<string, readonly RemoteRunnerEvent[]>;
   readonly resumes: ReadonlyMap<string, RemoteRunnerTaskResume>;
   readonly replayCursors?: ReadonlyMap<string, number>;
+  readonly subagentLifecycles?: ReadonlyMap<string, AgentSubagentLifecycle>;
   readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete: ReadonlySet<string>;
   readonly replayTruncated: ReadonlySet<string>;
@@ -174,9 +176,12 @@ export async function loadRemoteAgentInventory(
   );
   const replayCursors = new Map<string, number>();
   const replayGaps = new Map<string, RemoteReplayGap>();
+  const subagentLifecycles = new Map<string, AgentSubagentLifecycle>();
   const olderTurnBytes = Math.floor(3_000_000 / Math.max(1, selected.length - 1));
   let error: string | null = null;
   for (const task of selected) {
+    const priorLifecycle = previous.subagentLifecycles?.get(task.id);
+    if (priorLifecycle) subagentLifecycles.set(task.id, priorLifecycle);
     const perTurnBytes = task === latestSelected ? 3_000_000 : olderTurnBytes;
     let events = previous.replays.get(task.id) ?? [];
     let cursor = previous.replayCursors?.get(task.id) ?? events[events.length - 1]?.sequence ?? 0;
@@ -187,6 +192,7 @@ export async function loadRemoteAgentInventory(
       for (let pageNumber = 0; pageNumber < 24; pageNumber++) {
         const page = await gateway.listEvents({ serverId, taskId: task.id, after: cursor });
         check();
+        if (page.subagentLifecycle) subagentLifecycles.set(task.id, page.subagentLifecycle);
         let next = cursor;
         for (const event of page.items) {
           if (event.taskId !== task.id || event.sequence <= next)
@@ -243,7 +249,7 @@ export async function loadRemoteAgentInventory(
       page.items.some(
         (item) =>
           item.conversationId !== (latestSelected.conversationId ?? latestSelected.id) ||
-          (item.status !== "queued" && item.status !== "paused"),
+          (item.status !== "queued" && item.status !== "paused" && item.status !== "uncertain"),
       )
     )
       throw new Error("The runner returned an invalid pending message queue.");
@@ -263,6 +269,7 @@ export async function loadRemoteAgentInventory(
     replayComplete,
     replayCursors,
     replayGaps,
+    subagentLifecycles,
     replayTruncated,
     error,
   };

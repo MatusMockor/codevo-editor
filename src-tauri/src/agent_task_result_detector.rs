@@ -20,11 +20,29 @@ pub struct ResultLineDetector {
     live: HashSet<String>,
     terminal: HashSet<String>,
     session: Option<String>,
+    lifecycle: Option<
+        std::sync::Arc<
+            crate::agent_task_spawner::agent_task_input::claude_lifecycle::ClaudeInputLifecycle,
+        >,
+    >,
+    result_candidate: bool,
 }
 
 impl ResultLineDetector {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_lifecycle(
+        mut self,
+        lifecycle: Option<
+            std::sync::Arc<
+                crate::agent_task_spawner::agent_task_input::claude_lifecycle::ClaudeInputLifecycle,
+            >,
+        >,
+    ) -> Self {
+        self.lifecycle = lifecycle;
+        self
     }
 
     pub fn feed(&mut self, chunk: &[u8]) -> Result<bool, &'static str> {
@@ -78,6 +96,9 @@ impl ResultLineDetector {
                 _ => {}
             }
         }
+        if let Some(lifecycle) = &self.lifecycle {
+            lifecycle.observe(&message)?;
+        }
         match message.get("type").and_then(Value::as_str) {
             Some("result") => {
                 let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
@@ -85,14 +106,28 @@ impl ResultLineDetector {
                         .get("subtype")
                         .and_then(Value::as_str)
                         .is_some_and(|subtype| subtype.starts_with("error"));
-                Ok(failed || self.live.is_empty())
+                self.result_candidate = self.live.is_empty();
+                Ok(failed || self.settled())
             }
             Some("system") => {
                 self.consume_task(&message)?;
+                if !self.live.is_empty() {
+                    self.result_candidate = false;
+                }
                 Ok(false)
             }
+            Some("command_lifecycle") => Ok(self.settled()),
             _ => Ok(false),
         }
+    }
+
+    fn settled(&self) -> bool {
+        self.result_candidate
+            && self.live.is_empty()
+            && self
+                .lifecycle
+                .as_ref()
+                .is_none_or(|lifecycle| lifecycle.close_if_settled())
     }
 
     fn consume_task(&mut self, message: &Value) -> Result<(), &'static str> {

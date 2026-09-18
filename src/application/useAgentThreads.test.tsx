@@ -36,6 +36,8 @@ import {
   type AgentThreadsDependencies,
 } from "./useAgentThreads";
 import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import type { AgentQuestionRequest } from "../domain/agentQuestion";
 
 const ROOT = "/workspace/app";
 const OWNER = "workspace-a";
@@ -55,6 +57,7 @@ interface Environment {
   cliKind: AgentCliKind;
   repositoryRoots: ReadonlyArray<string>;
   externalSessionGateway?: ExternalSessionGateway;
+  agentQuestionGateway?: AgentQuestionGateway;
 }
 
 const SHA_A = "a".repeat(40);
@@ -87,6 +90,43 @@ function gitStatusOf(rootPath: string, changeCount: number): GitStatus {
 }
 
 describe("useAgentThreads facade", () => {
+  it("keeps immediate steering until the exact running task's pending question is answered", async () => {
+    const list = vi.fn<AgentQuestionGateway["list"]>();
+    const harness = renderThreads({ agentQuestionGateway: { list, answer: vi.fn() } });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))!.threadId;
+    act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
+    const question: AgentQuestionRequest = {
+      id: "question",
+      taskId: harness.turnIdOf(threadId),
+      provider: "claudeCode",
+      status: "pending",
+      questions: [
+        {
+          id: "q",
+          header: "Choose",
+          prompt: "Which?",
+          multiple: false,
+          allowCustom: true,
+          options: [{ id: "a", label: "A", description: "" }],
+        },
+      ],
+    };
+    list.mockResolvedValue([question]);
+    const request = { threadId, prompt: "Use the selected option", delivery: "immediate" as const };
+    expect(await act(() => harness.hook().steer(request))).toBe("kept");
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledWith({
+      kind: "local",
+      workspaceId: OWNER,
+      repositoryRoot: ROOT,
+      taskId: harness.turnIdOf(threadId),
+    });
+    list.mockResolvedValue([]);
+    expect(await act(() => harness.hook().steer(request))).toBe("sent");
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
   it("loads persisted threads on agent mode entry and presents them as settled views", async () => {
     const stored = storedThread("agt-stored-0001", "agt-stored-0002");
     const harness = renderThreads({ storedThreads: [stored] });
@@ -367,6 +407,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   function Harness() {
     const dependencies: AgentThreadsDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
+      agentQuestionGateway: environment.agentQuestionGateway,
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
       externalSessionGateway: environment.externalSessionGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,

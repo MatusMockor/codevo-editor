@@ -14,7 +14,6 @@ import {
   AGENT_THREAD_RUNNING_NOTICE,
   AGENT_THREAD_STARTING_NOTICE,
   AGENT_THREAD_STEER_LIMIT_NOTICE,
-  AGENT_THREAD_TURN_FULL_NOTICE,
   admitSteer,
   agentThreadIsSteerable,
   type AgentTurnAdmissionDependencies,
@@ -260,7 +259,7 @@ describe("admitSteer", () => {
     expect(notices[notices.length - 1]?.message).toBe(AGENT_THREAD_STARTING_NOTICE);
   });
 
-  it("refuses a turn that can no longer record the message", () => {
+  it("admits steering when only retained output is full or truncated", () => {
     const full: ReadonlyArray<AgentTurn> = [
       turn({ eventsTruncated: true }),
       turn({
@@ -283,8 +282,8 @@ describe("admitSteer", () => {
     for (const running of full) {
       const { deps, notices } = harness(thread({ turns: [running] }));
 
-      expect(admitSteer(deps, steerRequest({ prompt: "12345" }), new Set())).toBeNull();
-      expect(notices[notices.length - 1]?.message).toBe(AGENT_THREAD_TURN_FULL_NOTICE);
+      expect(admitSteer(deps, steerRequest({ prompt: "12345" }), new Set())).not.toBeNull();
+      expect(notices).toEqual([]);
     }
   });
 

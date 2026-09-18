@@ -219,3 +219,72 @@ describe("remote original thread projection", () => {
     ).toEqual([]);
   });
 });
+it("replays accepted image messages with late metadata and stable owner-specific views", () => {
+  const cache = new RemoteAgentProjection();
+  const snapshot: RemoteAgentProjectionInput = {
+    ...input([root]),
+    replays: new Map([
+      [
+        "root",
+        [
+          {
+            type: "task.input",
+            taskId: "root",
+            sequence: 1,
+            createdAt: root.createdAt,
+            messageId: "message",
+            parts: [
+              { type: "text", text: "Check image" },
+              { type: "attachment", attachmentId: "ab-cd" },
+            ],
+          },
+        ],
+      ],
+    ]),
+  };
+  const first = cache.project(snapshot);
+  expect(first[0]!.thread.turns[0]!.events[0]).toMatchObject({
+    kind: "userMessage",
+    text: "Check image",
+    remoteMessageId: "message",
+  });
+  const attachment = {
+    kind: "image" as const,
+    attachmentId: "abcd",
+    remote: { serverId: "server", attachmentId: "ab-cd" },
+    name: "image.png",
+    mime: "image/png" as const,
+    bytes: 12,
+    width: 1,
+    height: 1,
+  };
+  const withImages = { ...snapshot, attachmentsByTask: new Map([["root", [attachment]]]) };
+  const second = cache.project(withImages);
+  expect(second[0]!.thread.turns[0]!.events[0]).toMatchObject({ attachments: [attachment] });
+  expect(second[0]!.thread.turns[0]!.attachments).toEqual([]);
+  expect(cache.project(withImages)).toBe(second);
+  expect(projectRemoteAgentThreads(withImages)[0]!.thread.turns[0]!.events).toEqual(
+    second[0]!.thread.turns[0]!.events,
+  );
+});
+it("uses durable server subagent summaries when historical output was already evicted", () => {
+  const lifecycle = {
+    entries: [
+      {
+        id: "tool:spawn",
+        toolId: "spawn",
+        name: "Agent",
+        description: "Review",
+        state: "completed" as const,
+      },
+    ],
+    truncated: false,
+  };
+  const projected = projectRemoteAgentThreads({
+    ...input([root]),
+    replayTruncated: new Set(["root"]),
+    subagentLifecycles: new Map([["root", lifecycle]]),
+  });
+  expect(projected[0]!.thread.turns[0]!.subagentLifecycle).toBe(lifecycle);
+  expect(projected[0]!.thread.turns[0]!.eventsTruncated).toBe(true);
+});

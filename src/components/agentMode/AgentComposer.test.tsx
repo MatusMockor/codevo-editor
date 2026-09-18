@@ -1095,17 +1095,17 @@ describe("AgentComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("replaces the arrow with Stop while a steerable turn runs", () => {
+  it("keeps Send now and Queue available alongside Stop while a turn runs", () => {
     const onStop = vi.fn();
     const onSubmit = vi.fn();
     render({ mode: STEER_MODE, running: true, onStop, onSubmit });
 
     const stop = stopButton();
     expect(stop.getAttribute("aria-label")).toBe("Stop agent");
-    expect(stop.getAttribute("title")).toContain("Queue message: Enter");
+    expect(stop.getAttribute("title")).toBe("Stop (Esc)");
     expect(stop.type).toBe("button");
     expect(stop.disabled).toBe(false);
-    expect(host.querySelector(".agent-composer__send")).toBeNull();
+    expect(host.querySelector(".agent-composer__send")).not.toBeNull();
     expect(promptField().placeholder).toBe("Queue a message for the next turn");
     expect(host.querySelector("form")?.getAttribute("aria-label")).toBe(
       "Follow up on agent thread",
@@ -1116,6 +1116,86 @@ describe("AgentComposer", () => {
     act(() => stop.click());
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it.each(["claudeCode", "codex"] as const)(
+    "chooses default and alternate delivery for %s",
+    (provider) => {
+      const onSubmit = vi.fn();
+      for (const followUpBehavior of ["queue", "steer"] as const) {
+        onSubmit.mockClear();
+        render({
+          mode: STEER_MODE,
+          running: true,
+          prompt: "Continue",
+          followUpBehavior,
+          launchProvider: provider,
+          onSubmit,
+        });
+        pressEnter();
+        pressEnter({ metaKey: true });
+        pressEnter({ ctrlKey: true });
+        act(() => host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!.click());
+        expect(onSubmit.mock.calls.map(([request]) => request.delivery)).toEqual(
+          followUpBehavior === "queue"
+            ? ["queued", "immediate", "immediate", "immediate"]
+            : ["immediate", "queued", "queued", "queued"],
+        );
+        expect(submitButton().getAttribute("aria-label")).toBe(
+          followUpBehavior === "queue" ? "Queue message" : "Send now",
+        );
+      }
+    },
+  );
+
+  it("does not consume attachments while choosing Send now and blocks both actions during staging", () => {
+    const onSubmit = vi.fn();
+    const markSent = vi.fn();
+    const prepareTurn = vi.fn(async () => null);
+    const attachments = attachmentsSurface({
+      drafts: [readyAttachmentDraft()],
+      markSent,
+      prepareTurn,
+    });
+    render({ mode: STEER_MODE, running: true, prompt: "Review image", attachments, onSubmit });
+    act(() => host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!.click());
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ delivery: "immediate" }));
+    expect(markSent).not.toHaveBeenCalled();
+    expect(prepareTurn).not.toHaveBeenCalled();
+    render({
+      mode: STEER_MODE,
+      running: true,
+      prompt: "Review image",
+      attachments,
+      onSubmit,
+      submitBlocked: true,
+    });
+    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!.disabled).toBe(
+      true,
+    );
+    pressEnter({ metaKey: true });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps queue available and refuses immediate delivery when unsupported", () => {
+    const onSubmit = vi.fn();
+    render({
+      mode: STEER_MODE,
+      running: true,
+      prompt: "Continue",
+      followUpBehavior: "steer",
+      immediateBlockedReason: "Update the server to send now.",
+      onSubmit,
+    });
+    expect(submitButton().getAttribute("aria-label")).toBe("Queue message");
+    const alternate = host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!;
+    expect(alternate.disabled).toBe(true);
+    expect(alternate.title).toBe("Update the server to send now.");
+    pressEnter({ metaKey: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+    pressEnter();
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ delivery: "queued" }));
   });
 
   it("shows pending steering on desktop while keeping Stop usable", () => {

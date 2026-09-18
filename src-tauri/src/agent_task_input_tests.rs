@@ -72,7 +72,7 @@ fn deadline() -> Instant {
 }
 
 fn slot_with(writer: RecordingWriter) -> AgentTaskInputSlot {
-    AgentTaskInputSlot::new(Box::new(writer))
+    AgentTaskInputSlot::new(Box::new(writer), None)
 }
 
 fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) -> bool {
@@ -364,7 +364,10 @@ fn cancellation_interrupts_an_initial_frame_blocked_on_a_full_pipe() {
         .state
         .try_lock()
         .is_err()));
-    let slot = AgentTaskInputSlot::new(Box::new(StdAgentTaskInput::new(Arc::clone(&retained))));
+    let slot = AgentTaskInputSlot::new(
+        Box::new(StdAgentTaskInput::new(Arc::clone(&retained))),
+        None,
+    );
     let started = Instant::now();
     slot.close(AgentTaskInputState::ClosedByStop);
     let result = pending.join().expect("writer");
@@ -412,9 +415,10 @@ fn waiting_for_initial_frame_does_not_extend_a_steer_deadline() {
 
 #[test]
 fn temporarily_not_steerable_keeps_the_input_open_for_a_later_message() {
-    let slot = AgentTaskInputSlot::new(Box::new(RecordingWriter::failing(
-        io::ErrorKind::WouldBlock,
-    )));
+    let slot = AgentTaskInputSlot::new(
+        Box::new(RecordingWriter::failing(io::ErrorKind::WouldBlock)),
+        None,
+    );
     assert_eq!(
         slot.write(b"message", Instant::now() + Duration::from_secs(1), 32),
         Err(AgentTaskSteerRejection::NotSteerable)
@@ -426,7 +430,7 @@ fn temporarily_not_steerable_keeps_the_input_open_for_a_later_message() {
 #[test]
 fn codex_input_cannot_be_sent_to_a_byte_writer() {
     use crate::agent_task_spawner::codex_app_server_protocol::UserInput;
-    let slot = AgentTaskInputSlot::new(Box::new(RecordingWriter::new()));
+    let slot = AgentTaskInputSlot::new(Box::new(RecordingWriter::new()), None);
     let input = AgentTaskInputFrame::CodexInput {
         input: vec![UserInput::Text {
             text: "hello".into(),
@@ -478,4 +482,96 @@ fn background_failure_after_stop_does_not_reopen_input() {
     slot.fail_background("late failure");
     assert_eq!(slot.background_failure(), Some("late failure"));
     assert_eq!(slot.state(), AgentTaskInputState::ClosedByStop);
+}
+
+fn pending_question(provider: &str) -> crate::agent_questions::AgentQuestionRequest {
+    serde_json::from_value(serde_json::json!({
+        "id":"question-1", "taskId":"", "provider":provider,
+        "questions":[{"id":"q", "header":"Choice", "prompt":"Which?",
+            "options":[], "multiple":false, "allowCustom":true}], "status":"pending"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn pending_question_rejects_steering_without_writing_or_consuming_quota() {
+    for provider in ["codex", "claudeCode"] {
+        let questions = Arc::new(crate::agent_questions::AgentQuestionSession::new());
+        let writer = RecordingWriter::new();
+        let frames = writer.frames();
+        let closes = writer.closes();
+        let slot = AgentTaskInputSlot::new(Box::new(writer), Some(Arc::clone(&questions)));
+        questions
+            .register(pending_question(provider), Arc::new(|_| Ok(())))
+            .unwrap();
+        assert_eq!(
+            slot.write(b"follow-up", deadline(), 1),
+            Err(AgentTaskSteerRejection::NotSteerable)
+        );
+        assert!(frames.lock().unwrap().is_empty());
+        assert_eq!(slot.frames_written(), 0);
+        assert_eq!(slot.state(), AgentTaskInputState::Open);
+        assert_eq!(closes.load(Ordering::SeqCst), 0);
+        questions.cancel("question-1");
+        slot.write(b"follow-up", deadline(), 1).unwrap();
+        assert_eq!(*frames.lock().unwrap(), vec![b"follow-up".to_vec()]);
+    }
+}
+
+#[test]
+fn answering_question_keeps_steering_blocked_until_response_settles() {
+    let questions = Arc::new(crate::agent_questions::AgentQuestionSession::new());
+    let slot = Arc::new(AgentTaskInputSlot::new(
+        Box::new(RecordingWriter::new()),
+        Some(Arc::clone(&questions)),
+    ));
+    let pending_slot = Arc::clone(&slot);
+    questions
+        .register(
+            pending_question("claudeCode"),
+            Arc::new(move |_| {
+                assert_eq!(
+                    pending_slot.write(b"too soon", deadline(), 1),
+                    Err(AgentTaskSteerRejection::NotSteerable)
+                );
+                Ok(())
+            }),
+        )
+        .unwrap();
+    questions
+        .answer(
+            "task",
+            "question-1",
+            crate::agent_questions::AgentQuestionResponse {
+                answers: vec![crate::agent_questions::AgentQuestionAnswerItem {
+                    question_id: "q".into(),
+                    option_ids: vec![],
+                    text: "Here".into(),
+                }],
+            },
+        )
+        .unwrap();
+    slot.write(b"after answer", deadline(), 1).unwrap();
+    assert_eq!(slot.frames_written(), 1);
+}
+
+#[test]
+fn question_arriving_after_initial_admission_is_rechecked_with_writer_locked() {
+    let questions = Arc::new(crate::agent_questions::AgentQuestionSession::new());
+    let slot = AgentTaskInputSlot::new(
+        Box::new(RecordingWriter::new()),
+        Some(Arc::clone(&questions)),
+    );
+    slot.ensure_no_pending_question().unwrap();
+    let writer = slot.writer.lock().unwrap();
+    questions
+        .register(pending_question("codex"), Arc::new(|_| Ok(())))
+        .unwrap();
+    let frame = AgentTaskInputFrame::Bytes(Arc::from(b"follow-up".as_slice()));
+    assert_eq!(
+        slot.write_input_locked(&frame, deadline(), 1, writer),
+        Err(AgentTaskSteerRejection::NotSteerable)
+    );
+    assert_eq!(slot.frames_written(), 0);
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
 }

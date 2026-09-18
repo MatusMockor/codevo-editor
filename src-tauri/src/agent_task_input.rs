@@ -1,3 +1,5 @@
+#[path = "agent_claude_input_lifecycle.rs"]
+pub mod claude_lifecycle;
 use serde::{Deserialize, Serialize};
 use std::{
     io,
@@ -58,6 +60,9 @@ pub enum AgentTaskInputKind {
 }
 
 pub trait AgentTaskInput: Send {
+    fn claude_lifecycle(&self) -> Option<Arc<claude_lifecycle::ClaudeInputLifecycle>> {
+        None
+    }
     fn kind(&self) -> AgentTaskInputKind {
         AgentTaskInputKind::Bytes
     }
@@ -114,15 +119,23 @@ pub struct AgentTaskInputSlot {
     cancellation: Option<Arc<AtomicBool>>,
     kind: AgentTaskInputKind,
     background_failure: Mutex<Option<&'static str>>,
+    questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
+    lifecycle: Option<Arc<claude_lifecycle::ClaudeInputLifecycle>>,
 }
 
 impl AgentTaskInputSlot {
-    pub fn new(writer: Box<dyn AgentTaskInput>) -> Self {
+    pub fn new(
+        writer: Box<dyn AgentTaskInput>,
+        questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
+    ) -> Self {
         let cancellation = writer.cancellation_flag();
         let kind = writer.kind();
+        let lifecycle = writer.claude_lifecycle();
         Self {
             cancellation,
             kind,
+            lifecycle,
+            questions,
             background_failure: Mutex::new(None),
             state: Mutex::new(AgentTaskInputState::Open),
             writer: Mutex::new(Some(writer)),
@@ -142,6 +155,23 @@ impl AgentTaskInputSlot {
             .background_failure
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn claude_lifecycle(&self) -> Option<Arc<claude_lifecycle::ClaudeInputLifecycle>> {
+        self.lifecycle.clone()
+    }
+
+    pub(crate) fn unfinished_input_failure(&self) -> Option<&'static str> {
+        if self.state() != AgentTaskInputState::ClosedByStop
+            && self
+                .lifecycle
+                .as_ref()
+                .is_some_and(|ledger| ledger.has_pending())
+        {
+            Some("Claude exited before completing an accepted follow-up message.")
+        } else {
+            None
+        }
     }
 
     pub fn kind(&self) -> AgentTaskInputKind {
@@ -195,19 +225,52 @@ impl AgentTaskInputSlot {
         if !frame.bounded() {
             return Err(AgentTaskSteerRejection::LimitExceeded);
         }
-        let mut writer = lock_before(&self.writer, deadline)
+        self.ensure_no_pending_question()?;
+        let writer = lock_before(&self.writer, deadline)
             .map_err(|_| AgentTaskSteerRejection::WriteTimedOut)?;
+        self.write_input_locked(frame, deadline, limit, writer)
+    }
+
+    fn write_input_locked(
+        &self,
+        frame: &AgentTaskInputFrame,
+        deadline: Instant,
+        limit: u32,
+        mut writer: MutexGuard<'_, Option<Box<dyn AgentTaskInput>>>,
+    ) -> Result<(), AgentTaskSteerRejection> {
         if let Some(rejection) = self.state().rejection() {
             release_writer(&mut writer);
             return Err(rejection);
         }
+        // A question may arrive while another frame owns the writer lock.
+        self.ensure_no_pending_question()?;
         if self.frames_written.load(Ordering::SeqCst) >= limit {
             return Err(AgentTaskSteerRejection::LimitExceeded);
         }
         let Some(handle) = writer.as_mut() else {
             return Err(AgentTaskSteerRejection::InputUnavailable);
         };
-        if let Err(error) = handle.write_input(frame, deadline) {
+        let reservation = match (&self.lifecycle, frame) {
+            (Some(lifecycle), AgentTaskInputFrame::Bytes(bytes)) => Some(
+                lifecycle
+                    .reserve(bytes)
+                    .map_err(|_| AgentTaskSteerRejection::NotSteerable)?,
+            ),
+            _ => None,
+        };
+        let tagged = reservation
+            .as_ref()
+            .map(|(_, bytes)| AgentTaskInputFrame::Bytes(Arc::from(bytes.as_slice())));
+        if tagged.as_ref().is_some_and(|frame| !frame.bounded()) {
+            if let (Some(lifecycle), Some((id, _))) = (&self.lifecycle, &reservation) {
+                lifecycle.abandon(id);
+            }
+            return Err(AgentTaskSteerRejection::LimitExceeded);
+        }
+        if let Err(error) = handle.write_input(tagged.as_ref().unwrap_or(frame), deadline) {
+            if let (Some(lifecycle), Some((id, _))) = (&self.lifecycle, &reservation) {
+                lifecycle.abandon(id);
+            }
             if error.kind() == io::ErrorKind::WouldBlock {
                 return Err(AgentTaskSteerRejection::NotSteerable);
             }
@@ -221,6 +284,17 @@ impl AgentTaskInputSlot {
         self.frames_written.fetch_add(1, Ordering::SeqCst);
         if self.state().rejection().is_some() {
             release_writer(&mut writer);
+        }
+        Ok(())
+    }
+
+    fn ensure_no_pending_question(&self) -> Result<(), AgentTaskSteerRejection> {
+        if self
+            .questions
+            .as_ref()
+            .is_some_and(|questions| questions.has_pending())
+        {
+            return Err(AgentTaskSteerRejection::NotSteerable);
         }
         Ok(())
     }
@@ -345,15 +419,32 @@ impl RetainedAgentStdin {
 
 pub struct StdAgentTaskInput {
     stdin: RetainedChildStdin,
+    lifecycle: Option<Arc<claude_lifecycle::ClaudeInputLifecycle>>,
 }
 
 impl StdAgentTaskInput {
     pub fn new(stdin: RetainedChildStdin) -> Self {
-        Self { stdin }
+        Self {
+            stdin,
+            lifecycle: None,
+        }
+    }
+}
+
+impl StdAgentTaskInput {
+    pub fn with_lifecycle(
+        mut self,
+        lifecycle: Option<Arc<claude_lifecycle::ClaudeInputLifecycle>>,
+    ) -> Self {
+        self.lifecycle = lifecycle;
+        self
     }
 }
 
 impl AgentTaskInput for StdAgentTaskInput {
+    fn claude_lifecycle(&self) -> Option<Arc<claude_lifecycle::ClaudeInputLifecycle>> {
+        self.lifecycle.clone()
+    }
     fn write_frame(&mut self, frame: &[u8], deadline: Instant) -> io::Result<()> {
         self.stdin.write_frame(frame, deadline)
     }

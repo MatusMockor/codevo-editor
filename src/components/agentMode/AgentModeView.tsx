@@ -1,3 +1,5 @@
+import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
+import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
 import { AgentThreadQuestions } from "./AgentThreadQuestions";
@@ -80,6 +82,7 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
+  readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly questionGateway?: AgentQuestionGateway | null;
   readonly artifactLoader?: AgentArtifactLoader | null;
   readonly artifactPreview?: AgentArtifactPreviewPort | null;
@@ -169,6 +172,7 @@ export function AgentModeView(props: AgentModeViewProps) {
 }
 
 function LocalAgentModeView({
+  followUpBehavior = "queue",
   agents,
   chrome,
   modelFavoritesPersistence = null,
@@ -358,6 +362,12 @@ function LocalAgentModeView({
   });
   const composerProps = {
     ...composer.composerProps,
+    immediateBlockedReason:
+      selectedThread?.execution?.kind === "remote"
+        ? selectedThread.execution.taskSteering === true
+          ? null
+          : "Update the server to send messages during a run. Queued messages remain available."
+        : composer.composerProps.immediateBlockedReason,
     ...(resolvingRemoteThread
       ? {
           mode: {
@@ -813,7 +823,10 @@ function LocalAgentModeView({
                 }
                 onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
                 onSendDeferredFollowUpNow={
-                  sessionThread !== null && agentThreadIsSteerable(sessionThread.thread)
+                  sessionThread !== null &&
+                  (sessionThread.execution?.kind === "remote"
+                    ? sessionThread.execution.taskSteering === true
+                    : agentThreadIsSteerable(sessionThread.thread))
                     ? agents.sendDeferredFollowUpNow
                     : undefined
                 }
@@ -822,6 +835,14 @@ function LocalAgentModeView({
                 textClipboard={textClipboard}
                 thread={sessionThread}
               />
+              {sessionThread !== null &&
+                agents.hasUnconfirmedMessage?.(sessionThread.thread.threadId) && (
+                  <AgentUnconfirmedMessageNotice
+                    onDismiss={() =>
+                      agents.discardUnconfirmedMessage?.(sessionThread.thread.threadId)
+                    }
+                  />
+                )}
               {notice && (
                 <div className="agent-thread-notice">
                   <AgentNoticeBar
@@ -833,6 +854,7 @@ function LocalAgentModeView({
               )}
               <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
               <AgentComposerController
+                followUpBehavior={followUpBehavior}
                 contextUsage={contextUsage}
                 executionServerId={
                   selectedThread?.execution?.serverId ??

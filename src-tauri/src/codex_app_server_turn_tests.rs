@@ -200,12 +200,25 @@ fn stale_root_items_and_usage_cannot_contaminate_current_turn() {
 fn subagent_registration_attaches_and_child_completion_does_not_end_root() {
     let port = FakePort::new();
     port.push("item/started", json!({"threadId":THREAD,"turnId":TURN,"item":{"type":"subAgentActivity","id":"call","kind":"started","agentThreadId":"sub","agentPath":"/root/sub"}}));
+    port.push(
+        "turn/started",
+        json!({"threadId":"sub","turn":{"id":"child-turn","status":"inProgress"}}),
+    );
+    port.complete("sub", "stale-child-turn", "completed");
     port.complete("sub", "child-turn", "completed");
     let mut child = port.child();
     let mut output = child.stdout_reader().unwrap();
     read_chunk(&mut output).unwrap();
     assert!(read_chunk(&mut output).unwrap().contains("subagent"));
     assert!(port.attached.lock().unwrap().iter().any(|id| id == "sub"));
+    // Start establishes authority without a wire event; a stale completion is ignored.
+    for _ in 0..2 {
+        assert_eq!(
+            read_chunk(&mut output).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(!child.observe_exit());
+    }
     assert!(read_chunk(&mut output)
         .unwrap()
         .contains("subagentTurnCompleted"));

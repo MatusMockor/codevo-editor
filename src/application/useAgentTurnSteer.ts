@@ -14,6 +14,7 @@ import {
   type AgentTurn,
   type AgentTurnEvent,
 } from "../domain/agentThread";
+import { AgentDeferredBoundaryTracker } from "./agentDeferredBoundaryTracker";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import {
   MAX_DEFERRED_FOLLOW_UPS_PER_THREAD,
@@ -47,6 +48,7 @@ import {
   AGENT_THREAD_TURN_FULL_NOTICE,
   admitSteer,
   agentPromptByteLength,
+  agentThreadIsSteerable,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import {
@@ -74,6 +76,7 @@ export const DEFERRED_SEND_FAILED_NOTICE =
 
 export interface AgentTurnSteerDependencies extends AgentTurnAdmissionDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
+  readonly hasPendingThreadInput?: (threadId: string) => Promise<boolean>;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
 }
 
@@ -122,8 +125,11 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       { readonly authority: AgentTaskLaunchAuthority; readonly entryId: string; cancelled: boolean }
     >
   >(new Map());
+  const boundaryTrackerRef = useRef(new AgentDeferredBoundaryTracker());
+  const blockedThreadsRef = useRef(new Set<string>());
+  const awaitingSettlementRef = useRef(new Set<string>());
   const pendingDrainsRef = useRef<Set<string>>(new Set());
-  const sendingQueuedRef = useRef<Set<string>>(new Set());
+  const sendingQueuedRef = useRef<Map<string, string>>(new Map());
   const pausedThreadsRef = useRef<Set<string>>(new Set());
   const deferredSequenceRef = useRef(0);
   const preparedDeferredRef = useRef(new WeakMap<AgentFollowUpRequest, ClaimedTurnAttachments>());
@@ -131,6 +137,12 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
   const commitDeferred = useCallback(
     (next: DeferredFollowUps): void => {
       deferredRef.current = next;
+      boundaryTrackerRef.current.retain(next.keys());
+      for (const pending of [blockedThreadsRef.current, awaitingSettlementRef.current]) {
+        for (const threadId of pending) {
+          if (!next.has(threadId)) pending.delete(threadId);
+        }
+      }
       for (const threadId of pausedThreadsRef.current) {
         if (!next.has(threadId)) pausedThreadsRef.current.delete(threadId);
       }
@@ -180,6 +192,14 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         deps.setNotice(warning(DEFERRED_FULL_NOTICE));
         return "kept";
       }
+      if (!deferredRef.current.has(threadId)) {
+        const turn = deps.store.currentState().threads.get(threadId);
+        boundaryTrackerRef.current.anchor(
+          threadId,
+          turn === undefined ? null : runningTurn(turn),
+          true,
+        );
+      }
       deferredAuthoritiesRef.current.set(threadId, authority);
       preparedDeferredRef.current.set(entry.request, prepared);
       commitDeferred(enqueued.map);
@@ -207,7 +227,10 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         case "inputClosed":
         case "notRunning":
           if (request.delivery === "immediate") {
-            deps.setNotice(info("The agent cannot receive this message now. It remains queued."));
+            if (sendingQueuedRef.current.has(threadId)) awaitingSettlementRef.current.add(threadId);
+            deps.setNotice(
+              info("The agent cannot receive this message now. Your message has not been sent."),
+            );
             return "kept";
           }
           if (turn.launch === null) return "kept";
@@ -287,6 +310,24 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           if (turn.launch === null || prepared.notice !== null) return "kept";
           return deferSteer(threadId, turn.launch, { ...request, prompt }, authority, prepared);
         }
+        const pendingInput = dependenciesRef.current.hasPendingThreadInput;
+        if (pendingInput !== undefined) {
+          const blocked = await attempt(() => boundedPendingInputCheck(pendingInput, threadId));
+          if (!ownsTarget()) return "kept";
+          if (!blocked.ok || blocked.value) {
+            if (deferredRef.current.has(threadId)) blockedThreadsRef.current.add(threadId);
+            boundaryTrackerRef.current.retry(threadId);
+            dependenciesRef.current.setNotice(
+              info(
+                blocked.ok
+                  ? "Answer the pending question or approval before sending this message."
+                  : "Pending requests could not be checked. Your message has not been sent.",
+              ),
+            );
+            return "kept";
+          }
+          blockedThreadsRef.current.delete(threadId);
+        }
         if (agentPromptByteLength(prepared.prompt) > MAX_AGENT_EVENT_TEXT_BYTES) {
           dependenciesRef.current.setNotice(warning(STEER_TOO_LONG_NOTICE));
           return "kept";
@@ -315,6 +356,15 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         }
         if (sent.value.kind === "rejected") {
           if (!ownsTarget()) return "kept";
+          if (sent.value.rejection.reason === "notSteerable" && pendingInput !== undefined) {
+            const blocked = await attempt(() => boundedPendingInputCheck(pendingInput, threadId));
+            if (!ownsTarget()) return "kept";
+            if (!blocked.ok || blocked.value) {
+              if (deferredRef.current.has(threadId)) blockedThreadsRef.current.add(threadId);
+              boundaryTrackerRef.current.retry(threadId);
+              return "kept";
+            }
+          }
           return rejectSteer(
             sent.value.rejection.reason,
             threadId,
@@ -358,6 +408,10 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
 
   const removeDeferredFollowUp = useCallback(
     (threadId: string, id: string): void => {
+      if (sendingQueuedRef.current.get(threadId) === id) {
+        const lease = steerLeasesRef.current.get(threadId);
+        if (lease !== undefined) lease.cancelled = true;
+      }
       const drain = drainLeasesRef.current.get(threadId);
       if (drain?.entryId === id) drain.cancelled = true;
       const next = removeDeferred(deferredRef.current, threadId, id);
@@ -397,7 +451,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       )
         return;
       if (!isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)) return;
-      sendingQueuedRef.current.add(threadId);
+      sendingQueuedRef.current.set(threadId, id);
       try {
         const outcome = await steer(
           { ...entry.request, delivery: "immediate" },
@@ -408,6 +462,12 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           outcome === "kept"
         )
           return;
+        const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
+        boundaryTrackerRef.current.anchor(
+          threadId,
+          thread === undefined ? null : runningTurn(thread),
+          false,
+        );
         removeDeferredFollowUp(threadId, id);
       } finally {
         sendingQueuedRef.current.delete(threadId);
@@ -427,6 +487,8 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         queue.map((entry) => ({ ...entry, state: "queued" as const })),
       );
       commitDeferred(next);
+      boundaryTrackerRef.current.retry(threadId);
+      awaitingSettlementRef.current.delete(threadId);
       armDrain(threadId);
     },
     [armDrain, commitDeferred],
@@ -532,8 +594,40 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           ),
         );
       }
+      for (const [threadId, entries] of deferredRef.current) {
+        if (
+          sendingQueuedRef.current.has(threadId) ||
+          pausedThreadsRef.current.has(threadId) ||
+          inFlightSteersRef.current.has(threadId) ||
+          awaitingSettlementRef.current.has(threadId) ||
+          blockedThreadsRef.current.has(threadId)
+        )
+          continue;
+        const thread = current.threads.get(threadId);
+        if (thread === undefined || !agentThreadIsSteerable(thread)) continue;
+        const turn = runningTurn(thread);
+        const head = entries[0];
+        if (
+          turn === null ||
+          head === undefined ||
+          !boundaryTrackerRef.current.takeDue(threadId, turn)
+        )
+          continue;
+        void sendDeferredFollowUpNow(threadId, head.id).then(() => {
+          if (
+            !blockedThreadsRef.current.has(threadId) &&
+            !awaitingSettlementRef.current.has(threadId) &&
+            deferredRef.current.get(threadId)?.some((entry) => entry.id === head.id)
+          )
+            pauseDeferred(threadId);
+        });
+      }
       for (const threadId of [...pendingDrainsRef.current]) {
-        if (sendingQueuedRef.current.has(threadId) || pausedThreadsRef.current.has(threadId))
+        if (
+          sendingQueuedRef.current.has(threadId) ||
+          pausedThreadsRef.current.has(threadId) ||
+          blockedThreadsRef.current.has(threadId)
+        )
           continue;
         const thread = current.threads.get(threadId);
         if (thread !== undefined && runningTurn(thread) !== null) continue;
@@ -583,12 +677,31 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         });
       }
     },
-    [armDrain, commitDeferred, dependenciesRef, mountedRef, pauseDeferred, sendFollowUpRef],
+    [
+      armDrain,
+      commitDeferred,
+      dependenciesRef,
+      mountedRef,
+      pauseDeferred,
+      sendFollowUpRef,
+      sendDeferredFollowUpNow,
+    ],
   );
 
   useEffect(() => {
+    if (deferredFollowUps.size === 0) return;
+    const timer = setInterval(() => {
+      for (const threadId of blockedThreadsRef.current) {
+        blockedThreadsRef.current.delete(threadId);
+        if (deferredRef.current.has(threadId)) armDrain(threadId);
+      }
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [armDrain, deferredFollowUps.size]);
+
+  useEffect(() => {
     drainDeferred(state);
-  }, [drainDeferred, drainTick, state]);
+  }, [drainDeferred, drainTick, state, deferredFollowUps]);
 
   return {
     deferredFollowUps,
@@ -718,4 +831,22 @@ function deferredFollowUpRequest(
 
 function unsupportedSteerRejection(reason: never): never {
   throw new TypeError(`Unsupported agent task steer rejection: ${String(reason)}.`);
+}
+
+/** A disconnected request registry must not hold the per-thread send lease forever. */
+async function boundedPendingInputCheck(
+  check: (threadId: string) => Promise<boolean>,
+  threadId: string,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => check(threadId)),
+      new Promise<boolean>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Pending request check timed out.")), 5_000);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

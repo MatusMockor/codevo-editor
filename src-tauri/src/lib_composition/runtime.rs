@@ -238,6 +238,8 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_task,
             crate::remote_runner::remote_runner_get_task_resume,
             crate::remote_runner::remote_runner_continue_task,
+            crate::remote_runner::remote_runner_steer_task,
+            crate::remote_runner::remote_runner_steer_pending_message,
             crate::remote_runner::remote_runner_list_pending_messages,
             crate::remote_runner::remote_runner_enqueue_message,
             crate::remote_runner::remote_runner_cancel_pending_message,

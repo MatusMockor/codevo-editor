@@ -1722,7 +1722,7 @@ describe("agentThreadsReducer turnSteered", () => {
     expect(agentThreadsReducer(settled, steerAction())).toBe(settled);
   });
 
-  it("refuses a steered message once the per-turn event cap or truncation is reached", () => {
+  it("evicts old output to admit steering at the event cap or after truncation", () => {
     const filled = agentThreadsReducer(
       stateWith(thread()),
       appendAction(
@@ -1736,18 +1736,25 @@ describe("agentThreadsReducer turnSteered", () => {
     );
     const before = filled.threads.get("agt-t1-0001")!.turns[0];
     expect(before.eventsTruncated).toBe(false);
-    expect(agentTurnAcceptsSteerBytes(before, 1)).toBe(false);
+    expect(agentTurnAcceptsSteerBytes(before, 1)).toBe(true);
 
-    expect(agentThreadsReducer(filled, steerAction())).toBe(filled);
+    const admitted = agentThreadsReducer(filled, steerAction());
+    const admittedTurn = admitted.threads.get("agt-t1-0001")!.turns[0];
+    expect(admittedTurn.events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
+    expect(admittedTurn.events[0]).toMatchObject({ toolId: "t1" });
+    expect(admittedTurn.events[admittedTurn.events.length - 1]).toEqual(steerAction().event);
+    expect(admittedTurn.eventsTruncated).toBe(true);
 
     const truncated = stateWith(thread({ turns: [turn({ eventsTruncated: true })] }));
     expect(agentTurnAcceptsSteerBytes(truncated.threads.get("agt-t1-0001")!.turns[0], 1)).toBe(
-      false,
+      true,
     );
-    expect(agentThreadsReducer(truncated, steerAction())).toBe(truncated);
+    expect(
+      agentThreadsReducer(truncated, steerAction()).threads.get("agt-t1-0001")!.turns[0],
+    ).toMatchObject({ events: [steerAction().event], eventsTruncated: true });
   });
 
-  it("refuses a steered message that would exceed the per-turn byte budget", () => {
+  it("evicts saturated output to admit steering without exceeding the byte budget", () => {
     const nearlyFull = stateWith(
       thread({
         turns: [turn({ events: [text("x".repeat(MAX_AGENT_EVENT_BYTES_PER_TURN - 4))] })],
@@ -1756,8 +1763,160 @@ describe("agentThreadsReducer turnSteered", () => {
     const before = nearlyFull.threads.get("agt-t1-0001")!.turns[0];
 
     expect(agentTurnAcceptsSteerBytes(before, 4)).toBe(true);
-    expect(agentTurnAcceptsSteerBytes(before, 5)).toBe(false);
-    expect(agentThreadsReducer(nearlyFull, steerAction())).toBe(nearlyFull);
+    expect(agentTurnAcceptsSteerBytes(before, 5)).toBe(true);
+    const admitted = agentThreadsReducer(nearlyFull, steerAction()).threads.get("agt-t1-0001")!
+      .turns[0];
+    expect(admitted.events).toEqual([steerAction().event]);
+    expect(admitted.eventsTruncated).toBe(true);
+  });
+
+  it("preserves accepted messages while evicting output during steering and later output", () => {
+    const first = { kind: "userMessage" as const, text: "keep my instruction" };
+    const initial = stateWith(
+      thread({
+        turns: [
+          turn({
+            events: [first, text("x".repeat(MAX_AGENT_EVENT_BYTES_PER_TURN - first.text.length))],
+            eventsTruncated: true,
+          }),
+        ],
+      }),
+    );
+    const steered = agentThreadsReducer(initial, steerAction());
+    const updated = agentThreadsReducer(
+      steered,
+      appendAction([text("y".repeat(MAX_AGENT_EVENT_BYTES_PER_TURN))]),
+    );
+    const retained = updated.threads.get("agt-t1-0001")!.turns[0];
+    expect(retained.events).toEqual([first, steerAction().event]);
+    expect(steerCount(retained)).toBe(2);
+    expect(
+      retained.events.reduce((bytes, event) => bytes + agentTurnEventUtf8Bytes(event), 0),
+    ).toBeLessThanOrEqual(MAX_AGENT_EVENT_BYTES_PER_TURN);
+    expect(
+      parseAgentThread(serializeAgentThread(updated.threads.get("agt-t1-0001")!)).turns[0].events,
+    ).toEqual(retained.events);
+  });
+
+  it("still bounds user input independently of the output window", () => {
+    const messages = Array.from({ length: 32 }, () => ({
+      kind: "userMessage" as const,
+      text: "keep",
+    }));
+    const full = stateWith(thread({ turns: [turn({ events: messages })] }));
+    expect(agentTurnAcceptsSteerBytes(full.threads.get("agt-t1-0001")!.turns[0], 1)).toBe(false);
+    expect(agentThreadsReducer(full, steerAction())).toBe(full);
+    const bounded = turn({
+      events: [{ kind: "userMessage", text: "keep" }],
+      eventsTruncated: true,
+    });
+    expect(agentTurnAcceptsSteerBytes(bounded, MAX_AGENT_EVENT_BYTES_PER_TURN - 4)).toBe(true);
+    expect(agentTurnAcceptsSteerBytes(bounded, MAX_AGENT_EVENT_BYTES_PER_TURN - 3)).toBe(false);
+    for (const invalid of [-1, NaN, Infinity, 1.5]) {
+      expect(agentTurnAcceptsSteerBytes(bounded, invalid)).toBe(false);
+    }
+  });
+
+  it("tracks delivery boundaries before output eviction and ignores child completions", () => {
+    let state = agentThreadsReducer(
+      stateWith(thread()),
+      appendAction([
+        { kind: "toolResult", toolId: "finished", outputSummary: "done", isError: false },
+        ...Array.from({ length: MAX_AGENT_EVENTS_PER_TURN }, (_, index) => ({
+          kind: "toolCall" as const,
+          toolId: `next-${index}`,
+          name: "Read",
+          inputSummary: "file",
+        })),
+      ]),
+    );
+    expect(state.threads.get("agt-t1-0001")!.turns[0]).toMatchObject({
+      queueBoundarySequence: 1,
+      foregroundSettled: false,
+      eventsTruncated: true,
+    });
+    state = agentThreadsReducer(
+      state,
+      appendAction(
+        [
+          {
+            kind: "toolResult",
+            toolId: "child",
+            parentToolId: "parent",
+            outputSummary: "done",
+            isError: false,
+          },
+          {
+            kind: "toolResult",
+            toolId: "root-before-failure",
+            outputSummary: "done",
+            isError: false,
+          },
+          { kind: "result", text: "failed", isError: true, usage: null },
+        ],
+        { outputSequence: 2 },
+      ),
+    );
+    expect(state.threads.get("agt-t1-0001")!.turns[0]).toMatchObject({
+      queueBoundarySequence: 1,
+      foregroundSettled: false,
+    });
+    state = agentThreadsReducer(
+      state,
+      appendAction(
+        [
+          { kind: "result", text: "done", isError: false, usage: null },
+          { kind: "assistantText", text: "child", parentToolId: "parent" },
+        ],
+        { outputSequence: 3 },
+      ),
+    );
+    expect(state.threads.get("agt-t1-0001")!.turns[0]).toMatchObject({
+      queueBoundarySequence: 3,
+      foregroundSettled: true,
+    });
+    const steered = agentThreadsReducer(state, steerAction());
+    expect(steered.threads.get("agt-t1-0001")!.turns[0]).toMatchObject({
+      queueBoundarySequence: 3,
+      foregroundSettled: false,
+    });
+    const resumed = agentThreadsReducer(
+      state,
+      appendAction([text("parent resumed")], { outputSequence: 4 }),
+    );
+    expect(resumed.threads.get("agt-t1-0001")!.turns[0].foregroundSettled).toBe(false);
+    const roundTrip = parseAgentThread(serializeAgentThread(resumed.threads.get("agt-t1-0001")!));
+    expect(roundTrip.turns[0].queueBoundarySequence).toBeUndefined();
+    expect(roundTrip.turns[0].foregroundSettled).toBeUndefined();
+  });
+
+  it("preserves subagent lifecycle across retained output eviction and save/reload", () => {
+    const spawned = agentThreadsReducer(
+      stateWith(thread()),
+      appendAction([
+        { kind: "toolCall", toolId: "worker", name: "Agent", inputSummary: "long private prompt" },
+        { kind: "subagent", toolId: "worker", taskId: "background", status: "running" },
+        ...Array.from({ length: MAX_AGENT_EVENTS_PER_TURN }, (_, i) => ({
+          kind: "toolCall" as const,
+          toolId: `read${i}`,
+          name: "Read",
+          inputSummary: "file",
+        })),
+      ]),
+    );
+    const current = spawned.threads.get("agt-t1-0001")!;
+    expect(current.turns[0].events.some((event) => event.kind === "subagent")).toBe(false);
+    expect(current.turns[0].subagentLifecycle?.entries[0].state).toBe("running");
+    const restored = parseAgentThread(serializeAgentThread(current));
+    const ended = agentThreadsReducer(
+      stateWith(restored),
+      appendAction([{ kind: "subagent", taskId: "background", status: "completed" }], {
+        outputSequence: 2,
+      }),
+    );
+    expect(ended.threads.get("agt-t1-0001")!.turns[0].subagentLifecycle?.entries[0].state).toBe(
+      "completed",
+    );
   });
 
   it("refuses a steered message past the per-event text bound", () => {

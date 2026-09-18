@@ -1,4 +1,8 @@
 import {
+  DEFAULT_AGENT_FOLLOW_UP_BEHAVIOR,
+  type AgentFollowUpBehavior,
+} from "./agentFollowUpBehavior";
+import {
   CLAUDE_MODEL_CHOICES,
   CODEX_MODEL_CHOICES,
   type ClaudeModelChoice,
@@ -69,6 +73,7 @@ export type AgentCliPathValidation = "notConfigured" | "invalid" | "valid";
 export interface AgentAppSettings {
   readonly agentCliPaths: AgentCliPaths;
   readonly agentCliKind: AgentCliKind;
+  readonly agentFollowUpBehavior: AgentFollowUpBehavior;
   readonly agentAppearanceVariant: AgentAppearanceVariant;
   readonly agentThreadFontSize: number;
   readonly agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
@@ -88,6 +93,7 @@ export function defaultAgentAppSettings(): AgentAppSettings {
   return {
     agentCliPaths: { claudeCode: null, codex: null },
     agentCliKind: DEFAULT_AGENT_CLI_KIND,
+    agentFollowUpBehavior: DEFAULT_AGENT_FOLLOW_UP_BEHAVIOR,
     agentAppearanceVariant: DEFAULT_AGENT_APPEARANCE_VARIANT,
     agentThreadFontSize: DEFAULT_AGENT_THREAD_FONT_SIZE,
     agentModelFavoriteKeys: [],

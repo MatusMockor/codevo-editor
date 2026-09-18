@@ -7,6 +7,32 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.53] - 2026-09-18
+
+### Added
+
+- Choose Queue or Send now for follow-up messages during a run, with a saved default
+  and a modified Enter shortcut to switch behavior.
+- Expand a shared subagent overview with individual task states and available details
+  across local and server conversations.
+
+### Fixed
+
+- Keep valid follow-up messages available after older output is trimmed. Deliver
+  queued messages at fresh tool boundaries while preserving attachments.
+- Preserve bounded subagent summaries through output trimming, reload and server
+  reconnection, and reject late events from earlier child tasks.
+- Keep accepted follow-ups alive until their provider lifecycle completes, including
+  messages sent while background work continues.
+- Respect pending questions and cancelled conversations when sending follow-ups.
+  Explain unconfirmed server delivery without automatically sending duplicates.
+
+### Compatibility
+
+- Sending immediate follow-ups and retaining subagent summaries on a server requires
+  the matching updated runner. Unsupported runtimes retain queued-message behavior.
+- Detailed output remains bounded; previously discarded output cannot be restored.
+
 ## [0.2.0-beta.52] - 2026-09-18
 
 ### Added

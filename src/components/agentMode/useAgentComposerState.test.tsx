@@ -607,6 +607,28 @@ describe("useAgentComposerState", () => {
     expect(stop).toHaveBeenCalledWith("agt-1");
   });
 
+  it.each(["claudeCode", "codex"] as const)(
+    "preserves explicit immediate submission for %s",
+    async (provider) => {
+      const steer = vi.fn(async () => "sent" as const);
+      render(threadsSurfaceFixture({ threads: [steerableThreadView(provider)], steer }));
+      act(() => current().navigation.selectThread("agt-1"));
+      act(() => current().composer.composerProps.onPromptChange("Send this now"));
+      await act(async () => {
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions(provider),
+          dangerousLaunchConfirmed: false,
+          delivery: "immediate",
+        });
+      });
+      expect(steer).toHaveBeenCalledWith({
+        threadId: "agt-1",
+        prompt: "Send this now",
+        delivery: "immediate",
+      });
+    },
+  );
+
   it("shows the running launch even if a next-turn preference is changed", () => {
     const thread = steerableThreadView();
     render(threadsSurfaceFixture({ threads: [thread] }));

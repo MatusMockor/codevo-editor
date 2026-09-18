@@ -133,7 +133,7 @@ describe("App Quick Open integration", () => {
   let host: HTMLDivElement;
   let root: Root;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     Object.defineProperty(window.navigator, "platform", {
       configurable: true,
@@ -222,7 +222,9 @@ describe("App Quick Open integration", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-  });
+    // Module transformation is fixture setup, not part of the interaction deadline.
+    await import("./App");
+  }, 60_000);
 
   afterEach(() => {
     act(() => root.unmount());

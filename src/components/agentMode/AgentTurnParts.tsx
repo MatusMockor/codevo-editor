@@ -112,11 +112,14 @@ export interface AgentQueuedPromptProps {
   readonly attachments?: ReadonlyArray<AgentTurnAttachmentIntent>;
   readonly id: string;
   readonly prompt: string;
-  readonly state?: "queued" | "paused";
+  readonly state?: "queued" | "paused" | "uncertain";
   onEdit?(id: string): void;
   onSendNow?(id: string): void;
   onRemove(id: string): void;
 }
+
+export const AGENT_QUEUED_UNCERTAIN_NOTICE =
+  "Delivery could not be confirmed. Remove this message before sending it again.";
 
 export const AGENT_QUEUED_EDIT_LABEL = "Edit queued message";
 export const AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE =
@@ -142,9 +145,11 @@ export function AgentQueuedPrompt({
       : 0;
   const boundedAttachmentCount = Math.min(attachmentCount, MAX_AGENT_TURN_ATTACHMENTS);
   const statusDescription =
-    state === "paused"
-      ? "Paused. Resume queued messages when you are ready."
-      : "Waiting until the current response finishes.";
+    state === "uncertain"
+      ? AGENT_QUEUED_UNCERTAIN_NOTICE
+      : state === "paused"
+        ? "Paused. Resume queued messages when you are ready."
+        : "Waiting for the next tool or response to finish.";
   const displayText = agentPromptDisplayText(prompt);
 
   return (
@@ -154,8 +159,15 @@ export function AgentQueuedPrompt({
         <div className="agent-prompt__queue">
           <span className="agent-prompt__queue-status" title={statusDescription}>
             {state === "paused" ? <Pause aria-hidden="true" /> : <Clock3 aria-hidden="true" />}
-            {state === "paused" ? "Paused" : "Queued"}
+            {state === "uncertain"
+              ? "Delivery unconfirmed"
+              : state === "paused"
+                ? "Paused"
+                : "Queued"}
           </span>
+          {state === "uncertain" && (
+            <span className="agent-prompt__queue-note">{AGENT_QUEUED_UNCERTAIN_NOTICE}</span>
+          )}
           {attachmentCount > 0 && (
             <span
               className="agent-prompt__queue-attachments"
@@ -174,9 +186,13 @@ export function AgentQueuedPrompt({
             <button
               aria-label={AGENT_QUEUED_EDIT_LABEL}
               className="agent-prompt__queue-action agent-prompt__queue-action--edit"
-              disabled={attachmentCount > 0}
+              disabled={attachmentCount > 0 || state === "uncertain"}
               title={
-                attachmentCount > 0 ? AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE : AGENT_QUEUED_EDIT_LABEL
+                state === "uncertain"
+                  ? AGENT_QUEUED_UNCERTAIN_NOTICE
+                  : attachmentCount > 0
+                    ? AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE
+                    : AGENT_QUEUED_EDIT_LABEL
               }
               onClick={() => onEdit(id)}
               type="button"

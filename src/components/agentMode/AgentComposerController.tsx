@@ -1,3 +1,4 @@
+import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { memo } from "react";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
@@ -15,6 +16,7 @@ import {
 } from "./useAgentComposerState";
 
 export interface AgentComposerControllerProps {
+  readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly executionServerId?: string | null;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly contextUsage?: AgentContextWindowUsage | null;
@@ -29,6 +31,7 @@ export interface AgentComposerControllerProps {
 }
 
 export const AgentComposerController = memo(function AgentComposerController({
+  followUpBehavior = "queue",
   executionServerId = null,
   compactionOffer = null,
   contextUsage = null,
@@ -52,6 +55,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   return (
     <AgentComposer
       {...controlledProps}
+      followUpBehavior={followUpBehavior}
       executionServerId={executionServerId}
       compactionOffer={compactionOffer}
       contextUsage={contextUsage}
@@ -72,6 +76,7 @@ function agentComposerControllerPropsEqual(
   const leftProps = left.composerProps;
   const rightProps = right.composerProps;
   return (
+    left.followUpBehavior === right.followUpBehavior &&
     left.executionServerId === right.executionServerId &&
     left.compactionOffer?.key === right.compactionOffer?.key &&
     left.contextUsage?.usedTokens === right.contextUsage?.usedTokens &&
@@ -89,6 +94,7 @@ function agentComposerControllerPropsEqual(
     sameComposerAttachments(leftProps.attachments, rightProps.attachments) &&
     leftProps.dispatching === rightProps.dispatching &&
     leftProps.running === rightProps.running &&
+    leftProps.immediateBlockedReason === rightProps.immediateBlockedReason &&
     leftProps.promptOwnerKey === rightProps.promptOwnerKey &&
     leftProps.onStop === rightProps.onStop &&
     sameGuard(leftProps.guard, rightProps.guard) &&

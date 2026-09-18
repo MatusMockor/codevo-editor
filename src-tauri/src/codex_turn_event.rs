@@ -8,6 +8,7 @@ use super::codex_app_server_protocol::{
 };
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
+use std::collections::{HashMap, HashSet};
 
 pub const CODEX_TURN_EVENT_SCHEMA_VERSION: u8 = 1;
 pub const MAX_CODEX_EVENT_TEXT_BYTES: usize = 16 * 1_024;
@@ -18,6 +19,7 @@ pub const MAX_CODEX_CLIENT_USER_MESSAGE_ID_BYTES: usize = 256;
 pub const MAX_SUBAGENT_THREADS_PER_TURN: usize = 32;
 pub const MAX_CODEX_UNKNOWN_FRAMES_PER_TURN: usize = 8;
 pub const MAX_CODEX_SUBAGENT_ACTIVITY_IDS: usize = 256;
+pub const MAX_CODEX_SUBAGENT_TURN_IDS: usize = 4096;
 
 pub const SHELL_TOOL_NAME: &str = "shell";
 pub const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
@@ -468,6 +470,8 @@ pub struct CodexTurnProjection {
     unknown_frames_emitted: usize,
     subagent_activity_ids: Vec<String>,
     root_usage: Option<CodexUsage>,
+    subagent_turns: HashMap<String, String>,
+    observed_subagent_turns: HashSet<(String, String)>,
 }
 
 impl CodexTurnProjection {
@@ -478,6 +482,8 @@ impl CodexTurnProjection {
             unknown_frames_emitted: 0,
             subagent_activity_ids: Vec::new(),
             root_usage: None,
+            subagent_turns: HashMap::new(),
+            observed_subagent_turns: HashSet::new(),
         }
     }
 
@@ -511,9 +517,13 @@ impl CodexTurnProjection {
     pub fn project(&mut self, notification: ServerNotification) -> Vec<CodexTurnEvent> {
         match notification {
             ServerNotification::ThreadStarted(payload) => self.thread_started(payload),
-            ServerNotification::TurnStarted(_) => Vec::new(),
+            ServerNotification::TurnStarted(payload) => {
+                self.subagent_turn_started(&payload.thread_id, &payload.turn.id);
+                Vec::new()
+            }
             ServerNotification::TurnCompleted(payload) => self.turn_completed(
                 payload.thread_id.as_str(),
+                &payload.turn.id,
                 &payload.turn.status,
                 payload.turn.duration_ms,
                 payload.turn.error.as_ref(),
@@ -549,6 +559,7 @@ impl CodexTurnProjection {
     fn turn_completed(
         &mut self,
         thread_id: &str,
+        turn_id: &str,
         status: &TurnStatus,
         duration_ms: Option<i64>,
         error: Option<&TurnError>,
@@ -562,13 +573,47 @@ impl CodexTurnProjection {
                 text: error.map(turn_error_text).unwrap_or_default(),
                 usage: self.root_usage,
             }],
-            CodexThreadRole::Subagent => vec![CodexTurnEvent::SubagentTurnCompleted {
-                agent_thread_id: thread_id.to_string(),
-                duration_ms,
-                is_error,
-            }],
+            CodexThreadRole::Subagent => {
+                if bounded_identity(turn_id, MAX_CODEX_THREAD_ID_BYTES).is_none() {
+                    return Vec::new();
+                }
+                if self.observed_subagent_turns.len() < MAX_CODEX_SUBAGENT_TURN_IDS {
+                    self.observed_subagent_turns
+                        .insert((thread_id.to_string(), turn_id.to_string()));
+                }
+                if self.subagent_turns.get(thread_id).map(String::as_str) != Some(turn_id) {
+                    return Vec::new();
+                }
+                self.subagent_turns.remove(thread_id);
+                vec![CodexTurnEvent::SubagentTurnCompleted {
+                    agent_thread_id: thread_id.to_string(),
+                    duration_ms,
+                    is_error,
+                }]
+            }
             CodexThreadRole::Foreign => self.unknown_frame("turn/completed"),
         }
+    }
+
+    fn subagent_turn_started(&mut self, thread_id: &str, turn_id: &str) {
+        if !matches!(self.role(thread_id), CodexThreadRole::Subagent)
+            || bounded_identity(turn_id, MAX_CODEX_THREAD_ID_BYTES).is_none()
+            || self.subagent_turns.get(thread_id).map(String::as_str) == Some(turn_id)
+        {
+            return;
+        }
+        let identity = (thread_id.to_string(), turn_id.to_string());
+        if self.observed_subagent_turns.contains(&identity) {
+            return;
+        }
+        // Never evict tombstones: late starts/completions cannot resurrect prior work.
+        self.subagent_turns.remove(thread_id);
+        if self.observed_subagent_turns.len() >= MAX_CODEX_SUBAGENT_TURN_IDS {
+            return;
+        }
+        self.observed_subagent_turns.insert(identity);
+        self.subagent_turns
+            .insert(thread_id.to_string(), turn_id.to_string());
     }
 
     fn item(&mut self, payload: ItemNotification, phase: CodexItemPhase) -> Vec<CodexTurnEvent> {
@@ -649,6 +694,14 @@ impl CodexTurnProjection {
         }
         if !self.mark_subagent_activity(activity.id.as_str()) {
             return Vec::new();
+        }
+        if matches!(
+            kind,
+            CodexSubagentKind::Started
+                | CodexSubagentKind::Interacted
+                | CodexSubagentKind::Interrupted
+        ) {
+            self.subagent_turns.remove(&agent_thread_id);
         }
         vec![CodexTurnEvent::Subagent {
             kind,

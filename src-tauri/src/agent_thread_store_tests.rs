@@ -57,8 +57,10 @@ fn settled_turn(turn_id: &str) -> AgentTurn {
         ended_at_epoch_ms: Some(2),
         events: vec![AgentTurnEvent::AssistantText {
             text: "done".to_string(),
+            parent_tool_id: None,
         }],
         events_truncated: false,
+        subagent_lifecycle: None,
         last_status_sequence: 1,
         last_output_sequence: 1,
         stream_metrics: None,
@@ -431,6 +433,7 @@ fn an_oversize_document_is_rejected_before_it_reaches_the_disk() {
             let mut turn = settled_turn(&format!("agt-turn-{index:04}"));
             turn.events = vec![AgentTurnEvent::AssistantText {
                 text: "a".repeat(MAX_AGENT_EVENT_TEXT_BYTES),
+                parent_tool_id: None,
             }];
             turn
         })
@@ -455,6 +458,7 @@ fn out_of_bounds_turn_and_event_payloads_are_rejected() {
     let mut too_much_text = thread_document(ROOT_KEY, "agt-thread-0002", 10);
     too_much_text.thread.turns[0].events = vec![AgentTurnEvent::AssistantText {
         text: "a".repeat(MAX_AGENT_EVENT_TEXT_BYTES + 1),
+        parent_tool_id: None,
     }];
     let mut too_long_summary = thread_document(ROOT_KEY, "agt-thread-0003", 10);
     too_long_summary.thread.turns[0].events = vec![AgentTurnEvent::ToolCall {
@@ -1512,6 +1516,9 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
     });
     assert!(validate_agent_thread_document(ROOT_KEY, &malformed).is_err());
 }
+
+#[path = "agent_thread_store_event_wire_tests.rs"]
+mod event_wire_tests;
 
 #[path = "agent_thread_store_external_history_tests.rs"]
 mod external_history_tests;

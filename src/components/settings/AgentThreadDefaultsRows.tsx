@@ -1,3 +1,4 @@
+import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import {
   DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
@@ -27,6 +28,7 @@ export interface AgentThreadDefaultsRowsProps {
   readonly appSettings: AppSettings;
   readonly hasWorkspace: boolean;
   readonly workspaceSettings: WorkspaceSettings;
+  onChangeFollowUpBehavior(behavior: AgentFollowUpBehavior): void;
   onChangeDefaultProvider(provider: AgentCliKind): void;
   onChangeIsolationPolicy(policy: AgentIsolationPolicy): void;
   onClearFavorites(): void;
@@ -36,6 +38,7 @@ export function AgentThreadDefaultsRows({
   appSettings,
   hasWorkspace,
   onChangeDefaultProvider,
+  onChangeFollowUpBehavior,
   onChangeIsolationPolicy,
   onClearFavorites,
   workspaceSettings,
@@ -75,6 +78,20 @@ export function AgentThreadDefaultsRows({
           }}
           options={providerOptions}
           value={selectedEnabled ? appSettings.agentCliKind : ""}
+          width="md"
+        />
+      </SettingsRow>
+
+      <SettingsRow rowId="agents.followUpBehavior">
+        <SettingsSelect
+          onChange={(value) => {
+            if (value === "queue" || value === "steer") onChangeFollowUpBehavior(value);
+          }}
+          options={[
+            { label: "Queue for later", value: "queue" },
+            { label: "Send now", value: "steer" },
+          ]}
+          value={appSettings.agentFollowUpBehavior}
           width="md"
         />
       </SettingsRow>

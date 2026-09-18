@@ -59,6 +59,7 @@ import { useAgentProviderSignIn, type AgentProviderSignInSurface } from "./useAg
 import type { AgentProviderSignInRefreshOutcome } from "./useAgentProviderSignIn";
 import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import {
   defaultAgentAttachmentGateway,
   defaultAgentImageSurface,
@@ -81,6 +82,7 @@ export interface WorkbenchAgentProjectGateways {
 
 export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
+  readonly agentQuestionGateway?: AgentQuestionGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
   readonly agentProviderGateway: AgentProviderPolicyGateway &
@@ -431,6 +433,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
+    agentQuestionGateway: options.agentQuestionGateway,
     agentAttachmentGateway: options.agentAttachmentGateway ?? defaultAgentAttachmentGateway,
     agentImageSurface: options.agentImageSurface ?? defaultAgentImageSurface,
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,

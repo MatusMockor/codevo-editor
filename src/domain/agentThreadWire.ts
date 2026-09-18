@@ -1,3 +1,4 @@
+import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import {
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,
@@ -145,6 +146,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     lastStatusSequence: turn.lastStatusSequence,
     lastOutputSequence: turn.lastOutputSequence,
     streamMetrics: turn.streamMetrics ?? null,
+    ...optionalField("subagentLifecycle", turn.subagentLifecycle),
     launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
     cliVersion: turn.cliVersion,
     ...optionalField("codexTransport", turn.codexTransport),
@@ -557,7 +559,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
       "lastStatusSequence",
       "lastOutputSequence",
     ],
-    ["launch", "cliVersion", "streamMetrics", "attachments", "codexTransport"],
+    ["launch", "cliVersion", "streamMetrics", "attachments", "codexTransport", "subagentLifecycle"],
     path,
   );
   return {
@@ -571,6 +573,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
     lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
     streamMetrics: parseStreamMetrics(turn.streamMetrics, `${path}.streamMetrics`),
+    ...optionalField("subagentLifecycle", parseAgentSubagentLifecycle(turn.subagentLifecycle)),
     launch: parseLaunch(turn.launch, `${path}.launch`),
     cliVersion: parseCliVersion(turn.cliVersion, `${path}.cliVersion`),
     ...optionalField(

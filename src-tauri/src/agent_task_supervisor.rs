@@ -871,7 +871,7 @@ impl AgentTaskRegistry {
         let questions = child.take_questions();
         let input = child
             .take_input()
-            .map(|writer| Arc::new(AgentTaskInputSlot::new(writer)));
+            .map(|writer| Arc::new(AgentTaskInputSlot::new(writer, questions.clone())));
         if let (Some(group), Some(input)) = (unpublished.group.as_ref(), input.as_ref()) {
             let _ = group.input.set(Arc::clone(input));
         }
@@ -1506,7 +1506,11 @@ fn run_waiter_inner(
                 publish_output_incomplete_marker(shared, task_id, AgentTaskOutputStream::Stdout);
                 let _ = group.force_stop();
             }
-            if let Some(message) = input.as_ref().and_then(|input| input.background_failure()) {
+            if let Some(message) = input.as_ref().and_then(|input| {
+                input
+                    .background_failure()
+                    .or_else(|| input.unfinished_input_failure())
+            }) {
                 let _ = group.force_stop();
                 reap_bounded(group, child, shared.tuning.force_timeout);
                 complete(

@@ -325,3 +325,25 @@ it("propagates the runner's gap while retaining lifecycle rows preceding it", as
   expect(turn.events).toEqual([{ kind: "assistantText", text: "Recovered" }]);
   expect(turn.eventsTruncated).toBe(true);
 });
+it("retains the authoritative lifecycle snapshot across completed replay refreshes", async () => {
+  const gw = fixture();
+  const lifecycle = {
+    entries: [
+      {
+        id: "tool:spawn",
+        toolId: "spawn",
+        name: "Agent",
+        description: "Review",
+        state: "completed",
+      },
+    ],
+    truncated: false,
+  };
+  gw.listEvents.mockResolvedValue({ items: [], nextCursor: null, subagentLifecycle: lifecycle });
+  const first = await load(gw);
+  expect(first.subagentLifecycles?.get("root")).toEqual(lifecycle);
+  gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+  const second = await load(gw, first);
+  expect(second.subagentLifecycles?.get("root")).toEqual(lifecycle);
+  expect(gw.listEvents).toHaveBeenCalledTimes(1);
+});

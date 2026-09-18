@@ -155,6 +155,14 @@ pub struct AgentQuestionSession {
     state: Mutex<State>,
 }
 impl AgentQuestionSession {
+    pub fn has_pending(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entries
+            .iter()
+            .any(|entry| entry.request.status == AgentQuestionStatus::Pending)
+    }
     pub fn failure(&self) -> Option<String> {
         self.state
             .lock()

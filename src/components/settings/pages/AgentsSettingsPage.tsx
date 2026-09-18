@@ -170,6 +170,9 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
         onChangeDefaultProvider={(agentCliKind) =>
           writeAppSettings({ ...appSettingsRef.current, agentCliKind })
         }
+        onChangeFollowUpBehavior={(agentFollowUpBehavior) =>
+          writeAppSettings({ ...appSettingsRef.current, agentFollowUpBehavior })
+        }
         onChangeIsolationPolicy={(agentIsolationPolicy) =>
           actions.updateWorkspaceSettings({
             ...draft.workspaceSettings,

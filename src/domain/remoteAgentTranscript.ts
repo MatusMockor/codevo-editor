@@ -4,6 +4,10 @@ import {
   finishAgentOutput,
   type AgentOutputParserState,
 } from "./agentOutput/agentOutputParser";
+import {
+  retainAgentSubagentLifecycle,
+  type AgentSubagentLifecycle,
+} from "./agentSubagentLifecycle";
 import { mergeTurnEvents, type AgentTurnEvent } from "./agentThread";
 import type { RemoteRunnerEvent, RemoteRunnerProvider } from "./remoteRunner";
 
@@ -11,6 +15,7 @@ export interface RemoteAgentTranscript {
   readonly taskId: string;
   readonly parser: AgentOutputParserState;
   readonly events: readonly AgentTurnEvent[];
+  readonly subagentLifecycle?: AgentSubagentLifecycle;
   readonly lastRunnerSequence: number;
   readonly outputOrdinal: number;
   readonly receivedUtf8Bytes: number;
@@ -80,8 +85,11 @@ export function appendRemoteAgentTranscript(
   let error = previous.error;
   let truncated = previous.eventsTruncated || pendingGap !== undefined;
   let events = previous.events;
+  let subagentLifecycle =
+    previous.subagentLifecycle ?? retainAgentSubagentLifecycle(undefined, previous.events);
   const append = (incomingEvents: readonly AgentTurnEvent[]) => {
-    const merged = mergeTurnEvents(events, incomingEvents);
+    subagentLifecycle = retainAgentSubagentLifecycle(subagentLifecycle, incomingEvents);
+    const merged = mergeRemoteTranscriptEvents(events, incomingEvents);
     events = merged.events;
     truncated ||= merged.truncated;
   };
@@ -102,6 +110,23 @@ export function appendRemoteAgentTranscript(
       append(result.events);
       ordinal++;
       bytes += new TextEncoder().encode(event.text).byteLength;
+    }
+    if (event.type === "task.input" && event.messageId && event.parts) {
+      if (
+        !events.some(
+          (item) => item.kind === "userMessage" && item.remoteMessageId === event.messageId,
+        )
+      )
+        append([
+          {
+            kind: "userMessage",
+            remoteMessageId: event.messageId,
+            text: event.parts
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n\n"),
+          },
+        ]);
     }
     if (event.error) {
       error = event.error;
@@ -126,6 +151,7 @@ export function appendRemoteAgentTranscript(
     pendingGap,
     parser,
     events,
+    subagentLifecycle,
     lastRunnerSequence: sequence,
     outputOrdinal: ordinal,
     receivedUtf8Bytes: bytes,
@@ -133,5 +159,42 @@ export function appendRemoteAgentTranscript(
     finished,
     endedAtEpochMs: ended !== null && Number.isFinite(ended) ? ended : null,
     error,
+  };
+}
+
+/** Accepted inputs retain 32 × (48,000 text bytes + 30 separator bytes), outside output. */
+function mergeRemoteTranscriptEvents(
+  existing: readonly AgentTurnEvent[],
+  incoming: readonly AgentTurnEvent[],
+): ReturnType<typeof mergeTurnEvents> {
+  if (incoming.length === 0) return { events: existing, truncated: false };
+  const accepted = new Map<string, Extract<AgentTurnEvent, { kind: "userMessage" }>>();
+  for (const event of [...existing, ...incoming]) {
+    if (event.kind !== "userMessage" || event.remoteMessageId === undefined) continue;
+    if (!accepted.has(event.remoteMessageId) && accepted.size >= 32)
+      throw new Error("The runner exceeded the accepted message limit.");
+    accepted.set(event.remoteMessageId, event);
+  }
+  for (const event of incoming) {
+    if (
+      event.kind === "userMessage" &&
+      event.remoteMessageId !== undefined &&
+      new TextEncoder().encode(event.text).byteLength > 48_030
+    )
+      throw new Error("The runner exceeded the accepted message byte limit.");
+  }
+  if (!accepted.size) return mergeTurnEvents(existing, incoming);
+  const reference = (event: AgentTurnEvent): AgentTurnEvent =>
+    event.kind === "userMessage" && event.remoteMessageId !== undefined
+      ? { kind: "userMessage", remoteMessageId: event.remoteMessageId, text: "" }
+      : event;
+  const merged = mergeTurnEvents(existing.map(reference), incoming.map(reference));
+  return {
+    ...merged,
+    events: merged.events.map((event) =>
+      event.kind === "userMessage" && event.remoteMessageId !== undefined
+        ? accepted.get(event.remoteMessageId)!
+        : event,
+    ),
   };
 }

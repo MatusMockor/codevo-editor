@@ -12,6 +12,7 @@ pub mod agent_attachment_paths;
 
 #[path = "agent_thread_store_appserver.rs"]
 mod appserver;
+use crate::agent_subagent_lifecycle as subagent_lifecycle;
 pub use appserver::{AgentAppServerUsage, AgentUsageScope, CodexTransport, SubagentActivity};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -33,6 +34,7 @@ pub const MAX_AGENT_EVENTS_PER_TURN: usize = 512;
 pub const MAX_AGENT_EVENT_TEXT_BYTES: usize = 16 * 1024;
 pub const MAX_AGENT_CONTEXT_MODEL_BYTES: usize = 256;
 pub const MAX_AGENT_TOOL_SUMMARY_BYTES: usize = 512;
+pub const MAX_AGENT_TOOL_ID_BYTES: usize = 256;
 pub const MAX_AGENT_TOOL_DESCRIPTION_BYTES: usize = 200;
 pub const MAX_AGENT_THREAD_TITLE_BYTES: usize = 256;
 pub const MAX_AGENT_THREAD_FILE_BYTES: usize = 1024 * 1024;
@@ -253,6 +255,12 @@ pub struct AgentTurn {
     pub ended_at_epoch_ms: Option<u64>,
     pub events: Vec<AgentTurnEvent>,
     pub events_truncated: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "subagent_lifecycle::optional"
+    )]
+    pub subagent_lifecycle: Option<serde_json::Value>,
     pub last_status_sequence: u64,
     pub last_output_sequence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -397,6 +405,25 @@ pub enum AgentSubagentStatus {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum AgentBackgroundTaskStatus {
+    Starting,
+    Running,
+    Completed,
+    Failed,
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentBackgroundTaskType {
+    Monitor,
+    Shell,
+    Agent,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum AgentContextCompactionStatus {
     Compacting,
     Idle,
@@ -406,6 +433,14 @@ pub enum AgentContextCompactionStatus {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum AgentTurnEvent {
+    #[serde(rename_all = "camelCase")]
+    BackgroundTask {
+        task_id: String,
+        status: AgentBackgroundTaskStatus,
+        task_type: AgentBackgroundTaskType,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     UserMessage {
         text: String,
@@ -445,8 +480,11 @@ pub enum AgentTurnEvent {
         #[serde(deserialize_with = "appserver::nullable_required")]
         client_user_message_id: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
     AssistantText {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_id: Option<String>,
     },
     Reasoning {
         text: String,
@@ -913,6 +951,13 @@ fn ensure_agent_integration_ref(candidate: &str) -> Result<(), String> {
 
 fn validate_agent_turn(turn: &AgentTurn) -> Result<(), String> {
     safe_agent_task_id(&turn.turn_id)?;
+    if turn
+        .subagent_lifecycle
+        .as_ref()
+        .is_some_and(|value| !subagent_lifecycle::valid(value))
+    {
+        return Err("Invalid subagent lifecycle metadata".into());
+    }
     if turn.prompt.len() > MAX_AGENT_PROMPT_BYTES {
         return Err("Agent turn prompt exceeds the supported length.".to_string());
     }
@@ -1138,9 +1183,25 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
         }
     }
     let (text_bytes, summary_bytes) = match event {
-        AgentTurnEvent::UserMessage { text, .. }
-        | AgentTurnEvent::AssistantText { text }
-        | AgentTurnEvent::Reasoning { text } => (text.len(), 0),
+        AgentTurnEvent::UserMessage { text, .. } | AgentTurnEvent::Reasoning { text } => {
+            (text.len(), 0)
+        }
+        AgentTurnEvent::AssistantText {
+            text,
+            parent_tool_id,
+        } => {
+            ensure_optional_tool_identifier_bounds(parent_tool_id)?;
+            (text.len(), 0)
+        }
+        AgentTurnEvent::BackgroundTask {
+            task_id,
+            description,
+            ..
+        } => {
+            ensure_tool_identifier_bounds(task_id)?;
+            ensure_background_task_description_bounds(description)?;
+            (0, optional_len(description))
+        }
         AgentTurnEvent::ToolCall {
             tool_id,
             name,
@@ -1148,28 +1209,21 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
             description,
             parent_tool_id,
         } => {
+            ensure_tool_identifier_bounds(tool_id)?;
+            ensure_optional_tool_identifier_bounds(parent_tool_id)?;
             ensure_tool_description_bounds(description)?;
-            (
-                0,
-                tool_id
-                    .len()
-                    .max(name.len())
-                    .max(input_summary.len())
-                    .max(optional_len(parent_tool_id)),
-            )
+            (0, name.len().max(input_summary.len()))
         }
         AgentTurnEvent::ToolResult {
             tool_id,
             output_summary,
             parent_tool_id,
             ..
-        } => (
-            0,
-            tool_id
-                .len()
-                .max(output_summary.len())
-                .max(optional_len(parent_tool_id)),
-        ),
+        } => {
+            ensure_tool_identifier_bounds(tool_id)?;
+            ensure_optional_tool_identifier_bounds(parent_tool_id)?;
+            (0, output_summary.len())
+        }
         AgentTurnEvent::Subagent {
             tool_id,
             task_id,
@@ -1236,6 +1290,36 @@ fn ensure_tool_description_bounds(description: &Option<String>) -> Result<(), St
     }
     if description.chars().any(char::is_control) {
         return Err("Agent tool description must not contain control characters.".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_tool_identifier_bounds(identifier: &str) -> Result<(), String> {
+    if identifier.is_empty() {
+        return Err("Agent tool identifier must not be empty.".to_string());
+    }
+    if identifier.len() > MAX_AGENT_TOOL_ID_BYTES {
+        return Err("Agent tool identifier exceeds the supported length.".to_string());
+    }
+    if identifier.chars().any(char::is_control) {
+        return Err("Agent tool identifier must not contain control characters.".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_optional_tool_identifier_bounds(identifier: &Option<String>) -> Result<(), String> {
+    let Some(identifier) = identifier.as_ref() else {
+        return Ok(());
+    };
+    ensure_tool_identifier_bounds(identifier)
+}
+
+fn ensure_background_task_description_bounds(description: &Option<String>) -> Result<(), String> {
+    let Some(description) = description.as_ref() else {
+        return Ok(());
+    };
+    if description.contains('\0') {
+        return Err("Agent background task description contains a NUL byte.".to_string());
     }
     Ok(())
 }

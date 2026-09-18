@@ -1,3 +1,4 @@
+import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import type {
   RemoteRunnerCollectInstructionsRequest,
   RemoteRunnerInstructionSnapshot,
@@ -33,6 +34,8 @@ export type RemoteRunnerDescriptor = Readonly<{
     taskIsolation?: boolean;
     taskFileDiffs?: boolean;
     pendingMessages?: boolean;
+    taskSteering?: boolean;
+    subagentTelemetry?: boolean;
     outputArtifacts?: boolean;
     instructionSync?: boolean;
     interactiveQuestions?: boolean;
@@ -84,10 +87,19 @@ export type RemoteRunnerContinueTaskRequest = RemoteRunnerTaskRequest &
     parts: readonly RemoteRunnerPart[];
     launch?: AgentLaunchOptions;
   }>;
+export type RemoteRunnerSteerTaskRequest = RemoteRunnerTaskRequest &
+  Readonly<{ idempotencyKey: string; parts: readonly RemoteRunnerPart[] }>;
+export type RemoteRunnerSteerResponse = Readonly<{
+  taskId: string;
+  messageId: string;
+  status: "accepted";
+}>;
+export type RemoteRunnerSteerPendingRequest = RemoteRunnerTaskRequest &
+  Readonly<{ pendingId: string }>;
 export type RemoteRunnerPendingMessage = Readonly<{
   id: string;
   conversationId: string;
-  status: "queued" | "paused" | "dispatched" | "cancelled";
+  status: "queued" | "paused" | "dispatched" | "cancelled" | "uncertain";
   parts: readonly RemoteRunnerPart[];
   createdAt: string;
   launch?: AgentLaunchOptions;
@@ -109,10 +121,13 @@ export type RemoteRunnerEvent = Readonly<{
     | "task.failed"
     | "task.interrupted"
     | "task.cancelled"
-    | "task.output";
+    | "task.output"
+    | "task.input";
   createdAt: string;
   channel?: "stdout" | "stderr";
   text?: string;
+  messageId?: string;
+  parts?: readonly RemoteRunnerPart[];
   exitCode?: number | null;
   error?: string;
 }>;
@@ -120,6 +135,7 @@ export type RemoteRunnerPage<T> = Readonly<{ items: readonly T[]; nextCursor: nu
 export type RemoteRunnerEventPage = RemoteRunnerPage<RemoteRunnerEvent> &
   Readonly<{
     /** Highest output sequence evicted by the runner; lifecycle events remain replayable. */
+    subagentLifecycle?: AgentSubagentLifecycle;
     outputTruncatedBeforeSequence?: number;
     outputStartsAtLineBoundary?: boolean;
   }>;
@@ -203,6 +219,10 @@ export type RemoteRunnerHistorySearchPage = Readonly<{
 }>;
 
 export interface RemoteRunnerGateway {
+  steerTask?(request: RemoteRunnerSteerTaskRequest): Promise<RemoteRunnerSteerResponse>;
+  steerPendingMessage?(
+    request: RemoteRunnerSteerPendingRequest,
+  ): Promise<RemoteRunnerSteerResponse>;
   collectInstructions?(
     request: RemoteRunnerCollectInstructionsRequest,
   ): Promise<RemoteRunnerInstructionSnapshot>;

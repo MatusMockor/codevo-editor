@@ -8,6 +8,24 @@ import {
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 
 describe("BrowserSettingsGateway", () => {
+  it("persists follow-up delivery preference and migrates missing or invalid values to queue", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    expect((await gateway.loadAppSettings()).agentFollowUpBehavior).toBe("queue");
+    await gateway.saveAppSettings({ ...defaultAppSettings(), agentFollowUpBehavior: "steer" });
+    expect(
+      (await new BrowserSettingsGateway(storage).loadAppSettings()).agentFollowUpBehavior,
+    ).toBe("steer");
+    for (const value of [undefined, "invalid", null, 1, {}, []]) {
+      storage.setItem("editor.settings.app", JSON.stringify({ agentFollowUpBehavior: value }));
+      expect((await gateway.loadAppSettings()).agentFollowUpBehavior).toBe("queue");
+    }
+    await gateway.saveAppSettings({ ...defaultAppSettings(), agentFollowUpBehavior: "queue" });
+    expect(
+      (await new BrowserSettingsGateway(storage).loadAppSettings()).agentFollowUpBehavior,
+    ).toBe("queue");
+  });
+
   it("enables automatic CLI update checks for both providers on a fresh install", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
@@ -496,6 +514,7 @@ describe("BrowserSettingsGateway", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
+      agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
@@ -600,6 +619,7 @@ describe("BrowserSettingsGateway", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
+      agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
@@ -715,6 +735,7 @@ describe("BrowserSettingsGateway", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
+      agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
@@ -851,6 +872,7 @@ describe("BrowserSettingsGateway", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
+      agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,

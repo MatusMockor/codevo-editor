@@ -1,3 +1,4 @@
+import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import {
   useCallback,
   useMemo,
@@ -8,7 +9,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Loader2, Paperclip, Square, X } from "lucide-react";
+import { Paperclip, X } from "lucide-react";
 import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
@@ -48,9 +49,9 @@ import { AgentLaunchControls, type AgentLaunchControlRequest } from "./AgentLaun
 import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
-import { agentSubmitKeyShortcuts, agentSubmitShortcut } from "./agentSubmitShortcut";
+import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { useCompactComposerControls } from "./useCompactComposerControls";
-import { useTouchComposerLayout } from "./useTouchComposerLayout";
+import { AgentComposerSubmitControls } from "./AgentComposerSubmitControls";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
 import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
 import { AgentContextWindowMeter, type AgentContextWindowUsage } from "./AgentContextWindowMeter";
@@ -68,11 +69,14 @@ export type AgentComposerMode =
   | { readonly kind: "steer"; readonly threadId: string };
 
 export interface AgentComposerSubmission {
+  readonly delivery?: "queued" | "immediate";
   readonly launch: AgentLaunchOptions;
   readonly dangerousLaunchConfirmed: boolean;
 }
 
 export interface AgentComposerProps {
+  readonly followUpBehavior?: AgentFollowUpBehavior;
+  readonly immediateBlockedReason?: string | null;
   readonly contextUsage?: AgentContextWindowUsage | null;
   readonly executionServerId?: string | null;
   readonly attachments?: AgentComposerAttachmentsSurface | null;
@@ -115,6 +119,8 @@ export interface AgentComposerProps {
 }
 
 export function AgentComposer({
+  followUpBehavior = "queue",
+  immediateBlockedReason = null,
   contextUsage = null,
   executionServerId = null,
   attachments = null,
@@ -185,7 +191,6 @@ export function AgentComposer({
   const [dismissedCompactionKey, setDismissedCompactionKey] = useState<string | null>(null);
   const followUp = mode.kind !== "new";
   const steering = mode.kind === "steer";
-  const touch = useTouchComposerLayout();
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
   const normalizedLaunch = useMemo(
@@ -225,8 +230,8 @@ export function AgentComposer({
     blockedReason !== null ||
     targetReason !== null;
   const shortcut = agentSubmitShortcut();
-  const submitName = submitAccessibleName(dispatching, mode);
-  const submitHint = `${submitName} (Enter or ${shortcut.secondary.glyphs})`;
+  const effectiveFollowUpBehavior = immediateBlockedReason === null ? followUpBehavior : "queue";
+  const submitName = submitAccessibleName(dispatching, mode, effectiveFollowUpBehavior);
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -448,8 +453,14 @@ export function AgentComposer({
       commands.exactCommand !== "compact" &&
       (commands.exactCommand === "new" || !allProvidersDisabled));
 
-  const dispatch = (): void => {
-    onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
+  const dispatch = (alternate = false): void => {
+    const queue = (effectiveFollowUpBehavior === "queue") !== alternate;
+    if (steering && !queue && immediateBlockedReason !== null) return;
+    onSubmit({
+      launch: effectiveLaunch,
+      dangerousLaunchConfirmed: dangerousLaunch,
+      ...(steering ? { delivery: queue ? ("queued" as const) : ("immediate" as const) } : {}),
+    });
   };
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
@@ -481,7 +492,7 @@ export function AgentComposer({
     event.preventDefault();
     if (commands.interceptSubmit()) return;
     if (blocked) return;
-    dispatch();
+    dispatch(event.metaKey || event.ctrlKey);
   };
 
   return (
@@ -564,7 +575,7 @@ export function AgentComposer({
           }}
           onKeyDown={onKeyDown}
           onPaste={pasteAttachments}
-          placeholder={composerPlaceholder(mode)}
+          placeholder={composerPlaceholder(mode, effectiveFollowUpBehavior)}
           value={prompt}
         />
 
@@ -600,58 +611,21 @@ export function AgentComposer({
 
           <AgentContextWindowMeter ownerKey={promptOwnerKey ?? "composer"} usage={contextUsage} />
 
-          {running && (
-            <button
-              aria-label="Stop agent"
-              className="agent-composer__stop"
-              onClick={onStop}
-              title={
-                steering
-                  ? `Stop (Esc). Queue message: Enter or ${shortcut.secondary.glyphs}`
-                  : "Stop (Esc)"
-              }
-              aria-busy={dispatching || undefined}
-              type="button"
-            >
-              {dispatching ? (
-                <Loader2
-                  aria-hidden="true"
-                  className="agent-composer__send-spinner"
-                  size={14}
-                  strokeWidth={2.5}
-                />
-              ) : (
-                <Square aria-hidden="true" size={14} strokeWidth={2.5} />
-              )}
-            </button>
-          )}
-
-          {(!running || touch) && (
-            <button
-              aria-busy={dispatching || undefined}
-              aria-keyshortcuts={agentSubmitKeyShortcuts(shortcut)}
-              aria-label={submitName}
-              className={
-                dispatching
-                  ? "agent-composer__send agent-composer__send--busy"
-                  : "agent-composer__send"
-              }
-              disabled={blocked && !localCommandAvailable}
-              title={submitHint}
-              type="submit"
-            >
-              {dispatching ? (
-                <Loader2
-                  aria-hidden="true"
-                  className="agent-composer__send-spinner"
-                  size={16}
-                  strokeWidth={2.5}
-                />
-              ) : (
-                <ArrowUp aria-hidden="true" size={16} strokeWidth={2.5} />
-              )}
-            </button>
-          )}
+          <AgentComposerSubmitControls
+            running={running}
+            steering={steering}
+            dispatching={dispatching}
+            disabled={blocked && !localCommandAvailable}
+            submitName={submitName}
+            followUpBehavior={effectiveFollowUpBehavior}
+            immediateBlockedReason={immediateBlockedReason}
+            shortcut={shortcut}
+            onStop={onStop}
+            onAlternate={() => {
+              if (commands.interceptSubmit() || blocked) return;
+              dispatch(true);
+            }}
+          />
         </div>
 
         {caption && (
@@ -706,15 +680,25 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
   );
 }
 
-function submitAccessibleName(dispatching: boolean, mode: AgentComposerMode): string {
-  if (mode.kind === "steer") return "Queue message";
+function submitAccessibleName(
+  dispatching: boolean,
+  mode: AgentComposerMode,
+  followUpBehavior: AgentFollowUpBehavior,
+): string {
+  if (mode.kind === "steer") return followUpBehavior === "queue" ? "Queue message" : "Send now";
   if (dispatching) return "Starting…";
   if (mode.kind === "followUp") return "Send follow-up";
   return "Start agent";
 }
 
-function composerPlaceholder(mode: AgentComposerMode): string {
-  if (mode.kind === "steer") return "Queue a message for the next turn";
+function composerPlaceholder(
+  mode: AgentComposerMode,
+  followUpBehavior: AgentFollowUpBehavior,
+): string {
+  if (mode.kind === "steer")
+    return followUpBehavior === "queue"
+      ? "Queue a message for the next turn"
+      : "Send a message to the running agent";
   if (mode.kind === "followUp") return "Reply to the agent in this thread";
   return "Ask anything or describe the change you want";
 }

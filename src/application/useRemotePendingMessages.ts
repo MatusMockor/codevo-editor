@@ -96,7 +96,12 @@ export function useRemotePendingMessages(options: Options) {
           return [
             {
               id: item.id,
-              state: item.status === "paused" ? ("paused" as const) : ("queued" as const),
+              state:
+                item.status === "uncertain"
+                  ? ("uncertain" as const)
+                  : item.status === "paused"
+                    ? ("paused" as const)
+                    : ("queued" as const),
               queuedAtEpochMs: Date.parse(item.createdAt),
               displayAttachmentCount: item.parts.filter((part) => part.type === "attachment")
                 .length,
@@ -138,6 +143,7 @@ export function useRemotePendingMessages(options: Options) {
     let command: Command | undefined;
     let commandKey = "";
     let dispatched = false;
+    let retryingUnconfirmed = false;
     try {
       const execution = target(request.threadId);
       const rawLaunch =
@@ -160,6 +166,7 @@ export function useRemotePendingMessages(options: Options) {
         request.attachmentOwner ?? null,
       ]);
       command = uncertain.current.get(commandKey);
+      retryingUnconfirmed = command !== undefined;
       if (command && command.signature !== signature)
         throw new Error("Retry the original queued message before changing it.");
       if (!command) {
@@ -230,13 +237,13 @@ export function useRemotePendingMessages(options: Options) {
       uncertain.current.delete(commandKey);
       options.publish(execution.serverId, request.threadId, (values) => [
         ...values.filter((entry) => entry.id !== item.id),
-        ...(["queued", "paused"].includes(item.status) ? [item] : []),
+        ...(["queued", "paused", "uncertain"].includes(item.status) ? [item] : []),
       ]);
       void options.refresh();
       return true;
     } catch (error) {
       if (valid()) {
-        if (dispatched && isRemoteRunnerRequestRejectedError(error))
+        if (dispatched && !retryingUnconfirmed && isRemoteRunnerRequestRejectedError(error))
           uncertain.current.delete(commandKey);
         options.report(
           uncertain.current.has(commandKey)
@@ -299,6 +306,15 @@ export function useRemotePendingMessages(options: Options) {
   }
   return {
     busy,
+    hasUnconfirmed: (threadId: string) => {
+      const execution = latest.current.views.get(threadId)?.execution;
+      return (
+        execution !== undefined &&
+        uncertain.current.has(
+          `${execution.serverId}:${execution.runnerId}:${execution.conversationId}`,
+        )
+      );
+    },
     deferred,
     enqueue,
     remove: (threadId: string, id: string) => mutate(threadId, id),

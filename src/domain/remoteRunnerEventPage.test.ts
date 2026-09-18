@@ -42,3 +42,57 @@ describe("remote event page retention metadata", () => {
     expect(() => validateRemoteRunnerValue("listTasks", "response", page)).toThrow();
   });
 });
+
+describe("accepted input event", () => {
+  const event = {
+    sequence: 1,
+    taskId: "12345678-1234-4234-8234-123456789abc",
+    type: "task.input",
+    createdAt: "2026-09-18T00:00:00.000Z",
+    messageId: "12345678-1234-4234-8234-123456789abd",
+    parts: [{ type: "text", text: "New direction" }],
+  };
+  it("preserves accepted input for durable conversation reconstruction", () => {
+    expect(() =>
+      validateRemoteRunnerValue("listEvents", "response", { items: [event], nextCursor: null }),
+    ).not.toThrow();
+  });
+  it.each(["messageId", "parts", "taskId", "createdAt", "unknown"])(
+    "rejects malformed %s",
+    (field) => {
+      expect(() =>
+        validateRemoteRunnerValue("listEvents", "response", {
+          items: [{ ...event, [field]: "foreign" }],
+          nextCursor: null,
+        }),
+      ).toThrow();
+    },
+  );
+});
+
+it("accepts strict lifecycle snapshots and rejects invalid metadata", () => {
+  const subagentLifecycle = {
+    entries: [{ id: "tool:t", toolId: "t", name: "Agent", description: "", state: "running" }],
+    truncated: false,
+  };
+  expect(() =>
+    validateRemoteRunnerValue("listEvents", "response", {
+      items: [],
+      nextCursor: null,
+      subagentLifecycle,
+    }),
+  ).not.toThrow();
+  for (const invalid of [
+    null,
+    { ...subagentLifecycle, unknown: true },
+    { ...subagentLifecycle, entries: [{ ...subagentLifecycle.entries[0], state: "completed" }] },
+  ]) {
+    expect(() =>
+      validateRemoteRunnerValue("listEvents", "response", {
+        items: [],
+        nextCursor: null,
+        subagentLifecycle: invalid,
+      }),
+    ).toThrow();
+  }
+});

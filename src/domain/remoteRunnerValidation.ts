@@ -1,3 +1,4 @@
+import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
 import type * as R from "./remoteRunner";
@@ -175,7 +176,7 @@ const pendingMessage: Check = (value) => {
     !object({
       id,
       conversationId: id,
-      status: choice("queued", "paused", "dispatched", "cancelled"),
+      status: choice("queued", "paused", "dispatched", "cancelled", "uncertain"),
       parts,
       createdAt: (v) =>
         timestamp(v) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(v as string),
@@ -193,10 +194,12 @@ const pendingMessages: Check = (value) => {
   return (
     new Set(items.map((item) => item.id)).size === items.length &&
     new Set(items.map((item) => item.conversationId)).size <= 1 &&
-    items.every((item) => item.status === "queued" || item.status === "paused")
+    items.every(
+      (item) => item.status === "queued" || item.status === "paused" || item.status === "uncertain",
+    )
   );
 };
-const event = object({
+const legacyEvent = object({
   sequence: integer(1),
   taskId: id,
   type: choice(
@@ -215,11 +218,28 @@ const event = object({
   exitCode: optional((v) => v === null || integer(-2147483648, 2147483647)(v)),
   error: optional(text(1024)),
 });
+const event: Check = (value) =>
+  legacyEvent(value) ||
+  object({
+    sequence: integer(1),
+    taskId: id,
+    type: choice("task.input"),
+    createdAt: timestamp,
+    messageId: id,
+    parts,
+  })(value);
 const eventPage: Check = (value) => {
   if (
     !object({
       items: array(event, 50),
       nextCursor: (v) => v === null || integer(0)(v),
+      subagentLifecycle: optional((value) => {
+        try {
+          return parseAgentSubagentLifecycle(value) !== undefined;
+        } catch {
+          return false;
+        }
+      }),
       outputTruncatedBeforeSequence: optional(integer(1)),
       outputStartsAtLineBoundary: optional(boolean),
     })(value)
@@ -273,6 +293,8 @@ export const remoteRunnerChecks = {
         taskIsolation: optional(boolean),
         taskFileDiffs: optional(boolean),
         pendingMessages: optional(boolean),
+        taskSteering: optional(boolean),
+        subagentTelemetry: optional(boolean),
         outputArtifacts: optional(boolean),
         instructionSync: optional(boolean),
         interactiveQuestions: optional(boolean),
@@ -359,6 +381,14 @@ export const remoteRunnerChecks = {
       instructions: optional(isRemoteRunnerInstructionSnapshot),
     }),
     response: object({ task, created: boolean }),
+  },
+  steerTask: {
+    request: object({ ...taskRequest, idempotencyKey: id, parts }),
+    response: object({ taskId: id, messageId: id, status: choice("accepted") }),
+  },
+  steerPendingMessage: {
+    request: object({ ...taskRequest, pendingId: id }),
+    response: object({ taskId: id, messageId: id, status: choice("accepted") }),
   },
   listPendingMessages: { request: object(taskRequest), response: pendingMessages },
   resumePendingMessages: { request: object(taskRequest), response: pendingMessages },

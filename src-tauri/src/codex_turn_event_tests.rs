@@ -669,6 +669,11 @@ fn a_failed_root_turn_projects_an_error_result_with_the_bounded_message() {
 #[test]
 fn a_completed_subagent_turn_projects_a_subagent_turn_completed_event() {
     let mut projection = with_subagent();
+    project(
+        &mut projection,
+        "turn/started",
+        json!({"threadId":SUB_THREAD, "turn":{"id":"turn-sub", "status":"inProgress"}}),
+    );
 
     let events = project(
         &mut projection,
@@ -1213,4 +1218,100 @@ fn adapter_session_fallback_serializes_a_closed_identity_transition() {
         assert!(CodexTurnEvent::session_fallback("previous-thread", invalid).is_none());
     }
     assert!(CodexTurnEvent::session_fallback(&"a".repeat(129), "replacement-thread").is_none());
+}
+
+fn child_turn(projection: &mut CodexTurnProjection, method: &str, id: &str) -> Vec<CodexTurnEvent> {
+    project(
+        projection,
+        method,
+        json!({"threadId":SUB_THREAD,"turn":{"id":id,"status":if method=="turn/started" {"inProgress"} else {"completed"}}}),
+    )
+}
+fn child_activity(projection: &mut CodexTurnProjection, id: &str, kind: &str) {
+    project(
+        projection,
+        "item/started",
+        item_params(ROOT_THREAD, subagent_activity_item(id, kind, SUB_THREAD)),
+    );
+}
+#[test]
+fn a_reused_child_cannot_be_completed_by_a_prior_turn() {
+    let mut projection = with_subagent();
+    child_turn(&mut projection, "turn/started", "child-1");
+    assert_eq!(
+        child_turn(&mut projection, "turn/completed", "child-1").len(),
+        1
+    );
+    child_activity(&mut projection, "interaction-2", "interacted");
+    assert!(child_turn(&mut projection, "turn/completed", "child-1").is_empty());
+    child_turn(&mut projection, "turn/started", "child-2");
+    child_turn(&mut projection, "turn/started", "child-1");
+    assert!(child_turn(&mut projection, "turn/completed", "child-1").is_empty());
+    assert_eq!(
+        child_turn(&mut projection, "turn/completed", "child-2").len(),
+        1
+    );
+    assert!(child_turn(&mut projection, "turn/completed", "child-2").is_empty());
+}
+#[test]
+fn child_interaction_or_interrupt_retires_the_previous_active_turn() {
+    for kind in ["interacted", "interrupted"] {
+        let mut projection = with_subagent();
+        child_turn(&mut projection, "turn/started", "child-1");
+        child_activity(&mut projection, "activity-2", kind);
+        child_turn(&mut projection, "turn/started", "child-1");
+        assert!(child_turn(&mut projection, "turn/completed", "child-1").is_empty());
+        child_turn(&mut projection, "turn/started", "child-2");
+        assert_eq!(
+            child_turn(&mut projection, "turn/completed", "child-2").len(),
+            1
+        );
+    }
+}
+#[test]
+fn unknown_child_completion_is_tombstoned_without_retiring_the_current_turn() {
+    let mut projection = with_subagent();
+    child_turn(&mut projection, "turn/started", "current");
+    assert!(child_turn(&mut projection, "turn/completed", "old-unseen").is_empty());
+    child_turn(&mut projection, "turn/started", "old-unseen");
+    assert_eq!(
+        child_turn(&mut projection, "turn/completed", "current").len(),
+        1
+    );
+}
+#[test]
+fn duplicate_current_start_and_foreign_start_do_not_change_child_authority() {
+    let mut projection = with_subagent();
+    child_turn(&mut projection, "turn/started", "current");
+    child_turn(&mut projection, "turn/started", "current");
+    project(
+        &mut projection,
+        "turn/started",
+        json!({"threadId":FOREIGN_THREAD,"turn":{"id":"foreign","status":"inProgress"}}),
+    );
+    assert_eq!(projection.subagent_turns.len(), 1);
+    assert_eq!(
+        child_turn(&mut projection, "turn/completed", "current").len(),
+        1
+    );
+}
+#[test]
+fn child_turn_tombstones_never_evict_and_exhaustion_fails_closed() {
+    let mut projection = with_subagent();
+    for index in 0..MAX_CODEX_SUBAGENT_TURN_IDS {
+        child_turn(&mut projection, "turn/started", &format!("turn-{index}"));
+    }
+    assert_eq!(
+        projection.observed_subagent_turns.len(),
+        MAX_CODEX_SUBAGENT_TURN_IDS
+    );
+    child_turn(&mut projection, "turn/started", "overflow");
+    assert!(child_turn(&mut projection, "turn/completed", "overflow").is_empty());
+    child_turn(&mut projection, "turn/started", "turn-0");
+    assert!(child_turn(&mut projection, "turn/completed", "turn-0").is_empty());
+    assert!(projection.subagent_turns.is_empty());
+    assert_eq!(
+        projection.observed_subagent_turns.len(),
+        MAX_CODEX_SUBAGENT_TURN_IDS
+    );
 }

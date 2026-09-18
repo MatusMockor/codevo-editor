@@ -664,10 +664,17 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
             let _ = reap_child(&mut child);
             return Err("Agent process identifier is not addressable.".to_string());
         };
+        let lifecycle = plan
+            .stdin_frame()
+            .map(|_| Arc::new(agent_task_input::claude_lifecycle::ClaudeInputLifecycle::new()));
         let input = plan.stdin_frame().and_then(|frame| {
             let retained: RetainedChildStdin =
                 Arc::new(RetainedAgentStdin::new(child.stdin.take()?));
-            write_prompt_frame_on_a_dedicated_thread(&retained, Arc::clone(frame));
+            let frame = lifecycle.as_ref().map_or_else(
+                || Arc::clone(frame),
+                |lifecycle| lifecycle.initial_frame(frame).into(),
+            );
+            write_prompt_frame_on_a_dedicated_thread(&retained, frame);
             Some(retained)
         });
         let questions = input
@@ -681,6 +688,7 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
             input,
             questions,
             question_input,
+            lifecycle,
         }))
     }
 }
@@ -700,6 +708,7 @@ struct StdAgentChild {
     input: Option<RetainedChildStdin>,
     questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
     question_input: Option<RetainedChildStdin>,
+    lifecycle: Option<Arc<agent_task_input::claude_lifecycle::ClaudeInputLifecycle>>,
 }
 
 impl AgentChild for StdAgentChild {
@@ -793,7 +802,9 @@ impl AgentChild for StdAgentChild {
 
     fn take_input(&mut self) -> Option<Box<dyn AgentTaskInput>> {
         let retained = self.input.take()?;
-        Some(Box::new(StdAgentTaskInput::new(retained)))
+        Some(Box::new(
+            StdAgentTaskInput::new(retained).with_lifecycle(self.lifecycle.clone()),
+        ))
     }
 }
 

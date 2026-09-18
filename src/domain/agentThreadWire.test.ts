@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_EFFORT_CHOICES } from "./agentLaunch";
+import type { AgentTurnEvent } from "./agentThread";
 import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
 
 const STORED_TURN = {
@@ -657,5 +658,74 @@ describe("agentThreadWire tool call description", () => {
     const description = "a".repeat(200);
 
     expect(roundTrip({ ...CALL, description })).toEqual([{ ...CALL, description }]);
+  });
+});
+
+describe("agentThreadWire shared event kind fixture", () => {
+  const REQUIRED_EVENT_KINDS: Readonly<Record<AgentTurnEvent["kind"], true>> = {
+    assistantText: true,
+    backgroundTask: true,
+    contextCompaction: true,
+    contextCompactionStatus: true,
+    contextUsage: true,
+    error: true,
+    queued: true,
+    reasoning: true,
+    result: true,
+    subagent: true,
+    subagentActivity: true,
+    subagentEvent: true,
+    subagentTurnDone: true,
+    subagentUsage: true,
+    toolCall: true,
+    toolResult: true,
+    unknownLine: true,
+    userMessage: true,
+  };
+
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/agent-turn-event-kinds.json", import.meta.url), "utf8"),
+  ) as {
+    readonly kinds: Record<string, Record<string, unknown>>;
+    readonly variants: ReadonlyArray<Record<string, unknown>>;
+  };
+
+  function serializedEvents(events: ReadonlyArray<unknown>): ReadonlyArray<unknown> {
+    const stored = storedThreadWithTurn({ ...STORED_TURN, launch: null, events });
+    const turns = serializeAgentThread(parseAgentThread(stored)).turns as ReadonlyArray<
+      Record<string, unknown>
+    >;
+    return turns[0].events as ReadonlyArray<unknown>;
+  }
+
+  it("carries exactly one entry per serialised turn event kind", () => {
+    expect(Object.keys(fixture.kinds).sort()).toEqual(Object.keys(REQUIRED_EVENT_KINDS).sort());
+    for (const [kind, event] of Object.entries(fixture.kinds)) {
+      expect(event.kind, kind).toBe(kind);
+    }
+  });
+
+  it("re-serialises every fixture event unchanged so the Rust wire contract can mirror it", () => {
+    for (const [kind, event] of Object.entries(fixture.kinds)) {
+      expect(
+        parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null, events: [event] }))
+          .turns[0].events,
+        kind,
+      ).toEqual([event]);
+      expect(serializedEvents([event]), kind).toEqual([event]);
+    }
+  });
+
+  it("re-serialises every optional-field variant unchanged", () => {
+    for (const [index, event] of fixture.variants.entries()) {
+      expect(REQUIRED_EVENT_KINDS).toHaveProperty(String(event.kind));
+      expect(serializedEvents([event]), `variants[${index}]`).toEqual([event]);
+    }
+  });
+
+  it("accepts every fixture event and variant together in a single turn", () => {
+    const events = [...Object.values(fixture.kinds), ...fixture.variants];
+
+    expect(serializedEvents(events)).toEqual(events);
   });
 });

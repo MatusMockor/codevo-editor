@@ -92,7 +92,7 @@ describe("AgentThreadSession", () => {
       "Queued messages will run after the current response.",
     );
     expect(queue?.querySelector(".agent-prompt__queue-status")?.getAttribute("title")).toBe(
-      "Waiting until the current response finishes.",
+      "Waiting for the next tool or response to finish.",
     );
     expect(queue?.textContent).toContain("Next task");
     expect(queue?.querySelector(".agent-prompt__queue-attachments")?.textContent).toBe(
@@ -512,7 +512,7 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-subagents__dot--live")).not.toBeNull();
   });
 
-  it("counts the subagents in the work fold summary and lists them inside the fold", () => {
+  it("counts the subagents and exposes their disclosure outside the work fold", () => {
     render({
       thread: threadView({
         turns: [
@@ -540,7 +540,8 @@ describe("AgentThreadSession", () => {
     );
     expect(rows[0]?.querySelector(".agent-subagent__state")?.textContent).toBe("completed");
     expect(rows[1]?.querySelector(".agent-subagent__state--failed")?.textContent).toBe("failed");
-    expect(rows[0]?.closest(".agent-work__events")).not.toBeNull();
+    expect(rows[0]?.closest(".agent-work__events")).toBeNull();
+    expect(host.querySelector<HTMLDetailsElement>(".agent-subagent-disclosure")?.open).toBe(false);
     expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
   });
 
@@ -560,7 +561,9 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-work")).toBeNull();
     expect(list?.closest(".agent-turn__events")).not.toBeNull();
     expect(list?.querySelectorAll(".agent-subagent")).toHaveLength(1);
-    expect(list?.querySelector(".agent-subagent__state--running")?.textContent).toBe("working");
+    expect(list?.querySelector(".agent-subagent__state--unknown")?.textContent).toBe(
+      "status unavailable",
+    );
     expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
     expect(host.querySelectorAll('[aria-label="Subagents"]')).toHaveLength(1);
   });

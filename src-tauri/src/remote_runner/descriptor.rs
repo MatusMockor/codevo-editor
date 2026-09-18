@@ -32,6 +32,10 @@ struct Capabilities {
     #[serde(default, deserialize_with = "optional_bool")]
     pending_messages: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
+    task_steering: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    subagent_telemetry: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     output_artifacts: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     instruction_sync: Option<bool>,
@@ -80,6 +84,8 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.task_launch_options,
         caps.task_file_diffs,
         caps.pending_messages,
+        caps.task_steering,
+        caps.subagent_telemetry,
         caps.output_artifacts,
         caps.instruction_sync,
         caps.interactive_questions,
@@ -193,6 +199,20 @@ mod tests {
         let mut wrong = value;
         wrong["capabilities"]["unknown"] = true.into();
         assert!(validate(wrong).is_err());
+    }
+
+    #[test]
+    fn steering_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["taskSteering"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [Value::Null, "true".into(), 1.into(), serde_json::json!({})] {
+            value["capabilities"]["taskSteering"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
     }
 
     #[test]

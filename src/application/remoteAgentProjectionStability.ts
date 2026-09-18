@@ -3,7 +3,24 @@ import type { AgentThreadView } from "./agentThreadPorts";
 
 /** Compare bounded display metadata only: never serialize transcript events or prompt text. */
 function sameTurn(previous: AgentTurn, next: AgentTurn): boolean {
-  if (previous.events !== next.events || previous.prompt !== next.prompt) return false;
+  if (previous.prompt !== next.prompt) return false;
+  if (
+    previous.events !== next.events &&
+    (previous.events.length !== next.events.length ||
+      !previous.events.every((event, index) => {
+        const other = next.events[index];
+        return (
+          event === other ||
+          (event.kind === "userMessage" &&
+            other?.kind === "userMessage" &&
+            event.remoteMessageId !== undefined &&
+            event.remoteMessageId === other.remoteMessageId &&
+            event.text === other.text &&
+            JSON.stringify(event.attachments) === JSON.stringify(other.attachments))
+        );
+      }))
+  )
+    return false;
   const { events: _oldEvents, prompt: _oldPrompt, ...oldMetadata } = previous;
   const { events: _newEvents, prompt: _newPrompt, ...newMetadata } = next;
   return JSON.stringify(oldMetadata) === JSON.stringify(newMetadata);

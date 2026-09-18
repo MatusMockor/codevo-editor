@@ -89,6 +89,9 @@ async fn execute(
         .headers(prepared.headers)
         .bearer_auth(token)
         .body(prepared.body);
+    if prepared.path.ends_with("/steer") {
+        request = request.timeout(std::time::Duration::from_secs(60));
+    }
     if let Some(id) = expected {
         request = request.header("x-codevo-runner-id", id);
     }
@@ -100,10 +103,25 @@ async fn execute(
         return Err("Runner identity changed. Reconnect the server before continuing.".into());
     }
     if !response.status().is_success() {
-        return Err(format!(
-            "Runner request failed (HTTP {}).",
-            response.status().as_u16()
-        ));
+        let status = response.status().as_u16();
+        if status == 409 && prepared.path.ends_with("/steer") {
+            let mut body = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| "Runner steering delivery was not confirmed.")?
+            {
+                if chunk.len() > 1024_usize.saturating_sub(body.len()) {
+                    return Err("Runner steering delivery was not confirmed.".into());
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let value = serde_json::from_slice::<Value>(&body).ok();
+            if value.as_ref() != Some(&json!({"error":"conflict"})) {
+                return Err("Runner steering delivery was not confirmed.".into());
+            }
+        }
+        return Err(format!("Runner request failed (HTTP {status})."));
     }
     let media = response
         .headers()
@@ -351,6 +369,41 @@ mod tests {
         });
         assert_eq!(result.unwrap_err(), "Runner request failed (HTTP 409).");
         server.join().unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn steering_uncertainty_is_not_a_definite_rejection() {
+        for (body, definite) in [
+            ("{\"error\":\"conflict\"}", true),
+            ("{\"error\":\"delivery_uncertain\"}", false),
+            ("{}", false),
+        ] {
+            let (path, server) = test_server(vec![(409, body)]);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(path)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare("POST", "/v1/tasks/id/steer", None, vec![]).unwrap(),
+                    4096,
+                )
+                .await
+            });
+            assert_eq!(
+                result.unwrap_err(),
+                if definite {
+                    "Runner request failed (HTTP 409)."
+                } else {
+                    "Runner steering delivery was not confirmed."
+                }
+            );
+            server.join().unwrap();
+        }
     }
     #[cfg(unix)]
     #[test]

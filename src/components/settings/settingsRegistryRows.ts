@@ -216,6 +216,13 @@ export const SETTINGS_ROW_TABLE = [
     ["agent", "cli", "default", "provider"],
   ),
   row(
+    "agents.followUpBehavior",
+    "agents",
+    "Messages during a run",
+    "Choose whether Enter queues a follow-up or sends it now. Use Ctrl/Cmd+Enter in the composer for the other action.",
+    ["agent", "follow-up", "queue", "steer", "send now", "enter", "shortcut"],
+  ),
+  row(
     "agents.favoriteModels",
     "agents",
     "Favorite models",

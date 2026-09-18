@@ -4,7 +4,7 @@ export const MAX_DEFERRED_FOLLOW_UPS_PER_THREAD = 8;
 export const MAX_DEFERRED_FOLLOW_UP_THREADS = 64;
 
 export interface DeferredFollowUp {
-  readonly state?: "queued" | "paused";
+  readonly state?: "queued" | "paused" | "uncertain";
   readonly id: string;
   readonly request: AgentFollowUpRequest;
   /** Presentation only; never an executable attachment reference. */

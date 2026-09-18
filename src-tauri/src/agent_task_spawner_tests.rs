@@ -1032,14 +1032,14 @@ fn a_claude_plan_pipes_its_frame_and_keeps_stdin_open_until_the_input_closes() {
         &[("image/png".to_string(), vec![0x89, 0x50, 0x4e, 0x47])],
     );
     let mut stdout = child.stdout_reader().expect("stdout");
-    let mut echoed = vec![0_u8; first_frame.len()];
+    let mut echoed = vec![0_u8; first_frame.len() + 46];
     read_exactly(
         stdout.as_mut(),
         &mut echoed,
         std::time::Duration::from_secs(5),
     )
     .expect("the first frame is echoed back");
-    assert_eq!(echoed, first_frame);
+    assert_eq!(without_command_uuid(&echoed), first_frame);
     assert_eq!(
         poll_test_child_exit(child.as_mut(), std::time::Instant::now()),
         Ok(None),
@@ -1116,11 +1116,13 @@ fn a_steer_written_during_the_initial_frame_is_serialized_after_it() {
         .expect("the child exits once the input closes");
     let echoed = collector.join().expect("collector");
 
-    let mut expected = claude_user_frame("describe it", &[("image/png".to_string(), image)]);
-    expected.extend_from_slice(&steer);
+    let expected = claude_user_frame("describe it", &[("image/png".to_string(), image)]);
+    let first_end = echoed.iter().position(|byte| *byte == b'\n').unwrap() + 1;
     assert_eq!(exit_code, 0);
+    assert_eq!(&echoed[first_end..], steer);
     assert_eq!(
-        echoed, expected,
+        without_command_uuid(&echoed[..first_end]),
+        expected,
         "the steer frame is serialized after the initial frame"
     );
     fs::remove_dir_all(fixture).expect("cleanup");
@@ -1277,4 +1279,13 @@ fn planning_rejects_unsafe_resume_session_ids_before_any_other_work() {
 
     assert!(flag_like.contains("session id"), "got: {flag_like}");
     assert!(oversize.contains("session id"), "got: {oversize}");
+}
+
+fn without_command_uuid(frame: &[u8]) -> Vec<u8> {
+    let text = std::str::from_utf8(frame).unwrap();
+    assert!(text.starts_with("{\"uuid\":\""));
+    let id_end = text.find("\",\"type\"").unwrap();
+    let mut original = vec![b'{'];
+    original.extend_from_slice(&frame[id_end + 2..]);
+    original
 }

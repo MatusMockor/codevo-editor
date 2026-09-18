@@ -241,15 +241,20 @@ describe("agent thread turns", () => {
         ]),
       ]),
     });
-    const group = Array.from(host.querySelectorAll("details")).find((entry) =>
-      entry.querySelector("summary")?.textContent?.includes("tests"),
-    );
+    const group = Array.from(
+      host.querySelectorAll<HTMLDetailsElement>("details.agent-reasoning"),
+    ).find((entry) => entry.querySelector("summary")?.textContent?.includes("tests"));
     expect(group?.open).toBe(false);
     expect(group?.textContent).toContain("Child-only response");
     expect(group?.textContent).not.toContain("Parent response");
     expect(group?.textContent).toContain("20 input");
     expect(group?.textContent).toContain("3 cached input");
     expect(group?.textContent).toContain("4s");
+    const member = host.querySelector<HTMLDetailsElement>(".agent-subagent-member");
+    expect(member?.open).toBe(false);
+    expect(member?.textContent).toContain("28 tokens");
+    expect(member?.textContent).toContain("Child-only response");
+    expect(member?.textContent).not.toContain("Parent response");
   });
 
   it("labels root cumulative usage as thread usage", () => {

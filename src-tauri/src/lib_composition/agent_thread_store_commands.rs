@@ -265,6 +265,7 @@ mod tests {
                     ended_at_epoch_ms: None,
                     events: Vec::new(),
                     events_truncated: false,
+                    subagent_lifecycle: None,
                     last_status_sequence: 0,
                     last_output_sequence: 0,
                     stream_metrics: None,
