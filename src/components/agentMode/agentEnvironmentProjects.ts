@@ -44,6 +44,23 @@ export function environmentComposerScope(
   serverId: string | null,
 ): ComposerScope | null {
   if (scope === null || scope.kind === "missing") return scope;
+  // An explicit physical project selection is already an exact destination, even
+  // when the display group contains multiple linked projects on this server.
+  if (scope.kind === "repository") {
+    const selected = projects.find((project) => project.rootKey === scope.projectRootKey);
+    const prefix = serverId === null ? null : `remote:${encodeURIComponent(serverId)}:`;
+    const sameEnvironment =
+      prefix === null
+        ? !scope.projectRootKey.startsWith("remote:")
+        : scope.projectRootKey.startsWith(prefix);
+    if (
+      sameEnvironment &&
+      selected?.ownerId === scope.ownerId &&
+      selected.generation === scope.generation
+    )
+      return scope;
+  }
+
   const group = groups.find(
     (candidate) =>
       candidate.projectRootKey === scope.projectRootKey ||

@@ -57,6 +57,8 @@ import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPick
 import { AgentContextWindowMeter, type AgentContextWindowUsage } from "./AgentContextWindowMeter";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
+const NO_SERVER_TARGET_REASON =
+  "Choose a project on this server to add attachments and start a thread.";
 
 export type { AgentComposerRepositoryOption, AgentComposerTarget } from "./agentComposerCheckout";
 
@@ -192,7 +194,16 @@ export function AgentComposer({
   const followUp = mode.kind !== "new";
   const steering = mode.kind === "steer";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
-  const targetReason = composerTargetReason(followUp, target);
+  const targetReason =
+    !followUp && target === null && executionServerId !== null
+      ? NO_SERVER_TARGET_REASON
+      : composerTargetReason(followUp, target);
+  const [unavailableAttachmentNotice, setUnavailableAttachmentNotice] = useState<string | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    setUnavailableAttachmentNotice(null);
+  }, [promptOwnerKey, executionServerId, attachmentTargetKey]);
   const normalizedLaunch = useMemo(
     () =>
       normalizeAgentComposerLaunch(
@@ -275,7 +286,6 @@ export function AgentComposer({
     targetRef: composerRef,
   });
   const pasteAttachments = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
-    if (attachments === null || attachmentTargetKey === null) return;
     if (dispatching) return;
     const data = event.clipboardData;
     if (data === null || data === undefined) return;
@@ -286,6 +296,17 @@ export function AgentComposer({
         const file = item.getAsFile();
         if (file !== null) files.push(file);
       }
+    }
+    if (attachments === null || attachmentTargetKey === null) {
+      if (files.length > 0) {
+        event.preventDefault();
+        setUnavailableAttachmentNotice(
+          targetReason === NO_SERVER_TARGET_REASON
+            ? "Attachment was not added. Choose a project on this server, then paste it again."
+            : "Attachment was not added. Choose an available project, then paste it again.",
+        );
+      }
+      return;
     }
     const claim = attachments.claimPaste(
       files.map((file) => ({
@@ -557,6 +578,7 @@ export function AgentComposer({
         <textarea
           className="agent-composer__textarea"
           id="agent-prompt"
+          disabled={targetReason !== null}
           ref={textareaRef}
           aria-autocomplete="list"
           aria-controls={commands.open ? "agent-composer-commands" : undefined}
@@ -575,7 +597,7 @@ export function AgentComposer({
           }}
           onKeyDown={onKeyDown}
           onPaste={pasteAttachments}
-          placeholder={composerPlaceholder(mode, effectiveFollowUpBehavior)}
+          placeholder={targetReason ?? composerPlaceholder(mode, effectiveFollowUpBehavior)}
           value={prompt}
         />
 
@@ -590,13 +612,13 @@ export function AgentComposer({
         )}
 
         <div className="agent-composer__row" data-presentation={compact ? "compact" : "inline"}>
-          {attachmentsEnabled && (
+          {(attachmentsEnabled || targetReason !== null) && (
             <button
               aria-label="Attach files"
               className="agent-composer__attach"
-              disabled={dispatching}
+              disabled={dispatching || !attachmentsEnabled}
               onClick={pickAttachments}
-              title="Attach files"
+              title={attachmentsEnabled ? "Attach files" : (targetReason ?? "Choose a project")}
               type="button"
             >
               <Paperclip aria-hidden="true" size={15} strokeWidth={2} />
@@ -628,6 +650,11 @@ export function AgentComposer({
           />
         </div>
 
+        {unavailableAttachmentNotice !== null && (
+          <p className="agent-composer__caption" role="alert">
+            {unavailableAttachmentNotice}
+          </p>
+        )}
         {caption && (
           <p className="agent-composer__reason">
             <span>{caption}</span>

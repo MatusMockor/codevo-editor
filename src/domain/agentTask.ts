@@ -239,7 +239,6 @@ export function defaultAgentTaskIsolation(
 export function inPlaceDispatchGuard(context: AgentTaskIsolationContext): InPlaceDispatchGuard {
   const reasons: InPlaceDispatchUnsafeReason[] = [];
   if (context.liveAgentTasksInRepository > 0) reasons.push("agent-active");
-  if (context.repositoryStatusKnown && context.repositoryDirty) reasons.push("dirty-tree");
   if (context.dirtyEditorDocumentsInRepository > 0) reasons.push("dirty-editors");
   if (!context.repositoryStatusKnown) reasons.push("status-unknown");
   if (reasons.length === 0) return { kind: "safe" };

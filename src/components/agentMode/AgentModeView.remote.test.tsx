@@ -123,6 +123,99 @@ describe("original agent workbench with remote execution", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(["codex", "claude"] as const)(
+    "requires an explicit server project then accepts %s clipboard images",
+    async (provider) => {
+      const gateway = gatewayFixture();
+      gateway.listTasks.mockImplementation(async () => ({ items: [], nextCursor: null }));
+      vi.stubGlobal(
+        "URL",
+        class extends URL {
+          static createObjectURL = () => "blob:chooser";
+          static revokeObjectURL = vi.fn();
+        },
+      );
+      const imageSurface = {
+        decode: vi.fn(async () => ({ width: 64, height: 64 })),
+        encodeMime: vi.fn(async () => "image/jpeg" as const),
+        encode: vi.fn(async () => new ArrayBuffer(16)),
+        release: vi.fn(),
+      };
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway}>
+            <AgentModeView
+              imageSurface={imageSurface}
+              agents={{
+                ...threadsSurfaceFixture(),
+                providerManagement: {
+                  ...unconfiguredAgentProviderManagement(),
+                  admissionAuthority: (provider) => ({
+                    provider,
+                    revision: 0,
+                    providerGeneration: 1,
+                    disposition: { kind: "ready" },
+                  }),
+                },
+              }}
+              projects={[projectFixture()]}
+              workspaceRoot={SURFACE_FIXTURE_ROOT}
+              overflowRootPaths={[]}
+              providerEnabled={{ claudeCode: true, codex: true }}
+              chrome={chromeFixture()}
+              onTrustProject={() => undefined}
+              onReleaseProject={() => undefined}
+              onOpenEnvironmentSettings={() => undefined}
+            />
+          </RemoteRunnerProvider>,
+        ),
+      );
+      if (provider === "claude") {
+        click(host.querySelector("#agent-launch-model")!);
+        click(host.querySelector('[role="dialog"] button[data-provider="claudeCode"]')!);
+        click(host.querySelector('[role="option"][data-value="claude-opus-5"]')!);
+      }
+      click(host.querySelector('[aria-label="Run on: This computer"]')!);
+      click(
+        [...host.querySelectorAll('[role="menuitemradio"]')].find((entry) =>
+          entry.textContent?.includes("Linux server"),
+        )!,
+      );
+      await waitForReact(() =>
+        expect(host.querySelector('[aria-label="Choose server project"] select')).not.toBeNull(),
+      );
+      expect(host.textContent).not.toContain("No Git repository");
+      expect(host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")?.disabled).toBe(
+        true,
+      );
+      const select = host.querySelector<HTMLSelectElement>(
+        '[aria-label="Choose server project"] select',
+      )!;
+      act(() => {
+        select.value = "remote:linux:runner:project";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await waitForReact(() =>
+        expect(host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")?.disabled).toBe(
+          false,
+        ),
+      );
+      expect(host.querySelector('[aria-label="Choose server project"]')).toBeNull();
+      const file = new File([new Uint8Array(16)], "clipboard.png", { type: "image/png" });
+      Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(16) });
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: { files: [file], getData: () => "" },
+      });
+      act(() => host.querySelector(".agent-composer textarea")!.dispatchEvent(event));
+      await waitForReact(() =>
+        expect(host.querySelector('[data-agent-attachment-state="ready"]')).not.toBeNull(),
+      );
+      expect(gateway.uploadAttachment).not.toHaveBeenCalled();
+      expect(gateway.createTask).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps explicit project navigation authoritative after a failed server turn", async () => {
     const gateway = gatewayFixture();
     gateway.listTasks.mockImplementation(async () => ({

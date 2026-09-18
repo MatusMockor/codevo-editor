@@ -1,3 +1,4 @@
+import { AgentRemoteDraftProjectChooser } from "./AgentRemoteDraftProjectChooser";
 import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
@@ -771,70 +772,105 @@ function LocalAgentModeView({
                 shortcuts={chrome.shortcuts}
                 thread={selectedThread}
               />
-              <AgentThreadSession
-                artifactLoader={artifactLoader}
-                artifactPreview={artifactPreview}
-                attachmentImages={agents.attachmentImages}
-                onRevealAttachment={revealAttachment}
-                findBar={
-                  find.open ? (
-                    <AgentThreadFindBar
-                      currentIndex={find.hitIndex}
-                      hitCount={find.hits.length}
-                      onChangeQuery={find.setQuery}
-                      onClose={navigation.closeFindBar}
-                      onNavigate={find.navigate}
-                      query={find.query}
-                      truncated={find.truncated}
-                    />
-                  ) : null
-                }
-                findOpen={find.open}
-                goToTurnSignal={goToTurnSignal}
-                externalHistoryState={
-                  sessionThread === null
-                    ? undefined
-                    : agents.externalHistory?.states.get(sessionThread.thread.threadId)
-                }
-                onRetryExternalHistory={
-                  sessionThread === null || agents.externalHistory === undefined
-                    ? undefined
-                    : () => {
-                        void agents.externalHistory?.load(sessionThread.thread.threadId);
-                      }
-                }
-                composerRepositoryLabel={headerProject?.label ?? composer.composerLabel}
-                findHitIndex={navigation.findHitIndex}
-                findHits={find.open ? find.hits : undefined}
-                findQuery={find.open ? find.query : undefined}
-                deferredFollowUps={
-                  sessionThread === null
-                    ? undefined
-                    : deferredFollowUpsForThread(
-                        agents.deferredFollowUps,
-                        sessionThread.thread.threadId,
-                      )
-                }
-                onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
-                onEditDeferredFollowUp={
-                  sessionThread === null || sessionThread.execution?.kind === "remote"
-                    ? undefined
-                    : editQueued
-                }
-                onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
-                onSendDeferredFollowUpNow={
-                  sessionThread !== null &&
-                  (sessionThread.execution?.kind === "remote"
-                    ? sessionThread.execution.taskSteering === true
-                    : agentThreadIsSteerable(sessionThread.thread))
-                    ? agents.sendDeferredFollowUpNow
-                    : undefined
-                }
-                onReviewInDiff={reviewInDiff}
-                reveal={find.reveal}
-                textClipboard={textClipboard}
-                thread={sessionThread}
-              />
+              {selectedThreadId === null &&
+              selectedServerId !== null &&
+              composer.target === null ? (
+                <AgentRemoteDraftProjectChooser
+                  projects={composerProjects}
+                  onOpenSettings={onOpenEnvironmentSettings}
+                  onSelect={(project) => {
+                    const live = projects.find(
+                      (candidate) =>
+                        candidate.rootKey === project.rootKey &&
+                        candidate.ownerId === project.ownerId &&
+                        candidate.generation === project.generation,
+                    );
+                    if (
+                      live === undefined ||
+                      live.trust !== "trusted" ||
+                      selectedServerId === null ||
+                      !live.rootKey.startsWith(`remote:${encodeURIComponent(selectedServerId)}:`)
+                    )
+                      return;
+                    const group = groups.find(
+                      (candidate) =>
+                        candidate.projectRootKey === live.rootKey ||
+                        candidate.memberProjectRootKeys?.includes(live.rootKey),
+                    );
+                    navigation.setRailScope({
+                      projectRootKey: live.rootKey,
+                      repositoryRoot: live.rootPath,
+                      memberProjectRootKeys: group?.memberProjectRootKeys,
+                    });
+                    composer.startNewThread(project.rootKey, project.rootPath);
+                  }}
+                />
+              ) : (
+                <AgentThreadSession
+                  artifactLoader={artifactLoader}
+                  artifactPreview={artifactPreview}
+                  attachmentImages={agents.attachmentImages}
+                  onRevealAttachment={revealAttachment}
+                  findBar={
+                    find.open ? (
+                      <AgentThreadFindBar
+                        currentIndex={find.hitIndex}
+                        hitCount={find.hits.length}
+                        onChangeQuery={find.setQuery}
+                        onClose={navigation.closeFindBar}
+                        onNavigate={find.navigate}
+                        query={find.query}
+                        truncated={find.truncated}
+                      />
+                    ) : null
+                  }
+                  findOpen={find.open}
+                  goToTurnSignal={goToTurnSignal}
+                  externalHistoryState={
+                    sessionThread === null
+                      ? undefined
+                      : agents.externalHistory?.states.get(sessionThread.thread.threadId)
+                  }
+                  onRetryExternalHistory={
+                    sessionThread === null || agents.externalHistory === undefined
+                      ? undefined
+                      : () => {
+                          void agents.externalHistory?.load(sessionThread.thread.threadId);
+                        }
+                  }
+                  composerRepositoryLabel={headerProject?.label ?? composer.composerLabel}
+                  findHitIndex={navigation.findHitIndex}
+                  findHits={find.open ? find.hits : undefined}
+                  findQuery={find.open ? find.query : undefined}
+                  deferredFollowUps={
+                    sessionThread === null
+                      ? undefined
+                      : deferredFollowUpsForThread(
+                          agents.deferredFollowUps,
+                          sessionThread.thread.threadId,
+                        )
+                  }
+                  onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
+                  onEditDeferredFollowUp={
+                    sessionThread === null || sessionThread.execution?.kind === "remote"
+                      ? undefined
+                      : editQueued
+                  }
+                  onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
+                  onSendDeferredFollowUpNow={
+                    sessionThread !== null &&
+                    (sessionThread.execution?.kind === "remote"
+                      ? sessionThread.execution.taskSteering === true
+                      : agentThreadIsSteerable(sessionThread.thread))
+                      ? agents.sendDeferredFollowUpNow
+                      : undefined
+                  }
+                  onReviewInDiff={reviewInDiff}
+                  reveal={find.reveal}
+                  textClipboard={textClipboard}
+                  thread={sessionThread}
+                />
+              )}
               {sessionThread !== null &&
                 agents.hasUnconfirmedMessage?.(sessionThread.thread.threadId) && (
                   <AgentUnconfirmedMessageNotice

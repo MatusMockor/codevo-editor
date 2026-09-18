@@ -637,6 +637,23 @@ describe("useAgentThreadNavigation", () => {
     expect(current().selectedThreadId).toBe("a");
   });
 
+  it("preserves explicit physical project authority when linked group membership changes", () => {
+    const remoteRoot = "remote:server:runner:project";
+    const projects = [projectFixture(), project(remoteRoot, "remote")];
+    render(threadsSurfaceFixture(), projects);
+    act(() => current().setRailScope({ projectRootKey: remoteRoot, repositoryRoot: remoteRoot }));
+    projectLinks = new Map([[remoteRoot, SURFACE_FIXTURE_ROOT]]);
+    render(threadsSurfaceFixture(), projects);
+    expect(current().composerScope).toMatchObject({
+      kind: "repository",
+      projectRootKey: remoteRoot,
+      repositoryRoot: remoteRoot,
+    });
+    expect(current().railScope?.memberProjectRootKeys).toEqual(
+      expect.arrayContaining([remoteRoot, SURFACE_FIXTURE_ROOT]),
+    );
+  });
+
   it("retains a pending remote project selection without selecting another server's thread", () => {
     const remoteRoot = "remote:server:runner:project";
     const remote = viewInProject("remote-thread:server:runner:conversation", remoteRoot);

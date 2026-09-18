@@ -615,7 +615,14 @@ function reconcileScopeState(
   if (scope !== null && entry !== null && scopeAuthorityIntact(current, scope, projects)) {
     const members = entry.memberProjectRootKeys;
     if (JSON.stringify(scope.memberProjectRootKeys) !== JSON.stringify(members))
-      return { ...current, order, railScope: agentRailScopeFromEntry(entry) };
+      return {
+        ...current,
+        order,
+        railScope:
+          current.intent === "explicit" && members?.includes(scope.projectRootKey)
+            ? { ...scope, memberProjectRootKeys: members }
+            : agentRailScopeFromEntry(entry),
+      };
     return ordered ? current : { ...current, order };
   }
   const next =

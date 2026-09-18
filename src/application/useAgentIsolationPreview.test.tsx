@@ -59,8 +59,7 @@ describe("useAgentIsolationPreview", () => {
       reason: "dirty-tree",
     });
     expect(dirty.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({
-      kind: "unsafe",
-      reasons: ["dirty-tree"],
+      kind: "safe",
     });
     dirty.unmount();
   });
@@ -321,12 +320,24 @@ describe("useAgentIsolationPreview", () => {
       harness.unmount();
     });
 
-    it("refuses an unsafe repository unless the exact confirmation key is presented", async () => {
+    it("allows uncommitted changes discovered at send time without confirmation", async () => {
       const harness = renderPreview({ gitChanges: 1 });
       const authority = projectAuthority(harness.project());
 
+      const result = await act(() => harness.hook().preflightInPlace(ROOT, authority, null));
+
+      expect(result).toEqual({ kind: "ok" });
+      expect(harness.hook().isolationContext(ROOT).repositoryDirty).toBe(true);
+      expect(harness.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({ kind: "safe" });
+      harness.unmount();
+    });
+
+    it("refuses an unsafe repository unless the exact confirmation key is presented", async () => {
+      const harness = renderPreview({ liveTasks: 1 });
+      const authority = projectAuthority(harness.project());
+
       const refused = await act(() => harness.hook().preflightInPlace(ROOT, authority, null));
-      expect(refused).toEqual({ kind: "unsafe", label: inPlaceGuardReasonLabel("dirty-tree") });
+      expect(refused).toEqual({ kind: "unsafe", label: inPlaceGuardReasonLabel("agent-active") });
 
       const key = harness.hook().isolationPreview(ROOT).confirmationKey;
       const confirmed = await act(() => harness.hook().preflightInPlace(ROOT, authority, key));

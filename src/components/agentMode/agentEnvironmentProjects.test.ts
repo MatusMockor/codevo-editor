@@ -83,4 +83,24 @@ describe("project display across environments", () => {
       "missing",
     );
   });
+  it("preserves an explicitly chosen physical member in an ambiguous linked group", () => {
+    const second = { ...remote, rootKey: "remote:linux:runner:second" };
+    const inventory = [...projects, second];
+    const groups = [
+      { ...source[0]!, memberProjectRootKeys: inventory.map((project) => project.rootKey) },
+    ];
+    const explicit = {
+      ...scope,
+      kind: "repository" as const,
+      projectRootKey: remote.rootKey,
+      repositoryRoot: remote.rootPath,
+      ownerId: remote.ownerId,
+      generation: remote.generation,
+    };
+    expect(environmentComposerScope(explicit, groups, inventory, "linux")).toBe(explicit);
+    expect(
+      environmentComposerScope({ ...explicit, generation: 99 }, groups, inventory, "linux")?.kind,
+    ).toBe("missing");
+    expect(environmentComposerScope(explicit, groups, inventory, "other")?.kind).toBe("missing");
+  });
 });

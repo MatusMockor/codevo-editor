@@ -1,0 +1,21 @@
+.agent-remote-project-choice {
+  gap: 12px;
+}
+.agent-remote-project-choice label {
+  color: var(--agent-text-muted);
+  font-size: 12px;
+}
+.agent-remote-project-choice select {
+  color-scheme: inherit;
+  width: min(100%, 360px);
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--agent-composer-surface);
+  color: var(--agent-text-strong);
+  font: inherit;
+}
+.agent-remote-project-choice select:focus-visible {
+  outline: 2px solid var(--agent-accent);
+  outline-offset: 2px;
+}

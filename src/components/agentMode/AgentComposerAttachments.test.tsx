@@ -690,6 +690,52 @@ describe("AgentComposer attachments", () => {
     expect(host.querySelector(".agent-composer__attach")).toBeNull();
   });
 
+  it("explains the missing server project before accepting clipboard attachments", () => {
+    const read = vi.fn();
+    const image = file("shot.png", "image/png", 16);
+    Object.defineProperty(image, "arrayBuffer", { value: read });
+    render({
+      executionServerId: "linux",
+      target: null,
+      attachments: null,
+      attachmentTargetKey: null,
+    });
+    expect(textarea().disabled).toBe(true);
+    expect(textarea().placeholder).toContain("Choose a project on this server");
+    expect(attachButton().disabled).toBe(true);
+    expect(attachButton().title).toContain("Choose a project on this server");
+    const event = pasteEvent([image], "");
+    act(() => textarea().dispatchEvent(event));
+    expect(read).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("then paste it again");
+    render({ executionServerId: "linux", attachments: surface({}) });
+    expect(textarea().disabled).toBe(false);
+    expect(attachButton().disabled).toBe(false);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("does not claim ordinary text or carry a missing-target notice to another server", () => {
+    render({
+      executionServerId: "linux",
+      target: null,
+      attachments: null,
+      attachmentTargetKey: null,
+    });
+    const text = pasteEvent([], "ordinary text");
+    act(() => textarea().dispatchEvent(text));
+    expect(text.defaultPrevented).toBe(false);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    act(() => textarea().dispatchEvent(pasteEvent([file("shot.png", "image/png", 16)], "")));
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    render({
+      executionServerId: "other",
+      target: null,
+      attachments: null,
+      attachmentTargetKey: null,
+    });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }

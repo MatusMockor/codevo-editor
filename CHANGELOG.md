@@ -7,6 +7,17 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.54] - 2026-09-18
+
+### Fixed
+
+- Allow starting in the local checkout with uncommitted changes, including changes
+  discovered immediately before sending a message.
+- Offer explicit server project selection when a new conversation has no matching
+  server project. Enable messages and attachments once a valid project is selected.
+- Explain missing attachment targets instead of silently discarding pasted images,
+  and preserve the selected physical project within linked project groups.
+
 ## [0.2.0-beta.53] - 2026-09-18
 
 ### Added

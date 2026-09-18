@@ -211,6 +211,12 @@ describe("inPlaceDispatchGuard", () => {
     expect(inPlaceDispatchGuard(isolationContext())).toEqual({ kind: "safe" });
   });
 
+  it("allows an explicit in-place launch with uncommitted on-disk changes", () => {
+    expect(inPlaceDispatchGuard(isolationContext({ repositoryDirty: true }))).toEqual({
+      kind: "safe",
+    });
+  });
+
   it("ignores a planned parallel dispatch, which is a preference and not a hazard", () => {
     expect(inPlaceDispatchGuard(isolationContext({ plannedParallelDispatch: true }))).toEqual({
       kind: "safe",
@@ -226,7 +232,7 @@ describe("inPlaceDispatchGuard", () => {
           dirtyEditorDocumentsInRepository: 1,
         }),
       ),
-    ).toEqual({ kind: "unsafe", reasons: ["agent-active", "dirty-tree", "dirty-editors"] });
+    ).toEqual({ kind: "unsafe", reasons: ["agent-active", "dirty-editors"] });
   });
 
   it("reports an unknown repository status without claiming a dirty tree", () => {
