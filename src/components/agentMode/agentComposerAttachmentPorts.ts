@@ -70,6 +70,19 @@ export async function openAgentAttachmentPicker(): Promise<ReadonlyArray<string>
   return [selected];
 }
 
+/** Restrict the server source chooser to formats the native image reader validates. */
+export async function openAgentImageAttachmentPicker(): Promise<ReadonlyArray<string>> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: true,
+    directory: false,
+    title: "Attach images",
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+  });
+  if (selected === null) return [];
+  return Array.isArray(selected) ? selected : [selected];
+}
+
 export async function subscribeAgentAttachmentDragDrop(
   listener: AgentComposerDragDropListener,
 ): Promise<() => void> {

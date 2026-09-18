@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
@@ -149,6 +149,67 @@ describe("thread compaction visibility", () => {
     expect(host.textContent).toContain("Context compaction failed: Not enough context");
     expect(host.textContent).not.toContain("Conversation compacted");
     expect(host.textContent).not.toContain("Compacting context…");
+  });
+  it("uses an accessible compact activity without a redundant provider header", () => {
+    render([], { kind: "pending" });
+    expect(host.querySelector(".agent-turn__head")).toBeNull();
+    expect(host.querySelector('.agent-compaction-activity[role="status"]')).not.toBeNull();
+    expect(host.querySelector('.agent-compaction-activity svg[aria-hidden="true"]')).not.toBeNull();
+  });
+  it("renders a completed standalone command as a boundary with exact token details", () => {
+    render([{ kind: "contextCompaction", beforeTokens: 330123, afterTokens: 8123 }], {
+      kind: "exited",
+      exitCode: 0,
+    });
+    expect(host.querySelector('.agent-compaction-event[role="separator"]')).not.toBeNull();
+    expect(host.querySelector(".agent-turn__head")).toBeNull();
+    const details = host.querySelector<HTMLDetailsElement>(".agent-compaction-event__details");
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("330,123 → 8,123 tokens");
+    act(() => details?.querySelector("summary")?.click());
+    expect(details?.open).toBe(true);
+  });
+  it.each<AgentTurnEvent>([
+    { kind: "assistantText", text: "Useful output" },
+    { kind: "result", text: "Useful output", isError: false, usage: null },
+    { kind: "toolCall", name: "Read", inputSummary: "file.ts", toolId: "read" },
+    { kind: "error", message: "Provider failed" },
+  ])("retains the provider header and output in a mixed compaction turn %j", async (event) => {
+    render([event, completed]);
+    expect(host.querySelector(".agent-turn__head")).not.toBeNull();
+    expect(host.querySelector('.agent-compaction-event[role="separator"]')).not.toBeNull();
+    if (event.kind === "assistantText" || event.kind === "result")
+      await act(async () => {
+        await vi.waitFor(() => expect(host.textContent).toContain("Useful output"));
+      });
+  });
+  it("keeps automatic completion outside collapsed work and before the final response", async () => {
+    render(
+      [
+        { kind: "toolCall", name: "Read", inputSummary: "file.ts", toolId: "read" },
+        completed,
+        { kind: "assistantText", text: "Finished inspection" },
+      ],
+      { kind: "exited", exitCode: 0 },
+      "Inspect code",
+    );
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain("Finished inspection"));
+    });
+    const fold = host.querySelector<HTMLDetailsElement>("details.agent-work");
+    const boundary = host.querySelector(".agent-compaction-event");
+    expect(fold).not.toBeNull();
+    expect(fold?.open).toBe(false);
+    expect(boundary?.closest("details.agent-work")).toBeNull();
+    expect(host.textContent?.indexOf("Conversation compacted")).toBeLessThan(
+      host.textContent?.indexOf("Finished inspection") ?? -1,
+    );
+  });
+  it("keeps a header for automatic compaction and failed manual compaction", () => {
+    render([completed], { kind: "exited", exitCode: 0 }, "Inspect code");
+    expect(host.querySelector(".agent-turn__head")).not.toBeNull();
+    render([completed], { kind: "failed", message: "Provider failed" });
+    expect(host.querySelector(".agent-turn__head")).not.toBeNull();
   });
   it("keeps pending Codex startup as a single status", () => {
     render([], { kind: "pending" }, "hello", "codex");

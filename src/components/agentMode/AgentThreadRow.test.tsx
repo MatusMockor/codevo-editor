@@ -84,6 +84,50 @@ describe("AgentThreadRow", () => {
     expect(line1().querySelector(".agent-row__status--done")).not.toBeNull();
   });
 
+  it("keeps background monitoring stoppable and unarchivable until the process exits", () => {
+    const base = pinnedDone();
+    const turn = base.thread.turns[0]!;
+    render({
+      ...base,
+      thread: {
+        ...base.thread,
+        turns: [
+          {
+            ...turn,
+            status: { kind: "running" },
+            endedAtEpochMs: null,
+            events: [
+              {
+                kind: "backgroundTask",
+                taskId: "monitor-1",
+                taskType: "monitor",
+                status: "starting",
+              },
+              { kind: "result", text: "Watching pipeline", isError: false, usage: null },
+            ],
+          },
+        ],
+      },
+    });
+    expect(host.querySelector(".agent-row__status-label")?.textContent).toBe("Monitoring");
+    const row = host.querySelector<HTMLElement>('[role="option"]')!;
+    expect(row.classList.contains("agent-row--inflight")).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="Archive thread"]')?.disabled).toBe(
+      true,
+    );
+    act(() => row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    expect(document.body.textContent).toContain("Stop");
+    const archive = Array.from(document.querySelectorAll('[role="menuitem"]')).find(
+      (item) => item.textContent === "Archive",
+    );
+    expect((archive as HTMLButtonElement | undefined)?.disabled).toBe(true);
+    render(base);
+    expect(host.querySelector(".agent-row__status-label")?.textContent).toBe("Done");
+    expect(host.querySelector('[role="option"]')?.classList.contains("agent-row--inflight")).toBe(
+      false,
+    );
+  });
+
   it("puts the pin glyph before the Done status on a pinned unread thread", () => {
     render(pinnedDone());
 

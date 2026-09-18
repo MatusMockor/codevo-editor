@@ -1,3 +1,4 @@
+import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type {
   AgentProviderManagementSurface,
@@ -32,7 +33,11 @@ export const MAX_AGENT_THREAD_JUMP_SLOTS = 9;
 export const NO_PROJECT_SCOPE_LABEL = "No project";
 
 export type AgentRowStatus =
-  | { readonly kind: "working"; readonly startedAtEpochMs: number }
+  | {
+      readonly kind: "working";
+      readonly startedAtEpochMs: number;
+      readonly activity?: "background" | "monitoring";
+    }
   | { readonly kind: "failed" }
   | { readonly kind: "stopped" }
   | { readonly kind: "done" }
@@ -173,7 +178,22 @@ function menuItem(
 
 export function agentRowStatus(view: AgentThreadView): AgentRowStatus {
   const running = runningTurn(view.thread);
-  if (running !== null) return { kind: "working", startedAtEpochMs: running.startedAtEpochMs };
+  if (running !== null) {
+    const background =
+      view.thread.provider.kind === "claudeCode"
+        ? projectAgentBackgroundActivity(running.events, true, running.eventsTruncated)
+        : null;
+    return {
+      kind: "working",
+      startedAtEpochMs: running.startedAtEpochMs,
+      ...(background?.foregroundSettled && background.phase !== "inactive"
+        ? {
+            activity:
+              background.phase === "monitoring" ? ("monitoring" as const) : ("background" as const),
+          }
+        : {}),
+    };
+  }
   const last = lastTurnStatus(view.thread);
   if (last !== null && isFailedTurnStatus(last)) return { kind: "failed" };
   if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };
@@ -543,6 +563,8 @@ export function agentWorkingDurationLabel(startedAtEpochMs: number, now: number)
 export function agentRowStatusLabel(status: AgentRowStatus): string | null {
   switch (status.kind) {
     case "working":
+      if (status.activity === "monitoring") return "Monitoring";
+      if (status.activity === "background") return "Working in background";
       return "Working";
     case "failed":
       return "Failed";

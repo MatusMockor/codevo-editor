@@ -93,6 +93,7 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     ...dependencies,
     gateway: store,
     imageOutputPolicy: REMOTE_IMAGE_OUTPUT_POLICY,
+    sentAttachmentDisposition: "release",
   });
   const attachmentImages = useAgentAttachmentImages({
     gateway: imagesGateway,
@@ -111,26 +112,12 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     }
     for (const workspaceId of invalidWorkspaces) attachmentImages.releaseWorkspace(workspaceId);
     if (gatewayChanged) {
-      attachments.clear();
+      attachments.clearAll?.();
       store.clear();
     }
   });
   return {
-    attachments: {
-      ...attachments,
-      markSent: (draftIds: readonly string[]) => {
-        for (const draft of attachments.drafts) {
-          if (draftIds.includes(draft.draftId) && draft.attachmentId !== null) {
-            void store.releaseAgentAttachment({
-              workspaceId:
-                dependencies.resolveOwner(attachments.projectRootKey ?? "")?.workspaceId ?? "",
-              attachmentId: draft.attachmentId,
-            });
-          }
-        }
-        attachments.markSent(draftIds);
-      },
-    },
+    attachments,
     attachmentImages,
     resolve: store.resolve.bind(store),
     loadTaskAttachments: (

@@ -360,7 +360,9 @@ function fixtureEvents(): ReadonlyArray<AgentTurnEvent> {
 
 describe("parseClaudeStreamJsonLine subagent telemetry", () => {
   it("parses the captured subagent turn into spawn, telemetry and parented steps", () => {
-    const events = fixtureEvents();
+    const allEvents = fixtureEvents();
+    const events = allEvents.filter((event) => event.kind !== "backgroundTask");
+    expect(allEvents.filter((event) => event.kind === "backgroundTask")).toHaveLength(4);
 
     expect(events.slice(0, 7)).toEqual([
       {
@@ -484,7 +486,10 @@ describe("parseClaudeStreamJsonLine subagent telemetry", () => {
 
     expect(parsed).toEqual({
       kind: "events",
-      events: [{ kind: "subagent", status: "running", taskId: TASK_ID }],
+      events: [
+        { kind: "subagent", status: "running", taskId: TASK_ID },
+        { kind: "backgroundTask", status: "running", taskId: TASK_ID, taskType: "other" },
+      ],
       sessionId: null,
     });
   });
@@ -502,7 +507,10 @@ describe("parseClaudeStreamJsonLine subagent telemetry", () => {
 
     expect(parsed).toEqual({
       kind: "events",
-      events: [{ kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID }],
+      events: [
+        { kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID },
+        { kind: "backgroundTask", status: "starting", taskId: TASK_ID, taskType: "other" },
+      ],
       sessionId: null,
     });
   });
@@ -596,7 +604,7 @@ describe("subagent telemetry review regressions", () => {
     });
   });
 
-  it("drops task telemetry for a task type the editor does not support", () => {
+  it("keeps task liveness separate from supported subagent telemetry", () => {
     expect(
       parseClaudeStreamJsonLine(
         line({
@@ -607,7 +615,11 @@ describe("subagent telemetry review regressions", () => {
           task_type: "remote_agent",
         }),
       ),
-    ).toEqual({ kind: "ignored" });
+    ).toEqual({
+      kind: "events",
+      events: [{ kind: "backgroundTask", status: "starting", taskId: TASK_ID, taskType: "agent" }],
+      sessionId: null,
+    });
     expect(
       parseClaudeStreamJsonLine(
         line({
@@ -620,7 +632,10 @@ describe("subagent telemetry review regressions", () => {
       ),
     ).toEqual({
       kind: "events",
-      events: [{ kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID }],
+      events: [
+        { kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID },
+        { kind: "backgroundTask", status: "starting", taskId: TASK_ID, taskType: "agent" },
+      ],
       sessionId: null,
     });
   });

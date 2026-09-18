@@ -19,6 +19,7 @@ import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
+  composerAttachmentsSurfaceFixture,
   FIXTURE_NESTED_ROOT,
   fixtureRepository,
   projectFixture,
@@ -64,6 +65,46 @@ describe("useAgentComposerState", () => {
     act(() => root.unmount());
     host.remove();
   });
+
+  it.each(["claudeCode", "codex"] as const)(
+    "selects conversation-scoped attachments for %s across A B A and new",
+    (provider) => {
+      const base = surfaceThreadView();
+      const a = surfaceThreadView({
+        thread: {
+          ...base.thread,
+          threadId: "thread-a",
+          provider: { kind: provider, sessionId: "session-abcdefgh" },
+        },
+      });
+      const b = surfaceThreadView({
+        thread: {
+          ...base.thread,
+          threadId: "thread-b",
+          provider: { kind: provider, sessionId: "session-ijklmnop" },
+        },
+      });
+      const forDraft = vi.fn((key: string) =>
+        composerAttachmentsSurfaceFixture({ refusal: `draft:${key}` }),
+      );
+      render(
+        threadsSurfaceFixture({
+          threads: [a, b],
+          attachments: composerAttachmentsSurfaceFixture({ forDraft }),
+        }),
+      );
+      act(() => current().navigation.selectThread("thread-a"));
+      expect(current().composer.composerProps.attachments?.refusal).toBe("draft:thread-a");
+      act(() => current().navigation.selectThread("thread-b"));
+      expect(current().composer.composerProps.attachments?.refusal).toBe("draft:thread-b");
+      act(() => current().navigation.selectThread("thread-a"));
+      expect(current().composer.composerProps.attachments?.refusal).toBe("draft:thread-a");
+      act(() => current().navigation.clearSelectedThread());
+      expect(current().composer.composerProps.attachments?.refusal).toBe(
+        `draft:new:${SURFACE_FIXTURE_ROOT}`,
+      );
+    },
+  );
 
   it("targets the active-tab project and starts a thread with the composed payload", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));

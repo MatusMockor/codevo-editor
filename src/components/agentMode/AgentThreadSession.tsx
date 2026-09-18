@@ -3,6 +3,9 @@ import {
   useAgentToolDisclosure,
   useAgentTurnToolDisclosure,
 } from "./AgentToolDisclosure";
+import { AgentBackgroundActivity } from "./AgentBackgroundActivity";
+import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
+import { AgentCompactionActivity, AgentCompactionBoundary } from "./AgentCompactionActivity";
 import { AgentActivityItems } from "./AgentActivityItems";
 import { agentActivityAttentionCount } from "./agentActivityGrouping";
 import { AgentArtifactPreviewScope } from "./AgentOutputArtifacts";
@@ -620,7 +623,14 @@ const AgentTurnView = memo(function AgentTurnView({
     setStreamed(true);
   }, [running, streamed]);
 
-  const stream = proseStream(running, streamed);
+  const background = useMemo(
+    () => projectAgentBackgroundActivity(turn.events, running, turn.eventsTruncated),
+    [turn.events, running, turn.eventsTruncated],
+  );
+  const backgroundOnly =
+    provider === "claudeCode" && background.foregroundSettled && background.phase !== "inactive";
+  const foregroundRunning = running && !backgroundOnly;
+  const stream = proseStream(foregroundRunning, streamed);
   const errorContext = createTurnErrorContext(
     provider,
     turn.cliVersion,
@@ -631,13 +641,29 @@ const AgentTurnView = memo(function AgentTurnView({
     (line) => !isAgentRawOutputNoise(provider, line.stream, line.raw),
   );
   const empty = projection.items.length === 0 && rawLines.length === 0;
-  const workFold = agentTurnWorkFold(projection.items, running);
+  const workFold = agentTurnWorkFold(projection.items, foregroundRunning);
   const liveActivity = agentTurnLiveActivity(turn);
   const compaction = agentCompactionState(provider, turn);
   const compacting = compaction.kind === "compacting";
+  const standaloneCompaction =
+    provider === "claudeCode" &&
+    /^\/compact(?:\s|$)/.test(turn.prompt.trim()) &&
+    (compacting || projection.items.some((item) => item.kind === "contextCompaction")) &&
+    compaction.kind !== "failed" &&
+    (turn.status.kind === "pending" ||
+      turn.status.kind === "running" ||
+      (turn.status.kind === "exited" && turn.status.exitCode === 0)) &&
+    rawLines.length === 0 &&
+    projection.hiddenCount === 0 &&
+    !turn.eventsTruncated &&
+    projection.items.every(
+      (item) =>
+        item.kind === "contextCompaction" ||
+        (item.kind === "result" && !item.isError && item.text.trim() === ""),
+    );
   const toolDisclosure = useAgentTurnToolDisclosure();
   const liveStatus =
-    compacting || liveActivity === null || empty ? null : (
+    compacting || backgroundOnly || liveActivity === null || empty ? null : (
       <AgentTurnLiveStatus activity={liveActivity} items={projection.items} />
     );
   const cursor = highlight?.current ?? null;
@@ -670,11 +696,13 @@ const AgentTurnView = memo(function AgentTurnView({
         />
 
         <div className="agent-answer">
-          <AgentTurnHead
-            provider={provider}
-            startedAtEpochMs={turn.startedAtEpochMs}
-            timing={agentTurnTiming(turn)}
-          />
+          {!standaloneCompaction && (
+            <AgentTurnHead
+              provider={provider}
+              startedAtEpochMs={turn.startedAtEpochMs}
+              timing={agentTurnTiming(turn)}
+            />
+          )}
 
           {turn.status.kind === "pending" && provider === "codex" && !compacting && (
             <p className="agent-note" role="status">
@@ -694,14 +722,15 @@ const AgentTurnView = memo(function AgentTurnView({
             {workFold !== null && (
               <AgentTurnWork
                 compacting={compacting}
+                backgroundOnly={backgroundOnly}
                 liveStatus={liveStatus}
                 attachmentImages={attachmentImages}
                 errorContext={errorContext}
                 highlight={highlight}
                 items={workFold.workItems}
-                key={running ? "running-work" : "settled-work"}
+                key={foregroundRunning ? "running-work" : "settled-work"}
                 prose={prose}
-                running={running}
+                running={foregroundRunning}
                 stream={stream}
                 subagents={subagents}
                 summary={workFold.summary}
@@ -728,19 +757,15 @@ const AgentTurnView = memo(function AgentTurnView({
               )}
             />
             {workFold === null && liveStatus}
+            {backgroundOnly && !compacting && <AgentBackgroundActivity activity={background} />}
             {compaction.kind === "failed" && (
               <p className="agent-note agent-note--warning" role="status">
                 Context compaction failed{compaction.message ? `: ${compaction.message}` : "."}
               </p>
             )}
-            {compacting && (
-              <p className="agent-note" role="status">
-                Compacting context…
-                <span aria-hidden="true" className="agent-well__caret" />
-              </p>
-            )}
+            {compacting && <AgentCompactionActivity />}
             {empty &&
-              running &&
+              foregroundRunning &&
               compaction.kind === "idle" &&
               !(turn.status.kind === "pending" && provider === "codex") && (
                 <p className="agent-note">
@@ -792,6 +817,7 @@ function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine>
 
 function AgentTurnWork({
   compacting,
+  backgroundOnly,
   attachmentImages,
   errorContext,
   highlight,
@@ -812,6 +838,7 @@ function AgentTurnWork({
   readonly liveStatus: ReactNode;
   readonly prose: AgentProseContext;
   readonly compacting: boolean;
+  readonly backgroundOnly: boolean;
   readonly running: boolean;
   readonly stream: AgentProseStream;
   readonly subagents: AgentSubagentSummary | null;
@@ -819,7 +846,9 @@ function AgentTurnWork({
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
 }) {
-  const title = running ? (
+  const title = backgroundOnly ? (
+    <>Work so far</>
+  ) : running ? (
     <>
       {compacting ? "Turn elapsed " : "Working for "}
       <AgentWorkingDuration startedAtEpochMs={turn.startedAtEpochMs} />
@@ -1079,16 +1108,7 @@ function AgentTurnItemView({
   }
 
   if (item.kind === "contextCompaction") {
-    const tokenChange =
-      item.beforeTokens === null || item.afterTokens === null
-        ? null
-        : `${formatTokens(item.beforeTokens)} → ${formatTokens(item.afterTokens)} tokens`;
-    return (
-      <div className="agent-compaction-event" data-agent-event={item.key}>
-        <span>Conversation compacted</span>
-        {tokenChange !== null && <span className="agent-num">{tokenChange}</span>}
-      </div>
-    );
+    return <AgentCompactionBoundary item={item} />;
   }
 
   const error = classifyAgentProviderError(item.message, errorContext.provider);
@@ -1190,10 +1210,6 @@ function rawOutputDisclosed(status: AgentTurnStatus): boolean {
   if (status.kind === "interrupted") return true;
 
   return status.kind === "exited" && status.exitCode !== 0;
-}
-
-function formatTokens(tokens: number): string {
-  return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens);
 }
 
 function toolRowIcon(kind: AgentToolRowKind): LucideIcon {

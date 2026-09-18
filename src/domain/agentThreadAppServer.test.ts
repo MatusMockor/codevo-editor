@@ -236,3 +236,50 @@ describe("app-server domain persistence", () => {
     ).toThrow();
   });
 });
+
+describe("background lifecycle persistence", () => {
+  it("round trips bounded task telemetry and child text ownership", () => {
+    const events: AgentTurnEvent[] = [
+      {
+        kind: "backgroundTask",
+        taskId: "task-1",
+        taskType: "shell",
+        status: "starting",
+        description: "Watch pipeline",
+      },
+      { kind: "assistantText", text: "Child update", parentToolId: "tool-parent" },
+      { kind: "backgroundTask", taskId: "task-1", taskType: "other", status: "stopped" },
+    ];
+    expect(parseAgentThread(serializeAgentThread(thread(events)))).toEqual(thread(events));
+    expect(agentTurnEventUtf8Bytes(events[1]!)).toBe(23);
+  });
+  it("does not coalesce different child owners or child and root text", () => {
+    const child: AgentTurnEvent = { kind: "assistantText", text: "a", parentToolId: "child-1" };
+    expect(coalesceAgentTextEvents(child, { kind: "assistantText", text: "b" })).toBeNull();
+    expect(coalesceAgentTextEvents(child, { ...child, parentToolId: "child-2" })).toBeNull();
+    expect(coalesceAgentTextEvents(child, { ...child, text: "b" })).toEqual({
+      ...child,
+      text: "ab",
+    });
+  });
+  it.each([
+    { status: "invented" },
+    { taskType: "invented" },
+    { taskId: "" },
+    { taskId: "x".repeat(257) },
+    { description: "x".repeat(513) },
+    { extra: true },
+  ])("rejects malformed persisted background events %j", (override) => {
+    expect(() =>
+      parseAgentThread(
+        rawEvent({
+          kind: "backgroundTask",
+          taskId: "task-1",
+          taskType: "shell",
+          status: "starting",
+          ...override,
+        }),
+      ),
+    ).toThrow();
+  });
+});

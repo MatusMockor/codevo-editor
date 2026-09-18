@@ -80,6 +80,16 @@ describe("StatusSlot", () => {
     expect(slot().textContent).toBe("Stopped");
   });
 
+  it.each([
+    ["monitoring", "Monitoring"],
+    ["background", "Working in background"],
+  ] as const)("retains the live duration and glyph for %s", (activity, label) => {
+    render({ kind: "working", activity, startedAtEpochMs: NOW - 90_000 });
+    expect(slot().querySelector(".agent-row__status-label")?.textContent).toBe(label);
+    expect(slot().querySelector(".agent-row__status-icon")).not.toBeNull();
+    expect(slot().querySelector("time")?.textContent).toBe("1m");
+  });
+
   it("keeps the live elapsed duration after the working glyph and label", () => {
     render({ kind: "working", startedAtEpochMs: NOW - 90_000 });
 

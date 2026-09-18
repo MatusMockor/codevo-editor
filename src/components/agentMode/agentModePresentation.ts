@@ -541,6 +541,10 @@ export function agentTurnWorkFold(
       break;
     }
   }
+  // A compaction boundary remains in the conversation, including when work is
+  // collapsed. End the fold at the first boundary so later output keeps its order.
+  const boundaryIndex = items.findIndex((item) => item.kind === "contextCompaction");
+  if (boundaryIndex >= 0 && boundaryIndex < finalResponseIndex) finalResponseIndex = boundaryIndex;
   if (finalResponseIndex <= 0) return null;
   const workItems = items.slice(0, finalResponseIndex);
   if (!workItems.some((item) => item.kind === "tool" || item.kind === "reasoning")) return null;

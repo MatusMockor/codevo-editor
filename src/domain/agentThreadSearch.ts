@@ -363,6 +363,7 @@ function eventSegment(
     case "reasoning":
     case "toolCall":
     case "toolResult":
+    case "backgroundTask":
     case "subagent":
     case "contextUsage":
     case "contextCompactionStatus":

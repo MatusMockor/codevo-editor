@@ -120,6 +120,7 @@ describe("original agent workbench with remote execution", () => {
     host.remove();
     removeRemoteProjectLink("remote:linux:runner:project");
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("keeps explicit project navigation authoritative after a failed server turn", async () => {
@@ -193,6 +194,19 @@ describe("original agent workbench with remote execution", () => {
     saveRemoteProjectLink("remote:linux:runner:project", SURFACE_FIXTURE_ROOT);
     const gateway = gatewayFixture();
     const surfacesGateway = surfaceGatewayFixture();
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = () => "blob:remote-composer-test";
+        static revokeObjectURL = vi.fn();
+      },
+    );
+    const imageSurface = {
+      decode: vi.fn(async () => ({ width: 64, height: 64 })),
+      encodeMime: vi.fn(async () => "image/jpeg" as const),
+      encode: vi.fn(async () => new ArrayBuffer(16)),
+      release: vi.fn(),
+    };
     const startThread = vi.fn();
     const sendFollowUp = vi.fn();
     const revealPath = vi.fn();
@@ -208,6 +222,7 @@ describe("original agent workbench with remote execution", () => {
       root.render(
         <RemoteRunnerProvider gateway={gateway} surfacesGateway={surfacesGateway}>
           <AgentModeView
+            imageSurface={imageSurface}
             agents={{ ...local, providerManagement: unconfiguredAgentProviderManagement() }}
             projects={[projectFixture()]}
             workspaceRoot={SURFACE_FIXTURE_ROOT}
@@ -255,6 +270,26 @@ describe("original agent workbench with remote execution", () => {
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
     expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
     expect(host.querySelector('[aria-label="Remote tasks"]')).toBeNull();
+    const pasteImage = async () => {
+      const file = new File([new Uint8Array(16)], "clipboard.png", { type: "image/png" });
+      Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(16) });
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: { files: [file], getData: () => "" },
+      });
+      act(() => host.querySelector(".agent-composer textarea")!.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(true);
+      await waitForReact(() =>
+        expect(host.querySelector('[data-agent-attachment-state="ready"]')).not.toBeNull(),
+      );
+      expect(host.querySelector('[aria-label="Preview clipboard.png"]')).not.toBeNull();
+      expect(gateway.uploadAttachment).not.toHaveBeenCalled();
+      click(host.querySelector('[aria-label="Remove clipboard.png"]')!);
+      await waitForReact(() =>
+        expect(host.querySelector('[data-agent-attachment-state="ready"]')).toBeNull(),
+      );
+    };
+    await pasteImage();
     selectWorkspace.mockClear();
     refreshShipStatus.mockClear();
     click(host.querySelector(`[data-thread-id="${remoteThreadId}"]`)!);
@@ -274,6 +309,7 @@ describe("original agent workbench with remote execution", () => {
     expect(host.querySelector('[aria-label="Runs on server"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Local instruction source"]')).toBeNull();
     expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
+    await pasteImage();
     const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(

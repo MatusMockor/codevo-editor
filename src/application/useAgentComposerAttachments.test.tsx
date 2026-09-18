@@ -142,6 +142,7 @@ function renderAttachments(environment: Environment) {
       if (surface === null) throw new Error("The attachment surface is not mounted.");
       return surface;
     },
+    rerender: () => act(() => root.render(createElement(Probe))),
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -420,6 +421,171 @@ describe("useAgentComposerAttachments staging", () => {
     expect(harness.hook().drafts).toHaveLength(8);
     expect(harness.hook().refusal).toBe(AGENT_ATTACHMENT_COUNT_REFUSAL);
     expect(harness.gateway.inspectAgentAttachmentCandidate).toHaveBeenCalledTimes(8);
+    harness.unmount();
+  });
+});
+
+describe("useAgentComposerAttachments conversation drafts", () => {
+  it("isolates thread A and B in one project and restores both on return", async () => {
+    const harness = renderAttachments(environment());
+    const scope = (key: string) => harness.hook().forDraft!(key);
+    await act(() => scope("thread-a").add(ROOT_A, [{ kind: "path", path: "/Users/dev/a.png" }]));
+    const original = scope("thread-a").drafts[0];
+    expect(scope("thread-b").drafts).toEqual([]);
+    expect(scope("thread-b").promptLineBytes).toBe(0);
+    await act(() => scope("thread-b").add(ROOT_A, [{ kind: "path", path: "/Users/dev/b.png" }]));
+    expect(scope("thread-a").drafts).toEqual([original]);
+    expect(scope("thread-b").drafts.map((draft) => draft.name)).toEqual(["b.png"]);
+    expect(harness.released).toEqual([]);
+    harness.unmount();
+  });
+
+  it("keeps new-conversation drafts separate and clears only the captured sent conversation", async () => {
+    const harness = renderAttachments(environment());
+    const scope = (key: string) => harness.hook().forDraft!(key);
+    await act(() => scope("thread-a").add(ROOT_A, [{ kind: "path", path: "/Users/dev/a.png" }]));
+    const submitted = scope("thread-a");
+    const prepared = await act(() => submitted.prepareTurn(ROOT_A));
+    await act(() =>
+      scope("new:project").add(ROOT_A, [{ kind: "path", path: "/Users/dev/new.png" }]),
+    );
+    act(() => submitted.markSent(prepared!.draftIds));
+    expect(scope("thread-a").drafts).toEqual([]);
+    expect(scope("new:project").drafts.map((draft) => draft.name)).toEqual(["new.png"]);
+    harness.unmount();
+  });
+
+  it("preserves capture callbacks across unrelated publications and rejects an A B A intake lease", async () => {
+    const harness = renderAttachments(environment());
+    const scope = (key: string) => harness.hook().forDraft!(key);
+    const capture = scope("thread-a").captureIntake;
+    let generation = 1;
+    const intake = capture!(ROOT_A, () => generation === 1)!;
+    act(() => scope("thread-b").refuse("Only B"));
+    expect(scope("thread-a").captureIntake).toBe(capture);
+    expect(scope("thread-a").refusal).toBeNull();
+    generation = 3;
+    await act(() => intake([{ kind: "path", path: "/Users/dev/late.png" }]));
+    expect(scope("thread-a").drafts).toEqual([]);
+    expect(scope("thread-b").drafts).toEqual([]);
+    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("retains scoped drafts for distinct projects and rejects replaced workspace authority", async () => {
+    const env = environment({
+      owners: new Map([
+        [ROOT_A, ownerA()],
+        [ROOT_B, ownerB()],
+      ]),
+    });
+    const harness = renderAttachments(env);
+    const scope = (key: string) => harness.hook().forDraft!(key);
+    await act(() => scope("a").add(ROOT_A, [{ kind: "path", path: "/Users/dev/a.png" }]));
+    await act(() => scope("b").add(ROOT_B, [{ kind: "path", path: "/Users/dev/b.png" }]));
+    env.owners.set(ROOT_A, ownerA(2));
+    expect(await act(() => scope("a").prepareTurn(ROOT_A))).toBeNull();
+    expect(scope("a").drafts).toEqual([]);
+    expect(scope("b").drafts.map((draft) => draft.name)).toEqual(["b.png"]);
+    harness.unmount();
+  });
+
+  it("invalidates pending intake when all drafts are cleared", async () => {
+    const harness = renderAttachments(environment());
+    let complete:
+      | ((value: { bytes: number; isRegularFile: boolean; extensionMime: string }) => void)
+      | undefined;
+    harness.gateway.inspectAgentAttachmentCandidate = vi.fn(
+      () =>
+        new Promise<{ bytes: number; isRegularFile: boolean; extensionMime: string }>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    let pending: Promise<void>;
+    act(() => {
+      pending = harness.hook().forDraft!("a").add(ROOT_A, [
+        { kind: "path", path: "/Users/dev/late.png" },
+      ]);
+    });
+    act(() => harness.hook().clearAll!());
+    await act(async () => {
+      complete!({ bytes: 100, isRegularFile: true, extensionMime: "image/png" });
+      await pending;
+    });
+    expect(harness.hook().forDraft!("a").drafts).toEqual([]);
+    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("rejects pending empty-scope intake across owner A B A replacement", async () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    let complete:
+      | ((value: { bytes: number; isRegularFile: boolean; extensionMime: string }) => void)
+      | undefined;
+    harness.gateway.inspectAgentAttachmentCandidate = vi.fn(
+      () =>
+        new Promise<{ bytes: number; isRegularFile: boolean; extensionMime: string }>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    let pending: Promise<void>;
+    act(() => {
+      pending = harness.hook().forDraft!("pending").add(ROOT_A, [
+        { kind: "path", path: "/Users/dev/late.png" },
+      ]);
+    });
+    env.owners.set(ROOT_A, ownerA(2));
+    harness.rerender();
+    env.owners.set(ROOT_A, ownerA(1));
+    harness.rerender();
+    await act(async () => {
+      complete!({ bytes: 100, isRegularFile: true, extensionMime: "image/png" });
+      await pending;
+    });
+    expect(harness.hook().forDraft!("pending").drafts).toEqual([]);
+    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("bounds retained image bytes across conversations without deleting earlier images", async () => {
+    const harness = renderAttachments(environment());
+    harness.gateway.stageAgentAttachmentFromPath = vi.fn(async ({ name, mime }) => ({
+      attachmentId: IMAGE_ID,
+      name,
+      mime,
+      bytes: 5 * 1024 * 1024,
+      width: 100,
+      height: 50,
+      promptLineBytesMax: 100,
+    }));
+    for (let index = 0; index < 9; index++) {
+      await act(() =>
+        harness.hook().forDraft!(`bytes-${index}`).add(ROOT_A, [
+          { kind: "path", path: `/Users/dev/${index}.png` },
+        ]),
+      );
+    }
+    expect(harness.hook().forDraft!("bytes-0").drafts).toHaveLength(1);
+    expect(harness.hook().forDraft!("bytes-8").drafts).toEqual([]);
+    expect(harness.hook().forDraft!("bytes-8").refusal).toContain("storage is full");
+    expect(harness.released).toEqual([IMAGE_ID]);
+    harness.unmount();
+  });
+
+  it("refuses capacity without evicting retained drafts", async () => {
+    const harness = renderAttachments(environment({ extensionMime: null }));
+    for (let index = 0; index < 32; index++) {
+      await act(() =>
+        harness.hook().forDraft!(`thread-${index}`).add(ROOT_A, [
+          { kind: "path", path: `/Users/dev/${index}.txt` },
+        ]),
+      );
+    }
+    const full = harness.hook().forDraft!("overflow");
+    await act(() => full.add(ROOT_A, [{ kind: "path", path: "/Users/dev/overflow.txt" }]));
+    expect(harness.hook().forDraft!("overflow").refusal).toContain("storage is full");
+    expect(harness.hook().forDraft!("thread-0").drafts[0]?.name).toBe("0.txt");
     harness.unmount();
   });
 });

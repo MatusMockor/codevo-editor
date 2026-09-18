@@ -201,8 +201,10 @@ pub(super) fn close_input_after_result(
     bytes: &[u8],
 ) -> Option<AgentTaskResultWatch> {
     let (input, mut detector) = watch?;
-    if !detector.feed(bytes) {
-        return Some((input, detector));
+    match detector.feed(bytes) {
+        Ok(false) => return Some((input, detector)),
+        Ok(true) => {}
+        Err(message) => input.fail_background(message),
     }
     close_agent_task_input(Some(input), AgentTaskInputState::ClosedAfterResult);
     None

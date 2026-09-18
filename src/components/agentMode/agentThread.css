@@ -459,16 +459,82 @@
   padding: 7px 0 2px 16px;
 }
 
+/* Compaction is a conversation boundary, not an assistant message card. */
 .agent-compaction-event {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  border-radius: 7px;
-  background: var(--agent-well);
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-sm);
-  padding: 6px 10px;
+  padding: 6px 0;
+}
+
+.agent-compaction-event::before,
+.agent-compaction-event::after {
+  content: "";
+  flex: 1;
+  min-width: 12px;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.2;
+}
+
+.agent-compaction-event__label,
+.agent-compaction-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-compaction-event__label {
+  text-align: center;
+}
+
+.agent-compaction-event svg,
+.agent-compaction-activity svg {
+  flex-shrink: 0;
+}
+
+.agent-compaction-event__details {
+  text-align: center;
+}
+
+.agent-compaction-event__details summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-compaction-event__details summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-compaction-event__tokens {
+  display: block;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-compaction-event__label:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+.agent-compaction-activity {
+  width: fit-content;
+  animation: agent-compaction-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes agent-compaction-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-compaction-activity {
+    animation: none;
+  }
 }
 
 .agent-subagents {
@@ -2174,4 +2240,26 @@
   .palette-backdrop.agent-lightbox {
     animation: none;
   }
+}
+
+.agent-background-activity {
+  color: var(--agent-text-muted);
+  font-size: 12px;
+}
+
+.agent-background-activity > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.agent-background-activity__count {
+  opacity: 0.7;
+}
+
+.agent-background-activity ul {
+  padding-left: 21px;
+  overflow-wrap: anywhere;
 }

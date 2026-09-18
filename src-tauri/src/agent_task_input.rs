@@ -113,6 +113,7 @@ pub struct AgentTaskInputSlot {
     frames_written: AtomicU32,
     cancellation: Option<Arc<AtomicBool>>,
     kind: AgentTaskInputKind,
+    background_failure: Mutex<Option<&'static str>>,
 }
 
 impl AgentTaskInputSlot {
@@ -122,10 +123,25 @@ impl AgentTaskInputSlot {
         Self {
             cancellation,
             kind,
+            background_failure: Mutex::new(None),
             state: Mutex::new(AgentTaskInputState::Open),
             writer: Mutex::new(Some(writer)),
             frames_written: AtomicU32::new(0),
         }
+    }
+
+    pub(crate) fn fail_background(&self, message: &'static str) {
+        self.background_failure
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert(message);
+    }
+
+    pub(crate) fn background_failure(&self) -> Option<&'static str> {
+        *self
+            .background_failure
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn kind(&self) -> AgentTaskInputKind {

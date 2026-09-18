@@ -22,6 +22,7 @@ export function remoteRunnerOutput(
       case "result":
         line = event.text;
         break;
+      case "backgroundTask":
       case "queued":
       case "subagentActivity":
       case "subagentEvent":

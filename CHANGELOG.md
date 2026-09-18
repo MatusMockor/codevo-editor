@@ -7,6 +7,33 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.52] - 2026-09-18
+
+### Added
+
+- Show Monitoring or Working in background in the conversation and sidebar while
+  real Claude background tasks remain active. Keep the foreground answer visible
+  and deliver later results to the same conversation.
+
+### Fixed
+
+- Keep background task input open after the initial Claude answer so later results
+  can arrive, with existing Stop controls and runtime limits preserved.
+- Keep attachment drafts separate for every conversation and restore them when
+  switching back, including new drafts and server conversations.
+- Handle clipboard image file items and native image selection for server drafts;
+  reject delayed paste, picker and drop results after their composer changes.
+- Display compaction as a live activity followed by a compact conversation separator
+  with expandable token details.
+- Seal unsigned beta application bundles with an ad-hoc signature and verify the
+  application copies inside both distribution formats before publication.
+
+### Compatibility
+
+- Server background task retention requires the updated Codevo runner. Monitoring
+  reflects actual provider tasks; it does not schedule work from an assistant's text
+  or resume background jobs after a process or server restart.
+
 ## [0.2.0-beta.51] - 2026-09-18
 
 ### Added

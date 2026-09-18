@@ -440,3 +440,42 @@ fn codex_input_cannot_be_sent_to_a_byte_writer() {
     );
     assert_eq!(slot.frames_written(), 0);
 }
+
+#[test]
+fn background_failure_preserves_the_first_reason() {
+    let slot = slot_with(RecordingWriter::new());
+    assert_eq!(slot.background_failure(), None);
+    slot.fail_background("background task tracking exceeded its limit");
+    slot.fail_background("later failure");
+    assert_eq!(
+        slot.background_failure(),
+        Some("background task tracking exceeded its limit")
+    );
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
+}
+
+#[test]
+fn stopping_input_preserves_background_failure_and_closes_once() {
+    let writer = RecordingWriter::new();
+    let closes = writer.closes();
+    let slot = slot_with(writer);
+    slot.fail_background("tracking failure");
+    slot.close(AgentTaskInputState::ClosedByStop);
+    slot.close(AgentTaskInputState::ClosedAfterResult);
+    assert_eq!(slot.background_failure(), Some("tracking failure"));
+    assert_eq!(slot.state(), AgentTaskInputState::ClosedByStop);
+    assert_eq!(closes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        slot.write(b"late", deadline(), MAX_AGENT_STEERS_PER_TURN),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn background_failure_after_stop_does_not_reopen_input() {
+    let slot = slot_with(RecordingWriter::new());
+    slot.close(AgentTaskInputState::ClosedByStop);
+    slot.fail_background("late failure");
+    assert_eq!(slot.background_failure(), Some("late failure"));
+    assert_eq!(slot.state(), AgentTaskInputState::ClosedByStop);
+}

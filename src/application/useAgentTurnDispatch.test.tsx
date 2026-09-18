@@ -24,6 +24,8 @@ import {
 } from "../domain/agentTask";
 import {
   createAgentOutputParserState,
+  feedAgentOutput,
+  finishAgentOutput,
   type AgentOutputParserState,
 } from "../domain/agentOutput/agentOutputParser";
 import {
@@ -3403,21 +3405,82 @@ describe("useAgentTurnDispatch steering", () => {
     }
   });
 
-  it("closes the task input exactly once when the stream sees the result line", async () => {
+  it("leaves input lifecycle to the runtime across foreground results and delayed background output", async () => {
     const harness = renderDispatch();
+    harness.parser.feed.mockImplementation(feedAgentOutput);
+    harness.parser.finish.mockImplementation(finishAgentOutput);
     const threadId = await harness.startRunningThread();
     const turnId = harness.turnIdOf(threadId, 0);
+    const frame = (value: object) => `${JSON.stringify(value)}\n`;
 
     await act(async () => {
-      harness.emitOutput(turnId, 1, "result");
-      harness.emitOutput(turnId, 2, "result");
+      harness.emitOutput(
+        turnId,
+        1,
+        frame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "pipeline",
+          task_type: "monitor",
+          description: "Watching pipeline",
+        }),
+      );
+      harness.emitOutput(
+        turnId,
+        2,
+        frame({
+          type: "result",
+          subtype: "success",
+          result: "I am watching the pipeline.",
+          is_error: false,
+        }),
+      );
     });
+    expect(harness.agent.closeAgentTaskInput).not.toHaveBeenCalled();
+    expect(await steerOnce(harness, { threadId, prompt: "Keep watching" })).toBe("sent");
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
 
-    expect(harness.agent.closeAgentTaskInput).toHaveBeenCalledTimes(1);
-    expect(harness.agent.closeAgentTaskInput).toHaveBeenCalledWith({
-      taskId: turnId,
-      workspaceId: OWNER_A,
+    await act(async () => {
+      harness.emitOutput(
+        turnId,
+        3,
+        frame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "pipeline",
+          status: "completed",
+        }),
+      );
+      harness.emitOutput(
+        turnId,
+        4,
+        frame({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "Pipeline passed." }] },
+        }),
+      );
+      harness.emitOutput(
+        turnId,
+        5,
+        frame({ type: "result", subtype: "success", result: "Pipeline passed.", is_error: false }),
+      );
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
     });
+    await waitForReact(() =>
+      expect(harness.turn(threadId, 0).status).toEqual({ kind: "exited", exitCode: 0 }),
+    );
+    expect(harness.turn(threadId, 0).events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "backgroundTask", taskId: "pipeline", status: "starting" }),
+        expect.objectContaining({
+          kind: "backgroundTask",
+          taskId: "pipeline",
+          status: "completed",
+        }),
+        expect.objectContaining({ kind: "assistantText", text: "Pipeline passed." }),
+      ]),
+    );
+    expect(harness.agent.closeAgentTaskInput).not.toHaveBeenCalled();
     harness.unmount();
   });
 });

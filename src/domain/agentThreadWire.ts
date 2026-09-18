@@ -213,6 +213,11 @@ function serializeTurnStatus(status: AgentTurnStatus): Record<string, unknown> {
 function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
   switch (event.kind) {
     case "assistantText":
+      return {
+        kind: event.kind,
+        text: event.text,
+        ...optionalField("parentToolId", event.parentToolId),
+      };
     case "reasoning":
       return { kind: event.kind, text: event.text };
     case "userMessage":
@@ -238,6 +243,8 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         isError: event.isError,
         ...optionalField("parentToolId", event.parentToolId),
       };
+    case "backgroundTask":
+      return { ...event };
     case "subagent":
       return {
         kind: event.kind,
@@ -746,6 +753,15 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
   const kind = turnEventKind(event.kind, `${path}.kind`);
   switch (kind) {
     case "assistantText":
+      boundedKeys(event, ["kind", "text"], ["parentToolId"], path);
+      return {
+        kind,
+        text: eventText(event.text, `${path}.text`),
+        ...optionalField(
+          "parentToolId",
+          optionalToolId(event.parentToolId, `${path}.parentToolId`),
+        ),
+      };
     case "reasoning":
       exactKeys(event, ["kind", "text"], path);
       return { kind, text: eventText(event.text, `${path}.text`) };
@@ -789,6 +805,38 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
           optionalToolId(event.parentToolId, `${path}.parentToolId`),
         ),
       };
+    case "backgroundTask": {
+      boundedKeys(event, ["kind", "taskId", "status", "taskType"], ["description"], path);
+      const status = event.status;
+      const taskType = event.taskType;
+      if (
+        status !== "starting" &&
+        status !== "running" &&
+        status !== "completed" &&
+        status !== "failed" &&
+        status !== "stopped"
+      )
+        invalid(path, "a background task status");
+      if (
+        taskType !== "monitor" &&
+        taskType !== "shell" &&
+        taskType !== "agent" &&
+        taskType !== "other"
+      )
+        invalid(path, "a background task type");
+      return {
+        kind,
+        status,
+        taskType,
+        taskId: boundedText(event.taskId, `${path}.taskId`, MAX_AGENT_TOOL_ID_BYTES, false, true),
+        ...optionalField(
+          "description",
+          event.description === undefined
+            ? undefined
+            : toolSummary(event.description, `${path}.description`),
+        ),
+      };
+    }
     case "subagent":
       return parseSubagentEvent(event, path);
     case "subagentActivity": {
@@ -1149,6 +1197,7 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
     value !== "subagentUsage" &&
     value !== "subagentTurnDone" &&
     value !== "queued" &&
+    value !== "backgroundTask" &&
     value !== "subagent" &&
     value !== "result" &&
     value !== "contextUsage" &&

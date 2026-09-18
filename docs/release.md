@@ -20,8 +20,10 @@ its `.sig`, and `latest.json`. The GitHub Release body is the matching version s
 from `CHANGELOG.md`. A beta version is always marked as a prerelease, including when
 Apple signing secrets are configured.
 
-An unsigned beta is not an unsigned updater feed: the macOS application and DMG lack
-Apple signing, but the updater archive still requires the Tauri updater signature.
+An unsigned beta is not an unsigned updater feed: the macOS application is sealed
+ad-hoc rather than signed with an Apple Developer ID or notarized, and the updater
+archive still requires the Tauri updater signature. The workflow verifies the bundle
+seal in the application, updater archive and mounted DMG before publication.
 
 ## One-time updater key setup
 

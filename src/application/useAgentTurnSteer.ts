@@ -72,18 +72,9 @@ export const DEFERRED_CLEARED_NOTICE =
 export const DEFERRED_SEND_FAILED_NOTICE =
   "Queued messages could not be sent. The queue is paused; review the thread before resuming.";
 
-const MAX_TRACKED_CLOSED_INPUTS = 256;
-
 export interface AgentTurnSteerDependencies extends AgentTurnAdmissionDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
-}
-
-export interface AgentTurnSteerStream {
-  readonly turnId: string;
-  readonly threadId: string;
-  readonly ownerId: string;
-  readonly sawResult: boolean;
 }
 
 export interface AgentTurnSteerOptions {
@@ -112,7 +103,6 @@ export interface AgentTurnSteerSurface {
   onTurnSettled(threadId: string): void;
   onThreadStopped(threadId: string): void;
   clearDeferredForOwner(ownerId: string): void;
-  noteStreamResult(stream: AgentTurnSteerStream): void;
 }
 
 export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnSteerSurface {
@@ -135,7 +125,6 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
   const pendingDrainsRef = useRef<Set<string>>(new Set());
   const sendingQueuedRef = useRef<Set<string>>(new Set());
   const pausedThreadsRef = useRef<Set<string>>(new Set());
-  const closedInputsRef = useRef<Set<string>>(new Set());
   const deferredSequenceRef = useRef(0);
   const preparedDeferredRef = useRef(new WeakMap<AgentFollowUpRequest, ClaimedTurnAttachments>());
 
@@ -521,17 +510,6 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     [commitDeferred, dependenciesRef],
   );
 
-  const noteStreamResult = useCallback(
-    (stream: AgentTurnSteerStream): void => {
-      if (!stream.sawResult) return;
-      if (closedInputsRef.current.has(stream.turnId)) return;
-      if (!steerableStream(dependenciesRef.current, stream)) return;
-      retainClosedInput(closedInputsRef.current, stream.turnId);
-      void closeAgentTaskInput(dependenciesRef.current, stream.turnId, stream.ownerId);
-    },
-    [dependenciesRef],
-  );
-
   const drainDeferred = useCallback(
     (current: AgentThreadsState): void => {
       const deps = dependenciesRef.current;
@@ -622,7 +600,6 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     onTurnSettled,
     onThreadStopped,
     clearDeferredForOwner,
-    noteStreamResult,
   };
 }
 
@@ -647,33 +624,6 @@ async function sendDeferredFollowUp(
   if (!sent.ok) deps.reportError(AGENT_TASKS_SOURCE, sent.error);
   deps.setNotice(failure(DEFERRED_SEND_FAILED_NOTICE));
   return false;
-}
-
-async function closeAgentTaskInput(
-  deps: AgentTurnSteerDependencies,
-  taskId: string,
-  workspaceId: string,
-): Promise<void> {
-  const closed = await attempt(() =>
-    deps.agentTaskGateway.closeAgentTaskInput({ taskId, workspaceId }),
-  );
-  if (closed.ok) return;
-  deps.reportError(AGENT_TASKS_SOURCE, closed.error);
-}
-
-function steerableStream(deps: AgentTurnSteerDependencies, stream: AgentTurnSteerStream): boolean {
-  const thread = deps.store.currentState().threads.get(stream.threadId);
-  if (thread === undefined) return false;
-  const turn = thread.turns.find((candidate) => candidate.turnId === stream.turnId);
-  return turn?.launch?.provider === "claudeCode";
-}
-
-function retainClosedInput(tracked: Set<string>, turnId: string): void {
-  if (tracked.size >= MAX_TRACKED_CLOSED_INPUTS) {
-    const oldest = tracked.values().next().value;
-    if (oldest !== undefined) tracked.delete(oldest);
-  }
-  tracked.add(turnId);
 }
 
 function steerEventFits(

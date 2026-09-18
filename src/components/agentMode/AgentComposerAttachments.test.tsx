@@ -42,63 +42,56 @@ describe("AgentComposer attachments", () => {
     Reflect.deleteProperty(window, "matchMedia");
   });
 
-  it("uses selected image bytes for server attachments without exposing local paths", async () => {
+  it("reads native selected images for the server without attaching local paths", async () => {
     const intake = vi.fn(async () => undefined);
-    const captureIntake = vi.fn(() => intake);
     const attachmentPicker = vi.fn(async () => ["/private/shot.png"]);
+    const attachmentImageReader = vi.fn(async () => new ArrayBuffer(12));
     render({
       executionServerId: "server",
-      attachments: surface({ captureIntake }),
+      attachments: surface({ captureIntake: () => intake }),
       attachmentPicker,
+      attachmentImageReader,
     });
-    act(() => attachButton().click());
-    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
-    Object.defineProperty(picker, "files", {
-      configurable: true,
-      value: [file("shot.png", "image/png", 12)],
-    });
-    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
-    expect(captureIntake).toHaveBeenCalledTimes(1);
-    expect(attachmentPicker).not.toHaveBeenCalled();
+    await act(async () => attachButton().click());
+    expect(attachmentPicker).toHaveBeenCalledTimes(1);
+    expect(attachmentImageReader).toHaveBeenCalledWith("/private/shot.png");
     expect(intake).toHaveBeenCalledWith([
       expect.objectContaining({ kind: "bytes", name: "shot.png" }),
     ]);
+    expect(host.querySelector('input[type="file"]')).toBeNull();
   });
 
-  it("does not read a selection after its server owner changes", async () => {
+  it("ignores a native picker result after switching server away and back", async () => {
+    let finish!: (paths: string[]) => void;
+    const attachmentPicker = () =>
+      new Promise<string[]>((resolve) => {
+        finish = resolve;
+      });
     const intake = vi.fn(async () => undefined);
     const attachments = surface({ captureIntake: () => intake });
-    render({ executionServerId: "server-a", attachments });
+    const attachmentImageReader = vi.fn(async () => new ArrayBuffer(12));
+    render({ executionServerId: "server-a", attachments, attachmentPicker, attachmentImageReader });
     act(() => attachButton().click());
-    render({ executionServerId: "server-b", attachments });
-    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
-    const selected = file("shot.png", "image/png", 12);
-    const read = vi.fn(async () => new ArrayBuffer(12));
-    Object.defineProperty(selected, "arrayBuffer", { value: read });
-    Object.defineProperty(picker, "files", { configurable: true, value: [selected] });
-    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
-    expect(read).not.toHaveBeenCalled();
+    render({ executionServerId: "server-b", attachments, attachmentPicker, attachmentImageReader });
+    render({ executionServerId: "server-a", attachments, attachmentPicker, attachmentImageReader });
+    await act(async () => finish(["/private/shot.png"]));
+    expect(attachmentImageReader).not.toHaveBeenCalled();
     expect(intake).not.toHaveBeenCalled();
   });
 
-  it("drops an image read completed after switching away and back", async () => {
+  it("drops a native image read completed after switching away and back", async () => {
+    let finish!: (bytes: ArrayBuffer) => void;
+    const attachmentImageReader = () =>
+      new Promise<ArrayBuffer>((resolve) => {
+        finish = resolve;
+      });
+    const attachmentPicker = async () => ["/private/shot.png"];
     const intake = vi.fn(async () => undefined);
     const attachments = surface({ captureIntake: () => intake });
-    render({ executionServerId: "server-a", attachments });
-    act(() => attachButton().click());
-    let finish!: (bytes: ArrayBuffer) => void;
-    const selected = file("shot.png", "image/png", 12);
-    Object.defineProperty(selected, "arrayBuffer", {
-      value: () =>
-        new Promise<ArrayBuffer>((resolve) => {
-          finish = resolve;
-        }),
-    });
-    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
-    Object.defineProperty(picker, "files", { configurable: true, value: [selected] });
-    act(() => picker.dispatchEvent(new Event("change", { bubbles: true })));
-    render({ executionServerId: "server-b", attachments });
-    render({ executionServerId: "server-a", attachments });
+    render({ executionServerId: "server-a", attachments, attachmentPicker, attachmentImageReader });
+    await act(async () => attachButton().click());
+    render({ executionServerId: "server-b", attachments, attachmentPicker, attachmentImageReader });
+    render({ executionServerId: "server-a", attachments, attachmentPicker, attachmentImageReader });
     await act(async () => finish(new ArrayBuffer(12)));
     expect(intake).not.toHaveBeenCalled();
   });
@@ -106,42 +99,146 @@ describe("AgentComposer attachments", () => {
   it("cancels a server picker without staging or reporting an error", async () => {
     const intake = vi.fn(async () => undefined);
     const refuse = vi.fn();
+    const attachmentImageReader = vi.fn(async () => new ArrayBuffer(12));
     render({
       executionServerId: "server",
       attachments: surface({ captureIntake: () => intake, refuse }),
+      attachmentPicker: async () => [],
+      attachmentImageReader,
     });
-    act(() => attachButton().click());
-    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
-    act(() => picker.dispatchEvent(new Event("cancel", { bubbles: true })));
-    Object.defineProperty(picker, "files", {
-      configurable: true,
-      value: [file("shot.png", "image/png", 12)],
-    });
-    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    await act(async () => attachButton().click());
+    expect(attachmentImageReader).not.toHaveBeenCalled();
     expect(intake).not.toHaveBeenCalled();
     expect(refuse).not.toHaveBeenCalled();
   });
 
-  it("claims a pasted image and stages it as bytes", async () => {
-    const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
-    const claimPaste = vi.fn(() => "claim" as const);
-    render({ attachments: surface({ add, claimPaste }) });
-
-    const event = pasteEvent([file("shot.png", "image/png", 12)], "");
-    await act(async () => {
-      textarea().dispatchEvent(event);
+  it("reads clipboard file items when WebKit exposes no files", async () => {
+    const intake = vi.fn(async () => undefined);
+    render({
+      executionServerId: "server",
+      attachments: surface({ captureIntake: () => intake, claimPaste: () => "claim" }),
     });
-
-    expect(claimPaste).toHaveBeenCalledWith(
-      [{ name: "shot.png", mime: "image/png", hasPath: false, bytes: 12 }],
-      0,
-    );
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    const image = file("shot.png", "image/png", 12);
+    Object.defineProperty(event, "clipboardData", {
+      value: { files: [], items: [{ kind: "file", getAsFile: () => image }], getData: () => "" },
+    });
+    await act(async () => textarea().dispatchEvent(event));
     expect(event.defaultPrevented).toBe(true);
-    expect(add).toHaveBeenCalledTimes(1);
-    const sources: ReadonlyArray<AgentAttachmentSource> = add.mock.calls[0]?.[1] ?? [];
-    expect(sources[0]?.kind).toBe("bytes");
-    expect(sources[0]).toMatchObject({ name: "shot.png", mime: "image/png" });
+    expect(intake).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "bytes", name: "shot.png" }),
+    ]);
   });
+
+  it("does not attach a clipboard read to a replacement server draft", async () => {
+    let finish!: (bytes: ArrayBuffer) => void;
+    const image = file("shot.png", "image/png", 12);
+    Object.defineProperty(image, "arrayBuffer", {
+      value: () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    const intake = vi.fn(async () => undefined);
+    const attachments = surface({ captureIntake: () => intake, claimPaste: () => "claim" });
+    render({ executionServerId: "server-a", attachments });
+    act(() => textarea().dispatchEvent(pasteEvent([image], "")));
+    render({ executionServerId: "server-b", attachments });
+    render({ executionServerId: "server-a", attachments });
+    await act(async () => finish(new ArrayBuffer(12)));
+    expect(intake).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "server-a"])(
+    "rejects a delayed clipboard read after thread A → B → A on %s",
+    async (executionServerId) => {
+      let finish!: (bytes: ArrayBuffer) => void;
+      const image = file("shot.png", "image/png", 12);
+      Object.defineProperty(image, "arrayBuffer", {
+        value: () =>
+          new Promise<ArrayBuffer>((resolve) => {
+            finish = resolve;
+          }),
+      });
+      const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
+      const attachments = surface({
+        add,
+        captureIntake: () => async (sources) => add("/workspace/app", sources),
+        claimPaste: () => "claim",
+      });
+      render({ executionServerId, attachments, promptOwnerKey: "thread-a" });
+      act(() => textarea().dispatchEvent(pasteEvent([image], "")));
+      render({ executionServerId, attachments, promptOwnerKey: "thread-b" });
+      render({ executionServerId, attachments, promptOwnerKey: "thread-a" });
+      await act(async () => finish(new ArrayBuffer(12)));
+      expect(add).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a delayed local picker after thread A → B → A", async () => {
+    let finish!: (paths: string[]) => void;
+    const attachmentPicker = () =>
+      new Promise<string[]>((resolve) => {
+        finish = resolve;
+      });
+    const add = vi.fn(async () => undefined);
+    const attachments = surface({ add });
+    render({ attachments, attachmentPicker, promptOwnerKey: "thread-a" });
+    act(() => attachButton().click());
+    render({ attachments, attachmentPicker, promptOwnerKey: "thread-b" });
+    render({ attachments, attachmentPicker, promptOwnerKey: "thread-a" });
+    await act(async () => finish(["/workspace/app/shot.png"]));
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("does not show a failed old picker in a different thread", async () => {
+    let fail!: (error: Error) => void;
+    const attachmentPicker = () =>
+      new Promise<string[]>((_resolve, reject) => {
+        fail = reject;
+      });
+    const refuse = vi.fn();
+    const attachments = surface({ refuse });
+    render({ attachments, attachmentPicker, promptOwnerKey: "thread-a" });
+    act(() => attachButton().click());
+    render({ attachments, attachmentPicker, promptOwnerKey: "thread-b" });
+    await act(async () => fail(new Error("old picker failed")));
+    expect(refuse).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { provider: "codex" as const, executionServerId: null },
+    { provider: "claudeCode" as const, executionServerId: null },
+    { provider: "codex" as const, executionServerId: "server" },
+    { provider: "claudeCode" as const, executionServerId: "server" },
+  ])(
+    "claims an image equally for $provider on $executionServerId",
+    async ({ provider, executionServerId }) => {
+      const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
+      const claimPaste = vi.fn(() => "claim" as const);
+      render({
+        attachments: surface({ add, claimPaste }),
+        executionServerId,
+        launchProvider: provider,
+        launch: { provider, model: "default", mode: "default", effort: "default" },
+      });
+
+      const event = pasteEvent([file("shot.png", "image/png", 12)], "");
+      await act(async () => {
+        textarea().dispatchEvent(event);
+      });
+
+      expect(claimPaste).toHaveBeenCalledWith(
+        [{ name: "shot.png", mime: "image/png", hasPath: false, bytes: 12 }],
+        0,
+      );
+      expect(event.defaultPrevented).toBe(true);
+      expect(add).toHaveBeenCalledTimes(1);
+      const sources: ReadonlyArray<AgentAttachmentSource> = add.mock.calls[0]?.[1] ?? [];
+      expect(sources[0]?.kind).toBe("bytes");
+      expect(sources[0]).toMatchObject({ name: "shot.png", mime: "image/png" });
+    },
+  );
 
   it("does not claim a paste while a turn is dispatching", async () => {
     const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
@@ -262,6 +359,29 @@ describe("AgentComposer attachments", () => {
     act(() => listener({ kind: "drop", x: 50, y: 50, paths: [ABSOLUTE_VIDEO] }));
     expect(add).toHaveBeenCalledWith("/workspace/app", [{ kind: "path", path: ABSOLUTE_VIDEO }]);
     expect(host.querySelector("[data-agent-composer-drop='active']")).toBeNull();
+  });
+
+  it("stages native dropped server images as bytes", async () => {
+    const intake = vi.fn(async () => undefined);
+    const attachmentImageReader = vi.fn(async () => new ArrayBuffer(12));
+    let listener: AgentComposerDragDropListener = () => undefined;
+    const attachmentDragDrop: AgentComposerDragDropSubscribe = async (next) => {
+      listener = next;
+      return () => undefined;
+    };
+    render({
+      executionServerId: "server",
+      attachments: surface({ captureIntake: () => intake }),
+      attachmentImageReader,
+      attachmentDragDrop,
+    });
+    await act(async () => undefined);
+    stubComposerBounds();
+    await act(async () => listener({ kind: "drop", x: 50, y: 50, paths: ["/private/shot.png"] }));
+    expect(attachmentImageReader).toHaveBeenCalledWith("/private/shot.png");
+    expect(intake).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "bytes", name: "shot.png" }),
+    ]);
   });
 
   it("ignores a drop outside the composer bounds", async () => {
@@ -712,6 +832,11 @@ function surface(
     refusal: null,
     promptLineBytes: 0,
     add: async () => undefined,
+    captureIntake:
+      (target, isCurrent = () => true) =>
+      async (sources) => {
+        if (isCurrent()) await overrides.add?.(target, sources);
+      },
     claimPaste: () => "pass-through",
     remove: () => undefined,
     clear: () => undefined,

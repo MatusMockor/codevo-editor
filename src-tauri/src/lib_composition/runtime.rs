@@ -564,6 +564,7 @@ pub fn run() {
             agent_attachment_commands::stage_agent_attachment_from_path,
             agent_attachment_commands::inspect_agent_attachment_candidate,
             agent_attachment_commands::read_agent_attachment_candidate,
+            agent_image_source_commands::read_agent_attachment_image_source,
             agent_attachment_commands::claim_agent_attachments,
             agent_attachment_commands::release_agent_attachment,
             agent_output_artifact_commands::resolve_agent_output_artifact,

@@ -239,7 +239,6 @@ export function useAgentTurnDispatch(
     onTurnSettled,
     onThreadStopped,
     clearDeferredForOwner,
-    noteStreamResult,
   } = useAgentTurnSteer({
     state: dependencies.store.state,
     dependenciesRef,
@@ -290,10 +289,10 @@ export function useAgentTurnDispatch(
       for (const observation of drainAgentAccountUsage(stream)) {
         deps.onAccountUsageObserved?.(observation);
       }
-      noteStreamResult(stream);
+      // The runtime owns stdin lifetime, including live background work after a result.
       scheduleFlush();
     },
-    [noteStreamResult, parser, scheduleFlush],
+    [parser, scheduleFlush],
   );
 
   const handleStatusEvent = useCallback(

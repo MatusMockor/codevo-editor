@@ -9,10 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { ArrowUp, Loader2, Paperclip, Square, X } from "lucide-react";
-import type {
-  AgentAttachmentSource,
-  AgentComposerAttachmentsSurface,
-} from "../../application/useAgentComposerAttachments";
+import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
@@ -35,16 +32,13 @@ import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agen
 import { AgentComposerAttachments } from "./AgentComposerAttachments";
 import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
-  agentAttachmentPasteFailureMessage,
-  AGENT_ATTACHMENT_PICKER_FAILURE,
-  agentAttachmentSourcesFromFiles,
-  agentAttachmentSourcesFromPaths,
   openAgentAttachmentPicker,
+  openAgentImageAttachmentPicker,
   subscribeAgentAttachmentDragDrop,
   type AgentComposerDragDropSubscribe,
   type AgentComposerFilePicker,
 } from "./agentComposerAttachmentPorts";
-import { useAgentRemoteAttachmentPicker } from "./useAgentRemoteAttachmentPicker";
+import { useAgentAttachmentIntake } from "./useAgentAttachmentIntake";
 import { useAgentComposerDragDrop } from "./useAgentComposerDragDrop";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentComposerCommands } from "./AgentComposerCommands";
@@ -84,6 +78,7 @@ export interface AgentComposerProps {
   readonly attachments?: AgentComposerAttachmentsSurface | null;
   readonly attachmentTargetKey?: string | null;
   readonly attachmentPicker?: AgentComposerFilePicker;
+  readonly attachmentImageReader?: (path: string) => Promise<ArrayBuffer>;
   readonly attachmentDragDrop?: AgentComposerDragDropSubscribe;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
@@ -124,7 +119,10 @@ export function AgentComposer({
   executionServerId = null,
   attachments = null,
   attachmentTargetKey = null,
-  attachmentPicker = openAgentAttachmentPicker,
+  attachmentPicker = executionServerId === null
+    ? openAgentAttachmentPicker
+    : openAgentImageAttachmentPicker,
+  attachmentImageReader,
   attachmentDragDrop = subscribeAgentAttachmentDragDrop,
   compactionOffer = null,
   dispatching,
@@ -238,33 +236,21 @@ export function AgentComposer({
     worktreeOnlyReason,
   });
 
-  const remotePicker = useAgentRemoteAttachmentPicker({
+  const attachmentIntake = useAgentAttachmentIntake({
     attachments,
     target: attachmentTargetKey,
     serverId: executionServerId,
     promptOwnerKey,
     dispatching,
+    picker: attachmentPicker,
+    readImagePath: attachmentImageReader,
   });
   const attachmentsEnabled = attachments !== null && attachmentTargetKey !== null;
-  const addAttachments = useCallback(
-    (sources: ReadonlyArray<AgentAttachmentSource>): void => {
-      if (attachments === null || attachmentTargetKey === null) return;
-      if (sources.length === 0) return;
-      void attachments.add(attachmentTargetKey, sources);
-    },
-    [attachments, attachmentTargetKey],
-  );
   const dropPaths = useCallback(
     (paths: ReadonlyArray<string>): void => {
-      if (executionServerId !== null) {
-        attachments?.refuse(
-          "For server conversations, attach images with the paperclip or paste a screenshot. Drag and drop is not supported yet.",
-        );
-        return;
-      }
-      addAttachments(agentAttachmentSourcesFromPaths(paths));
+      void attachmentIntake.drop(paths);
     },
-    [addAttachments, attachments, executionServerId],
+    [attachmentIntake],
   );
   const refuseAttachments = useCallback(
     (reason: string): void => {
@@ -288,7 +274,14 @@ export function AgentComposer({
     if (dispatching) return;
     const data = event.clipboardData;
     if (data === null || data === undefined) return;
-    const files = [...data.files];
+    const files = Array.from(data.files);
+    if (files.length === 0) {
+      for (const item of Array.from(data.items ?? [])) {
+        if (item.kind !== "file") continue;
+        const file = item.getAsFile();
+        if (file !== null) files.push(file);
+      }
+    }
     const claim = attachments.claimPaste(
       files.map((file) => ({
         name: file.name,
@@ -300,18 +293,10 @@ export function AgentComposer({
     );
     if (claim !== "claim") return;
     event.preventDefault();
-    agentAttachmentSourcesFromFiles(files)
-      .then(addAttachments)
-      .catch((error: unknown) => refuseAttachments(agentAttachmentPasteFailureMessage(error)));
+    void attachmentIntake.paste(files);
   };
   const pickAttachments = (): void => {
-    if (executionServerId !== null) {
-      remotePicker.open();
-      return;
-    }
-    attachmentPicker()
-      .then(dropPaths)
-      .catch(() => refuseAttachments(AGENT_ATTACHMENT_PICKER_FAILURE));
+    void attachmentIntake.open();
   };
 
   const nestedTargetLabel = agentComposerNestedTargetLabel(target);
@@ -506,17 +491,6 @@ export function AgentComposer({
       onSubmit={submit}
       ref={composerRef}
     >
-      {executionServerId !== null && (
-        <input
-          type="file"
-          hidden
-          accept="image/png,image/jpeg"
-          multiple
-          ref={remotePicker.inputRef}
-          onChange={(event) => void remotePicker.change(event)}
-          aria-label="Choose server attachments"
-        />
-      )}
       {compactionOffer !== null &&
         compactionOffer.key !== dismissedCompactionKey &&
         onCompactContext !== undefined && (

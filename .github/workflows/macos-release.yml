@@ -144,6 +144,8 @@ jobs:
         run: npm ci
 
       - name: Build debug DMG
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
         run: >-
           npm run tauri build -- --debug --bundles app,dmg
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
@@ -152,6 +154,9 @@ jobs:
         run: |
           dmg_path="$(find src-tauri/target/debug/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
           test -n "$dmg_path"
+          app_paths=(src-tauri/target/debug/bundle/macos/*.app)
+          test "${#app_paths[@]}" -eq 1
+          codesign --verify --deep --strict --verbose=2 "${app_paths[0]}"
           hdiutil imageinfo "$dmg_path"
 
       - name: Upload debug artifacts
@@ -412,6 +417,9 @@ jobs:
       - name: Build unsigned beta artifacts
         if: ${{ steps.signing.outputs.apple_signing == 'false' }}
         env:
+          # Seal the complete bundle before Tauri packages the DMG and updater.
+          # This is ad-hoc signing, not Developer ID signing or notarization.
+          APPLE_SIGNING_IDENTITY: "-"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --bundles app,dmg
@@ -450,8 +458,31 @@ jobs:
             "$updater_path.sig" \
             src-tauri/tauri.conf.json
 
+          # Every distribution needs a valid bundle seal, including unsigned betas.
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          verification_dir="$(mktemp -d "$RUNNER_TEMP/codevo-artifact-verification.XXXXXX")"
+          dmg_mount="$verification_dir/dmg"
+          cleanup_verification() {
+            if mount | grep -Fq " on $dmg_mount ("; then
+              hdiutil detach "$dmg_mount" || return 1
+            fi
+            rm -rf "$verification_dir"
+          }
+          trap cleanup_verification EXIT
+          mkdir "$verification_dir/updater" "$dmg_mount"
+          tar -xzf "$updater_path" -C "$verification_dir/updater"
+          updater_apps=("$verification_dir/updater/"*.app)
+          test "${#updater_apps[@]}" -eq 1
+          codesign --verify --deep --strict --verbose=2 "${updater_apps[0]}"
+          hdiutil attach "$dmg_path" -readonly -nobrowse -mountpoint "$dmg_mount"
+          dmg_apps=("$dmg_mount/"*.app)
+          test "${#dmg_apps[@]}" -eq 1
+          codesign --verify --deep --strict --verbose=2 "${dmg_apps[0]}"
+          hdiutil detach "$dmg_mount"
+          rm -rf "$verification_dir"
+          trap - EXIT
+
           if [ "$APPLE_SIGNING" = "true" ]; then
-            codesign --verify --deep --strict --verbose=2 "$app_path"
             codesign -dv --verbose=4 "$app_path"
             codesign -d --entitlements :- "$app_path"
             spctl -a -vvv -t exec "$app_path"

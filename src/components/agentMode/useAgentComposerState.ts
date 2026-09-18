@@ -390,7 +390,11 @@ export function useAgentComposerControllerState({
     selectedThread !== null
       ? selectedThread.thread.owner.rootKey
       : (target?.projectRootKey ?? null);
-  const attachmentsSurface = agents.attachments;
+  const attachmentDraftKey = agentComposerDraftKey(selectedThread, target);
+  const attachmentsSurface =
+    attachmentDraftKey === null
+      ? agents.attachments
+      : (agents.attachments.forDraft?.(attachmentDraftKey) ?? agents.attachments);
   const attachments = useMemo(
     () => composerAttachmentsForTarget(attachmentsSurface, attachmentTargetKey),
     [attachmentsSurface, attachmentTargetKey],

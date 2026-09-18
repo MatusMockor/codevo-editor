@@ -1477,7 +1477,15 @@ fn run_waiter_inner(
     group: &Arc<AgentProcessGroup>,
     pumps: &mut AgentOutputPumps,
 ) {
+    let input = shared
+        .state()
+        .entries
+        .get(task_id)
+        .and_then(|entry| entry.input.clone());
     let outcome = loop {
+        if let Some(message) = input.as_ref().and_then(|input| input.background_failure()) {
+            break Err(message.to_owned());
+        }
         if group.force_requested() {
             let _ = child.force_kill();
         }
@@ -1497,6 +1505,18 @@ fn run_waiter_inner(
             if !pumps.join() {
                 publish_output_incomplete_marker(shared, task_id, AgentTaskOutputStream::Stdout);
                 let _ = group.force_stop();
+            }
+            if let Some(message) = input.as_ref().and_then(|input| input.background_failure()) {
+                let _ = group.force_stop();
+                reap_bounded(group, child, shared.tuning.force_timeout);
+                complete(
+                    shared,
+                    task_id,
+                    AgentTaskStatusPayload::Failed {
+                        message: format!("Agent task wait failed: {message}"),
+                    },
+                );
+                return;
             }
             match group.reap(child) {
                 Ok(exit_code) => complete(

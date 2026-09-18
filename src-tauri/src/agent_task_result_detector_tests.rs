@@ -1,88 +1,176 @@
 use super::*;
 
-fn feed_all(detector: &mut ResultLineDetector, chunks: &[&[u8]]) -> usize {
-    chunks.iter().filter(|chunk| detector.feed(chunk)).count()
+fn start(id: &str) -> String {
+    format!("{{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"{id}\",\"task_type\":\"local_bash\"}}\n")
 }
+const RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\"}\n";
+const DONE: &[u8] = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"watch\",\"status\":\"completed\"}\n";
 
 #[test]
-fn a_result_line_at_the_start_of_the_stream_matches() {
+fn ordinary_result_closes_once_after_complete_json_line() {
     let mut detector = ResultLineDetector::new();
-
-    assert!(detector.feed(br#"{"type":"result","subtype":"success"}"#));
+    assert!(!detector.feed(&RESULT[..RESULT.len() - 1]).unwrap());
+    assert!(detector.feed(b"\n").unwrap());
+    assert!(!detector.feed(RESULT).unwrap());
 }
 
 #[test]
-fn a_result_line_after_a_newline_matches() {
+fn background_result_keeps_input_until_terminal_and_late_reply_result() {
     let mut detector = ResultLineDetector::new();
-
-    assert!(!detector.feed(b"{\"type\":\"assistant\",\"message\":{}}\n"));
-    assert!(detector.feed(b"{\"type\":\"result\",\"is_error\":false}\n"));
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert!(!detector.feed(RESULT).unwrap());
+    assert!(!detector.feed(DONE).unwrap());
+    assert!(!detector
+        .feed(b"{\"type\":\"assistant\",\"message\":{\"content\":[]}}\n")
+        .unwrap());
+    assert!(detector.feed(RESULT).unwrap());
 }
 
 #[test]
-fn the_prefix_matches_across_every_chunk_boundary() {
-    let line = b"{\"type\":\"assistant\"}\n{\"type\":\"result\",\"is_error\":false}\n";
-    for split in 0..line.len() {
+fn lifecycle_survives_every_chunk_boundary() {
+    let stream = [start("watch").as_bytes(), RESULT, DONE, RESULT].concat();
+    for split in 0..stream.len() {
         let mut detector = ResultLineDetector::new();
-        let matches = feed_all(&mut detector, &[&line[..split], &line[split..]]);
-        assert_eq!(matches, 1, "split at {split} still sees one result line");
+        let one = detector.feed(&stream[..split]).unwrap();
+        let two = detector.feed(&stream[split..]).unwrap();
+        assert_eq!(usize::from(one) + usize::from(two), 1, "split {split}");
     }
 }
 
 #[test]
-fn the_prefix_matches_when_fed_one_byte_at_a_time() {
-    let line = b"{\"type\":\"user\"}\n{\"type\":\"result\"}\n";
+fn bytewise_lifecycle_and_multiple_tasks_require_all_terminals() {
     let mut detector = ResultLineDetector::new();
-    let mut matches = 0;
-    for byte in line {
-        if detector.feed(&[*byte]) {
-            matches += 1;
-        }
+    for byte in start("watch").as_bytes() {
+        assert!(!detector.feed(&[*byte]).unwrap());
     }
-
-    assert_eq!(matches, 1);
+    detector.feed(start("other").as_bytes()).unwrap();
+    detector.feed(DONE).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    detector.feed(b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"other\",\"patch\":{\"status\":\"killed\"}}\n").unwrap();
+    assert!(detector.feed(RESULT).unwrap());
 }
 
 #[test]
-fn a_prefix_in_the_middle_of_a_line_is_ignored() {
+fn stale_start_progress_and_duplicate_notification_do_not_resurrect() {
     let mut detector = ResultLineDetector::new();
-
-    assert!(!detector.feed(b"{\"text\":\"{\\\"type\\\":\\\"result\\\",\"}\n"));
-    assert!(!detector.feed(b" {\"type\":\"result\"}\n"));
-    assert!(!detector.feed(b"x{\"type\":\"result\"}\n"));
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(DONE).unwrap();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector
+        .feed(b"{\"type\":\"system\",\"subtype\":\"task_progress\",\"task_id\":\"watch\"}\n")
+        .unwrap();
+    detector.feed(DONE).unwrap();
+    assert!(detector.feed(RESULT).unwrap());
 }
 
 #[test]
-fn a_longer_type_name_is_not_a_result_line() {
-    let mut detector = ResultLineDetector::new();
-
-    assert!(!detector.feed(b"{\"type\":\"resultx\",\"is_error\":false}\n"));
-    assert!(!detector.feed(b"{\"type\":\"result_summary\"}\n"));
+fn prose_unknown_progress_nested_and_foreign_tasks_are_not_live() {
+    for line in [
+        b"{\"type\":\"assistant\",\"message\":\"watching pipeline in background\"}\n".as_slice(),
+        b"{\"type\":\"system\",\"subtype\":\"task_progress\",\"task_id\":\"watch\"}\n",
+        b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"watch\",\"parent_tool_use_id\":\"nested\"}\n",
+        b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"watch\",\"session_id\":\"foreign\"}\n",
+    ] {
+        let mut detector = ResultLineDetector::new();
+        detector.feed(b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"own\"}\n").unwrap();
+        detector.feed(line).unwrap();
+        assert!(detector.feed(RESULT).unwrap());
+    }
 }
 
 #[test]
-fn a_truncated_prefix_before_a_newline_is_not_a_match() {
+fn failure_result_closes_even_with_live_tasks() {
     let mut detector = ResultLineDetector::new();
-
-    assert!(!detector.feed(b"{\"type\":\"result\"\n"));
-    assert!(!detector.feed(b"{\"type\":\"resul"));
-    assert!(!detector.feed(b"t\"\n"));
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert!(detector
+        .feed(b"{\"type\":\"result\",\"is_error\":true}\n")
+        .unwrap());
 }
 
 #[test]
-fn the_detector_fires_only_once_per_stream() {
+fn invalid_json_and_result_substrings_never_close() {
     let mut detector = ResultLineDetector::new();
-
-    assert!(detector.feed(b"{\"type\":\"result\"}\n"));
-    assert!(!detector.feed(b"{\"type\":\"result\"}\n"));
-    assert!(!detector.feed(b"{\"type\":\"result\",\"is_error\":true}\n"));
+    for line in [
+        b"{\"type\":\"result\"\n".as_slice(),
+        b"{\"type\":\"result_extra\"}\n",
+        b"{\"text\":\"{\\\"type\\\":\\\"result\\\"}\"}\n",
+    ] {
+        assert!(!detector.feed(line).unwrap());
+    }
 }
 
 #[test]
-fn an_empty_chunk_keeps_the_pending_prefix() {
+fn live_limit_is_explicit_failure_and_duplicates_do_not_consume_capacity() {
     let mut detector = ResultLineDetector::new();
+    for id in 0..MAX_LIVE_TASKS {
+        detector
+            .feed(start(&format!("task-{id}")).as_bytes())
+            .unwrap();
+        detector
+            .feed(start(&format!("task-{id}")).as_bytes())
+            .unwrap();
+    }
+    assert!(detector.feed(start("overflow").as_bytes()).is_err());
+}
 
-    assert!(!detector.feed(b"{\"type\":\"res"));
-    assert!(!detector.feed(b""));
-    assert!(detector.feed(b"ult\",\"is_error\":false}\n"));
+#[test]
+fn oversized_lifecycle_fails_but_ordinary_large_output_is_skipped() {
+    let mut detector = ResultLineDetector::new();
+    let mut line = b"{\"type\":\"system\",".to_vec();
+    line.resize(MAX_LINE_BYTES + 1, b' ');
+    assert!(detector.feed(&line).is_err());
+    let mut detector = ResultLineDetector::new();
+    let mut line = b"{\"type\":\"assistant\",".to_vec();
+    line.resize(MAX_LINE_BYTES + 1, b' ');
+    line.extend_from_slice(b"\n");
+    assert!(!detector.feed(&line).unwrap());
+    assert!(detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn paused_task_can_resume_without_losing_input_retention() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    for status in ["paused", "idle", "running"] {
+        let patch = format!("{{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{{\"status\":\"{status}\"}}}}\n");
+        detector.feed(patch.as_bytes()).unwrap();
+        assert!(!detector.feed(RESULT).unwrap());
+    }
+    detector.feed(DONE).unwrap();
+    assert!(detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn notification_without_recognized_terminal_status_cannot_stop_live_task() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    for status in ["running", "unknown", ""] {
+        let notification = format!("{{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"watch\",\"status\":\"{status}\"}}\n");
+        detector.feed(notification.as_bytes()).unwrap();
+        assert!(!detector.feed(RESULT).unwrap());
+    }
+    detector.feed(DONE).unwrap();
+    assert!(detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn observed_history_limit_allows_existing_live_task_terminal_transition() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    for id in 0..MAX_OBSERVED_TASKS - 1 {
+        let done = format!("{{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"done-{id}\",\"status\":\"completed\"}}\n");
+        detector.feed(done.as_bytes()).unwrap();
+    }
+    assert!(!detector.feed(DONE).unwrap());
+    let overflow = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"overflow\",\"status\":\"completed\"}\n";
+    assert!(detector.feed(overflow).is_err());
+}
+
+#[test]
+fn explicit_terminal_update_then_root_result_settles_per_run_session() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(RESULT).unwrap();
+    detector.feed(b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{\"status\":\"completed\"}}\n").unwrap();
+    assert!(detector.feed(RESULT).unwrap());
 }

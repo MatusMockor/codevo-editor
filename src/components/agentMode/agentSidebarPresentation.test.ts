@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
-import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
+import type { AgentThread, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import {
   ARCHIVED_PAGE_COUNT,
@@ -55,6 +55,48 @@ describe("agent row status", () => {
       kind: "working",
       startedAtEpochMs: NOW - 10 * 60_000,
     });
+  });
+
+  it("shows provider-reported background work only after the foreground result", () => {
+    const start: AgentTurnEvent = {
+      kind: "backgroundTask",
+      taskId: "task-1",
+      taskType: "monitor",
+      status: "starting",
+    };
+    const result: AgentTurnEvent = {
+      kind: "result",
+      text: "Watching pipeline",
+      isError: false,
+      usage: null,
+    };
+    expect(agentRowStatusLabel(agentRowStatus(view({ events: [start] })))).toBe("Working");
+    const monitoring = agentRowStatus(view({ events: [start, result] }));
+    expect(monitoring).toMatchObject({ kind: "working", activity: "monitoring" });
+    expect(agentRowStatusLabel(monitoring)).toBe("Monitoring");
+    expect(
+      agentRowStatusLabel(
+        agentRowStatus(view({ events: [{ ...start, taskType: "agent" }, result] })),
+      ),
+    ).toBe("Working in background");
+    expect(agentRowStatusLabel(agentRowStatus(view({ events: [result] })))).toBe("Working");
+    expect(
+      agentRowStatusLabel(
+        agentRowStatus(view({ events: [start, result, { ...start, status: "completed" }] })),
+      ),
+    ).toBe("Working");
+    expect(agentRowStatus(view({ events: [start, result], status: { kind: "stopped" } }))).toEqual({
+      kind: "stopped",
+    });
+    const codex = view({ events: [start, result] });
+    expect(
+      agentRowStatusLabel(
+        agentRowStatus({
+          ...codex,
+          thread: { ...codex.thread, provider: { kind: "codex", sessionId: null } },
+        }),
+      ),
+    ).toBe("Working");
   });
 
   it("maps failed and non-zero exits to failed, stops to stopped", () => {
@@ -591,6 +633,7 @@ function group(
 
 interface ViewOptions {
   readonly threadId?: string;
+  readonly events?: ReadonlyArray<AgentTurnEvent>;
   readonly status?: AgentTurnStatus;
   readonly pinned?: boolean;
   readonly archived?: boolean;
@@ -602,6 +645,7 @@ interface ViewOptions {
 
 function view({
   archived = false,
+  events = [],
   endedAtEpochMs = null,
   pinned = false,
   repositoryRoot = ROOT,
@@ -627,7 +671,7 @@ function view({
         status,
         startedAtEpochMs: NOW - 10 * 60_000,
         endedAtEpochMs,
-        events: [],
+        events,
         eventsTruncated: false,
         lastStatusSequence: 0,
         lastOutputSequence: 0,

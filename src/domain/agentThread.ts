@@ -116,6 +116,13 @@ export type AgentSubagentContentEvent = Extract<
 
 export type AgentTurnEvent =
   | {
+      readonly kind: "backgroundTask";
+      readonly taskId: string;
+      readonly status: "starting" | "running" | "completed" | "failed" | "stopped";
+      readonly taskType: "monitor" | "shell" | "agent" | "other";
+      readonly description?: string;
+    }
+  | {
       readonly kind: "subagentActivity";
       readonly agentThreadId: string;
       readonly agentPath: string;
@@ -142,7 +149,7 @@ export type AgentTurnEvent =
       readonly threadId: string;
       readonly clientUserMessageId: string | null;
     }
-  | { readonly kind: "assistantText"; readonly text: string }
+  | { readonly kind: "assistantText"; readonly text: string; readonly parentToolId?: string }
   | { readonly kind: "reasoning"; readonly text: string }
   | {
       readonly kind: "userMessage";
@@ -828,7 +835,12 @@ export function mergeTurnEvents(
 
 export function agentTurnEventUtf8Bytes(event: AgentTurnEvent): number {
   if (event.kind === "assistantText" || event.kind === "reasoning" || event.kind === "result") {
-    return agentTextEventByteState(event).byteLength;
+    return (
+      agentTextEventByteState(event).byteLength +
+      (event.kind === "assistantText" && event.parentToolId !== undefined
+        ? UTF8_ENCODER.encode(event.parentToolId).byteLength
+        : 0)
+    );
   }
   const values = agentTurnEventStrings(event);
   const cached = agentEventByteState.get(event);
@@ -866,6 +878,8 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
       ]);
     case "toolResult":
       return definedStrings([event.toolId, event.outputSummary, event.parentToolId]);
+    case "backgroundTask":
+      return definedStrings([event.taskId, event.taskType, event.description]);
     case "subagent":
       return definedStrings([
         event.toolId,
@@ -887,6 +901,7 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
     case "contextCompaction":
       return [];
     case "assistantText":
+      return definedStrings([event.text, event.parentToolId]);
     case "reasoning":
     case "result":
       return [event.text];
@@ -957,12 +972,18 @@ export function coalesceAgentTextEvents(
   }
   if (next.kind !== "assistantText" && next.kind !== "reasoning") return null;
   if (last.kind !== next.kind) return null;
+  if (
+    last.kind === "assistantText" &&
+    next.kind === "assistantText" &&
+    last.parentToolId !== next.parentToolId
+  )
+    return null;
   const lastState = agentTextEventByteState(last);
   const nextState = agentTextEventByteState(next);
   const repairsSplitScalar = lastState.trailingHighSurrogate && startsWithLowSurrogate(next.text);
   const byteLength = lastState.byteLength + nextState.byteLength - (repairsSplitScalar ? 2 : 0);
   if (byteLength > MAX_AGENT_EVENT_TEXT_BYTES) return null;
-  const coalesced = { kind: next.kind, text: last.text + next.text };
+  const coalesced: AgentTurnEvent = { ...next, text: last.text + next.text };
   agentTextByteState.set(coalesced, {
     byteLength,
     text: coalesced.text,

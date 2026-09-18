@@ -1,3 +1,4 @@
+import { claudeBackgroundTask } from "./claudeBackgroundTask";
 import {
   claudeAssistantContext,
   claudeCompactionStatus,
@@ -100,8 +101,10 @@ function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
   }
   if (value.subtype === "compact_boundary") return parseCompactBoundaryLine(value);
   const event = claudeCompactionStatus(value) ?? subagentTelemetryEvent(value);
-  if (event === null) return IGNORED;
-  return { kind: "events", events: [event], sessionId: null };
+  const background = claudeBackgroundTask(value);
+  const events = [...(event === null ? [] : [event]), ...(background === null ? [] : [background])];
+  if (events.length === 0) return IGNORED;
+  return { kind: "events", events, sessionId: null };
 }
 
 function parseCompactBoundaryLine(value: Record<string, unknown>): ParsedAgentLine {
@@ -252,7 +255,11 @@ function assistantBlockEvents(
 ): ReadonlyArray<AgentTurnEvent> {
   const block = objectValue(value);
   if (block === null) return [];
-  if (block.type === "text") return textEvents("assistantText", block.text);
+  if (block.type === "text")
+    return textEvents("assistantText", block.text).map((event) => ({
+      ...event,
+      ...present("parentToolId", parentToolId),
+    }));
   if (block.type === "thinking") return textEvents("reasoning", block.thinking);
   if (block.type !== "tool_use") return [];
   const toolId = safeIdentifier(block.id, MAX_AGENT_TOOL_ID_BYTES);

@@ -3315,6 +3315,17 @@ fn steer_after_result_line_is_input_closed() {
 
     harness.steer(b"before\n").expect("steer before the result");
     harness.emit_stdout(b"{\"type\":\"assistant\"}\n{\"type\":\"result\",");
+    assert!(wait_until(EVENT_DEADLINE, || outputs_for(
+        &harness.fixture.sink,
+        &harness.task_id
+    )
+    .iter()
+    .any(|event| event.chunk.contains("{\"type\":\"result\","))));
+    assert!(
+        !harness.recorded_input().is_closed(),
+        "an incomplete result frame must not close the input"
+    );
+    harness.emit_stdout(b"\"is_error\":false}\n");
     assert!(
         wait_until(EVENT_DEADLINE, || harness.recorded_input().is_closed()),
         "the result line did not close the input"
@@ -3709,3 +3720,87 @@ fn waiter_failure_closes_the_input_before_signalling() {
 
 #[path = "support/agent_task_question_lifecycle_tests.rs"]
 mod question_lifecycle;
+
+#[test]
+fn real_process_background_monitor_keeps_stdin_until_delayed_answer() {
+    let cwd = unique_path("background-monitor-eof");
+    fs::create_dir_all(&cwd).expect("fixture directory");
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let registry = AgentTaskRegistry::new(
+        Arc::clone(&admission_registry),
+        Arc::new(StdAgentProcessSpawner),
+        Arc::clone(&sink) as Arc<dyn AgentTaskEventSink>,
+    );
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &cwd,
+            &cwd,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    // EOF cancels the worker, just as closing Claude's stream input can cancel
+    // an active monitor. A late answer cannot be synthesized by the test host.
+    let source = r#"
+IFS= read -r initial || exit 2
+printf '%s\n' '{"type":"system","subtype":"task_started","task_id":"watch","task_type":"local_bash"}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
+(
+  /bin/sleep 0.3
+  printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"watch","status":"completed"}'
+  /bin/sleep 0.1
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Pipeline finished"}]}}'
+  printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
+) &
+worker=$!
+while IFS= read -r input; do :; done
+kill "$worker" 2>/dev/null || :
+wait "$worker" 2>/dev/null || :
+exit 0
+"#;
+    let plan = AgentTaskSpawnPlan::for_tests(
+        probe_binary(&["/bin/sh"]).expect("POSIX shell"),
+        vec!["-c".to_string(), source.to_string()],
+        cwd.clone(),
+        Vec::new(),
+    )
+    .with_stdin_frame_for_tests(claude_user_frame("watch pipeline", &[]));
+    registry
+        .start(
+            AgentTaskStartRequest {
+                isolation: AgentTaskIsolation::InPlace,
+                worktree_path: None,
+                ..start_request("agt-background-monitor", &cwd)
+            },
+            plan,
+            admission,
+        )
+        .expect("start");
+    registry
+        .acknowledge("agt-background-monitor")
+        .expect("acknowledge");
+    assert!(
+        wait_until(Duration::from_secs(10), || sink
+            .has_terminal_status("agt-background-monitor")),
+        "background process never settled"
+    );
+    let stdout: String = outputs_for(&sink, "agt-background-monitor")
+        .iter()
+        .filter(|event| event.stream == AgentTaskOutputStream::Stdout)
+        .map(|event| event.chunk.as_str())
+        .collect();
+    assert!(
+        stdout.contains("Pipeline finished"),
+        "early stdin EOF lost delayed answer: {stdout}"
+    );
+    assert_eq!(stdout.matches("\"type\":\"result\"").count(), 2);
+    assert!(matches!(
+        statuses_for(&sink, "agt-background-monitor")
+            .last()
+            .map(|event| &event.status),
+        Some(AgentTaskStatusPayload::Exited { exit_code: 0 })
+    ));
+    drop(registry);
+    fs::remove_dir_all(cwd).expect("fixture cleanup");
+}
