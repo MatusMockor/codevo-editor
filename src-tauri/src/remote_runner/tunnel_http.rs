@@ -2,6 +2,8 @@ use super::MAX_INPUT;
 use base64::Engine;
 use serde_json::{json, Value};
 
+const CLIENT_CAPABILITIES: &str = "subagentLifecycleRetention";
+
 pub(super) struct Prepared {
     method: reqwest::Method,
     path: String,
@@ -88,6 +90,10 @@ async fn execute(
         )
         .headers(prepared.headers)
         .bearer_auth(token)
+        .header(
+            "x-codevo-client-capabilities",
+            reqwest::header::HeaderValue::from_static(CLIENT_CAPABILITIES),
+        )
         .body(prepared.body);
     if prepared.path.ends_with("/steer") {
         request = request.timeout(std::time::Duration::from_secs(60));
@@ -236,6 +242,21 @@ mod tests {
     }
 
     #[test]
+    fn announced_capabilities_stay_inside_the_runner_header_grammar() {
+        assert!(!CLIENT_CAPABILITIES.is_empty() && CLIENT_CAPABILITIES.len() <= 512);
+        assert!(CLIENT_CAPABILITIES.bytes().all(|b| (32..=126).contains(&b)));
+        let tokens: Vec<&str> = CLIENT_CAPABILITIES.split(',').collect();
+        assert!(tokens.len() <= 16);
+        assert!(tokens.contains(&"subagentLifecycleRetention"));
+        for token in tokens {
+            assert_eq!(token, token.trim());
+            assert!(!token.is_empty() && token.len() <= 64);
+            assert!(token.as_bytes()[0].is_ascii_alphabetic());
+            assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));
+        }
+    }
+
+    #[test]
     fn history_search_accepts_maximum_encoded_unicode_with_bounded_path() {
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("q", &"界".repeat(256))
@@ -339,7 +360,8 @@ mod tests {
             assert!(requests
                 .iter()
                 .all(|r| r.contains("authorization: Bearer private-token")
-                    && r.contains("x-codevo-runner-id: expected")));
+                    && r.contains("x-codevo-runner-id: expected")
+                    && r.contains("x-codevo-client-capabilities: subagentLifecycleRetention")));
             if expected_calls == 2 {
                 assert!(requests[1].starts_with("POST /v1/tasks "));
             }

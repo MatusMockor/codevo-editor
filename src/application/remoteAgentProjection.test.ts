@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
+import wire from "../../contracts/agent-subagent-lifecycle-wire.json";
 import {
   RemoteAgentProjection,
   projectRemoteAgentThreads,
   type RemoteAgentProjectionInput,
 } from "./remoteAgentProjection";
 import type { RemoteRunnerTask } from "../domain/remoteRunner";
+import type { AgentTurn } from "../domain/agentThread";
+import { RUNTIME_SUBAGENT_LEGACY_BATCH_ID } from "../domain/agentRuntimeSubagent";
+import { parseAgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
+import { agentTurnRuntimeSubagents } from "../components/agentMode/agentRuntimeSubagentPresentation";
 const root: RemoteRunnerTask = {
   id: "root",
   runnerId: "runner",
@@ -287,4 +293,50 @@ it("uses durable server subagent summaries when historical output was already ev
   });
   expect(projected[0]!.thread.turns[0]!.subagentLifecycle).toBe(lifecycle);
   expect(projected[0]!.thread.turns[0]!.eventsTruncated).toBe(true);
+});
+
+describe("remote subagent lifecycle wire compatibility", () => {
+  function projectLifecyclePage(lifecycle: unknown, status: RemoteRunnerTask["status"]): AgentTurn {
+    const page = { items: [], nextCursor: null, subagentLifecycle: lifecycle };
+    validateRemoteRunnerValue("listEvents", "response", page);
+    const parsed = parseAgentSubagentLifecycle(page.subagentLifecycle);
+    expect(parsed).toEqual(page.subagentLifecycle);
+    const views = projectRemoteAgentThreads({
+      ...input([{ ...root, status }]),
+      subagentLifecycles: new Map(parsed === undefined ? [] : [["root", parsed]]),
+    });
+    const turn = views[0]!.thread.turns[0]!;
+    expect(turn.subagentLifecycle).toBe(parsed);
+    return turn;
+  }
+
+  it("keeps retained spawn identity from the runner page through the presentation path", () => {
+    const turn = projectLifecyclePage(wire.valid.retained, "running");
+    expect(turn.subagentLifecycle?.openBatchKey).toBe("spawn:toolu_parent");
+    expect(turn.subagentLifecycle?.countedNestedToolIds).toEqual(["toolu_nested_overflow"]);
+    const runtime = agentTurnRuntimeSubagents(turn);
+    expect(runtime.agents).toHaveLength(1);
+    expect(runtime.agents[0]).toMatchObject({
+      batchId: "spawn:toolu_parent",
+      title: "Fix subagent view findings",
+      titleKnown: true,
+      nestedAgents: 1,
+      status: "working",
+    });
+    expect(runtime.batches.map((batch) => batch.id)).toEqual(["spawn:toolu_parent"]);
+  });
+
+  it("still loads a legacy lifecycle page from a runner without retention", () => {
+    const turn = projectLifecyclePage(wire.valid.legacy, "succeeded");
+    expect(turn.subagentLifecycle?.openBatchKey).toBeUndefined();
+    expect(turn.subagentLifecycle?.entries[0]?.taskTitle).toBeUndefined();
+    const runtime = agentTurnRuntimeSubagents(turn);
+    expect(runtime.agents).toHaveLength(1);
+    expect(runtime.agents[0]).toMatchObject({
+      batchId: RUNTIME_SUBAGENT_LEGACY_BATCH_ID,
+      role: "general-purpose",
+      nestedAgents: 0,
+      status: "completed",
+    });
+  });
 });
