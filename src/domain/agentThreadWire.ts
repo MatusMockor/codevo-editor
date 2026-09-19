@@ -1,4 +1,4 @@
-import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { readAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import {
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,
@@ -573,7 +573,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
     lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
     streamMetrics: parseStreamMetrics(turn.streamMetrics, `${path}.streamMetrics`),
-    ...optionalField("subagentLifecycle", parseAgentSubagentLifecycle(turn.subagentLifecycle)),
+    ...optionalField("subagentLifecycle", readAgentSubagentLifecycle(turn.subagentLifecycle)),
     launch: parseLaunch(turn.launch, `${path}.launch`),
     cliVersion: parseCliVersion(turn.cliVersion, `${path}.cliVersion`),
     ...optionalField(

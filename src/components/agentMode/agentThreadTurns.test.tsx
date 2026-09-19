@@ -250,9 +250,10 @@ describe("agent thread turns", () => {
     expect(group?.textContent).toContain("20 input");
     expect(group?.textContent).toContain("3 cached input");
     expect(group?.textContent).toContain("4s");
-    const member = host.querySelector<HTMLDetailsElement>(".agent-subagent-member");
-    expect(member?.open).toBe(false);
-    expect(member?.textContent).toContain("28 tokens");
+    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__row")?.click());
+    const member = host.querySelector<HTMLElement>(".agent-spawn-member");
+    expect(member?.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+    expect(member?.textContent).toContain("28 tok");
     expect(member?.textContent).toContain("Child-only response");
     expect(member?.textContent).not.toContain("Parent response");
   });
@@ -814,7 +815,7 @@ describe("agent thread turns", () => {
     for (const selector of [
       ".agent-reasoning",
       ".agent-tool-row",
-      ".agent-subagents",
+      ".agent-spawn",
       ".agent-text",
       ".agent-md__table-scroll",
       ".agent-md__code-body",

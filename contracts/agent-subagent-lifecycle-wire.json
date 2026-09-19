@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "limits": {
+    "entries": 32,
+    "taskTitleBytes": 480,
+    "batchKeyBytes": 272,
+    "parentToolIdBytes": 256,
+    "nestedCount": 999,
+    "countedNestedToolIds": 32
+  },
+  "valid": {
+    "legacy": {
+      "entries": [
+        {
+          "description": "Running grep -n export src/domain/example.ts",
+          "durationMs": 654474,
+          "id": "tool:toolu_legacy_a",
+          "lastToolName": "Bash",
+          "name": "general-purpose",
+          "resultState": "completed",
+          "state": "completed",
+          "steps": 35,
+          "taskId": "task-legacy-a",
+          "telemetryState": "completed",
+          "toolId": "toolu_legacy_a",
+          "totalTokens": 136996
+        }
+      ],
+      "truncated": false
+    },
+    "retained": {
+      "entries": [
+        {
+          "batchKey": "spawn:toolu_parent",
+          "description": "Running npx vitest run",
+          "durationMs": 76099,
+          "id": "tool:toolu_parent",
+          "lastToolName": "Bash",
+          "name": "general-purpose",
+          "nestedCount": 1,
+          "state": "running",
+          "steps": 31,
+          "taskId": "task-parent",
+          "taskTitle": "Fix subagent view findings",
+          "telemetryState": "running",
+          "toolId": "toolu_parent",
+          "totalTokens": 87253
+        },
+        {
+          "description": "Review slice fixes",
+          "id": "tool:toolu_nested",
+          "name": "Agent",
+          "parentToolId": "toolu_parent",
+          "state": "running",
+          "taskTitle": "Review slice fixes",
+          "toolId": "toolu_nested"
+        }
+      ],
+      "countedNestedToolIds": ["toolu_nested_overflow"],
+      "openBatchKey": "spawn:toolu_parent",
+      "truncated": false
+    }
+  },
+  "invalidEntryPatches": [
+    { "taskTitle": "" },
+    { "taskTitle": 7 },
+    { "batchKey": "" },
+    { "batchKey": null },
+    { "nestedCount": 0 },
+    { "nestedCount": 1000 },
+    { "nestedCount": 1.5 },
+    { "nestedCount": "1" },
+    { "parentToolId": "" },
+    { "unknownField": true }
+  ],
+  "invalidRootPatches": [
+    { "openBatchKey": "" },
+    { "openBatchKey": 3 },
+    { "countedNestedToolIds": [] },
+    { "countedNestedToolIds": [""] },
+    { "countedNestedToolIds": ["dup", "dup"] },
+    { "countedNestedToolIds": "toolu_nested_overflow" },
+    { "unknownField": true }
+  ]
+}

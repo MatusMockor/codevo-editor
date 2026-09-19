@@ -156,6 +156,98 @@ describe("thread background activity visibility", () => {
     expect(host.textContent).toContain("Working in background");
     expect(host.textContent).not.toContain("Monitoring");
   });
+  const claudeAgents: AgentTurnEvent[] = [
+    {
+      kind: "toolCall",
+      toolId: "spawn-a",
+      name: "Agent",
+      inputSummary: "prompt a",
+      description: "Stream A backend",
+    },
+    {
+      kind: "toolCall",
+      toolId: "spawn-b",
+      name: "Agent",
+      inputSummary: "prompt b",
+      description: "Stream B gateway",
+    },
+    { kind: "subagent", status: "starting", toolId: "spawn-a", taskId: "task-a" },
+    { kind: "subagent", status: "starting", toolId: "spawn-b", taskId: "task-b" },
+    {
+      kind: "subagent",
+      status: "running",
+      taskId: "task-b",
+      description: "Running vitest",
+      lastToolName: "Bash",
+      durationMs: 5000,
+    },
+    { kind: "assistantText", text: "Lead keeps working." },
+    { kind: "toolCall", toolId: "lead-read", name: "Read", inputSummary: "src/app.ts" },
+  ];
+  const codexAgents: AgentTurnEvent[] = [
+    {
+      kind: "subagentActivity",
+      agentThreadId: "child",
+      agentPath: "/root/explorer",
+      activity: "started",
+    },
+    {
+      kind: "subagentEvent",
+      agentThreadId: "child",
+      event: { kind: "toolCall", toolId: "exec", name: "shell", inputSummary: "rg subagent" },
+    },
+    { kind: "assistantText", text: "Lead keeps working." },
+  ];
+  const indicator = () => host.querySelector<HTMLButtonElement>(".agent-background-row__action");
+
+  it("shows live agents while the Claude lead is still working and opens the Agents panel", () => {
+    render(claudeAgents);
+    expect(host.querySelector(".agent-background-row__label")?.textContent).toBe(
+      "2 agents working",
+    );
+    expect(host.querySelector(".agent-background-row__latest")?.textContent).toBe(
+      "Stream B gateway \u00B7 Running vitest",
+    );
+    expect(host.querySelector(".agents-panel")).toBeNull();
+
+    act(() => indicator()?.click());
+    const rows = [...host.querySelectorAll(".agents-panel__name")].map((row) => row.textContent);
+    expect(rows).toEqual(["Stream A backend", "Stream B gateway"]);
+
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Close Agents panel"]')?.click());
+    expect(host.querySelector(".agents-panel")).toBeNull();
+  });
+  it("shows live agents while the Codex lead is still working", () => {
+    render(codexAgents, { kind: "running" }, "Delegate", "codex");
+    expect(host.querySelector(".agent-background-row__label")?.textContent).toBe("1 agent working");
+    expect(host.querySelector(".agent-background-row__latest")?.textContent).toBe(
+      "explorer \u00B7 rg subagent",
+    );
+    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__row")?.click());
+    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__open")?.click());
+    expect(host.querySelector(".agents-panel__name")?.textContent).toBe("explorer");
+  });
+  it("hides the agent indicator once the agents or the run settle", () => {
+    render(
+      [
+        ...codexAgents,
+        { kind: "subagentTurnDone", agentThreadId: "child", durationMs: 9, isError: false },
+      ],
+      { kind: "running" },
+      "Delegate",
+      "codex",
+    );
+    expect(indicator()).toBeNull();
+    render(claudeAgents, { kind: "exited", exitCode: 0 });
+    expect(indicator()).toBeNull();
+    render(claudeAgents, { kind: "interrupted" });
+    expect(indicator()).toBeNull();
+  });
+  it("keeps live background tasks visible while the foreground is working", () => {
+    render([started, work]);
+    expect(host.textContent).toContain("1 background task running");
+    expect(host.textContent).not.toContain("Monitoring");
+  });
   it("projects native streamed task lifecycle through reconnect and terminal process exit", async () => {
     let parser = createAgentOutputParserState("claudeCode");
     const events: AgentTurnEvent[] = [];

@@ -439,7 +439,7 @@ describe("agent thread session minimap and find pill", () => {
     }
   });
 
-  it("adds nothing to the scroller's ancestor chain but a positioned session", () => {
+  it("adds nothing to the scroller's ancestor chain but a positioned session and its dock", () => {
     render({ thread: threadView(turns(3)) });
 
     const scroll = host.querySelector<HTMLElement>(".agent-session__scroll");
@@ -454,7 +454,11 @@ describe("agent thread session minimap and find pill", () => {
       chain.push(ancestor);
     }
 
-    expect(chain.map((element) => element.className)).toEqual(["agent-session"]);
+    expect(chain.map((element) => element.className)).toEqual([
+      "agent-session",
+      "agents-dock__main",
+      "agents-dock",
+    ]);
     expect(chain.flatMap((element) => containingBlockDeclarations(element))).toEqual([
       "components/agentMode/agentThread.css .agent-session position",
     ]);

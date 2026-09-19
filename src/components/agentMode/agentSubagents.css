@@ -1,0 +1,529 @@
+.agent-spawn-list {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-spawn {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-spawn__row {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 26px;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text);
+  cursor: pointer;
+  font-family: var(--agent-sans);
+  font-size: var(--agent-fs-sm);
+  line-height: var(--agent-lh-row);
+  margin: 0 -6px;
+  padding: 2px 6px;
+  text-align: left;
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-spawn__row:hover,
+.agent-spawn-member__head--action:hover,
+.agent-background-row__action:hover:not(:disabled) {
+  background: var(--agent-hover);
+}
+
+.agent-spawn__row:focus-visible,
+.agent-spawn-member__head--action:focus-visible,
+.agent-spawn__open:focus-visible,
+.agent-background-row__action:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-background-row__icon {
+  flex: none;
+  color: var(--agent-status-working);
+}
+
+.agent-spawn__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--agent-radius-pill);
+  background: var(--agent-text-subtle);
+}
+
+.agent-spawn[data-tone="working"] .agent-spawn__dot {
+  background: var(--agent-status-working);
+}
+
+.agent-spawn[data-tone="completed"] .agent-spawn__dot {
+  background: var(--agent-status-working);
+  opacity: 0.55;
+}
+
+.agent-spawn[data-tone="failed"] .agent-spawn__dot {
+  background: var(--agent-danger);
+}
+
+.agent-spawn__lead {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--agent-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-spawn__status {
+  flex: none;
+  margin-left: auto;
+  color: var(--agent-text-muted);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-spawn[data-tone="failed"] .agent-spawn__status {
+  color: var(--agent-danger);
+}
+
+.agent-spawn__chevron,
+.agent-background-row__chevron {
+  flex: none;
+  color: var(--agent-text-subtle);
+  transition: transform var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-spawn__row[aria-expanded="true"] .agent-spawn__chevron {
+  transform: rotate(90deg);
+}
+
+.agent-spawn__members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 23px;
+  min-width: 0;
+}
+
+.agent-spawn__members[hidden] {
+  display: none;
+}
+
+.agent-spawn__list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-spawn__open {
+  align-self: flex-start;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  font-family: var(--agent-sans);
+  font-size: var(--agent-fs-xs);
+  margin: 2px 0 0 -4px;
+  padding: 2px 4px;
+}
+
+.agent-spawn__open:hover {
+  color: var(--agent-text-strong);
+}
+
+.agent-spawn-member {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-spawn-member__head {
+  display: flex;
+  box-sizing: border-box;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text);
+  font-family: var(--agent-sans);
+  font-size: var(--agent-fs-sm);
+  line-height: var(--agent-lh-row);
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.agent-spawn-member__head--action {
+  cursor: pointer;
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-spawn-member__title,
+.agents-panel__name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-spawn-member[data-status="failed"] .agent-spawn-member__title {
+  color: var(--agent-danger);
+}
+
+.agent-spawn-member[data-title="unknown"] .agent-spawn-member__title,
+.agent-spawn-member[data-title="unknown"] .agent-spawn-member__activity,
+.agents-panel__row[data-title="unknown"] .agents-panel__name {
+  color: var(--agent-text-subtle);
+}
+
+.agent-spawn-member__role,
+.agents-panel__role {
+  overflow: hidden;
+  flex: none;
+  max-width: 112px;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-hover);
+  color: var(--agent-text-muted);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  padding: 0 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-spawn-member__meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--agent-text-muted);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-spawn-member__activity {
+  overflow: hidden;
+  margin: 0;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  padding: 0 4px 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-spawn-member__body {
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-well);
+  margin: 2px 0 4px;
+  padding: 8px 12px;
+}
+
+.agent-spawn-member__body[hidden] {
+  display: none;
+}
+
+.agent-spawn-member__body pre {
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  color: var(--agent-text);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-xs);
+  white-space: pre-wrap;
+}
+
+.agent-background-row {
+  display: flex;
+  min-width: 0;
+}
+
+.agent-background-row__action {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  font-family: var(--agent-sans);
+  font-size: var(--agent-fs-xs);
+  line-height: var(--agent-lh-row);
+  margin: 0 -6px;
+  padding: 2px 6px;
+  text-align: left;
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-background-row__action:disabled {
+  cursor: default;
+}
+
+.agent-background-row__label {
+  flex: none;
+  color: var(--agent-text);
+}
+
+.agent-background-row__latest {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-dock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.agents-dock[data-agents="docked"] {
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.agents-dock__main {
+  display: flex;
+  grid-row: 1;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.agents-panel {
+  display: flex;
+  flex-direction: column;
+  grid-row: 1;
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+  background: var(--agent-rail);
+  color: var(--agent-text);
+  font-family: var(--agent-sans);
+}
+
+.agents-dock[data-agents="overlay"] .agents-panel {
+  z-index: 6;
+  grid-column: 1;
+  justify-self: end;
+  width: min(340px, 100%);
+  box-shadow: var(--agent-shadow-raised);
+}
+
+.agents-panel__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 6px 16px;
+}
+
+.agents-panel__heading-group {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agents-panel__notice {
+  margin: 0;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-2xs);
+}
+
+.agents-panel__heading {
+  margin: 0;
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-2xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.agents-panel__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+}
+
+.agents-panel__row {
+  display: grid;
+  box-sizing: border-box;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  grid-template-rows: 20px 18px 16px;
+  align-items: center;
+  column-gap: 10px;
+  height: 64px;
+  border-radius: var(--agent-radius-md);
+  padding: 5px 8px;
+}
+
+.agents-panel__row:hover {
+  background: var(--agent-hover);
+}
+
+.agents-panel__dot {
+  grid-row: 1;
+  grid-column: 1;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--agent-radius-pill);
+  background: var(--agent-text-subtle);
+}
+
+.agents-panel__row[data-status="working"] .agents-panel__dot {
+  background: var(--agent-status-working);
+}
+
+.agents-panel__row[data-status="completed"] .agents-panel__dot {
+  background: var(--agent-status-done);
+}
+
+.agents-panel__row[data-status="failed"] .agents-panel__dot {
+  background: var(--agent-status-failed);
+}
+
+.agents-panel__row[data-status="stopped"] .agents-panel__dot {
+  background: var(--agent-status-stopped);
+}
+
+.agents-panel__title {
+  display: flex;
+  grid-row: 1;
+  grid-column: 2;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+}
+
+.agents-panel__elapsed {
+  display: inline-flex;
+  grid-row: 1;
+  grid-column: 3;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 48px;
+  color: var(--agent-text-muted);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-panel__elapsed svg {
+  color: var(--agent-ok);
+}
+
+.agents-panel__activity-text,
+.agents-panel__metrics {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-panel__activity,
+.agents-panel__metrics {
+  grid-column: 2 / 4;
+  min-width: 0;
+}
+
+.agents-panel__activity {
+  display: flex;
+  grid-row: 2;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+}
+
+.agents-panel__activity-text {
+  min-width: 0;
+}
+
+.agents-panel__stale {
+  flex: none;
+  color: var(--agent-text-subtle);
+  white-space: nowrap;
+}
+
+.agents-panel__stale:not(:empty)::before {
+  content: "\00a0·\00a0";
+}
+
+.agents-panel__row[data-title="unknown"] .agents-panel__activity {
+  color: var(--agent-text-subtle);
+}
+
+.agents-panel__row[data-status="failed"] .agents-panel__activity {
+  color: var(--agent-danger);
+}
+
+.agents-panel__metrics {
+  grid-row: 3;
+  color: var(--agent-text-subtle);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-panel__empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--agent-text-subtle);
+  padding: 24px;
+  text-align: center;
+}
+
+.agents-panel__empty-title {
+  margin: 0;
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+}
+
+.agents-panel__foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--agent-text-muted);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  font-variant-numeric: tabular-nums;
+  padding: 6px 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-spawn__row,
+  .agent-spawn__chevron,
+  .agent-spawn-member__head--action,
+  .agent-background-row__action {
+    transition: none;
+  }
+}

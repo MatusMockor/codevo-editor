@@ -1,5 +1,8 @@
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
-import { agentSubagentDisclosureEntries } from "./agentSubagentDisclosurePresentation";
+import { agentBackgroundIndicator } from "./agentBackgroundIndicatorPresentation";
+import { AgentAgentsDock } from "./AgentAgentsDock";
+import { useAgentThreadAgents } from "./useAgentThreadAgents";
+import type { AgentRuntimeSubagents } from "../../domain/agentRuntimeSubagent";
 import {
   AgentToolDisclosureContext,
   useAgentToolDisclosure,
@@ -208,6 +211,7 @@ function AgentThreadSessionBody({
 }: AgentThreadSessionBodyProps) {
   const record = thread.thread;
   const threadId = record.threadId;
+  const agents = useAgentThreadAgents(threadId, record.turns);
   const serverId = thread.execution?.serverId;
   const runnerId = thread.execution?.runnerId;
   const artifactScope = useMemo<AgentArtifactScope | null>(
@@ -428,7 +432,7 @@ function AgentThreadSessionBody({
     return baseHighlight;
   };
 
-  return (
+  const session = (
     <section
       aria-label={`Agent thread ${threadId}`}
       className="agent-session"
@@ -486,6 +490,8 @@ function AgentThreadSessionBody({
                   artifactScope={artifactScope}
                   highlight={highlightFor(turn.turnId)}
                   key={turn.turnId}
+                  onOpenAgents={agents.openPanel}
+                  subagents={agents.subagentsFor(turn.turnId)}
                   prose={prose}
                   provider={record.provider.kind}
                   executionTarget={thread.execution?.kind ?? "local"}
@@ -578,6 +584,8 @@ function AgentThreadSessionBody({
       />
     </section>
   );
+
+  return <AgentAgentsDock agents={agents}>{session}</AgentAgentsDock>;
 }
 
 const AgentTurnView = memo(function AgentTurnView({
@@ -585,9 +593,11 @@ const AgentTurnView = memo(function AgentTurnView({
   attachmentImages = null,
   highlight = null,
   executionTarget,
+  onOpenAgents,
   prose,
   provider,
   renderProbe,
+  subagents,
   textClipboard,
   turn,
   workspaceRoot = null,
@@ -599,6 +609,8 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly provider: AgentCliKind;
   readonly executionTarget: "local" | "remote";
   readonly renderProbe?: (turnId: string) => void;
+  readonly onOpenAgents: () => void;
+  readonly subagents: AgentRuntimeSubagents;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
   readonly workspaceRoot?: string | null;
@@ -611,10 +623,6 @@ const AgentTurnView = memo(function AgentTurnView({
   const projection = useMemo(
     () => agentTurnProjection(turn.events, revealEventIndex, workspaceRoot, settlement),
     [turn.events, revealEventIndex, workspaceRoot, settlement],
-  );
-  const subagents = useMemo(
-    () => agentSubagentDisclosureEntries(turn.events, turn.subagentLifecycle, settlement),
-    [turn.events, turn.subagentLifecycle, settlement],
   );
   const running = settlement === "running";
   const [streamed, setStreamed] = useState(running);
@@ -631,6 +639,10 @@ const AgentTurnView = memo(function AgentTurnView({
   );
   const backgroundOnly =
     provider === "claudeCode" && background.foregroundSettled && background.phase !== "inactive";
+  const backgroundIndicator = useMemo(
+    () => agentBackgroundIndicator(background, subagents, provider),
+    [background, subagents, provider],
+  );
   const foregroundRunning = running && !backgroundOnly;
   const stream = proseStream(foregroundRunning, streamed);
   const errorContext = createTurnErrorContext(
@@ -717,10 +729,7 @@ const AgentTurnView = memo(function AgentTurnView({
           )}
 
           <div className="agent-turn__events">
-            <AgentSubagentDisclosure
-              entries={subagents}
-              truncated={turn.subagentLifecycle?.truncated}
-            />
+            <AgentSubagentDisclosure onOpenAgents={onOpenAgents} subagents={subagents} />
             {workFold !== null && (
               <AgentTurnWork
                 compacting={compacting}
@@ -758,7 +767,12 @@ const AgentTurnView = memo(function AgentTurnView({
               )}
             />
             {workFold === null && liveStatus}
-            {backgroundOnly && !compacting && <AgentBackgroundActivity activity={background} />}
+            {!compacting && (
+              <AgentBackgroundActivity
+                indicator={backgroundIndicator}
+                onOpenAgents={onOpenAgents}
+              />
+            )}
             {compaction.kind === "failed" && (
               <p className="agent-note agent-note--warning" role="status">
                 Context compaction failed{compaction.message ? `: ${compaction.message}` : "."}
@@ -784,7 +798,7 @@ const AgentTurnView = memo(function AgentTurnView({
 
           {turn.eventsTruncated && (
             <p className="agent-note agent-note--warning">
-              Some output is not included in this view.
+              Some activity from this turn is not shown.
             </p>
           )}
 

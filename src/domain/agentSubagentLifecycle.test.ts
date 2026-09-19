@@ -159,13 +159,15 @@ describe("retained subagent lifecycle", () => {
     expect(parseAgentSubagentLifecycle(snapshot)).toEqual(snapshot);
   });
   it("ignores unrelated tool output and child logs without changing metadata", () => {
-    const snapshot = retainAgentSubagentLifecycle(undefined, [spawn("t")]);
-    expect(
-      retainAgentSubagentLifecycle(snapshot, [
-        { kind: "toolResult", toolId: "unrelated", isError: false, outputSummary: "raw" },
-        { kind: "toolCall", parentToolId: "t", toolId: "read", name: "Read", inputSummary: "file" },
-      ]),
-    ).toBe(snapshot);
+    const open = retainAgentSubagentLifecycle(undefined, [spawn("t")]);
+    const events: AgentTurnEvent[] = [
+      { kind: "toolResult", toolId: "unrelated", isError: false, outputSummary: "raw" },
+      { kind: "toolCall", parentToolId: "t", toolId: "read", name: "Read", inputSummary: "file" },
+    ];
+    const snapshot = retainAgentSubagentLifecycle(open, events);
+    expect(snapshot?.entries).toEqual(open?.entries);
+    expect(snapshot?.openBatchKey).toBeUndefined();
+    expect(retainAgentSubagentLifecycle(snapshot, events)).toBe(snapshot);
   });
   it("accepts omitted old metadata and rejects malformed persistence", () => {
     expect(parseAgentSubagentLifecycle(undefined)).toBeUndefined();

@@ -506,10 +506,10 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-subagents")?.textContent).toBe(
-      "Started 2 subagents1 working · 1 completed",
+    expect(host.querySelector(".agent-spawn__row")?.textContent).toBe(
+      "Kicked off 2 subagents1 working",
     );
-    expect(host.querySelector(".agent-subagents__dot--live")).not.toBeNull();
+    expect(host.querySelector(".agent-spawn")?.getAttribute("data-tone")).toBe("working");
   });
 
   it("counts the subagents and exposes their disclosure outside the work fold", () => {
@@ -531,17 +531,22 @@ describe("AgentThreadSession", () => {
       "2 subagents · 1 need attention",
     );
 
-    const rows = [...host.querySelectorAll('[aria-label="Subagents"] .agent-subagent')];
+    const spawn = host.querySelector<HTMLButtonElement>(".agent-spawn__row");
+    expect(spawn?.getAttribute("aria-expanded")).toBe("false");
+    expect(spawn?.textContent).toBe("Ran 2 subagents1 failed");
+    expect(host.querySelector('[aria-label="Subagents"]')).toBeNull();
+    act(() => spawn?.click());
+    const rows = [...host.querySelectorAll('[aria-label="Subagents"] .agent-spawn-member')];
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.querySelector(".agent-subagent__name")?.textContent).toBe("Task");
-    expect(rows[0]?.querySelector(".agent-subagent__description")?.textContent).toBe(
+    expect(rows[0]?.querySelector(".agent-spawn-member__title")?.textContent).toBe(
       "Review the rail",
     );
-    expect(rows[0]?.querySelector(".agent-subagent__state")?.textContent).toBe("completed");
-    expect(rows[1]?.querySelector(".agent-subagent__state--failed")?.textContent).toBe("failed");
+    expect(rows[0]?.querySelector(".agent-spawn-member__activity")?.textContent).toBe("done");
+    expect(rows[0]?.querySelector(".agent-spawn-member__meta")?.textContent).toBe("Completed");
+    expect(rows[1]?.getAttribute("data-status")).toBe("failed");
+    expect(rows[1]?.querySelector(".agent-spawn-member__meta")?.textContent).toBe("Failed");
     expect(rows[0]?.closest(".agent-work__events")).toBeNull();
-    expect(host.querySelector<HTMLDetailsElement>(".agent-subagent-disclosure")?.open).toBe(false);
     expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
   });
 
@@ -556,13 +561,16 @@ describe("AgentThreadSession", () => {
       }),
     });
 
+    const spawn = host.querySelector<HTMLButtonElement>(".agent-spawn__row");
+    expect(spawn?.textContent).toBe("Ran 1 subagentstatus unavailable");
+    act(() => spawn?.click());
     const list = host.querySelector('[aria-label="Subagents"]');
 
     expect(host.querySelector(".agent-work")).toBeNull();
     expect(list?.closest(".agent-turn__events")).not.toBeNull();
-    expect(list?.querySelectorAll(".agent-subagent")).toHaveLength(1);
-    expect(list?.querySelector(".agent-subagent__state--unknown")?.textContent).toBe(
-      "status unavailable",
+    expect(list?.querySelectorAll(".agent-spawn-member")).toHaveLength(1);
+    expect(list?.querySelector(".agent-spawn-member__meta")?.textContent).toBe(
+      "Status unavailable",
     );
     expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
     expect(host.querySelectorAll('[aria-label="Subagents"]')).toHaveLength(1);
@@ -983,7 +991,7 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.textContent).toContain("Some output is not included in this view.");
+    expect(host.textContent).toContain("Some activity from this turn is not shown.");
   });
 
   it("says when a turn was interrupted by an app restart", () => {

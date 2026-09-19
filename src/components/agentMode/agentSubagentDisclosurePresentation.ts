@@ -6,6 +6,12 @@ import { agentTurnSubagentSummary, type AgentSubagentEntry } from "./agentModePr
 export interface AgentSubagentDisclosureEntry extends Omit<AgentSubagentEntry, "state"> {
   readonly state: AgentSubagentEntry["state"] | "interrupted" | "unknown";
   readonly detail?: string;
+  readonly taskId?: string;
+  readonly agentThreadId?: string;
+  readonly taskTitle?: string;
+  readonly batchKey?: string;
+  readonly nestedCount?: number;
+  readonly parentToolId?: string;
 }
 
 const MAX_DETAIL_CHARACTERS = 2_000;
@@ -71,20 +77,23 @@ export function agentSubagentDisclosureEntries(
     });
   }
   if (lifecycle === undefined) return settleEntries(entries, settlement);
-  const previews = new Map(entries.map((entry) => [entry.toolId, entry.detail]));
+  const previews = new Map(entries.map((entry) => [entry.toolId, entry]));
   return settleEntries(
     lifecycle.entries.map((entry) => {
       const toolId =
         entry.agentThreadId === undefined
           ? `tool:${entry.toolId ?? entry.id}`
           : `thread:${entry.agentThreadId}`;
+      if (entry.agentThreadId === undefined)
+        return { ...entry, toolId, detail: details.get(entry.toolId ?? entry.id) };
+      const preview = previews.get(toolId);
       return {
         ...entry,
         toolId,
-        detail:
-          entry.agentThreadId === undefined
-            ? details.get(entry.toolId ?? entry.id)
-            : previews.get(toolId),
+        ...(entry.totalTokens !== undefined || preview?.totalTokens === undefined
+          ? {}
+          : { totalTokens: preview.totalTokens }),
+        detail: preview?.detail,
       };
     }),
     settlement,

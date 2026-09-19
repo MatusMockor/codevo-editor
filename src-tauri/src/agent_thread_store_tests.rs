@@ -1517,6 +1517,9 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
     assert!(validate_agent_thread_document(ROOT_KEY, &malformed).is_err());
 }
 
+#[path = "agent_thread_store_lifecycle_tests.rs"]
+mod lifecycle_tests;
+
 #[path = "agent_thread_store_event_wire_tests.rs"]
 mod event_wire_tests;
 
