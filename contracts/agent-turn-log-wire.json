@@ -1,0 +1,1429 @@
+{
+  "schemaVersion": 1,
+  "limits": {
+    "seqBase": 1,
+    "appendOps": 256,
+    "appendBytes": 1048576,
+    "pageEvents": 200,
+    "pageBytes": 524288,
+    "digestBytes": 65536,
+    "digestCapacities": 16,
+    "summaries": 64,
+    "rootKeyBytes": 4096,
+    "idBytes": 64,
+    "ownerIdPattern": "^agent-root:[0-9a-f]{16}$",
+    "ownerIdRule": "agent-root:<fnv1a64hex(rootKey)>",
+    "idPattern": "^[a-z0-9][a-z0-9-]{2,63}$"
+  },
+  "scope": {
+    "rootKey": "/projects/storefront",
+    "ownerId": "agent-root:f307e46f5f6c07dd",
+    "threadId": "thread-0a1b2c3d",
+    "turnId": "turn-0a1b2c3d"
+  },
+  "events": [
+    {
+      "kind": "userMessage",
+      "text": "Explain the failing test."
+    },
+    {
+      "kind": "assistantText",
+      "text": "Reading the failing spec."
+    },
+    {
+      "kind": "toolCall",
+      "toolId": "toolu-01",
+      "name": "Read",
+      "inputSummary": "src/app.ts"
+    },
+    {
+      "kind": "contextUsage",
+      "model": "model-a",
+      "inputTokens": 120000,
+      "contextWindow": null
+    },
+    {
+      "kind": "result",
+      "text": "Done.",
+      "isError": false,
+      "usage": null
+    }
+  ],
+  "losses": [
+    {
+      "kind": "none"
+    },
+    {
+      "kind": "legacyWindow"
+    },
+    {
+      "kind": "supervisorGap"
+    },
+    {
+      "kind": "diskBudget",
+      "atEpochMs": 1750000000000
+    },
+    {
+      "kind": "turnCeiling"
+    },
+    {
+      "kind": "unreadable"
+    }
+  ],
+  "rejectedLosses": [
+    {
+      "why": "unknown kind",
+      "value": {
+        "kind": "diskFull"
+      }
+    },
+    {
+      "why": "missing timestamp",
+      "value": {
+        "kind": "diskBudget"
+      }
+    },
+    {
+      "why": "fractional timestamp",
+      "value": {
+        "kind": "diskBudget",
+        "atEpochMs": 1.5
+      }
+    },
+    {
+      "why": "negative timestamp",
+      "value": {
+        "kind": "diskBudget",
+        "atEpochMs": -1
+      }
+    },
+    {
+      "why": "unknown field",
+      "value": {
+        "kind": "none",
+        "detail": "x"
+      }
+    },
+    {
+      "why": "not an object",
+      "value": "none"
+    }
+  ],
+  "digests": [
+    {
+      "version": 1,
+      "context": {
+        "provider": "claudeCode",
+        "capacities": [
+          {
+            "model": "model-a",
+            "contextWindow": 200000
+          }
+        ],
+        "primary": {
+          "model": "model-a",
+          "inputTokens": 120000
+        },
+        "current": {
+          "usedTokens": 120000,
+          "contextWindow": 200000
+        },
+        "bounded": false
+      }
+    },
+    {
+      "version": 1,
+      "context": {
+        "provider": "codex",
+        "capacities": [],
+        "primary": null,
+        "current": {
+          "usedTokens": 48000,
+          "contextWindow": 272000
+        },
+        "bounded": false
+      }
+    },
+    {
+      "version": 1,
+      "context": {
+        "provider": "claudeCode",
+        "capacities": [],
+        "primary": null,
+        "current": null,
+        "bounded": true
+      }
+    }
+  ],
+  "rejectedDigests": [
+    {
+      "why": "unsupported version",
+      "value": {
+        "version": 2,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [],
+          "primary": null,
+          "current": null,
+          "bounded": false
+        }
+      }
+    },
+    {
+      "why": "unknown provider",
+      "value": {
+        "version": 1,
+        "context": {
+          "provider": "gemini",
+          "capacities": [],
+          "primary": null,
+          "current": null,
+          "bounded": false
+        }
+      }
+    },
+    {
+      "why": "duplicate capacity model",
+      "value": {
+        "version": 1,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [
+            {
+              "model": "model-a",
+              "contextWindow": 200000
+            },
+            {
+              "model": "model-a",
+              "contextWindow": 1000000
+            }
+          ],
+          "primary": null,
+          "current": null,
+          "bounded": false
+        }
+      }
+    },
+    {
+      "why": "capacity of zero",
+      "value": {
+        "version": 1,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [
+            {
+              "model": "model-a",
+              "contextWindow": 0
+            }
+          ],
+          "primary": null,
+          "current": null,
+          "bounded": false
+        }
+      }
+    },
+    {
+      "why": "negative occupancy",
+      "value": {
+        "version": 1,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [],
+          "primary": {
+            "model": "model-a",
+            "inputTokens": -1
+          },
+          "current": null,
+          "bounded": false
+        }
+      }
+    },
+    {
+      "why": "unknown field",
+      "value": {
+        "version": 1,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [],
+          "primary": null,
+          "current": null,
+          "bounded": false,
+          "extra": 1
+        }
+      }
+    },
+    {
+      "why": "missing bounded flag",
+      "value": {
+        "version": 1,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [],
+          "primary": null,
+          "current": null
+        }
+      }
+    }
+  ],
+  "requests": {
+    "open": [
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "priorLoss": {
+          "kind": "none"
+        }
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-9f8e7d6c"
+        },
+        "priorLoss": {
+          "kind": "legacyWindow"
+        }
+      }
+    ],
+    "append": [
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "writerEpoch": 3,
+        "expectedNextSeq": 1,
+        "ops": [
+          {
+            "seq": 1,
+            "event": {
+              "kind": "userMessage",
+              "text": "Explain the failing test."
+            }
+          },
+          {
+            "seq": 2,
+            "event": {
+              "kind": "assistantText",
+              "text": "Reading the failing spec."
+            }
+          }
+        ],
+        "digest": null,
+        "seal": false,
+        "loss": {
+          "kind": "none"
+        }
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "writerEpoch": 3,
+        "expectedNextSeq": 3,
+        "ops": [
+          {
+            "seq": 2,
+            "event": {
+              "kind": "assistantText",
+              "text": "Reading the failing spec now."
+            }
+          },
+          {
+            "seq": 3,
+            "event": {
+              "kind": "contextUsage",
+              "model": "model-a",
+              "inputTokens": 120000,
+              "contextWindow": null
+            }
+          }
+        ],
+        "digest": {
+          "version": 1,
+          "context": {
+            "provider": "claudeCode",
+            "capacities": [
+              {
+                "model": "model-a",
+                "contextWindow": 200000
+              }
+            ],
+            "primary": {
+              "model": "model-a",
+              "inputTokens": 120000
+            },
+            "current": {
+              "usedTokens": 120000,
+              "contextWindow": 200000
+            },
+            "bounded": false
+          }
+        },
+        "seal": false,
+        "loss": {
+          "kind": "none"
+        }
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "writerEpoch": 3,
+        "expectedNextSeq": 4,
+        "ops": [],
+        "digest": null,
+        "seal": true,
+        "loss": {
+          "kind": "supervisorGap"
+        }
+      }
+    ],
+    "page": [
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "anchor": {
+          "at": "tail"
+        },
+        "maxEvents": 200,
+        "maxBytes": 524288
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "anchor": {
+          "at": "before",
+          "seq": 512
+        },
+        "maxEvents": 50,
+        "maxBytes": 65536
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "anchor": {
+          "at": "after",
+          "seq": 1
+        },
+        "maxEvents": 1,
+        "maxBytes": 1
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "anchor": {
+          "at": "around",
+          "seq": 256
+        },
+        "maxEvents": 100,
+        "maxBytes": 131072
+      }
+    ],
+    "summarize": [
+      {
+        "rootKey": "/projects/storefront",
+        "ownerId": "agent-root:f307e46f5f6c07dd",
+        "threadId": "thread-0a1b2c3d"
+      }
+    ],
+    "deleteThreadLog": [
+      {
+        "rootKey": "/projects/storefront",
+        "ownerId": "agent-root:f307e46f5f6c07dd",
+        "threadId": "thread-0a1b2c3d"
+      }
+    ]
+  },
+  "rejectedRequests": {
+    "open": [
+      {
+        "why": "owner id is not an agent root owner",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "owner-1",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "priorLoss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "empty root key",
+        "value": {
+          "scope": {
+            "rootKey": "",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "priorLoss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "turn id with a path separator",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "../turn-0a1b2c3d"
+          },
+          "priorLoss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "unknown field",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "priorLoss": {
+            "kind": "none"
+          },
+          "resume": true
+        }
+      }
+    ],
+    "append": [
+      {
+        "why": "writer epoch of zero",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 0,
+          "expectedNextSeq": 1,
+          "ops": [],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "sequence below the log base",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 0,
+          "ops": [],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "appended sequences are not contiguous",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "assistantText",
+                "text": "a"
+              }
+            },
+            {
+              "seq": 3,
+              "event": {
+                "kind": "assistantText",
+                "text": "b"
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "appended sequences do not start at the expected next sequence",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 5,
+          "ops": [
+            {
+              "seq": 6,
+              "event": {
+                "kind": "assistantText",
+                "text": "a"
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "operations are not ordered by sequence",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 3,
+          "ops": [
+            {
+              "seq": 3,
+              "event": {
+                "kind": "assistantText",
+                "text": "b"
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "kind": "assistantText",
+                "text": "a"
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "duplicate sequence",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 2,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "assistantText",
+                "text": "a"
+              }
+            },
+            {
+              "seq": 1,
+              "event": {
+                "kind": "assistantText",
+                "text": "b"
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "event kind is not supported",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "telemetry",
+                "text": "a"
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "event carries an unknown field",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "assistantText",
+                "text": "a",
+                "sourceLine": 12
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "why": "operation carries an unknown field",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 1,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "assistantText",
+                "text": "a"
+              },
+              "bytes": 12
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          }
+        }
+      }
+    ],
+    "page": [
+      {
+        "why": "unknown anchor",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "anchor": {
+            "at": "head"
+          },
+          "maxEvents": 10,
+          "maxBytes": 1024
+        }
+      },
+      {
+        "why": "tail anchor with a sequence",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "anchor": {
+            "at": "tail",
+            "seq": 4
+          },
+          "maxEvents": 10,
+          "maxBytes": 1024
+        }
+      },
+      {
+        "why": "page larger than the event bound",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "anchor": {
+            "at": "tail"
+          },
+          "maxEvents": 201,
+          "maxBytes": 1024
+        }
+      },
+      {
+        "why": "page larger than the byte bound",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "anchor": {
+            "at": "tail"
+          },
+          "maxEvents": 10,
+          "maxBytes": 524289
+        }
+      },
+      {
+        "why": "empty page request",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "anchor": {
+            "at": "tail"
+          },
+          "maxEvents": 0,
+          "maxBytes": 1024
+        }
+      }
+    ],
+    "summarize": [
+      {
+        "why": "missing thread id",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd"
+        }
+      },
+      {
+        "why": "turn id is not part of the request",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        }
+      }
+    ],
+    "deleteThreadLog": [
+      {
+        "why": "missing thread id",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd"
+        }
+      },
+      {
+        "why": "turn id is not part of the request",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        }
+      },
+      {
+        "why": "owner id does not belong to the root key",
+        "value": {
+          "rootKey": "/projects/other",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d"
+        }
+      },
+      {
+        "why": "thread id is not a safe agent identifier",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "../escape"
+        }
+      }
+    ]
+  },
+  "leases": [
+    {
+      "writerEpoch": 1,
+      "nextSeq": 1,
+      "digest": null,
+      "digestThroughSeq": 0
+    },
+    {
+      "writerEpoch": 7,
+      "nextSeq": 941,
+      "digest": {
+        "version": 1,
+        "context": {
+          "provider": "claudeCode",
+          "capacities": [
+            {
+              "model": "model-a",
+              "contextWindow": 200000
+            }
+          ],
+          "primary": {
+            "model": "model-a",
+            "inputTokens": 120000
+          },
+          "current": {
+            "usedTokens": 120000,
+            "contextWindow": 200000
+          },
+          "bounded": false
+        }
+      },
+      "digestThroughSeq": 940
+    }
+  ],
+  "rejectedLeases": [
+    {
+      "why": "writer epoch of zero",
+      "value": {
+        "writerEpoch": 0,
+        "nextSeq": 1,
+        "digest": null,
+        "digestThroughSeq": 0
+      }
+    },
+    {
+      "why": "next sequence below the log base",
+      "value": {
+        "writerEpoch": 1,
+        "nextSeq": 0,
+        "digest": null,
+        "digestThroughSeq": 0
+      }
+    },
+    {
+      "why": "digest coverage without a digest",
+      "value": {
+        "writerEpoch": 1,
+        "nextSeq": 5,
+        "digest": null,
+        "digestThroughSeq": 4
+      }
+    },
+    {
+      "why": "digest covers sequences that do not exist",
+      "value": {
+        "writerEpoch": 1,
+        "nextSeq": 3,
+        "digest": {
+          "version": 1,
+          "context": {
+            "provider": "codex",
+            "capacities": [],
+            "primary": null,
+            "current": null,
+            "bounded": false
+          }
+        },
+        "digestThroughSeq": 7
+      }
+    },
+    {
+      "why": "unknown field",
+      "value": {
+        "writerEpoch": 1,
+        "nextSeq": 1,
+        "digest": null,
+        "digestThroughSeq": 0,
+        "sealed": false
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "persistedThroughSeq": 0,
+      "nextSeq": 1,
+      "turnBytes": 0,
+      "budget": "ok"
+    },
+    {
+      "persistedThroughSeq": 512,
+      "nextSeq": 513,
+      "turnBytes": 4194304,
+      "budget": "near"
+    },
+    {
+      "persistedThroughSeq": 100000,
+      "nextSeq": 100001,
+      "turnBytes": 268435456,
+      "budget": "evicting"
+    }
+  ],
+  "rejectedReceipts": [
+    {
+      "why": "persisted sequence does not chain to the next sequence",
+      "value": {
+        "persistedThroughSeq": 7,
+        "nextSeq": 7,
+        "turnBytes": 0,
+        "budget": "ok"
+      }
+    },
+    {
+      "why": "unknown budget",
+      "value": {
+        "persistedThroughSeq": 0,
+        "nextSeq": 1,
+        "turnBytes": 0,
+        "budget": "full"
+      }
+    },
+    {
+      "why": "negative bytes",
+      "value": {
+        "persistedThroughSeq": 0,
+        "nextSeq": 1,
+        "turnBytes": -1,
+        "budget": "ok"
+      }
+    },
+    {
+      "why": "unknown field",
+      "value": {
+        "persistedThroughSeq": 0,
+        "nextSeq": 1,
+        "turnBytes": 0,
+        "budget": "ok",
+        "sealed": true
+      }
+    }
+  ],
+  "pages": [
+    {
+      "entries": [
+        {
+          "seq": 1,
+          "event": {
+            "kind": "userMessage",
+            "text": "Explain the failing test."
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "kind": "assistantText",
+            "text": "Reading the failing spec."
+          }
+        }
+      ],
+      "firstSeq": 1,
+      "lastSeq": 2,
+      "hasEarlier": false,
+      "hasLater": true,
+      "loss": {
+        "kind": "none"
+      },
+      "clipped": false
+    },
+    {
+      "entries": [],
+      "firstSeq": 0,
+      "lastSeq": 0,
+      "hasEarlier": false,
+      "hasLater": false,
+      "loss": {
+        "kind": "unreadable"
+      },
+      "clipped": false
+    },
+    {
+      "entries": [
+        {
+          "seq": 940,
+          "event": {
+            "kind": "result",
+            "text": "Done.",
+            "isError": false,
+            "usage": null
+          }
+        }
+      ],
+      "firstSeq": 940,
+      "lastSeq": 940,
+      "hasEarlier": true,
+      "hasLater": false,
+      "loss": {
+        "kind": "legacyWindow"
+      },
+      "clipped": true
+    }
+  ],
+  "rejectedPages": [
+    {
+      "why": "first sequence does not match the first entry",
+      "value": {
+        "entries": [
+          {
+            "seq": 2,
+            "event": {
+              "kind": "assistantText",
+              "text": "a"
+            }
+          }
+        ],
+        "firstSeq": 1,
+        "lastSeq": 2,
+        "hasEarlier": false,
+        "hasLater": false,
+        "loss": {
+          "kind": "none"
+        },
+        "clipped": false
+      }
+    },
+    {
+      "why": "entries are not ordered by sequence",
+      "value": {
+        "entries": [
+          {
+            "seq": 3,
+            "event": {
+              "kind": "assistantText",
+              "text": "b"
+            }
+          },
+          {
+            "seq": 2,
+            "event": {
+              "kind": "assistantText",
+              "text": "a"
+            }
+          }
+        ],
+        "firstSeq": 3,
+        "lastSeq": 2,
+        "hasEarlier": false,
+        "hasLater": false,
+        "loss": {
+          "kind": "none"
+        },
+        "clipped": false
+      }
+    },
+    {
+      "why": "empty page reports a sequence",
+      "value": {
+        "entries": [],
+        "firstSeq": 4,
+        "lastSeq": 4,
+        "hasEarlier": true,
+        "hasLater": false,
+        "loss": {
+          "kind": "none"
+        },
+        "clipped": false
+      }
+    },
+    {
+      "why": "unknown field",
+      "value": {
+        "entries": [],
+        "firstSeq": 0,
+        "lastSeq": 0,
+        "hasEarlier": false,
+        "hasLater": false,
+        "loss": {
+          "kind": "none"
+        },
+        "clipped": false,
+        "turnId": "turn-0a1b2c3d"
+      }
+    }
+  ],
+  "summaries": [
+    [],
+    [
+      {
+        "turnId": "turn-0a1b2c3d",
+        "eventCount": 940,
+        "bytes": 1048576,
+        "loss": {
+          "kind": "none"
+        },
+        "sealed": true,
+        "digest": {
+          "version": 1,
+          "context": {
+            "provider": "claudeCode",
+            "capacities": [
+              {
+                "model": "model-a",
+                "contextWindow": 200000
+              }
+            ],
+            "primary": {
+              "model": "model-a",
+              "inputTokens": 120000
+            },
+            "current": {
+              "usedTokens": 120000,
+              "contextWindow": 200000
+            },
+            "bounded": false
+          }
+        }
+      },
+      {
+        "turnId": "turn-9f8e7d6c",
+        "eventCount": 0,
+        "bytes": 0,
+        "loss": {
+          "kind": "unreadable"
+        },
+        "sealed": false,
+        "digest": null
+      }
+    ]
+  ],
+  "rejectedSummaries": [
+    {
+      "why": "duplicate turn id",
+      "value": [
+        {
+          "turnId": "turn-0a1b2c3d",
+          "eventCount": 1,
+          "bytes": 1,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": false,
+          "digest": null
+        },
+        {
+          "turnId": "turn-0a1b2c3d",
+          "eventCount": 2,
+          "bytes": 2,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": false,
+          "digest": null
+        }
+      ]
+    },
+    {
+      "why": "negative event count",
+      "value": [
+        {
+          "turnId": "turn-0a1b2c3d",
+          "eventCount": -1,
+          "bytes": 0,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": false,
+          "digest": null
+        }
+      ]
+    },
+    {
+      "why": "unknown field",
+      "value": [
+        {
+          "turnId": "turn-0a1b2c3d",
+          "eventCount": 0,
+          "bytes": 0,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": false,
+          "digest": null,
+          "writerEpoch": 1
+        }
+      ]
+    },
+    {
+      "why": "not an array",
+      "value": {
+        "turnId": "turn-0a1b2c3d"
+      }
+    }
+  ],
+  "errors": [
+    "supersededWriter",
+    "sequenceGap",
+    "sealed",
+    "ownerMismatch",
+    "budgetExhausted",
+    "diskFull",
+    "foreign",
+    "unreadable",
+    "busy"
+  ],
+  "rejectedErrors": [
+    "SupersededWriter",
+    "superseded_writer",
+    "database is locked",
+    "",
+    "unknown",
+    "busy:1",
+    "sealed:1"
+  ],
+  "commands": {
+    "open": "open_agent_turn_log",
+    "append": "append_agent_turn_log",
+    "readPage": "read_agent_turn_log_page",
+    "summarize": "summarize_agent_turn_logs",
+    "deleteThreadLog": "delete_agent_thread_log"
+  },
+  "deleteThreadLogResults": [
+    {
+      "deleted": true
+    },
+    {
+      "deleted": false
+    }
+  ],
+  "rejectedDeleteThreadLogResults": [
+    {
+      "why": "missing deleted flag",
+      "value": {}
+    },
+    {
+      "why": "deleted is not a boolean",
+      "value": {
+        "deleted": "true"
+      }
+    },
+    {
+      "why": "unknown field",
+      "value": {
+        "deleted": true,
+        "removedFiles": 3
+      }
+    }
+  ],
+  "sequenceGapErrors": [
+    {
+      "why": "the log restarts at the first sequence",
+      "value": "sequenceGap:1",
+      "nextSeq": 1
+    },
+    {
+      "why": "the log already holds the batch",
+      "value": "sequenceGap:42",
+      "nextSeq": 42
+    },
+    {
+      "why": "a large but safe sequence",
+      "value": "sequenceGap:9007199254740991",
+      "nextSeq": 9007199254740991
+    }
+  ],
+  "plainSequenceGapErrors": [
+    {
+      "why": "an older build reports the bare code",
+      "value": "sequenceGap"
+    },
+    {
+      "why": "no sequence after the separator",
+      "value": "sequenceGap:"
+    },
+    {
+      "why": "the sequence is not digits only",
+      "value": "sequenceGap:12a"
+    },
+    {
+      "why": "a negative sequence",
+      "value": "sequenceGap:-1"
+    },
+    {
+      "why": "a fractional sequence",
+      "value": "sequenceGap:1.5"
+    },
+    {
+      "why": "padded digits",
+      "value": "sequenceGap:007"
+    },
+    {
+      "why": "a space before the sequence",
+      "value": "sequenceGap: 7"
+    },
+    {
+      "why": "zero is below the first sequence",
+      "value": "sequenceGap:0"
+    },
+    {
+      "why": "beyond the safe integer range",
+      "value": "sequenceGap:9007199254740992"
+    },
+    {
+      "why": "more digits than any sequence",
+      "value": "sequenceGap:123456789012345678901234"
+    }
+  ]
+}

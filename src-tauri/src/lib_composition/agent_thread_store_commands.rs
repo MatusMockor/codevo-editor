@@ -44,7 +44,7 @@ pub(crate) struct AgentThreadsSnapshot {
     evicted: usize,
 }
 
-fn ensure_agent_root_owner(root_key: &str, owner_id: &str) -> Result<(), String> {
+pub(crate) fn ensure_agent_root_owner(root_key: &str, owner_id: &str) -> Result<(), String> {
     if owner_id != agent_root_owner_id(root_key) {
         return Err(AGENT_THREAD_OWNER_ID_MISMATCH_ERROR.to_string());
     }

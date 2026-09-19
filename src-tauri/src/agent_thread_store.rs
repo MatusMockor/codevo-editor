@@ -635,8 +635,6 @@ impl AgentThreadStore {
         let mut stored = Vec::new();
         let mut threads = HashMap::new();
         let mut unreadable = Vec::new();
-        let mut unreadable_count = 0;
-        let mut unreadable_bytes = 0;
         for entry in entries {
             match read_thread_file(root_key, &entry) {
                 Ok(thread) => {
@@ -650,8 +648,6 @@ impl AgentThreadStore {
                     threads.insert(entry.thread_id, thread);
                 }
                 Err(reason) => {
-                    unreadable_count += 1;
-                    unreadable_bytes += entry.size;
                     if unreadable.len() < MAX_UNREADABLE_REPORTS {
                         unreadable.push(UnreadableAgentThread {
                             thread_id: entry.thread_id,
@@ -661,7 +657,7 @@ impl AgentThreadStore {
                 }
             }
         }
-        let (evicted, _) = evict_to_budget(&mut stored, unreadable_count, unreadable_bytes);
+        let (evicted, _) = evict_to_budget(&mut stored, 0, 0);
         let mut retained: Vec<AgentThread> = stored
             .iter()
             .filter_map(|file| threads.remove(&file.thread_id))
@@ -1126,7 +1122,7 @@ fn validate_agent_turn_usage(usage: &AgentTurnUsage) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
+pub(crate) fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
     appserver::validate_event(event)?;
     if let AgentTurnEvent::ContextUsage {
         model,

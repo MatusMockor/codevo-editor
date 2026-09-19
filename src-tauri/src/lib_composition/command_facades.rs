@@ -22,6 +22,8 @@ mod agent_session_history_commands;
 mod agent_task_commands;
 #[path = "agent_thread_store_commands.rs"]
 mod agent_thread_store_commands;
+#[path = "agent_turn_log_commands.rs"]
+mod agent_turn_log_commands;
 #[path = "directory_listing_commands.rs"]
 mod directory_listing_commands;
 #[path = "git_integration_commands.rs"]

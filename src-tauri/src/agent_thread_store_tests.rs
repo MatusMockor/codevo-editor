@@ -1534,3 +1534,6 @@ mod tool_description_tests;
 
 #[path = "agent_thread_store_context_tests.rs"]
 mod context_tests;
+
+#[path = "agent_thread_store_unreadable_budget_tests.rs"]
+mod unreadable_budget_tests;
