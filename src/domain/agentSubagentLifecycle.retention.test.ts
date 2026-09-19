@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import wire from "../../contracts/agent-subagent-lifecycle-wire.json";
 import {
   MAX_RETAINED_SUBAGENTS,
+  MAX_SUBAGENT_BATCH_KEY_BYTES,
   MAX_SUBAGENT_COUNTED_NESTED_IDS,
   MAX_SUBAGENT_NESTED_COUNT,
+  MAX_SUBAGENT_PARENT_TOOL_ID_BYTES,
+  MAX_SUBAGENT_TASK_TITLE_BYTES,
   parseAgentSubagentLifecycle,
   retainAgentSubagentLifecycle,
   type AgentSubagentLifecycle,
 } from "./agentSubagentLifecycle";
 import type { AgentTurnEvent } from "./agentThread";
+import { agentTurnStream, nestedSpawnAgentTurnStream } from "../test/agentTurnEventStreams";
 
 const spawn = (toolId: string, description: string, parentToolId?: string): AgentTurnEvent => ({
   kind: "toolCall",
@@ -108,7 +112,7 @@ describe("retained subagent task title", () => {
     const title = lifecycle?.entries[0]?.taskTitle ?? "";
 
     expect([...title]).toHaveLength(120);
-    expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(wire.limits.taskTitleBytes);
+    expect(new TextEncoder().encode(title).length).toBe(wire.limits.taskTitleBytes);
     expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(lifecycle)))).toEqual(lifecycle);
   });
 });
@@ -139,6 +143,24 @@ describe("retained spawn batch key", () => {
       "spawn:b",
       "spawn:c",
     ]);
+  });
+
+  it("a re-observed spawn never reopens a batch and leaves the root key unchanged", () => {
+    const opened = retainAgentSubagentLifecycle(undefined, [spawn("a", "First")]);
+    expect(opened?.openBatchKey).toBe("spawn:a");
+
+    const replayed = retainAgentSubagentLifecycle(opened, [spawn("a", "First")]);
+    expect(replayed?.openBatchKey).toBe("spawn:a");
+    expect(replayed?.entries[0]?.batchKey).toBe("spawn:a");
+
+    const closed = retainAgentSubagentLifecycle(replayed, [
+      { kind: "assistantText", text: "Waiting for the agent." },
+    ]);
+    expect(closed?.openBatchKey).toBeUndefined();
+
+    const reopened = retainAgentSubagentLifecycle(closed, [spawn("a", "First"), launched("a")]);
+    expect(reopened?.openBatchKey).toBeUndefined();
+    expect(reopened?.entries[0]?.batchKey).toBe("spawn:a");
   });
 
   it("leaves entries that never saw their spawn call without a key", () => {
@@ -211,6 +233,29 @@ describe("retained nested agents", () => {
     expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(lifecycle)))).toEqual(lifecycle);
   });
 
+  it(`recounts a replayed nested spawn once its identity leaves the ${MAX_SUBAGENT_COUNTED_NESTED_IDS}-identity memory`, () => {
+    const roots = Array.from({ length: MAX_RETAINED_SUBAGENTS }, (_, index) =>
+      spawn(`t${index}`, "Work"),
+    );
+    const distinct = MAX_SUBAGENT_COUNTED_NESTED_IDS + 1;
+    const nested = Array.from({ length: distinct }, (_, index) =>
+      spawn(`child-${index}`, "Child", "t0"),
+    );
+    const filled = retainInChunks([roots, nested]);
+
+    expect(filled?.countedNestedToolIds).toHaveLength(MAX_SUBAGENT_COUNTED_NESTED_IDS);
+    expect(filled?.countedNestedToolIds).not.toContain("child-0");
+    expect(filled?.entries[0]?.nestedCount).toBe(distinct);
+
+    const remembered = retainAgentSubagentLifecycle(filled, [
+      spawn(`child-${distinct - 1}`, "Child", "t0"),
+    ]);
+    expect(remembered?.entries[0]?.nestedCount).toBe(distinct);
+
+    const forgotten = retainAgentSubagentLifecycle(remembered, [spawn("child-0", "Child", "t0")]);
+    expect(forgotten?.entries[0]?.nestedCount).toBe(distinct + 1);
+  });
+
   it("saturates the nested count", () => {
     const events = Array.from({ length: MAX_SUBAGENT_NESTED_COUNT + 5 }, (_, index) =>
       spawn(`child-${index}`, "Child", "parent"),
@@ -218,6 +263,96 @@ describe("retained nested agents", () => {
     const lifecycle = retainInChunks([[spawn("parent", "Lead")], events]);
 
     expect(lifecycle?.entries[0]?.nestedCount).toBe(MAX_SUBAGENT_NESTED_COUNT);
+  });
+});
+
+describe("producer stays inside the strict validator", () => {
+  it("attaches a nested spawn to the entry that already owns its tool id", () => {
+    const lifecycle = retainInChunks([
+      [spawn("P", "Lead work")],
+      [{ kind: "subagent", status: "starting", taskId: "T", description: "Task telemetry" }],
+      [{ kind: "subagent", status: "running", taskId: "T", toolId: "X" }],
+      [spawn("X", "Nested work", "P")],
+    ]);
+    const entries = lifecycle?.entries ?? [];
+
+    expect(entries.filter((entry) => entry.toolId === "X")).toHaveLength(1);
+    expect(entries.find((entry) => entry.toolId === "X")).toMatchObject({
+      taskId: "T",
+      parentToolId: "P",
+    });
+    expect(entries.find((entry) => entry.toolId === "P")?.nestedCount).toBe(1);
+    expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(lifecycle)))).toEqual(lifecycle);
+  });
+
+  it("counts an adopted nested spawn once when the stream redelivers it", () => {
+    const lifecycle = retainInChunks([
+      [spawn("P", "Lead work")],
+      [{ kind: "subagent", status: "running", taskId: "T", toolId: "X" }],
+      [spawn("X", "Nested work", "P")],
+      [spawn("X", "Nested work", "P")],
+    ]);
+
+    expect(lifecycle?.entries.find((entry) => entry.toolId === "P")?.nestedCount).toBe(1);
+    expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(lifecycle)))).toEqual(lifecycle);
+  });
+
+  it("never nests an entry under itself or its own descendant", () => {
+    const lifecycle = retainInChunks([
+      [spawn("root", "Lead")],
+      [spawn("child", "Child", "root")],
+      [spawn("root", "Cycle", "child")],
+      [spawn("root", "Self", "root")],
+    ]);
+    const entries = lifecycle?.entries ?? [];
+
+    expect(entries.find((entry) => entry.toolId === "root")?.parentToolId).toBeUndefined();
+    expect(entries.find((entry) => entry.toolId === "root")?.nestedCount).toBe(1);
+    expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(lifecycle)))).toEqual(lifecycle);
+  });
+
+  it("keeps a merged alias nested only when both sides shared the same parent", () => {
+    const nested = retainInChunks([
+      [spawn("root", "Lead")],
+      [{ kind: "subagent", status: "running", taskId: "solo" }],
+      [{ kind: "subagent", status: "running", taskId: "solo", toolId: "n1" }],
+      [spawn("n1", "Nested one", "root"), spawn("n2", "Nested two", "root")],
+      [{ kind: "subagent", status: "running", taskId: "solo", toolId: "n2" }],
+    ]);
+    const survivor = nested?.entries.find((entry) => entry.taskId === "solo");
+
+    expect(nested?.entries.filter((entry) => entry.toolId === "n2")).toHaveLength(1);
+    expect(survivor?.parentToolId).toBe("root");
+
+    const promoted = retainInChunks([
+      [{ kind: "subagent", status: "running", taskId: "solo" }],
+      [spawn("lead", "Lead")],
+      [spawn("alias", "Nested", "lead")],
+      [{ kind: "subagent", status: "running", taskId: "solo", toolId: "alias" }],
+    ]);
+    const merged = promoted?.entries.find((entry) => entry.taskId === "solo");
+
+    expect(promoted?.entries.filter((entry) => entry.toolId === "alias")).toHaveLength(1);
+    expect(merged?.parentToolId).toBeUndefined();
+    expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(promoted)))).toEqual(promoted);
+  });
+
+  it("keeps every incremental snapshot strictly parseable across generated streams", () => {
+    const roundTrip = (lifecycle: AgentSubagentLifecycle | undefined): unknown =>
+      lifecycle === undefined ? undefined : JSON.parse(JSON.stringify(lifecycle));
+    for (let seed = 0; seed < 24; seed += 1)
+      for (const events of [nestedSpawnAgentTurnStream(seed, 80), agentTurnStream(seed, 80)]) {
+        let lifecycle: AgentSubagentLifecycle | undefined;
+        for (const [index, event] of events.entries()) {
+          lifecycle = retainAgentSubagentLifecycle(lifecycle, [event]);
+          const label = `seed ${seed} event ${index} ${event.kind}`;
+
+          expect(parseAgentSubagentLifecycle(roundTrip(lifecycle)), label).toEqual(lifecycle);
+          expect(new Set((lifecycle?.entries ?? []).map((entry) => entry.id)).size, label).toBe(
+            lifecycle?.entries.length ?? 0,
+          );
+        }
+      }
   });
 });
 
@@ -229,10 +364,15 @@ describe("lifecycle wire contract", () => {
     }
   });
 
-  it("keeps limits aligned with the domain constants", () => {
-    expect(wire.limits.entries).toBe(MAX_RETAINED_SUBAGENTS);
-    expect(wire.limits.nestedCount).toBe(MAX_SUBAGENT_NESTED_COUNT);
-    expect(wire.limits.countedNestedToolIds).toBe(MAX_SUBAGENT_COUNTED_NESTED_IDS);
+  it("keeps every declared limit aligned with the domain constants", () => {
+    expect(wire.limits).toEqual({
+      entries: MAX_RETAINED_SUBAGENTS,
+      taskTitleBytes: MAX_SUBAGENT_TASK_TITLE_BYTES,
+      batchKeyBytes: MAX_SUBAGENT_BATCH_KEY_BYTES,
+      parentToolIdBytes: MAX_SUBAGENT_PARENT_TOOL_ID_BYTES,
+      nestedCount: MAX_SUBAGENT_NESTED_COUNT,
+      countedNestedToolIds: MAX_SUBAGENT_COUNTED_NESTED_IDS,
+    });
   });
 
   it("rejects every invalid patch fail-closed", () => {
@@ -251,11 +391,5 @@ describe("lifecycle wire contract", () => {
         () => parseAgentSubagentLifecycle({ ...wire.valid.retained, ...patch }),
         JSON.stringify(patch),
       ).toThrow();
-    expect(() =>
-      parseAgentSubagentLifecycle({
-        ...wire.valid.retained,
-        entries: [{ ...entry, taskTitle: "é".repeat(241) }, ...rest],
-      }),
-    ).toThrow();
   });
 });

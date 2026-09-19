@@ -4,6 +4,7 @@ import type { AgentTurnEvent } from "./agentThread";
 export const MAX_RETAINED_SUBAGENTS = 32;
 export const MAX_SUBAGENT_TASK_TITLE_BYTES = MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS * 4;
 export const MAX_SUBAGENT_BATCH_KEY_BYTES = 272;
+export const MAX_SUBAGENT_PARENT_TOOL_ID_BYTES = 256;
 export const MAX_SUBAGENT_NESTED_COUNT = 999;
 export const MAX_SUBAGENT_COUNTED_NESTED_IDS = 32;
 const MAX_NESTED_ANCESTOR_DEPTH = 8;
@@ -132,6 +133,27 @@ function rememberCountedNested(counted: Set<string>, toolId: string): void {
   }
 }
 
+function resolveAlias(
+  entries: Map<string, AgentSubagentLifecycleEntry>,
+  identity: SubagentEventIdentity,
+): AgentSubagentLifecycleEntry | undefined {
+  const { toolId, taskId, agentThreadId } = identity;
+  const [first, ...aliases] = [...entries.values()].filter(
+    (entry) =>
+      (toolId !== undefined && entry.toolId === toolId) ||
+      (taskId !== undefined && entry.taskId === taskId) ||
+      (agentThreadId !== undefined && entry.agentThreadId === agentThreadId),
+  );
+  if (first === undefined) return undefined;
+  let found = first;
+  for (const alias of aliases) {
+    entries.delete(alias.id);
+    found = mergeAliases(found, alias);
+  }
+  entries.set(found.id, found);
+  return found;
+}
+
 function retainNestedSpawn(
   entries: Map<string, AgentSubagentLifecycleEntry>,
   counted: Set<string>,
@@ -139,25 +161,37 @@ function retainNestedSpawn(
   parentToolId: string,
 ): "retained" | "truncated" {
   if (!validId(event.toolId) || !validId(parentToolId)) return "truncated";
-  const key = `tool:${event.toolId}`;
-  if (entries.has(key) || counted.has(event.toolId)) return "retained";
+  const existing = resolveAlias(entries, { toolId: event.toolId });
+  if (existing?.parentToolId !== undefined) return "retained";
+  if (counted.has(event.toolId)) return "retained";
   const root = nestedRoot(entries, parentToolId);
   if (root === undefined) return "truncated";
+  if (existing?.id === root.id) return "retained";
   entries.set(root.id, {
     ...root,
     nestedCount: Math.min(MAX_SUBAGENT_NESTED_COUNT, (root.nestedCount ?? 0) + 1),
   });
+  const description = clip(event.description ?? event.inputSummary, 512);
+  const taskTitle = existing?.taskTitle ?? taskTitleOf(event.description ?? event.inputSummary);
+  if (existing !== undefined) {
+    entries.set(existing.id, {
+      ...existing,
+      parentToolId,
+      description: existing.description || description,
+      ...(taskTitle === undefined ? {} : { taskTitle }),
+    });
+    return "retained";
+  }
   if (entries.size >= MAX_RETAINED_SUBAGENTS) {
     rememberCountedNested(counted, event.toolId);
     return "truncated";
   }
-  const taskTitle = taskTitleOf(event.description ?? event.inputSummary);
-  entries.set(key, {
-    id: key,
+  entries.set(`tool:${event.toolId}`, {
+    id: `tool:${event.toolId}`,
     toolId: event.toolId,
     parentToolId,
     name: clip(event.name, 128),
-    description: clip(event.description ?? event.inputSummary, 512),
+    description,
     state: "running",
     ...(taskTitle === undefined ? {} : { taskTitle }),
   });
@@ -201,17 +235,7 @@ export function retainAgentSubagentLifecycle(
     const identity = subagentEventIdentity(event);
     if (identity === null) continue;
     const { toolId, taskId, agentThreadId } = identity;
-    const matches = [...entries.values()].filter(
-      (entry) =>
-        (toolId !== undefined && entry.toolId === toolId) ||
-        (taskId !== undefined && entry.taskId === taskId) ||
-        (agentThreadId !== undefined && entry.agentThreadId === agentThreadId),
-    );
-    let found = matches[0];
-    for (const alias of matches.slice(1)) {
-      entries.delete(alias.id);
-      found = mergeAliases(found!, alias);
-    }
+    const found = resolveAlias(entries, identity);
     if (event.kind === "toolResult" && found === undefined) continue;
     if (event.kind === "backgroundTask" && found === undefined && event.taskType !== "agent")
       continue;
@@ -359,13 +383,17 @@ function mergeAliases(
     first.resultState === "failed" || second.resultState === "failed"
       ? "failed"
       : (first.resultState ?? second.resultState);
+  const { parentToolId: firstParent, ...firstFields } = first;
+  const { parentToolId: secondParent, ...secondFields } = second;
+  const parentToolId = firstParent === secondParent ? firstParent : undefined;
   return {
-    ...second,
-    ...first,
+    ...secondFields,
+    ...firstFields,
     id: first.id,
     description: first.description || second.description,
     ...(telemetryState === undefined ? {} : { telemetryState }),
     ...(resultState === undefined ? {} : { resultState }),
+    ...(parentToolId === undefined ? {} : { parentToolId }),
   };
 }
 
@@ -498,7 +526,7 @@ export function parseAgentSubagentLifecycle(value: unknown): AgentSubagentLifecy
       ...(nestedCount === undefined ? {} : { nestedCount }),
       ...(entry.parentToolId === undefined
         ? {}
-        : { parentToolId: presentText(entry.parentToolId, 256) }),
+        : { parentToolId: presentText(entry.parentToolId, MAX_SUBAGENT_PARENT_TOOL_ID_BYTES) }),
     };
   });
   return {

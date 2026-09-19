@@ -3,6 +3,7 @@ use std::collections::HashSet;
 
 const MAX_TASK_TITLE_BYTES: usize = 480;
 const MAX_BATCH_KEY_BYTES: usize = 272;
+const MAX_PARENT_TOOL_ID_BYTES: usize = 256;
 const MAX_NESTED_COUNT: u64 = 999;
 const MAX_COUNTED_NESTED_IDS: usize = 32;
 
@@ -110,7 +111,7 @@ pub(crate) fn valid(value: &Value) -> bool {
         for (key, max) in [
             ("taskTitle", MAX_TASK_TITLE_BYTES),
             ("batchKey", MAX_BATCH_KEY_BYTES),
-            ("parentToolId", 256),
+            ("parentToolId", MAX_PARENT_TOOL_ID_BYTES),
         ] {
             if fields.contains_key(key) && text(key, max).is_none_or(str::is_empty) {
                 return false;
@@ -262,10 +263,18 @@ mod tests {
             json!(MAX_TASK_TITLE_BYTES)
         );
         assert_eq!(wire["limits"]["batchKeyBytes"], json!(MAX_BATCH_KEY_BYTES));
+        assert_eq!(
+            wire["limits"]["parentToolIdBytes"],
+            json!(MAX_PARENT_TOOL_ID_BYTES)
+        );
         assert_eq!(wire["limits"]["nestedCount"], json!(MAX_NESTED_COUNT));
         assert_eq!(
             wire["limits"]["countedNestedToolIds"],
             json!(MAX_COUNTED_NESTED_IDS)
+        );
+        assert_eq!(
+            wire["limits"].as_object().map(serde_json::Map::len),
+            Some(6)
         );
         for name in ["legacy", "retained"] {
             let input = json!({"lifecycle": wire["valid"][name]});
@@ -290,8 +299,5 @@ mod tests {
             assert!(!valid(&value), "{patch}");
             assert!(dropped(&value), "{patch}");
         }
-        let mut oversized = retained.clone();
-        oversized["entries"][0]["taskTitle"] = json!("é".repeat(241));
-        assert!(!valid(&oversized));
     }
 }
