@@ -353,6 +353,13 @@ export function useAgentThreadNavigation({
     markThreadViewed(selectedThreadId);
   }, [canMarkSelectedViewed, markThreadViewed, selectedTerminalKey, selectedThreadId]);
 
+  const turnLogFacts = agents.turnLog ?? null;
+  useEffect(() => {
+    if (turnLogFacts === null) return;
+    turnLogFacts.setVisibleThread(selectedThreadId);
+    return () => turnLogFacts.setVisibleThread(null);
+  }, [selectedThreadId, turnLogFacts]);
+
   const closeFind = find.close;
   const requestReveal = find.requestReveal;
   const [pendingSearchReveal, setPendingSearchReveal] = useState<{

@@ -18,6 +18,7 @@ function status(
 ): AgentTurnLogSlotStatus {
   return {
     turnId,
+    threadId: THREAD_ID,
     state: { kind: "writing" },
     loss: { kind: "none" },
     pendingOps: 0,
@@ -190,14 +191,23 @@ describe("agent turn log facts store", () => {
     expect(store.evidenceRevisionOf(THREAD_ID)).toBeGreaterThan(revision);
   });
 
-  it("asks the injected port for the summaries of a thread it does not know", () => {
-    const requested: string[] = [];
-    const store = createAgentTurnLogFactsStore(
-      () => 0,
-      (threadId) => requested.push(threadId),
-    );
-    store.ensureThreadFacts(THREAD_ID);
-    expect(requested).toEqual([THREAD_ID]);
+  it("forwards every facts request and visible-thread pin to the injected request port", async () => {
+    const requested: Array<{ threadId: string; turnIds: ReadonlyArray<string> }> = [];
+    const rearmed: string[] = [];
+    const store = createAgentTurnLogFactsStore(() => 0, {
+      ensure: (threadId, turnIds) => {
+        requested.push({ threadId, turnIds });
+        return Promise.resolve();
+      },
+      rearm: (threadId) => rearmed.push(threadId),
+    });
+
+    await store.ensureThreadFacts(THREAD_ID, ["turn-1"]);
+    store.setVisibleThread(THREAD_ID);
+    store.setVisibleThread(null);
+
+    expect(requested).toEqual([{ threadId: THREAD_ID, turnIds: ["turn-1"] }]);
+    expect(rearmed).toEqual([THREAD_ID]);
   });
 
   it("stops notifying an unsubscribed listener and clears every turn", () => {

@@ -86,6 +86,7 @@ export type AgentTurnLogSlotState =
 
 export interface AgentTurnLogSlotStatus {
   readonly turnId: string;
+  readonly threadId: string;
   readonly state: AgentTurnLogSlotState;
   readonly loss: AgentTurnLogLoss;
   readonly pendingOps: number;

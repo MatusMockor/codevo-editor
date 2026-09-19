@@ -9,6 +9,7 @@ import type {
   ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { createAgentTurnLogFactsStore } from "../../application/agentTurnLogStatusStore";
 import { groupedEnvironmentProjects } from "./agentEnvironmentProjects";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
@@ -527,6 +528,40 @@ describe("useAgentThreadNavigation", () => {
     act(() => current().selectStartedThread("agt-2"));
     expect(current().selectedThreadId).toBe("agt-2");
     expect(current().find.open).toBe(true);
+  });
+
+  it("pins the visible thread to the selection while viewed-marking is suppressed", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const visible: Array<string | null> = [];
+    const turnLog = {
+      ...store,
+      setVisibleThread: (threadId: string | null) => {
+        visible.push(threadId);
+        store.setVisibleThread(threadId);
+      },
+    };
+    const remoteThreadId = "remote-thread:server:runner:conversation";
+    const markThreadViewed = vi.fn();
+    const session: AgentNavigationSession = {
+      current: {
+        selectedThreadId: remoteThreadId,
+        selectedThreadOwnerKey: null,
+        scopeState: NO_SCOPE_STATE,
+      },
+    };
+    render(
+      threadsSurfaceFixture({ threads: [], markThreadViewed, turnLog }),
+      [projectFixture()],
+      null,
+      session,
+    );
+
+    expect(current().selectedThreadId).toBe(remoteThreadId);
+    expect(markThreadViewed).not.toHaveBeenCalled();
+    expect(visible).toEqual([remoteThreadId]);
+
+    act(() => root.unmount());
+    expect(visible).toEqual([remoteThreadId, null]);
   });
 
   it.each([true, false])(

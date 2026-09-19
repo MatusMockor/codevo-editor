@@ -110,7 +110,16 @@ export function createAgentTurnLogLifecycle(
   let retiring: Promise<void> | null = null;
   let summaryRequester: AgentTurnLogSummaryRequester | null = null;
 
-  const facts = createAgentTurnLogFactsStore(now, (threadId) => summaryRequester?.ensure(threadId));
+  const timers: AgentTurnLogTimers = {
+    now: () => (dependenciesRef.current.timers ?? systemAgentTurnLogTimers).now(),
+    schedule: (callback, delayMs) =>
+      (dependenciesRef.current.timers ?? systemAgentTurnLogTimers).schedule(callback, delayMs),
+  };
+
+  const facts = createAgentTurnLogFactsStore(now, {
+    ensure: (threadId, turnIds) => summaryRequester?.ensure(threadId, turnIds) ?? Promise.resolve(),
+    rearm: (threadId) => summaryRequester?.rearm(threadId),
+  });
 
   const authority: AgentTurnLogOwnerAuthority = {
     ownsTurn: (scope, generation) =>
@@ -126,16 +135,14 @@ export function createAgentTurnLogLifecycle(
     generationOf: (request) =>
       currentAgentTurnLogGeneration(dependenciesRef.current.projects, request),
     active: () => phase !== "unmounted",
+    timers,
   });
   summaryRequester = requester;
 
   const onStatus = (writer: AgentTurnLogWriter, status: AgentTurnLogSlotStatus): void => {
     if (live !== writer) return;
-    const threadId =
-      openRequests.get(status.turnId)?.scope.threadId ?? facts.threadIdOf(status.turnId);
     if (status.state.kind === "stopped") openRequests.delete(status.turnId);
-    if (threadId === null) return;
-    facts.publishSlot(threadId, status);
+    facts.publishSlot(status.threadId, status);
   };
 
   const createWriter = (): AgentTurnLogWriter => {

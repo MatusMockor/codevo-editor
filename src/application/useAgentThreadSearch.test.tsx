@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThread, AgentTurn } from "../domain/agentThread";
 import * as agentThreadSearch from "../domain/agentThreadSearch";
 import type { AgentThreadSearchSurface, AgentThreadView } from "./agentThreadPorts";
-import { agentTurnLogEvidence, createAgentTurnLogFactsStore } from "./agentTurnLogStatusStore";
+import {
+  MAX_RETAINED_AGENT_TURN_LOG_FACT_THREADS,
+  agentTurnLogEvidence,
+  createAgentTurnLogFactsStore,
+} from "./agentTurnLogStatusStore";
 import {
   AGENT_THREAD_SEARCH_DEBOUNCE_MS,
   EMPTY_AGENT_THREAD_SEARCH_INDEX,
@@ -83,8 +87,10 @@ function renderSearch(
   let views = initialViews;
   let options = initialOptions;
   let current: AgentThreadSearchSurface | null = null;
+  let renders = 0;
   function Harness() {
     current = useAgentThreadSearch(views, options);
+    renders += 1;
     return null;
   }
 
@@ -94,6 +100,9 @@ function renderSearch(
   render();
 
   return {
+    renders(): number {
+      return renders;
+    },
     hook(): AgentThreadSearchSurface {
       expect(current).not.toBeNull();
       return current as AgentThreadSearchSurface;
@@ -561,10 +570,96 @@ describe("useAgentThreadSearch turn log evidence", () => {
     harness.unmount();
   });
 
+  function liveSlot(
+    threadId: string,
+    turnId: string,
+    contextWindow: { usedTokens: number; contextWindow: number } | null,
+  ) {
+    return {
+      turnId,
+      threadId,
+      state: { kind: "writing" } as const,
+      loss: { kind: "none" } as const,
+      pendingOps: 0,
+      pendingBytes: 0,
+      backpressure: false,
+      persistedThroughSeq: 0,
+      bounded: false,
+      contextWindow,
+    };
+  }
+
+  it("rebuilds the document of a thread whose facts the store evicted", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const alpha = truncatedThread("agt-a", "Alpha parser");
+    const harness = renderSearch([view(alpha)], {
+      evidenceOf: (turnId) => agentTurnLogEvidence(store.factsOf(turnId)),
+      turnLog: store,
+    });
+
+    act(() => {
+      store.publishSummaries("agt-a", [healthySummary("agt-a-t1")]);
+    });
+    harness.type("parser");
+    harness.fire();
+    expect(harness.hook().result?.documentsTruncated).toBe(false);
+
+    act(() => {
+      for (let index = 0; index <= MAX_RETAINED_AGENT_TURN_LOG_FACT_THREADS; index += 1) {
+        store.publishSummaries(`agt-filler-${index}`, [healthySummary(`turn-filler-${index}`)]);
+      }
+    });
+    expect(store.hasThreadFacts("agt-a")).toBe(false);
+    harness.fire();
+
+    expect(harness.hook().result?.documentsTruncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("ignores a live context window tick that moved no evidence", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const read: string[] = [];
+    const source = {
+      ...store,
+      evidenceRevisionOf: (threadId: string) => {
+        read.push(threadId);
+        return store.evidenceRevisionOf(threadId);
+      },
+    };
+    const alpha = truncatedThread("agt-a", "Alpha parser");
+    const beta = truncatedThread("agt-b", "Beta parser");
+    const harness = renderSearch([view(alpha), view(beta)], {
+      evidenceOf: (turnId) => agentTurnLogEvidence(store.factsOf(turnId)),
+      turnLog: source,
+    });
+    act(() => {
+      store.publishSlot("agt-a", liveSlot("agt-a", "agt-a-t1", null));
+    });
+    const renders = harness.renders();
+    read.length = 0;
+
+    act(() => {
+      store.publishSlot(
+        "agt-a",
+        liveSlot("agt-a", "agt-a-t1", { usedTokens: 5, contextWindow: 9 }),
+      );
+    });
+
+    expect(read).toEqual(["agt-a"]);
+    expect(harness.renders()).toBe(renders);
+    harness.unmount();
+  });
+
   it("asks for the facts of the threads a published result actually matched", () => {
     const store = createAgentTurnLogFactsStore(() => 0);
     const requested: string[] = [];
-    const source = { ...store, ensureThreadFacts: (threadId: string) => requested.push(threadId) };
+    const source = {
+      ...store,
+      ensureThreadFacts: (threadId: string) => {
+        requested.push(threadId);
+        return Promise.resolve();
+      },
+    };
     const alpha = truncatedThread("agt-a", "Alpha parser");
     const beta = truncatedThread("agt-b", "Beta router");
     const harness = renderSearch([view(alpha), view(beta)], { turnLog: source });

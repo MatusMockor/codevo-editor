@@ -80,7 +80,9 @@ describe("agent turn log hydration after a restart", () => {
     expect(harness.turnOf(LOG_THREAD_ID, LOG_TURN_ID)?.events).toHaveLength(PERSISTED_TAIL_EVENTS);
     expect(display(harness).window).toBe("lost");
 
-    act(() => harness.turnLog.facts.ensureThreadFacts(LOG_THREAD_ID));
+    act(() => {
+      void harness.turnLog.facts.ensureThreadFacts(LOG_THREAD_ID, [LOG_TURN_ID]);
+    });
     await settleLogStore();
     expect(display(harness).window).toBe("savedNotShown");
 

@@ -377,7 +377,11 @@ export function useAgentThreadStore(
         if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
         if (loadKeysRef.current.get(authority.rootKey) !== key) return;
         if (!summarized.ok) continue;
-        turnLog.facts.publishSummaries(thread.threadId, summarized.value);
+        turnLog.facts.publishSummaries(
+          thread.threadId,
+          summarized.value,
+          thread.turns.map((turn) => turn.turnId),
+        );
         sealInterruptedTurnLogs(turnLog, authority, thread, summarized.value);
       }
     },

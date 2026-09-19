@@ -533,6 +533,7 @@ export function createAgentTurnLogWriter(
     };
     return {
       turnId: slot.scope.turnId,
+      threadId: slot.scope.threadId,
       state: slot.state,
       loss: slotLoss(slot),
       pendingOps: pending.ops,

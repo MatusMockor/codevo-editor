@@ -17,6 +17,7 @@ import type {
   OpenAgentTurnLogSlotRequest,
 } from "./agentTurnLogPorts";
 import {
+  MAX_TRACKED_OPEN_AGENT_TURN_LOGS,
   createAgentTurnLogLifecycle,
   useAgentTurnLogging,
   type AgentTurnLogIntegration,
@@ -237,6 +238,32 @@ describe("useAgentTurnLogging lifetime", () => {
     const persistedSeqs = gateway.appends.flatMap((append) => append.ops.map((op) => op.seq));
     expect(persistedSeqs).toEqual([1, 2, 3, 4, 5, 6]);
     expect(lifecycle.integration.facts.factsOf(TURN_ID)?.live).toBe(true);
+    lifecycle.unmount();
+  });
+
+  it("still records the status of a turn whose open request aged out of the tracked window", async () => {
+    const gateway = persistentLogGateway();
+    const clock = manualTimers();
+    const dependenciesRef: { current: AgentTurnLoggingDependencies } = {
+      current: { gateway, projects: [project()], timers: clock.timers, now: clock.timers.now },
+    };
+    const lifecycle = createAgentTurnLogLifecycle(dependenciesRef);
+    const { facts, writer } = lifecycle.integration;
+    lifecycle.mount();
+
+    const oldest = "agt-1-turn-0";
+    for (let index = 0; index < MAX_TRACKED_OPEN_AGENT_TURN_LOGS + 6; index += 1) {
+      const request = openRequest();
+      writer.openTurn({ ...request, scope: { ...request.scope, turnId: `agt-1-turn-${index}` } });
+    }
+    await settle();
+    expect(facts.factsOf(oldest)).toBeNull();
+
+    writer.reportLoss(oldest, { kind: "supervisorGap" });
+    await settle();
+
+    expect(facts.threadIdOf(oldest)).toBe(openRequest().scope.threadId);
+    expect(facts.factsOf(oldest)?.loss).toEqual({ kind: "supervisorGap" });
     lifecycle.unmount();
   });
 

@@ -81,10 +81,20 @@ export function useAgentThreadSearch(
   );
   indexRef.current = index;
 
+  const revisionsRef = useRef(evidenceRevisions);
   useEffect(() => {
     if (turnLog === undefined) return;
-    const sync = (): void =>
-      setEvidenceRevisions((current) => nextEvidenceRevisions(current, indexRef.current, turnLog));
+    const sync = (changed?: ReadonlySet<string>): void => {
+      const next = nextEvidenceRevisions(
+        revisionsRef.current,
+        indexRef.current,
+        turnLog,
+        changed ?? null,
+      );
+      if (next === revisionsRef.current) return;
+      revisionsRef.current = next;
+      setEvidenceRevisions(next);
+    };
     sync();
     return turnLog.subscribe(sync);
   }, [index, turnLog]);
@@ -166,7 +176,12 @@ export function useAgentThreadSearch(
     if (turnLog === undefined) return;
     if (published === null) return;
     for (const match of published.matches.slice(0, MAX_AGENT_THREAD_SEARCH_FACTS_REQUESTS)) {
-      turnLog.ensureThreadFacts(match.threadId);
+      const thread = indexRef.current.entries.get(match.threadId)?.thread;
+      if (thread === undefined) continue;
+      void turnLog.ensureThreadFacts(
+        match.threadId,
+        thread.turns.map((turn) => turn.turnId),
+      );
     }
   }, [published, turnLog]);
 
@@ -282,6 +297,25 @@ function compareViewsForRetention(left: AgentThreadView, right: AgentThreadView)
 }
 
 function nextEvidenceRevisions(
+  current: ReadonlyMap<string, number>,
+  index: AgentThreadSearchIndex,
+  turnLog: AgentTurnLogFactsSource,
+  changedThreadIds: ReadonlySet<string> | null,
+): ReadonlyMap<string, number> {
+  if (changedThreadIds === null) return allEvidenceRevisions(current, index, turnLog);
+  let next: Map<string, number> | null = null;
+  for (const threadId of changedThreadIds) {
+    if (!index.entries.has(threadId)) continue;
+    const revision = turnLog.evidenceRevisionOf(threadId);
+    if (current.get(threadId) === revision) continue;
+    next = next ?? new Map(current);
+    next.set(threadId, revision);
+  }
+  if (next === null) return current;
+  return next;
+}
+
+function allEvidenceRevisions(
   current: ReadonlyMap<string, number>,
   index: AgentThreadSearchIndex,
   turnLog: AgentTurnLogFactsSource,

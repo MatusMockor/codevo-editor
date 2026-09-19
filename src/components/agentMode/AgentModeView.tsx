@@ -796,6 +796,7 @@ function LocalAgentModeView({
                 scopeEntries={navigation.scopeEntries}
                 search={navigation.search}
                 selectedThreadId={selectedThread?.thread.threadId ?? null}
+                turnLog={agents.turnLog ?? null}
               />
             )}
             {layout.rail === "expanded" && (

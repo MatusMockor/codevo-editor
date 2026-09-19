@@ -117,7 +117,9 @@ describe("agent turn log summaries are fetched lazily per thread", () => {
     await settleLogStore();
     harness.logGateway.holdSummaries = true;
 
-    act(() => harness.turnLog.facts.ensureThreadFacts(threadIdOf(0)));
+    act(() => {
+      void harness.turnLog.facts.ensureThreadFacts(threadIdOf(0), [turnIdOf(0, 0)]);
+    });
     await settleLogStore();
     expect(harness.logGateway.summarized).toHaveLength(1);
 
@@ -127,6 +129,20 @@ describe("agent turn log summaries are fetched lazily per thread", () => {
     await settleLogStore();
 
     expect(harness.turnLog.facts.hasThreadFacts(threadIdOf(0))).toBe(false);
+    expect(harness.turnLog.facts.factsOf(turnIdOf(0, 0))).toBeNull();
+    await harness.unmount();
+  });
+
+  it("summarizes a legacy thread without log rows once however often it is opened", async () => {
+    const harness = renderLogStore({ persisted: [loggedThread(0)] });
+    await settleLogStore();
+
+    for (let open = 0; open < 5; open += 1) {
+      act(() => harness.hook().hydrateThread?.(threadIdOf(0)));
+      await settleLogStore();
+    }
+
+    expect(harness.logGateway.summarized).toHaveLength(1);
     expect(harness.turnLog.facts.factsOf(turnIdOf(0, 0))).toBeNull();
     await harness.unmount();
   });

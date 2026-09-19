@@ -33,10 +33,7 @@ export const MAX_AGENT_TURN_HYDRATION_PAGES = 16;
 
 type AgentTurnHydratedAction = Extract<AgentThreadsAction, { kind: "turnHydrated" }>;
 
-export type AgentTurnLogHydrationSource = Pick<
-  AgentTurnLogIntegration,
-  "facts" | "readPage" | "summarize"
->;
+export type AgentTurnLogHydrationSource = Pick<AgentTurnLogIntegration, "facts" | "readPage">;
 
 export interface AgentTurnLogHydrationPorts {
   readonly turnLog: () => AgentTurnLogHydrationSource | null;
@@ -302,16 +299,8 @@ export function createAgentTurnLogHydrator(
       turnLog.facts.hasThreadFacts(authority.threadId) &&
       turnIds.every((turnId) => turnLog.facts.factsOf(turnId) !== null);
     if (known) return true;
-    const summarized = await attempt(() =>
-      turnLog.summarize({
-        rootKey: authority.rootKey,
-        ownerId: agentRootOwnerId(authority.rootKey),
-        threadId: authority.threadId,
-      }),
-    );
-    if (currentThread(authority) === null) return false;
-    if (summarized.ok) turnLog.facts.publishSummaries(authority.threadId, summarized.value);
-    return true;
+    await attempt(() => turnLog.facts.ensureThreadFacts(authority.threadId, turnIds));
+    return currentThread(authority) !== null;
   };
 
   const hydrateCandidate = async (
@@ -342,9 +331,9 @@ export function createAgentTurnLogHydrator(
     if (thread === undefined) return;
     const authority = captureThread(thread);
     if (authority === null) return;
-    const turnIds = hydrationCandidates(thread);
-    if (!(await ensureSummaries(turnLog, authority, turnIds))) return;
-    for (const turnId of turnIds) {
+    const evidenceTurnIds = thread.turns.map((turn) => turn.turnId);
+    if (!(await ensureSummaries(turnLog, authority, evidenceTurnIds))) return;
+    for (const turnId of hydrationCandidates(thread)) {
       if (currentThread(authority) === null) return;
       await hydrateCandidate(turnLog, authority, turnId);
     }

@@ -21,6 +21,7 @@ const THREAD_ID = "agt-1-0a1b";
 function slot(overrides: Partial<AgentTurnLogSlotStatus> = {}): AgentTurnLogSlotStatus {
   return {
     turnId: TURN_ID,
+    threadId: THREAD_ID,
     state: { kind: "writing" },
     loss: { kind: "none" },
     pendingOps: 0,

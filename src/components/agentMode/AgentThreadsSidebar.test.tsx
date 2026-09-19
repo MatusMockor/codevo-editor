@@ -14,6 +14,7 @@ import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThrea
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
 import { AGENT_THREAD_BULK_CONFIRM_DELAY_MS } from "../../domain/agentThreadBulkAction";
 import { __resetKeymapPlatformCacheForTests } from "../../domain/keymap";
+import { createAgentTurnLogFactsStore } from "../../application/agentTurnLogStatusStore";
 import { AgentClockProvider } from "./agentClock";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
@@ -65,6 +66,29 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".agent-rail__title")).toBeNull();
     expect(host.querySelector(".agent-rail__filters")).toBeNull();
     expect(host.textContent).not.toContain("running");
+  });
+
+  it("asks the turn log for the facts of the visible rows, bounded to eight threads", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const asked: Array<{ threadId: string; turnIds: ReadonlyArray<string> }> = [];
+    const turnLog = {
+      ...store,
+      ensureThreadFacts: (threadId: string, turnIds: ReadonlyArray<string>) => {
+        asked.push({ threadId, turnIds });
+        return Promise.resolve();
+      },
+    };
+    const views = Array.from({ length: 12 }, (_unused, index) =>
+      settled(`agt-${index}`, `Thread ${index}`, { updatedAtEpochMs: NOW - index * 60_000 }),
+    );
+
+    render({ groups: [group(ROOT, "app", views)], turnLog });
+
+    expect(asked).toHaveLength(8);
+    expect(asked.map((entry) => entry.threadId)).toEqual(
+      views.slice(0, 8).map((view) => view.thread.threadId),
+    );
+    expect(asked[0]?.turnIds).toEqual(["agt-0-t1"]);
   });
 
   it("hands the rail chrome row to the window as a drag region", () => {

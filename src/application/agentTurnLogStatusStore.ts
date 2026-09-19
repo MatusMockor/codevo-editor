@@ -1,6 +1,11 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import type { AgentContextWindow } from "../domain/agentContextWindow";
-import type { AgentTurnLogEvidence, AgentTurnLogHydration } from "../domain/agentTurnContentLoss";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  type AgentTurnLogEvidence,
+  type AgentTurnLogEvidenceLookup,
+  type AgentTurnLogHydration,
+} from "../domain/agentTurnContentLoss";
 import { agentTurnDigestContextWindow } from "../domain/agentTurnDigest";
 import type { AgentTurnLogLoss, AgentTurnLogSummary } from "../domain/agentTurnLog";
 import type {
@@ -12,6 +17,7 @@ import type {
 
 export const MAX_RETAINED_AGENT_TURN_LOG_FACT_THREADS = 16;
 export const MAX_RETAINED_AGENT_TURN_LOG_FACTS_PER_THREAD = 64;
+export const MAX_RETAINED_AGENT_TURN_LOG_FACT_TOMBSTONES = 64;
 export const AGENT_TURN_LOG_DEGRADED_NOTICE_MS = 10_000;
 
 export type AgentTurnLogWriterHealth =
@@ -28,23 +34,32 @@ export interface AgentTurnLogFacts {
   readonly health: AgentTurnLogWriterHealth;
 }
 
-export type AgentTurnLogSummaryRequest = (threadId: string) => void;
+export type AgentTurnLogFactsListener = (changedThreadIds: ReadonlySet<string>) => void;
+
+export interface AgentTurnLogSummaryRequestPort {
+  ensure(threadId: string, turnIds: ReadonlyArray<string>): Promise<void>;
+  rearm(threadId: string): void;
+}
 
 export interface AgentTurnLogFactsSource {
-  subscribe(listener: () => void): () => void;
+  subscribe(listener: AgentTurnLogFactsListener): () => void;
   factsOf(turnId: string): AgentTurnLogFacts | null;
   threadIdOf(turnId: string): string | null;
   hasThreadFacts(threadId: string): boolean;
   evidenceRevisionOf(threadId: string): number;
-  ensureThreadFacts(threadId: string): void;
+  ensureThreadFacts(threadId: string, turnIds: ReadonlyArray<string>): Promise<void>;
+  setVisibleThread(threadId: string | null): void;
 }
 
 export interface AgentTurnLogFactsStore extends AgentTurnLogFactsSource {
   publishSlot(threadId: string, status: AgentTurnLogSlotStatus): void;
-  publishSummaries(threadId: string, summaries: ReadonlyArray<AgentTurnLogSummary>): void;
+  publishSummaries(
+    threadId: string,
+    summaries: ReadonlyArray<AgentTurnLogSummary>,
+    turnIds?: ReadonlyArray<string> | null,
+  ): void;
   publishHydration(turnId: string, hydration: AgentTurnLogHydration): void;
   forgetTurn(turnId: string): void;
-  setVisibleThread(threadId: string | null): void;
   clear(): void;
 }
 
@@ -69,35 +84,59 @@ interface ThreadEntry {
   evidenceRevision: number;
 }
 
-const NO_SUMMARY_REQUEST: AgentTurnLogSummaryRequest = () => undefined;
-
 export function createAgentTurnLogFactsStore(
   now: () => number,
-  requestSummaries: AgentTurnLogSummaryRequest = NO_SUMMARY_REQUEST,
+  requests: AgentTurnLogSummaryRequestPort | null = null,
 ): AgentTurnLogFactsStore {
   const threads = new Map<string, ThreadEntry>();
   const threadOfTurn = new Map<string, string>();
-  const listeners = new Set<() => void>();
+  const tombstones = new Map<string, number>();
+  const listeners = new Set<AgentTurnLogFactsListener>();
   let visibleThreadId: string | null = null;
   let revision = 0;
+  let pending: Set<string> | null = null;
 
-  const notify = (): void => {
-    for (const listener of [...listeners]) listener();
+  const mark = (threadId: string): void => {
+    const changed = pending ?? new Set<string>();
+    pending = changed;
+    changed.add(threadId);
   };
 
-  const bump = (entry: ThreadEntry): void => {
+  const flush = (): void => {
+    const changed = pending;
+    pending = null;
+    if (changed === null) return;
+    for (const listener of [...listeners]) listener(changed);
+  };
+
+  const bump = (threadId: string, entry: ThreadEntry): void => {
     revision += 1;
     entry.evidenceRevision = revision;
+    mark(threadId);
   };
 
-  const dropThread = (threadId: string): void => {
+  const entomb = (threadId: string): void => {
+    revision += 1;
+    tombstones.delete(threadId);
+    tombstones.set(threadId, -revision);
+    while (tombstones.size > MAX_RETAINED_AGENT_TURN_LOG_FACT_TOMBSTONES) {
+      const oldest = tombstones.keys().next().value;
+      if (oldest === undefined) return;
+      tombstones.delete(oldest);
+    }
+  };
+
+  const dropThread = (threadId: string): boolean => {
     const entry = threads.get(threadId);
+    if (entry === undefined) return false;
     threads.delete(threadId);
-    if (entry === undefined) return;
     for (const turnId of entry.turns.keys()) {
       if (threadOfTurn.get(turnId) !== threadId) continue;
       threadOfTurn.delete(turnId);
     }
+    entomb(threadId);
+    mark(threadId);
+    return true;
   };
 
   const evictThreads = (keep: string): void => {
@@ -119,6 +158,7 @@ export function createAgentTurnLogFactsStore(
     }
     const created: ThreadEntry = { turns: new Map(), evidenceRevision: 0 };
     threads.set(threadId, created);
+    if (tombstones.delete(threadId)) mark(threadId);
     evictThreads(threadId);
     return created;
   };
@@ -129,7 +169,7 @@ export function createAgentTurnLogFactsStore(
       if (oldest === undefined) return;
       entry.turns.delete(oldest);
       if (threadOfTurn.get(oldest) === threadId) threadOfTurn.delete(oldest);
-      bump(entry);
+      bump(threadId, entry);
     }
   };
 
@@ -139,22 +179,14 @@ export function createAgentTurnLogFactsStore(
     return threads.get(threadId)?.turns.get(turnId) ?? null;
   };
 
-  const releaseElsewhere = (threadId: string, turnId: string): void => {
-    const previousThreadId = threadOfTurn.get(turnId);
-    if (previousThreadId === undefined || previousThreadId === threadId) return;
-    const previous = threads.get(previousThreadId);
-    if (previous === undefined) return;
-    if (!previous.turns.delete(turnId)) return;
-    bump(previous);
-  };
-
   const retain = (
     threadId: string,
     turnId: string,
     facts: AgentTurnLogFacts,
     degradedSinceMs: number | null,
   ): void => {
-    releaseElsewhere(threadId, turnId);
+    const owner = threadOfTurn.get(turnId);
+    if (owner !== undefined && owner !== threadId) return;
     const entry = touchThread(threadId);
     const existing = entry.turns.get(turnId);
     if (existing !== undefined && sameFacts(existing.facts, facts)) {
@@ -164,83 +196,118 @@ export function createAgentTurnLogFactsStore(
     entry.turns.delete(turnId);
     entry.turns.set(turnId, { facts, degradedSinceMs });
     threadOfTurn.set(turnId, threadId);
-    if (existing === undefined || !sameEvidence(existing.facts, facts)) bump(entry);
+    if (existing === undefined || !sameEvidence(existing.facts, facts)) bump(threadId, entry);
     evictTurns(threadId, entry);
-    notify();
+    mark(threadId);
+  };
+
+  const applySlot = (threadId: string, status: AgentTurnLogSlotStatus): void => {
+    const existing = entryOf(status.turnId);
+    const degradedSinceMs = degradedSince(existing?.degradedSinceMs ?? null, status.state, now());
+    retain(
+      threadId,
+      status.turnId,
+      {
+        turnId: status.turnId,
+        logged: true,
+        loss: status.loss,
+        sealed: status.state.kind === "stopped" && status.state.reason === "sealed",
+        live: status.state.kind !== "stopped",
+        hydration: existing?.facts.hydration ?? "notAttempted",
+        contextWindow: status.contextWindow,
+        health: writerHealth(status, degradedSinceMs, now()),
+      },
+      degradedSinceMs,
+    );
+  };
+
+  const applySummaries = (
+    threadId: string,
+    summaries: ReadonlyArray<AgentTurnLogSummary>,
+    turnIds: ReadonlyArray<string> | null | undefined,
+  ): void => {
+    touchThread(threadId);
+    const asked = turnIds === null || turnIds === undefined ? null : new Set(turnIds);
+    for (const summary of summaries.slice(-MAX_RETAINED_AGENT_TURN_LOG_FACTS_PER_THREAD)) {
+      if (asked !== null && !asked.has(summary.turnId)) continue;
+      const existing = entryOf(summary.turnId);
+      if (existing?.facts.live === true) continue;
+      retain(
+        threadId,
+        summary.turnId,
+        {
+          turnId: summary.turnId,
+          logged: true,
+          loss: summary.loss,
+          sealed: summary.sealed,
+          live: false,
+          hydration: existing?.facts.hydration ?? "notAttempted",
+          contextWindow: agentTurnDigestContextWindow(summary.digest),
+          health: HEALTHY,
+        },
+        null,
+      );
+    }
+  };
+
+  const applyHydration = (turnId: string, hydration: AgentTurnLogHydration): void => {
+    const threadId = threadOfTurn.get(turnId);
+    if (threadId === undefined) return;
+    const existing = entryOf(turnId);
+    if (existing === null) return;
+    if (existing.facts.hydration === hydration) return;
+    retain(threadId, turnId, { ...existing.facts, hydration }, existing.degradedSinceMs);
+  };
+
+  const applyForget = (turnId: string): void => {
+    const threadId = threadOfTurn.get(turnId);
+    if (threadId === undefined) return;
+    threadOfTurn.delete(turnId);
+    const entry = threads.get(threadId);
+    if (entry === undefined) return;
+    if (!entry.turns.delete(turnId)) return;
+    bump(threadId, entry);
+    if (entry.turns.size > 0) return;
+    dropThread(threadId);
+  };
+
+  const applyVisibleThread = (threadId: string | null): void => {
+    visibleThreadId = threadId;
+    if (threadId === null) return;
+    if (threads.has(threadId)) touchThread(threadId);
+    requests?.rearm(threadId);
+  };
+
+  const applyClear = (): void => {
+    visibleThreadId = null;
+    for (const threadId of [...threads.keys()]) dropThread(threadId);
+    threadOfTurn.clear();
   };
 
   return {
     publishSlot(threadId, status) {
-      const existing = entryOf(status.turnId);
-      const degradedSinceMs = degradedSince(existing?.degradedSinceMs ?? null, status.state, now());
-      retain(
-        threadId,
-        status.turnId,
-        {
-          turnId: status.turnId,
-          logged: true,
-          loss: status.loss,
-          sealed: status.state.kind === "stopped" && status.state.reason === "sealed",
-          live: status.state.kind !== "stopped",
-          hydration: existing?.facts.hydration ?? "notAttempted",
-          contextWindow: status.contextWindow,
-          health: writerHealth(status, degradedSinceMs, now()),
-        },
-        degradedSinceMs,
-      );
+      applySlot(threadId, status);
+      flush();
     },
-    publishSummaries(threadId, summaries) {
-      touchThread(threadId);
-      for (const summary of summaries.slice(-MAX_RETAINED_AGENT_TURN_LOG_FACTS_PER_THREAD)) {
-        const existing = entryOf(summary.turnId);
-        if (existing?.facts.live === true) continue;
-        retain(
-          threadId,
-          summary.turnId,
-          {
-            turnId: summary.turnId,
-            logged: true,
-            loss: summary.loss,
-            sealed: summary.sealed,
-            live: false,
-            hydration: existing?.facts.hydration ?? "notAttempted",
-            contextWindow: agentTurnDigestContextWindow(summary.digest),
-            health: HEALTHY,
-          },
-          null,
-        );
-      }
+    publishSummaries(threadId, summaries, turnIds) {
+      applySummaries(threadId, summaries, turnIds);
+      flush();
     },
     publishHydration(turnId, hydration) {
-      const threadId = threadOfTurn.get(turnId);
-      if (threadId === undefined) return;
-      const existing = entryOf(turnId);
-      if (existing === null) return;
-      if (existing.facts.hydration === hydration) return;
-      retain(threadId, turnId, { ...existing.facts, hydration }, existing.degradedSinceMs);
+      applyHydration(turnId, hydration);
+      flush();
     },
     forgetTurn(turnId) {
-      const threadId = threadOfTurn.get(turnId);
-      if (threadId === undefined) return;
-      threadOfTurn.delete(turnId);
-      const entry = threads.get(threadId);
-      if (entry === undefined) return;
-      if (!entry.turns.delete(turnId)) return;
-      bump(entry);
-      if (entry.turns.size === 0) threads.delete(threadId);
-      notify();
+      applyForget(turnId);
+      flush();
     },
     setVisibleThread(threadId) {
-      visibleThreadId = threadId;
-      if (threadId === null) return;
-      if (!threads.has(threadId)) return;
-      touchThread(threadId);
+      applyVisibleThread(threadId);
+      flush();
     },
     clear() {
-      if (threads.size === 0) return;
-      threads.clear();
-      threadOfTurn.clear();
-      notify();
+      applyClear();
+      flush();
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -256,10 +323,10 @@ export function createAgentTurnLogFactsStore(
       return threads.has(threadId);
     },
     evidenceRevisionOf(threadId) {
-      return threads.get(threadId)?.evidenceRevision ?? 0;
+      return threads.get(threadId)?.evidenceRevision ?? tombstones.get(threadId) ?? 0;
     },
-    ensureThreadFacts(threadId) {
-      requestSummaries(threadId);
+    ensureThreadFacts(threadId, turnIds) {
+      return requests?.ensure(threadId, turnIds) ?? Promise.resolve();
     },
   };
 }
@@ -280,6 +347,59 @@ export function useAgentTurnLogFacts(
 
 function subscribeToNothing(): () => void {
   return () => undefined;
+}
+
+interface EvidenceLookupKey {
+  readonly source: AgentTurnLogFactsSource | null;
+  readonly fallback: AgentTurnLogEvidenceLookup;
+}
+
+export function useAgentTurnLogThreadEvidence(
+  source: AgentTurnLogFactsSource | null,
+  threadIds: ReadonlyArray<string>,
+  fallback: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
+): AgentTurnLogEvidenceLookup {
+  const lookupRef = useRef<AgentTurnLogEvidenceLookup>(fallback);
+  const keyRef = useRef<EvidenceLookupKey | null>(null);
+  const key = keyRef.current;
+  if (key === null || key.source !== source || key.fallback !== fallback) {
+    keyRef.current = { source, fallback };
+    lookupRef.current = evidenceLookupOf(source, fallback);
+  }
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      if (source === null) return () => undefined;
+      const known = new Map<string, number>();
+      for (const threadId of threadIds) known.set(threadId, source.evidenceRevisionOf(threadId));
+      return source.subscribe((changed) => {
+        let moved = false;
+        for (const threadId of changed) {
+          const previous = known.get(threadId);
+          if (previous === undefined) continue;
+          const next = source.evidenceRevisionOf(threadId);
+          if (previous === next) continue;
+          known.set(threadId, next);
+          moved = true;
+        }
+        if (!moved) return;
+        lookupRef.current = evidenceLookupOf(source, fallback);
+        onStoreChange();
+      });
+    },
+    [fallback, source, threadIds],
+  );
+
+  const read = useCallback(() => lookupRef.current, []);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+function evidenceLookupOf(
+  source: AgentTurnLogFactsSource | null,
+  fallback: AgentTurnLogEvidenceLookup,
+): AgentTurnLogEvidenceLookup {
+  if (source === null) return fallback;
+  return (turnId) => agentTurnLogEvidence(source.factsOf(turnId));
 }
 
 function degradedSince(

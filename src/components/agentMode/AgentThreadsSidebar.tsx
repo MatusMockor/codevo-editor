@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -29,6 +30,7 @@ import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import { AgentUsagePanel } from "./AgentUsagePanel";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
+import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
 import { AgentThreadList } from "./AgentThreadList";
 import { AgentThreadSelectionBar } from "./AgentThreadSelectionBar";
@@ -58,6 +60,7 @@ const EMPTY_JUMP_LABELS: ReadonlyMap<string, string> = new Map();
 const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 const NO_BULK_COMMAND: (command: AgentThreadBulkCommand) => void = () => undefined;
+const MAX_AGENT_RAIL_FACTS_REQUESTS = 8;
 export interface AgentThreadsSidebarProps {
   readonly addProjectAvailable: boolean;
   readonly accountUsage: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
@@ -71,6 +74,7 @@ export interface AgentThreadsSidebarProps {
   readonly providerManagement: AgentProviderManagementSurface;
   readonly pendingClone?: RemoteAddProjectPendingClone | null;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
+  readonly turnLog?: AgentTurnLogFactsSource | null;
   onCancelPendingClone?(): void;
   onDismissPendingClone?(): void;
   onOpenProviderSettings(): void;
@@ -116,6 +120,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   scopeEntries,
   search,
   selectedThreadId,
+  turnLog = null,
 }: AgentThreadsSidebarProps) {
   const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [archivedShown, setArchivedShown] = useState(ARCHIVED_PAGE_COUNT);
@@ -148,6 +153,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   const views = useMemo(() => agentRailViews(groups), [groups]);
   const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
+  const usageThreads = useMemo(() => views.map((view) => view.thread), [views]);
   const usageProjectLabels = useMemo(
     () => new Map(groups.map((group) => [group.projectRootKey, group.label])),
     [groups],
@@ -179,6 +185,16 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     () => agentRailSections(views, scope, archivedExpanded, archivedShown),
     [archivedExpanded, archivedShown, scope, views],
   );
+  useEffect(() => {
+    if (turnLog === null) return;
+    const visible = [...sections.pinned, ...sections.active, ...sections.archived];
+    for (const view of visible.slice(0, MAX_AGENT_RAIL_FACTS_REQUESTS)) {
+      void turnLog.ensureThreadFacts(
+        view.thread.threadId,
+        view.thread.turns.map((turn) => turn.turnId),
+      );
+    }
+  }, [sections, turnLog]);
   const empty = useMemo(
     () => agentRailEmptyState(groups, sections, scope, scopeEntries),
     [groups, scope, scopeEntries, sections],
@@ -456,7 +472,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
                     accountUsage={accountUsage}
                     evidenceOf={evidenceOf}
                     projectLabels={usageProjectLabels}
-                    threads={views.map((view) => view.thread)}
+                    threads={usageThreads}
+                    turnLog={turnLog}
                   />
                 </div>
               </div>

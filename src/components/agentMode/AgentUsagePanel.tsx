@@ -12,6 +12,10 @@ import {
   NO_AGENT_TURN_LOG_EVIDENCE,
   type AgentTurnLogEvidenceLookup,
 } from "../../domain/agentTurnContentLoss";
+import {
+  useAgentTurnLogThreadEvidence,
+  type AgentTurnLogFactsSource,
+} from "../../application/agentTurnLogStatusStore";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
 
 export interface AgentUsagePanelProps {
@@ -20,6 +24,7 @@ export interface AgentUsagePanelProps {
   readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly nowEpochMs?: number;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
+  readonly turnLog?: AgentTurnLogFactsSource | null;
 }
 
 interface PeriodOption {
@@ -41,12 +46,15 @@ export function AgentUsagePanel({
   nowEpochMs = Date.now(),
   projectLabels,
   threads,
+  turnLog = null,
 }: AgentUsagePanelProps) {
   const [period, setPeriod] = useState<AgentUsagePeriod>("today");
   const periodTabsRef = useRef<Array<HTMLButtonElement | null>>([]);
+  const threadIds = useMemo(() => threads.map((thread) => thread.threadId), [threads]);
+  const evidence = useAgentTurnLogThreadEvidence(turnLog, threadIds, evidenceOf);
   const usage = useMemo(
-    () => aggregateAgentUsage(threads, period, nowEpochMs, evidenceOf),
-    [evidenceOf, nowEpochMs, period, threads],
+    () => aggregateAgentUsage(threads, period, nowEpochMs, evidence),
+    [evidence, nowEpochMs, period, threads],
   );
   const spend = useMemo(() => localSpendSummary(usage.providers), [usage.providers]);
   const handlePeriodKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
