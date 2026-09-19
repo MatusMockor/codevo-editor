@@ -22,6 +22,11 @@
   min-height: 0;
 }
 
+.agent-session__scroll:focus-visible,
+.agent-queued-list:focus-visible {
+  box-shadow: none;
+}
+
 .agent-session__body {
   display: grid;
   gap: var(--agent-turn-gap);
