@@ -6,7 +6,7 @@ import {
   type AgentArtifactMetadata,
 } from "../domain/agentArtifact";
 
-type Invoke = (command: string, args: Readonly<{ request: unknown }>) => Promise<unknown>;
+export type Invoke = (command: string, args: Readonly<{ request: unknown }>) => Promise<unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function artifactId(owner: AgentArtifactOwner, value: string): boolean {
   return owner.kind === "local" ? /^[a-f0-9]{64}$/.test(value) : UUID.test(value);
@@ -19,6 +19,17 @@ function identifier(value: string): void {
     /[\u0000-\u001f\u007f]/.test(value)
   )
     throw new Error("Invalid artifact owner.");
+}
+export function agentArtifactAuthority(
+  owner: AgentArtifactOwner,
+): Readonly<Record<string, string>> {
+  return authority(owner);
+}
+export function agentArtifactReference(path: string): string {
+  // Already-decoded references must not be decoded a second time at this boundary.
+  if (typeof path !== "string" || parseAgentArtifactPath(encodeURI(path)) !== path)
+    throw new Error("Invalid artifact path.");
+  return path;
 }
 function authority(owner: AgentArtifactOwner): Readonly<Record<string, string>> {
   if (owner.kind === "local") {
@@ -71,9 +82,7 @@ export class TauriAgentArtifactGateway implements AgentArtifactLoader {
   constructor(private readonly invokeCommand: Invoke = invoke) {}
   async resolve(owner: AgentArtifactOwner, path: string): Promise<AgentArtifactMetadata> {
     const request = authority(owner);
-    // Already-decoded references must not be decoded a second time at this boundary.
-    if (typeof path !== "string" || parseAgentArtifactPath(encodeURI(path)) !== path)
-      throw new Error("Invalid artifact path.");
+    agentArtifactReference(path);
     const result = await this.invokeCommand(
       owner.kind === "local" ? "resolve_agent_output_artifact" : "resolve_remote_agent_artifact",
       { request: { ...request, path } },

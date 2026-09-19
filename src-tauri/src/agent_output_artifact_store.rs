@@ -1,3 +1,4 @@
+use super::errors;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -58,7 +59,24 @@ impl OutputArtifactStore {
         root: &Path,
         reference: &str,
     ) -> Result<ArtifactMetadata, String> {
-        self.resolve_registered(owner, root, &files::directory(root)?, reference, || Ok(()))
+        self.resolve_bounded(owner, root, reference, None)
+    }
+    #[cfg(test)]
+    fn resolve_bounded(
+        &self,
+        owner: &ArtifactOwner<'_>,
+        root: &Path,
+        reference: &str,
+        max_source_mtime_ms: Option<u64>,
+    ) -> Result<ArtifactMetadata, String> {
+        self.resolve_registered(
+            owner,
+            root,
+            &files::directory(root)?,
+            reference,
+            max_source_mtime_ms,
+            || Ok(()),
+        )
     }
     pub fn resolve_registered(
         &self,
@@ -66,30 +84,15 @@ impl OutputArtifactStore {
         root: &Path,
         root_descriptor: &fs::File,
         reference: &str,
+        max_source_mtime_ms: Option<u64>,
         revalidate: impl Fn() -> Result<(), String>,
     ) -> Result<ArtifactMetadata, String> {
-        if reference.is_empty() || reference.len() > 4096 || reference.contains('\0') {
-            return Err("Invalid artifact reference.".into());
-        }
-        let path = Path::new(reference);
-        let relative = if path.is_absolute() {
-            path.strip_prefix(root)
-                .map_err(|_| "Artifact is outside its workspace.")?
-        } else {
-            path
-        };
-        if relative
-            .components()
-            .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err("Invalid artifact reference.".into());
-        }
-        let name = relative
-            .file_name()
-            .and_then(|s| s.to_str())
-            .filter(|s| s.len() <= 255)
-            .ok_or("Invalid artifact name.")?;
-        let (media_type, limit) = media_type(relative)?;
+        let Validated {
+            relative,
+            name,
+            media_type,
+            limit,
+        } = validated(root, reference)?;
         let owner_key = owner.key();
         let id = digest(&serde_json::to_vec(&(&owner_key, relative.to_str())).unwrap());
         let _guard = self
@@ -99,7 +102,7 @@ impl OutputArtifactStore {
         revalidate()?;
         fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
         let directory = files::directory(&self.directory)?;
-        files::lock(&directory)?;
+        let _lock = files::lock(&directory)?;
         let filename = format!("{id}.artifact");
         if let Ok(file) = files::open(&directory, Path::new(&filename), libc::O_RDONLY) {
             revalidate()?;
@@ -112,7 +115,7 @@ impl OutputArtifactStore {
             revalidate()?;
             return Ok(result);
         }
-        let bytes = files::source(root, root_descriptor, reference, limit)?;
+        let bytes = files::source(root, root_descriptor, reference, limit, max_source_mtime_ms)?;
         verify(media_type, &bytes)?;
         let metadata = ArtifactMetadata {
             id,
@@ -137,22 +140,23 @@ impl OutputArtifactStore {
         revalidate()?;
         Ok(metadata)
     }
+    pub fn locate(
+        &self,
+        root: &Path,
+        root_descriptor: &fs::File,
+        reference: &str,
+    ) -> Result<PathBuf, String> {
+        let validated = validated(root, reference)?;
+        files::locate(root, root_descriptor, reference)?;
+        Ok(root.join(validated.relative))
+    }
     pub fn existing(
         &self,
         owner: &ArtifactOwner<'_>,
         root: &Path,
         reference: &str,
     ) -> Result<Option<ArtifactMetadata>, String> {
-        if reference.is_empty() || reference.len() > 4096 || reference.contains('\0') {
-            return Err("Invalid artifact reference.".into());
-        }
-        let path = Path::new(reference);
-        let relative = if path.is_absolute() {
-            path.strip_prefix(root)
-                .map_err(|_| "Artifact is outside its workspace.")?
-        } else {
-            path
-        };
+        let relative = files::workspace_relative(root, reference)?;
         if relative.as_os_str().is_empty()
             || relative
                 .components()
@@ -234,6 +238,33 @@ impl OutputArtifactStore {
         Ok(())
     }
 }
+struct Validated<'a> {
+    relative: &'a Path,
+    name: &'a str,
+    media_type: &'static str,
+    limit: u64,
+}
+fn validated<'a>(root: &Path, reference: &'a str) -> Result<Validated<'a>, String> {
+    let relative = files::workspace_relative(root, reference)?;
+    if relative
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("Invalid artifact reference.".into());
+    }
+    let name = relative
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| s.len() <= 255)
+        .ok_or("Invalid artifact name.")?;
+    let (media_type, limit) = media_type(relative)?;
+    Ok(Validated {
+        relative,
+        name,
+        media_type,
+        limit,
+    })
+}
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -280,7 +311,7 @@ fn media_type(path: &Path) -> Result<(&'static str, u64), String> {
         "png" => Ok(("image/png", MAX_IMAGE)),
         "jpg" | "jpeg" => Ok(("image/jpeg", MAX_IMAGE)),
         "webp" => Ok(("image/webp", MAX_IMAGE)),
-        _ => Err("Only HTML, PNG, JPEG and WebP artifacts are supported.".into()),
+        _ => Err(errors::UNSUPPORTED_MEDIA_TYPE.into()),
     }
 }
 fn verify(mime: &str, bytes: &[u8]) -> Result<(), String> {
@@ -307,11 +338,10 @@ fn verify(mime: &str, bytes: &[u8]) -> Result<(), String> {
         }
         _ => false,
     };
-    if valid && bytes.len() as u64 <= MAX_IMAGE {
-        Ok(())
-    } else {
-        Err("Artifact content does not match its supported media type.".into())
+    if !valid || bytes.len() as u64 > MAX_IMAGE {
+        return Err(errors::MEDIA_TYPE_MISMATCH.into());
     }
+    Ok(())
 }
 #[cfg(test)]
 #[path = "agent_output_artifact_store_tests.rs"]

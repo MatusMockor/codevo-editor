@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "newestTerminalTurnRule": "Capture only a terminal turn that has no terminal successor.",
+  "reasons": [
+    "snapshotMissing",
+    "changedOnDisk",
+    "unverifiable",
+    "conversationAdvanced",
+    "notPreviewable",
+    "storageBusy",
+    "tooLarge",
+    "readFailed",
+    "previewFailed",
+    "expired"
+  ],
+  "retryable": ["storageBusy", "readFailed", "previewFailed", "expired"],
+  "backendMessages": {
+    "snapshotMissing": ["This older turn has no saved artifact snapshot."],
+    "changedOnDisk": ["Artifact changed while reading.", "Artifact changed after this turn ended."],
+    "unverifiable": ["This turn has no recorded end time, so its files cannot be verified."],
+    "conversationAdvanced": ["The conversation advanced before its artifact was saved."],
+    "notPreviewable": [
+      "Artifact must be a bounded regular file without hard links.",
+      "Artifact must be a regular file.",
+      "Artifact content does not match its supported media type.",
+      "Only HTML, PNG, JPEG and WebP artifacts are supported."
+    ],
+    "storageBusy": ["Artifact storage is busy. Try again."]
+  }
+}

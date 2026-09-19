@@ -57,8 +57,8 @@ describe("turn artifact integration", () => {
       { kind: "assistantText", text: "ifacts/view.html)" },
       { kind: "result", text: "[Design](artifacts/view.html)", isError: false, usage: null },
     ]);
-    expect(host.querySelectorAll("button")).toHaveLength(1);
-    expect(host.textContent).toBe("Design");
+    expect(host.querySelectorAll(".agent-artifacts__chip")).toHaveLength(1);
+    expect(host.querySelector(".agent-artifacts__name")?.textContent).toBe("Design");
     expect(resolve).not.toHaveBeenCalled();
   });
   it("never treats user text or tool output as artifact authority", () => {
@@ -79,7 +79,7 @@ describe("turn artifact integration", () => {
       serverId: "server",
       runnerId: "runner",
     });
-    await act(async () => host.querySelector("button")!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".agent-artifacts__chip")!.click());
     expect(resolve).toHaveBeenCalledWith(
       { kind: "remote", serverId: "server", runnerId: "runner", taskId: "turn" },
       "result.png",
@@ -87,7 +87,7 @@ describe("turn artifact integration", () => {
   });
   it("routes local files through the persisted owner and turn", async () => {
     render([{ kind: "assistantText", text: "[Design](result.html)" }]);
-    await act(async () => host.querySelector("button")!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".agent-artifacts__chip")!.click());
     expect(resolve).toHaveBeenCalledWith(
       { kind: "local", ...scope.owner, threadId: "thread", turnId: "turn" },
       "result.html",

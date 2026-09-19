@@ -574,6 +574,8 @@ pub fn run() {
             agent_attachment_commands::release_agent_attachment,
             agent_output_artifact_commands::resolve_agent_output_artifact,
             agent_output_artifact_commands::read_agent_output_artifact,
+            agent_output_artifact_commands::locate_agent_output_artifact_file,
+            agent_output_artifact_commands::reveal_agent_output_artifact_file,
             agent_attachment_commands::read_agent_attachment,
             agent_attachment_commands::reveal_agent_attachment,
             agent_task_commands::acknowledge_agent_task_start,

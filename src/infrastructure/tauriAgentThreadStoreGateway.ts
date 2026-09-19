@@ -1,6 +1,10 @@
-import { captureLocalAgentArtifacts } from "./captureLocalAgentArtifacts";
+import {
+  AgentArtifactCaptureLedger,
+  captureLocalAgentArtifacts,
+} from "./captureLocalAgentArtifacts";
 import { TauriAgentArtifactGateway } from "./tauriAgentArtifactGateway";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { AgentThread } from "../domain/agentThread";
 import type {
   AgentThreadStoreGateway,
   AgentThreadStoreOwnerRequest,
@@ -27,6 +31,8 @@ const EMPTY_SNAPSHOT: AgentThreadStoreSnapshot = Object.freeze({
 });
 
 export class TauriAgentThreadStoreGateway implements AgentThreadStoreGateway {
+  private readonly captures = new AgentArtifactCaptureLedger();
+
   constructor(
     private readonly invokeCommand: InvokeAgentThreadStoreCommand = invokeAgentThreadStoreCommand,
     private readonly isRuntimeAvailable: AgentThreadStoreRuntimeDetector = isTauri,
@@ -40,14 +46,22 @@ export class TauriAgentThreadStoreGateway implements AgentThreadStoreGateway {
   async saveAgentThread(request: SaveAgentThreadRequest): Promise<void> {
     if (!this.isRuntimeAvailable()) return;
     await invokeSaveAgentThreadIpc(this.invokeCommand, request);
-    await captureLocalAgentArtifacts(
-      new TauriAgentArtifactGateway(this.invokeCommand),
-      request.thread,
-    );
+    this.captureArtifacts(request.thread);
   }
 
   async deleteAgentThread(request: DeleteAgentThreadRequest): Promise<void> {
     if (!this.isRuntimeAvailable()) return;
     return invokeDeleteAgentThreadIpc(this.invokeCommand, request);
+  }
+
+  /** Snapshots are taken off the save's critical path; a refused capture never fails the save. */
+  private captureArtifacts(thread: AgentThread): void {
+    const isCurrent = this.captures.claim(thread.threadId);
+    void captureLocalAgentArtifacts({
+      loader: new TauriAgentArtifactGateway(this.invokeCommand),
+      thread,
+      ledger: this.captures,
+      isCurrent,
+    }).catch(() => undefined);
   }
 }

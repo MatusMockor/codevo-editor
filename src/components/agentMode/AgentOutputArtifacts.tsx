@@ -1,23 +1,24 @@
 import {
-  createContext,
-  useContext,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+  ChevronDown,
+  FileCode2,
+  FileText,
+  Image as ImageIcon,
+  type LucideIcon,
+} from "lucide-react";
+import { createContext, useContext, useId, useState, type ReactNode } from "react";
 import type {
+  AgentArtifactFailureReporter,
+  AgentArtifactFilePort,
   AgentArtifactLoader,
   AgentArtifactOwner,
   AgentArtifactPreviewPort,
 } from "../../application/agentArtifactPorts";
 import {
   AGENT_ARTIFACT_REFERENCE_LIMIT,
-  agentArtifactByteLimit,
-  type AgentArtifactMetadata,
   type AgentArtifactReference,
 } from "../../domain/agentArtifact";
+import { AgentArtifactFileActions } from "./AgentArtifactFileActions";
+import { AgentArtifactPreview } from "./AgentArtifactPreview";
 import "./agentOutputArtifacts.css";
 
 export interface AgentOutputArtifactsProps {
@@ -25,6 +26,10 @@ export interface AgentOutputArtifactsProps {
   readonly references: readonly AgentArtifactReference[];
   readonly loader: AgentArtifactLoader;
   readonly preview: AgentArtifactPreviewPort;
+  readonly files?: AgentArtifactFilePort | null;
+  readonly reportError?: AgentArtifactFailureReporter | null;
+  readonly frameTimeoutMs?: number;
+  readonly previewTtlMs?: number;
 }
 
 const PreviewSelection = createContext<{
@@ -40,148 +45,131 @@ export function AgentArtifactPreviewScope({ children }: { readonly children: Rea
   );
 }
 
-type PreviewState =
-  | { readonly kind: "loading" }
-  | { readonly kind: "error" }
-  | { readonly kind: "ready"; readonly metadata: AgentArtifactMetadata; readonly url: string };
-
 export function AgentOutputArtifacts(props: AgentOutputArtifactsProps) {
   // Remounting prevents prior generations (including A → B → A) from publishing.
   return <ArtifactList key={JSON.stringify(props.owner)} {...props} />;
 }
 
-function ArtifactList({ owner, references, loader, preview }: AgentOutputArtifactsProps) {
+function ArtifactList({
+  owner,
+  references,
+  loader,
+  preview,
+  files = null,
+  reportError = null,
+  frameTimeoutMs,
+  previewTtlMs,
+}: AgentOutputArtifactsProps) {
   const [capturedOwner] = useState(owner);
   const selection = useContext(PreviewSelection);
   const identity = useId();
   const selected = selection?.selected?.startsWith(`${identity}:`)
     ? selection.selected.slice(identity.length + 1)
     : null;
-  const setSelected = (path: string | null) =>
-    selection?.select(path === null ? null : `${identity}:${path}`);
   const visible = references.slice(0, AGENT_ARTIFACT_REFERENCE_LIMIT);
   if (visible.length === 0 || selection === null) return null;
+  const select = selection.select;
   return (
     <section aria-label="Generated files" className="agent-artifacts">
-      <div className="agent-artifacts__list">
+      <ul className="agent-artifacts__list">
         {visible.map((reference) => (
-          <button
-            aria-pressed={selected === reference.path}
+          <ArtifactRow
+            expanded={selected === reference.path}
+            files={files}
+            frameTimeoutMs={frameTimeoutMs}
             key={reference.path}
-            onClick={() => setSelected(selected === reference.path ? null : reference.path)}
-            type="button"
-          >
-            {reference.label}
-          </button>
+            loader={loader}
+            onToggle={() =>
+              select(selected === reference.path ? null : `${identity}:${reference.path}`)
+            }
+            owner={capturedOwner}
+            preview={preview}
+            previewTtlMs={previewTtlMs}
+            reference={reference}
+            reportError={reportError}
+          />
         ))}
-      </div>
-      {selected !== null && visible.some((reference) => reference.path === selected) && (
-        <ArtifactPreview
-          key={selected}
-          loader={loader}
-          owner={capturedOwner}
-          path={selected}
-          preview={preview}
-        />
-      )}
+      </ul>
     </section>
   );
 }
 
-function ArtifactPreview({
-  owner,
+function ArtifactRow({
+  expanded,
+  files,
+  frameTimeoutMs,
   loader,
-  path,
+  onToggle,
+  owner,
   preview,
+  previewTtlMs,
+  reference,
+  reportError,
 }: {
-  readonly owner: AgentArtifactOwner;
+  readonly expanded: boolean;
+  readonly files: AgentArtifactFilePort | null;
+  readonly frameTimeoutMs: number | undefined;
   readonly loader: AgentArtifactLoader;
+  readonly onToggle: () => void;
+  readonly owner: AgentArtifactOwner;
   readonly preview: AgentArtifactPreviewPort;
-  readonly path: string;
+  readonly previewTtlMs: number | undefined;
+  readonly reference: AgentArtifactReference;
+  readonly reportError: AgentArtifactFailureReporter | null;
 }) {
-  const [state, setState] = useState<PreviewState>({ kind: "loading" });
-  useEffect(() => {
-    let current = true;
-    let cleanup: (() => void) | null = null;
-    setState({ kind: "loading" });
-    void (async () => {
-      try {
-        const metadata = await loader.resolve(owner, path);
-        if (!current) return;
-        if (metadata.sizeBytes > agentArtifactByteLimit(metadata.mediaType))
-          throw new Error("Size");
-        const bytes = await loader.read(owner, metadata.id);
-        if (!current) return;
-        if (bytes.byteLength !== metadata.sizeBytes) throw new Error("Size mismatch");
-        const digest = await crypto.subtle.digest("SHA-256", bytes);
-        if (!current) return;
-        const hash = Array.from(new Uint8Array(digest), (byte) =>
-          byte.toString(16).padStart(2, "0"),
-        ).join("");
-        if (hash !== metadata.sha256) throw new Error("Content changed");
-        let url: string;
-        if (metadata.mediaType === "text/html") {
-          const prepared = await preview.prepare(bytes);
-          const dispose = () => {
-            void prepared.dispose().catch(() => undefined);
-          };
-          if (!current) {
-            dispose();
-            return;
-          }
-          cleanup = dispose;
-          url = prepared.url;
-        } else {
-          url = URL.createObjectURL(new Blob([bytes], { type: metadata.mediaType }));
-          cleanup = () => URL.revokeObjectURL(url);
-        }
-        setState({ kind: "ready", metadata, url });
-      } catch {
-        if (current) setState({ kind: "error" });
-      }
-    })();
-    return () => {
-      current = false;
-      cleanup?.();
-    };
-  }, [loader, owner, path, preview]);
-
-  if (state.kind === "loading") return <p role="status">Loading preview…</p>;
-  if (state.kind === "error") return <p role="status">This file could not be previewed.</p>;
-  return state.metadata.mediaType === "text/html" ? (
-    <div className="agent-artifacts__html">
-      <p>Interactive preview · network access is disabled.</p>
-      <iframe sandbox="allow-scripts" src={state.url} title={`Preview of ${state.metadata.name}`} />
-    </div>
-  ) : (
-    <ArtifactImage name={state.metadata.name} url={state.url} />
+  const rowId = useId();
+  const buttonId = `${rowId}-toggle`;
+  const panelId = `${rowId}-panel`;
+  const Icon = artifactIcon(reference.path);
+  return (
+    <li className="agent-artifacts__item">
+      <div className="agent-artifacts__row">
+        <button
+          aria-controls={panelId}
+          aria-expanded={expanded}
+          className="agent-artifacts__chip"
+          data-agent-artifact-path={reference.path}
+          id={buttonId}
+          onClick={onToggle}
+          type="button"
+        >
+          <Icon aria-hidden="true" className="agent-artifacts__glyph" size={14} />
+          <span className="agent-artifacts__name">{reference.label}</span>
+          <span className="agent-artifacts__verb">Preview</span>
+          <ChevronDown aria-hidden="true" className="agent-artifacts__chevron" size={14} />
+        </button>
+        <AgentArtifactFileActions
+          files={files}
+          owner={owner}
+          path={reference.path}
+          reasonId={`${rowId}-reason`}
+        />
+      </div>
+      <div
+        aria-labelledby={buttonId}
+        className="agent-artifacts__panel"
+        hidden={!expanded}
+        id={panelId}
+        role="region"
+      >
+        {expanded && (
+          <AgentArtifactPreview
+            frameTimeoutMs={frameTimeoutMs}
+            loader={loader}
+            owner={owner}
+            path={reference.path}
+            preview={preview}
+            previewTtlMs={previewTtlMs}
+            reportError={reportError}
+          />
+        )}
+      </div>
+    </li>
   );
 }
 
-function ArtifactImage({ name, url }: { readonly name: string; readonly url: string }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const close = () => {
-    dialogRef.current?.close();
-    triggerRef.current?.focus();
-  };
-  return (
-    <>
-      <button
-        aria-label={`Enlarge ${name}`}
-        className="agent-artifacts__image"
-        onClick={() => dialogRef.current?.showModal()}
-        ref={triggerRef}
-        type="button"
-      >
-        <img alt={name} src={url} />
-      </button>
-      <dialog aria-label={name} className="agent-artifacts__dialog" ref={dialogRef}>
-        <button aria-label="Close image preview" onClick={close} type="button">
-          Close
-        </button>
-        <img alt={name} src={url} />
-      </dialog>
-    </>
-  );
+function artifactIcon(path: string): LucideIcon {
+  if (/\.html?$/i.test(path)) return FileCode2;
+  if (/\.(?:png|jpe?g|webp)$/i.test(path)) return ImageIcon;
+  return FileText;
 }

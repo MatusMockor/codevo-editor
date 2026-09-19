@@ -1,6 +1,13 @@
 import { TauriAgentQuestionGateway } from "../../infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
 import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
+import { TauriAgentArtifactFileGateway } from "../../infrastructure/tauriAgentArtifactFileGateway";
+import { reportAgentArtifactFailure } from "../../infrastructure/agentArtifactFailureReporter";
+import {
+  createAgentArtifactFilePort,
+  AGENT_ARTIFACT_OPEN_FAILED,
+} from "../../application/createAgentArtifactFilePort";
+import { AgentArtifactSupportProvider, type AgentArtifactSupport } from "./agentArtifactSupport";
 import { useAgentWorkspaceNavigationBoundary } from "./useAgentWorkspaceNavigationBoundary";
 import {
   useAgentWorkbenchProjectOpening,
@@ -145,6 +152,7 @@ const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
 const DEFAULT_QUESTION_GATEWAY = new TauriAgentQuestionGateway();
 const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
 const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
+const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
@@ -256,6 +264,8 @@ export function AgentWorkbenchScreen({
   const appSettingsRef = useRef(appSettings);
   const workspaceSettingsRef = useRef(workbench.workspaceSettings);
   const workspaceTrustRef = useRef(workbench.workspaceTrust);
+  const activeWorkspaceRootRef = useRef(workspaceRoot);
+  activeWorkspaceRootRef.current = workspaceRoot;
   appSettingsRef.current = appSettings;
   workspaceSettingsRef.current = workbench.workspaceSettings;
   workspaceTrustRef.current = workbench.workspaceTrust;
@@ -358,6 +368,30 @@ export function AgentWorkbenchScreen({
       await revealPathGateway.revealPath({ rootPath, path });
     },
     [revealPathGateway, revealRoots],
+  );
+
+  const artifactSupport = useMemo<AgentArtifactSupport>(
+    () => ({
+      files: createAgentArtifactFilePort(
+        DEFAULT_ARTIFACT_FILE_LOCATOR,
+        {
+          openFile: async (location, shouldCommit) => {
+            const opened = await openPinnedFile(
+              {
+                kind: "file",
+                name: location.filePath.slice(location.filePath.lastIndexOf("/") + 1),
+                path: location.filePath,
+              },
+              shouldCommit,
+            );
+            if (!opened) throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
+          },
+        },
+        { activeWorkspaceRoot: () => activeWorkspaceRootRef.current },
+      ),
+      reportError: reportAgentArtifactFailure,
+    }),
+    [openPinnedFile],
   );
 
   const openTerminalLink = useCallback(
@@ -515,31 +549,33 @@ export function AgentWorkbenchScreen({
   );
 
   return (
-    <AgentModeView
-      followUpBehavior={appSettings.agentFollowUpBehavior}
-      questionGateway={DEFAULT_QUESTION_GATEWAY}
-      artifactLoader={DEFAULT_ARTIFACT_LOADER}
-      artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
-      imageSurface={DEFAULT_IMAGE_SURFACE}
-      agents={agents}
-      chrome={chrome}
-      key={navigationBoundary.key}
-      navigationSession={navigationSession}
-      modelFavoritesPersistence={modelFavoritesPersistence}
-      onOpenSourceControl={openSourceControl}
-      onOpenEnvironmentSettings={
-        openSettingsSection === undefined ? undefined : openEnvironmentSettings
-      }
-      onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
-      onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
-      onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
-      overflowRootPaths={projects.overflowRootPaths}
-      providerEnabled={providerEnabled}
-      projects={projects.projects}
-      textClipboard={textClipboard}
-      viewCommands={workbenchAgentViewCommandBridge}
-      workspaceRoot={workspaceRoot}
-    />
+    <AgentArtifactSupportProvider value={artifactSupport}>
+      <AgentModeView
+        followUpBehavior={appSettings.agentFollowUpBehavior}
+        questionGateway={DEFAULT_QUESTION_GATEWAY}
+        artifactLoader={DEFAULT_ARTIFACT_LOADER}
+        artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
+        imageSurface={DEFAULT_IMAGE_SURFACE}
+        agents={agents}
+        chrome={chrome}
+        key={navigationBoundary.key}
+        navigationSession={navigationSession}
+        modelFavoritesPersistence={modelFavoritesPersistence}
+        onOpenSourceControl={openSourceControl}
+        onOpenEnvironmentSettings={
+          openSettingsSection === undefined ? undefined : openEnvironmentSettings
+        }
+        onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
+        onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
+        onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
+        overflowRootPaths={projects.overflowRootPaths}
+        providerEnabled={providerEnabled}
+        projects={projects.projects}
+        textClipboard={textClipboard}
+        viewCommands={workbenchAgentViewCommandBridge}
+        workspaceRoot={workspaceRoot}
+      />
+    </AgentArtifactSupportProvider>
   );
 }
 

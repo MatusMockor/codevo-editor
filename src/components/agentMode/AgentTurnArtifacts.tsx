@@ -7,6 +7,7 @@ import type {
 import type { AgentThreadOwner } from "../../domain/agentThread";
 import { agentTurnArtifactReferences } from "../../domain/agentTurnArtifactReferences";
 import type { AgentTurn } from "../../domain/agentThread";
+import { useAgentArtifactSupport } from "./agentArtifactSupport";
 import { AgentOutputArtifacts } from "./AgentOutputArtifacts";
 
 export interface AgentArtifactScope {
@@ -26,6 +27,7 @@ export function AgentTurnArtifacts({
   readonly turn: AgentTurn;
 }) {
   const { owner: threadOwner, threadId, serverId, runnerId, loader, preview } = scope;
+  const support = useAgentArtifactSupport();
   const owner = useMemo<AgentArtifactOwner>(
     () =>
       serverId === undefined || runnerId === undefined
@@ -35,6 +37,13 @@ export function AgentTurnArtifacts({
   );
   const references = useMemo(() => agentTurnArtifactReferences(turn), [turn]);
   return (
-    <AgentOutputArtifacts preview={preview} loader={loader} owner={owner} references={references} />
+    <AgentOutputArtifacts
+      files={support.files}
+      loader={loader}
+      owner={owner}
+      preview={preview}
+      references={references}
+      reportError={support.reportError}
+    />
   );
 }

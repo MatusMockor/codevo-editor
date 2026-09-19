@@ -21,6 +21,20 @@ const TOTAL_LIMIT: usize = 16 * 1024 * 1024;
 const ENTRY_LIMIT: usize = 8;
 const TTL: Duration = Duration::from_secs(30 * 60);
 const CSP: &str = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'";
+const UNAVAILABLE: &str = concat!(
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+    "<meta name=\"color-scheme\" content=\"light dark\">",
+    "<title>Preview unavailable</title></head>",
+    "<body style=\"margin:0;min-height:100vh;display:flex;align-items:center;",
+    "justify-content:center;background:Canvas;color:CanvasText;",
+    "font:13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif\">",
+    "<div style=\"max-width:22rem;padding:24px;text-align:center\">",
+    "<p style=\"margin:0 0 6px;font-size:15px;font-weight:600\">",
+    "This preview is no longer available</p>",
+    "<p style=\"margin:0;opacity:.7\">It expired or was closed. ",
+    "Close and reopen the file to show it again.</p>",
+    "</div></body></html>"
+);
 
 struct Entry {
     html: Arc<[u8]>,
@@ -167,8 +181,11 @@ fn request_token(request: &Request<Vec<u8>>) -> Option<&str> {
     valid_token(token).then_some(token)
 }
 fn response(body: Option<Arc<[u8]>>) -> Response<Vec<u8>> {
-    let status = if body.is_some() { 200 } else { 404 };
-    let mut response = Response::new(body.map_or_else(Vec::new, |bytes| bytes.to_vec()));
+    let (status, bytes) = match body {
+        Some(html) => (200, html.to_vec()),
+        None => (404, UNAVAILABLE.as_bytes().to_vec()),
+    };
+    let mut response = Response::new(bytes);
     *response.status_mut() = tauri::http::StatusCode::from_u16(status).unwrap();
     for (name, value) in [
         ("content-type", "text/html; charset=utf-8"),

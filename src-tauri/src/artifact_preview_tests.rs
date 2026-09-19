@@ -70,6 +70,41 @@ fn responses_always_enforce_isolation_including_not_found() {
     }
 }
 #[test]
+fn dead_frames_render_a_static_notice_instead_of_a_blank_body() {
+    let state = ArtifactPreviewState::default();
+    let now = Instant::now();
+    let handle = state.create("<h1>Live</h1>".into(), now).unwrap();
+    let live = response(state.read(&handle.token, now));
+    assert_eq!(live.status(), 200);
+    assert_eq!(live.body(), b"<h1>Live</h1>");
+
+    state.revoke(&handle.token).unwrap();
+    let revoked = response(state.read(&handle.token, now));
+    assert_eq!(revoked.status(), 404);
+    assert_eq!(revoked.body(), UNAVAILABLE.as_bytes());
+    assert!(!revoked.body().is_empty());
+    assert!(UNAVAILABLE.len() < 1024);
+
+    let expired = state.create("<h1>Expiring</h1>".into(), now).unwrap();
+    let stale = response(state.read(&expired.token, now + TTL));
+    assert_eq!(stale.status(), 404);
+    assert_eq!(stale.body(), UNAVAILABLE.as_bytes());
+}
+#[test]
+fn not_found_body_never_echoes_request_derived_data() {
+    let state = ArtifactPreviewState::default();
+    let now = Instant::now();
+    let first = "a".repeat(64);
+    let second = "b".repeat(64);
+    let one = response(state.read(&first, now));
+    let two = response(state.read(&second, now));
+    assert_eq!(one.body(), two.body());
+    assert_eq!(one.body(), UNAVAILABLE.as_bytes());
+    assert!(!UNAVAILABLE.contains(&first));
+    assert!(!UNAVAILABLE.contains(&second));
+    assert!(!UNAVAILABLE.contains("://"));
+}
+#[test]
 fn requests_reject_unknown_fields() {
     assert!(serde_json::from_str::<CreateRequest>(r#"{"html":"x","url":"evil"}"#).is_err());
     assert!(serde_json::from_str::<RevokeRequest>(r#"{"token":"x","owner":"foreign"}"#).is_err());
