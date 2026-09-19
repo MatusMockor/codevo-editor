@@ -111,6 +111,7 @@ function harness(
       state,
       loadedRootKeys: new Set(),
       currentState: () => state,
+      saveRunningThreadsNow: vi.fn(),
       dispatchAction: vi.fn(),
       togglePin: vi.fn(),
       archive: vi.fn(),

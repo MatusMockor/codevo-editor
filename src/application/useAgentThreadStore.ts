@@ -1,4 +1,6 @@
 import { agentTurnArtifactReferences } from "../domain/agentTurnArtifactReferences";
+import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
+import { useAgentTurnLogHydration } from "./useAgentTurnLogHydration";
 import {
   useCallback,
   useEffect,
@@ -14,12 +16,21 @@ import {
   AGENT_THREAD_STORE_FULL_ERROR,
   agentThreadsReducer,
   emptyAgentThreadsState,
+  isTerminalAgentTurnStatus,
   runningTurn,
   type AgentThread,
   type AgentThreadsAction,
   type AgentThreadsState,
+  type AgentTurnEvent,
 } from "../domain/agentThread";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
+import {
+  NO_AGENT_TURN_LOG_LOSS,
+  type AgentTurnLogLoss,
+  type AgentTurnLogSummary,
+} from "../domain/agentTurnLog";
+import { isRemoteAgentIdentity } from "./remoteAgentSurface";
+import type { AgentTurnLogIntegration } from "./useAgentTurnLogging";
 import {
   AGENT_TASKS_SOURCE,
   attempt,
@@ -40,10 +51,14 @@ import type {
 } from "./agentThreadPorts";
 
 export const LEGACY_AGENT_THREAD_PIN_STORAGE_KEY_PREFIX = "mockor.agents.threadPins.";
-export const MIN_AGENT_THREAD_PERSIST_INTERVAL_MS = 1_000;
+export const MIN_AGENT_THREAD_PERSIST_INTERVAL_MS = 10_000;
+export const MAX_INTERRUPTED_AGENT_THREADS_PER_LOAD = 8;
+export const MAX_SEALED_INTERRUPTED_TURN_LOGS_PER_THREAD = 16;
 
 export const PERSIST_FAILURE_NOTICE = "Some agent conversations could not be saved.";
 export const MAX_PERSIST_FAILURE_REASON_CHARS = 180;
+export const TURN_LOG_DELETE_FAILURE_NOTICE =
+  "The saved transcript of a removed thread could not be deleted from this computer.";
 const STORE_FULL_NOTICE =
   "The saved-thread store is full. Unpin or remove older threads so new conversations can be saved.";
 
@@ -73,9 +88,15 @@ export interface AgentThreadStoreDependencies {
   readonly now?: () => number;
   readonly legacyPinStorage?: AgentThreadLegacyPinStorage;
   readonly minimumPersistIntervalMs?: number;
+  readonly turnLog?: AgentTurnLogIntegration;
 }
 
 type PersistUrgency = "immediate" | "coalesced";
+
+interface ThreadRemoval {
+  readonly request: DeleteAgentThreadRequest;
+  readonly logged: boolean;
+}
 
 interface ThreadPersistSlot {
   inFlight: boolean;
@@ -104,7 +125,7 @@ export function useAgentThreadStore(
   const clearedLegacyPinRootsRef = useRef<Set<string>>(new Set());
   const slotsRef = useRef<Map<string, ThreadPersistSlot>>(new Map());
   const dirtyRef = useRef<Map<string, PersistUrgency>>(new Map());
-  const deleteQueueRef = useRef<DeleteAgentThreadRequest[]>([]);
+  const deleteQueueRef = useRef<ThreadRemoval[]>([]);
   const persistFailureNoticeShownRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
@@ -211,20 +232,34 @@ export function useAgentThreadStore(
   scheduleSaveRef.current = scheduleSave;
 
   const runDelete = useCallback(
-    async (request: DeleteAgentThreadRequest): Promise<void> => {
+    async ({ request, logged }: ThreadRemoval): Promise<void> => {
+      const project = projectByRootKey(dependenciesRef.current.projects, request.rootKey);
+      const authority = project === undefined ? null : projectAuthority(project);
       const settled = slotsRef.current.get(request.threadId)?.settled;
       if (settled !== undefined && settled !== null) await settled;
       const removed = await attempt(() =>
         dependenciesRef.current.agentThreadStoreGateway.deleteAgentThread(request),
       );
-      if (removed.ok) return;
-      notePersistFailure(removed.error);
+      if (!removed.ok) {
+        notePersistFailure(removed.error);
+        return;
+      }
+      const turnLog = dependenciesRef.current.turnLog;
+      if (!logged || turnLog === undefined || authority === null) return;
+      if (!mountedRef.current) return;
+      if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
+      const logRemoved = await attempt(() => turnLog.deleteThreadLog(request));
+      if (logRemoved.ok) return;
+      dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, logRemoved.error);
+      if (!mountedRef.current) return;
+      if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
+      dependenciesRef.current.setNotice(warning(TURN_LOG_DELETE_FAILURE_NOTICE));
     },
     [notePersistFailure],
   );
 
   const flushPersistQueue = useCallback((): void => {
-    for (const request of deleteQueueRef.current.splice(0)) void runDelete(request);
+    for (const removal of deleteQueueRef.current.splice(0)) void runDelete(removal);
     const dirty = [...dirtyRef.current];
     dirtyRef.current.clear();
     for (const [threadId, urgency] of dirty) scheduleSave(threadId, urgency);
@@ -239,6 +274,10 @@ export function useAgentThreadStore(
     const next = agentThreadsReducer(current, action);
     const intent = persistIntent(current, next, action);
     stateRef.current = next;
+    const turnLog = dependenciesRef.current.turnLog;
+    if (turnLog !== undefined) {
+      applyTurnLogEffects(turnLog, dependenciesRef.current.projects, current, next, action);
+    }
     for (const [threadId, urgency] of intent.saves) {
       const existing = dirtyRef.current.get(threadId);
       if (existing === "immediate") continue;
@@ -251,10 +290,49 @@ export function useAgentThreadStore(
         clearSlotTimer(slot);
         slot.pending = null;
       }
-      deleteQueueRef.current.push(intent.remove);
+      const removed = current.threads.get(intent.remove.threadId);
+      deleteQueueRef.current.push({
+        request: intent.remove,
+        logged: removed !== undefined && isLoggedAgentThread(removed),
+      });
     }
     publishState(next);
   }, []);
+
+  const saveRunningThreadsNow = useCallback((): void => {
+    for (const thread of stateRef.current.threads.values()) {
+      if (runningTurn(thread) === null) continue;
+      scheduleSaveRef.current(thread.threadId, "immediate");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saveRunningTurns = (): void => saveRunningThreadsNow();
+    window.addEventListener("pagehide", saveRunningTurns);
+    return () => window.removeEventListener("pagehide", saveRunningTurns);
+  }, [saveRunningThreadsNow]);
+
+  const hydrateLoggedThread = useAgentTurnLogHydration({
+    turnLog: () => dependenciesRef.current.turnLog ?? null,
+    projects: () => dependenciesRef.current.projects,
+    currentState: () => stateRef.current,
+    loadKeyOf: (rootKey) => loadKeysRef.current.get(rootKey) ?? null,
+    mounted: () => mountedRef.current,
+    publish: dispatchAction,
+  });
+
+  const hydrateThread = useCallback(
+    (threadId: string): void => {
+      const turnLog = dependenciesRef.current.turnLog;
+      turnLog?.facts.setVisibleThread(threadId);
+      const thread = stateRef.current.threads.get(threadId);
+      if (thread === undefined) return;
+      if (!isLoggedAgentThread(thread)) return;
+      hydrateLoggedThread(threadId);
+    },
+    [hydrateLoggedThread],
+  );
 
   const togglePin = useCallback(
     (threadId: string): void => dispatchAction({ kind: "pinToggled", threadId }),
@@ -280,6 +358,30 @@ export function useAgentThreadStore(
     (threadId: string, title: string): void =>
       dispatchAction({ kind: "threadRenamed", threadId, title }),
     [dispatchAction],
+  );
+
+  const loadTurnLogSummaries = useCallback(
+    async (
+      authority: AgentProjectAuthority,
+      threads: ReadonlyArray<AgentThread>,
+    ): Promise<void> => {
+      const turnLog = dependenciesRef.current.turnLog;
+      if (turnLog === undefined) return;
+      const key = loadKeysRef.current.get(authority.rootKey);
+      const ownerId = agentRootOwnerId(authority.rootKey);
+      for (const thread of interruptedLoggedThreads(threads)) {
+        const summarized = await attempt(() =>
+          turnLog.summarize({ rootKey: authority.rootKey, ownerId, threadId: thread.threadId }),
+        );
+        if (!mountedRef.current) return;
+        if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
+        if (loadKeysRef.current.get(authority.rootKey) !== key) return;
+        if (!summarized.ok) continue;
+        turnLog.facts.publishSummaries(thread.threadId, summarized.value);
+        sealInterruptedTurnLogs(turnLog, authority, thread, summarized.value);
+      }
+    },
+    [],
   );
 
   const loadProject = useCallback(
@@ -317,10 +419,11 @@ export function useAgentThreadStore(
         threads: loaded.value.threads.map((thread) => withRuntimeOwner(thread, authority.ownerId)),
       });
       setLoadedRootKeys((current) => withRoot(current, authority.rootKey));
+      void loadTurnLogSummaries(authority, loaded.value.threads);
       if (loaded.value.unreadable.length === 0) return;
       dependenciesRef.current.setNotice(warning(unreadableNotice(loaded.value.unreadable.length)));
     },
-    [dispatchAction],
+    [dispatchAction, loadTurnLogSummaries],
   );
 
   const projectsSignature = useMemo(
@@ -346,7 +449,11 @@ export function useAgentThreadStore(
       const thread = stateRef.current.threads.get(threadId);
       if (thread === undefined || runningTurn(thread) !== null) return false;
       const lastTurn = thread.turns[thread.turns.length - 1];
-      if (lastTurn === undefined || agentTurnArtifactReferences(lastTurn).length === 0) return true;
+      if (lastTurn === undefined) return true;
+      const evidence = agentTurnLogEvidence(
+        dependenciesRef.current.turnLog?.facts.factsOf(lastTurn.turnId) ?? null,
+      );
+      if (agentTurnArtifactReferences(lastTurn, evidence).length === 0) return true;
       const authority = threadAuthority(dependenciesRef.current.projects, thread);
       if (authority === null) return false;
       const turnId = thread.turns[thread.turns.length - 1]?.turnId;
@@ -383,6 +490,8 @@ export function useAgentThreadStore(
       loadedRootKeys,
       currentState,
       flushThread,
+      hydrateThread,
+      saveRunningThreadsNow,
       dispatchAction,
       togglePin,
       archive,
@@ -394,6 +503,8 @@ export function useAgentThreadStore(
       archive,
       currentState,
       flushThread,
+      hydrateThread,
+      saveRunningThreadsNow,
       dispatchAction,
       loadedRootKeys,
       markUnread,
@@ -403,6 +514,139 @@ export function useAgentThreadStore(
       togglePin,
     ],
   );
+}
+
+export function isLoggedAgentThread(thread: AgentThread): boolean {
+  if (thread.externalOrigin !== null) return false;
+  if (isRemoteAgentIdentity(thread.threadId)) return false;
+  return !isRemoteAgentIdentity(thread.owner.ownerId);
+}
+
+function applyTurnLogEffects(
+  turnLog: AgentTurnLogIntegration,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  state: AgentThreadsState,
+  next: AgentThreadsState,
+  action: AgentThreadsAction,
+): void {
+  if (next === state) return;
+  switch (action.kind) {
+    case "turnStarted":
+      return openTurnLogSlot(turnLog, projects, next, action);
+    case "turnEventsAppended":
+      return recordTurnLogEvents(turnLog, action);
+    case "turnSteered":
+      return turnLog.writer.recordEvents(action.turnId, [action.event]);
+    case "taskStatusEvent":
+      if (!isTerminalAgentTaskStatus(action.event.status)) return;
+      return turnLog.writer.sealTurn(action.event.taskId);
+    case "turnInterrupted":
+      return turnLog.writer.sealTurn(action.turnId);
+    case "deleted":
+      return closeTurnLogSlots(turnLog, state, action.threadId);
+    case "turnHydrated":
+      return;
+    default:
+      return;
+  }
+}
+
+function openTurnLogSlot(
+  turnLog: AgentTurnLogIntegration,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  next: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "turnStarted" }>,
+): void {
+  const thread = next.threads.get(action.threadId);
+  if (thread === undefined) return;
+  if (!isLoggedAgentThread(thread)) return;
+  const authority = threadAuthority(projects, thread);
+  if (authority === null) return;
+  turnLog.writer.openTurn({
+    scope: {
+      rootKey: thread.owner.rootKey,
+      ownerId: agentRootOwnerId(thread.owner.rootKey),
+      threadId: thread.threadId,
+      turnId: action.turn.turnId,
+    },
+    generation: authority.generation,
+    provider: thread.provider.kind,
+    priorLoss: resumedTurnLoss(action.turn.eventsTruncated),
+  });
+}
+
+function resumedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
+  if (!eventsTruncated) return NO_AGENT_TURN_LOG_LOSS;
+  return { kind: "legacyWindow" };
+}
+
+function recordTurnLogEvents(
+  turnLog: AgentTurnLogIntegration,
+  action: Extract<AgentThreadsAction, { kind: "turnEventsAppended" }>,
+): void {
+  turnLog.writer.recordEvents(action.turnId, action.events);
+  if (!action.supervisorTruncated) return;
+  turnLog.writer.reportLoss(action.turnId, { kind: "supervisorGap" });
+}
+
+function interruptedLoggedThreads(threads: ReadonlyArray<AgentThread>): ReadonlyArray<AgentThread> {
+  const interrupted: AgentThread[] = [];
+  for (const thread of threads) {
+    if (interrupted.length >= MAX_INTERRUPTED_AGENT_THREADS_PER_LOAD) return interrupted;
+    if (!isLoggedAgentThread(thread)) continue;
+    if (thread.turns.every((turn) => isTerminalAgentTurnStatus(turn.status))) continue;
+    interrupted.push(thread);
+  }
+  return interrupted;
+}
+
+function sealInterruptedTurnLogs(
+  turnLog: AgentTurnLogIntegration,
+  authority: AgentProjectAuthority,
+  thread: AgentThread,
+  summaries: ReadonlyArray<AgentTurnLogSummary>,
+): void {
+  const unsealed = new Set(
+    summaries.filter((summary) => !summary.sealed).map((summary) => summary.turnId),
+  );
+  if (unsealed.size === 0) return;
+  let sealed = 0;
+  for (const turn of thread.turns) {
+    if (sealed >= MAX_SEALED_INTERRUPTED_TURN_LOGS_PER_THREAD) return;
+    if (isTerminalAgentTurnStatus(turn.status)) continue;
+    if (!unsealed.has(turn.turnId)) continue;
+    turnLog.writer.openTurn({
+      scope: {
+        rootKey: thread.owner.rootKey,
+        ownerId: agentRootOwnerId(thread.owner.rootKey),
+        threadId: thread.threadId,
+        turnId: turn.turnId,
+      },
+      generation: authority.generation,
+      provider: thread.provider.kind,
+      priorLoss: interruptedTurnLoss(turn.eventsTruncated),
+    });
+    turnLog.writer.sealTurn(turn.turnId);
+    sealed += 1;
+  }
+}
+
+function interruptedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
+  if (!eventsTruncated) return NO_AGENT_TURN_LOG_LOSS;
+  return { kind: "supervisorGap" };
+}
+
+function closeTurnLogSlots(
+  turnLog: AgentTurnLogIntegration,
+  state: AgentThreadsState,
+  threadId: string,
+): void {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return;
+  for (const turn of thread.turns) {
+    turnLog.writer.closeTurn(turn.turnId);
+    turnLog.facts.forgetTurn(turn.turnId);
+  }
 }
 
 interface PersistIntent {
@@ -432,7 +676,15 @@ function persistIntent(
         isTerminalAgentTaskStatus(action.event.status) ? "immediate" : "coalesced",
       );
     case "turnEventsAppended":
-      return sessionCaptureIntent(state, action.threadId, action.turnId, action.sessionId);
+      return sessionCaptureIntent(
+        state,
+        action.threadId,
+        action.turnId,
+        action.sessionId,
+        action.events,
+      );
+    case "turnSteered":
+      return liveTurnIntent(state, action.threadId, action.turnId, "immediate");
     case "turnInterrupted":
       return liveTurnIntentByTurnId(state, action.turnId, "immediate");
     case "threadViewed":
@@ -454,6 +706,7 @@ function persistIntent(
     case "loaded":
       return interruptedTurnsIntent(state, action.threads);
     case "ownerReleased":
+    case "turnHydrated":
       return NO_PERSIST;
     default:
       return NO_PERSIST;
@@ -512,12 +765,14 @@ function sessionCaptureIntent(
   threadId: string,
   turnId: string,
   sessionId: string | null,
+  events: ReadonlyArray<AgentTurnEvent>,
 ): PersistIntent {
   const thread = state.threads.get(threadId);
   if (thread === undefined) return NO_PERSIST;
   if (!thread.turns.some((turn) => turn.turnId === turnId)) return NO_PERSIST;
   const captured = sessionId !== null && thread.provider.sessionId === null;
-  return saveIntent(thread.threadId, captured ? "immediate" : "coalesced");
+  const steered = events.some((event) => event.kind === "userMessage");
+  return saveIntent(thread.threadId, captured || steered ? "immediate" : "coalesced");
 }
 
 function interruptedTurnsIntent(

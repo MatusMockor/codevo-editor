@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AgentThread, AgentTurn, AgentTurnEvent, AgentTurnStatus } from "./agentThread";
 import { aggregateAgentUsage, agentUsagePeriodStart } from "./agentUsage";
+import type { AgentTurnLogEvidence } from "./agentTurnContentLoss";
+
+function evidence(overrides: Partial<AgentTurnLogEvidence> = {}): AgentTurnLogEvidence {
+  return { loss: { kind: "none" }, sealed: true, live: false, hydration: "complete", ...overrides };
+}
 
 const NOW = new Date(2026, 7, 28, 12, 0, 0, 0).getTime();
 
@@ -213,6 +218,44 @@ describe("aggregateAgentUsage", () => {
 
     expect(result.savedHistoryIncomplete).toBe(true);
     expect(result.providers.claudeCode.total.cliUsage.incomplete).toBe(true);
+  });
+
+  it("keeps usage complete when a window truncated turn has a provably complete log", () => {
+    const truncated = {
+      ...turn("truncated", NOW - 2_000, { kind: "exited", exitCode: 0 }, NOW - 1_000, usage(5, 7)),
+      eventsTruncated: true,
+    };
+    const result = aggregateAgentUsage(
+      [thread("claudeCode", "project-a", [truncated])],
+      "today",
+      NOW,
+      () => evidence(),
+    );
+
+    expect(result.providers.claudeCode.total.cliUsage.incomplete).toBe(false);
+    expect(result.providers.claudeCode.total.cliUsage.measuredTurns).toBe(1);
+  });
+
+  it("keeps marking usage incomplete when the log of a truncated turn is not provably complete", () => {
+    const truncated = {
+      ...turn("truncated", NOW - 2_000, { kind: "exited", exitCode: 0 }, NOW - 1_000, usage(5, 7)),
+      eventsTruncated: true,
+    };
+    const unsealed = aggregateAgentUsage(
+      [thread("claudeCode", "project-a", [truncated])],
+      "today",
+      NOW,
+      () => evidence({ sealed: false, live: false }),
+    );
+    const lossy = aggregateAgentUsage(
+      [thread("claudeCode", "project-a", [truncated])],
+      "today",
+      NOW,
+      () => evidence({ loss: { kind: "supervisorGap" } }),
+    );
+
+    expect(unsealed.providers.claudeCode.total.cliUsage.incomplete).toBe(true);
+    expect(lossy.providers.claudeCode.total.cliUsage.incomplete).toBe(true);
   });
 
   it("aggregates measured stream bytes with complete, partial, legacy, provider, and project coverage", () => {

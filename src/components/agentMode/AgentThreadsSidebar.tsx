@@ -28,6 +28,7 @@ import { AgentRailCloneRow } from "./remoteAddProject/AgentRailCloneRow";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import { AgentUsagePanel } from "./AgentUsagePanel";
+import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
 import { AgentThreadList } from "./AgentThreadList";
 import { AgentThreadSelectionBar } from "./AgentThreadSelectionBar";
@@ -69,6 +70,7 @@ export interface AgentThreadsSidebarProps {
   readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
   readonly providerManagement: AgentProviderManagementSurface;
   readonly pendingClone?: RemoteAddProjectPendingClone | null;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   onCancelPendingClone?(): void;
   onDismissPendingClone?(): void;
   onOpenProviderSettings(): void;
@@ -89,6 +91,7 @@ export interface AgentThreadsSidebarProps {
 export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   addProjectAvailable,
   accountUsage,
+  evidenceOf,
   groups,
   onAddProject,
   onCancelPendingClone,
@@ -396,6 +399,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
           <AgentThreadList
             archivedExpanded={archivedExpanded}
             empty={empty}
+            evidenceOf={evidenceOf}
             focusedThreadId={focusedThreadId}
             jumpLabels={jumpLabels}
             markedThreadIds={selection.selectedIds}
@@ -450,6 +454,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
                 <div className="agent-usage-popover__scroll">
                   <AgentUsagePanel
                     accountUsage={accountUsage}
+                    evidenceOf={evidenceOf}
                     projectLabels={usageProjectLabels}
                     threads={views.map((view) => view.thread)}
                   />

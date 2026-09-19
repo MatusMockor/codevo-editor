@@ -57,6 +57,41 @@ describe("agent row status", () => {
     });
   });
 
+  it("stops forcing a window truncated running turn into background work", () => {
+    const result: AgentTurnEvent = {
+      kind: "result",
+      text: "Watching pipeline",
+      isError: false,
+      usage: null,
+    };
+    const base = view({ events: [result] });
+    const truncated: AgentThreadView = {
+      ...base,
+      thread: {
+        ...base.thread,
+        turns: base.thread.turns.map((entry) => ({ ...entry, eventsTruncated: true })),
+      },
+    };
+
+    expect(agentRowStatus(truncated)).toMatchObject({ kind: "working", activity: "background" });
+    expect(
+      agentRowStatus(truncated, () => ({
+        loss: { kind: "none" },
+        sealed: false,
+        live: true,
+        hydration: "notAttempted",
+      })),
+    ).toEqual({ kind: "working", startedAtEpochMs: NOW - 10 * 60_000 });
+    expect(
+      agentRowStatus(truncated, () => ({
+        loss: { kind: "supervisorGap" },
+        sealed: false,
+        live: true,
+        hydration: "notAttempted",
+      })),
+    ).toMatchObject({ kind: "working", activity: "background" });
+  });
+
   it("shows provider-reported background work only after the foreground result", () => {
     const start: AgentTurnEvent = {
       kind: "backgroundTask",

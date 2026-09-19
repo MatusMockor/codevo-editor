@@ -3,6 +3,7 @@ import {
   appServerGroups,
   type AgentAppServerGroup,
 } from "./agentAppServerGroups";
+import { agentTurnItemKey } from "./agentTurnItemKeys";
 import type {
   AgentProjectDescriptor,
   AgentProjectOrigin,
@@ -442,6 +443,7 @@ export function agentTurnProjection(
   revealEventIndex: number | null = null,
   workspaceRoot: string | null = null,
   settlement: AgentTurnSettlement = "running",
+  firstEventOffset = 0,
 ): AgentTurnProjection {
   const groups = appServerGroups(events, revealEventIndex);
   const seenGroups = new Set<string>();
@@ -495,11 +497,12 @@ export function agentTurnProjection(
     ) {
       continue;
     }
+    const key = agentTurnItemKey(offset, firstEventOffset);
     const groupId = appServerGroupId(event);
     if (groupId !== null) {
       const group = groups.get(groupId);
       if (group !== undefined && !seenGroups.has(groupId)) {
-        items.push({ kind: "subagentGroup", key: `e${offset}`, group });
+        items.push({ kind: "subagentGroup", key, group });
         seenGroups.add(groupId);
       }
       continue;
@@ -508,7 +511,7 @@ export function agentTurnProjection(
       calls,
       event,
       items,
-      key: `e${offset}`,
+      key,
       rawLines,
       settlement,
       toolItemByToolId,

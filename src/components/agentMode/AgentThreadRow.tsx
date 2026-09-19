@@ -1,6 +1,10 @@
 import { memo, useCallback, useState, type MouseEvent } from "react";
 import { Check, Folder, FolderGit2, Pin } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  type AgentTurnLogEvidenceLookup,
+} from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
 import { AgentCompactRelativeTime } from "./agentClock";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
@@ -21,6 +25,7 @@ export interface AgentThreadRowProps {
   readonly selected: boolean;
   readonly focused: boolean;
   readonly jumpLabel: string | null;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   onSelect(threadId: string, modifiers: ListSelectionModifiers): void;
   onTogglePin(threadId: string): void;
   onMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -33,6 +38,7 @@ interface MenuAnchor {
 
 export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRowProps) {
   const {
+    evidenceOf = NO_AGENT_TURN_LOG_EVIDENCE,
     focused,
     jumpLabel,
     on,
@@ -45,7 +51,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   } = props;
   const thread = view.thread;
   const threadId = thread.threadId;
-  const model = agentThreadRowModel(view, on, projectLabel);
+  const model = agentThreadRowModel(view, on, projectLabel, evidenceOf);
   const status = model.status;
   const importedLabel = agentThreadImportedBadgeLabel(thread.externalOrigin);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);

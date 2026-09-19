@@ -36,7 +36,6 @@ import {
   type AgentTaskOutputStream,
 } from "./agentTask";
 import {
-  MAX_AGENT_EVENTS_PER_TURN,
   MAX_SUBAGENT_THREADS_PER_TURN,
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_THREAD_TITLE_BYTES,
@@ -63,6 +62,13 @@ import {
   type AgentTurnUsage,
 } from "./agentThread";
 import {
+  MAX_PERSISTED_AGENT_EVENTS_PER_TURN,
+  MAX_PERSISTED_AGENT_THREAD_FILE_BYTES,
+  MAX_PERSISTED_THREAD_EVENT_BYTES,
+  PERSISTED_AGENT_THREAD_FILE_MARGIN_BYTES,
+  capAgentThreadForPersistence,
+} from "./agentThreadTailCap";
+import {
   GIT_REMOTE_NAME_PATTERN,
   GIT_SHA_PATTERN,
   MAX_GIT_INTEGRATION_BRANCH_BYTES,
@@ -72,6 +78,26 @@ import {
 const UTF8_ENCODER = new TextEncoder();
 
 export function serializeAgentThread(thread: AgentThread): Record<string, unknown> {
+  const ceiling = MAX_PERSISTED_AGENT_THREAD_FILE_BYTES - PERSISTED_AGENT_THREAD_FILE_MARGIN_BYTES;
+  let budget = MAX_PERSISTED_THREAD_EVENT_BYTES;
+  let document = serializeThreadDocument(capAgentThreadForPersistence(thread, budget));
+  for (let attempt = 0; attempt < PERSISTED_THREAD_FIT_ATTEMPTS; attempt += 1) {
+    if (serializedThreadBytes(document) <= ceiling) return document;
+    budget = Math.floor(budget / 4);
+    document = serializeThreadDocument(capAgentThreadForPersistence(thread, budget));
+  }
+  return document;
+}
+
+const PERSISTED_THREAD_FIT_ATTEMPTS = 3;
+
+function serializedThreadBytes(document: Record<string, unknown>): number {
+  const text = JSON.stringify(document);
+  if (text.length <= MAX_PERSISTED_AGENT_THREAD_FILE_BYTES / 4) return text.length;
+  return UTF8_ENCODER.encode(text).byteLength;
+}
+
+function serializeThreadDocument(thread: AgentThread): Record<string, unknown> {
   return {
     threadId: thread.threadId,
     owner: {
@@ -212,7 +238,7 @@ function serializeTurnStatus(status: AgentTurnStatus): Record<string, unknown> {
   }
 }
 
-function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
+export function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
   switch (event.kind) {
     case "assistantText":
       return {
@@ -743,7 +769,7 @@ function parseTurnStatus(value: unknown, path: string): AgentTurnStatus {
 
 function parseTurnEvents(value: unknown, path: string): ReadonlyArray<AgentTurnEvent> {
   const seen = new Set<string>();
-  return boundedArray(value, path, MAX_AGENT_EVENTS_PER_TURN).map((raw, index) => {
+  return boundedArray(value, path, MAX_PERSISTED_AGENT_EVENTS_PER_TURN).map((raw, index) => {
     const event = parseTurnEvent(raw, `${path}[${index}]`);
     if ("agentThreadId" in event) seen.add(event.agentThreadId);
     if (seen.size > MAX_SUBAGENT_THREADS_PER_TURN) invalid(path, "at most 32 subagent threads");
@@ -751,7 +777,7 @@ function parseTurnEvents(value: unknown, path: string): ReadonlyArray<AgentTurnE
   });
 }
 
-function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
+export function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
   const event = record(value, path);
   const kind = turnEventKind(event.kind, `${path}.kind`);
   switch (kind) {

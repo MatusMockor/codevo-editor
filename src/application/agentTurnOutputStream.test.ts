@@ -200,8 +200,9 @@ describe("agent turn output pending bounds", () => {
       sessionId: chunk === "session" ? "session-0001" : null,
     }));
     const stream = createStream(parser);
+    const drains = Math.ceil(MAX_AGENT_EVENT_BYTES_PER_TURN / MAX_AGENT_EVENT_TEXT_BYTES) + 8;
 
-    for (let index = 1; index <= 100; index += 1) {
+    for (let index = 1; index <= drains; index += 1) {
       acceptAgentTurnOutput(parser, stream, outputEvent(index, String(index)));
     }
 
@@ -217,14 +218,14 @@ describe("agent turn output pending bounds", () => {
     expect(saturated?.supervisorTruncated).toBe(true);
     expect(saturated?.streamMetricsDelta).toEqual({
       receivedUtf8Bytes: new TextEncoder().encode(
-        Array.from({ length: 100 }, (_, index) => String(index + 1)).join(""),
+        Array.from({ length: drains }, (_, index) => String(index + 1)).join(""),
       ).byteLength,
       complete: true,
     });
     expect(stream.pendingEvents).toEqual([]);
     expect(stream.pendingEventBytes).toBe(0);
 
-    acceptAgentTurnOutput(parser, stream, outputEvent(101, "session"));
+    acceptAgentTurnOutput(parser, stream, outputEvent(drains + 1, "session"));
     expect(stream.pendingEvents).toEqual([{ kind: "assistantText", text: "x" }]);
     expect(stream.pendingEventBytes).toBe(1);
     expect(drainAgentTurnOutput(stream, 2)).toMatchObject({

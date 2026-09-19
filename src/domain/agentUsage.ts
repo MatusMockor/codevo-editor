@@ -8,6 +8,11 @@ import {
   type AgentTurn,
   type AgentTurnStatus,
 } from "./agentThread";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  agentTurnContentLost,
+  type AgentTurnLogEvidenceLookup,
+} from "./agentTurnContentLoss";
 
 export type AgentUsagePeriod = "today" | "7days" | "30days";
 
@@ -121,6 +126,7 @@ export function aggregateAgentUsage(
   threads: Iterable<AgentThread>,
   period: AgentUsagePeriod,
   nowEpochMs: number = Date.now(),
+  evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
 ): AgentUsageAggregate {
   const endEpochMs = validEpoch(nowEpochMs) ? nowEpochMs : 0;
   const startEpochMs = agentUsagePeriodStart(period, endEpochMs);
@@ -142,8 +148,9 @@ export function aggregateAgentUsage(
     if (thread.turns.length > MAX_AGENT_TURNS_PER_THREAD) savedHistoryIncomplete = true;
     for (const turn of thread.turns.slice(0, MAX_AGENT_TURNS_PER_THREAD)) {
       if (!turnFallsWithin(turn, startEpochMs, endEpochMs)) continue;
-      addTurn(provider.total, turn, endEpochMs);
-      addTurn(projectMetrics(provider, thread.owner.rootKey), turn, endEpochMs);
+      const lost = agentTurnContentLost(turn.eventsTruncated, evidenceOf(turn.turnId));
+      addTurn(provider.total, turn, endEpochMs, lost);
+      addTurn(projectMetrics(provider, thread.owner.rootKey), turn, endEpochMs, lost);
     }
   }
 
@@ -217,11 +224,16 @@ function turnFallsWithin(turn: AgentTurn, startEpochMs: number, endEpochMs: numb
   );
 }
 
-function addTurn(metrics: MutableMetrics, turn: AgentTurn, windowEndEpochMs: number): void {
+function addTurn(
+  metrics: MutableMetrics,
+  turn: AgentTurn,
+  windowEndEpochMs: number,
+  contentLost: boolean,
+): void {
   metrics.turnsStarted += 1;
   classifyStatus(metrics, turn.status);
   addWallTime(metrics.wallTime, turn, windowEndEpochMs);
-  addCliUsage(metrics.cliUsage, turn);
+  addCliUsage(metrics.cliUsage, turn, contentLost);
   addStreamOutput(metrics.streamOutput, turn);
 }
 
@@ -263,10 +275,10 @@ function addWallTime(wallTime: MutableWallTime, turn: AgentTurn, windowEndEpochM
   wallTime.measuredTurns += 1;
 }
 
-function addCliUsage(cliUsage: MutableCliTokens, turn: AgentTurn): void {
+function addCliUsage(cliUsage: MutableCliTokens, turn: AgentTurn, contentLost: boolean): void {
   if (turn.status.kind !== "exited") return;
   cliUsage.eligibleTurns += 1;
-  if (turn.eventsTruncated) cliUsage.incomplete = true;
+  if (contentLost) cliUsage.incomplete = true;
   let capturedUsage: {
     readonly inputTokens: number;
     readonly outputTokens: number;

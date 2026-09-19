@@ -18,6 +18,7 @@ import type {
 import { isDirty } from "../domain/workspace";
 import type { CloseCompletion } from "../domain/dirtyClose";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
+import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS } from "./agentTurnLogPorts";
 import { CloseCoordinator } from "./closeCoordinator";
 import type { DocumentSaveLease, RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import {
@@ -152,6 +153,7 @@ export interface WorkbenchCloseLifecycleDependencies {
   openWorkspacePath: (path: string, options?: OpenWorkspacePathOptions) => Promise<void>;
   clearActiveWorkspace: (options?: ClearActiveWorkspaceOptions) => Promise<void>;
   persistWorkspaceSession?: (rootPath: string) => Promise<void>;
+  prepareAgentQuit?: (budgetMs?: number) => Promise<void>;
   prepareWorkspaceTabRetainedStateCleanup?: (
     path: string,
     identity: WorkspaceIdentityDescriptor | null,
@@ -254,6 +256,39 @@ export function useWorkspaceCloseSessionPort(
 
 const NATIVE_CLOSE_REQUEST_EVENT = "mockor-native-close-requested";
 
+const AGENT_QUIT_PREPARATION_MARGIN_MS = 250;
+
+export const AGENT_QUIT_PREPARATION_TIMEOUT_MS =
+  AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS + AGENT_QUIT_PREPARATION_MARGIN_MS;
+
+function settleWithinBudget(
+  operation: () => Promise<void>,
+  budgetMs: number,
+  onFailure: (error: unknown) => void,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, budgetMs);
+    const settle = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const fail = (error: unknown): void => {
+      onFailure(error);
+      settle();
+    };
+
+    let pending: Promise<void>;
+    try {
+      pending = operation();
+    } catch (error) {
+      fail(error);
+      return;
+    }
+
+    pending.then(settle, fail);
+  });
+}
+
 type NativeCloseKind = "close" | "quit";
 type CloseScopeGuard = () => boolean;
 type CloseCommit = (scopeIsCurrent: CloseScopeGuard) => Promise<boolean>;
@@ -301,6 +336,7 @@ export function useWorkbenchCloseLifecycle(
     openWorkspacePath,
     clearActiveWorkspace,
     persistWorkspaceSession = async () => undefined,
+    prepareAgentQuit = async () => undefined,
     prepareWorkspaceTabRetainedStateCleanup = () => () => undefined,
     reportError,
   } = dependencies;
@@ -332,17 +368,39 @@ export function useWorkbenchCloseLifecycle(
     }
   }, [persistWorkspaceSession, reportError, workspaceRoot]);
 
+  const prepareAgentQuitWithinBudget = useCallback(
+    () =>
+      settleWithinBudget(
+        () => prepareAgentQuit(AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS),
+        AGENT_QUIT_PREPARATION_TIMEOUT_MS,
+        (error) => reportError("Agent", error),
+      ),
+    [prepareAgentQuit, reportError],
+  );
+
+  const prepareShutdownWhileWindowIsAlive = useCallback(
+    async (scopeIsCurrent: CloseScopeGuard): Promise<boolean> => {
+      await prepareAgentQuitWithinBudget();
+      if (!scopeIsCurrent()) {
+        return false;
+      }
+
+      await persistCurrentWorkspaceSession();
+      return scopeIsCurrent();
+    },
+    [persistCurrentWorkspaceSession, prepareAgentQuitWithinBudget],
+  );
+
   const confirmNativeShutdown = useCallback(
     async (kind: NativeCloseKind, scopeIsCurrent: CloseScopeGuard): Promise<boolean> => {
-      await persistCurrentWorkspaceSession();
-      if (!scopeIsCurrent()) {
+      if (!(await prepareShutdownWhileWindowIsAlive(scopeIsCurrent))) {
         return false;
       }
 
       await invoke("confirm_native_shutdown", { kind });
       return true;
     },
-    [persistCurrentWorkspaceSession],
+    [prepareShutdownWhileWindowIsAlive],
   );
 
   const targetIsCurrent = useCallback(
@@ -849,15 +907,14 @@ export function useWorkbenchCloseLifecycle(
     }
 
     requestApplicationShutdown(async (scopeIsCurrent) => {
-      await persistCurrentWorkspaceSession();
-      if (!scopeIsCurrent()) {
+      if (!(await prepareShutdownWhileWindowIsAlive(scopeIsCurrent))) {
         return false;
       }
 
       await invoke("quit_application");
       return true;
     }, "Application");
-  }, [persistCurrentWorkspaceSession, requestApplicationShutdown]);
+  }, [prepareShutdownWhileWindowIsAlive, requestApplicationShutdown]);
 
   const closeApplicationWindow = useCallback(() => {
     if (!isTauri()) {

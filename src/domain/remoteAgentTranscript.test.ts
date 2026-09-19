@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { appendRemoteAgentTranscript, createRemoteAgentTranscript } from "./remoteAgentTranscript";
 import type { RemoteRunnerEvent } from "./remoteRunner";
+import { MAX_AGENT_EVENTS_PER_TURN } from "./agentThread";
 const event = (sequence: number, text: string): RemoteRunnerEvent => ({
   taskId: "task",
   sequence,
@@ -42,7 +43,9 @@ describe("remote canonical transcript", () => {
     expect(state.finished).toBe(false);
   });
   it("keeps receiving after count eviction and truncated replay, including the final result", () => {
-    const noise = Array.from({ length: 600 }, (_, i) => event(i + 1, `output ${i}\n`));
+    const noise = Array.from({ length: MAX_AGENT_EVENTS_PER_TURN + 88 }, (_, i) =>
+      event(i + 1, `output ${i}\n`),
+    );
     const first = appendRemoteAgentTranscript(
       createRemoteAgentTranscript("task", "claude"),
       noise,
@@ -53,7 +56,7 @@ describe("remote canonical transcript", () => {
       },
     );
     expect(first.eventsTruncated).toBe(true);
-    expect(first.events).toHaveLength(512);
+    expect(first.events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
     expect(first.events[0]).toMatchObject({ raw: "output 88" });
     const finalLine =
       JSON.stringify({
@@ -65,10 +68,10 @@ describe("remote canonical transcript", () => {
     const final = appendRemoteAgentTranscript(
       first,
       [
-        event(601, finalLine),
+        event(noise.length + 1, finalLine),
         {
           taskId: "task",
-          sequence: 602,
+          sequence: noise.length + 2,
           type: "task.failed",
           error: "Late failure",
           createdAt: "2026-09-13T00:00:01Z",
@@ -76,7 +79,7 @@ describe("remote canonical transcript", () => {
       ],
       { complete: true, terminal: true },
     );
-    expect(final.events).toHaveLength(512);
+    expect(final.events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
     expect(final.events).toContainEqual(
       expect.objectContaining({ kind: "result", text: "![Preview](preview.png)" }),
     );
@@ -85,9 +88,12 @@ describe("remote canonical transcript", () => {
       message: "Late failure",
     });
     expect(final.finished).toBe(true);
-    expect(final.lastRunnerSequence).toBe(602);
+    expect(final.lastRunnerSequence).toBe(noise.length + 2);
     expect(
-      appendRemoteAgentTranscript(final, [event(603, line)], { complete: true, terminal: true }),
+      appendRemoteAgentTranscript(final, [event(noise.length + 3, line)], {
+        complete: true,
+        terminal: true,
+      }),
     ).toBe(final);
   });
   it("rejects foreign and reordered events", () => {
@@ -193,7 +199,12 @@ it("keeps observed subagent lifecycle after its raw display event is evicted", (
     }) + "\n";
   const transcript = appendRemoteAgentTranscript(
     createRemoteAgentTranscript("task", "claude"),
-    [event(1, spawn), ...Array.from({ length: 600 }, (_, i) => event(i + 2, `noise ${i}\n`))],
+    [
+      event(1, spawn),
+      ...Array.from({ length: MAX_AGENT_EVENTS_PER_TURN + 8 }, (_, i) =>
+        event(i + 2, `noise ${i}\n`),
+      ),
+    ],
     { complete: false, terminal: false },
   );
   expect(transcript.events.some((event) => event.kind === "toolCall")).toBe(false);
@@ -216,7 +227,7 @@ it("retains all 32 maximum-size accepted inputs independently of the output byte
   });
   const second = appendRemoteAgentTranscript(
     first,
-    Array.from({ length: 600 }, (_, i) => event(i + 33, `noise ${i}\n`)),
+    Array.from({ length: MAX_AGENT_EVENTS_PER_TURN + 8 }, (_, i) => event(i + 33, `noise ${i}\n`)),
     { complete: false, terminal: false },
   );
   const messages = second.events.filter((item) => item.kind === "userMessage");

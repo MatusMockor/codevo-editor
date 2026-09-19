@@ -7,6 +7,17 @@ import {
   type AgentTurnEvent,
 } from "./agentThread";
 import { agentTurnArtifactReferences } from "./agentTurnArtifactReferences";
+import type { AgentTurnLogEvidence } from "./agentTurnContentLoss";
+
+function evidence(overrides: Partial<AgentTurnLogEvidence> = {}): AgentTurnLogEvidence {
+  return {
+    loss: { kind: "none" },
+    sealed: true,
+    live: false,
+    hydration: "complete",
+    ...overrides,
+  };
+}
 
 function turn(events: ReadonlyArray<AgentTurnEvent>, eventsTruncated = false): AgentTurn {
   return {
@@ -35,6 +46,7 @@ describe("turn artifact references", () => {
           { kind: "assistantText", text: "ifacts/design.html)" },
           { kind: "result", text: "![Preview](preview.png)", isError: false, usage: null },
         ]),
+        null,
       ),
     ).toEqual([
       { path: "artifacts/design.html", label: "Design" },
@@ -54,7 +66,7 @@ describe("turn artifact references", () => {
         inputSummary: "work",
       }),
     );
-    expect(agentTurnArtifactReferences(turn([opening, ...tools, example]))).toEqual([]);
+    expect(agentTurnArtifactReferences(turn([opening, ...tools, example]), null)).toEqual([]);
     const retained = mergeTurnEvents([opening, ...tools], [example]);
     expect(retained.truncated).toBe(true);
     expect(retained.events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
@@ -63,7 +75,9 @@ describe("turn artifact references", () => {
     expect(extractAgentArtifactReferences(example.text)).toEqual([
       { path: "private.html", label: "Example" },
     ]);
-    expect(agentTurnArtifactReferences(turn(retained.events, retained.truncated))).toEqual([]);
+    expect(agentTurnArtifactReferences(turn(retained.events, retained.truncated), null)).toEqual(
+      [],
+    );
   });
 
   it("fails closed for any incomplete transcript, including a standalone final link", () => {
@@ -73,6 +87,40 @@ describe("turn artifact references", () => {
           [{ kind: "result", text: "[Design](design.html)", isError: false, usage: null }],
           true,
         ),
+        null,
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps the chips of a window truncated turn once the log rebuilt the whole window", () => {
+    expect(
+      agentTurnArtifactReferences(
+        turn(
+          [{ kind: "result", text: "[Design](design.html)", isError: false, usage: null }],
+          true,
+        ),
+        evidence(),
+      ),
+    ).toEqual([{ path: "design.html", label: "Design" }]);
+  });
+
+  it("still refuses a truncated turn whose window was never rebuilt from its healthy log", () => {
+    expect(
+      agentTurnArtifactReferences(
+        turn(
+          [{ kind: "result", text: "[Design](design.html)", isError: false, usage: null }],
+          true,
+        ),
+        evidence({ hydration: "notAttempted" }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a turn whose log recorded real loss even when nothing left the window", () => {
+    expect(
+      agentTurnArtifactReferences(
+        turn([{ kind: "result", text: "[Design](design.html)", isError: false, usage: null }]),
+        evidence({ loss: { kind: "supervisorGap" } }),
       ),
     ).toEqual([]);
   });

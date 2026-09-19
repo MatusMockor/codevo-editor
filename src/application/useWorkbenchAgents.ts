@@ -60,11 +60,12 @@ import type { AgentProviderSignInRefreshOutcome } from "./useAgentProviderSignIn
 import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
 import {
   defaultAgentAttachmentGateway,
   defaultAgentImageSurface,
   defaultAgentTaskGateway,
-  defaultAgentThreadStoreGateway,
+  createDefaultAgentThreadStoreGateway,
   defaultCompareUrlOpener,
   defaultExternalSessionGateway,
   defaultGitIntegrationGateway,
@@ -431,12 +432,21 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     [options.agentProviderGateway],
   );
 
+  const agentThreadStoreGateway = useMemo(
+    () =>
+      options.agentThreadStoreGateway ??
+      createDefaultAgentThreadStoreGateway((turnId) =>
+        agentTurnLogEvidence(threadsSurfaceRef.current?.turnLog?.factsOf(turnId) ?? null),
+      ),
+    [options.agentThreadStoreGateway],
+  );
+
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
     agentQuestionGateway: options.agentQuestionGateway,
     agentAttachmentGateway: options.agentAttachmentGateway ?? defaultAgentAttachmentGateway,
     agentImageSurface: options.agentImageSurface ?? defaultAgentImageSurface,
-    agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
+    agentThreadStoreGateway,
     externalSessionGateway: defaultExternalSessionGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,

@@ -49,9 +49,10 @@ export { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agen
 
 export const MAX_AGENT_THREADS_PER_ROOT = 64;
 export const MAX_AGENT_TURNS_PER_THREAD = 64;
-export const MAX_AGENT_EVENTS_PER_TURN = 512;
+export const MAX_AGENT_EVENTS_PER_TURN = 1_024;
 export const MAX_SUBAGENT_THREADS_PER_TURN = 32;
-export const MAX_AGENT_EVENT_BYTES_PER_TURN = 512 * 1_024;
+export const MAX_AGENT_EVENT_BYTES_PER_TURN = 2 * 1_024 * 1_024;
+export const MAX_AGENT_STEER_BYTES_PER_TURN = 512 * 1_024;
 export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
 export const MAX_AGENT_TOOL_ID_BYTES = 256;
 export const MAX_AGENT_TOOL_NAME_BYTES = 256;
@@ -239,6 +240,7 @@ export interface AgentTurn {
   /** Runtime-only delivery cursor; independent of the retained output window. */
   readonly queueBoundarySequence?: number;
   readonly foregroundSettled?: boolean;
+  readonly firstEventOffset?: number;
   readonly subagentLifecycle?: AgentSubagentLifecycle;
   readonly streamMetrics?: AgentTurnStreamMetrics | null;
   readonly launch: AgentLaunchOptions | null;
@@ -339,6 +341,13 @@ export type AgentThreadsAction =
       readonly event: Extract<AgentTurnEvent, { kind: "userMessage" }>;
     }
   | { readonly kind: "turnInterrupted"; readonly turnId: string; readonly nowEpochMs: number }
+  | {
+      readonly kind: "turnHydrated";
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly events: ReadonlyArray<AgentTurnEvent>;
+      readonly hasEarlier: boolean;
+    }
   | {
       readonly kind: "integrationRecorded";
       readonly threadId: string;
@@ -513,6 +522,8 @@ export function agentThreadsReducer(
       return appendSteeredMessage(state, action);
     case "turnInterrupted":
       return interruptTurn(state, action.turnId, action.nowEpochMs);
+    case "turnHydrated":
+      return hydrateTurn(state, action);
     case "integrationRecorded":
       return recordIntegration(state, action.threadId, action.integration);
     case "threadViewed":
@@ -749,7 +760,7 @@ export function agentTurnAcceptsSteerBytes(turn: AgentTurn, bytes: number): bool
   const messages = turn.events.filter((event) => event.kind === "userMessage");
   if (messages.length >= MAX_AGENT_STEERS_PER_TURN) return false;
   // Output retention must not prevent new user input: old output can be evicted.
-  return agentTurnEventsUtf8Bytes(messages) + bytes <= MAX_AGENT_EVENT_BYTES_PER_TURN;
+  return agentTurnEventsUtf8Bytes(messages) + bytes <= MAX_AGENT_STEER_BYTES_PER_TURN;
 }
 
 function appendSteeredMessage(
@@ -1063,6 +1074,41 @@ function interruptTurn(
     },
     nowEpochMs,
   );
+}
+
+function hydrateTurn(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "turnHydrated" }>,
+): AgentThreadsState {
+  const location = findTurnInThread(state, action.threadId, action.turnId);
+  if (location === null) return state;
+  const { thread, index } = location;
+  const turn = thread.turns[index];
+  if (!isTerminalAgentTurnStatus(turn.status)) return state;
+  const bounded = capPersistedTurnEvents(action.events);
+  const offset = hydratedEventOffset(turn, bounded.events.length);
+  const turns = thread.turns.map((candidate, position) =>
+    position === index
+      ? {
+          ...turn,
+          events: bounded.events,
+          eventsTruncated: action.hasEarlier || bounded.truncated,
+          ...(offset === 0 ? {} : { firstEventOffset: offset }),
+        }
+      : candidate,
+  );
+  return replaceThread(state, { ...thread, turns });
+}
+
+function hydratedEventOffset(turn: AgentTurn, hydratedLength: number): number {
+  const previous = turn.firstEventOffset ?? 0;
+  const base = Number.isSafeInteger(previous) && previous <= 0 ? previous : 0;
+  const prepended = hydratedLength - turn.events.length;
+  if (!Number.isSafeInteger(prepended)) return base;
+  if (prepended <= 0) return base;
+  const next = base - prepended;
+  if (!Number.isSafeInteger(next)) return base;
+  return next;
 }
 
 function recordIntegration(

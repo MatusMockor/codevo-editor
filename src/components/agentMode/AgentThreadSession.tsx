@@ -10,8 +10,15 @@ import {
 } from "./AgentToolDisclosure";
 import { AgentBackgroundActivity } from "./AgentBackgroundActivity";
 import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
+import { agentTurnContentLost } from "../../domain/agentTurnContentLoss";
 import { AgentCompactionActivity, AgentCompactionBoundary } from "./AgentCompactionActivity";
 import { AgentActivityItems } from "./AgentActivityItems";
+import { agentTurnLogNoticeModel } from "./agentTurnLogNotice";
+import {
+  agentTurnLogEvidence,
+  useAgentTurnLogFacts,
+  type AgentTurnLogFactsSource,
+} from "../../application/agentTurnLogStatusStore";
 import { agentActivityAttentionCount } from "./agentActivityGrouping";
 import { AgentArtifactPreviewScope } from "./AgentOutputArtifacts";
 import type {
@@ -117,6 +124,12 @@ import {
   type AgentToolRowKind,
   type AgentToolRowStatus,
 } from "../../domain/agentToolRowPresentation";
+import {
+  agentTurnEventIndexFromKey,
+  agentTurnHydrationScrollTop,
+  agentTurnItemKey,
+  normalizeAgentTurnEventOffset,
+} from "./agentTurnItemKeys";
 
 const WORKING_LABEL = "Working\u2026";
 
@@ -166,6 +179,7 @@ export interface AgentThreadSessionProps {
   readonly attachmentImages?: AgentAttachmentImagesSurface | null;
   readonly onRevealAttachment?: (threadId: string, attachmentId: string) => void;
   readonly onRetryExternalHistory?: () => void;
+  readonly turnLog?: AgentTurnLogFactsSource | null;
   onReviewInDiff(threadId: string): void;
 }
 
@@ -207,6 +221,7 @@ function AgentThreadSessionBody({
   externalHistoryState,
   onRetryExternalHistory,
   thread,
+  turnLog = null,
   turnRenderProbe,
 }: AgentThreadSessionBodyProps) {
   const record = thread.thread;
@@ -353,6 +368,44 @@ function AgentThreadSessionBody({
     viewport,
   ]);
 
+  const turnEventOffsets = useMemo(
+    () =>
+      record.turns.map((entry) => ({
+        turnId: entry.turnId,
+        offset: normalizeAgentTurnEventOffset(entry.firstEventOffset),
+      })),
+    [record.turns],
+  );
+  const scrollHeightRef = useRef(0);
+  const hydratedOffsetsRef = useRef({ threadId, offsets: turnEventOffsets });
+  useLayoutEffect(() => {
+    const previous = hydratedOffsetsRef.current;
+    hydratedOffsetsRef.current = { threadId, offsets: turnEventOffsets };
+    const container = scrollRef.current;
+    if (container === null) return;
+    if (pinnedToLatestRef.current) return;
+    if (previous.threadId !== threadId) return;
+    const shifted = prependedTurnIds(previous.offsets, turnEventOffsets);
+    if (shifted.length === 0) return;
+    const insertionTops = turnInsertionTops(container, shifted);
+    if (insertionTops === null) return;
+    const anchored = agentTurnHydrationScrollTop({
+      clientHeight: container.clientHeight,
+      insertionTops,
+      previousScrollHeight: scrollHeightRef.current,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+    });
+    if (anchored === null) return;
+    container.scrollTop = anchored;
+  }, [threadId, turnEventOffsets]);
+
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    scrollHeightRef.current = container.scrollHeight;
+  });
+
   const [sessionElement, setSessionElement] = useState<HTMLElement | null>(null);
   const [turnListOpen, setTurnListOpen] = useState(false);
   const sessionWidth = useViewportWidth(sessionElement);
@@ -498,6 +551,7 @@ function AgentThreadSessionBody({
                   renderProbe={turnRenderProbe}
                   textClipboard={textClipboard}
                   turn={turn}
+                  turnLog={turnLog}
                   workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
                 />
               ))}
@@ -600,6 +654,7 @@ const AgentTurnView = memo(function AgentTurnView({
   subagents,
   textClipboard,
   turn,
+  turnLog = null,
   workspaceRoot = null,
 }: {
   readonly artifactScope?: AgentArtifactScope | null;
@@ -613,6 +668,7 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly subagents: AgentRuntimeSubagents;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
+  readonly turnLog?: AgentTurnLogFactsSource | null;
   readonly workspaceRoot?: string | null;
 }) {
   renderProbe?.(turn.turnId);
@@ -620,9 +676,11 @@ const AgentTurnView = memo(function AgentTurnView({
   const revealEventIndex =
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
   const settlement = agentTurnSettlement(turn.status);
+  const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
   const projection = useMemo(
-    () => agentTurnProjection(turn.events, revealEventIndex, workspaceRoot, settlement),
-    [turn.events, revealEventIndex, workspaceRoot, settlement],
+    () =>
+      agentTurnProjection(turn.events, revealEventIndex, workspaceRoot, settlement, eventOffset),
+    [turn.events, revealEventIndex, workspaceRoot, settlement, eventOffset],
   );
   const running = settlement === "running";
   const [streamed, setStreamed] = useState(running);
@@ -633,9 +691,12 @@ const AgentTurnView = memo(function AgentTurnView({
     setStreamed(true);
   }, [running, streamed]);
 
+  const logFacts = turnLog?.factsOf(turn.turnId) ?? null;
+  const logEvidence = useMemo(() => agentTurnLogEvidence(logFacts), [logFacts]);
+  const contentLost = agentTurnContentLost(turn.eventsTruncated, logEvidence);
   const background = useMemo(
-    () => projectAgentBackgroundActivity(turn.events, running, turn.eventsTruncated),
-    [turn.events, running, turn.eventsTruncated],
+    () => projectAgentBackgroundActivity(turn.events, running, contentLost),
+    [turn.events, running, contentLost],
   );
   const backgroundOnly =
     provider === "claudeCode" && background.foregroundSettled && background.phase !== "inactive";
@@ -669,7 +730,7 @@ const AgentTurnView = memo(function AgentTurnView({
       (turn.status.kind === "exited" && turn.status.exitCode === 0)) &&
     rawLines.length === 0 &&
     projection.hiddenCount === 0 &&
-    !turn.eventsTruncated &&
+    !contentLost &&
     projection.items.every(
       (item) =>
         item.kind === "contextCompaction" ||
@@ -699,6 +760,7 @@ const AgentTurnView = memo(function AgentTurnView({
         className="agent-turn"
         data-agent-column={agentThreadColumnKey({ scope: "turn", turnId: turn.turnId })}
         data-agent-turn={turn.turnId}
+        data-agent-turn-offset={eventOffset}
       >
         <AgentTurnPrompt
           attachmentImages={attachmentImages}
@@ -751,13 +813,15 @@ const AgentTurnView = memo(function AgentTurnView({
             <AgentActivityItems
               items={workFold?.visibleItems ?? projection.items}
               currentEventKey={
-                highlight?.current?.kind === "event" ? `e${highlight.current.eventIndex}` : null
+                highlight?.current?.kind === "event"
+                  ? agentTurnItemKey(highlight.current.eventIndex, eventOffset)
+                  : null
               }
               renderItem={(item) => (
                 <AgentTurnItemView
                   attachmentImages={attachmentImages}
                   errorContext={errorContext}
-                  highlight={itemHighlight(highlight, item.key)}
+                  highlight={itemHighlight(highlight, item.key, eventOffset)}
                   groupHighlight={highlight}
                   item={item}
                   prose={prose}
@@ -791,16 +855,16 @@ const AgentTurnView = memo(function AgentTurnView({
           </div>
 
           {!running && artifactScope !== null && (
-            <AgentTurnArtifacts scope={artifactScope} turn={turn} />
+            <AgentTurnArtifacts evidence={logEvidence} scope={artifactScope} turn={turn} />
           )}
 
           {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
 
-          {turn.eventsTruncated && (
-            <p className="agent-note agent-note--warning">
-              Some activity from this turn is not shown.
-            </p>
-          )}
+          <AgentTurnLogNotices
+            eventsTruncated={turn.eventsTruncated}
+            turnId={turn.turnId}
+            turnLog={turnLog}
+          />
 
           {turn.status.kind === "interrupted" && (
             <p className="agent-note agent-note--warning">Interrupted by app restart</p>
@@ -820,6 +884,28 @@ const AgentTurnView = memo(function AgentTurnView({
     </AgentToolDisclosureContext.Provider>
   );
 });
+
+function AgentTurnLogNotices({
+  eventsTruncated,
+  turnId,
+  turnLog,
+}: {
+  readonly eventsTruncated: boolean;
+  readonly turnId: string;
+  readonly turnLog: AgentTurnLogFactsSource | null;
+}) {
+  const facts = useAgentTurnLogFacts(turnLog, turnId);
+  const notices = agentTurnLogNoticeModel(facts, eventsTruncated);
+  if (notices.loss === null && notices.unsaved === null) return null;
+  return (
+    <>
+      {notices.loss !== null && <p className="agent-note agent-note--warning">{notices.loss}</p>}
+      {notices.unsaved !== null && (
+        <p className="agent-note agent-note--warning">{notices.unsaved}</p>
+      )}
+    </>
+  );
+}
 
 function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine> }) {
   return (
@@ -859,6 +945,7 @@ function AgentTurnWork({
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
 }) {
+  const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
   const title = backgroundOnly ? (
     <>Work so far</>
   ) : running ? (
@@ -892,13 +979,15 @@ function AgentTurnWork({
         <AgentActivityItems
           items={items}
           currentEventKey={
-            highlight?.current?.kind === "event" ? `e${highlight.current.eventIndex}` : null
+            highlight?.current?.kind === "event"
+              ? agentTurnItemKey(highlight.current.eventIndex, eventOffset)
+              : null
           }
           renderItem={(item) => (
             <AgentTurnItemView
               attachmentImages={attachmentImages}
               errorContext={errorContext}
-              highlight={itemHighlight(highlight, item.key)}
+              highlight={itemHighlight(highlight, item.key, eventOffset)}
               groupHighlight={highlight}
               item={item}
               prose={prose}
@@ -979,7 +1068,7 @@ function AgentTurnItemView({
         <AgentActivityItems
           items={childProjection.items}
           scope={group.agentThreadId}
-          currentEventKey={childIndex < 0 ? null : `e${childIndex}`}
+          currentEventKey={childIndex < 0 ? null : agentTurnItemKey(childIndex)}
           renderItem={(child) => (
             <AgentTurnItemView
               item={child}
@@ -1327,9 +1416,10 @@ function AgentEmptyTitle({ repositoryLabel }: { readonly repositoryLabel: string
 function itemHighlight(
   highlight: AgentTurnHighlight | null,
   key: string,
+  firstEventOffset = 0,
 ): AgentItemHighlight | null {
   if (highlight === null || highlight.query === "") return null;
-  const eventIndex = Number.parseInt(key.slice(1), 10);
+  const eventIndex = agentTurnEventIndexFromKey(key, firstEventOffset);
   const cursor = highlight.current;
   if (cursor === null || cursor.kind !== "event" || cursor.eventIndex !== eventIndex) {
     return { query: highlight.query, current: null };
@@ -1406,13 +1496,56 @@ function columnElement(
   return candidates.find((candidate) => candidate.dataset.agentColumn === key) ?? null;
 }
 
+interface AgentTurnEventOffset {
+  readonly turnId: string;
+  readonly offset: number;
+}
+
+function prependedTurnIds(
+  previous: ReadonlyArray<AgentTurnEventOffset>,
+  next: ReadonlyArray<AgentTurnEventOffset>,
+): ReadonlyArray<string> {
+  if (previous.length === 0) return [];
+  const before = new Map(previous.map((entry) => [entry.turnId, entry.offset]));
+  const shifted: string[] = [];
+  for (const entry of next) {
+    const was = before.get(entry.turnId);
+    if (was === undefined) continue;
+    if (entry.offset >= was) continue;
+    shifted.push(entry.turnId);
+  }
+  return shifted;
+}
+
+function turnInsertionTops(
+  container: HTMLElement,
+  turnIds: ReadonlyArray<string>,
+): ReadonlyArray<number> | null {
+  const containerTop = container.getBoundingClientRect().top;
+  const tops: number[] = [];
+  for (const turnId of turnIds) {
+    const turn = turnElement(container, turnId);
+    if (turn === null) return null;
+    const events = turn.querySelector<HTMLElement>(".agent-turn__events");
+    if (events === null) return null;
+    tops.push(container.scrollTop + events.getBoundingClientRect().top - containerTop);
+  }
+  return tops;
+}
+
 function turnElement(container: HTMLElement, turnId: string): HTMLElement | null {
   const candidates = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-turn]"));
   return candidates.find((candidate) => candidate.dataset.agentTurn === turnId) ?? null;
 }
 
 function eventElement(turn: HTMLElement, eventIndex: number): HTMLElement | null {
-  const key = `e${eventIndex}`;
+  const key = agentTurnItemKey(eventIndex, turnEventOffset(turn));
   const candidates = Array.from(turn.querySelectorAll<HTMLElement>("[data-agent-event]"));
   return candidates.find((candidate) => candidate.dataset.agentEvent === key) ?? null;
+}
+
+function turnEventOffset(turn: HTMLElement): number {
+  const raw = turn.dataset.agentTurnOffset;
+  if (raw === undefined) return 0;
+  return normalizeAgentTurnEventOffset(Number.parseInt(raw, 10));
 }

@@ -31,6 +31,11 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { agentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
 import { agentContextWindow } from "../../domain/agentContextWindow";
+import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
+import {
+  agentTurnLogEvidence,
+  useAgentTurnLogFacts,
+} from "../../application/agentTurnLogStatusStore";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -233,8 +238,13 @@ function LocalAgentModeView({
     [executionGroups, projects, projectLinks],
   );
   const externalSessions = agents.externalSessions ?? null;
+  const turnEvidenceOf = useCallback<AgentTurnLogEvidenceLookup>(
+    (turnId) => agentTurnLogEvidence(agents.turnLog?.factsOf(turnId) ?? null),
+    [agents.turnLog],
+  );
   const navigation = useAgentThreadNavigation({
     agents,
+    evidenceOf: turnEvidenceOf,
     externalSessions,
     groups,
     presentationThreads,
@@ -244,7 +254,13 @@ function LocalAgentModeView({
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
   const contextThread = sessionThread?.thread ?? null;
-  const contextUsage = useMemo(() => agentContextWindow(contextThread), [contextThread]);
+  const contextTurnId = contextThread?.turns[contextThread.turns.length - 1]?.turnId ?? null;
+  const contextFacts = useAgentTurnLogFacts(agents.turnLog ?? null, contextTurnId);
+  const loggedContextWindow = contextFacts?.contextWindow ?? null;
+  const contextUsage = useMemo(
+    () => agentContextWindow(contextThread, loggedContextWindow),
+    [contextThread, loggedContextWindow],
+  );
   useLayoutEffect(
     () => onSelectedThreadChange(selectedThreadId),
     [onSelectedThreadChange, selectedThreadId],
@@ -755,6 +771,7 @@ function LocalAgentModeView({
               <AgentThreadsSidebar
                 addProjectAvailable={chrome.addProject !== null}
                 accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
+                evidenceOf={turnEvidenceOf}
                 groups={groups}
                 onAddProject={openAddProject}
                 onCancelPendingClone={cancelPendingClone}
@@ -910,6 +927,7 @@ function LocalAgentModeView({
                   reveal={find.reveal}
                   textClipboard={textClipboard}
                   thread={sessionThread}
+                  turnLog={agents.turnLog ?? null}
                 />
               )}
               {sessionThread !== null &&

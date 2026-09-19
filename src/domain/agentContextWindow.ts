@@ -1,4 +1,4 @@
-import type { AgentThread, AgentTurnEvent } from "./agentThread";
+import type { AgentThread, AgentTurn, AgentTurnEvent } from "./agentThread";
 
 export interface AgentContextWindow {
   readonly usedTokens: number;
@@ -6,14 +6,18 @@ export interface AgentContextWindow {
 }
 
 /** Latest measured main request occupancy; result totals and subagents never count. */
-export function agentContextWindow(thread: AgentThread | null): AgentContextWindow | null {
+export function agentContextWindow(
+  thread: AgentThread | null,
+  loggedWindow: AgentContextWindow | null = null,
+): AgentContextWindow | null {
   if (thread === null) return null;
   let current: AgentContextWindow | null = null;
   let primary: { model: string; inputTokens: number } | null = null;
   const capacities = new Map<string, number>();
   // Never pair a new request with an older launch's capacity (for example a changed 1M option).
   const turn = thread.turns[thread.turns.length - 1];
-  if (turn === undefined || turn.eventsTruncated) return null;
+  if (turn === undefined) return null;
+  if (turn.eventsTruncated) return settledContextWindow(turn.status, loggedWindow);
   for (const event of turn.events) {
     if (invalidatesContext(event)) {
       current = null;
@@ -42,11 +46,18 @@ export function agentContextWindow(thread: AgentThread | null): AgentContextWind
             : null;
     }
   }
+  return settledContextWindow(turn.status, current);
+}
+
+function settledContextWindow(
+  status: AgentTurn["status"],
+  current: AgentContextWindow | null,
+): AgentContextWindow | null {
   if (
-    turn.status.kind === "failed" ||
-    turn.status.kind === "interrupted" ||
-    turn.status.kind === "stopped" ||
-    (turn.status.kind === "exited" && turn.status.exitCode !== 0)
+    status.kind === "failed" ||
+    status.kind === "interrupted" ||
+    status.kind === "stopped" ||
+    (status.kind === "exited" && status.exitCode !== 0)
   ) {
     return null;
   }

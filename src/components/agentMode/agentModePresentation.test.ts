@@ -1,9 +1,19 @@
-import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
+import {
+  agentThreadAttention,
+  agentThreadsReducer,
+  agentThreadUnread,
+} from "../../domain/agentThread";
 import { describe, expect, it } from "vitest";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import type { AgentThread, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
+import type {
+  AgentThread,
+  AgentThreadsState,
+  AgentTurn,
+  AgentTurnEvent,
+  AgentTurnStatus,
+} from "../../domain/agentThread";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
 import {
@@ -52,6 +62,7 @@ import {
   inPlaceGuardReasonLabel,
   type AgentFollowUpContext,
   type AgentProjectGroup,
+  type AgentTurnItem,
 } from "./agentModePresentation";
 
 const ROOT = "/workspace/app";
@@ -1881,5 +1892,110 @@ describe("agent tool row descriptions", () => {
     ]);
 
     expect(projection.items[0]).toMatchObject({ label: "Running npm run lint" });
+  });
+});
+
+describe("agent turn item keys across log hydration", () => {
+  const THREAD_ID = "agt-1";
+  const TURN_ID = "agt-1-t1";
+
+  const TAIL: ReadonlyArray<AgentTurnEvent> = [
+    { kind: "assistantText", text: "Final answer." },
+    { kind: "reasoning", text: "Thinking hard." },
+    { kind: "toolCall", toolId: "t-9", name: "Read", inputSummary: "z.ts" },
+    { kind: "toolResult", toolId: "t-9", outputSummary: "1 line", isError: false },
+  ];
+
+  const OLDER: ReadonlyArray<AgentTurnEvent> = [
+    { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+    { kind: "toolResult", toolId: "t-1", outputSummary: "exit 0", isError: false },
+    { kind: "reasoning", text: "Older thought." },
+    { kind: "toolCall", toolId: "t-2", name: "Read", inputSummary: "a.ts" },
+    { kind: "toolResult", toolId: "t-2", outputSummary: "2 lines", isError: false },
+  ];
+
+  function settledTurn(events: ReadonlyArray<AgentTurnEvent>): AgentTurn {
+    return {
+      turnId: TURN_ID,
+      prompt: "Refactor the parser",
+      status: { kind: "exited", exitCode: 0 },
+      startedAtEpochMs: 10,
+      endedAtEpochMs: 20,
+      events,
+      eventsTruncated: true,
+      lastStatusSequence: 1,
+      lastOutputSequence: 2,
+      launch: null,
+      cliVersion: null,
+    };
+  }
+
+  function hydratedState(events: ReadonlyArray<AgentTurnEvent>): AgentThreadsState {
+    const base = thread({}).thread;
+    const start: AgentThreadsState = {
+      threads: new Map([[THREAD_ID, { ...base, threadId: THREAD_ID, turns: [settledTurn(TAIL)] }]]),
+    };
+    return agentThreadsReducer(start, {
+      kind: "turnHydrated",
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      events,
+      hasEarlier: false,
+    });
+  }
+
+  function projectionOf(turn: AgentTurn) {
+    return agentTurnProjection(turn.events, null, null, "settled", turn.firstEventOffset ?? 0);
+  }
+
+  function withoutKey(item: AgentTurnItem): Omit<AgentTurnItem, "key"> {
+    const { key: _key, ...rest } = item;
+    return rest;
+  }
+
+  it("keeps every existing item key on the same event after older events are prepended", () => {
+    const before = projectionOf(settledTurn(TAIL));
+    const hydrated = hydratedState([...OLDER, ...TAIL]).threads.get(THREAD_ID)!.turns[0]!;
+
+    expect(hydrated.events).toHaveLength(OLDER.length + TAIL.length);
+
+    const after = projectionOf(hydrated);
+    const afterByKey = new Map(after.items.map((item) => [item.key, withoutKey(item)]));
+
+    expect(before.items.length).toBeGreaterThan(0);
+    for (const item of before.items) {
+      expect(afterByKey.get(item.key)).toEqual(withoutKey(item));
+    }
+    expect(hydrated.firstEventOffset).toBe(-OLDER.length);
+  });
+
+  it("gives every prepended event a key below the keys that already existed", () => {
+    const hydrated = hydratedState([...OLDER, ...TAIL]).threads.get(THREAD_ID)!.turns[0]!;
+    const keys = projectionOf(hydrated).items.map((item) => item.key);
+
+    expect(keys.slice(0, 3)).toEqual(["e-5", "e-3", "e-2"]);
+    expect(keys.slice(3)).toEqual(["e0", "e1", "e2"]);
+  });
+
+  it("accumulates the offset when the same turn is hydrated twice", () => {
+    const once = hydratedState([...OLDER, ...TAIL]).threads.get(THREAD_ID)!.turns[0]!;
+    const twice = agentThreadsReducer(
+      {
+        threads: new Map([
+          [THREAD_ID, { ...thread({}).thread, threadId: THREAD_ID, turns: [once] }],
+        ]),
+      },
+      {
+        kind: "turnHydrated",
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        events: [{ kind: "assistantText", text: "Oldest." }, ...OLDER, ...TAIL],
+        hasEarlier: true,
+      },
+    ).threads.get(THREAD_ID)!.turns[0]!;
+
+    expect(twice.firstEventOffset).toBe(-(OLDER.length + 1));
+    const keys = projectionOf(twice).items.map((item) => item.key);
+    expect(keys.slice(-3)).toEqual(["e0", "e1", "e2"]);
   });
 });

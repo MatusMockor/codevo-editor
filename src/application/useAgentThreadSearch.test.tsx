@@ -6,10 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThread, AgentTurn } from "../domain/agentThread";
 import * as agentThreadSearch from "../domain/agentThreadSearch";
 import type { AgentThreadSearchSurface, AgentThreadView } from "./agentThreadPorts";
+import { agentTurnLogEvidence, createAgentTurnLogFactsStore } from "./agentTurnLogStatusStore";
 import {
   AGENT_THREAD_SEARCH_DEBOUNCE_MS,
+  EMPTY_AGENT_THREAD_SEARCH_INDEX,
   MAX_AGENT_THREAD_SEARCH_INDEX_BYTES,
   MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS,
+  reconcileAgentThreadSearchIndex,
   useAgentThreadSearch,
   type AgentThreadSearchOptions,
 } from "./useAgentThreadSearch";
@@ -502,5 +505,100 @@ describe("remote persisted search ownership", () => {
     expect(harness.hook().pending).toBe(false);
     harness.unmount();
     expect(signals[2]!.aborted).toBe(true);
+  });
+});
+
+describe("useAgentThreadSearch turn log evidence", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function truncatedThread(threadId: string, title: string): AgentThread {
+    return thread(threadId, title, {
+      turns: [
+        {
+          ...turn(`${threadId}-t1`, `${title} prompt`, `Assistant reply about ${title}`),
+          eventsTruncated: true,
+        },
+      ],
+    });
+  }
+
+  function healthySummary(turnId: string) {
+    return {
+      turnId,
+      eventCount: 400,
+      bytes: 4_000,
+      loss: { kind: "none" } as const,
+      sealed: true,
+      digest: null,
+    };
+  }
+
+  it("rebuilds the document of the thread whose turn log facts arrived", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const alpha = truncatedThread("agt-a", "Alpha parser");
+    const beta = truncatedThread("agt-b", "Beta parser");
+    const harness = renderSearch([view(alpha), view(beta)], {
+      evidenceOf: (turnId) => agentTurnLogEvidence(store.factsOf(turnId)),
+      turnLog: store,
+    });
+
+    harness.type("parser");
+    harness.fire();
+    expect(harness.hook().result?.documentsTruncated).toBe(true);
+
+    act(() => {
+      store.publishSummaries("agt-a", [healthySummary("agt-a-t1")]);
+      store.publishSummaries("agt-b", [healthySummary("agt-b-t1")]);
+    });
+    harness.fire();
+    expect(harness.hook().result?.documentsTruncated).toBe(false);
+    harness.unmount();
+  });
+
+  it("asks for the facts of the threads a published result actually matched", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const requested: string[] = [];
+    const source = { ...store, ensureThreadFacts: (threadId: string) => requested.push(threadId) };
+    const alpha = truncatedThread("agt-a", "Alpha parser");
+    const beta = truncatedThread("agt-b", "Beta router");
+    const harness = renderSearch([view(alpha), view(beta)], { turnLog: source });
+
+    harness.type("parser");
+    harness.fire();
+
+    expect(requested).toEqual(["agt-a"]);
+    harness.unmount();
+  });
+
+  it("keeps the document of a thread whose facts did not change", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const alpha = view(truncatedThread("agt-a", "Alpha parser"));
+    const beta = view(truncatedThread("agt-b", "Beta parser"));
+    const views = [alpha, beta];
+    const evidenceOf = (turnId: string) => agentTurnLogEvidence(store.factsOf(turnId));
+    const revisionOf = (threadId: string) => store.evidenceRevisionOf(threadId);
+
+    const first = reconcileAgentThreadSearchIndex(
+      EMPTY_AGENT_THREAD_SEARCH_INDEX,
+      views,
+      evidenceOf,
+      revisionOf,
+    );
+    store.publishSummaries("agt-b", [healthySummary("agt-b-t1")]);
+    const second = reconcileAgentThreadSearchIndex(first, views, evidenceOf, revisionOf);
+
+    expect(second.entries.get("agt-a")?.document).toBe(first.entries.get("agt-a")?.document);
+    expect(second.entries.get("agt-b")?.document).not.toBe(first.entries.get("agt-b")?.document);
+    expect(first.entries.get("agt-b")?.document.truncated).toBe(true);
+    expect(second.entries.get("agt-b")?.document.truncated).toBe(false);
+
+    const third = reconcileAgentThreadSearchIndex(second, views, evidenceOf, revisionOf);
+    expect(third).toBe(second);
   });
 });

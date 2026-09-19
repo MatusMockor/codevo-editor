@@ -1,4 +1,9 @@
 import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  agentTurnContentLost,
+  type AgentTurnLogEvidenceLookup,
+} from "../../domain/agentTurnContentLoss";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type {
   AgentProviderManagementSurface,
@@ -176,12 +181,16 @@ function menuItem(
   return { kind: "item", id, label, icon, command, disabled, destructive };
 }
 
-export function agentRowStatus(view: AgentThreadView): AgentRowStatus {
+export function agentRowStatus(
+  view: AgentThreadView,
+  evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
+): AgentRowStatus {
   const running = runningTurn(view.thread);
   if (running !== null) {
+    const lost = agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
     const background =
       view.thread.provider.kind === "claudeCode"
-        ? projectAgentBackgroundActivity(running.events, true, running.eventsTruncated)
+        ? projectAgentBackgroundActivity(running.events, true, lost)
         : null;
     return {
       kind: "working",
@@ -628,8 +637,9 @@ export function agentThreadRowModel(
   view: AgentThreadView,
   on: boolean,
   projectLabel: string = view.repositoryLabel,
+  evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
 ): AgentThreadRowModel {
-  const status = agentRowStatus(view);
+  const status = agentRowStatus(view, evidenceOf);
   const thread = view.thread;
   return {
     project: projectLabel,

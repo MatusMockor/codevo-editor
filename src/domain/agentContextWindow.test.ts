@@ -178,3 +178,43 @@ it("hides stale or truncated observations including pending compact and new laun
     }),
   ).toBeNull();
 });
+
+describe("agentContextWindow with an uncapped turn log", () => {
+  const logged = { usedTokens: 4_242, contextWindow: 200_000 };
+
+  it("reports the digest value for a window-truncated live turn", () => {
+    const original = thread([input("main", 100), capacity("main", 1000)]);
+    const last = original.turns[0]!;
+    const truncated = {
+      ...original,
+      turns: [{ ...last, eventsTruncated: true, status: { kind: "running" } as const }],
+    };
+    expect(agentContextWindow(truncated)).toBeNull();
+    expect(agentContextWindow(truncated, logged)).toEqual(logged);
+  });
+
+  it("still reports null for a failed, interrupted, stopped or non-zero exit turn", () => {
+    const original = thread([input("main", 100), capacity("main", 1000)]);
+    const last = original.turns[0]!;
+    for (const status of [
+      { kind: "failed", message: "boom" } as const,
+      { kind: "interrupted" } as const,
+      { kind: "stopped" } as const,
+      { kind: "exited", exitCode: 2 } as const,
+    ]) {
+      expect(
+        agentContextWindow(
+          { ...original, turns: [{ ...last, eventsTruncated: true, status }] },
+          logged,
+        ),
+      ).toBeNull();
+      expect(agentContextWindow({ ...original, turns: [{ ...last, status }] }, logged)).toBeNull();
+    }
+  });
+
+  it("keeps the in-turn fold when the turn was never truncated", () => {
+    expect(
+      agentContextWindow(thread([input("main", 100), capacity("main", 1000)]), logged),
+    ).toEqual({ usedTokens: 100, contextWindow: 1000 });
+  });
+});

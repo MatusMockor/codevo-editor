@@ -8,6 +8,10 @@ import {
   type AgentUsagePeriod,
   type AgentUsageProvider,
 } from "../../domain/agentUsage";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  type AgentTurnLogEvidenceLookup,
+} from "../../domain/agentTurnContentLoss";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
 
 export interface AgentUsagePanelProps {
@@ -15,6 +19,7 @@ export interface AgentUsagePanelProps {
   readonly projectLabels: ReadonlyMap<string, string>;
   readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly nowEpochMs?: number;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
 }
 
 interface PeriodOption {
@@ -32,6 +37,7 @@ const PROVIDER_ORDER = ["codex", "claudeCode"] as const;
 
 export function AgentUsagePanel({
   accountUsage,
+  evidenceOf = NO_AGENT_TURN_LOG_EVIDENCE,
   nowEpochMs = Date.now(),
   projectLabels,
   threads,
@@ -39,8 +45,8 @@ export function AgentUsagePanel({
   const [period, setPeriod] = useState<AgentUsagePeriod>("today");
   const periodTabsRef = useRef<Array<HTMLButtonElement | null>>([]);
   const usage = useMemo(
-    () => aggregateAgentUsage(threads, period, nowEpochMs),
-    [nowEpochMs, period, threads],
+    () => aggregateAgentUsage(threads, period, nowEpochMs, evidenceOf),
+    [evidenceOf, nowEpochMs, period, threads],
   );
   const spend = useMemo(() => localSpendSummary(usage.providers), [usage.providers]);
   const handlePeriodKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {

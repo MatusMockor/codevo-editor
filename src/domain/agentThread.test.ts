@@ -10,6 +10,7 @@ import {
 import {
   MAX_AGENT_EVENTS_PER_TURN,
   MAX_AGENT_EVENT_BYTES_PER_TURN,
+  MAX_AGENT_STEER_BYTES_PER_TURN,
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_THREADS_PER_ROOT,
   MAX_AGENT_THREAD_TITLE_BYTES,
@@ -456,10 +457,11 @@ describe("agentThreadsReducer output events", () => {
 
   it("caps aggregate UTF-8 event bytes across repeated output drains", () => {
     const wideText = "€".repeat(Math.floor(MAX_AGENT_EVENT_TEXT_BYTES / 3));
+    const drains = Math.ceil(MAX_AGENT_EVENT_BYTES_PER_TURN / MAX_AGENT_EVENT_TEXT_BYTES) + 8;
     let state = stateWith(thread());
     let sequence = 0;
 
-    while (sequence < 100) {
+    while (sequence < drains) {
       sequence += 1;
       state = agentThreadsReducer(
         state,
@@ -752,7 +754,9 @@ describe("agentThreadsReducer loaded", () => {
 
   it("bounds aggregate event bytes while hydrating persisted threads", () => {
     const wideText = "€".repeat(Math.floor(MAX_AGENT_EVENT_TEXT_BYTES / 3));
-    const events = Array.from({ length: 100 }, (_, index) =>
+    const hydratedCount =
+      Math.ceil(MAX_AGENT_EVENT_BYTES_PER_TURN / MAX_AGENT_EVENT_TEXT_BYTES) + 8;
+    const events = Array.from({ length: hydratedCount }, (_, index) =>
       index % 2 === 0 ? text(wideText) : { kind: "reasoning" as const, text: wideText },
     );
     const loaded = agentThreadsReducer(emptyAgentThreadsState(), {
@@ -1810,8 +1814,8 @@ describe("agentThreadsReducer turnSteered", () => {
       events: [{ kind: "userMessage", text: "keep" }],
       eventsTruncated: true,
     });
-    expect(agentTurnAcceptsSteerBytes(bounded, MAX_AGENT_EVENT_BYTES_PER_TURN - 4)).toBe(true);
-    expect(agentTurnAcceptsSteerBytes(bounded, MAX_AGENT_EVENT_BYTES_PER_TURN - 3)).toBe(false);
+    expect(agentTurnAcceptsSteerBytes(bounded, MAX_AGENT_STEER_BYTES_PER_TURN - 4)).toBe(true);
+    expect(agentTurnAcceptsSteerBytes(bounded, MAX_AGENT_STEER_BYTES_PER_TURN - 3)).toBe(false);
     for (const invalid of [-1, NaN, Infinity, 1.5]) {
       expect(agentTurnAcceptsSteerBytes(bounded, invalid)).toBe(false);
     }

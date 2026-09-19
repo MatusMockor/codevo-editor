@@ -8,10 +8,12 @@ import type { EditorDocument } from "../domain/workspace";
 import { createLegacyWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
+  AGENT_QUIT_PREPARATION_TIMEOUT_MS,
   useWorkbenchCloseLifecycle,
   type WorkbenchCloseLifecycle,
   type WorkbenchCloseLifecycleDependencies,
 } from "./useWorkbenchCloseLifecycle";
+import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS } from "./agentTurnLogPorts";
 import { workspaceIdentityStateCacheKey } from "./useWorkspaceStateCache";
 import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
 import type {
@@ -88,6 +90,15 @@ function requestNativeClose(kind: "close" | "quit" = "close"): void {
   tauriMocks.listeners.get("mockor-native-close-requested")?.({
     payload: kind,
   });
+}
+
+function recordShutdownOrder(): string[] {
+  const order: string[] = [];
+  tauriMocks.invoke.mockImplementation(async (command: string) => {
+    order.push(`invoke:${command}`);
+  });
+
+  return order;
 }
 
 function nativeShutdownInvocationCount(): number {
@@ -2593,6 +2604,133 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(tauriMocks.invoke).toHaveBeenCalledWith("quit_application");
     expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
+  it("completes agent quit preparation before confirming a native shutdown", async () => {
+    const order = recordShutdownOrder();
+    const prepareAgentQuit = vi.fn(async () => {
+      order.push("agent-quit:started");
+      await Promise.resolve();
+      await Promise.resolve();
+      order.push("agent-quit:completed");
+    });
+    const harness = renderLifecycle({ prepareAgentQuit });
+
+    await act(async () => {
+      requestNativeClose();
+    });
+    await vi.waitFor(() => {
+      expect(nativeShutdownInvocationCount()).toBe(1);
+    });
+
+    expect(prepareAgentQuit).toHaveBeenCalledTimes(1);
+    expect(order).toContain("agent-quit:completed");
+    expect(order.indexOf("agent-quit:completed")).toBeLessThan(
+      order.indexOf("invoke:confirm_native_shutdown"),
+    );
+    harness.unmount();
+  });
+
+  it("confirms a native shutdown when agent quit preparation never settles", async () => {
+    vi.useFakeTimers();
+    const neverSettles = new Promise<void>(() => undefined);
+    const prepareAgentQuit = vi.fn(() => neverSettles);
+    const harness = renderLifecycle({ prepareAgentQuit });
+
+    await act(async () => {
+      requestNativeClose();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(prepareAgentQuit).toHaveBeenCalledWith(
+      AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS,
+    );
+    expect(nativeShutdownInvocationCount()).toBe(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_QUIT_PREPARATION_TIMEOUT_MS);
+    });
+
+    expect(nativeShutdownInvocationCount()).toBe(1);
+    harness.unmount();
+  });
+
+  it("confirms a native shutdown when agent quit preparation fails", async () => {
+    const failure = new Error("transcript flush failed");
+    const prepareAgentQuit = vi.fn(async () => {
+      throw failure;
+    });
+    const harness = renderLifecycle({ prepareAgentQuit });
+
+    await act(async () => {
+      requestNativeClose();
+    });
+    await vi.waitFor(() => {
+      expect(nativeShutdownInvocationCount()).toBe(1);
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Agent", failure);
+    harness.unmount();
+  });
+
+  it("does not confirm a native shutdown when the scope goes stale during agent quit preparation", async () => {
+    const fixture = ownerCloseFixture(
+      dirtyDocument(`${WORKSPACE_A}/StaleQuit.php`),
+    );
+    const preparationStarted = createDeferred<void>();
+    const preparation = createDeferred<void>();
+    let capturedTargets: (typeof fixture.target)[] = [];
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => capturedTargets,
+      persistWorkspaceSession,
+      prepareAgentQuit: async () => {
+        preparationStarted.resolve();
+        await preparation.promise;
+      },
+    });
+
+    await act(async () => {
+      requestNativeClose();
+      await preparationStarted.promise;
+    });
+    capturedTargets = [fixture.target];
+    await act(async () => {
+      preparation.resolve();
+      await preparation.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
+  it("completes agent quit preparation before quitting the application", async () => {
+    const order = recordShutdownOrder();
+    const prepareAgentQuit = vi.fn(async () => {
+      order.push("agent-quit:started");
+      await Promise.resolve();
+      await Promise.resolve();
+      order.push("agent-quit:completed");
+    });
+    const harness = renderLifecycle({ prepareAgentQuit });
+
+    await act(async () => {
+      harness.lifecycle().quitApplication();
+    });
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledWith("quit_application");
+    });
+
+    expect(prepareAgentQuit).toHaveBeenCalledTimes(1);
+    expect(order).toContain("agent-quit:completed");
+    expect(order.indexOf("agent-quit:completed")).toBeLessThan(
+      order.indexOf("invoke:quit_application"),
+    );
     harness.unmount();
   });
 

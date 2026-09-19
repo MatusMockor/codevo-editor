@@ -1,5 +1,10 @@
 import type { AgentThread, AgentTurn, AgentTurnEvent } from "./agentThread";
 import { agentPromptDisplayText } from "./agentPromptDisplay";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  agentTurnContentLost,
+  type AgentTurnLogEvidenceLookup,
+} from "./agentTurnContentLoss";
 import type { ExternalSessionExchange } from "./externalAgentSession";
 import {
   CONTENT_INCLUDES_SCORE,
@@ -118,7 +123,10 @@ export function normalizeThreadSearchQuery(raw: string): string | null {
   return clipped.toLowerCase();
 }
 
-export function buildAgentThreadSearchDocument(thread: AgentThread): AgentThreadSearchDocument {
+export function buildAgentThreadSearchDocument(
+  thread: AgentThread,
+  evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
+): AgentThreadSearchDocument {
   const title = segment("title", null, null, thread.title);
   const collected: AgentThreadSearchSegment[] = [];
   let bytes = utf8ByteLength(title.text);
@@ -127,7 +135,7 @@ export function buildAgentThreadSearchDocument(thread: AgentThread): AgentThread
   for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
     const turn = thread.turns[index];
     if (turn === undefined) continue;
-    if (turn.eventsTruncated) truncated = true;
+    if (agentTurnContentLost(turn.eventsTruncated, evidenceOf(turn.turnId))) truncated = true;
     const outcome = collectTurnSegments(turn, collected, bytes);
     bytes = outcome.bytes;
     if (!outcome.stopped) continue;

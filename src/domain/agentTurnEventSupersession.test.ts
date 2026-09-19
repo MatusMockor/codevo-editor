@@ -609,7 +609,8 @@ describe("mergeTurnEvents supersession", () => {
   it("never evicts accepted user steering messages", () => {
     const steer: AgentTurnEvent = { kind: "userMessage", text: "please also fix lint" };
     const incoming = [steer, ...subagentScenario()];
-    for (let index = 0; index < 600; index += 1) incoming.push(toolCall(10_000 + index));
+    for (let index = 0; index < MAX_AGENT_EVENTS_PER_TURN + 88; index += 1)
+      incoming.push(toolCall(10_000 + index));
     const merged = mergeTurnEvents([], incoming);
     expect(merged.truncated).toBe(true);
     expect(merged.events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
@@ -827,7 +828,7 @@ describe("capped streams against the uncapped ground truth", () => {
   const BATCH_SIZES = [1, 7, 64] as const;
 
   function longStream(seed: number): AgentTurnEvent[] {
-    const length = 600 + ((seed * 37) % 1_400);
+    const length = 1_200 + ((seed * 37) % 2_800);
     if (seed % 2 === 0) return realisticAgentTurnStream(seed, length);
     return longRunningAgentTurnStream(seed, length);
   }

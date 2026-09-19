@@ -19,6 +19,7 @@ import type {
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
 import { useAgentThreadSearch } from "../../application/useAgentThreadSearch";
+import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import { terminalTurnKey } from "./agentComposerLaunch";
 import type { ComposerScope } from "./agentComposerTarget";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
@@ -57,7 +58,11 @@ export type AgentNavigationCommandHandlers = Pick<
   Required<Pick<AgentViewCommandHandlers, "threadFindFocused">>;
 
 export interface AgentThreadNavigationOptions {
-  readonly agents: Pick<AgentThreadsSurface, "threads" | "markThreadViewed" | "historySearch">;
+  readonly agents: Pick<
+    AgentThreadsSurface,
+    "threads" | "markThreadViewed" | "historySearch" | "turnLog"
+  >;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly presentationThreads: ReadonlyArray<AgentThreadView>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
@@ -142,6 +147,7 @@ export interface AgentNavigationSession {
 
 export function useAgentThreadNavigation({
   agents,
+  evidenceOf,
   externalSessions = null,
   groups,
   presentationThreads,
@@ -314,7 +320,11 @@ export function useAgentThreadNavigation({
     () => agentThreadsInScope(presentationThreads, railScope),
     [presentationThreads, railScope],
   );
-  const search = useAgentThreadSearch(scopedViews, { historySearch: agents.historySearch });
+  const search = useAgentThreadSearch(scopedViews, {
+    historySearch: agents.historySearch,
+    evidenceOf,
+    turnLog: agents.turnLog,
+  });
   const paletteTitles = useMemo(
     () =>
       paletteOpen

@@ -2310,6 +2310,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
         loadedRootKeys: new Set([ROOT_A]),
         currentState: () => shadowState,
         flushThread: (threadId) => environment.flushThread?.(threadId) ?? Promise.resolve(true),
+        saveRunningThreadsNow: () => undefined,
         dispatchAction: (action) => {
           actions.push(action);
           shadowState = harnessReducer(shadowState, action);

@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChevronDown, Plus } from "lucide-react";
+import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
 import { AgentThreadRow } from "./AgentThreadRow";
 import {
@@ -18,6 +19,7 @@ export interface AgentThreadListProps {
   readonly jumpLabels: ReadonlyMap<string, string>;
   readonly archivedExpanded: boolean;
   readonly empty: AgentRailEmptyState;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   onToggleArchived(): void;
   onShowMoreArchived(): void;
   onSelectThread(threadId: string, modifiers: ListSelectionModifiers): void;
@@ -28,6 +30,7 @@ export interface AgentThreadListProps {
 export const AgentThreadList = memo(function AgentThreadList({
   archivedExpanded,
   empty,
+  evidenceOf,
   focusedThreadId,
   jumpLabels,
   markedThreadIds,
@@ -45,6 +48,7 @@ export const AgentThreadList = memo(function AgentThreadList({
     const threadId = view.thread.threadId;
     return (
       <AgentThreadRow
+        evidenceOf={evidenceOf}
         focused={focusedThreadId === threadId}
         jumpLabel={jumpLabels.get(threadId) ?? null}
         key={threadId}

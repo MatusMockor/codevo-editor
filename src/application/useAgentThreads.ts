@@ -32,6 +32,7 @@ import type {
   AgentTasksNotice,
   AgentThreadCopyDetail,
   AgentThreadStoreGateway,
+  AgentThreadStoreSurface,
   AgentThreadView,
   AgentThreadsSurface,
   ExternalSessionGateway,
@@ -72,7 +73,10 @@ import {
 } from "./useAgentEditorBridge";
 import { useAgentIsolationPreview } from "./useAgentIsolationPreview";
 import { useAgentShipFlow, type ExternalUrlOpenerPort } from "./useAgentShipFlow";
-import { useAgentThreadStore } from "./useAgentThreadStore";
+import { isLoggedAgentThread, useAgentThreadStore } from "./useAgentThreadStore";
+import { useAgentTurnLogging } from "./useAgentTurnLogging";
+import { defaultAgentTurnLogGateway } from "./workbenchDefaultGateways";
+import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS, type AgentTurnLogGateway } from "./agentTurnLogPorts";
 import { useAgentTurnDispatch } from "./useAgentTurnDispatch";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
@@ -89,6 +93,7 @@ export interface AgentThreadsDependencies {
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
+  readonly agentTurnLogGateway?: AgentTurnLogGateway;
   readonly externalSessionGateway?: ExternalSessionGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly gitGateway: AgentThreadsGitGateway;
@@ -150,6 +155,13 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const { projects, reportError, gitGateway, onAccountUsageObserved, onProviderTurnCompleted } =
     dependencies;
 
+  const storeRef = useRef<AgentThreadStoreSurface | null>(null);
+  const turnLog = useAgentTurnLogging({
+    gateway: dependencies.agentTurnLogGateway ?? defaultAgentTurnLogGateway,
+    projects,
+    now: dependencies.now,
+    loggedThreadRootKey: (threadId) => loggedThreadRootKey(storeRef.current, threadId),
+  });
   const store = useAgentThreadStore({
     agentThreadStoreGateway: dependencies.agentThreadStoreGateway,
     projects,
@@ -157,7 +169,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     reportError,
     setNotice,
     now: dependencies.now,
+    turnLog,
   });
+  storeRef.current = store;
   const threads = store.state.threads;
   const externalHistory = useImportedThreadHistory({
     projects,
@@ -389,17 +403,18 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   );
 
   const now = dependencies.now ?? Date.now;
-  const { currentState } = store;
+  const { currentState, hydrateThread } = store;
   const markThreadViewed = useCallback(
     (threadId: string): void => {
       void ensureExternalHistory(threadId);
+      hydrateThread?.(threadId);
       const thread = currentState().threads.get(threadId);
       if (thread === undefined) return;
       if (!agentThreadUnread(thread)) return;
       if (!ownsThread(projects, thread)) return;
       dispatchAction({ kind: "threadViewed", threadId, atEpochMs: now() });
     },
-    [currentState, dispatchAction, ensureExternalHistory, now, projects],
+    [currentState, dispatchAction, ensureExternalHistory, hydrateThread, now, projects],
   );
 
   const { markUnread: markUnreadInStore, rename: renameInStore } = store;
@@ -556,6 +571,15 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const configureAgentCli = useCallback((): void => openAgentSettings(), [openAgentSettings]);
   const dismissNotice = useCallback((): void => setNotice(null), []);
 
+  const { saveRunningThreadsNow } = store;
+  const prepareQuit = useCallback(
+    async (budgetMs: number = AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS): Promise<void> => {
+      saveRunningThreadsNow();
+      await turnLog.writer.flushAll(budgetMs).catch(() => undefined);
+    },
+    [saveRunningThreadsNow, turnLog],
+  );
+
   const viewCacheRef = useRef<ReadonlyMap<string, AgentThreadView>>(new Map());
   const threadViews = useMemo(() => {
     const views = agentThreadViews(
@@ -617,6 +641,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     importExternalSession,
     externalSessions,
     externalHistory,
+    turnLog: turnLog.facts,
     stop: dispatch.stop,
     togglePin: store.togglePin,
     archive: store.archive,
@@ -642,6 +667,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     openChangedFileDiff: editor.openChangedFileDiff,
     configureAgentCli,
     dismissNotice,
+    prepareQuit,
   };
 }
 
@@ -671,6 +697,16 @@ function threadIdForTurn(threads: ReadonlyMap<string, AgentThread>, turnId: stri
     if (thread.turns.some((turn) => turn.turnId === turnId)) return thread.threadId;
   }
   return turnId;
+}
+
+function loggedThreadRootKey(
+  store: AgentThreadStoreSurface | null,
+  threadId: string,
+): string | null {
+  const thread = store?.currentState().threads.get(threadId);
+  if (thread === undefined) return null;
+  if (!isLoggedAgentThread(thread)) return null;
+  return thread.owner.rootKey;
 }
 
 function ownsThread(projects: ReadonlyArray<AgentProjectDescriptor>, thread: AgentThread): boolean {

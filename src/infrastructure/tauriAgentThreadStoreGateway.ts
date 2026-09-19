@@ -5,6 +5,10 @@ import {
 import { TauriAgentArtifactGateway } from "./tauriAgentArtifactGateway";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AgentThread } from "../domain/agentThread";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  type AgentTurnLogEvidenceLookup,
+} from "../domain/agentTurnContentLoss";
 import type {
   AgentThreadStoreGateway,
   AgentThreadStoreOwnerRequest,
@@ -36,6 +40,7 @@ export class TauriAgentThreadStoreGateway implements AgentThreadStoreGateway {
   constructor(
     private readonly invokeCommand: InvokeAgentThreadStoreCommand = invokeAgentThreadStoreCommand,
     private readonly isRuntimeAvailable: AgentThreadStoreRuntimeDetector = isTauri,
+    private readonly evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
   ) {}
 
   async loadAgentThreads(request: AgentThreadStoreOwnerRequest): Promise<AgentThreadStoreSnapshot> {
@@ -54,7 +59,6 @@ export class TauriAgentThreadStoreGateway implements AgentThreadStoreGateway {
     return invokeDeleteAgentThreadIpc(this.invokeCommand, request);
   }
 
-  /** Snapshots are taken off the save's critical path; a refused capture never fails the save. */
   private captureArtifacts(thread: AgentThread): void {
     const isCurrent = this.captures.claim(thread.threadId);
     void captureLocalAgentArtifacts({
@@ -62,6 +66,7 @@ export class TauriAgentThreadStoreGateway implements AgentThreadStoreGateway {
       thread,
       ledger: this.captures,
       isCurrent,
+      evidenceOf: this.evidenceOf,
     }).catch(() => undefined);
   }
 }

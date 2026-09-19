@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_AGENT_STEERS_PER_TURN } from "./agentTask";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
   MAX_AGENT_EVENT_BYTES_PER_TURN,
@@ -11,6 +12,7 @@ import {
 const text = (value: string): AgentTurnEvent => ({ kind: "assistantText", text: value });
 const bytes = (events: readonly AgentTurnEvent[]) =>
   events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0);
+const FULL_BYTE_WINDOW = Math.floor(MAX_AGENT_EVENT_BYTES_PER_TURN / MAX_AGENT_EVENT_TEXT_BYTES);
 
 describe("recent turn event window", () => {
   it("retains the same newest window across burst and incremental delivery", () => {
@@ -29,7 +31,7 @@ describe("recent turn event window", () => {
   });
 
   it("keeps final result, image reference, usage and failure after aggregate byte eviction", () => {
-    const noise: AgentTurnEvent[] = Array.from({ length: 100 }, (_, i) => ({
+    const noise: AgentTurnEvent[] = Array.from({ length: FULL_BYTE_WINDOW + 8 }, (_, i) => ({
       kind: i % 2 ? "reasoning" : "assistantText",
       text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES),
     }));
@@ -47,11 +49,13 @@ describe("recent turn event window", () => {
   });
 
   it("coalesces only within the per-event text bound at the byte limit", () => {
-    const initial = Array.from({ length: 32 }, () => text("x".repeat(MAX_AGENT_EVENT_TEXT_BYTES)));
+    const initial = Array.from({ length: FULL_BYTE_WINDOW }, () =>
+      text("x".repeat(MAX_AGENT_EVENT_TEXT_BYTES)),
+    );
     const result = mergeTurnEvents(initial, [text("€"), text("suffix")]);
     expect(result.truncated).toBe(true);
     expect(result.events[result.events.length - 1]).toEqual(text("€suffix"));
-    expect(result.events).toHaveLength(32);
+    expect(result.events).toHaveLength(FULL_BYTE_WINDOW);
     expect(
       result.events.every((event) => agentTurnEventUtf8Bytes(event) <= MAX_AGENT_EVENT_TEXT_BYTES),
     ).toBe(true);
@@ -67,27 +71,31 @@ describe("recent turn event window", () => {
   });
   it("preserves accepted steering messages while old output rolls off", () => {
     const steer: AgentTurnEvent = { kind: "userMessage", text: "Keep this instruction" };
-    const noise: AgentTurnEvent[] = Array.from({ length: 1000 }, (_, i) => ({
-      kind: "error",
-      message: String(i),
-    }));
+    const noise: AgentTurnEvent[] = Array.from(
+      { length: MAX_AGENT_EVENTS_PER_TURN * 2 },
+      (_, i) => ({ kind: "error", message: String(i) }),
+    );
     const result = mergeTurnEvents([steer], noise);
     expect(result.events[0]).toBe(steer);
-    expect(result.events.slice(1)).toEqual(noise.slice(-511));
+    expect(result.events.slice(1)).toEqual(noise.slice(-(MAX_AGENT_EVENTS_PER_TURN - 1)));
     expect(result.truncated).toBe(true);
   });
 
   it("terminates within bounds when pinned steering consumes the byte budget", () => {
-    const steers: AgentTurnEvent[] = Array.from({ length: 32 }, () => ({
-      kind: "userMessage",
+    const steers: AgentTurnEvent[] = Array.from({ length: MAX_AGENT_STEERS_PER_TURN }, () => ({
+      kind: "userMessage" as const,
       text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES),
     }));
-    const result = mergeTurnEvents(steers, [
-      text("new output"),
-      { kind: "error", message: "failure" },
-    ]);
-    expect(result.events).toEqual(steers);
-    expect(bytes(result.events)).toBe(MAX_AGENT_EVENT_BYTES_PER_TURN);
+    const filler: AgentTurnEvent[] = Array.from({ length: FULL_BYTE_WINDOW }, () =>
+      text("y".repeat(MAX_AGENT_EVENT_TEXT_BYTES)),
+    );
+    const result = mergeTurnEvents(
+      [...steers, ...filler],
+      [text("new output"), { kind: "error", message: "failure" }],
+    );
+    expect(result.events.filter((event) => event.kind === "userMessage")).toEqual(steers);
+    expect(result.events.slice(-1)).toEqual([{ kind: "error", message: "failure" }]);
+    expect(bytes(result.events)).toBeLessThanOrEqual(MAX_AGENT_EVENT_BYTES_PER_TURN);
     expect(result.truncated).toBe(true);
   });
 });

@@ -9,6 +9,11 @@ import {
   type AgentThreadSearchDocument,
   type AgentThreadSearchResult,
 } from "../domain/agentThreadSearch";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  type AgentTurnLogEvidenceLookup,
+} from "../domain/agentTurnContentLoss";
+import type { AgentTurnLogFactsSource } from "./agentTurnLogStatusStore";
 import { useRemoteThreadSearchResults } from "./useRemoteThreadSearchResults";
 import type {
   AgentHistorySearchPort,
@@ -19,24 +24,35 @@ import type {
 export const AGENT_THREAD_SEARCH_DEBOUNCE_MS = 120;
 export const MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS = 128;
 export const MAX_AGENT_THREAD_SEARCH_INDEX_BYTES = 4 * 1_024 * 1_024;
+export const MAX_AGENT_THREAD_SEARCH_FACTS_REQUESTS = 8;
+
+export type AgentThreadEvidenceRevisionLookup = (threadId: string) => number;
 
 export interface AgentThreadSearchOptions {
   readonly historySearch?: AgentHistorySearchPort;
   readonly debounceMs?: number;
   readonly limit?: number;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
+  readonly turnLog?: AgentTurnLogFactsSource;
 }
 
-interface IndexedThread {
+export interface IndexedAgentThread {
   readonly thread: AgentThread;
+  readonly evidenceRevision: number;
   readonly document: AgentThreadSearchDocument;
 }
 
-interface SearchIndex {
-  readonly entries: ReadonlyMap<string, IndexedThread>;
+export interface AgentThreadSearchIndex {
+  readonly entries: ReadonlyMap<string, IndexedAgentThread>;
   readonly documentsTruncated: boolean;
 }
 
-const EMPTY_INDEX: SearchIndex = { entries: new Map(), documentsTruncated: false };
+export const EMPTY_AGENT_THREAD_SEARCH_INDEX: AgentThreadSearchIndex = {
+  entries: new Map(),
+  documentsTruncated: false,
+};
+
+const NO_EVIDENCE_REVISIONS: ReadonlyMap<string, number> = new Map();
 
 export function useAgentThreadSearch(
   views: ReadonlyArray<AgentThreadView>,
@@ -44,14 +60,34 @@ export function useAgentThreadSearch(
 ): AgentThreadSearchSurface {
   const debounceMs = options.debounceMs ?? AGENT_THREAD_SEARCH_DEBOUNCE_MS;
   const limit = options.limit ?? MAX_THREAD_SEARCH_RESULTS;
+  const evidenceOf = options.evidenceOf ?? NO_AGENT_TURN_LOG_EVIDENCE;
+  const turnLog = options.turnLog;
 
   const [query, setQueryState] = useState("");
   const [published, setPublished] = useState<AgentThreadSearchResult | null>(null);
   const [pending, setPending] = useState(false);
+  const [evidenceRevisions, setEvidenceRevisions] =
+    useState<ReadonlyMap<string, number>>(NO_EVIDENCE_REVISIONS);
 
-  const indexRef = useRef<SearchIndex>(EMPTY_INDEX);
-  const index = useMemo(() => reconcileIndex(indexRef.current, views), [views]);
+  const evidenceRevisionOf = useCallback<AgentThreadEvidenceRevisionLookup>(
+    (threadId) => evidenceRevisions.get(threadId) ?? turnLog?.evidenceRevisionOf(threadId) ?? 0,
+    [evidenceRevisions, turnLog],
+  );
+
+  const indexRef = useRef<AgentThreadSearchIndex>(EMPTY_AGENT_THREAD_SEARCH_INDEX);
+  const index = useMemo(
+    () => reconcileAgentThreadSearchIndex(indexRef.current, views, evidenceOf, evidenceRevisionOf),
+    [evidenceOf, evidenceRevisionOf, views],
+  );
   indexRef.current = index;
+
+  useEffect(() => {
+    if (turnLog === undefined) return;
+    const sync = (): void =>
+      setEvidenceRevisions((current) => nextEvidenceRevisions(current, indexRef.current, turnLog));
+    sync();
+    return turnLog.subscribe(sync);
+  }, [index, turnLog]);
 
   const generationRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,6 +162,14 @@ export function useAgentThreadSearch(
     scheduleRefresh(normalized);
   }, [index, scheduleRefresh]);
 
+  useEffect(() => {
+    if (turnLog === undefined) return;
+    if (published === null) return;
+    for (const match of published.matches.slice(0, MAX_AGENT_THREAD_SEARCH_FACTS_REQUESTS)) {
+      turnLog.ensureThreadFacts(match.threadId);
+    }
+  }, [published, turnLog]);
+
   useEffect(() => cancelScheduled, [cancelScheduled]);
 
   const result = useMemo(() => retainKnownThreads(published, index), [index, published]);
@@ -165,18 +209,31 @@ export function useAgentThreadSearch(
   );
 }
 
-function reconcileIndex(previous: SearchIndex, views: ReadonlyArray<AgentThreadView>): SearchIndex {
-  const next = new Map<string, IndexedThread>();
+export function reconcileAgentThreadSearchIndex(
+  previous: AgentThreadSearchIndex,
+  views: ReadonlyArray<AgentThreadView>,
+  evidenceOf: AgentTurnLogEvidenceLookup,
+  evidenceRevisionOf: AgentThreadEvidenceRevisionLookup,
+): AgentThreadSearchIndex {
+  const next = new Map<string, IndexedAgentThread>();
   let retainedBytes = 0;
   const candidates = [...views].sort(compareViewsForRetention);
   for (const view of candidates) {
     if (next.size >= MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS) break;
     const thread = view.thread;
     const cached = previous.entries.get(thread.threadId);
-    const entry =
-      cached !== undefined && cached.thread === thread
-        ? cached
-        : { thread, document: buildAgentThreadSearchDocument(thread) };
+    const evidenceRevision = evidenceRevisionOf(thread.threadId);
+    const reusable =
+      cached !== undefined &&
+      cached.thread === thread &&
+      cached.evidenceRevision === evidenceRevision;
+    const entry = reusable
+      ? cached
+      : {
+          thread,
+          evidenceRevision,
+          document: buildAgentThreadSearchDocument(thread, evidenceOf),
+        };
     if (retainedBytes + entry.document.byteLength > MAX_AGENT_THREAD_SEARCH_INDEX_BYTES) break;
     retainedBytes += entry.document.byteLength;
     next.set(thread.threadId, entry);
@@ -188,7 +245,11 @@ function reconcileIndex(previous: SearchIndex, views: ReadonlyArray<AgentThreadV
   return { entries: next, documentsTruncated };
 }
 
-function searchIndex(index: SearchIndex, query: string, limit: number): AgentThreadSearchResult {
+function searchIndex(
+  index: AgentThreadSearchIndex,
+  query: string,
+  limit: number,
+): AgentThreadSearchResult {
   const documents: AgentThreadSearchDocument[] = [];
   for (const entry of index.entries.values()) documents.push(entry.document);
   const result = searchAgentThreadDocuments(documents, query, limit);
@@ -198,7 +259,7 @@ function searchIndex(index: SearchIndex, query: string, limit: number): AgentThr
 
 function retainKnownThreads(
   result: AgentThreadSearchResult | null,
-  index: SearchIndex,
+  index: AgentThreadSearchIndex,
 ): AgentThreadSearchResult | null {
   if (result === null) return null;
   const matches = result.matches.filter((match) => index.entries.has(match.threadId));
@@ -220,9 +281,25 @@ function compareViewsForRetention(left: AgentThreadView, right: AgentThreadView)
   return 0;
 }
 
+function nextEvidenceRevisions(
+  current: ReadonlyMap<string, number>,
+  index: AgentThreadSearchIndex,
+  turnLog: AgentTurnLogFactsSource,
+): ReadonlyMap<string, number> {
+  const next = new Map<string, number>();
+  let changed = current.size !== index.entries.size;
+  for (const threadId of index.entries.keys()) {
+    const revision = turnLog.evidenceRevisionOf(threadId);
+    next.set(threadId, revision);
+    if (current.get(threadId) !== revision) changed = true;
+  }
+  if (!changed) return current;
+  return next;
+}
+
 function sameEntries(
-  previous: ReadonlyMap<string, IndexedThread>,
-  next: ReadonlyMap<string, IndexedThread>,
+  previous: ReadonlyMap<string, IndexedAgentThread>,
+  next: ReadonlyMap<string, IndexedAgentThread>,
 ): boolean {
   if (previous.size !== next.size) return false;
   for (const [threadId, entry] of next) {

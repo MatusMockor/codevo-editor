@@ -18,6 +18,7 @@ import type {
   AgentThreadsState,
 } from "../domain/agentThread";
 import type { AgentThreadSearchResult } from "../domain/agentThreadSearch";
+import type { AgentTurnLogFactsSource } from "./agentTurnLogStatusStore";
 import type {
   ExternalAgentSessionHistory,
   ExternalSessionHistoryRequest,
@@ -145,6 +146,8 @@ export interface AgentThreadStoreSurface {
   currentState(): AgentThreadsState;
   /** Await terminal persistence and immutable output snapshots before continuing. */
   flushThread?(threadId: string): Promise<boolean>;
+  hydrateThread?(threadId: string): void;
+  saveRunningThreadsNow(): void;
   dispatchAction(action: AgentThreadsAction): void;
   togglePin(threadId: string): void;
   archive(threadId: string): void;
@@ -307,6 +310,7 @@ export type AgentSteerOutcome = "sent" | "deferred" | "kept";
 
 export interface AgentThreadsSurface {
   readonly historySearch?: AgentHistorySearchPort;
+  readonly turnLog?: AgentTurnLogFactsSource;
   readonly attachments: AgentComposerAttachmentsSurface;
   readonly attachmentImages: AgentAttachmentImagesSurface;
   revealAttachment(threadId: string, attachmentId: string): Promise<void>;
@@ -376,4 +380,5 @@ export interface AgentThreadsSurface {
   openChangedFileDiff(threadId: string, change: GitChangedFile): Promise<void>;
   configureAgentCli(): void;
   dismissNotice(): void;
+  prepareQuit?(budgetMs?: number): Promise<void>;
 }

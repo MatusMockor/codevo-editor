@@ -6,6 +6,7 @@ import type {
 } from "../../application/agentArtifactPorts";
 import type { AgentThreadOwner } from "../../domain/agentThread";
 import { agentTurnArtifactReferences } from "../../domain/agentTurnArtifactReferences";
+import type { AgentTurnLogEvidence } from "../../domain/agentTurnContentLoss";
 import type { AgentTurn } from "../../domain/agentThread";
 import { useAgentArtifactSupport } from "./agentArtifactSupport";
 import { AgentOutputArtifacts } from "./AgentOutputArtifacts";
@@ -22,9 +23,11 @@ export interface AgentArtifactScope {
 export function AgentTurnArtifacts({
   scope,
   turn,
+  evidence = null,
 }: {
   readonly scope: AgentArtifactScope;
   readonly turn: AgentTurn;
+  readonly evidence?: AgentTurnLogEvidence | null;
 }) {
   const { owner: threadOwner, threadId, serverId, runnerId, loader, preview } = scope;
   const support = useAgentArtifactSupport();
@@ -35,7 +38,7 @@ export function AgentTurnArtifacts({
         : { kind: "remote", serverId, runnerId, taskId: turn.turnId },
     [threadOwner, threadId, serverId, runnerId, turn.turnId],
   );
-  const references = useMemo(() => agentTurnArtifactReferences(turn), [turn]);
+  const references = useMemo(() => agentTurnArtifactReferences(turn, evidence), [turn, evidence]);
   return (
     <AgentOutputArtifacts
       files={support.files}

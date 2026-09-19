@@ -6,6 +6,10 @@ import {
 } from "../domain/agentArtifactFailure";
 import { isTerminalAgentTurnStatus, type AgentThread, type AgentTurn } from "../domain/agentThread";
 import { agentTurnArtifactReferences } from "../domain/agentTurnArtifactReferences";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  type AgentTurnLogEvidenceLookup,
+} from "../domain/agentTurnContentLoss";
 
 /** Pinned against contracts/agent-artifact-errors.json so both sides refuse the same turns. */
 export const AGENT_ARTIFACT_CAPTURE_RULE =
@@ -87,6 +91,7 @@ export interface AgentArtifactCaptureInput {
   readonly thread: AgentThread;
   readonly ledger: AgentArtifactCaptureLedger;
   readonly isCurrent: () => boolean;
+  readonly evidenceOf?: AgentTurnLogEvidenceLookup;
 }
 
 /**
@@ -98,6 +103,7 @@ export async function captureLocalAgentArtifacts({
   thread,
   ledger,
   isCurrent,
+  evidenceOf = NO_AGENT_TURN_LOG_EVIDENCE,
 }: AgentArtifactCaptureInput): Promise<void> {
   const turn = newestTerminalTurn(thread);
   if (turn === null) return;
@@ -110,7 +116,7 @@ export async function captureLocalAgentArtifacts({
   const release = ledger.hold(thread.threadId);
   try {
     let budget = AGENT_ARTIFACT_REFERENCE_LIMIT;
-    for (const reference of agentTurnArtifactReferences(turn)) {
+    for (const reference of agentTurnArtifactReferences(turn, evidenceOf(turn.turnId))) {
       if (budget === 0) return;
       const key = captureKey(thread, turn.turnId, reference.path);
       if (ledger.isSettled(key)) continue;

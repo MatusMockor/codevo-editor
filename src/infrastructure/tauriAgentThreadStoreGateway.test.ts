@@ -273,3 +273,28 @@ it("captures at most the shared reference limit from one terminal turn", async (
 
   expect(resolveCalls(invokeCommand)).toHaveLength(32);
 });
+
+it("captures a window truncated turn through the injected evidence lookup", async () => {
+  const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);
+  const gateway = new TauriAgentThreadStoreGateway(invokeCommand, available, () => ({
+    loss: { kind: "none" },
+    sealed: true,
+    live: false,
+    hydration: "complete",
+  }));
+
+  await save(gateway, { ...THREAD, turns: [{ ...FINISHED, eventsTruncated: true }] });
+  await flush();
+
+  expect(resolveCalls(invokeCommand)).toHaveLength(1);
+});
+
+it("captures nothing from a truncated turn when no evidence lookup was injected", async () => {
+  const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);
+  const gateway = new TauriAgentThreadStoreGateway(invokeCommand, available);
+
+  await save(gateway, { ...THREAD, turns: [{ ...FINISHED, eventsTruncated: true }] });
+  await flush();
+
+  expect(resolveCalls(invokeCommand)).toEqual([]);
+});

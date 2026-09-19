@@ -4,6 +4,7 @@ import type { AgentArtifactLoader } from "../application/agentArtifactPorts";
 import type { AgentArtifactMetadata } from "../domain/agentArtifact";
 import { agentRootOwnerId } from "../domain/agentProject";
 import type { AgentThread, AgentTurn } from "../domain/agentThread";
+import type { AgentTurnLogEvidence } from "../domain/agentTurnContentLoss";
 import {
   AgentArtifactCaptureLedger,
   AGENT_ARTIFACT_CAPTURE_ATTEMPTS,
@@ -261,6 +262,53 @@ describe("captureLocalAgentArtifacts", () => {
     await run(loader, thread([turn("agt-2-0a1b", markdown)]), new AgentArtifactCaptureLedger());
 
     expect(loader.resolve).toHaveBeenCalledTimes(32);
+  });
+
+  it("captures a window truncated turn whose log rebuilt the whole window", async () => {
+    const loader = captured();
+    const truncated: AgentTurn = {
+      ...turn("agt-2-0a1b", "[Preview](design.html)"),
+      eventsTruncated: true,
+    };
+    const evidence: AgentTurnLogEvidence = {
+      loss: { kind: "none" },
+      sealed: true,
+      live: false,
+      hydration: "complete",
+    };
+
+    await captureLocalAgentArtifacts({
+      loader,
+      thread: thread([truncated]),
+      ledger: new AgentArtifactCaptureLedger(),
+      isCurrent: () => true,
+      evidenceOf: () => evidence,
+    });
+
+    expect(loader.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it("captures nothing from a truncated turn whose log recorded real loss", async () => {
+    const loader = captured();
+    const truncated: AgentTurn = {
+      ...turn("agt-2-0a1b", "[Preview](design.html)"),
+      eventsTruncated: true,
+    };
+
+    await captureLocalAgentArtifacts({
+      loader,
+      thread: thread([truncated]),
+      ledger: new AgentArtifactCaptureLedger(),
+      isCurrent: () => true,
+      evidenceOf: () => ({
+        loss: { kind: "supervisorGap" },
+        sealed: true,
+        live: false,
+        hydration: "complete",
+      }),
+    });
+
+    expect(loader.resolve).not.toHaveBeenCalled();
   });
 
   it("evicts the oldest settled entry once the ledger is full", async () => {

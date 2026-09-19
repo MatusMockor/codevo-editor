@@ -302,6 +302,30 @@ describe("buildAgentThreadSearchDocument", () => {
     expect(documentOf({ turns: [turn({ eventsTruncated: true })] }).truncated).toBe(true);
   });
 
+  it("does not call a window truncated turn truncated when its log is provably complete", () => {
+    const subject = thread({ turns: [turn({ eventsTruncated: true })] });
+    const doc = buildAgentThreadSearchDocument(subject, () => ({
+      loss: { kind: "none" },
+      sealed: true,
+      live: false,
+      hydration: "complete",
+    }));
+
+    expect(doc.truncated).toBe(false);
+  });
+
+  it("keeps reporting truncation when the log of a truncated turn is not provably complete", () => {
+    const subject = thread({ turns: [turn({ eventsTruncated: true })] });
+    const doc = buildAgentThreadSearchDocument(subject, () => ({
+      loss: { kind: "none" },
+      sealed: false,
+      live: false,
+      hydration: "complete",
+    }));
+
+    expect(doc.truncated).toBe(true);
+  });
+
   it("builds an empty document body for a thread without turns", () => {
     const doc = documentOf({ turns: [] });
 
