@@ -1,0 +1,496 @@
+{
+  "schemaVersion": 1,
+  "requests": [
+    {
+      "name": "githubOwnerRepo",
+      "value": { "provider": "github", "host": "github.com", "path": "acme/storefront-api" }
+    },
+    {
+      "name": "gitlabGroupProject",
+      "value": {
+        "provider": "gitlab",
+        "host": "gitlab.example.com",
+        "path": "platform/billing-service"
+      }
+    },
+    {
+      "name": "gitlabNestedGroups",
+      "value": {
+        "provider": "gitlab",
+        "host": "gitlab.example.com",
+        "path": "platform/payments/billing-service"
+      }
+    }
+  ],
+  "rejectedRequests": [
+    {
+      "name": "unknownProvider",
+      "value": { "provider": "bitbucket", "host": "github.com", "path": "acme/storefront-api" }
+    },
+    {
+      "name": "unknownField",
+      "value": {
+        "provider": "github",
+        "host": "github.com",
+        "path": "acme/storefront-api",
+        "hostname": "github.com"
+      }
+    },
+    { "name": "missingPath", "value": { "provider": "github", "host": "github.com" } },
+    {
+      "name": "uppercaseHost",
+      "value": { "provider": "github", "host": "GitHub.com", "path": "acme/storefront-api" }
+    },
+    {
+      "name": "emptyHost",
+      "value": { "provider": "github", "host": "", "path": "acme/storefront-api" }
+    },
+    {
+      "name": "hostWithPort",
+      "value": {
+        "provider": "gitlab",
+        "host": "gitlab.example.com:443",
+        "path": "platform/billing-service"
+      }
+    },
+    {
+      "name": "pathLeadingDash",
+      "value": { "provider": "github", "host": "github.com", "path": "-acme/storefront-api" }
+    },
+    {
+      "name": "pathWithGitSuffix",
+      "value": { "provider": "github", "host": "github.com", "path": "acme/storefront-api.git" }
+    },
+    {
+      "name": "pathWithSurroundingWhitespace",
+      "value": { "provider": "github", "host": "github.com", "path": " acme/storefront-api " }
+    },
+    {
+      "name": "pathWithNewline",
+      "value": { "provider": "github", "host": "github.com", "path": "acme/storefront-api\n" }
+    },
+    {
+      "name": "pathWithParentSegment",
+      "value": {
+        "provider": "gitlab",
+        "host": "gitlab.example.com",
+        "path": "platform/../billing-service"
+      }
+    },
+    {
+      "name": "githubThreeSegments",
+      "value": { "provider": "github", "host": "github.com", "path": "acme/team/storefront-api" }
+    },
+    {
+      "name": "gitlabSingleSegment",
+      "value": { "provider": "gitlab", "host": "gitlab.example.com", "path": "platform" }
+    },
+    {
+      "name": "pathNotAString",
+      "value": { "provider": "github", "host": "github.com", "path": 42 }
+    }
+  ],
+  "hostsSnapshots": [
+    {
+      "name": "bothProvidersReady",
+      "value": {
+        "github": {
+          "status": "ready",
+          "hosts": [{ "provider": "github", "host": "github.com", "auth": "authenticated" }],
+          "truncated": false
+        },
+        "gitlab": {
+          "status": "ready",
+          "hosts": [
+            { "provider": "gitlab", "host": "gitlab.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab.com", "auth": "notAuthenticated" }
+          ],
+          "truncated": false
+        }
+      }
+    },
+    {
+      "name": "githubCliMissingGitlabTimedOut",
+      "value": {
+        "github": { "status": "cliMissing" },
+        "gitlab": { "status": "failed", "reason": "timedOut" }
+      }
+    },
+    {
+      "name": "githubFailedBusyGitlabEmptyReady",
+      "value": {
+        "github": { "status": "failed", "reason": "busy" },
+        "gitlab": { "status": "ready", "hosts": [], "truncated": false }
+      }
+    },
+    {
+      "name": "gitlabTruncatedAtLimit",
+      "value": {
+        "github": { "status": "failed", "reason": "invalidOutput" },
+        "gitlab": {
+          "status": "ready",
+          "hosts": [
+            { "provider": "gitlab", "host": "gitlab.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-1.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-2.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-3.example.com", "auth": "notAuthenticated" },
+            { "provider": "gitlab", "host": "gitlab-4.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-5.example.com", "auth": "notAuthenticated" },
+            { "provider": "gitlab", "host": "gitlab-6.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-7.example.com", "auth": "authenticated" }
+          ],
+          "truncated": true
+        }
+      }
+    }
+  ],
+  "rejectedHostsSnapshots": [
+    {
+      "name": "missingProvider",
+      "value": { "github": { "status": "cliMissing" } }
+    },
+    {
+      "name": "unknownProviderKey",
+      "value": {
+        "github": { "status": "cliMissing" },
+        "gitlab": { "status": "cliMissing" },
+        "bitbucket": { "status": "cliMissing" }
+      }
+    },
+    {
+      "name": "stateWithUnknownStatus",
+      "value": { "github": { "status": "pending" }, "gitlab": { "status": "cliMissing" } }
+    },
+    {
+      "name": "unknownFailureReason",
+      "value": {
+        "github": { "status": "failed", "reason": "denied" },
+        "gitlab": { "status": "cliMissing" }
+      }
+    },
+    {
+      "name": "stateWithUnknownField",
+      "value": {
+        "github": { "status": "cliMissing", "detail": "gh not on PATH" },
+        "gitlab": { "status": "cliMissing" }
+      }
+    },
+    {
+      "name": "readyWithoutTruncated",
+      "value": {
+        "github": { "status": "ready", "hosts": [] },
+        "gitlab": { "status": "cliMissing" }
+      }
+    },
+    {
+      "name": "hostProviderMismatch",
+      "value": {
+        "github": {
+          "status": "ready",
+          "hosts": [{ "provider": "gitlab", "host": "github.com", "auth": "authenticated" }],
+          "truncated": false
+        },
+        "gitlab": { "status": "cliMissing" }
+      }
+    },
+    {
+      "name": "hostUnknownAuth",
+      "value": {
+        "github": {
+          "status": "ready",
+          "hosts": [{ "provider": "github", "host": "github.com", "auth": "expired" }],
+          "truncated": false
+        },
+        "gitlab": { "status": "cliMissing" }
+      }
+    },
+    {
+      "name": "duplicateHosts",
+      "value": {
+        "github": { "status": "cliMissing" },
+        "gitlab": {
+          "status": "ready",
+          "hosts": [
+            { "provider": "gitlab", "host": "gitlab.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab.example.com", "auth": "notAuthenticated" }
+          ],
+          "truncated": false
+        }
+      }
+    },
+    {
+      "name": "moreHostsThanLimit",
+      "value": {
+        "github": { "status": "cliMissing" },
+        "gitlab": {
+          "status": "ready",
+          "hosts": [
+            { "provider": "gitlab", "host": "gitlab-0.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-1.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-2.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-3.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-4.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-5.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-6.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-7.example.com", "auth": "authenticated" },
+            { "provider": "gitlab", "host": "gitlab-8.example.com", "auth": "authenticated" }
+          ],
+          "truncated": true
+        }
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "name": "okGithubPublic",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": "Storefront API service",
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": "git@github.com:acme/storefront-api.git",
+          "httpsUrl": "https://github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "okGitlabPrivateWithSshPort",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "gitlab",
+          "host": "gitlab.example.com",
+          "fullPath": "platform/billing-service",
+          "description": "Billing service",
+          "visibility": "private",
+          "defaultBranch": "release/2026.04",
+          "sshUrl": "ssh://git@gitlab.example.com:2222/platform/billing-service.git",
+          "httpsUrl": "https://gitlab.example.com/platform/billing-service.git"
+        }
+      }
+    },
+    {
+      "name": "okGitlabInternalWithoutUrls",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "gitlab",
+          "host": "gitlab.example.com",
+          "fullPath": "platform/payments/billing-service",
+          "description": null,
+          "visibility": "internal",
+          "defaultBranch": null,
+          "sshUrl": null,
+          "httpsUrl": null
+        }
+      }
+    },
+    {
+      "name": "okGitlabUnknownVisibilityHttpsOnly",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "gitlab",
+          "host": "gitlab.example.com",
+          "fullPath": "platform/billing-service",
+          "description": null,
+          "visibility": "unknown",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://gitlab.example.com/platform/billing-service.git"
+        }
+      }
+    },
+    { "name": "notFound", "value": { "status": "notFound" } },
+    { "name": "cliMissing", "value": { "status": "cliMissing" } },
+    { "name": "notAuthenticated", "value": { "status": "notAuthenticated" } },
+    { "name": "hostNotAllowed", "value": { "status": "hostNotAllowed" } },
+    { "name": "timedOut", "value": { "status": "timedOut" } },
+    { "name": "superseded", "value": { "status": "superseded" } },
+    {
+      "name": "rateLimitedWithRetryAfter",
+      "value": { "status": "rateLimited", "retryAfterSeconds": 60 }
+    },
+    {
+      "name": "rateLimitedWithoutRetryAfter",
+      "value": { "status": "rateLimited", "retryAfterSeconds": null }
+    },
+    { "name": "failedNetwork", "value": { "status": "failed", "reason": "network" } },
+    { "name": "failedInvalidOutput", "value": { "status": "failed", "reason": "invalidOutput" } },
+    { "name": "failedOutputTooLarge", "value": { "status": "failed", "reason": "outputTooLarge" } },
+    { "name": "failedBusy", "value": { "status": "failed", "reason": "busy" } },
+    { "name": "failedUnknown", "value": { "status": "failed", "reason": "unknown" } }
+  ],
+  "rejectedOutcomes": [
+    { "name": "unknownStatus", "value": { "status": "partial" } },
+    { "name": "missingStatus", "value": {} },
+    {
+      "name": "plainStatusWithUnknownField",
+      "value": { "status": "notFound", "detail": "no such repository" }
+    },
+    { "name": "okWithoutRepository", "value": { "status": "ok" } },
+    {
+      "name": "okWithUnknownRepositoryField",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git",
+          "stars": 12
+        }
+      }
+    },
+    {
+      "name": "okWithUppercaseHost",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "GitHub.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "okWithUnnormalizedFullPath",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api.git",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "okWithUnknownVisibilityValue",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "secret",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "okWithCredentialsInHttpsUrl",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://user@github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "okWithQueryInHttpsUrl",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git?token=x"
+        }
+      }
+    },
+    {
+      "name": "okWithProtocolMismatchedSshUrl",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": "https://github.com/acme/storefront-api.git",
+          "httpsUrl": null
+        }
+      }
+    },
+    {
+      "name": "okWithControlCharacterInDescription",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": "Storefront\u0000API",
+          "visibility": "public",
+          "defaultBranch": "main",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "okWithEmptyDefaultBranch",
+      "value": {
+        "status": "ok",
+        "repository": {
+          "provider": "github",
+          "host": "github.com",
+          "fullPath": "acme/storefront-api",
+          "description": null,
+          "visibility": "public",
+          "defaultBranch": "",
+          "sshUrl": null,
+          "httpsUrl": "https://github.com/acme/storefront-api.git"
+        }
+      }
+    },
+    {
+      "name": "rateLimitedWithNegativeRetryAfter",
+      "value": { "status": "rateLimited", "retryAfterSeconds": -1 }
+    },
+    {
+      "name": "rateLimitedWithFractionalRetryAfter",
+      "value": { "status": "rateLimited", "retryAfterSeconds": 1.5 }
+    },
+    {
+      "name": "rateLimitedWithoutRetryAfterField",
+      "value": { "status": "rateLimited" }
+    },
+    { "name": "failedWithUnknownReason", "value": { "status": "failed", "reason": "meltdown" } },
+    { "name": "failedWithoutReason", "value": { "status": "failed" } }
+  ]
+}

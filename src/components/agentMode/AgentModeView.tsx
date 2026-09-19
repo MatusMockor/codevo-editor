@@ -46,6 +46,12 @@ import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
+import { useRemoteAddProject } from "../../application/useRemoteAddProject";
+import { AgentRemoteAddProjectDialog } from "./remoteAddProject/AgentRemoteAddProjectDialog";
+import {
+  remoteAddProjectCloneActive,
+  remoteAddProjectServerProjects,
+} from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
 import { AgentThreadHeader } from "./AgentThreadHeader";
@@ -166,6 +172,7 @@ export function AgentModeView(props: AgentModeViewProps) {
       onSelectedThreadChange={setSelectedThreadId}
       onSelectedProjectChange={remote === null ? NOOP_SELECTED_PROJECT : setSelectedProjectRootKey}
       onSelectProjectEnvironment={selectProjectEnvironment}
+      refreshRemoteProjects={unified.refreshRemote}
       selectedServerId={remote?.selectedServerId ?? null}
       authoritativeRemoteProjectKeys={unified.authoritativeRemoteProjectKeys}
     />
@@ -196,12 +203,14 @@ function LocalAgentModeView({
   onSelectedThreadChange,
   onSelectedProjectChange,
   onSelectProjectEnvironment,
+  refreshRemoteProjects,
   selectedServerId,
   authoritativeRemoteProjectKeys,
 }: AgentModeViewProps & {
   onSelectedThreadChange(threadId: string | null): void;
   onSelectedProjectChange(rootKey: string | null): void;
   onSelectProjectEnvironment(rootKey: string): void;
+  refreshRemoteProjects(): Promise<void>;
   selectedServerId: string | null;
   authoritativeRemoteProjectKeys: ReadonlySet<string>;
 }) {
@@ -574,9 +583,11 @@ function LocalAgentModeView({
     }
   }, [agents, localNotice, setLocalNotice]);
 
+  const composerTargetProjectRootKey = composer.target?.projectRootKey ?? null;
+  const composerTargetRepositoryRoot = composer.target?.repositoryRoot ?? null;
   const addProjectSelectionIdentity = useMemo(
-    () => ({ selectedThreadId, projectSelectionIntent }),
-    [selectedThreadId, projectSelectionIntent],
+    () => ({ selectedThreadId, projectSelectionIntent, composerTargetProjectRootKey }),
+    [composerTargetProjectRootKey, selectedThreadId, projectSelectionIntent],
   );
   const selectAddedProject = useAgentLatestCallback((project: AgentProjectDescriptor) => {
     if (!navigation.setProjectScope(project.rootKey)) return;
@@ -593,8 +604,32 @@ function LocalAgentModeView({
     workspaceRoot,
   });
 
-  const composerTargetProjectRootKey = composer.target?.projectRootKey ?? null;
-  const composerTargetRepositoryRoot = composer.target?.repositoryRoot ?? null;
+  const remoteServerProjects = useMemo(
+    () => remoteAddProjectServerProjects(projects, selectedServerId),
+    [projects, selectedServerId],
+  );
+  const selectRemoteProject = useAgentLatestCallback((rootKey: string) => {
+    const project = projects.find((candidate) => candidate.rootKey === rootKey);
+    if (project === undefined) return;
+    selectAddedProject(project);
+  });
+  const remoteAdd = useRemoteAddProject({
+    runnerGateway: remoteContext?.gateway ?? null,
+    lookupGateway: remoteContext?.repositoryLookup ?? null,
+    serverId: selectedServerId,
+    workspaceOwner: workspaceRoot,
+    serverProjects: remoteServerProjects,
+    selectionIdentity: addProjectSelectionIdentity,
+    refreshProjects: refreshRemoteProjects,
+    selectProject: selectRemoteProject,
+  });
+  const openRemoteAddProject = useAgentLatestCallback(() => remoteAdd.openDialog());
+  const cancelPendingClone = useAgentLatestCallback(() => remoteAdd.cancelPendingClone());
+  const dismissPendingClone = useAgentLatestCallback(() => remoteAdd.dismissPendingClone());
+  const openAddProject = selectedServerId === null ? addProject.openDialog : openRemoteAddProject;
+  const remoteAddCloneRunning =
+    remoteAdd.pendingClone !== null && remoteAddProjectCloneActive(remoteAdd.pendingClone.status);
+
   const headerFallback = useMemo(
     () =>
       composerTargetProjectRootKey === null || composerTargetRepositoryRoot === null
@@ -721,7 +756,10 @@ function LocalAgentModeView({
                 addProjectAvailable={chrome.addProject !== null}
                 accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
                 groups={groups}
-                onAddProject={addProject.openDialog}
+                onAddProject={openAddProject}
+                onCancelPendingClone={cancelPendingClone}
+                onDismissPendingClone={dismissPendingClone}
+                pendingClone={remoteAdd.pendingClone}
                 onChangeScope={changeProjectScope}
                 onCollapseSidebar={toggleRail}
                 onNewThread={newProjectThread}
@@ -777,6 +815,8 @@ function LocalAgentModeView({
               composer.target === null ? (
                 <AgentRemoteDraftProjectChooser
                   projects={composerProjects}
+                  cloneRunning={remoteAddCloneRunning}
+                  onAddProject={openRemoteAddProject}
                   onOpenSettings={onOpenEnvironmentSettings}
                   onSelect={(project) => {
                     const live = projects.find(
@@ -797,6 +837,7 @@ function LocalAgentModeView({
                         candidate.projectRootKey === live.rootKey ||
                         candidate.memberProjectRootKeys?.includes(live.rootKey),
                     );
+                    setProjectSelectionIntent((current) => current + 1);
                     navigation.setRailScope({
                       projectRootKey: live.rootKey,
                       repositoryRoot: live.rootPath,
@@ -918,6 +959,7 @@ function LocalAgentModeView({
             </div>
           </div>
         </AgentClockProvider>
+        <AgentRemoteAddProjectDialog controller={remoteAdd} onClose={remoteAdd.close} />
         {addProject.open && chrome.addProject !== null && (
           <AgentAddProjectDialog
             gateway={chrome.addProject.gateway}

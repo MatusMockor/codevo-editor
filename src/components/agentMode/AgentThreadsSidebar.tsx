@@ -10,6 +10,7 @@ import {
 import { PanelLeftClose, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
+import type { RemoteAddProjectPendingClone } from "../../application/useRemoteAddProject";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
@@ -23,6 +24,7 @@ import {
   type ListSelectionModifiers,
   type ListSelectionOwner,
 } from "../../domain/listSelection";
+import { AgentRailCloneRow } from "./remoteAddProject/AgentRailCloneRow";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import { AgentUsagePanel } from "./AgentUsagePanel";
@@ -66,6 +68,9 @@ export interface AgentThreadsSidebarProps {
   readonly selectedThreadId: string | null;
   readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly pendingClone?: RemoteAddProjectPendingClone | null;
+  onCancelPendingClone?(): void;
+  onDismissPendingClone?(): void;
   onOpenProviderSettings(): void;
   onOpenSourceControl(): void;
   onCollapseSidebar?(): void;
@@ -86,10 +91,13 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   accountUsage,
   groups,
   onAddProject,
+  onCancelPendingClone,
   onChangeScope,
   onCollapseSidebar,
+  onDismissPendingClone,
   onNewThread,
   onProjectCommand,
+  pendingClone = null,
   providerEnabled,
   providerManagement,
   onOpenProviderSettings,
@@ -354,6 +362,13 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         }
         searchRef={searchRef}
       />
+      {pendingClone !== null && (
+        <AgentRailCloneRow
+          clone={pendingClone}
+          onCancel={() => onCancelPendingClone?.()}
+          onDismiss={() => onDismissPendingClone?.()}
+        />
+      )}
       {!search.active && selection.count > 1 && (
         <AgentThreadSelectionBar
           onAction={runBulkAction}

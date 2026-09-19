@@ -190,6 +190,9 @@ pub fn run() {
             });
             app.manage(codex_hosts);
             app.manage(agent_cli_versions);
+            app.manage(Arc::new(repository_lookup::RepositoryLookupService::new(
+                Arc::clone(&agent_cli_discovery),
+            )));
             app.manage(agent_cli_discovery);
             app.manage(agent_provider_runtime);
             app.manage(Arc::new(
@@ -605,6 +608,8 @@ pub fn run() {
             git_worktree_commands::add_git_worktree,
             git_worktree_commands::remove_git_worktree,
             git_worktree_commands::prune_git_worktrees,
+            repository_lookup_commands::repository_lookup_hosts,
+            repository_lookup_commands::repository_lookup,
             directory_listing_commands::list_directory_entries,
             directory_listing_commands::open_directory_in_file_manager
         ])

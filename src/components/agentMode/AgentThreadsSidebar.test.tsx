@@ -1343,6 +1343,44 @@ describe("AgentThreadsSidebar", () => {
     expect(counters.get("agt-0")?.count).toBeGreaterThan(before);
   });
 
+  it("shows a pending clone row above the list and reports cancel and dismiss", () => {
+    const onCancelPendingClone = vi.fn();
+    const onDismissPendingClone = vi.fn();
+    render({
+      pendingClone: { name: "storefront", status: "running", error: null },
+      onCancelPendingClone,
+      onDismissPendingClone,
+    });
+
+    const clone = host.querySelector('[aria-label="Repository clone"]');
+    expect(clone?.textContent).toContain("storefront");
+    expect(clone?.textContent).toContain("Cloning on the server");
+    expect(clone?.nextElementSibling).toBe(host.querySelector(".agent-rail__scroll"));
+
+    act(() => clone?.querySelector<HTMLButtonElement>("button")?.click());
+    expect(onCancelPendingClone).toHaveBeenCalledTimes(1);
+
+    render({
+      pendingClone: { name: "storefront", status: "failed", error: "Clone rejected" },
+      onCancelPendingClone,
+      onDismissPendingClone,
+    });
+    expect(host.textContent).toContain("Clone rejected");
+    act(() =>
+      host
+        .querySelector('[aria-label="Repository clone"]')
+        ?.querySelector<HTMLButtonElement>("button")
+        ?.click(),
+    );
+    expect(onDismissPendingClone).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the rail free of a clone row without a pending clone", () => {
+    render();
+
+    expect(host.querySelector('[aria-label="Repository clone"]')).toBeNull();
+  });
+
   function render(overrides: Partial<AgentThreadsSidebarProps> = {}): void {
     const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
     const props: AgentThreadsSidebarProps = {

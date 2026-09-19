@@ -112,7 +112,7 @@ impl CloneProjectRequest {
     }
 }
 
-fn repository_url(value: &str) -> bool {
+pub(crate) fn repository_url(value: &str) -> bool {
     if value.len() > 2048 || !value.is_ascii() {
         return false;
     }
@@ -187,7 +187,7 @@ fn repository_url(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
 }
 
-fn branch_name(value: &str) -> bool {
+pub(crate) fn branch_name(value: &str) -> bool {
     !value.is_empty()
         && value.encode_utf16().count() <= 255
         && !value

@@ -54,9 +54,62 @@ Server projects must be registered before an agent can use them. The runner's
 clone API accepts a repository URL, a folder name and an optional branch. The
 folder name uses letters, digits, underscores and hyphens, starts with a letter or
 digit, and is at most 64 characters. Omitting the branch uses the repository's
-default branch. The clone API remains available, but its integration into the
-existing **Add project** flow is not yet complete. Do not rely on a desktop clone
-button in this build; a separate remote task panel is not part of this integration.
+default branch.
+
+While a server is the selected execution environment, **Add project** in the rail
+and the button on the empty remote thread open the server add-project dialog. Its
+steps are sources, then one entry field, then confirm:
+
+- **Server project** opens a project already registered on that server.
+- **Git URL** takes one clone URL; URLs carrying credentials are rejected.
+- **GitHub repository** and **GitLab repository** take one exact `owner/repo` or
+  `group/project` and run a single lookup through this machine's `gh` or `glab`
+  account. Lookup runs on the desktop, so it is available on macOS and Linux only.
+  There is no repository search and no result list. A provider is disabled with a
+  one-line reason when its CLI is missing, when it is not logged in to any host,
+  when the host check did not finish, or when the server could not be reached; all
+  four offer **Retry**, which repeats the capability probe and the host list, and
+  the missing-CLI and not-signed-in rows name the command to run
+  (`gh auth login`, `glab auth login`). Only a reason the user cannot act on, such
+  as a server that cannot clone, keeps the plain "Setup required" chip. A host that
+  was just signed in can take a few seconds to appear, because the desktop caches
+  the CLI host status briefly; **Retry** after that delay picks it up. Every failed
+  lookup offers **Use Git URL**, which switches to the Git URL step with an empty
+  field. A repeated Enter on an entry that is already being looked up is ignored,
+  so a held or double-tapped Enter runs one lookup, while a different entry
+  supersedes the running one. GitLab shows a host selector only when more than one
+  authenticated host is available and notes when the host list was truncated. Only
+  a clone URL that points at the host the lookup was made against is offered; when
+  the host returns no usable clone URL the entry step reports "This host returned no
+  usable clone URL. Use a Git URL instead." instead of opening confirm. A repository
+  that was renamed must be entered under its current path.
+- **Confirm** shows the repository, the folder name under the server projects root
+  with inline validation, an optional branch validated against the runner's branch
+  grammar, and an SSH/HTTPS choice where a protocol without a URL is disabled. HTTPS
+  on a repository that is not public warns that the server clones anonymously, and
+  only when an HTTPS clone URL actually exists. A folder name already registered on
+  the server is flagged with an **Open existing** action. Enter in the folder name or
+  branch field starts the clone; Enter on any other control activates only that
+  control, and Cmd/Ctrl+Enter is the primary shortcut everywhere in the dialog. Key
+  auto-repeat is ignored, so holding Enter never starts a second clone or lookup.
+
+Submitting closes the dialog and shows a clone row in the rail with the project
+name, its status text, an indeterminate progress bar while the job is queued or
+running, and **Cancel** or **Dismiss**. A submission the server refused is kept in
+that row with its bounded reason until it is dismissed. The runner reports clone
+status only, so the editor shows no percentage. The row belongs to one workspace tab
+and one server; another tab on the same server neither shows it nor can cancel it.
+The row does not survive an editor restart; the clone itself keeps running on the
+server. GitHub Enterprise hosts are not supported.
+
+When the clone succeeds the editor refreshes the server projects and selects the new
+project for the draft thread only once that project is actually in the refreshed
+list, and only while the user selected nothing else meanwhile. Choosing a project in
+the draft chooser, picking one in the rail or the scope menu, opening a thread,
+changing the composer's repository or switching servers all count as selecting
+something else, and the auto-selection is then dropped. If the selection moved on,
+the clone is still finished on the server and the row stays, showing "Clone
+finished" with **Dismiss**, until it is dismissed.
 
 Cloning runs on the Linux server. The current deployment uses
 `CODEVO_PROJECTS_ROOT=/home/codex/Developer`, producing

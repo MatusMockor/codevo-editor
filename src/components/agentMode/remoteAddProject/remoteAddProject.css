@@ -1,0 +1,398 @@
+.agent-remote-add-project {
+  border: 0;
+  border-radius: var(--codevo-r-xl);
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-float);
+}
+
+.agent-remote-add-project__crumb {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--agent-space-3);
+  height: calc(44px * var(--codevo-fs-scale));
+  padding: 0 12px 0 10px;
+}
+
+.agent-remote-add-project__crumb .agent-iconbutton {
+  width: 28px;
+  height: 28px;
+}
+
+.agent-remote-add-project__title {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--codevo-fg-strong);
+  font-size: var(--codevo-fs-meta);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-remote-add-project .palette-search {
+  height: 34px;
+  border-bottom: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  color: var(--codevo-fg-muted);
+  margin: 0 10px 6px;
+  padding: 0 10px;
+  gap: var(--agent-space-3);
+}
+
+.agent-remote-add-project .palette-search input {
+  height: 34px;
+  color: var(--codevo-fg-strong);
+}
+
+.agent-remote-add-project .palette-search input::placeholder {
+  color: var(--codevo-fg-subtle);
+}
+
+.agent-remote-add-project .palette-search:focus-within {
+  box-shadow: var(--codevo-focus-ring);
+}
+
+.agent-remote-add-project__host,
+.agent-remote-add-project__badge {
+  flex: none;
+  border: 0;
+  border-radius: var(--codevo-r-pill);
+  background: var(--codevo-hover);
+  color: var(--codevo-fg-muted);
+  font: inherit;
+  font-size: var(--codevo-fs-label);
+  padding: 3px 8px;
+}
+
+.agent-remote-add-project__host:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+  outline: none;
+}
+
+.agent-remote-add-project__body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 10px 8px;
+}
+
+.agent-remote-add-project .search-everywhere-section-label {
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-label);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 6px 10px 4px;
+}
+
+.agent-remote-add-project__list {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.agent-remote-add-project__row {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  min-height: 36px;
+  border-radius: var(--codevo-r-sm);
+  color: var(--codevo-fg);
+}
+
+.agent-remote-add-project__row svg {
+  color: var(--codevo-fg-muted);
+}
+
+.agent-remote-add-project__row:hover,
+.agent-remote-add-project__row.active {
+  background: var(--codevo-hover);
+  color: var(--codevo-fg-strong);
+}
+
+.agent-remote-add-project__row.active::before {
+  display: none;
+}
+
+.agent-remote-add-project__row[aria-disabled="true"] {
+  color: var(--codevo-fg-disabled);
+  cursor: default;
+}
+
+.agent-remote-add-project__chip {
+  border-radius: var(--codevo-r-pill);
+  background: var(--codevo-warn-soft);
+  color: var(--codevo-warn);
+  font-size: var(--codevo-fs-label);
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.agent-remote-add-project__pending,
+.agent-remote-add-project__meta {
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-label);
+  white-space: nowrap;
+}
+
+.agent-remote-add-project__entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--agent-space-2);
+  padding: 4px 10px 8px;
+}
+
+.agent-remote-add-project__outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--agent-space-3);
+  padding: 0;
+}
+
+.agent-remote-add-project__outcome-text {
+  color: var(--codevo-fg-strong);
+}
+
+.agent-remote-add-project__note {
+  margin: 0;
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-meta);
+}
+
+.agent-remote-add-project__form {
+  display: grid;
+  gap: var(--agent-space-3);
+  padding: 4px 10px 10px;
+}
+
+.agent-remote-add-project__repo {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--agent-space-3);
+  border-radius: var(--codevo-r-md);
+  background: var(--codevo-well);
+  padding: 10px 12px;
+}
+
+.agent-remote-add-project__repo strong {
+  display: block;
+  overflow: hidden;
+  color: var(--codevo-fg-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-remote-add-project__repo small {
+  display: block;
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-label);
+}
+
+.agent-remote-add-project__field {
+  display: grid;
+  gap: 4px;
+  color: var(--codevo-fg-muted);
+  font-size: var(--codevo-fs-label);
+}
+
+.agent-remote-add-project__field input {
+  height: 32px;
+  border: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  color: var(--codevo-fg-strong);
+  font: inherit;
+  font-size: var(--codevo-fs-meta);
+  outline: none;
+  padding: 0 10px;
+}
+
+.agent-remote-add-project__field input:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+}
+
+.agent-remote-add-project__prefixed {
+  display: flex;
+  align-items: center;
+  gap: var(--agent-space-2);
+}
+
+.agent-remote-add-project__prefixed input {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-remote-add-project__prefix {
+  flex: none;
+  color: var(--codevo-fg-subtle);
+  font-family: var(--codevo-mono);
+  font-size: var(--codevo-fs-label);
+}
+
+.agent-remote-add-project__segmented {
+  display: inline-flex;
+  width: fit-content;
+  gap: 2px;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  padding: 3px;
+}
+
+.agent-remote-add-project__segmented button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--codevo-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--codevo-fs-label);
+  padding: 4px 12px;
+}
+
+.agent-remote-add-project__segmented button[aria-pressed="true"] {
+  background: var(--codevo-raised);
+  color: var(--codevo-fg-strong);
+}
+
+.agent-remote-add-project__segmented button:disabled {
+  color: var(--codevo-fg-disabled);
+  cursor: default;
+}
+
+.agent-remote-add-project__segmented button:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+  outline: none;
+}
+
+.agent-remote-add-project__warning {
+  margin: 0;
+  color: var(--codevo-warn);
+  font-size: var(--codevo-fs-meta);
+}
+
+.agent-remote-add-project__error {
+  margin: 0;
+  color: var(--codevo-danger);
+  font-size: var(--codevo-fs-meta);
+  overflow-wrap: anywhere;
+}
+
+.agent-remote-add-project__footer {
+  height: 36px;
+  border-top: 0;
+  gap: var(--agent-space-3);
+  color: var(--codevo-fg-muted);
+  font-size: 11.5px;
+  padding: 0 16px;
+}
+
+.agent-remote-add-project__footer kbd {
+  min-width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--codevo-well);
+  color: var(--codevo-fg-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 0 5px;
+}
+
+.agent-remote-add-project__spacer {
+  flex: 1;
+}
+
+.agent-remote-add-project__primary {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: calc(24px * var(--codevo-fs-scale));
+  border: none;
+  border-radius: 7px;
+  background: var(--codevo-primary);
+  color: var(--codevo-primary-fg);
+  cursor: pointer;
+  font-size: var(--codevo-fs-meta);
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.agent-remote-add-project__primary:disabled {
+  background: var(--codevo-well);
+  color: var(--codevo-fg-disabled);
+  cursor: default;
+}
+
+.agent-remote-add-project__primary:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+  outline: none;
+}
+
+.agent-rail-clone {
+  display: grid;
+  gap: 4px;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  margin: 4px 10px;
+  padding: 8px 10px;
+}
+
+.agent-rail-clone__name {
+  overflow: hidden;
+  color: var(--codevo-fg-strong);
+  font-size: var(--codevo-fs-meta);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-rail-clone__status,
+.agent-rail-clone__error {
+  margin: 0;
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-label);
+}
+
+.agent-rail-clone__error {
+  color: var(--codevo-danger);
+  overflow-wrap: anywhere;
+}
+
+.agent-rail-clone__track {
+  display: block;
+  overflow: hidden;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--codevo-hover);
+}
+
+.agent-rail-clone__track i {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--codevo-primary);
+  animation: agent-rail-clone-slide 1.4s linear infinite;
+}
+
+@keyframes agent-rail-clone-slide {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-rail-clone__track i {
+    width: 100%;
+    animation: none;
+  }
+}
+
+.agent-rail-clone__actions {
+  display: flex;
+  justify-content: flex-end;
+}

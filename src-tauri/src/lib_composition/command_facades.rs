@@ -32,6 +32,10 @@ mod git_worktree_commands;
 mod language_features_facade;
 #[path = "language_runtime_facade.rs"]
 mod language_runtime_facade;
+#[path = "../repository_lookup/mod.rs"]
+mod repository_lookup;
+#[path = "repository_lookup_commands.rs"]
+mod repository_lookup_commands;
 #[path = "../startup_metrics.rs"]
 mod startup_metrics;
 #[path = "workspace_facade.rs"]

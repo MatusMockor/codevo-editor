@@ -81,6 +81,7 @@ async function bootstrap(): Promise<void> {
     { RemoteRunnerProvider },
     { TauriRemoteRunnerGateway },
     { TauriRemoteRunnerSurfacesGateway },
+    { TauriRepositoryLookupGateway },
     { BrowserRemoteAgentMetadataRepository },
   ] = await Promise.all([
     import("react"),
@@ -92,6 +93,7 @@ async function bootstrap(): Promise<void> {
     import("./components/remoteRunner/RemoteRunnerProvider"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
     import("./infrastructure/tauriRemoteRunnerSurfacesGateway"),
+    import("./infrastructure/tauriRepositoryLookupGateway"),
     import("./infrastructure/browserRemoteAgentMetadataRepository"),
   ]);
 
@@ -103,6 +105,7 @@ async function bootstrap(): Promise<void> {
     children: React.createElement(RemoteRunnerProvider, {
       gateway: new TauriRemoteRunnerGateway(),
       surfacesGateway: new TauriRemoteRunnerSurfacesGateway(),
+      repositoryLookup: new TauriRepositoryLookupGateway(),
       metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),
       children: React.createElement(App),
     }),

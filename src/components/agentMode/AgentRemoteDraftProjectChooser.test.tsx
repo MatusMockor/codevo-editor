@@ -33,6 +33,37 @@ it("shows management instead of guessing when no eligible project exists", () =>
   expect(manage).toHaveBeenCalledOnce();
   expect(select).not.toHaveBeenCalled();
 });
+it("offers the clone entry point and states why the thread is still locked", () => {
+  const add = vi.fn();
+  act(() =>
+    root.render(
+      <AgentRemoteDraftProjectChooser
+        projects={[projectFixture({})]}
+        onSelect={vi.fn()}
+        onAddProject={add}
+        cloneRunning
+      />,
+    ),
+  );
+  const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) =>
+    candidate.textContent?.includes("Add project or clone repository"),
+  );
+  expect(button).not.toBeUndefined();
+  expect(host.querySelector('[role="status"]')?.textContent).toBe(
+    "Clone running. Thread unlocks when ready.",
+  );
+  act(() => button!.click());
+  expect(add).toHaveBeenCalledOnce();
+});
+it("keeps the clone note away while nothing is cloning", () => {
+  act(() =>
+    root.render(
+      <AgentRemoteDraftProjectChooser projects={[projectFixture({})]} onSelect={vi.fn()} />,
+    ),
+  );
+  expect(host.querySelector('[role="status"]')).toBeNull();
+  expect(host.textContent).not.toContain("Add project or clone repository");
+});
 it("disambiguates equal labels and returns only the exact selected descriptor", () => {
   const first = projectFixture({ rootKey: "remote:linux:r:a", rootPath: "remote:linux:r:a" });
   const second = projectFixture({ rootKey: "remote:linux:r:b", rootPath: "remote:linux:r:b" });
