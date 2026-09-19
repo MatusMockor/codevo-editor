@@ -82,6 +82,7 @@ interface WriterSlot {
   attempts: number;
   retryWindowStartMs: number | null;
   backpressure: boolean;
+  promptStored: boolean;
   reportedLoss: AgentTurnLogLoss;
   state: AgentTurnLogSlotState;
   final: AgentTurnLogSlotStatus | null;
@@ -337,6 +338,7 @@ export function createAgentTurnLogWriter(
       dependencies.gateway.openTurnLog({
         scope: slot.scope,
         priorLoss: slot.request.priorLoss,
+        prompt: slot.request.prompt,
       }),
     );
     if (!alive(slot)) return;
@@ -355,6 +357,7 @@ export function createAgentTurnLogWriter(
   };
 
   const adoptLease = (slot: WriterSlot, lease: AgentTurnLogLease): void => {
+    slot.promptStored = slot.request.prompt !== null;
     slot.writerEpoch = lease.writerEpoch;
     slot.expectedNextSeq = lease.nextSeq;
     slot.persistedThroughSeq = lease.nextSeq - 1;
@@ -440,7 +443,11 @@ export function createAgentTurnLogWriter(
 
   const reopenLease = async (slot: WriterSlot): Promise<boolean> => {
     const opened = await attempt(() =>
-      dependencies.gateway.openTurnLog({ scope: slot.scope, priorLoss: slot.request.priorLoss }),
+      dependencies.gateway.openTurnLog({
+        scope: slot.scope,
+        priorLoss: slot.request.priorLoss,
+        prompt: slot.request.prompt,
+      }),
     );
     if (!alive(slot)) return false;
     if (!opened.ok) {
@@ -451,6 +458,7 @@ export function createAgentTurnLogWriter(
       stop(slot, "sequenceGap");
       return false;
     }
+    slot.promptStored = slot.request.prompt !== null;
     slot.writerEpoch = opened.value.writerEpoch;
     slot.attempts = 0;
     slot.retryWindowStartMs = null;
@@ -542,6 +550,7 @@ export function createAgentTurnLogWriter(
       persistedThroughSeq: slot.persistedThroughSeq,
       bounded: slot.window?.bounded() ?? false,
       contextWindow: agentTurnDigestContextWindow(slot.window?.digest() ?? null),
+      promptStored: slot.promptStored,
     };
   };
 
@@ -572,6 +581,7 @@ export function createAgentTurnLogWriter(
         attempts: 0,
         retryWindowStartMs: null,
         backpressure: false,
+        promptStored: false,
         reportedLoss: NO_AGENT_TURN_LOG_LOSS,
         state: { kind: "opening" },
         final: null,

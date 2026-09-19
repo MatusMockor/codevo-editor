@@ -58,6 +58,7 @@ import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewp
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
 import { agentCompactionState } from "../../domain/agentCompactionState";
+import { agentPromptLooksClipped } from "../../domain/agentPromptClipping";
 import {
   agentProviderErrorHeadline,
   classifyAgentProviderError,
@@ -767,6 +768,7 @@ const AgentTurnView = memo(function AgentTurnView({
           attachments={attachments}
           current={promptCurrent}
           prompt={turn.prompt}
+          promptClipped={agentPromptLooksClipped(turn.prompt) && turn.promptRestored !== true}
           query={highlight?.query ?? ""}
           textClipboard={textClipboard}
         />

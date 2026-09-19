@@ -53,6 +53,7 @@ function openRequest(generation = 1): OpenAgentTurnLogSlotRequest {
     generation,
     provider: "claudeCode",
     priorLoss: { kind: "none" },
+    prompt: null,
   };
 }
 

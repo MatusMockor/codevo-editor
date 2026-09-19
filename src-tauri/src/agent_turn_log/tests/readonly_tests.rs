@@ -1,7 +1,9 @@
 use super::super::connection::{recover_write_ahead_log, OpenedTurnLog};
 use super::super::integrity::verifications_under;
 use super::super::paths::{locate, AgentTurnLogLocation};
-use super::migration_tests::{activity_column_present, write_first_build_database};
+use super::migration_tests::{
+    activity_column_present, prompt_column_present, write_first_build_database,
+};
 use super::*;
 
 fn log_location(temp: &TempLogStore) -> AgentTurnLogLocation {
@@ -91,6 +93,29 @@ fn a_read_only_store_never_upgrades_an_unmigrated_database() {
         fs::metadata(temp.database()).expect("stat database").len(),
         0,
         "a read migrated an empty database"
+    );
+}
+
+#[test]
+fn a_read_only_store_reports_no_prompt_for_a_database_without_the_prompt_column() {
+    let temp = TempLogStore::create("read-only-promptless");
+    write_first_build_database(&temp, &[TURN_ID]);
+    let store = temp.store();
+
+    let summaries = store
+        .summarize(&prompted_summarize_request(true))
+        .expect("summaries");
+    let page = store
+        .read_page(&page_request(TURN_ID, tail(), 200, 512 * 1024))
+        .expect("tail page");
+
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].prompt, None);
+    assert!(!summaries[0].prompt_omitted);
+    assert_eq!(page.entries.len(), 1);
+    assert!(
+        !prompt_column_present(&temp),
+        "a read must not migrate the schema"
     );
 }
 

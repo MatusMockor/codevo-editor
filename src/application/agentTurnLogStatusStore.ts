@@ -32,6 +32,7 @@ export interface AgentTurnLogFacts {
   readonly hydration: AgentTurnLogHydration;
   readonly contextWindow: AgentContextWindow | null;
   readonly health: AgentTurnLogWriterHealth;
+  readonly promptInLog: boolean;
 }
 
 export type AgentTurnLogFactsListener = (changedThreadIds: ReadonlySet<string>) => void;
@@ -46,6 +47,7 @@ export interface AgentTurnLogFactsSource {
   factsOf(turnId: string): AgentTurnLogFacts | null;
   threadIdOf(turnId: string): string | null;
   hasThreadFacts(threadId: string): boolean;
+  promptLoggedTurnIds(threadId: string): ReadonlySet<string>;
   evidenceRevisionOf(threadId: string): number;
   ensureThreadFacts(threadId: string, turnIds: ReadonlyArray<string>): Promise<void>;
   setVisibleThread(threadId: string | null): void;
@@ -216,6 +218,7 @@ export function createAgentTurnLogFactsStore(
         hydration: existing?.facts.hydration ?? "notAttempted",
         contextWindow: status.contextWindow,
         health: writerHealth(status, degradedSinceMs, now()),
+        promptInLog: status.promptStored,
       },
       degradedSinceMs,
     );
@@ -244,6 +247,7 @@ export function createAgentTurnLogFactsStore(
           hydration: existing?.facts.hydration ?? "notAttempted",
           contextWindow: agentTurnDigestContextWindow(summary.digest),
           health: HEALTHY,
+          promptInLog: summary.prompt !== null || summary.promptOmitted,
         },
         null,
       );
@@ -322,6 +326,16 @@ export function createAgentTurnLogFactsStore(
     hasThreadFacts(threadId) {
       return threads.has(threadId);
     },
+    promptLoggedTurnIds(threadId) {
+      const entry = threads.get(threadId);
+      if (entry === undefined) return NO_PROMPT_LOGGED_TURNS;
+      const logged = new Set<string>();
+      for (const [turnId, retained] of entry.turns) {
+        if (!retained.facts.promptInLog) continue;
+        logged.add(turnId);
+      }
+      return logged;
+    },
     evidenceRevisionOf(threadId) {
       return threads.get(threadId)?.evidenceRevision ?? tombstones.get(threadId) ?? 0;
     },
@@ -332,6 +346,7 @@ export function createAgentTurnLogFactsStore(
 }
 
 const HEALTHY: AgentTurnLogWriterHealth = Object.freeze({ kind: "ok" });
+const NO_PROMPT_LOGGED_TURNS: ReadonlySet<string> = new Set<string>();
 
 export function useAgentTurnLogFacts(
   source: AgentTurnLogFactsSource | null,
@@ -480,6 +495,7 @@ function sameEvidence(left: AgentTurnLogFacts, right: AgentTurnLogFacts): boolea
     left.sealed === right.sealed &&
     left.live === right.live &&
     left.hydration === right.hydration &&
+    left.promptInLog === right.promptInLog &&
     sameLoss(left.loss, right.loss)
   );
 }

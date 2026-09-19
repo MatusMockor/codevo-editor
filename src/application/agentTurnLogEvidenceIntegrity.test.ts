@@ -21,6 +21,7 @@ function status(
     persistedThroughSeq: 0,
     bounded: false,
     contextWindow: null,
+    promptStored: false,
     ...overrides,
   };
 }
@@ -36,6 +37,8 @@ function summary(
     loss: { kind: "none" },
     sealed: true,
     digest: null,
+    prompt: null,
+    promptOmitted: false,
     ...overrides,
   };
 }

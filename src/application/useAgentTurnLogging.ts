@@ -259,7 +259,7 @@ function summaryScopeOf(
 ): SummarizeAgentTurnLogsRequest | null {
   const rootKey = dependencies.loggedThreadRootKey?.(threadId) ?? null;
   if (rootKey === null) return null;
-  return { rootKey, ownerId: agentRootOwnerId(rootKey), threadId };
+  return { rootKey, ownerId: agentRootOwnerId(rootKey), threadId, includePrompts: false };
 }
 
 export function ownsAgentTurnLogScope(

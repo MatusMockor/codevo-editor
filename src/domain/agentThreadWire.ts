@@ -77,17 +77,26 @@ import {
 
 const UTF8_ENCODER = new TextEncoder();
 
-export function serializeAgentThread(thread: AgentThread): Record<string, unknown> {
+export function serializeAgentThread(
+  thread: AgentThread,
+  loggedPromptTurnIds: ReadonlySet<string> = NO_LOGGED_PROMPT_TURNS,
+): Record<string, unknown> {
   const ceiling = MAX_PERSISTED_AGENT_THREAD_FILE_BYTES - PERSISTED_AGENT_THREAD_FILE_MARGIN_BYTES;
   let budget = MAX_PERSISTED_THREAD_EVENT_BYTES;
-  let document = serializeThreadDocument(capAgentThreadForPersistence(thread, budget));
+  let document = serializeThreadDocument(
+    capAgentThreadForPersistence(thread, budget, loggedPromptTurnIds),
+  );
   for (let attempt = 0; attempt < PERSISTED_THREAD_FIT_ATTEMPTS; attempt += 1) {
     if (serializedThreadBytes(document) <= ceiling) return document;
     budget = Math.floor(budget / 4);
-    document = serializeThreadDocument(capAgentThreadForPersistence(thread, budget));
+    document = serializeThreadDocument(
+      capAgentThreadForPersistence(thread, budget, loggedPromptTurnIds),
+    );
   }
   return document;
 }
+
+const NO_LOGGED_PROMPT_TURNS: ReadonlySet<string> = new Set<string>();
 
 const PERSISTED_THREAD_FIT_ATTEMPTS = 3;
 

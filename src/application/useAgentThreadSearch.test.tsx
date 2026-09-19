@@ -545,6 +545,8 @@ describe("useAgentThreadSearch turn log evidence", () => {
       loss: { kind: "none" } as const,
       sealed: true,
       digest: null,
+      prompt: null,
+      promptOmitted: false,
     };
   }
 
@@ -586,6 +588,7 @@ describe("useAgentThreadSearch turn log evidence", () => {
       persistedThroughSeq: 0,
       bounded: false,
       contextWindow,
+      promptStored: false,
     };
   }
 

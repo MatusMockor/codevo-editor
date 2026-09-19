@@ -11,6 +11,8 @@ export const AGENT_TURN_LOG_LIMITS = {
   digestBytes: 65_536,
   digestCapacities: 16,
   summaries: 64,
+  promptBytes: 32_768,
+  summaryPromptBytes: 524_288,
   rootKeyBytes: 4_096,
   idBytes: 64,
   turnCeilingBytes: 268_435_456,
@@ -39,6 +41,7 @@ export interface AgentTurnLogEntry {
 export interface OpenAgentTurnLogRequest {
   readonly scope: AgentTurnLogScope;
   readonly priorLoss: AgentTurnLogLoss;
+  readonly prompt: string | null;
 }
 
 export interface AgentTurnLogLease {
@@ -94,6 +97,7 @@ export interface SummarizeAgentTurnLogsRequest {
   readonly rootKey: string;
   readonly ownerId: string;
   readonly threadId: string;
+  readonly includePrompts: boolean;
 }
 
 export interface DeleteAgentThreadLogRequest {
@@ -113,6 +117,8 @@ export interface AgentTurnLogSummary {
   readonly loss: AgentTurnLogLoss;
   readonly sealed: boolean;
   readonly digest: AgentTurnDigestWire | null;
+  readonly prompt: string | null;
+  readonly promptOmitted: boolean;
 }
 
 export const AGENT_TURN_LOG_ERRORS = [

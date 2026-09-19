@@ -127,6 +127,8 @@ export function sealedLogSummary(
     loss: { kind: "none" },
     sealed: true,
     digest: null,
+    prompt: null,
+    promptOmitted: false,
     ...overrides,
   };
 }

@@ -125,7 +125,7 @@ impl AgentTurnLogStore {
         };
         let summaries = self
             .with_connection(&scope, TurnLogAccess::ReadOnly, |slot| {
-                summarize(&slot.connection)
+                summarize(&slot.connection, request.include_prompts)
             })?
             .unwrap_or_default();
         validate_summaries(&summaries)?;

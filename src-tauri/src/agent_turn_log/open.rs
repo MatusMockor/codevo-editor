@@ -17,11 +17,14 @@ pub(crate) fn open_lease(
             if existing.loss.is_none() {
                 existing.loss = request.prior_loss;
             }
+            if existing.prompt.is_none() {
+                existing.prompt.clone_from(&request.prompt);
+            }
             update_turn_meta(&transaction, &existing)?;
             existing
         }
         None => {
-            let created = fresh_row(turn_id.to_string(), request.prior_loss);
+            let created = fresh_row(turn_id.to_string(), request.prior_loss, &request.prompt);
             insert_turn_meta(&transaction, &created)?;
             created
         }
@@ -35,7 +38,7 @@ pub(crate) fn open_lease(
     })
 }
 
-fn fresh_row(turn_id: String, loss: AgentTurnLogLoss) -> TurnMetaRow {
+fn fresh_row(turn_id: String, loss: AgentTurnLogLoss, prompt: &Option<String>) -> TurnMetaRow {
     TurnMetaRow {
         turn_id,
         writer_epoch: 1,
@@ -47,5 +50,6 @@ fn fresh_row(turn_id: String, loss: AgentTurnLogLoss) -> TurnMetaRow {
         sealed: false,
         digest: None,
         digest_through_seq: 0,
+        prompt: prompt.clone(),
     }
 }

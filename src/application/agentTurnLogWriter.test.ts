@@ -217,8 +217,56 @@ describe("agent turn log writer", () => {
       generation: owner.generation,
       provider: "claudeCode",
       priorLoss: { kind: "none" },
+      prompt: null,
     });
   }
+
+  it("sends the turn's full prompt on open and reports it stored only once the lease resolved", async () => {
+    const gate = deferred<void>();
+    gateway.openGate = gate.promise;
+    const subject = writer();
+    subject.openTurn({
+      scope: SCOPE,
+      generation: owner.generation,
+      provider: "claudeCode",
+      priorLoss: { kind: "none" },
+      prompt: "write the whole parser",
+    });
+    await settle();
+
+    expect(gateway.opens.map((request) => request.prompt)).toEqual(["write the whole parser"]);
+    expect(subject.status(SCOPE.turnId)?.state.kind).toBe("opening");
+    expect(subject.status(SCOPE.turnId)?.promptStored).toBe(false);
+
+    gate.resolve();
+    await settle();
+
+    expect(subject.status(SCOPE.turnId)?.promptStored).toBe(true);
+    expect(lastStatus(statuses).promptStored).toBe(true);
+    subject.dispose();
+  });
+
+  it("never claims the prompt is stored when the open failed or the slot carries none", async () => {
+    gateway.failures.push(new AgentTurnLogFailure("ownerMismatch"));
+    const failing = writer();
+    failing.openTurn({
+      scope: SCOPE,
+      generation: owner.generation,
+      provider: "claudeCode",
+      priorLoss: { kind: "none" },
+      prompt: "write the whole parser",
+    });
+    await settle();
+    expect(lastStatus(statuses).promptStored).toBe(false);
+    failing.dispose();
+
+    statuses = [];
+    const withoutPrompt = writer();
+    open(withoutPrompt);
+    await settle();
+    expect(withoutPrompt.status(SCOPE.turnId)?.promptStored).toBe(false);
+    withoutPrompt.dispose();
+  });
 
   it("opens a lease before it appends and coalesces one flush per interval", async () => {
     const subject = writer();
@@ -624,6 +672,7 @@ describe("agent turn log writer", () => {
         generation: owner.generation,
         provider: "claudeCode",
         priorLoss: { kind: "none" },
+        prompt: null,
       });
       await settle();
       gateway.failures.push(failure("supersededWriter"));
@@ -873,6 +922,7 @@ describe("agent turn log writer against the real wire validation", () => {
       generation: 7,
       provider: "claudeCode",
       priorLoss: { kind: "none" },
+      prompt: null,
     });
     await settle();
 

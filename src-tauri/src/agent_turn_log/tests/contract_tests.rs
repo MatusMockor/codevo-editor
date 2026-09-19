@@ -8,7 +8,8 @@ use super::super::validation::{
 use super::super::wire::{
     AgentTurnDigestWire, AgentTurnLogLease, AgentTurnLogPage, AgentTurnLogSummary,
     AppendAgentTurnLogReceipt, AGENT_TURN_LOG_SEQ_BASE, MAX_APPEND_BYTES, MAX_APPEND_OPS,
-    MAX_DIGEST_BYTES, MAX_DIGEST_CAPACITIES, MAX_PAGE_BYTES, MAX_PAGE_EVENTS, MAX_TURN_SUMMARIES,
+    MAX_DIGEST_BYTES, MAX_DIGEST_CAPACITIES, MAX_PAGE_BYTES, MAX_PAGE_EVENTS,
+    MAX_SUMMARY_PROMPT_RESPONSE_BYTES, MAX_TURN_PROMPT_BYTES, MAX_TURN_SUMMARIES,
 };
 use super::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -113,6 +114,11 @@ fn the_shared_fixture_pins_the_same_bounds_as_the_rust_store() {
     assert_eq!(limits["digestBytes"], json!(MAX_DIGEST_BYTES));
     assert_eq!(limits["digestCapacities"], json!(MAX_DIGEST_CAPACITIES));
     assert_eq!(limits["summaries"], json!(MAX_TURN_SUMMARIES));
+    assert_eq!(limits["promptBytes"], json!(MAX_TURN_PROMPT_BYTES));
+    assert_eq!(
+        limits["summaryPromptBytes"],
+        json!(MAX_SUMMARY_PROMPT_RESPONSE_BYTES)
+    );
     assert_eq!(wire["errors"], json!(ERROR_CODES));
     assert_eq!(
         wire["scope"]["ownerId"],
@@ -120,6 +126,14 @@ fn the_shared_fixture_pins_the_same_bounds_as_the_rust_store() {
             wire["scope"]["rootKey"].as_str().expect("a root key")
         )),
         "the fixture owner id must be derived from the root key"
+    );
+}
+
+#[test]
+fn the_turn_prompt_ceiling_matches_the_spawned_agent_prompt_ceiling() {
+    assert_eq!(
+        MAX_TURN_PROMPT_BYTES,
+        crate::agent_task_spawner::MAX_AGENT_PROMPT_BYTES
     );
 }
 

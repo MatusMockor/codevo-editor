@@ -7,6 +7,7 @@ use super::wire::{
     DeleteAgentThreadLogRequest, OpenAgentTurnLogRequest, ReadAgentTurnLogPageRequest,
     SummarizeAgentTurnLogsRequest, AGENT_TURN_DIGEST_VERSION, AGENT_TURN_LOG_SEQ_BASE,
     MAX_APPEND_OPS, MAX_DIGEST_BYTES, MAX_DIGEST_CAPACITIES, MAX_PAGE_BYTES, MAX_PAGE_EVENTS,
+    MAX_TURN_PROMPT_BYTES,
 };
 use crate::git_worktree::safe_agent_task_id;
 use std::collections::HashSet;
@@ -15,7 +16,18 @@ const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 pub(crate) fn validate_open_request(request: &OpenAgentTurnLogRequest) -> AgentTurnLogResult<()> {
     validate_scope(&request.scope)?;
-    validate_loss(request.prior_loss)
+    validate_loss(request.prior_loss)?;
+    validate_turn_prompt(request.prompt.as_deref())
+}
+
+fn validate_turn_prompt(prompt: Option<&str>) -> AgentTurnLogResult<()> {
+    let Some(prompt) = prompt else {
+        return Ok(());
+    };
+    if prompt.is_empty() || prompt.len() > MAX_TURN_PROMPT_BYTES || prompt.contains('\0') {
+        return Err(AgentTurnLogError::BudgetExhausted);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_append_request(

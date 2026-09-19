@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { agentRootOwnerId } from "../domain/agentProject";
-import { serializeAgentThread, type AgentThread } from "../domain/agentThread";
+import { CLIPPED_AGENT_PROMPT_MARKER } from "../domain/agentPromptClipping";
+import {
+  MAX_AGENT_TURNS_PER_THREAD,
+  serializeAgentThread,
+  type AgentThread,
+} from "../domain/agentThread";
 import {
   DELETE_AGENT_THREAD_IPC_COMMAND,
   LOAD_AGENT_THREADS_IPC_COMMAND,
@@ -9,6 +14,7 @@ import {
   invokeLoadAgentThreadsIpc,
   invokeSaveAgentThreadIpc,
   parseAgentThreadStoreSnapshot,
+  validateSaveAgentThreadRequest,
   type InvokeAgentThreadStoreCommand,
 } from "./tauriAgentThreadStoreIpcContract";
 
@@ -86,6 +92,7 @@ describe("persistent owner id contract", () => {
         rootKey: ROOT_KEY,
         ownerId: OWNER_ID,
         thread: { ...THREAD, owner: { ...THREAD.owner, ownerId: "ws-7f3a2c" } },
+        loggedPromptTurnIds: [],
       }),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -156,7 +163,11 @@ describe("invokeSaveAgentThreadIpc", () => {
   it("sends the serialized thread and accepts only a null result", async () => {
     const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);
 
-    await invokeSaveAgentThreadIpc(invokeCommand, { ...OWNER_REQUEST, thread: THREAD });
+    await invokeSaveAgentThreadIpc(invokeCommand, {
+      ...OWNER_REQUEST,
+      thread: THREAD,
+      loggedPromptTurnIds: [],
+    });
 
     expect(invokeCommand).toHaveBeenCalledWith("save_agent_thread", {
       request: { ...OWNER_REQUEST, thread: serializeAgentThread(THREAD) },
@@ -171,6 +182,7 @@ describe("invokeSaveAgentThreadIpc", () => {
         rootKey: "/workspace/other",
         ownerId: OWNER_ID,
         thread: THREAD,
+        loggedPromptTurnIds: [],
       }),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -180,7 +192,11 @@ describe("invokeSaveAgentThreadIpc", () => {
     const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue({});
 
     await expect(
-      invokeSaveAgentThreadIpc(invokeCommand, { ...OWNER_REQUEST, thread: THREAD }),
+      invokeSaveAgentThreadIpc(invokeCommand, {
+        ...OWNER_REQUEST,
+        thread: THREAD,
+        loggedPromptTurnIds: [],
+      }),
     ).rejects.toThrow(TypeError);
   });
 });
@@ -220,7 +236,11 @@ describe("tool call description wire field", () => {
     const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);
     const thread = threadWithToolCalls();
 
-    await invokeSaveAgentThreadIpc(invokeCommand, { ...OWNER_REQUEST, thread });
+    await invokeSaveAgentThreadIpc(invokeCommand, {
+      ...OWNER_REQUEST,
+      thread,
+      loggedPromptTurnIds: [],
+    });
 
     const payload = invokeCommand.mock.calls[0]?.[1] as {
       readonly request: {
@@ -269,5 +289,97 @@ describe("invokeDeleteAgentThreadIpc", () => {
       invokeDeleteAgentThreadIpc(invokeCommand, { ...OWNER_REQUEST, threadId: "../escape" }),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("logged prompt evidence on save", () => {
+  const PROMPT_CHARS = 30_000;
+  const TURN_COUNT = 40;
+  const RUNNING_INDEX = TURN_COUNT - 1;
+
+  function bigPrompt(index: number): string {
+    return `turn ${index} `.padEnd(PROMPT_CHARS, "x");
+  }
+
+  function bigPromptThread(runningIndex: number | null): AgentThread {
+    return {
+      ...THREAD,
+      turns: Array.from({ length: TURN_COUNT }, (_unused, index) => ({
+        turnId: `agt-1-0a1b-t${index}`,
+        prompt: bigPrompt(index),
+        status:
+          index === runningIndex
+            ? ({ kind: "running" } as const)
+            : ({ kind: "exited", exitCode: 0 } as const),
+        startedAtEpochMs: 1_000 + index,
+        endedAtEpochMs: index === runningIndex ? null : 2_000 + index,
+        events: [],
+        eventsTruncated: false,
+        lastStatusSequence: 0,
+        lastOutputSequence: 0,
+        launch: null,
+        cliVersion: null,
+      })),
+    };
+  }
+
+  function savedPrompts(request: Record<string, unknown>): ReadonlyArray<string> {
+    const thread = request.thread as { readonly turns: ReadonlyArray<{ readonly prompt: string }> };
+    return thread.turns.map((turn) => turn.prompt);
+  }
+
+  function saveWith(
+    thread: AgentThread,
+    loggedPromptTurnIds: ReadonlyArray<string>,
+  ): ReadonlyArray<string> {
+    return savedPrompts(
+      validateSaveAgentThreadRequest({ ...OWNER_REQUEST, thread, loggedPromptTurnIds }),
+    );
+  }
+
+  it("clips the older logged prompts and keeps the newest running turn intact", () => {
+    const thread = bigPromptThread(RUNNING_INDEX);
+
+    const prompts = saveWith(
+      thread,
+      thread.turns.map((turn) => turn.turnId),
+    );
+
+    expect(prompts[0]).toContain(CLIPPED_AGENT_PROMPT_MARKER);
+    expect(prompts[0]?.startsWith("turn 0 ")).toBe(true);
+    expect(prompts[RUNNING_INDEX]).toBe(bigPrompt(RUNNING_INDEX));
+  });
+
+  it("keeps the newest settled prompt intact while it clips the earlier ones", () => {
+    const thread = bigPromptThread(null);
+
+    const prompts = saveWith(
+      thread,
+      thread.turns.map((turn) => turn.turnId),
+    );
+
+    expect(prompts[TURN_COUNT - 1]).toBe(bigPrompt(TURN_COUNT - 1));
+    expect(
+      prompts.slice(0, 4).every((prompt) => prompt.endsWith(CLIPPED_AGENT_PROMPT_MARKER)),
+    ).toBe(true);
+  });
+
+  it("never clips a prompt whose turn the log does not vouch for", () => {
+    const prompts = saveWith(bigPromptThread(null), []);
+
+    expect(prompts.some((prompt) => prompt.includes(CLIPPED_AGENT_PROMPT_MARKER))).toBe(false);
+    expect(prompts[0]).toBe(bigPrompt(0));
+  });
+
+  it("rejects prompt evidence that is not a bounded list of agent turn ids", () => {
+    const thread = bigPromptThread(null);
+    const overflowing = Array.from(
+      { length: MAX_AGENT_TURNS_PER_THREAD + 1 },
+      (_unused, index) => `agt-1-0a1b-x${index}`,
+    );
+
+    expect(() => saveWith(thread, overflowing)).toThrow(TypeError);
+    expect(() => saveWith(thread, ["../escape"])).toThrow(TypeError);
+    expect(() => saveWith(thread, [1] as unknown as ReadonlyArray<string>)).toThrow(TypeError);
   });
 });

@@ -95,6 +95,7 @@ export interface AgentTurnLogSlotStatus {
   readonly persistedThroughSeq: number;
   readonly bounded: boolean;
   readonly contextWindow: AgentContextWindow | null;
+  readonly promptStored: boolean;
 }
 
 export interface OpenAgentTurnLogSlotRequest {
@@ -102,6 +103,7 @@ export interface OpenAgentTurnLogSlotRequest {
   readonly generation: number;
   readonly provider: AgentCliKind;
   readonly priorLoss: AgentTurnLogLoss;
+  readonly prompt: string | null;
 }
 
 export interface AgentTurnLogWriter {

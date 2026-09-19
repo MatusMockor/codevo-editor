@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import wire from "../../contracts/agent-turn-log-wire.json";
 import type { AgentTurnEvent } from "./agentThread";
+import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
 import { serializeTurnEvent } from "./agentThreadWire";
 import {
   AGENT_TURN_LOG_ERRORS,
@@ -55,6 +56,9 @@ describe("agent turn log wire contract", () => {
     expect(wire.limits.pageBytes).toBe(AGENT_TURN_LOG_LIMITS.pageBytes);
     expect(wire.limits.digestBytes).toBe(AGENT_TURN_LOG_LIMITS.digestBytes);
     expect(wire.limits.summaries).toBe(AGENT_TURN_LOG_LIMITS.summaries);
+    expect(wire.limits.promptBytes).toBe(AGENT_TURN_LOG_LIMITS.promptBytes);
+    expect(wire.limits.promptBytes).toBe(MAX_AGENT_TASK_PROMPT_BYTES);
+    expect(wire.limits.summaryPromptBytes).toBe(AGENT_TURN_LOG_LIMITS.summaryPromptBytes);
     expect(wire.limits.seqBase).toBe(1);
     expect(wire.errors).toEqual([...AGENT_TURN_LOG_ERRORS]);
   });
@@ -257,6 +261,57 @@ describe("agent turn log wire boundaries", () => {
         loss: { kind: "none" },
       } as never),
     ).toThrow(/at most 256 operations/u);
+  });
+
+  it("covers both prompt shapes and both prompt intents the fixture pins", () => {
+    expect(wire.requests.open.map((request) => request.prompt)).toEqual([
+      "Explain the failing test in src/app.ts.",
+      null,
+    ]);
+    expect(wire.requests.summarize.map((request) => request.includePrompts)).toEqual([false, true]);
+    expect(wire.rejectedRequests.open.map((entry) => entry.why)).toContain(
+      "prompt carries a NUL byte",
+    );
+    expect(wire.rejectedRequests.open.map((entry) => entry.why)).toContain(
+      "prompt is not a string",
+    );
+    expect(wire.rejectedRequests.summarize.map((entry) => entry.why)).toContain(
+      "includePrompts is not a boolean",
+    );
+    expect(wire.rejectedSummaries.map((entry) => entry.why)).toContain(
+      "a carried prompt contradicts promptOmitted",
+    );
+    expect(wire.rejectedSummaries.map((entry) => entry.why)).toContain("prompt is not a string");
+    expect(wire.summaries.flat().some((summary) => typeof summary.prompt === "string")).toBe(true);
+    expect(wire.summaries.flat().some((summary) => summary.promptOmitted)).toBe(true);
+  });
+
+  it("refuses an opening prompt above the prompt byte bound", () => {
+    const open = (prompt: string): unknown =>
+      validateOpenAgentTurnLogRequest({ scope, priorLoss: { kind: "none" }, prompt } as never);
+
+    expect(() => open("a".repeat(AGENT_TURN_LOG_LIMITS.promptBytes))).not.toThrow();
+    expect(() => open("a".repeat(AGENT_TURN_LOG_LIMITS.promptBytes + 1))).toThrow(
+      /at most 32768 bytes/u,
+    );
+    expect(() => open("")).toThrow(/a non-empty prompt/u);
+  });
+
+  it("refuses a summary response whose carried prompts exceed the shared budget", () => {
+    const prompt = "p".repeat(AGENT_TURN_LOG_LIMITS.promptBytes);
+    const summaries = Array.from({ length: 17 }, (_unused, index) => ({
+      turnId: `turn-0a1b2c${String(index).padStart(2, "0")}`,
+      eventCount: 1,
+      bytes: 1,
+      loss: { kind: "none" },
+      sealed: true,
+      digest: null,
+      prompt,
+      promptOmitted: false,
+    }));
+
+    expect(() => parseAgentTurnLogSummaries(summaries.slice(0, 16))).not.toThrow();
+    expect(() => parseAgentTurnLogSummaries(summaries)).toThrow(/at most 524288 prompt bytes/u);
   });
 
   it("refuses a scope whose owner id does not belong to the root key", () => {

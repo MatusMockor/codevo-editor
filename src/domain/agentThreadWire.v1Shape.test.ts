@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { agentPromptLooksClipped } from "./agentPromptClipping";
 import type { AgentThread, AgentTurn, AgentTurnEvent, AgentTurnUsage } from "./agentThread";
 import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
 
@@ -327,5 +330,138 @@ describe("v1 thread JSON shape: shipped builds deny unknown fields and evict rea
     const parsed = parseAgentThread(document);
     expect(keysOf(serializeAgentThread(parsed))).toEqual(V1_THREAD_KEYS);
     expect(parsed.turns[0]?.events).toHaveLength(EVERY_EVENT.length);
+  });
+});
+
+const REPOSITORY_ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/u, "");
+const SHIPPED_PARSER_COMMIT = "c33d0d03";
+const SHIPPED_PARSER_SCRATCH = "/tmp/codevo-agent-thread-wire-c33d0d03";
+const SHIPPED_PARSER_ENTRY = `${SHIPPED_PARSER_SCRATCH}/src/domain/agentThreadWire.ts`;
+const CLIPPED_PROMPT_TURNS = 64;
+
+interface ShippedParser {
+  readonly parseAgentThread: (value: unknown) => AgentThread;
+}
+
+let shippedParser: ShippedParser | null = null;
+let shippedParserFailure: string | null = null;
+
+function filler(position: number): AgentTurn {
+  return {
+    turnId: `agt-1-${String(position).padStart(4, "0")}`,
+    prompt: `${position}:${"p".repeat(16 * 1_024 - 8)}`,
+    status: { kind: "exited", exitCode: 0 },
+    startedAtEpochMs: 10,
+    endedAtEpochMs: 20,
+    events: [{ kind: "result", text: `done ${position}`, isError: false, usage: null }],
+    eventsTruncated: false,
+    lastStatusSequence: 1,
+    lastOutputSequence: 1,
+    launch: null,
+    cliVersion: null,
+  };
+}
+
+function clippedPromptThread(): AgentThread {
+  const oldest: AgentTurn = {
+    ...fullTurn(),
+    prompt: `oldest:${"p".repeat(16 * 1_024 - 8)}`,
+    subagentLifecycle: {
+      entries: [
+        {
+          id: "tool-2",
+          toolId: "tool-2",
+          name: "Explore",
+          description: "scout",
+          state: "completed",
+          telemetryState: "completed",
+        },
+      ],
+      truncated: false,
+    },
+  };
+  const rest = Array.from({ length: CLIPPED_PROMPT_TURNS - 1 }, (_unused, position) =>
+    filler(position),
+  );
+  return { ...fullThread(), turns: [oldest, ...rest] };
+}
+
+function loggedPromptTurnIds(subject: AgentThread): ReadonlySet<string> {
+  return new Set(subject.turns.slice(0, -1).map((candidate) => candidate.turnId));
+}
+
+describe("v1 thread JSON shape: a thread whose oldest prompts are clipped still parses in shipped builds", () => {
+  beforeAll(async () => {
+    try {
+      rmSync(SHIPPED_PARSER_SCRATCH, { recursive: true, force: true });
+      mkdirSync(SHIPPED_PARSER_SCRATCH, { recursive: true });
+      execFileSync(
+        "sh",
+        [
+          "-c",
+          `git archive ${SHIPPED_PARSER_COMMIT} src/domain | tar -x -C ${SHIPPED_PARSER_SCRATCH}`,
+        ],
+        { cwd: REPOSITORY_ROOT },
+      );
+      shippedParser = (await import(/* @vite-ignore */ SHIPPED_PARSER_ENTRY)) as ShippedParser;
+    } catch (error) {
+      shippedParserFailure = error instanceof Error ? error.message : String(error);
+    }
+  });
+
+  it("clips the oldest prompts without adding or removing a v1 key", () => {
+    const subject = clippedPromptThread();
+    const document = serializeAgentThread(subject, loggedPromptTurnIds(subject));
+    const turns = document.turns as ReadonlyArray<WireRecord>;
+
+    expect(keysOf(document)).toEqual(V1_THREAD_KEYS);
+    expect(keysOf(turns[0])).toEqual(V1_TURN_KEYS);
+    expect(agentPromptLooksClipped(turns[0]?.prompt as string)).toBe(true);
+    expect(turns[turns.length - 1]?.prompt).toBe(subject.turns[subject.turns.length - 1]?.prompt);
+    expect(JSON.stringify(document)).not.toContain("promptRestored");
+  });
+
+  it("stays readable by the current strict parser once prompts are clipped", () => {
+    const subject = clippedPromptThread();
+    const document = JSON.parse(
+      JSON.stringify(serializeAgentThread(subject, loggedPromptTurnIds(subject))),
+    ) as unknown;
+    const parsed = parseAgentThread(document);
+
+    expect(parsed.turns).toHaveLength(CLIPPED_PROMPT_TURNS);
+    expect(agentPromptLooksClipped(parsed.turns[0]!.prompt)).toBe(true);
+  });
+
+  it(`stays readable by the parser shipped at ${SHIPPED_PARSER_COMMIT}`, (context) => {
+    if (shippedParser === null) {
+      context.skip(
+        `the parser at ${SHIPPED_PARSER_COMMIT} could not be loaded: ${shippedParserFailure ?? "unknown reason"}`,
+      );
+      return;
+    }
+    const subject = clippedPromptThread();
+    const document = JSON.parse(
+      JSON.stringify(serializeAgentThread(subject, loggedPromptTurnIds(subject))),
+    ) as unknown;
+    const parsed = shippedParser.parseAgentThread(document);
+
+    expect(parsed.turns).toHaveLength(CLIPPED_PROMPT_TURNS);
+    expect(agentPromptLooksClipped(parsed.turns[0]!.prompt)).toBe(true);
+    expect(parsed.turns[parsed.turns.length - 1]?.prompt).toBe(
+      subject.turns[subject.turns.length - 1]?.prompt,
+    );
+  });
+
+  it("refuses a lifecycle field the current parser drops, which prompt clipping never produces", (context) => {
+    if (shippedParser === null) {
+      context.skip(
+        `the parser at ${SHIPPED_PARSER_COMMIT} could not be loaded: ${shippedParserFailure ?? "unknown reason"}`,
+      );
+      return;
+    }
+    const document = JSON.parse(JSON.stringify(serializeAgentThread(fullThread()))) as unknown;
+
+    expect(parseAgentThread(document).turns[0]?.subagentLifecycle).toBeUndefined();
+    expect(() => shippedParser?.parseAgentThread(document)).toThrow(/subagent lifecycle metadata/u);
   });
 });

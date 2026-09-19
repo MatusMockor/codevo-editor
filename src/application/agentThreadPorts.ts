@@ -117,6 +117,7 @@ export interface AgentThreadStoreOwnerRequest {
 
 export interface SaveAgentThreadRequest extends AgentThreadStoreOwnerRequest {
   readonly thread: AgentThread;
+  readonly loggedPromptTurnIds: ReadonlyArray<string>;
 }
 
 export interface DeleteAgentThreadRequest extends AgentThreadStoreOwnerRequest {

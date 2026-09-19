@@ -9,6 +9,8 @@
     "digestBytes": 65536,
     "digestCapacities": 16,
     "summaries": 64,
+    "promptBytes": 32768,
+    "summaryPromptBytes": 524288,
     "rootKeyBytes": 4096,
     "idBytes": 64,
     "ownerIdPattern": "^agent-root:[0-9a-f]{16}$",
@@ -276,7 +278,8 @@
         },
         "priorLoss": {
           "kind": "none"
-        }
+        },
+        "prompt": "Explain the failing test in src/app.ts."
       },
       {
         "scope": {
@@ -287,7 +290,8 @@
         },
         "priorLoss": {
           "kind": "legacyWindow"
-        }
+        },
+        "prompt": null
       }
     ],
     "append": [
@@ -453,7 +457,14 @@
       {
         "rootKey": "/projects/storefront",
         "ownerId": "agent-root:f307e46f5f6c07dd",
-        "threadId": "thread-0a1b2c3d"
+        "threadId": "thread-0a1b2c3d",
+        "includePrompts": false
+      },
+      {
+        "rootKey": "/projects/storefront",
+        "ownerId": "agent-root:f307e46f5f6c07dd",
+        "threadId": "thread-0a1b2c3d",
+        "includePrompts": true
       }
     ],
     "deleteThreadLog": [
@@ -477,7 +488,8 @@
           },
           "priorLoss": {
             "kind": "none"
-          }
+          },
+          "prompt": "Explain the failing test in src/app.ts."
         }
       },
       {
@@ -491,7 +503,8 @@
           },
           "priorLoss": {
             "kind": "none"
-          }
+          },
+          "prompt": "Explain the failing test in src/app.ts."
         }
       },
       {
@@ -505,7 +518,8 @@
           },
           "priorLoss": {
             "kind": "none"
-          }
+          },
+          "prompt": "Explain the failing test in src/app.ts."
         }
       },
       {
@@ -520,7 +534,38 @@
           "priorLoss": {
             "kind": "none"
           },
+          "prompt": "Explain the failing test in src/app.ts.",
           "resume": true
+        }
+      },
+      {
+        "why": "prompt carries a NUL byte",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "priorLoss": {
+            "kind": "none"
+          },
+          "prompt": "Explain the failing test.\u0000"
+        }
+      },
+      {
+        "why": "prompt is not a string",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "priorLoss": {
+            "kind": "none"
+          },
+          "prompt": 12
         }
       }
     ],
@@ -864,7 +909,8 @@
         "why": "missing thread id",
         "value": {
           "rootKey": "/projects/storefront",
-          "ownerId": "agent-root:f307e46f5f6c07dd"
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "includePrompts": false
         }
       },
       {
@@ -873,7 +919,17 @@
           "rootKey": "/projects/storefront",
           "ownerId": "agent-root:f307e46f5f6c07dd",
           "threadId": "thread-0a1b2c3d",
-          "turnId": "turn-0a1b2c3d"
+          "turnId": "turn-0a1b2c3d",
+          "includePrompts": false
+        }
+      },
+      {
+        "why": "includePrompts is not a boolean",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "includePrompts": "yes"
         }
       }
     ],
@@ -1235,7 +1291,9 @@
             },
             "bounded": false
           }
-        }
+        },
+        "prompt": "Explain the failing test in src/app.ts.",
+        "promptOmitted": false
       },
       {
         "turnId": "turn-9f8e7d6c",
@@ -1245,7 +1303,23 @@
           "kind": "unreadable"
         },
         "sealed": false,
-        "digest": null
+        "digest": null,
+        "prompt": null,
+        "promptOmitted": true
+      }
+    ],
+    [
+      {
+        "turnId": "turn-1a2b3c4d",
+        "eventCount": 3,
+        "bytes": 512,
+        "loss": {
+          "kind": "none"
+        },
+        "sealed": true,
+        "digest": null,
+        "prompt": null,
+        "promptOmitted": false
       }
     ]
   ],
@@ -1261,7 +1335,9 @@
             "kind": "none"
           },
           "sealed": false,
-          "digest": null
+          "digest": null,
+          "prompt": null,
+          "promptOmitted": false
         },
         {
           "turnId": "turn-0a1b2c3d",
@@ -1271,7 +1347,9 @@
             "kind": "none"
           },
           "sealed": false,
-          "digest": null
+          "digest": null,
+          "prompt": null,
+          "promptOmitted": false
         }
       ]
     },
@@ -1286,7 +1364,9 @@
             "kind": "none"
           },
           "sealed": false,
-          "digest": null
+          "digest": null,
+          "prompt": null,
+          "promptOmitted": false
         }
       ]
     },
@@ -1302,15 +1382,53 @@
           },
           "sealed": false,
           "digest": null,
-          "writerEpoch": 1
+          "writerEpoch": 1,
+          "prompt": null,
+          "promptOmitted": false
         }
       ]
     },
     {
       "why": "not an array",
       "value": {
-        "turnId": "turn-0a1b2c3d"
+        "turnId": "turn-0a1b2c3d",
+        "prompt": null,
+        "promptOmitted": false
       }
+    },
+    {
+      "why": "a carried prompt contradicts promptOmitted",
+      "value": [
+        {
+          "turnId": "turn-0a1b2c3d",
+          "eventCount": 1,
+          "bytes": 1,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": true,
+          "digest": null,
+          "prompt": "Explain the failing test in src/app.ts.",
+          "promptOmitted": true
+        }
+      ]
+    },
+    {
+      "why": "prompt is not a string",
+      "value": [
+        {
+          "turnId": "turn-0a1b2c3d",
+          "eventCount": 1,
+          "bytes": 1,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": true,
+          "digest": null,
+          "prompt": 7,
+          "promptOmitted": false
+        }
+      ]
     }
   ],
   "errors": [

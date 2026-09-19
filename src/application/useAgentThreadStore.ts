@@ -23,6 +23,7 @@ import {
   type AgentThreadsState,
   type AgentTurnEvent,
 } from "../domain/agentThread";
+import { agentPromptLooksClipped } from "../domain/agentPromptClipping";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import {
   NO_AGENT_TURN_LOG_LOSS,
@@ -61,6 +62,7 @@ export const TURN_LOG_DELETE_FAILURE_NOTICE =
   "The saved transcript of a removed thread could not be deleted from this computer.";
 const STORE_FULL_NOTICE =
   "The saved-thread store is full. Unpin or remove older threads so new conversations can be saved.";
+const NO_LOGGED_PROMPT_TURN_IDS: ReadonlyArray<string> = Object.freeze([]);
 
 const BACKEND_REASON_PREFIXES = [
   "Agent context ",
@@ -175,11 +177,13 @@ export function useAgentThreadStore(
       const authority = threadAuthority(dependenciesRef.current.projects, thread);
       if (authority === null) return;
 
+      const loggedPromptTurnIds = loggedPromptTurnIdsOf(dependenciesRef.current, thread);
+
       slot.inFlight = true;
       slot.lastSaveAtMs = nowMs();
       const inFlight = attempt(() =>
         dependenciesRef.current.agentThreadStoreGateway.saveAgentThread(
-          persistentSaveRequest(thread),
+          persistentSaveRequest(thread, loggedPromptTurnIds),
         ),
       );
       slot.settled = inFlight.then(() => undefined);
@@ -371,7 +375,12 @@ export function useAgentThreadStore(
       const ownerId = agentRootOwnerId(authority.rootKey);
       for (const thread of interruptedLoggedThreads(threads)) {
         const summarized = await attempt(() =>
-          turnLog.summarize({ rootKey: authority.rootKey, ownerId, threadId: thread.threadId }),
+          turnLog.summarize({
+            rootKey: authority.rootKey,
+            ownerId,
+            threadId: thread.threadId,
+            includePrompts: false,
+          }),
         );
         if (!mountedRef.current) return;
         if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
@@ -576,7 +585,13 @@ function openTurnLogSlot(
     generation: authority.generation,
     provider: thread.provider.kind,
     priorLoss: resumedTurnLoss(action.turn.eventsTruncated),
+    prompt: loggablePrompt(action.turn.prompt),
   });
+}
+
+function loggablePrompt(prompt: string): string | null {
+  if (agentPromptLooksClipped(prompt)) return null;
+  return prompt;
 }
 
 function resumedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
@@ -629,6 +644,7 @@ function sealInterruptedTurnLogs(
       generation: authority.generation,
       provider: thread.provider.kind,
       priorLoss: interruptedTurnLoss(turn.eventsTruncated),
+      prompt: loggablePrompt(turn.prompt),
     });
     turnLog.writer.sealTurn(turn.turnId);
     sealed += 1;
@@ -827,13 +843,27 @@ function boundedPersistFailureReason(raw: string): string | null {
   return `${points.slice(0, MAX_PERSIST_FAILURE_REASON_CHARS).join("")}…`;
 }
 
-function persistentSaveRequest(thread: AgentThread): SaveAgentThreadRequest {
+function persistentSaveRequest(
+  thread: AgentThread,
+  loggedPromptTurnIds: ReadonlyArray<string>,
+): SaveAgentThreadRequest {
   const ownerId = agentRootOwnerId(thread.owner.rootKey);
   return {
     rootKey: thread.owner.rootKey,
     ownerId,
     thread: { ...thread, owner: { ...thread.owner, ownerId } },
+    loggedPromptTurnIds,
   };
+}
+
+function loggedPromptTurnIdsOf(
+  dependencies: AgentThreadStoreDependencies,
+  thread: AgentThread,
+): ReadonlyArray<string> {
+  const turnLog = dependencies.turnLog;
+  if (turnLog === undefined) return NO_LOGGED_PROMPT_TURN_IDS;
+  if (!isLoggedAgentThread(thread)) return NO_LOGGED_PROMPT_TURN_IDS;
+  return [...turnLog.facts.promptLoggedTurnIds(thread.threadId)];
 }
 
 function withRuntimeOwner(thread: AgentThread, ownerId: string): AgentThread {

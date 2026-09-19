@@ -6,6 +6,7 @@ import type { AgentAttachment } from "./agentAttachment";
 import type { AgentLaunchOptions } from "./agentLaunch";
 import {
   MAX_AGENT_STEERS_PER_TURN,
+  MAX_AGENT_TASK_PROMPT_BYTES,
   isAgentSessionId,
   isTerminalAgentTaskStatus,
   type AgentCliKind,
@@ -239,6 +240,8 @@ export interface AgentTurn {
   readonly lastOutputSequence: number;
   /** Runtime-only delivery cursor; independent of the retained output window. */
   readonly queueBoundarySequence?: number;
+  /** Runtime-only reconciliation mark; the JSON prompt was replaced from this turn's log. */
+  readonly promptRestored?: boolean;
   readonly foregroundSettled?: boolean;
   readonly firstEventOffset?: number;
   readonly subagentLifecycle?: AgentSubagentLifecycle;
@@ -347,6 +350,12 @@ export type AgentThreadsAction =
       readonly turnId: string;
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly hasEarlier: boolean;
+    }
+  | {
+      readonly kind: "turnPromptRestored";
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly prompt: string;
     }
   | {
       readonly kind: "integrationRecorded";
@@ -524,6 +533,8 @@ export function agentThreadsReducer(
       return interruptTurn(state, action.turnId, action.nowEpochMs);
     case "turnHydrated":
       return hydrateTurn(state, action);
+    case "turnPromptRestored":
+      return restoreTurnPrompt(state, action);
     case "integrationRecorded":
       return recordIntegration(state, action.threadId, action.integration);
     case "threadViewed":
@@ -1098,6 +1109,28 @@ function hydrateTurn(
       : candidate,
   );
   return replaceThread(state, { ...thread, turns });
+}
+
+function restoreTurnPrompt(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "turnPromptRestored" }>,
+): AgentThreadsState {
+  if (!isRestorableAgentPrompt(action.prompt)) return state;
+  const location = findTurnInThread(state, action.threadId, action.turnId);
+  if (location === null) return state;
+  const { thread, index } = location;
+  const turn = thread.turns[index];
+  if (!isTerminalAgentTurnStatus(turn.status)) return state;
+  const turns = thread.turns.map((candidate, position) =>
+    position === index ? { ...turn, prompt: action.prompt, promptRestored: true } : candidate,
+  );
+  return replaceThread(state, { ...thread, turns });
+}
+
+function isRestorableAgentPrompt(prompt: string): boolean {
+  if (typeof prompt !== "string" || prompt.length === 0) return false;
+  if (prompt.includes("\0")) return false;
+  return UTF8_ENCODER.encode(prompt).byteLength <= MAX_AGENT_TASK_PROMPT_BYTES;
 }
 
 function hydratedEventOffset(turn: AgentTurn, hydratedLength: number): number {

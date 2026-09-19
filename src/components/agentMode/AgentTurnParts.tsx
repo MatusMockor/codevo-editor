@@ -18,12 +18,18 @@ const NO_ATTACHMENTS: ReadonlyArray<AgentTurnAttachmentView> = [];
 
 export type AgentPromptRole = "turn" | "steer";
 
+export const AGENT_PROMPT_CLIPPED_NOTICE =
+  "Shortened when this thread was saved. The full message is kept in this turn's log.";
+export const AGENT_PROMPT_CLIPPED_COPY_BLOCKED =
+  "Only the shortened message is available here; the full message is in this turn's log.";
+
 export interface AgentTurnPromptProps {
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly attachments?: ReadonlyArray<AgentTurnAttachmentView>;
   readonly current: number | null;
   readonly eventKey?: string;
   readonly prompt: string;
+  readonly promptClipped?: boolean;
   readonly query: string;
   readonly role?: AgentPromptRole;
   readonly textClipboard: TextClipboardGateway | null;
@@ -35,6 +41,7 @@ export const AgentTurnPrompt = memo(function AgentTurnPrompt({
   current,
   eventKey,
   prompt,
+  promptClipped = false,
   query,
   role = "turn",
   textClipboard,
@@ -47,7 +54,12 @@ export const AgentTurnPrompt = memo(function AgentTurnPrompt({
       data-agent-event={eventKey}
     >
       <div className="agent-message-actions">
-        <AgentMessageCopyButton clipboard={textClipboard} label="your message" text={prompt} />
+        <AgentMessageCopyButton
+          blockedReason={promptClipped ? AGENT_PROMPT_CLIPPED_COPY_BLOCKED : null}
+          clipboard={textClipboard}
+          label="your message"
+          text={prompt}
+        />
       </div>
       <div className="agent-prompt__bubble" tabIndex={-1}>
         {displayText !== "" && (
@@ -55,6 +67,7 @@ export const AgentTurnPrompt = memo(function AgentTurnPrompt({
             <HighlightRun current={current} query={query} text={displayText} />
           </p>
         )}
+        {promptClipped && <p className="agent-note">{AGENT_PROMPT_CLIPPED_NOTICE}</p>}
         <AgentTurnAttachments attachments={attachments} images={attachmentImages} />
       </div>
     </div>

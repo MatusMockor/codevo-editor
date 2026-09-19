@@ -14,6 +14,7 @@ import {
 } from "../domain/agentTask";
 import {
   MAX_AGENT_THREADS_PER_ROOT,
+  MAX_AGENT_TURNS_PER_THREAD,
   parseAgentThread,
   serializeAgentThread,
   type AgentThread,
@@ -53,7 +54,11 @@ export function validateSaveAgentThreadRequest(
   request: SaveAgentThreadRequest,
 ): Record<string, unknown> {
   const owner = validateAgentThreadStoreOwnerRequest(request);
-  const serialized = serializeAgentThread(request.thread);
+  const loggedPromptTurnIds = validateLoggedPromptTurnIds(
+    request.loggedPromptTurnIds,
+    "request.loggedPromptTurnIds",
+  );
+  const serialized = serializeAgentThread(request.thread, loggedPromptTurnIds);
   const thread = parseAgentThread(serialized);
   if (thread.owner.rootKey !== owner.rootKey) {
     invalid("request.thread.owner.rootKey", "the requested root key");
@@ -233,6 +238,15 @@ function errorMessageOf(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   return "";
+}
+
+function validateLoggedPromptTurnIds(value: unknown, path: string): ReadonlySet<string> {
+  if (!Array.isArray(value) || value.length > MAX_AGENT_TURNS_PER_THREAD) {
+    invalid(path, `an array of at most ${MAX_AGENT_TURNS_PER_THREAD} agent turn ids`);
+  }
+  const turnIds = new Set<string>();
+  value.forEach((candidate, index) => turnIds.add(agentThreadId(candidate, `${path}[${index}]`)));
+  return turnIds;
 }
 
 function agentThreadId(value: unknown, path: string): string {

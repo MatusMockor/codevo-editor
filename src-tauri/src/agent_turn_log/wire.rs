@@ -11,6 +11,8 @@ pub(crate) const MAX_DIGEST_CAPACITIES: usize = 16;
 pub(crate) const MAX_TURN_BYTES: i64 = 256 * 1024 * 1024;
 pub(crate) const NEAR_TURN_BYTES: i64 = MAX_TURN_BYTES / 4 * 3;
 pub(crate) const MAX_TURN_SUMMARIES: usize = 64;
+pub(crate) const MAX_TURN_PROMPT_BYTES: usize = 32 * 1024;
+pub(crate) const MAX_SUMMARY_PROMPT_RESPONSE_BYTES: usize = 512 * 1024;
 pub(crate) const AGENT_TURN_DIGEST_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -111,6 +113,8 @@ pub(crate) struct AgentTurnDigestWire {
 pub(crate) struct OpenAgentTurnLogRequest {
     pub(crate) scope: AgentTurnLogScope,
     pub(crate) prior_loss: AgentTurnLogLoss,
+    #[serde(default)]
+    pub(crate) prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -198,6 +202,8 @@ pub(crate) struct AgentTurnLogSummary {
     pub(crate) loss: AgentTurnLogLoss,
     pub(crate) sealed: bool,
     pub(crate) digest: Option<AgentTurnDigestWire>,
+    pub(crate) prompt: Option<String>,
+    pub(crate) prompt_omitted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -206,6 +212,8 @@ pub(crate) struct SummarizeAgentTurnLogsRequest {
     pub(crate) root_key: String,
     pub(crate) owner_id: String,
     pub(crate) thread_id: String,
+    #[serde(default)]
+    pub(crate) include_prompts: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

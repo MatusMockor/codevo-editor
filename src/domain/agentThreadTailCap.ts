@@ -1,4 +1,10 @@
 import {
+  agentPromptLooksClipped,
+  clipAgentPromptForPersistence,
+  clipUtf8Text,
+  utf8ByteLength,
+} from "./agentPromptClipping";
+import {
   isTerminalAgentTurnStatus,
   type AgentSubagentContentEvent,
   type AgentThread,
@@ -26,6 +32,7 @@ const LIVE_OUTPUT_TIER = 2;
 const LIVE_STEER_TIER = 3;
 const FINAL_ANSWER_TIER = 4;
 const NO_GUARDED_EVENTS: ReadonlySet<number> = new Set<number>();
+const NO_LOGGED_PROMPT_TURNS: ReadonlySet<string> = new Set<string>();
 const SACRIFICE_TIERS: ReadonlyArray<number> = [
   SETTLED_OUTPUT_TIER,
   SETTLED_STEER_TIER,
@@ -72,18 +79,59 @@ export function persistedAgentThreadScaffoldBytes(thread: AgentThread): number {
 export function capAgentThreadForPersistence(
   thread: AgentThread,
   eventBudgetBytes: number = MAX_PERSISTED_THREAD_EVENT_BYTES,
+  loggedPromptTurnIds: ReadonlySet<string> = NO_LOGGED_PROMPT_TURNS,
 ): AgentThread {
-  const slots = thread.turns.map(openSlot);
-  const available = eventBudgetBytes - persistedAgentThreadScaffoldBytes(thread);
-  fitThreadBudget(slots, Math.max(available, 0));
+  const projection = clipLoggedPrompts(thread, eventBudgetBytes, loggedPromptTurnIds);
+  const projected = projection.thread;
+  const slots = projected.turns.map(openSlot);
+  fitThreadBudget(slots, Math.max(eventBudgetBytes - projection.scaffoldBytes, 0));
   let changed = false;
   const turns = slots.map((slot) => {
     const turn = closeSlot(slot);
     if (turn !== slot.source) changed = true;
     return turn;
   });
-  if (!changed) return thread;
-  return { ...thread, turns };
+  if (!changed) return projected;
+  return { ...projected, turns };
+}
+
+interface PromptProjection {
+  readonly thread: AgentThread;
+  readonly scaffoldBytes: number;
+}
+
+function clipLoggedPrompts(
+  thread: AgentThread,
+  budgetBytes: number,
+  loggedPromptTurnIds: ReadonlySet<string>,
+): PromptProjection {
+  let scaffold = persistedAgentThreadScaffoldBytes(thread);
+  if (loggedPromptTurnIds.size === 0) return { thread, scaffoldBytes: scaffold };
+  if (scaffold <= budgetBytes) return { thread, scaffoldBytes: scaffold };
+  const turns = [...thread.turns];
+  const newest = turns.length - 1;
+  let clipped = false;
+  for (let index = 0; index < newest && scaffold > budgetBytes; index += 1) {
+    const turn = turns[index]!;
+    if (!isClippablePromptTurn(turn, loggedPromptTurnIds)) continue;
+    const prompt = clipAgentPromptForPersistence(turn.prompt);
+    if (prompt === null) continue;
+    scaffold -= jsonTextBytes(turn.prompt) - jsonTextBytes(prompt);
+    turns[index] = { ...turn, prompt };
+    clipped = true;
+  }
+  if (!clipped) return { thread, scaffoldBytes: scaffold };
+  return { thread: { ...thread, turns }, scaffoldBytes: scaffold };
+}
+
+function isClippablePromptTurn(turn: AgentTurn, loggedPromptTurnIds: ReadonlySet<string>): boolean {
+  if (!isTerminalAgentTurnStatus(turn.status)) return false;
+  if (!loggedPromptTurnIds.has(turn.turnId)) return false;
+  return !agentPromptLooksClipped(turn.prompt);
+}
+
+function jsonTextBytes(text: string): number {
+  return utf8ByteLength(JSON.stringify(text));
 }
 
 function openSlot(turn: AgentTurn): TailSlot {
@@ -343,33 +391,33 @@ function clipEventText(event: AgentTurnEvent, limitBytes: number): AgentTurnEven
     case "reasoning":
     case "userMessage":
     case "result": {
-      const text = clipText(event.text, limitBytes);
+      const text = clipUtf8Text(event.text, limitBytes);
       if (text === event.text) return null;
       return { ...event, text };
     }
     case "error": {
-      const message = clipText(event.message, limitBytes);
+      const message = clipUtf8Text(event.message, limitBytes);
       if (message === event.message) return null;
       return { ...event, message };
     }
     case "contextCompactionStatus": {
       if (event.message === null) return null;
-      const message = clipText(event.message, limitBytes);
+      const message = clipUtf8Text(event.message, limitBytes);
       if (message === event.message) return null;
       return { ...event, message };
     }
     case "unknownLine": {
-      const raw = clipText(event.raw, limitBytes);
+      const raw = clipUtf8Text(event.raw, limitBytes);
       if (raw === event.raw) return null;
       return { ...event, raw, clipped: true };
     }
     case "toolCall": {
-      const inputSummary = clipText(event.inputSummary, limitBytes);
+      const inputSummary = clipUtf8Text(event.inputSummary, limitBytes);
       if (inputSummary === event.inputSummary) return null;
       return { ...event, inputSummary };
     }
     case "toolResult": {
-      const outputSummary = clipText(event.outputSummary, limitBytes);
+      const outputSummary = clipUtf8Text(event.outputSummary, limitBytes);
       if (outputSummary === event.outputSummary) return null;
       return { ...event, outputSummary };
     }
@@ -400,28 +448,6 @@ function isSubagentContentEvent(event: AgentTurnEvent): event is AgentSubagentCo
     event.kind === "toolCall" ||
     event.kind === "toolResult"
   );
-}
-
-function clipText(text: string, limitBytes: number): string {
-  if (limitBytes <= 0) return "";
-  let bytes = 0;
-  let index = 0;
-  while (index < text.length) {
-    const codePoint = text.codePointAt(index);
-    if (codePoint === undefined) return text.slice(0, index);
-    const width = utf8Width(codePoint);
-    if (bytes + width > limitBytes) return text.slice(0, index);
-    bytes += width;
-    index += codePoint > 0xffff ? 2 : 1;
-  }
-  return text;
-}
-
-function utf8Width(codePoint: number): number {
-  if (codePoint < 0x80) return 1;
-  if (codePoint < 0x800) return 2;
-  if (codePoint < 0x10000) return 3;
-  return 4;
 }
 
 function unclippableEvent(event: never): never {

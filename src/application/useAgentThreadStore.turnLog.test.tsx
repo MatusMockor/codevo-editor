@@ -588,6 +588,8 @@ describe("useAgentThreadStore turn log summaries on demand", () => {
           loss: { kind: "none" },
           sealed: true,
           digest: null,
+          prompt: null,
+          promptOmitted: false,
         },
       ],
     });
@@ -600,7 +602,7 @@ describe("useAgentThreadStore turn log summaries on demand", () => {
     await settle();
 
     expect(harness.logGateway.summarized).toEqual([
-      { rootKey: ROOT_KEY, ownerId: OWNER_ID, threadId: THREAD_ID },
+      { rootKey: ROOT_KEY, ownerId: OWNER_ID, threadId: THREAD_ID, includePrompts: false },
     ]);
     expect(harness.turnLog.facts.factsOf(TURN_ID)).toMatchObject({
       logged: true,

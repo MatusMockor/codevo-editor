@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS turn_meta (
     digest BLOB,
     digest_through_seq INTEGER NOT NULL,
     digest_version INTEGER NOT NULL,
-    updated_seq INTEGER NOT NULL DEFAULT 0
+    updated_seq INTEGER NOT NULL DEFAULT 0,
+    prompt TEXT
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS events (
@@ -33,6 +34,7 @@ CREATE INDEX IF NOT EXISTS turn_meta_updated_seq ON turn_meta (updated_seq DESC)
 ";
 
 const ACTIVITY_COLUMN: &str = "updated_seq";
+const PROMPT_COLUMN: &str = "prompt";
 const NEXT_ACTIVITY: &str = "(SELECT IFNULL(MAX(updated_seq), 0) + 1 FROM turn_meta)";
 
 pub(crate) fn ensure_activity_column(connection: &Connection) -> AgentTurnLogResult<()> {
@@ -46,9 +48,24 @@ pub(crate) fn ensure_activity_column(connection: &Connection) -> AgentTurnLogRes
 }
 
 pub(crate) fn has_activity_column(connection: &Connection) -> AgentTurnLogResult<bool> {
+    has_column(connection, ACTIVITY_COLUMN)
+}
+
+pub(crate) fn ensure_prompt_column(connection: &Connection) -> AgentTurnLogResult<()> {
+    if has_prompt_column(connection)? {
+        return Ok(());
+    }
+    sqlite(connection.execute_batch("ALTER TABLE turn_meta ADD COLUMN prompt TEXT;"))
+}
+
+pub(crate) fn has_prompt_column(connection: &Connection) -> AgentTurnLogResult<bool> {
+    has_column(connection, PROMPT_COLUMN)
+}
+
+fn has_column(connection: &Connection, column: &str) -> AgentTurnLogResult<bool> {
     let present: i64 = sqlite(connection.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('turn_meta') WHERE name = ?1",
-        [ACTIVITY_COLUMN],
+        [column],
         |row| row.get(0),
     ))?;
     Ok(present != 0)
@@ -66,15 +83,25 @@ pub(crate) struct TurnMetaRow {
     pub(crate) sealed: bool,
     pub(crate) digest: Option<AgentTurnDigestWire>,
     pub(crate) digest_through_seq: i64,
+    pub(crate) prompt: Option<String>,
 }
 
 const SELECT_COLUMNS: &str = "turn_id, writer_epoch, next_seq, first_seq, event_count, bytes, loss, sealed, digest, digest_through_seq";
+
+fn select_columns(connection: &Connection) -> AgentTurnLogResult<String> {
+    let prompt = match has_prompt_column(connection)? {
+        true => PROMPT_COLUMN,
+        false => "NULL",
+    };
+    Ok(format!("{SELECT_COLUMNS}, {prompt}"))
+}
 
 pub(crate) fn read_turn_meta(
     connection: &Connection,
     turn_id: &str,
 ) -> AgentTurnLogResult<Option<TurnMetaRow>> {
-    let statement = format!("SELECT {SELECT_COLUMNS} FROM turn_meta WHERE turn_id = ?1");
+    let columns = select_columns(connection)?;
+    let statement = format!("SELECT {columns} FROM turn_meta WHERE turn_id = ?1");
     sqlite(
         connection
             .query_row(&statement, [turn_id], turn_meta_from_row)
@@ -90,7 +117,8 @@ pub(crate) fn read_all_turn_meta(
         true => "updated_seq DESC, turn_id DESC",
         false => "turn_id DESC",
     };
-    let statement = format!("SELECT {SELECT_COLUMNS} FROM turn_meta ORDER BY {order} LIMIT ?1");
+    let columns = select_columns(connection)?;
+    let statement = format!("SELECT {columns} FROM turn_meta ORDER BY {order} LIMIT ?1");
     let mut prepared = sqlite(connection.prepare(&statement))?;
     let rows = sqlite(prepared.query_map([limit as i64], turn_meta_from_row))?;
     let mut collected = Vec::new();
@@ -115,6 +143,7 @@ fn turn_meta_from_row(row: &Row<'_>) -> rusqlite::Result<TurnMetaRow> {
         sealed: row.get::<_, i64>(7)? != 0,
         digest: digest.as_deref().and_then(decode_digest),
         digest_through_seq: row.get(9)?,
+        prompt: row.get(10)?,
     })
 }
 
@@ -145,8 +174,8 @@ pub(crate) fn insert_turn_meta(
         .and_then(|digest| serde_json::to_vec(digest).ok());
     sqlite(connection.execute(
         &format!(
-        "INSERT INTO turn_meta (turn_id, writer_epoch, next_seq, first_seq, event_count, bytes, loss, sealed, digest, digest_through_seq, digest_version, updated_seq)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, {NEXT_ACTIVITY})"),
+        "INSERT INTO turn_meta (turn_id, writer_epoch, next_seq, first_seq, event_count, bytes, loss, sealed, digest, digest_through_seq, digest_version, prompt, updated_seq)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, {NEXT_ACTIVITY})"),
         rusqlite::params![
             row.turn_id,
             row.writer_epoch,
@@ -159,6 +188,7 @@ pub(crate) fn insert_turn_meta(
             digest,
             row.digest_through_seq,
             i64::from(AGENT_TURN_DIGEST_VERSION),
+            row.prompt,
         ],
     ))?;
     Ok(())
@@ -176,7 +206,7 @@ pub(crate) fn update_turn_meta(
         &format!(
         "UPDATE turn_meta SET writer_epoch = ?2, next_seq = ?3, first_seq = ?4, event_count = ?5,
          bytes = ?6, loss = ?7, sealed = ?8, digest = ?9, digest_through_seq = ?10, digest_version = ?11,
-         updated_seq = {NEXT_ACTIVITY}
+         prompt = ?12, updated_seq = {NEXT_ACTIVITY}
          WHERE turn_id = ?1"),
         rusqlite::params![
             row.turn_id,
@@ -190,6 +220,7 @@ pub(crate) fn update_turn_meta(
             digest,
             row.digest_through_seq,
             i64::from(AGENT_TURN_DIGEST_VERSION),
+            row.prompt,
         ],
     ))?;
     Ok(())

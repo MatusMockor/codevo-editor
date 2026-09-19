@@ -7,10 +7,12 @@ type AgentMessageCopyState = "idle" | "copied" | "failed";
 const FEEDBACK_DURATION_MS = 1_600;
 
 export function AgentMessageCopyButton({
+  blockedReason = null,
   clipboard,
   label,
   text,
 }: {
+  readonly blockedReason?: string | null;
   readonly clipboard: TextClipboardGateway | null;
   readonly label: string;
   readonly text: string;
@@ -49,6 +51,7 @@ export function AgentMessageCopyButton({
   };
 
   const copy = async (): Promise<void> => {
+    if (blockedReason !== null) return;
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
     try {
@@ -71,8 +74,9 @@ export function AgentMessageCopyButton({
     <button
       aria-label={actionLabel}
       className={`agent-message-copy${state === "copied" ? " agent-message-copy--copied" : ""}${state === "failed" ? " agent-message-copy--failed" : ""}`}
+      disabled={blockedReason !== null}
       onClick={() => void copy()}
-      title={actionLabel}
+      title={blockedReason ?? actionLabel}
       type="button"
     >
       {state === "copied" ? (

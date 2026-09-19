@@ -23,6 +23,8 @@ function summary(turnId: string): AgentTurnLogSummary {
     loss: { kind: "none" },
     sealed: true,
     digest: null,
+    prompt: null,
+    promptOmitted: false,
   };
 }
 
@@ -40,6 +42,7 @@ function liveSlot(
     persistedThroughSeq: 0,
     bounded: false,
     contextWindow,
+    promptStored: false,
   };
 }
 

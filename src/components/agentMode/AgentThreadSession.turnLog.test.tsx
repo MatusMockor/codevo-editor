@@ -30,6 +30,7 @@ function slot(overrides: Partial<AgentTurnLogSlotStatus> = {}): AgentTurnLogSlot
     persistedThroughSeq: 0,
     bounded: false,
     contextWindow: null,
+    promptStored: false,
     ...overrides,
   };
 }
@@ -141,6 +142,8 @@ describe("thread session turn log notices", () => {
         loss: { kind: "none" },
         sealed: false,
         digest: null,
+        prompt: null,
+        promptOmitted: false,
       },
     ]);
     render(true, store);

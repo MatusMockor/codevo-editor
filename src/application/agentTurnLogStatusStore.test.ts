@@ -27,6 +27,7 @@ function status(
     persistedThroughSeq: 0,
     bounded: false,
     contextWindow: null,
+    promptStored: false,
     ...overrides,
   };
 }
@@ -42,6 +43,8 @@ function summary(
     loss: { kind: "none" },
     sealed: true,
     digest: null,
+    prompt: null,
+    promptOmitted: false,
     ...overrides,
   };
 }
@@ -81,6 +84,8 @@ describe("agent turn log facts store", () => {
         bytes: 100,
         loss: { kind: "legacyWindow" },
         sealed: true,
+        prompt: null,
+        promptOmitted: false,
         digest: {
           version: 1,
           context: {
@@ -103,6 +108,7 @@ describe("agent turn log facts store", () => {
       hydration: "notAttempted",
       contextWindow: { usedTokens: 7, contextWindow: 9 },
       health: { kind: "ok" },
+      promptInLog: false,
     });
   });
 
@@ -312,5 +318,71 @@ describe("agent turn log facts store", () => {
     store.publishHydration("turn-1", "partial");
     store.publishSummaries(THREAD_ID, [summary("turn-1", { eventCount: 11 })]);
     expect(store.factsOf("turn-1")?.hydration).toBe("partial");
+  });
+});
+
+describe("agent turn log prompt evidence", () => {
+  const OTHER_THREAD_ID = "agt-2-0b1b";
+
+  it("derives promptInLog from a slot status that stored the prompt", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    store.publishSlot(THREAD_ID, status("turn-1"));
+    expect(store.factsOf("turn-1")?.promptInLog).toBe(false);
+
+    store.publishSlot(THREAD_ID, status("turn-1", { promptStored: true }));
+    expect(store.factsOf("turn-1")?.promptInLog).toBe(true);
+  });
+
+  it("derives promptInLog from a summary that carries or omits the prompt", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    store.publishSummaries(THREAD_ID, [
+      summary("turn-1", { prompt: "the whole prompt" }),
+      summary("turn-2", { prompt: null, promptOmitted: true }),
+      summary("turn-3"),
+    ]);
+
+    expect(store.factsOf("turn-1")?.promptInLog).toBe(true);
+    expect(store.factsOf("turn-2")?.promptInLog).toBe(true);
+    expect(store.factsOf("turn-3")?.promptInLog).toBe(false);
+  });
+
+  it("notifies the thread when only the prompt evidence changed", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const listener = vi.fn();
+    store.publishSummaries(THREAD_ID, [summary("turn-1")]);
+    const before = store.evidenceRevisionOf(THREAD_ID);
+    store.subscribe(listener);
+
+    store.publishSummaries(THREAD_ID, [summary("turn-1", { prompt: "the whole prompt" })]);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.evidenceRevisionOf(THREAD_ID)).not.toBe(before);
+    expect(store.factsOf("turn-1")?.promptInLog).toBe(true);
+  });
+
+  it("reports exactly the turns of one thread whose log holds the prompt", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    store.publishSummaries(THREAD_ID, [
+      summary("turn-1", { prompt: "kept" }),
+      summary("turn-2"),
+      summary("turn-3", { promptOmitted: true }),
+    ]);
+    store.publishSummaries(OTHER_THREAD_ID, [summary("turn-9", { prompt: "other" })]);
+
+    expect([...store.promptLoggedTurnIds(THREAD_ID)]).toEqual(["turn-1", "turn-3"]);
+    expect([...store.promptLoggedTurnIds(OTHER_THREAD_ID)]).toEqual(["turn-9"]);
+    expect([...store.promptLoggedTurnIds("agt-3-0c1c")]).toEqual([]);
+  });
+
+  it("keeps the reported prompt turns inside the retained facts cap", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const total = MAX_RETAINED_AGENT_TURN_LOG_FACTS_PER_THREAD + 8;
+    for (let index = 0; index < total; index += 1) {
+      store.publishSummaries(THREAD_ID, [summary(`turn-${index}`, { prompt: "kept" })]);
+    }
+
+    expect(store.promptLoggedTurnIds(THREAD_ID).size).toBe(
+      MAX_RETAINED_AGENT_TURN_LOG_FACTS_PER_THREAD,
+    );
   });
 });

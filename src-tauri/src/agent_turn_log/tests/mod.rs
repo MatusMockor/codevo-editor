@@ -143,6 +143,15 @@ pub(super) fn open_request(turn_id: &str) -> OpenAgentTurnLogRequest {
     OpenAgentTurnLogRequest {
         scope: scope(turn_id),
         prior_loss: loss(AgentTurnLogLossKind::None),
+        prompt: None,
+    }
+}
+
+pub(super) fn prompted_open_request(turn_id: &str, prompt: &str) -> OpenAgentTurnLogRequest {
+    OpenAgentTurnLogRequest {
+        scope: scope(turn_id),
+        prior_loss: loss(AgentTurnLogLossKind::None),
+        prompt: Some(prompt.to_string()),
     }
 }
 
@@ -178,10 +187,15 @@ pub(super) fn page_request(
 }
 
 pub(super) fn summarize_request() -> SummarizeAgentTurnLogsRequest {
+    prompted_summarize_request(false)
+}
+
+pub(super) fn prompted_summarize_request(include_prompts: bool) -> SummarizeAgentTurnLogsRequest {
     SummarizeAgentTurnLogsRequest {
         root_key: ROOT_KEY.to_string(),
         owner_id: agent_root_owner_id(ROOT_KEY),
         thread_id: THREAD_ID.to_string(),
+        include_prompts,
     }
 }
 

@@ -43,7 +43,12 @@ describe("TauriAgentThreadStoreGateway", () => {
     const gateway = new TauriAgentThreadStoreGateway(invokeCommand, available);
 
     const snapshot = await gateway.loadAgentThreads({ rootKey: ROOT_KEY, ownerId: OWNER_ID });
-    await gateway.saveAgentThread({ rootKey: ROOT_KEY, ownerId: OWNER_ID, thread: THREAD });
+    await gateway.saveAgentThread({
+      rootKey: ROOT_KEY,
+      ownerId: OWNER_ID,
+      thread: THREAD,
+      loggedPromptTurnIds: [],
+    });
     await gateway.deleteAgentThread({
       rootKey: ROOT_KEY,
       ownerId: OWNER_ID,
@@ -63,7 +68,12 @@ describe("TauriAgentThreadStoreGateway", () => {
     const gateway = new TauriAgentThreadStoreGateway(invokeCommand, unavailable);
 
     const snapshot = await gateway.loadAgentThreads({ rootKey: ROOT_KEY, ownerId: OWNER_ID });
-    await gateway.saveAgentThread({ rootKey: ROOT_KEY, ownerId: OWNER_ID, thread: THREAD });
+    await gateway.saveAgentThread({
+      rootKey: ROOT_KEY,
+      ownerId: OWNER_ID,
+      thread: THREAD,
+      loggedPromptTurnIds: [],
+    });
     await gateway.deleteAgentThread({
       rootKey: ROOT_KEY,
       ownerId: OWNER_ID,
@@ -111,7 +121,12 @@ function resolveCalls(invokeCommand: ReturnType<typeof vi.fn<InvokeAgentThreadSt
 }
 
 function save(gateway: TauriAgentThreadStoreGateway, thread: AgentThread): Promise<void> {
-  return gateway.saveAgentThread({ rootKey: ROOT_KEY, ownerId: OWNER_ID, thread });
+  return gateway.saveAgentThread({
+    rootKey: ROOT_KEY,
+    ownerId: OWNER_ID,
+    thread,
+    loggedPromptTurnIds: [],
+  });
 }
 
 async function flush(): Promise<void> {

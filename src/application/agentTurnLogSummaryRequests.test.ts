@@ -22,6 +22,8 @@ function summary(turnId: string): AgentTurnLogSummary {
     loss: { kind: "none" },
     sealed: true,
     digest: null,
+    prompt: null,
+    promptOmitted: false,
   };
 }
 
@@ -37,6 +39,7 @@ function liveStatus(threadId: string, turnId: string): AgentTurnLogSlotStatus {
     persistedThroughSeq: 0,
     bounded: false,
     contextWindow: null,
+    promptStored: false,
   };
 }
 
@@ -63,7 +66,12 @@ function requesterHarness() {
       if (state.fails) throw new Error("busy");
       return state.summaries;
     },
-    scopeOf: (threadId) => ({ rootKey: ROOT_KEY, ownerId: OWNER_ID, threadId }),
+    scopeOf: (threadId) => ({
+      rootKey: ROOT_KEY,
+      ownerId: OWNER_ID,
+      threadId,
+      includePrompts: false,
+    }),
     generationOf: () => state.generation,
     active: () => true,
     timers: clock.timers,

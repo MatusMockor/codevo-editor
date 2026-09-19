@@ -19,6 +19,7 @@ function facts(overrides: Partial<AgentTurnLogFacts> = {}): AgentTurnLogFacts {
     hydration: "complete",
     contextWindow: null,
     health: { kind: "ok" },
+    promptInLog: false,
     ...overrides,
   };
 }

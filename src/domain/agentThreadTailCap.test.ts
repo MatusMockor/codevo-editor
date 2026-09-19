@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { agentTurnStream } from "../test/agentTurnEventStreams";
 import {
+  CLIPPED_AGENT_PROMPT_MARKER,
+  agentPromptLooksClipped,
+  restoreAgentPromptFromLog,
+} from "./agentPromptClipping";
+import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
+import {
   MAX_AGENT_EVENTS_PER_TURN,
   mergeTurnEvents,
   parseAgentThread,
@@ -145,6 +151,40 @@ function promptHeavyThread(): AgentThread {
       }),
     ),
   );
+}
+
+function promptScaffoldThread(promptBytes: number): AgentThread {
+  return thread(
+    Array.from({ length: OVERSIZED_THREAD_TURNS }, (_, position) =>
+      settledTurn({
+        turnId: `agt-1-${String(position).padStart(4, "0")}`,
+        prompt: `${position}:${"p".repeat(promptBytes - 8)}`,
+        events: [],
+      }),
+    ),
+  );
+}
+
+function loggedTurnIds(subject: AgentThread): ReadonlySet<string> {
+  return new Set(subject.turns.slice(0, -1).map((candidate) => candidate.turnId));
+}
+
+function threadBytes(subject: AgentThread, logged?: ReadonlySet<string>): number {
+  return documentBytes(serializeAgentThread(subject, logged));
+}
+
+function promptsOf(subject: AgentThread): ReadonlyArray<string> {
+  return subject.turns.map((candidate) => candidate.prompt);
+}
+
+function persistedPrompts(
+  subject: AgentThread,
+  logged: ReadonlySet<string>,
+): ReadonlyArray<string> {
+  const turns = serializeAgentThread(subject, logged).turns as ReadonlyArray<{
+    readonly prompt: string;
+  }>;
+  return turns.map((entry) => entry.prompt);
 }
 
 const oversizedThreadScenarios: ReadonlyArray<{
@@ -400,6 +440,138 @@ describe("agent thread tail cap", () => {
     );
     const persisted = document.turns as ReadonlyArray<{ readonly eventsTruncated: boolean }>;
     expect(persisted.every((entry) => entry.eventsTruncated)).toBe(true);
+  });
+
+  it("fits 64 turns of 16 KiB prompts and zero events once the log holds the settled prompts", () => {
+    const subject = promptScaffoldThread(16 * 1_024);
+    const logged = loggedTurnIds(subject);
+
+    expect(threadBytes(subject)).toBe(1_065_023);
+    expect(threadBytes(subject)).toBeGreaterThan(MAX_PERSISTED_AGENT_THREAD_FILE_BYTES);
+    expect(threadBytes(subject, logged)).toBe(938_559);
+    expect(threadBytes(subject, logged)).toBeLessThanOrEqual(MAX_PERSISTED_AGENT_THREAD_FILE_BYTES);
+
+    const parsed = parseAgentThread(serializeAgentThread(subject, logged));
+    expect(parsed.turns).toHaveLength(OVERSIZED_THREAD_TURNS);
+    expect(parsed.turns[parsed.turns.length - 1]?.prompt).toBe(
+      subject.turns[subject.turns.length - 1]?.prompt,
+    );
+    expect(
+      parsed.turns.filter((candidate) => agentPromptLooksClipped(candidate.prompt)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("stays oversized and keeps every prompt when the log carries no evidence", () => {
+    const subject = promptScaffoldThread(16 * 1_024);
+    const document = serializeAgentThread(subject, new Set<string>());
+    const turns = document.turns as ReadonlyArray<{ readonly prompt: string }>;
+
+    expect(documentBytes(document)).toBe(1_065_023);
+    expect(documentBytes(document)).toBeGreaterThan(MAX_PERSISTED_AGENT_THREAD_FILE_BYTES);
+    expect(turns).toHaveLength(OVERSIZED_THREAD_TURNS);
+    expect(turns.map((entry) => entry.prompt)).toEqual(promptsOf(subject));
+  });
+
+  it("fits 64 turns of 32 KiB prompts once the log holds the settled prompts", () => {
+    const subject = promptScaffoldThread(MAX_AGENT_TASK_PROMPT_BYTES);
+    const logged = loggedTurnIds(subject);
+
+    expect(threadBytes(subject)).toBe(2_113_599);
+    expect(threadBytes(subject, logged)).toBe(922_468);
+    expect(threadBytes(subject, logged)).toBeLessThanOrEqual(MAX_PERSISTED_AGENT_THREAD_FILE_BYTES);
+    expect(parseAgentThread(serializeAgentThread(subject, logged)).turns).toHaveLength(
+      OVERSIZED_THREAD_TURNS,
+    );
+  });
+
+  it("never clips the newest prompt, a running prompt or a prompt without log evidence", () => {
+    const settled = promptScaffoldThread(16 * 1_024).turns.slice(0, OVERSIZED_THREAD_TURNS - 1);
+    const live = turn({
+      turnId: "agt-1-live",
+      prompt: `live:${"p".repeat(16 * 1_024 - 8)}`,
+      events: [],
+    });
+    const subject = thread([...settled, live]);
+    const withheld = settled[settled.length - 1]!;
+    const logged = new Set(
+      settled.slice(0, settled.length - 1).map((candidate) => candidate.turnId),
+    );
+    const prompts = persistedPrompts(subject, logged);
+
+    expect(prompts[prompts.length - 1]).toBe(live.prompt);
+    expect(prompts[prompts.length - 2]).toBe(withheld.prompt);
+    expect(prompts.filter((prompt) => agentPromptLooksClipped(prompt)).length).toBeGreaterThan(0);
+  });
+
+  it("clips the oldest settled prompts first and never twice", () => {
+    const subject = promptScaffoldThread(16 * 1_024);
+    const logged = loggedTurnIds(subject);
+    const once = capAgentThreadForPersistence(subject, undefined, logged);
+    const twice = capAgentThreadForPersistence(once, undefined, logged);
+
+    expect(agentPromptLooksClipped(once.turns[0]!.prompt)).toBe(true);
+    expect(promptsOf(twice)).toEqual(promptsOf(once));
+    for (const prompt of promptsOf(once)) {
+      expect(prompt.split(CLIPPED_AGENT_PROMPT_MARKER).length).toBeLessThanOrEqual(2);
+    }
+    const clippedCount = promptsOf(once).filter(agentPromptLooksClipped).length;
+    expect(promptsOf(once).slice(0, clippedCount).every(agentPromptLooksClipped)).toBe(true);
+  });
+
+  it("restores a clipped prompt from the log prompt that produced it", () => {
+    const subject = promptScaffoldThread(16 * 1_024);
+    const clipped = capAgentThreadForPersistence(subject, undefined, loggedTurnIds(subject));
+
+    expect(restoreAgentPromptFromLog(clipped.turns[0]!.prompt, subject.turns[0]!.prompt)).toBe(
+      subject.turns[0]!.prompt,
+    );
+    const newest = clipped.turns[clipped.turns.length - 1]!.prompt;
+    expect(restoreAgentPromptFromLog(newest, newest)).toBeNull();
+  });
+
+  it("leaves a thread whose scaffold already fits byte for byte unchanged", () => {
+    for (const scenario of oversizedThreadScenarios) {
+      const subject = scenario.build();
+      const logged = loggedTurnIds(subject);
+      expect({ name: scenario.name, bytes: threadBytes(subject, logged) }).toEqual({
+        name: scenario.name,
+        bytes: threadBytes(subject),
+      });
+      expect(persistedPrompts(subject, logged)).toEqual(promptsOf(subject));
+    }
+  });
+
+  it("hands the bytes freed by prompt clipping back to the event ladder", () => {
+    const subject = thread(
+      Array.from({ length: OVERSIZED_THREAD_TURNS }, (_, position) =>
+        settledTurn({
+          turnId: `agt-1-${String(position).padStart(4, "0")}`,
+          prompt: `${position}:${"p".repeat(16 * 1_024 - 8)}`,
+          events: [steer(`ask ${position}`), wide(position, 2_000), outcome(`done ${position}`)],
+        }),
+      ),
+    );
+    const retained = (subject: AgentThread, logged: ReadonlySet<string>): number =>
+      capAgentThreadForPersistence(subject, undefined, logged).turns.reduce(
+        (total, candidate) => total + candidate.events.length,
+        0,
+      );
+
+    expect(retained(subject, new Set<string>())).toBe(0);
+    expect(retained(subject, loggedTurnIds(subject))).toBe(131);
+    expect(threadBytes(subject, loggedTurnIds(subject))).toBeLessThanOrEqual(
+      MAX_PERSISTED_AGENT_THREAD_FILE_BYTES,
+    );
+  });
+
+  it("records the measured bytes of the two earlier oversized regressions", () => {
+    const answers = oversizedThreadScenarios[0]!.build();
+    const newlines = oversizedThreadScenarios[1]!.build();
+
+    expect(threadBytes(answers)).toBe(950_191);
+    expect(threadBytes(newlines)).toBe(938_019);
+    expect(threadBytes(answers, loggedTurnIds(answers))).toBe(950_191);
+    expect(threadBytes(newlines, loggedTurnIds(newlines))).toBe(938_019);
   });
 
   it("keeps a whole thread of wide settled turns under the file cap", () => {

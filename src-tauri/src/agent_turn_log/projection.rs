@@ -2,7 +2,8 @@ use super::errors::{AgentTurnLogError, AgentTurnLogResult};
 use super::validation::{validate_digest, validate_loss};
 use super::wire::{
     AgentTurnLogLease, AgentTurnLogPage, AgentTurnLogSummary, AppendAgentTurnLogReceipt,
-    AGENT_TURN_LOG_SEQ_BASE, MAX_TURN_SUMMARIES,
+    AGENT_TURN_LOG_SEQ_BASE, MAX_SUMMARY_PROMPT_RESPONSE_BYTES, MAX_TURN_PROMPT_BYTES,
+    MAX_TURN_SUMMARIES,
 };
 use std::collections::HashSet;
 
@@ -64,6 +65,7 @@ pub(crate) fn validate_summaries(summaries: &[AgentTurnLogSummary]) -> AgentTurn
         return Err(AgentTurnLogError::Unreadable);
     }
     let mut turn_ids = HashSet::new();
+    let mut carried_bytes: usize = 0;
     for summary in summaries {
         validate_loss(summary.loss)?;
         if summary.event_count < 0 || summary.bytes < 0 {
@@ -75,6 +77,20 @@ pub(crate) fn validate_summaries(summaries: &[AgentTurnLogSummary]) -> AgentTurn
         if let Some(digest) = summary.digest.as_ref() {
             validate_digest(digest)?;
         }
+        carried_bytes = carried_bytes.saturating_add(carried_prompt_bytes(summary)?);
+    }
+    if carried_bytes > MAX_SUMMARY_PROMPT_RESPONSE_BYTES {
+        return Err(AgentTurnLogError::Unreadable);
     }
     Ok(())
+}
+
+fn carried_prompt_bytes(summary: &AgentTurnLogSummary) -> AgentTurnLogResult<usize> {
+    let Some(prompt) = summary.prompt.as_ref() else {
+        return Ok(0);
+    };
+    if summary.prompt_omitted || prompt.len() > MAX_TURN_PROMPT_BYTES {
+        return Err(AgentTurnLogError::Unreadable);
+    }
+    Ok(prompt.len())
 }

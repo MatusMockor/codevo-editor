@@ -77,7 +77,12 @@ describe("agent turn log summaries are fetched lazily per thread", () => {
     await settleLogStore();
 
     expect(harness.logGateway.summarized).toEqual([
-      { rootKey: LOG_ROOT_KEY, ownerId: LOG_OWNER_ID, threadId: threadIdOf(0) },
+      {
+        rootKey: LOG_ROOT_KEY,
+        ownerId: LOG_OWNER_ID,
+        threadId: threadIdOf(0),
+        includePrompts: false,
+      },
     ]);
     expect(harness.turnLog.facts.factsOf(turnIdOf(0, 0))).not.toBeNull();
 

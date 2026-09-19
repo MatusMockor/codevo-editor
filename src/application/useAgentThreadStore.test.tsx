@@ -323,7 +323,9 @@ describe("useAgentThreadStore persistence", () => {
     act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
 
     await waitForReact(() => {
-      expect(harness.saved).toEqual([{ rootKey: ROOT_KEY, ownerId: OWNER_ID, thread: created }]);
+      expect(harness.saved).toEqual([
+        { rootKey: ROOT_KEY, ownerId: OWNER_ID, thread: created, loggedPromptTurnIds: [] },
+      ]);
     });
     harness.unmount();
   });

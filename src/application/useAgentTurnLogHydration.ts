@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentProject";
+import { agentPromptLooksClipped, restoreAgentPromptFromLog } from "../domain/agentPromptClipping";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
   MAX_AGENT_EVENT_BYTES_PER_TURN,
+  MAX_AGENT_TURNS_PER_THREAD,
   agentTurnEventUtf8Bytes,
   isTerminalAgentTurnStatus,
   mergeTurnEvents,
@@ -22,6 +24,7 @@ import {
   type AgentTurnLogAnchor,
   type AgentTurnLogPage,
   type AgentTurnLogScope,
+  type AgentTurnLogSummary,
 } from "../domain/agentTurnLog";
 import { attempt, projectByRootKey } from "./agentProjectAuthority";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
@@ -32,8 +35,13 @@ export const MAX_HYDRATED_AGENT_THREADS = 3;
 export const MAX_AGENT_TURN_HYDRATION_PAGES = 16;
 
 type AgentTurnHydratedAction = Extract<AgentThreadsAction, { kind: "turnHydrated" }>;
+type AgentTurnPromptRestoredAction = Extract<AgentThreadsAction, { kind: "turnPromptRestored" }>;
+export type AgentTurnLogHydrationAction = AgentTurnHydratedAction | AgentTurnPromptRestoredAction;
 
-export type AgentTurnLogHydrationSource = Pick<AgentTurnLogIntegration, "facts" | "readPage">;
+export type AgentTurnLogHydrationSource = Pick<
+  AgentTurnLogIntegration,
+  "facts" | "readPage" | "summarize"
+>;
 
 export interface AgentTurnLogHydrationPorts {
   readonly turnLog: () => AgentTurnLogHydrationSource | null;
@@ -41,7 +49,7 @@ export interface AgentTurnLogHydrationPorts {
   readonly currentState: () => AgentThreadsState;
   readonly loadKeyOf: (rootKey: string) => string | null;
   readonly mounted: () => boolean;
-  readonly publish: (action: AgentTurnHydratedAction) => void;
+  readonly publish: (action: AgentTurnLogHydrationAction) => void;
 }
 
 export interface AgentTurnLogHydrator {
@@ -303,6 +311,29 @@ export function createAgentTurnLogHydrator(
     return currentThread(authority) !== null;
   };
 
+  const restorePrompts = async (
+    turnLog: AgentTurnLogHydrationSource,
+    authority: ThreadAuthority,
+  ): Promise<void> => {
+    const opened = currentThread(authority);
+    if (opened === null) return;
+    if (!hasClippedPrompt(opened)) return;
+    const summarized = await attempt(() =>
+      turnLog.summarize({
+        rootKey: authority.rootKey,
+        ownerId: agentRootOwnerId(authority.rootKey),
+        threadId: authority.threadId,
+        includePrompts: true,
+      }),
+    );
+    if (!summarized.ok) return;
+    const settled = currentThread(authority);
+    if (settled === null) return;
+    for (const [turnId, prompt] of restorablePrompts(settled, summarized.value)) {
+      ports.publish({ kind: "turnPromptRestored", threadId: authority.threadId, turnId, prompt });
+    }
+  };
+
   const hydrateCandidate = async (
     turnLog: AgentTurnLogHydrationSource,
     authority: ThreadAuthority,
@@ -333,6 +364,8 @@ export function createAgentTurnLogHydrator(
     if (authority === null) return;
     const evidenceTurnIds = thread.turns.map((turn) => turn.turnId);
     if (!(await ensureSummaries(turnLog, authority, evidenceTurnIds))) return;
+    await restorePrompts(turnLog, authority);
+    if (currentThread(authority) === null) return;
     for (const turnId of hydrationCandidates(thread)) {
       if (currentThread(authority) === null) return;
       await hydrateCandidate(turnLog, authority, turnId);
@@ -389,6 +422,45 @@ function oldestHydratedTurn(entries: ReadonlyMap<string, HydratedTurnEntry>): st
     order = entry.order;
   }
   return oldest;
+}
+
+function boundedTurns(thread: AgentThread): ReadonlyArray<AgentTurn> {
+  return thread.turns.slice(0, MAX_AGENT_TURNS_PER_THREAD);
+}
+
+function clippedPromptTurn(turn: AgentTurn): boolean {
+  if (!isTerminalAgentTurnStatus(turn.status)) return false;
+  if (turn.promptRestored === true) return false;
+  return agentPromptLooksClipped(turn.prompt);
+}
+
+function hasClippedPrompt(thread: AgentThread): boolean {
+  return boundedTurns(thread).some(clippedPromptTurn);
+}
+
+function restorablePrompts(
+  thread: AgentThread,
+  summaries: ReadonlyArray<AgentTurnLogSummary>,
+): ReadonlyArray<readonly [string, string]> {
+  const logged = new Map<string, string>();
+  for (const summary of summaries.slice(0, AGENT_TURN_LOG_LIMITS.summaries)) {
+    if (summary.prompt === null) continue;
+    logged.set(summary.turnId, summary.prompt);
+  }
+  const restored: Array<readonly [string, string]> = [];
+  for (const turn of boundedTurns(thread)) {
+    if (!clippedPromptTurn(turn)) continue;
+    const logPrompt = logged.get(turn.turnId);
+    if (logPrompt === undefined) continue;
+    const full = restoreAgentPromptFromLog(turn.prompt, logPrompt);
+    if (full !== null) {
+      restored.push([turn.turnId, full]);
+      continue;
+    }
+    if (logPrompt !== turn.prompt) continue;
+    restored.push([turn.turnId, turn.prompt]);
+  }
+  return restored;
 }
 
 function hydratableTurn(turn: AgentTurn): boolean {

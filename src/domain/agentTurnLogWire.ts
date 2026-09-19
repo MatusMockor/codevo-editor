@@ -55,6 +55,7 @@ export interface AgentTurnLogEntryWire {
 export interface OpenAgentTurnLogRequestWire {
   readonly scope: AgentTurnLogScope;
   readonly priorLoss: AgentTurnLogLoss;
+  readonly prompt: string | null;
 }
 
 export interface AppendAgentTurnLogRequestWire {
@@ -97,10 +98,11 @@ export function validateOpenAgentTurnLogRequest(
   request: OpenAgentTurnLogRequest,
 ): OpenAgentTurnLogRequestWire {
   const value = record(request, "request");
-  exactKeys(value, ["scope", "priorLoss"], "request");
+  exactKeys(value, ["scope", "priorLoss", "prompt"], "request");
   return {
     scope: parseAgentTurnLogScope(value.scope, "request.scope"),
     priorLoss: parseAgentTurnLogLoss(value.priorLoss, "request.priorLoss"),
+    prompt: promptText(value.prompt, "request.prompt"),
   };
 }
 
@@ -148,12 +150,13 @@ export function validateSummarizeAgentTurnLogsRequest(
   request: SummarizeAgentTurnLogsRequest,
 ): SummarizeAgentTurnLogsRequest {
   const value = record(request, "request");
-  exactKeys(value, ["rootKey", "ownerId", "threadId"], "request");
+  exactKeys(value, ["rootKey", "ownerId", "threadId", "includePrompts"], "request");
   const rootKey = rootKeyText(value.rootKey, "request.rootKey");
   return {
     rootKey,
     ownerId: ownerIdText(value.ownerId, rootKey, "request.ownerId"),
     threadId: identifier(value.threadId, "request.threadId"),
+    includePrompts: booleanValue(value.includePrompts, "request.includePrompts"),
   };
 }
 
@@ -250,11 +253,16 @@ export function parseAgentTurnLogSummaries(value: unknown): ReadonlyArray<AgentT
   if (value.length > AGENT_TURN_LOG_LIMITS.summaries)
     invalid("summaries", `at most ${AGENT_TURN_LOG_LIMITS.summaries} entries`);
   const seen = new Set<string>();
+  let promptBytes = 0;
   return Object.freeze(
     value.map((entry, index) => {
       const summary = parseAgentTurnLogSummary(entry, `summaries[${index}]`);
       if (seen.has(summary.turnId)) invalid(`summaries[${index}].turnId`, "a unique turn id");
       seen.add(summary.turnId);
+      promptBytes += summary.prompt === null ? 0 : utf8Bytes(summary.prompt);
+      if (promptBytes > AGENT_TURN_LOG_LIMITS.summaryPromptBytes) {
+        invalid("summaries", `at most ${AGENT_TURN_LOG_LIMITS.summaryPromptBytes} prompt bytes`);
+      }
       return summary;
     }),
   );
@@ -326,7 +334,15 @@ function failureText(error: unknown): string | null {
 
 function parseAgentTurnLogSummary(value: unknown, path: string): AgentTurnLogSummary {
   const summary = record(value, path);
-  exactKeys(summary, ["turnId", "eventCount", "bytes", "loss", "sealed", "digest"], path);
+  exactKeys(
+    summary,
+    ["turnId", "eventCount", "bytes", "loss", "sealed", "digest", "prompt", "promptOmitted"],
+    path,
+  );
+  const prompt = promptText(summary.prompt, `${path}.prompt`);
+  const promptOmitted = booleanValue(summary.promptOmitted, `${path}.promptOmitted`);
+  if (prompt !== null && promptOmitted)
+    invalid(`${path}.promptOmitted`, "false when the summary carries a prompt");
   return Object.freeze({
     turnId: identifier(summary.turnId, `${path}.turnId`),
     eventCount: integer(summary.eventCount, `${path}.eventCount`, 0, MAX_SAFE),
@@ -334,7 +350,19 @@ function parseAgentTurnLogSummary(value: unknown, path: string): AgentTurnLogSum
     loss: parseAgentTurnLogLoss(summary.loss, `${path}.loss`),
     sealed: booleanValue(summary.sealed, `${path}.sealed`),
     digest: optionalDigest(summary.digest, `${path}.digest`),
+    prompt,
+    promptOmitted,
   });
+}
+
+function promptText(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") return invalid(path, "a prompt string or null");
+  if (value.length === 0) return invalid(path, "a non-empty prompt");
+  if (value.includes("\0")) return invalid(path, "a prompt without a NUL byte");
+  if (utf8Bytes(value) > AGENT_TURN_LOG_LIMITS.promptBytes)
+    invalid(path, `at most ${AGENT_TURN_LOG_LIMITS.promptBytes} bytes`);
+  return value;
 }
 
 function appendOps(
