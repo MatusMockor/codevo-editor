@@ -1905,7 +1905,9 @@ describe("agentThreadsReducer turnSteered", () => {
       ]),
     );
     const current = spawned.threads.get("agt-t1-0001")!;
+    expect(current.turns[0].events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
     expect(current.turns[0].events.some((event) => event.kind === "subagent")).toBe(false);
+    expect(current.turns[0].eventsTruncated).toBe(true);
     expect(current.turns[0].subagentLifecycle?.entries[0].state).toBe("running");
     const restored = parseAgentThread(serializeAgentThread(current));
     const ended = agentThreadsReducer(

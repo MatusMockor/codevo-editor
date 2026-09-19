@@ -17,6 +17,11 @@ import {
 import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
+import {
+  capAgentTurnEvents,
+  retainAgentTurnEvents,
+  type AgentTurnEventRetentionPolicy,
+} from "./agentTurnEventRetention";
 
 export interface AgentSessionFallback {
   readonly previousThreadId: string;
@@ -832,52 +837,24 @@ export function mergeTurnEvents(
   existing: ReadonlyArray<AgentTurnEvent>,
   incoming: ReadonlyArray<AgentTurnEvent>,
 ): { readonly events: ReadonlyArray<AgentTurnEvent>; readonly truncated: boolean } {
-  if (incoming.length === 0) return { events: existing, truncated: false };
-  const events = [...existing];
-  let retainedBytes = agentTurnEventsUtf8Bytes(events);
-  let truncated = false;
-  const subagents = new Map<string, number>();
-  const countSubagent = (event: AgentTurnEvent, delta: number) => {
-    if (!("agentThreadId" in event)) return;
-    const count = (subagents.get(event.agentThreadId) ?? 0) + delta;
-    if (count > 0) subagents.set(event.agentThreadId, count);
-    else subagents.delete(event.agentThreadId);
+  return retainAgentTurnEvents(existing, incoming, turnEventRetentionPolicy());
+}
+
+export function capPersistedTurnEvents(events: ReadonlyArray<AgentTurnEvent>): {
+  readonly events: ReadonlyArray<AgentTurnEvent>;
+  readonly truncated: boolean;
+} {
+  return capAgentTurnEvents(events, turnEventRetentionPolicy());
+}
+
+function turnEventRetentionPolicy(): AgentTurnEventRetentionPolicy {
+  return {
+    maxEvents: MAX_AGENT_EVENTS_PER_TURN,
+    maxBytes: MAX_AGENT_EVENT_BYTES_PER_TURN,
+    maxSubagentThreads: MAX_SUBAGENT_THREADS_PER_TURN,
+    eventBytes: agentTurnEventUtf8Bytes,
+    coalesceText: coalesceAgentTextEvents,
   };
-  events.forEach((event) => countSubagent(event, 1));
-  for (const event of incoming) {
-    const eventBytes = agentTurnEventUtf8Bytes(event);
-    if (eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN) {
-      truncated = true;
-      continue;
-    }
-    const previous = events[events.length - 1];
-    const coalesced = coalesceAgentTextEvents(previous, event);
-    if (coalesced !== null && previous !== undefined) {
-      retainedBytes -= agentTurnEventUtf8Bytes(previous);
-      events[events.length - 1] = coalesced;
-      retainedBytes += agentTurnEventUtf8Bytes(coalesced);
-    } else {
-      events.push(event);
-      retainedBytes += eventBytes;
-      countSubagent(event, 1);
-    }
-    while (
-      events.length > MAX_AGENT_EVENTS_PER_TURN ||
-      retainedBytes > MAX_AGENT_EVENT_BYTES_PER_TURN ||
-      subagents.size > MAX_SUBAGENT_THREADS_PER_TURN
-    ) {
-      // Accepted steering messages are user input and must remain visible/countable.
-      // If they consume the entire budget, reject newer output instead of losing them.
-      const oldestOutput = events.findIndex((candidate) => candidate.kind !== "userMessage");
-      const removalIndex = oldestOutput < 0 ? events.length - 1 : oldestOutput;
-      const [removed] = events.splice(removalIndex, 1);
-      if (removed === undefined) break;
-      retainedBytes -= agentTurnEventUtf8Bytes(removed);
-      countSubagent(removed, -1);
-      truncated = true;
-    }
-  }
-  return { events, truncated };
 }
 
 export function agentTurnEventUtf8Bytes(event: AgentTurnEvent): number {
@@ -988,7 +965,7 @@ function boundAgentThreadEvents(thread: AgentThread): AgentThread {
 }
 
 function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
-  const bounded = mergeTurnEvents([], turn.events);
+  const bounded = capPersistedTurnEvents(turn.events);
   const truncated = turn.eventsTruncated || bounded.truncated;
   if (
     bounded.events.length === turn.events.length &&
