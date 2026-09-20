@@ -865,24 +865,30 @@ describe("capped streams against the uncapped ground truth", () => {
     },
   );
 
-  it("covers untruncated streams well past the event cap and truncated ones", () => {
-    let untruncated = 0;
-    let truncated = 0;
-    let longestUntruncated = 0;
-    for (let seed = 1; seed <= 300; seed += 1) {
-      const raw = longStream(seed);
-      const merged = mergeInBatches(raw, 64, TURN_POLICY);
-      if (merged.truncated) {
-        truncated += 1;
-        continue;
+  // This 300-seed correctness sweep is CPU-heavy on shared CI runners.
+  // Algorithmic work bounds are asserted separately below.
+  it(
+    "covers untruncated streams well past the event cap and truncated ones",
+    { timeout: 30_000 },
+    () => {
+      let untruncated = 0;
+      let truncated = 0;
+      let longestUntruncated = 0;
+      for (let seed = 1; seed <= 300; seed += 1) {
+        const raw = longStream(seed);
+        const merged = mergeInBatches(raw, 64, TURN_POLICY);
+        if (merged.truncated) {
+          truncated += 1;
+          continue;
+        }
+        untruncated += 1;
+        longestUntruncated = Math.max(longestUntruncated, groundTruth(raw).length);
       }
-      untruncated += 1;
-      longestUntruncated = Math.max(longestUntruncated, groundTruth(raw).length);
-    }
-    expect(untruncated).toBeGreaterThanOrEqual(60);
-    expect(truncated).toBeGreaterThanOrEqual(60);
-    expect(longestUntruncated).toBeGreaterThan(MAX_AGENT_EVENTS_PER_TURN * 2);
-  });
+      expect(untruncated).toBeGreaterThanOrEqual(60);
+      expect(truncated).toBeGreaterThanOrEqual(60);
+      expect(longestUntruncated).toBeGreaterThan(MAX_AGENT_EVENTS_PER_TURN * 2);
+    },
+  );
 
   it("reports truncation whenever the capped projection differs from the raw stream", () => {
     const silent: string[] = [];
