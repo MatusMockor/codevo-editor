@@ -54,12 +54,45 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS turn_meta_updated_seq ON turn_meta (updated_seq DESC);
 ";
 
+const LIFECYCLE_FREE_DDL: &str = "
+CREATE TABLE IF NOT EXISTS turn_meta (
+    turn_id TEXT PRIMARY KEY,
+    writer_epoch INTEGER NOT NULL,
+    next_seq INTEGER NOT NULL,
+    first_seq INTEGER NOT NULL,
+    event_count INTEGER NOT NULL,
+    bytes INTEGER NOT NULL,
+    loss TEXT NOT NULL,
+    sealed INTEGER NOT NULL,
+    digest BLOB,
+    digest_through_seq INTEGER NOT NULL,
+    digest_version INTEGER NOT NULL,
+    updated_seq INTEGER NOT NULL DEFAULT 0,
+    prompt TEXT
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS events (
+    turn_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    bytes INTEGER NOT NULL,
+    payload BLOB NOT NULL,
+    PRIMARY KEY(turn_id, seq)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS turn_meta_updated_seq ON turn_meta (updated_seq DESC);
+";
+
 pub(super) fn write_first_build_database(temp: &TempLogStore, turn_ids: &[&str]) {
     write_legacy_database(temp, turn_ids, FIRST_BUILD_DDL, "");
 }
 
 fn write_prompt_free_database(temp: &TempLogStore, turn_ids: &[&str]) {
     write_legacy_database(temp, turn_ids, PROMPT_FREE_DDL, ", updated_seq");
+}
+
+pub(super) fn write_lifecycle_free_database(temp: &TempLogStore, turn_ids: &[&str]) {
+    write_legacy_database(temp, turn_ids, LIFECYCLE_FREE_DDL, ", updated_seq");
 }
 
 fn write_legacy_database(temp: &TempLogStore, turn_ids: &[&str], ddl: &str, activity_column: &str) {
@@ -101,6 +134,21 @@ pub(super) fn activity_column_present(temp: &TempLogStore) -> bool {
 
 pub(super) fn prompt_column_present(temp: &TempLogStore) -> bool {
     column_present(temp, "prompt")
+}
+
+pub(super) fn lifecycle_column_present(temp: &TempLogStore) -> bool {
+    column_present(temp, "lifecycle")
+}
+
+fn lifecycle_column_count(temp: &TempLogStore) -> i64 {
+    let connection = rusqlite::Connection::open(temp.database()).expect("open the database");
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('turn_meta') WHERE name = 'lifecycle'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read the table info")
 }
 
 fn column_present(temp: &TempLogStore, column: &str) -> bool {
@@ -214,4 +262,71 @@ fn migrating_a_first_build_database_twice_is_a_no_op() {
     assert_eq!(lease.writer_epoch, 3);
     assert_eq!(summaries.len(), 1);
     assert!(activity_column_present(&temp));
+}
+
+#[test]
+fn a_lifecycle_free_database_gains_the_column_once_on_the_next_write_and_keeps_its_rows() {
+    let temp = TempLogStore::create("lifecycle-migration");
+    write_lifecycle_free_database(&temp, &[TURN_ID]);
+    let store = temp.store();
+
+    assert!(!lifecycle_column_present(&temp));
+
+    let lease = store
+        .open(&open_request(TURN_ID))
+        .expect("the write open migrates the schema");
+    store
+        .append(&lifecycle_append_request(
+            TURN_ID,
+            lease.writer_epoch,
+            lease.next_seq,
+            Vec::new(),
+            retained_lifecycle(),
+        ))
+        .expect("store a lifecycle on the migrated turn");
+    drop(store);
+    let reopened = temp.store();
+    reopened
+        .open(&open_request(TURN_ID))
+        .expect("a second process opens the migrated database");
+    let summaries = reopened
+        .summarize(&lifecycle_summarize_request(true))
+        .expect("summaries");
+
+    assert_eq!(
+        lifecycle_column_count(&temp),
+        1,
+        "the migration must add the column exactly once"
+    );
+    assert_eq!(
+        lease.next_seq, 2,
+        "the existing rows survived the migration"
+    );
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].lifecycle, Some(retained_lifecycle()));
+    assert!(!summaries[0].lifecycle_omitted);
+    assert_eq!(summaries[0].event_count, 1);
+}
+
+#[test]
+fn a_lifecycle_free_database_is_summarized_read_only_without_being_altered() {
+    let temp = TempLogStore::create("lifecycle-read-only");
+    write_lifecycle_free_database(&temp, &[TURN_ID]);
+    let store = temp.store();
+
+    let summaries = store
+        .summarize(&lifecycle_summarize_request(true))
+        .expect("summaries");
+    let page = store
+        .read_page(&page_request(TURN_ID, tail(), 200, 512 * 1024))
+        .expect("tail page");
+
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].lifecycle, None);
+    assert!(!summaries[0].lifecycle_omitted);
+    assert_eq!(page.entries.len(), 1);
+    assert!(
+        !lifecycle_column_present(&temp),
+        "a read must not migrate the schema"
+    );
 }

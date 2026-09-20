@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import lifecycleWire from "../../contracts/agent-subagent-lifecycle-wire.json";
 import wire from "../../contracts/agent-turn-log-wire.json";
 import type { AgentTurnEvent } from "./agentThread";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
@@ -11,6 +12,7 @@ import {
 } from "./agentTurnLog";
 import {
   agentTurnLogFailureFrom,
+  agentTurnLogLifecycleFits,
   agentTurnLogOpBytes,
   agentTurnLogOpsBytes,
   parseAgentTurnDigest,
@@ -58,6 +60,8 @@ describe("agent turn log wire contract", () => {
     expect(wire.limits.summaries).toBe(AGENT_TURN_LOG_LIMITS.summaries);
     expect(wire.limits.promptBytes).toBe(AGENT_TURN_LOG_LIMITS.promptBytes);
     expect(wire.limits.promptBytes).toBe(MAX_AGENT_TASK_PROMPT_BYTES);
+    expect(wire.limits.lifecycleBytes).toBe(AGENT_TURN_LOG_LIMITS.lifecycleBytes);
+    expect(wire.limits.summaryLifecycleBytes).toBe(AGENT_TURN_LOG_LIMITS.summaryLifecycleBytes);
     expect(wire.limits.summaryPromptBytes).toBe(AGENT_TURN_LOG_LIMITS.summaryPromptBytes);
     expect(wire.limits.seqBase).toBe(1);
     expect(wire.errors).toEqual([...AGENT_TURN_LOG_ERRORS]);
@@ -197,6 +201,7 @@ describe("agent turn log wire contract", () => {
           digest: null,
           seal: false,
           loss: { kind: "none" },
+          lifecycle: null,
         } as never);
         return null;
       } catch (error) {
@@ -220,6 +225,7 @@ describe("agent turn log wire boundaries", () => {
       digest: null,
       seal: false,
       loss: { kind: "none" },
+      lifecycle: null,
     };
     expect(validateAppendAgentTurnLogRequest(request as never).ops[0]?.event).toEqual({
       kind: "userMessage",
@@ -241,6 +247,7 @@ describe("agent turn log wire boundaries", () => {
         digest: null,
         seal: false,
         loss: { kind: "none" },
+        lifecycle: null,
       } as never),
     ).toThrow(/at most 1048576 bytes/u);
   });
@@ -259,6 +266,7 @@ describe("agent turn log wire boundaries", () => {
         digest: null,
         seal: false,
         loss: { kind: "none" },
+        lifecycle: null,
       } as never),
     ).toThrow(/at most 256 operations/u);
   });
@@ -268,7 +276,12 @@ describe("agent turn log wire boundaries", () => {
       "Explain the failing test in src/app.ts.",
       null,
     ]);
-    expect(wire.requests.summarize.map((request) => request.includePrompts)).toEqual([false, true]);
+    expect(wire.requests.summarize.map((request) => request.includePrompts)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
     expect(wire.rejectedRequests.open.map((entry) => entry.why)).toContain(
       "prompt carries a NUL byte",
     );
@@ -308,10 +321,90 @@ describe("agent turn log wire boundaries", () => {
       digest: null,
       prompt,
       promptOmitted: false,
+      lifecycle: null,
+      lifecycleOmitted: false,
     }));
 
     expect(() => parseAgentTurnLogSummaries(summaries.slice(0, 16))).not.toThrow();
     expect(() => parseAgentTurnLogSummaries(summaries)).toThrow(/at most 524288 prompt bytes/u);
+  });
+
+  it("covers the lifecycle shapes and intents the fixture pins", () => {
+    const appended = wire.requests.append.map((request) =>
+      validateAppendAgentTurnLogRequest(request as never),
+    );
+
+    expect(appended.map((request) => request.lifecycle === null)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(appended[3]?.lifecycle).toEqual(lifecycleWire.valid.retained);
+    expect(appended[4]?.ops).toEqual([]);
+    expect(wire.requests.summarize.map((request) => request.includeLifecycles)).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+    const carried = parseAgentTurnLogSummaries(wire.summaries[1]);
+    expect(carried[0]?.lifecycle).toEqual(lifecycleWire.valid.retained);
+    expect(carried.map((summary) => summary.lifecycleOmitted)).toEqual([false, true]);
+    expect(wire.rejectedRequests.append.map((entry) => entry.why)).toEqual(
+      expect.arrayContaining([
+        "lifecycle is not an object",
+        "lifecycle entry carries an unknown field",
+        "lifecycle state contradicts its telemetry",
+        "lifecycle carries an unknown root field",
+      ]),
+    );
+    expect(wire.rejectedSummaries.map((entry) => entry.why)).toEqual(
+      expect.arrayContaining([
+        "a carried lifecycle contradicts lifecycleOmitted",
+        "lifecycle entry carries an unknown field",
+        "lifecycle is not an object",
+      ]),
+    );
+  });
+
+  it("refuses a lifecycle above the shared byte bound and a summary response above its budget", () => {
+    const control = (length: number): string => "\u0000".repeat(length);
+    const entries = Array.from({ length: 32 }, (_unused, index) => ({
+      id: `tool:t${index}`,
+      toolId: `t${index}`,
+      name: control(128),
+      description: control(512),
+      state: "running",
+      lastToolName: control(128),
+    }));
+    const oversized = { entries, truncated: false };
+    const fitting = { entries: entries.slice(0, 8), truncated: false };
+
+    expect(agentTurnLogLifecycleFits(oversized as never)).toBe(false);
+    expect(agentTurnLogLifecycleFits(fitting as never)).toBe(true);
+    expect(() =>
+      validateAppendAgentTurnLogRequest({
+        ...(wire.requests.append[0] as never as Record<string, unknown>),
+        lifecycle: oversized,
+      } as never),
+    ).toThrow(/at most 131072 bytes/u);
+    const summaries = Array.from({ length: 16 }, (_unused, index) => ({
+      turnId: `turn-${String(index).padStart(8, "0")}`,
+      eventCount: 1,
+      bytes: 1,
+      loss: { kind: "none" },
+      sealed: true,
+      digest: null,
+      prompt: null,
+      promptOmitted: false,
+      lifecycle: fitting,
+      lifecycleOmitted: false,
+    }));
+
+    expect(() => parseAgentTurnLogSummaries(summaries.slice(0, 8))).not.toThrow();
+    expect(() => parseAgentTurnLogSummaries(summaries)).toThrow(/lifecycle bytes/u);
   });
 
   it("refuses a scope whose owner id does not belong to the root key", () => {

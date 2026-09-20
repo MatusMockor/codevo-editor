@@ -547,6 +547,8 @@ describe("useAgentThreadSearch turn log evidence", () => {
       digest: null,
       prompt: null,
       promptOmitted: false,
+      lifecycle: null,
+      lifecycleOmitted: false,
     };
   }
 

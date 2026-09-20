@@ -8,7 +8,7 @@ use super::wire::{
     SummarizeAgentTurnLogsRequest, AGENT_TURN_LOG_SEQ_BASE,
 };
 use super::AgentTurnLogStore;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     fs,
     path::PathBuf,
@@ -169,7 +169,100 @@ pub(super) fn append_request(
         digest: None,
         seal: false,
         loss: loss(AgentTurnLogLossKind::None),
+        lifecycle: None,
     }
+}
+
+pub(super) fn lifecycle_append_request(
+    turn_id: &str,
+    writer_epoch: i64,
+    expected_next_seq: i64,
+    ops: Vec<AgentTurnLogEntry>,
+    lifecycle: Value,
+) -> AppendAgentTurnLogRequest {
+    AppendAgentTurnLogRequest {
+        lifecycle: Some(lifecycle),
+        ..append_request(turn_id, writer_epoch, expected_next_seq, ops)
+    }
+}
+
+pub(super) fn retained_lifecycle() -> Value {
+    json!({
+        "entries": [
+            {
+                "batchKey": "spawn:toolu_parent",
+                "description": "Running npx vitest run",
+                "durationMs": 76099,
+                "id": "tool:toolu_parent",
+                "lastToolName": "Bash",
+                "name": "general-purpose",
+                "nestedCount": 1,
+                "state": "running",
+                "steps": 31,
+                "taskId": "task-parent",
+                "taskTitle": "Fix subagent view findings",
+                "telemetryState": "running",
+                "toolId": "toolu_parent",
+                "totalTokens": 87253
+            },
+            {
+                "description": "Review slice fixes",
+                "id": "tool:toolu_nested",
+                "name": "Agent",
+                "parentToolId": "toolu_parent",
+                "state": "running",
+                "taskTitle": "Review slice fixes",
+                "toolId": "toolu_nested"
+            }
+        ],
+        "countedNestedToolIds": ["toolu_nested_overflow"],
+        "openBatchKey": "spawn:toolu_parent",
+        "truncated": false
+    })
+}
+
+pub(super) fn large_lifecycle() -> Value {
+    lifecycle_of(&"\u{1}".repeat(512), None)
+}
+
+pub(super) fn oversized_lifecycle() -> Value {
+    lifecycle_of(&"\u{1}".repeat(512), Some(&"\u{1}".repeat(480)))
+}
+
+fn lifecycle_of(description: &str, task_title: Option<&str>) -> Value {
+    let entries: Vec<Value> = (0..32)
+        .map(|index| {
+            let mut entry = json!({
+                "id": format!("tool:toolu_{index:02}"),
+                "toolId": format!("toolu_{index:02}"),
+                "name": "general-purpose",
+                "description": description,
+                "state": "running"
+            });
+            if let Some(task_title) = task_title {
+                entry["taskTitle"] = json!(task_title);
+            }
+            entry
+        })
+        .collect();
+    json!({ "entries": entries, "truncated": false })
+}
+
+pub(super) fn legacy_lifecycle(tag: &str) -> Value {
+    json!({
+        "entries": [
+            {
+                "description": "Running grep -n export src/domain/example.ts",
+                "id": format!("tool:{tag}"),
+                "name": "general-purpose",
+                "resultState": "completed",
+                "state": "completed",
+                "telemetryState": "completed",
+                "toolId": tag
+            }
+        ],
+        "truncated": false
+    })
 }
 
 pub(super) fn page_request(
@@ -187,15 +280,30 @@ pub(super) fn page_request(
 }
 
 pub(super) fn summarize_request() -> SummarizeAgentTurnLogsRequest {
-    prompted_summarize_request(false)
+    summarize_with(false, false)
 }
 
 pub(super) fn prompted_summarize_request(include_prompts: bool) -> SummarizeAgentTurnLogsRequest {
+    summarize_with(include_prompts, false)
+}
+
+pub(super) fn lifecycle_summarize_request(
+    include_lifecycles: bool,
+) -> SummarizeAgentTurnLogsRequest {
+    summarize_with(false, include_lifecycles)
+}
+
+fn summarize_with(
+    include_prompts: bool,
+    include_lifecycles: bool,
+) -> SummarizeAgentTurnLogsRequest {
     SummarizeAgentTurnLogsRequest {
+        turn_id: None,
         root_key: ROOT_KEY.to_string(),
         owner_id: agent_root_owner_id(ROOT_KEY),
         thread_id: THREAD_ID.to_string(),
         include_prompts,
+        include_lifecycles,
     }
 }
 

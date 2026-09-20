@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { persistentAgentThreadSaveRequest } from "../application/agentThreadSaveRequest";
+import { createAgentTurnLogFactsStore } from "../application/agentTurnLogStatusStore";
+import { compactPersistedAgentSubagentLifecycle } from "../domain/agentLifecyclePersistence";
 import { agentRootOwnerId } from "../domain/agentProject";
 import { CLIPPED_AGENT_PROMPT_MARKER } from "../domain/agentPromptClipping";
 import {
   MAX_AGENT_TURNS_PER_THREAD,
   serializeAgentThread,
+  parseAgentThread,
   type AgentThread,
 } from "../domain/agentThread";
 import {
@@ -231,6 +235,58 @@ describe("tool call description wire field", () => {
       ],
     };
   }
+
+  it("forwards exact lifecycle evidence into serialization without extra wire keys", () => {
+    const lifecycle = {
+      entries: Array.from({ length: 32 }, (_, index) => ({
+        id: `tool:${index}`,
+        toolId: `${index}`,
+        name: "Agent",
+        description: "x".repeat(512),
+        state: "running" as const,
+      })),
+      truncated: false,
+    };
+    const original = threadWithToolCalls();
+    const thread = {
+      ...original,
+      turns: Array.from({ length: 64 }, (_, index) => ({
+        ...original.turns[0]!,
+        turnId: `agt-1-0a1b-t${index}`,
+        subagentLifecycle: lifecycle,
+      })),
+    };
+    const turnId = thread.turns[0]!.turnId;
+    const facts = createAgentTurnLogFactsStore(() => 0);
+    facts.publishSummaries(
+      thread.threadId,
+      thread.turns.map((turn) => ({
+        turnId: turn.turnId,
+        eventCount: 0,
+        bytes: 0,
+        sealed: true,
+        loss: { kind: "none" },
+        digest: null,
+        prompt: null,
+        promptOmitted: false,
+        lifecycle,
+        lifecycleOmitted: false,
+      })),
+    );
+    const request = persistentAgentThreadSaveRequest(thread, facts);
+    expect(request.loggedLifecycles?.get(turnId)).toBe(lifecycle);
+    const validated = validateSaveAgentThreadRequest(request);
+    expect(Object.keys(validated).sort()).toEqual(["ownerId", "rootKey", "thread"]);
+    const saved = parseAgentThread(validated.thread);
+    expect(saved.turns[0]?.subagentLifecycle).toEqual(
+      compactPersistedAgentSubagentLifecycle(lifecycle),
+    );
+    expect(saved.turns).toHaveLength(thread.turns.length);
+    const withoutEvidence = validateSaveAgentThreadRequest(
+      persistentAgentThreadSaveRequest(thread, undefined),
+    );
+    expect(parseAgentThread(withoutEvidence.thread).turns[0]?.subagentLifecycle).toEqual(lifecycle);
+  });
 
   it("serialises the description for the Rust store and omits it when absent", async () => {
     const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);

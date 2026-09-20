@@ -82,6 +82,7 @@ describe("agent turn log summaries are fetched lazily per thread", () => {
         ownerId: LOG_OWNER_ID,
         threadId: threadIdOf(0),
         includePrompts: false,
+        includeLifecycles: false,
       },
     ]);
     expect(harness.turnLog.facts.factsOf(turnIdOf(0, 0))).not.toBeNull();

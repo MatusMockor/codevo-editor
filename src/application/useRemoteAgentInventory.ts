@@ -9,6 +9,7 @@ import {
   emptyRemoteInventory,
   loadRemoteAgentInventory,
   RemoteInventoryRevoked,
+  retainRemoteInventoryTasks,
   type RemoteAgentInventorySnapshot,
 } from "./remoteAgentInventoryLoad";
 import { mergeRemoteTasks } from "./remoteRunnerTaskState";
@@ -74,17 +75,14 @@ export function useRemoteAgentInventory({
         lease,
         snapshots: snapshots
           .filter((item) => configured.has(item.serverId))
-          .map((item) =>
-            item.tasks.length > 4096
-              ? {
-                  ...item,
-                  tasks: item.tasks.slice(0, 4096),
-                  inventoryTruncated: true,
-                  connected: false,
-                  error: "Remote task history exceeds the editor limit; history is incomplete.",
-                }
-              : item,
-          ),
+          .map((item) => {
+            const tasks = retainRemoteInventoryTasks(item.tasks, item.serverId, selectedThreadId);
+            return {
+              ...item,
+              tasks,
+              historyWindowed: item.historyWindowed || tasks.length !== item.tasks.length,
+            };
+          }),
       };
       for (const id of provenance.current.keys())
         if (!configured.has(id)) provenance.current.delete(id);
@@ -92,7 +90,7 @@ export function useRemoteAgentInventory({
         if (!configured.has(id)) pendingRevisions.current.delete(id);
       setState(cache.current);
     },
-    [valid, lease],
+    [valid, lease, selectedThreadId],
   );
   const refresh = useCallback(async () => {
     if (!valid() || gateway === null) return;
@@ -122,7 +120,12 @@ export function useRemoteAgentInventory({
           if (!server.connected) {
             publish([
               ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
-              { ...previous, connected: false, error: "Server disconnected." },
+              {
+                ...previous,
+                connected: false,
+                inventoryTruncated: false,
+                error: "Server disconnected.",
+              },
             ]);
             continue;
           }
@@ -136,6 +139,7 @@ export function useRemoteAgentInventory({
             result = {
               ...previous,
               connected: false,
+              inventoryTruncated: false,
               error: error instanceof Error ? error.message : "Could not refresh remote tasks.",
             };
           }
@@ -172,25 +176,19 @@ export function useRemoteAgentInventory({
       stop();
     };
   }, [refresh, gateway]);
+  useEffect(() => {
+    if (state.lease !== lease || !state.snapshots.some((snapshot) => snapshot.inventoryTruncated))
+      return;
+    const timer = setTimeout(() => {
+      void refresh();
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [state, lease, refresh]);
   const publishTask = useCallback(
     (serverId: string, task: RemoteRunnerTask) => {
       if (!valid()) return;
       const previous = cache.current.snapshots.find((item) => item.serverId === serverId);
       if (!previous || previous.descriptor?.runnerId !== task.runnerId) return;
-      if (previous.tasks.length >= 4096 && !previous.tasks.some((item) => item.id === task.id)) {
-        publish(
-          cache.current.snapshots.map((item) =>
-            item === previous
-              ? {
-                  ...item,
-                  connected: false,
-                  error: "Remote task history exceeds the editor limit; history is incomplete.",
-                }
-              : item,
-          ),
-        );
-        return;
-      }
       publish(
         cache.current.snapshots.map((item) =>
           item === previous ? { ...item, tasks: mergeRemoteTasks(item.tasks, [task]) } : item,

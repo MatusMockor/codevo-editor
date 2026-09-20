@@ -39,6 +39,8 @@ function summary(
     digest: null,
     prompt: null,
     promptOmitted: false,
+    lifecycle: null,
+    lifecycleOmitted: false,
     ...overrides,
   };
 }

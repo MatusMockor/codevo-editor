@@ -676,6 +676,7 @@ impl AgentThreadStore {
 
     pub fn save(&self, root_key: &str, document: &AgentThreadDocument) -> Result<(), String> {
         validate_agent_thread_document(root_key, document)?;
+        ensure_v1_lifecycle_shape(&document.thread)?;
         let thread_id = safe_agent_task_id(&document.thread.thread_id)?;
         let payload = serde_json::to_vec(document)
             .map_err(|error| format!("Unable to encode the agent thread: {error}"))?;
@@ -942,6 +943,21 @@ fn ensure_agent_integration_ref(candidate: &str) -> Result<(), String> {
         return Err(AGENT_THREAD_INTEGRATION_REF_ERROR.to_string());
     }
 
+    Ok(())
+}
+
+pub const AGENT_THREAD_RETAINED_LIFECYCLE_ERROR: &str =
+    "Agent thread lifecycle metadata must be written in the v1 shape.";
+
+fn ensure_v1_lifecycle_shape(thread: &AgentThread) -> Result<(), String> {
+    let retained = thread.turns.iter().any(|turn| {
+        turn.subagent_lifecycle
+            .as_ref()
+            .is_some_and(|value| !subagent_lifecycle::valid_legacy(value))
+    });
+    if retained {
+        return Err(AGENT_THREAD_RETAINED_LIFECYCLE_ERROR.to_string());
+    }
     Ok(())
 }
 
@@ -1575,3 +1591,7 @@ mod attachment_tests;
 #[cfg(test)]
 #[path = "agent_thread_store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_thread_store_v1_compat_tests/mod.rs"]
+mod v1_compat_tests;

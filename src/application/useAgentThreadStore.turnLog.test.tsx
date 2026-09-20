@@ -281,6 +281,7 @@ function renderStore(overrides: StoreOptions = {}) {
         seams.push(`recordEvents:${turnId}:${events.length}`);
         real.writer.recordEvents(turnId, events);
       },
+      recordLifecycle: (turnId, lifecycle) => real.writer.recordLifecycle(turnId, lifecycle),
       reportLoss: (turnId, loss) => {
         seams.push(`reportLoss:${turnId}:${loss.kind}`);
         real.writer.reportLoss(turnId, loss);
@@ -359,6 +360,91 @@ const tool = (id: string): AgentTurnEvent => ({
 });
 
 describe("useAgentThreadStore turn log lifecycle", () => {
+  it("retries when lifecycle evidence arrives while a failed save is still pending", async () => {
+    vi.useFakeTimers();
+    const harness = renderStore();
+    try {
+      await settle();
+      let rejectSave: ((reason: Error) => void) | undefined;
+      harness.threadGateway.saveAgentThread.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectSave = reject;
+          }),
+      );
+      const created = thread({ turns: [turn()] });
+      act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+      await settle();
+      const lifecycle = { entries: [], truncated: false };
+      act(() =>
+        harness.turnLog.facts.publishSummaries(created.threadId, [
+          {
+            turnId: created.turns[0]!.turnId,
+            eventCount: 0,
+            bytes: 0,
+            sealed: true,
+            loss: { kind: "none" },
+            digest: null,
+            prompt: null,
+            promptOmitted: false,
+            lifecycle,
+            lifecycleOmitted: false,
+          },
+        ]),
+      );
+      rejectSave?.(new Error("The agent thread exceeds the maximum"));
+      await settle();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(harness.threadGateway.saveAgentThread).toHaveBeenCalledTimes(2);
+      expect(harness.saved[0]?.loggedLifecycles?.get(created.turns[0]!.turnId)).toBe(lifecycle);
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a failed thread save after exact lifecycle evidence arrives", async () => {
+    vi.useFakeTimers();
+    const harness = renderStore();
+    try {
+      await settle();
+      harness.threadGateway.saveAgentThread.mockRejectedValueOnce(
+        new Error("The agent thread exceeds the maximum"),
+      );
+      const created = thread({ turns: [turn()] });
+      act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+      await settle();
+      expect(harness.threadGateway.saveAgentThread).toHaveBeenCalledTimes(1);
+      const lifecycle = { entries: [], truncated: false };
+      act(() =>
+        harness.turnLog.facts.publishSummaries(created.threadId, [
+          {
+            turnId: created.turns[0]!.turnId,
+            eventCount: 0,
+            bytes: 0,
+            sealed: true,
+            loss: { kind: "none" },
+            digest: null,
+            prompt: null,
+            promptOmitted: false,
+            lifecycle,
+            lifecycleOmitted: false,
+          },
+        ]),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(harness.threadGateway.saveAgentThread).toHaveBeenCalledTimes(2);
+      expect(harness.saved[0]?.loggedLifecycles?.get(created.turns[0]!.turnId)).toBe(lifecycle);
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("opens, records and seals a local turn in order", async () => {
     const harness = renderStore();
     await settle();
@@ -441,7 +527,7 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     harness.unmount();
   });
 
-  it("never opens a log for a remote or imported thread", async () => {
+  it("logs resumed imported turns while excluding remote threads", async () => {
     const harness = renderStore();
     await settle();
     const remote = thread({ threadId: "remote-thread:server/one" });
@@ -466,8 +552,11 @@ describe("useAgentThreadStore turn log lifecycle", () => {
       }),
     );
     await settle();
-    expect(harness.seams).toEqual([]);
-    expect(harness.logGateway.opens).toHaveLength(0);
+    expect(harness.logGateway.opens).toHaveLength(1);
+    expect(harness.logGateway.opens[0]?.scope).toMatchObject({
+      threadId: imported.threadId,
+      turnId: "agt-i-0a1c",
+    });
     harness.unmount();
   });
 
@@ -590,6 +679,8 @@ describe("useAgentThreadStore turn log summaries on demand", () => {
           digest: null,
           prompt: null,
           promptOmitted: false,
+          lifecycle: null,
+          lifecycleOmitted: false,
         },
       ],
     });
@@ -602,7 +693,13 @@ describe("useAgentThreadStore turn log summaries on demand", () => {
     await settle();
 
     expect(harness.logGateway.summarized).toEqual([
-      { rootKey: ROOT_KEY, ownerId: OWNER_ID, threadId: THREAD_ID, includePrompts: false },
+      {
+        rootKey: ROOT_KEY,
+        ownerId: OWNER_ID,
+        threadId: THREAD_ID,
+        includePrompts: false,
+        includeLifecycles: false,
+      },
     ]);
     expect(harness.turnLog.facts.factsOf(TURN_ID)).toMatchObject({
       logged: true,

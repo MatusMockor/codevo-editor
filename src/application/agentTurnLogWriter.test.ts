@@ -28,6 +28,7 @@ import {
   AGENT_TURN_LOG_COMMANDS,
   TauriAgentTurnLogGateway,
 } from "../infrastructure/tauriAgentTurnLogGateway";
+import * as turnWindow from "../domain/agentTurnWindow";
 import { createAgentTurnLogWriter } from "./agentTurnLogWriter";
 
 const SCOPE: AgentTurnLogScope = {
@@ -220,6 +221,29 @@ describe("agent turn log writer", () => {
       prompt: null,
     });
   }
+
+  it("keeps writing beyond the historical cumulative byte ceiling", async () => {
+    const createWindow = turnWindow.createAgentTurnWindow;
+    const spy = vi.spyOn(turnWindow, "createAgentTurnWindow").mockImplementation((options) => ({
+      ...createWindow(options),
+      totalBytes: () => 268_435_457,
+    }));
+    const subject = writer();
+    try {
+      open(subject);
+      await settle();
+      subject.recordEvents(SCOPE.turnId, [
+        { kind: "unknownLine", stream: "stdout", raw: "later event", clipped: false },
+      ]);
+      await subject.flushAll();
+      expect(subject.status(SCOPE.turnId)?.state.kind).toBe("writing");
+      expect(gateway.log.size).toBe(1);
+      expect(gateway.appends.every((request) => request.loss.kind === "none")).toBe(true);
+    } finally {
+      subject.dispose();
+      spy.mockRestore();
+    }
+  });
 
   it("sends the turn's full prompt on open and reports it stored only once the lease resolved", async () => {
     const gate = deferred<void>();

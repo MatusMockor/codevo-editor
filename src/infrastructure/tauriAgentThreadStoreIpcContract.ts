@@ -58,7 +58,11 @@ export function validateSaveAgentThreadRequest(
     request.loggedPromptTurnIds,
     "request.loggedPromptTurnIds",
   );
-  const serialized = serializeAgentThread(request.thread, loggedPromptTurnIds);
+  const serialized = serializeAgentThread(
+    request.thread,
+    loggedPromptTurnIds,
+    request.loggedLifecycles,
+  );
   const thread = parseAgentThread(serialized);
   if (thread.owner.rootKey !== owner.rootKey) {
     invalid("request.thread.owner.rootKey", "the requested root key");

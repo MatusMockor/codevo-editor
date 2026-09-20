@@ -118,8 +118,12 @@ const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
-async function setup(taskIsolation = false) {
+async function setup(
+  taskIsolation = false,
+  configure?: (configuredGateway: ReturnType<typeof gateway>) => void,
+) {
   const gw = gateway();
+  configure?.(gw);
   const descriptor = await gw.getRunner();
   gw.getRunner.mockResolvedValue({
     ...descriptor,
@@ -415,5 +419,123 @@ describe("unified original agent surface", () => {
     expect(nextLocal.refreshShipStatus).toHaveBeenCalledWith("agt-1");
     expect(h.local.markThreadViewed).not.toHaveBeenCalled();
     expect(h.local.refreshShipStatus).not.toHaveBeenCalled();
+  });
+});
+
+function historyTask(sequence: number): RemoteRunnerTask {
+  return task({
+    id: sequence === 1 ? "root" : `history-${sequence}`,
+    sequence,
+    conversationId: "root",
+    ...(sequence > 1 ? { parentTaskId: sequence === 2 ? "root" : `history-${sequence - 1}` } : {}),
+    parts: [{ type: "text", text: `Historical prompt ${sequence}` }],
+  });
+}
+
+async function historySetup() {
+  const tasks = Array.from({ length: 70 }, (_, index) => historyTask(index + 1));
+  const harness = await setup(false, (gw) => {
+    gw.listTasks.mockImplementation(async ({ after }) => {
+      const items = tasks.filter((item) => item.sequence > after).slice(0, 64);
+      return { items, nextCursor: items.length === 64 ? items[63]!.sequence : null };
+    });
+    gw.continueTask.mockResolvedValue({
+      task: { ...historyTask(71), parts: [{ type: "text", text: "Next" }] },
+      created: true,
+    });
+    gw.getTask.mockImplementation(async ({ taskId }) => {
+      const found = tasks.find((item) => item.id === taskId);
+      if (!found) throw new Error("Unknown history task");
+      return found;
+    });
+  });
+  await harness.render({ selectedThreadId: remoteId });
+  return harness;
+}
+
+describe("unified conversation history routing", () => {
+  it("routes by the selected conversation and retains the exact local history surface", async () => {
+    const h = await setup();
+    const history = { page: null, older: vi.fn().mockResolvedValue(undefined), latest: vi.fn() };
+    const local = { ...h.local, history };
+    await h.render({ local, selectedThreadId: "agt-1", selectedServerId: server.id });
+    expect(h.current.agents.history).toBe(history);
+    await h.render({ selectedThreadId: remoteId, selectedServerId: null });
+    expect(h.current.agents.history).toBeDefined();
+    expect(h.current.agents.history).not.toBe(history);
+    await act(async () => h.current.agents.history!.older(remoteId));
+    expect(history.older).not.toHaveBeenCalled();
+    await h.render({ selectedThreadId: "agt-1" });
+    expect(h.current.agents.history).toBe(history);
+  });
+
+  it("keeps old remote turns display-only and continues from the latest remote task", async () => {
+    const h = await historySetup();
+    const live = h.current.agents.threads.find((view) => view.thread.threadId === remoteId)!;
+    expect(live.thread.turns).toHaveLength(64);
+    expect(live.execution?.latestTaskId).toBe("history-70");
+    await act(async () => h.current.agents.history!.older(remoteId));
+    expect(h.current.agents.history!.page).toMatchObject({
+      loading: false,
+      error: null,
+      hasEarlier: false,
+    });
+    expect(h.current.agents.history!.page!.turns.map((turn) => turn.turnId)).toEqual([
+      "root",
+      "history-2",
+      "history-3",
+      "history-4",
+      "history-5",
+      "history-6",
+    ]);
+    const after = h.current.agents.threads.find((view) => view.thread.threadId === remoteId)!;
+    expect(after.thread.turns).toEqual(live.thread.turns);
+    expect(after.execution).toEqual(live.execution);
+    let sent = false;
+    await act(async () => {
+      sent = await h.current.agents.sendFollowUp({ threadId: remoteId, prompt: "Next", launch });
+    });
+    expect(sent, JSON.stringify(h.current.agents.notice)).toBe(true);
+    expect(h.gw.continueTask).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: "history-70" }),
+    );
+    expect(h.local.sendFollowUp).not.toHaveBeenCalled();
+  });
+
+  it("discards an in-flight remote history page across workspace A to B to A", async () => {
+    const h = await historySetup();
+    let release!: (value: RemoteRunnerTask) => void;
+    h.gw.getTask.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = h.current.agents.history!.older(remoteId);
+    });
+    expect(h.current.agents.history!.page?.loading).toBe(true);
+    await h.render({ workspaceOwner: "B" });
+    await h.render({ workspaceOwner: "A" });
+    await act(async () => {
+      release(historyTask(6));
+      await pending;
+    });
+    expect(h.current.agents.history!.page).toBeNull();
+    expect(
+      h.current.agents.threads.find((view) => view.thread.threadId === remoteId)?.execution
+        ?.latestTaskId,
+    ).toBe("history-70");
+  });
+
+  it("clears a remote page when workspace ownership changes", async () => {
+    const h = await historySetup();
+    await act(async () => h.current.agents.history!.older(remoteId));
+    expect(h.current.agents.history!.page?.turns).toHaveLength(6);
+    await h.render({ workspaceOwner: "B" });
+    expect(h.current.agents.history!.page).toBeNull();
+    await h.render({ workspaceOwner: "A" });
+    expect(h.current.agents.history!.page).toBeNull();
   });
 });

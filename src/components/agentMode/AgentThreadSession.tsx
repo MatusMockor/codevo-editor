@@ -1,3 +1,6 @@
+import { AgentHistoryActivity } from "./AgentHistoryActivity";
+import { AgentHistoryPager } from "./AgentHistoryPager";
+import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
 import { agentBackgroundIndicator } from "./agentBackgroundIndicatorPresentation";
 import { AgentAgentsDock } from "./AgentAgentsDock";
@@ -73,7 +76,10 @@ import {
 } from "./agentTurnErrorPresentation";
 import { isAgentRawOutputNoise } from "../../domain/agentOutput/agentRawOutput";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
-import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
+import type {
+  ExternalAgentSessionHistory,
+  ExternalSessionExchange,
+} from "../../domain/externalAgentSession";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMarkdownRenderer";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
@@ -155,6 +161,10 @@ interface AgentRevealTarget {
 }
 
 export interface AgentThreadSessionProps {
+  readonly history?: AgentThreadHistorySurface;
+  readonly importedHistory?: ExternalAgentSessionHistory;
+  readonly hasEarlierImportedHistory?: boolean;
+  readonly onEarlierImportedHistory?: () => void;
   readonly artifactLoader?: AgentArtifactLoader | null;
   readonly artifactPreview?: AgentArtifactPreviewPort | null;
   readonly thread: AgentThreadView | null;
@@ -198,6 +208,10 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 };
 
 function AgentThreadSessionBody({
+  history,
+  importedHistory,
+  hasEarlierImportedHistory = false,
+  onEarlierImportedHistory,
   artifactLoader = null,
   artifactPreview = null,
   attachmentImages = null,
@@ -227,7 +241,10 @@ function AgentThreadSessionBody({
 }: AgentThreadSessionBodyProps) {
   const record = thread.thread;
   const threadId = record.threadId;
-  const agents = useAgentThreadAgents(threadId, record.turns);
+  const displayedImportedHistory = importedHistory ?? record.externalOrigin?.history;
+  const historyPage = history?.page?.threadId === threadId ? history.page : null;
+  const displayedTurns = historyPage?.turns ?? record.turns;
+  const agents = useAgentThreadAgents(threadId, displayedTurns);
   const serverId = thread.execution?.serverId;
   const runnerId = thread.execution?.runnerId;
   const artifactScope = useMemo<AgentArtifactScope | null>(
@@ -331,7 +348,7 @@ function AgentThreadSessionBody({
     return () => container.removeEventListener("scroll", updatePinnedState);
   }, [threadId]);
 
-  const lastTurn = record.turns[record.turns.length - 1] ?? null;
+  const lastTurn = displayedTurns[displayedTurns.length - 1] ?? null;
   const findInsetRef = useRef(0);
   useLayoutEffect(() => {
     const container = scrollRef.current;
@@ -364,18 +381,18 @@ function AgentThreadSessionBody({
     lastTurn?.status.kind,
     lastTurn?.turnId,
     record.updatedAtEpochMs,
-    record.externalOrigin?.history,
+    displayedImportedHistory,
     threadId,
     viewport,
   ]);
 
   const turnEventOffsets = useMemo(
     () =>
-      record.turns.map((entry) => ({
+      displayedTurns.map((entry) => ({
         turnId: entry.turnId,
         offset: normalizeAgentTurnEventOffset(entry.firstEventOffset),
       })),
-    [record.turns],
+    [displayedTurns],
   );
   const scrollHeightRef = useRef(0);
   const hydratedOffsetsRef = useRef({ threadId, offsets: turnEventOffsets });
@@ -412,20 +429,20 @@ function AgentThreadSessionBody({
   const sessionWidth = useViewportWidth(sessionElement);
   const minimapSurface = agentMinimapHasPersistentGutter(sessionWidth) ? "rail" : "list";
   const minimapStripWidth = agentMinimapHitStripWidth(sessionWidth);
-  const importedExchanges = record.externalOrigin?.history?.exchanges ?? NO_EXCHANGES;
+  const importedExchanges = displayedImportedHistory?.exchanges ?? NO_EXCHANGES;
   const importedTurns = useMemo(() => agentImportedTurns(importedExchanges), [importedExchanges]);
   const importedCarriesAttachments = useMemo(
     () => importedTurns.some((turn) => (turn.prompt?.attachments.length ?? 0) > 0),
     [importedTurns],
   );
   const minimap = useMemo(
-    () => agentThreadMinimapModel(importedTurns, record.turns),
-    [importedTurns, record.turns],
+    () => agentThreadMinimapModel(importedTurns, displayedTurns),
+    [importedTurns, displayedTurns],
   );
   const measured = sessionElement !== null;
   const mapped = measured && minimap.entries.length >= MIN_AGENT_MINIMAP_ENTRIES;
   const inViewColumnKey = useAgentThreadTurnInView({
-    columnSignature: `${importedTurns.length}:${record.turns.length}:${lastTurn?.turnId ?? ""}`,
+    columnSignature: `${importedTurns.length}:${displayedTurns.length}:${lastTurn?.turnId ?? ""}`,
     enabled: mapped && (minimapSurface === "rail" || turnListOpen),
     scrollRef,
     threadId,
@@ -509,7 +526,24 @@ function AgentThreadSessionBody({
 
       <div className="agent-session__scroll" ref={scrollRef} tabIndex={-1}>
         <div className="agent-session__body">
-          {record.turnsTruncated && (
+          {history !== undefined && (
+            <AgentHistoryPager
+              page={historyPage}
+              hasEarlier={record.turnsTruncated}
+              onEarlier={() => {
+                void history.older(threadId);
+              }}
+              onNewer={
+                history.newer === undefined
+                  ? undefined
+                  : () => {
+                      void history.newer?.(threadId);
+                    }
+              }
+              onLatest={history.latest}
+            />
+          )}
+          {record.turnsTruncated && history === undefined && (
             <p className="agent-note agent-note--warning">
               Earlier turns were dropped to bound memory.
             </p>
@@ -519,11 +553,29 @@ function AgentThreadSessionBody({
             <p className="agent-note agent-session__provenance">{provenanceNote}</p>
           )}
 
+          {record.externalOrigin != null && onEarlierImportedHistory !== undefined && (
+            <nav aria-label="Original conversation history" className="agent-history-pager">
+              <button
+                type="button"
+                disabled={externalHistoryState === "loading" || !hasEarlierImportedHistory}
+                onClick={onEarlierImportedHistory}
+              >
+                Earlier imported messages
+              </button>
+              <button
+                type="button"
+                disabled={externalHistoryState === "loading"}
+                onClick={onRetryExternalHistory}
+              >
+                Latest imported messages
+              </button>
+            </nav>
+          )}
           {record.externalOrigin != null && (
             <AgentImportedHistory
               attachmentImages={importedCarriesAttachments ? attachmentImageViewer : null}
               highlights={importedHighlights}
-              history={record.externalOrigin.history}
+              history={displayedImportedHistory}
               key={`${threadId}:${record.externalOrigin.sessionId}`}
               onRetry={onRetryExternalHistory}
               prose={prose}
@@ -536,25 +588,34 @@ function AgentThreadSessionBody({
             key={`${threadId}:${serverId ?? "local"}:${runnerId ?? record.owner.ownerId}`}
           >
             <div className="agent-turn-list">
-              {record.turns.map((turn) => (
-                <AgentTurnView
-                  attachmentImages={
-                    agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
-                  }
-                  artifactScope={artifactScope}
-                  highlight={highlightFor(turn.turnId)}
+              {displayedTurns.map((turn) => (
+                <AgentHistoryActivity
                   key={turn.turnId}
-                  onOpenAgents={agents.openPanel}
-                  subagents={agents.subagentsFor(turn.turnId)}
-                  prose={prose}
-                  provider={record.provider.kind}
-                  executionTarget={thread.execution?.kind ?? "local"}
-                  renderProbe={turnRenderProbe}
-                  textClipboard={textClipboard}
                   turn={turn}
-                  turnLog={turnLog}
-                  workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
-                />
+                  source={history?.activitySource?.(threadId, turn.turnId) ?? null}
+                >
+                  {(displayedTurn, savedActivity) => (
+                    <AgentTurnView
+                      savedActivity={savedActivity}
+                      attachmentImages={
+                        agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
+                      }
+                      artifactScope={artifactScope}
+                      highlight={highlightFor(turn.turnId)}
+                      key={turn.turnId}
+                      onOpenAgents={agents.openPanel}
+                      subagents={agents.subagentsFor(turn.turnId)}
+                      prose={prose}
+                      provider={record.provider.kind}
+                      executionTarget={thread.execution?.kind ?? "local"}
+                      renderProbe={turnRenderProbe}
+                      textClipboard={textClipboard}
+                      turn={displayedTurn}
+                      turnLog={turnLog}
+                      workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
+                    />
+                  )}
+                </AgentHistoryActivity>
               ))}
             </div>
           </AgentArtifactPreviewScope>
@@ -644,6 +705,7 @@ function AgentThreadSessionBody({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
+  savedActivity = false,
   artifactScope = null,
   attachmentImages = null,
   highlight = null,
@@ -658,6 +720,7 @@ const AgentTurnView = memo(function AgentTurnView({
   turnLog = null,
   workspaceRoot = null,
 }: {
+  readonly savedActivity?: boolean;
   readonly artifactScope?: AgentArtifactScope | null;
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
@@ -676,7 +739,7 @@ const AgentTurnView = memo(function AgentTurnView({
   const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
   const revealEventIndex =
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
-  const settlement = agentTurnSettlement(turn.status);
+  const settlement = savedActivity ? "settled" : agentTurnSettlement(turn.status);
   const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
   const projection = useMemo(
     () =>
@@ -718,9 +781,9 @@ const AgentTurnView = memo(function AgentTurnView({
   );
   const empty = projection.items.length === 0 && rawLines.length === 0;
   const workFold = agentTurnWorkFold(projection.items, foregroundRunning);
-  const liveActivity = agentTurnLiveActivity(turn);
+  const liveActivity = savedActivity ? null : agentTurnLiveActivity(turn);
   const compaction = agentCompactionState(provider, turn);
-  const compacting = compaction.kind === "compacting";
+  const compacting = !savedActivity && compaction.kind === "compacting";
   const standaloneCompaction =
     provider === "claudeCode" &&
     /^\/compact(?:\s|$)/.test(turn.prompt.trim()) &&
@@ -782,11 +845,14 @@ const AgentTurnView = memo(function AgentTurnView({
             />
           )}
 
-          {turn.status.kind === "pending" && provider === "codex" && !compacting && (
-            <p className="agent-note" role="status">
-              Starting Codex…
-            </p>
-          )}
+          {!savedActivity &&
+            turn.status.kind === "pending" &&
+            provider === "codex" &&
+            !compacting && (
+              <p className="agent-note" role="status">
+                Starting Codex…
+              </p>
+            )}
           <AgentThreadUsage usage={threadUsage} />
           {projection.hiddenCount > 0 && (
             <p className="agent-note">{projection.hiddenCount} events hidden</p>

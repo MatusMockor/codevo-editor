@@ -129,6 +129,8 @@ export function sealedLogSummary(
     digest: null,
     prompt: null,
     promptOmitted: false,
+    lifecycle: null,
+    lifecycleOmitted: false,
     ...overrides,
   };
 }

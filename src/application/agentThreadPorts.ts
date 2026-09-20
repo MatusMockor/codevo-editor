@@ -1,3 +1,11 @@
+import type { AgentHistoryCatalogSurface } from "./useAgentHistoryCatalog";
+import type {
+  AgentHistoryTurnPage,
+  ReadAgentHistoryTurnsRequest,
+  FindAgentHistoryImportRequest,
+} from "../domain/agentHistory";
+import type { AgentThreadHistorySurface } from "./useAgentThreadHistory";
+import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import type { AgentImageMime } from "../domain/agentAttachment";
 import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
@@ -12,6 +20,7 @@ import type {
 } from "../domain/agentTask";
 import type {
   AgentThread,
+  AgentThreadOwner,
   AgentThreadAttention,
   AgentThreadLifecycle,
   AgentThreadsAction,
@@ -116,8 +125,11 @@ export interface AgentThreadStoreOwnerRequest {
 }
 
 export interface SaveAgentThreadRequest extends AgentThreadStoreOwnerRequest {
+  readonly onRevision?: (revision: number) => void;
+  readonly isCurrent?: () => boolean;
   readonly thread: AgentThread;
   readonly loggedPromptTurnIds: ReadonlyArray<string>;
+  readonly loggedLifecycles?: ReadonlyMap<string, AgentSubagentLifecycle>;
 }
 
 export interface DeleteAgentThreadRequest extends AgentThreadStoreOwnerRequest {
@@ -136,6 +148,8 @@ export interface AgentThreadStoreSnapshot {
 }
 
 export interface AgentThreadStoreGateway {
+  findAgentHistoryImport?(request: FindAgentHistoryImportRequest): Promise<AgentThread | null>;
+  readAgentHistoryTurns?(request: ReadAgentHistoryTurnsRequest): Promise<AgentHistoryTurnPage>;
   loadAgentThreads(request: AgentThreadStoreOwnerRequest): Promise<AgentThreadStoreSnapshot>;
   saveAgentThread(request: SaveAgentThreadRequest): Promise<void>;
   deleteAgentThread(request: DeleteAgentThreadRequest): Promise<void>;
@@ -148,6 +162,9 @@ export interface AgentThreadStoreSurface {
   /** Await terminal persistence and immutable output snapshots before continuing. */
   flushThread?(threadId: string): Promise<boolean>;
   hydrateThread?(threadId: string): void;
+  restoreThread?(thread: AgentThread): Promise<boolean>;
+  /** Reserve a display slot after durably saving any evicted conversation. Release on cancellation. */
+  reserveThreadSlot?(threadId: string, owner: AgentThreadOwner): Promise<(() => void) | null>;
   saveRunningThreadsNow(): void;
   dispatchAction(action: AgentThreadsAction): void;
   togglePin(threadId: string): void;
@@ -310,6 +327,8 @@ export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
 export type AgentSteerOutcome = "sent" | "deferred" | "kept";
 
 export interface AgentThreadsSurface {
+  readonly history?: AgentThreadHistorySurface;
+  readonly catalog?: AgentHistoryCatalogSurface;
   readonly historySearch?: AgentHistorySearchPort;
   readonly turnLog?: AgentTurnLogFactsSource;
   readonly attachments: AgentComposerAttachmentsSurface;
@@ -318,6 +337,9 @@ export interface AgentThreadsSurface {
   readonly externalHistory?: {
     readonly states: ReadonlyMap<string, "loading" | "failed" | "unavailable" | "ready">;
     load(threadId: string): Promise<void>;
+    readonly hasEarlier?: ReadonlyMap<string, boolean>;
+    readonly pages?: ReadonlyMap<string, ExternalAgentSessionHistory>;
+    loadEarlier?(threadId: string): Promise<void>;
   };
   readonly threads: ReadonlyArray<AgentThreadView>;
   readonly repositories: ReadonlyArray<ResolvedGitRepository>;

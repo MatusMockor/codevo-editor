@@ -177,3 +177,8 @@ pub use runtime::run;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[path = "agent_history_commands.rs"]
+mod agent_history_commands;
+#[path = "agent_session_import_commands.rs"]
+mod agent_session_import_commands;

@@ -25,6 +25,7 @@ import {
 import { useRemoteAgentStableSurface } from "./useRemoteAgentStableSurface";
 import { useRemoteAgentChanges } from "./useRemoteAgentChanges";
 import { useRemoteAgentImages } from "./useRemoteAgentImages";
+import { useRemoteAgentThreadHistory } from "./useRemoteAgentThreadHistory";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -297,6 +298,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     () => new Map(projected.views.map((view) => [view.thread.threadId, view])),
     [projected.views],
   );
+  const remoteHistory = useRemoteAgentThreadHistory({
+    gateway,
+    snapshots: inventory.snapshots,
+    views: projected.views,
+    selectedThreadId,
+    owner,
+  });
   const mutations = useRemoteAgentMutations({
     gateway,
     owner,
@@ -491,8 +499,18 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       if (isRemoteAgentIdentity(threadId)) await remoteAttachments.reveal(threadId, attachmentId);
       else await local.revealAttachment(threadId, attachmentId);
     },
+    history:
+      selectedThreadId !== null && isRemoteAgentIdentity(selectedThreadId)
+        ? remoteHistory
+        : local.history,
+    catalog: local.catalog,
     externalHistory: {
       states: local.externalHistory?.states ?? new Map(),
+      pages: local.externalHistory?.pages,
+      hasEarlier: local.externalHistory?.hasEarlier,
+      loadEarlier: async (id) => {
+        if (!isRemoteAgentIdentity(id)) await local.externalHistory?.loadEarlier?.(id);
+      },
       load: async (id) => {
         if (isRemoteAgentIdentity(id)) await inventory.refresh();
         else await local.externalHistory?.load(id);

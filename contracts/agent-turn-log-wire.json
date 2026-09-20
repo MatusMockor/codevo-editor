@@ -11,6 +11,8 @@
     "summaries": 64,
     "promptBytes": 32768,
     "summaryPromptBytes": 524288,
+    "lifecycleBytes": 131072,
+    "summaryLifecycleBytes": 524288,
     "rootKeyBytes": 4096,
     "idBytes": 64,
     "ownerIdPattern": "^agent-root:[0-9a-f]{16}$",
@@ -324,7 +326,8 @@
         "seal": false,
         "loss": {
           "kind": "none"
-        }
+        },
+        "lifecycle": null
       },
       {
         "scope": {
@@ -377,7 +380,8 @@
         "seal": false,
         "loss": {
           "kind": "none"
-        }
+        },
+        "lifecycle": null
       },
       {
         "scope": {
@@ -393,6 +397,105 @@
         "seal": true,
         "loss": {
           "kind": "supervisorGap"
+        },
+        "lifecycle": null
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "writerEpoch": 3,
+        "expectedNextSeq": 1,
+        "ops": [
+          {
+            "seq": 1,
+            "event": {
+              "kind": "userMessage",
+              "text": "Explain the failing test."
+            }
+          },
+          {
+            "seq": 2,
+            "event": {
+              "kind": "assistantText",
+              "text": "Reading the failing spec."
+            }
+          }
+        ],
+        "digest": null,
+        "seal": false,
+        "loss": {
+          "kind": "none"
+        },
+        "lifecycle": {
+          "entries": [
+            {
+              "batchKey": "spawn:toolu_parent",
+              "description": "Running npx vitest run",
+              "durationMs": 76099,
+              "id": "tool:toolu_parent",
+              "lastToolName": "Bash",
+              "name": "general-purpose",
+              "nestedCount": 1,
+              "state": "running",
+              "steps": 31,
+              "taskId": "task-parent",
+              "taskTitle": "Fix subagent view findings",
+              "telemetryState": "running",
+              "toolId": "toolu_parent",
+              "totalTokens": 87253
+            },
+            {
+              "description": "Review slice fixes",
+              "id": "tool:toolu_nested",
+              "name": "Agent",
+              "parentToolId": "toolu_parent",
+              "state": "running",
+              "taskTitle": "Review slice fixes",
+              "toolId": "toolu_nested"
+            }
+          ],
+          "countedNestedToolIds": ["toolu_nested_overflow"],
+          "openBatchKey": "spawn:toolu_parent",
+          "truncated": false
+        }
+      },
+      {
+        "scope": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "turnId": "turn-0a1b2c3d"
+        },
+        "writerEpoch": 3,
+        "expectedNextSeq": 1,
+        "ops": [],
+        "digest": null,
+        "seal": false,
+        "loss": {
+          "kind": "none"
+        },
+        "lifecycle": {
+          "entries": [
+            {
+              "description": "Running grep -n export src/domain/example.ts",
+              "durationMs": 654474,
+              "id": "tool:toolu_legacy_a",
+              "lastToolName": "Bash",
+              "name": "general-purpose",
+              "resultState": "completed",
+              "state": "completed",
+              "steps": 35,
+              "taskId": "task-legacy-a",
+              "telemetryState": "completed",
+              "toolId": "toolu_legacy_a",
+              "totalTokens": 136996
+            }
+          ],
+          "truncated": false
         }
       }
     ],
@@ -458,13 +561,30 @@
         "rootKey": "/projects/storefront",
         "ownerId": "agent-root:f307e46f5f6c07dd",
         "threadId": "thread-0a1b2c3d",
-        "includePrompts": false
+        "includePrompts": false,
+        "includeLifecycles": false
       },
       {
         "rootKey": "/projects/storefront",
         "ownerId": "agent-root:f307e46f5f6c07dd",
         "threadId": "thread-0a1b2c3d",
-        "includePrompts": true
+        "includePrompts": true,
+        "includeLifecycles": false
+      },
+      {
+        "rootKey": "/projects/storefront",
+        "ownerId": "agent-root:f307e46f5f6c07dd",
+        "threadId": "thread-0a1b2c3d",
+        "includePrompts": false,
+        "includeLifecycles": true
+      },
+      {
+        "rootKey": "/projects/storefront",
+        "ownerId": "agent-root:f307e46f5f6c07dd",
+        "threadId": "thread-0a1b2c3d",
+        "includePrompts": false,
+        "includeLifecycles": true,
+        "turnId": "turn-0a1b2c3d"
       }
     ],
     "deleteThreadLog": [
@@ -586,7 +706,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -605,7 +726,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -639,7 +761,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -666,7 +789,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -700,7 +824,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -734,7 +859,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -761,7 +887,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -789,7 +916,8 @@
           "seal": false,
           "loss": {
             "kind": "none"
-          }
+          },
+          "lifecycle": null
         }
       },
       {
@@ -817,6 +945,242 @@
           "seal": false,
           "loss": {
             "kind": "none"
+          },
+          "lifecycle": null
+        }
+      },
+      {
+        "why": "lifecycle is not an object",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 3,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "userMessage",
+                "text": "Explain the failing test."
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "kind": "assistantText",
+                "text": "Reading the failing spec."
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          },
+          "lifecycle": "running"
+        }
+      },
+      {
+        "why": "lifecycle entry carries an unknown field",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 3,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "userMessage",
+                "text": "Explain the failing test."
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "kind": "assistantText",
+                "text": "Reading the failing spec."
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          },
+          "lifecycle": {
+            "entries": [
+              {
+                "batchKey": "spawn:toolu_parent",
+                "description": "Running npx vitest run",
+                "durationMs": 76099,
+                "id": "tool:toolu_parent",
+                "lastToolName": "Bash",
+                "name": "general-purpose",
+                "nestedCount": 1,
+                "state": "running",
+                "steps": 31,
+                "taskId": "task-parent",
+                "taskTitle": "Fix subagent view findings",
+                "telemetryState": "running",
+                "toolId": "toolu_parent",
+                "totalTokens": 87253,
+                "unknownField": true
+              },
+              {
+                "description": "Review slice fixes",
+                "id": "tool:toolu_nested",
+                "name": "Agent",
+                "parentToolId": "toolu_parent",
+                "state": "running",
+                "taskTitle": "Review slice fixes",
+                "toolId": "toolu_nested"
+              }
+            ],
+            "countedNestedToolIds": ["toolu_nested_overflow"],
+            "openBatchKey": "spawn:toolu_parent",
+            "truncated": false
+          }
+        }
+      },
+      {
+        "why": "lifecycle state contradicts its telemetry",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 3,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "userMessage",
+                "text": "Explain the failing test."
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "kind": "assistantText",
+                "text": "Reading the failing spec."
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          },
+          "lifecycle": {
+            "entries": [
+              {
+                "batchKey": "spawn:toolu_parent",
+                "description": "Running npx vitest run",
+                "durationMs": 76099,
+                "id": "tool:toolu_parent",
+                "lastToolName": "Bash",
+                "name": "general-purpose",
+                "nestedCount": 1,
+                "state": "completed",
+                "steps": 31,
+                "taskId": "task-parent",
+                "taskTitle": "Fix subagent view findings",
+                "telemetryState": "running",
+                "toolId": "toolu_parent",
+                "totalTokens": 87253
+              },
+              {
+                "description": "Review slice fixes",
+                "id": "tool:toolu_nested",
+                "name": "Agent",
+                "parentToolId": "toolu_parent",
+                "state": "running",
+                "taskTitle": "Review slice fixes",
+                "toolId": "toolu_nested"
+              }
+            ],
+            "countedNestedToolIds": ["toolu_nested_overflow"],
+            "openBatchKey": "spawn:toolu_parent",
+            "truncated": false
+          }
+        }
+      },
+      {
+        "why": "lifecycle carries an unknown root field",
+        "value": {
+          "scope": {
+            "rootKey": "/projects/storefront",
+            "ownerId": "agent-root:f307e46f5f6c07dd",
+            "threadId": "thread-0a1b2c3d",
+            "turnId": "turn-0a1b2c3d"
+          },
+          "writerEpoch": 3,
+          "expectedNextSeq": 1,
+          "ops": [
+            {
+              "seq": 1,
+              "event": {
+                "kind": "userMessage",
+                "text": "Explain the failing test."
+              }
+            },
+            {
+              "seq": 2,
+              "event": {
+                "kind": "assistantText",
+                "text": "Reading the failing spec."
+              }
+            }
+          ],
+          "digest": null,
+          "seal": false,
+          "loss": {
+            "kind": "none"
+          },
+          "lifecycle": {
+            "entries": [
+              {
+                "batchKey": "spawn:toolu_parent",
+                "description": "Running npx vitest run",
+                "durationMs": 76099,
+                "id": "tool:toolu_parent",
+                "lastToolName": "Bash",
+                "name": "general-purpose",
+                "nestedCount": 1,
+                "state": "running",
+                "steps": 31,
+                "taskId": "task-parent",
+                "taskTitle": "Fix subagent view findings",
+                "telemetryState": "running",
+                "toolId": "toolu_parent",
+                "totalTokens": 87253
+              },
+              {
+                "description": "Review slice fixes",
+                "id": "tool:toolu_nested",
+                "name": "Agent",
+                "parentToolId": "toolu_parent",
+                "state": "running",
+                "taskTitle": "Review slice fixes",
+                "toolId": "toolu_nested"
+              }
+            ],
+            "countedNestedToolIds": ["toolu_nested_overflow"],
+            "openBatchKey": "spawn:toolu_parent",
+            "truncated": false,
+            "unknownRootKey": 1
           }
         }
       }
@@ -910,17 +1274,8 @@
         "value": {
           "rootKey": "/projects/storefront",
           "ownerId": "agent-root:f307e46f5f6c07dd",
-          "includePrompts": false
-        }
-      },
-      {
-        "why": "turn id is not part of the request",
-        "value": {
-          "rootKey": "/projects/storefront",
-          "ownerId": "agent-root:f307e46f5f6c07dd",
-          "threadId": "thread-0a1b2c3d",
-          "turnId": "turn-0a1b2c3d",
-          "includePrompts": false
+          "includePrompts": false,
+          "includeLifecycles": false
         }
       },
       {
@@ -929,7 +1284,62 @@
           "rootKey": "/projects/storefront",
           "ownerId": "agent-root:f307e46f5f6c07dd",
           "threadId": "thread-0a1b2c3d",
-          "includePrompts": "yes"
+          "includePrompts": "yes",
+          "includeLifecycles": false
+        }
+      },
+      {
+        "why": "includeLifecycles is not a boolean",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "includePrompts": false,
+          "includeLifecycles": "yes"
+        }
+      },
+      {
+        "why": "invalid targeted turn id ''",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "includePrompts": false,
+          "includeLifecycles": true,
+          "turnId": ""
+        }
+      },
+      {
+        "why": "invalid targeted turn id '../escape'",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "includePrompts": false,
+          "includeLifecycles": true,
+          "turnId": "../escape"
+        }
+      },
+      {
+        "why": "invalid targeted turn id None",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "includePrompts": false,
+          "includeLifecycles": true,
+          "turnId": null
+        }
+      },
+      {
+        "why": "invalid targeted turn id 4",
+        "value": {
+          "rootKey": "/projects/storefront",
+          "ownerId": "agent-root:f307e46f5f6c07dd",
+          "threadId": "thread-0a1b2c3d",
+          "includePrompts": false,
+          "includeLifecycles": true,
+          "turnId": 4
         }
       }
     ],
@@ -1293,7 +1703,40 @@
           }
         },
         "prompt": "Explain the failing test in src/app.ts.",
-        "promptOmitted": false
+        "promptOmitted": false,
+        "lifecycle": {
+          "entries": [
+            {
+              "batchKey": "spawn:toolu_parent",
+              "description": "Running npx vitest run",
+              "durationMs": 76099,
+              "id": "tool:toolu_parent",
+              "lastToolName": "Bash",
+              "name": "general-purpose",
+              "nestedCount": 1,
+              "state": "running",
+              "steps": 31,
+              "taskId": "task-parent",
+              "taskTitle": "Fix subagent view findings",
+              "telemetryState": "running",
+              "toolId": "toolu_parent",
+              "totalTokens": 87253
+            },
+            {
+              "description": "Review slice fixes",
+              "id": "tool:toolu_nested",
+              "name": "Agent",
+              "parentToolId": "toolu_parent",
+              "state": "running",
+              "taskTitle": "Review slice fixes",
+              "toolId": "toolu_nested"
+            }
+          ],
+          "countedNestedToolIds": ["toolu_nested_overflow"],
+          "openBatchKey": "spawn:toolu_parent",
+          "truncated": false
+        },
+        "lifecycleOmitted": false
       },
       {
         "turnId": "turn-9f8e7d6c",
@@ -1305,7 +1748,9 @@
         "sealed": false,
         "digest": null,
         "prompt": null,
-        "promptOmitted": true
+        "promptOmitted": true,
+        "lifecycle": null,
+        "lifecycleOmitted": true
       }
     ],
     [
@@ -1319,7 +1764,9 @@
         "sealed": true,
         "digest": null,
         "prompt": null,
-        "promptOmitted": false
+        "promptOmitted": false,
+        "lifecycle": null,
+        "lifecycleOmitted": false
       }
     ]
   ],
@@ -1337,7 +1784,9 @@
           "sealed": false,
           "digest": null,
           "prompt": null,
-          "promptOmitted": false
+          "promptOmitted": false,
+          "lifecycle": null,
+          "lifecycleOmitted": false
         },
         {
           "turnId": "turn-0a1b2c3d",
@@ -1349,7 +1798,9 @@
           "sealed": false,
           "digest": null,
           "prompt": null,
-          "promptOmitted": false
+          "promptOmitted": false,
+          "lifecycle": null,
+          "lifecycleOmitted": false
         }
       ]
     },
@@ -1366,7 +1817,9 @@
           "sealed": false,
           "digest": null,
           "prompt": null,
-          "promptOmitted": false
+          "promptOmitted": false,
+          "lifecycle": null,
+          "lifecycleOmitted": false
         }
       ]
     },
@@ -1384,7 +1837,9 @@
           "digest": null,
           "writerEpoch": 1,
           "prompt": null,
-          "promptOmitted": false
+          "promptOmitted": false,
+          "lifecycle": null,
+          "lifecycleOmitted": false
         }
       ]
     },
@@ -1409,7 +1864,9 @@
           "sealed": true,
           "digest": null,
           "prompt": "Explain the failing test in src/app.ts.",
-          "promptOmitted": true
+          "promptOmitted": true,
+          "lifecycle": null,
+          "lifecycleOmitted": false
         }
       ]
     },
@@ -1426,7 +1883,129 @@
           "sealed": true,
           "digest": null,
           "prompt": 7,
-          "promptOmitted": false
+          "promptOmitted": false,
+          "lifecycle": null,
+          "lifecycleOmitted": false
+        }
+      ]
+    },
+    {
+      "why": "a carried lifecycle contradicts lifecycleOmitted",
+      "value": [
+        {
+          "turnId": "turn-1a2b3c4d",
+          "eventCount": 3,
+          "bytes": 512,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": true,
+          "digest": null,
+          "prompt": null,
+          "promptOmitted": false,
+          "lifecycle": {
+            "entries": [
+              {
+                "batchKey": "spawn:toolu_parent",
+                "description": "Running npx vitest run",
+                "durationMs": 76099,
+                "id": "tool:toolu_parent",
+                "lastToolName": "Bash",
+                "name": "general-purpose",
+                "nestedCount": 1,
+                "state": "running",
+                "steps": 31,
+                "taskId": "task-parent",
+                "taskTitle": "Fix subagent view findings",
+                "telemetryState": "running",
+                "toolId": "toolu_parent",
+                "totalTokens": 87253
+              },
+              {
+                "description": "Review slice fixes",
+                "id": "tool:toolu_nested",
+                "name": "Agent",
+                "parentToolId": "toolu_parent",
+                "state": "running",
+                "taskTitle": "Review slice fixes",
+                "toolId": "toolu_nested"
+              }
+            ],
+            "countedNestedToolIds": ["toolu_nested_overflow"],
+            "openBatchKey": "spawn:toolu_parent",
+            "truncated": false
+          },
+          "lifecycleOmitted": true
+        }
+      ]
+    },
+    {
+      "why": "lifecycle entry carries an unknown field",
+      "value": [
+        {
+          "turnId": "turn-1a2b3c4d",
+          "eventCount": 3,
+          "bytes": 512,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": true,
+          "digest": null,
+          "prompt": null,
+          "promptOmitted": false,
+          "lifecycle": {
+            "entries": [
+              {
+                "batchKey": "spawn:toolu_parent",
+                "description": "Running npx vitest run",
+                "durationMs": 76099,
+                "id": "tool:toolu_parent",
+                "lastToolName": "Bash",
+                "name": "general-purpose",
+                "nestedCount": 1,
+                "state": "running",
+                "steps": 31,
+                "taskId": "task-parent",
+                "taskTitle": "Fix subagent view findings",
+                "telemetryState": "running",
+                "toolId": "toolu_parent",
+                "totalTokens": 87253,
+                "unknownField": true
+              },
+              {
+                "description": "Review slice fixes",
+                "id": "tool:toolu_nested",
+                "name": "Agent",
+                "parentToolId": "toolu_parent",
+                "state": "running",
+                "taskTitle": "Review slice fixes",
+                "toolId": "toolu_nested"
+              }
+            ],
+            "countedNestedToolIds": ["toolu_nested_overflow"],
+            "openBatchKey": "spawn:toolu_parent",
+            "truncated": false
+          },
+          "lifecycleOmitted": false
+        }
+      ]
+    },
+    {
+      "why": "lifecycle is not an object",
+      "value": [
+        {
+          "turnId": "turn-1a2b3c4d",
+          "eventCount": 3,
+          "bytes": 512,
+          "loss": {
+            "kind": "none"
+          },
+          "sealed": true,
+          "digest": null,
+          "prompt": null,
+          "promptOmitted": false,
+          "lifecycle": "running",
+          "lifecycleOmitted": false
         }
       ]
     }

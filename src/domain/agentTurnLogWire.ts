@@ -1,4 +1,5 @@
 import { agentRootOwnerId } from "./agentProject";
+import { parseAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { AGENT_TASK_ID_PATTERN, MAX_AGENT_TASK_PATH_BYTES } from "./agentTask";
 import type { AgentTurnEvent } from "./agentThread";
 import { parseTurnEvent, serializeTurnEvent } from "./agentThreadWire";
@@ -66,6 +67,7 @@ export interface AppendAgentTurnLogRequestWire {
   readonly digest: AgentTurnDigestWire | null;
   readonly seal: boolean;
   readonly loss: AgentTurnLogLoss;
+  readonly lifecycle: AgentSubagentLifecycle | null;
 }
 
 export interface ReadAgentTurnLogPageRequestWire {
@@ -112,7 +114,7 @@ export function validateAppendAgentTurnLogRequest(
   const value = record(request, "request");
   exactKeys(
     value,
-    ["scope", "writerEpoch", "expectedNextSeq", "ops", "digest", "seal", "loss"],
+    ["scope", "writerEpoch", "expectedNextSeq", "ops", "digest", "seal", "loss", "lifecycle"],
     "request",
   );
   const expectedNextSeq = integer(
@@ -130,6 +132,7 @@ export function validateAppendAgentTurnLogRequest(
     digest: optionalDigest(value.digest, "request.digest"),
     seal: booleanValue(value.seal, "request.seal"),
     loss: parseAgentTurnLogLoss(value.loss, "request.loss"),
+    lifecycle: lifecycleSnapshot(value.lifecycle, "request.lifecycle"),
   };
 }
 
@@ -150,13 +153,28 @@ export function validateSummarizeAgentTurnLogsRequest(
   request: SummarizeAgentTurnLogsRequest,
 ): SummarizeAgentTurnLogsRequest {
   const value = record(request, "request");
-  exactKeys(value, ["rootKey", "ownerId", "threadId", "includePrompts"], "request");
+  exactKeys(
+    value,
+    [
+      "rootKey",
+      "ownerId",
+      "threadId",
+      "includePrompts",
+      "includeLifecycles",
+      ...(Object.prototype.hasOwnProperty.call(value, "turnId") ? ["turnId"] : []),
+    ],
+    "request",
+  );
   const rootKey = rootKeyText(value.rootKey, "request.rootKey");
   return {
+    ...(Object.prototype.hasOwnProperty.call(value, "turnId")
+      ? { turnId: identifier(value.turnId, "request.turnId") }
+      : {}),
     rootKey,
     ownerId: ownerIdText(value.ownerId, rootKey, "request.ownerId"),
     threadId: identifier(value.threadId, "request.threadId"),
     includePrompts: booleanValue(value.includePrompts, "request.includePrompts"),
+    includeLifecycles: booleanValue(value.includeLifecycles, "request.includeLifecycles"),
   };
 }
 
@@ -254,6 +272,7 @@ export function parseAgentTurnLogSummaries(value: unknown): ReadonlyArray<AgentT
     invalid("summaries", `at most ${AGENT_TURN_LOG_LIMITS.summaries} entries`);
   const seen = new Set<string>();
   let promptBytes = 0;
+  let lifecycleBytes = 0;
   return Object.freeze(
     value.map((entry, index) => {
       const summary = parseAgentTurnLogSummary(entry, `summaries[${index}]`);
@@ -262,6 +281,13 @@ export function parseAgentTurnLogSummaries(value: unknown): ReadonlyArray<AgentT
       promptBytes += summary.prompt === null ? 0 : utf8Bytes(summary.prompt);
       if (promptBytes > AGENT_TURN_LOG_LIMITS.summaryPromptBytes) {
         invalid("summaries", `at most ${AGENT_TURN_LOG_LIMITS.summaryPromptBytes} prompt bytes`);
+      }
+      lifecycleBytes += summary.lifecycle === null ? 0 : lifecycleJsonBytes(summary.lifecycle);
+      if (lifecycleBytes > AGENT_TURN_LOG_LIMITS.summaryLifecycleBytes) {
+        invalid(
+          "summaries",
+          `at most ${AGENT_TURN_LOG_LIMITS.summaryLifecycleBytes} lifecycle bytes`,
+        );
       }
       return summary;
     }),
@@ -336,13 +362,28 @@ function parseAgentTurnLogSummary(value: unknown, path: string): AgentTurnLogSum
   const summary = record(value, path);
   exactKeys(
     summary,
-    ["turnId", "eventCount", "bytes", "loss", "sealed", "digest", "prompt", "promptOmitted"],
+    [
+      "turnId",
+      "eventCount",
+      "bytes",
+      "loss",
+      "sealed",
+      "digest",
+      "prompt",
+      "promptOmitted",
+      "lifecycle",
+      "lifecycleOmitted",
+    ],
     path,
   );
   const prompt = promptText(summary.prompt, `${path}.prompt`);
   const promptOmitted = booleanValue(summary.promptOmitted, `${path}.promptOmitted`);
   if (prompt !== null && promptOmitted)
     invalid(`${path}.promptOmitted`, "false when the summary carries a prompt");
+  const lifecycle = lifecycleSnapshot(summary.lifecycle, `${path}.lifecycle`);
+  const lifecycleOmitted = booleanValue(summary.lifecycleOmitted, `${path}.lifecycleOmitted`);
+  if (lifecycle !== null && lifecycleOmitted)
+    invalid(`${path}.lifecycleOmitted`, "false when the summary carries a lifecycle");
   return Object.freeze({
     turnId: identifier(summary.turnId, `${path}.turnId`),
     eventCount: integer(summary.eventCount, `${path}.eventCount`, 0, MAX_SAFE),
@@ -352,7 +393,35 @@ function parseAgentTurnLogSummary(value: unknown, path: string): AgentTurnLogSum
     digest: optionalDigest(summary.digest, `${path}.digest`),
     prompt,
     promptOmitted,
+    lifecycle,
+    lifecycleOmitted,
   });
+}
+
+export function agentTurnLogLifecycleFits(lifecycle: AgentSubagentLifecycle): boolean {
+  return lifecycleJsonBytes(lifecycle) <= AGENT_TURN_LOG_LIMITS.lifecycleBytes;
+}
+
+function lifecycleJsonBytes(lifecycle: AgentSubagentLifecycle): number {
+  return utf8Bytes(JSON.stringify(lifecycle));
+}
+
+function lifecycleSnapshot(value: unknown, path: string): AgentSubagentLifecycle | null {
+  if (value === null) return null;
+  const parsed = strictLifecycle(value);
+  if (parsed === null) return invalid(path, "a valid subagent lifecycle snapshot or null");
+  if (!agentTurnLogLifecycleFits(parsed))
+    invalid(path, `at most ${AGENT_TURN_LOG_LIMITS.lifecycleBytes} bytes`);
+  return parsed;
+}
+
+function strictLifecycle(value: unknown): AgentSubagentLifecycle | null {
+  if (value === undefined) return null;
+  try {
+    return parseAgentSubagentLifecycle(value) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function promptText(value: unknown, path: string): string | null {

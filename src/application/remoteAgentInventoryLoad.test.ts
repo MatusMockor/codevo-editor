@@ -118,12 +118,11 @@ describe("remote inventory loading", () => {
     await expect(load(gw)).rejects.toThrow("different conversation turn");
     expect(gw.listEvents).not.toHaveBeenCalled();
   });
-  it("retains the incomplete-history state after a bounded publication overflow", async () => {
+  it("resumes a bounded catch-up snapshot instead of failing for lifetime history", async () => {
     const gw = fixture();
-    await expect(load(gw, { ...initial(), inventoryTruncated: true })).rejects.toThrow(
-      "history is incomplete",
-    );
-    expect(gw.getRunner).not.toHaveBeenCalled();
+    const result = await load(gw, { ...initial(), inventoryTruncated: true });
+    expect(result.connected).toBe(true);
+    expect(result.inventoryTruncated).toBe(false);
   });
   it("loads every page and all selected conversation turns", async () => {
     const gw = fixture();
@@ -346,4 +345,80 @@ it("retains the authoritative lifecycle snapshot across completed replay refresh
   const second = await load(gw, first);
   expect(second.subagentLifecycles?.get("root")).toEqual(lifecycle);
   expect(gw.listEvents).toHaveBeenCalledTimes(1);
+});
+
+it("advances across more than 4096 retained tasks without dropping active or selected authority", async () => {
+  const gw = fixture();
+  const all = Array.from({ length: 5000 }, (_, i) => task(`task-${i + 1}`, i + 1));
+  all[0] = { ...all[0]!, status: "running" };
+  gw.listTasks.mockImplementation(async ({ after }: { after: number }) => {
+    const items = all.filter((item) => item.sequence > after).slice(0, 50);
+    const last = items[items.length - 1]?.sequence ?? after;
+    return { items, nextCursor: last < all.length ? last : null };
+  });
+  gw.getTask.mockImplementation(async ({ taskId }: { taskId: string }) =>
+    all.find((item) => item.id === taskId)!,
+  );
+  const selected = remoteAgentThreadKey("server", "runner", "task-2");
+  const first = await load(gw, initial(), selected);
+  expect(first.listingCursor).toBe(3200);
+  expect(first.connected).toBe(false);
+  expect(first.inventoryTruncated).toBe(true);
+  expect(first.resumes.size).toBe(0);
+  const second = await load(gw, first, selected);
+  expect(second.listingCursor).toBe(5000);
+  expect(second.connected).toBe(true);
+  expect(second.tasks).toHaveLength(4096);
+  expect(second.tasks.some((item) => item.id === "task-1")).toBe(true);
+  expect(second.tasks.some((item) => item.id === "task-2")).toBe(true);
+  expect(second.tasks[0]?.sequence).toBe(5000);
+  expect(second.historyWindowed).toBe(true);
+});
+it("loads only latest64 turns without failing a longer conversation", async () => {
+  const gw = fixture();
+  const all = Array.from({ length: 150 }, (_, i) => ({
+    ...task(i === 0 ? "root" : `child-${i}`, i + 1),
+    conversationId: "root",
+    ...(i > 0 ? { parentTaskId: i === 1 ? "root" : `child-${i - 1}` } : {}),
+  }));
+  gw.listTasks.mockImplementation(async ({ after }: { after: number }) => {
+    const items = all.filter((item) => item.sequence > after).slice(0, 50);
+    return {
+      items,
+      nextCursor:
+        items[items.length - 1]!.sequence < 150 ? items[items.length - 1]!.sequence : null,
+    };
+  });
+  gw.getTask.mockImplementation(async ({ taskId }: { taskId: string }) =>
+    all.find((item) => item.id === taskId)!,
+  );
+  const result = await load(gw);
+  expect(result.replays.size).toBe(64);
+  expect(result.resumes.has("child-149")).toBe(true);
+  expect(gw.getTask).toHaveBeenCalledTimes(64);
+  expect(
+    new RemoteAgentProjection().project({ ...result, runnerId: "runner" })[0]?.thread
+      .turnsTruncated,
+  ).toBe(true);
+});
+
+it("keeps the inventory bound when hydrating ancestors into a full cache", async () => {
+  const gw = fixture();
+  const latest = { ...task("child-64", 6000), conversationId: "root", parentTaskId: "child-63" };
+  const tasks = [latest, ...Array.from({ length: 4095 }, (_, i) => task(`other-${i}`, i + 1000))];
+  gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+  gw.getTask.mockImplementation(async ({ taskId }: { taskId: string }) => {
+    if (taskId === latest.id) return latest;
+    const ordinal = Number(taskId.slice(6));
+    return {
+      ...task(taskId, ordinal),
+      conversationId: "root",
+      parentTaskId: ordinal === 1 ? "root" : `child-${ordinal - 1}`,
+    };
+  });
+  const result = await load(gw, { ...initial(), tasks, listingCursor: 6000 });
+  expect(result.tasks).toHaveLength(4096);
+  expect(result.tasks.filter((item) => item.conversationId === "root")).toHaveLength(64);
+  expect(result.detailedTaskIds?.size).toBe(64);
+  expect(result.resumes.has(latest.id)).toBe(true);
 });

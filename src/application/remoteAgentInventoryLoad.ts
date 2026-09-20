@@ -20,6 +20,7 @@ export interface RemoteAgentInventorySnapshot {
   readonly serverId: string;
   readonly listingCursor: number;
   readonly inventoryTruncated?: boolean;
+  readonly historyWindowed?: boolean;
   readonly detailedTaskIds?: ReadonlySet<string>;
   readonly connected: boolean;
   readonly descriptor: RemoteRunnerDescriptor | null;
@@ -64,8 +65,6 @@ export async function loadRemoteAgentInventory(
     if (!valid()) throw new RemoteInventoryRevoked();
   };
   check();
-  if (previous.inventoryTruncated)
-    throw new Error("Remote task history exceeds the editor limit; history is incomplete.");
   const serverId = previous.serverId;
   const descriptor = await gateway.getRunner({ serverId });
   check();
@@ -77,6 +76,8 @@ export async function loadRemoteAgentInventory(
   check();
   let tasks = previous.tasks;
   let after = previous.listingCursor;
+  let catchingUp = false;
+  let historyWindowed = previous.historyWindowed === true;
   for (let pageNumber = 0; pageNumber < 64; pageNumber++) {
     const page = await gateway.listTasks({ serverId, after });
     check();
@@ -86,16 +87,18 @@ export async function loadRemoteAgentInventory(
         throw new Error("The runner returned invalid task history.");
       next = task.sequence;
     }
-    if (page.items.length > 64 || tasks.length + page.items.length > 4096)
-      throw new Error("Remote task history exceeds the editor limit; history is incomplete.");
-    tasks = mergeRemoteTasks(tasks, page.items);
+    if (page.items.length > 64) throw new Error("The runner returned an oversized task page.");
+    const merged = mergeRemoteTasks(tasks, page.items);
+    tasks = retainRemoteInventoryTasks(merged, serverId, selectedThreadId);
+    historyWindowed ||= tasks.length !== merged.length;
     if (page.nextCursor === null) {
       after = next;
       break;
     }
-    if (page.nextCursor !== next || next === after || pageNumber === 63)
-      throw new Error("Remote task history exceeds the page limit or has an invalid cursor.");
+    if (page.nextCursor !== next || next === after)
+      throw new Error("The runner returned an invalid task page cursor.");
     after = next;
+    catchingUp = pageNumber === 63;
   }
   const activeTasks = tasks.filter((task) => !isRemoteTaskTerminal(task));
   if (activeTasks.length > 64)
@@ -107,11 +110,10 @@ export async function loadRemoteAgentInventory(
       throw new Error("The runner returned a different task.");
     tasks = mergeRemoteTasks(tasks, [updated]);
   }
-  let selected = tasks.filter((task) => threadId(serverId, task) === selectedThreadId);
+  let selected = tasks.filter((task) => threadId(serverId, task) === selectedThreadId).slice(0, 64);
   const known = new Set(tasks.map((task) => task.id));
   for (let index = 0; index < selected.length; index++) {
-    if (selected.length > 64)
-      throw new Error("Remote conversation exceeds the 64-turn display limit.");
+    if (selected.length >= 64) break;
     const current = selected[index]!;
     const parentId =
       current.parentTaskId ??
@@ -128,18 +130,21 @@ export async function loadRemoteAgentInventory(
     if (
       parent.id !== parentId ||
       parent.runnerId !== descriptor.runnerId ||
-      threadId(serverId, parent) !== selectedThreadId
+      threadId(serverId, parent) !== selectedThreadId ||
+      parent.sequence >= current.sequence
     )
       throw new Error("The runner returned invalid conversation ancestry.");
-    if (tasks.length >= 4096)
-      throw new Error("Remote task history exceeds the editor limit; history is incomplete.");
     known.add(parent.id);
     tasks = mergeRemoteTasks(tasks, [parent]);
     selected = [...selected, parent];
   }
-  if (selected.length > 64)
-    throw new Error("Remote conversation exceeds the 64-turn display limit.");
-  const detailedTaskIds = new Set(previous.detailedTaskIds ?? []);
+  const window = retainRemoteInventoryTasks(tasks, serverId, selectedThreadId);
+  historyWindowed ||= window.length !== tasks.length;
+  tasks = window;
+  const retainedIds = new Set(tasks.map((task) => task.id));
+  const detailedTaskIds = new Set(
+    [...(previous.detailedTaskIds ?? [])].filter((id) => retainedIds.has(id)),
+  );
   for (const listed of selected) {
     if (detailedTaskIds.has(listed.id)) continue;
     const detail = await gateway.getTask({ serverId, taskId: listed.id });
@@ -165,7 +170,7 @@ export async function loadRemoteAgentInventory(
     tasks = tasks.map((task) => (task.id === detail.id ? detail : task));
     detailedTaskIds.add(detail.id);
   }
-  selected = tasks.filter((task) => threadId(serverId, task) === selectedThreadId);
+  selected = tasks.filter((task) => threadId(serverId, task) === selectedThreadId).slice(0, 64);
   const replays = new Map<string, readonly RemoteRunnerEvent[]>();
   const resumes = new Map<string, RemoteRunnerTaskResume>();
   const replayComplete = new Set<string>();
@@ -178,7 +183,11 @@ export async function loadRemoteAgentInventory(
   const replayGaps = new Map<string, RemoteReplayGap>();
   const subagentLifecycles = new Map<string, AgentSubagentLifecycle>();
   const olderTurnBytes = Math.floor(3_000_000 / Math.max(1, selected.length - 1));
-  let error: string | null = null;
+  let error: string | null = catchingUp
+    ? "Loading server history; continuation will be available when the latest tasks are reached."
+    : historyWindowed
+      ? "Showing recent conversations. Older history remains stored on the server."
+      : null;
   for (const task of selected) {
     const priorLifecycle = previous.subagentLifecycles?.get(task.id);
     if (priorLifecycle) subagentLifecycles.set(task.id, priorLifecycle);
@@ -234,7 +243,7 @@ export async function loadRemoteAgentInventory(
     }
     // Only the latest turn owns continuation. Older output remains fully replayed;
     // querying its resume status adds no display information or launch authority.
-    if (descriptor.capabilities.taskContinuation && task === latestSelected) {
+    if (!catchingUp && descriptor.capabilities.taskContinuation && task === latestSelected) {
       const resume = await gateway.getTaskResume({ serverId, taskId: task.id });
       check();
       resumes.set(task.id, resume);
@@ -260,7 +269,9 @@ export async function loadRemoteAgentInventory(
     serverId,
     listingCursor: after,
     detailedTaskIds,
-    connected: true,
+    connected: !catchingUp,
+    inventoryTruncated: catchingUp,
+    historyWindowed,
     descriptor,
     projects: projectPage.items,
     tasks,
@@ -273,4 +284,24 @@ export async function loadRemoteAgentInventory(
     replayTruncated,
     error,
   };
+}
+
+/** A bounded display cache; server rows remain authoritative and are never deleted. */
+export function retainRemoteInventoryTasks(
+  tasks: readonly RemoteRunnerTask[],
+  serverId?: string,
+  selectedThreadId?: string | null,
+): readonly RemoteRunnerTask[] {
+  const active = tasks.filter((task) => !isRemoteTaskTerminal(task));
+  if (active.length > 64)
+    throw new Error("Remote active task inventory exceeds the 64-task polling limit.");
+  const selected =
+    serverId && selectedThreadId
+      ? tasks.filter((task) => threadId(serverId, task) === selectedThreadId).slice(0, 64)
+      : [];
+  const reserved = new Map([...active, ...selected].map((task) => [task.id, task]));
+  return [
+    ...reserved.values(),
+    ...tasks.filter((task) => !reserved.has(task.id)).slice(0, 4096 - reserved.size),
+  ].sort((a, b) => b.sequence - a.sequence);
 }

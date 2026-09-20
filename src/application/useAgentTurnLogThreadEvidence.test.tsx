@@ -25,6 +25,8 @@ function summary(turnId: string): AgentTurnLogSummary {
     digest: null,
     prompt: null,
     promptOmitted: false,
+    lifecycle: null,
+    lifecycleOmitted: false,
   };
 }
 

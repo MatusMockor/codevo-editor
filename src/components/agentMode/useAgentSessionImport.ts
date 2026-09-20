@@ -113,7 +113,7 @@ export function useAgentSessionImport(options: AgentSessionImportOptions) {
         agentProjectOwnsLaunchRoot(currentOwner, session.cwd)
       ) {
         const key = sessionKey(entry);
-        let threadId = imported.current.get(key) ?? session.alreadyImportedThreadId;
+        let threadId: string | null | undefined = imported.current.get(key);
         if (threadId === null || threadId === undefined) {
           try {
             const result = await latest.current.importSession({

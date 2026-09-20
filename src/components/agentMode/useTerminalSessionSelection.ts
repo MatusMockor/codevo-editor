@@ -21,9 +21,7 @@ export function useTerminalSessionSelection(
     readonly keys: ReadonlySet<string>;
   }>({ owner, target, keys: new Set() });
   const eligible = new Map(
-    sessions
-      .filter((session) => session.alreadyImportedThreadId === null)
-      .map((session) => [terminalSessionSelectionKey(session), session]),
+    sessions.map((session) => [terminalSessionSelectionKey(session), session]),
   );
   const keys = new Set([...state.keys].filter((key) => eligible.has(key)));
   if (state.owner !== owner || state.target !== target || owner === null) keys.clear();

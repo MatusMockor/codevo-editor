@@ -452,7 +452,7 @@ describe("v1 thread JSON shape: a thread whose oldest prompts are clipped still 
     );
   });
 
-  it("refuses a lifecycle field the current parser drops, which prompt clipping never produces", (context) => {
+  it("writes the lifecycle state the shipped validator derives instead of an incoherent one", (context) => {
     if (shippedParser === null) {
       context.skip(
         `the parser at ${SHIPPED_PARSER_COMMIT} could not be loaded: ${shippedParserFailure ?? "unknown reason"}`,
@@ -460,8 +460,9 @@ describe("v1 thread JSON shape: a thread whose oldest prompts are clipped still 
       return;
     }
     const document = JSON.parse(JSON.stringify(serializeAgentThread(fullThread()))) as unknown;
+    const written = shippedParser.parseAgentThread(document).turns[0]?.subagentLifecycle;
 
-    expect(parseAgentThread(document).turns[0]?.subagentLifecycle).toBeUndefined();
-    expect(() => shippedParser?.parseAgentThread(document)).toThrow(/subagent lifecycle metadata/u);
+    expect(written?.entries.map((entry) => entry.state)).toEqual(["running"]);
+    expect(parseAgentThread(document).turns[0]?.subagentLifecycle).toEqual(written);
   });
 });

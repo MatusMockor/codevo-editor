@@ -2997,12 +2997,13 @@ describe("AgentModeView", () => {
     openProjectMenu("app");
     clickMenuItem("Terminal sessions…");
     act(() => buttonWithText("Select filtered").click());
-    act(() => buttonWithText("Import 2 sessions").click());
+    act(() => buttonWithText("Import 3 sessions").click());
     await waitForReact(() => expect(terminalSessionsPalette()).toBeNull());
-    expect(importExternalSession).toHaveBeenCalledTimes(2);
+    expect(importExternalSession).toHaveBeenCalledTimes(3);
     expect(importExternalSession.mock.calls.map(([request]) => request.sessionId)).toEqual([
       "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412",
       secondId,
+      "34fbe185-9c1d-4e6a-8b21-7f3a5d90c414",
     ]);
     expect(externalSessions.close).toHaveBeenCalledTimes(1);
     expect(selectedSessionId()).toBe("agt-1");
@@ -3034,8 +3035,8 @@ describe("AgentModeView", () => {
     );
   });
 
-  it("selects the existing thread for an already imported session without importing again", () => {
-    const importExternalSession = vi.fn(async () => null);
+  it("checks import completion before selecting an existing imported thread", async () => {
+    const importExternalSession = vi.fn(async () => ({ threadId: "agt-1", alreadyImported: true }));
     const externalSessions = externalSessionsSurfaceFixture({
       state: "ready",
       target: { rootKey: ROOT, repositoryRoot: ROOT },
@@ -3053,9 +3054,11 @@ describe("AgentModeView", () => {
 
     openProjectMenu("app");
     clickMenuItem("Terminal sessions…");
-    act(() => buttonWithText("Open imported thread").click());
+    await act(async () => buttonWithText("Open imported thread").click());
 
-    expect(importExternalSession).not.toHaveBeenCalled();
+    expect(importExternalSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412" }),
+    );
     expect(terminalSessionsPalette()).toBeNull();
     expect(externalSessions.close).toHaveBeenCalledTimes(1);
     expect(selectedSessionId()).toBe("agt-1");

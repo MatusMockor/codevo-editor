@@ -1,3 +1,5 @@
+import { AgentHistoryCatalog } from "./AgentHistoryCatalog";
+import type { AgentHistoryCatalogSurface } from "../../application/useAgentHistoryCatalog";
 import {
   memo,
   useCallback,
@@ -62,6 +64,7 @@ const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 const NO_BULK_COMMAND: (command: AgentThreadBulkCommand) => void = () => undefined;
 const MAX_AGENT_RAIL_FACTS_REQUESTS = 8;
 export interface AgentThreadsSidebarProps {
+  readonly catalog?: AgentHistoryCatalogSurface;
   readonly addProjectAvailable: boolean;
   readonly accountUsage: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
@@ -93,6 +96,7 @@ export interface AgentThreadsSidebarProps {
 }
 
 export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
+  catalog,
   addProjectAvailable,
   accountUsage,
   evidenceOf,
@@ -397,6 +401,9 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         />
       )}
       <div className="agent-rail__scroll" onKeyDown={handleListKeyDown} ref={listRef}>
+        {catalog !== undefined && (
+          <AgentHistoryCatalog catalog={catalog} onSelect={onSelectThread} />
+        )}
         {search.active ? (
           <AgentThreadSearchResults
             activeIndex={activeHit}

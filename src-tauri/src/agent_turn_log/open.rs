@@ -51,5 +51,6 @@ fn fresh_row(turn_id: String, loss: AgentTurnLogLoss, prompt: &Option<String>) -
         digest: None,
         digest_through_seq: 0,
         prompt: prompt.clone(),
+        lifecycle: None,
     }
 }

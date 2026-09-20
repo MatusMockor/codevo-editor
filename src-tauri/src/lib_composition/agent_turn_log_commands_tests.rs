@@ -172,6 +172,7 @@ fn no_command_error_ever_carries_a_path_or_sqlite_text() {
             loss: agent_turn_log::wire::AgentTurnLogLoss::of(
                 agent_turn_log::wire::AgentTurnLogLossKind::None,
             ),
+            lifecycle: None,
         })
         .map_err(|error| error.code().to_string())
         .expect_err("an unopened turn is refused");

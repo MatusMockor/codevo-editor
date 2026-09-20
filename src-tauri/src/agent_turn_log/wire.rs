@@ -1,5 +1,6 @@
 use super::agent_thread_store::AgentTurnEvent;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub(crate) const AGENT_TURN_LOG_SEQ_BASE: i64 = 1;
 pub(crate) const MAX_APPEND_OPS: usize = 256;
@@ -8,11 +9,13 @@ pub(crate) const MAX_PAGE_EVENTS: u32 = 200;
 pub(crate) const MAX_PAGE_BYTES: u32 = 512 * 1024;
 pub(crate) const MAX_DIGEST_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DIGEST_CAPACITIES: usize = 16;
-pub(crate) const MAX_TURN_BYTES: i64 = 256 * 1024 * 1024;
-pub(crate) const NEAR_TURN_BYTES: i64 = MAX_TURN_BYTES / 4 * 3;
+// Numeric wire precision, not a retention or disk quota.
+pub(crate) const MAX_LOG_COUNTER: i64 = 9_007_199_254_740_991;
 pub(crate) const MAX_TURN_SUMMARIES: usize = 64;
 pub(crate) const MAX_TURN_PROMPT_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_SUMMARY_PROMPT_RESPONSE_BYTES: usize = 512 * 1024;
+pub(crate) const MAX_TURN_LIFECYCLE_BYTES: usize = 128 * 1024;
+pub(crate) const MAX_SUMMARY_LIFECYCLE_RESPONSE_BYTES: usize = 512 * 1024;
 pub(crate) const AGENT_TURN_DIGEST_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -22,6 +25,7 @@ pub(crate) enum AgentTurnLogLossKind {
     LegacyWindow,
     SupervisorGap,
     DiskBudget,
+    // Historical loss marker; new writes have no cumulative turn-size quota.
     TurnCeiling,
     Unreadable,
 }
@@ -136,6 +140,8 @@ pub(crate) struct AppendAgentTurnLogRequest {
     pub(crate) digest: Option<AgentTurnDigestWire>,
     pub(crate) seal: bool,
     pub(crate) loss: AgentTurnLogLoss,
+    #[serde(default)]
+    pub(crate) lifecycle: Option<Value>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -193,7 +199,7 @@ pub(crate) struct AgentTurnLogPage {
     pub(crate) clipped: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentTurnLogSummary {
     pub(crate) turn_id: String,
@@ -204,16 +210,26 @@ pub(crate) struct AgentTurnLogSummary {
     pub(crate) digest: Option<AgentTurnDigestWire>,
     pub(crate) prompt: Option<String>,
     pub(crate) prompt_omitted: bool,
+    pub(crate) lifecycle: Option<Value>,
+    pub(crate) lifecycle_omitted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SummarizeAgentTurnLogsRequest {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_turn_id"
+    )]
+    pub(crate) turn_id: Option<String>,
     pub(crate) root_key: String,
     pub(crate) owner_id: String,
     pub(crate) thread_id: String,
     #[serde(default)]
     pub(crate) include_prompts: bool,
+    #[serde(default)]
+    pub(crate) include_lifecycles: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -230,12 +246,12 @@ pub(crate) struct DeleteAgentThreadLogResult {
     pub(crate) deleted: bool,
 }
 
-pub(crate) fn budget_for(turn_bytes: i64) -> AgentTurnLogBudget {
-    if turn_bytes >= MAX_TURN_BYTES {
-        return AgentTurnLogBudget::Evicting;
-    }
-    if turn_bytes >= NEAR_TURN_BYTES {
-        return AgentTurnLogBudget::Near;
-    }
-    AgentTurnLogBudget::Ok
+pub(crate) fn lifecycle_bytes(lifecycle: &Value) -> usize {
+    serde_json::to_vec(lifecycle).map_or(usize::MAX, |encoded| encoded.len())
+}
+
+fn deserialize_turn_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }

@@ -14,6 +14,7 @@ import type {
   StartAgentTaskRequest,
 } from "../domain/agentTask";
 import type { AgentThread } from "../domain/agentThread";
+import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
 import type { GitStatus } from "../domain/git";
 import type { GitIntegrationOutcome, GitShipStatus } from "../domain/gitIntegration";
 import type { GitWorktreeDescriptor, GitWorktreeGateway } from "../domain/gitWorktree";
@@ -58,6 +59,8 @@ interface Environment {
   repositoryRoots: ReadonlyArray<string>;
   externalSessionGateway?: ExternalSessionGateway;
   agentQuestionGateway?: AgentQuestionGateway;
+  externalSessionImportGateway?: ExternalSessionImportGateway;
+  durableHistory?: boolean;
 }
 
 const SHA_A = "a".repeat(40);
@@ -343,13 +346,23 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     removeWorktree: vi.fn(async () => undefined),
     pruneWorktrees: vi.fn(async () => []),
   };
+  const readAgentHistoryTurns = vi.fn(async () => ({
+    turns: [],
+    hasEarlier: false,
+    beforeTurnId: null,
+    revision: 1,
+  }));
+  const findAgentHistoryImport = vi.fn<
+    NonNullable<AgentThreadStoreGateway["findAgentHistoryImport"]>
+  >(async () => null);
   const store = {
+    ...(environment.durableHistory ? { readAgentHistoryTurns, findAgentHistoryImport } : {}),
     loadAgentThreads: vi.fn(async () => ({
       threads: environment.storedThreads,
       unreadable: [],
       evicted: 0,
     })),
-    saveAgentThread: vi.fn(async (_request: SaveAgentThreadRequest) => undefined),
+    saveAgentThread: vi.fn(async (_request: SaveAgentThreadRequest): Promise<void> => undefined),
     deleteAgentThread: vi.fn(async () => undefined),
   };
   const git = {
@@ -410,6 +423,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       agentQuestionGateway: environment.agentQuestionGateway,
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
       externalSessionGateway: environment.externalSessionGateway,
+      externalSessionImportGateway: environment.externalSessionImportGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       gitGateway: git,
       gitIntegrationGateway: gitIntegration,
@@ -451,6 +465,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   return {
     agent,
     store,
+    findAgentHistoryImport,
     git,
     gitIntegration,
     editor,
@@ -920,6 +935,248 @@ describe("useAgentThreads external session import", () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
   }
+
+  function durableImportGateway() {
+    return {
+      importSessionHistory: vi.fn<ExternalSessionImportGateway["importSessionHistory"]>(
+        async () => ({
+          complete: true,
+          importedCount: 3,
+          truncated: false,
+        }),
+      ),
+      readImportedHistory: vi.fn<ExternalSessionImportGateway["readImportedHistory"]>(async () => ({
+        history: {
+          provider: "claudeCode",
+          sessionId: EXTERNAL_ID,
+          exchanges: [],
+          exchangesTruncated: false,
+          totalPreviewBytes: 0,
+        },
+        hasEarlier: false,
+        beforeOrdinal: null,
+        complete: true,
+      })),
+    };
+  }
+
+  it("awaits durable persistence of the empty header before starting history import", async () => {
+    const gateway = durableImportGateway();
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    let finishSave!: () => void;
+    harness.store.saveAgentThread.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    let importing!: ReturnType<AgentThreadsSurface["importExternalSession"]>;
+    await act(async () => {
+      importing = harness.hook().importExternalSession(importRequest());
+      await Promise.resolve();
+    });
+    expect(harness.store.saveAgentThread).toHaveBeenCalled();
+    expect(harness.store.saveAgentThread.mock.calls[0]?.[0].thread.turns).toHaveLength(0);
+    expect(gateway.importSessionHistory).not.toHaveBeenCalled();
+    await act(async () => {
+      finishSave();
+      await importing;
+    });
+    const result = await importing;
+    expect(result?.alreadyImported).toBe(false);
+    expect(gateway.importSessionHistory).toHaveBeenCalledWith({
+      rootKey: ROOT,
+      ownerId: PERSISTENT_OWNER,
+      threadId: result?.threadId,
+    });
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("retries an interrupted durable import on the existing thread and resumes its checkpoint", async () => {
+    const gateway = durableImportGateway();
+    gateway.importSessionHistory.mockRejectedValueOnce(new Error("source temporarily unavailable"));
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    expect(await act(() => harness.hook().importExternalSession(importRequest()))).toBeNull();
+    const threadId = harness.hook().threads[0]?.thread.threadId;
+    expect(harness.hook().notice?.message).toContain("Retry to continue from the saved progress");
+    gateway.importSessionHistory.mockResolvedValueOnce({
+      complete: false,
+      importedCount: 2,
+      truncated: false,
+    });
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(result).toEqual({ threadId, alreadyImported: true });
+    expect(gateway.importSessionHistory).toHaveBeenCalledTimes(3);
+    expect(harness.hook().threads).toHaveLength(1);
+    expect(harness.hook().notice).toBeNull();
+    harness.unmount();
+  });
+
+  it("reopens an existing import after switching the configured provider", async () => {
+    const gateway = durableImportGateway();
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    const created = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(created).not.toBeNull();
+    harness.set({ cliKind: "codex" });
+    const reopened = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(reopened).toEqual({ threadId: created?.threadId, alreadyImported: true });
+    expect(gateway.importSessionHistory).toHaveBeenCalledTimes(2);
+    expect(harness.startedRequests).toEqual([]);
+    harness.unmount();
+  });
+
+  it("reopens a completed import while its resumed turn is running", async () => {
+    const gateway = durableImportGateway();
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    const created = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(created).not.toBeNull();
+    const threadId = created!.threadId;
+    const started = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      }),
+    );
+    expect(started).toBe(true);
+    const reopened = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(reopened).toEqual({ threadId, alreadyImported: true });
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(gateway.importSessionHistory).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("restores an unloaded durable import and resumes its original provider session", async () => {
+    const gateway = durableImportGateway();
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    const restored: AgentThread = {
+      ...storedThread("agt-stored-0001", "agt-stored-0002"),
+      target: { isolation: "in-place", worktreePath: null },
+      provider: { kind: "claudeCode", sessionId: EXTERNAL_ID },
+      externalOrigin: { provider: "claudeCode", sessionId: EXTERNAL_ID, importedAtEpochMs: 1_500 },
+    };
+    harness.findAgentHistoryImport.mockResolvedValueOnce(restored);
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(result).toEqual({ threadId: restored.threadId, alreadyImported: true });
+    expect(harness.hook().threads).toHaveLength(1);
+    expect(harness.hook().threads[0]?.thread.owner.ownerId).toBe(OWNER);
+    expect(harness.findAgentHistoryImport).toHaveBeenCalledWith({
+      rootKey: ROOT,
+      ownerId: PERSISTENT_OWNER,
+      repositoryRoot: ROOT,
+      provider: "claudeCode",
+      sessionId: EXTERNAL_ID,
+    });
+    const sent = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId: restored.threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      }),
+    );
+    expect(sent).toBe(true);
+    expect(harness.startedRequests[0]?.resumeSessionId).toBe(EXTERNAL_ID);
+    harness.unmount();
+  });
+
+  it("rejects a late durable lookup after A to B to A without restoring or importing it", async () => {
+    const gateway = durableImportGateway();
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    let finishLookup!: (thread: AgentThread | null) => void;
+    harness.findAgentHistoryImport.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishLookup = resolve;
+        }),
+    );
+    let importing!: ReturnType<AgentThreadsSurface["importExternalSession"]>;
+    act(() => {
+      importing = harness.hook().importExternalSession(importRequest());
+    });
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    await storeReady(harness, 2);
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    await storeReady(harness, 3);
+    await act(async () => {
+      finishLookup(storedThread("agt-stored-0001", "agt-stored-0002"));
+      await importing;
+    });
+    expect(await importing).toBeNull();
+    expect(harness.hook().threads).toHaveLength(0);
+    expect(gateway.importSessionHistory).not.toHaveBeenCalled();
+    expect(harness.store.saveAgentThread).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not start durable history import when the empty header cannot be saved", async () => {
+    const gateway = durableImportGateway();
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    harness.store.saveAgentThread.mockRejectedValue(new Error("disk full"));
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(result).toBeNull();
+    expect(gateway.importSessionHistory).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("could not be saved");
+    expect(harness.hook().threads).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("stops checkpoint work and suppresses stale warnings when the owner changes during import", async () => {
+    const gateway = durableImportGateway();
+    let finishImport!: (
+      progress: Awaited<ReturnType<ExternalSessionImportGateway["importSessionHistory"]>>,
+    ) => void;
+    gateway.importSessionHistory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishImport = resolve;
+        }),
+    );
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    let importing!: ReturnType<AgentThreadsSurface["importExternalSession"]>;
+    await act(async () => {
+      importing = harness.hook().importExternalSession(importRequest());
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+    expect(gateway.importSessionHistory).toHaveBeenCalledTimes(1);
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    await storeReady(harness, 2);
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    await storeReady(harness, 3);
+    await act(async () => {
+      finishImport({ complete: false, importedCount: 2, truncated: true });
+      await importing;
+    });
+    expect(await importing).toBeNull();
+    expect(gateway.importSessionHistory).toHaveBeenCalledTimes(1);
+    expect(harness.hook().threads).toHaveLength(0);
+    expect(harness.hook().notice).toBeNull();
+    harness.unmount();
+  });
+
+  it("shows an incomplete-source warning for a completed but truncated import", async () => {
+    const gateway = durableImportGateway();
+    gateway.importSessionHistory.mockResolvedValueOnce({
+      complete: true,
+      importedCount: 3,
+      truncated: true,
+    });
+    const harness = renderThreads({ durableHistory: true, externalSessionImportGateway: gateway });
+    await storeReady(harness);
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(result?.alreadyImported).toBe(false);
+    expect(harness.hook().notice?.message).toContain("some source records were incomplete");
+    expect(harness.hook().notice?.kind).toBe("warning");
+    harness.unmount();
+  });
 
   it("imports a zero-turn in-place thread, persists it, and starts no task", async () => {
     const harness = renderThreads();

@@ -2,14 +2,16 @@ use super::agent_thread_store::MAX_AGENT_CONTEXT_MODEL_BYTES;
 use super::errors::{sequence_gap, AgentTurnLogError, AgentTurnLogResult};
 use super::paths::ensure_scope_authority;
 use super::wire::{
-    AgentTurnDigestWire, AgentTurnLogAnchorAt, AgentTurnLogEntry, AgentTurnLogLoss,
-    AgentTurnLogLossKind, AgentTurnLogScope, AppendAgentTurnLogRequest,
+    lifecycle_bytes, AgentTurnDigestWire, AgentTurnLogAnchorAt, AgentTurnLogEntry,
+    AgentTurnLogLoss, AgentTurnLogLossKind, AgentTurnLogScope, AppendAgentTurnLogRequest,
     DeleteAgentThreadLogRequest, OpenAgentTurnLogRequest, ReadAgentTurnLogPageRequest,
     SummarizeAgentTurnLogsRequest, AGENT_TURN_DIGEST_VERSION, AGENT_TURN_LOG_SEQ_BASE,
     MAX_APPEND_OPS, MAX_DIGEST_BYTES, MAX_DIGEST_CAPACITIES, MAX_PAGE_BYTES, MAX_PAGE_EVENTS,
-    MAX_TURN_PROMPT_BYTES,
+    MAX_TURN_LIFECYCLE_BYTES, MAX_TURN_PROMPT_BYTES,
 };
+use crate::agent_subagent_lifecycle;
 use crate::git_worktree::safe_agent_task_id;
+use serde_json::Value;
 use std::collections::HashSet;
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
@@ -45,10 +47,24 @@ pub(crate) fn validate_append_request(
         return Err(AgentTurnLogError::BudgetExhausted);
     }
     validate_op_order(&request.ops, request.expected_next_seq)?;
+    validate_turn_lifecycle(request.lifecycle.as_ref())?;
     let Some(digest) = request.digest.as_ref() else {
         return Ok(());
     };
     validate_digest(digest)
+}
+
+fn validate_turn_lifecycle(lifecycle: Option<&Value>) -> AgentTurnLogResult<()> {
+    let Some(lifecycle) = lifecycle else {
+        return Ok(());
+    };
+    if !agent_subagent_lifecycle::valid(lifecycle) {
+        return Err(AgentTurnLogError::BudgetExhausted);
+    }
+    if lifecycle_bytes(lifecycle) > MAX_TURN_LIFECYCLE_BYTES {
+        return Err(AgentTurnLogError::BudgetExhausted);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_page_request(
@@ -74,6 +90,9 @@ pub(crate) fn validate_summarize_request(
 ) -> AgentTurnLogResult<()> {
     ensure_scope_authority(&request.root_key, &request.owner_id)?;
     safe_agent_task_id(&request.thread_id).map_err(|_| AgentTurnLogError::OwnerMismatch)?;
+    if let Some(turn_id) = request.turn_id.as_deref() {
+        safe_agent_task_id(turn_id).map_err(|_| AgentTurnLogError::OwnerMismatch)?;
+    }
     Ok(())
 }
 

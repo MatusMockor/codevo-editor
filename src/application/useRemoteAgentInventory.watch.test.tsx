@@ -75,3 +75,68 @@ it("does not lose an inventory invalidation behind an explicit refresh", async (
     vi.useRealTimers();
   }
 });
+
+it("continues bounded history catch-up promptly even with a live inventory watch", async () => {
+  vi.useFakeTimers();
+  let surface!: RemoteAgentInventorySurface;
+  const gateway = {
+    getRunner: vi.fn().mockResolvedValue({
+      runnerId: "runner",
+      capabilities: { taskExecution: true, eventReplay: true },
+    }),
+    listProjects: vi.fn().mockResolvedValue({ items: [] }),
+    listTasks: vi.fn().mockImplementation(async ({ after }: { after: number }) => ({
+      items:
+        after < 129
+          ? [
+              {
+                id: `task-${after + 1}`,
+                sequence: after + 1,
+                runnerId: "runner",
+                provider: "claude",
+                status: "succeeded",
+                parts: [],
+                createdAt: "date",
+              },
+            ]
+          : [],
+      nextCursor: after < 128 ? after + 1 : null,
+    })),
+    watchInventory: vi.fn(async (_request, callback) => {
+      callback({ type: "connected" });
+      return vi.fn();
+    }),
+  };
+  function Harness() {
+    surface = useRemoteAgentInventory({
+      gateway: gateway as unknown as RemoteRunnerGateway,
+      workspaceOwner: "A",
+      selectedThreadId: null,
+      servers: [
+        { id: "server", host: "host", username: "user", port: 22, name: "Server", connected: true },
+      ],
+    });
+    return null;
+  }
+  const root = createRoot(document.createElement("div"));
+  try {
+    await act(async () => {
+      root.render(createElement(Harness));
+    });
+    expect(surface.snapshots[0]?.listingCursor).toBe(64);
+    expect(surface.snapshots[0]?.connected).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(surface.snapshots[0]?.listingCursor).toBe(128);
+    expect(surface.snapshots[0]?.connected).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(surface.snapshots[0]?.listingCursor).toBe(129);
+    expect(surface.snapshots[0]?.connected).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    vi.useRealTimers();
+  }
+});

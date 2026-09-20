@@ -39,6 +39,8 @@ use attachments::{
     RawCodexBlock,
 };
 
+#[path = "agent_session_import/mod.rs"]
+pub(crate) mod import;
 #[path = "agent_session_transcript.rs"]
 mod transcript;
 pub use transcript::{

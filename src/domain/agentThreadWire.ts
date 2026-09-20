@@ -1,4 +1,5 @@
-import { readAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { persistedAgentSubagentLifecycle } from "./agentSubagentLifecycleLegacy";
 import {
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,
@@ -80,23 +81,59 @@ const UTF8_ENCODER = new TextEncoder();
 export function serializeAgentThread(
   thread: AgentThread,
   loggedPromptTurnIds: ReadonlySet<string> = NO_LOGGED_PROMPT_TURNS,
+  loggedLifecycles: ReadonlyMap<string, AgentSubagentLifecycle> = NO_LOGGED_LIFECYCLES,
 ): Record<string, unknown> {
   const ceiling = MAX_PERSISTED_AGENT_THREAD_FILE_BYTES - PERSISTED_AGENT_THREAD_FILE_MARGIN_BYTES;
   let budget = MAX_PERSISTED_THREAD_EVENT_BYTES;
   let document = serializeThreadDocument(
-    capAgentThreadForPersistence(thread, budget, loggedPromptTurnIds),
+    capAgentThreadForPersistence(thread, budget, loggedPromptTurnIds, loggedLifecycles),
   );
   for (let attempt = 0; attempt < PERSISTED_THREAD_FIT_ATTEMPTS; attempt += 1) {
     if (serializedThreadBytes(document) <= ceiling) return document;
     budget = Math.floor(budget / 4);
     document = serializeThreadDocument(
-      capAgentThreadForPersistence(thread, budget, loggedPromptTurnIds),
+      capAgentThreadForPersistence(thread, budget, loggedPromptTurnIds, loggedLifecycles),
     );
   }
   return document;
 }
 
+/** SQLite stores independent turn snapshots; only the event projection is bounded. */
+export function serializeAgentHistoryThread(thread: AgentThread): Record<string, unknown> {
+  const bounded = {
+    ...thread,
+    turns: thread.turns.map((turn) => {
+      let bytes = 2;
+      let start = turn.events.length;
+      while (start > 0 && turn.events.length - start < MAX_PERSISTED_AGENT_EVENTS_PER_TURN) {
+        const eventBytes =
+          UTF8_ENCODER.encode(JSON.stringify(serializeTurnEvent(turn.events[start - 1])))
+            .byteLength + 1;
+        if (bytes + eventBytes > 512 * 1_024) break;
+        bytes += eventBytes;
+        start -= 1;
+      }
+      return {
+        ...turn,
+        events: turn.events.slice(start),
+        eventsTruncated: turn.eventsTruncated || start > 0,
+      };
+    }),
+  };
+  const document = serializeThreadDocument(bounded);
+  document.turns = bounded.turns.map((turn) => ({
+    ...serializeTurn(turn),
+    ...optionalField("subagentLifecycle", turn.subagentLifecycle),
+  }));
+  return document;
+}
+
+export function parseAgentHistoryTurn(value: unknown, path = "turn"): AgentTurn {
+  return parseTurn(value, path);
+}
+
 const NO_LOGGED_PROMPT_TURNS: ReadonlySet<string> = new Set<string>();
+const NO_LOGGED_LIFECYCLES: ReadonlyMap<string, AgentSubagentLifecycle> = new Map();
 
 const PERSISTED_THREAD_FIT_ATTEMPTS = 3;
 
@@ -181,7 +218,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     lastStatusSequence: turn.lastStatusSequence,
     lastOutputSequence: turn.lastOutputSequence,
     streamMetrics: turn.streamMetrics ?? null,
-    ...optionalField("subagentLifecycle", turn.subagentLifecycle),
+    ...optionalField("subagentLifecycle", persistedAgentSubagentLifecycle(turn.subagentLifecycle)),
     launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
     cliVersion: turn.cliVersion,
     ...optionalField("codexTransport", turn.codexTransport),

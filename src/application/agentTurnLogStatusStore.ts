@@ -1,4 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
+import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import type { AgentContextWindow } from "../domain/agentContextWindow";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
@@ -33,6 +34,7 @@ export interface AgentTurnLogFacts {
   readonly contextWindow: AgentContextWindow | null;
   readonly health: AgentTurnLogWriterHealth;
   readonly promptInLog: boolean;
+  readonly lifecycleInLog?: AgentSubagentLifecycle | null;
 }
 
 export type AgentTurnLogFactsListener = (changedThreadIds: ReadonlySet<string>) => void;
@@ -219,6 +221,7 @@ export function createAgentTurnLogFactsStore(
         contextWindow: status.contextWindow,
         health: writerHealth(status, degradedSinceMs, now()),
         promptInLog: status.promptStored,
+        lifecycleInLog: status.lifecycleStored ?? null,
       },
       degradedSinceMs,
     );
@@ -248,6 +251,11 @@ export function createAgentTurnLogFactsStore(
           contextWindow: agentTurnDigestContextWindow(summary.digest),
           health: HEALTHY,
           promptInLog: summary.prompt !== null || summary.promptOmitted,
+          lifecycleInLog:
+            summary.lifecycle ??
+            (summary.lifecycleOmitted && summary.sealed && existing?.facts.sealed
+              ? (existing.facts.lifecycleInLog ?? null)
+              : null),
         },
         null,
       );
@@ -496,6 +504,7 @@ function sameEvidence(left: AgentTurnLogFacts, right: AgentTurnLogFacts): boolea
     left.live === right.live &&
     left.hydration === right.hydration &&
     left.promptInLog === right.promptInLog &&
+    (left.lifecycleInLog ?? null) === (right.lifecycleInLog ?? null) &&
     sameLoss(left.loss, right.loss)
   );
 }

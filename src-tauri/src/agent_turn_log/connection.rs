@@ -4,7 +4,7 @@ use super::paths::{
     prepare_database_file, resolved_database, sidecar_path, AgentTurnLogLocation,
     AGENT_TURN_LOG_USER_VERSION, WRITE_AHEAD_LOG_SUFFIX,
 };
-use super::schema::{ensure_activity_column, ensure_prompt_column, DDL};
+use super::schema::{ensure_activity_column, ensure_lifecycle_column, ensure_prompt_column, DDL};
 use rusqlite::{Connection, OpenFlags};
 use std::{fs, io::ErrorKind, time::Duration};
 
@@ -142,6 +142,7 @@ fn migrate(connection: &Connection, access: TurnLogAccess) -> AgentTurnLogResult
         }
         ensure_activity_column(connection)?;
         ensure_prompt_column(connection)?;
+        ensure_lifecycle_column(connection)?;
         return Ok(Readiness::Ready);
     }
     if user_version != 0 {

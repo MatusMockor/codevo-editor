@@ -1,3 +1,4 @@
+import { completeAgentLifecycleSummaries } from "./agentTurnLifecycleSummaries";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentProject";
 import { agentPromptLooksClipped, restoreAgentPromptFromLog } from "../domain/agentPromptClipping";
@@ -20,6 +21,11 @@ import {
 } from "../domain/agentTurnContentLoss";
 import { planHydratedAgentTurnEvents } from "../domain/agentTurnHydrationCarry";
 import {
+  agentThreadNeedsLoggedLifecycles,
+  planAgentTurnLifecycleRestore,
+  type AgentTurnLifecycleSubject,
+} from "../domain/agentTurnLifecycleRestore";
+import {
   AGENT_TURN_LOG_LIMITS,
   type AgentTurnLogAnchor,
   type AgentTurnLogPage,
@@ -33,14 +39,20 @@ import type { AgentTurnLogIntegration } from "./useAgentTurnLogging";
 export const MAX_HYDRATED_AGENT_TURNS_PER_THREAD = 8;
 export const MAX_HYDRATED_AGENT_THREADS = 3;
 export const MAX_AGENT_TURN_HYDRATION_PAGES = 16;
+export const MAX_LIFECYCLE_CHECKED_AGENT_THREADS = 64;
 
 type AgentTurnHydratedAction = Extract<AgentThreadsAction, { kind: "turnHydrated" }>;
 type AgentTurnPromptRestoredAction = Extract<AgentThreadsAction, { kind: "turnPromptRestored" }>;
-export type AgentTurnLogHydrationAction = AgentTurnHydratedAction | AgentTurnPromptRestoredAction;
+type AgentTurnLifecycleRestoredAction = Extract<
+  AgentThreadsAction,
+  { kind: "turnLifecycleRestored" }
+>;
+export type AgentTurnLogHydrationAction =
+  AgentTurnHydratedAction | AgentTurnPromptRestoredAction | AgentTurnLifecycleRestoredAction;
 
 export type AgentTurnLogHydrationSource = Pick<
   AgentTurnLogIntegration,
-  "facts" | "readPage" | "summarize"
+  "facts" | "readPage" | "summarize" | "storeSettledLifecycle"
 >;
 
 export interface AgentTurnLogHydrationPorts {
@@ -118,6 +130,7 @@ export function createAgentTurnLogHydrator(
 ): AgentTurnLogHydrator {
   const hydrated = new Map<string, Map<string, HydratedTurnEntry>>();
   const inFlight = new Map<string, number>();
+  const lifecycleChecked = new Set<string>();
   let run = 0;
   let activeThreadId: string | null = null;
   let reopenRequested = false;
@@ -311,27 +324,118 @@ export function createAgentTurnLogHydrator(
     return currentThread(authority) !== null;
   };
 
-  const restorePrompts = async (
+  const restoreLoggedDetail = async (
     turnLog: AgentTurnLogHydrationSource,
     authority: ThreadAuthority,
   ): Promise<void> => {
     const opened = currentThread(authority);
     if (opened === null) return;
-    if (!hasClippedPrompt(opened)) return;
+    const includePrompts = hasClippedPrompt(opened);
+    const includeLifecycles =
+      !lifecycleChecked.has(lifecycleCheckKey(authority)) &&
+      agentThreadNeedsLoggedLifecycles(lifecycleSubjects(opened));
+    if (!includePrompts && !includeLifecycles) return;
     const summarized = await attempt(() =>
       turnLog.summarize({
         rootKey: authority.rootKey,
         ownerId: agentRootOwnerId(authority.rootKey),
         threadId: authority.threadId,
-        includePrompts: true,
+        includePrompts,
+        includeLifecycles,
       }),
     );
     if (!summarized.ok) return;
     const settled = currentThread(authority);
     if (settled === null) return;
-    for (const [turnId, prompt] of restorablePrompts(settled, summarized.value)) {
+    const summaries = includeLifecycles
+      ? await completeAgentLifecycleSummaries(
+          { summarizeTurnLogs: turnLog.summarize },
+          {
+            rootKey: authority.rootKey,
+            ownerId: agentRootOwnerId(authority.rootKey),
+            threadId: authority.threadId,
+            includePrompts: false,
+            includeLifecycles: true,
+          },
+          summarized.value,
+          () => currentThread(authority) !== null,
+        )
+      : summarized.value;
+    if (currentThread(authority) === null) return;
+    turnLog.facts.publishSummaries(authority.threadId, summaries);
+    for (const [turnId, prompt] of restorablePrompts(settled, summaries)) {
       ports.publish({ kind: "turnPromptRestored", threadId: authority.threadId, turnId, prompt });
     }
+    if (!includeLifecycles) return;
+    const reconciled = await restoreLifecycles(turnLog, authority, settled, summaries);
+    if (!reconciled) return;
+    if (currentThread(authority) === null) return;
+    rememberLifecycleChecked(lifecycleCheckKey(authority));
+  };
+
+  const rememberLifecycleChecked = (key: string): void => {
+    lifecycleChecked.add(key);
+    for (const oldest of lifecycleChecked) {
+      if (lifecycleChecked.size <= MAX_LIFECYCLE_CHECKED_AGENT_THREADS) return;
+      lifecycleChecked.delete(oldest);
+    }
+  };
+
+  const restoreLifecycles = async (
+    turnLog: AgentTurnLogHydrationSource,
+    authority: ThreadAuthority,
+    thread: AgentThread,
+    summaries: ReadonlyArray<AgentTurnLogSummary>,
+  ): Promise<boolean> => {
+    const plan = planAgentTurnLifecycleRestore(
+      lifecycleSubjects(thread),
+      summaries.slice(0, AGENT_TURN_LOG_LIMITS.summaries),
+    );
+    for (const { turnId, lifecycle } of plan.restore) {
+      ports.publish({
+        kind: "turnLifecycleRestored",
+        threadId: authority.threadId,
+        turnId,
+        lifecycle,
+      });
+    }
+    let reconciled = !summaries.some(
+      (entry) => entry.lifecycleOmitted || (!entry.sealed && entry.lifecycle === null),
+    );
+    for (const { turnId, lifecycle } of plan.migrate) {
+      if (currentThread(authority) === null) return false;
+      const stored = await turnLog.storeSettledLifecycle({
+        scope: {
+          rootKey: authority.rootKey,
+          ownerId: agentRootOwnerId(authority.rootKey),
+          threadId: authority.threadId,
+          turnId,
+        },
+        lifecycle,
+        missingLog: !summaries.some((entry) => entry.turnId === turnId),
+      });
+      if (currentThread(authority) === null) return false;
+      if (stored) {
+        const previous = summaries.find((entry) => entry.turnId === turnId);
+        turnLog.facts.publishSummaries(authority.threadId, [
+          {
+            turnId,
+            eventCount: 0,
+            bytes: 0,
+            loss: { kind: "legacyWindow" },
+            sealed: true,
+            digest: null,
+            prompt: null,
+            promptOmitted: false,
+            ...previous,
+            lifecycle,
+            lifecycleOmitted: false,
+          },
+        ]);
+      }
+      reconciled = reconciled && stored;
+    }
+    return reconciled;
   };
 
   const hydrateCandidate = async (
@@ -364,7 +468,7 @@ export function createAgentTurnLogHydrator(
     if (authority === null) return;
     const evidenceTurnIds = thread.turns.map((turn) => turn.turnId);
     if (!(await ensureSummaries(turnLog, authority, evidenceTurnIds))) return;
-    await restorePrompts(turnLog, authority);
+    await restoreLoggedDetail(turnLog, authority);
     if (currentThread(authority) === null) return;
     for (const turnId of hydrationCandidates(thread)) {
       if (currentThread(authority) === null) return;
@@ -409,6 +513,7 @@ export function createAgentTurnLogHydrator(
       reopenRequested = false;
       inFlight.clear();
       hydrated.clear();
+      lifecycleChecked.clear();
     },
   };
 }
@@ -432,6 +537,18 @@ function clippedPromptTurn(turn: AgentTurn): boolean {
   if (!isTerminalAgentTurnStatus(turn.status)) return false;
   if (turn.promptRestored === true) return false;
   return agentPromptLooksClipped(turn.prompt);
+}
+
+function lifecycleCheckKey(authority: ThreadAuthority): string {
+  return `${authority.generation}:${authority.loadKey}:${authority.threadId}`;
+}
+
+function lifecycleSubjects(thread: AgentThread): ReadonlyArray<AgentTurnLifecycleSubject> {
+  return boundedTurns(thread).map((turn) => ({
+    turnId: turn.turnId,
+    settled: isTerminalAgentTurnStatus(turn.status),
+    ...(turn.subagentLifecycle === undefined ? {} : { subagentLifecycle: turn.subagentLifecycle }),
+  }));
 }
 
 function hasClippedPrompt(thread: AgentThread): boolean {

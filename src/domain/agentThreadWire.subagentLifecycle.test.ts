@@ -39,14 +39,28 @@ function storedThread(subagentLifecycle: unknown): Record<string, unknown> {
 }
 
 describe("agentThreadWire subagent lifecycle", () => {
-  it("round-trips the retained title, batch key and nested count through the store", () => {
-    for (const snapshot of [wire.valid.legacy, wire.valid.retained]) {
-      const stored = storedThread(snapshot);
-      const parsed = parseAgentThread(stored);
+  it("round-trips the legacy snapshot unchanged", () => {
+    const stored = storedThread(wire.valid.legacy);
+    const parsed = parseAgentThread(stored);
 
-      expect(parsed.turns[0].subagentLifecycle).toEqual(snapshot);
-      expect(serializeAgentThread(parsed)).toEqual(stored);
-    }
+    expect(parsed.turns[0].subagentLifecycle).toEqual(wire.valid.legacy);
+    expect(serializeAgentThread(parsed)).toEqual(stored);
+  });
+
+  it("keeps retained detail read from an existing file in memory and rewrites the file in the v1 shape", () => {
+    const parsed = parseAgentThread(storedThread(wire.valid.retained));
+    const [parent] = wire.valid.retained.entries;
+    const {
+      taskTitle: _taskTitle,
+      batchKey: _batchKey,
+      nestedCount: _nestedCount,
+      ...legacyParent
+    } = parent;
+
+    expect(parsed.turns[0].subagentLifecycle).toEqual(wire.valid.retained);
+    expect(serializeAgentThread(parsed)).toEqual(
+      storedThread({ entries: [legacyParent], truncated: true }),
+    );
   });
 
   it("loads a turn stored before the lifecycle existed", () => {

@@ -1,3 +1,4 @@
+import { persistentAgentThreadSaveRequest } from "./agentThreadSaveRequest";
 import { agentTurnArtifactReferences } from "../domain/agentTurnArtifactReferences";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
 import { useAgentTurnLogHydration } from "./useAgentTurnLogHydration";
@@ -14,11 +15,13 @@ import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentPr
 import { isTerminalAgentTaskStatus } from "../domain/agentTask";
 import {
   AGENT_THREAD_STORE_FULL_ERROR,
+  MAX_AGENT_THREADS_PER_ROOT,
   agentThreadsReducer,
   emptyAgentThreadsState,
   isTerminalAgentTurnStatus,
   runningTurn,
   type AgentThread,
+  type AgentThreadOwner,
   type AgentThreadsAction,
   type AgentThreadsState,
   type AgentTurnEvent,
@@ -48,7 +51,6 @@ import type {
   AgentThreadStoreGateway,
   AgentThreadStoreSurface,
   DeleteAgentThreadRequest,
-  SaveAgentThreadRequest,
 } from "./agentThreadPorts";
 
 export const LEGACY_AGENT_THREAD_PIN_STORAGE_KEY_PREFIX = "mockor.agents.threadPins.";
@@ -62,7 +64,6 @@ export const TURN_LOG_DELETE_FAILURE_NOTICE =
   "The saved transcript of a removed thread could not be deleted from this computer.";
 const STORE_FULL_NOTICE =
   "The saved-thread store is full. Unpin or remove older threads so new conversations can be saved.";
-const NO_LOGGED_PROMPT_TURN_IDS: ReadonlyArray<string> = Object.freeze([]);
 
 const BACKEND_REASON_PREFIXES = [
   "Agent context ",
@@ -123,6 +124,9 @@ export function useAgentThreadStore(
   const stateRef = useRef(state);
   stateRef.current = state;
   const mountedRef = useRef(true);
+  const admissionsRef = useRef(
+    new Map<string, { threadId: string; authority: AgentProjectAuthority }>(),
+  );
   const loadKeysRef = useRef<Map<string, string>>(new Map());
   const clearedLegacyPinRootsRef = useRef<Set<string>>(new Set());
   const slotsRef = useRef<Map<string, ThreadPersistSlot>>(new Map());
@@ -177,14 +181,39 @@ export function useAgentThreadStore(
       const authority = threadAuthority(dependenciesRef.current.projects, thread);
       if (authority === null) return;
 
-      const loggedPromptTurnIds = loggedPromptTurnIdsOf(dependenciesRef.current, thread);
+      const facts = isLoggedAgentThread(thread)
+        ? dependenciesRef.current.turnLog?.facts
+        : undefined;
 
+      const evidenceRevision = facts?.evidenceRevisionOf(threadId);
       slot.inFlight = true;
       slot.lastSaveAtMs = nowMs();
       const inFlight = attempt(() =>
-        dependenciesRef.current.agentThreadStoreGateway.saveAgentThread(
-          persistentSaveRequest(thread, loggedPromptTurnIds),
-        ),
+        dependenciesRef.current.agentThreadStoreGateway.saveAgentThread({
+          ...persistentAgentThreadSaveRequest(thread, facts),
+          ...(dependenciesRef.current.agentThreadStoreGateway.readAgentHistoryTurns === undefined
+            ? {}
+            : {
+                isCurrent: () =>
+                  mountedRef.current &&
+                  ownsProjectRoot(dependenciesRef.current.projects, authority) &&
+                  stateRef.current.threads.has(threadId),
+                onRevision: (revision: number) => {
+                  if (
+                    !mountedRef.current ||
+                    !ownsProjectRoot(dependenciesRef.current.projects, authority)
+                  )
+                    return;
+                  const latest = stateRef.current.threads.get(threadId);
+                  if (latest === undefined || (latest.historyRevision ?? 0) >= revision) return;
+                  const threads = new Map(stateRef.current.threads);
+                  threads.set(threadId, { ...latest, historyRevision: revision });
+                  const next = { threads };
+                  stateRef.current = next;
+                  publishState(next);
+                },
+              }),
+        }),
       );
       slot.settled = inFlight.then(() => undefined);
       const saved = await inFlight;
@@ -194,6 +223,7 @@ export function useAgentThreadStore(
       if (!mountedRef.current) return;
       if (!saved.ok && ownsProjectRoot(dependenciesRef.current.projects, authority)) {
         notePersistFailure(saved.error);
+        if (facts?.evidenceRevisionOf(threadId) !== evidenceRevision) slot.pending = "coalesced";
       }
       if (saved.ok) persistFailureNoticeShownRef.current = null;
       const pending = slot.pending;
@@ -235,6 +265,18 @@ export function useAgentThreadStore(
 
   scheduleSaveRef.current = scheduleSave;
 
+  useEffect(() => {
+    const facts = dependencies.turnLog?.facts;
+    return facts?.subscribe((changedThreadIds) => {
+      for (const threadId of changedThreadIds) {
+        const slot = slotsRef.current.get(threadId);
+        if (slot === undefined || slot.inFlight || slot.lastSaveSucceeded) continue;
+        if (!Number.isFinite(slot.lastSaveAtMs)) continue;
+        scheduleSaveRef.current(threadId, "coalesced");
+      }
+    });
+  }, [dependencies.turnLog?.facts]);
+
   const runDelete = useCallback(
     async ({ request, logged }: ThreadRemoval): Promise<void> => {
       const project = projectByRootKey(dependenciesRef.current.projects, request.rootKey);
@@ -275,6 +317,19 @@ export function useAgentThreadStore(
 
   const dispatchAction = useCallback((action: AgentThreadsAction): void => {
     const current = stateRef.current;
+    if (
+      dependenciesRef.current.agentThreadStoreGateway.readAgentHistoryTurns !== undefined &&
+      (action.kind === "threadCreated" || action.kind === "historyThreadOpened")
+    ) {
+      const reservation = admissionsRef.current.get(action.thread.owner.rootKey);
+      if (reservation !== undefined && reservation.threadId !== action.thread.threadId) return;
+      if (
+        [...current.threads.values()].filter(
+          (thread) => thread.owner.rootKey === action.thread.owner.rootKey,
+        ).length >= MAX_AGENT_THREADS_PER_ROOT
+      )
+        return;
+    }
     const next = agentThreadsReducer(current, action);
     const intent = persistIntent(current, next, action);
     stateRef.current = next;
@@ -380,6 +435,7 @@ export function useAgentThreadStore(
             ownerId,
             threadId: thread.threadId,
             includePrompts: false,
+            includeLifecycles: false,
           }),
         );
         if (!mountedRef.current) return;
@@ -462,11 +518,18 @@ export function useAgentThreadStore(
       const thread = stateRef.current.threads.get(threadId);
       if (thread === undefined || runningTurn(thread) !== null) return false;
       const lastTurn = thread.turns[thread.turns.length - 1];
-      if (lastTurn === undefined) return true;
+      const durableHistory =
+        dependenciesRef.current.agentThreadStoreGateway.readAgentHistoryTurns !== undefined;
+      if (lastTurn === undefined && !durableHistory) return true;
       const evidence = agentTurnLogEvidence(
-        dependenciesRef.current.turnLog?.facts.factsOf(lastTurn.turnId) ?? null,
+        dependenciesRef.current.turnLog?.facts.factsOf(lastTurn?.turnId ?? "") ?? null,
       );
-      if (agentTurnArtifactReferences(lastTurn, evidence).length === 0) return true;
+      if (
+        !durableHistory &&
+        lastTurn !== undefined &&
+        agentTurnArtifactReferences(lastTurn, evidence).length === 0
+      )
+        return true;
       const authority = threadAuthority(dependenciesRef.current.projects, thread);
       if (authority === null) return false;
       const turnId = thread.turns[thread.turns.length - 1]?.turnId;
@@ -495,6 +558,85 @@ export function useAgentThreadStore(
     [runSave],
   );
 
+  const reserveThreadSlot = useCallback(
+    async (threadId: string, owner: AgentThreadOwner): Promise<(() => void) | null> => {
+      if (dependenciesRef.current.agentThreadStoreGateway.readAgentHistoryTurns === undefined)
+        return () => undefined;
+      const authority = threadOwnerAuthority(dependenciesRef.current.projects, owner);
+      if (authority === null || !mountedRef.current) return null;
+      const existing = admissionsRef.current.get(owner.rootKey);
+      if (
+        existing !== undefined &&
+        ownsProjectRoot(dependenciesRef.current.projects, existing.authority)
+      )
+        return null;
+      const reservation = { threadId, authority };
+      admissionsRef.current.set(owner.rootKey, reservation);
+      const release = (): void => {
+        if (admissionsRef.current.get(owner.rootKey) === reservation)
+          admissionsRef.current.delete(owner.rootKey);
+      };
+      const current = (): boolean =>
+        mountedRef.current &&
+        ownsProjectRoot(dependenciesRef.current.projects, authority) &&
+        admissionsRef.current.get(owner.rootKey) === reservation;
+      let admitted = false;
+      try {
+        const sameRoot = [...stateRef.current.threads.values()].filter(
+          (entry) => entry.owner.rootKey === owner.rootKey,
+        );
+        if (sameRoot.length >= MAX_AGENT_THREADS_PER_ROOT) {
+          const victim = sameRoot
+            .filter((entry) => !entry.pinned && runningTurn(entry) === null)
+            .sort(
+              (left, right) =>
+                left.updatedAtEpochMs - right.updatedAtEpochMs ||
+                left.threadId.localeCompare(right.threadId),
+            )[0];
+          if (victim === undefined || !(await flushThread(victim.threadId)) || !current())
+            return null;
+          const latest = stateRef.current.threads.get(victim.threadId);
+          const slot = slotsRef.current.get(victim.threadId);
+          if (latest === undefined || !sameThreadContent(victim, latest) || slot?.inFlight)
+            return null;
+          dispatchAction({ kind: "historyThreadEvicted", threadId: victim.threadId });
+          if (stateRef.current.threads.has(victim.threadId)) return null;
+          if (slot !== undefined) {
+            clearSlotTimer(slot);
+            slot.pending = null;
+          }
+          dirtyRef.current.delete(victim.threadId);
+          slotsRef.current.delete(victim.threadId);
+        }
+        if (!current()) return null;
+        admitted = true;
+        return release;
+      } finally {
+        if (!admitted) release();
+      }
+    },
+    [dispatchAction, flushThread],
+  );
+
+  const restoreThread = useCallback(
+    async (thread: AgentThread): Promise<boolean> => {
+      const authority = threadAuthority(dependenciesRef.current.projects, thread);
+      if (authority === null) return false;
+      if (stateRef.current.threads.has(thread.threadId)) return true;
+      const release = await reserveThreadSlot(thread.threadId, thread.owner);
+      if (release === null) return false;
+      try {
+        if (!mountedRef.current || !ownsProjectRoot(dependenciesRef.current.projects, authority))
+          return false;
+        dispatchAction({ kind: "historyThreadOpened", thread, evictThreadId: null });
+        return stateRef.current.threads.has(thread.threadId);
+      } finally {
+        release();
+      }
+    },
+    [dispatchAction, reserveThreadSlot],
+  );
+
   const currentState = useCallback((): AgentThreadsState => stateRef.current, []);
 
   return useMemo(
@@ -503,6 +645,8 @@ export function useAgentThreadStore(
       loadedRootKeys,
       currentState,
       flushThread,
+      restoreThread,
+      reserveThreadSlot,
       hydrateThread,
       saveRunningThreadsNow,
       dispatchAction,
@@ -516,6 +660,8 @@ export function useAgentThreadStore(
       archive,
       currentState,
       flushThread,
+      restoreThread,
+      reserveThreadSlot,
       hydrateThread,
       saveRunningThreadsNow,
       dispatchAction,
@@ -530,7 +676,6 @@ export function useAgentThreadStore(
 }
 
 export function isLoggedAgentThread(thread: AgentThread): boolean {
-  if (thread.externalOrigin !== null) return false;
   if (isRemoteAgentIdentity(thread.threadId)) return false;
   return !isRemoteAgentIdentity(thread.owner.ownerId);
 }
@@ -547,7 +692,7 @@ function applyTurnLogEffects(
     case "turnStarted":
       return openTurnLogSlot(turnLog, projects, next, action);
     case "turnEventsAppended":
-      return recordTurnLogEvents(turnLog, action);
+      return recordTurnLogEvents(turnLog, next, action);
     case "turnSteered":
       return turnLog.writer.recordEvents(action.turnId, [action.event]);
     case "taskStatusEvent":
@@ -601,11 +746,24 @@ function resumedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
 
 function recordTurnLogEvents(
   turnLog: AgentTurnLogIntegration,
+  next: AgentThreadsState,
   action: Extract<AgentThreadsAction, { kind: "turnEventsAppended" }>,
 ): void {
   turnLog.writer.recordEvents(action.turnId, action.events);
+  recordTurnLogLifecycle(turnLog, next, action.threadId, action.turnId);
   if (!action.supervisorTruncated) return;
   turnLog.writer.reportLoss(action.turnId, { kind: "supervisorGap" });
+}
+
+function recordTurnLogLifecycle(
+  turnLog: AgentTurnLogIntegration,
+  next: AgentThreadsState,
+  threadId: string,
+  turnId: string,
+): void {
+  const turn = next.threads.get(threadId)?.turns.find((candidate) => candidate.turnId === turnId);
+  if (turn?.subagentLifecycle === undefined) return;
+  turnLog.writer.recordLifecycle(turnId, turn.subagentLifecycle);
 }
 
 function interruptedLoggedThreads(threads: ReadonlyArray<AgentThread>): ReadonlyArray<AgentThread> {
@@ -843,29 +1001,6 @@ function boundedPersistFailureReason(raw: string): string | null {
   return `${points.slice(0, MAX_PERSIST_FAILURE_REASON_CHARS).join("")}…`;
 }
 
-function persistentSaveRequest(
-  thread: AgentThread,
-  loggedPromptTurnIds: ReadonlyArray<string>,
-): SaveAgentThreadRequest {
-  const ownerId = agentRootOwnerId(thread.owner.rootKey);
-  return {
-    rootKey: thread.owner.rootKey,
-    ownerId,
-    thread: { ...thread, owner: { ...thread.owner, ownerId } },
-    loggedPromptTurnIds,
-  };
-}
-
-function loggedPromptTurnIdsOf(
-  dependencies: AgentThreadStoreDependencies,
-  thread: AgentThread,
-): ReadonlyArray<string> {
-  const turnLog = dependencies.turnLog;
-  if (turnLog === undefined) return NO_LOGGED_PROMPT_TURN_IDS;
-  if (!isLoggedAgentThread(thread)) return NO_LOGGED_PROMPT_TURN_IDS;
-  return [...turnLog.facts.promptLoggedTurnIds(thread.threadId)];
-}
-
 function withRuntimeOwner(thread: AgentThread, ownerId: string): AgentThread {
   if (thread.owner.ownerId === ownerId) return thread;
   return { ...thread, owner: { ...thread.owner, ownerId } };
@@ -883,14 +1018,21 @@ function threadAuthority(
   projects: ReadonlyArray<AgentProjectDescriptor>,
   thread: AgentThread,
 ): AgentProjectAuthority | null {
-  const project = projectByRootKey(projects, thread.owner.rootKey);
+  return threadOwnerAuthority(projects, thread.owner);
+}
+
+function threadOwnerAuthority(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  owner: AgentThreadOwner,
+): AgentProjectAuthority | null {
+  const project = projectByRootKey(projects, owner.rootKey);
   if (project === undefined) return null;
   if (
-    project.ownerId !== thread.owner.ownerId &&
-    project.runtimeOwnerIds?.includes(thread.owner.ownerId) !== true
+    project.ownerId !== owner.ownerId &&
+    project.runtimeOwnerIds?.includes(owner.ownerId) !== true
   )
     return null;
-  return projectAuthority(project, thread.owner.ownerId);
+  return projectAuthority(project, owner.ownerId);
 }
 
 function ownsProjectRoot(
@@ -954,6 +1096,12 @@ function browserLocalStorage(): AgentThreadLegacyPinStorage | null {
 
 function authorityKey(authority: AgentProjectAuthority): string {
   return [authority.rootKey, authority.ownerId, authority.generation].join("#");
+}
+
+function sameThreadContent(left: AgentThread, right: AgentThread): boolean {
+  return (Object.keys(left) as Array<keyof AgentThread>).every(
+    (key) => key === "historyRevision" || left[key] === right[key],
+  );
 }
 
 function unreadableNotice(count: number): string {

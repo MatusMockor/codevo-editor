@@ -1,4 +1,5 @@
 import type { AgentContextWindow } from "../domain/agentContextWindow";
+import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AgentTurnEvent } from "../domain/agentThread";
 import type {
@@ -96,6 +97,7 @@ export interface AgentTurnLogSlotStatus {
   readonly bounded: boolean;
   readonly contextWindow: AgentContextWindow | null;
   readonly promptStored: boolean;
+  readonly lifecycleStored?: AgentSubagentLifecycle | null;
 }
 
 export interface OpenAgentTurnLogSlotRequest {
@@ -109,6 +111,7 @@ export interface OpenAgentTurnLogSlotRequest {
 export interface AgentTurnLogWriter {
   openTurn(request: OpenAgentTurnLogSlotRequest): void;
   recordEvents(turnId: string, events: ReadonlyArray<AgentTurnEvent>): void;
+  recordLifecycle(turnId: string, lifecycle: AgentSubagentLifecycle): void;
   reportLoss(turnId: string, loss: AgentTurnLogLoss): void;
   sealTurn(turnId: string): void;
   closeTurn(turnId: string): void;

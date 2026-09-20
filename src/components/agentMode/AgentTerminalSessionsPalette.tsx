@@ -54,7 +54,6 @@ export function AgentTerminalSessionsPalette({
   isOpen,
   onClose,
   onImport,
-  onSelectImported,
   onImportMany,
   importProgress = null,
   importNotice = null,
@@ -123,10 +122,6 @@ export function AgentTerminalSessionsPalette({
 
   const activate = (session: ExternalAgentSessionView | undefined): void => {
     if (session === undefined || !canActivate) return;
-    if (session.alreadyImportedThreadId !== null) {
-      onSelectImported(session.alreadyImportedThreadId);
-      return;
-    }
     onImport(session.sessionId, session.provider);
   };
 
@@ -248,9 +243,7 @@ export function AgentTerminalSessionsPalette({
                     !canActivate ||
                     selection.selected.length >= MAX_SESSION_SELECTION ||
                     !filtered.some(
-                      (session) =>
-                        session.alreadyImportedThreadId === null &&
-                        !selection.keys.has(terminalSessionSelectionKey(session)),
+                      (session) => !selection.keys.has(terminalSessionSelectionKey(session)),
                     )
                   }
                   onClick={() => selection.select(filtered)}
@@ -392,7 +385,6 @@ function SessionListBody({
               checked={selection.has(terminalSessionSelectionKey(session))}
               disabled={
                 selectionDisabled ||
-                session.alreadyImportedThreadId !== null ||
                 (selection.size >= MAX_SESSION_SELECTION &&
                   !selection.has(terminalSessionSelectionKey(session)))
               }

@@ -622,6 +622,7 @@ export function useAgentTurnDispatch(
       dispatchingRef.current = true;
       beginPendingTurn(agentCliKind);
       setDispatching(true);
+      let releaseSlot: (() => void) | undefined;
       try {
         const leased = await ensureLease(
           deps,
@@ -634,6 +635,29 @@ export function useAgentTurnDispatch(
         );
         if (!leased) return null;
         if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) return null;
+        const admission = await deps.store.reserveThreadSlot?.(threadId, {
+          rootKey: authority.rootKey,
+          ownerId: authority.workspaceId,
+          repositoryRoot,
+        });
+        if (admission === null) {
+          if (
+            isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)
+          ) {
+            dependenciesRef.current.setNotice(
+              warning(
+                "A conversation could not be saved to make room. Retry after saving finishes.",
+              ),
+            );
+          }
+          return null;
+        }
+        releaseSlot = admission;
+        if (
+          !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
+          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+        )
+          return null;
         if (request.isolation === "in-place") {
           const preflight = await deps.preflightInPlace(
             repositoryRoot,
@@ -792,6 +816,7 @@ export function useAgentTurnDispatch(
         }
         return started ? { threadId } : null;
       } finally {
+        releaseSlot?.();
         endPendingTurn(agentCliKind);
         dispatchingRef.current = false;
         if (mountedRef.current) setDispatching(false);

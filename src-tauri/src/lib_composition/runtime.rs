@@ -153,6 +153,9 @@ pub fn run() {
                 ),
             ));
             app.manage(Arc::new(
+                agent_history_commands::agent_history_store::AgentHistoryStore::new(app.path().app_data_dir()?),
+            ));
+            app.manage(Arc::new(
                 agent_turn_log_commands::agent_turn_log::AgentTurnLogStore::new(
                     app.path().app_data_dir()?,
                 ),
@@ -593,6 +596,14 @@ pub fn run() {
             agent_task_commands::stop_agent_tasks_for_root,
             agent_task_commands::acquire_agent_root_lease,
             agent_task_commands::release_agent_root_lease,
+            agent_history_commands::read_agent_history_threads,
+            agent_history_commands::find_agent_history_import,
+            agent_history_commands::load_agent_history,
+            agent_history_commands::save_agent_history_thread,
+            agent_history_commands::read_agent_history_turns,
+            agent_history_commands::delete_agent_history_thread,
+            agent_session_import_commands::import_agent_session_history,
+            agent_session_import_commands::read_agent_imported_history,
             agent_thread_store_commands::load_agent_threads,
             agent_thread_store_commands::save_agent_thread,
             agent_thread_store_commands::delete_agent_thread,

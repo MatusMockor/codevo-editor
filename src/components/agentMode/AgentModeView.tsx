@@ -769,6 +769,7 @@ function LocalAgentModeView({
               </div>
             ) : (
               <AgentThreadsSidebar
+                catalog={agents.catalog}
                 addProjectAvailable={chrome.addProject !== null}
                 accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
                 evidenceOf={turnEvidenceOf}
@@ -866,6 +867,24 @@ function LocalAgentModeView({
                 />
               ) : (
                 <AgentThreadSession
+                  history={sessionThread?.execution?.kind === "remote" ? undefined : agents.history}
+                  importedHistory={
+                    sessionThread === null
+                      ? undefined
+                      : agents.externalHistory?.pages?.get(sessionThread.thread.threadId)
+                  }
+                  hasEarlierImportedHistory={
+                    sessionThread === null
+                      ? false
+                      : agents.externalHistory?.hasEarlier?.get(sessionThread.thread.threadId)
+                  }
+                  onEarlierImportedHistory={
+                    sessionThread === null || agents.externalHistory?.loadEarlier === undefined
+                      ? undefined
+                      : () => {
+                          void agents.externalHistory?.loadEarlier?.(sessionThread.thread.threadId);
+                        }
+                  }
                   artifactLoader={artifactLoader}
                   artifactPreview={artifactPreview}
                   attachmentImages={agents.attachmentImages}

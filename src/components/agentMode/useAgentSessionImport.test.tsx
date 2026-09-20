@@ -232,7 +232,7 @@ describe("session batch import", () => {
     expect(h.importSession).toHaveBeenCalledTimes(1);
     expect(h.hook().importNotice).toContain("1 of 2");
   });
-  it("rejects oversized and foreign selections and honors already imported sessions", async () => {
+  it("rejects oversized and foreign selections and completes existing session imports", async () => {
     const h = harness();
     await act(() => h.hook().importMany(Array.from({ length: 51 }, () => a)));
     expect(h.hook().importNotice).toContain("up to 50");
@@ -243,8 +243,9 @@ describe("session batch import", () => {
     h.update({
       surface: { ...surface, sessions: [{ ...a, alreadyImportedThreadId: "existing" }] },
     });
+    h.importSession.mockResolvedValueOnce({ threadId: "existing", alreadyImported: true });
     await act(() => h.hook().importMany([a]));
     expect(h.onComplete).toHaveBeenCalledExactlyOnceWith("existing");
-    expect(h.importSession).not.toHaveBeenCalled();
+    expect(h.importSession).toHaveBeenCalledOnce();
   });
 });

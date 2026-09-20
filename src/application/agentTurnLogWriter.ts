@@ -1,4 +1,8 @@
 import {
+  readAgentSubagentLifecycle,
+  type AgentSubagentLifecycle,
+} from "../domain/agentSubagentLifecycle";
+import {
   agentTurnEventUtf8Bytes,
   coalesceAgentTextEvents,
   type AgentTurnEvent,
@@ -19,7 +23,7 @@ import {
   type AgentTurnLogLoss,
   type AgentTurnLogScope,
 } from "../domain/agentTurnLog";
-import { agentTurnLogOpBytes } from "../domain/agentTurnLogWire";
+import { agentTurnLogLifecycleFits, agentTurnLogOpBytes } from "../domain/agentTurnLogWire";
 import {
   MAX_AGENT_TURN_LOG_EVENT_BYTES,
   MAX_AGENT_TURN_LOG_OP_BYTES,
@@ -83,6 +87,9 @@ interface WriterSlot {
   retryWindowStartMs: number | null;
   backpressure: boolean;
   promptStored: boolean;
+  lifecycle: AgentSubagentLifecycle | null;
+  lifecycleStored: AgentSubagentLifecycle | null;
+  lifecycleRejected: AgentSubagentLifecycle | null;
   reportedLoss: AgentTurnLogLoss;
   state: AgentTurnLogSlotState;
   final: AgentTurnLogSlotStatus | null;
@@ -92,6 +99,7 @@ interface InFlightBatch {
   readonly window: AgentTurnWindow;
   readonly batch: AgentTurnWindowBatch;
   readonly seal: boolean;
+  readonly lifecycle: AgentSubagentLifecycle | null;
 }
 
 export function agentTurnLogWindowPolicy(): AgentTurnWindowPolicy {
@@ -182,6 +190,7 @@ export function createAgentTurnLogWriter(
         digest: null,
         seal: false,
         loss,
+        lifecycle: null,
       }),
     );
   };
@@ -322,7 +331,7 @@ export function createAgentTurnLogWriter(
     if (reported === null || inflight === null || last === undefined)
       return stop(slot, "sequenceGap");
     if (reported !== Math.max(slot.expectedNextSeq, last + 1)) return stop(slot, "sequenceGap");
-    settleFlush(slot, inflight, reported, reported - 1);
+    settleFlush(slot, { ...inflight, lifecycle: null, seal: false }, reported, reported - 1);
   };
 
   const beginOpen = (slot: WriterSlot): void => {
@@ -352,7 +361,6 @@ export function createAgentTurnLogWriter(
     const acceptance = slot.window?.accept(buffered);
     publish(slot);
     if (acceptance !== undefined) applyBackpressure(slot, acceptance.pending);
-    guardTurnCeiling(slot);
     scheduleFlush(slot, (acceptance?.urgent ?? false) || slot.sealRequested);
   };
 
@@ -379,12 +387,6 @@ export function createAgentTurnLogWriter(
     if (digest.context.provider !== slot.request.provider)
       return emptyAgentTurnDigest(slot.request.provider);
     return digest;
-  };
-
-  const guardTurnCeiling = (slot: WriterSlot): void => {
-    if (slot.window === null) return;
-    if (slot.window.totalBytes() <= AGENT_TURN_LOG_LIMITS.turnCeilingBytes) return;
-    stop(slot, "turnCeiling", { kind: "turnCeiling" });
   };
 
   const runFlush = async (slot: WriterSlot): Promise<void> => {
@@ -414,12 +416,13 @@ export function createAgentTurnLogWriter(
     }
     const batch = window.take(slot.maxBatchOps, AGENT_TURN_LOG_APPEND_TARGET_BYTES);
     const seal = slot.sealRequested && batch.complete;
-    if (batch.ops.length === 0 && !seal) {
+    const lifecycle = unstoredLifecycle(slot);
+    if (batch.ops.length === 0 && !seal && lifecycle === null) {
       slot.flushing = false;
       return;
     }
     cancelTimer(slot);
-    const inflight: InFlightBatch = { window, batch, seal };
+    const inflight: InFlightBatch = { window, batch, seal, lifecycle };
     const written = await attempt(() =>
       dependencies.gateway.appendTurnLog({
         scope: slot.scope,
@@ -429,6 +432,7 @@ export function createAgentTurnLogWriter(
         digest: batch.digest,
         seal,
         loss: slotLoss(slot),
+        lifecycle,
       }),
     );
     slot.flushing = false;
@@ -472,6 +476,7 @@ export function createAgentTurnLogWriter(
     persistedThroughSeq: number,
   ): void => {
     inflight.window.commit(inflight.batch);
+    if (inflight.lifecycle !== null) slot.lifecycleStored = inflight.lifecycle;
     slot.attempts = 0;
     slot.retryWindowStartMs = null;
     slot.expectedNextSeq = nextSeq;
@@ -483,7 +488,11 @@ export function createAgentTurnLogWriter(
       return;
     }
     publish(slot);
-    const chase = slot.flushRequested || slot.sealRequested || inflight.window.pending().ops > 0;
+    const chase =
+      slot.flushRequested ||
+      slot.sealRequested ||
+      inflight.window.pending().ops > 0 ||
+      unstoredLifecycle(slot) !== null;
     slot.flushRequested = false;
     if (!chase) return;
     void runFlush(slot);
@@ -504,7 +513,7 @@ export function createAgentTurnLogWriter(
         await withinBudget(pendingOpen, deadline);
         continue;
       }
-      if (slot.window.pending().ops === 0) return;
+      if (slot.window.pending().ops === 0 && unstoredLifecycle(slot) === null) return;
       cancelTimer(slot);
       await withinBudget(runFlush(slot), deadline);
     }
@@ -524,6 +533,15 @@ export function createAgentTurnLogWriter(
       const cancel = dependencies.timers.schedule(finish, remainingMs);
       void work.then(finish, finish);
     });
+  };
+
+  const unstoredLifecycle = (slot: WriterSlot): AgentSubagentLifecycle | null => {
+    const lifecycle = slot.lifecycle;
+    if (lifecycle === null) return null;
+    if (lifecycle === slot.lifecycleStored || lifecycle === slot.lifecycleRejected) return null;
+    if (loggableLifecycle(lifecycle)) return lifecycle;
+    slot.lifecycleRejected = lifecycle;
+    return null;
   };
 
   const slotLoss = (slot: WriterSlot): AgentTurnLogLoss => {
@@ -551,6 +569,7 @@ export function createAgentTurnLogWriter(
       bounded: slot.window?.bounded() ?? false,
       contextWindow: agentTurnDigestContextWindow(slot.window?.digest() ?? null),
       promptStored: slot.promptStored,
+      lifecycleStored: slot.lifecycleStored,
     };
   };
 
@@ -582,6 +601,9 @@ export function createAgentTurnLogWriter(
         retryWindowStartMs: null,
         backpressure: false,
         promptStored: false,
+        lifecycle: null,
+        lifecycleStored: null,
+        lifecycleRejected: null,
         reportedLoss: NO_AGENT_TURN_LOG_LOSS,
         state: { kind: "opening" },
         final: null,
@@ -609,8 +631,16 @@ export function createAgentTurnLogWriter(
       }
       const acceptance = window.accept(events);
       applyBackpressure(slot, acceptance.pending);
-      guardTurnCeiling(slot);
       scheduleFlush(slot, acceptance.urgent);
+    },
+    recordLifecycle(turnId, lifecycle) {
+      if (disposed) return;
+      const slot = slots.get(turnId);
+      if (slot === undefined) return;
+      if (slot.state.kind === "stopped") return;
+      if (slot.lifecycle === lifecycle) return;
+      slot.lifecycle = lifecycle;
+      scheduleFlush(slot, false);
     },
     reportLoss(turnId, loss) {
       if (disposed) return;
@@ -655,6 +685,11 @@ export function createAgentTurnLogWriter(
       finals.clear();
     },
   };
+}
+
+function loggableLifecycle(lifecycle: AgentSubagentLifecycle): boolean {
+  if (readAgentSubagentLifecycle(lifecycle) === undefined) return false;
+  return agentTurnLogLifecycleFits(lifecycle);
 }
 
 function retryDelayMs(attempts: number): number {

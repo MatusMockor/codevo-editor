@@ -1,3 +1,8 @@
+import { agentRootOwnerId } from "../domain/agentProject";
+import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
+import { importSavedSessionHistory } from "./importSavedSessionHistory";
+import { useAgentThreadHistory } from "./useAgentThreadHistory";
+import { useAgentHistoryCatalog } from "./useAgentHistoryCatalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
@@ -75,7 +80,11 @@ import { useAgentIsolationPreview } from "./useAgentIsolationPreview";
 import { useAgentShipFlow, type ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { isLoggedAgentThread, useAgentThreadStore } from "./useAgentThreadStore";
 import { useAgentTurnLogging } from "./useAgentTurnLogging";
-import { defaultAgentTurnLogGateway } from "./workbenchDefaultGateways";
+import {
+  defaultAgentTurnLogGateway,
+  defaultSessionImportGateway,
+  defaultHistoryCatalogGateway,
+} from "./workbenchDefaultGateways";
 import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS, type AgentTurnLogGateway } from "./agentTurnLogPorts";
 import { useAgentTurnDispatch } from "./useAgentTurnDispatch";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
@@ -88,6 +97,7 @@ export type AgentThreadsGitGateway = Pick<
 >;
 
 export interface AgentThreadsDependencies {
+  readonly externalSessionImportGateway?: ExternalSessionImportGateway;
   readonly agentTaskGateway: AgentTaskGateway;
   readonly agentQuestionGateway?: AgentQuestionGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
@@ -173,10 +183,39 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   });
   storeRef.current = store;
   const threads = store.state.threads;
+  const durableHistory = dependencies.agentThreadStoreGateway.readAgentHistoryTurns !== undefined;
+  const importGateway =
+    dependencies.externalSessionImportGateway ??
+    (durableHistory ? defaultSessionImportGateway : undefined);
+  const importAuthorityRef = useRef({ projects, store });
+  importAuthorityRef.current = { projects, store };
+  const importMounted = useRef(true);
+  useEffect(() => {
+    importMounted.current = true;
+    return () => {
+      importMounted.current = false;
+    };
+  }, []);
+  const history = useAgentThreadHistory({
+    projects,
+    threads,
+    gateway: dependencies.agentThreadStoreGateway,
+    currentState: store.currentState,
+    reportError,
+    turnLog,
+  });
+  const catalog = useAgentHistoryCatalog({
+    projects,
+    gateway: defaultHistoryCatalogGateway,
+    currentState: store.currentState,
+    restoreThread: (thread) => store.restoreThread?.(thread) ?? Promise.resolve(false),
+    reportError,
+  });
   const externalHistory = useImportedThreadHistory({
     projects,
     threads,
     gateway: dependencies.externalSessionGateway,
+    importGateway,
     currentState: store.currentState,
     dispatchAction: store.dispatchAction,
     reportError,
@@ -452,22 +491,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
         setNotice(warning(IMPORT_INVALID_SESSION_NOTICE));
         return null;
       }
-      if (request.provider !== normalizeAgentCliKind(getAgentCliKind())) {
-        setNotice({
-          kind: "warning",
-          message: IMPORT_PROVIDER_MISMATCH_NOTICE,
-          action: "configure-agent-cli",
-        });
-        return null;
-      }
-      if (getAgentProviderAdmissionAuthority(request.provider).disposition.kind !== "ready") {
-        setNotice({
-          kind: "warning",
-          message: IMPORT_CLI_NOT_CONFIGURED_NOTICE,
-          action: "configure-agent-cli",
-        });
-        return null;
-      }
       const project = projectByRootKey(projects, request.projectRootKey);
       if (
         project === undefined ||
@@ -489,13 +512,117 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
         setNotice(warning(IMPORT_STORE_NOT_READY_NOTICE));
         return null;
       }
+      const owned = () => {
+        const current = importAuthorityRef.current.projects.find(
+          (entry) => entry.rootKey === project.rootKey,
+        );
+        return (
+          importMounted.current &&
+          current?.generation === project.generation &&
+          current?.ownerId === project.ownerId
+        );
+      };
+      const finishImport = async (
+        threadId: string,
+        alreadyImported: boolean,
+      ): Promise<ExternalSessionImportResult | null> => {
+        if (importGateway === undefined) {
+          setNotice(alreadyImported ? info(IMPORT_DUPLICATE_NOTICE) : null);
+          return { threadId, alreadyImported };
+        }
+        const current = () =>
+          owned() && importAuthorityRef.current.store.currentState().threads.has(threadId);
+        const existing = importAuthorityRef.current.store.currentState().threads.get(threadId);
+        // A running imported turn already passed the durable save barrier before launch.
+        const saved =
+          alreadyImported && existing !== undefined && runningTurn(existing) !== null
+            ? true
+            : await store.flushThread?.(threadId);
+        if (!current()) return null;
+        if (saved !== true) {
+          setNotice(
+            warning("The imported conversation could not be saved. Retry the import to continue."),
+          );
+          return null;
+        }
+        const imported = await attempt(() =>
+          importSavedSessionHistory(
+            importGateway,
+            {
+              rootKey: project.rootKey,
+              ownerId: agentRootOwnerId(project.rootKey),
+              threadId,
+            },
+            current,
+          ),
+        );
+        if (!current()) return null;
+        if (!imported.ok) {
+          reportError("Session import", imported.error);
+          setNotice(
+            warning(
+              "The session history could not be fully imported. Retry to continue from the saved progress.",
+            ),
+          );
+          return null;
+        }
+        setNotice(
+          imported.value.truncated
+            ? warning(
+                "The session was imported, but some source records were incomplete or exceeded the supported record size.",
+              )
+            : null,
+        );
+        return { threadId, alreadyImported };
+      };
       const state = currentState();
       const existing = importedThreadFor(state, request);
       if (existing !== null) {
-        setNotice(info(IMPORT_DUPLICATE_NOTICE));
-        return { threadId: existing.threadId, alreadyImported: true };
+        return finishImport(existing.threadId, true);
       }
-      const usedIds = new Set([...state.threads.keys(), ...usedTurnIds(state)]);
+      const findImport = dependencies.agentThreadStoreGateway.findAgentHistoryImport;
+      if (findImport !== undefined) {
+        const found = await attempt(() =>
+          findImport.call(dependencies.agentThreadStoreGateway, {
+            rootKey: project.rootKey,
+            ownerId: agentRootOwnerId(project.rootKey),
+            provider: request.provider,
+            sessionId: request.sessionId,
+            repositoryRoot: request.repositoryRoot,
+          }),
+        );
+        if (!owned()) return null;
+        if (!found.ok) {
+          reportError("Session import", found.error);
+          setNotice(warning("Saved sessions could not be checked. Retry the import."));
+          return null;
+        }
+        if (found.value !== null) {
+          const restored = await store.restoreThread?.({
+            ...found.value,
+            owner: { ...found.value.owner, ownerId: identity.workspaceId },
+          });
+          if (!owned() || restored !== true) return null;
+          return finishImport(found.value.threadId, true);
+        }
+      }
+      if (request.provider !== normalizeAgentCliKind(getAgentCliKind())) {
+        setNotice({
+          kind: "warning",
+          message: IMPORT_PROVIDER_MISMATCH_NOTICE,
+          action: "configure-agent-cli",
+        });
+        return null;
+      }
+      if (getAgentProviderAdmissionAuthority(request.provider).disposition.kind !== "ready") {
+        setNotice({
+          kind: "warning",
+          message: IMPORT_CLI_NOT_CONFIGURED_NOTICE,
+          action: "configure-agent-cli",
+        });
+        return null;
+      }
+      const usedIds = new Set([...currentState().threads.keys(), ...usedTurnIds(currentState())]);
       const threadId = mintUnusedId({ now: clock, createEntropyHex4 }, usedIds);
       if (threadId === null) {
         setNotice(warning(IMPORT_ID_MINT_FAILED_NOTICE));
@@ -526,9 +653,22 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
           importedAtEpochMs: createdAt,
         },
       };
-      dispatchAction({ kind: "threadCreated", thread });
-      setNotice(null);
-      return { threadId, alreadyImported: false };
+      const reserve = store.reserveThreadSlot;
+      const release =
+        reserve === undefined ? () => undefined : await reserve(threadId, thread.owner);
+      if (release === null) {
+        if (owned())
+          setNotice(warning("Save an existing conversation before importing another session."));
+        return null;
+      }
+      try {
+        if (!owned()) return null;
+        dispatchAction({ kind: "threadCreated", thread });
+        if (!currentState().threads.has(threadId)) return null;
+        return await finishImport(threadId, false);
+      } finally {
+        release();
+      }
     },
     [
       clock,
@@ -538,6 +678,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       getAgentCliKind,
       getAgentProviderAdmissionAuthority,
       launchIdentityForProject,
+      importGateway,
+      dependencies.agentThreadStoreGateway,
+      store,
+      reportError,
       loadedRootKeys,
       projects,
     ],
@@ -641,6 +785,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     importExternalSession,
     externalSessions,
     externalHistory,
+    history: durableHistory ? history : undefined,
+    catalog: durableHistory ? catalog : undefined,
     turnLog: turnLog.facts,
     stop: dispatch.stop,
     togglePin: store.togglePin,

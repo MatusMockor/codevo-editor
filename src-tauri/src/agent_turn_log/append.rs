@@ -2,10 +2,10 @@ use super::errors::{sequence_gap, sqlite, AgentTurnLogError, AgentTurnLogResult}
 use super::payload::{encode_ops, EncodedOp};
 use super::schema::{read_turn_meta, update_turn_meta, TurnMetaRow};
 use super::wire::{
-    budget_for, AgentTurnLogLoss, AgentTurnLogLossKind, AppendAgentTurnLogReceipt,
-    AppendAgentTurnLogRequest, MAX_TURN_BYTES,
+    AgentTurnLogBudget, AppendAgentTurnLogReceipt, AppendAgentTurnLogRequest, MAX_LOG_COUNTER,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
+use serde_json::Value;
 
 pub(crate) fn append(
     connection: &mut Connection,
@@ -21,7 +21,7 @@ pub(crate) fn append(
         return Err(AgentTurnLogError::SupersededWriter);
     }
     if meta.sealed {
-        return Err(AgentTurnLogError::Sealed);
+        return append_lifecycle_to_sealed_turn(transaction, request, meta);
     }
     if meta.next_seq != request.expected_next_seq {
         return Err(AgentTurnLogError::SequenceGap(Some(meta.next_seq)));
@@ -36,23 +36,22 @@ pub(crate) fn append(
         .sum();
     let turn_bytes = meta
         .bytes
-        .saturating_add(added_bytes)
-        .saturating_add(replacement_bytes)
-        .saturating_sub(replaced_bytes);
-    if turn_bytes > MAX_TURN_BYTES {
-        meta.loss = AgentTurnLogLoss::of(AgentTurnLogLossKind::TurnCeiling);
-        update_turn_meta(&transaction, &meta)?;
-        sqlite(transaction.commit())?;
-        return Err(AgentTurnLogError::BudgetExhausted);
-    }
+        .checked_sub(replaced_bytes)
+        .and_then(|bytes| bytes.checked_add(added_bytes))
+        .and_then(|bytes| bytes.checked_add(replacement_bytes))
+        .filter(|bytes| (0..=MAX_LOG_COUNTER).contains(bytes))
+        .ok_or(AgentTurnLogError::BudgetExhausted)?;
+    let appended_count = plan.appends.len() as i64;
+    let next_seq = checked_counter(meta.next_seq, appended_count)?;
+    let event_count = checked_counter(meta.event_count, appended_count)?;
     for op in &plan.replacements {
         replace_event(&transaction, turn_id, op)?;
     }
     for op in &plan.appends {
         insert_event(&transaction, turn_id, op)?;
     }
-    meta.next_seq = request.expected_next_seq + plan.appends.len() as i64;
-    meta.event_count += plan.appends.len() as i64;
+    meta.next_seq = next_seq;
+    meta.event_count = event_count;
     meta.bytes = turn_bytes;
     meta.first_seq = plan.first_seq;
     meta.sealed = meta.sealed || request.seal;
@@ -63,14 +62,52 @@ pub(crate) fn append(
         meta.digest = Some(digest.clone());
         meta.digest_through_seq = meta.next_seq - 1;
     }
+    if let Some(lifecycle) = request.lifecycle.as_ref() {
+        meta.lifecycle = Some(lifecycle.clone());
+    }
     update_turn_meta(&transaction, &meta)?;
     sqlite(transaction.commit())?;
-    Ok(AppendAgentTurnLogReceipt {
+    Ok(receipt_of(&meta))
+}
+
+fn append_lifecycle_to_sealed_turn(
+    transaction: Transaction<'_>,
+    request: &AppendAgentTurnLogRequest,
+    mut meta: TurnMetaRow,
+) -> AgentTurnLogResult<AppendAgentTurnLogReceipt> {
+    let Some(lifecycle) = lifecycle_only_request(request) else {
+        return Err(AgentTurnLogError::Sealed);
+    };
+    if meta.next_seq != request.expected_next_seq {
+        return Err(AgentTurnLogError::SequenceGap(Some(meta.next_seq)));
+    }
+    if let Some(stored) = meta.lifecycle.as_ref() {
+        return if stored == lifecycle {
+            Ok(receipt_of(&meta))
+        } else {
+            Err(AgentTurnLogError::Sealed)
+        };
+    }
+    meta.lifecycle = Some(lifecycle.clone());
+    update_turn_meta(&transaction, &meta)?;
+    sqlite(transaction.commit())?;
+    Ok(receipt_of(&meta))
+}
+
+fn lifecycle_only_request(request: &AppendAgentTurnLogRequest) -> Option<&Value> {
+    if !request.ops.is_empty() || request.seal {
+        return None;
+    }
+    request.lifecycle.as_ref()
+}
+
+fn receipt_of(meta: &TurnMetaRow) -> AppendAgentTurnLogReceipt {
+    AppendAgentTurnLogReceipt {
         persisted_through_seq: meta.next_seq - 1,
         next_seq: meta.next_seq,
         turn_bytes: meta.bytes,
-        budget: budget_for(meta.bytes),
-    })
+        budget: AgentTurnLogBudget::Ok,
+    }
 }
 
 struct AppendPlan<'ops> {
@@ -125,7 +162,7 @@ fn existing_bytes(
         let Some(bytes) = bytes else {
             return Err(sequence_gap());
         };
-        total = total.saturating_add(bytes);
+        total = checked_counter(total, bytes)?;
     }
     Ok(total)
 }
@@ -159,4 +196,11 @@ fn insert_event(connection: &Connection, turn_id: &str, op: &EncodedOp) -> Agent
         ],
     ))?;
     Ok(())
+}
+
+fn checked_counter(current: i64, added: i64) -> AgentTurnLogResult<i64> {
+    current
+        .checked_add(added)
+        .filter(|value| current >= 0 && added >= 0 && *value <= MAX_LOG_COUNTER)
+        .ok_or(AgentTurnLogError::BudgetExhausted)
 }

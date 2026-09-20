@@ -144,6 +144,8 @@ describe("thread session turn log notices", () => {
         digest: null,
         prompt: null,
         promptOmitted: false,
+        lifecycle: null,
+        lifecycleOmitted: false,
       },
     ]);
     render(true, store);

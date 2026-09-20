@@ -1,3 +1,4 @@
+import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import type { AgentTurnEvent } from "./agentThread";
 import type { AgentTurnDigestWire } from "./agentTurnDigest";
 
@@ -13,9 +14,10 @@ export const AGENT_TURN_LOG_LIMITS = {
   summaries: 64,
   promptBytes: 32_768,
   summaryPromptBytes: 524_288,
+  lifecycleBytes: 131_072,
+  summaryLifecycleBytes: 524_288,
   rootKeyBytes: 4_096,
   idBytes: 64,
-  turnCeilingBytes: 268_435_456,
 } as const;
 
 export type AgentTurnLogLoss =
@@ -23,6 +25,7 @@ export type AgentTurnLogLoss =
   | { readonly kind: "legacyWindow" }
   | { readonly kind: "supervisorGap" }
   | { readonly kind: "diskBudget"; readonly atEpochMs: number }
+  // Historical loss marker retained for logs written before incremental storage.
   | { readonly kind: "turnCeiling" }
   | { readonly kind: "unreadable" };
 
@@ -59,6 +62,7 @@ export interface AppendAgentTurnLogRequest {
   readonly digest: AgentTurnDigestWire | null;
   readonly seal: boolean;
   readonly loss: AgentTurnLogLoss;
+  readonly lifecycle: AgentSubagentLifecycle | null;
 }
 
 export type AgentTurnLogBudget = "ok" | "near" | "evicting";
@@ -94,10 +98,12 @@ export interface AgentTurnLogPage {
 }
 
 export interface SummarizeAgentTurnLogsRequest {
+  readonly turnId?: string;
   readonly rootKey: string;
   readonly ownerId: string;
   readonly threadId: string;
   readonly includePrompts: boolean;
+  readonly includeLifecycles: boolean;
 }
 
 export interface DeleteAgentThreadLogRequest {
@@ -119,6 +125,8 @@ export interface AgentTurnLogSummary {
   readonly digest: AgentTurnDigestWire | null;
   readonly prompt: string | null;
   readonly promptOmitted: boolean;
+  readonly lifecycle: AgentSubagentLifecycle | null;
+  readonly lifecycleOmitted: boolean;
 }
 
 export const AGENT_TURN_LOG_ERRORS = [

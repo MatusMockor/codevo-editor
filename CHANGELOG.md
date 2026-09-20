@@ -7,6 +7,41 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.55] - 2026-09-20
+
+### Added
+
+- Store local conversation history in SQLite and browse saved conversations, older
+  turns and recorded activity in bounded pages.
+- Resume interrupted session imports from saved progress, preserve provider session
+  identities, and prevent duplicate imports across loaded and saved conversations.
+- Browse earlier and newer server conversation turns without changing the latest
+  turn used for continuation, and catch up large server histories incrementally.
+- Add server projects through a Git URL or repository lookup, and show expanded
+  subagent details for supported providers.
+
+### Fixed
+
+- Remove the 1 MiB local thread-file ceiling and the 256 MiB cumulative turn-log
+  ceiling. Saving the current window no longer discards older saved turns.
+- Preserve full local prompts and subagent lifecycle summaries across reloads;
+  reject stale saves and recover safely when a save acknowledgement is lost.
+- Save conversations before replacing their in-memory views, including imports and
+  newly created conversations.
+- Preserve existing history styling, make generated file previews diagnosable,
+  and avoid focus rings on programmatic focus targets.
+
+### Compatibility
+
+- Existing local JSON history is migrated without deleting its original files.
+- Session import preserves supported chat text and attachment metadata. Individual
+  oversized or malformed source records are reported as incomplete; import does
+  not reproduce every provider-specific tool event.
+- Server history improvements require the matching updated Codevo Runner. Server
+  deployment and service startup are separate from this editor release.
+- The server catalog keeps a bounded recent task window. Earlier turns remain
+  pageable; historical attachment previews are not yet included in that view.
+
 ## [0.2.0-beta.54] - 2026-09-18
 
 ### Fixed

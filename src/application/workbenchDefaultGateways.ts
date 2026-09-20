@@ -1,6 +1,8 @@
 import { TauriAgentAttachmentGateway } from "../infrastructure/tauriAgentAttachmentGateway";
 import { TauriAgentTaskGateway } from "../infrastructure/tauriAgentTaskGateway";
-import { TauriAgentThreadStoreGateway } from "../infrastructure/tauriAgentThreadStoreGateway";
+import { TauriAgentHistoryGateway } from "../infrastructure/tauriAgentHistoryGateway";
+import { TauriExternalSessionImportGateway } from "../infrastructure/tauriExternalSessionImportGateway";
+import { TauriAgentHistoryCatalogGateway } from "../infrastructure/tauriAgentHistoryCatalogGateway";
 import { TauriAgentTurnLogGateway } from "../infrastructure/tauriAgentTurnLogGateway";
 import { TauriDebugGateway } from "../infrastructure/tauriDebugGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
@@ -20,10 +22,12 @@ import type { AgentThreadStoreGateway } from "./agentThreadPorts";
 
 export const defaultAgentAttachmentGateway = new TauriAgentAttachmentGateway();
 export const defaultAgentTaskGateway = new TauriAgentTaskGateway();
+export const defaultSessionImportGateway = new TauriExternalSessionImportGateway();
+export const defaultHistoryCatalogGateway = new TauriAgentHistoryCatalogGateway();
 export function createDefaultAgentThreadStoreGateway(
   evidenceOf: AgentTurnLogEvidenceLookup,
 ): AgentThreadStoreGateway {
-  return new TauriAgentThreadStoreGateway(undefined, undefined, evidenceOf);
+  return new TauriAgentHistoryGateway(undefined, undefined, evidenceOf);
 }
 export const defaultAgentTurnLogGateway = new TauriAgentTurnLogGateway();
 export const defaultDebugGateway = new TauriDebugGateway();

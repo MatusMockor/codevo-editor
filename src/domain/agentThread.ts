@@ -18,6 +18,7 @@ import {
 import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
+import { restorableAgentTurnLifecycle } from "./agentTurnLifecycleRestore";
 import {
   capAgentTurnEvents,
   retainAgentTurnEvents,
@@ -277,6 +278,7 @@ export interface AgentThreadExternalOrigin {
 }
 
 export interface AgentThread {
+  readonly historyRevision?: number;
   readonly threadId: string;
   readonly owner: AgentThreadOwner;
   readonly target: AgentThreadTarget;
@@ -309,6 +311,12 @@ export type AgentThreadsAction =
       readonly threads: ReadonlyArray<AgentThread>;
     }
   | { readonly kind: "threadCreated"; readonly thread: AgentThread }
+  | { readonly kind: "historyThreadEvicted"; readonly threadId: string }
+  | {
+      readonly kind: "historyThreadOpened";
+      readonly thread: AgentThread;
+      readonly evictThreadId: string | null;
+    }
   | {
       readonly kind: "externalHistoryLoaded";
       readonly threadId: string;
@@ -356,6 +364,12 @@ export type AgentThreadsAction =
       readonly threadId: string;
       readonly turnId: string;
       readonly prompt: string;
+    }
+  | {
+      readonly kind: "turnLifecycleRestored";
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly lifecycle: AgentSubagentLifecycle;
     }
   | {
       readonly kind: "integrationRecorded";
@@ -519,6 +533,15 @@ export function agentThreadsReducer(
       return loadThreads(state, action.owner, action.threads);
     case "threadCreated":
       return createThread(state, action.thread);
+    case "historyThreadOpened":
+      return openHistoryThread(state, action);
+    case "historyThreadEvicted": {
+      const thread = state.threads.get(action.threadId);
+      if (thread === undefined || !isEvictableThread(thread)) return state;
+      const threads = new Map(state.threads);
+      threads.delete(action.threadId);
+      return { threads };
+    }
     case "externalHistoryLoaded":
       return loadExternalHistory(state, action);
     case "turnStarted":
@@ -535,6 +558,8 @@ export function agentThreadsReducer(
       return hydrateTurn(state, action);
     case "turnPromptRestored":
       return restoreTurnPrompt(state, action);
+    case "turnLifecycleRestored":
+      return restoreTurnLifecycle(state, action);
     case "integrationRecorded":
       return recordIntegration(state, action.threadId, action.integration);
     case "threadViewed":
@@ -631,6 +656,28 @@ function createThread(state: AgentThreadsState, thread: AgentThread): AgentThrea
   const threads = new Map(state.threads);
   threads.set(thread.threadId, boundAgentThreadEvents(thread));
   evictThreadsForRoot(threads, thread.owner.rootKey);
+  return { threads };
+}
+
+function openHistoryThread(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "historyThreadOpened" }>,
+): AgentThreadsState {
+  if (state.threads.has(action.thread.threadId)) return state;
+  const threads = new Map(state.threads);
+  if (action.evictThreadId !== null) {
+    const victim = threads.get(action.evictThreadId);
+    if (victim === undefined || victim.owner.rootKey !== action.thread.owner.rootKey) return state;
+    if (!isEvictableThread(victim)) return state;
+    threads.delete(victim.threadId);
+  }
+  if (
+    [...threads.values()].filter((thread) => thread.owner.rootKey === action.thread.owner.rootKey)
+      .length >= MAX_AGENT_THREADS_PER_ROOT
+  )
+    return state;
+  if (action.thread.turns.some((turn) => findTurn({ threads }, turn.turnId) !== null)) return state;
+  threads.set(action.thread.threadId, boundAgentThreadEvents(markInterruptedTurns(action.thread)));
   return { threads };
 }
 
@@ -1123,6 +1170,23 @@ function restoreTurnPrompt(
   if (!isTerminalAgentTurnStatus(turn.status)) return state;
   const turns = thread.turns.map((candidate, position) =>
     position === index ? { ...turn, prompt: action.prompt, promptRestored: true } : candidate,
+  );
+  return replaceThread(state, { ...thread, turns });
+}
+
+function restoreTurnLifecycle(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "turnLifecycleRestored" }>,
+): AgentThreadsState {
+  const location = findTurnInThread(state, action.threadId, action.turnId);
+  if (location === null) return state;
+  const { thread, index } = location;
+  const turn = thread.turns[index];
+  if (!isTerminalAgentTurnStatus(turn.status)) return state;
+  const subagentLifecycle = restorableAgentTurnLifecycle(turn.subagentLifecycle, action.lifecycle);
+  if (subagentLifecycle === null) return state;
+  const turns = thread.turns.map((candidate, position) =>
+    position === index ? { ...turn, subagentLifecycle } : candidate,
   );
   return replaceThread(state, { ...thread, turns });
 }

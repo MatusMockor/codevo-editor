@@ -173,7 +173,7 @@ fn read_history_at(
     })
 }
 
-fn history_claude_exchange(line: &RawClaudeLine) -> Option<SessionExchangeDraft> {
+pub(super) fn history_claude_exchange(line: &RawClaudeLine) -> Option<SessionExchangeDraft> {
     if line.line_type.as_deref() != Some("user") {
         return claude_exchange(line);
     }
@@ -195,7 +195,7 @@ fn history_claude_exchange(line: &RawClaudeLine) -> Option<SessionExchangeDraft>
     Some(SessionExchangeDraft::claude_user(line, text.to_string()))
 }
 
-fn history_codex_exchange(line: &RawCodexLine) -> Option<SessionExchangeDraft> {
+pub(super) fn history_codex_exchange(line: &RawCodexLine) -> Option<SessionExchangeDraft> {
     let payload = line.payload.as_ref()?;
     if payload.role.as_deref() != Some("user") {
         return codex_exchange(line);

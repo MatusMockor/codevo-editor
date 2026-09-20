@@ -24,6 +24,8 @@ function summary(turnId: string): AgentTurnLogSummary {
     digest: null,
     prompt: null,
     promptOmitted: false,
+    lifecycle: null,
+    lifecycleOmitted: false,
   };
 }
 
@@ -71,6 +73,7 @@ function requesterHarness() {
       ownerId: OWNER_ID,
       threadId,
       includePrompts: false,
+      includeLifecycles: false,
     }),
     generationOf: () => state.generation,
     active: () => true,

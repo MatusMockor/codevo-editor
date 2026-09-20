@@ -555,6 +555,11 @@ impl AgentAttachmentStore {
     }
 
     fn thread_file_exists_for_root_key(&self, root_key: &str, thread_id: &str) -> bool {
+        match super::super::agent_history_commands::agent_history_store::connection::ownership_status(&self.base_dir,root_key,thread_id) {
+            Ok(Some(owned))=>return owned,
+            Err(_)=>return false,
+            Ok(None)=>{}
+        }
         self.base_dir
             .join(AGENT_THREAD_STORE_DIR_NAME)
             .join(fnv1a64hex(root_key))
@@ -761,6 +766,12 @@ impl AgentAttachmentStore {
     }
 
     fn thread_file_exists_in_any_root(&self, thread_id: &str) -> bool {
+        if super::super::agent_history_commands::agent_history_store::connection::exists_in_any_root(
+            &self.base_dir,
+            thread_id,
+        ) {
+            return true;
+        }
         let roots = match fs::read_dir(self.base_dir.join(AGENT_THREAD_STORE_DIR_NAME)) {
             Ok(roots) => roots,
             Err(error) if error.kind() == ErrorKind::NotFound => return false,

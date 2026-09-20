@@ -74,7 +74,7 @@ describe("useAgentThreadStore thread deletion and the turn log", () => {
     await harness.unmount();
   });
 
-  it("never asks for the log of an imported thread", async () => {
+  it("deletes resumed-turn logs when an imported thread is removed", async () => {
     const harness = renderLogStore({
       persisted: [
         logThread({
@@ -92,7 +92,7 @@ describe("useAgentThreadStore thread deletion and the turn log", () => {
     await settleLogStore();
 
     expect(harness.deleted).toHaveLength(1);
-    expect(harness.logGateway.deletedLogs).toEqual([]);
+    expect(harness.logGateway.deletedLogs).toEqual([LOG_SCOPE]);
     await harness.unmount();
   });
 });

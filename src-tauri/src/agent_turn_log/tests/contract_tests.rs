@@ -9,7 +9,8 @@ use super::super::wire::{
     AgentTurnDigestWire, AgentTurnLogLease, AgentTurnLogPage, AgentTurnLogSummary,
     AppendAgentTurnLogReceipt, AGENT_TURN_LOG_SEQ_BASE, MAX_APPEND_BYTES, MAX_APPEND_OPS,
     MAX_DIGEST_BYTES, MAX_DIGEST_CAPACITIES, MAX_PAGE_BYTES, MAX_PAGE_EVENTS,
-    MAX_SUMMARY_PROMPT_RESPONSE_BYTES, MAX_TURN_PROMPT_BYTES, MAX_TURN_SUMMARIES,
+    MAX_SUMMARY_LIFECYCLE_RESPONSE_BYTES, MAX_SUMMARY_PROMPT_RESPONSE_BYTES,
+    MAX_TURN_LIFECYCLE_BYTES, MAX_TURN_PROMPT_BYTES, MAX_TURN_SUMMARIES,
 };
 use super::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -118,6 +119,11 @@ fn the_shared_fixture_pins_the_same_bounds_as_the_rust_store() {
     assert_eq!(
         limits["summaryPromptBytes"],
         json!(MAX_SUMMARY_PROMPT_RESPONSE_BYTES)
+    );
+    assert_eq!(limits["lifecycleBytes"], json!(MAX_TURN_LIFECYCLE_BYTES));
+    assert_eq!(
+        limits["summaryLifecycleBytes"],
+        json!(MAX_SUMMARY_LIFECYCLE_RESPONSE_BYTES)
     );
     assert_eq!(wire["errors"], json!(ERROR_CODES));
     assert_eq!(

@@ -12,6 +12,7 @@ import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { ExternalAgentSessionHistory } from "../domain/externalAgentSession";
 import { surfaceThreadView } from "../components/agentMode/agentSurfaceTestFixtures";
 import { projectFixture } from "../components/agentMode/agentThreadsSurfaceTestFixtures";
+import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
 
 const SESSION = "b79ff607-9d00-4290-98db-f12ff5c950ff";
@@ -48,6 +49,7 @@ describe("useImportedThreadHistory", () => {
   let current: ReturnType<typeof useImportedThreadHistory>;
   let read: ReturnType<typeof vi.fn<(request: unknown) => Promise<ExternalAgentSessionHistory>>>;
   let actions: AgentThreadsAction[];
+  let importGateway: ExternalSessionImportGateway | undefined;
   const reportError = vi.fn();
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -56,6 +58,7 @@ describe("useImportedThreadHistory", () => {
     state = { threads: new Map([["agt-1", imported()]]) };
     projects = [projectFixture()];
     actions = [];
+    importGateway = undefined;
     reportError.mockClear();
     read = vi.fn(async () => history);
   });
@@ -73,6 +76,7 @@ describe("useImportedThreadHistory", () => {
   function Harness({ select = false }: { select?: boolean }) {
     current = useImportedThreadHistory({
       projects,
+      importGateway,
       threads: state.threads,
       gateway: {
         listExternalSessions: vi.fn(),
@@ -199,5 +203,54 @@ describe("useImportedThreadHistory", () => {
       await load;
     });
     expect(actions).toHaveLength(0);
+  });
+  it("keeps durable pages bounded and out of saved thread state", async () => {
+    const older = {
+      ...history,
+      exchanges: [{ role: "user" as const, text: "older" }],
+      totalPreviewBytes: 5,
+    };
+    const readImportedHistory = vi
+      .fn()
+      .mockResolvedValueOnce({ history, complete: true, hasEarlier: true, beforeOrdinal: 128 })
+      .mockResolvedValueOnce({
+        history: older,
+        complete: true,
+        hasEarlier: false,
+        beforeOrdinal: null,
+      });
+    importGateway = { readImportedHistory, importSessionHistory: vi.fn() };
+    render();
+    await act(() => current.ensure("agt-1"));
+    expect(current.pages.get("agt-1")).toEqual(history);
+    expect(current.hasEarlier.get("agt-1")).toBe(true);
+    await act(() => current.loadEarlier("agt-1"));
+    expect(readImportedHistory.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ beforeOrdinal: 128 }),
+    );
+    expect(current.pages.get("agt-1")).toEqual(older);
+    expect(actions).toEqual([]);
+    expect(state.threads.get("agt-1")?.externalOrigin?.history).toBeUndefined();
+  });
+  it("drops durable pages immediately when exact owner or trust changes", async () => {
+    importGateway = {
+      readImportedHistory: vi
+        .fn()
+        .mockResolvedValue({ history, complete: true, hasEarlier: false, beforeOrdinal: null }),
+      importSessionHistory: vi.fn(),
+    };
+    render();
+    await act(() => current.ensure("agt-1"));
+    expect(current.pages.size).toBe(1);
+    projects = projects.map((project) => ({ ...project, generation: project.generation + 1 }));
+    render();
+    expect(current.pages.size).toBe(0);
+    expect(current.states.size).toBe(0);
+    expect(current.hasEarlier.size).toBe(0);
+    await act(() => current.ensure("agt-1"));
+    expect(current.pages.size).toBe(1);
+    projects = projects.map((project) => ({ ...project, trust: "untrusted" }));
+    render();
+    expect(current.pages.size).toBe(0);
   });
 });

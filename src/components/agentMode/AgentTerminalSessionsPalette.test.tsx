@@ -242,7 +242,7 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(onSelectImported).not.toHaveBeenCalled();
   });
 
-  it("routes an already imported session to the existing thread", async () => {
+  it("checks durable import completion before opening an existing session", async () => {
     const onImport = vi.fn();
     const onSelectImported = vi.fn();
     await render({ onImport, onSelectImported });
@@ -252,8 +252,8 @@ describe("AgentTerminalSessionsPalette", () => {
 
     await press("Enter");
 
-    expect(onSelectImported).toHaveBeenCalledWith("agt-existing");
-    expect(onImport).not.toHaveBeenCalled();
+    expect(onSelectImported).not.toHaveBeenCalled();
+    expect(onImport).toHaveBeenCalledWith(IMPORTED_ID, "claudeCode");
   });
 
   it("triggers the primary action from the Continue in Codevo button", async () => {
@@ -548,21 +548,44 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(checkboxes()[0]?.checked).toBe(false);
   });
 
-  it("prunes removed or imported sessions and never selects imported entries", async () => {
+  it("prunes removed sessions but retains a selection when its import header appears", async () => {
     const onImportMany = vi.fn();
-    await render({ onImportMany });
-    expect(checkboxes()[2]?.disabled).toBe(true);
+    const surface = surfaceFixture({});
+    await render({ onImportMany, surface });
+    expect(checkboxes()[2]?.disabled).toBe(false);
     await checkAt(0);
     await checkAt(1);
     await render({
       onImportMany,
+      surface: { ...surface, sessions: [sessionFixture({ alreadyImportedThreadId: "existing" })] },
+    });
+    expect(host.textContent).toContain("1 selected");
+    await press("Enter");
+    expect(onImportMany).toHaveBeenCalledWith([{ sessionId: CLAUDE_ID, provider: "claudeCode" }]);
+    await render({ onImportMany, surface: { ...surface, sessions: [] } });
+    expect(checkboxes()).toHaveLength(0);
+    expect(continueButton()?.disabled).toBe(true);
+  });
+
+  it("allows retrying a failed import whose session already has a saved thread", async () => {
+    const onImportMany = vi.fn();
+    await render({
+      onImportMany,
+      importNotice: "0 of 1 sessions imported. Retry the remaining session.",
       surface: surfaceFixture({
-        sessions: [sessionFixture({ alreadyImportedThreadId: "existing" })],
+        sessions: [sessionFixture({ alreadyImportedThreadId: "partial-thread" })],
       }),
     });
-    expect(host.textContent).toContain("0 selected");
-    await render({ onImportMany });
-    expect(checkboxes().some((checkbox) => checkbox.checked)).toBe(false);
+    expect(checkboxes()[0]?.disabled).toBe(false);
+    const selectFiltered = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Select filtered",
+    );
+    expect(selectFiltered?.disabled).toBe(false);
+    await click(selectFiltered);
+    await press("Enter");
+    expect(onImportMany).toHaveBeenCalledExactlyOnceWith([
+      { sessionId: CLAUDE_ID, provider: "claudeCode" },
+    ]);
   });
 
   it("uses provider and session ID together for selection identity", async () => {

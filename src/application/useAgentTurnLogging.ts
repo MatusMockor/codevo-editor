@@ -10,6 +10,10 @@ import type {
   SummarizeAgentTurnLogsRequest,
 } from "../domain/agentTurnLog";
 import {
+  storeSettledAgentTurnLifecycle,
+  type StoreSettledAgentTurnLifecycleRequest,
+} from "./agentTurnLifecycleMigration";
+import {
   createAgentTurnLogFactsStore,
   type AgentTurnLogFactsStore,
 } from "./agentTurnLogStatusStore";
@@ -41,6 +45,9 @@ export interface AgentTurnLogIntegration {
   readonly deleteThreadLog: (
     request: DeleteAgentThreadLogRequest,
   ) => Promise<DeleteAgentThreadLogResult>;
+  readonly storeSettledLifecycle: (
+    request: StoreSettledAgentTurnLifecycleRequest,
+  ) => Promise<boolean>;
 }
 
 export interface AgentTurnLogLifecycle {
@@ -214,6 +221,7 @@ export function createAgentTurnLogLifecycle(
       target.openTurn(request);
     },
     recordEvents: (turnId, events) => liveWriter()?.recordEvents(turnId, events),
+    recordLifecycle: (turnId, lifecycle) => liveWriter()?.recordLifecycle(turnId, lifecycle),
     reportLoss: (turnId, loss) => liveWriter()?.reportLoss(turnId, loss),
     sealTurn: (turnId) => liveWriter()?.sealTurn(turnId),
     closeTurn(turnId) {
@@ -230,6 +238,23 @@ export function createAgentTurnLogLifecycle(
     },
   };
 
+  const storeSettledLifecycle = (
+    request: StoreSettledAgentTurnLifecycleRequest,
+  ): Promise<boolean> => {
+    if (phase === "unmounted") return Promise.resolve(false);
+    const status = live?.status(request.scope.turnId) ?? null;
+    if (status !== null && status.state.kind !== "stopped") return Promise.resolve(false);
+    const generation = authority.currentGeneration(request.scope);
+    if (generation === null) return Promise.resolve(false);
+    return storeSettledAgentTurnLifecycle(
+      {
+        gateway: dependenciesRef.current.gateway,
+        owned: () => phase !== "unmounted" && authority.ownsTurn(request.scope, generation),
+      },
+      request,
+    );
+  };
+
   return {
     integration: {
       writer,
@@ -237,6 +262,7 @@ export function createAgentTurnLogLifecycle(
       summarize: (request) => dependenciesRef.current.gateway.summarizeTurnLogs(request),
       readPage: (request) => dependenciesRef.current.gateway.readTurnLogPage(request),
       deleteThreadLog: (request) => dependenciesRef.current.gateway.deleteThreadLog(request),
+      storeSettledLifecycle,
     },
     mount() {
       phase = "mounted";
@@ -259,7 +285,13 @@ function summaryScopeOf(
 ): SummarizeAgentTurnLogsRequest | null {
   const rootKey = dependencies.loggedThreadRootKey?.(threadId) ?? null;
   if (rootKey === null) return null;
-  return { rootKey, ownerId: agentRootOwnerId(rootKey), threadId, includePrompts: false };
+  return {
+    rootKey,
+    ownerId: agentRootOwnerId(rootKey),
+    threadId,
+    includePrompts: false,
+    includeLifecycles: false,
+  };
 }
 
 export function ownsAgentTurnLogScope(

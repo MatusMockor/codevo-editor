@@ -45,6 +45,8 @@ function summary(
     digest: null,
     prompt: null,
     promptOmitted: false,
+    lifecycle: null,
+    lifecycleOmitted: false,
     ...overrides,
   };
 }
@@ -54,6 +56,30 @@ function retrying(attempts: number): AgentTurnLogSlotState {
 }
 
 describe("agent turn log facts store", () => {
+  it("retains exact snapshots only from acknowledged writes or detailed summaries", () => {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    const lifecycle = { entries: [], truncated: false };
+    store.publishSlot(THREAD_ID, status("turn-1", { lifecycleStored: lifecycle }));
+    expect(store.factsOf("turn-1")?.lifecycleInLog).toBe(lifecycle);
+    store.publishSlot(
+      THREAD_ID,
+      status("turn-1", {
+        state: { kind: "stopped", reason: "sealed" },
+        lifecycleStored: lifecycle,
+      }),
+    );
+    store.publishSummaries(THREAD_ID, [summary("turn-1", { lifecycleOmitted: true })]);
+    expect(store.factsOf("turn-1")?.lifecycleInLog).toBe(lifecycle);
+    store.publishSummaries(THREAD_ID, [summary("turn-1", { lifecycle })]);
+    expect(store.factsOf("turn-1")?.lifecycleInLog).toBe(lifecycle);
+    store.publishSummaries(THREAD_ID, [
+      summary("turn-1", { sealed: false, lifecycleOmitted: true }),
+    ]);
+    expect(store.factsOf("turn-1")?.lifecycleInLog).toBeNull();
+    store.publishSummaries(THREAD_ID, [summary("turn-2", { lifecycleOmitted: true })]);
+    expect(store.factsOf("turn-2")?.lifecycleInLog).toBeNull();
+  });
+
   it("keeps the latest facts per turn and notifies only on a visible change", () => {
     const store = createAgentTurnLogFactsStore(() => 0);
     const listener = vi.fn();
@@ -86,6 +112,8 @@ describe("agent turn log facts store", () => {
         sealed: true,
         prompt: null,
         promptOmitted: false,
+        lifecycle: null,
+        lifecycleOmitted: false,
         digest: {
           version: 1,
           context: {
@@ -109,6 +137,7 @@ describe("agent turn log facts store", () => {
       contextWindow: { usedTokens: 7, contextWindow: 9 },
       health: { kind: "ok" },
       promptInLog: false,
+      lifecycleInLog: null,
     });
   });
 

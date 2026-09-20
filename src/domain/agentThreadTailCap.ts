@@ -4,6 +4,8 @@ import {
   clipUtf8Text,
   utf8ByteLength,
 } from "./agentPromptClipping";
+import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { compactPersistedAgentSubagentLifecycle } from "./agentLifecyclePersistence";
 import {
   isTerminalAgentTurnStatus,
   type AgentSubagentContentEvent,
@@ -33,6 +35,7 @@ const LIVE_STEER_TIER = 3;
 const FINAL_ANSWER_TIER = 4;
 const NO_GUARDED_EVENTS: ReadonlySet<number> = new Set<number>();
 const NO_LOGGED_PROMPT_TURNS: ReadonlySet<string> = new Set<string>();
+const NO_LOGGED_LIFECYCLES: ReadonlyMap<string, AgentSubagentLifecycle> = new Map();
 const SACRIFICE_TIERS: ReadonlyArray<number> = [
   SETTLED_OUTPUT_TIER,
   SETTLED_STEER_TIER,
@@ -80,8 +83,10 @@ export function capAgentThreadForPersistence(
   thread: AgentThread,
   eventBudgetBytes: number = MAX_PERSISTED_THREAD_EVENT_BYTES,
   loggedPromptTurnIds: ReadonlySet<string> = NO_LOGGED_PROMPT_TURNS,
+  loggedLifecycles: ReadonlyMap<string, AgentSubagentLifecycle> = NO_LOGGED_LIFECYCLES,
 ): AgentThread {
-  const projection = clipLoggedPrompts(thread, eventBudgetBytes, loggedPromptTurnIds);
+  const lifecycleProjection = compactLoggedLifecycles(thread, eventBudgetBytes, loggedLifecycles);
+  const projection = clipLoggedPrompts(lifecycleProjection, eventBudgetBytes, loggedPromptTurnIds);
   const projected = projection.thread;
   const slots = projected.turns.map(openSlot);
   fitThreadBudget(slots, Math.max(eventBudgetBytes - projection.scaffoldBytes, 0));
@@ -93,6 +98,36 @@ export function capAgentThreadForPersistence(
   });
   if (!changed) return projected;
   return { ...projected, turns };
+}
+
+function compactLoggedLifecycles(
+  thread: AgentThread,
+  budgetBytes: number,
+  loggedLifecycles: ReadonlyMap<string, AgentSubagentLifecycle>,
+): AgentThread {
+  if (loggedLifecycles.size === 0) return thread;
+  let scaffold = persistedAgentThreadScaffoldBytes(thread);
+  if (scaffold <= budgetBytes) return thread;
+  const turns = [...thread.turns];
+  let changed = false;
+  for (let index = 0; index < turns.length && scaffold > budgetBytes; index += 1) {
+    const turn = turns[index]!;
+    if (!isTerminalAgentTurnStatus(turn.status)) continue;
+    const lifecycle = turn.subagentLifecycle;
+    const logged = loggedLifecycles.get(turn.turnId);
+    if (lifecycle === undefined || logged === undefined) continue;
+    const original = JSON.stringify(lifecycle);
+    if (original !== JSON.stringify(logged)) continue;
+    const compact = compactPersistedAgentSubagentLifecycle(lifecycle);
+    if (compact === undefined) continue;
+    const released = utf8ByteLength(original) - utf8ByteLength(JSON.stringify(compact));
+    if (released <= 0) continue;
+    scaffold -= released;
+    turns[index] = { ...turn, subagentLifecycle: compact };
+    changed = true;
+  }
+  if (!changed) return thread;
+  return { ...thread, turns };
 }
 
 interface PromptProjection {

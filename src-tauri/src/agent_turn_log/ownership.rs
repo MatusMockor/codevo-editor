@@ -35,6 +35,20 @@ impl ThreadOwnershipProbe {
     }
 
     pub(crate) fn revalidate(&mut self) -> AgentTurnLogResult<()> {
+        if let Some(base) = self
+            .document
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+        {
+            // Exact catalog ownership wins once migrated; legacy files remain immutable backups.
+            let owned=super::super::super::agent_history_commands::agent_history_store::connection::ownership_status(base,&self.root_key,&self.thread_id).map_err(|_|AgentTurnLogError::OwnerMismatch)?;
+            match owned {
+                Some(true) => return Ok(()),
+                Some(false) => return Err(AgentTurnLogError::OwnerMismatch),
+                None => {}
+            }
+        }
         let metadata = match fs::symlink_metadata(&self.document) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => {

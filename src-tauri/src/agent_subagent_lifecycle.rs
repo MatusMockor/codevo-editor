@@ -156,6 +156,31 @@ pub(crate) fn valid(value: &Value) -> bool {
     true
 }
 
+const RETAINED_ENTRY_KEYS: [&str; 4] = ["taskTitle", "batchKey", "nestedCount", "parentToolId"];
+
+pub(crate) fn valid_legacy(value: &Value) -> bool {
+    valid(value) && !carries_retained_detail(value)
+}
+
+fn carries_retained_detail(value: &Value) -> bool {
+    let Some(record) = value.as_object() else {
+        return true;
+    };
+    if record.len() != 2 {
+        return true;
+    }
+    let Some(entries) = record.get("entries").and_then(Value::as_array) else {
+        return true;
+    };
+    entries.iter().any(|entry| {
+        entry.as_object().is_none_or(|fields| {
+            RETAINED_ENTRY_KEYS
+                .iter()
+                .any(|key| fields.contains_key(*key))
+        })
+    })
+}
+
 fn valid_counted_nested_ids(value: &Value) -> bool {
     let Some(ids) = value.as_array() else {
         return false;
@@ -237,6 +262,38 @@ mod tests {
         v["entries"].as_array_mut().unwrap().push(duplicate);
         assert!(!valid(&v));
         assert!(!valid(&Value::Null));
+    }
+    #[test]
+    fn the_v1_shape_refuses_every_retained_key_and_anything_invalid() {
+        let wire: Value = serde_json::from_str(WIRE).unwrap();
+        let legacy = &wire["valid"]["legacy"];
+        assert!(valid_legacy(legacy));
+        assert!(valid(&wire["valid"]["retained"]));
+        assert!(!valid_legacy(&wire["valid"]["retained"]));
+        for (key, value) in [
+            ("taskTitle", json!("Review the slice")),
+            ("batchKey", json!("spawn:toolu_legacy_a")),
+            ("nestedCount", json!(1)),
+            ("parentToolId", json!("toolu_parent")),
+        ] {
+            let mut entry_patched = legacy.clone();
+            entry_patched["entries"][0][key] = value;
+            assert!(valid(&entry_patched), "{key}");
+            assert!(!valid_legacy(&entry_patched), "{key}");
+        }
+        for (key, value) in [
+            ("openBatchKey", json!("spawn:toolu_legacy_a")),
+            ("countedNestedToolIds", json!(["toolu_overflow"])),
+        ] {
+            let mut root_patched = legacy.clone();
+            root_patched[key] = value;
+            assert!(valid(&root_patched), "{key}");
+            assert!(!valid_legacy(&root_patched), "{key}");
+        }
+        let mut incoherent = legacy.clone();
+        incoherent["entries"][0]["state"] = json!("running");
+        assert!(!valid_legacy(&incoherent));
+        assert!(!valid_legacy(&Value::Null));
     }
     const WIRE: &str = include_str!("../../contracts/agent-subagent-lifecycle-wire.json");
     fn patched(mut target: Value, patch: &Value) -> Value {
