@@ -113,6 +113,27 @@ describe("AgentActivityItems", () => {
     }
   });
 
+  it("summarizes a mixed run in first-appearance order under one toggle", () => {
+    const view = fixture();
+    try {
+      view.render([
+        activityTool(0, { name: "Grep", rowKind: "search", inputSummary: "todo" }),
+        activityTool(1, { name: "Read", rowKind: "read", inputSummary: "a.ts" }),
+        activityTool(2),
+        activityTool(3, { name: "Read", rowKind: "read", inputSummary: "b.ts" }),
+        activityTool(4),
+      ]);
+      const toggles = [...view.host.querySelectorAll("button")];
+      expect(toggles).toHaveLength(1);
+      expect(toggles[0].textContent).toContain("1 search · 2 file reads · 2 commands");
+      expect(toggles[0].textContent).toContain("5 completed");
+      act(() => toggles[0].click());
+      expect(view.host.querySelectorAll("[data-tool]")).toHaveLength(5);
+    } finally {
+      view.close();
+    }
+  });
+
   it("keeps live and failed activity visible while collapsed and avoids inferred success", () => {
     const view = fixture();
     try {

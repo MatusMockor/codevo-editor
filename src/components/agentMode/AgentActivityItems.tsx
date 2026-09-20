@@ -6,6 +6,7 @@ import {
   AGENT_ACTIVITY_PAGE_SIZE,
   agentActivityEntries,
   type AgentActivityEntry,
+  type AgentActivityTool,
 } from "./agentActivityGrouping";
 import "./agentActivityGroups.css";
 
@@ -33,6 +34,14 @@ export function AgentActivityItems({ items, currentEventKey, renderItem, scope =
   );
 }
 
+function latestRunning(items: ReadonlyArray<AgentActivityTool>): AgentActivityTool | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.status === "running") return item;
+  }
+  return undefined;
+}
+
 function AgentActivityGroup({
   group,
   scope,
@@ -45,9 +54,7 @@ function AgentActivityGroup({
   readonly renderItem: Props["renderItem"];
 }) {
   const id = useId();
-  const disclosure = useAgentToolDisclosure(
-    JSON.stringify(["activity", scope, group.items[0]?.toolId ?? group.key]),
-  );
+  const disclosure = useAgentToolDisclosure(JSON.stringify(["activity", scope, group.key]));
   const [page, setPage] = useState(0);
   const found =
     currentEventKey === null ? -1 : group.items.findIndex((item) => item.key === currentEventKey);
@@ -57,11 +64,7 @@ function AgentActivityGroup({
     found >= 0 ? Math.floor(found / AGENT_ACTIVITY_PAGE_SIZE) : Math.min(page, lastPage);
   const start = currentPage * AGENT_ACTIVITY_PAGE_SIZE;
   const visible = group.items.slice(start, start + AGENT_ACTIVITY_PAGE_SIZE);
-  const running = group.items.filter((item) => item.status === "running");
-  const latest = running[running.length - 1];
-  const completed = group.items.filter(
-    (item) => item.outcome !== null && !item.outcome.isError,
-  ).length;
+  const latest = latestRunning(group.items);
   const Icon =
     group.category === "command"
       ? Terminal
@@ -86,10 +89,10 @@ function AgentActivityGroup({
         <Icon className="agent-tool-row__icon" aria-hidden="true" size={15} />
         <span className="agent-activity-group__label">{group.label}</span>
         <span className="agent-activity-group__status">
-          {running.length > 0
-            ? `${running.length} running`
-            : completed > 0
-              ? `${completed} completed`
+          {group.running > 0
+            ? `${group.running} running`
+            : group.completed > 0
+              ? `${group.completed} completed`
               : null}
         </span>
         <ChevronDown className="agent-activity-group__chevron" aria-hidden="true" size={14} />

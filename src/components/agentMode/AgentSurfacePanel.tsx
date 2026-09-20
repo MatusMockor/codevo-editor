@@ -21,9 +21,15 @@ import {
   isRemoteAgentSurfaceThread,
   type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
+import {
+  agentSurfaceEditorSlot,
+  effectiveAgentSurface,
+  servedAgentSurfaces,
+  type AgentSurfaceActivation,
+} from "../../domain/agentSurfaceActivation";
 import { useWorkbenchFrameEditorState } from "../workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
-import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
+import { remoteSurfaceCapabilities, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
 
 const RemoteFilesPanel = lazy(() =>
@@ -139,23 +145,19 @@ export function AgentSurfacePanel({
   workspaceTrusted,
 }: AgentSurfacePanelProps) {
   const server = remote || isRemoteAgentSurfaceThread(thread);
-  const openSurfaces = server
-    ? layout.openSurfaces.filter((kind) =>
-        kind === "diff" ? thread !== null : remoteSurfaceSupports(remoteSurface, kind),
-      )
-    : layout.openSurfaces;
-  const activeSurface =
-    server &&
-    layout.activeSurface !== null &&
-    (layout.activeSurface === "diff"
-      ? thread === null
-      : !remoteSurfaceSupports(remoteSurface, layout.activeSurface))
-      ? null
-      : layout.activeSurface;
+  const activation: AgentSurfaceActivation = {
+    remote: server,
+    threadPresent: thread !== null,
+    remoteCapabilities: remoteSurfaceCapabilities(remoteSurface),
+    unavailable: unavailable !== null,
+    hidden,
+  };
+  const openSurfaces = servedAgentSurfaces(activation, layout.openSurfaces);
+  const activeSurface = effectiveAgentSurface(activation, layout.activeSurface);
+  const editorSlot = agentSurfaceEditorSlot(activation, layout.activeSurface);
   const [treeVisible, setTreeVisible] = useState(true);
   const documentOpen = useWorkbenchFrameEditorState() === "documents";
-  const filesActive =
-    !server && unavailable === null && !hidden && activeSurface === "files" && fileTree !== null;
+  const filesActive = editorSlot === "open" && fileTree !== null;
   const treeShown = filesActive && (treeVisible || !documentOpen);
   const treeToggleShown = filesActive && documentOpen;
   useWorkbenchFrameTreeReport(treeShown);
@@ -178,6 +180,7 @@ export function AgentSurfacePanel({
     <aside
       aria-label="Thread surface"
       className="agent-surface"
+      data-editor-slot={editorSlot}
       data-surface={activeSurface ?? "empty"}
       data-tree={treeShown ? "visible" : "hidden"}
     >
@@ -237,9 +240,7 @@ export function AgentSurfacePanel({
             })}
           </div>
         )}
-        {!server && unavailable === null && activeSurface === "files" && !hidden && (
-          <WorkbenchEditorTabsPortalTarget />
-        )}
+        {editorSlot === "open" && <WorkbenchEditorTabsPortalTarget />}
         {activeSurface !== "files" && <span className="agent-session__spacer" />}
         {treeToggleShown && (
           <button

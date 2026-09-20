@@ -8,12 +8,20 @@ import {
   responsiveAgentPanelPlacement,
   type ResponsivePanelRestore,
 } from "../domain/agentWorkbenchResponsiveLayout";
+import {
+  LOCAL_AGENT_SURFACE_ACTIVATION,
+  agentSurfaceEditorSlot,
+} from "../domain/agentSurfaceActivation";
 
 export type { ResponsivePanelRestore } from "../domain/agentWorkbenchResponsiveLayout";
 
 export const WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE = "--agent-right-panel-committed";
 export const WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE = "--agent-bottom-panel-committed";
 export const WORKBENCH_FRAME_RAIL_VARIABLE = "--agent-rail-committed";
+
+export const WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE = "data-editor-slot";
+export const WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR =
+  '.workbench-frame[data-layout="agent"]:has(> [data-slot="surface"] .agent-surface[data-editor-slot="none"])';
 
 export interface WorkbenchShellPlacementInput {
   readonly effectiveLayout: AgentWorkbenchLayoutMode;
@@ -98,7 +106,9 @@ export function workbenchShellPlacement({
   const rightPanelHidden = host.hidden;
   const placement: WorkbenchShellPlacement = {
     layout: effectiveLayout,
-    editorHidden: rightPanelHidden || layout.activeSurface !== "files",
+    editorHidden:
+      rightPanelHidden ||
+      agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, layout.activeSurface) === "none",
     rightPanelHidden,
     surfacesMounted: host.mounted,
     rightPanelMaximized: !rightPanelHidden && layout.rightPanelMaximized,

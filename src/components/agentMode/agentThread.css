@@ -1439,6 +1439,7 @@
 
 .agent-crumbs__title {
   flex: 0 1 auto;
+  max-width: min(44ch, 45%);
   color: var(--agent-text-strong);
 }
 

@@ -12,6 +12,10 @@ import {
   nextWorkbenchFrameEditorReports,
   workbenchFrameEditorState,
 } from "./workbenchFrameEditorReport";
+import {
+  WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE,
+  WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR,
+} from "./workbenchShellPlacement";
 
 const SHELL_SHEET = "components/workbenchShellFrame.css";
 const SURFACE_SHEET = "components/agentMode/agentSurface.css";
@@ -164,6 +168,17 @@ describe("expanded editing shell layout contract", () => {
     expect(
       rulesFor(surface, '.workbench-frame[data-editor="empty"] .agent-surface__editor-slot'),
     ).toEqual([]);
+  });
+
+  it("yields the editor overlay whenever the surface panel hosts no editor slot", () => {
+    expect(
+      declarations(shell, `${WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR} > [data-slot="editor"]`).get(
+        "display",
+      ),
+    ).toBe("none");
+    expect(WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR).toContain(
+      `.agent-surface[${WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE}="none"]`,
+    );
   });
 
   it("docks the tree right only in the maximized state", () => {

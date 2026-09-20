@@ -116,6 +116,16 @@
   display: none;
 }
 
+/* The right panel reports whether it hosts the editor slot (data-editor-slot, derived from the
+   shared agentSurfaceActivation helper). A remote pane, an unavailable scope, a hidden panel or
+   any non-Files surface hosts nothing, so the canvas overlay must not paint over the side tone. */
+.workbench-frame[data-layout="agent"]:has(
+    > [data-slot="surface"] .agent-surface[data-editor-slot="none"]
+  )
+  > [data-slot="editor"] {
+  display: none;
+}
+
 .workbench-frame > [data-slot="surface"][hidden],
 .workbench-frame > [data-slot="editor"][hidden],
 .workbench-frame > [data-slot="bottom"][hidden],

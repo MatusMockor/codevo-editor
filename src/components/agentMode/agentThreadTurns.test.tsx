@@ -646,7 +646,7 @@ describe("agent thread turns", () => {
     expect(declaration(".agent-md__table", "width")).toBe("100%");
     expect(declaration(".agent-md__table", "max-width")).toBe("100%");
     expect(declaration(".agent-md__th", "white-space")).toBe("normal");
-    expect(declaration(".agent-md__td", "overflow-wrap")).toBe("anywhere");
+    expect(declaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
     expect(declaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe("anywhere");
   });
 

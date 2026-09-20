@@ -1,3 +1,7 @@
+import {
+  remoteSurfaceCapabilityOpen,
+  type AgentRemoteSurfaceKind,
+} from "../../domain/agentSurfaceActivation";
 import type {
   RemoteRunnerSurfacesGateway,
   RemoteSurfaceCapabilities,
@@ -13,9 +17,17 @@ export interface AgentRemoteSurface {
   readonly message?: string | null;
 }
 
+export function remoteSurfaceCapabilities(
+  surface: AgentRemoteSurface | null | undefined,
+): RemoteSurfaceCapabilities | null {
+  if (surface === null || surface === undefined) return null;
+  if (surface.gateway === null) return null;
+  return surface.capabilities;
+}
+
 export function remoteSurfaceSupports(
-  surface: AgentRemoteSurface | null,
-  kind: "files" | "history" | "terminal",
+  surface: AgentRemoteSurface | null | undefined,
+  kind: AgentRemoteSurfaceKind,
 ): boolean {
-  return surface?.gateway !== null && surface?.gateway !== undefined && surface.capabilities[kind];
+  return remoteSurfaceCapabilityOpen(remoteSurfaceCapabilities(surface), kind);
 }

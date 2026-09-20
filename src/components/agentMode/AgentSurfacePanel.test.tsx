@@ -7,8 +7,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import type { Commit } from "../../domain/git";
 import type { AgentSurfaceFileTreeSurface } from "../../application/useAgentSurfaceFileTree";
-import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import {
+  initialAgentWorkbenchLayout,
+  type AgentSurfaceKind,
+  type AgentWorkbenchLayout,
+} from "../../domain/agentWorkbenchLayout";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import { WorkbenchShellFrame } from "../WorkbenchShellFrame";
+import {
+  WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE,
+  WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR,
+  workbenchShellPlacement,
+  type WorkbenchShellPlacement,
+} from "../workbenchShellPlacement";
 import {
   WorkbenchFrameEditorStateContext,
   type WorkbenchFrameEditorState,
@@ -761,3 +772,142 @@ function cssRule(source: string, selector: string): string {
   expect(end).toBeGreaterThan(bodyStart);
   return source.slice(bodyStart + 1, end);
 }
+
+describe("surface editor slot and the shell frame", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    installResizeObserver();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("keeps the canvas overlay out of a remote pane that persisted the Files surface", () => {
+    const placement = renderFrame(
+      { openSurfaces: ["files"], activeSurface: "files" },
+      { layout: open([], null), remote: true, remoteSurface: null, thread: null },
+    );
+
+    expect(placement.editorHidden).toBe(false);
+    expect(editorSlot()).toBe("none");
+    expect(overlayYields()).toBe(true);
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+    expect(frame()?.getAttribute("data-tree")).toBe("hidden");
+  });
+
+  it("keeps the canvas overlay out of a remote pane whose Files surface is demoted", () => {
+    renderFrame(
+      { openSurfaces: ["files"], activeSurface: "files" },
+      {
+        layout: open(["files"], "files"),
+        remote: true,
+        remoteSurface: null,
+        thread: null,
+        unavailable: <p className="agent-note">Server surfaces are unavailable.</p>,
+      },
+    );
+
+    expect(surface()?.getAttribute("data-surface")).toBe("empty");
+    expect(editorSlot()).toBe("none");
+    expect(overlayYields()).toBe(true);
+  });
+
+  it("keeps the canvas overlay out of an unavailable local scope", () => {
+    renderFrame(
+      { openSurfaces: ["files"], activeSurface: "files" },
+      {
+        layout: open(["files"], "files"),
+        unavailable: <p className="agent-note">Opening project…</p>,
+      },
+    );
+
+    expect(editorSlot()).toBe("none");
+    expect(overlayYields()).toBe(true);
+  });
+
+  it("leaves the local Files surface hosting the editor", () => {
+    const placement = renderFrame(
+      { openSurfaces: ["files"], activeSurface: "files" },
+      { layout: open(["files"], "files") },
+    );
+
+    expect(placement.editorHidden).toBe(false);
+    expect(editorSlot()).toBe("open");
+    expect(overlayYields()).toBe(false);
+    expect(frame()?.getAttribute("data-tree")).toBe("visible");
+  });
+
+  it("restores the editor slot after a remote pane and back", () => {
+    const local = {
+      base: { openSurfaces: ["files"], activeSurface: "files" } as const,
+      panel: { layout: open(["files"], "files") },
+    };
+    renderFrame(local.base, local.panel);
+    expect(editorSlot()).toBe("open");
+
+    renderFrame(local.base, {
+      layout: open([], null),
+      remote: true,
+      remoteSurface: null,
+      thread: null,
+    });
+    expect(editorSlot()).toBe("none");
+    expect(frame()?.getAttribute("data-tree")).toBe("hidden");
+
+    renderFrame(local.base, local.panel);
+    expect(editorSlot()).toBe("open");
+    expect(overlayYields()).toBe(false);
+    expect(frame()?.getAttribute("data-tree")).toBe("visible");
+  });
+
+  function renderFrame(
+    base: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">,
+    overrides: Partial<AgentSurfacePanelProps>,
+  ): WorkbenchShellPlacement {
+    const placement = workbenchShellPlacement({
+      bottomPanelVisible: false,
+      effectiveLayout: "agent",
+      layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", ...base },
+    });
+    act(() =>
+      root.render(
+        <WorkbenchShellFrame
+          agent={
+            <div className="agent-surface-host" data-slot="surface">
+              <AgentSurfacePanel {...defaultProps()} chooserAutoFocus={false} {...overrides} />
+            </div>
+          }
+          bottom={null}
+          chrome={null}
+          editor={null}
+          placement={placement}
+        />,
+      ),
+    );
+    return placement;
+  }
+
+  function frame(): HTMLElement | null {
+    return host.querySelector<HTMLElement>(".workbench-frame");
+  }
+
+  function surface(): HTMLElement | null {
+    return host.querySelector<HTMLElement>(".agent-surface");
+  }
+
+  function editorSlot(): string | null {
+    return surface()?.getAttribute(WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE) ?? null;
+  }
+
+  function overlayYields(): boolean {
+    return frame()?.matches(WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR) ?? false;
+  }
+});
