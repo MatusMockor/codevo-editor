@@ -7,6 +7,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.57] - 2026-09-20
+
+### Changed
+
+- Group adjacent mixed tool activities into a compact summary with running and
+  completed counts while keeping individual activity details available.
+
+### Fixed
+
+- Hide the editor overlay when the active agent panel cannot host local files,
+  including remote, unavailable and hidden panels.
+- Keep Markdown table columns from collapsing to one character while allowing
+  long code paths and links to wrap.
+- Keep long conversation titles from crowding the thread header.
+
 ## [0.2.0-beta.56] - 2026-09-20
 
 ### Added
