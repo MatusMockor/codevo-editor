@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
+import { createWorkspaceRootFromPath } from "../domain/workspacePath";
 import type { EditorDocument } from "../domain/workspace";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
 import { LiveDocumentRuntime } from "../application/liveDocumentRuntime";
@@ -171,6 +172,59 @@ describe("EditorRuntimeHost", () => {
     expect(attachEditorGroupLiveDocument).toHaveBeenCalledOnce();
     expect(reconcile).toHaveBeenCalledTimes(reconcileCount);
     expect(onBindingChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("captures exact live HTML and invalidates it on model edits or owner retirement", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/index.html");
+    const authority = liveSessionAuthority("left", fixture.path);
+    const parsed = createWorkspaceRootFromPath("/workspace");
+    if (!parsed.ok) throw new Error("fixture");
+    const descriptor = {
+      workspaceId: "/workspace",
+      canonicalRoot: "/workspace",
+      selectedPath: "/workspace",
+      caseSensitive: true,
+      unicodeNormalizationPolicy: "preserved" as const,
+      policy: parsed.value.policy,
+    };
+    let runtime: ReturnType<typeof useEditorRuntimeContext> = null;
+    function Probe() {
+      runtime = useEditorRuntimeContext();
+      return null;
+    }
+    let current = true;
+    await act(async () =>
+      root.render(
+        <EditorRuntimeHost
+          activeGroupId="left"
+          attachEditorGroupLiveDocument={() => ({ observe: () => true, release: () => true })}
+          isEditorGroupDocumentSessionAuthorityCurrent={(candidate) =>
+            current && candidate === authority
+          }
+          liveDocumentRuntime={new LiveDocumentRuntime()}
+          resolveEditorGroupDocumentSessionAuthority={() => authority}
+        >
+          <RuntimeSurface
+            {...fixture}
+            groupId="left"
+            name="index.html"
+            workspaceIdentityDescriptor={descriptor}
+          />
+          <Probe />
+        </EditorRuntimeHost>,
+      ),
+    );
+    const getCapture = () => runtime?.captureGroupPreviewContent?.("left", fixture.path);
+    const captured = getCapture();
+    expect(captured?.html).toBe("<?php");
+    expect(captured?.workspaceId).toBe("/workspace");
+    expect(captured?.isCurrent()).toBe(true);
+    act(() => fixture.leftEditor.emitModelContentChange());
+    expect(captured?.isCurrent()).toBe(false);
+    expect(getCapture()?.isCurrent()).toBe(true);
+    current = false;
+    expect(getCapture()).toBeNull();
+    expect(captured?.isCurrent()).toBe(false);
   });
 
   it("wires the existing runtime into the opaque active-binding content facade", async () => {
@@ -1557,6 +1611,7 @@ function RuntimeSurface({
   transitionWorkspaceRoot,
   transitionContentSync,
   validationEnabled = true,
+  workspaceIdentityDescriptor = null,
   workspaceRoot,
 }: ReturnType<typeof runtimeFixture> & {
   content?: string;
@@ -1574,6 +1629,7 @@ function RuntimeSurface({
     prepareTransition(): void;
   };
   validationEnabled?: boolean;
+  workspaceIdentityDescriptor?: EditorRuntimeSurfaceRegistration["workspaceIdentityDescriptor"];
 }) {
   const runtime = useEditorRuntimeContext();
   const registrationRef = useRef<EditorRuntimeSurfaceRegistration | null>(null);
@@ -1637,7 +1693,7 @@ function RuntimeSurface({
         managedLanguageServerActive: false,
         validationEnabled,
       },
-      workspaceIdentityDescriptor: null,
+      workspaceIdentityDescriptor,
       workspaceRoot,
     } as unknown as EditorRuntimeSurfaceRegistration;
     registrationRef.current = registration;
@@ -1656,6 +1712,7 @@ function RuntimeSurface({
     rightEditor,
     runtime,
     validationEnabled,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 

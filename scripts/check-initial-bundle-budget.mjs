@@ -3,6 +3,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { checkPackagedEditorStyles } from "./check-packaged-editor-styles.mjs";
+
 export const INITIAL_ASSET_LIMIT_BYTES = 500 * 1024;
 
 export async function inspectBundleBudget(distDirectory) {
@@ -102,6 +104,7 @@ export function formatBundleBudgetReport(assets) {
 
 async function main() {
   const distDirectory = resolve(process.cwd(), "dist");
+  await checkPackagedEditorStyles(distDirectory);
   const report = formatBundleBudgetReport(await inspectBundleBudget(distDirectory));
   process.stdout.write(`${report.lines.join("\n")}\n`);
   if (report.initialBudgetExceeded) {

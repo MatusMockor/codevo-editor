@@ -1,4 +1,13 @@
-import { useLayoutEffect, useMemo, useRef, type ComponentProps, type RefObject } from "react";
+import type { HtmlFilePreviewGateway } from "../application/htmlFilePreviewGateway";
+import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ComponentProps,
+  type RefObject,
+} from "react";
 import type { useWorkbenchController } from "../application/useWorkbenchController";
 import type { EditorGroupId } from "../domain/editorGroups";
 import type { JsTestEditorSurfaceSource } from "./jsTestEditorSurfaceProps";
@@ -115,7 +124,32 @@ function createRevisionToken(...dependencies: readonly unknown[]): Readonly<Reco
   return Object.freeze({});
 }
 
-export function useWorkbenchEditorHostPresenter(workbench: Workbench) {
+export function useWorkbenchEditorGroupFocusRunner() {
+  const runnerRef = useRef<EditorGroupFocusRunner | null>(null);
+  const editorGroupFocusRunner = useCallback<EditorGroupFocusRunner>(
+    (groupId) => runnerRef.current?.(groupId) ?? false,
+    [],
+  );
+  const updateEditorGroupFocusRunner = useCallback((runner: EditorGroupFocusRunner | null) => {
+    runnerRef.current = runner;
+  }, []);
+  return { editorGroupFocusRunner, updateEditorGroupFocusRunner };
+}
+
+export function useWorkbenchEditorHostPresenter(
+  workbench: Workbench,
+  htmlPreviewGateway?: HtmlFilePreviewGateway,
+) {
+  const htmlPreview = useMemo(
+    () =>
+      htmlPreviewGateway && workbench.workspaceIdentityDescriptor
+        ? {
+            gateway: htmlPreviewGateway,
+            workspace: workbench.workspaceIdentityDescriptor,
+          }
+        : undefined,
+    [htmlPreviewGateway, workbench.workspaceIdentityDescriptor],
+  );
   const workbenchRef = useRef(workbench);
   const debugSessionRef = useRef(workbench.debugSession);
   const frameworkProvidersRef = useRef(workbench.frameworkIntelligenceProviders);
@@ -148,6 +182,7 @@ export function useWorkbenchEditorHostPresenter(workbench: Workbench) {
   const data = useMemo(
     () => ({
       activeEditorConfig,
+      htmlPreview,
       appSettings: workbench.appSettings,
       breakpoints: workbench.debugSession.breakpoints,
       debugHover: workbench.debugSession.debugHover,
@@ -178,6 +213,7 @@ export function useWorkbenchEditorHostPresenter(workbench: Workbench) {
     }),
     [
       activeEditorConfig,
+      htmlPreview,
       frameworkIntelligenceProviders,
       restoredEditorViewStates,
       restoredEditorViewStatesByGroup,
@@ -418,6 +454,7 @@ export function workbenchEditorHostProps({
 }): EditorHostProps {
   return {
     ...wiring,
+    htmlPreview: editorHost.htmlPreview,
     attachEditorGroupLiveDocument: editorHost.attachEditorGroupLiveDocument,
     javaScriptTypeScriptIncrementalSync: editorHost.javaScriptTypeScriptIncrementalSync,
     debugHover: editorHost.debugHover,

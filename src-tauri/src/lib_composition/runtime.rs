@@ -229,6 +229,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             crate::artifact_preview::artifact_preview_create,
+            crate::artifact_preview::workspace_html_preview::workspace_html_preview_create,
             crate::artifact_preview::artifact_preview_revoke,
             crate::remote_runner::remote_runner_list_servers,
             crate::remote_runner::remote_runner_collect_instructions,

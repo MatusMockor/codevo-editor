@@ -287,6 +287,40 @@ export function EditorRuntimeHost({
       resolveEditorGroupDocumentSessionAuthority,
     ],
   );
+  const captureGroupPreviewContent = useCallback(
+    (groupId: string, path: string) => {
+      const registration = [...registrationsRef.current.values()].find(
+        (candidate) => candidate.groupId === groupId && candidate.activePath === path,
+      );
+      const model = registration?.editor?.getModel();
+      const workspaceId = registration?.workspaceIdentityDescriptor?.workspaceId;
+      if (!model || !workspaceId) return null;
+      try {
+        const exact = resolveExactLiveModelContent(groupId, path, model);
+        if (!exact || model.getValueLength() > 1_048_576) return null;
+        const version = model.getVersionId();
+        const isCurrent = () => {
+          try {
+            const current = resolveExactLiveModelContent(groupId, path, model);
+            return (
+              registrationsRef.current.get(exact.id)?.workspaceIdentityDescriptor?.workspaceId ===
+                workspaceId &&
+              current?.handleAuthority === exact.handleAuthority &&
+              current?.document === exact.document &&
+              model.getVersionId() === version
+            );
+          } catch {
+            return false;
+          }
+        };
+        const html = model.getValue();
+        return isCurrent() ? { html, isCurrent, workspaceId } : null;
+      } catch {
+        return null;
+      }
+    },
+    [resolveExactLiveModelContent],
+  );
   const ownsExactLiveModelContent = useCallback(
     (groupId: string, path: string, model: Monaco.editor.ITextModel): boolean => {
       const exact = resolveExactLiveModelContent(groupId, path, model);
@@ -1249,6 +1283,7 @@ export function EditorRuntimeHost({
   const value = useMemo<EditorRuntimeContextValue>(
     () => ({
       acknowledgeExactLiveModelContent,
+      captureGroupPreviewContent,
       coordinateLocalPhpValidation,
       coordinatePhpDocumentSymbols,
       focusGroup,
@@ -1261,6 +1296,7 @@ export function EditorRuntimeHost({
     }),
     [
       acknowledgeExactLiveModelContent,
+      captureGroupPreviewContent,
       coordinateLocalPhpValidation,
       coordinatePhpDocumentSymbols,
       focusGroup,

@@ -4,6 +4,9 @@
 //! relies on the opaque iframe sandbox, CSP connect-src none, and Tauri's random
 //! invoke key (injected into the main frame only). Never grant allow-same-origin,
 //! inject the key into previews, or forward their postMessage data into IPC.
+#[path = "workspace_html_preview.rs"]
+pub(crate) mod workspace_html_preview;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -16,8 +19,8 @@ use tauri::{
 };
 
 pub(crate) const SCHEME: &str = "codevo-artifact-preview";
-const HTML_LIMIT: usize = 2 * 1024 * 1024;
-const TOTAL_LIMIT: usize = 16 * 1024 * 1024;
+pub(crate) const HTML_LIMIT: usize = 2 * 1024 * 1024;
+const TOTAL_LIMIT: usize = 64 * 1024 * 1024;
 const ENTRY_LIMIT: usize = 8;
 const TTL: Duration = Duration::from_secs(30 * 60);
 const CSP: &str = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'";
@@ -36,7 +39,13 @@ const UNAVAILABLE: &str = concat!(
     "</div></body></html>"
 );
 
+pub(crate) struct PreviewAsset {
+    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) mime: &'static str,
+}
+
 struct Entry {
+    assets: HashMap<String, PreviewAsset>,
     html: Arc<[u8]>,
     created: Instant,
 }
@@ -58,7 +67,7 @@ pub(crate) struct RevokeRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviewHandle {
-    token: String,
+    pub(crate) token: String,
     url: String,
 }
 
@@ -88,6 +97,15 @@ fn preview_url(token: &str) -> String {
 }
 impl ArtifactPreviewState {
     fn create(&self, html: String, now: Instant) -> Result<PreviewHandle, String> {
+        self.create_bundle(html, HashMap::new(), now, false)
+    }
+    pub(crate) fn create_bundle(
+        &self,
+        html: String,
+        assets: HashMap<String, PreviewAsset>,
+        now: Instant,
+        file_preview: bool,
+    ) -> Result<PreviewHandle, String> {
         if html.is_empty() || html.len() > HTML_LIMIT || html.contains('\0') {
             return Err("HTML preview is empty, invalid, or exceeds 2 MiB.".into());
         }
@@ -100,9 +118,12 @@ impl ArtifactPreviewState {
         if entries.len() >= ENTRY_LIMIT
             || entries
                 .values()
-                .map(|entry| entry.html.len())
+                .map(|entry| {
+                    entry.html.len() + entry.assets.values().map(|a| a.bytes.len()).sum::<usize>()
+                })
                 .sum::<usize>()
                 + bytes.len()
+                + assets.values().map(|a| a.bytes.len()).sum::<usize>()
                 > TOTAL_LIMIT
         {
             return Err("Too many open previews. Close a preview and try again.".into());
@@ -112,10 +133,15 @@ impl ArtifactPreviewState {
             if entries.contains_key(&id) {
                 continue;
             }
-            let url = preview_url(&id);
+            let url = if file_preview {
+                format!("{}/index.html", preview_url(&id))
+            } else {
+                preview_url(&id)
+            };
             entries.insert(
                 id.clone(),
                 Entry {
+                    assets,
                     html: bytes,
                     created: now,
                 },
@@ -124,7 +150,7 @@ impl ArtifactPreviewState {
         }
         Err("Could not create unique preview identity.".into())
     }
-    fn revoke(&self, token: &str) -> Result<(), String> {
+    pub(crate) fn revoke(&self, token: &str) -> Result<(), String> {
         if !valid_token(token) {
             return Err("Invalid preview identity.".into());
         }
@@ -197,20 +223,76 @@ fn response(body: Option<Arc<[u8]>>) -> Response<Vec<u8>> {
     ] { response.headers_mut().insert(tauri::http::header::HeaderName::from_static(name), tauri::http::HeaderValue::from_static(value)); }
     response
 }
+fn bundle_route(request: &Request<Vec<u8>>) -> Option<(&str, String)> {
+    if request.method() != tauri::http::Method::GET
+        || request.uri().query().is_some_and(|q| q.len() > 4096)
+    {
+        return None;
+    }
+    let (id, path) = request.uri().path().strip_prefix('/')?.split_once('/')?;
+    let origin_check = Request::builder()
+        .uri(format!(
+            "{}://{}/{}",
+            request.uri().scheme_str()?,
+            request.uri().authority()?,
+            id
+        ))
+        .body(vec![])
+        .ok()?;
+    request_token(&origin_check)?;
+    let decoded = workspace_html_preview::decode_asset_path(path)?;
+    Some((id, decoded))
+}
 pub(crate) fn respond(
     context: tauri::UriSchemeContext<'_, tauri::Wry>,
     request: Request<Vec<u8>>,
 ) -> Response<Vec<u8>> {
-    let body = (context.webview_label() == "main")
-        .then(|| request_token(&request))
-        .flatten()
-        .and_then(|id| {
+    if context.webview_label() != "main" {
+        return response(None);
+    }
+    if let Some(id) = request_token(&request) {
+        return response(
             context
                 .app_handle()
                 .state::<ArtifactPreviewState>()
-                .read(id, Instant::now())
-        });
-    response(body)
+                .read(id, Instant::now()),
+        );
+    }
+    let Some((id, path)) = bundle_route(&request) else {
+        return response(None);
+    };
+    let state = context.app_handle().state::<ArtifactPreviewState>();
+    let Ok(mut entries) = state.entries.lock() else {
+        return response(None);
+    };
+    entries.retain(|_, entry| Instant::now().saturating_duration_since(entry.created) < TTL);
+    let Some(entry) = entries.get(id) else {
+        return response(None);
+    };
+    let (body, mime) = if path == "index.html" {
+        (Arc::clone(&entry.html), "text/html; charset=utf-8")
+    } else {
+        let Some(asset) = entry.assets.get(&path) else {
+            return response(None);
+        };
+        (Arc::clone(&asset.bytes), asset.mime)
+    };
+    drop(entries);
+    let mut result = response(Some(body));
+    result.headers_mut().insert(
+        "access-control-allow-origin",
+        tauri::http::HeaderValue::from_static("*"),
+    );
+    result
+        .headers_mut()
+        .insert("content-type", tauri::http::HeaderValue::from_static(mime));
+    let source = format!("{}/", preview_url(id));
+    let csp = format!("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' {source}; style-src 'unsafe-inline' {source}; img-src data: blob: {source}; font-src data: {source}; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'");
+    result.headers_mut().insert(
+        "content-security-policy",
+        tauri::http::HeaderValue::from_str(&csp).expect("validated token CSP"),
+    );
+    result
 }
 #[cfg(test)]
 #[path = "artifact_preview_tests.rs"]

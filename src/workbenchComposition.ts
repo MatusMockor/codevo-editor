@@ -1,3 +1,4 @@
+import { TauriHtmlFilePreviewGateway } from "./infrastructure/tauriHtmlFilePreviewGateway";
 import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionCoordinator";
 import { EditorCursorStore } from "./application/editorCursorStore";
 import { LiveDocumentRuntime } from "./application/liveDocumentRuntime";
@@ -125,6 +126,7 @@ export function createWorkbenchComposition() {
     ...agentControllerGateways,
     agentControllerGateways,
     agentTaskGateway: new TauriAgentTaskGateway(),
+    htmlFilePreviewGateway: new TauriHtmlFilePreviewGateway(),
     appUpdater: {
       appUpdaterGateway,
       appUpdaterPreferencesGateway: new SettingsAppUpdaterPreferencesGateway(settingsGateway),

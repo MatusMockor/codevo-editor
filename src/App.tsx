@@ -21,7 +21,6 @@ import {
   useStableDocumentPaths,
   useStableNavigationHistoryPaths,
 } from "./application/useStablePathLists";
-import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort";
 import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { WorkbenchBottomPanelHost } from "./components/WorkbenchBottomPanelHost";
@@ -49,6 +48,7 @@ import {
   useStableJsTestEditorSurfaceSource,
   useStableLatestCallback,
   useWorkbenchEditorHostPresenter,
+  useWorkbenchEditorGroupFocusRunner,
   workbenchEditorHostProps,
 } from "./components/workbenchEditorHostPresenter";
 import { ExternalFileConflictBar } from "./components/ExternalFileConflictBar";
@@ -125,6 +125,7 @@ const {
   gitGateway,
   gitHistoryGateway,
   agentSurfaceGateways,
+  htmlFilePreviewGateway,
   indexProgressGateway,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
@@ -177,14 +178,8 @@ const {
 function App() {
   const debugCommandBridges = useDebugCommandBridges();
   const prefersLightTheme = usePrefersLightTheme();
-  const editorGroupFocusRunnerRef = useRef<EditorGroupFocusRunner | null>(null);
-  const editorGroupFocusRunner = useCallback<EditorGroupFocusRunner>(
-    (groupId) => editorGroupFocusRunnerRef.current?.(groupId) ?? false,
-    [],
-  );
-  const updateEditorGroupFocusRunner = useCallback((runner: EditorGroupFocusRunner | null) => {
-    editorGroupFocusRunnerRef.current = runner;
-  }, []);
+  const { editorGroupFocusRunner, updateEditorGroupFocusRunner } =
+    useWorkbenchEditorGroupFocusRunner();
   const editorRunners = useScopedEditorSurfaceRunners("editor-main");
   const {
     activateGroup: activateRunnerGroup,
@@ -269,7 +264,7 @@ function App() {
       workspaceSourceDiscoveryGateway,
     },
   );
-  const editorHost = useWorkbenchEditorHostPresenter(workbench);
+  const editorHost = useWorkbenchEditorHostPresenter(workbench, htmlFilePreviewGateway);
   const editorSessionOwnerKey = workbench.workspaceRoot
     ? createWorkspaceEditorSessionOwnerKey(
         workbench.workspaceRoot,
@@ -278,6 +273,7 @@ function App() {
     : null;
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
+
   const {
     runCommand,
     setTextSearchOpen: setDockedTextSearchOpen,

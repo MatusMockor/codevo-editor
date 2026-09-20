@@ -7,6 +7,28 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.58] - 2026-09-21
+
+### Added
+
+- Switch HTML and HTM files between source and a rendered preview, including
+  unsaved editor content, local stylesheets, scripts, images, and fonts.
+- Refresh isolated HTML previews while preserving the source editor and undo
+  history. Relative assets may resolve within the registered workspace.
+
+### Fixed
+
+- Restore visible editor cursors, active line numbers, and syntax colors in
+  packaged builds by keeping startup styles external to the application document.
+- Reject packaged builds that reintroduce inline startup styles and prevent the
+  editor theme stylesheet from loading under the native content security policy.
+
+### Compatibility
+
+- HTML previews render the current file in an isolated snapshot. Linked HTML pages,
+  external resources, dynamic network requests, and module dependency graphs are
+  not supported.
+
 ## [0.2.0-beta.57] - 2026-09-20
 
 ### Changed

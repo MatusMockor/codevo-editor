@@ -109,3 +109,26 @@ fn requests_reject_unknown_fields() {
     assert!(serde_json::from_str::<CreateRequest>(r#"{"html":"x","url":"evil"}"#).is_err());
     assert!(serde_json::from_str::<RevokeRequest>(r#"{"token":"x","owner":"foreign"}"#).is_err());
 }
+#[test]
+fn bundle_routes_are_exact_token_paths_and_allow_asset_cache_keys() {
+    let token = "c".repeat(64);
+    let route = format!("{SCHEME}://localhost/{token}/report/main.css?v=123");
+    let request = Request::builder().uri(route).body(vec![]).unwrap();
+    assert_eq!(
+        bundle_route(&request),
+        Some((token.as_str(), "report/main.css".into()))
+    );
+    for path in [
+        "../secret.css",
+        "%2e%2e/secret.css",
+        "report%2fsecret.css",
+        ".env",
+        "report//x.js",
+    ] {
+        let request = Request::builder()
+            .uri(format!("{SCHEME}://localhost/{token}/{path}"))
+            .body(vec![])
+            .unwrap();
+        assert!(bundle_route(&request).is_none());
+    }
+}

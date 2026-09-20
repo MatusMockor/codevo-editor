@@ -1,3 +1,7 @@
+import {
+  EditorGroupHtmlPreview,
+  type EditorHtmlPreviewEnvironment,
+} from "./EditorGroupHtmlPreview";
 import { memo, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { EditorGroup, EditorGroupId } from "../domain/editorGroups";
@@ -15,6 +19,7 @@ export type EditorGroupSurface =
 
 export interface EditorGroupViewProps {
   active: boolean;
+  htmlPreview?: EditorHtmlPreviewEnvironment;
   contentRevision?: unknown;
   documents: readonly EditorGroupDocument[];
   fileStatusesByPath?: React.ComponentProps<typeof EditorTabs>["fileStatusesByPath"];
@@ -118,7 +123,22 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
         role="tabpanel"
         style={{ flex: 1, minHeight: 0, minWidth: 0 }}
       >
-        {renderContent(surface, groupId)}
+        {props.htmlPreview &&
+        activeDocument &&
+        "content" in activeDocument &&
+        /\.html?$/i.test(activeDocument.path) ? (
+          <EditorGroupHtmlPreview
+            key={`${props.htmlPreview.workspace.workspaceId}:${activeDocument.path}`}
+            environment={props.htmlPreview}
+            groupId={groupId}
+            name={activeDocument.name}
+            path={activeDocument.path}
+          >
+            {renderContent(surface, groupId)}
+          </EditorGroupHtmlPreview>
+        ) : (
+          renderContent(surface, groupId)
+        )}
       </div>
     </section>
   );
@@ -130,6 +150,7 @@ function editorGroupViewPropsEqual(
 ): boolean {
   if (
     previous.active !== next.active ||
+    previous.htmlPreview !== next.htmlPreview ||
     (previous.documents.length === 0) !== (next.documents.length === 0) ||
     previous.contentRevision !== next.contentRevision ||
     previous.group !== next.group ||

@@ -14,6 +14,7 @@ export interface EditorAreaProps {
   documents: readonly EditorGroupDocument[];
   editorSessionOwnerKey: EditorSessionOwnerKey | null;
   fileStatusesByPath?: React.ComponentProps<typeof EditorGroupView>["fileStatusesByPath"];
+  htmlPreview?: React.ComponentProps<typeof EditorGroupView>["htmlPreview"];
   projectId: string;
   state: EditorGroupsState;
   onActivateGroup(groupId: EditorGroupId): void;
@@ -50,6 +51,7 @@ export function EditorArea(props: EditorAreaProps) {
           fileStatusesByPath={props.fileStatusesByPath}
           group={group}
           groupId={layout.groupId}
+          htmlPreview={props.htmlPreview}
           onActivateGroup={props.onActivateGroup}
           onActivateTab={props.onActivateTab}
           onCloseTab={props.onCloseTab}

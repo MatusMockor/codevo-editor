@@ -3,7 +3,7 @@ use std::path::Path;
 use tauri::utils::config::{Color, WindowConfig};
 
 fn startup_side_tone() -> Color {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../index.html");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../public/startup.css");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()));
     let root = source

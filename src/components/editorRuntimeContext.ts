@@ -52,6 +52,14 @@ export interface EditorRuntimeSurfaceRegistration {
 }
 
 export interface EditorRuntimeContextValue {
+  captureGroupPreviewContent?(
+    groupId: string,
+    path: string,
+  ): {
+    readonly html: string;
+    readonly workspaceId: string;
+    isCurrent(): boolean;
+  } | null;
   getActiveJavaScriptTypeScriptOwnerEpoch(): number;
   getActiveJavaScriptTypeScriptOwnerIdentity(): object | null;
   coordinatePhpDocumentSymbols(

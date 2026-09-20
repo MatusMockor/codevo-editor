@@ -29,6 +29,7 @@ interface WorkbenchEditorHostProps {
   ): boolean;
   javaScriptTypeScriptIncrementalSync?: EditorJavaScriptTypeScriptIncrementalSyncFacade | null;
   liveDocumentRuntime: LiveDocumentRuntime;
+  htmlPreview?: EditorAreaProps["htmlPreview"];
   projectId: string;
   state: EditorGroupsState;
   onActivateGroup(groupId: EditorGroupId): void;
@@ -66,6 +67,7 @@ export const WorkbenchEditorHost = memo(function WorkbenchEditorHost({
   isEditorGroupDocumentSessionAuthorityCurrent,
   javaScriptTypeScriptIncrementalSync,
   liveDocumentRuntime,
+  htmlPreview,
   projectId,
   state,
   onActivateGroup,
@@ -133,6 +135,7 @@ export const WorkbenchEditorHost = memo(function WorkbenchEditorHost({
       <EditorArea
         contentRevisionForGroup={contentRevisionForGroup}
         documents={documents}
+        htmlPreview={htmlPreview}
         editorSessionOwnerKey={editorSessionOwnerKey}
         fileStatusesByPath={fileStatusesByPath}
         onActivateGroup={onActivateGroup}

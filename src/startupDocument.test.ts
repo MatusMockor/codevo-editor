@@ -19,7 +19,7 @@ import { DEFAULT_AGENT_RAIL_WIDTH } from "./domain/agentWorkbenchLayout";
 import { STARTUP_THEME_IDS } from "./domain/startupTheme";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
-const STARTUP_SHEET = "index.html";
+const STARTUP_SHEET = "public/startup.css";
 const STARTUP_SKELETON_SELECTOR = "[data-startup-skeleton]";
 const HEX_TONE = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const APP_TOKEN_FOR_TONE = {
@@ -117,16 +117,10 @@ function cssVar(name: string): string {
 }
 
 const documentSource = readFileSync(resolve(REPOSITORY_ROOT, "index.html"), "utf8");
-const startupStyle = extractStartupStyle(documentSource);
+const startupStyle = readFileSync(resolve(REPOSITORY_ROOT, STARTUP_SHEET), "utf8");
 const startupCss = parseCssRules(startupStyle, STARTUP_SHEET);
 const startupDocument = new DOMParser().parseFromString(documentSource, "text/html");
 const appCss = parseAllStyleSheets().rules.filter((rule) => rule.sheet === "App.css");
-
-function extractStartupStyle(source: string): string {
-  const match = /<style>([\s\S]*?)<\/style>/.exec(source);
-  expect(match, "index.html must carry the startup stylesheet inline").not.toBeNull();
-  return match?.[1] ?? "";
-}
 
 function startupRules(selector: string, context: readonly string[] = []): readonly CssRule[] {
   return startupCss.rules.filter(
@@ -180,6 +174,28 @@ function appShellDeclaration(property: string): string | undefined {
 }
 
 describe("startup document reset", () => {
+  it("loads a render-blocking startup sheet without poisoning Monaco's runtime CSP styles", () => {
+    // Tauri adds a nonce to inline <style> elements. A style-src nonce makes
+    // browsers ignore unsafe-inline, rejecting Monaco's generated colors sheet.
+    expect(startupDocument.querySelectorAll("style")).toHaveLength(0);
+    const link = startupDocument.head.querySelector('link[rel="stylesheet"]');
+    expect(link?.getAttribute("href")).toBe("/startup.css");
+    expect(link?.hasAttribute("media")).toBe(false);
+    expect(link?.hasAttribute("disabled")).toBe(false);
+    expect(link?.hasAttribute("onload")).toBe(false);
+    expect(startupStyle).not.toMatch(/@import\b/);
+    expect(Buffer.byteLength(startupStyle, "utf8")).toBeLessThan(12_000);
+    const config = JSON.parse(
+      readFileSync(resolve(REPOSITORY_ROOT, "src-tauri/tauri.conf.json"), "utf8"),
+    ) as { app: { security: { csp: string; dangerousDisableAssetCspModification?: unknown } } };
+    const stylePolicy = config.app.security.csp
+      .split(";")
+      .find((part) => part.trim().startsWith("style-src "));
+    expect(stylePolicy?.trim()).toBe("style-src 'self' 'unsafe-inline'");
+    expect(config.app.security.csp).toContain("script-src 'self';");
+    expect(config.app.security.dangerousDisableAssetCspModification).toBeUndefined();
+  });
+
   it("paints the surface tones without waiting for App.css", () => {
     expect(startupStyle.length).toBeGreaterThan(0);
     expect(startupDeclaration("html", "margin")).toBe("0");
