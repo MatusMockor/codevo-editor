@@ -853,7 +853,7 @@
     no-repeat;
   text-align: left;
   vertical-align: top;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .agent-md__table tbody tr:last-child > .agent-md__td {

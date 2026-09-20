@@ -688,7 +688,7 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-md__th", "color")).toBe("var(--agent-text-strong)");
     expect(winningDeclaration(".agent-md__th", "font-weight")).toBe("600");
     expect(declarations(".agent-md__td", "white-space")).toEqual([]);
-    expect(winningDeclaration(".agent-md__td", "overflow-wrap")).toBe("anywhere");
+    expect(winningDeclaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
     expect(winningDeclaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe(
       "anywhere",
     );
