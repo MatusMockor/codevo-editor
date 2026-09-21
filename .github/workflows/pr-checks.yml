@@ -17,6 +17,8 @@ jobs:
   frontend-quality:
     name: Frontend quality
     runs-on: macos-15
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
 
     steps:
       - name: Checkout
