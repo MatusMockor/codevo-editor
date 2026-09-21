@@ -1,12 +1,20 @@
 use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::super::clock::TestClock;
 use super::super::hosts::{HOSTS_CACHE_TTL, HOSTS_REFRESH_DEBOUNCE};
+use super::super::plan::CliProgram;
+use super::super::resolver::{ExecutableResolver, ResolvedExecutable};
 use super::super::service::RepositoryLookupService;
 use super::super::wire::{
     RepositoryHostsState, RepositoryLookupFailureReason, RepositoryLookupOutcome,
 };
+use super::fake_cli::TEST_SEARCH_PATH;
 use super::fake_cli::{request, FakeCliDirectory};
 
 const AUTH_STATUS: &str = concat!(
@@ -170,4 +178,82 @@ fn a_refresh_superseded_by_a_user_hosts_call_reports_busy() {
         matches!(snapshot.gitlab, RepositoryHostsState::Ready { .. }),
         "{snapshot:?}"
     );
+}
+
+#[test]
+fn a_superseded_refresh_reports_busy_even_when_its_process_cannot_start() {
+    struct HeldResolver {
+        path: std::path::PathBuf,
+        first: AtomicBool,
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+    impl ExecutableResolver for HeldResolver {
+        fn resolve(&self, program: CliProgram) -> Option<ResolvedExecutable> {
+            if program.executable_name() != "glab" {
+                return None;
+            }
+            let path = if self.first.swap(false, Ordering::SeqCst) {
+                self.entered.send(()).expect("publish held refresh");
+                self.release
+                    .lock()
+                    .expect("release lock")
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("release held refresh");
+                self.path.with_file_name("missing-cli")
+            } else {
+                self.path.clone()
+            };
+            Some(ResolvedExecutable {
+                path,
+                search_path: TEST_SEARCH_PATH.to_owned(),
+            })
+        }
+    }
+    let directory = FakeCliDirectory::create("hosts-superseded-spawn-error");
+    glab(&directory);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let clock = Arc::new(TestClock::new());
+    let service = Arc::new(RepositoryLookupService::with_clock(
+        Arc::new(HeldResolver {
+            path: directory.file("glab"),
+            first: AtomicBool::new(true),
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }),
+        directory.base().to_path_buf(),
+        clock.clone(),
+    ));
+    let lookup_service = Arc::clone(&service);
+    let lookup = thread::spawn(move || unknown_host_lookup(&lookup_service));
+    entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("refresh entered resolver");
+    // Remove the admission delay so observing the waiter under the slot mutex
+    // also proves that it has marked the running refresh superseded.
+    clock.advance(Duration::from_secs(1));
+    let hosts_service = Arc::clone(&service);
+    let hosts = thread::spawn(move || hosts_service.hosts());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !service.hosts_slot().has_waiter() {
+        assert!(
+            Instant::now() < deadline,
+            "user hosts call did not supersede refresh"
+        );
+        thread::yield_now();
+    }
+    release_tx
+        .send(())
+        .expect("release failed spawn after supersession");
+    assert_eq!(
+        lookup.join().expect("lookup joined"),
+        RepositoryLookupOutcome::Failed {
+            reason: RepositoryLookupFailureReason::Busy,
+        }
+    );
+    assert!(matches!(
+        hosts.join().expect("hosts joined").gitlab,
+        RepositoryHostsState::Ready { .. }
+    ));
 }

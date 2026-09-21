@@ -185,12 +185,13 @@ impl RepositoryLookupService {
         else {
             return HostsRefresh::CliMissing;
         };
-        let Ok(output) = self.run(&executable, &CliPlan::GitlabAuthStatus, &lease) else {
-            return HostsRefresh::Failed;
-        };
+        let output = self.run(&executable, &CliPlan::GitlabAuthStatus, &lease);
         if lease.superseded() {
             return HostsRefresh::Busy;
         }
+        let Ok(output) = output else {
+            return HostsRefresh::Failed;
+        };
         let parsed = parse_glab_auth_status(&auth_status_text(&output));
         self.gitlab_hosts.store(parsed.clone());
         HostsRefresh::Parsed(parsed)

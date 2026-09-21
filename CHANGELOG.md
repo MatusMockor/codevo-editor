@@ -13,6 +13,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matrix test shards and shared test archives while retaining application and
   test fixes.
 
+### Fixed
+
+- Report a superseded GitLab host refresh as busy even when its cancelled
+  process also returns an error.
+
 ## [0.2.0-beta.65] - 2026-09-21
 
 ### Changed
