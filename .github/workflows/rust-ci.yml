@@ -1,0 +1,73 @@
+name: Rust CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "26"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Rust / ${{ matrix.check }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [format, clippy, compile, doctests]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+      - name: Check Rust
+        env:
+          CHECK: ${{ matrix.check }}
+        run: |
+          case "$CHECK" in
+            format) npm run format:rust:check ;;
+            clippy) npm run clippy:check ;;
+            compile) cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets ;;
+            doctests) cargo test --manifest-path src-tauri/Cargo.toml --locked --doc ;;
+            *) exit 1 ;;
+          esac
+
+  tests:
+    name: Rust tests / ${{ matrix.shard }} of 4
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install pinned test runner
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-nextest@0.9.145
+          fallback: none
+      - name: Run Rust test shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: cargo nextest run --manifest-path src-tauri/Cargo.toml --locked --partition "slice:$SHARD/4" --no-fail-fast --test-threads 4

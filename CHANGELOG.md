@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Run frontend quality checks and four frontend and Rust test shards in parallel.
+  Require every check and combined frontend coverage before release builds, without
+  sharing Rust compilation caches between jobs.
+
 ## [0.2.0-beta.62] - 2026-09-21
 
 ### Fixed

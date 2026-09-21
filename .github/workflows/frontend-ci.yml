@@ -1,0 +1,126 @@
+name: Frontend CI
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: macos-15
+      node-version:
+        type: string
+        default: "26"
+      format-base:
+        type: string
+        default: ""
+      release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+
+jobs:
+  checks:
+    name: Frontend / ${{ matrix.check }}
+    runs-on: ${{ inputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [formatting, lint, hooks, hotspots, types, build]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Check formatting
+        if: matrix.check == 'formatting'
+        env:
+          FORMAT_BASE_SHA: ${{ inputs.format-base }}
+          IS_RELEASE: ${{ inputs.release }}
+        run: |
+          npm run format:check
+          if [[ "$IS_RELEASE" == "true" ]]; then
+            FORMAT_BASE_SHA="$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD^)"
+          fi
+          npm run format:check:changed -- "$FORMAT_BASE_SHA"
+      - name: Lint TypeScript and React
+        if: matrix.check == 'lint'
+        run: npm run lint -- --max-warnings 0
+      - name: Check React hook dependency debt
+        if: matrix.check == 'hooks'
+        run: npm run lint:exhaustive-deps
+      - name: Check source hotspot sizes
+        if: matrix.check == 'hotspots'
+        run: npm run size:hotspots
+      - name: Type check
+        if: matrix.check == 'types'
+        run: npm run check
+      - name: Build web app
+        if: matrix.check == 'build'
+        run: npm run build
+
+  tests:
+    name: Frontend / tests ${{ matrix.shard }}/4
+    runs-on: ${{ inputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      # Each shard covers only part of the source. The original coverage gate is
+      # applied once to the union below; test failures still fail each shard.
+      - name: Run test shard with coverage
+        run: >-
+          npm test -- --coverage
+          --coverage.include='src/**/*.{ts,tsx}'
+          --coverage.exclude='src/**/*.test.{ts,tsx}'
+          --coverage.exclude='src/test/**'
+          --shard=${{ matrix.shard }}/4
+          --reporter=default --reporter=blob
+      # Vitest 4 embeds the remapped coverage map in each blob report.
+      - name: Upload test and coverage blob
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-blob-${{ matrix.shard }}
+          path: .vitest-reports/blob-${{ matrix.shard }}-4.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  coverage:
+    name: Frontend / aggregate coverage
+    needs: tests
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: frontend-blob-*
+          path: .vitest-reports
+          merge-multiple: true
+      - name: Require every shard report
+        run: |
+          for shard in 1 2 3 4; do
+            test -s ".vitest-reports/blob-${shard}-4.json"
+          done
+          test "$(find .vitest-reports -type f | wc -l | tr -d ' ')" = 4
+      - name: Merge reports and enforce original coverage thresholds
+        run: npm run test:coverage -- --merge-reports=.vitest-reports

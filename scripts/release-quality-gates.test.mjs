@@ -13,18 +13,20 @@ const workflow = readFileSync(
 );
 const workspaces = [];
 
-function job(name) {
+function job(name, source = workflow) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [\\w-]+:|$(?![\\s\\S]))`, "m").exec(
-    workflow,
+    source,
   );
   expect(match, `missing workflow job ${name}`).not.toBeNull();
   return match[1];
 }
 
 function formatScript() {
-  const match = /- name: Check release TypeScript formatting\n {8}run: \|\n((?: {10}.+\n)+)/.exec(
-    job("frontend-checks"),
+  const frontend = readFileSync(
+    fileURLToPath(new URL("../.github/workflows/frontend-ci.yml", import.meta.url)),
+    "utf8",
   );
+  const match = /- name: Check formatting[\s\S]*?run: \|\n((?: {10}.+\n)+)/.exec(frontend);
   expect(match).not.toBeNull();
   return match[1].replace(/^ {10}/gm, "");
 }
@@ -45,24 +47,59 @@ afterEach(() => {
 });
 
 describe("release quality gates", () => {
-  it("requires hook, formatting, lint and size checks before release builds", () => {
-    const frontend = job("frontend-checks");
-    for (const command of [
-      "npm run format:check",
-      "npm run lint -- --max-warnings 0",
-      "npm run lint:exhaustive-deps",
-      "npm run size:hotspots",
-      "npm run check",
-      "npm test",
-      "npm run build",
-    ]) {
-      expect(frontend).toContain(`run: ${command}\n`);
+  it("waits for every reusable quality workflow before building or publishing", () => {
+    expect(job("frontend-checks")).toContain("uses: ./.github/workflows/frontend-ci.yml");
+    expect(job("rust-checks")).toContain("uses: ./.github/workflows/rust-ci.yml");
+    expect(job("frontend-checks")).toContain("release: true");
+    for (const name of ["release-build", "smoke-dmg"]) {
+      expect(job(name)).toMatch(/needs:\s*\[validate-dispatch, frontend-checks, rust-checks\]/);
+      expect(job(name)).not.toMatch(/^    if:.*always\(\)|continue-on-error:\s*true/m);
     }
-    expect(frontend).not.toMatch(/continue-on-error:\s*true/);
-    expect(frontend).toMatch(/uses: actions\/checkout@[^\n]+\n\s+with:\n\s+fetch-depth: 0\n/);
-    expect(job("release-build")).toMatch(/needs:\s*\[frontend-checks, rust-checks\]/);
-    expect(job("smoke-dmg")).toMatch(/needs:\s*\[frontend-checks, rust-checks\]/);
     expect(job("publish-release")).toMatch(/needs:\s*release-build\n/);
+    expect(workflow).not.toMatch(/continue-on-error:\s*true/);
+  });
+
+  it("keeps every parallel check and shard mandatory, including aggregate coverage and doctests", () => {
+    const readWorkflow = (name) =>
+      readFileSync(
+        fileURLToPath(new URL(`../.github/workflows/${name}.yml`, import.meta.url)),
+        "utf8",
+      );
+    const frontend = readWorkflow("frontend-ci");
+    const rust = readWorkflow("rust-ci");
+    for (const source of [frontend, rust]) {
+      expect(source).not.toMatch(/continue-on-error:|max-parallel:|fail-fast: true/);
+      expect(job("tests", source)).toContain("shard: [1, 2, 3, 4]");
+      expect(job("checks", source)).not.toMatch(/^    needs:/m);
+      expect(job("tests", source)).not.toMatch(/^    needs:/m);
+    }
+    expect(job("checks", frontend)).toContain(
+      "check: [formatting, lint, hooks, hotspots, types, build]",
+    );
+    for (const command of [
+      "format:check",
+      "format:check:changed",
+      "lint -- --max-warnings 0",
+      "lint:exhaustive-deps",
+      "size:hotspots",
+      "check",
+      "build",
+    ]) {
+      expect(job("checks", frontend)).toContain(`npm run ${command}`);
+    }
+    expect(job("tests", frontend)).toContain("--shard=${{ matrix.shard }}/4");
+    const coverage = job("coverage", frontend);
+    expect(coverage).toMatch(/needs: tests/);
+    expect(coverage).toContain("npm run test:coverage -- --merge-reports=.vitest-reports");
+    expect(coverage).not.toContain("thresholds.");
+    expect(coverage).toContain("for shard in 1 2 3 4");
+    expect(job("checks", rust)).toContain("check: [format, clippy, compile, doctests]");
+    expect(job("checks", rust)).toContain(
+      "cargo test --manifest-path src-tauri/Cargo.toml --locked --doc",
+    );
+    expect(job("tests", rust)).toContain("tool: cargo-nextest@0.9.145");
+    expect(job("tests", rust)).toContain('--partition "slice:$SHARD/4"');
+    expect(rust).not.toMatch(/rust-cache|actions\/cache|save-cache|restore-cache/);
   });
 
   it("ad-hoc signs beta and smoke bundles during packaging and keeps Developer ID signing separate", () => {
@@ -143,7 +180,14 @@ describe("release quality gates", () => {
     // Run the actual workflow shell, replacing only the external npm invocation.
     const args = execFileSync(
       "bash",
-      ["-e", "-u", "-o", "pipefail", "-c", `npm() { printf '%s\\n' "$@"; }\n${formatScript()}`],
+      [
+        "-e",
+        "-u",
+        "-o",
+        "pipefail",
+        "-c",
+        `npm() { if [ "$2" = "format:check:changed" ]; then printf '%s\\n' "$@"; fi; }\nIS_RELEASE=true\nFORMAT_BASE_SHA=\n${formatScript()}`,
+      ],
       { cwd: directory, encoding: "utf8", timeout: 10_000 },
     )
       .trim()
