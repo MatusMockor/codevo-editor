@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.63] - 2026-09-21
+
 ### Changed
 
 - Run frontend quality checks and four frontend and Rust test shards in parallel.
