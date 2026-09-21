@@ -7,6 +7,18 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Match the right panel, file tree, and changes list to the left sidebar background
+  across themes and maximized layouts.
+- Keep Escape-based stopping separate from message queue support and ignore held-key
+  repeats without also closing unrelated workbench surfaces.
+- Offer an explicit new conversation with the unsent draft after a stopped remote
+  session cannot be resumed, without claiming to preserve provider context.
+- Preserve navigation while a server clone starts, refresh projects after a resumed
+  clone completes, and reject results belonging to a previous server selection.
+- Describe provider failures truthfully when they happen during an active run.
+
 ## [0.2.0-beta.58] - 2026-09-21
 
 ### Added

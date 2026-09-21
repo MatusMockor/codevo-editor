@@ -1,7 +1,9 @@
+import { useAgentComposerRecovery, type AgentComposerRecovery } from "./useAgentComposerRecovery";
 import { useAgentComposerLaunchChoices } from "./useAgentComposerLaunchChoices";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentComposerDraftStore,
+  MAX_AGENT_COMPOSER_DRAFT_BYTES,
   type AgentComposerDraftStore,
 } from "../../application/agentComposerDrafts";
 import { mergeRestoredPrompt } from "../../application/agentQueuedMessageEdit";
@@ -98,6 +100,7 @@ export interface AgentComposerStateOptions {
   readonly drafts?: AgentComposerDraftStore;
   onClearSelectedThread(): void;
   onThreadStarted(threadId: string): void;
+  onSelectProjectEnvironment?(projectRootKey: string): void;
 }
 
 export interface AgentComposerState {
@@ -113,6 +116,7 @@ export type AgentComposerControllerProps = Omit<
   AgentComposerProps,
   | "onOpenProviderSettings"
   | "onOpenEnvironmentSettings"
+  | "onRecoverDraft"
   | "onPromptChange"
   | "onSubmit"
   | "prompt"
@@ -120,6 +124,7 @@ export type AgentComposerControllerProps = Omit<
   | "providerEnabled"
   | "submitBlocked"
 > & {
+  readonly recovery?: AgentComposerRecovery | null;
   readonly draftKey: string | null;
   readonly promptRestore?: AgentComposerPromptRestore | null;
 };
@@ -176,6 +181,7 @@ export function useAgentComposerControllerState({
   groups,
   onClearSelectedThread,
   onThreadStarted,
+  onSelectProjectEnvironment,
   projects,
   promptRestore = null,
   providerEnabled,
@@ -325,8 +331,10 @@ export function useAgentComposerControllerState({
   );
   const composerMode = useComposerMode(selectedThread, agents, agentCliKind);
   const steerThreadId = composerMode.kind === "steer" ? composerMode.threadId : null;
-  const steerThreadIdRef = useRef(steerThreadId);
-  steerThreadIdRef.current = steerThreadId;
+  const runningThreadId =
+    selectedThread?.lifecycle === "running" ? selectedThread.thread.threadId : null;
+  const runningThreadIdRef = useRef(runningThreadId);
+  runningThreadIdRef.current = runningThreadId;
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -338,7 +346,7 @@ export function useAgentComposerControllerState({
   const dispatching = agents.dispatching || steering;
   const stopThread = agents.stop;
   const requestStop = useCallback((): void => {
-    const threadId = steerThreadIdRef.current;
+    const threadId = runningThreadIdRef.current;
     if (threadId === null) return;
     void stopThread(threadId);
   }, [stopThread]);
@@ -382,6 +390,13 @@ export function useAgentComposerControllerState({
     },
     [composerProjects, onClearSelectedThread],
   );
+
+  const recovery = useAgentComposerRecovery({
+    selectedThread,
+    projects: composerProjects,
+    startNewThread,
+    selectEnvironment: onSelectProjectEnvironment,
+  });
 
   const clearDraftTarget = useCallback(() => setSelection(null), []);
   const clearSelection = useCallback(() => {
@@ -539,6 +554,7 @@ export function useAgentComposerControllerState({
   );
 
   const composerProps: AgentComposerControllerProps = {
+    recovery,
     attachments,
     attachmentTargetKey,
     immediateBlockedReason:
@@ -567,7 +583,7 @@ export function useAgentComposerControllerState({
     onNewThread: clearSelection,
     onSelectRepository: selectRepository,
     onStop: requestStop,
-    running: steerThreadId !== null,
+    running: runningThreadId !== null,
     target: composerTargetView(composerProjects, target),
     worktreeAvailable,
     worktreeOnly,
@@ -690,7 +706,7 @@ export function agentComposerPromptBytes(
 export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
 ): AgentComposerPromptProps {
-  const { draftKey, promptRestore = null, ...composerProps } = controller.composerProps;
+  const { draftKey, promptRestore = null, recovery, ...composerProps } = controller.composerProps;
   const [ownDrafts] = useState(createAgentComposerDraftStore);
   const drafts = controller.drafts ?? ownDrafts;
   const [draft, setDraft] = useState(() => ({
@@ -763,8 +779,28 @@ export function useAgentComposerPromptState(
     },
     [controller, draft.key, drafts, prompt, submitBlocked],
   );
+  const recoveryRevision = promptRevisionRef.current;
+  const recoveryOwner = promptOwnerRef.current;
   return {
     ...composerProps,
+    onRecoverDraft:
+      recovery == null
+        ? undefined
+        : () => {
+            if (
+              promptRevisionRef.current !== recoveryRevision ||
+              promptOwnerRef.current !== recoveryOwner
+            )
+              return "unavailable";
+            const existing = drafts.readDraft(recovery.draftKey);
+            const merged = mergeRestoredPrompt(existing, prompt);
+            if (agentPromptByteLength(merged) > MAX_AGENT_COMPOSER_DRAFT_BYTES)
+              return "draftTooLarge";
+            if (!recovery.activate()) return "unavailable";
+            drafts.writeDraft(recovery.draftKey, merged);
+            focusAgentComposerPrompt(merged.length);
+            return "started";
+          },
     promptRevision: promptRevisionRef.current,
     onPromptChange: changePrompt,
     onSubmit: submit,

@@ -89,6 +89,7 @@ function agentComposerControllerPropsEqual(
     left.submissionBlocked === right.submissionBlocked &&
     left.submit === right.submit &&
     leftProps.draftKey === rightProps.draftKey &&
+    leftProps.recovery === rightProps.recovery &&
     leftProps.promptRestore === rightProps.promptRestore &&
     leftProps.attachmentTargetKey === rightProps.attachmentTargetKey &&
     sameComposerAttachments(leftProps.attachments, rightProps.attachments) &&

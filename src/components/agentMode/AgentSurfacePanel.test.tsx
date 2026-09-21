@@ -590,9 +590,9 @@ describe("AgentSurfacePanel", () => {
 });
 
 describe("agent surface styles", () => {
-  it("sets the panel and its head on the side tone with no rule between them", () => {
+  it("sets the panel and its head on the shared rail tone with no rule between them", () => {
     const surface = cssRule(agentModeCss, ".agent-surface {");
-    expect(surface).toContain("background: var(--codevo-side)");
+    expect(surface).toContain("background: var(--codevo-canvas)");
     expect(surface).not.toContain("border");
 
     const head = cssRule(agentModeCss, ".agent-surface__head {");
@@ -634,12 +634,12 @@ describe("agent surface styles", () => {
     );
   });
 
-  it("drops the files subhead and gives the tree a tools row on the side tone", () => {
+  it("drops the files subhead and gives the tree a tools row on the shared rail tone", () => {
     expect(agentModeCss).not.toContain(".agent-surface__subhead");
 
     const tree = cssRule(agentModeCss, ".agent-surface-tree {");
     expect(tree).toContain("width: var(--agent-surface-tree-width)");
-    expect(tree).toContain("background: var(--codevo-side)");
+    expect(tree).toContain("background: var(--codevo-canvas)");
     expect(tree).not.toContain("border");
 
     expect(cssRule(agentModeCss, ".agent-surface-tree__tools {")).toContain("padding: 4px 8px");
@@ -656,9 +656,9 @@ describe("agent surface styles", () => {
     );
   });
 
-  it("keeps the change list on the side tone and lifts the open row", () => {
+  it("keeps the change list on the shared rail tone and lifts the open row", () => {
     expect(cssRule(agentModeCss, ".agent-surface-diff__list {")).toContain(
-      "background: var(--codevo-side)",
+      "background: var(--codevo-canvas)",
     );
     const row = cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row {");
     expect(row).toContain("min-height: calc(28px * var(--codevo-fs-scale))");

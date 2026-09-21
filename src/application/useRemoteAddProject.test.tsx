@@ -272,6 +272,22 @@ it("selects the cloned project once it appears in the refreshed list", async () 
   expect(view.selectProject).toHaveBeenCalledWith(CLONED_KEY);
 });
 
+it("does not refresh a new owner from the previous owner's completed clone", async () => {
+  const view = setup();
+  view.getProjectClone.mockResolvedValue(succeededJob);
+  await reachConfirm(view);
+  await act(async () => {
+    view.result.confirmClone();
+  });
+  await settleClone();
+  expect(view.refreshProjects).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    view.render("server-b");
+  });
+  expect(view.refreshProjects).toHaveBeenCalledTimes(1);
+  expect(view.result.pendingClone).toBeNull();
+});
+
 it("selects the first clone on a server that had no projects at all", async () => {
   const view = setup({ initialProjects: [], projectsAfterRefresh: [clonedProjectRow] });
   view.getProjectClone.mockResolvedValue(succeededJob);
@@ -315,6 +331,33 @@ it("gives up the adoption when the selection identity changed while cloning", as
   expect(view.result.pendingClone).toBeNull();
 });
 
+it("preserves navigation that changed before the clone request acknowledged", async () => {
+  const view = setup();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  view.cloneProject.mockImplementation(async () => {
+    await gate;
+    return runningJob;
+  });
+  view.getProjectClone.mockResolvedValue(succeededJob);
+  await reachConfirm(view);
+  act(() => {
+    view.result.confirmClone();
+  });
+  await act(async () => {
+    view.render("server-a", true, "workspace-1", {});
+  });
+  await act(async () => {
+    release();
+    await gate;
+  });
+  await settleClone();
+  expect(view.refreshProjects).toHaveBeenCalledTimes(1);
+  expect(view.selectProject).not.toHaveBeenCalled();
+});
+
 it("does not select the cloned project when the user picked another one first", async () => {
   const view = setup();
   view.getProjectClone.mockResolvedValue(succeededJob);
@@ -349,6 +392,7 @@ it("resumes a tracked clone across server A to B to A without selecting", async 
     name: "storefront-api",
     status: "succeeded",
   });
+  expect(view.refreshProjects).toHaveBeenCalledTimes(1);
   expect(view.selectProject).not.toHaveBeenCalled();
 });
 

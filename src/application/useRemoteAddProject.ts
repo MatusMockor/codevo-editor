@@ -189,6 +189,7 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     if (job === null || job.status !== "succeeded") return;
     if (handled.current === job.id) return;
     handled.current = job.id;
+    void refreshForAdoption(ports);
     const submission = submitted.current;
     if (submission === null || submission.jobId !== job.id) return;
     const project = job.project;
@@ -197,7 +198,6 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
       projectKey: remoteAgentProjectKey(captured.serverId, submission.runnerId, project.id),
       selectionIdentity: submission.selectionIdentity,
     });
-    void refreshForAdoption(ports);
   }, [captured, job]);
 
   useEffect(() => {
@@ -257,6 +257,8 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     dispatch({ kind: "submitStarted" });
     const input = branch.length === 0 ? { url, name } : { url, name, branch };
     if (!valid()) return;
+    const submissionIdentity = ports.current.selectionIdentity;
+    const submissionRunnerId = runnerId.current;
     const result = await cloneRef.current.start(input);
     if (result.status === "started" || result.status === "orphaned") {
       tracker.remember(trackerKey, { cloneId: result.job.id, name });
@@ -273,8 +275,8 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     resumed.current = result.job.id;
     submitted.current = {
       jobId: result.job.id,
-      runnerId: runnerId.current,
-      selectionIdentity: ports.current.selectionIdentity,
+      runnerId: submissionRunnerId,
+      selectionIdentity: submissionIdentity,
     };
     setAdoption(null);
     setFailure(null);

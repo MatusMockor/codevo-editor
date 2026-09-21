@@ -76,7 +76,7 @@ export function agentProviderErrorHeadline(
   if (detail.kind === "authenticationRequired")
     return `${agentProviderDisplayName(detail.provider)} needs you to sign in again.`;
   if (detail.kind === "protocolFailure")
-    return `${agentProviderDisplayName(detail.provider)} could not start or resume this conversation.`;
+    return `${agentProviderDisplayName(detail.provider)} could not complete this run.`;
   if (detail.kind === "advisory") return detail.text;
   if (detail.kind === "unknown") return error.message;
 

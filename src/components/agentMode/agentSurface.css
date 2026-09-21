@@ -1,6 +1,6 @@
 /* Surfaces */
 
-/* Right panel: a tab strip of open surfaces on the side tone. The surface tracks themselves belong
+/* Right panel: a tab strip of open surfaces on the shared rail tone. The surface tracks themselves belong
    to the shell frame (workbenchShellFrame.css). */
 .agent-surface {
   position: relative;
@@ -9,7 +9,7 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  background: var(--codevo-side);
+  background: var(--codevo-canvas);
   container-name: agent-surface;
   container-type: inline-size;
 }
@@ -404,7 +404,7 @@
   }
 }
 
-/* Files: the tree on the side tone and the editor well on the canvas tone. Docked, the tree sits
+/* Files: the tree on the shared rail tone and the editor well on the canvas tone. Docked, the tree sits
    left; maximized, the row reverses so the tree docks right of the editor. With no document open
    and a tree showing (data-editor="empty" + data-tree="visible") the editor well collapses and
    the tree fills the body; without a tree the editor placeholder stays. */
@@ -425,7 +425,7 @@
   min-height: 0;
   flex: 0 0 auto;
   flex-direction: column;
-  background: var(--codevo-side);
+  background: var(--codevo-canvas);
   font-size: var(--agent-fs-sm);
 }
 
@@ -511,7 +511,7 @@
   display: none;
 }
 
-/* Diff: change list on the side tone, one Monaco diff editor on a canvas block. */
+/* Diff: change list on the shared rail tone, one Monaco diff editor on a canvas block. */
 .agent-surface-diff {
   display: flex;
   min-height: 0;
@@ -529,7 +529,7 @@
 .agent-surface-diff__list {
   min-height: 0;
   padding: 0 var(--agent-space-2) var(--agent-space-3);
-  background: var(--codevo-side);
+  background: var(--codevo-canvas);
   overflow-y: auto;
 }
 

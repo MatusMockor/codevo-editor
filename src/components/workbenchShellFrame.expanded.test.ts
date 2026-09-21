@@ -199,9 +199,9 @@ describe("expanded editing shell layout contract", () => {
       [SHELL_SHEET, SURFACE_SHEET, STATUS_BAR_SHEET].includes(rule.sheet),
     );
     expect(collectBorderViolations(owned, tokenTable)).toEqual([]);
-    expect(declarations(surface, ".agent-surface").get("background")).toBe("var(--codevo-side)");
+    expect(declarations(surface, ".agent-surface").get("background")).toBe("var(--codevo-canvas)");
     expect(declarations(surface, ".agent-surface-tree").get("background")).toBe(
-      "var(--codevo-side)",
+      "var(--codevo-canvas)",
     );
     expect(declarations(surface, ".agent-surface__editor-slot").get("background")).toBe(
       "var(--codevo-canvas)",
@@ -308,6 +308,6 @@ describe("workbenchFrameEditorReport", () => {
     );
     expect(narrow?.selector).toContain('[data-right-panel="docked"]');
     expect(narrow?.declarations).toEqual([{ property: "--agent-rail-track", value: "0px" }]);
-    expect(declarations(shell, MAXIMIZED).get("background")).toBe("var(--codevo-side)");
+    expect(declarations(shell, MAXIMIZED).get("background")).toBe("var(--codevo-canvas)");
   });
 });

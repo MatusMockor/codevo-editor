@@ -376,6 +376,7 @@ function LocalAgentModeView({
     selectedThread,
     onClearSelectedThread: navigation.clearSelectedThread,
     onThreadStarted: navigation.selectStartedThread,
+    onSelectProjectEnvironment,
   });
   const submitComposer = useAgentLatestCallback(composer.submit);
   const changeIsolation = useAgentLatestCallback(composer.composerProps.onIsolationChange);

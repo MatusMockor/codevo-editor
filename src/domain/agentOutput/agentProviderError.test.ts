@@ -208,9 +208,7 @@ describe("launch failure guidance", () => {
   });
   it("makes the protocol failure readable while retaining its technical detail", () => {
     const error = classifyAgentProviderError("provider_protocol_failed", "codex");
-    expect(agentProviderErrorHeadline(error, null)).toBe(
-      "Codex could not start or resume this conversation.",
-    );
+    expect(agentProviderErrorHeadline(error, null)).toBe("Codex could not complete this run.");
     expect(error.raw).toBe("provider_protocol_failed");
   });
 });

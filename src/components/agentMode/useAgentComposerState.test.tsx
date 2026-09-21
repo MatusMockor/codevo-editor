@@ -14,6 +14,7 @@ import {
 } from "../../application/agentComposerDrafts";
 import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentTurn } from "../../domain/agentThread";
+import { remoteAgentProjectKey } from "../../application/remoteAgentProjection";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentProjectGroups } from "./agentModePresentation";
@@ -606,6 +607,124 @@ describe("useAgentComposerState", () => {
     act(() => current().composer.composerProps.onStop?.());
     expect(stop).toHaveBeenCalledWith("agt-1");
   });
+
+  it("can stop a running server turn without queue support and keep writing after it stops", () => {
+    const stop = vi.fn(async () => undefined);
+    const base = steerableThreadView();
+    const view: AgentThreadView = {
+      ...base,
+      execution: {
+        kind: "remote",
+        serverId: "server",
+        runnerId: "runner",
+        projectId: "project",
+        conversationId: "conversation",
+        latestTaskId: "task",
+        pendingMessages: false,
+        resume: { available: false, reason: "task_not_finished" },
+      },
+    };
+    render(threadsSurfaceFixture({ threads: [view], stop }));
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Continue after stopping"));
+    expect(current().composer.composerProps.mode.kind).toBe("followUp");
+    expect(current().composer.composerProps.running).toBe(true);
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+    act(() => current().composer.composerProps.onStop?.());
+    expect(stop).toHaveBeenCalledWith("agt-1");
+
+    const stopped: AgentThreadView = {
+      ...view,
+      lifecycle: "settled",
+      thread: {
+        ...view.thread,
+        turns: view.thread.turns.map((turn) => ({ ...turn, status: { kind: "stopped" } })),
+      },
+      execution: { ...view.execution!, resume: { available: true, reason: null } },
+    };
+    render(threadsSurfaceFixture({ threads: [stopped], stop }));
+    expect(current().composer.composerProps.running).toBe(false);
+    expect(current().composer.composerProps.prompt).toBe("Continue after stopping");
+    act(() => current().composer.composerProps.onPromptChange("Continue with a changed plan"));
+    expect(current().composer.composerProps.prompt).toBe("Continue with a changed plan");
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+    act(() => current().composer.composerProps.onStop?.());
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "preserves both recovery drafts including the UTF-8 storage boundary (%s)",
+    (checkBoundary) => {
+      const key = remoteAgentProjectKey("server", "runner", "project");
+      const base = surfaceThreadView();
+      const thread: AgentThreadView = {
+        ...base,
+        lifecycle: "settled",
+        thread: {
+          ...base.thread,
+          owner: { rootKey: key, ownerId: key, repositoryRoot: key },
+          turns: [{ ...steerableThreadView().thread.turns[0]!, status: { kind: "stopped" } }],
+        },
+        execution: {
+          kind: "remote",
+          serverId: "server",
+          runnerId: "runner",
+          projectId: "project",
+          conversationId: "agt-1",
+          latestTaskId: "agt-1-t1",
+          resume: { available: false, reason: "session_unavailable" },
+        },
+      };
+      const project = {
+        ...projectFixture(),
+        rootKey: key,
+        rootPath: key,
+        ownerId: key,
+        repositories: [],
+      };
+      const drafts = createAgentComposerDraftStore();
+      drafts.writeDraft(`new:${key}`, "Existing new draft");
+      render(threadsSurfaceFixture({ threads: [thread] }), [project], ALL_PROVIDERS, drafts);
+      act(() => current().navigation.selectThread("agt-1"));
+      act(() => current().composer.composerProps.onPromptChange("Unsent correction"));
+      const staleRecovery = current().composer.composerProps.onRecoverDraft;
+      expect(staleRecovery).toBeDefined();
+      act(() => current().composer.composerProps.onPromptChange("Latest correction"));
+      act(() => staleRecovery?.());
+      expect(current().composer.composerProps.mode.kind).toBe("followUp");
+      expect(drafts.readDraft(`new:${key}`)).toBe("Existing new draft");
+      if (checkBoundary) {
+        const destination = "é".repeat(16_384);
+        const source = "ø".repeat(16_384);
+        drafts.writeDraft(`new:${key}`, destination);
+        act(() => current().composer.composerProps.onPromptChange(source));
+        act(() =>
+          expect(current().composer.composerProps.onRecoverDraft?.()).toBe("draftTooLarge"),
+        );
+        expect(current().composer.composerProps.mode.kind).toBe("followUp");
+        expect(drafts.readDraft(`new:${key}`)).toBe(destination);
+        expect(drafts.readDraft("agt-1")).toBe(source);
+        act(() => current().composer.composerProps.onPromptChange(source.slice(1)));
+        act(() => expect(current().composer.composerProps.onRecoverDraft?.()).toBe("started"));
+        expect(current().composer.composerProps.mode.kind).toBe("new");
+        expect(current().composer.composerProps.prompt).toBe(
+          `${destination}\n\n${source.slice(1)}`,
+        );
+        expect(new TextEncoder().encode(current().composer.composerProps.prompt)).toHaveLength(
+          65_536,
+        );
+        return;
+      }
+      act(() => current().composer.composerProps.onRecoverDraft?.());
+      expect(current().composer.composerProps.mode.kind).toBe("new");
+      expect(current().composer.target).toEqual({ projectRootKey: key, repositoryRoot: key });
+      expect(current().composer.composerProps.prompt).toBe(
+        "Existing new draft\n\nLatest correction",
+      );
+      expect(drafts.readDraft("agt-1")).toBe("Latest correction");
+      expect(current().composer.composerProps.onRecoverDraft).toBeUndefined();
+    },
+  );
 
   it.each(["claudeCode", "codex"] as const)(
     "preserves explicit immediate submission for %s",

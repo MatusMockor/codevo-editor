@@ -165,11 +165,11 @@
 
 /*
   Maximized: the editing shell. The surface takes the thread column plus a tree column on the
-  side tone; the editor overlay sits in the centre column on a canvas block, the bottom panel
+  shared rail tone; the editor overlay sits in the centre column on a canvas block, the bottom panel
   sits under the editor only, and the rail never changes.
 */
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] {
-  background: var(--codevo-side);
+  background: var(--codevo-canvas);
   grid-template-columns:
     var(--agent-rail-track) minmax(0, 1fr)
     var(--agent-surface-tree-width);

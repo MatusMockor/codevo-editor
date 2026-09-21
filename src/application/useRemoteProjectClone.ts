@@ -35,7 +35,17 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
   }, []);
   const lock = useRef(false);
   const request = useRef<{ input: Input; key: string } | null>(null);
-  const [job, setJob] = useState<RemoteRunnerCloneJob | null>(null);
+  const [ownedJob, setOwnedJob] = useState<{
+    owner: typeof captured;
+    job: RemoteRunnerCloneJob;
+  } | null>(null);
+  const job = ownedJob?.owner === captured ? ownedJob.job : null;
+  const setJob = useCallback(
+    (next: RemoteRunnerCloneJob | null) => {
+      setOwnedJob(next === null ? null : { owner: captured, job: next });
+    },
+    [captured],
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [requestedName, setRequestedName] = useState<string | null>(null);
@@ -54,7 +64,7 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
       mounted.current = false;
       invalidatePending();
     };
-  }, [captured, invalidatePending]);
+  }, [captured, invalidatePending, setJob]);
 
   useEffect(() => {
     const runner = gateway;
@@ -82,7 +92,7 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
       disposed = true;
       clearTimeout(timer);
     };
-  }, [gateway, serverId, cloneId, polling, pending, valid]);
+  }, [gateway, serverId, cloneId, polling, pending, valid, setJob]);
 
   async function start(input: Input): Promise<RemoteProjectCloneStart> {
     if (!valid() || gateway === null || lock.current || active(job)) return IGNORED;

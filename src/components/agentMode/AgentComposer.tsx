@@ -116,6 +116,7 @@ export interface AgentComposerProps {
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
   onStop?(): void;
+  onRecoverDraft?(): "started" | "unavailable" | "draftTooLarge";
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void | Promise<boolean>;
 }
@@ -149,6 +150,7 @@ export function AgentComposer({
   onPromptChange,
   onSelectRepository,
   onStop,
+  onRecoverDraft,
   onSubmit,
   onCompactContext,
   prompt,
@@ -177,6 +179,9 @@ export function AgentComposer({
     promptAuthorityRef.current = {};
     onPromptChange(next);
   };
+  const [recoveryRefusal, setRecoveryRefusal] = useState<{
+    readonly action: NonNullable<AgentComposerProps["onRecoverDraft"]>;
+  } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useAgentComposerAutosize(textareaRef, prompt);
   const [controlRequest, setControlRequest] = useState<
@@ -497,7 +502,8 @@ export function AgentComposer({
     if (event.key === "Escape") {
       if (!running) return;
       event.preventDefault();
-      onStop?.();
+      event.stopPropagation();
+      if (!event.repeat) onStop?.();
       return;
     }
     if (event.key !== "Enter") return;
@@ -649,6 +655,31 @@ export function AgentComposer({
             }}
           />
         </div>
+
+        {onRecoverDraft !== undefined && (
+          <div className="agent-composer__caption">
+            <p>
+              This session cannot be resumed. Start a new thread to keep writing. Your unsent text
+              will be copied; the previous conversation is not carried over.
+            </p>
+            <button
+              className="agent-composer__alternate"
+              type="button"
+              onClick={() => {
+                if (onRecoverDraft() === "draftTooLarge")
+                  setRecoveryRefusal({ action: onRecoverDraft });
+              }}
+            >
+              Start new thread with this draft
+            </button>
+            {recoveryRefusal?.action === onRecoverDraft && (
+              <p role="alert">
+                The combined draft is too large. Shorten either draft and try again. Both drafts are
+                unchanged.
+              </p>
+            )}
+          </div>
+        )}
 
         {unavailableAttachmentNotice !== null && (
           <p className="agent-composer__caption" role="alert">

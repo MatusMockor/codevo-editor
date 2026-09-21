@@ -1230,6 +1230,83 @@ describe("AgentComposer", () => {
     expect(onStop).toHaveBeenCalledTimes(2);
   });
 
+  it("owns running Escape and ignores key repeats without losing the draft or focus", () => {
+    const onStop = vi.fn();
+    const onPromptChange = vi.fn();
+    const bubbled = vi.fn();
+    window.addEventListener("keydown", bubbled);
+    try {
+      render({ mode: STEER_MODE, prompt: "Next change", running: true, onStop, onPromptChange });
+      const field = promptField();
+      act(() => field.focus());
+      const first = pressEscape();
+      const repeated = pressEscape({ repeat: true });
+      expect(first.defaultPrevented).toBe(true);
+      expect(repeated.defaultPrevented).toBe(true);
+      expect(bubbled).not.toHaveBeenCalled();
+      expect(onStop).toHaveBeenCalledTimes(1);
+      expect(field.value).toBe("Next change");
+      expect(document.activeElement).toBe(field);
+
+      render({
+        mode: { kind: "followUp", blockedReason: null },
+        prompt: "Next change",
+        onStop,
+        onPromptChange,
+      });
+      expect(promptField()).toBe(field);
+      expect(field.disabled).toBe(false);
+      expect(document.activeElement).toBe(field);
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+          field,
+          "Next change after stop",
+        );
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(onPromptChange).toHaveBeenLastCalledWith("Next change after stop");
+    } finally {
+      window.removeEventListener("keydown", bubbled);
+    }
+  });
+
+  it("offers an explicit fresh draft action without sending or claiming to resume history", () => {
+    const onRecoverDraft = vi.fn();
+    const onSubmit = vi.fn();
+    render({
+      mode: { kind: "followUp", blockedReason: "This session cannot be resumed." },
+      prompt: "Unsent correction",
+      onRecoverDraft,
+      onSubmit,
+    });
+    const action = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Start new thread with this draft",
+    );
+    expect(action).toBeDefined();
+    expect(host.textContent).toContain("previous conversation is not carried over");
+    expect(promptField().disabled).toBe(false);
+    act(() => action?.click());
+    expect(onRecoverDraft).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("reports oversized recovery without submitting or hiding the editable draft", () => {
+    render({
+      mode: { kind: "followUp", blockedReason: "This session cannot be resumed." },
+      prompt: "Unsent correction",
+      onRecoverDraft: () => "draftTooLarge",
+    });
+    const action = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Start new thread with this draft",
+    );
+    act(() => action?.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      "Both drafts are unchanged",
+    );
+    expect(promptField().value).toBe("Unsent correction");
+    expect(promptField().disabled).toBe(false);
+  });
+
   it("leaves Escape alone once the turn is no longer running", () => {
     const onStop = vi.fn();
     render({ mode: { kind: "followUp", blockedReason: null }, prompt: "Reply", onStop });
@@ -1315,13 +1392,15 @@ describe("AgentComposer", () => {
     return element ?? document.createElement("textarea");
   }
 
-  function pressEscape(): void {
-    const field = promptField();
-    act(() => {
-      field.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
-      );
+  function pressEscape(options: KeyboardEventInit = {}): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+      ...options,
     });
+    act(() => promptField().dispatchEvent(event));
+    return event;
   }
 
   function render(overrides: Partial<AgentComposerProps> = {}): void {

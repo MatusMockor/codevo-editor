@@ -595,9 +595,13 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("blocks a follow-up while the thread is still running", () => {
+  it("blocks a follow-up while a nonqueueable thread is running but keeps Stop usable", () => {
+    const sendFollowUp = vi.fn(async () => true);
+    const stop = vi.fn(async () => undefined);
     render({
       agents: surface({
+        sendFollowUp,
+        stop,
         threads: [threadView({ threadId: "agt-1", status: { kind: "running" } })],
       }),
     });
@@ -606,7 +610,16 @@ describe("AgentModeView", () => {
     typePrompt("Also update the tests");
 
     expect(host.textContent).toContain("This thread is still running");
-    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector('.agent-composer button[type="submit"]')).toBeNull();
+    expect(promptField().disabled).toBe(false);
+    submitForm();
+    expect(sendFollowUp).not.toHaveBeenCalled();
+    expect(promptField().value).toBe("Also update the tests");
+    const stopButton = host.querySelector<HTMLButtonElement>('button[aria-label="Stop agent"]');
+    expect(stopButton).not.toBeNull();
+    expect(stopButton?.disabled).toBe(false);
+    act(() => stopButton?.click());
+    expect(stop).toHaveBeenCalledWith("agt-1");
   });
 
   it.each(["queue", "steer"] as const)(
