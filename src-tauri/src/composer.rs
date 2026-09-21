@@ -171,10 +171,7 @@ fn append_package_array(
 }
 
 fn package_metadata(value: &Value, default_dev: bool) -> Option<ComposerPackageMetadata> {
-    let name = match value.get("name").and_then(Value::as_str) {
-        Some(name) => name.to_string(),
-        None => return None,
-    };
+    let name = value.get("name").and_then(Value::as_str)?.to_string();
     let dev = value
         .get("dev_requirement")
         .and_then(Value::as_bool)

@@ -139,7 +139,9 @@ pub(super) fn parse_commit_log_output(output: &str) -> io::Result<Vec<GitCommit>
         return Err(io::Error::other("Invalid history response."));
     }
     fields
-        .chunks_exact(9)
+        .as_chunks::<9>()
+        .0
+        .iter()
         .map(|fields| {
             let commit = parse_git_commit_from_fields(fields);
             if !valid_history_hash(&commit.hash)

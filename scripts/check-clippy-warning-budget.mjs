@@ -63,7 +63,6 @@ for (const line of result.stdout.split("\n")) {
 
 if (result.status !== 0) {
   for (const diagnostic of diagnostics) {
-    if (diagnostic.level === "warning") continue;
     process.stderr.write(diagnostic.rendered ?? `${diagnostic.level}: ${diagnostic.message}\n`);
   }
   process.exit(result.status ?? 1);
@@ -71,6 +70,10 @@ if (result.status !== 0) {
 
 console.log(`Clippy warning budget: ${warnings.size}/${budget}`);
 if (warnings.size > budget) {
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.level !== "warning") continue;
+    process.stderr.write(diagnostic.rendered ?? `warning: ${diagnostic.message}\n`);
+  }
   console.error(
     `Clippy introduced ${warnings.size - budget} warning(s). Fix them or deliberately lower existing debt before updating the budget.`,
   );

@@ -86,8 +86,9 @@ describe("hydration carries what the JSON tail was already showing", () => {
   ] as const;
 
   for (const [name, generate] of generators) {
-    it(`never loses an event of the ${name} JSON tail when the log window starts later`, () => {
-      for (const seed of SEEDS) {
+    it.each(SEEDS)(
+      `never loses an event of the ${name} JSON tail when the log window starts later (seed %i)`,
+      (seed) => {
         const replay = replayTurn(generate(seed, 5_000));
         const planned = planHydratedAgentTurnEvents(replay.jsonTail, replay.logRange);
         const hydrated = mergeTurnEvents([], planned).events;
@@ -95,11 +96,12 @@ describe("hydration carries what the JSON tail was already showing", () => {
           seed,
           missing: containsAll(identities(hydrated), identities(replay.jsonTail)),
         }).toEqual({ seed, missing: [] });
-      }
-    });
+      },
+    );
 
-    it(`never makes a ${name} consumer projection less complete than the JSON tail`, () => {
-      for (const seed of SEEDS) {
+    it.each(SEEDS)(
+      `never makes a ${name} consumer projection less complete than the JSON tail (seed %i)`,
+      (seed) => {
         const replay = replayTurn(generate(seed, 5_000));
         const planned = planHydratedAgentTurnEvents(replay.jsonTail, replay.logRange);
         const hydrated = mergeTurnEvents([], planned).events;
@@ -122,11 +124,12 @@ describe("hydration carries what the JSON tail was already showing", () => {
           tasks: lostTasks.filter((taskId) => !unexplainedTasks.includes(taskId)),
           subagents: lostSubagents.filter((id) => !unexplainedSubagents.includes(id)),
         }).toEqual({ seed, tasks: [], subagents: [] });
-      }
-    });
+      },
+    );
 
-    it(`never narrows the persisted ${name} tail through hydration`, () => {
-      for (const seed of SEEDS) {
+    it.each(SEEDS)(
+      `never narrows the persisted ${name} tail through hydration (seed %i)`,
+      (seed) => {
         const replay = replayTurn(generate(seed, 5_000));
         const planned = planHydratedAgentTurnEvents(replay.jsonTail, replay.logRange);
         const hydrated = mergeTurnEvents([], planned).events;
@@ -139,8 +142,8 @@ describe("hydration carries what the JSON tail was already showing", () => {
           seed,
           dropped: containsAll(identities(persistedAfter), identities(replay.jsonTail)),
         }).toEqual({ seed, dropped: [] });
-      }
-    });
+      },
+    );
   }
 
   it("carries a bounded number of events on top of the hydrated range", () => {
