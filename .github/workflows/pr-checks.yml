@@ -18,12 +18,12 @@ jobs:
     name: Frontend
     uses: ./.github/workflows/frontend-ci.yml
     with:
-      runner: ubuntu-latest
-      node-version: "24"
+      runner: macos-15
+      node-version: "26"
       format-base: ${{ github.event.pull_request.base.sha || '' }}
 
   rust-quality:
     name: Rust
     uses: ./.github/workflows/rust-ci.yml
     with:
-      node-version: "24"
+      node-version: "26"

@@ -38,7 +38,15 @@ jobs:
         run: |
           case "$CHECK" in
             format) npm run format:rust:check ;;
-            clippy) npm run clippy:check ;;
+            clippy)
+              clippy_dir="$(mktemp -d "$RUNNER_TEMP/codevo-clippy.XXXXXX")"
+              trap 'rm -rf "$clippy_dir"' EXIT
+              CODEVO_PERF_CAPTURE_RUN_TOKEN="$(uuidgen)" \
+              CODEVO_PERF_CAPTURE_RESULT_PATH="$clippy_dir/result.json" \
+              CODEVO_PERF_CAPTURE_WORK_ROOT="$clippy_dir" \
+              CODEVO_PERF_CAPTURE_SHUTDOWN_PATH="$clippy_dir/shutdown.json" \
+              CODEVO_PERF_CAPTURE_SMOKE=0 npm run clippy:check
+              ;;
             compile) cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets ;;
             doctests) cargo test --manifest-path src-tauri/Cargo.toml --locked --doc ;;
             *) exit 1 ;;
