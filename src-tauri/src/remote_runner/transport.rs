@@ -263,7 +263,7 @@ mod tests {
         let script = r#"
 import base64,contextlib,io,json,sys,unittest.mock
 source=sys.stdin.read()
-for media,size,ok in [('image/png',8388608,True),('image/jpeg',3,True),('text/html',3,False),('image/png',8388609,False),('image/png',0,False)]:
+for media,size,ok in [('image/png',8388608,True),('image/jpeg',3,True),('text/html',3,False),('text/plain',5242880,True),('text/plain',5242881,False),('image/png',8388609,False),('image/png',0,False)]:
     class Response:
         status=200
         def read(self, limit): return b'x'*min(size,limit)
@@ -314,6 +314,52 @@ print('verified')
         assert!(validate_destination("::1", "codex").is_err());
         assert!(validate_destination("host", "1user").is_err());
         assert!(validate_destination("host", "_user-1").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_upload_preserves_raw_text_and_image_media() {
+        let script = r#"
+import base64,contextlib,io,json,sys,unittest.mock
+source=sys.stdin.read()
+for media,payload in [('text/plain','Long pasted text: ž🙂\n'.encode()),('image/png',b'\x89PNG\r\n\x1a\n')]:
+    calls=[]
+    class Response:
+        status=200
+        def read(self, limit): return b'{"created":true}'
+    class Connection:
+        def __init__(self,*args,**kwargs): pass
+        def request(self,method,path,body=None,headers=None):
+            calls.append((method,path,body,headers))
+        def getresponse(self): return Response()
+        def close(self): pass
+    path='/v1/attachments/7389088c-29b8-4cec-9a15-e825e1fb2f66'
+    class Input:
+        buffer=io.BytesIO(json.dumps({'method':'PUT','path':path,
+            'headers':[['content-type',media],['x-file-name','pasted-text.txt']],
+            'body':{'base64':base64.b64encode(payload).decode()}}).encode())
+    output=io.StringIO()
+    with unittest.mock.patch('sys.stdin',Input()), unittest.mock.patch('http.client.HTTPConnection',Connection), unittest.mock.patch('builtins.open',unittest.mock.mock_open(read_data='secret')), contextlib.redirect_stdout(output):
+        exec(compile(source,'helper.py','exec'),{})
+    assert len(calls)==1
+    method,actual_path,body,headers=calls[0]
+    assert (method,actual_path,body)==('PUT',path,payload)
+    assert headers['content-type']==media
+    assert headers['x-file-name']=='pasted-text.txt'
+    assert json.loads(output.getvalue())=={'result':{'created':True}}
+print('verified')
+"#;
+        let mut command = Command::new("python3");
+        command.args(["-c", script]);
+        assert_eq!(
+            run(
+                &mut command,
+                include_bytes!("helper.py"),
+                Duration::from_secs(3)
+            )
+            .unwrap(),
+            b"verified\n"
+        );
     }
 
     #[test]

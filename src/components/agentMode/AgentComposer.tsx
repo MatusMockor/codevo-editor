@@ -39,6 +39,7 @@ import {
   type AgentComposerDragDropSubscribe,
   type AgentComposerFilePicker,
 } from "./agentComposerAttachmentPorts";
+import { useAgentTextPaste } from "./useAgentTextPaste";
 import { useAgentAttachmentIntake } from "./useAgentAttachmentIntake";
 import { useAgentComposerDragDrop } from "./useAgentComposerDragDrop";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
@@ -290,6 +291,17 @@ export function AgentComposer({
     subscribe: attachmentDragDrop,
     targetRef: composerRef,
   });
+  const textPaste = useAgentTextPaste({
+    ownerKey: JSON.stringify([attachmentTargetKey, executionServerId, promptOwnerKey]),
+    prompt,
+    promptBytes,
+    attachments,
+    available: attachmentsEnabled,
+    pasteText: attachmentIntake.pasteText,
+    refuse: setUnavailableAttachmentNotice,
+    onPromptChange: changePrompt,
+    currentAuthority: () => promptAuthorityRef.current,
+  });
   const pasteAttachments = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
     if (dispatching) return;
     const data = event.clipboardData;
@@ -303,6 +315,7 @@ export function AgentComposer({
       }
     }
     if (attachments === null || attachmentTargetKey === null) {
+      if (files.length === 0 && textPaste.paste(event)) return;
       if (files.length > 0) {
         event.preventDefault();
         setUnavailableAttachmentNotice(
@@ -322,7 +335,10 @@ export function AgentComposer({
       })),
       data.getData("text/plain").length,
     );
-    if (claim !== "claim") return;
+    if (claim !== "claim") {
+      textPaste.paste(event);
+      return;
+    }
     event.preventDefault();
     void attachmentIntake.paste(files);
   };
@@ -497,6 +513,7 @@ export function AgentComposer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    textPaste.keyDown(event);
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (commands.onKeyDown(event)) return;
     if (event.key === "Escape") {
@@ -681,6 +698,22 @@ export function AgentComposer({
           </div>
         )}
 
+        {promptBytes > MAX_AGENT_TASK_PROMPT_BYTES && (
+          <div className="agent-composer__caption" role="status">
+            <p>
+              This text exceeds the message limit. Attach it as a text file to send the full
+              content.
+            </p>
+            <button
+              type="button"
+              className="agent-composer__alternate"
+              disabled={dispatching || !attachmentsEnabled || textPaste.converting}
+              onClick={textPaste.convertDraft}
+            >
+              {textPaste.converting ? "Attaching text…" : "Attach draft as text file"}
+            </button>
+          </div>
+        )}
         {unavailableAttachmentNotice !== null && (
           <p className="agent-composer__caption" role="alert">
             {unavailableAttachmentNotice}
@@ -726,6 +759,7 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
   const over = promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
   return (
     <span
+      title="Large pasted text is attached as a file. Use Shift+Command/Ctrl+V to paste inline."
       aria-label={`${promptBytes} of ${MAX_AGENT_TASK_PROMPT_BYTES} bytes`}
       className={
         over

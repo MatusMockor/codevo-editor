@@ -7,6 +7,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.61] - 2026-09-21
+
+### Added
+
+- Fold large pasted text into a file attachment while keeping the full content.
+  Existing oversized drafts can also be attached without discarding unsaved text.
+- Send UTF-8 text attachments to local and server agents.
+
+### Fixed
+
+- Accept the runner's optional subagent lifecycle capability and show specific
+  connection errors during manual connections and automatic reconnects.
+- Keep the terminal within the available window height, provide a clear close
+  button, and return focus to the same composer when closing a focused terminal.
+- Recover completed turns after restart when an explicit provider result proves
+  completion, and distinguish a paged activity window from missing saved activity.
+
+### Compatibility
+
+- Server text attachments require an updated runner advertising text attachment
+  support and are limited to 5 MiB. Older runners show an update requirement.
+- Existing saved activity gaps remain visible when their original cause cannot
+  be proven. Recovery does not invent missing content or completion evidence.
+
 ## [0.2.0-beta.60] - 2026-09-21
 
 ### Added

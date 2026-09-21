@@ -1,3 +1,4 @@
+import { interruptedTurnLogLosses } from "./agentTurnLogRestartRecovery";
 import { persistentAgentThreadSaveRequest } from "./agentThreadSaveRequest";
 import { agentTurnArtifactReferences } from "../domain/agentTurnArtifactReferences";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
@@ -28,11 +29,7 @@ import {
 } from "../domain/agentThread";
 import { agentPromptLooksClipped } from "../domain/agentPromptClipping";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
-import {
-  NO_AGENT_TURN_LOG_LOSS,
-  type AgentTurnLogLoss,
-  type AgentTurnLogSummary,
-} from "../domain/agentTurnLog";
+import { NO_AGENT_TURN_LOG_LOSS, type AgentTurnLogLoss } from "../domain/agentTurnLog";
 import { isRemoteAgentIdentity } from "./remoteAgentSurface";
 import type { AgentTurnLogIntegration } from "./useAgentTurnLogging";
 import {
@@ -429,6 +426,9 @@ export function useAgentThreadStore(
       const key = loadKeysRef.current.get(authority.rootKey);
       const ownerId = agentRootOwnerId(authority.rootKey);
       for (const thread of interruptedLoggedThreads(threads)) {
+        const currentThread = stateRef.current.threads.get(thread.threadId);
+        if (currentThread === undefined) continue;
+        const ownsThread = () => stateRef.current.threads.get(thread.threadId) === currentThread;
         const summarized = await attempt(() =>
           turnLog.summarize({
             rootKey: authority.rootKey,
@@ -441,13 +441,27 @@ export function useAgentThreadStore(
         if (!mountedRef.current) return;
         if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
         if (loadKeysRef.current.get(authority.rootKey) !== key) return;
-        if (!summarized.ok) continue;
+        if (!summarized.ok || !ownsThread()) continue;
         turnLog.facts.publishSummaries(
           thread.threadId,
           summarized.value,
           thread.turns.map((turn) => turn.turnId),
         );
-        sealInterruptedTurnLogs(turnLog, authority, thread, summarized.value);
+        const losses = await interruptedTurnLogLosses(
+          turnLog,
+          thread,
+          summarized.value,
+          () =>
+            mountedRef.current &&
+            ownsThread() &&
+            ownsProjectRoot(dependenciesRef.current.projects, authority) &&
+            loadKeysRef.current.get(authority.rootKey) === key,
+        );
+        if (!mountedRef.current) return;
+        if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
+        if (loadKeysRef.current.get(authority.rootKey) !== key) return;
+        if (!ownsThread()) continue;
+        sealInterruptedTurnLogs(turnLog, authority, thread, losses);
       }
     },
     [],
@@ -781,17 +795,15 @@ function sealInterruptedTurnLogs(
   turnLog: AgentTurnLogIntegration,
   authority: AgentProjectAuthority,
   thread: AgentThread,
-  summaries: ReadonlyArray<AgentTurnLogSummary>,
+  losses: ReadonlyMap<string, AgentTurnLogLoss>,
 ): void {
-  const unsealed = new Set(
-    summaries.filter((summary) => !summary.sealed).map((summary) => summary.turnId),
-  );
-  if (unsealed.size === 0) return;
+  if (losses.size === 0) return;
   let sealed = 0;
   for (const turn of thread.turns) {
     if (sealed >= MAX_SEALED_INTERRUPTED_TURN_LOGS_PER_THREAD) return;
     if (isTerminalAgentTurnStatus(turn.status)) continue;
-    if (!unsealed.has(turn.turnId)) continue;
+    const loss = losses.get(turn.turnId);
+    if (loss === undefined) continue;
     turnLog.writer.openTurn({
       scope: {
         rootKey: thread.owner.rootKey,
@@ -801,17 +813,12 @@ function sealInterruptedTurnLogs(
       },
       generation: authority.generation,
       provider: thread.provider.kind,
-      priorLoss: interruptedTurnLoss(turn.eventsTruncated),
+      priorLoss: loss,
       prompt: loggablePrompt(turn.prompt),
     });
     turnLog.writer.sealTurn(turn.turnId);
     sealed += 1;
   }
-}
-
-function interruptedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
-  if (!eventsTruncated) return NO_AGENT_TURN_LOG_LOSS;
-  return { kind: "supervisorGap" };
 }
 
 function closeTurnLogSlots(

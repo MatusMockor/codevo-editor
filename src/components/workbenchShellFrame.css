@@ -22,9 +22,12 @@
 .editor-workbench {
   --agent-right-panel-committed: 0px;
   --agent-bottom-panel-committed: 0px;
+  --agent-bottom-panel-requested: var(--agent-bottom-panel-committed);
   --agent-rail-committed: 256px;
   --agent-rail-width: var(--agent-rail-committed);
   --agent-right-panel-width: var(--agent-right-panel-committed);
+  /* A saved height can come from a larger display. Keep the thread and its panel
+     toggle reachable when restoring it or resizing the window. */
   --agent-bottom-panel-height: var(--agent-bottom-panel-committed);
 }
 
@@ -52,6 +55,11 @@
   agent grid below reuses the same track so both columns stay aligned.
 */
 .workbench-frame[data-layout="agent"] {
+  --agent-bottom-panel-limit: 75vh;
+  --agent-bottom-panel-height: min(
+    var(--agent-bottom-panel-requested, var(--agent-bottom-panel-committed)),
+    var(--agent-bottom-panel-limit, 75vh)
+  );
   --agent-center-min-width: 560px;
   --agent-rail-inset: 8px;
   --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));

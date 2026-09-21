@@ -249,6 +249,8 @@ function serializeAttachment(attachment: AgentAttachment): Record<string, unknow
         storedPath: attachment.storedPath,
       };
     case "file":
+      if (attachment.remote !== undefined)
+        throw new TypeError("Remote files cannot be saved in the local thread store.");
       return {
         kind: attachment.kind,
         attachmentId: attachment.attachmentId,

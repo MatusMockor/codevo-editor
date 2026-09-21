@@ -504,8 +504,10 @@ impl RemoteRunnerState {
     pub(super) fn upload(&self, request: UploadRequest) -> Result<Value, String> {
         use base64::Engine;
         id(&request.attachment_id)?;
-        if !matches!(request.media_type.as_str(), "image/png" | "image/jpeg")
-            || request.name.is_empty()
+        if !matches!(
+            request.media_type.as_str(),
+            "image/png" | "image/jpeg" | "text/plain"
+        ) || request.name.is_empty()
             || request.name.len() > 255
             || request.name.chars().any(char::is_control)
             || request.base64.len() > 11_184_812
@@ -517,6 +519,13 @@ impl RemoteRunnerState {
             .map_err(|_| "Invalid image encoding")?;
         if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
             return Err("Image exceeds runner limit".into());
+        }
+        if request.media_type == "text/plain"
+            && (bytes.len() > 5 * 1024 * 1024
+                || bytes.contains(&0)
+                || std::str::from_utf8(&bytes).is_err())
+        {
+            return Err("Invalid UTF-8 text attachment or text exceeds 5 MiB".into());
         }
         let filename: String = url::form_urlencoded::byte_serialize(request.name.as_bytes())
             .collect::<String>()

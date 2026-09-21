@@ -28,6 +28,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     eventReplay: boolean;
     taskDrafts?: boolean;
     imageAttachments?: boolean;
+    textAttachments?: boolean;
     projectCloning?: boolean;
     taskContinuation?: boolean;
     taskLaunchOptions?: boolean;
@@ -36,6 +37,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     pendingMessages?: boolean;
     taskSteering?: boolean;
     subagentTelemetry?: boolean;
+    subagentLifecycleRetention?: boolean;
     outputArtifacts?: boolean;
     instructionSync?: boolean;
     interactiveQuestions?: boolean;
@@ -148,13 +150,15 @@ export type RemoteRunnerAttachment = Readonly<{
   id: string;
   runnerId: string;
   name: string;
-  mediaType: "image/png" | "image/jpeg";
+  mediaType: "image/png" | "image/jpeg" | "text/plain";
   bytes: number;
   sha256: string;
-  width: number;
-  height: number;
   createdAt: string;
-}>;
+}> &
+  (
+    | Readonly<{ mediaType: "image/png" | "image/jpeg"; width: number; height: number }>
+    | Readonly<{ mediaType: "text/plain"; width?: never; height?: never }>
+  );
 export type RemoteRunnerCreateTaskRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
@@ -168,7 +172,7 @@ export type RemoteRunnerUploadRequest = RemoteRunnerServerRequest &
   Readonly<{
     attachmentId: string;
     name: string;
-    mediaType: "image/png" | "image/jpeg";
+    mediaType: "image/png" | "image/jpeg" | "text/plain";
     base64: string;
   }>;
 
@@ -176,7 +180,7 @@ export type RemoteRunnerAttachmentRequest = RemoteRunnerServerRequest &
   Readonly<{ attachmentId: string }>;
 export type RemoteRunnerAttachmentContent = Readonly<{
   base64: string;
-  mediaType: "image/png" | "image/jpeg";
+  mediaType: "image/png" | "image/jpeg" | "text/plain";
 }>;
 
 export type RemoteRunnerTaskFile = Readonly<{

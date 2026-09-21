@@ -63,7 +63,7 @@ describe("agent turn log notices", () => {
       "Part of this turn ran before full transcripts were kept, so some activity is gone.",
     );
     expect(wording({ kind: "supervisorGap" })).toBe(
-      "Some activity from this turn was too large to record and is not shown.",
+      "Some activity from this turn could not be saved and is not shown.",
     );
     expect(wording({ kind: "turnCeiling" })).toBe(
       "This turn reached its recording limit, so later activity was not saved.",

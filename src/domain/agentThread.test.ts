@@ -704,6 +704,36 @@ describe("agentThreadsReducer turn lifecycle", () => {
 });
 
 describe("agentThreadsReducer loaded", () => {
+  it.each(["running", "interrupted"] as const)(
+    "restores a completed provider result from a persisted %s turn",
+    (kind) => {
+      const persisted = wireParseAgentThread(
+        wireSerializeAgentThread(
+          thread({
+            turns: [
+              turn({
+                status: { kind },
+                eventsTruncated: true,
+                events: [
+                  { kind: "result", text: "Completed response", isError: false, usage: null },
+                ],
+              }),
+            ],
+          }),
+        ),
+      );
+      const loaded = agentThreadsReducer(emptyAgentThreadsState(), {
+        kind: "loaded",
+        owner: { rootKey: OWNER.rootKey, ownerId: OWNER.ownerId },
+        threads: [persisted],
+      });
+      expect(loaded.threads.get(persisted.threadId)?.turns[0].status).toEqual({
+        kind: "exited",
+        exitCode: 0,
+      });
+      expect(loaded.threads.get(persisted.threadId)?.turns[0].eventsTruncated).toBe(true);
+    },
+  );
   it("replaces the root's threads, keeps in-memory running threads, and interrupts loaded live turns", () => {
     const inMemoryRunning = thread({ threadId: "agt-run-0001" });
     const inMemorySettled = settledThread({ threadId: "agt-old-0001" });

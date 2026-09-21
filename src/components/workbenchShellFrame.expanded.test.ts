@@ -57,6 +57,20 @@ function ruleIndex(rules: readonly CssRule[], selector: string): number {
 }
 
 describe("expanded editing shell layout contract", () => {
+  it("caps restored terminal height at three quarters of the window in every agent placement", () => {
+    expect(
+      declarations(shell, '.workbench-frame[data-layout="agent"]').get(
+        "--agent-bottom-panel-height",
+      ),
+    ).toBe(
+      "min(var(--agent-bottom-panel-requested,var(--agent-bottom-panel-committed)),var(--agent-bottom-panel-limit,75vh))",
+    );
+    expect(
+      declarations(shell, '.workbench-frame[data-layout="agent"]').get("grid-template-rows"),
+    ).toBe("minmax(0,1fr)var(--agent-bottom-panel-height)");
+    expect(declarations(shell, MAXIMIZED).has("grid-template-rows")).toBe(false);
+  });
+
   it("parses the frame and surface sheets without issues", () => {
     expect(parsed.issues).toEqual([]);
     expect(shell.length).toBeGreaterThan(0);

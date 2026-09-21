@@ -661,6 +661,102 @@ describe("useAgentThreadStore turn log lifecycle", () => {
   });
 });
 
+describe("restart completion is backed by durable history", () => {
+  it("does not recreate a transcript deleted while its recovery tail is pending", async () => {
+    const result: AgentTurnEvent = { kind: "result", text: "Done", isError: false, usage: null };
+    const harness = renderStore({
+      persisted: [
+        thread({
+          turns: [turn({ status: { kind: "running" }, events: [result], eventsTruncated: true })],
+        }),
+      ],
+      summaries: [
+        {
+          turnId: TURN_ID,
+          eventCount: 999,
+          bytes: 999999,
+          loss: { kind: "none" },
+          sealed: false,
+          digest: null,
+          prompt: null,
+          promptOmitted: false,
+          lifecycle: null,
+          lifecycleOmitted: false,
+        },
+      ],
+    });
+    let release: (() => void) | undefined;
+    harness.logGateway.readTurnLogPage = async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return {
+        entries: [{ seq: 999, event: result }],
+        firstSeq: 999,
+        lastSeq: 999,
+        hasEarlier: true,
+        hasLater: false,
+        loss: { kind: "none" },
+        clipped: false,
+      };
+    };
+    await settle();
+    expect(release).toBeDefined();
+    act(() => harness.hook().remove(THREAD_ID));
+    await settle();
+    release?.();
+    await settle();
+    expect(harness.logGateway.opens).toEqual([]);
+    expect(harness.hook().state.threads.has(THREAD_ID)).toBe(false);
+    harness.unmount();
+  });
+  it("recovers a completed foreground turn without labeling its paged history as lost", async () => {
+    const result: AgentTurnEvent = { kind: "result", text: "Done", isError: false, usage: null };
+    const harness = renderStore({
+      persisted: [
+        thread({
+          turns: [turn({ status: { kind: "running" }, events: [result], eventsTruncated: true })],
+        }),
+      ],
+      summaries: [
+        {
+          turnId: TURN_ID,
+          eventCount: 999,
+          bytes: 999999,
+          loss: { kind: "none" },
+          sealed: false,
+          digest: null,
+          prompt: null,
+          promptOmitted: false,
+          lifecycle: null,
+          lifecycleOmitted: false,
+        },
+      ],
+    });
+    harness.logGateway.readTurnLogPage = async () => ({
+      entries: [{ seq: 999, event: result }],
+      firstSeq: 999,
+      lastSeq: 999,
+      hasEarlier: true,
+      hasLater: false,
+      loss: { kind: "none" },
+      clipped: false,
+    });
+    await settle();
+    await settle();
+    expect(harness.hook().state.threads.get(THREAD_ID)?.turns[0]?.status).toEqual({
+      kind: "exited",
+      exitCode: 0,
+    });
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "none" });
+    expect(lastAppend(harness.logGateway.appends)).toMatchObject({
+      seal: true,
+      loss: { kind: "none" },
+    });
+    harness.unmount();
+  });
+});
+
 describe("useAgentThreadStore turn log summaries on demand", () => {
   it("keeps the log loss as the authority over the persisted JSON flag", async () => {
     const harness = renderStore({

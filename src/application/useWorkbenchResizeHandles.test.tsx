@@ -119,6 +119,28 @@ describe("useWorkbenchResizeHandles", () => {
     harness.unmount();
   });
 
+  it("starts from the displayed restored height and respects the available frame", () => {
+    const commit = recordingCommit({ bottomPanelHeight: 900 });
+    const harness = renderHandles(commit);
+    const available = document.createElement("div");
+    available.className = "workbench-frame";
+    Object.defineProperty(available, "clientHeight", { value: 400 });
+    const panel = document.createElement("div");
+    panel.dataset.slot = "bottom";
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({ height: 300 } as DOMRect);
+    available.append(panel);
+    harness.frame().append(available);
+    act(() => harness.result().startAgentBottomPanelResize(pointerEvent(harness.handle(), 0, 600)));
+    act(() => dispatchPointerMove(0, 620));
+    act(() => dispatchPointerUp());
+    expect(commit.heights).toEqual([280]);
+    act(() => harness.result().startAgentBottomPanelResize(pointerEvent(harness.handle(), 0, 600)));
+    act(() => dispatchPointerMove(0, -1000));
+    act(() => dispatchPointerUp());
+    expect(commit.heights).toEqual([280, 300]);
+    harness.unmount();
+  });
+
   it("reserves the rail and the composer-sized centre while sizing the right panel", () => {
     expect(maxAgentRightPanelWidth(1_280)).toBe(464);
     expect(maxAgentRightPanelWidth(1_180)).toBe(372);
@@ -208,7 +230,9 @@ describe("useWorkbenchResizeHandles", () => {
 });
 
 function recordingCommit(
-  overrides: Partial<Pick<AgentWorkbenchLayout, "rail" | "railWidth" | "rightPanelWidth">> = {},
+  overrides: Partial<
+    Pick<AgentWorkbenchLayout, "rail" | "railWidth" | "rightPanelWidth" | "bottomPanelHeight">
+  > = {},
 ): AgentPanelResizeCommit & {
   readonly widths: number[];
   readonly heights: number[];

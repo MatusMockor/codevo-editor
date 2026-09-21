@@ -46,7 +46,7 @@ export function agentTurnLogLossNotice(loss: AgentTurnLogLoss): string | null {
     case "legacyWindow":
       return "Part of this turn ran before full transcripts were kept, so some activity is gone.";
     case "supervisorGap":
-      return "Some activity from this turn was too large to record and is not shown.";
+      return "Some activity from this turn could not be saved and is not shown.";
     case "turnCeiling":
       return "This turn reached its recording limit, so later activity was not saved.";
     case "unreadable":

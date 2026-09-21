@@ -31,13 +31,18 @@ export type AgentAttachment =
           readonly remote: { readonly serverId: string; readonly attachmentId: string };
         }
     ))
-  | {
+  | ({
       readonly kind: "file";
       readonly attachmentId: string;
       readonly name: string;
       readonly bytes: number;
-      readonly storedPath: string;
-    }
+    } & (
+      | { readonly storedPath: string; readonly remote?: never }
+      | {
+          readonly storedPath?: never;
+          readonly remote: { readonly serverId: string; readonly attachmentId: string };
+        }
+    ))
   | {
       readonly kind: "reference";
       readonly name: string;

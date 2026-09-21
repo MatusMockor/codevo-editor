@@ -43,26 +43,51 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
     if (!owner || owner.workspaceId !== request.workspaceId || !this.options.ownerIsCurrent(owner))
       throw new Error("Remote attachment ownership is unavailable.");
     const size = request.bytes.byteLength;
+    const isText =
+      request.kind === "file" &&
+      request.mime === null &&
+      request.width === null &&
+      request.height === null;
     if (
-      request.kind !== "image" ||
-      !["image/png", "image/jpeg"].includes(request.mime ?? "") ||
+      (!isText &&
+        (request.kind !== "image" || !["image/png", "image/jpeg"].includes(request.mime ?? ""))) ||
       !request.workspaceId ||
       request.workspaceId.length > 4096 ||
       !request.name.trim() ||
       new TextEncoder().encode(request.name).length > 255 ||
       /[\\/"\x00-\x1f\x7f]/.test(request.name) ||
-      !Number.isSafeInteger(request.width) ||
-      !Number.isSafeInteger(request.height) ||
-      request.width! < 1 ||
-      request.width! > 8192 ||
-      request.height! < 1 ||
-      request.height! > 8192 ||
+      (!isText &&
+        (!Number.isSafeInteger(request.width) ||
+          !Number.isSafeInteger(request.height) ||
+          request.width! < 1 ||
+          request.width! > 8192 ||
+          request.height! < 1 ||
+          request.height! > 8192)) ||
       size < 1 ||
       size > MAX_IMAGE_BYTES
     )
       throw new Error(
-        "Remote attachments require a PNG or JPEG image up to 5 MiB with valid dimensions.",
+        "Remote attachments require a UTF-8 text file or PNG/JPEG image up to 5 MiB.",
       );
+    const ownedBytes = new Uint8Array(request.bytes.slice(0));
+    if (isText) {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(ownedBytes);
+      if (text.includes("\0")) throw new Error("Text attachments cannot contain NUL bytes.");
+    }
+    if (isText) {
+      const gateway = this.options.getGateway();
+      const segments = owner.projectRootKey.split(":");
+      if (!gateway || segments.length !== 4 || segments[0] !== "remote")
+        throw new Error("Remote text attachment ownership is unavailable.");
+      const serverId = decodeURIComponent(segments[1]!);
+      const runnerId = decodeURIComponent(segments[2]!);
+      const runner = await gateway.getRunner({ serverId });
+      if (!this.options.ownerIsCurrent(owner) || this.options.getGateway() !== gateway)
+        throw new Error("Remote attachment owner changed. Attach the file again.");
+      validateRemoteRunnerValue("getRunner", "response", runner);
+      if (runner.runnerId !== runnerId || runner.capabilities.textAttachments !== true)
+        throw new Error("Update this server to attach pasted text files.");
+    }
     if (this.entries.size >= 32 || this.retainedBytes + size > MAX_RETAINED_BYTES)
       throw new Error("Remote attachment staging is full. Remove an attachment first.");
     const metadata: StagedAgentAttachment = Object.freeze({
@@ -80,7 +105,7 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       owner,
       workspaceId: request.workspaceId,
       metadata,
-      bytes: new Uint8Array(request.bytes.slice(0)),
+      bytes: ownedBytes,
       uploads: new Map(),
     });
     this.retainedBytes += size;
@@ -140,6 +165,20 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
         throw new Error("Remote attachment owner changed. Attach the image again.");
     };
     assertCurrent();
+    if (selected.some((entry) => entry.metadata.mime === null)) {
+      const runner = await gateway.getRunner({ serverId });
+      assertCurrent();
+      validateRemoteRunnerValue("getRunner", "response", runner);
+      const segments = owner.projectRootKey.split(":");
+      if (
+        segments.length !== 4 ||
+        decodeURIComponent(segments[1]!) !== serverId ||
+        decodeURIComponent(segments[2]!) !== runner.runnerId
+      )
+        throw new Error("Remote text attachment belongs to another server.");
+      if (runner.capabilities.textAttachments !== true)
+        throw new Error("Update this server to attach pasted text files.");
+    }
     const parts: RemoteRunnerPart[] = [];
     for (const entry of selected) {
       assertCurrent();
@@ -175,11 +214,14 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
     let binary = "";
     for (let offset = 0; offset < entry.bytes.length; offset += 8192)
       binary += String.fromCharCode(...entry.bytes.subarray(offset, offset + 8192));
+    const mediaType = entry.metadata.mime;
+    if (mediaType !== null && mediaType !== "image/png" && mediaType !== "image/jpeg")
+      throw new Error("Unsupported staged attachment media type.");
     const response = await gateway.uploadAttachment({
       serverId,
       attachmentId: upload.id,
       name: entry.metadata.name,
-      mediaType: entry.metadata.mime as "image/png" | "image/jpeg",
+      mediaType: mediaType ?? "text/plain",
       base64: btoa(binary),
     });
     assertCurrent();
@@ -188,10 +230,10 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
     if (
       remote.id !== upload.id ||
       remote.name !== entry.metadata.name ||
-      remote.mediaType !== entry.metadata.mime ||
+      remote.mediaType !== (entry.metadata.mime ?? "text/plain") ||
       remote.bytes !== entry.metadata.bytes ||
-      remote.width !== entry.metadata.width ||
-      remote.height !== entry.metadata.height
+      (remote.width ?? null) !== entry.metadata.width ||
+      (remote.height ?? null) !== entry.metadata.height
     )
       throw new Error("Server attachment does not match the staged image.");
     // Cache only while the exact staging lease survives; resolve checks the calling owner too.

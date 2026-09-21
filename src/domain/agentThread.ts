@@ -18,6 +18,7 @@ import {
 import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
+import { recoverAgentTurnResultStatus } from "./agentTurnRestartRecovery";
 import { restorableAgentTurnLifecycle } from "./agentTurnLifecycleRestore";
 import {
   capAgentTurnEvents,
@@ -628,19 +629,22 @@ function loadThreads(
 }
 
 function markInterruptedTurns(thread: AgentThread): AgentThread {
-  if (thread.turns.every((turn) => isTerminalAgentTurnStatus(turn.status))) return thread;
-  return {
-    ...thread,
-    turns: thread.turns.map((turn) =>
-      isTerminalAgentTurnStatus(turn.status)
-        ? turn
-        : {
-            ...turn,
-            status: { kind: "interrupted" },
-            streamMetrics: interruptedStreamMetrics(turn.streamMetrics ?? null),
-          },
-    ),
-  };
+  let changed = false;
+  const turns = thread.turns.map((turn): AgentTurn => {
+    const recovered = recoverAgentTurnResultStatus(turn);
+    if (recovered !== null) {
+      changed = true;
+      return { ...turn, status: recovered };
+    }
+    if (isTerminalAgentTurnStatus(turn.status)) return turn;
+    changed = true;
+    return {
+      ...turn,
+      status: { kind: "interrupted" },
+      streamMetrics: interruptedStreamMetrics(turn.streamMetrics ?? null),
+    };
+  });
+  return changed ? { ...thread, turns } : thread;
 }
 
 function interruptedStreamMetrics(

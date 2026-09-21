@@ -87,6 +87,27 @@ function fixture() {
 }
 
 describe("remote attachment history", () => {
+  it("projects text files as remote file chips without local paths", async () => {
+    const f = fixture();
+    f.getAttachment.mockResolvedValue({
+      id,
+      runnerId: "runner",
+      name: "pasted-text.txt",
+      mediaType: "text/plain",
+      bytes: 4,
+      sha256: "a".repeat(64),
+      createdAt: task.createdAt,
+    });
+    expect(await f.load()).toEqual([
+      {
+        kind: "file",
+        attachmentId: id.replace(/-/g, ""),
+        name: "pasted-text.txt",
+        bytes: 4,
+        remote: { serverId: "server", attachmentId: id },
+      },
+    ]);
+  });
   it("projects server images without a local path and reads only registered conversation images", async () => {
     const f = fixture();
     const [image] = await f.load();

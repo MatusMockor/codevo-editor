@@ -255,6 +255,31 @@ describe("useRemoteRunnerConnections", () => {
     expect(first.connectServer).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["Unsupported runner protocol", "Unsupported runner protocol"],
+    [new Error("SSH unavailable"), "SSH unavailable"],
+    ["", "The server operation failed."],
+    ["x".repeat(1001), "The server operation failed."],
+    [{ message: "untrusted object" }, "The server operation failed."],
+  ])("preserves bounded native connection errors: %s", async (failure, expected) => {
+    const api = gateway();
+    api.connectServer.mockRejectedValueOnce(failure);
+    const h = await render(api);
+    await act(async () => {
+      await h.current().connect(saved);
+    });
+    expect(h.current().error).toBe(expected);
+    expect(h.current().status).toBe("error");
+  });
+
+  it("preserves native list failure reasons", async () => {
+    const api = gateway();
+    api.listServers.mockRejectedValueOnce("Unable to read saved servers.");
+    const h = await render(api);
+    expect(h.current().error).toBe("Unable to read saved servers.");
+    expect(h.current().status).toBe("error");
+  });
+
   it("reports a failed mutation and allows retry", async () => {
     const api = gateway();
     api.connectServer.mockRejectedValueOnce(new Error("SSH unavailable"));
@@ -273,6 +298,15 @@ describe("useRemoteRunnerConnections", () => {
 });
 
 describe("startup server connections", () => {
+  it("preserves the native reconnect reason with its server name", async () => {
+    const api = gateway();
+    api.listServers.mockResolvedValue([saved]);
+    api.connectServer.mockRejectedValueOnce("Unsupported runner protocol");
+    const h = await render(api);
+    expect(h.current().error).toBe("Linux: Unsupported runner protocol");
+    expect(h.current().servers).toEqual([saved]);
+  });
+
   it("does not publish an obsolete startup failure after manual connection intent", async () => {
     const api = gateway();
     api.listServers.mockResolvedValue([saved]);

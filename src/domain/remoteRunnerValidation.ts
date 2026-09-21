@@ -115,7 +115,7 @@ const base64: Check = (v) =>
   (v.length / 4) * 3 - (v.endsWith("==") ? 2 : v.endsWith("=") ? 1 : 0) <= 8388608 &&
   /^[A-Za-z0-9+/]+={0,2}$/.test(v);
 const provider = choice("claude", "codex");
-const mediaType = choice("image/png", "image/jpeg");
+const mediaType = choice("image/png", "image/jpeg", "text/plain");
 const part: Check = (v) =>
   object({ type: choice("text"), text: text(48000) })(v) ||
   object({ type: choice("attachment"), attachmentId: id })(v);
@@ -251,17 +251,26 @@ const eventPage: Check = (value) => {
     (page.outputStartsAtLineBoundary === undefined)
   );
 };
-const attachment = object({
+const attachmentFields: Readonly<Record<string, Check>> = {
   id,
   runnerId: text(128),
   name: text(255),
-  mediaType,
   bytes: integer(1, 8388608),
   sha256: (v) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v),
-  width: integer(1, 8192),
-  height: integer(1, 8192),
   createdAt: timestamp,
-});
+};
+const attachment: Check = (value) =>
+  object({
+    ...attachmentFields,
+    mediaType: choice("image/png", "image/jpeg"),
+    width: integer(1, 8192),
+    height: integer(1, 8192),
+  })(value) ||
+  object({
+    ...attachmentFields,
+    mediaType: choice("text/plain"),
+    bytes: integer(1, 5 * 1024 * 1024),
+  })(value);
 const page = (item: Check) =>
   object({ items: array(item, 50), nextCursor: (v) => v === null || integer(0)(v) });
 const voidResponse: Check = (v) => v === null || v === undefined;
@@ -287,6 +296,7 @@ export const remoteRunnerChecks = {
         eventReplay: boolean,
         taskDrafts: optional(boolean),
         imageAttachments: optional(boolean),
+        textAttachments: optional(boolean),
         projectCloning: optional(boolean),
         taskContinuation: optional(boolean),
         taskLaunchOptions: optional(boolean),
@@ -295,6 +305,7 @@ export const remoteRunnerChecks = {
         pendingMessages: optional(boolean),
         taskSteering: optional(boolean),
         subagentTelemetry: optional(boolean),
+        subagentLifecycleRetention: optional(boolean),
         outputArtifacts: optional(boolean),
         instructionSync: optional(boolean),
         interactiveQuestions: optional(boolean),

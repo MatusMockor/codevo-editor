@@ -92,6 +92,16 @@ export async function loadRemoteTaskAttachments(
       throw new Error("Server image thread limit reached.");
     entry.threads.add(threadId);
     const image = entry.attachment;
+    if (image.mediaType === "text/plain") {
+      result.push({
+        kind: "file",
+        attachmentId: displayId,
+        name: image.name,
+        bytes: image.bytes,
+        remote: { serverId, attachmentId: image.id },
+      });
+      continue;
+    }
     result.push({
       kind: "image",
       attachmentId: displayId,

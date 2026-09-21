@@ -97,3 +97,69 @@ describe("remote runner isolation capability", () => {
     ).toThrow();
   });
 });
+
+describe("remote runner lifecycle retention capability", () => {
+  it.each([true, false, undefined])("accepts optional boolean %s", (subagentLifecycleRetention) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, subagentLifecycleRetention },
+      }),
+    ).not.toThrow();
+  });
+  it.each([null, "true", 1, {}, []])("rejects malformed flag %j", (subagentLifecycleRetention) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, subagentLifecycleRetention },
+      }),
+    ).toThrow("Invalid remote runner getRunner response.");
+  });
+  it("accepts the current Linux runner descriptor", () => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        protocolVersion: 1,
+        runnerId: "linux-runner",
+        name: "Linux",
+        executionTimeoutMs: 43_200_000,
+        capabilities: {
+          taskIsolation: true,
+          interactiveQuestions: true,
+          instructionSync: true,
+          outputArtifacts: true,
+          pendingMessages: true,
+          taskSteering: true,
+          subagentTelemetry: true,
+          taskFileDiffs: true,
+          taskLaunchOptions: true,
+          taskContinuation: true,
+          taskExecution: true,
+          eventReplay: true,
+          subagentLifecycleRetention: true,
+          taskDrafts: true,
+          imageAttachments: true,
+          projectCloning: true,
+        },
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("remote runner text attachments capability", () => {
+  it.each([true, false, undefined])("accepts optional boolean %s", (textAttachments) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, textAttachments },
+      }),
+    ).not.toThrow();
+  });
+  it.each([null, "true", 1, {}, []])("rejects malformed flag %j", (textAttachments) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, textAttachments },
+      }),
+    ).toThrow("Invalid remote runner getRunner response.");
+  });
+});

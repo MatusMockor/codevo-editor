@@ -112,5 +112,15 @@ export function useAgentAttachmentIntake(options: Options) {
       if (captured.isCurrent()) captured.refuse(agentAttachmentPasteFailureMessage(error));
     }
   };
-  return { open, drop, paste };
+  const pasteText = async (text: string, name: string) => {
+    const captured = capture();
+    if (!captured) return;
+    try {
+      const bytes = new TextEncoder().encode(text).buffer;
+      await captured.intake([{ kind: "bytes", name, mime: "text/plain;charset=utf-8", bytes }]);
+    } catch (error: unknown) {
+      fail(captured, error);
+    }
+  };
+  return { open, drop, paste, pasteText };
 }

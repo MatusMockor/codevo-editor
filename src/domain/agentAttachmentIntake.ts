@@ -147,6 +147,8 @@ export function agentAttachmentPromptLine(attachment: AgentAttachment): string {
         throw new TypeError("Remote images cannot be serialized as local file references.");
       return `[Attached image "${attachment.name}" is saved at: ${attachment.storedPath}]`;
     case "file":
+      if (attachment.remote !== undefined)
+        throw new TypeError("Remote files cannot be serialized as local file references.");
       return `[Attached file "${attachment.name}" is saved at: ${attachment.storedPath}]`;
     case "reference":
       return `[Attached file "${attachment.name}" is at: ${attachment.path}]`;

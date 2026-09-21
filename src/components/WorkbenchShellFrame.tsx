@@ -26,6 +26,8 @@ import {
   type WorkbenchShellPlacement,
 } from "./workbenchShellPlacement";
 import { useViewportWidth } from "./useViewportWidth";
+import { useWorkbenchFrameHeight } from "./useWorkbenchFrameHeight";
+import { useTerminalPanelFocusReturn } from "./useTerminalPanelFocusReturn";
 
 export type WorkbenchShellSurface = "workbench" | "settings";
 
@@ -65,6 +67,11 @@ export function WorkbenchShellFrame({
     setEditorReports((current) => nextWorkbenchFrameEditorReports(current, key, state));
   }, []);
   const [frameElement, setFrameElement] = useState<HTMLDivElement | null>(null);
+  const frameHeight = useWorkbenchFrameHeight(frameElement);
+  useTerminalPanelFocusReturn(
+    settingsSurface ? null : frameElement,
+    placement.bottomPanelHeight > 0,
+  );
   const editorState = workbenchFrameEditorState(editorReports);
   const editorHidden = responsivePlacement.editorHidden || settingsSurface;
   const style = {
@@ -85,6 +92,7 @@ export function WorkbenchShellFrame({
       </div>
       <div
         className="workbench-frame"
+        style={{ "--agent-bottom-panel-limit": `${frameHeight * 0.75}px` } as CSSProperties}
         data-agent-variant={agentVariant}
         data-editor={editorState}
         data-layout={responsivePlacement.layout}

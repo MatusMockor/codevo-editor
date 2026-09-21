@@ -1,3 +1,4 @@
+import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import { RemoteRunnerStartupConnections } from "./remoteRunnerStartupConnections";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
@@ -145,5 +146,5 @@ export function useRemoteRunnerConnections({
 }
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : "The server operation failed.";
+  return remoteRunnerErrorMessage(error, "The server operation failed.");
 }

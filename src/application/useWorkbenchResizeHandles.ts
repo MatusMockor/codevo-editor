@@ -27,7 +27,7 @@ export const AGENT_RIGHT_PANEL_VIEWPORT_RATIO = 0.7;
 export const AGENT_BOTTOM_PANEL_VIEWPORT_RATIO = 0.75;
 export const AGENT_WORKBENCH_SELECTOR = ".editor-workbench";
 export const AGENT_RIGHT_PANEL_WIDTH_VARIABLE = "--agent-right-panel-width";
-export const AGENT_BOTTOM_PANEL_HEIGHT_VARIABLE = "--agent-bottom-panel-height";
+export const AGENT_BOTTOM_PANEL_HEIGHT_VARIABLE = "--agent-bottom-panel-requested";
 
 export interface AgentPanelResizeCommit {
   readonly layout: Pick<
@@ -168,7 +168,8 @@ export function useWorkbenchResizeHandles(
     (event: PointerEvent<HTMLElement>) => {
       const frame = agentWorkbenchFrame(event);
       const startY = event.clientY;
-      const startHeight = agentBottomPanelHeight;
+      const panel = frame?.querySelector<HTMLElement>('[data-slot="bottom"]');
+      const startHeight = panel?.getBoundingClientRect().height || agentBottomPanelHeight;
       let height = startHeight;
 
       startPointerDrag(
@@ -177,7 +178,10 @@ export function useWorkbenchResizeHandles(
           height = clamp(
             startHeight + startY - moveEvent.clientY,
             MIN_AGENT_BOTTOM_PANEL_HEIGHT,
-            maxAgentBottomPanelHeight(window.innerHeight),
+            maxAgentBottomPanelHeight(
+              frame?.querySelector<HTMLElement>(".workbench-frame")?.clientHeight ||
+                window.innerHeight,
+            ),
           );
           frame?.style.setProperty(AGENT_BOTTOM_PANEL_HEIGHT_VARIABLE, `${height}px`);
         },

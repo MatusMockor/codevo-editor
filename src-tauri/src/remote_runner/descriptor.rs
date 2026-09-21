@@ -22,6 +22,8 @@ struct Capabilities {
     task_drafts: Option<bool>,
     image_attachments: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
+    text_attachments: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     project_cloning: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     task_continuation: Option<bool>,
@@ -35,6 +37,8 @@ struct Capabilities {
     task_steering: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     subagent_telemetry: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    subagent_lifecycle_retention: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     output_artifacts: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
@@ -79,6 +83,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.event_replay,
         caps.task_drafts,
         caps.image_attachments,
+        caps.text_attachments,
         caps.project_cloning,
         caps.task_continuation,
         caps.task_launch_options,
@@ -86,6 +91,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.pending_messages,
         caps.task_steering,
         caps.subagent_telemetry,
+        caps.subagent_lifecycle_retention,
         caps.output_artifacts,
         caps.instruction_sync,
         caps.interactive_questions,
@@ -96,6 +102,64 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn text_attachments_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["textAttachments"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [
+            Value::Null,
+            "true".into(),
+            1.into(),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            value["capabilities"]["textAttachments"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
+    }
+
+    #[test]
+    fn lifecycle_retention_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["subagentLifecycleRetention"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [
+            Value::Null,
+            "true".into(),
+            1.into(),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            value["capabilities"]["subagentLifecycleRetention"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
+    }
+
+    #[test]
+    fn accepts_current_linux_runner_descriptor() {
+        // Mirrors createRunnerApplication's effective descriptor with execution services.
+        let value = serde_json::json!({
+            "protocolVersion": 1, "runnerId": "linux-runner", "name": "Linux",
+            "executionTimeoutMs": 43_200_000,
+            "capabilities": {
+                "taskIsolation": true, "interactiveQuestions": true, "instructionSync": true,
+                "outputArtifacts": true, "pendingMessages": true, "taskSteering": true,
+                "subagentTelemetry": true, "taskFileDiffs": true, "taskLaunchOptions": true,
+                "taskContinuation": true, "taskExecution": true, "eventReplay": true,
+                "subagentLifecycleRetention": true, "taskDrafts": true,
+                "imageAttachments": true, "projectCloning": true
+            }
+        });
+        assert_eq!(validate(value).unwrap(), "linux-runner");
+    }
+
     #[test]
     fn task_isolation_capability_is_optional_and_strict() {
         let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});

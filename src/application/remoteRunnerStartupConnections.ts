@@ -1,3 +1,4 @@
+import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import type { RemoteRunnerGateway, RemoteRunnerServer } from "../domain/remoteRunner";
 
 /** A single startup pass; transport timeouts and SSH ownership remain in the gateway. */
@@ -65,7 +66,7 @@ export class RemoteRunnerStartupConnections {
       } catch (error) {
         if (this.stopped || !this.current()) return;
         this.reportFailure(
-          `${server.name}: ${error instanceof Error ? error.message : "Could not reconnect."}`,
+          `${server.name}: ${remoteRunnerErrorMessage(error, "Could not reconnect.")}`,
         );
       }
     }

@@ -71,6 +71,26 @@ describe("BottomPanel terminal links", () => {
     host.remove();
   });
 
+  it("offers an explicit hide action independently of terminal session controls", async () => {
+    const onClose = vi.fn();
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        onClose,
+        viewScope: "agent",
+      },
+    );
+    const close = host.querySelector<HTMLButtonElement>('button[aria-label="Hide panel"]');
+    expect(close?.disabled).toBe(false);
+    expect(close?.querySelector("svg.lucide-x")).not.toBeNull();
+    act(() => close?.click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(bottomPanelMocks.terminalUnmounts).toBe(0);
+  });
+
   it("builds terminal navigation targets with exact and default positions", async () => {
     const onOpenProblem = vi.fn(async () => true);
 

@@ -43,7 +43,7 @@ pub(super) fn prepare(
     }
     let body = if parsed
         .get("content-type")
-        .is_some_and(|v| v.as_bytes().starts_with(b"image/"))
+        .is_some_and(|v| v.as_bytes().starts_with(b"image/") || v.as_bytes() == b"text/plain")
     {
         let encoded = body
             .as_ref()
@@ -184,7 +184,8 @@ pub(super) async fn request(
     if image {
         let media = media
             .filter(|m| {
-                matches!(m.as_str(), "image/png" | "image/jpeg")
+                (matches!(m.as_str(), "image/png" | "image/jpeg")
+                    || (!artifact && m == "text/plain"))
                     || (artifact
                         && matches!(
                             m.as_str(),
@@ -193,6 +194,13 @@ pub(super) async fn request(
             })
             .ok_or("Invalid runner image media type.")?;
         let media = media.split(';').next().unwrap_or_default();
+        if media == "text/plain"
+            && (output.len() > 5 * 1024 * 1024
+                || output.contains(&0)
+                || std::str::from_utf8(&output).is_err())
+        {
+            return Err("Runner returned invalid text attachment.".into());
+        }
         if output.is_empty()
             || (media == "text/html"
                 && (output.len() > 2 * 1024 * 1024 || std::str::from_utf8(&output).is_err()))
@@ -214,6 +222,20 @@ pub(super) async fn request(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    #[test]
+    fn text_upload_preserves_raw_bytes_and_media_type() {
+        let bytes = "hello 🦀".as_bytes();
+        let prepared = prepare(
+            "PUT",
+            "/v1/attachments/7389088c-29b8-4cec-9a15-e825e1fb2f66",
+            Some(json!({"base64": base64::engine::general_purpose::STANDARD.encode(bytes)})),
+            vec![("content-type".into(), "text/plain".into())],
+        )
+        .unwrap();
+        assert_eq!(prepared.body, bytes);
+        assert_eq!(prepared.headers.get("content-type").unwrap(), "text/plain");
+    }
+
     #[test]
     fn request_input_rejects_injection_and_unbounded_payloads() {
         for path in [

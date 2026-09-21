@@ -1,4 +1,4 @@
-import { PanelBottomClose, ShieldCheck, Terminal, X } from "lucide-react";
+import { ShieldCheck, Terminal, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent, ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
@@ -481,8 +481,14 @@ export function BottomPanel({
         {effectiveActiveView === "terminal" ? (
           <div className="bottom-panel-terminal-toolbar" ref={setTerminalToolbarHost} />
         ) : null}
-        <button className="bottom-panel-action" onClick={onClose} title="Hide panel" type="button">
-          <PanelBottomClose aria-hidden="true" size={14} />
+        <button
+          aria-label="Hide panel"
+          className="bottom-panel-action bottom-panel-hide"
+          onClick={onClose}
+          title="Hide panel"
+          type="button"
+        >
+          <X aria-hidden="true" size={14} />
         </button>
       </header>
       <div className="bottom-panel-body">

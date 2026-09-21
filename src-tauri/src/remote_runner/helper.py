@@ -33,7 +33,7 @@ def main():
             raise ValueError("header")
         headers[name.lower()] = value
     payload = request.get("body")
-    if headers.get("content-type", "").startswith("image/"):
+    if headers.get("content-type", "").startswith("image/") or headers.get("content-type") == "text/plain":
         payload = base64.b64decode(payload["base64"], validate=True)
     elif payload is not None:
         payload = json.dumps(payload).encode("utf-8")
@@ -83,10 +83,14 @@ def main():
             raise ValueError("output limit")
         if binary_content:
             media_type = response.getheader("Content-Type")
-            allowed = ("image/png", "image/jpeg", "image/webp", "text/html", "text/html; charset=utf-8") if artifact_content else ("image/png", "image/jpeg")
+            allowed = ("image/png", "image/jpeg", "image/webp", "text/html", "text/html; charset=utf-8") if artifact_content else ("image/png", "image/jpeg", "text/plain")
             if media_type not in allowed:
                 raise ValueError("media type")
             media_type = media_type.split(";")[0]
+            if media_type == "text/plain":
+                if len(result) > 5 * 1024 * 1024 or b"\x00" in result:
+                    raise ValueError("text limit")
+                result.decode("utf-8", errors="strict")
             if media_type == "text/html":
                 if len(result) > 2 * 1024 * 1024:
                     raise ValueError("HTML limit")

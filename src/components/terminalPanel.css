@@ -56,6 +56,10 @@
   margin-left: auto;
 }
 
+.bottom-panel-hide {
+  flex: 0 0 24px;
+}
+
 .terminal-profile-select ~ .bottom-panel-terminal-toolbar {
   margin-left: 0;
 }
