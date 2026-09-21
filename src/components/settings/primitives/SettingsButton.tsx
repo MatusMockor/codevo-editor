@@ -1,6 +1,6 @@
 import type { ReactNode, Ref } from "react";
 
-export type SettingsButtonVariant = "primary" | "outline" | "ghost" | "ghostMuted";
+export type SettingsButtonVariant = "primary" | "outline" | "ghost" | "ghostMuted" | "danger";
 export type SettingsButtonSize = "micro" | "xsq" | "compact" | "sm";
 
 export interface SettingsButtonProps {

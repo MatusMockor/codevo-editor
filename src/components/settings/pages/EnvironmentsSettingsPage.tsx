@@ -195,7 +195,7 @@ export function EnvironmentsSettingsPage({
                   />
                 )}
               </div>
-              <div className="settings-environments__actions">
+              <div className="settings-environments__actions settings-environments__server-actions">
                 <SettingsButton
                   disabled={busy}
                   label={`${server.connected ? "Disconnect" : "Connect"} ${server.name}`}
@@ -210,13 +210,14 @@ export function EnvironmentsSettingsPage({
                           port: server.port,
                         }));
                   }}
-                  variant="outline"
+                  variant={server.connected ? "outline" : "primary"}
                 >
                   {server.connected ? "Disconnect" : "Connect"}
                 </SettingsButton>
                 <SettingsButton
                   disabled={busy}
                   label={`Remove ${server.name}`}
+                  variant="danger"
                   onClick={() => {
                     void remote.remove(server.id);
                   }}

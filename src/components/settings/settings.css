@@ -555,6 +555,15 @@ code.settings-readout,
   background: var(--settings-row-selected);
 }
 
+.settings-btn--danger {
+  background: var(--codevo-danger-soft);
+  color: var(--settings-fg);
+}
+
+.settings-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--settings-danger) 20%, transparent);
+}
+
 .settings-btn--ghost {
   color: var(--settings-fg);
 }

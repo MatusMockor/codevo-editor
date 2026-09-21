@@ -7,8 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.66] - 2026-09-21
+
 ### Changed
 
+- Make server Connect, Disconnect, and Remove actions easier to distinguish,
+  using theme-aware button backgrounds and readable labels.
 - Restore one frontend job and one Rust job before release builds, removing
   matrix test shards and shared test archives while retaining application and
   test fixes.
