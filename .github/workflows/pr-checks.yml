@@ -15,15 +15,84 @@ concurrency:
 
 jobs:
   frontend-quality:
-    name: Frontend
-    uses: ./.github/workflows/frontend-ci.yml
-    with:
-      runner: macos-15
-      node-version: "26"
-      format-base: ${{ github.event.pull_request.base.sha || '' }}
+    name: Frontend quality
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Check changed TypeScript formatting
+        env:
+          FORMAT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npm run format:check:changed -- "$FORMAT_BASE_SHA"
+
+      - name: Lint TypeScript and React
+        run: npm run lint
+
+      - name: Check React hook dependency debt
+        run: npm run lint:exhaustive-deps
+
+      - name: Check source hotspot sizes
+        run: npm run size:hotspots
+
+      - name: Type check
+        run: npm run check
+
+      - name: Run tests with coverage gate
+        run: npm run test:coverage
+
+      - name: Build web app
+        run: npm run build
 
   rust-quality:
-    name: Rust
-    uses: ./.github/workflows/rust-ci.yml
-    with:
-      node-version: "26"
+    name: Rust quality
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Check formatting
+        run: npm run format:rust:check
+
+      - name: Run Clippy
+        run: |
+          clippy_dir="$(mktemp -d "$RUNNER_TEMP/codevo-clippy.XXXXXX")"
+          trap 'rm -rf "$clippy_dir"' EXIT
+          CODEVO_PERF_CAPTURE_RUN_TOKEN="$(uuidgen)" \
+          CODEVO_PERF_CAPTURE_RESULT_PATH="$clippy_dir/result.json" \
+          CODEVO_PERF_CAPTURE_WORK_ROOT="$clippy_dir" \
+          CODEVO_PERF_CAPTURE_SHUTDOWN_PATH="$clippy_dir/shutdown.json" \
+          CODEVO_PERF_CAPTURE_SMOKE=0 npm run clippy:check
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml

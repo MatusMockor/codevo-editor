@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,20 +13,18 @@ const workflow = readFileSync(
 );
 const workspaces = [];
 
-function job(name, source = workflow) {
+function job(name) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [\\w-]+:|$(?![\\s\\S]))`, "m").exec(
-    source,
+    workflow,
   );
   expect(match, `missing workflow job ${name}`).not.toBeNull();
   return match[1];
 }
 
 function formatScript() {
-  const frontend = readFileSync(
-    fileURLToPath(new URL("../.github/workflows/frontend-ci.yml", import.meta.url)),
-    "utf8",
+  const match = /- name: Check release TypeScript formatting\n {8}run: \|\n((?: {10}.+\n)+)/.exec(
+    job("frontend-checks"),
   );
-  const match = /- name: Check formatting[\s\S]*?run: \|\n((?: {10}.+\n)+)/.exec(frontend);
   expect(match).not.toBeNull();
   return match[1].replace(/^ {10}/gm, "");
 }
@@ -48,108 +45,24 @@ afterEach(() => {
 });
 
 describe("release quality gates", () => {
-  it("waits for every reusable quality workflow before building or publishing", () => {
-    expect(job("frontend-checks")).toContain("uses: ./.github/workflows/frontend-ci.yml");
-    expect(job("rust-checks")).toContain("uses: ./.github/workflows/rust-ci.yml");
-    expect(job("frontend-checks")).toContain("release: true");
-    for (const name of ["release-build", "smoke-dmg"]) {
-      expect(job(name)).toMatch(/needs:\s*\[validate-dispatch, frontend-checks, rust-checks\]/);
-      expect(job(name)).not.toMatch(/^    if:.*always\(\)|continue-on-error:\s*true/m);
-    }
-    expect(job("publish-release")).toMatch(/needs:\s*release-build\n/);
-    expect(workflow).not.toMatch(/continue-on-error:\s*true/);
-  });
-
-  it("keeps every parallel check and shard mandatory, including aggregate coverage and doctests", () => {
-    const readWorkflow = (name) =>
-      readFileSync(
-        fileURLToPath(new URL(`../.github/workflows/${name}.yml`, import.meta.url)),
-        "utf8",
-      );
-    const frontend = readWorkflow("frontend-ci");
-    const rust = readWorkflow("rust-ci");
-    for (const source of [frontend, rust]) {
-      expect(source).not.toMatch(/continue-on-error:|max-parallel:|fail-fast: true/);
-      expect(job("tests", source)).toContain("shard: [1, 2, 3, 4]");
-      expect(job("checks", source)).not.toMatch(/^    needs:/m);
-    }
-    expect(job("tests", frontend)).not.toMatch(/^    needs:/m);
-    expect(job("tests", rust)).toMatch(/needs: test-build/);
-    expect(job("test-build", rust)).not.toMatch(/^    needs:/m);
-    expect(job("checks", frontend)).toContain(
-      "check: [formatting, lint, hooks, hotspots, types, build]",
-    );
+  it("requires hook, formatting, lint and size checks before release builds", () => {
+    const frontend = job("frontend-checks");
     for (const command of [
-      "format:check",
-      "format:check:changed",
-      "lint -- --max-warnings 0",
-      "lint:exhaustive-deps",
-      "size:hotspots",
-      "check",
-      "build",
+      "npm run format:check",
+      "npm run lint -- --max-warnings 0",
+      "npm run lint:exhaustive-deps",
+      "npm run size:hotspots",
+      "npm run check",
+      "npm test",
+      "npm run build",
     ]) {
-      expect(job("checks", frontend)).toContain(`npm run ${command}`);
+      expect(frontend).toContain(`run: ${command}\n`);
     }
-    expect(job("tests", frontend)).toContain("--shard=${{ matrix.shard }}/4");
-    const coverage = job("coverage", frontend);
-    expect(coverage).toMatch(/needs: tests/);
-    expect(coverage).toContain("npm run test:coverage -- --merge-reports=.vitest-reports");
-    expect(coverage).not.toContain("thresholds.");
-    expect(coverage).toContain("for shard in 1 2 3 4");
-    expect(job("checks", rust)).toContain("check: [format, clippy, compile, doctests]");
-    expect(job("checks", rust)).toContain(
-      "cargo test --manifest-path src-tauri/Cargo.toml --locked --doc",
-    );
-    expect(job("tests", rust)).toContain("tool: cargo-nextest@0.9.145");
-    expect(job("tests", rust)).toContain('--partition "slice:$SHARD/4"');
-    expect(job("test-build", rust)).toContain("cargo nextest archive");
-    expect(job("tests", rust)).toContain(
-      "artifact-ids: ${{ needs.test-build.outputs.artifact-id }}",
-    );
-    expect(job("tests", rust)).toContain("ARCHIVE_SHA256: ${{ needs.test-build.outputs.sha256 }}");
-    expect(job("tests", rust)).toContain("shasum -a 256 -c -");
-    expect(job("tests", rust)).toContain("cargo-nextest nextest run");
-    expect(job("tests", rust)).toContain(
-      '--archive-file "$RUNNER_TEMP/rust-test-archive/tests.tar.zst"',
-    );
-    expect(job("tests", rust)).not.toMatch(/cargo (test|build|nextest)|rustup/);
-    expect(rust).not.toMatch(/rust-cache|actions\/cache|save-cache|restore-cache/);
-  });
-
-  it("rejects a mismatched Rust archive or compile-time workspace before tests run", () => {
-    const rust = readFileSync(
-      fileURLToPath(new URL("../.github/workflows/rust-ci.yml", import.meta.url)),
-      "utf8",
-    );
-    const verification = job("tests", rust)
-      .split("- name: Verify archive and compile-time source path")[1]
-      .split("- name: Run Rust test shard")[0];
-    const script = /run: \|\n([\s\S]*)/.exec(verification)[1].replace(/^ {10}/gm, "");
-    const directory = mkdtempSync(path.join(os.tmpdir(), "codevo-rust-archive-"));
-    workspaces.push(directory);
-    mkdirSync(path.join(directory, "rust-test-archive"));
-    const archive = "fixture test archive";
-    writeFileSync(path.join(directory, "rust-test-archive/tests.tar.zst"), archive);
-    const digest = createHash("sha256").update(archive).digest("hex");
-    for (const [sha256, workspace, expected] of [
-      [digest, `${directory}/src-tauri`, 0],
-      ["0".repeat(64), `${directory}/src-tauri`, 1],
-      [digest, "/foreign/src-tauri", 1],
-      ["", `${directory}/src-tauri`, 1],
-    ]) {
-      const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", script], {
-        env: {
-          ...process.env,
-          ARCHIVE_SHA256: sha256,
-          BUILD_WORKSPACE: workspace,
-          GITHUB_WORKSPACE: directory,
-          RUNNER_TEMP: directory,
-        },
-        encoding: "utf8",
-        timeout: 10_000,
-      });
-      expect(result.status === 0, result.stderr).toBe(expected === 0);
-    }
+    expect(frontend).not.toMatch(/continue-on-error:\s*true/);
+    expect(frontend).toMatch(/uses: actions\/checkout@[^\n]+\n\s+with:\n\s+fetch-depth: 0\n/);
+    expect(job("release-build")).toMatch(/needs:\s*\[frontend-checks, rust-checks\]/);
+    expect(job("smoke-dmg")).toMatch(/needs:\s*\[frontend-checks, rust-checks\]/);
+    expect(job("publish-release")).toMatch(/needs:\s*release-build\n/);
   });
 
   it("ad-hoc signs beta and smoke bundles during packaging and keeps Developer ID signing separate", () => {
@@ -230,14 +143,7 @@ describe("release quality gates", () => {
     // Run the actual workflow shell, replacing only the external npm invocation.
     const args = execFileSync(
       "bash",
-      [
-        "-e",
-        "-u",
-        "-o",
-        "pipefail",
-        "-c",
-        `npm() { if [ "$2" = "format:check:changed" ]; then printf '%s\\n' "$@"; fi; }\nIS_RELEASE=true\nFORMAT_BASE_SHA=\n${formatScript()}`,
-      ],
+      ["-e", "-u", "-o", "pipefail", "-c", `npm() { printf '%s\\n' "$@"; }\n${formatScript()}`],
       { cwd: directory, encoding: "utf8", timeout: 10_000 },
     )
       .trim()

@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Restore one frontend job and one Rust job before release builds, removing
+  matrix test shards and shared test archives while retaining application and
+  test fixes.
+
 ## [0.2.0-beta.65] - 2026-09-21
 
 ### Changed
