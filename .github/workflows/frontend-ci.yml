@@ -25,7 +25,7 @@ env:
 jobs:
   checks:
     name: Frontend / ${{ matrix.check }}
-    runs-on: ${{ inputs.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
