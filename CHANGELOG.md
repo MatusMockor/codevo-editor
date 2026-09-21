@@ -7,6 +7,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.65] - 2026-09-21
+
+### Changed
+
+- Rebuild beta.64 without functional changes to measure the release pipeline
+  with no other repository workflows running.
+
 ## [0.2.0-beta.64] - 2026-09-21
 
 ### Changed
