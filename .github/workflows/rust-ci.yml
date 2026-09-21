@@ -52,13 +52,13 @@ jobs:
             *) exit 1 ;;
           esac
 
-  tests:
-    name: Rust tests / ${{ matrix.shard }} of 4
+  test-build:
+    name: Rust test archive
     runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.archive.outputs.sha256 }}
+      workspace: ${{ steps.archive.outputs.workspace }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -75,7 +75,65 @@ jobs:
         with:
           tool: cargo-nextest@0.9.145
           fallback: none
-      - name: Run Rust test shard
+      - name: Build and archive Rust tests once
+        id: archive
+        run: |
+          archive_dir="$RUNNER_TEMP/rust-test-archive"
+          mkdir -p "$archive_dir"
+          cargo nextest archive --manifest-path src-tauri/Cargo.toml --locked --archive-file "$archive_dir/tests.tar.zst"
+          archive_sha="$(shasum -a 256 "$archive_dir/tests.tar.zst" | cut -d ' ' -f 1)"
+          printf 'sha256=%s\nworkspace=%s\n' "$archive_sha" "$GITHUB_WORKSPACE/src-tauri" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable test archive
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-tests-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: ${{ runner.temp }}/rust-test-archive/tests.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  tests:
+    name: Rust tests / ${{ matrix.shard }} of 4
+    needs: test-build
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Install pinned test runner
+        uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-nextest@0.9.145
+          fallback: none
+      - name: Download this run's test archive
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.test-build.outputs.artifact-id }}
+          path: ${{ runner.temp }}/rust-test-archive
+          merge-multiple: true
+      - name: Verify archive and compile-time source path
+        env:
+          ARCHIVE_SHA256: ${{ needs.test-build.outputs.sha256 }}
+          BUILD_WORKSPACE: ${{ needs.test-build.outputs.workspace }}
+        run: |
+          # Some fixtures use env!("CARGO_MANIFEST_DIR"); runtime remapping cannot change it.
+          test "$BUILD_WORKSPACE" = "$GITHUB_WORKSPACE/src-tauri"
+          [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          cd "$RUNNER_TEMP/rust-test-archive"
+          printf '%s  tests.tar.zst\n' "$ARCHIVE_SHA256" | shasum -a 256 -c -
+      - name: Run Rust test shard without rebuilding
         env:
           SHARD: ${{ matrix.shard }}
-        run: cargo nextest run --manifest-path src-tauri/Cargo.toml --locked --partition "slice:$SHARD/4" --no-fail-fast --test-threads 4
+        run: >-
+          cargo-nextest nextest run
+          --archive-file "$RUNNER_TEMP/rust-test-archive/tests.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE/src-tauri"
+          --partition "slice:$SHARD/4" --no-fail-fast --test-threads 4

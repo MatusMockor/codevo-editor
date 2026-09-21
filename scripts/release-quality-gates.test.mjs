@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -71,8 +72,10 @@ describe("release quality gates", () => {
       expect(source).not.toMatch(/continue-on-error:|max-parallel:|fail-fast: true/);
       expect(job("tests", source)).toContain("shard: [1, 2, 3, 4]");
       expect(job("checks", source)).not.toMatch(/^    needs:/m);
-      expect(job("tests", source)).not.toMatch(/^    needs:/m);
     }
+    expect(job("tests", frontend)).not.toMatch(/^    needs:/m);
+    expect(job("tests", rust)).toMatch(/needs: test-build/);
+    expect(job("test-build", rust)).not.toMatch(/^    needs:/m);
     expect(job("checks", frontend)).toContain(
       "check: [formatting, lint, hooks, hotspots, types, build]",
     );
@@ -99,7 +102,54 @@ describe("release quality gates", () => {
     );
     expect(job("tests", rust)).toContain("tool: cargo-nextest@0.9.145");
     expect(job("tests", rust)).toContain('--partition "slice:$SHARD/4"');
+    expect(job("test-build", rust)).toContain("cargo nextest archive");
+    expect(job("tests", rust)).toContain(
+      "artifact-ids: ${{ needs.test-build.outputs.artifact-id }}",
+    );
+    expect(job("tests", rust)).toContain("ARCHIVE_SHA256: ${{ needs.test-build.outputs.sha256 }}");
+    expect(job("tests", rust)).toContain("shasum -a 256 -c -");
+    expect(job("tests", rust)).toContain("cargo-nextest nextest run");
+    expect(job("tests", rust)).toContain(
+      '--archive-file "$RUNNER_TEMP/rust-test-archive/tests.tar.zst"',
+    );
+    expect(job("tests", rust)).not.toMatch(/cargo (test|build|nextest)|rustup/);
     expect(rust).not.toMatch(/rust-cache|actions\/cache|save-cache|restore-cache/);
+  });
+
+  it("rejects a mismatched Rust archive or compile-time workspace before tests run", () => {
+    const rust = readFileSync(
+      fileURLToPath(new URL("../.github/workflows/rust-ci.yml", import.meta.url)),
+      "utf8",
+    );
+    const verification = job("tests", rust)
+      .split("- name: Verify archive and compile-time source path")[1]
+      .split("- name: Run Rust test shard")[0];
+    const script = /run: \|\n([\s\S]*)/.exec(verification)[1].replace(/^ {10}/gm, "");
+    const directory = mkdtempSync(path.join(os.tmpdir(), "codevo-rust-archive-"));
+    workspaces.push(directory);
+    mkdirSync(path.join(directory, "rust-test-archive"));
+    const archive = "fixture test archive";
+    writeFileSync(path.join(directory, "rust-test-archive/tests.tar.zst"), archive);
+    const digest = createHash("sha256").update(archive).digest("hex");
+    for (const [sha256, workspace, expected] of [
+      [digest, `${directory}/src-tauri`, 0],
+      ["0".repeat(64), `${directory}/src-tauri`, 1],
+      [digest, "/foreign/src-tauri", 1],
+      ["", `${directory}/src-tauri`, 1],
+    ]) {
+      const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", script], {
+        env: {
+          ...process.env,
+          ARCHIVE_SHA256: sha256,
+          BUILD_WORKSPACE: workspace,
+          GITHUB_WORKSPACE: directory,
+          RUNNER_TEMP: directory,
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(result.status === 0, result.stderr).toBe(expected === 0);
+    }
   });
 
   it("ad-hoc signs beta and smoke bundles during packaging and keeps Developer ID signing separate", () => {
