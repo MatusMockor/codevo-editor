@@ -1056,27 +1056,45 @@ describe("retention invariants", () => {
     expect(quadratic.steps).toBeGreaterThan(budget(20_000));
   });
 
-  it("does bounded work per incremental merge and the guard rejects a history replay", () => {
-    const incrementalSteps = (
-      retain: typeof retainAgentTurnEvents,
-      count: number,
-    ): { readonly total: number; readonly worst: number } => {
-      let events: ReadonlyArray<AgentTurnEvent> = [];
-      let total = 0;
-      let worst = 0;
-      for (const event of churn(count)) {
-        const counted = countedSteps(retain, events, [event], TURN_POLICY);
-        events = counted.merged.events;
-        total += counted.steps;
-        worst = Math.max(worst, counted.steps);
-      }
-      return { total, worst };
+  function incrementalSteps(
+    retain: typeof retainAgentTurnEvents,
+    count: number,
+  ): { readonly total: number; readonly worst: number } {
+    // This probe measures retention steps, not repeated JSON serialization.
+    // Events are immutable; cache their exact byte sizes by object identity so
+    // both implementations retain the same byte accounting and eviction rules.
+    const byteSizes = new WeakMap<AgentTurnEvent, number>();
+    const policy: AgentTurnEventRetentionPolicy = {
+      ...TURN_POLICY,
+      eventBytes: (event) => {
+        const cached = byteSizes.get(event);
+        if (cached !== undefined) return cached;
+        const bytes = TURN_POLICY.eventBytes(event);
+        byteSizes.set(event, bytes);
+        return bytes;
+      },
     };
-    const perMergeBudget = (MAX_AGENT_EVENTS_PER_TURN + 1) * 3;
+    let events: ReadonlyArray<AgentTurnEvent> = [];
+    let total = 0;
+    let worst = 0;
+    for (const event of churn(count)) {
+      const counted = countedSteps(retain, events, [event], policy);
+      events = counted.merged.events;
+      total += counted.steps;
+      worst = Math.max(worst, counted.steps);
+    }
+    return { total, worst };
+  }
+
+  const perMergeBudget = (MAX_AGENT_EVENTS_PER_TURN + 1) * 3;
+
+  it("does bounded work per incremental merge", () => {
     const bounded = incrementalSteps(retainAgentTurnEvents, 4_000);
     expect(bounded.worst).toBeLessThanOrEqual(perMergeBudget);
     expect(bounded.total).toBeLessThanOrEqual(4_000 * perMergeBudget);
+  });
 
+  it("rejects an unbounded history replay with the incremental work guard", () => {
     const replaysHistory: typeof retainAgentTurnEvents = (existing, incoming, policy) =>
       retainAgentTurnEvents(existing, incoming, { ...policy, ...UNBOUNDED });
     const unbounded = incrementalSteps(replaysHistory, 8_000);
