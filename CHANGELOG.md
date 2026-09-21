@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.62] - 2026-09-21
+
 ### Fixed
 
 - Preserve the selected Files panel size when previewing or opening a file instead
