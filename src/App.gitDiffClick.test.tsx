@@ -261,9 +261,8 @@ describe("App Git diff click path", () => {
         root.render(<App />);
         await Promise.resolve();
       });
-      await vi.waitFor(() => {
-        expect(host.textContent).not.toContain("Loading editor runtime");
-      });
+      await settleLazySurfaces();
+      expect(host.textContent).not.toContain("Loading editor runtime");
 
       const changeButton = changeRowButton(host, change.relativePath);
       expect(changeButton).toBeDefined();
@@ -271,7 +270,8 @@ describe("App Git diff click path", () => {
       await act(async () => {
         changeButton?.click();
       });
-      await waitForText(host, expectedText);
+      await settleLazySurfaces();
+      expect(host.textContent).toContain(expectedText);
 
       expect(host.textContent).toContain(fileName(change.relativePath));
       expect(host.textContent).toContain(`Diff: ${fileName(change.relativePath)}`);
@@ -306,9 +306,8 @@ describe("App Git diff click path", () => {
       root.render(<App />);
       await Promise.resolve();
     });
-    await vi.waitFor(() => {
-      expect(host.textContent).not.toContain("Loading editor runtime");
-    });
+    await settleLazySurfaces();
+    expect(host.textContent).not.toContain("Loading editor runtime");
 
     const readmeButton = changeRowButton(host, "README.md");
     expect(readmeButton).toBeDefined();
@@ -496,14 +495,10 @@ function fileName(relativePath: string): string {
   return parts[parts.length - 1] ?? relativePath;
 }
 
-async function waitForText(container: ParentNode, expectedText: string): Promise<void> {
-  await vi.waitFor(
-    async () => {
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
-      expect(container.textContent).toContain(expectedText);
-    },
-    { timeout: 2_000, interval: 10 },
-  );
+async function settleLazySurfaces(): Promise<void> {
+  // Rendering starts the lazy imports. Wait for the real import graph inside
+  // act so Suspense retries and their effects commit before inspecting the DOM.
+  await act(async () => {
+    await vi.dynamicImportSettled();
+  });
 }
