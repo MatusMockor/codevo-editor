@@ -394,37 +394,40 @@ describe("AgentSurfaceHost", () => {
     expect(gateway.start).not.toHaveBeenCalled();
   });
 
-  it("maximizes the docked panel when a file is previewed or opened from the tree", async () => {
-    const layout = recordedLayoutState({
-      rightPanel: "open",
-      openSurfaces: ["files"],
-      activeSurface: "files",
-    });
-    const onOpenFile = vi.fn();
-    const onPreviewFile = vi.fn();
-    render({ chrome: filesChrome(layout, { onOpenFile, onPreviewFile }), layout: FILES_LAYOUT });
-    const row = await treeRow("users.ts");
+  it.each([false, true])(
+    "preserves panel maximization (%s) when previewing or opening a file",
+    async (rightPanelMaximized) => {
+      const layout = recordedLayoutState({
+        rightPanel: "open",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+        rightPanelMaximized,
+        rightPanelWidth: 680,
+      });
+      const onOpenFile = vi.fn();
+      const onPreviewFile = vi.fn();
+      render({ chrome: filesChrome(layout, { onOpenFile, onPreviewFile }), layout: FILES_LAYOUT });
+      const row = await treeRow("users.ts");
 
-    act(() => row.click());
-    expect(onPreviewFile).toHaveBeenCalledWith(expect.objectContaining({ name: "users.ts" }));
-    expect(layout.actions).toEqual([{ kind: "maximizeRightPanel" }]);
-    expect(reduceRecordedLayout(layout).rightPanelMaximized).toBe(true);
+      act(() => row.click());
+      expect(onPreviewFile).toHaveBeenCalledWith(expect.objectContaining({ name: "users.ts" }));
+      expect(layout.actions).toEqual([]);
+      expect(reduceRecordedLayout(layout)).toEqual(layout.layout);
 
-    act(() => {
-      row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    });
-    expect(onOpenFile).toHaveBeenCalledWith(expect.objectContaining({ name: "users.ts" }));
-    expect(layout.actions).toEqual([
-      { kind: "maximizeRightPanel" },
-      { kind: "maximizeRightPanel" },
-    ]);
-    expect(reduceRecordedLayout(layout)).toMatchObject({
-      rightPanel: "open",
-      openSurfaces: ["files"],
-      activeSurface: "files",
-      rightPanelMaximized: true,
-    });
-  });
+      act(() => {
+        row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      });
+      expect(onOpenFile).toHaveBeenCalledWith(expect.objectContaining({ name: "users.ts" }));
+      expect(layout.actions).toEqual([]);
+      expect(reduceRecordedLayout(layout)).toMatchObject({
+        rightPanel: "open",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+        rightPanelMaximized,
+        rightPanelWidth: 680,
+      });
+    },
+  );
 
   it("keeps the tree and the editor slot after a restore without re-maximizing", async () => {
     const maximized = recordedLayoutState({
@@ -447,6 +450,8 @@ describe("AgentSurfaceHost", () => {
 
     expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
     expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
+    const restoredRow = await treeRow("users.ts");
+    act(() => restoredRow.click());
     expect(restored.actions).toEqual([]);
   });
 
@@ -505,33 +510,39 @@ describe("AgentSurfaceHost", () => {
       expect(onSearchFiles).toHaveBeenCalledTimes(1);
     });
 
-    it("opens a scope file through the chrome and maximizes the docked panel", async () => {
-      const onOpenFile = vi.fn();
-      const onPreviewFile = vi.fn();
-      const layout = recordedLayoutState({ rightPanel: "open", ...FILES_LAYOUT });
-      render({
-        chrome: filesChrome(layout, { onOpenFile, onPreviewFile }),
-        layout: FILES_LAYOUT,
-        thread: null,
-        scope: surfaceRepositoryScope(),
-      });
-      const row = await treeRow(`${SURFACE_FIXTURE_ROOT}/users.ts`);
+    it.each([false, true])(
+      "opens a scope file without changing panel maximization (%s)",
+      async (rightPanelMaximized) => {
+        const onOpenFile = vi.fn();
+        const onPreviewFile = vi.fn();
+        const layout = recordedLayoutState({
+          rightPanel: "open",
+          ...FILES_LAYOUT,
+          rightPanelMaximized,
+          rightPanelWidth: 680,
+        });
+        render({
+          chrome: filesChrome(layout, { onOpenFile, onPreviewFile }),
+          layout: FILES_LAYOUT,
+          thread: null,
+          scope: surfaceRepositoryScope(),
+        });
+        const row = await treeRow(`${SURFACE_FIXTURE_ROOT}/users.ts`);
 
-      act(() => row.click());
-      expect(onPreviewFile).toHaveBeenCalledWith(
-        expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
-      );
-      act(() => {
-        row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-      });
-      expect(onOpenFile).toHaveBeenCalledWith(
-        expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
-      );
-      expect(layout.actions).toEqual([
-        { kind: "maximizeRightPanel" },
-        { kind: "maximizeRightPanel" },
-      ]);
-    });
+        act(() => row.click());
+        expect(onPreviewFile).toHaveBeenCalledWith(
+          expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
+        );
+        act(() => {
+          row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        });
+        expect(onOpenFile).toHaveBeenCalledWith(
+          expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
+        );
+        expect(layout.actions).toEqual([]);
+        expect(reduceRecordedLayout(layout)).toEqual(layout.layout);
+      },
+    );
 
     it("shows the trust notice for an untrusted scope and never reads its files", async () => {
       const readDirectory = vi.fn(listing);

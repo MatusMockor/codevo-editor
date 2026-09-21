@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   isInsideAgentSurfaceRoot,
@@ -146,11 +146,6 @@ export function useAgentSurfaceScopeTree({
     fileChanges: fileTreeChrome?.fileChanges ?? null,
   });
 
-  const dispatchLayout = chrome.layout.dispatch;
-  const maximizeForDocument = useCallback(
-    () => dispatchLayout({ kind: "maximizeRightPanel" }),
-    [dispatchLayout],
-  );
   const scopeAction = useMemo((): (() => void) | null => {
     switch (scope.kind) {
       case "none":
@@ -178,7 +173,6 @@ export function useAgentSurfaceScopeTree({
         if (!mountedRef.current || authorityRef.current !== authority) return;
         if (rootPath === null || !isInsideAgentSurfaceRoot(rootPath, entry.path)) return;
         open(entry);
-        maximizeForDocument();
       };
     const unavailable = agentSurfaceTreeUnavailable(thread, scope, scopeAction);
     const searchFiles =
@@ -212,7 +206,6 @@ export function useAgentSurfaceScopeTree({
   }, [
     authority,
     fileTreeChrome,
-    maximizeForDocument,
     rootPath,
     scope,
     scopeAction,
