@@ -79,7 +79,7 @@ jobs:
         run: npm run check
 
       - name: Frontend tests
-        run: npm test
+        run: npm test -- --maxWorkers=2
 
       - name: Frontend build
         run: npm run build

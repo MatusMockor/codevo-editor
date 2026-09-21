@@ -56,7 +56,7 @@ jobs:
         run: npm run check
 
       - name: Run tests with coverage gate
-        run: npm run test:coverage
+        run: npm run test:coverage -- --maxWorkers=2
 
       - name: Build web app
         run: npm run build

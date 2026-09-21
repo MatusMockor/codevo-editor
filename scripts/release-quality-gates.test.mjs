@@ -53,7 +53,7 @@ describe("release quality gates", () => {
       "npm run lint:exhaustive-deps",
       "npm run size:hotspots",
       "npm run check",
-      "npm test",
+      "npm test -- --maxWorkers=2",
       "npm run build",
     ]) {
       expect(frontend).toContain(`run: ${command}\n`);

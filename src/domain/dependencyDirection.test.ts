@@ -4,60 +4,76 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 describe("domain dependency direction", () => {
-  it("keeps production domain modules independent from outer layers", () => {
-    const domainDirectory = join(process.cwd(), "src", "domain");
-    const violations = productionTypeScriptFiles(domainDirectory).flatMap((fileName) => {
+  const domainDirectory = join(process.cwd(), "src", "domain");
+  const applicationDirectory = join(process.cwd(), "src", "application");
+  const domainFiles = productionTypeScriptFiles(domainDirectory);
+  const applicationFiles = productionTypeScriptFiles(applicationDirectory);
+  const legacyExceptions = new Set([
+    "useLanguageServerFeatureErrorReporting.ts -> ../infrastructure/globalErrorSafetyNet",
+    "useWorkbenchController.ts -> ../components/composerManifestMonacoProviders",
+    "useWorkbenchController.ts -> ../components/npmManifestMonacoProviders",
+    "useWorkbenchController.ts -> ../infrastructure/globalErrorSafetyNet",
+    "useWorkbenchController.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
+    "useWorkbenchNativeMenuCommands.ts -> ../infrastructure/safeUnsubscribe",
+    "useWorkbenchPintCommand.ts -> ../infrastructure/tauriPintGateway",
+    "useWorkspaceStateCache.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentAttachmentGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentTaskGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentHistoryGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentHistoryCatalogGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriExternalSessionImportGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentTurnLogGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriDebugGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriEslintDiagnosticsGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriExternalSessionGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitIntegrationGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitWorktreeGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpSyntaxDiagnosticsGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpstanDiagnosticsGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriPintGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/tauriPrettierGateway",
+    "workbenchDefaultGateways.ts -> ../infrastructure/webviewAgentImageSurface",
+    "workbenchOwnerDocumentSaveAdapters.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
+  ]);
+
+  it.each(domainFiles.map((fileName) => relative(domainDirectory, fileName)))(
+    "keeps production domain module %s independent from outer layers",
+    (relativePath) => {
+      const fileName = join(domainDirectory, relativePath);
       const source = readFileSync(fileName, "utf8");
-      return moduleSpecifiers(source, fileName)
+      const violations = moduleSpecifiers(source, fileName)
         .filter((specifier) =>
           /(?:^|\/)(?:application|components|infrastructure)(?:\/|$)/.test(specifier),
         )
-        .map((specifier) => `${relative(domainDirectory, fileName)} -> ${specifier}`);
-    });
+        .map((specifier) => `${relativePath} -> ${specifier}`);
+      expect(violations).toEqual([]);
+    },
+  );
 
-    expect(violations).toEqual([]);
-  });
-
-  it("ratchets application imports away from UI and infrastructure layers", () => {
-    const applicationDirectory = join(process.cwd(), "src", "application");
-    const legacyExceptions = new Set([
-      "useLanguageServerFeatureErrorReporting.ts -> ../infrastructure/globalErrorSafetyNet",
-      "useWorkbenchController.ts -> ../components/composerManifestMonacoProviders",
-      "useWorkbenchController.ts -> ../components/npmManifestMonacoProviders",
-      "useWorkbenchController.ts -> ../infrastructure/globalErrorSafetyNet",
-      "useWorkbenchController.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
-      "useWorkbenchNativeMenuCommands.ts -> ../infrastructure/safeUnsubscribe",
-      "useWorkbenchPintCommand.ts -> ../infrastructure/tauriPintGateway",
-      "useWorkspaceStateCache.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentAttachmentGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentTaskGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentHistoryGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentHistoryCatalogGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriExternalSessionImportGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentTurnLogGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriDebugGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriEslintDiagnosticsGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriExternalSessionGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitIntegrationGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitWorktreeGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpSyntaxDiagnosticsGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpstanDiagnosticsGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriPintGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/tauriPrettierGateway",
-      "workbenchDefaultGateways.ts -> ../infrastructure/webviewAgentImageSurface",
-      "workbenchOwnerDocumentSaveAdapters.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
-    ]);
-    const outerLayerDependencies = productionTypeScriptFiles(applicationDirectory).flatMap(
-      (fileName) => {
-        const source = readFileSync(fileName, "utf8");
-        return moduleSpecifiers(source, fileName)
-          .filter((specifier) => /(?:^|\/)(?:components|infrastructure)(?:\/|$)/.test(specifier))
-          .map((specifier) => `${relative(applicationDirectory, fileName)} -> ${specifier}`);
-      },
+  it("retains a production file for every legacy application exception", () => {
+    const existingFiles = new Set(
+      applicationFiles.map((fileName) => relative(applicationDirectory, fileName)),
     );
-
-    expect([...new Set(outerLayerDependencies)].sort()).toEqual([...legacyExceptions].sort());
+    const missing = [...legacyExceptions].filter(
+      (exception) => !existingFiles.has(exception.split(" -> ")[0]),
+    );
+    expect(missing).toEqual([]);
   });
+
+  it.each(applicationFiles.map((fileName) => relative(applicationDirectory, fileName)))(
+    "ratchets application imports in %s away from UI and infrastructure layers",
+    (relativePath) => {
+      const fileName = join(applicationDirectory, relativePath);
+      const source = readFileSync(fileName, "utf8");
+      const outerLayerDependencies = moduleSpecifiers(source, fileName)
+        .filter((specifier) => /(?:^|\/)(?:components|infrastructure)(?:\/|$)/.test(specifier))
+        .map((specifier) => `${relativePath} -> ${specifier}`);
+      const expected = [...legacyExceptions].filter((exception) =>
+        exception.startsWith(`${relativePath} -> `),
+      );
+      expect([...new Set(outerLayerDependencies)].sort()).toEqual(expected.sort());
+    },
+  );
 });
 
 function moduleSpecifiers(source: string, fileName: string): string[] {
