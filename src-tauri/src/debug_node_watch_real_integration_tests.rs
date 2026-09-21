@@ -1124,11 +1124,15 @@ fn wait_for_breakpoint_state(
 fn assert_exact_watch_inspection(
     watch_adapter: &WatchNodeDebugAdapter,
     owner: &BreakpointPauseOwner,
+    sink: &WatchEventSink,
+    reconnect_effects: &Mutex<Vec<WatchReconnectEffect>>,
 ) {
     assert_eq!(
         watch_adapter.current_pause_epoch(),
         Ok(owner.pause_epoch),
-        "active control ownership must match the stopped event epoch"
+        "active control ownership must match the stopped event epoch; reconnect effects: {:?}; events: {:?}",
+        lock_recover(reconnect_effects).as_slice(),
+        lock_recover(&sink.0).as_slice()
     );
     let stack = watch_adapter
         .stack_trace(owner.pause_epoch)

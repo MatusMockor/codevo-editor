@@ -133,7 +133,15 @@ fn stalled_request(
         }
         signal.store(cancel, Ordering::Release);
         let mut remaining = Vec::new();
-        stream.read_to_end(&mut remaining).unwrap();
+        // Dropping an unfinished response may close TCP with either FIN or RST.
+        // A timeout (or any other I/O error) still means closure was not proven.
+        match stream.read_to_end(&mut remaining) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+            Err(error) => {
+                panic!("cancelled or timed-out request did not close its connection: {error}")
+            }
+        }
     });
     let start = Instant::now();
     let result = tauri::async_runtime::block_on(fetch_version(

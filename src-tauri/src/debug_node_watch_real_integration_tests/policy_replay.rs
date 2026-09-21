@@ -129,7 +129,7 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
     assert_eq!(process_group(first.pid), process_group_id);
     let first_pause =
         wait_for_breakpoint_state(&sink, &reconnect_effects, &script_path, 5, 1, 1, 1);
-    assert_exact_watch_inspection(&watch_adapter, &first_pause);
+    assert_exact_watch_inspection(&watch_adapter, &first_pause, &sink, &reconnect_effects);
     let replacement_breakpoint = DebugBreakpoint {
         line_number: 6,
         ..watch_breakpoint(&script_path)
@@ -144,7 +144,12 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
         .expect("continue first watch target to replacement breakpoint");
     let live_replacement_pause =
         wait_for_breakpoint_state(&sink, &reconnect_effects, &script_path, 6, 1, 0, 1);
-    assert_exact_watch_inspection(&watch_adapter, &live_replacement_pause);
+    assert_exact_watch_inspection(
+        &watch_adapter,
+        &live_replacement_pause,
+        &sink,
+        &reconnect_effects,
+    );
     watch_adapter
         .step(StepKind::Continue)
         .expect("continue first watch target after live breakpoint replacement");
@@ -195,7 +200,7 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
         reconnect_floor + 1,
         "replacement pause must continue the exact pause-generation lineage"
     );
-    assert_exact_watch_inspection(&watch_adapter, &second_pause);
+    assert_exact_watch_inspection(&watch_adapter, &second_pause, &sink, &reconnect_effects);
     assert!(
         lock_recover(&sink.0).iter().all(|event| !matches!(
             &event.payload,
@@ -229,28 +234,27 @@ fn trigger_policy_watch_replacement(
 ) -> u32 {
     let initial_effect_count = lock_recover(reconnect_effects).len();
     let deadline = Instant::now() + PROBE_TIMEOUT;
-    for revision in 2..=17 {
-        write_revision(dependency, revision);
-        let observation_deadline = Instant::now() + Duration::from_millis(500);
-        while Instant::now() < observation_deadline && Instant::now() < deadline {
-            let replacement_observed = lock_recover(reconnect_effects)
-                .iter()
-                .skip(initial_effect_count)
-                .any(|effect| {
-                    matches!(
-                        effect,
-                        WatchReconnectEffect::AwaitingReplacement(_)
-                            | WatchReconnectEffect::Activated(_)
-                    )
-                });
-            if replacement_observed {
-                return revision;
-            }
-            thread::sleep(POLL_INTERVAL);
+    // After both breakpoint/resume handshakes, request exactly one replacement.
+    // Retrying edits while the controller is publishing a
+    // replacement can queue another restart and invalidate the stopped owner
+    // whose inspection this test is intended to prove.
+    let revision = 2;
+    write_revision(dependency, revision);
+    while Instant::now() < deadline {
+        let replacement_observed = lock_recover(reconnect_effects)
+            .iter()
+            .skip(initial_effect_count)
+            .any(|effect| {
+                matches!(
+                    effect,
+                    WatchReconnectEffect::AwaitingReplacement(_)
+                        | WatchReconnectEffect::Activated(_)
+                )
+            });
+        if replacement_observed {
+            return revision;
         }
-        if Instant::now() >= deadline {
-            break;
-        }
+        thread::sleep(POLL_INTERVAL);
     }
     panic!(
         "timed out causally triggering policy-replay watch replacement; reconnect effects: {:?}; events: {:?}",
