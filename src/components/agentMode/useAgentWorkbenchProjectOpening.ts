@@ -1,3 +1,7 @@
+import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
+import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
+import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
+import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
@@ -16,11 +20,19 @@ export interface AgentPendingProjectOpen {
 
 export function useAgentWorkbenchProjectOpening({
   directoryListingGateway,
+  cloneGateway = null,
+  localCloneSession,
+  remoteCloneSession,
+  creationSession,
   openWorkspaceRootWithReceipt,
   navigationSession,
   addProjectPending,
 }: {
   readonly directoryListingGateway: DirectoryListingGateway;
+  readonly cloneGateway?: LocalProjectCloneGateway | null;
+  readonly localCloneSession?: LocalProjectCloneSession;
+  readonly remoteCloneSession?: RemoteAddProjectSession;
+  readonly creationSession?: AgentProjectCreationSession;
   readonly openWorkspaceRootWithReceipt: AgentWorkbenchScreenWorkbench["openWorkspaceRootWithReceipt"];
   readonly navigationSession: AgentNavigationSession;
   readonly addProjectPending: RefObject<AgentPendingProjectOpen | null>;
@@ -59,6 +71,10 @@ export function useAgentWorkbenchProjectOpening({
   return useMemo(
     () => ({
       gateway: directoryListingGateway,
+      cloneGateway,
+      localCloneSession,
+      remoteCloneSession,
+      creationSession,
       receipt: addedProjectReceipt,
       cancelSelection: cancelAddSelection,
       consumeSelection: consumeAddSelection,
@@ -113,6 +129,10 @@ export function useAgentWorkbenchProjectOpening({
       cancelAddSelection,
       consumeAddSelection,
       directoryListingGateway,
+      cloneGateway,
+      localCloneSession,
+      remoteCloneSession,
+      creationSession,
       openWorkspaceRootWithReceipt,
     ],
   );

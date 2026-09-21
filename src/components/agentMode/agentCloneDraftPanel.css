@@ -1,0 +1,54 @@
+.agent-clone-draft {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+  color: var(--agent-text-strong);
+}
+.agent-clone-draft__header,
+.agent-clone-draft__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.agent-clone-draft h2 {
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+.agent-clone-draft p,
+.agent-clone-draft label {
+  color: var(--agent-text-muted);
+  font-size: 13px;
+}
+.agent-clone-draft textarea {
+  min-height: 160px;
+  resize: vertical;
+  border: 0;
+  border-radius: 8px;
+  background: var(--agent-composer-surface);
+  color: var(--agent-text-strong);
+  padding: 12px;
+  font: inherit;
+}
+.agent-clone-draft button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: var(--agent-composer-surface);
+  color: var(--agent-text-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.agent-clone-draft button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.agent-clone-draft textarea:focus-visible,
+.agent-clone-draft button:focus-visible {
+  outline: 2px solid var(--agent-accent);
+  outline-offset: 2px;
+}

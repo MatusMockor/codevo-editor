@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 #[derive(Debug)]
-pub(super) struct ProcessKillSwitch {
+pub(crate) struct ProcessKillSwitch {
     terminate: fn(u32),
     state: Mutex<KillState>,
 }
@@ -28,14 +28,14 @@ impl Default for ProcessKillSwitch {
 
 impl ProcessKillSwitch {
     #[cfg(test)]
-    pub(super) fn with_terminator(terminate: fn(u32)) -> Self {
+    pub(crate) fn with_terminator(terminate: fn(u32)) -> Self {
         Self {
             terminate,
             state: Mutex::new(KillState::default()),
         }
     }
 
-    pub(super) fn kill(&self) {
+    pub(crate) fn kill(&self) {
         let mut state = self.lock();
         state.killed = true;
         let Some(process_id) = state.process_id else {
@@ -44,7 +44,7 @@ impl ProcessKillSwitch {
         (self.terminate)(process_id);
     }
 
-    pub(super) fn register(&self, process_id: u32) -> KillRegistration<'_> {
+    pub(crate) fn register(&self, process_id: u32) -> KillRegistration<'_> {
         let mut state = self.lock();
         let accepted = !state.killed;
         if accepted {
@@ -66,13 +66,13 @@ impl ProcessKillSwitch {
     }
 }
 
-pub(super) struct KillRegistration<'a> {
+pub(crate) struct KillRegistration<'a> {
     kill: &'a ProcessKillSwitch,
     accepted: bool,
 }
 
 impl KillRegistration<'_> {
-    pub(super) fn accepted(&self) -> bool {
+    pub(crate) fn accepted(&self) -> bool {
         self.accepted
     }
 }
@@ -83,20 +83,20 @@ impl Drop for KillRegistration<'_> {
     }
 }
 
-pub(super) struct ChildGuard {
+pub(crate) struct ChildGuard {
     child: Child,
     process_id: u32,
     reaped: bool,
 }
 
 impl ChildGuard {
-    pub(super) fn take_streams(&mut self) -> Option<(ChildStdout, ChildStderr)> {
+    pub(crate) fn take_streams(&mut self) -> Option<(ChildStdout, ChildStderr)> {
         let stdout = self.child.stdout.take()?;
         let stderr = self.child.stderr.take()?;
         Some((stdout, stderr))
     }
 
-    pub(super) fn spawn(mut command: Command) -> io::Result<Self> {
+    pub(crate) fn spawn(mut command: Command) -> io::Result<Self> {
         configure_process_group(&mut command);
         let child = command
             .stdin(Stdio::null())
@@ -111,16 +111,16 @@ impl ChildGuard {
         })
     }
 
-    pub(super) fn process_id(&self) -> u32 {
+    pub(crate) fn process_id(&self) -> u32 {
         self.process_id
     }
 
-    pub(super) fn kill(&mut self) {
+    pub(crate) fn kill(&mut self) {
         terminate_process_group(self.process_id);
         let _ = self.child.kill();
     }
 
-    pub(super) fn wait(&mut self) -> io::Result<ExitStatus> {
+    pub(crate) fn wait(&mut self) -> io::Result<ExitStatus> {
         let status = self.child.wait();
         self.reaped = true;
         status
@@ -137,14 +137,14 @@ impl Drop for ChildGuard {
     }
 }
 
-pub(super) struct Watchdog {
+pub(crate) struct Watchdog {
     cancel: mpsc::Sender<()>,
     fired: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl Watchdog {
-    pub(super) fn start(process_id: u32, timeout: Duration) -> io::Result<Self> {
+    pub(crate) fn start(process_id: u32, timeout: Duration) -> io::Result<Self> {
         let (cancel, cancelled) = mpsc::channel::<()>();
         let fired = Arc::new(AtomicBool::new(false));
         let fired_flag = Arc::clone(&fired);
@@ -166,7 +166,7 @@ impl Watchdog {
         })
     }
 
-    pub(super) fn finish(mut self) -> bool {
+    pub(crate) fn finish(mut self) -> bool {
         let _ = self.cancel.send(());
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -176,7 +176,7 @@ impl Watchdog {
 }
 
 #[cfg(unix)]
-pub(super) fn await_exit_without_reaping(process_id: u32) -> bool {
+pub(crate) fn await_exit_without_reaping(process_id: u32) -> bool {
     let id = libc::id_t::from(process_id);
     if id == 0 {
         return false;
@@ -199,7 +199,7 @@ pub(super) fn await_exit_without_reaping(process_id: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-pub(super) fn await_exit_without_reaping(_process_id: u32) -> bool {
+pub(crate) fn await_exit_without_reaping(_process_id: u32) -> bool {
     false
 }
 

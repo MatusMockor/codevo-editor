@@ -5,20 +5,20 @@ use std::time::Instant;
 const CHUNK_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct StreamLimits {
-    pub(super) stdout_bytes: usize,
-    pub(super) stderr_bytes: usize,
+pub(crate) struct StreamLimits {
+    pub(crate) stdout_bytes: usize,
+    pub(crate) stderr_bytes: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum StreamsResult {
+pub(crate) enum StreamsResult {
     Complete { stdout: Vec<u8>, stderr: Vec<u8> },
     TooLarge,
     TimedOut,
     Failed,
 }
 
-pub(super) fn read_streams<O: Read + AsRawFd, E: Read + AsRawFd>(
+pub(crate) fn read_streams<O: Read + AsRawFd, E: Read + AsRawFd>(
     stdout: O,
     stderr: E,
     limits: StreamLimits,

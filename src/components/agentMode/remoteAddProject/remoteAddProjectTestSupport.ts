@@ -33,6 +33,7 @@ export type FakeRemoteAddProjectController = Readonly<{
   setProtocol: Mock<(value: CloneProtocol) => void>;
   confirmClone: Mock<() => void>;
   openExisting: Mock<() => void>;
+  retryPendingClone: Mock<() => void>;
   cancelPendingClone: Mock<() => void>;
   dismissPendingClone: Mock<() => void>;
 }>;
@@ -69,6 +70,7 @@ export function fakeRemoteAddProjectController(
     setProtocol: vi.fn<(value: CloneProtocol) => void>(),
     confirmClone: vi.fn<() => void>(),
     openExisting: vi.fn<() => void>(),
+    retryPendingClone: vi.fn<() => void>(),
     cancelPendingClone: vi.fn<() => void>(),
     dismissPendingClone: vi.fn<() => void>(),
   };

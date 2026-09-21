@@ -3,7 +3,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RemoteRunnerCloneJob, RemoteRunnerGateway } from "../domain/remoteRunner";
-import { useRemoteProjectClone, type RemoteProjectCloneStart } from "./useRemoteProjectClone";
+import {
+  useRemoteProjectClone,
+  type RemoteProjectCloneStart,
+  type RemoteProjectCloneSession,
+} from "./useRemoteProjectClone";
 const job: RemoteRunnerCloneJob = { id: "clone", status: "running", project: null, error: null };
 const input = { url: "git@github.com:owner/project.git", name: "project" };
 let dispose: () => void;
@@ -15,7 +19,7 @@ afterEach(() => {
   dispose?.();
   vi.useRealTimers();
 });
-function setup() {
+function setup(session?: RemoteProjectCloneSession) {
   const cloneProject = vi.fn().mockResolvedValue(job);
   const getProjectClone = vi.fn().mockResolvedValue(job);
   const cancelProjectClone = vi.fn().mockResolvedValue({ ...job, status: "cancelled" });
@@ -31,11 +35,12 @@ function setup() {
       gateway: connected ? gateway : null,
       serverId: server,
       workspaceOwner: "workspace",
+      ...(session ? { session } : {}),
     });
     return null;
   }
-  const render = (server: string, connected = true) =>
-    act(() => root.render(<Harness server={server} connected={connected} />));
+  const render = (server: string, connected = true, generation = 0) =>
+    act(() => root.render(<Harness key={generation} server={server} connected={connected} />));
   render("a");
   dispose = () => act(() => root.unmount());
   return {
@@ -328,4 +333,125 @@ it("preserves an active clone and its polling schedule across same-owner renders
   });
   expect(view.cloneProject).toHaveBeenCalledTimes(1);
   expect(view.getProjectClone).toHaveBeenCalledTimes(1);
+});
+
+it("restores and polls a running clone across a keyed leaf remount", async () => {
+  const session: RemoteProjectCloneSession = { current: null };
+  const view = setup(session);
+  await act(async () => {
+    await view.result.start(input);
+  });
+  view.render("a", true, 1);
+  expect(view.result.job).toEqual(job);
+  expect(view.result.requestedName).toBe("project");
+  expect(view.result.busy).toBe(true);
+  view.getProjectClone.mockResolvedValue({
+    ...job,
+    status: "succeeded",
+    project: { id: "project", name: "project" },
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(view.result.job?.status).toBe("succeeded");
+  expect(view.cloneProject).toHaveBeenCalledTimes(1);
+});
+it("reattaches the same pending acknowledgement without a second clone or orphan navigation", async () => {
+  const session: RemoteProjectCloneSession = { current: null };
+  const view = setup(session);
+  let resolve!: (value: RemoteRunnerCloneJob) => void;
+  view.cloneProject.mockReturnValue(
+    new Promise<RemoteRunnerCloneJob>((yes) => {
+      resolve = yes;
+    }),
+  );
+  let original!: Promise<RemoteProjectCloneStart>;
+  await act(async () => {
+    original = view.result.start(input);
+  });
+  const key = view.cloneProject.mock.calls[0]![0].idempotencyKey;
+  view.render("a", true, 1);
+  expect(view.result.pending).toBe(true);
+  expect(view.result.requestedName).toBe("project");
+  let result!: RemoteProjectCloneStart;
+  await act(async () => {
+    resolve(job);
+    result = await original;
+  });
+  expect(result).toEqual({ status: "ignored" });
+  expect(view.result.job).toEqual(job);
+  expect(view.result.pending).toBe(false);
+  expect(view.cloneProject).toHaveBeenCalledTimes(1);
+  expect(view.cloneProject.mock.calls[0]![0].idempotencyKey).toBe(key);
+});
+it("rejects a retained acknowledgement after owner A to B to A replacement", async () => {
+  const session: RemoteProjectCloneSession = { current: null };
+  const view = setup(session);
+  let resolve!: (value: RemoteRunnerCloneJob) => void;
+  view.cloneProject.mockReturnValue(
+    new Promise<RemoteRunnerCloneJob>((yes) => {
+      resolve = yes;
+    }),
+  );
+  let original!: Promise<RemoteProjectCloneStart>;
+  await act(async () => {
+    original = view.result.start(input);
+  });
+  view.render("b", true, 1);
+  view.render("a", true, 2);
+  let result!: RemoteProjectCloneStart;
+  await act(async () => {
+    resolve(job);
+    result = await original;
+  });
+  expect(result).toEqual({ status: "orphaned", job });
+  expect(view.result.job).toBeNull();
+  expect(view.result.pending).toBe(false);
+});
+it("does not let a poll from an unmounted leaf replace a terminal restored job", async () => {
+  const session: RemoteProjectCloneSession = { current: null };
+  const view = setup(session);
+  await act(async () => {
+    await view.result.start(input);
+  });
+  let late!: (value: RemoteRunnerCloneJob) => void;
+  view.getProjectClone.mockReturnValueOnce(
+    new Promise<RemoteRunnerCloneJob>((yes) => {
+      late = yes;
+    }),
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  view.render("a", true, 1);
+  view.getProjectClone.mockResolvedValue({
+    ...job,
+    status: "succeeded",
+    project: { id: "project", name: "project" },
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(view.result.job?.status).toBe("succeeded");
+  await act(async () => {
+    late(job);
+  });
+  expect(view.result.job?.status).toBe("succeeded");
+});
+it("keeps an uncertain submission key across remount and fails closed on gateway replacement", async () => {
+  const session: RemoteProjectCloneSession = { current: null };
+  const view = setup(session);
+  view.cloneProject.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => {
+    await view.result.start(input);
+  });
+  const key = view.cloneProject.mock.calls[0]![0].idempotencyKey;
+  view.render("a", true, 1);
+  await act(async () => {
+    await view.result.start(input);
+  });
+  expect(view.cloneProject.mock.calls[1]![0].idempotencyKey).toBe(key);
+  view.render("a", false, 2);
+  view.render("a", true, 3);
+  expect(view.result.job).toBeNull();
 });

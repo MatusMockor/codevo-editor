@@ -7,33 +7,49 @@ export function groupedEnvironmentProjects(
   groups: readonly AgentProjectGroup[],
   projects: readonly AgentProjectDescriptor[],
   links: ReadonlyMap<string, string>,
+  repositoryIdentities: ReadonlyMap<string, string> = new Map(),
 ): readonly AgentProjectGroup[] {
-  const aliases = new Map<string, string>();
-  for (const [remoteKey, localRoot] of links) {
-    if (!remoteKey.startsWith("remote:")) continue;
-    const local = projects.find(
-      (project) => !project.rootKey.startsWith("remote:") && project.rootKey === localRoot,
-    );
-    if (local && groups.some((group) => group.projectRootKey === remoteKey))
-      aliases.set(remoteKey, local.rootKey);
+  // Explicit connections override automatic identity for their remote member. This
+  // preserves an intentional association even if that checkout uses a fork remote.
+  const projectByKey = new Map(projects.map((project) => [project.rootKey, project]));
+  const groupByKey = new Map(groups.map((group) => [group.projectRootKey, group]));
+  const identities = new Map<string, string>();
+  for (const project of projects) {
+    const identity = repositoryIdentities.get(project.rootKey) ?? project.repositoryIdentity;
+    if (identity) identities.set(project.rootKey, identity);
   }
-  return groups
-    .filter((group) => !aliases.has(group.projectRootKey))
-    .map((group) => {
-      const members = groups.filter(
-        (candidate) => aliases.get(candidate.projectRootKey) === group.projectRootKey,
-      );
-      if (members.length === 0) return group;
-      return {
-        ...group,
-        memberProjectRootKeys: [
-          group.projectRootKey,
-          ...members.map((member) => member.projectRootKey),
-        ],
-        repos: [...group.repos, ...members.flatMap((member) => member.repos)],
-        liveCount: group.liveCount + members.reduce((sum, member) => sum + member.liveCount, 0),
-      };
-    });
+  const explicit = new Map<string, string>();
+  for (const [remoteKey, localRoot] of links) {
+    if (
+      remoteKey.startsWith("remote:") &&
+      !localRoot.startsWith("remote:") &&
+      projectByKey.has(localRoot) &&
+      groupByKey.has(remoteKey) &&
+      groupByKey.has(localRoot)
+    )
+      explicit.set(remoteKey, localRoot);
+  }
+  const buckets = new Map<string, AgentProjectGroup[]>();
+  for (const group of groups) {
+    const root = explicit.get(group.projectRootKey) ?? group.projectRootKey;
+    const identity = identities.get(root);
+    const key = identity ? `repository:${identity}` : `physical:${root}`;
+    const members = buckets.get(key) ?? [];
+    members.push(group);
+    buckets.set(key, members);
+  }
+  return [...buckets.values()].map((members) => {
+    if (members.length === 1) return members[0]!;
+    // Prefer a local representative so discovery order cannot hide local actions.
+    const representative =
+      members.find((member) => !member.projectRootKey.startsWith("remote:")) ?? members[0]!;
+    return {
+      ...representative,
+      memberProjectRootKeys: members.map((member) => member.projectRootKey),
+      repos: members.flatMap((member) => member.repos),
+      liveCount: members.reduce((sum, member) => sum + member.liveCount, 0),
+    };
+  });
 }
 
 /** Resolve an exact member of the displayed project, never an arbitrary project on a server. */

@@ -5,6 +5,8 @@ export type AgentProjectTrust = "trusted" | "untrusted" | "unknown";
 export type AgentProjectOrigin = "active-tab" | "background-tab" | "closed-tab-live-tasks";
 
 export interface AgentProjectDescriptor {
+  /** Sanitized canonical Git identity for display grouping only; never execution authority. */
+  readonly repositoryIdentity?: string;
   readonly rootKey: string;
   readonly rootPath: string;
   readonly ownerId: string;

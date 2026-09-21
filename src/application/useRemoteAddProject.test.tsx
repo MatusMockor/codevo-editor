@@ -15,7 +15,11 @@ import type {
 } from "../domain/repositoryLookup";
 import { remoteAgentProjectKey } from "./remoteAgentProjection";
 import type { RepositoryLookupGateway } from "./repositoryLookupPorts";
-import { useRemoteAddProject, type RemoteAddProjectServerProject } from "./useRemoteAddProject";
+import {
+  useRemoteAddProject,
+  type RemoteAddProjectServerProject,
+  type RemoteAddProjectSession,
+} from "./useRemoteAddProject";
 
 const repository: RepositoryInfo = {
   provider: "github",
@@ -107,6 +111,9 @@ afterEach(() => {
 });
 
 type SetupOverrides = Readonly<{
+  session?: RemoteAddProjectSession;
+  onCloneStarted?: (id: string, name: string, meta: Readonly<{ select: boolean }>) => void;
+  onCloneReady?: (id: string, projectKey: string) => void;
   lookupGateway?: RepositoryLookupGateway | null;
   runnerGateway?: RemoteRunnerGateway | null;
   capabilities?: RemoteRunnerDescriptor["capabilities"];
@@ -157,6 +164,7 @@ function setup(overrides: SetupOverrides = {}) {
       setServerProjects(afterRefresh);
     }, []);
     result = useRemoteAddProject({
+      session: overrides.session,
       runnerGateway: connected ? runnerGateway : null,
       lookupGateway,
       serverId: server,
@@ -165,6 +173,8 @@ function setup(overrides: SetupOverrides = {}) {
       selectionIdentity: identity,
       refreshProjects: refresh,
       selectProject,
+      onCloneStarted: overrides.onCloneStarted,
+      onCloneReady: overrides.onCloneReady,
     });
     return null;
   }
@@ -174,11 +184,18 @@ function setup(overrides: SetupOverrides = {}) {
     connected = true,
     owner = "workspace-1",
     nextIdentity: object = identity,
+    mountKey = "initial",
   ) => {
     identity = nextIdentity;
     return act(() =>
       root.render(
-        <Harness connected={connected} identity={identity} owner={owner} server={server} />,
+        <Harness
+          key={mountKey}
+          connected={connected}
+          identity={identity}
+          owner={owner}
+          server={server}
+        />,
       ),
     );
   };
@@ -254,6 +271,7 @@ it("walks sources to confirm and clones with the chosen protocol and branch", as
   );
   expect(view.result.open).toBe(false);
   expect(view.result.pendingClone).toEqual({
+    id: "clone-1",
     name: "storefront-api",
     status: "running",
     error: null,
@@ -779,4 +797,194 @@ it("survives an unmount while a lookup is in flight", async () => {
     view.lookupGateway.settle(0, { status: "ok", repository });
   });
   expect(view.result.step).toMatchObject({ kind: "repository", lookup: { status: "pending" } });
+});
+
+it("opens the pending draft and reports readiness without stealing subsequent navigation", async () => {
+  const onCloneStarted = vi.fn();
+  const onCloneReady = vi.fn();
+  const view = setup({ onCloneStarted, onCloneReady });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  expect(onCloneStarted).toHaveBeenCalledWith("clone-1", "storefront-api", { select: true });
+  view.render("server-a", true, "workspace-1", {});
+  view.getProjectClone.mockResolvedValue(succeededJob);
+  await settleClone();
+  expect(onCloneReady).toHaveBeenCalledWith("clone-1", CLONED_KEY);
+  expect(view.selectProject).not.toHaveBeenCalled();
+});
+
+it("does not open a draft when navigation changed during clone acknowledgement", async () => {
+  const onCloneStarted = vi.fn();
+  const view = setup({ onCloneStarted });
+  await reachConfirm(view);
+  let resolve!: (job: RemoteRunnerCloneJob) => void;
+  view.cloneProject.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  act(() => view.result.confirmClone());
+  view.render("server-a", true, "workspace-1", {});
+  await act(async () => resolve(runningJob));
+  expect(onCloneStarted).toHaveBeenCalledWith("clone-1", "storefront-api", { select: false });
+  expect(view.result.pendingClone?.id).toBe("clone-1");
+});
+
+it("retries a failed clone with its original input and a new operation key", async () => {
+  const view = setup();
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.getProjectClone.mockResolvedValue({ ...runningJob, status: "failed", error: "network" });
+  await settleClone();
+  await act(async () => view.result.retryPendingClone());
+  expect(view.cloneProject).toHaveBeenCalledTimes(2);
+  const first = view.cloneProject.mock.calls[0];
+  const second = view.cloneProject.mock.calls[1];
+  expect(second).not.toEqual(first);
+  expect(second).toMatchObject([
+    { serverId: "server-a", name: "storefront-api", url: repository.sshUrl },
+  ]);
+});
+
+it("restores exact-owner draft readiness after server A to B to A", async () => {
+  const onCloneReady = vi.fn();
+  const view = setup({ onCloneReady });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.render("server-b");
+  view.getProjectClone.mockResolvedValue(succeededJob);
+  await act(async () => view.render("server-a"));
+  await settleClone();
+  expect(onCloneReady).toHaveBeenCalledWith("clone-1", CLONED_KEY);
+  expect(view.selectProject).not.toHaveBeenCalled();
+});
+
+it("restores retry input after returning to the original clone owner", async () => {
+  const view = setup({ onCloneReady: vi.fn() });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.render("server-b");
+  view.getProjectClone.mockResolvedValue({ ...runningJob, status: "failed", error: "network" });
+  await act(async () => view.render("server-a"));
+  await settleClone();
+  expect(view.result.canRetryPendingClone).toBe(true);
+  await act(async () => view.result.retryPendingClone());
+  expect(view.cloneProject).toHaveBeenCalledTimes(2);
+});
+
+it("retains runner authority when retrying after a server round trip", async () => {
+  const onCloneReady = vi.fn();
+  const view = setup({ onCloneReady });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.render("server-b");
+  view.getProjectClone.mockResolvedValue({ ...runningJob, status: "failed", error: "network" });
+  await act(async () => view.render("server-a"));
+  await settleClone();
+  view.cloneProject.mockResolvedValue({ ...runningJob, id: "clone-2" });
+  view.getProjectClone.mockResolvedValue({ ...succeededJob, id: "clone-2" });
+  await act(async () => view.result.retryPendingClone());
+  await settleClone();
+  expect(onCloneReady).toHaveBeenCalledWith("clone-2", CLONED_KEY);
+});
+
+it("revokes retry on dismiss even for a retained callback", async () => {
+  const view = setup();
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.getProjectClone.mockResolvedValue({ ...runningJob, status: "failed", error: "network" });
+  await settleClone();
+  const retry = view.result.retryPendingClone;
+  act(() => view.result.dismissPendingClone());
+  await act(async () => retry());
+  expect(view.cloneProject).toHaveBeenCalledTimes(1);
+});
+
+it("delivers completed draft readiness once across repeated server navigation", async () => {
+  const onCloneReady = vi.fn();
+  const view = setup({ onCloneReady });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.getProjectClone.mockResolvedValue(succeededJob);
+  await settleClone();
+  view.render("server-b");
+  await act(async () => view.render("server-a"));
+  await settleClone();
+  expect(onCloneReady).toHaveBeenCalledTimes(1);
+});
+
+it("can retry a retained operation interrupted by the server", async () => {
+  const view = setup();
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.getProjectClone.mockResolvedValue({
+    ...runningJob,
+    status: "interrupted",
+    error: "Server restarted",
+  });
+  await settleClone();
+  expect(view.result.canRetryPendingClone).toBe(true);
+  await act(async () => view.result.retryPendingClone());
+  expect(view.cloneProject).toHaveBeenCalledTimes(2);
+});
+
+it("restores server clone readiness across keyed workspace leaf remount", async () => {
+  const session: RemoteAddProjectSession = { current: null };
+  const onCloneReady = vi.fn();
+  const view = setup({ session, onCloneReady });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  await act(async () => view.render("server-a", true, "workspace-1", {}, "leaf-b"));
+  view.getProjectClone.mockResolvedValue(succeededJob);
+  await settleClone();
+  expect(view.result.pendingClone?.projectKey).toBe(CLONED_KEY);
+  expect(onCloneReady).toHaveBeenCalledWith("clone-1", CLONED_KEY);
+  expect(view.selectProject).not.toHaveBeenCalled();
+  expect(view.cloneProject).toHaveBeenCalledTimes(1);
+});
+
+it("recovers the first clone acknowledgement on the new leaf without selecting it", async () => {
+  const session: RemoteAddProjectSession = { current: null };
+  const onCloneStarted = vi.fn();
+  const onCloneReady = vi.fn();
+  const view = setup({ session, onCloneStarted, onCloneReady });
+  await reachConfirm(view);
+  let resolve!: (job: RemoteRunnerCloneJob) => void;
+  view.cloneProject.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  await act(async () => view.result.confirmClone());
+  await act(async () => view.render("server-a", true, "workspace-1", {}, "leaf-b"));
+  await act(async () => resolve(succeededJob));
+  await settleClone();
+  expect(onCloneStarted).toHaveBeenCalledWith("clone-1", "storefront-api", { select: false });
+  expect(onCloneReady).toHaveBeenCalledWith("clone-1", CLONED_KEY);
+  expect(view.selectProject).not.toHaveBeenCalled();
+});
+
+it("restores the retried job rather than the failed submission across pending acknowledgement remount", async () => {
+  const session: RemoteAddProjectSession = { current: null };
+  const onCloneReady = vi.fn();
+  const view = setup({ session, onCloneReady });
+  await reachConfirm(view);
+  await act(async () => view.result.confirmClone());
+  view.getProjectClone.mockResolvedValue({ ...runningJob, status: "failed", error: "network" });
+  await settleClone();
+  let resolve!: (job: RemoteRunnerCloneJob) => void;
+  view.cloneProject.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  await act(async () => view.result.retryPendingClone());
+  await act(async () => view.render("server-a", true, "workspace-1", {}, "retry-leaf"));
+  await act(async () => resolve({ ...succeededJob, id: "clone-retry" }));
+  await settleClone();
+  expect(onCloneReady).toHaveBeenCalledWith("clone-retry", CLONED_KEY);
+  expect(view.selectProject).not.toHaveBeenCalled();
 });

@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.59] - 2026-09-21
+
+### Added
+
+- Add local and server projects from one entry point, including cloning a Git
+  repository while preparing the first task's draft.
+- Group checkouts of the same Git repository in the sidebar while preserving
+  their individual execution environments.
+
+### Changed
+
+- Browse saved agent activity inside the turn's expandable work history instead
+  of a separate Saved activity button.
+
 ### Fixed
 
 - Match the right panel, file tree, and changes list to the left sidebar background
@@ -18,6 +32,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Preserve navigation while a server clone starts, refresh projects after a resumed
   clone completes, and reject results belonging to a previous server selection.
 - Describe provider failures truthfully when they happen during an active run.
+
+### Compatibility
+
+- Automatic grouping of existing server checkouts requires the runner's repository
+  identity endpoint. Older runners remain usable with separate projects and manual
+  project connections.
+- Local clones use existing Git credentials and SSH configuration. Closing the app
+  cancels active local clones; pending clone drafts are retained during navigation,
+  but are not restored after restarting the app.
 
 ## [0.2.0-beta.58] - 2026-09-21
 

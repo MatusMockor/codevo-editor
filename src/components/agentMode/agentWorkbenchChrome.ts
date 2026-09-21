@@ -1,3 +1,7 @@
+import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
+import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
+import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
+import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
 import type { AgentSurfaceProjectDiffState } from "./AgentSurfaceProjectDiff";
 import type { AgentProjectWorkspaceSync } from "./useAgentProjectWorkspaceSync";
 import type {
@@ -86,6 +90,10 @@ export interface AgentAddedProjectReceipt {
 
 export interface AgentWorkbenchAddProjectChrome {
   readonly gateway: DirectoryListingGateway;
+  readonly cloneGateway?: LocalProjectCloneGateway | null;
+  readonly localCloneSession?: LocalProjectCloneSession;
+  readonly remoteCloneSession?: RemoteAddProjectSession;
+  readonly creationSession?: AgentProjectCreationSession;
   readonly receipt?: AgentAddedProjectReceipt | null;
   cancelSelection?(): void;
   consumeSelection?(receipt: AgentAddedProjectReceipt): void;

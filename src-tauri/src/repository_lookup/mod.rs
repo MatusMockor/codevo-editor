@@ -19,13 +19,12 @@ mod gitlab;
 #[cfg(unix)]
 mod hosts;
 #[cfg(unix)]
-mod pipes;
+use crate::repository_process_support::{pipes, process_guard};
 #[cfg(unix)]
 mod plan;
 #[cfg(unix)]
 mod process;
-#[cfg(unix)]
-mod process_guard;
+
 #[cfg(unix)]
 mod resolver;
 #[cfg(unix)]

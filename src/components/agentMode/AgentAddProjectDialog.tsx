@@ -21,6 +21,7 @@ export const MAX_RENDERED_DIRECTORY_ROWS = 200;
 
 export interface AgentAddProjectDialogProps {
   readonly gateway: DirectoryListingGateway;
+  readonly mode?: "addProject" | "selectDirectory";
   readonly projectRootPaths: ReadonlyArray<string>;
   onClose(): void;
   onAdd(path: string): void;
@@ -30,6 +31,7 @@ export interface AgentAddProjectDialogProps {
 
 export function AgentAddProjectDialog({
   gateway,
+  mode = "addProject",
   onAdd,
   onClose,
   onNotice,
@@ -59,11 +61,12 @@ export function AgentAddProjectDialog({
   const intent = agentAddProjectIntent({
     currentPath,
     hasListing: listing !== null,
-    projectRootPaths,
+    projectRootPaths: mode === "selectDirectory" ? [] : projectRootPaths,
     status,
   });
   const intentReason = agentAddProjectIntentReason(intent);
-  const actionLabel = agentAddProjectActionLabel(intent);
+  const actionLabel =
+    mode === "selectDirectory" ? "Choose folder" : agentAddProjectActionLabel(intent);
 
   const openInFinder = useCallback(() => {
     if (currentPath === null) return;
@@ -127,7 +130,7 @@ export function AgentAddProjectDialog({
   return (
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
       <section
-        aria-label="Add project"
+        aria-label={mode === "selectDirectory" ? "Choose destination folder" : "Add project"}
         className="quick-open agent-add-project"
         onMouseDown={(event) => event.stopPropagation()}
       >

@@ -36,6 +36,15 @@ describe("AgentRailCloneRow", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["running", "Cloning on this computer"],
+    ["queued", "Queued on this computer"],
+  ] as const)("announces local %s on this computer", (status, label) => {
+    render({ name: "editor", status, environment: "local", error: null });
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(label);
+    expect(host.textContent).not.toContain("server");
+  });
+
   it("keeps the queued state active", () => {
     render({ name: "editor", status: "queued", error: null });
 

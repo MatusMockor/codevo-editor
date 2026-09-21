@@ -23,8 +23,13 @@ export function remoteCloneTrackerKey(key: RemoteCloneTrackerKey): string | null
   return `${key.workspaceOwner ?? ""}${SEPARATOR}${key.serverId}`;
 }
 
-export function useRemoteCloneTracker(): RemoteCloneTracker {
-  const entries = useRef<Map<string, RemoteCloneTrackerEntry> | null>(null);
+export interface RemoteCloneTrackerSession {
+  current: Map<string, RemoteCloneTrackerEntry> | null;
+}
+
+export function useRemoteCloneTracker(session?: RemoteCloneTrackerSession): RemoteCloneTracker {
+  const localEntries = useRef<Map<string, RemoteCloneTrackerEntry> | null>(null);
+  const entries = session ?? localEntries;
   if (entries.current === null) entries.current = new Map();
 
   return useMemo(() => {
@@ -55,7 +60,7 @@ export function useRemoteCloneTracker(): RemoteCloneTracker {
         return map().size;
       },
     };
-  }, []);
+  }, [entries]);
 }
 
 function evictOldest(tracked: Map<string, RemoteCloneTrackerEntry>): void {

@@ -1,3 +1,12 @@
+import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
+import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
+import type { RemoteRunnerCloneJob, RemoteRunnerGateway } from "../../domain/remoteRunner";
+import type {
+  RepositoryHostsSnapshot,
+  RepositoryLookupOutcome,
+} from "../../domain/repositoryLookup";
+import type { RepositoryLookupGateway } from "../../application/repositoryLookupPorts";
+import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
 import { waitForReact } from "../../test/reactTestLifecycle";
 // @vitest-environment jsdom
 
@@ -90,6 +99,7 @@ describe("AgentWorkbenchScreen", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    agentComposerDraftStore.reset();
   });
 
   it("isolates a reused thread ID in another workspace and restores the original project selection", async () => {
@@ -476,6 +486,13 @@ describe("AgentWorkbenchScreen", () => {
     render(workbench);
 
     click('button[aria-label="Add project"]');
+    act(() => {
+      const source = [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === "Open existing folder",
+      );
+      expect(source).toBeDefined();
+      source!.click();
+    });
     await act(async () => {});
 
     const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
@@ -507,6 +524,13 @@ describe("AgentWorkbenchScreen", () => {
       render(first);
       click('[data-thread-id="agt-1"]');
       click('button[aria-label="Add project"]');
+      act(() => {
+        const source = [...host.querySelectorAll("button")].find(
+          (button) => button.textContent === "Open existing folder",
+        );
+        expect(source).toBeDefined();
+        source!.click();
+      });
       await act(async () => {});
       await act(async () => {
         host
@@ -515,6 +539,7 @@ describe("AgentWorkbenchScreen", () => {
             new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
           );
       });
+      expect(opening).toHaveBeenCalledWith("/Users/dev");
       const nextAgents = {
         ...next.agents,
         agentProjects: {
@@ -543,6 +568,366 @@ describe("AgentWorkbenchScreen", () => {
     },
   );
 
+  it.each([false, true])(
+    "retains a remote clone draft across local workspace remounts and continues on its exact server project (ack pending: %s)",
+    async (pendingAcknowledgement) => {
+      const { gateway, finishClone } = gatewayFixture();
+      let acknowledge: (job: RemoteRunnerCloneJob) => void = () => undefined;
+      if (pendingAcknowledgement)
+        gateway.cloneProject.mockImplementationOnce(
+          () =>
+            new Promise<RemoteRunnerCloneJob>((resolve) => {
+              acknowledge = resolve;
+            }),
+        );
+      const lookup = lookupGatewayFixture();
+      const startThread = vi.fn(async () => ({ threadId: "must-not-start" }));
+      const opening = vi.fn();
+      const show = async (path: string) => {
+        const workbench = createWorkbench(path, { openWorkspaceRootWithReceipt: opening });
+        await act(async () =>
+          root.render(
+            <RemoteRunnerProvider gateway={gateway} repositoryLookup={lookup}>
+              <AgentWorkbenchScreen
+                {...defaultProps({ ...workbench, agents: { ...workbench.agents, startThread } })}
+              />
+            </RemoteRunnerProvider>,
+          ),
+        );
+      };
+      const clickText = (text: string) => {
+        const button = [...host.querySelectorAll("button")].find(
+          (item) => item.textContent === text,
+        );
+        expect(button, text).toBeDefined();
+        act(() => button!.click());
+      };
+      const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+        act(() => {
+          const prototype =
+            element instanceof HTMLTextAreaElement
+              ? HTMLTextAreaElement.prototype
+              : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(element, value);
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      };
+      await show(ROOT_A);
+      click('button[aria-label="Add project"]');
+      const environment = host.querySelector<HTMLSelectElement>(
+        '[aria-label="Project environment"]',
+      )!;
+      act(() => {
+        environment.value = "linux";
+        environment.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      clickText("Clone repository");
+      const gitUrl = () =>
+        [...host.querySelectorAll<HTMLElement>('[role="option"]')].find((row) =>
+          row.textContent?.includes("Git URL"),
+        );
+      await waitForReact(() => expect(gitUrl()?.getAttribute("aria-disabled")).toBe("false"));
+      act(() => gitUrl()!.click());
+      const urlInput = () =>
+        host.querySelector<HTMLInputElement>(".agent-remote-add-project .palette-search input")!;
+      await waitForReact(() => expect(urlInput()?.placeholder).toBe("Enter Git clone URL"));
+      type(urlInput(), CLONE_URL);
+      act(() =>
+        urlInput().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+      );
+      await waitForReact(() =>
+        expect(host.querySelector(".agent-remote-add-project__primary")?.textContent).toBe(
+          "Clone on server",
+        ),
+      );
+      click(".agent-remote-add-project__primary");
+      await waitForReact(() => expect(gateway.cloneProject).toHaveBeenCalledOnce());
+      if (pendingAcknowledgement) {
+        await show(ROOT_B);
+        await act(async () => acknowledge(runningClone));
+        expect(host.querySelector(".agent-clone-draft")).toBeNull();
+        await waitForReact(() =>
+          expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull(),
+        );
+        click(".agent-rail-clone__name");
+      }
+      await waitForReact(() =>
+        expect(host.querySelector(".agent-clone-draft textarea")).not.toBeNull(),
+      );
+      type(
+        host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")!,
+        "Remote clone draft",
+      );
+      await show(ROOT_B);
+      await show(ROOT_A);
+      expect(opening).not.toHaveBeenCalled();
+      expect(host.querySelector(".agent-rail-clone__name")).not.toBeNull();
+      click(".agent-rail-clone__name");
+      expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")?.value).toBe(
+        "Remote clone draft",
+      );
+      finishClone();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1600));
+      });
+      await waitForReact(() =>
+        expect(
+          [...host.querySelectorAll("button")].some(
+            (item) => item.textContent === "Continue with draft",
+          ),
+        ).toBe(true),
+      );
+      clickText("Continue with draft");
+      await act(async () => {});
+      expect(prompt().value).toBe("Remote clone draft");
+      expect(agentComposerDraftStore.readDraft("new:remote:linux:runner:cloned")).toBe(
+        "Remote clone draft",
+      );
+      expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain(
+        "storefront-api",
+      );
+      expect(opening).not.toHaveBeenCalled();
+      expect(startThread).not.toHaveBeenCalled();
+      expect(gateway.createTask).not.toHaveBeenCalled();
+      expect(gateway.cloneProject).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps a running clone and its draft across A to B to A navigation", async () => {
+    agentComposerDraftStore.reset();
+    let finish = false;
+    let cloneId = "";
+    const gateway: LocalProjectCloneGateway = {
+      start: vi.fn<LocalProjectCloneGateway["start"]>(async (request) => {
+        cloneId = request.idempotencyKey;
+        return { cloneId, status: "running", path: ROOT_B, error: null };
+      }),
+      get: vi.fn<LocalProjectCloneGateway["get"]>(async () =>
+        finish
+          ? { cloneId, status: "completed", path: ROOT_B, error: null }
+          : { cloneId, status: "running", path: ROOT_B, error: null },
+      ),
+      cancel: vi.fn(async () => {
+        throw new Error("Unexpected cancellation");
+      }),
+    };
+    const startThread = vi.fn(async () => ({ threadId: "must-not-start" }));
+    const destination = createWorkbench(ROOT_B);
+    const receipt = await destination.openWorkspaceRootWithReceipt(ROOT_B);
+    const opening = vi.fn(async () => {
+      root.render(
+        <AgentWorkbenchScreen
+          {...defaultProps({
+            ...destination,
+            agents: { ...destination.agents, startThread },
+            openWorkspaceRootWithReceipt: opening,
+          })}
+          localCloneGateway={gateway}
+        />,
+      );
+      return receipt;
+    });
+    const show = async (path: string) => {
+      const workbench = createWorkbench(path, { openWorkspaceRootWithReceipt: opening });
+      await act(async () =>
+        root.render(
+          <AgentWorkbenchScreen
+            {...defaultProps({ ...workbench, agents: { ...workbench.agents, startThread } })}
+            localCloneGateway={gateway}
+          />,
+        ),
+      );
+    };
+    const clickText = (text: string) => {
+      const button = [...host.querySelectorAll("button")].find((item) => item.textContent === text);
+      expect(button, text).toBeDefined();
+      act(() => button!.click());
+    };
+    const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+      act(() => {
+        const prototype =
+          element instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(element, value);
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await show(ROOT_A);
+    click('button[aria-label="Add project"]');
+    clickText("Clone repository");
+    type(
+      host.querySelector<HTMLInputElement>(
+        'input[placeholder="https://github.com/owner/repository.git"]',
+      )!,
+      "https://github.com/example/api.git",
+    );
+    clickText("Choose folder");
+    await act(async () => {});
+    await act(async () =>
+      host
+        .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+        ),
+    );
+    clickText("Clone repository");
+    await waitForReact(() =>
+      expect(host.querySelector(".agent-clone-draft textarea")).not.toBeNull(),
+    );
+    type(
+      host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")!,
+      "Keep this running clone draft",
+    );
+    await show(ROOT_B);
+    await show(ROOT_A);
+    expect(opening).not.toHaveBeenCalled();
+    expect(gateway.cancel).not.toHaveBeenCalled();
+    expect(host.querySelector(".agent-rail-clone__name")).not.toBeNull();
+    click(".agent-rail-clone__name");
+    expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")?.value).toBe(
+      "Keep this running clone draft",
+    );
+    finish = true;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+    });
+    await waitForReact(() =>
+      expect(
+        [...host.querySelectorAll("button")].some(
+          (item) => item.textContent === "Continue with draft",
+        ),
+      ).toBe(true),
+    );
+    expect(opening).not.toHaveBeenCalled();
+    clickText("Continue with draft");
+    await act(async () => {});
+    expect(opening).toHaveBeenCalledExactlyOnceWith(ROOT_B);
+    expect(prompt().value).toBe("Keep this running clone draft");
+    expect(agentComposerDraftStore.readDraft(`clone:local:${cloneId}`)).toBe(
+      "Keep this running clone draft",
+    );
+    expect(startThread).not.toHaveBeenCalled();
+    expect(gateway.start).toHaveBeenCalledOnce();
+  });
+
+  it.each(["", "Existing destination draft"])(
+    "retains clone draft across a real keyed workspace remount (destination: %s)",
+    async (existing) => {
+      agentComposerDraftStore.reset();
+      agentComposerDraftStore.writeDraft(`new:${ROOT_B}`, existing);
+      const startThread = vi.fn(async () => ({ threadId: "must-not-start" }));
+      const next = createWorkbench(ROOT_B);
+      const receipt = await next.openWorkspaceRootWithReceipt(ROOT_B);
+      let resolveReceipt!: (value: typeof receipt) => void;
+      const pendingReceipt = new Promise<typeof receipt>((resolve) => {
+        resolveReceipt = resolve;
+      });
+      const cloneStart = vi.fn<LocalProjectCloneGateway["start"]>(async (request) => ({
+        cloneId: request.idempotencyKey,
+        status: "completed",
+        path: ROOT_B,
+        error: null,
+      }));
+      const gateway: LocalProjectCloneGateway = {
+        start: cloneStart,
+        get: vi.fn(async () => {
+          throw new Error("Clone already completed");
+        }),
+        cancel: vi.fn(async () => {
+          throw new Error("Not canceled");
+        }),
+      };
+      const opening = vi.fn(() => {
+        root.render(
+          <AgentWorkbenchScreen
+            {...defaultProps({
+              ...next,
+              agents: { ...next.agents, startThread },
+              openWorkspaceRootWithReceipt: opening,
+            })}
+            localCloneGateway={gateway}
+          />,
+        );
+        return pendingReceipt;
+      });
+      const first = createWorkbench(ROOT_A, { openWorkspaceRootWithReceipt: opening });
+      await act(async () =>
+        root.render(
+          <AgentWorkbenchScreen
+            {...defaultProps({ ...first, agents: { ...first.agents, startThread } })}
+            localCloneGateway={gateway}
+          />,
+        ),
+      );
+      const clickText = (text: string) => {
+        const button = [...host.querySelectorAll("button")].find(
+          (item) => item.textContent === text,
+        );
+        expect(button, text).toBeDefined();
+        act(() => button!.click());
+      };
+      const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+        act(() => {
+          const prototype =
+            element instanceof HTMLTextAreaElement
+              ? HTMLTextAreaElement.prototype
+              : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(element, value);
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      };
+      click('button[aria-label="Add project"]');
+      clickText("Clone repository");
+      type(
+        host.querySelector<HTMLInputElement>(
+          'input[placeholder="https://github.com/owner/repository.git"]',
+        )!,
+        "https://github.com/example/api.git",
+      );
+      clickText("Choose folder");
+      await act(async () => {});
+      await act(async () =>
+        host
+          .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')!
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+          ),
+      );
+      clickText("Clone repository");
+      await waitForReact(() =>
+        expect(host.querySelector(".agent-clone-draft textarea")).not.toBeNull(),
+      );
+      type(
+        host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")!,
+        "Cloned project draft",
+      );
+      await waitForReact(() =>
+        expect(
+          [...host.querySelectorAll("button")].some(
+            (item) => item.textContent === "Continue with draft",
+          ),
+        ).toBe(true),
+      );
+      const cloneId = cloneStart.mock.calls[0]![0].idempotencyKey;
+      clickText("Continue with draft");
+      await act(async () => {});
+      expect(opening).toHaveBeenCalledWith(ROOT_B);
+      // The old AgentModeView has unmounted before the open receipt settles.
+      expect(host.querySelector(".agent-clone-draft")).toBeNull();
+      await act(async () => resolveReceipt(receipt));
+      const expected = existing ? `${existing}\n\nCloned project draft` : "Cloned project draft";
+      await waitForReact(() => expect(prompt().value).toBe(expected));
+      expect(host.querySelector('[aria-label="Repository clone"]')).toBeNull();
+      expect(agentComposerDraftStore.readDraft(`new:${ROOT_B}`)).toBe(expected);
+      expect(agentComposerDraftStore.readDraft(`clone:local:${cloneId}`)).toBe(
+        "Cloned project draft",
+      );
+      expect(startThread).not.toHaveBeenCalled();
+      agentComposerDraftStore.reset();
+    },
+  );
+
   it("reports the refusal when the workspace open flow declines the directory", async () => {
     const workbench = createWorkbench(ROOT_A, {
       openWorkspaceRootWithReceipt: vi.fn(async () => ({
@@ -553,6 +938,13 @@ describe("AgentWorkbenchScreen", () => {
     render(workbench);
 
     click('button[aria-label="Add project"]');
+    act(() => {
+      const source = [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === "Open existing folder",
+      );
+      expect(source).toBeDefined();
+      source!.click();
+    });
     await act(async () => {});
 
     const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
@@ -1015,4 +1407,82 @@ function threadView(root: string, worktreePath: string | null): AgentThreadView 
     worktreeMissing: false,
     changeSummary: null,
   };
+}
+
+const CLONE_URL = "git@github.com:acme/storefront-api.git";
+
+const runningClone: RemoteRunnerCloneJob = {
+  id: "clone-1",
+  status: "running",
+  project: null,
+  error: null,
+};
+
+const succeededClone: RemoteRunnerCloneJob = {
+  ...runningClone,
+  status: "succeeded",
+  project: { id: "cloned", name: "storefront-api" },
+};
+
+const hostsSnapshot: RepositoryHostsSnapshot = {
+  github: {
+    status: "ready",
+    hosts: [{ provider: "github", host: "github.com", auth: "authenticated" }],
+    truncated: false,
+  },
+  gitlab: { status: "ready", hosts: [], truncated: false },
+};
+
+function lookupGatewayFixture(): RepositoryLookupGateway {
+  return {
+    listHosts: vi.fn(async () => hostsSnapshot),
+    lookup: vi.fn(async (): Promise<RepositoryLookupOutcome> => ({ status: "notFound" })),
+  };
+}
+
+function gatewayFixture() {
+  const projects = [{ id: "project", name: "Server app" }];
+  let cloneFinished = false;
+  const cloneProject = vi.fn(async () => runningClone);
+  const gateway = {
+    collectInstructions: vi.fn().mockResolvedValue({ version: 1, files: [] }),
+    listServers: vi.fn().mockResolvedValue([
+      {
+        id: "linux",
+        name: "Linux server",
+        host: "linux",
+        username: "codex",
+        port: 22,
+        connected: true,
+      },
+    ]),
+    connectServer: vi.fn(),
+    disconnectServer: vi.fn(),
+    removeServer: vi.fn(),
+    getRunner: vi.fn().mockResolvedValue({
+      protocolVersion: 1,
+      runnerId: "runner",
+      name: "Linux server",
+      capabilities: { taskExecution: true, eventReplay: true, projectCloning: true },
+    }),
+    listProjects: vi.fn(async () => ({ items: [...projects] })),
+    cloneProject,
+    getProjectClone: vi.fn(async () => (cloneFinished ? succeededClone : runningClone)),
+    cancelProjectClone: vi.fn(),
+    listTasks: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    createTask: vi.fn(),
+    startTask: vi.fn(),
+    getTask: vi.fn(),
+    getTaskResume: vi.fn().mockResolvedValue({ available: true, reason: null }),
+    continueTask: vi.fn(),
+    cancelTask: vi.fn(),
+    listEvents: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    getDiff: vi.fn().mockResolvedValue({ diff: "", truncated: false }),
+    uploadAttachment: vi.fn(),
+  } satisfies RemoteRunnerGateway & { cloneProject: typeof cloneProject };
+  const finishClone = () => {
+    cloneFinished = true;
+    projects.push({ id: "cloned", name: "storefront-api" });
+  };
+  return { gateway, finishClone };
 }

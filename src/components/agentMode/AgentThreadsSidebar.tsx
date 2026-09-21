@@ -78,6 +78,7 @@ export interface AgentThreadsSidebarProps {
   readonly pendingClone?: RemoteAddProjectPendingClone | null;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly turnLog?: AgentTurnLogFactsSource | null;
+  onOpenPendingClone?(): void;
   onCancelPendingClone?(): void;
   onDismissPendingClone?(): void;
   onOpenProviderSettings(): void;
@@ -109,6 +110,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onNewThread,
   onProjectCommand,
   pendingClone = null,
+  onOpenPendingClone,
   providerEnabled,
   providerManagement,
   onOpenProviderSettings,
@@ -388,6 +390,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       {pendingClone !== null && (
         <AgentRailCloneRow
           clone={pendingClone}
+          onOpen={onOpenPendingClone}
           onCancel={() => onCancelPendingClone?.()}
           onDismiss={() => onDismissPendingClone?.()}
         />

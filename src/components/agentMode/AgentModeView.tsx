@@ -1,3 +1,13 @@
+import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
+import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
+import { TauriRemoteRepositoryIdentityGateway } from "../../infrastructure/tauriRemoteRepositoryIdentityGateway";
+import { useAgentProjectCreation } from "./useAgentProjectCreation";
+import {
+  AgentProjectSourceDialog,
+  AgentExistingServerProjectDialog,
+} from "./AgentProjectSourceDialog";
+import { AgentLocalCloneDialog } from "./AgentLocalCloneDialog";
+import { AgentCloneDraftPanel } from "./AgentCloneDraftPanel";
 import { AgentRemoteDraftProjectChooser } from "./AgentRemoteDraftProjectChooser";
 import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
@@ -51,12 +61,8 @@ import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
-import { useRemoteAddProject } from "../../application/useRemoteAddProject";
 import { AgentRemoteAddProjectDialog } from "./remoteAddProject/AgentRemoteAddProjectDialog";
-import {
-  remoteAddProjectCloneActive,
-  remoteAddProjectServerProjects,
-} from "./remoteAddProject/remoteAddProjectPresentation";
+import { remoteAddProjectCloneActive } from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
 import { AgentThreadHeader } from "./AgentThreadHeader";
@@ -75,7 +81,6 @@ import {
 import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
 import { useScopedAgentNotice } from "./useScopedAgentNotice";
 import { useAgentSessionImport } from "./useAgentSessionImport";
-import { useAgentAddProject } from "./useAgentAddProject";
 import {
   useAgentComposerControllerState,
   type AgentComposerPromptRestore,
@@ -127,6 +132,8 @@ const IDLE_ACCOUNT_USAGE = {
   codex: { kind: "idle" },
 } as const;
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
+const PROJECT_IDENTITY_GATEWAY = new TauriRepositoryIdentityGateway();
+const REMOTE_PROJECT_IDENTITY_GATEWAY = new TauriRemoteRepositoryIdentityGateway();
 const NOOP_CLOSE_PROJECT = () => undefined;
 const NOOP_SELECTED_PROJECT = () => undefined;
 const NO_REMOTE_SERVERS: readonly import("../../domain/remoteRunner").RemoteRunnerServer[] = [];
@@ -233,9 +240,14 @@ function LocalAgentModeView({
     [projects, agents.orphanedWorktrees, presentationThreads],
   );
 
+  const repositoryIdentities = useProjectRepositoryIdentities(
+    projects,
+    PROJECT_IDENTITY_GATEWAY,
+    REMOTE_PROJECT_IDENTITY_GATEWAY,
+  );
   const groups = useMemo(
-    () => groupedEnvironmentProjects(executionGroups, projects, projectLinks),
-    [executionGroups, projects, projectLinks],
+    () => groupedEnvironmentProjects(executionGroups, projects, projectLinks, repositoryIdentities),
+    [executionGroups, projects, projectLinks, repositoryIdentities],
   );
   const externalSessions = agents.externalSessions ?? null;
   const turnEvidenceOf = useCallback<AgentTurnLogEvidenceLookup>(
@@ -608,42 +620,27 @@ function LocalAgentModeView({
   );
   const selectAddedProject = useAgentLatestCallback((project: AgentProjectDescriptor) => {
     if (!navigation.setProjectScope(project.rootKey)) return;
+    navigation.setRailScope({ projectRootKey: project.rootKey, repositoryRoot: project.rootPath });
     onSelectProjectEnvironment(project.rootKey);
     navigation.clearSelectedThread();
     composer.clearSelection();
   });
-  const addProject = useAgentAddProject({
+  const creation = useAgentProjectCreation({
     selectionIdentity: addProjectSelectionIdentity,
     onProjectAdded: selectAddedProject,
     chrome: chrome.addProject,
     projects,
     reportNotice: setLocalNotice,
     workspaceRoot,
-  });
-
-  const remoteServerProjects = useMemo(
-    () => remoteAddProjectServerProjects(projects, selectedServerId),
-    [projects, selectedServerId],
-  );
-  const selectRemoteProject = useAgentLatestCallback((rootKey: string) => {
-    const project = projects.find((candidate) => candidate.rootKey === rootKey);
-    if (project === undefined) return;
-    selectAddedProject(project);
-  });
-  const remoteAdd = useRemoteAddProject({
-    runnerGateway: remoteContext?.gateway ?? null,
-    lookupGateway: remoteContext?.repositoryLookup ?? null,
-    serverId: selectedServerId,
-    workspaceOwner: workspaceRoot,
-    serverProjects: remoteServerProjects,
-    selectionIdentity: addProjectSelectionIdentity,
+    selectedServerId,
     refreshProjects: refreshRemoteProjects,
-    selectProject: selectRemoteProject,
   });
-  const openRemoteAddProject = useAgentLatestCallback(() => remoteAdd.openDialog());
-  const cancelPendingClone = useAgentLatestCallback(() => remoteAdd.cancelPendingClone());
-  const dismissPendingClone = useAgentLatestCallback(() => remoteAdd.dismissPendingClone());
-  const openAddProject = selectedServerId === null ? addProject.openDialog : openRemoteAddProject;
+  const { addProject, remoteAdd } = creation;
+  const openRemoteAddProject = useAgentLatestCallback(creation.open);
+  const cancelPendingClone = useAgentLatestCallback(creation.cancel);
+  const dismissPendingClone = useAgentLatestCallback(creation.dismiss);
+  const openAddProject = useAgentLatestCallback(creation.open);
+  const openPendingClone = useAgentLatestCallback(creation.showPending);
   const remoteAddCloneRunning =
     remoteAdd.pendingClone !== null && remoteAddProjectCloneActive(remoteAdd.pendingClone.status);
 
@@ -778,7 +775,8 @@ function LocalAgentModeView({
                 onAddProject={openAddProject}
                 onCancelPendingClone={cancelPendingClone}
                 onDismissPendingClone={dismissPendingClone}
-                pendingClone={remoteAdd.pendingClone}
+                pendingClone={creation.pendingClone}
+                onOpenPendingClone={openPendingClone}
                 onChangeScope={changeProjectScope}
                 onCollapseSidebar={toggleRail}
                 onNewThread={newProjectThread}
@@ -830,9 +828,23 @@ function LocalAgentModeView({
                 shortcuts={chrome.shortcuts}
                 thread={selectedThread}
               />
-              {selectedThreadId === null &&
-              selectedServerId !== null &&
-              composer.target === null ? (
+              {creation.visible && creation.pending !== null && creation.pendingClone !== null ? (
+                <AgentCloneDraftPanel
+                  clone={{
+                    ...creation.pendingClone,
+                    id: creation.pending.id,
+                    error: creation.error ?? creation.pendingClone.error,
+                  }}
+                  draft={creation.draft}
+                  onChangeDraft={creation.changeDraft}
+                  onCancel={creation.cancel}
+                  onRetry={creation.canRetry ? creation.retry : undefined}
+                  onClose={creation.hidePending}
+                  onContinue={creation.pending.target === null ? undefined : creation.continueDraft}
+                />
+              ) : selectedThreadId === null &&
+                selectedServerId !== null &&
+                composer.target === null ? (
                 <AgentRemoteDraftProjectChooser
                   projects={composerProjects}
                   cloneRunning={remoteAddCloneRunning}
@@ -968,36 +980,66 @@ function LocalAgentModeView({
                   />
                 </div>
               )}
-              <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
-              <AgentComposerController
-                followUpBehavior={followUpBehavior}
-                contextUsage={contextUsage}
-                executionServerId={
-                  selectedThread?.execution?.serverId ??
-                  pendingRemoteIdentity?.serverId ??
-                  (resolvingRemoteThread
-                    ? "unavailable"
-                    : selectedThread === null
-                      ? selectedServerId
-                      : null)
-                }
-                compactionOffer={
-                  selectedThread?.execution?.kind === "remote"
-                    ? null
-                    : agentContextCompactionOffer(sessionThread?.thread ?? null, Date.now())
-                }
-                composerProps={composerProps}
-                modelFavoritesPersistence={modelFavoritesPersistence}
-                onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-                onOpenProviderSettings={agents.configureAgentCli}
-                providerManagement={agents.providerManagement}
-                providerEnabled={effectiveProviderEnabled}
-                submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
-                submit={submitComposer}
-              />
+              {!creation.visible && (
+                <>
+                  <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
+                  <AgentComposerController
+                    followUpBehavior={followUpBehavior}
+                    contextUsage={contextUsage}
+                    executionServerId={
+                      selectedThread?.execution?.serverId ??
+                      pendingRemoteIdentity?.serverId ??
+                      (resolvingRemoteThread
+                        ? "unavailable"
+                        : selectedThread === null
+                          ? selectedServerId
+                          : null)
+                    }
+                    compactionOffer={
+                      selectedThread?.execution?.kind === "remote"
+                        ? null
+                        : agentContextCompactionOffer(sessionThread?.thread ?? null, Date.now())
+                    }
+                    composerProps={composerProps}
+                    modelFavoritesPersistence={modelFavoritesPersistence}
+                    onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+                    onOpenProviderSettings={agents.configureAgentCli}
+                    providerManagement={agents.providerManagement}
+                    providerEnabled={effectiveProviderEnabled}
+                    submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
+                    submit={submitComposer}
+                  />
+                </>
+              )}
             </div>
           </div>
         </AgentClockProvider>
+        {creation.entryOpen && (
+          <AgentProjectSourceDialog
+            selectedServerId={selectedServerId}
+            servers={remoteContext?.servers ?? NO_REMOTE_SERVERS}
+            localCloneAvailable={chrome.addProject?.cloneGateway != null}
+            cloneBlocked={creation.pending !== null}
+            onClose={creation.closeEntry}
+            onChoose={creation.choose}
+          />
+        )}
+        {creation.existingServerProjects !== null && (
+          <AgentExistingServerProjectDialog
+            projects={creation.existingServerProjects}
+            onClose={creation.closeExisting}
+            onSelect={creation.selectExisting}
+          />
+        )}
+        {creation.localDialogOpen && chrome.addProject !== null && (
+          <AgentLocalCloneDialog
+            gateway={chrome.addProject.gateway}
+            onClose={creation.closeLocal}
+            onClone={creation.local.start}
+            busy={creation.local.busy}
+            error={creation.local.error}
+          />
+        )}
         <AgentRemoteAddProjectDialog controller={remoteAdd} onClose={remoteAdd.close} />
         {addProject.open && chrome.addProject !== null && (
           <AgentAddProjectDialog

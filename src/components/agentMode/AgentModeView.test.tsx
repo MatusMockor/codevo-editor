@@ -2708,6 +2708,57 @@ describe("AgentModeView", () => {
     }
   });
 
+  it("opens the exact physical project and its draft inside a group with two local checkouts", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    const agents = surface({ startThread });
+    const addProject = vi.fn(async () => ({
+      rootPath: OTHER_ROOT,
+      ownerId: "agent-root:api-service",
+      isCurrent: () => true,
+    }));
+    const chrome = chromeFixture({ addProject: { gateway: addProjectGateway(), addProject } });
+    const repositoryIdentity = "github.com/team/repository";
+    const original = { ...activeProject(), repositoryIdentity };
+    const cloned = { ...backgroundProject(), repositoryIdentity };
+    render({ agents, projects: [original, cloned], chrome });
+    agentComposerDraftStore.writeDraft(`new:${OTHER_ROOT}`, "Draft for the second checkout");
+    click('button[aria-label="Add project"]');
+    act(() => {
+      Array.from(host.querySelectorAll("button"))
+        .find((button) => button.textContent === "Open existing folder")
+        ?.click();
+    });
+    await waitForReact(() => expect(host.querySelector(".agent-add-project")).not.toBeNull());
+    act(() =>
+      host
+        .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+        ),
+    );
+    await act(async () => {});
+    render({
+      agents,
+      chrome,
+      projects: [
+        { ...original, origin: "background-tab" },
+        { ...cloned, origin: "active-tab" },
+      ],
+      workspaceRoot: OTHER_ROOT,
+    });
+    expect(host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")?.value).toBe(
+      "Draft for the second checkout",
+    );
+    await submitFormAsync();
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRootKey: OTHER_ROOT,
+        repositoryRoot: OTHER_ROOT,
+        prompt: "Draft for the second checkout",
+      }),
+    );
+  });
+
   it.each([false, true])(
     "adds by keyboard without overriding newer manual scope navigation (%s)",
     async (manualNavigation) => {
@@ -2726,6 +2777,11 @@ describe("AgentModeView", () => {
       click('[data-thread-id="agt-1"]');
       expect(selectedSessionId()).toBe("agt-1");
       click('button[aria-label="Add project"]');
+      act(() => {
+        Array.from(host.querySelectorAll("button"))
+          .find((button) => button.textContent === "Open existing folder")
+          ?.click();
+      });
       await waitForReact(() => {
         expect(host.querySelector(".agent-add-project")).not.toBeNull();
       });

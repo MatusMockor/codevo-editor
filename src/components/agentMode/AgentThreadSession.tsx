@@ -1,4 +1,4 @@
-import { AgentHistoryActivity } from "./AgentHistoryActivity";
+import { AgentHistoryActivity, type AgentHistoryWork } from "./AgentHistoryActivity";
 import { AgentHistoryPager } from "./AgentHistoryPager";
 import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
@@ -594,9 +594,9 @@ function AgentThreadSessionBody({
                   turn={turn}
                   source={history?.activitySource?.(threadId, turn.turnId) ?? null}
                 >
-                  {(displayedTurn, savedActivity) => (
+                  {(historyWork) => (
                     <AgentTurnView
-                      savedActivity={savedActivity}
+                      historyWork={historyWork}
                       attachmentImages={
                         agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
                       }
@@ -610,7 +610,7 @@ function AgentThreadSessionBody({
                       executionTarget={thread.execution?.kind ?? "local"}
                       renderProbe={turnRenderProbe}
                       textClipboard={textClipboard}
-                      turn={displayedTurn}
+                      turn={turn}
                       turnLog={turnLog}
                       workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
                     />
@@ -705,7 +705,7 @@ function AgentThreadSessionBody({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
-  savedActivity = false,
+  historyWork,
   artifactScope = null,
   attachmentImages = null,
   highlight = null,
@@ -720,7 +720,7 @@ const AgentTurnView = memo(function AgentTurnView({
   turnLog = null,
   workspaceRoot = null,
 }: {
-  readonly savedActivity?: boolean;
+  readonly historyWork: AgentHistoryWork;
   readonly artifactScope?: AgentArtifactScope | null;
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
@@ -739,7 +739,7 @@ const AgentTurnView = memo(function AgentTurnView({
   const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
   const revealEventIndex =
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
-  const settlement = savedActivity ? "settled" : agentTurnSettlement(turn.status);
+  const settlement = agentTurnSettlement(turn.status);
   const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
   const projection = useMemo(
     () =>
@@ -781,9 +781,33 @@ const AgentTurnView = memo(function AgentTurnView({
   );
   const empty = projection.items.length === 0 && rawLines.length === 0;
   const workFold = agentTurnWorkFold(projection.items, foregroundRunning);
-  const liveActivity = savedActivity ? null : agentTurnLiveActivity(turn);
+  const savedWork = useMemo(
+    () =>
+      historyWork.turn === null
+        ? null
+        : agentTurnProjection(
+            historyWork.turn.events,
+            null,
+            workspaceRoot,
+            "settled",
+            normalizeAgentTurnEventOffset(historyWork.turn.firstEventOffset),
+          ),
+    [historyWork.turn, workspaceRoot],
+  );
+  // Page boundaries do not imply a final answer; preserve intermediate prose.
+  const visibleItems = workFold?.visibleItems ?? projection.items;
+  const visibleKeys = new Map(visibleItems.map((item) => [item.key, item]));
+  const savedItems =
+    savedWork?.items.filter((item) => {
+      const visible = visibleKeys.get(item.key);
+      return !visible || JSON.stringify(visible) !== JSON.stringify(item);
+    }) ?? null;
+  const savedRawLines =
+    savedWork?.rawLines.filter((line) => !isAgentRawOutputNoise(provider, line.stream, line.raw)) ??
+    [];
+  const liveActivity = agentTurnLiveActivity(turn);
   const compaction = agentCompactionState(provider, turn);
-  const compacting = !savedActivity && compaction.kind === "compacting";
+  const compacting = compaction.kind === "compacting";
   const standaloneCompaction =
     provider === "claudeCode" &&
     /^\/compact(?:\s|$)/.test(turn.prompt.trim()) &&
@@ -845,14 +869,11 @@ const AgentTurnView = memo(function AgentTurnView({
             />
           )}
 
-          {!savedActivity &&
-            turn.status.kind === "pending" &&
-            provider === "codex" &&
-            !compacting && (
-              <p className="agent-note" role="status">
-                Starting Codex…
-              </p>
-            )}
+          {turn.status.kind === "pending" && provider === "codex" && !compacting && (
+            <p className="agent-note" role="status">
+              Starting Codex…
+            </p>
+          )}
           <AgentThreadUsage usage={threadUsage} />
           {projection.hiddenCount > 0 && (
             <p className="agent-note">{projection.hiddenCount} events hidden</p>
@@ -860,7 +881,7 @@ const AgentTurnView = memo(function AgentTurnView({
 
           <div className="agent-turn__events">
             <AgentSubagentDisclosure onOpenAgents={onOpenAgents} subagents={subagents} />
-            {workFold !== null && (
+            {(workFold !== null || historyWork.available) && (
               <AgentTurnWork
                 compacting={compacting}
                 backgroundOnly={backgroundOnly}
@@ -868,14 +889,21 @@ const AgentTurnView = memo(function AgentTurnView({
                 attachmentImages={attachmentImages}
                 errorContext={errorContext}
                 highlight={highlight}
-                items={workFold.workItems}
+                items={savedItems ?? workFold?.workItems ?? []}
                 key={foregroundRunning ? "running-work" : "settled-work"}
                 prose={prose}
                 running={foregroundRunning}
-                stream={stream}
-                summary={workFold.summary}
+                stream={historyWork.turn === null ? stream : "settled"}
+                summary={workFold?.summary ?? "Activity"}
                 textClipboard={textClipboard}
-                turn={turn}
+                turn={historyWork.turn ?? turn}
+                historyWork={historyWork}
+                autoOpen={
+                  foregroundRunning || agentActivityAttentionCount(workFold?.workItems ?? []) > 0
+                }
+                savedRawOutput={
+                  savedRawLines.length > 0 ? <AgentRawOutput lines={savedRawLines} /> : null
+                }
               />
             )}
             <AgentActivityItems
@@ -898,7 +926,7 @@ const AgentTurnView = memo(function AgentTurnView({
                 />
               )}
             />
-            {workFold === null && liveStatus}
+            {workFold === null && !historyWork.available && liveStatus}
             {!compacting && (
               <AgentBackgroundActivity
                 indicator={backgroundIndicator}
@@ -985,6 +1013,9 @@ function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine>
 }
 
 function AgentTurnWork({
+  autoOpen,
+  historyWork,
+  savedRawOutput,
   compacting,
   backgroundOnly,
   attachmentImages,
@@ -1003,6 +1034,9 @@ function AgentTurnWork({
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentTurnHighlight | null;
   readonly items: ReadonlyArray<AgentTurnItem>;
+  readonly historyWork: AgentHistoryWork;
+  readonly autoOpen: boolean;
+  readonly savedRawOutput: ReactNode;
   readonly liveStatus: ReactNode;
   readonly prose: AgentProseContext;
   readonly compacting: boolean;
@@ -1030,11 +1064,14 @@ function AgentTurnWork({
     </>
   );
   return (
-    <details
-      className="agent-work"
-      open={running || agentActivityAttentionCount(items) > 0 || undefined}
-    >
-      <summary className="agent-work__summary">
+    <details className="agent-work" open={autoOpen || undefined}>
+      <summary
+        className="agent-work__summary"
+        onClick={(event) => {
+          const disclosure = event.currentTarget.parentElement;
+          if (disclosure instanceof HTMLDetailsElement && !disclosure.open) historyWork.open();
+        }}
+      >
         <span className="agent-work__title">{title}</span>
         <span className="agent-work__counts">
           {summary}
@@ -1044,6 +1081,8 @@ function AgentTurnWork({
         <ChevronDown aria-hidden="true" className="agent-work__chevron" size={14} />
       </summary>
       <div className="agent-work__events">
+        {historyWork.controls}
+        {savedRawOutput}
         <AgentActivityItems
           items={items}
           currentEventKey={

@@ -635,10 +635,9 @@ function reconcileScopeState(
       return {
         ...current,
         order,
-        railScope:
-          current.intent === "explicit" && members?.includes(scope.projectRootKey)
-            ? { ...scope, memberProjectRootKeys: members }
-            : agentRailScopeFromEntry(entry),
+        railScope: members?.includes(scope.projectRootKey)
+          ? { ...scope, memberProjectRootKeys: members }
+          : agentRailScopeFromEntry(entry),
       };
     return ordered ? current : { ...current, order };
   }

@@ -15,6 +15,7 @@ mod pending_messages;
 mod project_clone;
 mod questions;
 mod repository;
+mod repository_identity;
 mod service;
 mod transport;
 mod types;
@@ -28,6 +29,7 @@ pub use instruction_commands::*;
 pub use inventory_stream::*;
 pub use pending_messages::*;
 pub use project_clone::*;
+pub use repository_identity::*;
 pub use service::RemoteRunnerState;
 
 pub use artifacts::*;

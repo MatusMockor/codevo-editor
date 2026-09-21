@@ -124,7 +124,7 @@ describe("remoteAddProjectMessages", () => {
   it("names every clone status", () => {
     expect(
       (["queued", "running", "succeeded", "failed", "interrupted", "cancelled"] as const).map(
-        remoteAddProjectCloneStatusText,
+        (status) => remoteAddProjectCloneStatusText(status),
       ),
     ).toEqual([
       "Queued on the server",

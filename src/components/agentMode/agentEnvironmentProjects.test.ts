@@ -62,6 +62,62 @@ describe("project display across environments", () => {
       groupedEnvironmentProjects(source, projects, new Map([[remoteKey, "/gone"]])),
     ).toHaveLength(2);
   });
+  it("automatically groups canonical identities without changing physical thread owners", () => {
+    const identities = new Map(
+      projects.map((project) => [project.rootKey, "github.com/acme/editor"]),
+    );
+    const groups = groupedEnvironmentProjects(source, projects, new Map(), identities);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.memberProjectRootKeys).toEqual([local.rootKey, remoteKey]);
+    expect(groups[0]?.repos).toEqual(source.flatMap((group) => group.repos));
+    expect(environmentComposerScope(scope, groups, projects, "linux")).toMatchObject({
+      projectRootKey: remoteKey,
+      ownerId: remoteKey,
+    });
+    expect(remoteView.thread.owner.rootKey).toBe(remoteKey);
+  });
+  it("keeps same-name unrelated repositories and undiscovered projects separate", () => {
+    const identities = new Map([
+      [local.rootKey, "github.com/acme/editor"],
+      [remoteKey, "gitlab.com/acme/editor"],
+    ]);
+    expect(groupedEnvironmentProjects(source, projects, new Map(), identities)).toHaveLength(2);
+    expect(
+      groupedEnvironmentProjects(
+        source,
+        projects,
+        new Map(),
+        new Map([[remoteKey, "github.com/acme/editor"]]),
+      ),
+    ).toHaveLength(2);
+  });
+  it("preserves explicit connections that deliberately connect forks", () => {
+    const identities = new Map([
+      [local.rootKey, "github.com/acme/editor"],
+      [remoteKey, "github.com/me/editor"],
+    ]);
+    expect(groupedEnvironmentProjects(source, projects, links, identities)).toHaveLength(1);
+  });
+  it("groups server-only copies but refuses ambiguous environment routing", () => {
+    const second = {
+      ...remote,
+      rootKey: "remote:linux:runner:other",
+      ownerId: "other",
+      rootPath: "remote:linux:runner:other",
+    };
+    const inventory = [...projects, second];
+    const identities = new Map(
+      inventory.map((project) => [project.rootKey, "github.com/acme/editor"]),
+    );
+    const groups = groupedEnvironmentProjects(
+      agentProjectGroups(inventory, views, []),
+      inventory,
+      new Map(),
+      identities,
+    );
+    expect(groups).toHaveLength(1);
+    expect(environmentComposerScope(scope, groups, inventory, "linux")?.kind).toBe("missing");
+  });
   it("resolves selected server to an exact linked project and refuses an unrelated or ambiguous target", () => {
     const groups = groupedEnvironmentProjects(source, projects, links);
     expect(environmentComposerScope(scope, groups, projects, "linux")).toMatchObject({

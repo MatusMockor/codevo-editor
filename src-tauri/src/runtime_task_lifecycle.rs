@@ -59,6 +59,9 @@ pub(crate) fn shutdown_runtime_processes(
     app: &AppHandle,
     js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
 ) -> Result<(), String> {
+    if let Some(clones) = app.try_state::<crate::local_clone::LocalCloneState>() {
+        clones.shutdown()?;
+    }
     if let Some(streams) = app.try_state::<crate::remote_runner::InventoryStreamState>() {
         streams.shutdown();
     }

@@ -153,6 +153,12 @@ describe("agent workbench remote clone adoption", () => {
     await waitForReact(() =>
       expect(host.querySelector(".agent-remote-add-project")).not.toBeNull(),
     );
+    const cloneSource = [...host.querySelectorAll<HTMLElement>("button")].find(
+      (row) => row.textContent === "Clone repository",
+    );
+    expect(cloneSource).toBeDefined();
+    click(cloneSource!);
+    await waitForReact(() => expect(host.querySelector('[role="option"]')).not.toBeNull());
     const gitUrl = [...host.querySelectorAll<HTMLElement>('[role="option"]')].find((row) =>
       row.textContent?.includes("Git URL"),
     );
@@ -172,6 +178,10 @@ describe("agent workbench remote clone adoption", () => {
       expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull(),
     );
 
+    const draft = host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea");
+    expect(draft).not.toBeNull();
+    typeInto(draft!, "Draft kept while I visit the other project");
+    click(host.querySelector('button[aria-label="Close clone draft"]')!);
     const chooser = host.querySelector<HTMLSelectElement>(
       'section[aria-label="Choose server project"] select',
     );
@@ -205,7 +215,11 @@ describe("agent workbench remote clone adoption", () => {
     expect(cloneRow?.textContent).toContain("storefront-api");
     expect(
       [...(cloneRow?.querySelectorAll("button") ?? [])].map((button) => button.textContent),
-    ).toEqual(["Dismiss"]);
+    ).toEqual(["storefront-api", "Dismiss"]);
+    click(cloneRow!.querySelector("button")!);
+    expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")?.value).toBe(
+      "Draft kept while I visit the other project",
+    );
   });
 
   function dialogInput(): HTMLInputElement {
@@ -221,8 +235,12 @@ function click(element: Element) {
   act(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-function typeInto(field: HTMLInputElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const prototype =
+    field instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   act(() => {
     setter?.call(field, value);
     field.dispatchEvent(new Event("input", { bubbles: true }));

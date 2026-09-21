@@ -138,12 +138,15 @@ export function remoteAddProjectBranchErrorMessage(): string {
   return "Use a Git branch name, for example main or release/2026.04. Leave it empty for the server default.";
 }
 
-export function remoteAddProjectCloneStatusText(status: RemoteRunnerCloneJob["status"]): string {
+export function remoteAddProjectCloneStatusText(
+  status: RemoteRunnerCloneJob["status"],
+  environment: "local" | "remote" = "remote",
+): string {
   switch (status) {
     case "queued":
-      return "Queued on the server";
+      return environment === "local" ? "Queued on this computer" : "Queued on the server";
     case "running":
-      return "Cloning on the server";
+      return environment === "local" ? "Cloning on this computer" : "Cloning on the server";
     case "succeeded":
       return "Clone finished";
     case "failed":

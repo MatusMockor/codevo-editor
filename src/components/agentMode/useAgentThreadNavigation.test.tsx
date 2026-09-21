@@ -689,6 +689,42 @@ describe("useAgentThreadNavigation", () => {
     );
   });
 
+  it("retains an automatically targeted physical project when repository groups merge", () => {
+    const remoteRoot = "remote:server:runner:project";
+    const local = projectFixture();
+    const server = project(remoteRoot, "remote");
+    render(threadsSurfaceFixture(), [server, local]);
+    expect(current().composerScope?.projectRootKey).toBe(remoteRoot);
+    render(threadsSurfaceFixture(), [
+      { ...server, repositoryIdentity: "github.com/acme/editor" },
+      { ...local, repositoryIdentity: "github.com/acme/editor" },
+    ]);
+    expect(current().composerScope?.projectRootKey).toBe(remoteRoot);
+  });
+
+  it("retains an exact remote draft and selected conversation as automatic identity arrives", () => {
+    const remoteRoot = "remote:server:runner:project";
+    const local = projectFixture();
+    const server = project(remoteRoot, "remote");
+    const remoteThread = viewInProject("remote-thread:server:runner:conversation", remoteRoot);
+    const agents = threadsSurfaceFixture({ threads: [remoteThread] });
+    render(agents, [local, server]);
+    act(() => current().setRailScope({ projectRootKey: remoteRoot, repositoryRoot: remoteRoot }));
+    render(agents, [
+      { ...local, repositoryIdentity: "github.com/acme/editor" },
+      { ...server, repositoryIdentity: "github.com/acme/editor" },
+    ]);
+    expect(current().composerScope).toMatchObject({
+      kind: "repository",
+      projectRootKey: remoteRoot,
+      repositoryRoot: remoteRoot,
+    });
+    act(() => current().selectThread(remoteThread.thread.threadId));
+    render(agents, [local, server]);
+    expect(current().selectedThreadId).toBe(remoteThread.thread.threadId);
+    expect(current().selectedThread?.thread.owner.rootKey).toBe(remoteRoot);
+  });
+
   it("retains a pending remote project selection without selecting another server's thread", () => {
     const remoteRoot = "remote:server:runner:project";
     const remote = viewInProject("remote-thread:server:runner:conversation", remoteRoot);

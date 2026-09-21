@@ -1,3 +1,8 @@
+import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
+import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
+import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
+import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
+import { TauriLocalProjectCloneGateway } from "../../infrastructure/tauriLocalProjectCloneGateway";
 import { TauriAgentQuestionGateway } from "../../infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
 import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
@@ -139,6 +144,7 @@ export interface AgentWorkbenchScreenProps {
   readonly textClipboard?: TextClipboardGateway | null;
   readonly revealPathGateway?: RevealPathGateway;
   readonly directoryListingGateway?: DirectoryListingGateway;
+  readonly localCloneGateway?: LocalProjectCloneGateway | null;
   onTrustWorkspace(): void;
   onResizeRightPanelStart(event: PointerEvent<HTMLDivElement>): void;
 }
@@ -148,6 +154,7 @@ export const SEARCH_FILES_COMMAND = "file.quickOpen";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
+const DEFAULT_LOCAL_CLONE_GATEWAY = new TauriLocalProjectCloneGateway();
 const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
 const DEFAULT_QUESTION_GATEWAY = new TauriAgentQuestionGateway();
 const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
@@ -166,6 +173,7 @@ interface PersistedProviderProjection {
 export function AgentWorkbenchScreen({
   activeFileRevealSignal,
   directoryListingGateway = DEFAULT_DIRECTORY_LISTING_GATEWAY,
+  localCloneGateway = DEFAULT_LOCAL_CLONE_GATEWAY,
   fileChanges,
   fileStatusesByPath,
   files,
@@ -408,7 +416,14 @@ export function AgentWorkbenchScreen({
     [openProblemNotice],
   );
 
+  const localCloneSession = useRef<LocalProjectCloneSession["current"]>(null);
+  const remoteCloneSession = useRef<RemoteAddProjectSession["current"]>(null);
+  const creationSession = useRef<AgentProjectCreationSession["current"]>(null);
   const addProject = useAgentWorkbenchProjectOpening({
+    localCloneSession,
+    remoteCloneSession,
+    creationSession,
+    cloneGateway: localCloneGateway,
     directoryListingGateway,
     openWorkspaceRootWithReceipt,
     navigationSession,

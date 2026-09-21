@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RemoteRunnerCloneJob, RemoteRunnerGateway } from "../domain/remoteRunner";
+import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import type { CloneProtocol } from "../domain/repositoryCloneUrl";
 import type { RemoteProjectSourceKind } from "../domain/repositoryLookup";
 import { remoteAgentProjectKey } from "./remoteAgentProjection";
@@ -16,8 +16,12 @@ import {
   type RemoteAddProjectStep,
 } from "./remoteAddProjectMachine";
 import type { RepositoryLookupGateway } from "./repositoryLookupPorts";
-import { useRemoteCloneTracker, type RemoteCloneTrackerKey } from "./useRemoteCloneTracker";
-import { useRemoteProjectClone } from "./useRemoteProjectClone";
+import {
+  useRemoteCloneTracker,
+  type RemoteCloneTrackerKey,
+  type RemoteCloneTrackerSession,
+} from "./useRemoteCloneTracker";
+import { useRemoteProjectClone, type RemoteProjectCloneSession } from "./useRemoteProjectClone";
 import { useRepositoryHosts } from "./useRepositoryHosts";
 import { useRepositoryLookup } from "./useRepositoryLookup";
 
@@ -30,11 +34,12 @@ export type {
   RemoteAddProjectUnavailableReason,
 } from "./remoteAddProjectMachine";
 
-export type RemoteAddProjectPendingClone = Readonly<{
-  name: string;
-  status: RemoteRunnerCloneJob["status"];
-  error: string | null;
-}>;
+export type { RemoteAddProjectPendingClone } from "./remoteAddProjectPendingClone";
+import {
+  remoteAddProjectPendingClone,
+  matchingCloneProjectKey,
+  type RemoteAddProjectPendingClone,
+} from "./remoteAddProjectPendingClone";
 
 export interface RemoteAddProjectController {
   readonly open: boolean;
@@ -44,6 +49,7 @@ export interface RemoteAddProjectController {
     Record<RemoteProjectSourceKind, RemoteAddProjectSourceAvailability>
   >;
   readonly pendingClone: RemoteAddProjectPendingClone | null;
+  readonly canRetryPendingClone?: boolean;
   openDialog(): void;
   close(): void;
   back(): void;
@@ -58,11 +64,28 @@ export interface RemoteAddProjectController {
   setProtocol(value: CloneProtocol): void;
   confirmClone(): void;
   openExisting(): void;
+  retryPendingClone(): void;
   cancelPendingClone(): void;
   dismissPendingClone(): void;
 }
 
+export interface RemoteAddProjectSession {
+  current: {
+    runnerGateway: RemoteRunnerGateway | null;
+    lookupGateway: RepositoryLookupGateway | null;
+    serverId: string | null;
+    workspaceOwner: string | null;
+    clone: RemoteProjectCloneSession;
+    tracker: RemoteCloneTrackerSession;
+    retained: RetainedClone[];
+    submission: RemoteAddProjectSubmission | null;
+    retryInput: CloneRetryInput | null;
+    runnerId: string | null;
+  } | null;
+}
+
 export interface RemoteAddProjectOptions {
+  readonly session?: RemoteAddProjectSession;
   readonly runnerGateway: RemoteRunnerGateway | null;
   readonly lookupGateway: RepositoryLookupGateway | null;
   readonly serverId: string | null;
@@ -71,6 +94,8 @@ export interface RemoteAddProjectOptions {
   readonly selectionIdentity: unknown;
   refreshProjects(): Promise<void>;
   selectProject(key: string): void;
+  onCloneStarted?(id: string, name: string, meta: Readonly<{ select: boolean }>): void;
+  onCloneReady?(id: string, projectKey: string): void;
 }
 
 type RemoteAddProjectSubmission = Readonly<{
@@ -79,8 +104,19 @@ type RemoteAddProjectSubmission = Readonly<{
   selectionIdentity: unknown;
 }>;
 
+type CloneRetryInput = Readonly<{ name: string; branch: string; url: string }>;
+type RetainedClone = Readonly<{
+  gateway: RemoteRunnerGateway;
+  serverId: string;
+  workspaceOwner: string | null;
+  submission: RemoteAddProjectSubmission;
+  input: CloneRetryInput;
+}>;
+
 type RemoteAddProjectAdoption = Readonly<{
+  owner: object;
   projectKey: string;
+  jobId: string;
   selectionIdentity: unknown;
 }>;
 
@@ -93,6 +129,29 @@ const CLONE_BUSY = "Another clone is already running on this server.";
 export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAddProjectController {
   const { runnerGateway, lookupGateway, serverId, workspaceOwner, serverProjects } = options;
   const selectionIdentity = options.selectionIdentity;
+  const session = options.session;
+  if (
+    session &&
+    (session.current === null ||
+      session.current.runnerGateway !== runnerGateway ||
+      session.current.lookupGateway !== lookupGateway ||
+      session.current.serverId !== serverId ||
+      session.current.workspaceOwner !== workspaceOwner)
+  ) {
+    session.current = {
+      runnerGateway,
+      lookupGateway,
+      serverId,
+      workspaceOwner,
+      clone: { current: null },
+      tracker: { current: null },
+      retained: [],
+      submission: null,
+      retryInput: null,
+      runnerId: null,
+    };
+  }
+  const saved = session?.current;
   const owner = useRef({ runnerGateway, lookupGateway, serverId, workspaceOwner });
   if (
     owner.current.runnerGateway !== runnerGateway ||
@@ -124,10 +183,11 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     gateway: runnerGateway,
     serverId: serverId ?? "",
     workspaceOwner,
+    session: saved?.clone,
   });
   const cloneRef = useRef(clone);
   cloneRef.current = clone;
-  const tracker = useRemoteCloneTracker();
+  const tracker = useRemoteCloneTracker(saved?.tracker);
   const trackerKey = useMemo<RemoteCloneTrackerKey>(
     () => ({ workspaceOwner: captured.workspaceOwner, serverId: captured.serverId }),
     [captured],
@@ -152,23 +212,28 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
   const handled = useRef<string | null>(null);
   const resumed = useRef<string | null>(null);
   const submitting = useRef(false);
+  const retryInput = useRef<CloneRetryInput | null>(null);
+  const retained = useRef<RetainedClone[]>([]);
+  const delivered = useRef<string[]>([]);
   const [adoption, setAdoption] = useState<RemoteAddProjectAdoption | null>(null);
   const [failure, setFailure] = useState<RemoteAddProjectFailure | null>(null);
 
   useEffect(() => {
     mounted.current = true;
-    submitted.current = null;
+    submitted.current = saved?.submission ?? null;
     handled.current = null;
     resumed.current = null;
     submitting.current = false;
-    runnerId.current = null;
+    retryInput.current = saved?.retryInput ?? null;
+    if (saved) retained.current = saved.retained;
+    runnerId.current = saved?.runnerId ?? null;
     setAdoption(null);
     setFailure(null);
     setState(INITIAL_REMOTE_ADD_PROJECT_STATE);
     return () => {
       mounted.current = false;
     };
-  }, [captured]);
+  }, [captured, saved]);
 
   useEffect(() => {
     dispatch({ kind: "syncContext" });
@@ -181,49 +246,109 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     if (entry === null) return;
     if (resumed.current === entry.cloneId) return;
     resumed.current = entry.cloneId;
+    const saved = retained.current.find(
+      (candidate) =>
+        candidate.gateway === captured.runnerGateway &&
+        candidate.serverId === captured.serverId &&
+        candidate.workspaceOwner === captured.workspaceOwner &&
+        candidate.submission.jobId === entry.cloneId,
+    );
+    if (saved !== undefined) {
+      retryInput.current = saved.input;
+      runnerId.current = saved.submission.runnerId;
+      if (ports.current.onCloneReady !== undefined) submitted.current = saved.submission;
+    }
     void cloneRef.current.resume(entry.cloneId);
-  }, [idle, tracker, trackerKey]);
+  }, [captured, idle, tracker, trackerKey]);
 
   const job = clone.job;
+  useEffect(() => {
+    if (!saved || job === null || submitted.current !== null || saved.retryInput === null) return;
+    const submission = { jobId: job.id, runnerId: saved.runnerId, selectionIdentity: null };
+    submitted.current = submission;
+    saved.submission = submission;
+    tracker.remember(trackerKey, { cloneId: job.id, name: saved.retryInput.name });
+    ports.current.onCloneStarted?.(job.id, saved.retryInput.name, { select: false });
+  }, [job, saved, tracker, trackerKey]);
   useEffect(() => {
     if (job === null || job.status !== "succeeded") return;
     if (handled.current === job.id) return;
     handled.current = job.id;
     void refreshForAdoption(ports);
-    const submission = submitted.current;
+    const submission =
+      submitted.current ??
+      (saved?.runnerId != null && saved.retryInput !== null
+        ? { jobId: job.id, runnerId: saved.runnerId, selectionIdentity: null }
+        : null);
     if (submission === null || submission.jobId !== job.id) return;
+    submitted.current = submission;
+    if (saved) saved.submission = submission;
     const project = job.project;
     if (project === null || submission.runnerId === null || captured.serverId === null) return;
     setAdoption({
+      owner: captured,
       projectKey: remoteAgentProjectKey(captured.serverId, submission.runnerId, project.id),
+      jobId: job.id,
       selectionIdentity: submission.selectionIdentity,
     });
-  }, [captured, job]);
+  }, [captured, job, saved]);
 
   useEffect(() => {
-    if (adoption === null) return;
-    if (adoption.selectionIdentity !== selectionIdentity) {
+    if (adoption === null || adoption.owner !== captured || !valid()) return;
+    if (
+      adoption.selectionIdentity !== selectionIdentity &&
+      ports.current.onCloneReady === undefined
+    ) {
       setAdoption(null);
       return;
     }
     if (!serverProjects.some((project) => project.key === adoption.projectKey)) return;
     setAdoption(null);
-    ports.current.selectProject(adoption.projectKey);
-  }, [adoption, selectionIdentity, serverProjects]);
+    const deliveryKey = `${adoption.projectKey}\0${adoption.jobId}`;
+    if (delivered.current.includes(deliveryKey)) return;
+    delivered.current = [...delivered.current.slice(-31), deliveryKey];
+    if (ports.current.onCloneReady !== undefined)
+      ports.current.onCloneReady(adoption.jobId, adoption.projectKey);
+    else ports.current.selectProject(adoption.projectKey);
+  }, [adoption, captured, selectionIdentity, serverProjects, valid]);
 
   const tracked = tracker.find(trackerKey);
+  const jobRunnerId =
+    submitted.current?.jobId === job?.id
+      ? (submitted.current?.runnerId ?? null)
+      : (retained.current.find(
+          (candidate) =>
+            candidate.gateway === captured.runnerGateway &&
+            candidate.serverId === captured.serverId &&
+            candidate.workspaceOwner === captured.workspaceOwner &&
+            candidate.submission.jobId === job?.id,
+        )?.submission.runnerId ?? null);
   const confirmVisible = state.open && state.step.kind === "confirm";
   const pendingClone = useMemo<RemoteAddProjectPendingClone | null>(
     () =>
       remoteAddProjectPendingClone({
         job,
+        projectKey:
+          job?.status === "succeeded" && job.project !== null && serverId !== null
+            ? matchingCloneProjectKey(serverProjects, serverId, jobRunnerId, job.project.id)
+            : undefined,
         requestedName: clone.requestedName,
         trackedName: tracked?.name ?? null,
         cloneError: clone.error,
         failure,
         confirmVisible,
       }),
-    [job, clone.requestedName, clone.error, tracked, failure, confirmVisible],
+    [
+      job,
+      serverId,
+      jobRunnerId,
+      serverProjects,
+      clone.requestedName,
+      clone.error,
+      tracked,
+      failure,
+      confirmVisible,
+    ],
   );
 
   function choose(key: string) {
@@ -256,9 +381,16 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
   async function startClone(name: string, branch: string, url: string) {
     dispatch({ kind: "submitStarted" });
     const input = branch.length === 0 ? { url, name } : { url, name, branch };
+    retryInput.current = { name, branch, url };
     if (!valid()) return;
+    submitted.current = null;
+    if (saved) saved.submission = null;
     const submissionIdentity = ports.current.selectionIdentity;
     const submissionRunnerId = runnerId.current;
+    if (saved) {
+      saved.retryInput = { name, branch, url };
+      saved.runnerId = submissionRunnerId;
+    }
     const result = await cloneRef.current.start(input);
     if (result.status === "started" || result.status === "orphaned") {
       tracker.remember(trackerKey, { cloneId: result.job.id, name });
@@ -278,9 +410,35 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
       runnerId: submissionRunnerId,
       selectionIdentity: submissionIdentity,
     };
+    if (captured.runnerGateway !== null && captured.serverId !== null) {
+      retained.current = retained.current
+        .filter(
+          (candidate) =>
+            !(
+              candidate.gateway === captured.runnerGateway &&
+              candidate.serverId === captured.serverId &&
+              candidate.workspaceOwner === captured.workspaceOwner
+            ),
+        )
+        .slice(-31);
+      retained.current.push({
+        gateway: captured.runnerGateway,
+        serverId: captured.serverId,
+        workspaceOwner: captured.workspaceOwner,
+        submission: submitted.current,
+        input: { name, branch, url },
+      });
+    }
+    if (saved) {
+      saved.retained = retained.current;
+      saved.submission = submitted.current;
+    }
     setAdoption(null);
     setFailure(null);
     dispatch({ kind: "submitted" });
+    ports.current.onCloneStarted?.(result.job.id, name, {
+      select: ports.current.selectionIdentity === submissionIdentity,
+    });
   }
 
   function failSubmit(name: string, error: string, nameConflict: boolean) {
@@ -295,6 +453,10 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     serverProjects,
     availability: hosts.availability,
     pendingClone,
+    canRetryPendingClone:
+      retryInput.current !== null &&
+      !clone.busy &&
+      (job?.status === "failed" || job?.status === "cancelled" || job?.status === "interrupted"),
     openDialog() {
       lookup.reset();
       dispatch({ kind: "open" });
@@ -352,10 +514,42 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
       if (step.kind !== "confirm" || step.existingProjectKey === null) return;
       choose(step.existingProjectKey);
     },
+    retryPendingClone() {
+      const input = retryInput.current;
+      if (
+        !valid() ||
+        input === null ||
+        submitting.current ||
+        cloneRef.current.busy ||
+        (cloneRef.current.job?.status !== "failed" &&
+          cloneRef.current.job?.status !== "cancelled" &&
+          cloneRef.current.job?.status !== "interrupted")
+      )
+        return;
+      submitting.current = true;
+      void startClone(input.name, input.branch, input.url).finally(() => {
+        if (valid()) submitting.current = false;
+      });
+    },
     cancelPendingClone() {
       void cloneRef.current.cancel();
     },
     dismissPendingClone() {
+      if (!valid() || cloneRef.current.busy) return;
+      retryInput.current = null;
+      retained.current = retained.current.filter(
+        (candidate) =>
+          !(
+            candidate.gateway === captured.runnerGateway &&
+            candidate.serverId === captured.serverId &&
+            candidate.workspaceOwner === captured.workspaceOwner
+          ),
+      );
+      if (saved) {
+        saved.retryInput = null;
+        saved.submission = null;
+        saved.retained = retained.current;
+      }
       tracker.forget(trackerKey);
       submitted.current = null;
       setAdoption(null);
@@ -365,36 +559,10 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
   };
 }
 
-function remoteAddProjectPendingClone(
-  input: Readonly<{
-    job: RemoteRunnerCloneJob | null;
-    requestedName: string | null;
-    trackedName: string | null;
-    cloneError: string | null;
-    failure: RemoteAddProjectFailure | null;
-    confirmVisible: boolean;
-  }>,
-): RemoteAddProjectPendingClone | null {
-  if (input.job !== null) {
-    return {
-      name: input.requestedName ?? input.trackedName ?? "",
-      status: input.job.status,
-      error: cloneError(input.job.error ?? input.cloneError),
-    };
-  }
-  if (input.failure === null || input.confirmVisible) return null;
-  return { name: input.failure.name, status: "failed", error: input.failure.error };
-}
-
 async function refreshForAdoption(ports: { current: RemoteAddProjectOptions }): Promise<void> {
   try {
     await ports.current.refreshProjects();
   } catch {
     return;
   }
-}
-
-function cloneError(value: string | null): string | null {
-  if (value === null) return null;
-  return boundedRemoteAddProjectError(value);
 }

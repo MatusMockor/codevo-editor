@@ -31,6 +31,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .enable_macos_default_menu(false)
         .manage(crate::artifact_preview::ArtifactPreviewState::default())
+        .manage(crate::local_clone::LocalCloneState::default())
         .register_uri_scheme_protocol("codevo-artifact-preview", crate::artifact_preview::respond);
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -632,6 +633,11 @@ pub fn run() {
             git_worktree_commands::add_git_worktree,
             git_worktree_commands::remove_git_worktree,
             git_worktree_commands::prune_git_worktrees,
+            crate::local_clone::local_clone_project,
+            crate::local_clone::local_get_project_clone,
+            crate::local_clone::local_cancel_project_clone,
+            crate::repository_identity::get_repository_identity,
+            crate::remote_runner::remote_runner_repository_identity,
             repository_lookup_commands::repository_lookup_hosts,
             repository_lookup_commands::repository_lookup,
             directory_listing_commands::list_directory_entries,
