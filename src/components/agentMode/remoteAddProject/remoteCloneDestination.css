@@ -1,0 +1,14 @@
+.remote-clone-destination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-clone-destination input {
+  flex: 1;
+  min-width: 0;
+}
+.remote-clone-destination .agent-iconbutton {
+  flex: 0 0 36px;
+  height: 36px;
+  color: var(--codevo-fg-muted);
+}

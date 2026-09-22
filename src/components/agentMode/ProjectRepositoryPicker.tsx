@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { ArrowLeft, Search } from "lucide-react";
 import type { RepositoryLookupGateway } from "../../application/repositoryLookupPorts";
 import { useProjectRepositorySearch } from "../../application/useProjectRepositorySearch";
@@ -9,6 +9,9 @@ import {
 } from "../../domain/repositoryLookup";
 import { RemoteAddProjectSourceGlyph } from "./remoteAddProject/RemoteAddProjectSources";
 import "./projectRepositoryPicker.css";
+import "./projectMachinePicker.css";
+import { AgentPickerMenu } from "./AgentPickerMenu";
+import { agentPickerOption } from "./agentPickerOption";
 
 export interface ProjectRepositoryPickerProps {
   readonly gateway: RepositoryLookupGateway | null;
@@ -27,6 +30,7 @@ export function ProjectRepositoryPicker({
   onBack,
   onUseUrl,
 }: ProjectRepositoryPickerProps) {
+  const hostPickerId = useId();
   const model = useProjectRepositorySearch(gateway, environmentLabel, initialProvider);
   const section = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -114,31 +118,37 @@ export function ProjectRepositoryPicker({
               void model.submit();
             }}
           >
-            {authenticated.length === 1 ? (
+            {authenticated.length > 1 && (
               <div className="project-repository-picker__host">
                 <span>Repository host</span>
-                <output
-                  aria-label="Repository host"
-                  className="project-repository-picker__host-value"
+                <div
+                  className="project-machine-picker"
+                  onKeyDownCapture={(event) => {
+                    if (
+                      event.key === "Tab" &&
+                      event.shiftKey &&
+                      event.target instanceof HTMLElement &&
+                      event.target.closest('[role="listbox"]')
+                    )
+                      event.preventDefault();
+                  }}
                 >
-                  {model.host}
-                </output>
+                  <AgentPickerMenu
+                    id={hostPickerId}
+                    label="Repository host"
+                    options={authenticated.map((entry) =>
+                      agentPickerOption(entry.host, entry.host),
+                    )}
+                    value={model.host}
+                    disabled={false}
+                    tone={null}
+                    prefix={null}
+                    describedBy={null}
+                    align="start"
+                    onChange={model.selectHost}
+                  />
+                </div>
               </div>
-            ) : (
-              <label>
-                Repository host
-                <select
-                  aria-label="Repository host"
-                  value={model.host}
-                  onChange={(event) => model.selectHost(event.currentTarget.value)}
-                >
-                  {authenticated.map((entry) => (
-                    <option key={entry.host} value={entry.host}>
-                      {entry.host}
-                    </option>
-                  ))}
-                </select>
-              </label>
             )}
             <div className="project-repository-picker__query">
               <Search aria-hidden="true" size={16} />

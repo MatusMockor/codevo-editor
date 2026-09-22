@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { FolderOpen, GitBranch, Monitor, Server } from "lucide-react";
 import "./remoteAddProject/remoteAddProject.css";
+import { AgentPickerMenu } from "./AgentPickerMenu";
+import { agentPickerOption } from "./agentPickerOption";
+import "./projectMachinePicker.css";
 import type { RemoteRunnerServer } from "../../domain/remoteRunner";
 
 interface Props {
@@ -20,6 +23,7 @@ export function AgentProjectSourceDialog({
   onClose,
   onChoose,
 }: Props) {
+  const pickerId = useId();
   const [environment, setEnvironment] = useState(selectedServerId ?? "");
   const section = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -62,7 +66,7 @@ export function AgentProjectSourceDialog({
         <div className="agent-remote-add-project__crumb">
           <strong>Add project</strong>
         </div>
-        <label className="agent-project-source__environment">
+        <div className="agent-project-source__environment">
           <span className="agent-project-source__environment-label">
             {environment === "" ? (
               <Monitor aria-hidden="true" size={15} />
@@ -71,19 +75,51 @@ export function AgentProjectSourceDialog({
             )}
             Environment
           </span>
-          <select
-            aria-label="Project environment"
-            value={environment}
-            onChange={(event) => setEnvironment(event.currentTarget.value)}
+          <div
+            className="project-machine-picker"
+            onKeyDownCapture={(event) => {
+              if (
+                event.key === "Tab" &&
+                event.shiftKey &&
+                event.target instanceof HTMLElement &&
+                event.target.closest('[role="listbox"]')
+              )
+                event.preventDefault();
+            }}
           >
-            <option value="">This computer</option>
-            {servers.map((server) => (
-              <option key={server.id} value={server.id}>
-                {server.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            <AgentPickerMenu
+              id={pickerId}
+              label="Project environment"
+              options={[
+                agentPickerOption(
+                  "",
+                  "This computer",
+                  null,
+                  null,
+                  null,
+                  <Monitor aria-hidden="true" size={16} />,
+                ),
+                ...servers.map((server) =>
+                  agentPickerOption(
+                    server.id,
+                    server.name,
+                    `${server.username}@${server.host}:${server.port}`,
+                    null,
+                    null,
+                    <Server aria-hidden="true" size={16} />,
+                  ),
+                ),
+              ]}
+              value={environment}
+              disabled={false}
+              tone={null}
+              prefix={null}
+              describedBy={null}
+              align="start"
+              onChange={setEnvironment}
+            />
+          </div>
+        </div>
         <div className="quick-open-results">
           <button
             className="quick-open-result"

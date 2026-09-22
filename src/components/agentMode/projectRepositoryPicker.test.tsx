@@ -382,3 +382,44 @@ it("stale owner and unmounted submit callbacks cannot dispatch or cancel the cur
   await act(async () => unmountedSubmit());
   expect(second.search).toHaveBeenCalledTimes(1);
 });
+
+it("hides the redundant host row for a single account host", async () => {
+  await start();
+  expect(host.textContent).not.toContain("Repository host");
+  expect(host.querySelector("select")).toBeNull();
+  expect(host.textContent).toContain("This computer");
+});
+
+it("uses a themed host listbox for multiple hosts and clears a query when switching", async () => {
+  props.gateway!.listHosts = vi.fn(async () => ({
+    ...hosts,
+    github: {
+      status: "ready" as const,
+      truncated: false,
+      hosts: [
+        { provider: "github" as const, host: "github.com", auth: "authenticated" as const },
+        {
+          provider: "github" as const,
+          host: "github.company.test",
+          auth: "authenticated" as const,
+        },
+      ],
+    },
+  }));
+  await start();
+  expect(host.querySelector("select")).toBeNull();
+  const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Repository host"]')!;
+  act(() => trigger.click());
+  act(() =>
+    host.querySelector<HTMLElement>('[role="option"][data-value="github.company.test"]')!.click(),
+  );
+  expect(host.querySelector("input")!.value).toBe("");
+  query("crm");
+  await submit();
+  expect(props.gateway!.search).toHaveBeenLastCalledWith({
+    provider: "github",
+    host: "github.company.test",
+    query: "crm",
+    page: 1,
+  });
+});

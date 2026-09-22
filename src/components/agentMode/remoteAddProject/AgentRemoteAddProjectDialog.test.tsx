@@ -299,6 +299,29 @@ describe("AgentRemoteAddProjectDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("blocks the footer and shortcut until the full clone destination is available", () => {
+    const controller = {
+      ...fakeRemoteAddProjectController({ step: confirmStep({}) }),
+      directoryGateway: {
+        listDirectoryEntries: vi.fn(() => new Promise<never>(() => undefined)),
+        revealDirectory: vi.fn(async () => undefined),
+      },
+      setParentPath: vi.fn(),
+      parentPath: null,
+    };
+    render(controller);
+    expect(primaryButton().disabled).toBe(true);
+    act(() => primaryButton().click());
+    press({ key: "Enter", metaKey: true }, section());
+    expect(controller.confirmClone).not.toHaveBeenCalled();
+
+    const ready = { ...controller, parentPath: "/srv/projects" };
+    render(ready);
+    expect(primaryButton().disabled).toBe(false);
+    act(() => primaryButton().click());
+    expect(controller.confirmClone).toHaveBeenCalledTimes(1);
+  });
+
   it("closes when the backdrop is pressed and keeps presses inside the dialog", () => {
     const onClose = vi.fn();
     render(fakeRemoteAddProjectController({}), { onClose });

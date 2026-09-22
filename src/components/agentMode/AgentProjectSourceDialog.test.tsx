@@ -51,6 +51,47 @@ describe("AgentProjectSourceDialog", () => {
   function button(name: string) {
     return Array.from(host.querySelectorAll("button")).find((entry) => entry.textContent === name)!;
   }
+  function chooseEnvironment(value: string) {
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Project environment"]')!.click(),
+    );
+    act(() => host.querySelector<HTMLElement>(`[role="option"][data-value="${value}"]`)!.click());
+  }
+  it("uses a themed listbox and Escape dismisses only the open picker", () => {
+    render();
+    expect(host.querySelector("select")).toBeNull();
+    const trigger = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Project environment"]',
+    )!;
+    act(() => trigger.click());
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+    act(() =>
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+  it("contains Shift+Tab when the environment dropdown is open", () => {
+    render();
+    const trigger = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Project environment"]',
+    )!;
+    act(() => trigger.click());
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => document.activeElement!.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(onClose).not.toHaveBeenCalled();
+  });
   it("focuses the dialog for immediate Escape and contains keyboard navigation", () => {
     render();
     const section = host.querySelector("section")!;
@@ -68,7 +109,9 @@ describe("AgentProjectSourceDialog", () => {
         new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
       );
     });
-    expect(document.activeElement).toBe(host.querySelector("select"));
+    expect(document.activeElement).toBe(
+      host.querySelector('button[aria-label="Project environment"]'),
+    );
   });
   it.each(["existing", "clone"] as const)("routes local %s to this computer", (action) => {
     render();
@@ -77,11 +120,7 @@ describe("AgentProjectSourceDialog", () => {
   });
   it("routes a changed server by exact identity even when labels match", () => {
     render({ selectedServerId: "server-a" });
-    const select = host.querySelector("select")!;
-    act(() => {
-      select.value = "server-b";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    chooseEnvironment("server-b");
     act(() => button("Clone repository").click());
     expect(onChoose).toHaveBeenCalledExactlyOnceWith("server-b", "clone");
   });
@@ -97,17 +136,13 @@ describe("AgentProjectSourceDialog", () => {
     render({ localCloneAvailable: false });
     expect(button("Clone repository").disabled).toBe(true);
     expect(button("Open existing folder").disabled).toBe(false);
-    const select = host.querySelector("select")!;
-    act(() => {
-      select.value = "server-a";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    chooseEnvironment("server-a");
     expect(button("Clone repository").disabled).toBe(false);
   });
   it("consumes Escape and closes without selecting a project", () => {
     render();
     const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
-    act(() => host.querySelector("select")!.dispatchEvent(event));
+    act(() => host.querySelector('button[aria-label="Project environment"]')!.dispatchEvent(event));
     expect(event.defaultPrevented).toBe(true);
     expect(onClose).toHaveBeenCalledOnce();
     expect(onChoose).not.toHaveBeenCalled();

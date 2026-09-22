@@ -1,7 +1,10 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { RemoteAddProjectStep } from "../../../application/useRemoteAddProject";
 import type { DirectoryListingGateway } from "../../../domain/directoryListing";
 import { AgentAddProjectDialog } from "../AgentAddProjectDialog";
+import { FolderOpen } from "lucide-react";
+import { isRemoteProjectDirectoryPath } from "../../../domain/remoteProjectManagement";
+import "./remoteCloneDestination.css";
 import type { CloneProtocol } from "../../../domain/repositoryCloneUrl";
 import { RemoteAddProjectSourceGlyph } from "./RemoteAddProjectSources";
 import {
@@ -43,6 +46,49 @@ export function RemoteAddProjectConfirm({
   step,
 }: RemoteAddProjectConfirmProps) {
   const [browsing, setBrowsing] = useState(false);
+  const [destinationDraft, setDestinationDraft] = useState<string | null>(null);
+  const latest = useRef({ onParentPath, submitting: step.submitting, edited: false });
+  latest.current.onParentPath = onParentPath;
+  latest.current.submitting = step.submitting;
+  useEffect(() => {
+    if (!directoryGateway || parentPath != null) return;
+    let active = true;
+    void directoryGateway.listDirectoryEntries({ path: null, includeFiles: false }).then(
+      (listing) => {
+        if (
+          active &&
+          !latest.current.submitting &&
+          !latest.current.edited &&
+          isRemoteProjectDirectoryPath(listing.path)
+        )
+          latest.current.onParentPath?.(listing.path);
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [directoryGateway, environmentLabel, parentPath]);
+  const fullDestination = Boolean(directoryGateway && onParentPath);
+  const destination =
+    destinationDraft ??
+    (parentPath == null ? step.name : `${parentPath.replace(/\/$/, "")}/${step.name}`);
+  const validDestination =
+    !fullDestination ||
+    (parentPath != null && isRemoteProjectDirectoryPath(destination) && destination !== "/");
+  const canSubmit =
+    !step.submitting && step.nameError === null && step.branchError === null && validDestination;
+  const editDestination = (value: string) => {
+    latest.current.edited = true;
+    setDestinationDraft(value);
+    const index = value.lastIndexOf("/");
+    if (!isRemoteProjectDirectoryPath(value) || index < 0 || value === "/") {
+      onName("");
+      return;
+    }
+    onParentPath?.(value.slice(0, index) || "/");
+    onName(value.slice(index + 1));
+  };
   const nameId = useId();
   const nameErrorId = useId();
   const branchId = useId();
@@ -57,7 +103,7 @@ export function RemoteAddProjectConfirm({
     if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
     if (event.metaKey || event.ctrlKey) return;
     event.preventDefault();
-    onSubmit();
+    if (canSubmit) onSubmit();
   };
 
   if (browsing && !step.submitting && directoryGateway && onParentPath) {
@@ -71,6 +117,8 @@ export function RemoteAddProjectConfirm({
         projectRootPaths={[]}
         onClose={() => setBrowsing(false)}
         onAdd={(path) => {
+          latest.current.edited = true;
+          setDestinationDraft(null);
           onParentPath(path);
           setBrowsing(false);
         }}
@@ -84,7 +132,7 @@ export function RemoteAddProjectConfirm({
       className="agent-remote-add-project__form"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit();
+        if (canSubmit) onSubmit();
       }}
     >
       <div className="agent-remote-add-project__repo">
@@ -106,34 +154,39 @@ export function RemoteAddProjectConfirm({
         </button>
       )}
 
-      {directoryGateway && onParentPath && (
-        <button
-          className="agent-linkbutton"
-          disabled={step.submitting}
-          onClick={() => setBrowsing(true)}
-          type="button"
-        >
-          Choose destination folder
-        </button>
-      )}
-
       <label className="agent-remote-add-project__field" htmlFor={nameId}>
-        <span>Folder name</span>
-        <span className="agent-remote-add-project__prefixed">
-          <span className="agent-remote-add-project__prefix" title={parentPath ?? undefined}>
-            {parentPath == null ? "projects root/" : `${parentPath.replace(/\/$/, "")}/`}
-          </span>
+        <span>{fullDestination ? "Destination" : "Folder name"}</span>
+        <span className="remote-clone-destination">
           <input
+            aria-label={fullDestination ? "Destination path" : "Folder name"}
             aria-describedby={nameMessage === null ? undefined : nameErrorId}
-            aria-invalid={nameMessage !== null}
+            aria-invalid={nameMessage !== null || !validDestination}
+            disabled={step.submitting}
             id={nameId}
-            maxLength={64}
-            onChange={(event) => onName(event.currentTarget.value)}
+            maxLength={fullDestination ? 4096 : 64}
+            onChange={(event) =>
+              fullDestination
+                ? editDestination(event.currentTarget.value)
+                : onName(event.currentTarget.value)
+            }
             onKeyDown={submitOnEnter}
             spellCheck={false}
-            value={step.name}
+            value={fullDestination ? destination : step.name}
           />
+          {fullDestination && (
+            <button
+              aria-label="Choose destination folder"
+              className="agent-iconbutton"
+              disabled={step.submitting}
+              onClick={() => setBrowsing(true)}
+              title="Choose destination folder"
+              type="button"
+            >
+              <FolderOpen aria-hidden="true" size={18} />
+            </button>
+          )}
         </span>
+        {!fullDestination && <small>Inside the server projects folder</small>}
       </label>
       {nameMessage !== null && (
         <p className="agent-remote-add-project__error" id={nameErrorId}>
@@ -141,40 +194,49 @@ export function RemoteAddProjectConfirm({
         </p>
       )}
 
-      <label className="agent-remote-add-project__field" htmlFor={branchId}>
-        <span>Branch</span>
-        <input
-          aria-describedby={branchMessage === null ? undefined : branchErrorId}
-          aria-invalid={branchMessage !== null}
-          id={branchId}
-          maxLength={255}
-          onChange={(event) => onBranch(event.currentTarget.value)}
-          onKeyDown={submitOnEnter}
-          placeholder={view.defaultBranch ?? "Default branch"}
-          spellCheck={false}
-          value={step.branch}
-        />
-      </label>
+      {branchMessage !== null && (
+        <label className="agent-remote-add-project__field" htmlFor={branchId}>
+          <span>Branch</span>
+          <input
+            aria-describedby={branchMessage === null ? undefined : branchErrorId}
+            aria-invalid={branchMessage !== null}
+            id={branchId}
+            disabled={step.submitting}
+            maxLength={255}
+            onChange={(event) => onBranch(event.currentTarget.value)}
+            onKeyDown={submitOnEnter}
+            placeholder={view.defaultBranch ?? "Default branch"}
+            spellCheck={false}
+            value={step.branch}
+          />
+        </label>
+      )}
       {branchMessage !== null && (
         <p className="agent-remote-add-project__error" id={branchErrorId}>
           {branchMessage}
         </p>
       )}
 
-      <div aria-label="Clone protocol" className="agent-remote-add-project__segmented" role="group">
-        {protocols.map((option) => (
-          <button
-            aria-pressed={step.protocol === option.protocol}
-            disabled={!option.available}
-            key={option.protocol}
-            onClick={() => onProtocol(option.protocol)}
-            title={option.available ? undefined : "This repository has no URL for this protocol."}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      {protocols.every((option) => option.available) && (
+        <div
+          aria-label="Clone protocol"
+          className="agent-remote-add-project__segmented"
+          role="group"
+        >
+          {protocols.map((option) => (
+            <button
+              aria-pressed={step.protocol === option.protocol}
+              disabled={step.submitting || !option.available}
+              key={option.protocol}
+              onClick={() => onProtocol(option.protocol)}
+              title={option.available ? undefined : "This repository has no URL for this protocol."}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {warning !== null && <p className="agent-remote-add-project__warning">{warning}</p>}
       {step.submitError !== null && (

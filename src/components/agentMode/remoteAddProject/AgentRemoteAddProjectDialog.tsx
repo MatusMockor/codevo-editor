@@ -67,6 +67,12 @@ export function AgentRemoteAddProjectDialog({
   const listStep = step.kind === "sources" || step.kind === "serverProjects";
   const rowCount = listRowCount(step.kind, visibleSources.length, visibleProjects.length);
   const boundedIndex = rowCount === 0 ? -1 : Math.min(activeIndex, rowCount - 1);
+  const destinationPending = Boolean(
+    step.kind === "confirm" &&
+    controller.directoryGateway &&
+    controller.setParentPath &&
+    controller.parentPath == null,
+  );
 
   const activate = useCallback(() => {
     if (step.kind === "sources") {
@@ -92,9 +98,15 @@ export function AgentRemoteAddProjectDialog({
       activate();
       return;
     }
-    if (step.submitting || step.nameError !== null || step.branchError !== null) return;
+    if (
+      destinationPending ||
+      step.submitting ||
+      step.nameError !== null ||
+      step.branchError !== null
+    )
+      return;
     controller.confirmClone();
-  }, [activate, controller, step]);
+  }, [activate, controller, destinationPending, step]);
 
   const handleSectionKeyDown = useCallback(
     (event: KeyboardEvent<HTMLElement>) => {
@@ -247,7 +259,7 @@ export function AgentRemoteAddProjectDialog({
         </div>
 
         <RemoteAddProjectFooter
-          disabled={primaryDisabled(step, rowCount, query)}
+          disabled={destinationPending || primaryDisabled(step, rowCount, query)}
           listStep={listStep}
           onPrimary={primary}
           step={step}

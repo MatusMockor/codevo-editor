@@ -614,13 +614,12 @@ describe("AgentWorkbenchScreen", () => {
       };
       await show(ROOT_A);
       click('button[aria-label="Add project"]');
-      const environment = host.querySelector<HTMLSelectElement>(
-        '[aria-label="Project environment"]',
-      )!;
-      act(() => {
-        environment.value = "linux";
-        environment.dispatchEvent(new Event("change", { bubbles: true }));
-      });
+      click('button[aria-label="Project environment"]');
+      const serverOption = [...host.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (option) => option.textContent?.includes("Linux server"),
+      );
+      expect(serverOption).toBeDefined();
+      act(() => serverOption!.click());
       clickText("Clone repository");
       const gitUrl = () =>
         [...host.querySelectorAll<HTMLElement>('[role="option"]')].find((row) =>
@@ -750,7 +749,8 @@ describe("AgentWorkbenchScreen", () => {
       )!,
       "https://github.com/example/api.git",
     );
-    clickText("Choose folder");
+    clickText("Continue");
+    click('button[aria-label="Choose folder"]');
     await act(async () => {});
     await act(async () =>
       host
@@ -865,7 +865,8 @@ describe("AgentWorkbenchScreen", () => {
         )!,
         "https://github.com/example/api.git",
       );
-      clickText("Choose folder");
+      clickText("Continue");
+      click('button[aria-label="Choose folder"]');
       await act(async () => {});
       await act(async () =>
         host

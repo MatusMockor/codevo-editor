@@ -1,0 +1,31 @@
+.project-machine-picker,
+.project-machine-picker > .agent-picker {
+  width: 100%;
+  min-width: 0;
+}
+
+.project-machine-picker .agent-picker__trigger {
+  width: 100%;
+  max-width: none;
+  height: 40px;
+  gap: 12px;
+  border: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  color: var(--codevo-fg-strong);
+  font-family: inherit;
+  font-size: var(--codevo-fs-meta);
+  padding: 0 12px;
+  text-align: left;
+}
+
+.project-machine-picker .agent-picker__value {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-machine-picker .agent-picker__trigger:focus-visible {
+  outline: 2px solid var(--codevo-fg-muted);
+  outline-offset: 2px;
+  box-shadow: none;
+}
