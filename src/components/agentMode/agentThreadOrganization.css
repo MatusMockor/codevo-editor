@@ -1,0 +1,27 @@
+.agent-thread-snooze {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.agent-thread-snooze label {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  color: var(--codevo-fg-muted);
+  font-size: 12px;
+}
+
+.agent-thread-snooze input {
+  background: var(--codevo-well);
+  color: var(--codevo-fg);
+  border: none;
+  border-radius: var(--codevo-r-sm);
+  padding: 8px;
+  font: inherit;
+}
+
+.agent-thread-snooze input:focus-visible {
+  outline: 2px solid var(--codevo-primary);
+  outline-offset: 2px;
+}

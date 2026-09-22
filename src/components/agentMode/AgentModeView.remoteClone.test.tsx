@@ -178,7 +178,7 @@ describe("agent workbench remote clone adoption", () => {
       expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull(),
     );
 
-    const draft = host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea");
+    const draft = host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea");
     expect(draft).not.toBeNull();
     typeInto(draft!, "Draft kept while I visit the other project");
     click(host.querySelector('button[aria-label="Close clone draft"]')!);
@@ -217,7 +217,7 @@ describe("agent workbench remote clone adoption", () => {
       [...(cloneRow?.querySelectorAll("button") ?? [])].map((button) => button.textContent),
     ).toEqual(["storefront-api", "Dismiss"]);
     click(cloneRow!.querySelector("button")!);
-    expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")?.value).toBe(
+    expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")?.value).toBe(
       "Draft kept while I visit the other project",
     );
   });

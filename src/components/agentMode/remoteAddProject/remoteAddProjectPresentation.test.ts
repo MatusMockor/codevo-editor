@@ -35,7 +35,7 @@ describe("remoteAddProjectPresentation", () => {
     ] satisfies RemoteProjectSourceKind[]);
     expect(rows.every((row) => row.reason === null)).toBe(true);
     expect(rows[2]?.title).toBe("GitHub repository");
-    expect(rows[3]?.description).toBe("Clone group/project");
+    expect(rows[3]?.description).toBe("Search GitLab repositories");
   });
 
   it("explains every unavailable reason truthfully", () => {
@@ -55,7 +55,7 @@ describe("remoteAddProjectPresentation", () => {
     });
 
     expect(messages).toEqual([
-      "The GitLab CLI (glab) was not found on this machine. Install `glab`, then retry.",
+      "The GitLab CLI (glab) was not found on the selected server. Install `glab`, then retry.",
       "The GitLab CLI (glab) is not logged in to any host. Run `glab auth login` in a terminal, then retry.",
       "The GitLab CLI (glab) host check did not finish.",
       "This server cannot clone repositories.",

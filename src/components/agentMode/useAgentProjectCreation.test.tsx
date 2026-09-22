@@ -12,7 +12,7 @@ import type { useLocalProjectClone } from "../../application/useLocalProjectClon
 import type { useRemoteAddProject } from "../../application/useRemoteAddProject";
 import type { useAgentAddProject } from "./useAgentAddProject";
 import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
-import { useAgentProjectCreation } from "./useAgentProjectCreation";
+import { useAgentProjectCreationLane as useAgentProjectCreation } from "./useAgentProjectCreationLane";
 const state = vi.hoisted(() => ({
   localJob: null as LocalProjectCloneSnapshot | null,
   localError: null as string | null,
@@ -67,6 +67,7 @@ const project = {
   origin: "active-tab",
 } as AgentProjectDescriptor;
 let current: ReturnType<typeof useAgentProjectCreation>;
+let projects: readonly AgentProjectDescriptor[];
 let identity: object;
 let workspaceRoot: string | null;
 let chrome: AgentWorkbenchAddProjectChrome | null;
@@ -74,7 +75,7 @@ const onAdded = vi.fn();
 function Harness() {
   current = useAgentProjectCreation({
     chrome,
-    projects: [project],
+    projects,
     workspaceRoot,
     selectionIdentity: identity,
     selectedServerId: "srv",
@@ -99,6 +100,7 @@ beforeEach(() => {
   identity = {};
   workspaceRoot = "/work";
   chrome = null;
+  projects = [project];
   host = document.createElement("div");
   root = createRoot(host);
   render();
@@ -300,4 +302,49 @@ describe("clone draft coordination", () => {
     expect(current.draft).toBe(text);
     expect(current.pending?.target).toEqual({ kind: "local", path: "/clone" });
   });
+});
+
+it("registers completed local clone while retaining composer until send and rejects replaced project owner", () => {
+  const session: AgentProjectCreationSession = { current: null };
+  chrome = {
+    gateway: {} as DirectoryListingGateway,
+    creationSession: session,
+    addProject: vi.fn(),
+  };
+  render();
+  act(() => state.local.onStarted("local", "Repo", { select: true }));
+  state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+  render();
+  act(() => state.local.onReady("local", "/clone"));
+  act(() => current.changeDraft("keep pending"));
+  act(() => current.changeIsolation("worktree"));
+  act(() => current.activateCompleted());
+  expect(state.addProject).toHaveBeenCalledWith("/clone");
+  expect(session.current?.activationReceipt?.path).toBe("/clone");
+  act(() => root.unmount());
+  root = createRoot(host);
+  render();
+  expect(current.visible).toBe(true);
+  expect(current.draft).toBe("keep pending");
+  expect(current.isolation).toBe("worktree");
+  const localProject = { ...project, rootKey: "/clone", rootPath: "/clone" };
+  projects = [localProject];
+  render();
+  act(() => state.add.onProjectAdded(localProject));
+  expect(current.completedProject).toBe(localProject);
+  expect(current.pending?.id).toBe("local");
+  expect(onAdded).not.toHaveBeenCalled();
+  projects = [{ ...localProject, ownerId: "replacement" }];
+  render();
+  expect(current.completedProject).toBeNull();
+});
+it("retains the attachment draft key and isolation through clone retry", () => {
+  start("original");
+  const key = current.pending?.draftKey;
+  act(() => current.changeIsolation("worktree"));
+  act(() => current.retry());
+  start("retry");
+  expect(current.pending?.id).toBe("retry");
+  expect(current.pending?.draftKey).toBe(key);
+  expect(current.isolation).toBe("worktree");
 });

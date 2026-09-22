@@ -75,3 +75,81 @@ it("preserves an edited name and rejects unsafe branch even with direct form sub
   );
   expect(onClone).not.toHaveBeenCalled();
 });
+
+it("searches the local provider account and carries the selected repository into clone confirmation", async () => {
+  const repository = {
+    provider: "github",
+    host: "github.com",
+    fullPath: "team/crm",
+    description: null,
+    visibility: "private",
+    defaultBranch: "develop",
+    sshUrl: "git@github.com:team/crm.git",
+    httpsUrl: "https://github.com/team/crm.git",
+  } as const;
+  const search = vi.fn(
+    async () =>
+      ({ status: "ok", repositories: [repository], nextPage: null, truncated: false }) as const,
+  );
+  const lookupGateway = {
+    listHosts: vi.fn(
+      async () =>
+        ({
+          github: {
+            status: "ready",
+            hosts: [{ provider: "github", host: "github.com", auth: "authenticated" }],
+            truncated: false,
+          },
+          gitlab: { status: "cliMissing" },
+        }) as const,
+    ),
+    lookup: vi.fn(async () => ({ status: "ok", repository }) as const),
+    search,
+  };
+  await act(async () =>
+    root.render(
+      <AgentLocalCloneDialog
+        gateway={gateway}
+        lookupGateway={lookupGateway}
+        busy={false}
+        error={null}
+        onClose={() => undefined}
+        onClone={onClone}
+      />,
+    ),
+  );
+  // The same dialog can also enter the provider picker after having been on its URL step.
+  click("Back");
+  await act(async () => undefined);
+  const provider = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("GitHub"),
+  )!;
+  act(() => provider.click());
+  change(0, "crm");
+  await act(async () =>
+    host
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  expect(search).toHaveBeenCalledWith({
+    provider: "github",
+    host: "github.com",
+    query: "crm",
+    page: 1,
+  });
+  const result = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("team/crm"),
+  )!;
+  act(() => result.click());
+  expect(host.querySelectorAll("input")[0].value).toBe(repository.sshUrl);
+  expect(host.querySelectorAll("input")[1].value).toBe("crm");
+  click("Choose folder");
+  click("Pick selectDirectory");
+  click("Clone repository");
+  expect(onClone).toHaveBeenCalledWith({
+    url: repository.sshUrl,
+    name: "crm",
+    branch: "develop",
+    parentPath: "/projects",
+  });
+});

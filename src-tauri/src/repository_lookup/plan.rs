@@ -28,6 +28,9 @@ impl CliProgram {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CliPlan {
+    RepositorySearch {
+        request: super::search_wire::RepositorySearchRequest,
+    },
     GithubAuthStatus,
     GithubRepoView {
         path: RepositoryPath,
@@ -42,6 +45,10 @@ pub(crate) enum CliPlan {
 impl CliPlan {
     pub(crate) fn program(&self) -> CliProgram {
         match self {
+            Self::RepositorySearch { request } => match request.provider {
+                super::wire::RepositoryProvider::Github => CliProgram::Gh,
+                super::wire::RepositoryProvider::Gitlab => CliProgram::Glab,
+            },
             Self::GithubAuthStatus | Self::GithubRepoView { .. } => CliProgram::Gh,
             Self::GitlabAuthStatus | Self::GitlabProject { .. } => CliProgram::Glab,
         }
@@ -49,6 +56,29 @@ impl CliPlan {
 
     pub(crate) fn argv(&self) -> Vec<String> {
         match self {
+            Self::RepositorySearch { request } => {
+                let query: String = request
+                    .query
+                    .bytes()
+                    .map(|b| {
+                        if b.is_ascii_alphanumeric() || b"._-".contains(&b) {
+                            char::from(b).to_string()
+                        } else {
+                            format!("%{b:02X}")
+                        }
+                    })
+                    .collect();
+                let endpoint = match request.provider {
+                    super::wire::RepositoryProvider::Github => format!("search/repositories?q={query}%20in%3Aname%20fork%3Atrue&per_page=20&page={}", request.page),
+                    super::wire::RepositoryProvider::Gitlab => format!("projects?membership=true&search={query}&per_page=20&page={}&order_by=id&sort=asc", request.page),
+                };
+                vec![
+                    "api".into(),
+                    "--hostname".into(),
+                    request.host.as_str().into(),
+                    endpoint,
+                ]
+            }
             Self::GithubAuthStatus => vec![
                 "auth".to_string(),
                 "status".to_string(),
@@ -75,14 +105,18 @@ impl CliPlan {
     pub(crate) fn timeout(&self) -> Duration {
         match self {
             Self::GithubAuthStatus | Self::GitlabAuthStatus => HOSTS_TIMEOUT,
-            Self::GithubRepoView { .. } | Self::GitlabProject { .. } => LOOKUP_TIMEOUT,
+            Self::RepositorySearch { .. }
+            | Self::GithubRepoView { .. }
+            | Self::GitlabProject { .. } => LOOKUP_TIMEOUT,
         }
     }
 
     pub(crate) fn max_stdout_bytes(&self) -> usize {
         match self {
             Self::GithubAuthStatus | Self::GitlabAuthStatus => MAX_HOSTS_STDOUT_BYTES,
-            Self::GithubRepoView { .. } | Self::GitlabProject { .. } => MAX_LOOKUP_STDOUT_BYTES,
+            Self::RepositorySearch { .. }
+            | Self::GithubRepoView { .. }
+            | Self::GitlabProject { .. } => MAX_LOOKUP_STDOUT_BYTES,
         }
     }
 }

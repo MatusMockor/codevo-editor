@@ -123,6 +123,7 @@ export type RemoteAddProjectAction =
   | Readonly<{ kind: "chooseSource"; source: RemoteProjectSourceKind }>
   | Readonly<{ kind: "useGitUrl" }>
   | Readonly<{ kind: "chooseHost"; host: string }>
+  | Readonly<{ kind: "chooseRepository"; repository: RepositoryInfo }>
   | Readonly<{ kind: "submitEntry"; raw: string }>
   | Readonly<{ kind: "lookupSettled"; outcome: RemoteAddProjectLookupOutcome }>
   | Readonly<{ kind: "setName"; value: string }>
@@ -162,6 +163,17 @@ export function reduceRemoteAddProject(
       return chooseSource(state, action.source, context);
     case "useGitUrl":
       return useGitUrl(state, context);
+    case "chooseRepository": {
+      const repository = action.repository;
+      if (!state.open || (state.step.kind !== "repository" && state.step.kind !== "sources"))
+        return state;
+      if (state.step.kind === "repository" && state.step.provider !== repository.provider)
+        return state;
+      if (!hasCloneUrl(repository)) return state;
+      // The picker owns its refreshed host snapshot and filters the selected result.
+      // The source menu's earlier snapshot must not veto a newly authenticated host.
+      return enterConfirm(state, { kind: "repository", repository }, context);
+    }
     case "chooseHost":
       return chooseHost(state, action.host, context);
     case "submitEntry":

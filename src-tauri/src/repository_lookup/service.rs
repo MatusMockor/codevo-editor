@@ -20,7 +20,7 @@ use super::{github, gitlab};
 use crate::agent_cli_discovery::AgentCliDiscovery;
 
 pub(crate) struct RepositoryLookupService {
-    executables: Arc<dyn ExecutableResolver>,
+    pub(super) executables: Arc<dyn ExecutableResolver>,
     home: PathBuf,
     github_slot: ProviderSlot,
     gitlab_slot: ProviderSlot,
@@ -165,12 +165,18 @@ impl RepositoryLookupService {
     }
 
     fn authorize(&self, request: &RepositoryLookupRequest) -> HostAuthorization {
-        match request.provider {
-            RepositoryProvider::Github => allowance(request.host.as_str() == GITHUB_HOST),
+        self.authorize_host(request.provider, &request.host)
+    }
+
+    pub(super) fn authorize_host(
+        &self,
+        provider: RepositoryProvider,
+        host: &super::wire::RepositoryHostName,
+    ) -> HostAuthorization {
+        match provider {
+            RepositoryProvider::Github => allowance(host.as_str() == GITHUB_HOST),
             RepositoryProvider::Gitlab => {
-                authorize_gitlab_host(&request.host, &self.gitlab_hosts, || {
-                    self.refresh_gitlab_hosts()
-                })
+                authorize_gitlab_host(host, &self.gitlab_hosts, || self.refresh_gitlab_hosts())
             }
         }
     }
@@ -197,7 +203,7 @@ impl RepositoryLookupService {
         HostsRefresh::Parsed(parsed)
     }
 
-    fn run(
+    pub(super) fn run(
         &self,
         executable: &ResolvedExecutable,
         plan: &CliPlan,

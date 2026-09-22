@@ -2,7 +2,13 @@
 
 mod repository_path;
 mod sanitize;
+#[cfg(unix)]
+mod search;
+mod search_wire;
 mod wire;
+pub(crate) use search_wire::{
+    RepositorySearchOutcome, RepositorySearchRequest, RepositorySearchRequestWire,
+};
 
 #[cfg(unix)]
 mod authority;

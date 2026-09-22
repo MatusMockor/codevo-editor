@@ -13,10 +13,22 @@ interface Options {
     change: Partial<Omit<RemoteAgentMetadata, "threadId">>,
   ) => void;
   readonly stop: (threadId: string) => Promise<void>;
+  readonly reorder?: (
+    threadId: string,
+    targetThreadId: string,
+    placement: "before" | "after",
+  ) => void;
 }
 
 /** Routes presentation actions; remote identities can never fall through to local tools. */
-export function remoteAgentThreadActions({ local, threads, report, update, stop }: Options) {
+export function remoteAgentThreadActions({
+  local,
+  threads,
+  report,
+  update,
+  stop,
+  reorder,
+}: Options) {
   const byId = new Map(threads.map((view) => [view.thread.threadId, view]));
   const remote = (id: string) => isRemoteAgentIdentity(id) || byId.get(id)?.execution !== undefined;
   const unsupported = (id: string) => {
@@ -52,6 +64,31 @@ export function remoteAgentThreadActions({ local, threads, report, update, stop 
     renameThread(id: string, title: string) {
       if (remote(id)) update(id, { title });
       else local.renameThread(id, title);
+    },
+    updateThreadOrganization(
+      id: string,
+      change: {
+        readonly snoozedUntil?: number | null;
+        readonly settledAt?: number | null;
+        readonly sortOrder?: number | null;
+      },
+    ) {
+      if (remote(id)) {
+        if (change.settledAt != null && byId.get(id)?.lifecycle === "running") {
+          report("Stop the agent before marking this conversation as settled.");
+          return;
+        }
+        update(id, change);
+      } else local.updateThreadOrganization?.(id, change);
+    },
+    reorderThread(id: string, targetId: string, placement: "before" | "after") {
+      if (remote(id)) {
+        if (!remote(targetId) || !reorder) {
+          unsupported(id);
+          return;
+        }
+        reorder(id, targetId, placement);
+      } else if (!remote(targetId)) local.reorderThread?.(id, targetId, placement);
     },
     togglePin(id: string) {
       if (remote(id)) update(id, { pinned: !byId.get(id)?.thread.pinned });

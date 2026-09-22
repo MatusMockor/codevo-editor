@@ -65,7 +65,7 @@ describe("AgentRemoteAddProjectDialog", () => {
       }),
     );
 
-    expect(host.textContent).toContain("The GitHub CLI (gh) was not found on this machine.");
+    expect(host.textContent).toContain("The GitHub CLI (gh) was not found on the selected server.");
     expect(host.textContent).toContain("Checking…");
 
     const github = optionAt(2);

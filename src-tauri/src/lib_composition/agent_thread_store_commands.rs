@@ -254,6 +254,9 @@ mod tests {
                 title: "do the thing".to_string(),
                 pinned: false,
                 archived: false,
+                snoozed_until: None,
+                settled_at: None,
+                sort_order: None,
                 created_at_epoch_ms: 1,
                 updated_at_epoch_ms: 2,
                 turns: vec![AgentTurn {

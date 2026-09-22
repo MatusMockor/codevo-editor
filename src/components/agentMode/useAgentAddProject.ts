@@ -9,6 +9,7 @@ export interface AgentAddProjectOptions {
   readonly workspaceRoot: string | null;
   readonly selectionIdentity: object;
   onProjectAdded(project: AgentProjectDescriptor): void;
+  onProjectAddFailed?(error: unknown): void;
   reportNotice(notice: AgentTasksNotice): void;
 }
 
@@ -30,6 +31,7 @@ export function useAgentAddProject({
   workspaceRoot,
   selectionIdentity,
   onProjectAdded,
+  onProjectAddFailed,
 }: AgentAddProjectOptions): AgentAddProjectState {
   const [open, setOpen] = useState(false);
   const [receipt, setReceipt] = useState<{
@@ -101,15 +103,21 @@ export function useAgentAddProject({
         .addProject(path)
         .then((opened) => {
           if (!authority.current.mounted || authority.current.generation !== generation) return;
-          if (!opened.isCurrent()) return;
+          if (!opened.isCurrent()) {
+            onProjectAddFailed?.(
+              new Error("Opening the cloned project was interrupted. Retry opening it."),
+            );
+            return;
+          }
           setReceipt({ ...opened, generation });
         })
         .catch((error: unknown) => {
           if (!authority.current.mounted || authority.current.generation !== generation) return;
+          onProjectAddFailed?.(error);
           reportAddProjectNotice(error instanceof Error ? error.message : String(error));
         });
     },
-    [chrome, reportAddProjectNotice],
+    [chrome, reportAddProjectNotice, onProjectAddFailed],
   );
 
   const openDialog = useCallback(() => {

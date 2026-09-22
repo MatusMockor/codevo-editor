@@ -1,3 +1,4 @@
+import { validThreadOrganizationValue, validThreadSortOrder } from "./agentThreadOrganization";
 import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { persistedAgentSubagentLifecycle } from "./agentSubagentLifecycleLegacy";
 import {
@@ -155,6 +156,9 @@ function serializeThreadDocument(thread: AgentThread): Record<string, unknown> {
     provider: { kind: thread.provider.kind, sessionId: thread.provider.sessionId },
     title: thread.title,
     pinned: thread.pinned,
+    ...optionalField("snoozedUntil", thread.snoozedUntil),
+    ...optionalField("settledAt", thread.settledAt),
+    ...optionalField("sortOrder", thread.sortOrder),
     archived: thread.archived,
     createdAtEpochMs: thread.createdAtEpochMs,
     updatedAtEpochMs: thread.updatedAtEpochMs,
@@ -432,7 +436,7 @@ export function parseAgentThread(value: unknown): AgentThread {
       "turns",
       "turnsTruncated",
     ],
-    ["integration", "viewedAtEpochMs", "externalOrigin"],
+    ["integration", "viewedAtEpochMs", "externalOrigin", "snoozedUntil", "settledAt", "sortOrder"],
     "thread",
   );
   const provider = parseProvider(thread.provider, "thread.provider");
@@ -443,6 +447,7 @@ export function parseAgentThread(value: unknown): AgentThread {
     provider,
     title: boundedText(thread.title, "thread.title", MAX_AGENT_THREAD_TITLE_BYTES, false),
     pinned: booleanFlag(thread.pinned, "thread.pinned"),
+    ...parseOrganizationFields(thread),
     archived: booleanFlag(thread.archived, "thread.archived"),
     createdAtEpochMs: unsignedSafeInteger(thread.createdAtEpochMs, "thread.createdAtEpochMs"),
     updatedAtEpochMs: unsignedSafeInteger(thread.updatedAtEpochMs, "thread.updatedAtEpochMs"),
@@ -1454,4 +1459,26 @@ function unsupportedTurnEventKind(kind: never): never {
 
 function invalid(path: string, expectation: string): never {
   throw new TypeError(`Invalid agent thread value at ${path}: expected ${expectation}.`);
+}
+
+function parseOrganizationFields(thread: Record<string, unknown>): {
+  snoozedUntil?: number | null;
+  settledAt?: number | null;
+  sortOrder?: number | null;
+} {
+  const result: {
+    snoozedUntil?: number | null;
+    settledAt?: number | null;
+    sortOrder?: number | null;
+  } = {};
+  for (const key of ["snoozedUntil", "settledAt", "sortOrder"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(thread, key)) continue;
+    const value = thread[key];
+    if (!(key === "sortOrder" ? validThreadSortOrder(value) : validThreadOrganizationValue(value)))
+      invalid(`thread.${key}`, "a bounded nonnegative safe integer or null");
+    result[key] = value as number | null;
+  }
+  if (result.snoozedUntil != null && result.settledAt != null)
+    invalid("thread", "mutually exclusive snoozed and settled states");
+  return result;
 }

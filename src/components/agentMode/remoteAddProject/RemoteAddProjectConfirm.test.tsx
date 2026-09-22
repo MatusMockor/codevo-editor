@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RemoteAddProjectConfirm,
   type RemoteAddProjectConfirmStep,
+  type RemoteAddProjectConfirmProps,
 } from "./RemoteAddProjectConfirm";
 import { repositoryInfoFixture } from "./remoteAddProjectTestSupport";
 
@@ -147,6 +148,118 @@ describe("RemoteAddProjectConfirm", () => {
     expect(host.textContent).toContain("Use a Git branch name");
   });
 
+  it("chooses a server destination without submitting or changing clone fields", async () => {
+    const onParentPath = vi.fn();
+    const onSubmit = vi.fn();
+    const onName = vi.fn();
+    const listDirectoryEntries = vi.fn(async () => ({
+      path: "/srv/projects",
+      parent: "/srv",
+      entries: [],
+      truncated: false,
+    }));
+    const props = {
+      directoryGateway: { listDirectoryEntries, revealDirectory: vi.fn() },
+      parentPath: "/srv/projects",
+      onParentPath,
+      onSubmit,
+      onName,
+      environmentLabel: "Linux server",
+    };
+    render(step({ name: "custom", branch: "release", protocol: "https" }), props);
+    await act(async () => buttonNamed("Choose destination folder").click());
+    expect(listDirectoryEntries).toHaveBeenCalledWith({
+      path: "/srv/projects",
+      includeFiles: false,
+    });
+    expect(host.textContent).toContain("Linux server");
+    expect(host.textContent).not.toContain("Open in Finder");
+    await act(async () => buttonNamed("Choose folder").click());
+    expect(onParentPath).toHaveBeenCalledExactlyOnceWith("/srv/projects");
+    expect(inputs()[0]?.value).toBe("custom");
+    expect(inputs()[1]?.value).toBe("release");
+    expect(protocolButtons()[1]?.getAttribute("aria-pressed")).toBe("true");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onName).not.toHaveBeenCalled();
+  });
+
+  it("cancels destination browsing without changing the selection or bubbling Escape", async () => {
+    const onParentPath = vi.fn();
+    const parentKey = vi.fn();
+    document.addEventListener("keydown", parentKey);
+    render(step({ name: "custom" }), {
+      directoryGateway: {
+        listDirectoryEntries: async () => ({
+          path: "/srv",
+          parent: "/",
+          entries: [],
+          truncated: false,
+        }),
+        revealDirectory: vi.fn(),
+      },
+      onParentPath,
+    });
+    await act(async () => buttonNamed("Choose destination folder").click());
+    act(() =>
+      host
+        .querySelector('input[type="checkbox"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(onParentPath).not.toHaveBeenCalled();
+    document.removeEventListener("keydown", parentKey);
+    expect(parentKey).not.toHaveBeenCalled();
+    expect(inputs()[0]?.value).toBe("custom");
+    expect(host.textContent).toContain("projects root/");
+  });
+
+  it("contains keyboard focus in destination browsing", async () => {
+    render(step({}), {
+      directoryGateway: {
+        listDirectoryEntries: async () => ({
+          path: "/srv",
+          parent: "/",
+          entries: [],
+          truncated: false,
+        }),
+        revealDirectory: vi.fn(),
+      },
+      onParentPath: vi.fn(),
+    });
+    await act(async () => buttonNamed("Choose destination folder").click());
+    const last = buttonNamed("Choose folder");
+    expect(last.disabled).toBe(false);
+    const first = host.querySelector<HTMLInputElement>('input[role="combobox"]');
+    const tab = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Tab" });
+    act(() => {
+      last.focus();
+      expect(document.activeElement).toBe(last);
+      last.dispatchEvent(tab);
+    });
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+    const backTab = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Tab",
+      shiftKey: true,
+    });
+    act(() => first?.dispatchEvent(backTab));
+    expect(backTab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("disables destination changes while submitting", () => {
+    render(step({ submitting: true }), {
+      directoryGateway: { listDirectoryEntries: vi.fn(), revealDirectory: vi.fn() },
+      onParentPath: vi.fn(),
+      parentPath: "/srv/checkout",
+    });
+    expect(buttonNamed("Choose destination folder").disabled).toBe(true);
+    expect(host.querySelector(".agent-remote-add-project__prefix")?.textContent).toBe(
+      "/srv/checkout/",
+    );
+  });
+
   function press(target: Element): void {
     act(() => {
       target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
@@ -197,13 +310,7 @@ describe("RemoteAddProjectConfirm", () => {
 
   function render(
     confirmStep: RemoteAddProjectConfirmStep,
-    overrides: {
-      onBranch?: () => void;
-      onName?: () => void;
-      onOpenExisting?: () => void;
-      onProtocol?: () => void;
-      onSubmit?: () => void;
-    } = {},
+    overrides: Partial<RemoteAddProjectConfirmProps> = {},
   ): void {
     act(() => {
       root.render(
@@ -214,6 +321,7 @@ describe("RemoteAddProjectConfirm", () => {
           onProtocol={overrides.onProtocol ?? (() => undefined)}
           onSubmit={overrides.onSubmit ?? (() => undefined)}
           step={confirmStep}
+          {...overrides}
         />,
       );
     });

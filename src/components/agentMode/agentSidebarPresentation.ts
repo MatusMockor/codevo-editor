@@ -1,3 +1,4 @@
+import { compareAgentThreadOrder } from "../../domain/agentThreadOrganization";
 import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
@@ -89,6 +90,8 @@ export interface AgentRailSections {
   readonly active: ReadonlyArray<AgentThreadView>;
   readonly archived: ReadonlyArray<AgentThreadView>;
   readonly hiddenArchivedCount: number;
+  readonly snoozed?: ReadonlyArray<AgentThreadView>;
+  readonly settled?: ReadonlyArray<AgentThreadView>;
 }
 
 export interface AgentThreadRevealRequest {
@@ -111,7 +114,12 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "copy"; readonly detail: AgentThreadCopyDetail }
   | { readonly kind: "stop" }
   | { readonly kind: "archive" }
-  | { readonly kind: "delete" };
+  | { readonly kind: "delete" }
+  | { readonly kind: "snooze"; readonly until: number }
+  | { readonly kind: "unsnooze" }
+  | { readonly kind: "settle" }
+  | { readonly kind: "restore" }
+  | { readonly kind: "moveBefore" | "moveAfter"; readonly targetThreadId: string };
 
 export type AgentThreadMenuIcon =
   | "newThread"
@@ -124,7 +132,10 @@ export type AgentThreadMenuIcon =
   | "copyThreadId"
   | "stop"
   | "archive"
-  | "delete";
+  | "delete"
+  | "snooze"
+  | "settle"
+  | "restore";
 
 export type AgentThreadMenuEntry =
   | { readonly kind: "separator"; readonly id: string }
@@ -135,7 +146,7 @@ export type AgentThreadMenuEntry =
       readonly icon: AgentThreadMenuIcon;
       readonly disabled: boolean;
       readonly destructive: boolean;
-      readonly command: AgentThreadMenuCommand | "rename";
+      readonly command: AgentThreadMenuCommand | "rename" | "snooze";
     };
 
 export interface AgentThreadMenuContext {
@@ -143,6 +154,8 @@ export interface AgentThreadMenuContext {
   readonly pinned: boolean;
   readonly archived: boolean;
   readonly running: boolean;
+  readonly snoozed?: boolean;
+  readonly settled?: boolean;
 }
 
 export function agentThreadMenuEntries(
@@ -163,6 +176,26 @@ export function agentThreadMenuEntries(
     menuItem("copy-id", "Copy thread ID", "copyThreadId", { kind: "copy", detail: "threadId" }),
     { kind: "separator", id: "s3" },
   ];
+  if (!props.archived) {
+    entries.push(
+      menuItem(
+        "snooze",
+        props.snoozed ? "Wake now" : "Snooze…",
+        "snooze",
+        props.snoozed ? { kind: "unsnooze" } : "snooze",
+        props.running,
+      ),
+    );
+    entries.push(
+      menuItem(
+        "settle",
+        props.settled ? "Restore to active" : "Mark settled",
+        "settle",
+        { kind: props.settled ? "restore" : "settle" },
+        props.running,
+      ),
+    );
+  }
   if (props.running) entries.push(menuItem("stop", "Stop", "stop", { kind: "stop" }));
   if (!props.archived)
     entries.push(menuItem("archive", "Archive", "archive", { kind: "archive" }, props.running));
@@ -174,7 +207,7 @@ function menuItem(
   id: string,
   label: string,
   icon: AgentThreadMenuIcon,
-  command: AgentThreadMenuCommand | "rename",
+  command: AgentThreadMenuCommand | "rename" | "snooze",
   disabled = false,
   destructive = false,
 ): AgentThreadMenuEntry {
@@ -225,23 +258,41 @@ export function agentRailSections(
   scope: AgentRailScope | null,
   archivedExpanded: boolean,
   archivedShown: number,
+  now: number = Date.now(),
 ): AgentRailSections {
   const scoped = views.filter((view) => scopeIncludes(scope, view));
-  const pinned = scoped.filter((view) => view.thread.pinned && !view.thread.archived);
-  const active = scoped.filter((view) => !view.thread.pinned && !view.thread.archived);
+  const settled = scoped.filter((view) => !view.thread.archived && view.thread.settledAt != null);
+  const snoozed = scoped.filter(
+    (view) =>
+      !view.thread.archived &&
+      view.thread.settledAt == null &&
+      (view.thread.snoozedUntil ?? 0) > now,
+  );
+  const available = scoped.filter(
+    (view) =>
+      !view.thread.archived &&
+      view.thread.settledAt == null &&
+      (view.thread.snoozedUntil ?? 0) <= now,
+  );
+  const pinned = available.filter((view) => view.thread.pinned);
+  const active = available.filter((view) => !view.thread.pinned);
   const archived = scoped.filter((view) => view.thread.archived);
-  pinned.sort(compareByRecency);
-  active.sort(compareByRecency);
+  pinned.sort(compareManualOrder);
+  active.sort(compareManualOrder);
+  snoozed.sort(compareManualOrder);
+  settled.sort(compareManualOrder);
   archived.sort(compareByRecency);
 
   if (!archivedExpanded) {
-    return { pinned, active, archived: [], hiddenArchivedCount: archived.length };
+    return { pinned, active, snoozed, settled, archived: [], hiddenArchivedCount: archived.length };
   }
 
   const shown = Math.min(Math.max(archivedShown, 0), archived.length);
   return {
     pinned,
     active,
+    snoozed,
+    settled,
     archived: archived.slice(0, shown),
     hiddenArchivedCount: archived.length - shown,
   };
@@ -360,6 +411,10 @@ function scopeIncludes(scope: AgentRailScope | null, view: AgentThreadView): boo
   );
 }
 
+function compareManualOrder(left: AgentThreadView, right: AgentThreadView): number {
+  return compareAgentThreadOrder(left.thread, right.thread);
+}
+
 function compareByRecency(left: AgentThreadView, right: AgentThreadView): number {
   if (left.thread.updatedAtEpochMs !== right.thread.updatedAtEpochMs) {
     return right.thread.updatedAtEpochMs - left.thread.updatedAtEpochMs;
@@ -433,7 +488,9 @@ export function agentRailEmptyState(
     sections.pinned.length +
     sections.active.length +
     sections.archived.length +
-    sections.hiddenArchivedCount;
+    sections.hiddenArchivedCount +
+    (sections.snoozed?.length ?? 0) +
+    (sections.settled?.length ?? 0);
   if (total > 0) return null;
   if (scope === null) return { kind: "noScope" };
   return { kind: "noThreads", scopeLabel: agentRailScopeLabel(scope, entries) };

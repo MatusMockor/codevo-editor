@@ -101,7 +101,7 @@ describe("RemoteAddProjectSources", () => {
     const github = [...host.querySelectorAll<HTMLElement>('[role="option"]')][2];
     expect(github?.getAttribute("aria-disabled")).toBe("true");
     expect(github?.textContent).toContain("Checking…");
-    expect(github?.textContent).toContain("Clone owner/repo");
+    expect(github?.textContent).toContain("Search GitHub repositories");
   });
 
   it("offers a retry instead of setup required for a reachable failure", () => {

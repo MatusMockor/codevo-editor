@@ -725,3 +725,44 @@ describe("remoteAddProjectMachine helpers", () => {
     expect(boundedRemoteAddProjectError("y".repeat(500)).length).toBe(200);
   });
 });
+
+describe("search result selection", () => {
+  const browsing = run([{ kind: "open" }, { kind: "chooseSource", source: "github" }]);
+  it("uses a chosen result without repeating an exact lookup", () => {
+    const next = reduceRemoteAddProject(
+      browsing,
+      { kind: "chooseRepository", repository: githubRepository },
+      context,
+    );
+    expect(next.step).toMatchObject({
+      kind: "confirm",
+      name: "storefront-api",
+      candidate: { kind: "repository", repository: githubRepository },
+    });
+  });
+  it("rejects a result after closing or changing provider, or without a usable clone URL", () => {
+    const action: RemoteAddProjectAction = {
+      kind: "chooseRepository",
+      repository: githubRepository,
+    };
+    const closed = reduceRemoteAddProject(browsing, { kind: "close" }, context);
+    expect(reduceRemoteAddProject(closed, action, context)).toBe(closed);
+    const other = run([{ kind: "open" }, { kind: "chooseSource", source: "gitlab" }]);
+    expect(reduceRemoteAddProject(other, action, context)).toBe(other);
+    expect(
+      reduceRemoteAddProject(
+        browsing,
+        {
+          kind: "chooseRepository",
+          repository: { ...githubRepository, sshUrl: null, httpsUrl: null },
+        },
+        context,
+      ),
+    ).toBe(browsing);
+    const refreshed = reduceRemoteAddProject(browsing, action, {
+      ...context,
+      hosts: { ...context.hosts, github: [] },
+    });
+    expect(refreshed.step.kind).toBe("confirm");
+  });
+});

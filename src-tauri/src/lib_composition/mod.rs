@@ -1,5 +1,6 @@
 mod command_facades;
 
+pub(crate) use command_facades::repository_lookup;
 pub use command_facades::run;
 pub(crate) use command_facades::{
     absolute_workspace_candidate, canonicalize_workspace_root,

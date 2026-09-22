@@ -58,6 +58,24 @@ describe("useAgentThreadMenuCommands", () => {
     Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
   });
 
+  it("routes snooze, settle, restore and relative reorder with structured values", () => {
+    const updateThreadOrganization = vi.fn();
+    const reorderThread = vi.fn();
+    render({ agents: threadsSurfaceFixture({ updateThreadOrganization, reorderThread }) });
+    act(() => {
+      current().handleThreadMenuCommand("one", { kind: "snooze", until: 5000 });
+      current().handleThreadMenuCommand("one", { kind: "settle" });
+      current().handleThreadMenuCommand("one", { kind: "restore" });
+      current().handleThreadMenuCommand("one", { kind: "moveBefore", targetThreadId: "two" });
+    });
+    expect(updateThreadOrganization.mock.calls).toEqual([
+      ["one", { snoozedUntil: 5000, settledAt: null }],
+      ["one", { settledAt: expect.any(Number), snoozedUntil: null }],
+      ["one", { settledAt: null, snoozedUntil: null }],
+    ]);
+    expect(reorderThread).toHaveBeenCalledWith("one", "two", "before");
+  });
+
   it("does not forward server project actions to local project controls", () => {
     const revealPath = vi.fn(async () => undefined);
     const onTrustProject = vi.fn();

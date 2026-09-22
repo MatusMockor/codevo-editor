@@ -1,6 +1,7 @@
 use super::repository_lookup::{
     RepositoryHostsSnapshot, RepositoryLookupOutcome, RepositoryLookupRequest,
-    RepositoryLookupRequestWire, RepositoryLookupService,
+    RepositoryLookupRequestWire, RepositoryLookupService, RepositorySearchOutcome,
+    RepositorySearchRequest, RepositorySearchRequestWire,
 };
 use crate::run_blocking_command;
 use std::sync::Arc;
@@ -26,6 +27,18 @@ pub(crate) async fn repository_lookup(
     };
     let service = Arc::clone(&service);
     run_blocking_command(move || Ok(service.lookup(request))).await
+}
+
+#[tauri::command]
+pub(crate) async fn repository_search(
+    request: RepositorySearchRequestWire,
+    service: State<'_, Arc<RepositoryLookupService>>,
+) -> Result<RepositorySearchOutcome, String> {
+    let Some(request) = RepositorySearchRequest::validate(&request) else {
+        return Err(INVALID_REQUEST.to_string());
+    };
+    let service = Arc::clone(&service);
+    run_blocking_command(move || Ok(service.search(request))).await
 }
 
 #[cfg(test)]

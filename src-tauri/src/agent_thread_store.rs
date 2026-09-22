@@ -95,6 +95,12 @@ pub struct AgentThread {
     pub title: String,
     pub pinned: bool,
     pub archived: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snoozed_until: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<f64>,
     pub created_at_epoch_ms: u64,
     pub updated_at_epoch_ms: u64,
     pub turns: Vec<AgentTurn>,
@@ -796,6 +802,22 @@ pub fn validate_agent_thread_document(
         ));
     }
     let thread = &document.thread;
+    if [thread.snoozed_until, thread.settled_at]
+        .into_iter()
+        .flatten()
+        .any(|timestamp| timestamp > 8_640_000_000_000_000)
+    {
+        return Err("Agent thread management timestamp exceeds the supported bounds.".into());
+    }
+    if thread
+        .sort_order
+        .is_some_and(|order| !order.is_finite() || order.abs() > MAX_AGENT_SAFE_INTEGER as f64)
+    {
+        return Err("Agent thread sort order exceeds the supported finite range.".into());
+    }
+    if thread.snoozed_until.is_some() && thread.settled_at.is_some() {
+        return Err("Agent thread cannot be both snoozed and settled.".into());
+    }
     safe_agent_task_id(&thread.thread_id)?;
     if thread.owner.root_key != root_key {
         return Err(AGENT_THREAD_OWNER_MISMATCH_ERROR.to_string());

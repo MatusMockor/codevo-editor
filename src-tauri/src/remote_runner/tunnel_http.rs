@@ -2,7 +2,7 @@ use super::MAX_INPUT;
 use base64::Engine;
 use serde_json::{json, Value};
 
-const CLIENT_CAPABILITIES: &str = "subagentLifecycleRetention";
+const CLIENT_CAPABILITIES: &str = "subagentLifecycleRetention,projectManagement,threadManagement";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -16,7 +16,12 @@ pub(super) fn prepare(
     body: Option<Value>,
     headers: Vec<(String, String)>,
 ) -> Result<Prepared, String> {
-    if !matches!(method, "GET" | "POST" | "PUT" | "DELETE")
+    let metadata_patch = method == "PATCH"
+        && path
+            .strip_prefix("/v1/tasks/")
+            .and_then(|rest| rest.strip_suffix("/thread-metadata"))
+            .is_some_and(|task| crate::remote_runner::types::uuid(task).is_ok());
+    if !(matches!(method, "GET" | "POST" | "PUT" | "DELETE") || metadata_patch)
         || !(path.starts_with("/v1/") || path == "/healthz")
         || path.len() > 4096
         || path
@@ -246,6 +251,14 @@ mod tests {
         ] {
             assert!(prepare("POST", path, None, vec![]).is_err());
         }
+        assert!(prepare(
+            "PATCH",
+            "/v1/tasks/00000000-0000-4000-8000-000000000001/thread-metadata",
+            Some(serde_json::json!({"expectedRevision":0,"pinned":true})),
+            vec![]
+        )
+        .is_ok());
+        assert!(prepare("PATCH", "/v1/tasks/../thread-metadata", None, vec![]).is_err());
         assert!(prepare("PATCH", "/v1/tasks", None, vec![]).is_err());
         assert!(prepare(
             "GET",
@@ -270,6 +283,8 @@ mod tests {
         let tokens: Vec<&str> = CLIENT_CAPABILITIES.split(',').collect();
         assert!(tokens.len() <= 16);
         assert!(tokens.contains(&"subagentLifecycleRetention"));
+        assert!(tokens.contains(&"projectManagement"));
+        assert!(tokens.contains(&"threadManagement"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);

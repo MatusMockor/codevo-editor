@@ -242,6 +242,14 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_runner,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,
+            crate::remote_runner::remote_runner_repository_hosts,
+            crate::remote_runner::remote_runner_lookup_repository,
+            crate::remote_runner::remote_runner_search_repositories,
+            crate::remote_runner::remote_runner_project_directories,
+            crate::remote_runner::remote_runner_get_thread_metadata,
+            crate::remote_runner::remote_runner_list_thread_metadata,
+            crate::remote_runner::remote_runner_patch_thread_metadata,
+            crate::remote_runner::remote_runner_order_thread,
             crate::remote_runner::remote_runner_get_project_clone,
             crate::remote_runner::remote_runner_cancel_project_clone,
             crate::remote_runner::remote_runner_list_tasks,
@@ -640,6 +648,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_repository_identity,
             repository_lookup_commands::repository_lookup_hosts,
             repository_lookup_commands::repository_lookup,
+            repository_lookup_commands::repository_search,
             directory_listing_commands::list_directory_entries,
             directory_listing_commands::open_directory_in_file_manager
         ])

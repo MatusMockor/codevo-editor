@@ -7,7 +7,7 @@ import {
   AgentExistingServerProjectDialog,
 } from "./AgentProjectSourceDialog";
 import { AgentLocalCloneDialog } from "./AgentLocalCloneDialog";
-import { AgentCloneDraftPanel } from "./AgentCloneDraftPanel";
+import { AgentCloneComposer } from "./AgentCloneComposer";
 import { AgentRemoteDraftProjectChooser } from "./AgentRemoteDraftProjectChooser";
 import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
@@ -187,6 +187,7 @@ export function AgentModeView(props: AgentModeViewProps) {
       refreshRemoteProjects={unified.refreshRemote}
       selectedServerId={remote?.selectedServerId ?? null}
       authoritativeRemoteProjectKeys={unified.authoritativeRemoteProjectKeys}
+      cloneAttachments={unified.cloneAttachments}
     />
   );
 }
@@ -218,6 +219,7 @@ function LocalAgentModeView({
   refreshRemoteProjects,
   selectedServerId,
   authoritativeRemoteProjectKeys,
+  cloneAttachments,
 }: AgentModeViewProps & {
   onSelectedThreadChange(threadId: string | null): void;
   onSelectedProjectChange(rootKey: string | null): void;
@@ -225,6 +227,10 @@ function LocalAgentModeView({
   refreshRemoteProjects(): Promise<void>;
   selectedServerId: string | null;
   authoritativeRemoteProjectKeys: ReadonlySet<string>;
+  cloneAttachments: {
+    readonly local: AgentThreadsSurface["attachments"];
+    readonly remote: AgentThreadsSurface["attachments"];
+  };
 }) {
   const surfaceEnterClass = useSurfaceEnterClass();
   const remoteContext = useRemoteRunnerContext();
@@ -775,7 +781,7 @@ function LocalAgentModeView({
                 onAddProject={openAddProject}
                 onCancelPendingClone={cancelPendingClone}
                 onDismissPendingClone={dismissPendingClone}
-                pendingClone={creation.pendingClone}
+                pendingClones={creation.pendingClones}
                 onOpenPendingClone={openPendingClone}
                 onChangeScope={changeProjectScope}
                 onCollapseSidebar={toggleRail}
@@ -829,18 +835,26 @@ function LocalAgentModeView({
                 thread={selectedThread}
               />
               {creation.visible && creation.pending !== null && creation.pendingClone !== null ? (
-                <AgentCloneDraftPanel
-                  clone={{
-                    ...creation.pendingClone,
-                    id: creation.pending.id,
-                    error: creation.error ?? creation.pendingClone.error,
+                <AgentCloneComposer
+                  creation={creation}
+                  agents={{
+                    ...agents,
+                    attachments:
+                      creation.pending.environment === null
+                        ? cloneAttachments.local
+                        : cloneAttachments.remote,
                   }}
-                  draft={creation.draft}
-                  onChangeDraft={creation.changeDraft}
-                  onCancel={creation.cancel}
-                  onRetry={creation.canRetry ? creation.retry : undefined}
-                  onClose={creation.hidePending}
-                  onContinue={creation.pending.target === null ? undefined : creation.continueDraft}
+                  projects={projects}
+                  providerEnabled={
+                    creation.pending.environment === null
+                      ? providerEnabled
+                      : REMOTE_PROVIDERS_ENABLED
+                  }
+                  providerManagement={agents.providerManagement}
+                  modelFavoritesPersistence={modelFavoritesPersistence}
+                  onThreadStarted={navigation.selectStartedThread}
+                  onOpenProviderSettings={agents.configureAgentCli}
+                  onOpenEnvironmentSettings={onOpenEnvironmentSettings}
                 />
               ) : selectedThreadId === null &&
                 selectedServerId !== null &&
@@ -1019,7 +1033,7 @@ function LocalAgentModeView({
             selectedServerId={selectedServerId}
             servers={remoteContext?.servers ?? NO_REMOTE_SERVERS}
             localCloneAvailable={chrome.addProject?.cloneGateway != null}
-            cloneBlocked={creation.pending !== null}
+            cloneBlocked={creation.pendingClones.length >= 4}
             onClose={creation.closeEntry}
             onChoose={creation.choose}
           />
@@ -1034,6 +1048,7 @@ function LocalAgentModeView({
         {creation.localDialogOpen && chrome.addProject !== null && (
           <AgentLocalCloneDialog
             gateway={chrome.addProject.gateway}
+            lookupGateway={remoteContext?.repositoryLookup ?? null}
             onClose={creation.closeLocal}
             onClone={creation.local.start}
             busy={creation.local.busy}

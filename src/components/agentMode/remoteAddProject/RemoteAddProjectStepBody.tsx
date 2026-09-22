@@ -81,6 +81,9 @@ export function RemoteAddProjectStepBody({
     case "confirm":
       return (
         <RemoteAddProjectConfirm
+          directoryGateway={controller.directoryGateway}
+          parentPath={controller.parentPath}
+          onParentPath={controller.setParentPath}
           onBranch={controller.setBranch}
           onName={controller.setName}
           onOpenExisting={controller.openExisting}

@@ -25,6 +25,8 @@ function setup(running = false) {
   });
   const local = threadsSurfaceFixture({
     renameThread: vi.fn(),
+    updateThreadOrganization: vi.fn(),
+    reorderThread: vi.fn(),
     togglePin: vi.fn(),
     archive: vi.fn(),
     remove: vi.fn(),
@@ -80,6 +82,19 @@ describe("remote conversation action routing", () => {
     ])
       expect(action).not.toHaveBeenCalled();
     expect(h.actions.threadCopyDetail(h.id, "threadId")).toBe("root");
+  });
+  it("routes organization locally or remotely without crossing environments", () => {
+    const h = setup();
+    h.actions.updateThreadOrganization(h.id, { snoozedUntil: 5000 });
+    h.actions.updateThreadOrganization("local", { settledAt: 4000 });
+    h.actions.reorderThread("local", h.id, "before");
+    expect(h.update).toHaveBeenCalledWith(h.id, { snoozedUntil: 5000 });
+    expect(h.local.updateThreadOrganization).toHaveBeenCalledWith("local", { settledAt: 4000 });
+    expect(h.local.reorderThread).not.toHaveBeenCalled();
+    const running = setup(true);
+    running.actions.updateThreadOrganization(running.id, { settledAt: 4000 });
+    expect(running.update).not.toHaveBeenCalled();
+    expect(running.report).toHaveBeenCalled();
   });
   it("does not archive or remove a running conversation", () => {
     const h = setup(true);

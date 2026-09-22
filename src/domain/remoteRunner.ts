@@ -1,3 +1,16 @@
+import type {
+  RepositoryHostsSnapshot,
+  RepositoryLookupRequest,
+  RepositoryLookupOutcome,
+  RepositorySearchRequest,
+  RepositorySearchOutcome,
+} from "./repositoryLookup";
+import type {
+  RemoteThreadMetadata,
+  RemoteThreadMetadataPatch,
+  RemoteThreadMetadataPage,
+} from "./remoteThreadMetadata";
+import type { RemoteProjectDirectories } from "./remoteProjectManagement";
 import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import type {
   RemoteRunnerCollectInstructionsRequest,
@@ -30,6 +43,8 @@ export type RemoteRunnerDescriptor = Readonly<{
     imageAttachments?: boolean;
     textAttachments?: boolean;
     projectCloning?: boolean;
+    projectManagement?: boolean;
+    threadManagement?: boolean;
     taskContinuation?: boolean;
     taskLaunchOptions?: boolean;
     taskIsolation?: boolean;
@@ -50,6 +65,7 @@ export type RemoteRunnerCloneRequest = RemoteRunnerServerRequest &
     url: string;
     name: string;
     branch?: string;
+    parentPath?: string;
   }>;
 export type RemoteRunnerCloneJobRequest = RemoteRunnerServerRequest & Readonly<{ cloneId: string }>;
 export type RemoteRunnerCloneJob = Readonly<{
@@ -223,6 +239,27 @@ export type RemoteRunnerHistorySearchPage = Readonly<{
 }>;
 
 export interface RemoteRunnerGateway {
+  listRepositoryHosts?(request: RemoteRunnerServerRequest): Promise<RepositoryHostsSnapshot>;
+  lookupRepository?(
+    request: RemoteRunnerServerRequest & Readonly<{ request: RepositoryLookupRequest }>,
+  ): Promise<RepositoryLookupOutcome>;
+  searchRepositories?(
+    request: RemoteRunnerServerRequest & Readonly<{ request: RepositorySearchRequest }>,
+  ): Promise<RepositorySearchOutcome>;
+  listProjectDirectories?(
+    request: RemoteRunnerServerRequest & Readonly<{ path?: string }>,
+  ): Promise<RemoteProjectDirectories>;
+  getThreadMetadata?(request: RemoteRunnerTaskRequest): Promise<RemoteThreadMetadata>;
+  listThreadMetadata?(
+    request: RemoteRunnerServerRequest & Readonly<{ after?: string }>,
+  ): Promise<RemoteThreadMetadataPage>;
+  updateThreadMetadata?(
+    request: RemoteRunnerTaskRequest & Readonly<{ patch: RemoteThreadMetadataPatch }>,
+  ): Promise<RemoteThreadMetadata>;
+  reorderThread?(
+    request: RemoteRunnerTaskRequest &
+      Readonly<{ targetTaskId: string; placement: "before" | "after" }>,
+  ): Promise<Readonly<{ items: readonly RemoteThreadMetadata[] }>>;
   steerTask?(request: RemoteRunnerSteerTaskRequest): Promise<RemoteRunnerSteerResponse>;
   steerPendingMessage?(
     request: RemoteRunnerSteerPendingRequest,

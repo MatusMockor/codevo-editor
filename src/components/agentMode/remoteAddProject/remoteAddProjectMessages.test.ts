@@ -43,7 +43,7 @@ describe("remoteAddProjectMessages", () => {
     expect(messages.every((entry) => entry !== null)).toBe(true);
     expect(messages.every((entry) => (entry?.message.length ?? 0) <= 200)).toBe(true);
     expect(messages[0]?.remedy).toBe(
-      "Access through this machine's The GitLab CLI (glab) account is required.",
+      "Access through the selected server's The GitLab CLI (glab) account is required.",
     );
     expect(messages[5]?.remedy).toBe("Try again in 45 seconds.");
     expect(messages[6]?.remedy).toBeNull();
@@ -75,14 +75,14 @@ describe("remoteAddProjectMessages", () => {
     const messages = reasons.map((reason) => remoteAddProjectSourceReason("gitlab", reason));
 
     expect(messages).toEqual([
-      "The GitLab CLI (glab) was not found on this machine. Install `glab`, then retry.",
+      "The GitLab CLI (glab) was not found on the selected server. Install `glab`, then retry.",
       "The GitLab CLI (glab) is not logged in to any host. Run `glab auth login` in a terminal, then retry.",
       "The GitLab CLI (glab) host check did not finish.",
       "This server cannot clone repositories.",
       "Repository lookup is unavailable in this build.",
     ]);
     expect(remoteAddProjectSourceReason("github", "cliMissing")).toBe(
-      "The GitHub CLI (gh) was not found on this machine. Install `gh`, then retry.",
+      "The GitHub CLI (gh) was not found on the selected server. Install `gh`, then retry.",
     );
     expect(remoteAddProjectSourceReason("serverProject", "cloningUnsupported")).toBe(
       "This server cannot clone repositories.",

@@ -13,6 +13,13 @@ impl RepositoryLookupService {
         Self
     }
 
+    pub(crate) fn search(
+        &self,
+        _request: super::search_wire::RepositorySearchRequest,
+    ) -> super::search_wire::RepositorySearchOutcome {
+        super::search_wire::RepositorySearchOutcome::Failure(RepositoryLookupOutcome::CliMissing)
+    }
+
     pub(crate) fn hosts(&self) -> RepositoryHostsSnapshot {
         RepositoryHostsSnapshot {
             github: RepositoryHostsState::CliMissing,

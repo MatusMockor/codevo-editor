@@ -75,12 +75,13 @@ export interface AgentThreadsSidebarProps {
   readonly selectedThreadId: string | null;
   readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly pendingClones?: ReadonlyArray<RemoteAddProjectPendingClone>;
   readonly pendingClone?: RemoteAddProjectPendingClone | null;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly turnLog?: AgentTurnLogFactsSource | null;
-  onOpenPendingClone?(): void;
-  onCancelPendingClone?(): void;
-  onDismissPendingClone?(): void;
+  onOpenPendingClone?(id?: string): void;
+  onCancelPendingClone?(id?: string): void;
+  onDismissPendingClone?(id?: string): void;
   onOpenProviderSettings(): void;
   onOpenSourceControl(): void;
   onCollapseSidebar?(): void;
@@ -110,6 +111,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onNewThread,
   onProjectCommand,
   pendingClone = null,
+  pendingClones,
   onOpenPendingClone,
   providerEnabled,
   providerManagement,
@@ -187,13 +189,43 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       queueMicrotask(() => focusUsageSuccessor(trigger));
     };
   }, [closeUsage, usageOpen]);
+  const [organizationNow, setOrganizationNow] = useState(() => Date.now());
+  useEffect(() => {
+    const now = Date.now();
+    const future = views
+      .map((view) => view.thread.snoozedUntil ?? 0)
+      .filter((until) => until > now);
+    if (future.length === 0) return;
+    const next = future.reduce(
+      (minimum, until) => Math.min(minimum, until),
+      Number.MAX_SAFE_INTEGER,
+    );
+    const timer = setTimeout(
+      () => setOrganizationNow(Date.now()),
+      Math.min(2_147_483_647, Math.max(1, next - now)),
+    );
+    return () => clearTimeout(timer);
+  }, [views, organizationNow]);
   const sections = useMemo(
-    () => agentRailSections(views, scope, archivedExpanded, archivedShown),
-    [archivedExpanded, archivedShown, scope, views],
+    () =>
+      agentRailSections(
+        views,
+        scope,
+        archivedExpanded,
+        archivedShown,
+        Math.max(organizationNow, Date.now()),
+      ),
+    [archivedExpanded, archivedShown, scope, views, organizationNow],
   );
   useEffect(() => {
     if (turnLog === null) return;
-    const visible = [...sections.pinned, ...sections.active, ...sections.archived];
+    const visible = [
+      ...sections.pinned,
+      ...sections.active,
+      ...(sections.snoozed ?? []),
+      ...(sections.settled ?? []),
+      ...sections.archived,
+    ];
     for (const view of visible.slice(0, MAX_AGENT_RAIL_FACTS_REQUESTS)) {
       void turnLog.ensureThreadFacts(
         view.thread.threadId,
@@ -211,9 +243,13 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   );
   const visibleThreadIds = useMemo(
     () =>
-      [...sections.pinned, ...sections.active, ...sections.archived].map(
-        (view) => view.thread.threadId,
-      ),
+      [
+        ...sections.pinned,
+        ...sections.active,
+        ...(sections.snoozed ?? []),
+        ...(sections.settled ?? []),
+        ...sections.archived,
+      ].map((view) => view.thread.threadId),
     [sections],
   );
   const focusedThreadId = rovingThreadId(focusRequest, selectedThreadId, visibleThreadIds);
@@ -387,14 +423,15 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         }
         searchRef={searchRef}
       />
-      {pendingClone !== null && (
+      {(pendingClones ?? (pendingClone === null ? [] : [pendingClone])).map((clone) => (
         <AgentRailCloneRow
-          clone={pendingClone}
-          onOpen={onOpenPendingClone}
-          onCancel={() => onCancelPendingClone?.()}
-          onDismiss={() => onDismissPendingClone?.()}
+          key={clone.id}
+          clone={clone}
+          onOpen={onOpenPendingClone === undefined ? undefined : () => onOpenPendingClone(clone.id)}
+          onCancel={() => onCancelPendingClone?.(clone.id)}
+          onDismiss={() => onDismissPendingClone?.(clone.id)}
         />
-      )}
+      ))}
       {!search.active && selection.count > 1 && (
         <AgentThreadSelectionBar
           onAction={runBulkAction}

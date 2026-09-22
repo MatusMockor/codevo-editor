@@ -30,7 +30,7 @@ export function remoteAddProjectLookupMessage(
 export function remoteAddProjectEntryHint(source: RemoteAddProjectEntrySource): string {
   if (source === "gitUrl")
     return "Press Enter to continue. A URL carrying credentials is rejected.";
-  return `Press Enter to look up one exact ${remoteAddProjectPathHint(source)} on this machine's CLI account.`;
+  return `Press Enter to look up one exact ${remoteAddProjectPathHint(source)} on the selected server's CLI account.`;
 }
 
 export function remoteAddProjectProviderLabel(provider: RepositoryProvider): string {
@@ -65,9 +65,9 @@ export function remoteAddProjectSourceDescription(kind: RemoteProjectSourceKind)
     case "gitUrl":
       return "Clone from a Git clone URL";
     case "github":
-      return "Clone owner/repo";
+      return "Search GitHub repositories";
     case "gitlab":
-      return "Clone group/project";
+      return "Search GitLab repositories";
     default:
       return unsupportedSource(kind);
   }
@@ -79,7 +79,7 @@ export function remoteAddProjectSourceReason(
 ): string {
   switch (reason) {
     case "cliMissing":
-      return `${sourceCliName(kind)} was not found on this machine. ${installHint(kind)}`;
+      return `${sourceCliName(kind)} was not found on the selected server. ${installHint(kind)}`;
     case "notAuthenticated":
       return `${sourceCliName(kind)} is not logged in to any host. ${signInHint(kind)}`;
     case "hostsFailed":
@@ -184,10 +184,10 @@ function settledMessage(
     case "notFound":
       return {
         message: "That repository was not found.",
-        remedy: `Access through this machine's ${cliName(source)} account is required.`,
+        remedy: `Access through the selected server's ${cliName(source)} account is required.`,
       };
     case "cliMissing":
-      return { message: `${cliName(source)} was not found on this machine.`, remedy: null };
+      return { message: `${cliName(source)} was not found on the selected server.`, remedy: null };
     case "notAuthenticated":
       return {
         message: `${cliName(source)} is not logged in to that host.`,

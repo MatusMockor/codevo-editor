@@ -6,6 +6,7 @@ import type {
   RemoteAddProjectServerProject,
   RemoteAddProjectStep,
 } from "../../../application/useRemoteAddProject";
+import { ProjectRepositoryPicker } from "../ProjectRepositoryPicker";
 import { RemoteAddProjectFooter } from "./RemoteAddProjectFooter";
 import { RemoteAddProjectRepositoryHosts } from "./RemoteAddProjectRepositoryEntry";
 import { RemoteAddProjectSourceGlyph } from "./RemoteAddProjectSources";
@@ -137,6 +138,38 @@ export function AgentRemoteAddProjectDialog({
   );
 
   if (!open) return null;
+  if (
+    (step.kind === "repository" || step.kind === "sources") &&
+    controller.repositoryGateway &&
+    controller.chooseRepository
+  ) {
+    return (
+      <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
+        <section
+          className="quick-open agent-remote-add-project"
+          aria-label="Find a repository on the server"
+          onMouseDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onClose();
+            }
+          }}
+        >
+          <ProjectRepositoryPicker
+            gateway={controller.repositoryGateway}
+            environmentLabel="Selected server"
+            initialProvider={step.kind === "repository" ? step.provider : undefined}
+            onChoose={controller.chooseRepository}
+            onBack={step.kind === "sources" ? onClose : controller.back}
+            onUseUrl={() =>
+              step.kind === "sources" ? controller.chooseSource("gitUrl") : controller.useGitUrl()
+            }
+          />
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">

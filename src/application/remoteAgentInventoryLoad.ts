@@ -1,3 +1,5 @@
+import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
+import { loadRemoteThreadMetadata } from "./remoteThreadMetadataInventory";
 import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import { retainRemoteReplayWindow, type RemoteReplayGap } from "./remoteAgentReplayWindow";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
@@ -33,6 +35,7 @@ export interface RemoteAgentInventorySnapshot {
   readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete: ReadonlySet<string>;
   readonly replayTruncated: ReadonlySet<string>;
+  readonly threadMetadata?: ReadonlyMap<string, RemoteThreadMetadata>;
   readonly pendingMessages?: ReadonlyMap<string, readonly RemoteRunnerPendingMessage[]>;
   readonly error: string | null;
 }
@@ -264,7 +267,13 @@ export async function loadRemoteAgentInventory(
       throw new Error("The runner returned an invalid pending message queue.");
     pendingMessages.set(threadId(serverId, latestSelected), page.items);
   }
+  const threadMetadata =
+    descriptor.capabilities.threadManagement && gateway.listThreadMetadata
+      ? await loadRemoteThreadMetadata(gateway, serverId, check)
+      : new Map<string, RemoteThreadMetadata>();
+  check();
   return {
+    threadMetadata,
     pendingMessages,
     serverId,
     listingCursor: after,

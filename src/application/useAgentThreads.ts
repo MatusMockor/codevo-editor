@@ -1,3 +1,8 @@
+import {
+  compareAgentThreadOrder,
+  type AgentThreadOrganizationPatch,
+  type AgentThreadPlacement,
+} from "../domain/agentThreadOrganization";
 import { agentRootOwnerId } from "../domain/agentProject";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
 import { importSavedSessionHistory } from "./importSavedSessionHistory";
@@ -467,6 +472,30 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [currentState, markUnreadInStore, projects],
   );
 
+  const updateThreadOrganization = useCallback(
+    (threadId: string, patch: AgentThreadOrganizationPatch): void => {
+      const thread = currentState().threads.get(threadId);
+      if (thread === undefined || !ownsThread(projects, thread)) return;
+      dispatchAction({ kind: "threadOrganizationUpdated", threadId, owner: thread.owner, patch });
+    },
+    [currentState, projects, dispatchAction],
+  );
+  const reorderThread = useCallback(
+    (threadId: string, targetThreadId: string, placement: AgentThreadPlacement): void => {
+      const thread = currentState().threads.get(threadId);
+      if (thread === undefined || !ownsThread(projects, thread)) return;
+      dispatchAction({
+        kind: "threadReordered",
+        threadId,
+        owner: thread.owner,
+        targetThreadId,
+        placement,
+        now: now(),
+      });
+    },
+    [currentState, projects, dispatchAction, now],
+  );
+
   const renameThread = useCallback(
     (threadId: string, title: string): void => {
       const thread = currentState().threads.get(threadId);
@@ -770,6 +799,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     markThreadViewed,
     markThreadUnread,
     renameThread,
+    updateThreadOrganization,
+    reorderThread,
     threadCopyDetail,
     lastUsedLaunch,
     isolationPreview: isolation.isolationPreview,
@@ -958,10 +989,7 @@ function sameAvailability(left: AgentShipAvailability, right: AgentShipAvailabil
 
 function compareThreadViews(left: AgentThreadView, right: AgentThreadView): number {
   if (left.thread.pinned !== right.thread.pinned) return left.thread.pinned ? -1 : 1;
-  if (left.thread.updatedAtEpochMs !== right.thread.updatedAtEpochMs) {
-    return right.thread.updatedAtEpochMs - left.thread.updatedAtEpochMs;
-  }
-  return left.thread.threadId.localeCompare(right.thread.threadId);
+  return compareAgentThreadOrder(left.thread, right.thread);
 }
 
 function flattenProjectRepositories(

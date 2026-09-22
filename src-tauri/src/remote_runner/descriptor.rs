@@ -17,6 +17,10 @@ struct Descriptor {
 struct Capabilities {
     task_execution: bool,
     #[serde(default, deserialize_with = "optional_bool")]
+    project_management: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    thread_management: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     task_isolation: Option<bool>,
     event_replay: bool,
     task_drafts: Option<bool>,
@@ -79,6 +83,8 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
     let caps = descriptor.capabilities;
     let _ = (
         caps.task_execution,
+        caps.project_management,
+        caps.thread_management,
         caps.task_isolation,
         caps.event_replay,
         caps.task_drafts,
@@ -102,6 +108,27 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn management_capabilities_are_optional_strict_booleans() {
+        for cap in ["projectManagement", "threadManagement"] {
+            let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+            assert!(validate(value.clone()).is_ok());
+            for supported in [true, false] {
+                value["capabilities"][cap] = supported.into();
+                assert!(validate(value.clone()).is_ok());
+            }
+            for invalid in [
+                Value::Null,
+                "true".into(),
+                1.into(),
+                serde_json::json!({}),
+                serde_json::json!([]),
+            ] {
+                value["capabilities"][cap] = invalid;
+                assert!(validate(value.clone()).is_err());
+            }
+        }
+    }
     #[test]
     fn text_attachments_capability_is_optional_and_strict() {
         let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});

@@ -1,6 +1,4 @@
-import { MAX_PENDING_CLONE_DRAFT_CHARS } from "./agentProjectCreationSession";
-import { useId } from "react";
-import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
+import { Download, X } from "lucide-react";
 import "./agentCloneDraftPanel.css";
 
 export interface AgentCloneDraftPanelProps {
@@ -10,84 +8,76 @@ export interface AgentCloneDraftPanelProps {
     readonly status: string;
     readonly error: string | null;
   };
-  readonly draft: string;
-  readonly onChangeDraft: (draft: string) => void;
+  readonly preparing?: boolean;
   readonly onCancel: () => void;
   readonly onRetry?: () => void;
-  readonly onContinue?: () => void;
+  readonly onRemove?: () => void;
   readonly onClose: () => void;
 }
 
+/** Clone status sits directly above the regular composer; it never owns message input. */
 export function AgentCloneDraftPanel({
   clone,
-  draft,
-  onChangeDraft,
+  preparing = false,
   onCancel,
   onRetry,
-  onContinue,
+  onRemove,
   onClose,
 }: AgentCloneDraftPanelProps) {
-  const id = useId();
-  const oversized = new TextEncoder().encode(draft).byteLength > MAX_AGENT_TASK_PROMPT_BYTES;
   const complete = clone.status === "completed" || clone.status === "succeeded";
   const retryable = ["failed", "canceled", "cancelled", "interrupted"].includes(clone.status);
   const running = ["pending", "queued", "running", "cloning"].includes(clone.status);
-  const ready = complete && onContinue !== undefined;
-  const status = complete
-    ? "Clone complete. Continue to review your draft before sending."
+  const cancelled = ["canceled", "cancelled"].includes(clone.status);
+  const title = complete
+    ? preparing
+      ? `Preparing ${clone.name}`
+      : `${clone.name} is ready`
     : retryable
-      ? "Clone did not complete. Your draft is still available."
-      : running
-        ? "You can write your message while the repository is cloning. Sending waits until it is ready."
-        : "Waiting for the clone to become available. Your draft is still available.";
-
+      ? `${cancelled ? "Cancelled cloning" : "Could not clone"} ${clone.name}`
+      : `Cloning ${clone.name}`;
   return (
-    <section className="agent-clone-draft" aria-label={`Clone ${clone.name}`}>
-      <header className="agent-clone-draft__header">
-        <h2>{clone.name}</h2>
-        <button type="button" onClick={onClose} aria-label="Close clone draft">
-          Close
-        </button>
-      </header>
-      <p id={`${id}-status`} role="status">
-        {status}
-      </p>
-      {clone.error !== null && <p role="alert">{clone.error}</p>}
-      <label htmlFor={id}>Message for cloned project</label>
-      <textarea
-        id={id}
-        value={draft}
-        maxLength={MAX_PENDING_CLONE_DRAFT_CHARS}
-        placeholder="What would you like to work on?"
-        aria-describedby={`${id}-status${oversized ? ` ${id}-limit` : ""}`}
-        aria-invalid={oversized}
-        onChange={(event) => onChangeDraft(event.target.value)}
-      />
-      {oversized && (
-        <p id={`${id}-limit`} role="alert">
-          This message exceeds the {MAX_AGENT_TASK_PROMPT_BYTES.toLocaleString("en-US")}-byte limit.
-          Shorten it before continuing. Your text has not been truncated.
-        </p>
-      )}
+    <section
+      className="agent-clone-draft"
+      aria-label={`Clone ${clone.name}`}
+      data-failed={retryable}
+    >
+      <Download aria-hidden="true" size={16} />
+      <div className="agent-clone-draft__copy" role="status">
+        <strong>{title}</strong>
+        <span>
+          {complete
+            ? preparing
+              ? "Preparing the project. Your message stays here."
+              : "Review your message and send when you are ready."
+            : retryable
+              ? "Your message and attachments are kept. Retry to finish cloning."
+              : "Write your message below. Sending becomes available when cloning finishes."}
+        </span>
+        {clone.error !== null && <span role="alert">{clone.error}</span>}
+      </div>
       <div className="agent-clone-draft__actions">
         {running && (
-          <button type="button" onClick={onCancel}>
+          <button type="button" onClick={() => onCancel()}>
             Cancel clone
           </button>
         )}
-        {(retryable || (running && clone.error !== null)) && onRetry !== undefined && (
-          <button type="button" onClick={onRetry}>
+        {(retryable || clone.error !== null) && onRetry !== undefined && (
+          <button type="button" onClick={() => onRetry()}>
             {running ? "Retry status" : "Retry clone"}
+          </button>
+        )}
+        {(retryable || complete) && onRemove !== undefined && (
+          <button type="button" onClick={() => onRemove()}>
+            {complete ? "Dismiss clone" : "Remove project"}
           </button>
         )}
         <button
           type="button"
-          disabled={!ready || oversized}
-          onClick={() => {
-            if (ready && !oversized) onContinue();
-          }}
+          onClick={() => onClose()}
+          aria-label="Close clone draft"
+          title="Close clone draft"
         >
-          {ready ? "Continue with draft" : "Send"}
+          <X aria-hidden="true" size={14} />
         </button>
       </div>
     </section>

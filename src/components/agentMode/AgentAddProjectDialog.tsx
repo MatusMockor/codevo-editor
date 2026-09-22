@@ -22,6 +22,9 @@ export const MAX_RENDERED_DIRECTORY_ROWS = 200;
 export interface AgentAddProjectDialogProps {
   readonly gateway: DirectoryListingGateway;
   readonly mode?: "addProject" | "selectDirectory";
+  readonly environment?: "local" | "remote";
+  readonly environmentLabel?: string;
+  readonly initialPath?: string | null;
   readonly projectRootPaths: ReadonlyArray<string>;
   onClose(): void;
   onAdd(path: string): void;
@@ -32,13 +35,16 @@ export interface AgentAddProjectDialogProps {
 export function AgentAddProjectDialog({
   gateway,
   mode = "addProject",
+  environment = "local",
+  environmentLabel,
+  initialPath,
   onAdd,
   onClose,
   onNotice,
   onOpenExisting,
   projectRootPaths,
 }: AgentAddProjectDialogProps) {
-  const browser = useDirectoryBrowser(gateway);
+  const browser = useDirectoryBrowser(gateway, { initialPath });
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -94,11 +100,6 @@ export function AgentAddProjectDialog({
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
       if (event.key === "Enter") {
         event.preventDefault();
         if (event.metaKey || event.ctrlKey) {
@@ -124,16 +125,47 @@ export function AgentAddProjectDialog({
       event.preventDefault();
       setActiveIndex((current) => (current - 1 + visibleEntries.length) % visibleEntries.length);
     },
-    [ascend, commit, onClose, openHighlighted, query, visibleEntries.length],
+    [ascend, commit, openHighlighted, query, visibleEntries.length],
   );
 
   return (
-    <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
+    <div
+      className="palette-backdrop"
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+      role="presentation"
+    >
       <section
         aria-label={mode === "selectDirectory" ? "Choose destination folder" : "Add project"}
         className="quick-open agent-add-project"
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Tab") {
+            const controls = [
+              ...event.currentTarget.querySelectorAll<HTMLElement>('button, input, [tabindex="0"]'),
+            ].filter((control) => !control.hasAttribute("disabled"));
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+          }
+        }}
         onMouseDown={(event) => event.stopPropagation()}
       >
+        {environmentLabel !== undefined && (
+          <div className="search-everywhere-section-label">{environmentLabel}</div>
+        )}
         <div className="agent-add-project__path">
           <button
             aria-label="Go back"
@@ -147,7 +179,10 @@ export function AgentAddProjectDialog({
           </button>
           <FolderOpen aria-hidden="true" size={15} />
           <span className="agent-add-project__path-value" title={currentPath ?? undefined}>
-            {directoryDisplayPath(currentPath ?? "", browser.homePath)}
+            {directoryDisplayPath(
+              currentPath ?? "",
+              environment === "remote" ? null : browser.homePath,
+            )}
           </span>
         </div>
 
@@ -247,21 +282,28 @@ export function AgentAddProjectDialog({
             <kbd>⌫</kbd> up
           </span>
           <span>
-            <kbd>⌘↵</kbd> {intent.kind === "openExisting" ? "open project" : "add"}
+            <kbd>⌘↵</kbd>{" "}
+            {mode === "selectDirectory"
+              ? "choose folder"
+              : intent.kind === "openExisting"
+                ? "open project"
+                : "add"}
           </span>
           <span>
             <kbd>esc</kbd> close
           </span>
           <span className="agent-add-project__spacer" />
-          <button
-            className="agent-linkbutton"
-            disabled={currentPath === null}
-            onClick={openInFinder}
-            type="button"
-          >
-            <ExternalLink aria-hidden="true" size={13} />
-            Open in Finder
-          </button>
+          {environment === "local" && (
+            <button
+              className="agent-linkbutton"
+              disabled={currentPath === null}
+              onClick={openInFinder}
+              type="button"
+            >
+              <ExternalLink aria-hidden="true" size={13} />
+              Open in Finder
+            </button>
+          )}
           <button
             aria-describedby={intentReason === null ? undefined : REASON_ID}
             className="agent-add-project__add"

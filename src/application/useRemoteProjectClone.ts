@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RemoteRunnerCloneJob, RemoteRunnerGateway } from "../domain/remoteRunner";
 
-type Input = Readonly<{ url: string; name: string; branch?: string }>;
+type Input = Readonly<{ url: string; name: string; branch?: string; parentPath?: string }>;
 type Snapshot = {
   readonly gateway: RemoteRunnerGateway | null;
   readonly serverId: string;

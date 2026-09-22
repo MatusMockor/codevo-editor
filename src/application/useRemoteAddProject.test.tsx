@@ -988,3 +988,40 @@ it("restores the retried job rather than the failed submission across pending ac
   expect(onCloneReady).toHaveBeenCalledWith("clone-retry", CLONED_KEY);
   expect(view.selectProject).not.toHaveBeenCalled();
 });
+
+it("sends the selected server directory and retains it for a clone retry", async () => {
+  const view = setup();
+  await reachConfirm(view);
+  act(() => view.result.setParentPath!("/srv/projects/custom"));
+  expect(view.result.parentPath).toBe("/srv/projects/custom");
+  act(() => view.result.setParentPath!("/srv/projects/../private"));
+  expect(view.result.parentPath).toBe("/srv/projects/custom");
+  view.cloneProject.mockResolvedValueOnce({
+    ...runningJob,
+    status: "failed",
+    error: "temporary failure",
+  });
+  await act(async () => view.result.confirmClone());
+  expect(view.cloneProject).toHaveBeenCalledWith(
+    expect.objectContaining({ serverId: "server-a", parentPath: "/srv/projects/custom" }),
+  );
+  await act(async () => view.result.retryPendingClone());
+  expect(view.cloneProject).toHaveBeenLastCalledWith(
+    expect.objectContaining({ serverId: "server-a", parentPath: "/srv/projects/custom" }),
+  );
+});
+
+it("does not carry a destination or selected repository into another server generation", async () => {
+  const view = setup();
+  await reachConfirm(view);
+  act(() => view.result.setParentPath!("/srv/projects/custom"));
+  const stale = view.result;
+  await view.render("server-b");
+  expect(view.result.parentPath).toBeNull();
+  act(() => {
+    stale.setParentPath!("/srv/old");
+    stale.chooseRepository!(repository);
+  });
+  expect(view.result.parentPath).toBeNull();
+  expect(view.result.open).toBe(false);
+});

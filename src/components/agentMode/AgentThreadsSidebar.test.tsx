@@ -54,6 +54,43 @@ describe("AgentThreadsSidebar", () => {
     __resetKeymapPlatformCacheForTests();
   });
 
+  it("moves a dragged thread relative to a row and rejects cross-section drops", () => {
+    const command = vi.fn();
+    const views = threeThreads();
+    const pinned = { ...views[2]!, thread: { ...views[2]!.thread, pinned: true } };
+    render({
+      groups: [group(ROOT, "app", [views[0]!, views[1]!, pinned])],
+      onThreadMenuCommand: command,
+    });
+    const drag = (type: string, id: string) => {
+      const row = host.querySelector<HTMLElement>(`[data-thread-id="${id}"]`)!;
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientY: 0 });
+      Object.defineProperty(event, "dataTransfer", {
+        value: { setData: vi.fn(), effectAllowed: "", dropEffect: "" },
+      });
+      act(() => row.dispatchEvent(event));
+    };
+    drag("dragstart", "agt-2");
+    drag("drop", "agt-1");
+    expect(command).toHaveBeenCalledWith("agt-2", { kind: "moveBefore", targetThreadId: "agt-1" });
+    command.mockClear();
+    drag("dragstart", "agt-2");
+    drag("drop", "agt-3");
+    expect(command).not.toHaveBeenCalled();
+    drag("drop", "agt-1");
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it("moves snoozed rows back to active at their deadline without a data refresh", () => {
+    const original = settled("sleep", "Sleeping");
+    const sleeping = { ...original, thread: { ...original.thread, snoozedUntil: NOW + 1000 } };
+    render({ groups: [group(ROOT, "app", [sleeping])] });
+    expect(host.textContent).toContain("Snoozed (1)");
+    act(() => vi.advanceTimersByTime(1000));
+    expect(host.textContent).not.toContain("Snoozed (1)");
+    expect(host.querySelector('[data-thread-id="sleep"]')).not.toBeNull();
+  });
+
   it("renders the chrome, search row and scope row without headings or filters", () => {
     render();
 
@@ -577,17 +614,29 @@ describe("AgentThreadsSidebar", () => {
       "Copy path",
       "Copy branch",
       "Copy thread ID",
+      "Snooze…",
+      "Mark settled",
       "Stop",
       "Archive",
       "Delete",
     ]);
-    expect((items[8] as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (items.find((item) => item.textContent === "Archive") as HTMLButtonElement).disabled,
+    ).toBe(true);
 
     act(() => {
-      (items[9] as HTMLButtonElement).click();
+      (
+        items.find(
+          (item) => item.textContent === "Delete" || item.textContent === "Confirm delete",
+        ) as HTMLButtonElement
+      ).click();
     });
     act(() => {
-      (items[9] as HTMLButtonElement).click();
+      (
+        items.find(
+          (item) => item.textContent === "Delete" || item.textContent === "Confirm delete",
+        ) as HTMLButtonElement
+      ).click();
     });
 
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
@@ -1371,7 +1420,7 @@ describe("AgentThreadsSidebar", () => {
     const onCancelPendingClone = vi.fn();
     const onDismissPendingClone = vi.fn();
     render({
-      pendingClone: { name: "storefront", status: "running", error: null },
+      pendingClone: { id: "clone-storefront", name: "storefront", status: "running", error: null },
       onCancelPendingClone,
       onDismissPendingClone,
     });
@@ -1385,7 +1434,12 @@ describe("AgentThreadsSidebar", () => {
     expect(onCancelPendingClone).toHaveBeenCalledTimes(1);
 
     render({
-      pendingClone: { name: "storefront", status: "failed", error: "Clone rejected" },
+      pendingClone: {
+        id: "clone-storefront",
+        name: "storefront",
+        status: "failed",
+        error: "Clone rejected",
+      },
       onCancelPendingClone,
       onDismissPendingClone,
     });

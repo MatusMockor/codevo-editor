@@ -136,6 +136,9 @@ describe("repositoryLookup", () => {
   it("freezes the shared lookup limits", () => {
     expect(REPOSITORY_LOOKUP_LIMITS).toEqual({
       pathChars: 255,
+      queryChars: 100,
+      searchPageSize: 20,
+      searchMaxPages: 10,
       hostsPerProvider: 8,
       hostChars: 253,
       descriptionChars: 200,

@@ -242,6 +242,29 @@ describe("agent row status", () => {
 });
 
 describe("agent rail sections", () => {
+  it("keeps archived precedence, wakes snoozed threads at the deadline and retains manual order", () => {
+    const decorate = (id: string, metadata: Partial<AgentThread>) => {
+      const original = view({ threadId: id });
+      return { ...original, thread: { ...original.thread, ...metadata } };
+    };
+    const views = [
+      decorate("snoozed", { pinned: true, snoozedUntil: NOW + 1000 }),
+      decorate("settled", { pinned: true, settledAt: NOW, snoozedUntil: NOW + 1000 }),
+      decorate("archived", { archived: true, settledAt: NOW }),
+      decorate("first", { sortOrder: 1, updatedAtEpochMs: NOW - 10000 }),
+      decorate("second", { sortOrder: 2, updatedAtEpochMs: NOW }),
+    ];
+    const sections = agentRailSections(views, ROOT_SCOPE, true, 20, NOW);
+    expect(ids(sections.snoozed ?? [])).toEqual(["snoozed"]);
+    expect(ids(sections.settled ?? [])).toEqual(["settled"]);
+    expect(ids(sections.archived)).toEqual(["archived"]);
+    expect(ids(sections.active)).toEqual(["first", "second"]);
+    expect(sections.pinned).toEqual([]);
+    expect(ids(agentRailSections(views, ROOT_SCOPE, true, 20, NOW + 1000).pinned)).toEqual([
+      "snoozed",
+    ]);
+  });
+
   it("orders pinned, active and archived by recency and pages the archive", () => {
     const views = [
       view({ threadId: "old", updatedAtEpochMs: NOW - 5000 }),
@@ -613,6 +636,8 @@ describe("agent rail labels", () => {
       "Copy branch",
       "Copy thread ID",
       "-",
+      "Snooze…",
+      "Mark settled",
       "Stop",
       "Archive",
       "Delete",

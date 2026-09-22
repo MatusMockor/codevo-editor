@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
+import { isRemoteProjectDirectoryPath } from "../domain/remoteProjectManagement";
 import type { CloneProtocol } from "../domain/repositoryCloneUrl";
-import type { RemoteProjectSourceKind } from "../domain/repositoryLookup";
+import type { DirectoryListingGateway } from "../domain/directoryListing";
+import type { RepositoryInfo, RemoteProjectSourceKind } from "../domain/repositoryLookup";
 import { remoteAgentProjectKey } from "./remoteAgentProjection";
 import {
   boundedRemoteAddProjectError,
@@ -43,6 +45,11 @@ import {
 
 export interface RemoteAddProjectController {
   readonly open: boolean;
+  readonly repositoryGateway?: RepositoryLookupGateway | null;
+  readonly directoryGateway?: DirectoryListingGateway | null;
+  readonly parentPath?: string | null;
+  chooseRepository?(repository: RepositoryInfo): void;
+  setParentPath?(path: string): void;
   readonly step: RemoteAddProjectStep;
   readonly serverProjects: readonly RemoteAddProjectServerProject[];
   readonly availability: Readonly<
@@ -86,6 +93,7 @@ export interface RemoteAddProjectSession {
 
 export interface RemoteAddProjectOptions {
   readonly session?: RemoteAddProjectSession;
+  readonly directoryGateway?: DirectoryListingGateway | null;
   readonly runnerGateway: RemoteRunnerGateway | null;
   readonly lookupGateway: RepositoryLookupGateway | null;
   readonly serverId: string | null;
@@ -104,7 +112,7 @@ type RemoteAddProjectSubmission = Readonly<{
   selectionIdentity: unknown;
 }>;
 
-type CloneRetryInput = Readonly<{ name: string; branch: string; url: string }>;
+type CloneRetryInput = Readonly<{ name: string; branch: string; url: string; parentPath?: string }>;
 type RetainedClone = Readonly<{
   gateway: RemoteRunnerGateway;
   serverId: string;
@@ -167,6 +175,7 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
   ports.current = options;
 
   const [state, setState] = useState(INITIAL_REMOTE_ADD_PROJECT_STATE);
+  const [parentPath, setParentPath] = useState<string | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const hosts = useRepositoryHosts({
@@ -195,12 +204,12 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
 
   const context = useMemo<RemoteAddProjectContext>(
     () => ({
-      serverProjects,
+      serverProjects: parentPath === null ? serverProjects : [],
       hosts: hosts.hosts,
       hostsTruncated: hosts.hostsTruncated,
       availability: hosts.availability,
     }),
-    [serverProjects, hosts.hosts, hosts.hostsTruncated, hosts.availability],
+    [serverProjects, parentPath, hosts.hosts, hosts.hostsTruncated, hosts.availability],
   );
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -230,6 +239,7 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     setAdoption(null);
     setFailure(null);
     setState(INITIAL_REMOTE_ADD_PROJECT_STATE);
+    setParentPath(null);
     return () => {
       mounted.current = false;
     };
@@ -372,23 +382,29 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
     }
     submitting.current = true;
     try {
-      await startClone(step.name, step.branch.trim(), url);
+      await startClone(step.name, step.branch.trim(), url, parentPath ?? undefined);
     } finally {
       submitting.current = false;
     }
   }
 
-  async function startClone(name: string, branch: string, url: string) {
+  async function startClone(name: string, branch: string, url: string, destination?: string) {
     dispatch({ kind: "submitStarted" });
-    const input = branch.length === 0 ? { url, name } : { url, name, branch };
-    retryInput.current = { name, branch, url };
+    const input = {
+      url,
+      name,
+      ...(branch ? { branch } : {}),
+      ...(destination ? { parentPath: destination } : {}),
+    };
+    const retry = { name, branch, url, ...(destination ? { parentPath: destination } : {}) };
+    retryInput.current = retry;
     if (!valid()) return;
     submitted.current = null;
     if (saved) saved.submission = null;
     const submissionIdentity = ports.current.selectionIdentity;
     const submissionRunnerId = runnerId.current;
     if (saved) {
-      saved.retryInput = { name, branch, url };
+      saved.retryInput = retry;
       saved.runnerId = submissionRunnerId;
     }
     const result = await cloneRef.current.start(input);
@@ -426,7 +442,7 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
         serverId: captured.serverId,
         workspaceOwner: captured.workspaceOwner,
         submission: submitted.current,
-        input: { name, branch, url },
+        input: retry,
       });
     }
     if (saved) {
@@ -449,6 +465,20 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
 
   return {
     open: state.open,
+    repositoryGateway: lookupGateway,
+    directoryGateway: options.directoryGateway ?? null,
+    parentPath,
+    setParentPath(path) {
+      if (!valid() || stateRef.current.step.kind !== "confirm" || stateRef.current.step.submitting)
+        return;
+      if (!isRemoteProjectDirectoryPath(path)) return;
+      setParentPath(path);
+    },
+    chooseRepository(repository) {
+      if (!valid()) return;
+      lookup.reset();
+      dispatch({ kind: "chooseRepository", repository });
+    },
     step: state.step,
     serverProjects,
     availability: hosts.availability,
@@ -527,7 +557,7 @@ export function useRemoteAddProject(options: RemoteAddProjectOptions): RemoteAdd
       )
         return;
       submitting.current = true;
-      void startClone(input.name, input.branch, input.url).finally(() => {
+      void startClone(input.name, input.branch, input.url, input.parentPath).finally(() => {
         if (valid()) submitting.current = false;
       });
     },

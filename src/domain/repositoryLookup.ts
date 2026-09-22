@@ -1,5 +1,8 @@
 export const REPOSITORY_LOOKUP_LIMITS = {
   pathChars: 255,
+  queryChars: 100,
+  searchPageSize: 20,
+  searchMaxPages: 10,
   hostsPerProvider: 8,
   hostChars: 253,
   descriptionChars: 200,
@@ -96,4 +99,29 @@ export function parseRepositoryPath(provider: RepositoryProvider, raw: string): 
 function isRepositoryPathSegment(segment: string): boolean {
   if (segment.includes("..")) return false;
   return REPOSITORY_PATH_SEGMENT_PATTERN.test(segment);
+}
+
+export type RepositorySearchRequest = Readonly<{
+  provider: RepositoryProvider;
+  host: string;
+  query: string;
+  page: number;
+}>;
+
+export type RepositorySearchOutcome =
+  | Readonly<{
+      status: "ok";
+      repositories: readonly RepositoryInfo[];
+      nextPage: number | null;
+      truncated: boolean;
+    }>
+  | Exclude<RepositoryLookupOutcome, Readonly<{ status: "ok"; repository: RepositoryInfo }>>;
+
+export function parseRepositorySearchQuery(raw: string): string | null {
+  const query = raw.trim();
+  return query.length <= REPOSITORY_LOOKUP_LIMITS.queryChars &&
+    /^[A-Za-z0-9][A-Za-z0-9._ /-]*$/.test(query) &&
+    !query.includes("..")
+    ? query
+    : null;
 }

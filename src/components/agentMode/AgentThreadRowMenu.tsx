@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { createPortal } from "react-dom";
 import {
   Archive,
+  Clock,
+  Check,
+  Undo2,
   FolderClosed,
   GitBranch,
   Hash,
@@ -13,6 +16,7 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
+import { AgentThreadSnoozePicker } from "./AgentThreadSnoozePicker";
 import { useWorkbenchFramePortalTarget } from "../workbenchFramePortal";
 import {
   agentThreadMenuEntries,
@@ -27,6 +31,10 @@ export interface AgentThreadRowMenuProps {
   readonly pinned: boolean;
   readonly archived: boolean;
   readonly running: boolean;
+  readonly snoozed?: boolean;
+  readonly settled?: boolean;
+  readonly moveUpId?: string;
+  readonly moveDownId?: string;
   readonly position: { readonly x: number; readonly y: number };
   onCommand(command: AgentThreadMenuCommand): void;
   onRename(): void;
@@ -40,6 +48,7 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [placed, setPlaced] = useState(position);
+  const [snooze, setSnooze] = useState(false);
   const [armed, setArmed] = useState<string | null>(null);
   const portalTarget = useWorkbenchFramePortalTarget();
   const entries = agentThreadMenuEntries(props);
@@ -90,6 +99,7 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
   }, [armed, onClose]);
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.target instanceof HTMLInputElement) return;
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     const items = [
@@ -105,6 +115,10 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
   const run = (entry: Extract<AgentThreadMenuEntry, { kind: "item" }>): void => {
     if (entry.destructive && armed !== entry.id) {
       setArmed(entry.id);
+      return;
+    }
+    if (entry.command === "snooze") {
+      setSnooze(true);
       return;
     }
     onClose();
@@ -125,25 +139,62 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
       role="menu"
       style={{ left: placed.x, top: placed.y }}
     >
-      {entries.map((entry) =>
-        entry.kind === "separator" ? (
-          <div aria-hidden="true" className="agent-menu__separator" key={entry.id} />
-        ) : (
-          <button
-            className={itemClassName(entry.destructive, armed === entry.id)}
-            data-armed={armed === entry.id ? "true" : undefined}
-            disabled={entry.disabled}
-            key={entry.id}
-            onClick={() => run(entry)}
-            role="menuitem"
-            type="button"
-          >
-            <span aria-hidden="true" className="agent-menu__icon">
-              <MenuIcon icon={entry.icon} />
-            </span>
-            {armed === entry.id ? `Confirm ${entry.label.toLowerCase()}` : entry.label}
-          </button>
-        ),
+      {snooze ? (
+        <AgentThreadSnoozePicker
+          onSnooze={(until) => {
+            onClose();
+            onCommand({ kind: "snooze", until });
+          }}
+        />
+      ) : (
+        <>
+          {props.moveUpId !== undefined && (
+            <button
+              className="agent-menu__item"
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                onClose();
+                onCommand({ kind: "moveBefore", targetThreadId: props.moveUpId! });
+              }}
+            >
+              Move up
+            </button>
+          )}
+          {props.moveDownId !== undefined && (
+            <button
+              className="agent-menu__item"
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                onClose();
+                onCommand({ kind: "moveAfter", targetThreadId: props.moveDownId! });
+              }}
+            >
+              Move down
+            </button>
+          )}
+          {entries.map((entry) =>
+            entry.kind === "separator" ? (
+              <div aria-hidden="true" className="agent-menu__separator" key={entry.id} />
+            ) : (
+              <button
+                className={itemClassName(entry.destructive, armed === entry.id)}
+                data-armed={armed === entry.id ? "true" : undefined}
+                disabled={entry.disabled}
+                key={entry.id}
+                onClick={() => run(entry)}
+                role="menuitem"
+                type="button"
+              >
+                <span aria-hidden="true" className="agent-menu__icon">
+                  <MenuIcon icon={entry.icon} />
+                </span>
+                {armed === entry.id ? `Confirm ${entry.label.toLowerCase()}` : entry.label}
+              </button>
+            ),
+          )}
+        </>
       )}
     </div>,
     portalTarget,
@@ -160,6 +211,9 @@ function restoreOpenerFocus(opener: HTMLElement | null, menu: HTMLDivElement | n
 
 function MenuIcon({ icon }: { readonly icon: AgentThreadMenuIcon }) {
   const size = 14;
+  if (icon === "snooze") return <Clock size={size} />;
+  if (icon === "settle") return <Check size={size} />;
+  if (icon === "restore") return <Undo2 size={size} />;
   if (icon === "newThread") return <MessageSquarePlus size={size} />;
   if (icon === "pin") return <Pin size={size} />;
   if (icon === "unpin") return <PinOff size={size} />;

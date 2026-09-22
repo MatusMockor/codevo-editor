@@ -652,10 +652,10 @@ describe("AgentWorkbenchScreen", () => {
         click(".agent-rail-clone__name");
       }
       await waitForReact(() =>
-        expect(host.querySelector(".agent-clone-draft textarea")).not.toBeNull(),
+        expect(host.querySelector(".agent-clone-composer textarea")).not.toBeNull(),
       );
       type(
-        host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")!,
+        host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")!,
         "Remote clone draft",
       );
       await show(ROOT_B);
@@ -663,29 +663,17 @@ describe("AgentWorkbenchScreen", () => {
       expect(opening).not.toHaveBeenCalled();
       expect(host.querySelector(".agent-rail-clone__name")).not.toBeNull();
       click(".agent-rail-clone__name");
-      expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")?.value).toBe(
+      expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")?.value).toBe(
         "Remote clone draft",
       );
       finishClone();
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 1600));
       });
-      await waitForReact(() =>
-        expect(
-          [...host.querySelectorAll("button")].some(
-            (item) => item.textContent === "Continue with draft",
-          ),
-        ).toBe(true),
-      );
-      clickText("Continue with draft");
+      await waitForReact(() => expect(host.textContent?.includes("is ready")).toBe(true));
       await act(async () => {});
       expect(prompt().value).toBe("Remote clone draft");
-      expect(agentComposerDraftStore.readDraft("new:remote:linux:runner:cloned")).toBe(
-        "Remote clone draft",
-      );
-      expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain(
-        "storefront-api",
-      );
+      expect(host.querySelector(".agent-clone-draft")?.textContent).toContain("storefront-api");
       expect(opening).not.toHaveBeenCalled();
       expect(startThread).not.toHaveBeenCalled();
       expect(gateway.createTask).not.toHaveBeenCalled();
@@ -773,10 +761,10 @@ describe("AgentWorkbenchScreen", () => {
     );
     clickText("Clone repository");
     await waitForReact(() =>
-      expect(host.querySelector(".agent-clone-draft textarea")).not.toBeNull(),
+      expect(host.querySelector(".agent-clone-composer textarea")).not.toBeNull(),
     );
     type(
-      host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")!,
+      host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")!,
       "Keep this running clone draft",
     );
     await show(ROOT_B);
@@ -785,22 +773,14 @@ describe("AgentWorkbenchScreen", () => {
     expect(gateway.cancel).not.toHaveBeenCalled();
     expect(host.querySelector(".agent-rail-clone__name")).not.toBeNull();
     click(".agent-rail-clone__name");
-    expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")?.value).toBe(
+    expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")?.value).toBe(
       "Keep this running clone draft",
     );
     finish = true;
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1600));
     });
-    await waitForReact(() =>
-      expect(
-        [...host.querySelectorAll("button")].some(
-          (item) => item.textContent === "Continue with draft",
-        ),
-      ).toBe(true),
-    );
-    expect(opening).not.toHaveBeenCalled();
-    clickText("Continue with draft");
+    await waitForReact(() => expect(opening.mock.calls.length === 1).toBe(true));
     await act(async () => {});
     expect(opening).toHaveBeenCalledExactlyOnceWith(ROOT_B);
     expect(prompt().value).toBe("Keep this running clone draft");
@@ -896,30 +876,22 @@ describe("AgentWorkbenchScreen", () => {
       );
       clickText("Clone repository");
       await waitForReact(() =>
-        expect(host.querySelector(".agent-clone-draft textarea")).not.toBeNull(),
+        expect(host.querySelector(".agent-clone-composer textarea")).not.toBeNull(),
       );
       type(
-        host.querySelector<HTMLTextAreaElement>(".agent-clone-draft textarea")!,
+        host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")!,
         "Cloned project draft",
       );
-      await waitForReact(() =>
-        expect(
-          [...host.querySelectorAll("button")].some(
-            (item) => item.textContent === "Continue with draft",
-          ),
-        ).toBe(true),
-      );
+      await waitForReact(() => expect(opening).toHaveBeenCalledOnce());
       const cloneId = cloneStart.mock.calls[0]![0].idempotencyKey;
-      clickText("Continue with draft");
       await act(async () => {});
       expect(opening).toHaveBeenCalledWith(ROOT_B);
       // The old AgentModeView has unmounted before the open receipt settles.
-      expect(host.querySelector(".agent-clone-draft")).toBeNull();
+      expect(host.querySelector(".agent-clone-draft")).not.toBeNull();
       await act(async () => resolveReceipt(receipt));
-      const expected = existing ? `${existing}\n\nCloned project draft` : "Cloned project draft";
-      await waitForReact(() => expect(prompt().value).toBe(expected));
-      expect(host.querySelector('[aria-label="Repository clone"]')).toBeNull();
-      expect(agentComposerDraftStore.readDraft(`new:${ROOT_B}`)).toBe(expected);
+      await waitForReact(() => expect(prompt().value).toBe("Cloned project draft"));
+      expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull();
+      expect(agentComposerDraftStore.readDraft(`new:${ROOT_B}`)).toBe(existing);
       expect(agentComposerDraftStore.readDraft(`clone:local:${cloneId}`)).toBe(
         "Cloned project draft",
       );

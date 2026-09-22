@@ -1,4 +1,10 @@
 import {
+  updateAgentThreadOrganization,
+  reorderAgentThread,
+  type AgentThreadOrganizationPatch,
+  type AgentThreadPlacement,
+} from "./agentThreadOrganization";
+import {
   retainAgentSubagentLifecycle,
   type AgentSubagentLifecycle,
 } from "./agentSubagentLifecycle";
@@ -280,6 +286,9 @@ export interface AgentThreadExternalOrigin {
 
 export interface AgentThread {
   readonly historyRevision?: number;
+  readonly snoozedUntil?: number | null;
+  readonly settledAt?: number | null;
+  readonly sortOrder?: number | null;
   readonly threadId: string;
   readonly owner: AgentThreadOwner;
   readonly target: AgentThreadTarget;
@@ -306,6 +315,20 @@ export interface AgentThreadLoadOwner {
 }
 
 export type AgentThreadsAction =
+  | {
+      readonly kind: "threadOrganizationUpdated";
+      readonly threadId: string;
+      readonly owner: AgentThreadOwner;
+      readonly patch: AgentThreadOrganizationPatch;
+    }
+  | {
+      readonly kind: "threadReordered";
+      readonly threadId: string;
+      readonly owner: AgentThreadOwner;
+      readonly targetThreadId: string;
+      readonly placement: AgentThreadPlacement;
+      readonly now: number;
+    }
   | {
       readonly kind: "loaded";
       readonly owner: AgentThreadLoadOwner;
@@ -567,6 +590,17 @@ export function agentThreadsReducer(
       return markThreadViewed(state, action.threadId, action.atEpochMs);
     case "threadMarkedUnread":
       return markThreadUnread(state, action.threadId);
+    case "threadOrganizationUpdated":
+      return updateAgentThreadOrganization(state, action.threadId, action.owner, action.patch);
+    case "threadReordered":
+      return reorderAgentThread(
+        state,
+        action.threadId,
+        action.owner,
+        action.targetThreadId,
+        action.placement,
+        action.now,
+      );
     case "threadRenamed":
       return renameThread(state, action.threadId, action.title);
     case "ownerRebound":
@@ -696,6 +730,8 @@ function startTurn(state: AgentThreadsState, threadId: string, turn: AgentTurn):
   const boundedTurn = boundAgentTurnEvents(turn);
   return replaceThread(state, {
     ...thread,
+    ...(thread.snoozedUntil != null ? { snoozedUntil: null } : {}),
+    ...(thread.settledAt != null ? { settledAt: null } : {}),
     turns: [...retained.turns, boundedTurn],
     turnsTruncated: thread.turnsTruncated || retained.evicted,
     updatedAtEpochMs: Math.max(thread.updatedAtEpochMs, turn.startedAtEpochMs),

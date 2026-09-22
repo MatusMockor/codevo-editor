@@ -45,7 +45,9 @@ describe("RemoteAddProjectRepositoryEntry", () => {
     render({ status: "settled", outcome: { status: "notFound" } }, { onUseGitUrl });
 
     expect(host.textContent).toContain("That repository was not found.");
-    expect(host.textContent).toContain("Access through this machine's The GitHub CLI (gh) account");
+    expect(host.textContent).toContain(
+      "Access through the selected server's The GitHub CLI (gh) account",
+    );
 
     const button = host.querySelector<HTMLButtonElement>(".agent-linkbutton");
     expect(button?.textContent).toBe("Use Git URL");

@@ -1,6 +1,9 @@
 import { parseRepositoryCloneUrl } from "./repositoryCloneUrl";
 import {
   isRepositoryHost,
+  parseRepositorySearchQuery,
+  type RepositorySearchRequest,
+  type RepositorySearchOutcome,
   parseRepositoryPath,
   REPOSITORY_LOOKUP_LIMITS,
   REPOSITORY_PROVIDERS,
@@ -296,4 +299,69 @@ function invalid(path: string, expectation: string): never {
   throw new TypeError(
     `Invalid repository lookup value at ${path.slice(0, 120)}: ${expectation.slice(0, 120)}.`,
   );
+}
+
+export function validateRepositorySearchRequest(
+  request: RepositorySearchRequest,
+): RepositorySearchRequest {
+  const value = record(request, "request");
+  exactKeys(value, ["provider", "host", "query", "page"], "request");
+  const provider = choice<RepositoryProvider>(
+    value.provider,
+    REPOSITORY_PROVIDERS,
+    "request.provider",
+  );
+  if (typeof value.query !== "string" || parseRepositorySearchQuery(value.query) !== value.query) {
+    return invalid("request.query", "expected a normalized repository search query");
+  }
+  return Object.freeze({
+    provider,
+    host: host(value.host, "request.host"),
+    query: value.query,
+    page: searchPage(value.page, "request.page"),
+  });
+}
+
+export function parseRepositorySearchOutcome(value: unknown): RepositorySearchOutcome {
+  const outcome = record(value, "outcome");
+  if (outcome.status !== "ok") {
+    const failure = parseRepositoryLookupOutcome(value);
+    if (failure.status === "ok") return invalid("outcome.status", "expected search result");
+    return failure;
+  }
+  exactKeys(outcome, ["status", "repositories", "nextPage", "truncated"], "outcome");
+  if (
+    !Array.isArray(outcome.repositories) ||
+    outcome.repositories.length > REPOSITORY_LOOKUP_LIMITS.searchPageSize
+  )
+    return invalid("outcome.repositories", "expected at most 20 repositories");
+  const repositories = outcome.repositories.map((item, index) =>
+    repositoryInfo(item, `outcome.repositories[${index}]`),
+  );
+  if (
+    new Set(
+      repositories.map((item) => `${item.provider}:${item.host}:${item.fullPath.toLowerCase()}`),
+    ).size !== repositories.length
+  )
+    return invalid("outcome.repositories", "expected unique repositories");
+  const nextPage =
+    outcome.nextPage === null ? null : searchPage(outcome.nextPage, "outcome.nextPage");
+  if (nextPage === 1) return invalid("outcome.nextPage", "expected a later page");
+  return Object.freeze({
+    status: "ok",
+    repositories: Object.freeze(repositories),
+    nextPage,
+    truncated: boolean(outcome.truncated, "outcome.truncated"),
+  });
+}
+
+function searchPage(value: unknown, path: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > REPOSITORY_LOOKUP_LIMITS.searchMaxPages
+  )
+    return invalid(path, "expected page 1 to 10");
+  return value;
 }

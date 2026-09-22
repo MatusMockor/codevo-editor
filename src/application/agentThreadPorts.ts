@@ -1,3 +1,7 @@
+import type {
+  AgentThreadOrganizationPatch,
+  AgentThreadPlacement,
+} from "../domain/agentThreadOrganization";
 import type { AgentHistoryCatalogSurface } from "./useAgentHistoryCatalog";
 import type {
   AgentHistoryTurnPage,
@@ -355,6 +359,8 @@ export interface AgentThreadsSurface {
   markThreadViewed(threadId: string): void;
   markThreadUnread(threadId: string): void;
   renameThread(threadId: string, title: string): void;
+  updateThreadOrganization?(threadId: string, patch: AgentThreadOrganizationPatch): void;
+  reorderThread?(threadId: string, targetThreadId: string, placement: AgentThreadPlacement): void;
   threadCopyDetail(threadId: string, detail: AgentThreadCopyDetail): string | null;
   lastUsedLaunch(projectRootKey: string): AgentLaunchOptions | null;
   isolationPreview(repositoryRoot: string, projectRootKey?: string): AgentIsolationPreview;

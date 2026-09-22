@@ -15,6 +15,8 @@ mod process_tests;
 #[cfg(unix)]
 mod resolver_tests;
 #[cfg(unix)]
+mod search_tests;
+#[cfg(unix)]
 mod security_tests;
 #[cfg(unix)]
 mod service_tests;

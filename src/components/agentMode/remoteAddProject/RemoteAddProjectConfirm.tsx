@@ -1,5 +1,7 @@
-import { useId, type KeyboardEvent } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 import type { RemoteAddProjectStep } from "../../../application/useRemoteAddProject";
+import type { DirectoryListingGateway } from "../../../domain/directoryListing";
+import { AgentAddProjectDialog } from "../AgentAddProjectDialog";
 import type { CloneProtocol } from "../../../domain/repositoryCloneUrl";
 import { RemoteAddProjectSourceGlyph } from "./RemoteAddProjectSources";
 import {
@@ -17,6 +19,10 @@ export type RemoteAddProjectConfirmStep = Extract<RemoteAddProjectStep, { kind: 
 
 export interface RemoteAddProjectConfirmProps {
   readonly step: RemoteAddProjectConfirmStep;
+  readonly directoryGateway?: DirectoryListingGateway | null;
+  readonly parentPath?: string | null;
+  readonly environmentLabel?: string;
+  onParentPath?(path: string): void;
   onName(value: string): void;
   onBranch(value: string): void;
   onProtocol(value: CloneProtocol): void;
@@ -25,6 +31,10 @@ export interface RemoteAddProjectConfirmProps {
 }
 
 export function RemoteAddProjectConfirm({
+  directoryGateway,
+  parentPath,
+  environmentLabel = "Server",
+  onParentPath,
   onBranch,
   onName,
   onOpenExisting,
@@ -32,6 +42,7 @@ export function RemoteAddProjectConfirm({
   onSubmit,
   step,
 }: RemoteAddProjectConfirmProps) {
+  const [browsing, setBrowsing] = useState(false);
   const nameId = useId();
   const nameErrorId = useId();
   const branchId = useId();
@@ -48,6 +59,25 @@ export function RemoteAddProjectConfirm({
     event.preventDefault();
     onSubmit();
   };
+
+  if (browsing && !step.submitting && directoryGateway && onParentPath) {
+    return (
+      <AgentAddProjectDialog
+        environment="remote"
+        environmentLabel={environmentLabel}
+        gateway={directoryGateway}
+        initialPath={parentPath}
+        mode="selectDirectory"
+        projectRootPaths={[]}
+        onClose={() => setBrowsing(false)}
+        onAdd={(path) => {
+          onParentPath(path);
+          setBrowsing(false);
+        }}
+        onOpenExisting={() => undefined}
+      />
+    );
+  }
 
   return (
     <form
@@ -76,10 +106,23 @@ export function RemoteAddProjectConfirm({
         </button>
       )}
 
+      {directoryGateway && onParentPath && (
+        <button
+          className="agent-linkbutton"
+          disabled={step.submitting}
+          onClick={() => setBrowsing(true)}
+          type="button"
+        >
+          Choose destination folder
+        </button>
+      )}
+
       <label className="agent-remote-add-project__field" htmlFor={nameId}>
         <span>Folder name</span>
         <span className="agent-remote-add-project__prefixed">
-          <span className="agent-remote-add-project__prefix">projects root/</span>
+          <span className="agent-remote-add-project__prefix" title={parentPath ?? undefined}>
+            {parentPath == null ? "projects root/" : `${parentPath.replace(/\/$/, "")}/`}
+          </span>
           <input
             aria-describedby={nameMessage === null ? undefined : nameErrorId}
             aria-invalid={nameMessage !== null}

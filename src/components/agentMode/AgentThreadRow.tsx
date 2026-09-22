@@ -25,6 +25,9 @@ export interface AgentThreadRowProps {
   readonly selected: boolean;
   readonly focused: boolean;
   readonly jumpLabel: string | null;
+  readonly moveUpId?: string;
+  readonly moveDownId?: string;
+  readonly reorderable?: boolean;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   onSelect(threadId: string, modifiers: ListSelectionModifiers): void;
   onTogglePin(threadId: string): void;
@@ -93,6 +96,10 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   const menuNode = menu !== null && (
     <AgentThreadRowMenu
       archived={thread.archived}
+      snoozed={(thread.snoozedUntil ?? 0) > Date.now()}
+      settled={thread.settledAt != null}
+      moveUpId={props.moveUpId}
+      moveDownId={props.moveDownId}
       branch={agentShipBranchLabel(view.ship)}
       onClose={closeMenu}
       onCommand={command}
@@ -112,6 +119,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           aria-selected={selected}
           className={rowClass}
           data-thread-id={threadId}
+          draggable={!renaming && props.reorderable === true}
           onClick={selectRow}
           onContextMenu={openMenu}
           role="option"
@@ -147,6 +155,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
         aria-selected={selected}
         className={rowClass}
         data-thread-id={threadId}
+        draggable={!renaming && props.reorderable === true}
         onClick={selectRow}
         onContextMenu={openMenu}
         role="option"

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen, GitBranch, Monitor, Server } from "lucide-react";
+import "./remoteAddProject/remoteAddProject.css";
 import type { RemoteRunnerServer } from "../../domain/remoteRunner";
 
 interface Props {
@@ -19,28 +21,58 @@ export function AgentProjectSourceDialog({
   onChoose,
 }: Props) {
   const [environment, setEnvironment] = useState(selectedServerId ?? "");
+  const section = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    section.current?.focus();
+  }, []);
   return (
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
       <section
         aria-label="Add project"
-        className="quick-open agent-remote-add-project"
+        ref={section}
+        tabIndex={-1}
+        className="quick-open agent-remote-add-project agent-project-source"
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
             onClose();
+            return;
+          }
+          if (event.key === "Tab") {
+            const controls = [
+              ...event.currentTarget.querySelectorAll<HTMLElement>("button, select"),
+            ].filter((control) => !control.hasAttribute("disabled"));
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (
+              event.shiftKey &&
+              (document.activeElement === first || document.activeElement === event.currentTarget)
+            ) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
           }
         }}
       >
         <div className="agent-remote-add-project__crumb">
           <strong>Add project</strong>
         </div>
-        <label className="agent-remote-add-project__crumb">
-          Environment
+        <label className="agent-project-source__environment">
+          <span className="agent-project-source__environment-label">
+            {environment === "" ? (
+              <Monitor aria-hidden="true" size={15} />
+            ) : (
+              <Server aria-hidden="true" size={15} />
+            )}
+            Environment
+          </span>
           <select
             aria-label="Project environment"
-            autoFocus
             value={environment}
             onChange={(event) => setEnvironment(event.currentTarget.value)}
           >
@@ -58,7 +90,8 @@ export function AgentProjectSourceDialog({
             type="button"
             onClick={() => onChoose(environment || null, "existing")}
           >
-            {environment === "" ? "Open existing folder" : "Open server project"}
+            <FolderOpen aria-hidden="true" size={17} />
+            <span>{environment === "" ? "Open existing folder" : "Open server project"}</span>
           </button>
           <button
             className="quick-open-result"
@@ -66,7 +99,8 @@ export function AgentProjectSourceDialog({
             disabled={cloneBlocked || (environment === "" && !localCloneAvailable)}
             onClick={() => onChoose(environment || null, "clone")}
           >
-            Clone repository
+            <GitBranch aria-hidden="true" size={17} />
+            <span>Clone repository</span>
           </button>
         </div>
         {cloneBlocked && (
@@ -92,7 +126,7 @@ export function AgentExistingServerProjectDialog({
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
       <section
         aria-label="Open server project"
-        className="quick-open agent-remote-add-project"
+        className="quick-open agent-remote-add-project agent-project-source"
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
@@ -117,7 +151,8 @@ export function AgentExistingServerProjectDialog({
                 key={project.key}
                 onClick={() => onSelect(project.key)}
               >
-                {project.label}
+                <FolderOpen aria-hidden="true" size={17} />
+                <span>{project.label}</span>
               </button>
             ))
           )}

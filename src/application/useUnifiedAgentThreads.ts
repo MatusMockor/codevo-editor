@@ -16,7 +16,8 @@ import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
-import { useRemoteAgentMetadata, type RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
+import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
+import { useServerThreadMetadata } from "./useServerThreadMetadata";
 import {
   isRemoteAgentIdentity,
   remoteAgentNotice,
@@ -112,7 +113,15 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     [report],
   );
   const inventory = useRemoteAgentInventory({ gateway, servers, workspaceOwner, selectedThreadId });
-  const metadata = useRemoteAgentMetadata(options.metadataRepository);
+  const metadata = useServerThreadMetadata({
+    gateway,
+    snapshots: inventory.snapshots,
+    owner,
+    valid,
+    report,
+    refresh: inventory.refresh,
+    repository: options.metadataRepository,
+  });
   const projectTargets = useMemo(() => {
     const result = new Map<
       string,
@@ -381,6 +390,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     threads: projected.views,
     report,
     update: metadata.update,
+    reorder: metadata.reorder,
     stop: async (id) => {
       const target = targetForThread(id);
       if (target) await mutations.stop(target);
@@ -516,13 +526,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         else await local.externalHistory?.load(id);
       },
     },
-    notice: remoteMode
-      ? notice !== null
+    notice:
+      notice !== null
         ? remoteAgentNotice(notice)
-        : remoteError !== null
-          ? remoteAgentNotice(remoteError)
-          : null
-      : local.notice,
+        : remoteMode
+          ? remoteError !== null
+            ? remoteAgentNotice(remoteError)
+            : null
+          : local.notice,
     deferredFollowUps,
     removeDeferredFollowUp: (threadId, id) => {
       if (isRemoteAgentIdentity(threadId)) void pendingMessages.remove(threadId, id);
@@ -689,6 +700,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const stableAgents = useRemoteAgentStableSurface(agents);
   return {
     agents: stableAgents,
+    cloneAttachments: { local: local.attachments, remote: remoteAttachments.attachments },
     projects,
     authoritativeRemoteProjectKeys,
     remoteLoading: inventory.loading,

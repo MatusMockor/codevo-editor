@@ -136,6 +136,9 @@ fn thread_document(
             title: "do the thing".to_string(),
             pinned: false,
             archived: false,
+            snoozed_until: None,
+            settled_at: None,
+            sort_order: None,
             created_at_epoch_ms: 1,
             updated_at_epoch_ms,
             turns: vec![settled_turn("agt-turn-0001")],
@@ -1537,3 +1540,6 @@ mod context_tests;
 
 #[path = "agent_thread_store_unreadable_budget_tests.rs"]
 mod unreadable_budget_tests;
+
+#[path = "agent_thread_store_management_tests.rs"]
+mod management_tests;

@@ -9,6 +9,9 @@ export interface RemoteAgentMetadata {
   readonly archived?: boolean;
   readonly removed?: boolean;
   readonly viewedAtEpochMs?: number | null;
+  readonly snoozedUntil?: number | null;
+  readonly settledAt?: number | null;
+  readonly sortOrder?: number | null;
 }
 
 export interface RemoteAgentMetadataRepository {

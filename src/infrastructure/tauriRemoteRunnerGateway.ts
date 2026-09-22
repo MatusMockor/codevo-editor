@@ -18,6 +18,14 @@ export const REMOTE_RUNNER_COMMANDS = {
   removeServer: "remote_runner_remove_server",
   getRunner: "remote_runner_get_runner",
   listProjects: "remote_runner_list_projects",
+  listRepositoryHosts: "remote_runner_repository_hosts",
+  lookupRepository: "remote_runner_lookup_repository",
+  searchRepositories: "remote_runner_search_repositories",
+  listProjectDirectories: "remote_runner_project_directories",
+  getThreadMetadata: "remote_runner_get_thread_metadata",
+  listThreadMetadata: "remote_runner_list_thread_metadata",
+  updateThreadMetadata: "remote_runner_patch_thread_metadata",
+  reorderThread: "remote_runner_order_thread",
   cloneProject: "remote_runner_clone_project",
   getProjectClone: "remote_runner_get_project_clone",
   cancelProjectClone: "remote_runner_cancel_project_clone",
@@ -98,6 +106,42 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   getRunner(request: R.RemoteRunnerServerRequest) {
     return this.call("getRunner", request);
+  }
+  listRepositoryHosts(
+    request: Parameters<NonNullable<R.RemoteRunnerGateway["listRepositoryHosts"]>>[0],
+  ) {
+    return this.call("listRepositoryHosts", request);
+  }
+  lookupRepository(request: Parameters<NonNullable<R.RemoteRunnerGateway["lookupRepository"]>>[0]) {
+    return this.call("lookupRepository", request);
+  }
+  searchRepositories(
+    request: Parameters<NonNullable<R.RemoteRunnerGateway["searchRepositories"]>>[0],
+  ) {
+    return this.call("searchRepositories", request);
+  }
+  listProjectDirectories(
+    request: Parameters<NonNullable<R.RemoteRunnerGateway["listProjectDirectories"]>>[0],
+  ) {
+    return this.call("listProjectDirectories", request);
+  }
+  getThreadMetadata(
+    request: Parameters<NonNullable<R.RemoteRunnerGateway["getThreadMetadata"]>>[0],
+  ) {
+    return this.call("getThreadMetadata", request);
+  }
+  listThreadMetadata(
+    request: Parameters<NonNullable<R.RemoteRunnerGateway["listThreadMetadata"]>>[0],
+  ) {
+    return this.call("listThreadMetadata", request);
+  }
+  updateThreadMetadata(
+    request: Parameters<NonNullable<R.RemoteRunnerGateway["updateThreadMetadata"]>>[0],
+  ) {
+    return this.call("updateThreadMetadata", request);
+  }
+  reorderThread(request: Parameters<NonNullable<R.RemoteRunnerGateway["reorderThread"]>>[0]) {
+    return this.call("reorderThread", request);
   }
   listProjects(request: R.RemoteRunnerServerRequest) {
     return this.call("listProjects", request);

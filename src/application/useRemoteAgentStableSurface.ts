@@ -22,6 +22,11 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       markThreadViewed: (...args) => current.current.markThreadViewed(...args),
       markThreadUnread: (...args) => current.current.markThreadUnread(...args),
       renameThread: (...args) => current.current.renameThread(...args),
+      updateThreadOrganization: (
+        ...args: Parameters<NonNullable<AgentThreadsSurface["updateThreadOrganization"]>>
+      ) => current.current.updateThreadOrganization?.(...args),
+      reorderThread: (...args: Parameters<NonNullable<AgentThreadsSurface["reorderThread"]>>) =>
+        current.current.reorderThread?.(...args),
       threadCopyDetail: (...args) => current.current.threadCopyDetail(...args),
       lastUsedLaunch: (...args) => current.current.lastUsedLaunch(...args),
       isolationPreview: (...args) => current.current.isolationPreview(...args),

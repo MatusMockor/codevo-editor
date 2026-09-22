@@ -7,6 +7,34 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.67] - 2026-09-22
+
+### Added
+
+- Search GitHub and GitLab repositories automatically as you type when adding a
+  project locally or on a server, using the account on the selected machine. Other providers
+  remain available through Git URLs.
+- Browse clone destinations within the server's configured project directory.
+- Organize conversations with manual ordering, Snooze, and Settled locally and
+  remotely. Server conversation preferences persist on the Runner and are shared
+  across connected editors.
+
+### Changed
+
+- Use the regular composer while cloning, retaining drafts, attachments, and
+  launch settings across navigation and retries. Sending becomes available after
+  cloning completes and always requires an explicit action.
+- Retain independent pending clone flows in the sidebar.
+- Improve Add project and repository selection spacing, keyboard navigation,
+  and theme-aware presentation.
+
+### Fixed
+
+- Protect remote project and conversation operations from stale connections and
+  concurrent metadata updates.
+- Keep sidebar rendering isolated from streamed response updates while clone
+  flows are retained.
+
 ## [0.2.0-beta.66] - 2026-09-21
 
 ### Changed

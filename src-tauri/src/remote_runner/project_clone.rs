@@ -12,6 +12,8 @@ pub struct CloneProjectRequest {
     pub name: String,
     #[serde(default, deserialize_with = "optional_branch")]
     pub branch: Option<String>,
+    #[serde(default, deserialize_with = "optional_branch")]
+    pub parent_path: Option<String>,
 }
 
 fn optional_branch<'de, D: serde::Deserializer<'de>>(
@@ -32,16 +34,10 @@ pub async fn remote_runner_clone_project(
     state: tauri::State<'_, RemoteRunnerState>,
     request: CloneProjectRequest,
 ) -> Result<Value, String> {
-    let state = state.inner().clone();
+    let body = request.body()?;
+    let lease = state.connection_lease(&request.server_id)?;
     blocking(move || {
-        let body = request.body()?;
-        state.call(
-            &request.server_id,
-            "POST",
-            "/v1/projects/clone",
-            Some(body),
-            vec![],
-        )
+        super::project_management::call_lease(lease, "POST", "/v1/projects/clone", Some(body))
     })
     .await
 }
@@ -51,17 +47,10 @@ pub async fn remote_runner_get_project_clone(
     state: tauri::State<'_, RemoteRunnerState>,
     request: ProjectCloneRequest,
 ) -> Result<Value, String> {
-    let state = state.inner().clone();
-    blocking(move || {
-        state.call(
-            &request.server_id,
-            "GET",
-            &clone_path(&request.clone_id, false)?,
-            None,
-            vec![],
-        )
-    })
-    .await
+    super::types::id(&request.server_id)?;
+    let path = clone_path(&request.clone_id, false)?;
+    let lease = state.connection_lease(&request.server_id)?;
+    blocking(move || super::project_management::call_lease(lease, "GET", &path, None)).await
 }
 
 #[tauri::command]
@@ -69,17 +58,10 @@ pub async fn remote_runner_cancel_project_clone(
     state: tauri::State<'_, RemoteRunnerState>,
     request: ProjectCloneRequest,
 ) -> Result<Value, String> {
-    let state = state.inner().clone();
-    blocking(move || {
-        state.call(
-            &request.server_id,
-            "POST",
-            &clone_path(&request.clone_id, true)?,
-            None,
-            vec![],
-        )
-    })
-    .await
+    super::types::id(&request.server_id)?;
+    let path = clone_path(&request.clone_id, true)?;
+    let lease = state.connection_lease(&request.server_id)?;
+    blocking(move || super::project_management::call_lease(lease, "POST", &path, None)).await
 }
 
 fn clone_path(clone_id: &str, cancel: bool) -> Result<String, String> {
@@ -107,6 +89,12 @@ impl CloneProjectRequest {
             json!({"idempotencyKey": self.idempotency_key, "url": self.url, "name": self.name});
         if let Some(branch) = &self.branch {
             body["branch"] = branch.clone().into();
+        }
+        if let Some(path) = &self.parent_path {
+            if !super::project_management::valid_directory_path(path) {
+                return Err("Invalid project directory".into());
+            }
+            body["parentPath"] = path.clone().into();
         }
         Ok(body)
     }
@@ -210,6 +198,28 @@ pub(crate) fn branch_name(value: &str) -> bool {
 mod tests {
     use super::*;
     const UUID: &str = "7389088c-29b8-4cec-9a15-e825e1fb2f66";
+    #[test]
+    fn optional_parent_is_validated_and_preserved() {
+        let base = json!({"serverId":"server", "idempotencyKey":UUID,"url":"https://github.com/org/repo.git","name":"repo","parentPath":"/projects/apps"});
+        let request: CloneProjectRequest = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(request.body().unwrap()["parentPath"], "/projects/apps");
+        for path in [
+            "relative",
+            "/projects/../etc",
+            "/projects//apps",
+            "/projects\n",
+        ] {
+            let mut input = base.clone();
+            input["parentPath"] = path.into();
+            assert!(serde_json::from_value::<CloneProjectRequest>(input)
+                .unwrap()
+                .body()
+                .is_err());
+        }
+        let mut input = base;
+        input["parentPath"] = Value::Null;
+        assert!(serde_json::from_value::<CloneProjectRequest>(input).is_err());
+    }
     #[test]
     fn accepts_closed_remote_transports_and_refs() {
         for url in [

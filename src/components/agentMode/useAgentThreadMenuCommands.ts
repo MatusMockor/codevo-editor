@@ -54,6 +54,8 @@ export type AgentMenuCommandSurface = Pick<
   | "renameThread"
   | "markThreadUnread"
   | "threadCopyDetail"
+  | "updateThreadOrganization"
+  | "reorderThread"
 >;
 
 export interface AgentThreadMenuCommandOptions {
@@ -170,6 +172,32 @@ export function useAgentThreadMenuCommands({
   const handleThreadMenuCommand = useCallback(
     (threadId: string, command: AgentThreadMenuCommand) => {
       switch (command.kind) {
+        case "snooze":
+          agents.updateThreadOrganization?.(threadId, {
+            snoozedUntil: command.until,
+            settledAt: null,
+          });
+          return;
+        case "unsnooze":
+          agents.updateThreadOrganization?.(threadId, { snoozedUntil: null });
+          return;
+        case "settle":
+          agents.updateThreadOrganization?.(threadId, {
+            settledAt: Date.now(),
+            snoozedUntil: null,
+          });
+          return;
+        case "restore":
+          agents.updateThreadOrganization?.(threadId, { settledAt: null, snoozedUntil: null });
+          return;
+        case "moveBefore":
+        case "moveAfter":
+          agents.reorderThread?.(
+            threadId,
+            command.targetThreadId,
+            command.kind === "moveBefore" ? "before" : "after",
+          );
+          return;
         case "togglePin":
           agents.togglePin(threadId);
           return;

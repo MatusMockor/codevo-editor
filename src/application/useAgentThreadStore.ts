@@ -876,6 +876,15 @@ function persistIntent(
       return threadViewedIntent(state, action.threadId, action.atEpochMs);
     case "threadMarkedUnread":
       return changedThreadIntent(state, action, "coalesced");
+    case "threadOrganizationUpdated":
+      return saveIntent(action.threadId, "immediate");
+    case "threadReordered":
+      return {
+        saves: [...next.threads.values()]
+          .filter((thread) => thread !== state.threads.get(thread.threadId))
+          .map((thread) => [thread.threadId, "immediate"] as const),
+        remove: null,
+      };
     case "threadRenamed":
       return changedThreadIntent(state, action, "immediate");
     case "ownerRebound":

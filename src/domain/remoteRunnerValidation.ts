@@ -1,9 +1,37 @@
+import {
+  parseRepositoryHostsSnapshot,
+  parseRepositoryLookupOutcome,
+  parseRepositorySearchOutcome,
+  validateRepositoryLookupRequest,
+  validateRepositorySearchRequest,
+} from "./repositoryLookupValidation";
+import type { RepositoryLookupRequest, RepositorySearchRequest } from "./repositoryLookup";
+import {
+  isRemoteThreadMetadata,
+  isRemoteThreadMetadataPatch,
+  isRemoteThreadMetadataPage,
+  isRemoteThreadMetadataChanges,
+} from "./remoteThreadMetadata";
+import {
+  isRemoteProjectDirectories,
+  isRemoteProjectDirectoryPath,
+} from "./remoteProjectManagement";
 import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
 import type * as R from "./remoteRunner";
 
 type Check = (value: unknown) => boolean;
+const accepts =
+  (parse: (value: unknown) => unknown): Check =>
+  (value) => {
+    try {
+      parse(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 const bytes = (value: string) => new TextEncoder().encode(value).length;
 const text =
   (max: number, blank = false): Check =>
@@ -298,6 +326,8 @@ export const remoteRunnerChecks = {
         imageAttachments: optional(boolean),
         textAttachments: optional(boolean),
         projectCloning: optional(boolean),
+        projectManagement: optional(boolean),
+        threadManagement: optional(boolean),
         taskContinuation: optional(boolean),
         taskLaunchOptions: optional(boolean),
         taskIsolation: optional(boolean),
@@ -312,6 +342,47 @@ export const remoteRunnerChecks = {
       }),
     }),
   },
+  listRepositoryHosts: {
+    request: object(serverRequest),
+    response: accepts(parseRepositoryHostsSnapshot),
+  },
+  lookupRepository: {
+    request: object({
+      ...serverRequest,
+      request: accepts((value) =>
+        validateRepositoryLookupRequest(value as RepositoryLookupRequest),
+      ),
+    }),
+    response: accepts(parseRepositoryLookupOutcome),
+  },
+  searchRepositories: {
+    request: object({
+      ...serverRequest,
+      request: accepts((value) =>
+        validateRepositorySearchRequest(value as RepositorySearchRequest),
+      ),
+    }),
+    response: accepts(parseRepositorySearchOutcome),
+  },
+  listProjectDirectories: {
+    request: object({ ...serverRequest, path: optional(isRemoteProjectDirectoryPath) }),
+    response: isRemoteProjectDirectories,
+  },
+  getThreadMetadata: { request: object(taskRequest), response: isRemoteThreadMetadata },
+  listThreadMetadata: {
+    request: object({ ...serverRequest, after: optional(id) }),
+    response: isRemoteThreadMetadataPage,
+  },
+  updateThreadMetadata: {
+    request: object({ ...taskRequest, patch: isRemoteThreadMetadataPatch }),
+    response: isRemoteThreadMetadata,
+  },
+  reorderThread: {
+    request: object({ ...taskRequest, targetTaskId: id, placement: choice("before", "after") }),
+    response: object({
+      items: isRemoteThreadMetadataChanges,
+    }),
+  },
   listProjects: {
     request: object(serverRequest),
     response: object({ items: array(object({ id: identifier, name: text(256) }), 1000) }),
@@ -323,6 +394,7 @@ export const remoteRunnerChecks = {
       url: cloneUrl,
       name: identifier,
       branch: optional(cloneBranch),
+      parentPath: optional(isRemoteProjectDirectoryPath),
     }),
     response: cloneJob,
   },

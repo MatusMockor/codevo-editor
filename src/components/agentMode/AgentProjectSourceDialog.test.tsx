@@ -51,6 +51,25 @@ describe("AgentProjectSourceDialog", () => {
   function button(name: string) {
     return Array.from(host.querySelectorAll("button")).find((entry) => entry.textContent === name)!;
   }
+  it("focuses the dialog for immediate Escape and contains keyboard navigation", () => {
+    render();
+    const section = host.querySelector("section")!;
+    expect(document.activeElement).toBe(section);
+    act(() =>
+      section.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+    const last = button("Clone repository");
+    act(() => {
+      last.focus();
+      last.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.activeElement).toBe(host.querySelector("select"));
+  });
   it.each(["existing", "clone"] as const)("routes local %s to this computer", (action) => {
     render();
     act(() => button(action === "existing" ? "Open existing folder" : "Clone repository").click());
