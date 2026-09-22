@@ -1153,6 +1153,52 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.submitBlocked).toBe(false);
   });
 
+  it.each(["in-place", "worktree"] as const)(
+    "keeps a local checkout launch available while another thread runs in %s",
+    async (isolation) => {
+      const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+      const running = steerableThreadView();
+      const agents = threadsSurfaceFixture({ startThread });
+      render(agents);
+      act(() => current().composer.composerProps.onIsolationChange("in-place"));
+      act(() => current().composer.composerProps.onPromptChange("Work alongside the other task"));
+
+      render({
+        ...agents,
+        threads: [
+          {
+            ...running,
+            thread: {
+              ...running.thread,
+              target: {
+                isolation,
+                worktreePath: isolation === "worktree" ? "/workspace/app/.worktrees/other" : null,
+              },
+            },
+          },
+        ],
+      });
+
+      expect(current().composer.composerProps.mode).toEqual({ kind: "new" });
+      expect(current().composer.composerProps.isolation).toBe("in-place");
+      expect(current().composer.composerProps.guard).toEqual({ kind: "safe" });
+      expect(current().composer.composerProps.submitBlocked).toBe(false);
+      await act(async () => {
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        });
+      });
+      expect(startThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isolation: "in-place",
+          prompt: "Work alongside the other task",
+          unsafeInPlaceConfirmationKey: null,
+        }),
+      );
+    },
+  );
+
   it("honors an explicit workspace worktree policy", () => {
     render(threadsSurfaceFixture(), [projectFixture({ isolationPolicy: "worktree" })]);
 

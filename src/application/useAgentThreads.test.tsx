@@ -162,10 +162,7 @@ describe("useAgentThreads facade", () => {
     expect(harness.hook().liveTaskCount).toBe(1);
     expect(harness.startedRequests[0]?.providerGeneration).toBe(1);
     expect(harness.hook().hasLiveTasksForOwner(OWNER)).toBe(true);
-    expect(harness.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({
-      kind: "unsafe",
-      reasons: ["agent-active"],
-    });
+    expect(harness.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({ kind: "safe" });
     expect(harness.store.saveAgentThread).toHaveBeenCalled();
 
     act(() => harness.hook().remove(threadId));
@@ -178,6 +175,69 @@ describe("useAgentThreads facade", () => {
     expect(harness.hook().threads[0]?.lifecycle).toBe("settled");
     expect(harness.hook().liveTaskCount).toBe(0);
     expect(harness.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({ kind: "safe" });
+    harness.unmount();
+  });
+
+  it("starts concurrent local threads in one checkout and isolates their output and status", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const request = startRequest({ isolation: "in-place" });
+    const first = (await act(() => harness.hook().startThread(request)))!.threadId;
+    act(() => harness.emitStatus(first, 1, { kind: "running" }));
+
+    const additional = [
+      await act(() => harness.hook().startThread({ ...request, prompt: "Second task" })),
+      await act(() => harness.hook().startThread({ ...request, prompt: "Third task" })),
+    ];
+    expect(additional.every((result) => result !== null)).toBe(true);
+    const second = additional[0]!.threadId;
+    const third = additional[1]!.threadId;
+    expect(new Set([first, second, third]).size).toBe(3);
+    expect(harness.hook().liveTaskCount).toBe(3);
+    expect(harness.startedRequests).toHaveLength(3);
+    for (const started of harness.startedRequests) {
+      expect(started).toMatchObject({ repositoryRoot: ROOT, isolation: "in-place" });
+    }
+    expect(harness.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({ kind: "safe" });
+
+    await act(async () => {
+      harness.emitStatus(second, 1, { kind: "running" });
+      harness.emitStatus(third, 1, { kind: "running" });
+      harness.emitOutput(harness.turnIdOf(second), 1, `${assistantLine("Second task output")}\n`);
+      harness.emitStatus(second, 2, { kind: "exited", exitCode: 0 });
+    });
+    const viewOf = (threadId: string) =>
+      harness.hook().threads.find((view) => view.thread.threadId === threadId)!;
+    expect(viewOf(second).lifecycle).toBe("settled");
+    expect(viewOf(second).thread.turns[0].events).toContainEqual({
+      kind: "assistantText",
+      text: "Second task output",
+    });
+    for (const threadId of [first, third]) {
+      expect(viewOf(threadId).lifecycle).toBe("running");
+      expect(viewOf(threadId).thread.turns[0].events).toEqual([]);
+    }
+    expect(harness.hook().liveTaskCount).toBe(2);
+    harness.unmount();
+  });
+
+  it("starts a local thread while an isolated worktree agent is running", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const isolated = (await act(() => harness.hook().startThread(startRequest())))!.threadId;
+    act(() => harness.emitStatus(isolated, 1, { kind: "running" }));
+
+    const local = await act(() =>
+      harness.hook().startThread(startRequest({ isolation: "in-place" })),
+    );
+    expect(local).not.toBeNull();
+    expect(harness.startedRequests).toHaveLength(2);
+    expect(harness.startedRequests.map((request) => request.isolation)).toEqual([
+      "worktree",
+      "in-place",
+    ]);
+    expect(harness.hook().liveTaskCount).toBe(2);
+    expect(harness.hook().notice).toBeNull();
     harness.unmount();
   });
 
@@ -498,8 +558,8 @@ function renderThreads(overrides: Partial<Environment> = {}) {
         taskId: turnId,
         workspaceId: OWNER,
         repositoryRoot: ROOT,
-        isolation: "worktree",
-        worktreePath: `${ROOT}/.worktrees/${threadId}`,
+        isolation: view!.thread.target.isolation,
+        worktreePath: view!.thread.target.worktreePath,
         sequence,
         status,
       });

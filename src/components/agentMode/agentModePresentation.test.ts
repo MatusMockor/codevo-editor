@@ -511,9 +511,6 @@ describe("agentModePresentation", () => {
     expect(agentIsolationReasonLabel({ kind: "worktree", reason: "policy" })).toContain(
       "by default",
     );
-    expect(agentIsolationReasonLabel({ kind: "worktree", reason: "agent-active" })).toContain(
-      "Another agent",
-    );
     expect(agentIsolationReasonLabel({ kind: "worktree", reason: "parallel-dispatch" })).toContain(
       "at once",
     );
@@ -527,7 +524,6 @@ describe("agentModePresentation", () => {
       "unsaved editors",
     );
 
-    expect(inPlaceGuardReasonLabel("agent-active")).toContain("another agent");
     expect(inPlaceGuardReasonLabel("dirty-tree")).toContain("uncommitted");
     expect(inPlaceGuardReasonLabel("dirty-editors")).toContain("unsaved editors");
     expect(inPlaceGuardReasonLabel("status-unknown")).toContain("unknown");

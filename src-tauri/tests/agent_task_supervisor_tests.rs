@@ -24,8 +24,7 @@ mod agent_task_admission;
 mod agent_task_supervisor;
 
 use agent_task_admission::{
-    AgentTaskAdmissionRegistry, AGENT_TASK_CWD_EXCLUSIVE_ERROR, AGENT_TASK_GLOBAL_LIMIT,
-    AGENT_TASK_GLOBAL_LIMIT_ERROR, AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR,
+    AgentTaskAdmissionRegistry, AGENT_TASK_GLOBAL_LIMIT, AGENT_TASK_GLOBAL_LIMIT_ERROR,
     AGENT_TASK_REPOSITORY_LIMIT,
 };
 use agent_task_spawner::agent_launch::{
@@ -1152,122 +1151,75 @@ fn admission_allows_one_repository_to_use_all_global_slots() {
 }
 
 #[test]
-fn admission_in_place_exclusivity_covers_worktree_tasks_in_the_working_tree() {
+fn admission_allows_concurrent_threads_in_shared_local_and_worktree_directories() {
     let registry = Arc::new(AgentTaskAdmissionRegistry::new());
-    let root = unique_path("in-place");
-    let in_place = registry
+    let root = unique_path("shared-checkouts");
+    let mut held = Vec::new();
+    for cwd in [&root, &root.join(".worktrees/shared")] {
+        for isolation in [AgentTaskIsolation::InPlace, AgentTaskIsolation::Worktree] {
+            for owner in ["ws-a", "ws-a", "ws-b"] {
+                held.push(
+                    registry
+                        .reserve(&workspace(owner), &root, cwd, isolation)
+                        .expect("threads may share a working directory across workspace owners"),
+                );
+            }
+        }
+    }
+    assert_eq!(held.len(), 12);
+}
+
+#[test]
+fn shared_checkout_admissions_remain_bounded_and_release_exactly_one_slot() {
+    let registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let root = unique_path("shared-limit");
+    let mut held = Vec::new();
+    for _ in 0..AGENT_TASK_GLOBAL_LIMIT {
+        held.push(
+            registry
+                .reserve(
+                    &workspace("ws-a"),
+                    &root,
+                    &root,
+                    AgentTaskIsolation::InPlace,
+                )
+                .expect("shared checkout below global limit"),
+        );
+    }
+    assert_eq!(
+        registry
+            .reserve(
+                &workspace("ws-a"),
+                &root,
+                &root,
+                AgentTaskIsolation::InPlace
+            )
+            .err()
+            .as_deref(),
+        Some(AGENT_TASK_GLOBAL_LIMIT_ERROR)
+    );
+    held.pop();
+    let replacement = registry
         .reserve(
             &workspace("ws-a"),
             &root,
             &root,
             AgentTaskIsolation::InPlace,
         )
-        .expect("first in-place admission");
-    let second = registry.reserve(
-        &workspace("ws-a"),
-        &root,
-        &root,
-        AgentTaskIsolation::InPlace,
-    );
+        .expect("dropping one shared admission frees one slot");
     assert_eq!(
-        second.err().as_deref(),
-        Some(AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR)
+        registry
+            .reserve(
+                &workspace("ws-a"),
+                &root,
+                &root,
+                AgentTaskIsolation::InPlace
+            )
+            .err()
+            .as_deref(),
+        Some(AGENT_TASK_GLOBAL_LIMIT_ERROR)
     );
-    let worktree = registry
-        .reserve(
-            &workspace("ws-a"),
-            &root,
-            &root.join(".worktrees/task"),
-            AgentTaskIsolation::Worktree,
-        )
-        .expect("worktree admission next to in-place");
-    drop(in_place);
-    drop(worktree);
-    let worktree_in_root = registry
-        .reserve(
-            &workspace("ws-a"),
-            &root,
-            &root,
-            AgentTaskIsolation::Worktree,
-        )
-        .expect("worktree admission with cwd at repository root");
-    let blocked = registry.reserve(
-        &workspace("ws-a"),
-        &root,
-        &root,
-        AgentTaskIsolation::InPlace,
-    );
-    assert_eq!(
-        blocked.err().as_deref(),
-        Some(AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR)
-    );
-    drop(worktree_in_root);
-    assert!(registry
-        .reserve(
-            &workspace("ws-a"),
-            &root,
-            &root,
-            AgentTaskIsolation::InPlace
-        )
-        .is_ok());
-}
-
-#[test]
-fn admission_enforces_cwd_exclusivity_across_live_admissions() {
-    let registry = Arc::new(AgentTaskAdmissionRegistry::new());
-    let root = unique_path("cwd-exclusive");
-    let worktree = root.join(".worktrees/agt-thread-0001");
-    let first = registry
-        .reserve(
-            &workspace("ws-a"),
-            &root,
-            &worktree,
-            AgentTaskIsolation::Worktree,
-        )
-        .expect("first turn admission");
-
-    let second = registry.reserve(
-        &workspace("ws-a"),
-        &root,
-        &worktree,
-        AgentTaskIsolation::Worktree,
-    );
-    let foreign = registry.reserve(
-        &workspace("ws-b"),
-        &root,
-        &worktree,
-        AgentTaskIsolation::Worktree,
-    );
-
-    assert_eq!(
-        second.err().as_deref(),
-        Some(AGENT_TASK_CWD_EXCLUSIVE_ERROR)
-    );
-    assert_eq!(
-        foreign.err().as_deref(),
-        Some(AGENT_TASK_CWD_EXCLUSIVE_ERROR)
-    );
-
-    let sibling = registry
-        .reserve(
-            &workspace("ws-a"),
-            &root,
-            &root.join(".worktrees/agt-thread-0002"),
-            AgentTaskIsolation::Worktree,
-        )
-        .expect("sibling worktree keeps its own cwd");
-
-    drop(first);
-    drop(sibling);
-
-    registry
-        .reserve(
-            &workspace("ws-a"),
-            &root,
-            &worktree,
-            AgentTaskIsolation::Worktree,
-        )
-        .expect("cwd is admissible again once the turn settles");
+    drop(replacement);
 }
 
 #[test]
@@ -1906,6 +1858,71 @@ fn stop_running_task_publishes_stopped_and_signals_group() {
         fixture.registry.stop("agt-stop").is_ok(),
         "stop is idempotent"
     );
+}
+
+#[test]
+fn shared_local_checkout_tasks_keep_output_and_stop_ownership_independent() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("shared-local-runtime");
+    for (task_id, process_group, output) in [
+        ("agt-shared-a", 9791, "task a output"),
+        ("agt-shared-b", 9792, "task b output"),
+    ] {
+        let process = FakeProcess::new(None, Some(143));
+        fixture.signals.track(process_group, &process);
+        fixture.spawner.script(FakeSpawnOutcome::Child(
+            FakeChildSpec::new(&process, process_group)
+                .with_stdout_segments(vec![output.as_bytes().to_vec()])
+                .build(),
+        ));
+        let admission = fixture
+            .admission
+            .reserve(
+                &workspace("ws-agent-tests"),
+                &root,
+                &root,
+                AgentTaskIsolation::InPlace,
+            )
+            .expect("shared local checkout admission");
+        let request = AgentTaskStartRequest {
+            thread_id: task_id.to_string(),
+            isolation: AgentTaskIsolation::InPlace,
+            worktree_path: None,
+            ..start_request(task_id, &root)
+        };
+        fixture
+            .registry
+            .start(request, fake_plan(&root), admission)
+            .unwrap();
+        fixture.registry.acknowledge(task_id).unwrap();
+    }
+    assert!(wait_until(EVENT_DEADLINE, || {
+        !outputs_for(&fixture.sink, "agt-shared-a").is_empty()
+            && !outputs_for(&fixture.sink, "agt-shared-b").is_empty()
+    }));
+    assert_eq!(
+        outputs_for(&fixture.sink, "agt-shared-a")[0].chunk,
+        "task a output"
+    );
+    assert_eq!(
+        outputs_for(&fixture.sink, "agt-shared-b")[0].chunk,
+        "task b output"
+    );
+    fixture.registry.stop("agt-shared-a").unwrap();
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .sink
+        .has_terminal_status("agt-shared-a")));
+    assert!(!fixture.sink.has_terminal_status("agt-shared-b"));
+    assert!(fixture.signals.signals_for(9792).is_empty());
+    // Removal/shutdown by root must still reap every remaining process using that checkout.
+    assert!(fixture.registry.stop_for_root_and_reap(&root));
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .sink
+        .has_terminal_status("agt-shared-b")));
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .registry
+        .live_worker_thread_count()
+        == 0));
 }
 
 #[test]

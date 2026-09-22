@@ -73,6 +73,19 @@ fn completion_snapshot_retains_admission_and_precedes_terminal_publication() {
     registry.acknowledge("agt-capture").unwrap();
     entered_rx.recv_timeout(EVENT_DEADLINE).unwrap();
     assert!(!sink.events.has_terminal_status("agt-capture"));
+    let _other_admissions: Vec<_> = (1..AGENT_TASK_GLOBAL_LIMIT)
+        .map(|_| {
+            registry
+                .admission()
+                .reserve(
+                    &workspace("ws-agent-tests"),
+                    &root,
+                    &root,
+                    AgentTaskIsolation::Worktree,
+                )
+                .expect("reserve remaining global capacity")
+        })
+        .collect();
     assert!(registry
         .admission()
         .reserve(

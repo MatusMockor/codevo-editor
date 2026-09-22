@@ -159,19 +159,13 @@ export interface AgentTaskIsolationContext {
 }
 
 export type AgentIsolationReason =
-  | "policy"
-  | "agent-active"
-  | "parallel-dispatch"
-  | "status-unknown"
-  | "dirty-tree"
-  | "dirty-editors";
+  "policy" | "parallel-dispatch" | "status-unknown" | "dirty-tree" | "dirty-editors";
 
 export type AgentIsolationDefault =
   | { readonly kind: "in-place" }
   | { readonly kind: "worktree"; readonly reason: AgentIsolationReason };
 
-export type InPlaceDispatchUnsafeReason =
-  "agent-active" | "dirty-tree" | "dirty-editors" | "status-unknown";
+export type InPlaceDispatchUnsafeReason = "dirty-tree" | "dirty-editors" | "status-unknown";
 
 export type InPlaceDispatchGuard =
   | { readonly kind: "safe" }
@@ -225,7 +219,6 @@ export function defaultAgentTaskIsolation(
   context: AgentTaskIsolationContext,
 ): AgentIsolationDefault {
   if (context.workspacePolicy === "worktree") return { kind: "worktree", reason: "policy" };
-  if (context.liveAgentTasksInRepository > 0) return { kind: "worktree", reason: "agent-active" };
   if (context.plannedParallelDispatch) return { kind: "worktree", reason: "parallel-dispatch" };
   if (context.workspacePolicy === "in-place") return { kind: "in-place" };
   if (!context.repositoryStatusKnown) return { kind: "worktree", reason: "status-unknown" };
@@ -238,7 +231,6 @@ export function defaultAgentTaskIsolation(
 
 export function inPlaceDispatchGuard(context: AgentTaskIsolationContext): InPlaceDispatchGuard {
   const reasons: InPlaceDispatchUnsafeReason[] = [];
-  if (context.liveAgentTasksInRepository > 0) reasons.push("agent-active");
   if (context.dirtyEditorDocumentsInRepository > 0) reasons.push("dirty-editors");
   if (!context.repositoryStatusKnown) reasons.push("status-unknown");
   if (reasons.length === 0) return { kind: "safe" };

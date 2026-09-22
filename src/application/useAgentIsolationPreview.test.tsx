@@ -64,7 +64,7 @@ describe("useAgentIsolationPreview", () => {
     dirty.unmount();
   });
 
-  it("forces a worktree for background projects and counts running turns as hazards", () => {
+  it("forces a worktree for background projects but allows concurrent local turns", () => {
     const background = renderPreview({ origin: "background-tab", dirtyEditors: 3 });
     const preview = background.hook().isolationPreview(ROOT);
     expect(preview.inPlaceAllowed).toBe(false);
@@ -74,8 +74,7 @@ describe("useAgentIsolationPreview", () => {
 
     const busy = renderPreview({ liveTasks: 2 });
     expect(busy.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({
-      kind: "unsafe",
-      reasons: ["agent-active"],
+      kind: "safe",
     });
     busy.unmount();
   });
@@ -279,10 +278,9 @@ describe("useAgentIsolationPreview", () => {
     const preview = harness.hook().isolationPreview(ROOT);
     expect(preview.repositoryStatus).toEqual({ kind: "notRepository" });
     expect(preview.recommended).toEqual({ kind: "in-place" });
-    expect(preview.inPlaceGuard).toEqual({ kind: "unsafe", reasons: ["agent-active"] });
+    expect(preview.inPlaceGuard).toEqual({ kind: "safe" });
     expect(preview.confirmationKey).not.toBeNull();
 
-    harness.environment.liveTasks = 0;
     const preflight = await act(() => harness.hook().preflightInPlace(ROOT, authority, null));
     expect(preflight).toEqual({ kind: "ok" });
     expect(harness.reportError).not.toHaveBeenCalled();
@@ -333,15 +331,52 @@ describe("useAgentIsolationPreview", () => {
     });
 
     it("refuses an unsafe repository unless the exact confirmation key is presented", async () => {
-      const harness = renderPreview({ liveTasks: 1 });
+      const harness = renderPreview({ dirtyEditors: 1 });
       const authority = projectAuthority(harness.project());
 
       const refused = await act(() => harness.hook().preflightInPlace(ROOT, authority, null));
-      expect(refused).toEqual({ kind: "unsafe", label: inPlaceGuardReasonLabel("agent-active") });
+      expect(refused).toEqual({ kind: "unsafe", label: inPlaceGuardReasonLabel("dirty-editors") });
 
       const key = harness.hook().isolationPreview(ROOT).confirmationKey;
       const confirmed = await act(() => harness.hook().preflightInPlace(ROOT, authority, key));
       expect(confirmed).toEqual({ kind: "ok" });
+      harness.unmount();
+    });
+
+    it("allows other agents without confirmation, including during the status refresh", async () => {
+      const harness = renderPreview({ liveTasks: 1, policy: "in-place" });
+      const authority = projectAuthority(harness.project());
+      const pending = createDeferred<GitStatus>();
+      harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+
+      await act(async () => {
+        const preflight = harness.hook().preflightInPlace(ROOT, authority, null);
+        harness.environment.liveTasks = 2;
+        pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: ROOT });
+        expect(await preflight).toEqual({ kind: "ok" });
+      });
+
+      expect(harness.hook().isolationPreview(ROOT).recommended).toEqual({ kind: "in-place" });
+      harness.unmount();
+    });
+
+    it("keeps dirty-editor confirmation valid when another agent starts during preflight", async () => {
+      const harness = renderPreview({ dirtyEditors: 1 });
+      const authority = projectAuthority(harness.project());
+      await act(() => harness.hook().refreshIsolationStatus(ROOT));
+      const key = harness.hook().isolationPreview(ROOT).confirmationKey;
+      expect(key).not.toBeNull();
+      const pending = createDeferred<GitStatus>();
+      harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+
+      await act(async () => {
+        const preflight = harness.hook().preflightInPlace(ROOT, authority, key);
+        harness.environment.liveTasks = 1;
+        pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: ROOT });
+        expect(await preflight).toEqual({ kind: "ok" });
+      });
+
+      expect(harness.hook().isolationPreview(ROOT).confirmationKey).toBe(key);
       harness.unmount();
     });
 
@@ -480,7 +515,6 @@ describe("useAgentIsolationPreview", () => {
     expect(agentIsolationReasonLabel({ kind: "in-place" })).toContain("clean");
     for (const reason of [
       "policy",
-      "agent-active",
       "parallel-dispatch",
       "status-unknown",
       "dirty-tree",
@@ -488,12 +522,7 @@ describe("useAgentIsolationPreview", () => {
     ] as const) {
       expect(agentIsolationReasonLabel({ kind: "worktree", reason })).not.toBe("");
     }
-    for (const reason of [
-      "agent-active",
-      "dirty-tree",
-      "dirty-editors",
-      "status-unknown",
-    ] as const) {
+    for (const reason of ["dirty-tree", "dirty-editors", "status-unknown"] as const) {
       expect(inPlaceGuardReasonLabel(reason)).not.toBe("");
     }
   });

@@ -175,7 +175,7 @@ describe("defaultAgentTaskIsolation", () => {
       defaultAgentTaskIsolation(
         isolationContext({ workspacePolicy: "in-place", liveAgentTasksInRepository: 1 }),
       ),
-    ).toEqual({ kind: "worktree", reason: "agent-active" });
+    ).toEqual({ kind: "in-place" });
     expect(
       defaultAgentTaskIsolation(
         isolationContext({ workspacePolicy: "in-place", plannedParallelDispatch: true }),
@@ -223,6 +223,15 @@ describe("inPlaceDispatchGuard", () => {
     });
   });
 
+  it("allows concurrent agents to share a local checkout", () => {
+    expect(inPlaceDispatchGuard(isolationContext({ liveAgentTasksInRepository: 2 }))).toEqual({
+      kind: "safe",
+    });
+    expect(defaultAgentTaskIsolation(isolationContext({ liveAgentTasksInRepository: 2 }))).toEqual({
+      kind: "in-place",
+    });
+  });
+
   it("collects every hazard in a deterministic order", () => {
     expect(
       inPlaceDispatchGuard(
@@ -230,9 +239,10 @@ describe("inPlaceDispatchGuard", () => {
           liveAgentTasksInRepository: 2,
           repositoryDirty: true,
           dirtyEditorDocumentsInRepository: 1,
+          repositoryStatusKnown: false,
         }),
       ),
-    ).toEqual({ kind: "unsafe", reasons: ["agent-active", "dirty-editors"] });
+    ).toEqual({ kind: "unsafe", reasons: ["dirty-editors", "status-unknown"] });
   });
 
   it("reports an unknown repository status without claiming a dirty tree", () => {

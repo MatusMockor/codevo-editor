@@ -390,7 +390,15 @@ function isolationConfirmationKey(
   authority: AgentProjectAuthority,
 ): string | null {
   if (!context.repositoryStatusKnown) return null;
-  return JSON.stringify({ authority, repositoryRoot, ...context });
+  return JSON.stringify({
+    authority,
+    repositoryRoot,
+    workspacePolicy: context.workspacePolicy,
+    repositoryStatusKnown: context.repositoryStatusKnown,
+    repositoryDirty: context.repositoryDirty,
+    dirtyEditorDocumentsInRepository: context.dirtyEditorDocumentsInRepository,
+    plannedParallelDispatch: context.plannedParallelDispatch,
+  });
 }
 
 function guardReasonsLabel(reasons: ReadonlyArray<InPlaceDispatchUnsafeReason>): string {
@@ -399,8 +407,6 @@ function guardReasonsLabel(reasons: ReadonlyArray<InPlaceDispatchUnsafeReason>):
 
 export function inPlaceGuardReasonLabel(reason: InPlaceDispatchUnsafeReason): string {
   switch (reason) {
-    case "agent-active":
-      return "another agent is already running in this repository";
     case "dirty-tree":
       return "the working tree has uncommitted changes";
     case "dirty-editors":
@@ -419,8 +425,6 @@ export function agentIsolationReasonLabel(recommended: AgentIsolationDefault): s
   switch (recommended.reason) {
     case "policy":
       return "Agents start in an isolated worktree by default.";
-    case "agent-active":
-      return "Another agent is already running in this repository.";
     case "parallel-dispatch":
       return "Several agents are being started at once.";
     case "status-unknown":

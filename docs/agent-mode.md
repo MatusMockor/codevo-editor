@@ -25,12 +25,18 @@ Manually selecting a workspace tab selects that project in the agent view as wel
 Choose a project or repository, write a prompt, select the provider/model and permission mode,
 then choose a checkout:
 
-- **Local checkout** runs directly in the project's checkout. Codevo warns and requires an
-  explicit confirmation when the repository is dirty, has unsaved editors, has another active
-  agent, or its status cannot be confirmed.
+- **Local checkout** runs directly in the project's checkout. Multiple conversations can run
+  there at the same time, sharing the files and Git state. Another running agent does not block
+  a new conversation or require a confirmation. Unsaved editor changes still require explicit
+  confirmation, and a failed repository status check prevents a new local start.
 - **Isolated worktree** creates a dedicated Git worktree so the main checkout is not edited by
-  that thread. The automatic isolation policy prefers a worktree when the repository is busy,
-  dirty, or has unsaved editors.
+  that thread. The automatic isolation policy prefers a worktree; choosing **Local checkout**
+  explicitly keeps that choice even while other agents are running. The shared limit of 64
+  starting or running agent tasks still applies across checkouts.
+
+Recorded changes compare checkout snapshots before and after a turn. When conversations share
+a checkout, that comparison can include edits made by another conversation during the same
+interval. Use separate worktrees when each conversation needs its own files and change history.
 
 **Enter** sends (**Cmd/Ctrl+Enter** also sends, **Shift+Enter** inserts a newline). Select an
 existing thread to send a follow-up; follow-ups stay on that thread's original checkout and

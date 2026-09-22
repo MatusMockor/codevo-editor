@@ -300,8 +300,6 @@ export function agentIsolationBadgeReason(isolation: AgentTaskIsolation): string
 
 export function inPlaceGuardReasonLabel(reason: InPlaceDispatchUnsafeReason): string {
   switch (reason) {
-    case "agent-active":
-      return "another agent is already running in this repository";
     case "dirty-tree":
       return "the working tree has uncommitted changes";
     case "dirty-editors":
@@ -320,8 +318,6 @@ export function agentIsolationReasonLabel(recommended: AgentIsolationDefault): s
   switch (recommended.reason) {
     case "policy":
       return "Agents start in an isolated worktree by default.";
-    case "agent-active":
-      return "Another agent is already running in this repository.";
     case "parallel-dispatch":
       return "Several agents are being started at once.";
     case "status-unknown":
