@@ -153,10 +153,10 @@ fn parse_page(value: Value, after: Option<&str>) -> Result<ThreadMetadataPage, S
 fn validate_patch(patch: &Value) -> Result<(), String> {
     let fields = patch.as_object().ok_or(INVALID)?;
     if fields.len() < 2
-        || !fields
+        || fields
             .get("expectedRevision")
             .and_then(Value::as_u64)
-            .is_some_and(|v| v <= SAFE_INTEGER)
+            .is_none_or(|v| v > SAFE_INTEGER)
     {
         return Err(INVALID.into());
     }

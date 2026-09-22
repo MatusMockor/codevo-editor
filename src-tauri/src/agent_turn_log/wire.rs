@@ -84,6 +84,12 @@ pub(crate) struct AgentTurnDigestCapacity {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentTurnDigestPrimary {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::agent_thread_store::optional_context_observation_time"
+    )]
+    pub(crate) observed_at_epoch_ms: Option<u64>,
     pub(crate) model: String,
     pub(crate) input_tokens: u64,
 }
@@ -91,6 +97,12 @@ pub(crate) struct AgentTurnDigestPrimary {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentTurnDigestOccupancy {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::agent_thread_store::optional_context_observation_time"
+    )]
+    pub(crate) observed_at_epoch_ms: Option<u64>,
     pub(crate) used_tokens: u64,
     pub(crate) context_window: u64,
 }

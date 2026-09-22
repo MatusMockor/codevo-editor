@@ -1,6 +1,7 @@
 import type { AgentThread, AgentTurn, AgentTurnEvent } from "./agentThread";
 
 export interface AgentContextWindow {
+  readonly observedAtEpochMs?: number;
   readonly usedTokens: number;
   readonly contextWindow: number;
 }
@@ -12,7 +13,7 @@ export function agentContextWindow(
 ): AgentContextWindow | null {
   if (thread === null) return null;
   let current: AgentContextWindow | null = null;
-  let primary: { model: string; inputTokens: number } | null = null;
+  let primary: { model: string; inputTokens: number; observedAtEpochMs?: number } | null = null;
   const capacities = new Map<string, number>();
   // Never pair a new request with an older launch's capacity (for example a changed 1M option).
   const turn = thread.turns[thread.turns.length - 1];
@@ -31,11 +32,19 @@ export function agentContextWindow(
         capacities.set(event.model, event.contextWindow);
       }
       if (event.inputTokens !== null && nonnegative(event.inputTokens))
-        primary = { model: event.model, inputTokens: event.inputTokens };
+        primary = {
+          model: event.model,
+          inputTokens: event.inputTokens,
+          ...observationTimestamp(event),
+        };
       const capacity = primary === null ? undefined : capacities.get(primary.model);
       current =
         primary !== null && capacity !== undefined
-          ? { usedTokens: primary.inputTokens, contextWindow: capacity }
+          ? {
+              usedTokens: primary.inputTokens,
+              contextWindow: capacity,
+              ...observationTimestamp(primary),
+            }
           : null;
     } else if (thread.provider.kind === "codex" && event.kind === "result" && !event.isError) {
       const usage = event.usage?.appServerUsage;
@@ -77,4 +86,11 @@ function nonnegative(value: unknown): value is number {
 }
 function positive(value: unknown): value is number {
   return nonnegative(value) && value > 0;
+}
+
+/** Preserve source observation time; never manufacture freshness while projecting history. */
+export function observationTimestamp(value: { readonly observedAtEpochMs?: number }): {
+  readonly observedAtEpochMs?: number;
+} {
+  return nonnegative(value.observedAtEpochMs) ? { observedAtEpochMs: value.observedAtEpochMs } : {};
 }

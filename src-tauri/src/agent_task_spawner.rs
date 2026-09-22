@@ -130,6 +130,17 @@ impl AgentTaskSpawnPlan {
         self.cwd_authority.as_deref()
     }
 
+    pub(crate) fn retained_cwd_authority(&self) -> Option<Arc<fs::File>> {
+        #[cfg(unix)]
+        {
+            self.cwd_authority.clone()
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
     pub fn env(&self) -> &[(String, String)] {
         &self.env
     }

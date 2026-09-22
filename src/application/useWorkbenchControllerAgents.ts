@@ -123,6 +123,7 @@ export interface WorkbenchControllerAgentsOptions {
     | "agentProviderSignInGateway"
     | "agentRootLeaseGateway"
     | "agentTaskGateway"
+    | "turnChangesGateway"
     | "agentQuestionGateway"
     | "gitWorktreeGateway"
   >;
@@ -271,6 +272,7 @@ export function useWorkbenchControllerAgents(
     agentCliDiscoveryGateway:
       options.options.agentCliDiscoveryGateway ?? unavailableAgentCliDiscoveryGateway,
     agentTaskGateway: options.options.agentTaskGateway,
+    turnChangesGateway: options.options.turnChangesGateway,
     agentQuestionGateway: options.options.agentQuestionGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.options.gitWorktreeGateway,

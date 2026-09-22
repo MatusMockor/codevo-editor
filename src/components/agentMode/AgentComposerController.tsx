@@ -7,7 +7,6 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
-import type { AgentContextWindowUsage } from "./AgentContextWindowMeter";
 import {
   useAgentComposerPromptState,
   WITHOUT_COMPOSER_ATTACHMENTS,
@@ -19,7 +18,6 @@ export interface AgentComposerControllerProps {
   readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly executionServerId?: string | null;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
-  readonly contextUsage?: AgentContextWindowUsage | null;
   readonly composerProps: AgentComposerPresentation;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly providerManagement: AgentProviderManagementSurface;
@@ -34,7 +32,6 @@ export const AgentComposerController = memo(function AgentComposerController({
   followUpBehavior = "queue",
   executionServerId = null,
   compactionOffer = null,
-  contextUsage = null,
   composerProps,
   modelFavoritesPersistence = null,
   onOpenProviderSettings,
@@ -58,7 +55,6 @@ export const AgentComposerController = memo(function AgentComposerController({
       followUpBehavior={followUpBehavior}
       executionServerId={executionServerId}
       compactionOffer={compactionOffer}
-      contextUsage={contextUsage}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenProviderSettings={onOpenProviderSettings}
       onOpenEnvironmentSettings={onOpenEnvironmentSettings}
@@ -79,8 +75,6 @@ function agentComposerControllerPropsEqual(
     left.followUpBehavior === right.followUpBehavior &&
     left.executionServerId === right.executionServerId &&
     left.compactionOffer?.key === right.compactionOffer?.key &&
-    left.contextUsage?.usedTokens === right.contextUsage?.usedTokens &&
-    left.contextUsage?.contextWindow === right.contextUsage?.contextWindow &&
     left.modelFavoritesPersistence === right.modelFavoritesPersistence &&
     left.onOpenProviderSettings === right.onOpenProviderSettings &&
     left.onOpenEnvironmentSettings === right.onOpenEnvironmentSettings &&

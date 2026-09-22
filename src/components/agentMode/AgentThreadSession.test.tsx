@@ -1209,24 +1209,38 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Earlier turns were dropped to bound memory.");
   });
 
-  it("replaces the inline change list with a single review cue that opens the Diff surface", () => {
-    const onReviewInDiff = vi.fn();
+  it("does not present live working-tree totals as historical turn changes", () => {
     render({
-      onReviewInDiff,
       thread: threadView({
         changeSummary: summary({ files: [changedFile("src/a.ts"), changedFile("src/b.ts")] }),
       }),
     });
+    expect(host.querySelector("[data-agent-changes-cue]")).toBeNull();
+    expect(host.textContent).not.toContain("2 files changed");
+  });
 
-    expect(host.querySelector(".agent-session__head")).toBeNull();
-    expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).toBeNull();
-    expect(host.querySelector(".agent-changes")).toBeNull();
-    expect(host.querySelector("[data-agent-changes-cue]")?.textContent).toContain(
-      "2 files changed",
-    );
-    clickText("Review in Diff");
-
-    expect(onReviewInDiff).toHaveBeenCalledWith("agt-1");
+  it("loads a recorded summary for completed turns only", async () => {
+    const getTurnChanges = vi.fn(async (_threadId: string, turnId: string) => ({
+      turnId,
+      state: "ready" as const,
+      files: [],
+      truncated: false,
+      reason: null,
+    }));
+    const getTurnFileDiff = vi.fn();
+    render({
+      thread: threadView({
+        turns: [
+          turn("done", "first", { kind: "exited", exitCode: 0 }, []),
+          turn("running", "second", { kind: "running" }, []),
+        ],
+      }),
+      getTurnChanges,
+      getTurnFileDiff,
+    });
+    await act(async () => {});
+    expect(getTurnChanges).toHaveBeenCalledTimes(1);
+    expect(getTurnChanges).toHaveBeenCalledWith("agt-1", "done");
   });
 
   it("re-renders no turn body when only the clock ticks", () => {

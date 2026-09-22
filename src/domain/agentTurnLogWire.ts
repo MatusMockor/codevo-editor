@@ -548,20 +548,34 @@ function digestCapacities(value: unknown, path: string): ReadonlyArray<AgentTurn
 function digestPrimary(value: unknown, path: string): AgentTurnDigestOccupancy | null {
   if (value === null) return null;
   const primary = record(value, path);
-  exactKeys(primary, ["model", "inputTokens"], path);
+  exactKeys(
+    primary,
+    ["model", "inputTokens", ...("observedAtEpochMs" in primary ? ["observedAtEpochMs"] : [])],
+    path,
+  );
   return Object.freeze({
     model: modelName(primary.model, `${path}.model`),
     inputTokens: integer(primary.inputTokens, `${path}.inputTokens`, 0, MAX_SAFE),
+    ...timestamp(primary, path),
   });
 }
 
 function digestWindow(value: unknown, path: string): AgentContextWindow | null {
   if (value === null) return null;
   const window = record(value, path);
-  exactKeys(window, ["usedTokens", "contextWindow"], path);
+  exactKeys(
+    window,
+    [
+      "usedTokens",
+      "contextWindow",
+      ...("observedAtEpochMs" in window ? ["observedAtEpochMs"] : []),
+    ],
+    path,
+  );
   return Object.freeze({
     usedTokens: integer(window.usedTokens, `${path}.usedTokens`, 0, MAX_SAFE),
     contextWindow: integer(window.contextWindow, `${path}.contextWindow`, 1, MAX_SAFE),
+    ...timestamp(window, path),
   });
 }
 
@@ -641,4 +655,20 @@ function invalid(path: string, expectation: string): never {
   throw new TypeError(
     `Invalid agent turn log value at ${path.slice(0, 160)}: expected ${expectation.slice(0, 160)}.`,
   );
+}
+
+function timestamp(
+  value: Record<string, unknown>,
+  path: string,
+): { readonly observedAtEpochMs?: number } {
+  return "observedAtEpochMs" in value
+    ? {
+        observedAtEpochMs: integer(
+          value.observedAtEpochMs,
+          `${path}.observedAtEpochMs`,
+          0,
+          MAX_SAFE,
+        ),
+      }
+    : {};
 }

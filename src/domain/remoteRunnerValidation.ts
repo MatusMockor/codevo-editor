@@ -1,4 +1,9 @@
 import {
+  parseAgentTurnChangeSummary,
+  parseAgentTurnFileDiff,
+  isAgentTurnChangePath,
+} from "./agentTurnChanges";
+import {
   parseRepositoryHostsSnapshot,
   parseRepositoryLookupOutcome,
   parseRepositorySearchOutcome,
@@ -328,6 +333,7 @@ export const remoteRunnerChecks = {
         projectCloning: optional(boolean),
         projectManagement: optional(boolean),
         threadManagement: optional(boolean),
+        turnChanges: optional(boolean),
         taskContinuation: optional(boolean),
         taskLaunchOptions: optional(boolean),
         taskIsolation: optional(boolean),
@@ -492,6 +498,11 @@ export const remoteRunnerChecks = {
   },
   cancelTask: { request: object(taskRequest), response: task },
   listEvents: { request: object({ ...taskRequest, after: integer(0) }), response: eventPage },
+  getTurnChanges: { request: object(taskRequest), response: accepts(parseAgentTurnChangeSummary) },
+  getTurnFileDiff: {
+    request: object({ ...taskRequest, relativePath: isAgentTurnChangePath }),
+    response: accepts(parseAgentTurnFileDiff),
+  },
   listTaskFiles: {
     request: object(taskRequest),
     response: object({

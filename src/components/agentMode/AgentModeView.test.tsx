@@ -66,6 +66,10 @@ vi.mock("./AgentSurfaceDiff", () => ({
   AgentSurfaceDiff: (props: {
     readonly thread: { readonly thread: { readonly threadId: string } };
     readonly summary: { readonly files: ReadonlyArray<unknown> } | null;
+    readonly recorded?: {
+      readonly relativePath?: string;
+      readonly summary: { readonly turnId: string };
+    } | null;
     onOpenChangedFile(threadId: string, change: unknown): void;
     onOpenChangedFileDiff(threadId: string, change: unknown): void;
   }) => {
@@ -73,7 +77,11 @@ vi.mock("./AgentSurfaceDiff", () => ({
     const threadId = props.thread.thread.threadId;
     const change = props.summary?.files[0];
     return (
-      <div data-mock-diff={threadId}>
+      <div
+        data-mock-diff={threadId}
+        data-recorded-turn={props.recorded?.summary.turnId}
+        data-recorded-path={props.recorded?.relativePath}
+      >
         <button
           data-open-file
           onClick={() => props.onOpenChangedFile(threadId, change)}
@@ -1306,7 +1314,7 @@ describe("AgentModeView", () => {
     ]);
   });
 
-  it("offers the changed files as a review cue that opens the Diff surface", () => {
+  it("keeps live working-tree changes out of completed-turn history", () => {
     const showChanges = vi.fn(async () => undefined);
     const layout = recordedLayoutState();
     const view = threadView({ threadId: "agt-1" });
@@ -1332,10 +1340,61 @@ describe("AgentModeView", () => {
 
     clickText("Refactor the parser");
     expect(host.querySelector(".agent-changes")).toBeNull();
-    clickText("Review in Diff");
+    expect(host.textContent).not.toContain("Review in Diff");
+    expect(host.querySelector("[data-agent-changes-cue]")).toBeNull();
+    expect(showChanges).not.toHaveBeenCalled();
+    expect(layout.actions).toEqual([]);
+  });
 
-    expect(showChanges).toHaveBeenCalledWith("agt-1");
-    expect(layout.actions).toEqual([{ kind: "openSurface", surface: "diff" }]);
+  it("opens a completed turn's frozen diff in the existing right sidebar", async () => {
+    let layout = recordedLayoutState();
+    const view = threadView({ threadId: "agt-1", status: { kind: "exited", exitCode: 0 } });
+    const showChanges = vi.fn(async () => undefined);
+    const getTurnChanges = vi.fn(async (_threadId: string, turnId: string) => ({
+      turnId,
+      state: "ready" as const,
+      files: [
+        {
+          relativePath: "old.ts",
+          oldRelativePath: null,
+          status: "modified" as const,
+          addedLines: 2,
+          deletedLines: 1,
+        },
+      ],
+      truncated: false,
+      reason: null,
+    }));
+    const agents = surface({
+      threads: [view],
+      getTurnChanges,
+      getTurnFileDiff: vi.fn(),
+      showChanges,
+    });
+    render({ chrome: chromeFixture({ layout }), agents });
+    clickText("Refactor the parser");
+    await act(async () => {});
+    clickText("Open diff");
+    await act(async () => {});
+    expect(layout.actions).toContainEqual({ kind: "openSurface", surface: "diff" });
+    layout = recordedLayoutState(reduceRecordedLayout(layout));
+    render({ chrome: chromeFixture({ layout }), agents });
+    await waitForReact(() => expect(host.querySelector('[data-mock-diff="agt-1"]')).not.toBeNull());
+    expect(host.querySelector('[data-mock-diff="agt-1"]')?.getAttribute("data-recorded-turn")).toBe(
+      view.thread.turns[0]?.turnId,
+    );
+    expect(host.querySelector('.agent-session [aria-label="Recorded turn diff"]')).toBeNull();
+    expect(showChanges).not.toHaveBeenCalled();
+    click('[aria-label="Close Diff tab"]');
+    layout = recordedLayoutState(reduceRecordedLayout(layout));
+    render({ chrome: chromeFixture({ layout }), agents });
+    act(() => layout.dispatch({ kind: "openSurface", surface: "diff" }));
+    layout = recordedLayoutState(reduceRecordedLayout(layout));
+    render({ chrome: chromeFixture({ layout }), agents });
+    await waitForReact(() => expect(host.querySelector('[data-mock-diff="agt-1"]')).not.toBeNull());
+    expect(
+      host.querySelector('[data-mock-diff="agt-1"]')?.getAttribute("data-recorded-turn"),
+    ).toBeNull();
   });
 
   it("opens a changed file and its diff document through the Diff surface", async () => {

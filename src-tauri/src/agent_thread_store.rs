@@ -554,6 +554,12 @@ pub enum AgentTurnEvent {
     },
     #[serde(rename_all = "camelCase")]
     ContextUsage {
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "optional_context_observation_time"
+        )]
+        observed_at_epoch_ms: Option<u64>,
         model: String,
         #[serde(deserialize_with = "appserver::nullable_required")]
         input_tokens: Option<u64>,
@@ -1163,6 +1169,7 @@ fn validate_agent_turn_usage(usage: &AgentTurnUsage) -> Result<(), String> {
 pub(crate) fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
     appserver::validate_event(event)?;
     if let AgentTurnEvent::ContextUsage {
+        observed_at_epoch_ms,
         model,
         input_tokens,
         context_window,
@@ -1173,6 +1180,9 @@ pub(crate) fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), St
             || model.chars().any(char::is_control)
         {
             return Err("Agent context model exceeds the supported bounds.".to_string());
+        }
+        if observed_at_epoch_ms.is_some_and(|timestamp| timestamp > MAX_AGENT_SAFE_INTEGER) {
+            return Err("Agent context observation time exceeds the supported bounds.".into());
         }
         if input_tokens.is_some_and(|tokens| tokens > MAX_AGENT_SAFE_INTEGER)
             || context_window.is_some_and(|tokens| tokens == 0 || tokens > MAX_AGENT_SAFE_INTEGER)
@@ -1617,3 +1627,13 @@ mod tests;
 #[cfg(test)]
 #[path = "agent_thread_store_v1_compat_tests/mod.rs"]
 mod v1_compat_tests;
+
+pub(crate) fn optional_context_observation_time<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(deserializer)?;
+    if value > MAX_AGENT_SAFE_INTEGER {
+        return Err(serde::de::Error::custom("Invalid context observation time"));
+    }
+    Ok(Some(value))
+}

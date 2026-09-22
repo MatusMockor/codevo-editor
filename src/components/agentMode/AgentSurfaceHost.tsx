@@ -1,3 +1,4 @@
+import type { AgentRecordedTurnSelection } from "./AgentRecordedTurnDiff";
 import { useAgentWorktreeFileChanges } from "../../application/useAgentWorktreeFileChanges";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
@@ -27,6 +28,8 @@ export type AgentSurfaceHostAgents = Pick<
 >;
 
 export interface AgentSurfaceHostProps {
+  readonly recordedDiff?: AgentRecordedTurnSelection | null;
+  readonly onCloseRecordedDiff?: () => void;
   readonly chrome: AgentWorkbenchChrome;
   readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
@@ -48,6 +51,8 @@ export interface AgentSurfaceHostProps {
 }
 
 export const AgentSurfaceHost = memo(function AgentSurfaceHost({
+  recordedDiff = null,
+  onCloseRecordedDiff,
   agents,
   chooserAutoFocus,
   chrome,
@@ -135,6 +140,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         ? null
         : {
             ...chrome.diff,
+            recorded: recordedDiff?.threadId === thread.thread.threadId ? recordedDiff : null,
+            onCloseRecorded: onCloseRecordedDiff,
             summary: thread.changeSummary,
             onShowChanges: (threadId) => void agents.showChanges(threadId),
             onRefreshChanges: (threadId) => void agents.showChanges(threadId),
@@ -144,7 +151,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             onOpenChangedFileDiff: (threadId, change) =>
               void agents.openChangedFileDiff(threadId, change),
           },
-    [agents, available, chrome.diff, remote, thread],
+    [agents, available, chrome.diff, remote, thread, recordedDiff, onCloseRecordedDiff],
   );
 
   const terminalChrome = chrome.terminal;

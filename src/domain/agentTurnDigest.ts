@@ -1,4 +1,4 @@
-import type { AgentContextWindow } from "./agentContextWindow";
+import { observationTimestamp, type AgentContextWindow } from "./agentContextWindow";
 import type { AgentTurnEvent } from "./agentThread";
 import type { AgentCliKind } from "./agentTask";
 
@@ -14,6 +14,7 @@ export interface AgentTurnDigestCapacity {
 }
 
 export interface AgentTurnDigestOccupancy {
+  readonly observedAtEpochMs?: number;
   readonly model: string;
   readonly inputTokens: number;
 }
@@ -113,11 +114,19 @@ function acceptContextUsage(fold: DigestFold, event: ContextUsageEvent): void {
   if (event.contextWindow !== null && positive(event.contextWindow))
     retainCapacity(fold, event.model, event.contextWindow);
   if (event.inputTokens !== null && nonnegative(event.inputTokens))
-    fold.primary = { model: event.model, inputTokens: event.inputTokens };
+    fold.primary = {
+      model: event.model,
+      inputTokens: event.inputTokens,
+      ...observationTimestamp(event),
+    };
   const capacity = fold.primary === null ? undefined : fold.capacities.get(fold.primary.model);
   fold.current =
     fold.primary !== null && capacity !== undefined
-      ? { usedTokens: fold.primary.inputTokens, contextWindow: capacity }
+      ? {
+          usedTokens: fold.primary.inputTokens,
+          contextWindow: capacity,
+          ...observationTimestamp(fold.primary),
+        }
       : null;
 }
 

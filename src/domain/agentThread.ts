@@ -223,6 +223,7 @@ export type AgentTurnEvent =
     }
   | {
       readonly kind: "contextUsage";
+      readonly observedAtEpochMs?: number;
       readonly model: string;
       readonly inputTokens: number | null;
       readonly contextWindow: number | null;

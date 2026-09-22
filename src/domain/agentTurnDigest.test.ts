@@ -192,3 +192,41 @@ describe("agent turn digest", () => {
     expect(parseAgentTurnDigest(digest)).toEqual(digest);
   });
 });
+
+it("roundtrips observation time in primary and current without refreshing capacity-only updates", () => {
+  const occupied = foldAgentTurnDigest(emptyAgentTurnDigest("claudeCode"), [
+    {
+      kind: "contextUsage",
+      model: "main",
+      inputTokens: 123,
+      contextWindow: null,
+      observedAtEpochMs: 1000,
+    },
+  ]);
+  const restored = parseAgentTurnDigest(JSON.parse(JSON.stringify(occupied)));
+  const ready = foldAgentTurnDigest(restored, [
+    {
+      kind: "contextUsage",
+      model: "main",
+      inputTokens: null,
+      contextWindow: 1000,
+      observedAtEpochMs: 9000,
+    },
+  ]);
+  expect(parseAgentTurnDigest(JSON.parse(JSON.stringify(ready))).context.current).toEqual({
+    usedTokens: 123,
+    contextWindow: 1000,
+    observedAtEpochMs: 1000,
+  });
+  for (const invalid of [null, -1, 1.1, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() =>
+      parseAgentTurnDigest({
+        ...ready,
+        context: {
+          ...ready.context,
+          current: { ...ready.context.current, observedAtEpochMs: invalid },
+        },
+      }),
+    ).toThrow();
+  }
+});

@@ -69,7 +69,7 @@ describe("AgentComposerController context compaction", () => {
     host.remove();
   });
 
-  it("updates and clears context telemetry through the memoized controller", () => {
+  it("does not forward context usage telemetry into the composer", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const host = document.createElement("div");
     const root = createRoot(host);
@@ -82,16 +82,8 @@ describe("AgentComposerController context compaction", () => {
       onOpenProviderSettings: () => undefined,
     } as unknown as AgentComposerControllerProps;
     try {
-      for (const [contextUsage, expected] of [
-        [null, "Unknown"],
-        [{ usedTokens: 120, contextWindow: 200 }, "120/200"],
-        [{ usedTokens: 140, contextWindow: 200 }, "140/200"],
-        [{ usedTokens: 140, contextWindow: 1000 }, "140/1000"],
-        [null, "Unknown"],
-      ] as const) {
-        act(() => root.render(<AgentComposerController {...props} contextUsage={contextUsage} />));
-        expect(host.querySelector("output")?.textContent).toBe(expected);
-      }
+      act(() => root.render(<AgentComposerController {...props} />));
+      expect(host.querySelector("output")?.textContent).toBe("Unknown");
     } finally {
       act(() => root.unmount());
     }

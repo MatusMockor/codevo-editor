@@ -124,6 +124,11 @@ pub struct AgentTaskOutputEvent {
 }
 
 pub trait AgentTaskEventSink: Send + Sync {
+    /// Runs on the blocking start worker, with admission retained, before provider execution.
+    fn before_start(&self, _task: &AgentTaskMetadata, _authority: Option<&std::fs::File>) {}
+    /// Runs once after the provider is reaped and before terminal publication/admission release.
+    fn before_completion(&self, _task: &AgentTaskMetadata, _authority: Option<&std::fs::File>) {}
+
     fn status(&self, event: AgentTaskStatusEvent);
     fn output(&self, event: AgentTaskOutputEvent);
     /// Asynchronous transports must opt into bounded consumption acknowledgement.
@@ -571,6 +576,8 @@ enum QueuedAgentTaskEvent {
 }
 
 struct AgentTaskEntry {
+    completion_claimed: bool,
+    cwd_authority: Option<Arc<std::fs::File>>,
     admission: Option<AgentTaskAdmission>,
     metadata: AgentTaskMetadata,
     phase: AgentTaskPhase,
@@ -599,6 +606,8 @@ impl AgentTaskEntry {
         watchdog: Arc<WatchdogGate>,
     ) -> Self {
         Self {
+            completion_claimed: false,
+            cwd_authority: None,
             admission: Some(admission),
             metadata,
             phase: AgentTaskPhase::Pending,
@@ -703,6 +712,7 @@ impl Drop for UnpublishedAgentTask<'_> {
                 }
             }));
         }
+        capture_completion(&self.registry.shared, &self.task_id);
         self.registry.remove_entry(&self.task_id);
     }
 }
@@ -824,10 +834,9 @@ impl AgentTaskRegistry {
             if state.entries.contains_key(&task_id) {
                 return Err(DUPLICATE_AGENT_TASK_ERROR.to_string());
             }
-            state.entries.insert(
-                task_id.clone(),
-                AgentTaskEntry::new(metadata, admission, Arc::clone(&watchdog)),
-            );
+            let mut entry = AgentTaskEntry::new(metadata, admission, Arc::clone(&watchdog));
+            entry.cwd_authority = plan.retained_cwd_authority();
+            state.entries.insert(task_id.clone(), entry);
         }
         let start = catch_unwind(AssertUnwindSafe(|| {
             self.start_published(task_id, plan, watchdog)
@@ -852,6 +861,30 @@ impl AgentTaskRegistry {
             child: None,
             committed: false,
         };
+        let (metadata, authority) = {
+            let state = self.shared.state();
+            let entry = state
+                .entries
+                .get(&task_id)
+                .ok_or(AGENT_TASK_NOT_REGISTERED_ERROR)?;
+            (entry.metadata.clone(), entry.cwd_authority.clone())
+        };
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            self.shared
+                .sink
+                .before_start(&metadata, authority.as_deref());
+        }));
+        {
+            let state = self.shared.state();
+            if state.starts_closed
+                || state
+                    .entries
+                    .get(&task_id)
+                    .is_none_or(|entry| entry.stop_requested)
+            {
+                return Err(AGENT_TASK_STARTS_CLOSED_ERROR.to_string());
+            }
+        }
         unpublished.child = Some(
             self.spawner
                 .spawn(&plan)
@@ -1571,125 +1604,9 @@ fn remove_shared_entry(shared: &Arc<AgentTaskShared>, task_id: &str) {
         .retain(|candidate| candidate != task_id);
 }
 
-fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStatusPayload) {
-    let released_input;
-    let released_questions;
-    let expired_delivery;
-    let emit = {
-        let mut state = shared.state();
-        let emit = {
-            let Some(entry) = state.entries.get_mut(task_id) else {
-                return;
-            };
-            if matches!(entry.phase, AgentTaskPhase::Terminal) {
-                return;
-            }
-            let pending = matches!(entry.phase, AgentTaskPhase::Pending);
-            entry.phase = AgentTaskPhase::Terminal;
-            entry.admission.take();
-            released_input = entry.input.take();
-            released_questions = entry.questions.clone();
-            entry.watchdog.finish();
-            let status =
-                resolve_terminal_status(entry.stop_requested, entry.watchdog_timed_out, payload);
-            if entry.acknowledged
-                && !entry.flushing
-                && !shared.sink.requires_output_acknowledgement()
-            {
-                entry.status_sequence += 1;
-                Some(entry.metadata.status_event(entry.status_sequence, status))
-            } else {
-                if pending {
-                    entry.status_sequence += 1;
-                    let running = entry
-                        .metadata
-                        .status_event(entry.status_sequence, AgentTaskStatusPayload::Running);
-                    push_queued(entry, QueuedAgentTaskEvent::Status(running));
-                }
-                entry.status_sequence += 1;
-                let event = entry.metadata.status_event(entry.status_sequence, status);
-                push_queued(entry, QueuedAgentTaskEvent::Status(event));
-                None
-            }
-        };
-        expired_delivery = record_terminal_entry(&mut state, task_id);
-        emit
-    };
-    if let Some(questions) = released_questions {
-        questions.finish();
-    }
-    close_agent_task_input(released_input, AgentTaskInputState::ClosedAfterResult);
-    for event in expired_delivery {
-        shared.sink.status(event);
-    }
-    if let Some(event) = emit {
-        shared.sink.status(event);
-    } else if shared.sink.requires_output_acknowledgement() {
-        let _order = shared
-            .output_emission_order
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for event in drain_acknowledgement(shared, task_id) {
-            emit_queued_event(shared.sink.as_ref(), event);
-        }
-    }
-}
-
-fn resolve_terminal_status(
-    stop_requested: bool,
-    watchdog_timed_out: bool,
-    payload: AgentTaskStatusPayload,
-) -> AgentTaskStatusPayload {
-    if watchdog_timed_out {
-        return AgentTaskStatusPayload::Failed {
-            message: AGENT_TASK_TIMEOUT_MESSAGE.to_string(),
-        };
-    }
-    if let AgentTaskStatusPayload::Failed { message } = payload {
-        return AgentTaskStatusPayload::Failed {
-            message: clip_failure_message(&message),
-        };
-    }
-    if stop_requested {
-        return AgentTaskStatusPayload::Stopped;
-    }
-    payload
-}
-
-fn record_terminal_entry(
-    state: &mut AgentTaskRegistryState,
-    task_id: &str,
-) -> Vec<AgentTaskStatusEvent> {
-    let mut expired_delivery = Vec::new();
-    if !state
-        .terminal_order
-        .iter()
-        .any(|candidate| candidate == task_id)
-    {
-        state.terminal_order.push_back(task_id.to_string());
-    }
-    while state.terminal_order.len() > MAX_TERMINAL_AGENT_TASK_ENTRIES {
-        let Some(expired) = state.terminal_order.pop_front() else {
-            break;
-        };
-        if let Some(entry) = state.entries.remove(&expired) {
-            if entry.acknowledged
-                && (!entry.outstanding_output.is_empty() || !entry.queued.is_empty())
-            {
-                expired_delivery.push(
-                    entry.metadata.status_event(
-                        entry.status_sequence + 1,
-                        AgentTaskStatusPayload::Failed {
-                            message: "Agent output delivery expired; some output is unavailable."
-                                .to_string(),
-                        },
-                    ),
-                );
-            }
-        }
-    }
-    expired_delivery
-}
+#[path = "agent_task_completion.rs"]
+mod completion;
+use completion::{capture_completion, complete};
 
 #[path = "agent_task_output_delivery.rs"]
 mod output_delivery;

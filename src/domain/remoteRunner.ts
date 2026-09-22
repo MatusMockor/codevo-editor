@@ -1,3 +1,4 @@
+import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
 import type {
   RepositoryHostsSnapshot,
   RepositoryLookupRequest,
@@ -45,6 +46,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     projectCloning?: boolean;
     projectManagement?: boolean;
     threadManagement?: boolean;
+    turnChanges?: boolean;
     taskContinuation?: boolean;
     taskLaunchOptions?: boolean;
     taskIsolation?: boolean;
@@ -280,6 +282,10 @@ export interface RemoteRunnerGateway {
     request: RemoteRunnerServerRequest,
     listener: (event: RemoteRunnerInventoryEvent) => void,
   ): Promise<() => void>;
+  getTurnChanges?(request: RemoteRunnerTaskRequest): Promise<AgentTurnChangeSummary>;
+  getTurnFileDiff?(
+    request: RemoteRunnerTaskRequest & Readonly<{ relativePath: string }>,
+  ): Promise<AgentTurnFileDiff>;
   listTaskFiles?(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerTaskFiles>;
   getTaskFileDiff?(request: RemoteRunnerTaskFileDiffRequest): Promise<RemoteRunnerTaskFileDiff>;
   getAttachment?(request: RemoteRunnerAttachmentRequest): Promise<RemoteRunnerAttachment>;

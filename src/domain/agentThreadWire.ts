@@ -384,6 +384,7 @@ export function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknow
         model: event.model,
         inputTokens: event.inputTokens,
         contextWindow: event.contextWindow,
+        ...optionalField("observedAtEpochMs", event.observedAtEpochMs),
       };
     case "contextCompactionStatus":
       return { kind: event.kind, status: event.status, message: event.message };
@@ -1041,7 +1042,12 @@ export function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
         ),
       };
     case "contextUsage": {
-      exactKeys(event, ["kind", "model", "inputTokens", "contextWindow"], path);
+      boundedKeys(
+        event,
+        ["kind", "model", "inputTokens", "contextWindow"],
+        ["observedAtEpochMs"],
+        path,
+      );
       const contextWindow = optionalUnsignedSafeInteger(
         event.contextWindow,
         `${path}.contextWindow`,
@@ -1052,6 +1058,12 @@ export function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
         model: boundedText(event.model, `${path}.model`, 256, false, true),
         inputTokens: optionalUnsignedSafeInteger(event.inputTokens, `${path}.inputTokens`),
         contextWindow,
+        ...optionalField(
+          "observedAtEpochMs",
+          event.observedAtEpochMs === undefined
+            ? undefined
+            : unsignedSafeInteger(event.observedAtEpochMs, `${path}.observedAtEpochMs`),
+        ),
       };
     }
     case "contextCompactionStatus": {

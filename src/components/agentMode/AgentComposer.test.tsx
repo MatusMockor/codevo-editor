@@ -787,7 +787,7 @@ describe("AgentComposer", () => {
     });
 
     expect(host.textContent).toContain("Resume with less context");
-    expect(host.textContent).toContain("120k tokens from an older session");
+    expect(host.textContent).toContain("120k tokens from earlier");
     act(() => host.querySelector<HTMLButtonElement>(".agent-compaction-offer__action")?.click());
     expect(onCompactContext).toHaveBeenCalledWith({
       launch: {
@@ -799,11 +799,40 @@ describe("AgentComposer", () => {
       },
       dangerousLaunchConfirmed: true,
     });
-    act(() =>
-      host
-        .querySelector<HTMLButtonElement>('[aria-label="Dismiss context compaction suggestion"]')
-        ?.click(),
-    );
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Keep full history"]')?.click());
+    expect(host.textContent).not.toContain("Resume with less context");
+  });
+
+  it("keeps dismissals per snapshot across switching threads and hides the live meter", () => {
+    const onCompactContext = vi.fn();
+    const props = { mode: { kind: "followUp" as const, blockedReason: null }, onCompactContext };
+    render({ ...props, compactionOffer: { key: "a:1", contextTokens: 120_000 } });
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Keep full history"]')?.click());
+    render({ ...props, compactionOffer: { key: "b:1", contextTokens: 120_000 } });
+    expect(host.textContent).toContain("Resume with less context");
+    render({ ...props, compactionOffer: { key: "a:1", contextTokens: 120_000 } });
+    expect(host.textContent).not.toContain("Resume with less context");
+    render({ ...props, compactionOffer: { key: "a:2", contextTokens: 120_000 } });
+    expect(host.textContent).toContain("Resume with less context");
+    expect(host.querySelector(".agent-context-window-meter")).toBeNull();
+  });
+
+  it("does not offer Claude resume compaction while working or on another provider or server", () => {
+    const props = {
+      compactionOffer: { key: "a:1", contextTokens: 120_000 },
+      onCompactContext: vi.fn(),
+    };
+    render({ ...props, running: true });
+    expect(host.textContent).not.toContain("Resume with less context");
+    render({ ...props, executionServerId: "server-1" });
+    expect(host.textContent).not.toContain("Resume with less context");
+    render({
+      ...props,
+      launchProvider: "codex",
+      launch: { provider: "codex", model: "default", mode: "default" },
+    });
+    expect(host.textContent).not.toContain("Resume with less context");
+    render({ compactionOffer: props.compactionOffer });
     expect(host.textContent).not.toContain("Resume with less context");
   });
 
@@ -872,7 +901,7 @@ describe("AgentComposer", () => {
       onCompactContext,
     });
 
-    expect(compactAction().disabled).toBe(true);
+    expect(host.querySelector(".agent-compaction-offer__action")).toBeNull();
 
     render({
       executionServerId: "srv-1",

@@ -218,3 +218,16 @@ describe("agentContextWindow with an uncapped turn log", () => {
     ).toEqual({ usedTokens: 100, contextWindow: 1000 });
   });
 });
+
+it("keeps occupancy observation time across later capacity metadata and serialization", () => {
+  const measured = { ...input("main", 100), observedAtEpochMs: 1234 };
+  const value = thread([measured, { ...capacity("main", 1000), observedAtEpochMs: 9999 }]);
+  expect(agentContextWindow(parseAgentThread(serializeAgentThread(value)))).toEqual({
+    usedTokens: 100,
+    contextWindow: 1000,
+    observedAtEpochMs: 1234,
+  });
+  expect(
+    agentContextWindow(thread([measured, input("main", 200), capacity("main", 1000)])),
+  ).toEqual({ usedTokens: 200, contextWindow: 1000 });
+});

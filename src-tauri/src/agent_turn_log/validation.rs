@@ -162,12 +162,19 @@ pub(crate) fn validate_digest(digest: &AgentTurnDigestWire) -> AgentTurnLogResul
     }
     if let Some(primary) = context.primary.as_ref() {
         validate_model(&primary.model)?;
-        if primary.input_tokens > MAX_SAFE_INTEGER {
+        if primary.input_tokens > MAX_SAFE_INTEGER
+            || primary
+                .observed_at_epoch_ms
+                .is_some_and(|time| time > MAX_SAFE_INTEGER)
+        {
             return Err(AgentTurnLogError::BudgetExhausted);
         }
     }
     if let Some(current) = context.current {
-        if current.context_window == 0
+        if current
+            .observed_at_epoch_ms
+            .is_some_and(|time| time > MAX_SAFE_INTEGER)
+            || current.context_window == 0
             || current.context_window > MAX_SAFE_INTEGER
             || current.used_tokens > MAX_SAFE_INTEGER
         {

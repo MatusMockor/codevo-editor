@@ -45,6 +45,8 @@ export const REMOTE_RUNNER_COMMANDS = {
   resumePendingMessages: "remote_runner_resume_pending_messages",
   listEvents: "remote_runner_list_events",
   getDiff: "remote_runner_get_diff",
+  getTurnChanges: "remote_runner_get_turn_changes",
+  getTurnFileDiff: "remote_runner_get_turn_file_diff",
   listTaskFiles: "remote_runner_list_task_files",
   getTaskFileDiff: "remote_runner_get_task_file_diff",
   getAttachment: "remote_runner_get_attachment",
@@ -210,6 +212,18 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   listEvents(request: R.RemoteRunnerTaskRequest & Readonly<{ after: number }>) {
     return this.call("listEvents", request);
+  }
+  async getTurnChanges(request: R.RemoteRunnerTaskRequest) {
+    const response = await this.call("getTurnChanges", request);
+    if (response.turnId !== request.taskId)
+      throw new Error("Runner returned changes for another turn.");
+    return response;
+  }
+  async getTurnFileDiff(request: R.RemoteRunnerTaskRequest & Readonly<{ relativePath: string }>) {
+    const response = await this.call("getTurnFileDiff", request);
+    if (response.relativePath !== request.relativePath)
+      throw new Error("Runner returned a different turn file diff.");
+    return response;
   }
   listTaskFiles(request: R.RemoteRunnerTaskRequest) {
     return this.call("listTaskFiles", request);

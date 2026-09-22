@@ -156,7 +156,28 @@ impl AppHandleAgentTaskEventSink {
     }
 }
 
+#[path = "agent_task_change_capture.rs"]
+mod agent_task_change_capture;
+
 impl AgentTaskEventSink for AppHandleAgentTaskEventSink {
+    fn before_start(&self, task: &AgentTaskMetadata, authority: Option<&std::fs::File>) {
+        agent_task_change_capture::capture(
+            &self.app,
+            task,
+            authority,
+            crate::agent_turn_changes::CapturePhase::Before,
+        );
+    }
+
+    fn before_completion(&self, task: &AgentTaskMetadata, authority: Option<&std::fs::File>) {
+        agent_task_change_capture::capture(
+            &self.app,
+            task,
+            authority,
+            crate::agent_turn_changes::CapturePhase::After,
+        );
+    }
+
     fn requires_output_acknowledgement(&self) -> bool {
         true
     }

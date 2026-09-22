@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
+import { unavailableTurnChanges } from "./agentTurnChangesReader";
 import type { AgentThreadsSurface } from "./agentThreadPorts";
 
 type Methods = {
@@ -52,6 +53,16 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       releaseProjectTasks: (...args) => current.current.releaseProjectTasks(...args),
       removeOrphanedWorktree: (...args) => current.current.removeOrphanedWorktree(...args),
       pruneOrphanedWorktrees: (...args) => current.current.pruneOrphanedWorktrees(...args),
+      getTurnChangesRevision: (threadId: string) =>
+        current.current.getTurnChangesRevision?.(threadId) ??
+        current.current.turnChangesRevision ??
+        current.current,
+      getTurnChanges: (...args: Parameters<NonNullable<AgentThreadsSurface["getTurnChanges"]>>) =>
+        current.current.getTurnChanges?.(...args) ??
+        Promise.resolve(unavailableTurnChanges(args[1])),
+      getTurnFileDiff: (...args: Parameters<NonNullable<AgentThreadsSurface["getTurnFileDiff"]>>) =>
+        current.current.getTurnFileDiff?.(...args) ??
+        Promise.reject(new Error("Recorded changes are not available for this turn.")),
       showChanges: (...args) => current.current.showChanges(...args),
       hideChanges: (...args) => current.current.hideChanges(...args),
       showFileDiff: (...args) => current.current.showFileDiff(...args),

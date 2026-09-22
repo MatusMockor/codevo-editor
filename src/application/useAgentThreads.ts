@@ -1,3 +1,5 @@
+import { useLocalAgentTurnChanges } from "./useLocalAgentTurnChanges";
+import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import {
   compareAgentThreadOrder,
   type AgentThreadOrganizationPatch,
@@ -102,6 +104,7 @@ export type AgentThreadsGitGateway = Pick<
 >;
 
 export interface AgentThreadsDependencies {
+  readonly turnChangesGateway?: AgentTurnChangesGateway;
   readonly externalSessionImportGateway?: ExternalSessionImportGateway;
   readonly agentTaskGateway: AgentTaskGateway;
   readonly agentQuestionGateway?: AgentQuestionGateway;
@@ -227,6 +230,12 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   });
   const ensureExternalHistory = externalHistory.ensure;
 
+  const turnChanges = useLocalAgentTurnChanges({
+    gateway: dependencies.turnChangesGateway ?? null,
+    projects,
+    threads,
+    historyPage: history.page,
+  });
   const changes = useAgentChangeSummary({ gitGateway, projects, threads, reportError });
 
   const worktrees = useAgentWorktreeLifecycle({
@@ -782,6 +791,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     dependencies.getMaxConcurrentAgentTasks(),
   );
   return {
+    turnChangesRevision: turnChanges.turnChangesRevision,
+    getTurnChangesRevision: turnChanges.getTurnChangesRevision,
+    getTurnChanges: turnChanges.getTurnChanges,
+    getTurnFileDiff: turnChanges.getTurnFileDiff,
     threads: threadViews,
     attachments,
     attachmentImages,

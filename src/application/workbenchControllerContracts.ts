@@ -1,6 +1,7 @@
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
+import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
 import type {
@@ -71,6 +72,7 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
   agentProviderSignInGateway?: AgentProviderSignInGateway;
   agentRootLeaseGateway?: AgentRootLeaseGateway;
   agentTaskGateway?: AgentTaskGateway;
+  turnChangesGateway?: AgentTurnChangesGateway;
   agentQuestionGateway?: AgentQuestionGateway;
   gitWorktreeGateway?: GitWorktreeGateway;
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway?: IncrementalLanguageServerDocumentSyncGateway;

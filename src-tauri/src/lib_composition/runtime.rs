@@ -139,6 +139,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);
+            app.manage(Arc::new(crate::agent_turn_changes::AgentTurnChangesStore::new(app.path().app_data_dir()?)));
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
             let trust_service = WorkspaceTrustService::load(trust_path)?;
             app.manage(Mutex::new(trust_service));
@@ -278,6 +279,10 @@ pub fn run() {
             crate::remote_runner::remote_runner_surface,
             crate::remote_runner::remote_runner_list_task_files,
             crate::remote_runner::remote_runner_get_task_file_diff,
+            crate::remote_runner::remote_runner_get_turn_changes,
+            crate::remote_runner::remote_runner_get_turn_file_diff,
+            crate::agent_turn_changes_commands::agent_turn_changes_get,
+            crate::agent_turn_changes_commands::agent_turn_changes_diff,
             #[cfg(feature = "perf-capture")]
             perf_capture::perf_capture_activate_window,
             #[cfg(feature = "perf-capture")]

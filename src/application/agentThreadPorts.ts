@@ -1,3 +1,4 @@
+import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
 import type {
   AgentThreadOrganizationPatch,
   AgentThreadPlacement,
@@ -390,6 +391,14 @@ export interface AgentThreadsSurface {
   releaseProjectTasks(ownerId: string): void;
   removeOrphanedWorktree(worktreePath: string): Promise<void>;
   pruneOrphanedWorktrees(repositoryRoot: string): Promise<void>;
+  readonly turnChangesRevision?: object;
+  readonly getTurnChangesRevision?: (threadId: string) => object;
+  getTurnChanges?(threadId: string, turnId: string): Promise<AgentTurnChangeSummary>;
+  getTurnFileDiff?(
+    threadId: string,
+    turnId: string,
+    relativePath: string,
+  ): Promise<AgentTurnFileDiff>;
   showChanges(threadId: string): Promise<void>;
   hideChanges(threadId: string): void;
   showFileDiff(threadId: string, change: GitChangedFile): Promise<void>;

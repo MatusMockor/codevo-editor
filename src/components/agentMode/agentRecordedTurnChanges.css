@@ -1,0 +1,27 @@
+.agent-recorded-turn-surface .agent-turn-changes {
+  margin-top: 0;
+  border-radius: 0;
+}
+.agent-recorded-turn-surface .agent-surface-diff__preview {
+  display: flex;
+  flex-direction: column;
+}
+.agent-recorded-diff__preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 180px;
+}
+.agent-turn-changes-retry {
+  margin: 0 12px 10px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+}
+.agent-turn-changes-retry:hover {
+  background: var(--agent-hover);
+  color: var(--agent-text);
+}

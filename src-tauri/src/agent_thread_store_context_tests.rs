@@ -98,3 +98,35 @@ fn context_events_enforce_utf8_byte_bounds_and_safe_integer_edges() {
         json!({"kind":"contextCompactionStatus","status":"failed","message":"é".repeat(MAX_AGENT_EVENT_TEXT_BYTES / 2 + 1)}),
     );
 }
+
+#[test]
+fn context_observation_time_is_optional_strict_and_durable() {
+    let base =
+        json!({"kind":"contextUsage","model":"claude","inputTokens":100,"contextWindow":200000});
+    assert_eq!(serde_json::to_value(accepted(base.clone())).unwrap(), base);
+    for timestamp in [0, MAX_AGENT_SAFE_INTEGER] {
+        let mut value = base.clone();
+        value["observedAtEpochMs"] = json!(timestamp);
+        let temp = TempStore::create("observed-context");
+        let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+        document.thread.turns[0].events = vec![accepted(value.clone())];
+        temp.store().save(ROOT_KEY, &document).unwrap();
+        let loaded = temp.store().load(ROOT_KEY).unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded.threads[0].turns[0].events[0]).unwrap(),
+            value
+        );
+    }
+    for invalid in [
+        json!(null),
+        json!(-1),
+        json!(1.5),
+        json!("1"),
+        json!(true),
+        json!(MAX_AGENT_SAFE_INTEGER + 1),
+    ] {
+        let mut value = base.clone();
+        value["observedAtEpochMs"] = invalid;
+        rejected(value);
+    }
+}

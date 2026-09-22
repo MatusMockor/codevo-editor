@@ -7,6 +7,22 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.69] - 2026-09-22
+
+### Added
+
+- Review a file tree and historical diffs captured for each completed agent turn,
+  locally and on a Runner. Recorded changes remain tied to that turn as later
+  work changes the workspace; older turns without captured snapshots are not
+  reconstructed from the current files.
+- Offer context compaction when resuming a Claude conversation after an idle
+  period, using measured context usage and a recorded activity timestamp. The
+  suggestion can be dismissed without starting compaction.
+
+### Changed
+
+- Remove the context usage meter from the composer.
+
 ## [0.2.0-beta.68] - 2026-09-22
 
 ### Changed

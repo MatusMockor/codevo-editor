@@ -8,13 +8,78 @@ describe("agentContextCompactionOffer", () => {
   it("offers Claude compaction only for an old, large, resumable settled session", () => {
     const thread = candidate();
     expect(agentContextCompactionOffer(thread, NOW)).toEqual({
-      key: `agt-1:${thread.updatedAtEpochMs}:120000`,
+      key: `owner:agt-1:turn-1:${thread.turns[0]!.endedAtEpochMs}:120000`,
       contextTokens: 120_000,
     });
-    expect(agentContextCompactionOffer({ ...thread, updatedAtEpochMs: NOW }, NOW)).toBeNull();
+    expect(
+      agentContextCompactionOffer({ ...thread, title: "Renamed", updatedAtEpochMs: NOW }, NOW),
+    ).toEqual(agentContextCompactionOffer(thread, NOW));
     expect(
       agentContextCompactionOffer(
         { ...thread, provider: { kind: "codex", sessionId: "s-1" } },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it("uses exact usage age, including new snapshots with unchanged token counts", () => {
+    const thread = candidate();
+    const turn = thread.turns[0]!;
+    const observed = NOW - CLAUDE_COMPACTION_IDLE_MS;
+    const withObservation = (observedAtEpochMs: number): AgentThread => ({
+      ...thread,
+      turns: [
+        {
+          ...turn,
+          endedAtEpochMs: NOW,
+          events: turn.events.map((event) =>
+            event.kind === "contextUsage" ? { ...event, observedAtEpochMs } : event,
+          ),
+        },
+      ],
+    });
+    expect(agentContextCompactionOffer(withObservation(observed), NOW)?.contextTokens).toBe(
+      120_000,
+    );
+    expect(agentContextCompactionOffer(withObservation(observed + 1), NOW)).toBeNull();
+    expect(agentContextCompactionOffer(withObservation(NOW), NOW)).toBeNull();
+    expect(agentContextCompactionOffer(withObservation(NOW + 1), NOW)).toBeNull();
+  });
+
+  it("supports persisted truncated usage but never invents an age for unknown history", () => {
+    const thread = candidate();
+    const turn = thread.turns[0]!;
+    const truncated = { ...thread, turns: [{ ...turn, events: [], eventsTruncated: true }] };
+    expect(
+      agentContextCompactionOffer(truncated, NOW, { usedTokens: 100_000, contextWindow: 200_000 }),
+    ).not.toBeNull();
+    expect(
+      agentContextCompactionOffer(
+        { ...truncated, turns: [{ ...truncated.turns[0]!, endedAtEpochMs: null }] },
+        NOW,
+        { usedTokens: 120_000, contextWindow: 200_000 },
+      ),
+    ).toBeNull();
+    expect(
+      agentContextCompactionOffer(truncated, NOW, { usedTokens: 99_999, contextWindow: 200_000 }),
+    ).toBeNull();
+  });
+
+  it("suppresses archived, active and non-resumable sessions", () => {
+    const thread = candidate();
+    expect(agentContextCompactionOffer({ ...thread, archived: true }, NOW)).toBeNull();
+    expect(
+      agentContextCompactionOffer(
+        { ...thread, provider: { kind: "claudeCode", sessionId: null } },
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      agentContextCompactionOffer(
+        {
+          ...thread,
+          turns: [{ ...thread.turns[0]!, status: { kind: "running" } }],
+        },
         NOW,
       ),
     ).toBeNull();

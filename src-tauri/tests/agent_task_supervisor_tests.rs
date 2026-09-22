@@ -3807,3 +3807,6 @@ exit 0
 
 #[path = "support/agent_task_steer_eof_tests.rs"]
 mod steer_eof;
+
+#[path = "support/agent_task_capture_lifecycle.rs"]
+mod capture_lifecycle;

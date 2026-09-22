@@ -1,3 +1,4 @@
+import { AgentRecordedTurnDiff, type AgentRecordedTurnSelection } from "./AgentRecordedTurnDiff";
 import { RefreshCw } from "lucide-react";
 import { Suspense, lazy, useEffect, useMemo } from "react";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
@@ -19,6 +20,8 @@ const LazyGitDiffPreview = lazy(() =>
 );
 
 export interface AgentSurfaceDiffProps {
+  readonly recorded?: AgentRecordedTurnSelection | null;
+  readonly onCloseRecorded?: () => void;
   readonly thread: AgentThreadView;
   readonly summary: AgentTaskChangeSummary | null;
   readonly monacoTheme: MonacoAppTheme;
@@ -33,7 +36,22 @@ export interface AgentSurfaceDiffProps {
   onOpenChangedFileDiff(threadId: string, change: GitChangedFile): void;
 }
 
-export function AgentSurfaceDiff({
+export function AgentSurfaceDiff(props: AgentSurfaceDiffProps) {
+  if (props.recorded)
+    return (
+      <AgentRecordedTurnDiff
+        key={`${props.recorded.threadId}:${props.recorded.summary.turnId}:${props.recorded.relativePath ?? ""}`}
+        selection={props.recorded}
+        monacoTheme={props.monacoTheme}
+        editorFontFamily={props.editorFontFamily}
+        editorFontSize={props.editorFontSize}
+        editorFontLigatures={props.editorFontLigatures}
+        onClose={props.onCloseRecorded ?? (() => undefined)}
+      />
+    );
+  return <AgentWorkingTreeDiff {...props} />;
+}
+function AgentWorkingTreeDiff({
   editorFontFamily,
   editorFontLigatures,
   editorFontSize,

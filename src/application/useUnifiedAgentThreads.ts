@@ -24,6 +24,8 @@ import {
   remoteAgentThreadActions,
 } from "./remoteAgentSurface";
 import { useRemoteAgentStableSurface } from "./useRemoteAgentStableSurface";
+import { useRemoteAgentTurnChanges } from "./useRemoteAgentTurnChanges";
+import { unavailableTurnChanges } from "./agentTurnChangesReader";
 import { useRemoteAgentChanges } from "./useRemoteAgentChanges";
 import { useRemoteAgentImages } from "./useRemoteAgentImages";
 import { useRemoteAgentThreadHistory } from "./useRemoteAgentThreadHistory";
@@ -385,6 +387,17 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         : null;
     },
   });
+  const remoteTurnChanges = useRemoteAgentTurnChanges({
+    gateway,
+    owner,
+    valid,
+    snapshots: inventory.snapshots,
+    views: remoteById,
+  });
+  const turnChangesRevision = useMemo(
+    () => ({ local: local.turnChangesRevision, remote: remoteTurnChanges.turnChangesRevision }),
+    [local.turnChangesRevision, remoteTurnChanges.turnChangesRevision],
+  );
   const actions = remoteAgentThreadActions({
     local,
     threads: projected.views,
@@ -481,6 +494,23 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     ...local,
     historySearch,
     ...actions,
+    turnChangesRevision,
+    getTurnChangesRevision: (threadId) =>
+      isRemoteAgentIdentity(threadId)
+        ? remoteTurnChanges.getTurnChangesRevision(threadId)
+        : (local.getTurnChangesRevision?.(threadId) ??
+          local.turnChangesRevision ??
+          turnChangesRevision),
+    getTurnChanges: (threadId, turnId) =>
+      isRemoteAgentIdentity(threadId)
+        ? remoteTurnChanges.getTurnChanges(threadId, turnId)
+        : (local.getTurnChanges?.(threadId, turnId) ??
+          Promise.resolve(unavailableTurnChanges(turnId))),
+    getTurnFileDiff: (threadId, turnId, relativePath) =>
+      isRemoteAgentIdentity(threadId)
+        ? remoteTurnChanges.getTurnFileDiff(threadId, turnId, relativePath)
+        : (local.getTurnFileDiff?.(threadId, turnId, relativePath) ??
+          Promise.reject(new Error("Recorded changes are not available for this turn."))),
     showChanges: async (id) => {
       if (isRemoteAgentIdentity(id)) await remoteChanges.showChanges(id);
       else await local.showChanges(id);

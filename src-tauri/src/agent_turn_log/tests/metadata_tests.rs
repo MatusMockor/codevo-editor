@@ -25,6 +25,7 @@ fn sample_digest() -> AgentTurnDigestWire {
             capacities: Vec::new(),
             primary: None,
             current: Some(AgentTurnDigestOccupancy {
+                observed_at_epoch_ms: None,
                 used_tokens: 1_200,
                 context_window: 200_000,
             }),
@@ -893,4 +894,43 @@ fn summaries_that_contradict_the_lifecycle_projection_fail_closed() {
     assert_eq!(code(refused_shapeless), "unreadable");
     assert_eq!(code(refused_oversized), "unreadable");
     assert_eq!(code(refused_over_budget), "unreadable");
+}
+
+#[test]
+fn context_digest_observation_times_preserve_legacy_shape_and_round_trip() {
+    let mut base = serde_json::to_value(sample_digest()).unwrap();
+    base["context"]["primary"] = json!({"model":"claude","inputTokens":1200});
+    let legacy: AgentTurnDigestWire = serde_json::from_value(base.clone()).unwrap();
+    assert_eq!(serde_json::to_value(legacy).unwrap(), base);
+    for field in ["primary", "current"] {
+        for timestamp in [0, MAX_LOG_COUNTER] {
+            let mut value = base.clone();
+            value["context"][field]["observedAtEpochMs"] = json!(timestamp);
+            let digest: AgentTurnDigestWire = serde_json::from_value(value.clone()).unwrap();
+            super::super::validation::validate_digest(&digest).unwrap();
+            let temp = TempLogStore::create("observed-context-digest");
+            let store = temp.store();
+            let epoch = seed(&store, TURN_ID, 1);
+            let mut request = append_request(TURN_ID, epoch, 2, vec![entry(2, "observed")]);
+            request.digest = Some(digest);
+            store.append(&request).unwrap();
+            let reopened = store.open(&open_request(TURN_ID)).unwrap();
+            assert_eq!(
+                serde_json::to_value(reopened.digest.unwrap()).unwrap(),
+                value
+            );
+        }
+        for invalid in [
+            json!(null),
+            json!(-1),
+            json!(1.5),
+            json!("1"),
+            json!(true),
+            json!(MAX_LOG_COUNTER + 1),
+        ] {
+            let mut value = base.clone();
+            value["context"][field]["observedAtEpochMs"] = invalid;
+            assert!(serde_json::from_value::<AgentTurnDigestWire>(value).is_err());
+        }
+    }
 }

@@ -1,3 +1,5 @@
+import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
+import { AgentThreadSessionEmpty } from "./AgentThreadSessionEmpty";
 import { AgentHistoryActivity, type AgentHistoryWork } from "./AgentHistoryActivity";
 import { AgentHistoryPager } from "./AgentHistoryPager";
 import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
@@ -84,7 +86,10 @@ import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMarkdownRenderer";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentWorkingDuration } from "./agentClock";
-import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
+import { AgentRecordedTurnChanges } from "./AgentRecordedTurnChanges";
+import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
+import type { MonacoAppTheme } from "../../domain/settings";
+import { isTerminalAgentTurnStatus } from "../../domain/agentThread";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentQueuedPrompt, AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
@@ -192,6 +197,15 @@ export interface AgentThreadSessionProps {
   readonly onRetryExternalHistory?: () => void;
   readonly turnLog?: AgentTurnLogFactsSource | null;
   onReviewInDiff(threadId: string): void;
+  readonly onOpenTurnDiff?: (
+    threadId: string,
+    summary: AgentTurnChangeSummary,
+    relativePath?: string,
+  ) => void;
+  readonly turnChangesRevision?: object;
+  readonly getTurnChanges?: AgentThreadsSurface["getTurnChanges"];
+  readonly getTurnFileDiff?: AgentThreadsSurface["getTurnFileDiff"];
+  readonly monacoTheme?: MonacoAppTheme;
 }
 
 export function AgentThreadSession(props: AgentThreadSessionProps) {
@@ -227,7 +241,11 @@ function AgentThreadSessionBody({
   findOpen = false,
   findQuery,
   goToTurnSignal = 0,
-  onReviewInDiff,
+  onOpenTurnDiff,
+  turnChangesRevision,
+  getTurnChanges,
+  getTurnFileDiff,
+  monacoTheme = "calm-dark",
   reveal = null,
   textClipboard = null,
   markdownRenderer,
@@ -595,25 +613,43 @@ function AgentThreadSessionBody({
                   source={history?.activitySource?.(threadId, turn.turnId) ?? null}
                 >
                   {(historyWork) => (
-                    <AgentTurnView
-                      historyWork={historyWork}
-                      attachmentImages={
-                        agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
-                      }
-                      artifactScope={artifactScope}
-                      highlight={highlightFor(turn.turnId)}
-                      key={turn.turnId}
-                      onOpenAgents={agents.openPanel}
-                      subagents={agents.subagentsFor(turn.turnId)}
-                      prose={prose}
-                      provider={record.provider.kind}
-                      executionTarget={thread.execution?.kind ?? "local"}
-                      renderProbe={turnRenderProbe}
-                      textClipboard={textClipboard}
-                      turn={turn}
-                      turnLog={turnLog}
-                      workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
-                    />
+                    <>
+                      <AgentTurnView
+                        historyWork={historyWork}
+                        attachmentImages={
+                          agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
+                        }
+                        artifactScope={artifactScope}
+                        highlight={highlightFor(turn.turnId)}
+                        key={turn.turnId}
+                        onOpenAgents={agents.openPanel}
+                        subagents={agents.subagentsFor(turn.turnId)}
+                        prose={prose}
+                        provider={record.provider.kind}
+                        executionTarget={thread.execution?.kind ?? "local"}
+                        renderProbe={turnRenderProbe}
+                        textClipboard={textClipboard}
+                        turn={turn}
+                        turnLog={turnLog}
+                        workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
+                      />
+                      {isTerminalAgentTurnStatus(turn.status) &&
+                        getTurnChanges &&
+                        getTurnFileDiff && (
+                          <AgentRecordedTurnChanges
+                            key={`${threadId}:${turn.turnId}`}
+                            threadId={threadId}
+                            turnId={turn.turnId}
+                            onOpenDiff={(summary, path) =>
+                              onOpenTurnDiff?.(threadId, summary, path)
+                            }
+                            revision={turnChangesRevision}
+                            getTurnChanges={getTurnChanges}
+                            getTurnFileDiff={getTurnFileDiff}
+                            monacoTheme={monacoTheme}
+                          />
+                        )}
+                    </>
                   )}
                 </AgentHistoryActivity>
               ))}
@@ -666,14 +702,6 @@ function AgentThreadSessionBody({
           )}
 
           {worktreeRemovalLabel !== null && <p className="agent-note">{worktreeRemovalLabel}</p>}
-
-          {thread.changeSummary && (
-            <AgentThreadChangesCue
-              onReviewInDiff={onReviewInDiff}
-              summary={thread.changeSummary}
-              threadId={threadId}
-            />
-          )}
         </div>
       </div>
 
@@ -1486,38 +1514,6 @@ function liveStatusText(
   const live = items.find((item) => item.kind === "tool" && item.toolId === activity.toolId);
   if (live === undefined || live.kind !== "tool") return WORKING_LABEL;
   return live.label;
-}
-
-function AgentThreadSessionEmpty({ repositoryLabel }: { readonly repositoryLabel: string | null }) {
-  return (
-    <section aria-label="New agent thread" className="agent-session">
-      <div className="agent-session__scroll">
-        <div className="agent-session__body agent-session__body--empty">
-          <AgentEmptyTitle repositoryLabel={repositoryLabel} />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AgentEmptyTitle({ repositoryLabel }: { readonly repositoryLabel: string | null }) {
-  if (repositoryLabel === null) {
-    return (
-      <>
-        <h2 className="agent-empty__title">No Git repository detected</h2>
-        <p className="agent-empty__text">
-          The agent will work in this folder as it is. Open a Git repository to get branches,
-          worktrees and change review.
-        </p>
-      </>
-    );
-  }
-
-  return (
-    <h2 className="agent-empty__title">
-      What should we build in <span className="agent-empty__project">{repositoryLabel}</span>?
-    </h2>
-  );
 }
 
 function itemHighlight(

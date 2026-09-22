@@ -21,6 +21,8 @@ struct Capabilities {
     #[serde(default, deserialize_with = "optional_bool")]
     thread_management: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
+    turn_changes: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     task_isolation: Option<bool>,
     event_replay: bool,
     task_drafts: Option<bool>,
@@ -85,6 +87,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.task_execution,
         caps.project_management,
         caps.thread_management,
+        caps.turn_changes,
         caps.task_isolation,
         caps.event_replay,
         caps.task_drafts,
@@ -110,7 +113,7 @@ mod tests {
     use super::*;
     #[test]
     fn management_capabilities_are_optional_strict_booleans() {
-        for cap in ["projectManagement", "threadManagement"] {
+        for cap in ["projectManagement", "threadManagement", "turnChanges"] {
             let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
             assert!(validate(value.clone()).is_ok());
             for supported in [true, false] {

@@ -54,6 +54,7 @@ export interface AgentTurnOutputStream {
   readonly outputSubscriptionEpoch: number | null;
   parser: AgentOutputParserState;
   lastSequence: number;
+  lastOutputObservedAtEpochMs?: number;
   resyncStdout: boolean;
   resyncStderr: boolean;
   pendingEvents: ReadonlyArray<AgentTurnEvent>;
@@ -131,6 +132,7 @@ export function acceptAgentTurnOutput(
   parser: AgentOutputParserPort,
   stream: AgentTurnOutputStream,
   event: AgentTaskOutputEvent,
+  observedAtEpochMs: number = Date.now(),
 ): boolean {
   if (event.taskId !== stream.turnId) return false;
   if (event.sequence <= stream.lastSequence) return false;
@@ -142,6 +144,7 @@ export function acceptAgentTurnOutput(
     stream.resyncStderr = true;
   }
   stream.lastSequence = event.sequence;
+  stream.lastOutputObservedAtEpochMs = observedAtEpochMs;
   recordRawStreamChunk(stream, event.chunk);
   stream.pendingTruncated = stream.pendingTruncated || event.truncated;
   absorb(stream, parser.feed(stream.parser, event.stream, resynchronizedChunk(stream, event)));
@@ -245,7 +248,15 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
     if (event.kind === "result") stream.sawResult = true;
   }
   if (result.events.length > 0) {
-    const retained = mergeTurnEvents(stream.pendingEvents, result.events);
+    const events = result.events.map((event) =>
+      event.kind === "contextUsage" &&
+      event.inputTokens !== null &&
+      event.observedAtEpochMs === undefined &&
+      stream.lastOutputObservedAtEpochMs !== undefined
+        ? { ...event, observedAtEpochMs: stream.lastOutputObservedAtEpochMs }
+        : event,
+    );
+    const retained = mergeTurnEvents(stream.pendingEvents, events);
     stream.pendingEvents = retained.events;
     stream.pendingEventBytes = retained.events.reduce(
       (total, event) => total + agentTurnEventUtf8Bytes(event),

@@ -566,6 +566,7 @@ export function AgentWorkbenchScreen({
   return (
     <AgentArtifactSupportProvider value={artifactSupport}>
       <AgentModeView
+        monacoTheme={monacoTheme}
         followUpBehavior={appSettings.agentFollowUpBehavior}
         questionGateway={DEFAULT_QUESTION_GATEWAY}
         artifactLoader={DEFAULT_ARTIFACT_LOADER}

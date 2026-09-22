@@ -581,3 +581,22 @@ describe("output transport snapshot", () => {
     },
   );
 });
+
+it("timestamps accepted occupancy once and preserves it across duplicate output", () => {
+  const parser = scriptedParser(() => ({
+    events: [{ kind: "contextUsage", model: "main", inputTokens: 123, contextWindow: 1000 }],
+    sessionId: null,
+  }));
+  const stream = createStream(parser);
+  expect(acceptAgentTurnOutput(parser, stream, outputEvent(1, "usage"), 1234)).toBe(true);
+  expect(acceptAgentTurnOutput(parser, stream, outputEvent(1, "usage"), 9999)).toBe(false);
+  expect(drainAgentTurnOutput(stream, 1)?.events).toEqual([
+    {
+      kind: "contextUsage",
+      model: "main",
+      inputTokens: 123,
+      contextWindow: 1000,
+      observedAtEpochMs: 1234,
+    },
+  ]);
+});

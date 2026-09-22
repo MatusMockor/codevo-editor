@@ -15,6 +15,7 @@ import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPromp
 import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
 import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDiscoveryGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
+import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
 import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
@@ -126,6 +127,7 @@ export function createWorkbenchComposition() {
     ...agentControllerGateways,
     agentControllerGateways,
     agentTaskGateway: new TauriAgentTaskGateway(),
+    turnChangesGateway: new TauriAgentTurnChangesGateway(),
     htmlFilePreviewGateway: new TauriHtmlFilePreviewGateway(),
     appUpdater: {
       appUpdaterGateway,

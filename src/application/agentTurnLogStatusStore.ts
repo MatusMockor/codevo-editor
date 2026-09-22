@@ -521,7 +521,11 @@ function sameContextWindow(
   right: AgentContextWindow | null,
 ): boolean {
   if (left === null || right === null) return left === right;
-  return left.usedTokens === right.usedTokens && left.contextWindow === right.contextWindow;
+  return (
+    left.usedTokens === right.usedTokens &&
+    left.contextWindow === right.contextWindow &&
+    left.observedAtEpochMs === right.observedAtEpochMs
+  );
 }
 
 function sameHealth(left: AgentTurnLogWriterHealth, right: AgentTurnLogWriterHealth): boolean {

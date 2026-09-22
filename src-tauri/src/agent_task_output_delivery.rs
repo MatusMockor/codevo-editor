@@ -223,6 +223,8 @@ mod tests {
 
     fn terminal_entry() -> AgentTaskEntry {
         AgentTaskEntry {
+            completion_claimed: true,
+            cwd_authority: None,
             admission: None,
             metadata: AgentTaskMetadata {
                 task_id: "delivery-test".into(),

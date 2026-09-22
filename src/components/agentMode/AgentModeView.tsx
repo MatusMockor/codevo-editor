@@ -1,3 +1,7 @@
+import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import type { AgentRecordedTurnSelection } from "./AgentRecordedTurnDiff";
+import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
+import type { MonacoAppTheme } from "../../domain/settings";
 import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
 import { TauriRemoteRepositoryIdentityGateway } from "../../infrastructure/tauriRemoteRepositoryIdentityGateway";
@@ -38,9 +42,8 @@ import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
-import { agentContextCompactionOffer } from "../../domain/agentContextCompaction";
+import { useAgentResumeCompactionOffer } from "../../application/useAgentResumeCompactionOffer";
 import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
-import { agentContextWindow } from "../../domain/agentContextWindow";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import {
   agentTurnLogEvidence,
@@ -99,6 +102,7 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
+  readonly monacoTheme?: MonacoAppTheme;
   readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly questionGateway?: AgentQuestionGateway | null;
   readonly artifactLoader?: AgentArtifactLoader | null;
@@ -193,6 +197,7 @@ export function AgentModeView(props: AgentModeViewProps) {
 }
 
 function LocalAgentModeView({
+  monacoTheme = "calm-dark",
   followUpBehavior = "queue",
   agents,
   chrome,
@@ -275,10 +280,7 @@ function LocalAgentModeView({
   const contextTurnId = contextThread?.turns[contextThread.turns.length - 1]?.turnId ?? null;
   const contextFacts = useAgentTurnLogFacts(agents.turnLog ?? null, contextTurnId);
   const loggedContextWindow = contextFacts?.contextWindow ?? null;
-  const contextUsage = useMemo(
-    () => agentContextWindow(contextThread, loggedContextWindow),
-    [contextThread, loggedContextWindow],
-  );
+  const compactionOffer = useAgentResumeCompactionOffer(contextThread, loggedContextWindow);
   useLayoutEffect(
     () => onSelectedThreadChange(selectedThreadId),
     [onSelectedThreadChange, selectedThreadId],
@@ -457,11 +459,49 @@ function LocalAgentModeView({
     onBeforeRun: onShowTerminalPanel,
   });
   const headerScripts = useAgentThreadScriptPresentation(scripts);
+  const [recordedDiff, setRecordedDiff] = useState<AgentRecordedTurnSelection | null>(null);
+  const selectedRecordedThreadId = sessionThread?.thread.threadId ?? null;
+  const recordedRevision =
+    selectedRecordedThreadId === null
+      ? undefined
+      : (agents.getTurnChangesRevision?.(selectedRecordedThreadId) ?? agents.turnChangesRevision);
+  const visibleRecordedDiff = useMemo(() => {
+    if (!recordedDiff || recordedDiff.threadId !== selectedRecordedThreadId) return null;
+    if (recordedDiff.revision === recordedRevision) return recordedDiff;
+    return {
+      ...recordedDiff,
+      summary: {
+        turnId: recordedDiff.summary.turnId,
+        state: "unavailable" as const,
+        files: [],
+        truncated: false,
+        reason:
+          "Recorded changes are unavailable after the project connection changed. Reopen the turn to retry.",
+      },
+    };
+  }, [recordedDiff, recordedRevision, selectedRecordedThreadId]);
+  useEffect(() => {
+    setRecordedDiff(null);
+  }, [selectedRecordedThreadId]);
+  const openRecordedDiff = useAgentLatestCallback(
+    (threadId: string, summary: AgentTurnChangeSummary, relativePath?: string) => {
+      if (threadId !== selectedRecordedThreadId || !agents.getTurnFileDiff) return;
+      setRecordedDiff({
+        threadId,
+        summary,
+        relativePath,
+        revision: recordedRevision,
+        getTurnFileDiff: agents.getTurnFileDiff,
+      });
+      openSurface("diff");
+    },
+  );
   const showChanges = agents.showChanges;
   const trustProject = useAgentLatestCallback(onTrustProject);
   const releaseProject = useAgentLatestCallback(onReleaseProject);
   const reviewInDiff = useCallback(
     (threadId: string) => {
+      setRecordedDiff(null);
       void showChanges(threadId);
       openSurface("diff");
     },
@@ -570,8 +610,18 @@ function LocalAgentModeView({
     composer.clearSelection();
   });
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
-  const closeSurfaceTab = useAgentLatestCallback(surface.closeSurfaceTab);
-  const openSurfaceCommand = useAgentLatestCallback(openSurface);
+  const closeSurfaceTab = useAgentLatestCallback((kind: AgentSurfaceKind) => {
+    if (kind === "diff") setRecordedDiff(null);
+    surface.closeSurfaceTab(kind);
+  });
+  const closeRecordedDiff = useCallback(() => {
+    setRecordedDiff(null);
+    closeSurfaceTab("diff");
+  }, [closeSurfaceTab]);
+  const openSurfaceCommand = useAgentLatestCallback((kind: AgentSurfaceKind) => {
+    if (kind === "diff") setRecordedDiff(null);
+    openSurface(kind);
+  });
   const toggleRightPanelCommand = useAgentLatestCallback(toggleRightPanel);
   const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), [setLocalNotice]);
   const revealAgentAttachment = agents.revealAttachment;
@@ -971,6 +1021,16 @@ function LocalAgentModeView({
                       : undefined
                   }
                   onReviewInDiff={reviewInDiff}
+                  onOpenTurnDiff={openRecordedDiff}
+                  turnChangesRevision={
+                    sessionThread
+                      ? (agents.getTurnChangesRevision?.(sessionThread.thread.threadId) ??
+                        agents.turnChangesRevision)
+                      : agents.turnChangesRevision
+                  }
+                  getTurnChanges={agents.getTurnChanges}
+                  getTurnFileDiff={agents.getTurnFileDiff}
+                  monacoTheme={monacoTheme}
                   reveal={find.reveal}
                   textClipboard={textClipboard}
                   thread={sessionThread}
@@ -999,7 +1059,6 @@ function LocalAgentModeView({
                   <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
                   <AgentComposerController
                     followUpBehavior={followUpBehavior}
-                    contextUsage={contextUsage}
                     executionServerId={
                       selectedThread?.execution?.serverId ??
                       pendingRemoteIdentity?.serverId ??
@@ -1010,9 +1069,7 @@ function LocalAgentModeView({
                           : null)
                     }
                     compactionOffer={
-                      selectedThread?.execution?.kind === "remote"
-                        ? null
-                        : agentContextCompactionOffer(sessionThread?.thread ?? null, Date.now())
+                      selectedThread?.execution?.kind === "remote" ? null : compactionOffer
                     }
                     composerProps={composerProps}
                     modelFavoritesPersistence={modelFavoritesPersistence}
@@ -1094,6 +1151,8 @@ function LocalAgentModeView({
       {surface.surfaceHost.mounted && (
         <AgentSurfaceHost
           agents={surfaceAgents}
+          recordedDiff={visibleRecordedDiff}
+          onCloseRecordedDiff={closeRecordedDiff}
           remoteDraft={surfaceThread === null && selectedServerId !== null}
           remoteSurface={remoteSurface}
           chooserAutoFocus={surface.chooserRequested}

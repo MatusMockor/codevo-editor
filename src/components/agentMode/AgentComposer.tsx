@@ -55,7 +55,6 @@ import { useCompactComposerControls } from "./useCompactComposerControls";
 import { AgentComposerSubmitControls } from "./AgentComposerSubmitControls";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
 import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
-import { AgentContextWindowMeter, type AgentContextWindowUsage } from "./AgentContextWindowMeter";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
 const NO_SERVER_TARGET_REASON =
@@ -80,7 +79,6 @@ export interface AgentComposerSubmission {
 export interface AgentComposerProps {
   readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly immediateBlockedReason?: string | null;
-  readonly contextUsage?: AgentContextWindowUsage | null;
   readonly executionServerId?: string | null;
   readonly attachments?: AgentComposerAttachmentsSurface | null;
   readonly attachmentTargetKey?: string | null;
@@ -125,7 +123,6 @@ export interface AgentComposerProps {
 export function AgentComposer({
   followUpBehavior = "queue",
   immediateBlockedReason = null,
-  contextUsage = null,
   executionServerId = null,
   attachments = null,
   attachmentTargetKey = null,
@@ -196,7 +193,9 @@ export function AgentComposer({
   const composerRef = useRef<HTMLFormElement>(null);
   const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
-  const [dismissedCompactionKey, setDismissedCompactionKey] = useState<string | null>(null);
+  const [dismissedCompactionKeys, setDismissedCompactionKeys] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const followUp = mode.kind !== "new";
   const steering = mode.kind === "steer";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
@@ -547,14 +546,25 @@ export function AgentComposer({
       ref={composerRef}
     >
       {compactionOffer !== null &&
-        compactionOffer.key !== dismissedCompactionKey &&
+        !dismissedCompactionKeys.has(compactionOffer.key) &&
+        !running &&
+        !steering &&
+        effectiveLaunch.provider === "claudeCode" &&
+        executionServerId === null &&
         onCompactContext !== undefined && (
           <div className="agent-compaction-offer">
             <div className="agent-compaction-offer__copy">
-              <strong>Resume with less context</strong>
-              <span>
-                {formatContextTokens(compactionOffer.contextTokens)} tokens from an older session
-              </span>
+              <strong>
+                Resume with less context{" "}
+                <span
+                  tabIndex={0}
+                  title="This Claude session has been idle for at least 70 minutes and last used at least 100,000 tokens. Compact creates a shorter summary before continuing; Dismiss keeps the full history."
+                  aria-label="Why compact this session?"
+                >
+                  ⓘ
+                </span>
+              </strong>
+              <span>{formatContextTokens(compactionOffer.contextTokens)} tokens from earlier</span>
             </div>
             <button
               className="agent-compaction-offer__action"
@@ -570,9 +580,16 @@ export function AgentComposer({
               Compact
             </button>
             <button
-              aria-label="Dismiss context compaction suggestion"
+              aria-label="Keep full history"
               className="agent-compaction-offer__dismiss"
-              onClick={() => setDismissedCompactionKey(compactionOffer.key)}
+              onClick={() =>
+                setDismissedCompactionKeys((keys) => {
+                  const next = new Set(keys);
+                  next.add(compactionOffer.key);
+                  if (next.size > 256) next.delete(next.values().next().value!);
+                  return next;
+                })
+              }
               type="button"
             >
               <X aria-hidden="true" size={14} />
@@ -653,8 +670,6 @@ export function AgentComposer({
           <span className="agent-composer__spacer" />
 
           <AgentComposerBytes promptBytes={promptBytes} />
-
-          <AgentContextWindowMeter ownerKey={promptOwnerKey ?? "composer"} usage={contextUsage} />
 
           <AgentComposerSubmitControls
             running={running}

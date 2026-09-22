@@ -109,6 +109,15 @@ impl WorkspaceTrustService {
         }
     }
 
+    /// The caller supplies an already canonical root; this lookup performs no filesystem I/O.
+    pub(crate) fn snapshot_canonical(&self, root_path: &str) -> WorkspaceTrustSnapshot {
+        WorkspaceTrustSnapshot {
+            generation: self.root_generations.get(root_path).copied().unwrap_or(0),
+            root_path: root_path.to_owned(),
+            trusted: self.trusted_roots.contains(root_path),
+        }
+    }
+
     pub(crate) fn reserve_launch(
         &self,
         expected: &WorkspaceTrustSnapshot,
@@ -381,6 +390,23 @@ mod tests {
         panic::{catch_unwind, AssertUnwindSafe},
         time::SystemTime,
     };
+
+    #[test]
+    fn canonical_snapshots_preserve_generation_and_do_not_resolve_aliases() {
+        let root = create_temp_dir("trust-canonical-snapshot");
+        let mut service = WorkspaceTrustService::load(root.join("trust.json")).unwrap();
+        let path = root.canonicalize().unwrap().to_str().unwrap().to_owned();
+        service.set(&path, true).unwrap();
+        let original = service.snapshot_canonical(&path);
+        assert_eq!(original, service.snapshot(&path));
+        assert!(!service.snapshot_canonical(&format!("{path}/.")).trusted);
+        service.set(&path, false).unwrap();
+        service.set(&path, true).unwrap();
+        assert_ne!(original, service.snapshot_canonical(&path));
+        fs::remove_dir_all(root).unwrap();
+        // A canonical trust lookup retains the exact persisted key without filesystem resolution.
+        assert!(service.snapshot_canonical(&path).trusted);
+    }
 
     #[test]
     fn workspaces_are_untrusted_by_default() {

@@ -2,7 +2,8 @@ use super::MAX_INPUT;
 use base64::Engine;
 use serde_json::{json, Value};
 
-const CLIENT_CAPABILITIES: &str = "subagentLifecycleRetention,projectManagement,threadManagement";
+const CLIENT_CAPABILITIES: &str =
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -285,6 +286,7 @@ mod tests {
         assert!(tokens.contains(&"subagentLifecycleRetention"));
         assert!(tokens.contains(&"projectManagement"));
         assert!(tokens.contains(&"threadManagement"));
+        assert!(tokens.contains(&"turnChanges"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);
