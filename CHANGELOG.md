@@ -7,6 +7,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.70] - 2026-09-23
+
+### Changed
+
+- Run multiple local agent conversations in the same checkout without blocking
+  new turns when another agent is active. Worktrees remain available for isolated
+  work, and stopping a task only stops that task's execution.
+- Refresh the Claude model catalog from the public T3 manifest, with an offline
+  cache and launch controls matched to the selected model and CLI capabilities.
+
 ## [0.2.0-beta.69] - 2026-09-22
 
 ### Added
