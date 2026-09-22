@@ -7,6 +7,22 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.68] - 2026-09-22
+
+### Changed
+
+- Edit the full clone destination path directly for local and server projects,
+  with a folder browser and a single Back action.
+- Use themed environment and repository-host menus, and hide the host selector
+  when only one authenticated host is available.
+- Simplify clone confirmation by removing separate folder-name and advanced
+  options from the main destination flow.
+
+### Fixed
+
+- Keep keyboard focus inside the local clone dialog.
+- Prevent server clone submission before the destination directory is ready.
+
 ## [0.2.0-beta.67] - 2026-09-22
 
 ### Added
