@@ -16,7 +16,21 @@ export const CLAUDE_MODEL_CHOICES = [
   "claude-sonnet-4-6",
   "claude-haiku-4-5",
 ] as const;
-export type ClaudeModelChoice = (typeof CLAUDE_MODEL_CHOICES)[number];
+export type ClaudeModelChoice = "default" | "fable" | "opus" | "sonnet" | `claude-${string}`;
+
+export function isClaudeModelChoice(value: unknown): value is ClaudeModelChoice {
+  return (
+    typeof value === "string" &&
+    value.length <= 96 &&
+    (["default", "fable", "opus", "sonnet"].includes(value) ||
+      /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value))
+  );
+}
+
+function parseClaudeModelChoice(value: unknown, path: string): ClaudeModelChoice {
+  if (!isClaudeModelChoice(value)) invalid(path, "a bounded Claude model identifier");
+  return value;
+}
 
 export const CLAUDE_PERMISSION_MODES = [
   "default",
@@ -178,7 +192,7 @@ function parseLaunchOptions(value: unknown, path: string, stored: boolean): Agen
     exactKeys(options, claudeLaunchKeys(options, stored), path);
     return {
       provider,
-      model: member(options.model, CLAUDE_MODEL_CHOICES, `${path}.model`),
+      model: parseClaudeModelChoice(options.model, `${path}.model`),
       mode: member(options.mode, CLAUDE_PERMISSION_MODES, `${path}.mode`),
       effort: parseEffort(options.effort, `${path}.effort`, stored),
       ...(options.context === undefined

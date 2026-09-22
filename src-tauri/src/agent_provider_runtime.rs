@@ -23,6 +23,9 @@ impl AgentProviderHostLifecycle for NoProviderHosts {
     }
 }
 
+#[path = "agent_provider_runtime/turn_version.rs"]
+mod turn_version;
+
 #[path = "agent_provider_runtime/lifecycle.rs"]
 mod lifecycle;
 

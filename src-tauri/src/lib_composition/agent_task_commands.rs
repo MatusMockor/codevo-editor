@@ -434,6 +434,7 @@ fn prepare_agent_task_start(
     executable_identity: ExecutableIdentity,
     effective_path: EffectiveExecutablePath<'_>,
     store: &AgentAttachmentStore,
+    cli_version: Option<&str>,
 ) -> Result<PreparedAgentTaskStart, String> {
     if request.provider_generation == 0 {
         return Err("Agent provider generation is invalid.".to_string());
@@ -452,6 +453,7 @@ fn prepare_agent_task_start(
         executable_identity,
         effective_path,
         images,
+        cli_version,
     )
 }
 
@@ -461,6 +463,7 @@ fn prepare_claimed_agent_task_start(
     executable_identity: ExecutableIdentity,
     effective_path: EffectiveExecutablePath<'_>,
     attachments: Vec<AgentImageAttachment>,
+    cli_version: Option<&str>,
 ) -> Result<PreparedAgentTaskStart, String> {
     let task_id = safe_agent_task_id(&request.task_id)?;
     let repository_root = authority.repository_root.clone();
@@ -488,6 +491,7 @@ fn prepare_claimed_agent_task_start(
             cwd: &cwd,
             resume_session_id: request.resume_session_id.as_deref(),
             launch: request.launch,
+            cli_version,
             attachments,
         },
         effective_path,
@@ -523,6 +527,17 @@ pub(crate) async fn start_agent_task(
                 .inner(),
             &preparation_request,
         )?;
+        let version = if preparation_request.agent_cli_kind == AgentCliInvocation::ClaudeCode {
+            preparation_app
+                .state::<Arc<AgentProviderRuntimeRegistry>>()
+                .observed_turn_version(&provider_turn)?
+        } else {
+            None
+        };
+        preparation_request
+            .launch
+            .validate_cli_version(version.as_deref())
+            .map_err(str::to_string)?;
         let authority = capture_agent_task_project_authority(
             &preparation_app.state::<WorkspaceRegistry>(),
             &preparation_app.state::<Mutex<WorkspaceTrustService>>(),
@@ -538,6 +553,7 @@ pub(crate) async fn start_agent_task(
                 .state::<Arc<AgentAttachmentStore>>()
                 .inner()
                 .as_ref(),
+            version.as_deref(),
         )?;
         Ok((prepared, provider_turn))
     })

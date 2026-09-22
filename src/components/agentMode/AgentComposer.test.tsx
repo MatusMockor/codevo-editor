@@ -21,6 +21,12 @@ import {
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 
+import { ClaudeModelCatalogContext } from "./useAgentClaudeModelCatalog";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  parseClaudeModelManifest,
+} from "../../domain/claudeModelCatalog";
+
 describe("AgentComposer", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -1431,6 +1437,53 @@ describe("AgentComposer", () => {
     act(() => promptField().dispatchEvent(event));
     return event;
   }
+
+  it("dispatches the refreshed catalog default after a provider update", () => {
+    const onSubmit = vi.fn();
+    const props = { ...defaultProps(), prompt: "Fix it", onSubmit };
+    const remote = parseClaudeModelManifest({
+      ...BUNDLED_CLAUDE_MODEL_MANIFEST,
+      updatedAt: "2027-01-01T00:00:00Z",
+      claudeCode: [
+        {
+          ...BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode[0],
+          choice: "claude-future-9",
+          runtimeIds: ["claude-future-9"],
+          label: "Claude Future 9",
+          efforts: ["low"],
+          defaultEffort: "low",
+          contextWindows: ["200k"],
+          defaultContext: "200k",
+          isDefault: true,
+        },
+      ],
+    });
+    act(() =>
+      root.render(
+        <ClaudeModelCatalogContext.Provider value={BUNDLED_CLAUDE_MODEL_MANIFEST}>
+          <AgentComposer {...props} />
+        </ClaudeModelCatalogContext.Provider>,
+      ),
+    );
+    act(() =>
+      root.render(
+        <ClaudeModelCatalogContext.Provider value={remote}>
+          <AgentComposer {...props} />
+        </ClaudeModelCatalogContext.Provider>,
+      ),
+    );
+    expect(trigger("agent-launch-model").textContent).toContain("Claude Future 9");
+    submitForm();
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launch: expect.objectContaining({
+          model: "claude-future-9",
+          effort: "low",
+          context: "200k",
+        }),
+      }),
+    );
+  });
 
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));

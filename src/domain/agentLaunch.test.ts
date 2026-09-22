@@ -223,7 +223,7 @@ describe("agentLaunch", () => {
     ).toThrow(TypeError);
     expect(() =>
       parseAgentLaunchOptions(
-        { provider: "claudeCode", model: "claude-opus-4", mode: "default", effort: "default" },
+        { provider: "claudeCode", model: "claude-opus--4", mode: "default", effort: "default" },
         "launch",
       ),
     ).toThrow(TypeError);

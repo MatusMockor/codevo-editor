@@ -124,6 +124,7 @@ fn claude_waits_for_background_work_on_new_and_resumed_invocations_only() {
             let plan = plan_agent_invocation_with_authority_and_environment(
                 identity,
                 AgentInvocationRequest {
+                    cli_version: Some("2.999.0"),
                     invocation,
                     prompt: "finish the task",
                     cwd: Path::new("/tmp"),
@@ -409,6 +410,7 @@ fn hostile_effective_path_cannot_replace_retained_script_interpreter() {
     let plan = plan_agent_invocation_with_authority(
         identity,
         AgentInvocationRequest {
+            cli_version: Some("2.999.0"),
             invocation: AgentCliInvocation::ClaudeCode,
             prompt: "stop",
             cwd: &fixture,
@@ -784,6 +786,9 @@ fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
                     thinking_mode: false,
                     chrome: true,
                 };
+                if launch.validate_capabilities().is_err() {
+                    continue;
+                }
                 for resume in [None, Some(SESSION_ID)] {
                     for images in [0usize, 1, 8] {
                         let mut expected: Vec<String> =

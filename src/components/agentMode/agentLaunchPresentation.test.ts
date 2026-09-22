@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  type ClaudeModelManifest,
+} from "../../domain/claudeModelCatalog";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   CLAUDE_EFFORT_CHOICES,
@@ -104,6 +108,7 @@ describe("agentLaunchPresentation", () => {
   it("offers exactly the closed domain choices per provider", () => {
     expect(agentLaunchModelChoices("claudeCode").map((choice) => choice.value)).toEqual([
       "claude-fable-5-1",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-sonnet-5",
       "claude-fable-5",
@@ -413,6 +418,7 @@ describe("agent model rows", () => {
   it("lists the closed model choices per provider with a provider name and favorite key", () => {
     expect(agentModelRows("claudeCode").map((row) => row.value)).toEqual([
       "claude-fable-5-1",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-sonnet-5",
       "claude-fable-5",
@@ -431,10 +437,10 @@ describe("agent model rows", () => {
       "gpt-5.5",
       "gpt-5.4",
     ]);
-    const opus = agentModelRows("claudeCode")[1];
+    const opus = agentModelRows("claudeCode")[2];
     expect(opus?.providerName).toBe("Claude Code");
     expect(opus?.favoriteKey).toBe(agentModelFavoriteKey("claudeCode", "claude-opus-5"));
-    expect(agentModelRows("claudeCode")[3]?.isLegacy).toBe(true);
+    expect(agentModelRows("claudeCode")[4]?.isLegacy).toBe(true);
     expect(agentModelRows("codex")[0]?.providerName).toBe("Codex");
   });
 
@@ -472,16 +478,17 @@ describe("agent model rows", () => {
   it("matches a literal case-folded query against the label and provider name only", () => {
     const rows = agentModelRows("claudeCode");
     expect(filterAgentModelRows(rows, "all", new Set(), "OPUS").map((r) => r.value)).toEqual([
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-4-8",
       "claude-opus-4-7",
       "claude-opus-4-6",
       "claude-opus-4-5",
     ]);
-    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(10);
+    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(11);
     expect(filterAgentModelRows(rows, "all", new Set(), ".*").length).toBe(0);
     expect(filterAgentModelRows(rows, "all", new Set(), "latest").length).toBe(0);
-    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(10);
+    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(11);
   });
 
   it("filters models that require a newer Claude CLI", () => {
@@ -532,5 +539,121 @@ describe("agent model rows", () => {
     ]);
     expect(filterAgentModelRows(rows, "favorites", favorites, "sol")).toEqual([]);
     expect(filterAgentModelRows(rows, "favorites", new Set(), "")).toEqual([]);
+  });
+});
+
+describe("remote Claude model presentation", () => {
+  const launch: AgentLaunchOptions = {
+    provider: "claudeCode",
+    model: "default",
+    mode: "supervised",
+    effort: "default",
+  };
+  const catalog: ClaudeModelManifest = {
+    version: 1,
+    updatedAt: "2026-09-22T00:00:00Z",
+    claudeCode: [
+      {
+        ...BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode[0],
+        choice: "claude-new-model-99",
+        runtimeIds: ["opus", "claude-new-model-99"],
+        label: "New model 99",
+        description: "A newly published model.",
+        isDefault: true,
+        minVersion: "2.1.100",
+        maxVersionExclusive: "3.0.0",
+        efforts: ["low", "high"],
+        defaultEffort: "low",
+        contextWindows: ["200k"],
+        defaultContext: "200k",
+        fastMode: false,
+      },
+    ],
+  };
+
+  it("uses a new model consistently for rows, configured aliases, labels and dispatch", () => {
+    expect(agentModelRows("claudeCode", null, "2.1.100", catalog)[0]).toMatchObject({
+      value: "claude-new-model-99",
+      label: "New model 99",
+    });
+    expect(agentLaunchModelChoices("claudeCode", catalog)[0].value).toBe("claude-new-model-99");
+    expect(agentLaunchModelLabel(launch, "opus", catalog)).toBe("New model 99");
+    expect(agentLaunchModelHint(launch, "opus", catalog)).toContain("A newly published model.");
+    expect(agentLaunchEffectiveModel(launch, null, catalog)).toBe("claude-new-model-99");
+    expect(agentLaunchForDispatch(launch, "opus", catalog).model).toBe("claude-new-model-99");
+    const selected = agentLaunchWithModel(launch, "claude-new-model-99", null, catalog);
+    expect(selected).toMatchObject({
+      model: "claude-new-model-99",
+      effort: "low",
+      context: "200k",
+      fastMode: false,
+    });
+    expect(agentLaunchWithModel(launch, "opus", null, catalog)).toEqual(selected);
+    expect(
+      agentClaudeLaunchTraits({ ...launch, model: "claude-new-model-99" }, null, "local", catalog),
+    ).toMatchObject({ efforts: ["low", "high"], defaultEffort: "low", contextWindows: ["200k"] });
+  });
+
+  it("normalizes dispatch options to the active catalog and preserves supported choices", () => {
+    const lowOnlyCatalog: ClaudeModelManifest = {
+      ...catalog,
+      claudeCode: [{ ...catalog.claudeCode[0], efforts: ["low"] }],
+    };
+    expect(
+      agentLaunchForDispatch(
+        { ...launch, effort: "high", context: "1m", fastMode: true, thinkingMode: true },
+        null,
+        lowOnlyCatalog,
+      ),
+    ).toMatchObject({
+      model: "claude-new-model-99",
+      effort: "low",
+      context: "200k",
+      fastMode: false,
+      thinkingMode: false,
+    });
+    expect(agentLaunchForDispatch(launch, null, catalog)).toMatchObject({
+      effort: "low",
+      context: "200k",
+    });
+    expect(
+      agentLaunchForDispatch(
+        { ...launch, model: "claude-new-model-99", effort: "high", context: "200k" },
+        null,
+        catalog,
+      ),
+    ).toMatchObject({ effort: "high", context: "200k" });
+    const removed = {
+      ...launch,
+      model: "claude-removed-99",
+      effort: "max",
+      context: "1m",
+    } as const;
+    expect(agentLaunchForDispatch(removed, null, catalog)).toBe(removed);
+  });
+
+  it("enforces both version bounds and retains catalogs independently", () => {
+    expect(agentModelRows("claudeCode", null, "2.1.99", catalog)).toEqual([]);
+    expect(agentModelRows("claudeCode", null, "3.0.0", catalog)).toEqual([]);
+    expect(agentModelRows("claudeCode", null, "2.9.999", catalog)).toHaveLength(1);
+    expect(agentModelRows("claudeCode").some((row) => row.value === "claude-new-model-99")).toBe(
+      false,
+    );
+  });
+
+  it("matches backend version bounds for prereleases and fourth components", () => {
+    expect(agentModelRows("claudeCode", null, "2.1.100-beta.1", catalog)).toEqual([]);
+    expect(agentModelRows("claudeCode", null, "3.0.0-beta.1", catalog)).toHaveLength(1);
+    expect(agentModelRows("claudeCode", null, "2.1.100.1-beta.1", catalog)).toHaveLength(1);
+    expect(agentModelRows("claudeCode", null, "3.0.0.1-beta.1", catalog)).toEqual([]);
+    expect(agentModelRows("claudeCode", null, "invalid", catalog)).toEqual([]);
+    expect(agentModelRows("claudeCode", null, null, catalog)).toHaveLength(1);
+  });
+
+  it("rejects absent selections and safely displays historical unknown models", () => {
+    expect(agentLaunchWithModel(launch, "claude-unlisted-99", null, catalog)).toBe(launch);
+    expect(agentLaunchModelLabel({ ...launch, model: "claude-unlisted-99" }, null, catalog)).toBe(
+      "claude-unlisted-99",
+    );
   });
 });

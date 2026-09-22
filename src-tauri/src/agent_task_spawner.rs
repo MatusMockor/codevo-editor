@@ -231,6 +231,7 @@ pub fn plan_agent_invocation(
             cwd,
             resume_session_id,
             launch,
+            cli_version: Some("2.999.0"),
             attachments: Vec::new(),
         },
         inherited_environment(),
@@ -257,6 +258,7 @@ pub fn plan_agent_invocation_with_attachments(
             cwd,
             resume_session_id,
             launch,
+            cli_version: Some("2.999.0"),
             attachments,
         },
         inherited_environment(),
@@ -281,6 +283,7 @@ pub struct AgentInvocationRequest<'a> {
     pub cwd: &'a Path,
     pub resume_session_id: Option<&'a str>,
     pub launch: AgentLaunchOptions,
+    pub cli_version: Option<&'a str>,
     pub attachments: Vec<AgentImageAttachment>,
 }
 
@@ -295,11 +298,13 @@ fn plan_agent_invocation_with_authority_and_environment(
         cwd,
         resume_session_id,
         launch,
+        cli_version,
         attachments,
     } = request;
     if !launch.matches(invocation) {
         return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
     }
+    launch.validate_capabilities().map_err(str::to_string)?;
     if let Some(candidate) = resume_session_id {
         validate_resume_session_id(candidate)?;
     }
@@ -321,13 +326,14 @@ fn plan_agent_invocation_with_authority_and_environment(
     let dispatched = launch.prompt(prompt).into_owned();
     let attachment_paths = attachment_image_paths(invocation, &attachments)?;
     let prompt_transport = agent_prompt_transport(invocation, &dispatched, attachments)?;
-    let args = agent_invocation_args(
+    let args = try_agent_invocation_args(
         invocation,
         prompt,
         resume_session_id,
         launch,
         &attachment_paths,
-    );
+        cli_version,
+    )?;
     if invocation == AgentCliInvocation::ClaudeCode {
         // Claude print mode otherwise terminates background agents after ten minutes.
         // The task supervisor owns the bounded runtime and explicit cancellation.
@@ -456,6 +462,7 @@ pub fn claude_user_frame(prompt: &str, images: &[(String, Vec<u8>)]) -> Vec<u8> 
     encoded
 }
 
+#[cfg(test)]
 fn agent_invocation_args(
     invocation: AgentCliInvocation,
     prompt: &str,
@@ -463,6 +470,25 @@ fn agent_invocation_args(
     launch: AgentLaunchOptions,
     attachment_paths: &[PathBuf],
 ) -> Vec<String> {
+    try_agent_invocation_args(
+        invocation,
+        prompt,
+        resume_session_id,
+        launch,
+        attachment_paths,
+        Some("2.999.0"),
+    )
+    .expect("valid test launch")
+}
+
+fn try_agent_invocation_args(
+    invocation: AgentCliInvocation,
+    prompt: &str,
+    resume_session_id: Option<&str>,
+    launch: AgentLaunchOptions,
+    attachment_paths: &[PathBuf],
+    cli_version: Option<&str>,
+) -> Result<Vec<String>, String> {
     let resumed = resume_session_id.is_some();
     let mut template: Vec<&str> = match invocation {
         AgentCliInvocation::ClaudeCode => vec![
@@ -482,11 +508,12 @@ fn agent_invocation_args(
         }
         AgentCliInvocation::CodexExec => vec!["exec", "--json", "--skip-git-repo-check"],
     };
-    template.extend_from_slice(launch.model_args());
+    let catalog_args = launch.validated_catalog_args(cli_version)?;
+    template.extend(catalog_args.model.iter().map(String::as_str));
     template.extend_from_slice(launch.mode_args(resumed));
     template.extend_from_slice(launch.browser_args());
-    template.extend_from_slice(launch.effort_args());
-    template.extend_from_slice(launch.settings_args());
+    template.extend(catalog_args.effort.iter().map(String::as_str));
+    template.extend(catalog_args.settings.iter().map(String::as_str));
     let mut args: Vec<String> = template.into_iter().map(str::to_string).collect();
     args.extend(attachment_args(attachment_paths));
     if let Some(session_id) = resume_session_id {
@@ -499,11 +526,11 @@ fn agent_invocation_args(
         }
     }
     if invocation == AgentCliInvocation::ClaudeCode {
-        return args;
+        return Ok(args);
     }
     args.push("--".to_string());
     args.push(launch.prompt(prompt).into_owned());
-    args
+    Ok(args)
 }
 
 fn attachment_args(attachment_paths: &[PathBuf]) -> Vec<String> {

@@ -7,34 +7,85 @@ pub const AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR: &str =
 pub const AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR: &str =
     "Agent launch options include a capability the selected model does not support.";
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum ClaudeModelChoice {
-    #[default]
-    Default,
-    Fable,
-    Opus,
-    Sonnet,
-    #[serde(rename = "claude-fable-5-1")]
-    ClaudeFable51,
-    #[serde(rename = "claude-fable-5")]
-    ClaudeFable5,
-    #[serde(rename = "claude-opus-5")]
-    ClaudeOpus5,
-    #[serde(rename = "claude-opus-4-8")]
-    ClaudeOpus48,
-    #[serde(rename = "claude-opus-4-7")]
-    ClaudeOpus47,
-    #[serde(rename = "claude-opus-4-6")]
-    ClaudeOpus46,
-    #[serde(rename = "claude-opus-4-5")]
-    ClaudeOpus45,
-    #[serde(rename = "claude-sonnet-5")]
-    ClaudeSonnet5,
-    #[serde(rename = "claude-sonnet-4-6")]
-    ClaudeSonnet46,
-    #[serde(rename = "claude-haiku-4-5")]
-    ClaudeHaiku45,
+/// A bounded model identifier; catalog membership is checked before execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClaudeModelChoice {
+    bytes: [u8; 96],
+    len: u8,
+}
+
+#[allow(non_upper_case_globals)]
+impl ClaudeModelChoice {
+    const fn literal(value: &str) -> Self {
+        let mut bytes = [0; 96];
+        let mut index = 0;
+        while index < value.len() {
+            bytes[index] = value.as_bytes()[index];
+            index += 1;
+        }
+        Self {
+            bytes,
+            len: value.len() as u8,
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..usize::from(self.len)]).expect("validated ASCII model ID")
+    }
+    pub const Default: Self = Self::literal("default");
+    #[cfg(test)]
+    pub const Fable: Self = Self::literal("fable");
+    #[cfg(test)]
+    pub const Opus: Self = Self::literal("opus");
+    #[cfg(test)]
+    pub const Sonnet: Self = Self::literal("sonnet");
+    #[cfg(test)]
+    pub const ClaudeFable51: Self = Self::literal("claude-fable-5-1");
+    #[cfg(test)]
+    pub const ClaudeFable5: Self = Self::literal("claude-fable-5");
+    #[cfg(test)]
+    pub const ClaudeOpus5: Self = Self::literal("claude-opus-5");
+    #[cfg(test)]
+    pub const ClaudeOpus48: Self = Self::literal("claude-opus-4-8");
+    #[cfg(test)]
+    pub const ClaudeOpus47: Self = Self::literal("claude-opus-4-7");
+    #[cfg(test)]
+    pub const ClaudeOpus46: Self = Self::literal("claude-opus-4-6");
+    #[cfg(test)]
+    pub const ClaudeOpus45: Self = Self::literal("claude-opus-4-5");
+    #[cfg(test)]
+    pub const ClaudeSonnet5: Self = Self::literal("claude-sonnet-5");
+    #[cfg(test)]
+    pub const ClaudeSonnet46: Self = Self::literal("claude-sonnet-4-6");
+    #[cfg(test)]
+    pub const ClaudeHaiku45: Self = Self::literal("claude-haiku-4-5");
+}
+impl Default for ClaudeModelChoice {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+impl Serialize for ClaudeModelChoice {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+impl<'de> Deserialize<'de> for ClaudeModelChoice {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        let alias = matches!(value.as_str(), "default" | "fable" | "opus" | "sonnet");
+        let model = value.strip_prefix("claude-").is_some_and(|suffix| {
+            suffix.split('-').all(|part| {
+                !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            })
+        });
+        if value.len() > 96 || (!alias && !model) {
+            return Err(serde::de::Error::custom("Invalid Claude model identifier."));
+        }
+        Ok(Self::literal(&value))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -141,6 +192,12 @@ impl Default for AgentLaunchOptions {
     }
 }
 
+pub struct CatalogLaunchArgs {
+    pub model: Vec<String>,
+    pub settings: Vec<String>,
+    pub effort: Vec<String>,
+}
+
 impl AgentLaunchOptions {
     pub fn invocation(&self) -> AgentCliInvocation {
         match self {
@@ -161,29 +218,132 @@ impl AgentLaunchOptions {
     }
 
     pub fn validate_capabilities(&self) -> Result<(), &'static str> {
+        let manifest = crate::claude_model_manifest::snapshot()
+            .map_err(|_| AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
+        self.validate_manifest(&manifest, None)
+    }
+
+    pub fn validate_cli_version(&self, version: Option<&str>) -> Result<(), &'static str> {
+        let manifest = crate::claude_model_manifest::snapshot()
+            .map_err(|_| AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
+        self.validate_version_requirement(&manifest, version)
+    }
+
+    fn validate_version_requirement(
+        &self,
+        manifest: &crate::claude_model_manifest_domain::ClaudeModelManifest,
+        version: Option<&str>,
+    ) -> Result<(), &'static str> {
+        if let Self::ClaudeCode { model, .. } = self {
+            let entry = manifest
+                .resolve_model(model.as_str())
+                .ok_or(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
+            if version.is_none()
+                && *model != ClaudeModelChoice::Default
+                && (entry.min_version.is_some() || entry.max_version_exclusive.is_some())
+            {
+                return Err("Cannot verify the Claude Code version for this model. Refresh the provider status and try again.");
+            }
+        }
+        self.validate_manifest(manifest, version)
+    }
+
+    fn validate_manifest(
+        &self,
+        manifest: &crate::claude_model_manifest_domain::ClaudeModelManifest,
+        version: Option<&str>,
+    ) -> Result<(), &'static str> {
         if let Self::ClaudeCode {
             model,
             effort,
+            context,
             fast_mode,
             thinking_mode,
             ..
         } = self
         {
-            if !claude_model_supports_effort(*model, *effort)
-                || (*fast_mode && !claude_model_supports_fast_mode(*model))
-                || (*thinking_mode && *model != ClaudeModelChoice::ClaudeHaiku45)
+            let entry = manifest
+                .resolve_model(model.as_str())
+                .ok_or(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
+            let effort = match effort {
+                ClaudeEffortChoice::Default => "default",
+                ClaudeEffortChoice::Low => "low",
+                ClaudeEffortChoice::Medium => "medium",
+                ClaudeEffortChoice::High => "high",
+                ClaudeEffortChoice::Xhigh => "xhigh",
+                ClaudeEffortChoice::Max => "max",
+                ClaudeEffortChoice::Ultracode => "ultracode",
+                ClaudeEffortChoice::Ultrathink => "ultrathink",
+            };
+            let context = match context {
+                ClaudeContextChoice::TwoHundredK => "200k",
+                ClaudeContextChoice::OneM => "1m",
+            };
+            if (effort != "default" && !entry.efforts.iter().any(|value| value == effort))
+                || (!entry.context_windows.is_empty()
+                    && !entry.context_windows.iter().any(|value| value == context))
+                || (*fast_mode && !entry.fast_mode)
+                || (*thinking_mode && !entry.thinking_mode)
             {
                 return Err(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR);
+            }
+            if let Some(version) = version {
+                use crate::agent_task_spawner::agent_provider::compare_versions;
+                use std::cmp::Ordering;
+                if entry.min_version.as_ref().is_some_and(|min| {
+                    !matches!(
+                        compare_versions(version, min),
+                        Some(Ordering::Equal | Ordering::Greater)
+                    )
+                }) || entry
+                    .max_version_exclusive
+                    .as_ref()
+                    .is_some_and(|max| compare_versions(version, max) != Some(Ordering::Less))
+                {
+                    return Err(
+                        "The installed Claude Code version does not support the selected model.",
+                    );
+                }
             }
         }
         Ok(())
     }
 
-    pub fn model_args(&self) -> &'static [&'static str] {
+    pub fn model_args(&self) -> Vec<String> {
+        let manifest = crate::claude_model_manifest::snapshot().expect("bundled catalog is valid");
+        self.model_args_with_manifest(&manifest)
+    }
+
+    fn model_args_with_manifest(
+        &self,
+        manifest: &crate::claude_model_manifest_domain::ClaudeModelManifest,
+    ) -> Vec<String> {
         match self {
-            Self::ClaudeCode { model, context, .. } => claude_model_args(*model, *context),
-            Self::Codex { model, .. } => codex_model_args(*model),
+            Self::ClaudeCode { model, context, .. } => {
+                let supports_context = manifest
+                    .resolve_model(model.as_str())
+                    .is_some_and(|entry| !entry.context_windows.is_empty());
+                claude_model_args(*model, *context, supports_context)
+            }
+            Self::Codex { model, .. } => codex_model_args(*model)
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
         }
+    }
+
+    pub fn validated_catalog_args(
+        &self,
+        version: Option<&str>,
+    ) -> Result<CatalogLaunchArgs, String> {
+        let manifest = crate::claude_model_manifest::snapshot()?;
+        self.validate_version_requirement(&manifest, version)
+            .map_err(str::to_string)?;
+        Ok(CatalogLaunchArgs {
+            model: self.model_args_with_manifest(&manifest),
+            settings: self.settings_args_with_manifest(&manifest),
+            effort: self.effort_args_with_manifest(&manifest),
+        })
     }
 
     pub fn mode_args(&self, resumed: bool) -> &'static [&'static str] {
@@ -200,6 +360,7 @@ impl AgentLaunchOptions {
         }
     }
 
+    #[cfg(test)]
     pub fn effort_args(&self) -> &'static [&'static str] {
         match self {
             Self::ClaudeCode { effort, .. } => claude_effort_args(*effort),
@@ -207,31 +368,78 @@ impl AgentLaunchOptions {
         }
     }
 
-    pub fn settings_args(&self) -> &'static [&'static str] {
-        match self {
-            Self::ClaudeCode {
-                model: ClaudeModelChoice::ClaudeHaiku45,
-                thinking_mode: true,
-                ..
-            } => &["--settings", r#"{"alwaysThinkingEnabled":true}"#],
-            Self::ClaudeCode {
-                model: ClaudeModelChoice::ClaudeHaiku45,
-                thinking_mode: false,
-                ..
-            } => &["--settings", r#"{"alwaysThinkingEnabled":false}"#],
-            Self::ClaudeCode {
-                effort: ClaudeEffortChoice::Ultracode,
-                fast_mode: true,
-                ..
-            } => &["--settings", r#"{"fastMode":true,"ultracode":true}"#],
-            Self::ClaudeCode {
-                effort: ClaudeEffortChoice::Ultracode,
-                ..
-            } => &["--settings", r#"{"ultracode":true}"#],
-            Self::ClaudeCode {
-                fast_mode: true, ..
-            } => &["--settings", r#"{"fastMode":true}"#],
-            _ => &[],
+    fn effort_args_with_manifest(
+        &self,
+        manifest: &crate::claude_model_manifest_domain::ClaudeModelManifest,
+    ) -> Vec<String> {
+        let Self::ClaudeCode { model, effort, .. } = self else {
+            return Vec::new();
+        };
+        let source = match effort {
+            ClaudeEffortChoice::Default => return Vec::new(),
+            ClaudeEffortChoice::Low => "low",
+            ClaudeEffortChoice::Medium => "medium",
+            ClaudeEffortChoice::High => "high",
+            ClaudeEffortChoice::Xhigh => "xhigh",
+            ClaudeEffortChoice::Max => "max",
+            ClaudeEffortChoice::Ultracode => "ultracode",
+            ClaudeEffortChoice::Ultrathink => "ultrathink",
+        };
+        if let Some(target) = manifest
+            .resolve_model(model.as_str())
+            .and_then(|entry| entry.effort_map.as_ref())
+            .and_then(|mapping| mapping.get(source))
+        {
+            return target
+                .as_ref()
+                .map_or_else(Vec::new, |target| vec!["--effort".into(), target.clone()]);
+        }
+        claude_effort_args(*effort)
+            .iter()
+            .map(|value| (*value).into())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn settings_args(&self) -> Vec<String> {
+        let manifest = crate::claude_model_manifest::snapshot().expect("bundled catalog is valid");
+        self.settings_args_with_manifest(&manifest)
+    }
+
+    fn settings_args_with_manifest(
+        &self,
+        manifest: &crate::claude_model_manifest_domain::ClaudeModelManifest,
+    ) -> Vec<String> {
+        let Self::ClaudeCode {
+            model,
+            thinking_mode,
+            fast_mode,
+            effort,
+            ..
+        } = self
+        else {
+            return Vec::new();
+        };
+        let mut settings = serde_json::Map::new();
+        if manifest
+            .resolve_model(model.as_str())
+            .is_some_and(|entry| entry.thinking_mode)
+        {
+            settings.insert("alwaysThinkingEnabled".into(), (*thinking_mode).into());
+        }
+        if *fast_mode {
+            settings.insert("fastMode".into(), true.into());
+        }
+        if *effort == ClaudeEffortChoice::Ultracode {
+            settings.insert("ultracode".into(), true.into());
+        }
+        if settings.is_empty() {
+            Vec::new()
+        } else {
+            vec![
+                "--settings".into(),
+                serde_json::Value::Object(settings).to_string(),
+            ]
         }
     }
 
@@ -256,54 +464,6 @@ fn is_true(value: &bool) -> bool {
 
 fn default_true() -> bool {
     true
-}
-
-fn claude_model_supports_fast_mode(model: ClaudeModelChoice) -> bool {
-    matches!(
-        model,
-        ClaudeModelChoice::Opus
-            | ClaudeModelChoice::ClaudeOpus5
-            | ClaudeModelChoice::ClaudeOpus48
-            | ClaudeModelChoice::ClaudeOpus47
-            | ClaudeModelChoice::ClaudeOpus46
-            | ClaudeModelChoice::ClaudeOpus45
-    )
-}
-
-fn claude_model_supports_effort(model: ClaudeModelChoice, effort: ClaudeEffortChoice) -> bool {
-    match effort {
-        ClaudeEffortChoice::Default | ClaudeEffortChoice::Low | ClaudeEffortChoice::Medium => {
-            model != ClaudeModelChoice::ClaudeHaiku45 || effort == ClaudeEffortChoice::Default
-        }
-        ClaudeEffortChoice::High => model != ClaudeModelChoice::ClaudeHaiku45,
-        ClaudeEffortChoice::Xhigh => matches!(
-            model,
-            ClaudeModelChoice::Default
-                | ClaudeModelChoice::Fable
-                | ClaudeModelChoice::Opus
-                | ClaudeModelChoice::Sonnet
-                | ClaudeModelChoice::ClaudeFable51
-                | ClaudeModelChoice::ClaudeFable5
-                | ClaudeModelChoice::ClaudeOpus5
-                | ClaudeModelChoice::ClaudeOpus48
-                | ClaudeModelChoice::ClaudeOpus47
-                | ClaudeModelChoice::ClaudeSonnet5
-        ),
-        ClaudeEffortChoice::Max => model != ClaudeModelChoice::ClaudeHaiku45,
-        ClaudeEffortChoice::Ultracode => matches!(
-            model,
-            ClaudeModelChoice::Fable
-                | ClaudeModelChoice::Opus
-                | ClaudeModelChoice::ClaudeFable51
-                | ClaudeModelChoice::ClaudeFable5
-                | ClaudeModelChoice::ClaudeOpus5
-                | ClaudeModelChoice::ClaudeOpus48
-        ),
-        ClaudeEffortChoice::Ultrathink => !matches!(
-            model,
-            ClaudeModelChoice::ClaudeOpus45 | ClaudeModelChoice::ClaudeHaiku45
-        ),
-    }
 }
 
 fn claude_effort_args(effort: ClaudeEffortChoice) -> &'static [&'static str] {
@@ -338,56 +498,17 @@ fn is_claude_slash_command(prompt: &str) -> bool {
 fn claude_model_args(
     model: ClaudeModelChoice,
     context: ClaudeContextChoice,
-) -> &'static [&'static str] {
-    match (model, context) {
-        (ClaudeModelChoice::Default, _) => &[],
-        (ClaudeModelChoice::Fable, ClaudeContextChoice::TwoHundredK) => &["--model", "fable"],
-        (ClaudeModelChoice::Fable, ClaudeContextChoice::OneM) => &["--model", "fable[1m]"],
-        (ClaudeModelChoice::Opus, ClaudeContextChoice::TwoHundredK) => &["--model", "opus"],
-        (ClaudeModelChoice::Opus, ClaudeContextChoice::OneM) => &["--model", "opus[1m]"],
-        (ClaudeModelChoice::Sonnet, ClaudeContextChoice::TwoHundredK) => &["--model", "sonnet"],
-        (ClaudeModelChoice::Sonnet, ClaudeContextChoice::OneM) => &["--model", "sonnet[1m]"],
-        (ClaudeModelChoice::ClaudeFable51, ClaudeContextChoice::TwoHundredK) => {
-            &["--model", "claude-fable-5-1"]
-        }
-        (ClaudeModelChoice::ClaudeFable51, ClaudeContextChoice::OneM) => {
-            &["--model", "claude-fable-5-1[1m]"]
-        }
-        (ClaudeModelChoice::ClaudeFable5, ClaudeContextChoice::TwoHundredK) => {
-            &["--model", "claude-fable-5"]
-        }
-        (ClaudeModelChoice::ClaudeFable5, ClaudeContextChoice::OneM) => {
-            &["--model", "claude-fable-5[1m]"]
-        }
-        (ClaudeModelChoice::ClaudeOpus5, ClaudeContextChoice::TwoHundredK) => {
-            &["--model", "claude-opus-5"]
-        }
-        (ClaudeModelChoice::ClaudeOpus5, ClaudeContextChoice::OneM) => {
-            &["--model", "claude-opus-5[1m]"]
-        }
-        (ClaudeModelChoice::ClaudeOpus48, _) => &["--model", "claude-opus-4-8"],
-        (ClaudeModelChoice::ClaudeOpus47, _) => &["--model", "claude-opus-4-7"],
-        (ClaudeModelChoice::ClaudeOpus46, ClaudeContextChoice::TwoHundredK) => {
-            &["--model", "claude-opus-4-6"]
-        }
-        (ClaudeModelChoice::ClaudeOpus46, ClaudeContextChoice::OneM) => {
-            &["--model", "claude-opus-4-6[1m]"]
-        }
-        (ClaudeModelChoice::ClaudeOpus45, _) => &["--model", "claude-opus-4-5"],
-        (ClaudeModelChoice::ClaudeSonnet5, ClaudeContextChoice::TwoHundredK) => {
-            &["--model", "claude-sonnet-5"]
-        }
-        (ClaudeModelChoice::ClaudeSonnet5, ClaudeContextChoice::OneM) => {
-            &["--model", "claude-sonnet-5[1m]"]
-        }
-        (ClaudeModelChoice::ClaudeSonnet46, ClaudeContextChoice::TwoHundredK) => {
-            &["--model", "claude-sonnet-4-6"]
-        }
-        (ClaudeModelChoice::ClaudeSonnet46, ClaudeContextChoice::OneM) => {
-            &["--model", "claude-sonnet-4-6[1m]"]
-        }
-        (ClaudeModelChoice::ClaudeHaiku45, _) => &["--model", "claude-haiku-4-5"],
+    supports_context: bool,
+) -> Vec<String> {
+    if model == ClaudeModelChoice::Default {
+        return Vec::new();
     }
+    let suffix = if supports_context && context == ClaudeContextChoice::OneM {
+        "[1m]"
+    } else {
+        ""
+    };
+    vec!["--model".to_string(), format!("{}{suffix}", model.as_str())]
 }
 
 fn claude_mode_args(mode: ClaudePermissionMode) -> &'static [&'static str] {
@@ -429,532 +550,5 @@ fn codex_mode_args(mode: CodexExecutionMode, resumed: bool) -> &'static [&'stati
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const CLAUDE_MODELS: [ClaudeModelChoice; 14] = [
-        ClaudeModelChoice::Default,
-        ClaudeModelChoice::Fable,
-        ClaudeModelChoice::Opus,
-        ClaudeModelChoice::Sonnet,
-        ClaudeModelChoice::ClaudeFable51,
-        ClaudeModelChoice::ClaudeFable5,
-        ClaudeModelChoice::ClaudeOpus5,
-        ClaudeModelChoice::ClaudeOpus48,
-        ClaudeModelChoice::ClaudeOpus47,
-        ClaudeModelChoice::ClaudeOpus46,
-        ClaudeModelChoice::ClaudeOpus45,
-        ClaudeModelChoice::ClaudeSonnet5,
-        ClaudeModelChoice::ClaudeSonnet46,
-        ClaudeModelChoice::ClaudeHaiku45,
-    ];
-    const CLAUDE_MODES: [ClaudePermissionMode; 6] = [
-        ClaudePermissionMode::Default,
-        ClaudePermissionMode::Plan,
-        ClaudePermissionMode::Supervised,
-        ClaudePermissionMode::AcceptEdits,
-        ClaudePermissionMode::Auto,
-        ClaudePermissionMode::BypassPermissions,
-    ];
-    const CODEX_MODELS: [CodexModelChoice; 7] = [
-        CodexModelChoice::Default,
-        CodexModelChoice::Gpt6Astra,
-        CodexModelChoice::Gpt56Sol,
-        CodexModelChoice::Gpt56Terra,
-        CodexModelChoice::Gpt56Luna,
-        CodexModelChoice::Gpt55,
-        CodexModelChoice::Gpt54,
-    ];
-    const CODEX_MODES: [CodexExecutionMode; 5] = [
-        CodexExecutionMode::Default,
-        CodexExecutionMode::ReadOnly,
-        CodexExecutionMode::WorkspaceWrite,
-        CodexExecutionMode::Auto,
-        CodexExecutionMode::DangerFullAccess,
-    ];
-
-    const CLAUDE_EFFORTS: [ClaudeEffortChoice; 8] = [
-        ClaudeEffortChoice::Default,
-        ClaudeEffortChoice::Low,
-        ClaudeEffortChoice::Medium,
-        ClaudeEffortChoice::High,
-        ClaudeEffortChoice::Xhigh,
-        ClaudeEffortChoice::Max,
-        ClaudeEffortChoice::Ultracode,
-        ClaudeEffortChoice::Ultrathink,
-    ];
-
-    fn claude(model: ClaudeModelChoice, mode: ClaudePermissionMode) -> AgentLaunchOptions {
-        claude_with_effort(model, mode, ClaudeEffortChoice::Default)
-    }
-
-    fn claude_with_effort(
-        model: ClaudeModelChoice,
-        mode: ClaudePermissionMode,
-        effort: ClaudeEffortChoice,
-    ) -> AgentLaunchOptions {
-        AgentLaunchOptions::ClaudeCode {
-            model,
-            mode,
-            effort,
-            context: ClaudeContextChoice::TwoHundredK,
-            fast_mode: false,
-            thinking_mode: false,
-            chrome: true,
-        }
-    }
-
-    fn codex(model: CodexModelChoice, mode: CodexExecutionMode) -> AgentLaunchOptions {
-        AgentLaunchOptions::Codex { model, mode }
-    }
-
-    #[test]
-    fn product_default_is_a_concrete_full_access_claude_launch() {
-        let options = AgentLaunchOptions::default();
-        assert!(options.is_dangerous());
-        assert_eq!(options.mode_args(false), ["--dangerously-skip-permissions"]);
-        assert_eq!(options.effort_args(), ["--effort", "high"]);
-        assert!(options.model_args().is_empty());
-    }
-
-    #[test]
-    fn claude_model_table_is_exhaustive_and_flagless_by_default() {
-        let expected: [&[&str]; 14] = [
-            &[],
-            &["--model", "fable"],
-            &["--model", "opus"],
-            &["--model", "sonnet"],
-            &["--model", "claude-fable-5-1"],
-            &["--model", "claude-fable-5"],
-            &["--model", "claude-opus-5"],
-            &["--model", "claude-opus-4-8"],
-            &["--model", "claude-opus-4-7"],
-            &["--model", "claude-opus-4-6"],
-            &["--model", "claude-opus-4-5"],
-            &["--model", "claude-sonnet-5"],
-            &["--model", "claude-sonnet-4-6"],
-            &["--model", "claude-haiku-4-5"],
-        ];
-        for (index, model) in CLAUDE_MODELS.into_iter().enumerate() {
-            assert_eq!(
-                claude(model, ClaudePermissionMode::Default).model_args(),
-                expected[index],
-                "model {model:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn claude_one_million_context_uses_the_runtime_model_suffix() {
-        let launch = AgentLaunchOptions::ClaudeCode {
-            model: ClaudeModelChoice::Fable,
-            mode: ClaudePermissionMode::Default,
-            effort: ClaudeEffortChoice::High,
-            context: ClaudeContextChoice::OneM,
-            fast_mode: false,
-            thinking_mode: false,
-            chrome: true,
-        };
-        assert_eq!(launch.model_args(), &["--model", "fable[1m]"]);
-    }
-
-    #[test]
-    fn claude_mode_table_is_exhaustive_and_ignores_resume() {
-        let expected: [&[&str]; 6] = [
-            &[],
-            &["--permission-mode", "plan"],
-            &["--permission-mode", "default"],
-            &["--permission-mode", "acceptEdits"],
-            &["--permission-mode", "auto"],
-            &["--dangerously-skip-permissions"],
-        ];
-        for (index, mode) in CLAUDE_MODES.into_iter().enumerate() {
-            let options = claude(ClaudeModelChoice::Default, mode);
-            assert_eq!(options.mode_args(false), expected[index], "mode {mode:?}");
-            assert_eq!(options.mode_args(true), expected[index], "mode {mode:?}");
-        }
-    }
-
-    #[test]
-    fn claude_effort_table_is_exhaustive_and_flagless_by_default() {
-        let expected: [&[&str]; 8] = [
-            &[],
-            &["--effort", "low"],
-            &["--effort", "medium"],
-            &["--effort", "high"],
-            &["--effort", "xhigh"],
-            &["--effort", "max"],
-            &["--effort", "xhigh"],
-            &[],
-        ];
-        for (index, effort) in CLAUDE_EFFORTS.into_iter().enumerate() {
-            let options = claude_with_effort(
-                ClaudeModelChoice::Default,
-                ClaudePermissionMode::Default,
-                effort,
-            );
-            assert_eq!(options.effort_args(), expected[index], "effort {effort:?}");
-        }
-    }
-
-    #[test]
-    fn claude_ultracode_maps_to_xhigh_and_enables_cli_orchestration() {
-        let launch = claude_with_effort(
-            ClaudeModelChoice::Opus,
-            ClaudePermissionMode::BypassPermissions,
-            ClaudeEffortChoice::Ultracode,
-        );
-        assert_eq!(launch.effort_args(), &["--effort", "xhigh"]);
-        assert_eq!(
-            launch.settings_args(),
-            &["--settings", r#"{"ultracode":true}"#]
-        );
-    }
-
-    #[test]
-    fn claude_fast_mode_is_forwarded_with_ultracode_in_one_settings_document() {
-        let launch = AgentLaunchOptions::ClaudeCode {
-            model: ClaudeModelChoice::Opus,
-            mode: ClaudePermissionMode::BypassPermissions,
-            effort: ClaudeEffortChoice::Ultracode,
-            context: ClaudeContextChoice::OneM,
-            fast_mode: true,
-            thinking_mode: false,
-            chrome: true,
-        };
-        assert_eq!(
-            launch.settings_args(),
-            &["--settings", r#"{"fastMode":true,"ultracode":true}"#]
-        );
-    }
-
-    #[test]
-    fn claude_haiku_thinking_is_forwarded_as_a_real_cli_setting() {
-        let launch = AgentLaunchOptions::ClaudeCode {
-            model: ClaudeModelChoice::ClaudeHaiku45,
-            mode: ClaudePermissionMode::BypassPermissions,
-            effort: ClaudeEffortChoice::Default,
-            context: ClaudeContextChoice::TwoHundredK,
-            fast_mode: false,
-            thinking_mode: true,
-            chrome: true,
-        };
-        assert_eq!(
-            launch.settings_args(),
-            &["--settings", r#"{"alwaysThinkingEnabled":true}"#]
-        );
-        assert!(launch.validate_capabilities().is_ok());
-    }
-
-    #[test]
-    fn claude_ultrathink_prefixes_prose_but_preserves_cli_slash_commands() {
-        let launch = claude_with_effort(
-            ClaudeModelChoice::Fable,
-            ClaudePermissionMode::BypassPermissions,
-            ClaudeEffortChoice::Ultrathink,
-        );
-        assert_eq!(
-            launch.prompt("Investigate this"),
-            "Ultrathink:\nInvestigate this"
-        );
-        assert_eq!(
-            launch.prompt(" /compact keep recent errors "),
-            "/compact keep recent errors"
-        );
-        assert_eq!(
-            launch.prompt("/home/developer/app.ts failed"),
-            "Ultrathink:\n/home/developer/app.ts failed"
-        );
-    }
-
-    #[test]
-    fn model_specific_capabilities_fail_closed() {
-        let unsupported_ultracode = claude_with_effort(
-            ClaudeModelChoice::Sonnet,
-            ClaudePermissionMode::BypassPermissions,
-            ClaudeEffortChoice::Ultracode,
-        );
-        assert_eq!(
-            unsupported_ultracode.validate_capabilities(),
-            Err(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
-        );
-
-        let unsupported_fast = AgentLaunchOptions::ClaudeCode {
-            model: ClaudeModelChoice::Fable,
-            mode: ClaudePermissionMode::BypassPermissions,
-            effort: ClaudeEffortChoice::High,
-            context: ClaudeContextChoice::OneM,
-            fast_mode: true,
-            thinking_mode: false,
-            chrome: true,
-        };
-        assert_eq!(
-            unsupported_fast.validate_capabilities(),
-            Err(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
-        );
-        assert!(AgentLaunchOptions::ClaudeCode {
-            model: ClaudeModelChoice::Opus,
-            mode: ClaudePermissionMode::BypassPermissions,
-            effort: ClaudeEffortChoice::High,
-            context: ClaudeContextChoice::OneM,
-            fast_mode: true,
-            thinking_mode: false,
-            chrome: true,
-        }
-        .validate_capabilities()
-        .is_ok());
-        assert_eq!(
-            claude_with_effort(
-                ClaudeModelChoice::ClaudeHaiku45,
-                ClaudePermissionMode::BypassPermissions,
-                ClaudeEffortChoice::High,
-            )
-            .validate_capabilities(),
-            Err(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
-        );
-    }
-
-    #[test]
-    fn codex_never_carries_effort_args() {
-        for model in CODEX_MODELS {
-            for mode in CODEX_MODES {
-                assert!(codex(model, mode).effort_args().is_empty());
-            }
-        }
-    }
-
-    #[test]
-    fn claude_launch_defaults_effort_when_the_stored_document_omits_it() {
-        let decoded: AgentLaunchOptions =
-            serde_json::from_str(r#"{"provider":"claudeCode","model":"sonnet","mode":"plan"}"#)
-                .expect("schema 1 claude launch decodes");
-        assert_eq!(
-            decoded,
-            claude_with_effort(
-                ClaudeModelChoice::Sonnet,
-                ClaudePermissionMode::Plan,
-                ClaudeEffortChoice::Default
-            )
-        );
-        assert!(decoded.effort_args().is_empty());
-    }
-
-    #[test]
-    fn claude_browser_integration_is_on_unless_the_thread_turned_it_off() {
-        let stored: AgentLaunchOptions =
-            serde_json::from_str(r#"{"provider":"claudeCode","model":"sonnet","mode":"plan"}"#)
-                .expect("schema 1 claude launch decodes");
-        assert_eq!(stored.browser_args(), &["--chrome"]);
-        assert_eq!(AgentLaunchOptions::default().browser_args(), &["--chrome"]);
-        assert!(codex(CodexModelChoice::Gpt56Sol, CodexExecutionMode::Auto)
-            .browser_args()
-            .is_empty());
-
-        let off_wire = r#"{"provider":"claudeCode","model":"sonnet","mode":"plan","effort":"default","context":"200k","chrome":false}"#;
-        let off: AgentLaunchOptions =
-            serde_json::from_str(off_wire).expect("chrome-off launch decodes");
-        assert!(off.browser_args().is_empty());
-        assert_eq!(
-            serde_json::to_string(&off).expect("chrome-off launch encodes"),
-            off_wire
-        );
-        assert_eq!(off.validate_capabilities(), Ok(()));
-    }
-
-    #[test]
-    fn codex_model_table_is_exhaustive_and_flagless_by_default() {
-        let expected: [&[&str]; 7] = [
-            &[],
-            &["-m", "gpt-6-astra"],
-            &["-m", "gpt-5.6-sol"],
-            &["-m", "gpt-5.6-terra"],
-            &["-m", "gpt-5.6-luna"],
-            &["-m", "gpt-5.5"],
-            &["-m", "gpt-5.4"],
-        ];
-        for (index, model) in CODEX_MODELS.into_iter().enumerate() {
-            assert_eq!(
-                codex(model, CodexExecutionMode::Default).model_args(),
-                expected[index],
-                "model {model:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn codex_mode_table_differs_between_first_turn_and_resume() {
-        let first: [&[&str]; 5] = [
-            &[],
-            &["--sandbox", "read-only"],
-            &["--sandbox", "workspace-write"],
-            &["--sandbox", "workspace-write"],
-            &["--dangerously-bypass-approvals-and-sandbox"],
-        ];
-        let resumed: [&[&str]; 5] = [
-            &[],
-            &["-c", "sandbox_mode=\"read-only\""],
-            &["-c", "sandbox_mode=\"workspace-write\""],
-            &["-c", "sandbox_mode=\"workspace-write\""],
-            &["--dangerously-bypass-approvals-and-sandbox"],
-        ];
-        for (index, mode) in CODEX_MODES.into_iter().enumerate() {
-            let options = codex(CodexModelChoice::Default, mode);
-            assert_eq!(options.mode_args(false), first[index], "mode {mode:?}");
-            assert_eq!(options.mode_args(true), resumed[index], "mode {mode:?}");
-        }
-    }
-
-    #[test]
-    fn invocation_and_dangerous_classification_follow_the_provider() {
-        assert_eq!(
-            claude(ClaudeModelChoice::Opus, ClaudePermissionMode::Plan).invocation(),
-            AgentCliInvocation::ClaudeCode
-        );
-        assert_eq!(
-            codex(CodexModelChoice::Gpt55, CodexExecutionMode::ReadOnly).invocation(),
-            AgentCliInvocation::CodexExec
-        );
-        assert!(claude(
-            ClaudeModelChoice::Default,
-            ClaudePermissionMode::BypassPermissions
-        )
-        .is_dangerous());
-        assert!(codex(
-            CodexModelChoice::Default,
-            CodexExecutionMode::DangerFullAccess
-        )
-        .is_dangerous());
-        assert!(!claude(
-            ClaudeModelChoice::Default,
-            ClaudePermissionMode::AcceptEdits
-        )
-        .is_dangerous());
-        assert!(!codex(
-            CodexModelChoice::Default,
-            CodexExecutionMode::WorkspaceWrite
-        )
-        .is_dangerous());
-    }
-
-    #[test]
-    fn matches_only_its_own_invocation() {
-        let options = codex(CodexModelChoice::Gpt54, CodexExecutionMode::Default);
-        assert!(options.matches(AgentCliInvocation::CodexExec));
-        assert!(!options.matches(AgentCliInvocation::ClaudeCode));
-    }
-
-    #[test]
-    fn serde_round_trips_every_pair() {
-        for model in CLAUDE_MODELS {
-            for mode in CLAUDE_MODES {
-                let options = claude(model, mode);
-                let encoded = serde_json::to_string(&options).expect("claude launch encodes");
-                let decoded: AgentLaunchOptions =
-                    serde_json::from_str(&encoded).expect("claude launch decodes");
-                assert_eq!(decoded, options);
-            }
-        }
-        for model in CODEX_MODELS {
-            for mode in CODEX_MODES {
-                let options = codex(model, mode);
-                let encoded = serde_json::to_string(&options).expect("codex launch encodes");
-                let decoded: AgentLaunchOptions =
-                    serde_json::from_str(&encoded).expect("codex launch decodes");
-                assert_eq!(decoded, options);
-            }
-        }
-    }
-
-    #[test]
-    fn serde_uses_the_documented_wire_names() {
-        let astra_wire = r#"{"provider":"codex","model":"gpt-6-astra","mode":"workspaceWrite"}"#;
-        let astra = codex(
-            CodexModelChoice::Gpt6Astra,
-            CodexExecutionMode::WorkspaceWrite,
-        );
-        assert_eq!(
-            serde_json::from_str::<AgentLaunchOptions>(astra_wire).expect("astra launch decodes"),
-            astra
-        );
-        assert_eq!(
-            serde_json::to_string(&astra).expect("astra launch encodes"),
-            astra_wire
-        );
-        let encoded = serde_json::to_string(&codex(
-            CodexModelChoice::Gpt56Sol,
-            CodexExecutionMode::WorkspaceWrite,
-        ))
-        .expect("codex launch encodes");
-        assert_eq!(
-            encoded,
-            r#"{"provider":"codex","model":"gpt-5.6-sol","mode":"workspaceWrite"}"#
-        );
-        let encoded = serde_json::to_string(&claude(
-            ClaudeModelChoice::Sonnet,
-            ClaudePermissionMode::BypassPermissions,
-        ))
-        .expect("claude launch encodes");
-        assert_eq!(
-            encoded,
-            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"default","context":"200k"}"#
-        );
-        let encoded = serde_json::to_string(&claude_with_effort(
-            ClaudeModelChoice::Sonnet,
-            ClaudePermissionMode::BypassPermissions,
-            ClaudeEffortChoice::Xhigh,
-        ))
-        .expect("claude launch encodes");
-        assert_eq!(
-            encoded,
-            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"xhigh","context":"200k"}"#
-        );
-    }
-
-    #[test]
-    fn serde_rejects_unknown_variants_fields_and_cross_provider_pairs() {
-        for model in ["gpt-6-astra-unknown", "gpt-6-astra --help", "gpt-6"] {
-            let wire = serde_json::json!({"provider": "codex", "model": model, "mode": "default"});
-            assert!(serde_json::from_value::<AgentLaunchOptions>(wire).is_err());
-        }
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"claudeCode","model":"claude-opus-4","mode":"default"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"gemini","model":"default","mode":"default"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"codex","model":"default","mode":"acceptEdits"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"claudeCode","model":"default","mode":"readOnly"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"codex","model":"default","mode":"default","effort":"high"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"codex","model":"default"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"claudeCode","model":"default","mode":"default","effort":"ultra"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"codex","model":"default","mode":"default","effort":"low"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"codex","model":"default","mode":"default","effort":"default"}"#
-        )
-        .is_err());
-        assert!(serde_json::from_str::<AgentLaunchOptions>(
-            r#"{"provider":"claudeCode","model":"default","mode":"default","effort":"Xhigh"}"#
-        )
-        .is_err());
-    }
-}
+#[path = "agent_launch_tests.rs"]
+mod tests;

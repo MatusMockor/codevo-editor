@@ -62,6 +62,13 @@ export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set
   "Agent provider settings changed. Retry the operation.",
   "Enable this provider in Settings before starting a turn.",
   "This provider is updating. Wait for the update to finish.",
+  // These failures occur during catalog/CLI validation, before the agent is spawned.
+  "Agent launch options include a capability the selected model does not support.",
+  "Cannot verify the Claude Code version for this model. Refresh the provider status and try again.",
+  "The installed Claude Code version does not support the selected model.",
+  "Claude version checks are busy. Try again shortly.",
+  "Provider version probe failed.",
+  "Claude catalog unavailable.",
   AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION,
   agentCliBinaryUnavailableMessage("claudeCode"),
   agentCliBinaryUnavailableMessage("codex"),

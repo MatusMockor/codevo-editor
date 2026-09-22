@@ -267,6 +267,16 @@ describe("agent preferences", () => {
     expect(normalizeAgentModelFavoriteKeys("claudeCode/opus")).toEqual([]);
   });
 
+  it("preserves dynamically published model favorites across persistence", () => {
+    const keys = ["claudeCode/claude-future-9"];
+    const stored = JSON.parse(JSON.stringify(normalizeAgentModelFavoritesSnapshot(keys, 3)));
+    expect(normalizeAgentModelFavoritesSnapshot(stored.keys, stored.revision)).toEqual({
+      keys,
+      revision: 3,
+    });
+    expect(normalizeAgentModelFavoriteKeys(["claudeCode/claude-future--9"])).toEqual([]);
+  });
+
   it("normalizes a bounded persisted favorite revision and handles exhaustion", () => {
     expect(normalizeAgentModelFavoritesRevision(17)).toBe(17);
     expect(normalizeAgentModelFavoritesRevision(Number.MAX_SAFE_INTEGER)).toBe(

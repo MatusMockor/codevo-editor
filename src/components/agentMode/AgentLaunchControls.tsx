@@ -1,3 +1,4 @@
+import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import type { ReactNode } from "react";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { Lock, LockOpen, PenLine, Sparkles } from "lucide-react";
@@ -57,6 +58,7 @@ export function AgentLaunchControls({
   providerManagement = null,
   providerSwitchable = false,
 }: AgentLaunchControlsProps) {
+  const catalog = useAgentClaudeModelCatalog();
   const effectiveLaunch = normalizeAgentComposerLaunch(launch);
   const modeChoices = agentLaunchModeChoices(effectiveLaunch.provider);
   const configuredModelFor = (provider: AgentCliKind): string | null => {
@@ -123,6 +125,7 @@ export function AgentLaunchControls({
                 : defaultAgentComposerLaunch(provider),
               model,
               configuredModelFor(provider),
+              catalog,
             ),
           )
         }
@@ -131,7 +134,7 @@ export function AgentLaunchControls({
         providerSwitchable={providerSwitchable}
       />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
-        {agentLaunchModelHint(launch, configuredModel)}
+        {agentLaunchModelHint(launch, configuredModel, catalog)}
       </span>
 
       {presentation.kind === "compact" ? (

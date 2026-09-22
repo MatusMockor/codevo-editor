@@ -46,6 +46,7 @@ describe("AgentLaunchControls", () => {
     open("agent-launch-model");
     expect(optionValues("agent-launch-model")).toEqual([
       "claude-fable-5-1",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-sonnet-5",
     ]);

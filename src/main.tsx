@@ -79,6 +79,8 @@ async function bootstrap(): Promise<void> {
     { installGlobalErrorSafetyNet },
     { strictModeEnabled },
     { RemoteRunnerProvider },
+    { ClaudeModelCatalogProvider },
+    { TauriClaudeModelCatalogGateway },
     { TauriRemoteRunnerGateway },
     { TauriRemoteRunnerSurfacesGateway },
     { TauriRepositoryLookupGateway },
@@ -91,6 +93,8 @@ async function bootstrap(): Promise<void> {
     import("./infrastructure/globalErrorSafetyNet"),
     import("./perfLaneRenderMode"),
     import("./components/remoteRunner/RemoteRunnerProvider"),
+    import("./components/agentMode/ClaudeModelCatalogProvider"),
+    import("./infrastructure/tauriClaudeModelCatalogGateway"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
     import("./infrastructure/tauriRemoteRunnerSurfacesGateway"),
     import("./infrastructure/tauriRepositoryLookupGateway"),
@@ -107,7 +111,10 @@ async function bootstrap(): Promise<void> {
       surfacesGateway: new TauriRemoteRunnerSurfacesGateway(),
       repositoryLookup: new TauriRepositoryLookupGateway(),
       metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),
-      children: React.createElement(App),
+      children: React.createElement(ClaudeModelCatalogProvider, {
+        gateway: new TauriClaudeModelCatalogGateway(),
+        children: React.createElement(App),
+      }),
     }),
   });
 

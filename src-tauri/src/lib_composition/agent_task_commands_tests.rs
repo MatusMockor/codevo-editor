@@ -150,6 +150,7 @@ fn prepare_test_request_with_store(
         cli_identity,
         effective_path,
         store,
+        None,
     )
 }
 
@@ -198,6 +199,7 @@ fn prepare_test_request(request: &StartAgentTaskRequest) -> Result<PreparedAgent
         cli_identity,
         effective_path,
         &AgentAttachmentStore::new(PathBuf::from(&request.project_root).join("attachment-store")),
+        None,
     )
 }
 
@@ -927,7 +929,12 @@ fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
     assert!(serde_json::from_str::<StartAgentTaskRequest>(&missing_project_root).is_err());
 
     let unknown_model = complete.replace("\"opus\"", "\"claude-opus-4\"");
-    assert!(serde_json::from_str::<StartAgentTaskRequest>(&unknown_model).is_err());
+    let unknown = serde_json::from_str::<StartAgentTaskRequest>(&unknown_model)
+        .expect("bounded future model ID parses");
+    assert!(
+        unknown.launch.validate_capabilities().is_err(),
+        "unpublished model must be rejected before execution"
+    );
 }
 
 #[test]

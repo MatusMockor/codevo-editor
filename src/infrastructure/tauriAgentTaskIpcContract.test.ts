@@ -122,7 +122,7 @@ describe("invokeStartAgentTaskIpc", () => {
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
-  it("rejects an unknown launch model before touching the transport", async () => {
+  it("rejects a malformed launch model before touching the transport", async () => {
     const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
 
     await expect(
@@ -130,13 +130,59 @@ describe("invokeStartAgentTaskIpc", () => {
         ...START_REQUEST,
         launch: {
           provider: "claudeCode",
-          model: "claude-opus-4",
+          model: "claude-opus--4",
           mode: "default",
           effort: "default",
         },
       } as unknown as StartAgentTaskRequest),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("forwards a new bounded model for authoritative backend membership validation", async () => {
+    const message =
+      "Agent launch options include a capability the selected model does not support.";
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(message);
+    const request: StartAgentTaskRequest = {
+      ...START_REQUEST,
+      launch: {
+        provider: "claudeCode",
+        model: "claude-future-9",
+        mode: "default",
+        effort: "default",
+      },
+    };
+    const rejection = await invokeStartAgentTaskIpc(invokeCommand, request).catch(
+      (error: unknown) => error,
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(START_AGENT_TASK_IPC_COMMAND, { request });
+    expect(invokeCommand).toHaveBeenCalledTimes(1);
+    expect(rejection).toBeInstanceOf(AgentTaskStartRejectedError);
+    expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
+  });
+
+  it.each([
+    "Agent launch options include a capability the selected model does not support.",
+    "Cannot verify the Claude Code version for this model. Refresh the provider status and try again.",
+    "The installed Claude Code version does not support the selected model.",
+    "Claude version checks are busy. Try again shortly.",
+    "Provider version probe failed.",
+    "Claude catalog unavailable.",
+  ])("treats pre-spawn catalog validation failure as definite: %s", async (message) => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(new Error(message));
+    await expect(invokeStartAgentTaskIpc(invokeCommand, START_REQUEST)).rejects.toBeInstanceOf(
+      AgentTaskStartRejectedError,
+    );
+  });
+
+  it("preserves ambiguous transport failures instead of classifying error substrings", async () => {
+    const failure = new Error("Transport disconnected after start: Provider version probe failed.");
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(failure);
+    const rejection = await invokeStartAgentTaskIpc(invokeCommand, START_REQUEST).catch(
+      (error: unknown) => error,
+    );
+    expect(rejection).toBe(failure);
+    expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(false);
   });
 
   it("rejects an effort that the launch provider does not accept", async () => {

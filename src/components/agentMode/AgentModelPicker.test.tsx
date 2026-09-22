@@ -51,22 +51,27 @@ describe("AgentModelPicker", () => {
     expect(dialog?.id).toBe(`${ID}-dialog`);
     expect(trigger().getAttribute("aria-expanded")).toBe("true");
     expect(document.activeElement).toBe(search());
-    expect(optionValues()).toEqual(["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"]);
+    expect(optionValues()).toEqual([
+      "claude-fable-5-1",
+      "claude-opus-5-5",
+      "claude-opus-5",
+      "claude-sonnet-5",
+    ]);
     expect(selectedOption()?.dataset.value).toBe("claude-sonnet-5");
     expect(selectedOption()?.parentElement?.classList).toContain(
       "agent-model-picker__row--selected",
     );
-    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-2`);
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-3`);
     expect(
       [...host.querySelectorAll(".agent-model-picker__description")].map((el) => el.textContent),
     ).toEqual(
       agentModelRows("claudeCode")
-        .slice(0, 3)
+        .slice(0, 4)
         .map((row) => row.hint),
     );
     expect(
       [...host.querySelectorAll(".agent-model-picker__kbd")].map((el) => el.textContent),
-    ).toEqual([1, 2, 3].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
+    ).toEqual([1, 2, 3, 4].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
     expect(legacyToggle().textContent).toContain("Legacy models");
     expect(legacyToggle().textContent).toContain("7 models");
   });
@@ -108,7 +113,7 @@ describe("AgentModelPicker", () => {
 
     key("Escape");
     expect(search().value).toBe("");
-    expect(optionValues()).toHaveLength(3);
+    expect(optionValues()).toHaveLength(4);
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
 
     key("Escape");
@@ -122,7 +127,7 @@ describe("AgentModelPicker", () => {
     open();
 
     key("ArrowUp");
-    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-1`);
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-2`);
     expect(
       host
         .querySelector(".agent-model-picker__row--active [role='option']")
@@ -141,14 +146,14 @@ describe("AgentModelPicker", () => {
     render(CLAUDE, onSelect);
     open();
     type("claude");
-    expect(optionValues()).toHaveLength(10);
+    expect(optionValues()).toHaveLength(11);
 
     key("0", { metaKey: true });
     expect(onSelect).not.toHaveBeenCalled();
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
 
     key("2", { metaKey: true });
-    expect(onSelect).toHaveBeenCalledWith("claude-opus-5");
+    expect(onSelect).toHaveBeenCalledWith("claude-opus-5-5");
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
@@ -176,7 +181,7 @@ describe("AgentModelPicker", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toContain("No favorite models yet");
 
     act(() => railItem("claudeCode").click());
-    expect(optionValues()).toHaveLength(3);
+    expect(optionValues()).toHaveLength(4);
   });
 
   it("closes on an outside pointer press and on a click of the chosen row", () => {
@@ -316,6 +321,7 @@ describe("AgentModelPicker", () => {
 
     expect(optionValues()).toEqual([
       "claude-fable-5-1",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-sonnet-5",
       "claude-fable-5",

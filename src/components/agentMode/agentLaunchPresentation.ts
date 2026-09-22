@@ -1,6 +1,6 @@
+import { parseAgentCliVersion } from "../../domain/agentCliVersion";
 import {
   CLAUDE_EFFORT_CHOICES,
-  CLAUDE_MODEL_CHOICES,
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
   CODEX_MODEL_CHOICES,
@@ -15,6 +15,11 @@ import {
   type CodexModelChoice,
 } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  type ClaudeManifestModel,
+  type ClaudeModelManifest,
+} from "../../domain/claudeModelCatalog";
 import modelManifest from "../../domain/agentModelManifest.json";
 
 export type AgentModelChoice = ClaudeModelChoice | CodexModelChoice;
@@ -50,79 +55,6 @@ interface LaunchText {
   readonly meta: string;
   readonly hint: string;
 }
-
-const CLAUDE_MODEL_TEXT: Record<ClaudeModelChoice, LaunchText> = {
-  default: {
-    label: "Auto (Claude Code)",
-    meta: "automatic model",
-    hint: "No model override. Claude CLI chooses the model from its settings.",
-  },
-  fable: {
-    label: "Claude Fable 5.1",
-    meta: "fable",
-    hint: "Runs the session on the latest Fable model.",
-  },
-  opus: {
-    label: "Claude Opus 5",
-    meta: "opus",
-    hint: "Runs the session on the latest Opus model.",
-  },
-  sonnet: {
-    label: "Claude Sonnet 5",
-    meta: "sonnet",
-    hint: "Runs the session on the latest Sonnet model.",
-  },
-  "claude-fable-5-1": {
-    label: "Claude Fable 5.1",
-    meta: "fable-5.1",
-    hint: "Runs the session on Claude Fable 5.1.",
-  },
-  "claude-fable-5": {
-    label: "Claude Fable 5",
-    meta: "fable-5",
-    hint: "Runs the session on the legacy Claude Fable 5 model.",
-  },
-  "claude-opus-5": {
-    label: "Claude Opus 5",
-    meta: "opus-5",
-    hint: "Runs the session on Claude Opus 5.",
-  },
-  "claude-opus-4-8": {
-    label: "Claude Opus 4.8",
-    meta: "opus-4.8",
-    hint: "Runs the session on the legacy Claude Opus 4.8 model.",
-  },
-  "claude-opus-4-7": {
-    label: "Claude Opus 4.7",
-    meta: "opus-4.7",
-    hint: "Runs the session on the legacy Claude Opus 4.7 model.",
-  },
-  "claude-opus-4-6": {
-    label: "Claude Opus 4.6",
-    meta: "opus-4.6",
-    hint: "Runs the session on the legacy Claude Opus 4.6 model.",
-  },
-  "claude-opus-4-5": {
-    label: "Claude Opus 4.5",
-    meta: "opus-4.5",
-    hint: "Runs the session on the legacy Claude Opus 4.5 model.",
-  },
-  "claude-sonnet-5": {
-    label: "Claude Sonnet 5",
-    meta: "sonnet-5",
-    hint: "Runs the session on Claude Sonnet 5.",
-  },
-  "claude-sonnet-4-6": {
-    label: "Claude Sonnet 4.6",
-    meta: "sonnet-4.6",
-    hint: "Runs the session on the legacy Claude Sonnet 4.6 model.",
-  },
-  "claude-haiku-4-5": {
-    label: "Claude Haiku 4.5",
-    meta: "haiku-4.5",
-    hint: "Runs the session on the legacy Claude Haiku 4.5 model.",
-  },
-};
 
 const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
   default: {
@@ -266,9 +198,12 @@ const CODEX_MODE_TEXT: Record<CodexExecutionMode, LaunchText> = {
   },
 };
 
-export function agentLaunchModelChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
+export function agentLaunchModelChoices(
+  provider: AgentCliKind,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+): ReadonlyArray<AgentLaunchChoice> {
   if (provider === "claudeCode") {
-    return CLAUDE_MANIFEST.map((entry) => ({
+    return catalog.claudeCode.map((entry) => ({
       value: entry.choice,
       label: entry.label,
       hint: entry.description,
@@ -286,21 +221,24 @@ export function agentModelRows(
   provider: AgentCliKind,
   configuredModel: string | null = null,
   providerVersion: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ReadonlyArray<AgentModelRow> {
-  const configured = configuredModelEntry(provider, configuredModel);
+  const configured = configuredModelEntry(provider, configuredModel, catalog);
   if (provider === "claudeCode") {
     const providerName = agentModelProviderName(provider);
-    return CLAUDE_MANIFEST.filter((entry) =>
-      versionSupports(entry.minVersion, providerVersion),
-    ).map((entry) => ({
-      value: entry.choice,
-      label: entry.label,
-      hint: entry.description,
-      provider,
-      providerName,
-      favoriteKey: agentModelFavoriteKey(provider, entry.choice),
-      isLegacy: entry.status === "legacy",
-    }));
+    return catalog.claudeCode
+      .filter((entry) =>
+        versionSupports(entry.minVersion, entry.maxVersionExclusive, providerVersion),
+      )
+      .map((entry) => ({
+        value: entry.choice,
+        label: entry.label,
+        hint: entry.description,
+        provider,
+        providerName,
+        favoriteKey: agentModelFavoriteKey(provider, entry.choice),
+        isLegacy: entry.status === "legacy",
+      }));
   }
   return modelRows(
     provider,
@@ -402,11 +340,12 @@ export function agentLaunchWithEffort(
   launch: AgentLaunchOptions,
   value: string,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   const effort = pick(CLAUDE_EFFORT_CHOICES, value);
   if (effort === null) return launch;
-  const model = explicitConfiguredClaudeModel(launch.model, configuredModel);
+  const model = explicitConfiguredClaudeModel(launch.model, configuredModel, catalog);
   return { ...launch, model, effort };
 }
 
@@ -418,10 +357,10 @@ export function agentLaunchWithContext(
   launch: AgentLaunchOptions,
   context: ClaudeContextChoice,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
-  const model = explicitConfiguredClaudeModel(launch.model, configuredModel);
-  if (!CLAUDE_MODEL_CHOICES.includes(model as ClaudeModelChoice)) return launch;
+  const model = explicitConfiguredClaudeModel(launch.model, configuredModel, catalog);
   return { ...launch, model: model as ClaudeModelChoice, context };
 }
 
@@ -429,11 +368,12 @@ export function agentLaunchWithFastMode(
   launch: AgentLaunchOptions,
   fastMode: boolean,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   return {
     ...launch,
-    model: explicitConfiguredClaudeModel(launch.model, configuredModel),
+    model: explicitConfiguredClaudeModel(launch.model, configuredModel, catalog),
     fastMode,
   };
 }
@@ -442,11 +382,12 @@ export function agentLaunchWithThinkingMode(
   launch: AgentLaunchOptions,
   thinkingMode: boolean,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   return {
     ...launch,
-    model: explicitConfiguredClaudeModel(launch.model, configuredModel),
+    model: explicitConfiguredClaudeModel(launch.model, configuredModel, catalog),
     thinkingMode,
   };
 }
@@ -455,11 +396,12 @@ export function agentLaunchWithChrome(
   launch: AgentLaunchOptions,
   chrome: boolean,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   return {
     ...launch,
-    model: explicitConfiguredClaudeModel(launch.model, configuredModel),
+    model: explicitConfiguredClaudeModel(launch.model, configuredModel, catalog),
     chrome,
   };
 }
@@ -478,11 +420,12 @@ export function agentClaudeLaunchTraits(
   launch: AgentLaunchOptions & { readonly provider: "claudeCode" },
   configuredModel: string | null,
   executionTarget: AgentExecutionTarget,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ClaudeLaunchTraits {
   const entry =
-    manifestClaudeModel(launch.model, configuredModel) ??
-    CLAUDE_MANIFEST.find((candidate) => candidate.isDefault) ??
-    CLAUDE_MANIFEST[0];
+    manifestClaudeModel(launch.model, configuredModel, catalog) ??
+    catalog.claudeCode.find((candidate) => candidate.isDefault) ??
+    catalog.claudeCode[0];
   return {
     efforts: entry.efforts,
     defaultEffort: entry.defaultEffort,
@@ -497,30 +440,36 @@ export function agentClaudeLaunchTraits(
 export function agentLaunchModelLabel(
   launch: AgentLaunchOptions,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): string {
   if (launch.model === "default") {
-    const configured = configuredModelEntry(launch.provider, configuredModel)?.label;
+    const configured = configuredModelEntry(launch.provider, configuredModel, catalog)?.label;
     if (configured !== undefined) return configured;
     if (launch.provider === "claudeCode") {
-      return CLAUDE_MANIFEST.find((entry) => entry.isDefault)?.label ?? CLAUDE_MANIFEST[0].label;
+      return (
+        catalog.claudeCode.find((entry) => entry.isDefault)?.label ?? catalog.claudeCode[0].label
+      );
     }
     return (
       (modelManifest.codex as ReadonlyArray<ManifestModel>).find((entry) => entry.isDefault)
-        ?.label ?? modelText(launch).label
+        ?.label ?? modelText(launch, catalog).label
     );
   }
-  return modelText(launch).label;
+  return modelText(launch, catalog).label;
 }
 
 export function agentLaunchEffectiveModel(
   launch: AgentLaunchOptions,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentModelChoice {
   if (launch.model !== "default") return launch.model;
-  const configured = configuredModelEntry(launch.provider, configuredModel)?.choice;
+  const configured = configuredModelEntry(launch.provider, configuredModel, catalog)?.choice;
   if (configured !== undefined) return configured;
   if (launch.provider === "claudeCode") {
-    return CLAUDE_MANIFEST.find((entry) => entry.isDefault)?.choice ?? CLAUDE_MANIFEST[0].choice;
+    return (
+      catalog.claudeCode.find((entry) => entry.isDefault)?.choice ?? catalog.claudeCode[0].choice
+    );
   }
   return (
     (modelManifest.codex as ReadonlyArray<ManifestModel>).find((entry) => entry.isDefault)
@@ -532,26 +481,45 @@ export function agentLaunchEffectiveModel(
 export function agentLaunchForDispatch(
   launch: AgentLaunchOptions,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
-  if (launch.model !== "default") return launch;
   if (launch.provider === "claudeCode") {
-    return { ...launch, model: explicitConfiguredClaudeModel(launch.model, configuredModel) };
+    const model = explicitConfiguredClaudeModel(launch.model, configuredModel, catalog);
+    const entry = manifestClaudeModel(model, configuredModel, catalog);
+    // Preserve removed selections so the authoritative launch boundary can reject them.
+    if (entry === null) return launch;
+    return {
+      ...launch,
+      model,
+      effort:
+        launch.effort !== "default" && entry.efforts.includes(launch.effort)
+          ? launch.effort
+          : entry.defaultEffort,
+      context:
+        launch.context !== undefined && entry.contextWindows.includes(launch.context)
+          ? launch.context
+          : (entry.defaultContext ?? undefined),
+      ...(launch.fastMode && !entry.fastMode ? { fastMode: false } : {}),
+      ...(launch.thinkingMode && !entry.thinkingMode ? { thinkingMode: false } : {}),
+    };
   }
-  const model = agentLaunchEffectiveModel(launch, configuredModel);
+  if (launch.model !== "default") return launch;
+  const model = agentLaunchEffectiveModel(launch, configuredModel, catalog);
   return model === "default" ? launch : { ...launch, model: model as CodexModelChoice };
 }
 
 export function agentLaunchModelHint(
   launch: AgentLaunchOptions,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): string {
   if (launch.model === "default") {
-    const configured = configuredModelEntry(launch.provider, configuredModel);
+    const configured = configuredModelEntry(launch.provider, configuredModel, catalog);
     if (configured !== null) {
       return `${configured.description} Selected by your ${agentModelProviderName(launch.provider)} configuration.`;
     }
     if (launch.provider === "claudeCode") {
-      const fallback = CLAUDE_MANIFEST.find((entry) => entry.isDefault) ?? CLAUDE_MANIFEST[0];
+      const fallback = catalog.claudeCode.find((entry) => entry.isDefault) ?? catalog.claudeCode[0];
       return `${fallback.description} Selected by the Claude model catalog.`;
     }
     const fallback = (modelManifest.codex as ReadonlyArray<ManifestModel>).find(
@@ -561,7 +529,7 @@ export function agentLaunchModelHint(
       return `${fallback.description} Selected by the Codex model catalog.`;
     }
   }
-  return modelText(launch).hint;
+  return modelText(launch, catalog).hint;
 }
 
 export function agentLaunchModeLabel(launch: AgentLaunchOptions): string {
@@ -572,16 +540,22 @@ export function agentLaunchModeHint(launch: AgentLaunchOptions): string {
   return modeText(launch).hint;
 }
 
-export function agentLaunchModelMeta(launch: AgentLaunchOptions): string {
-  return modelText(launch).meta;
+export function agentLaunchModelMeta(
+  launch: AgentLaunchOptions,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+): string {
+  return modelText(launch, catalog).meta;
 }
 
 export function agentLaunchModeMeta(launch: AgentLaunchOptions): string {
   return modeText(launch).meta;
 }
 
-export function agentLaunchMetaLabel(launch: AgentLaunchOptions): string {
-  const base = `${agentLaunchModelMeta(launch)} · ${agentLaunchModeMeta(launch)}`;
+export function agentLaunchMetaLabel(
+  launch: AgentLaunchOptions,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+): string {
+  const base = `${agentLaunchModelMeta(launch, catalog)} · ${agentLaunchModeMeta(launch)}`;
   if (agentLaunchEffortValue(launch) === "default") return base;
   return `${base} · ${agentLaunchEffortMeta(launch)}`;
 }
@@ -589,8 +563,9 @@ export function agentLaunchMetaLabel(launch: AgentLaunchOptions): string {
 export function agentLaunchSummaryLabel(
   launch: AgentLaunchOptions,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): string {
-  const base = `${agentLaunchModelLabel(launch, configuredModel)} · ${agentLaunchModeLabel(launch)}`;
+  const base = `${agentLaunchModelLabel(launch, configuredModel, catalog)} · ${agentLaunchModeLabel(launch)}`;
   if (agentLaunchEffortValue(launch) === "default") return base;
   return `${base} · ${agentLaunchEffortLabel(launch)}`;
 }
@@ -599,11 +574,17 @@ export function agentLaunchWithModel(
   launch: AgentLaunchOptions,
   value: string,
   configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider === "claudeCode") {
-    const model = pick(CLAUDE_MODEL_CHOICES, value);
+    const model =
+      value === "default"
+        ? "default"
+        : (catalog.claudeCode.find(
+            (entry) => entry.choice === value || entry.runtimeIds.includes(value),
+          )?.choice ?? null);
     if (model === null) return launch;
-    const traits = manifestClaudeModel(model, configuredModel);
+    const traits = manifestClaudeModel(model, configuredModel, catalog);
     if (traits === null) return { ...launch, model };
     return {
       ...launch,
@@ -657,8 +638,24 @@ export function agentLaunchDangerConfirmLabel(launch: AgentLaunchOptions): strin
   return "Run this turn without the sandbox and accept the risk";
 }
 
-function modelText(launch: AgentLaunchOptions): LaunchText {
-  if (launch.provider === "claudeCode") return CLAUDE_MODEL_TEXT[launch.model];
+function modelText(
+  launch: AgentLaunchOptions,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+): LaunchText {
+  if (launch.provider === "claudeCode") {
+    if (launch.model === "default")
+      return {
+        label: "Auto (Claude Code)",
+        meta: "automatic model",
+        hint: "No model override. Claude CLI chooses the model from its settings.",
+      };
+    const entry = manifestClaudeModel(launch.model, null, catalog);
+    return {
+      label: entry?.label ?? launch.model,
+      meta: launch.model.replace(/^claude-/, ""),
+      hint: entry?.description ?? `Runs the session on ${launch.model}.`,
+    };
+  }
   return CODEX_MODEL_TEXT[launch.model];
 }
 
@@ -704,66 +701,75 @@ interface ManifestModel {
   readonly isDefault?: boolean;
 }
 
-interface ClaudeManifestModel extends ManifestModel {
-  readonly choice: ClaudeModelChoice;
-  readonly efforts: ReadonlyArray<Exclude<ClaudeEffortChoice, "default">>;
-  readonly defaultEffort: ClaudeEffortChoice;
-  readonly contextWindows: ReadonlyArray<ClaudeContextChoice>;
-  readonly defaultContext: ClaudeContextChoice | null;
-  readonly fastMode: boolean;
-  readonly thinkingMode: boolean;
-  readonly status: "current" | "legacy";
-  readonly minVersion?: string;
-}
-
-const CLAUDE_MANIFEST = modelManifest.claudeCode as ReadonlyArray<ClaudeManifestModel>;
-
 function manifestClaudeModel(
   model: ClaudeModelChoice,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ClaudeManifestModel | null {
   if (model === "default") {
-    return configuredModelEntry("claudeCode", configuredModel) as ClaudeManifestModel | null;
+    return configuredModelEntry(
+      "claudeCode",
+      configuredModel,
+      catalog,
+    ) as ClaudeManifestModel | null;
   }
   return (
-    CLAUDE_MANIFEST.find((entry) => entry.choice === model || entry.runtimeIds.includes(model)) ??
-    null
+    catalog.claudeCode.find(
+      (entry) => entry.choice === model || entry.runtimeIds.includes(model),
+    ) ?? null
   );
 }
 
 function explicitConfiguredClaudeModel(
   model: ClaudeModelChoice,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ClaudeModelChoice {
   if (model !== "default") return model;
   return (
-    manifestClaudeModel(model, configuredModel)?.choice ??
-    CLAUDE_MANIFEST.find((entry) => entry.isDefault)?.choice ??
-    CLAUDE_MANIFEST[0].choice
+    manifestClaudeModel(model, configuredModel, catalog)?.choice ??
+    catalog.claudeCode.find((entry) => entry.isDefault)?.choice ??
+    catalog.claudeCode[0].choice
   );
 }
 
 function configuredModelEntry(
   provider: AgentCliKind,
   configuredModel: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ManifestModel | null {
   if (configuredModel === null) return null;
   const base = configuredModel.replace(/\[[^\]]+\]$/, "");
-  const entries = modelManifest[provider] as ReadonlyArray<ManifestModel>;
-  return entries.find((entry) => entry.runtimeIds.includes(base)) ?? null;
+  const entries =
+    provider === "claudeCode"
+      ? catalog.claudeCode
+      : (modelManifest.codex as ReadonlyArray<ManifestModel>);
+  return entries.find((entry) => entry.choice === base || entry.runtimeIds.includes(base)) ?? null;
 }
 
-function versionSupports(minVersion: string | undefined, providerVersion: string | null): boolean {
-  if (minVersion === undefined || providerVersion === null) return true;
-  const actual = providerVersion.match(/\d+(?:\.\d+){1,2}/)?.[0];
-  if (actual === undefined) return true;
-  const left = actual.split(".").map(Number);
-  const right = minVersion.split(".").map(Number);
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) return difference > 0;
-  }
-  return true;
+function versionSupports(
+  minVersion: string | undefined,
+  maxVersionExclusive: string | undefined,
+  providerVersion: string | null,
+): boolean {
+  if (providerVersion === null) return true;
+  const actual = parseAgentCliVersion(providerVersion);
+  if (actual === null) return minVersion === undefined && maxVersionExclusive === undefined;
+  const [numeric, prerelease] = actual.split("-");
+  const compare = (bound: string): number => {
+    const left = numeric.split(".").map(Number);
+    const right = bound.split(".").map(Number);
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      const difference = (left[index] ?? 0) - (right[index] ?? 0);
+      if (difference !== 0) return difference;
+    }
+    // Manifest bounds are validated stable triplets; a prerelease sorts below its release.
+    return prerelease === undefined ? 0 : -1;
+  };
+  return (
+    (minVersion === undefined || compare(minVersion) >= 0) &&
+    (maxVersionExclusive === undefined || compare(maxVersionExclusive) < 0)
+  );
 }
 
 function choices<Value extends string>(

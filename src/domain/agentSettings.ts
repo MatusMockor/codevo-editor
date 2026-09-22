@@ -3,7 +3,7 @@ import {
   type AgentFollowUpBehavior,
 } from "./agentFollowUpBehavior";
 import {
-  CLAUDE_MODEL_CHOICES,
+  isClaudeModelChoice,
   CODEX_MODEL_CHOICES,
   type ClaudeModelChoice,
   type CodexModelChoice,
@@ -280,7 +280,7 @@ function agentModelFavoriteKey(value: unknown): AgentModelFavoriteKey | null {
   if (separator <= 0 || separator === value.length - 1) return null;
   const provider = value.slice(0, separator);
   const model = value.slice(separator + 1);
-  if (provider === "claudeCode" && CLAUDE_MODEL_CHOICES.some((choice) => choice === model)) {
+  if (provider === "claudeCode" && isClaudeModelChoice(model)) {
     return value as AgentModelFavoriteKey;
   }
   if (provider === "codex" && CODEX_MODEL_CHOICES.some((choice) => choice === model)) {

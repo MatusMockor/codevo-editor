@@ -1,3 +1,4 @@
+import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import { ChevronDown } from "lucide-react";
 import { useLayoutEffect, type ReactNode } from "react";
@@ -54,6 +55,7 @@ export function AgentTraitsPicker({
   launch,
   onChange,
 }: AgentTraitsPickerProps) {
+  const catalog = useAgentClaudeModelCatalog();
   const popover = useAgentPopover("start", disabled);
   useAgentControlOpenRequest(openRequest, () => popover.show(), onOpenRequestHandled);
 
@@ -61,7 +63,7 @@ export function AgentTraitsPicker({
   useLayoutEffect(() => {
     if (open) focusFirstInPopover(popoverRef.current);
   }, [open, popoverRef]);
-  const traits = agentClaudeLaunchTraits(launch, configuredModel, executionTarget);
+  const traits = agentClaudeLaunchTraits(launch, configuredModel, executionTarget, catalog);
   const effort =
     launch.effort !== "default" && traits.efforts.includes(launch.effort)
       ? launch.effort
@@ -127,7 +129,9 @@ export function AgentTraitsPicker({
                   isDefault={traits.defaultEffort === choice}
                   key={choice}
                   label={EFFORT_LABELS[choice]}
-                  onSelect={() => onChange(agentLaunchWithEffort(launch, choice, configuredModel))}
+                  onSelect={() =>
+                    onChange(agentLaunchWithEffort(launch, choice, configuredModel, catalog))
+                  }
                 />
               ))}
             </TraitGroup>
@@ -140,7 +144,9 @@ export function AgentTraitsPicker({
                   isDefault={traits.defaultContext === choice}
                   key={choice}
                   label={CONTEXT_LABELS[choice]}
-                  onSelect={() => onChange(agentLaunchWithContext(launch, choice, configuredModel))}
+                  onSelect={() =>
+                    onChange(agentLaunchWithContext(launch, choice, configuredModel, catalog))
+                  }
                 />
               ))}
             </TraitGroup>
@@ -151,12 +157,16 @@ export function AgentTraitsPicker({
                 checked={launch.fastMode === true}
                 isDefault={false}
                 label="On"
-                onSelect={() => onChange(agentLaunchWithFastMode(launch, true, configuredModel))}
+                onSelect={() =>
+                  onChange(agentLaunchWithFastMode(launch, true, configuredModel, catalog))
+                }
               />
               <TraitOption
                 checked={launch.fastMode !== true}
                 label="Off"
-                onSelect={() => onChange(agentLaunchWithFastMode(launch, false, configuredModel))}
+                onSelect={() =>
+                  onChange(agentLaunchWithFastMode(launch, false, configuredModel, catalog))
+                }
               />
             </TraitGroup>
           )}
@@ -166,14 +176,14 @@ export function AgentTraitsPicker({
                 checked={launch.thinkingMode === true}
                 label="On"
                 onSelect={() =>
-                  onChange(agentLaunchWithThinkingMode(launch, true, configuredModel))
+                  onChange(agentLaunchWithThinkingMode(launch, true, configuredModel, catalog))
                 }
               />
               <TraitOption
                 checked={launch.thinkingMode !== true}
                 label="Off"
                 onSelect={() =>
-                  onChange(agentLaunchWithThinkingMode(launch, false, configuredModel))
+                  onChange(agentLaunchWithThinkingMode(launch, false, configuredModel, catalog))
                 }
               />
             </TraitGroup>
@@ -185,12 +195,16 @@ export function AgentTraitsPicker({
                 description="Exposes the Claude in Chrome browser tools"
                 isDefault
                 label="Chrome"
-                onSelect={() => onChange(agentLaunchWithChrome(launch, true, configuredModel))}
+                onSelect={() =>
+                  onChange(agentLaunchWithChrome(launch, true, configuredModel, catalog))
+                }
               />
               <TraitOption
                 checked={launch.chrome === false}
                 label="Off"
-                onSelect={() => onChange(agentLaunchWithChrome(launch, false, configuredModel))}
+                onSelect={() =>
+                  onChange(agentLaunchWithChrome(launch, false, configuredModel, catalog))
+                }
               />
             </TraitGroup>
           )}

@@ -138,6 +138,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
+            crate::claude_model_manifest::initialize(app.handle().clone(), app.path().app_data_dir()?);
             app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);
             app.manage(Arc::new(crate::agent_turn_changes::AgentTurnChangesStore::new(app.path().app_data_dir()?)));
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
@@ -230,6 +231,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::claude_model_manifest::get_claude_model_manifest,
             crate::artifact_preview::artifact_preview_create,
             crate::artifact_preview::workspace_html_preview::workspace_html_preview_create,
             crate::artifact_preview::artifact_preview_revoke,

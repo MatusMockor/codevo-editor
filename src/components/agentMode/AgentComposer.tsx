@@ -1,3 +1,4 @@
+import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import {
   useCallback,
@@ -164,6 +165,7 @@ export function AgentComposer({
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
+  const catalog = useAgentClaudeModelCatalog();
   // Replace the lease whenever the draft or its owner changes, including A → B → A.
   // The application revision also catches edits batched into the same render.
   const promptAuthorityRef = useRef<object | null>(null);
@@ -224,10 +226,10 @@ export function AgentComposer({
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
   const executionTarget: AgentExecutionTarget = executionServerId === null ? "local" : "server";
   const effectiveLaunch = useMemo(() => {
-    const dispatched = agentLaunchForDispatch(normalizedLaunch, configuredModel);
+    const dispatched = agentLaunchForDispatch(normalizedLaunch, configuredModel, catalog);
     if (executionTarget === "local") return dispatched;
     return agentLaunchWithoutBrowser(dispatched);
-  }, [normalizedLaunch, configuredModel, executionTarget]);
+  }, [normalizedLaunch, configuredModel, executionTarget, catalog]);
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false
