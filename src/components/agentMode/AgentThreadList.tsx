@@ -1,6 +1,6 @@
-import { sameThreadOrganizationOwner } from "../../domain/agentThreadOrganization";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { memo, useRef } from "react";
+import { memo } from "react";
+import { useAgentThreadDrag } from "./useAgentThreadDrag";
 import { ChevronDown, Plus } from "lucide-react";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
@@ -45,10 +45,7 @@ export const AgentThreadList = memo(function AgentThreadList({
   sections,
   selectedThreadId,
 }: AgentThreadListProps) {
-  const drag = useRef<{
-    id: string;
-    section: ReadonlyArray<(typeof sections.active)[number]>;
-  } | null>(null);
+  const drag = useAgentThreadDrag(sections, onThreadMenuCommand);
   const archivedTotal = sections.archived.length + sections.hiddenArchivedCount;
   const renderRows = (rows: typeof sections.active) => {
     const neighbors = threadNeighbors(rows);
@@ -84,86 +81,11 @@ export const AgentThreadList = memo(function AgentThreadList({
       aria-multiselectable="true"
       className="agent-list"
       role="listbox"
-      onDragStart={(event) => {
-        const id =
-          event.target instanceof Element
-            ? event.target.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId
-            : undefined;
-        const section = [
-          sections.pinned,
-          sections.active,
-          sections.snoozed ?? [],
-          sections.settled ?? [],
-          sections.archived,
-        ].find((rows) => rows.some((row) => row.thread.threadId === id));
-        if (
-          id === undefined ||
-          section === undefined ||
-          section.some((row) => row.thread.threadId === id && row.thread.archived)
-        )
-          return;
-        drag.current = { id, section };
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", id);
-      }}
-      onDragEnd={() => {
-        drag.current = null;
-      }}
-      onDragOver={(event) => {
-        const id =
-          event.target instanceof Element
-            ? event.target.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId
-            : undefined;
-        if (drag.current?.section.some((row) => row.thread.threadId === id)) event.preventDefault();
-      }}
-      onDrop={(event) => {
-        const source = drag.current;
-        drag.current = null;
-        const target =
-          event.target instanceof Element
-            ? event.target.closest<HTMLElement>("[data-thread-id]")
-            : null;
-        const id = target?.dataset.threadId;
-        const currentSections = [
-          sections.pinned,
-          sections.active,
-          sections.snoozed ?? [],
-          sections.settled ?? [],
-          sections.archived,
-        ];
-        if (
-          source === null ||
-          target === null ||
-          id === undefined ||
-          source.id === id ||
-          !currentSections.some(
-            (rows) =>
-              rows.some((row) => row.thread.threadId === source.id) &&
-              rows.some((row) => row.thread.threadId === id),
-          )
-        )
-          return;
-        event.preventDefault();
-        const sourceView = currentSections.flat().find((row) => row.thread.threadId === source.id);
-        const targetView = currentSections.flat().find((row) => row.thread.threadId === id);
-        if (
-          !sourceView ||
-          !targetView ||
-          sourceView.thread.archived ||
-          !compatibleThreadOwner(sourceView, targetView)
-        )
-          return;
-        const bounds = target.getBoundingClientRect();
-        onThreadMenuCommand(source.id, {
-          kind: event.clientY > bounds.top + bounds.height / 2 ? "moveAfter" : "moveBefore",
-          targetThreadId: id,
-        });
-      }}
+      {...drag.handlers}
     >
+      {drag.marker("pinned", "Pins")}
       {renderRows(sections.pinned)}
-      {sections.pinned.length > 0 && (
-        <li aria-hidden="true" className="agent-list__divider" role="none" />
-      )}
+      {drag.marker("active", "Active")}
       {renderRows(sections.active)}
       {(sections.snoozed?.length ?? 0) > 0 && (
         <>
@@ -173,14 +95,11 @@ export const AgentThreadList = memo(function AgentThreadList({
           {renderRows(sections.snoozed!)}
         </>
       )}
-      {(sections.settled?.length ?? 0) > 0 && (
-        <>
-          <li className="agent-shelf-slot" role="none">
-            <span className="agent-shelf">Settled ({sections.settled!.length})</span>
-          </li>
-          {renderRows(sections.settled!)}
-        </>
+      {drag.marker(
+        "settled",
+        (sections.settled?.length ?? 0) > 0 ? `Settled (${sections.settled!.length})` : "Settled",
       )}
+      {renderRows(sections.settled ?? [])}
       {archivedTotal > 0 && (
         <li className="agent-shelf-slot" role="none">
           <button
@@ -227,14 +146,6 @@ function EmptyState({ state }: { readonly state: NonNullable<AgentRailEmptyState
     return <div className="agent-rail__empty-state">No project selected</div>;
   }
   return <div className="agent-rail__empty-state">{`No threads in ${state.scopeLabel} yet`}</div>;
-}
-
-function compatibleThreadOwner(left: AgentThreadView, right: AgentThreadView): boolean {
-  if (!sameThreadOrganizationOwner(left.thread.owner, right.thread.owner)) return false;
-  const a = left.execution;
-  const b = right.execution;
-  if (a?.kind === "remote") return b?.kind === "remote" && a.serverId === b.serverId;
-  return b?.kind !== "remote";
 }
 
 function threadNeighbors(

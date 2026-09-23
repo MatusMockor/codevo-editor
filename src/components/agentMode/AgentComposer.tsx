@@ -2,6 +2,7 @@ import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import {
   useCallback,
+  useId,
   useMemo,
   useLayoutEffect,
   useRef,
@@ -10,7 +11,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Paperclip, X } from "lucide-react";
+import { Info, Minimize2, Paperclip, X } from "lucide-react";
 import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
@@ -198,6 +199,8 @@ export function AgentComposer({
   const [dismissedCompactionKeys, setDismissedCompactionKeys] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const compactionInfoId = useId();
+  const [expandedCompactionKey, setExpandedCompactionKey] = useState<string | null>(null);
   const followUp = mode.kind !== "new";
   const steering = mode.kind === "steer";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
@@ -555,18 +558,31 @@ export function AgentComposer({
         executionServerId === null &&
         onCompactContext !== undefined && (
           <div className="agent-compaction-offer">
+            <Minimize2 aria-hidden="true" className="agent-compaction-offer__icon" size={14} />
             <div className="agent-compaction-offer__copy">
-              <strong>
-                Resume with less context{" "}
-                <span
-                  tabIndex={0}
-                  title="This Claude session has been idle for at least 70 minutes and last used at least 100,000 tokens. Compact creates a shorter summary before continuing; Dismiss keeps the full history."
-                  aria-label="Why compact this session?"
-                >
-                  ⓘ
-                </span>
-              </strong>
+              <strong>Resume with less context</strong>
               <span>{formatContextTokens(compactionOffer.contextTokens)} tokens from earlier</span>
+              <button
+                type="button"
+                className="agent-compaction-offer__info"
+                aria-expanded={expandedCompactionKey === compactionOffer.key}
+                aria-controls={compactionInfoId}
+                aria-describedby={compactionInfoId}
+                onClick={() =>
+                  setExpandedCompactionKey((key) =>
+                    key === compactionOffer.key ? null : compactionOffer.key,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setExpandedCompactionKey(null);
+                }}
+                aria-label="Why compact this session?"
+              >
+                <Info aria-hidden="true" size={14} />
+              </button>
             </div>
             <button
               className="agent-compaction-offer__action"
@@ -596,6 +612,15 @@ export function AgentComposer({
             >
               <X aria-hidden="true" size={14} />
             </button>
+            <p
+              id={compactionInfoId}
+              className="agent-compaction-offer__explanation"
+              hidden={expandedCompactionKey !== compactionOffer.key}
+            >
+              Claude manages context automatically. This large session has been idle for at least 70
+              minutes, so its earlier context may no longer be cached. Compact optionally summarizes
+              it before continuing; keeping the full history is also fine.
+            </p>
           </div>
         )}
       <div

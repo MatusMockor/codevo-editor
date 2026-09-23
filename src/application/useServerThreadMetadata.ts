@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import { normalizeAgentThreadTitle } from "../domain/agentThread";
 import type { RemoteThreadMetadataPatch } from "../domain/remoteThreadMetadata";
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
@@ -39,7 +40,10 @@ export function useServerThreadMetadata({
     }
   }, [repository]);
   const targets = useMemo(() => {
-    const result = new Map<string, { snapshot: RemoteAgentInventorySnapshot; taskId: string }>();
+    const result = new Map<
+      string,
+      { snapshot: RemoteAgentInventorySnapshot; taskId: string; projectId: string | undefined }
+    >();
     for (const snapshot of snapshots) {
       if (!snapshot.descriptor) continue;
       for (const task of snapshot.tasks) {
@@ -47,6 +51,7 @@ export function useServerThreadMetadata({
         result.set(remoteAgentThreadKey(snapshot.serverId, snapshot.descriptor.runnerId, taskId), {
           snapshot,
           taskId,
+          projectId: task.projectId,
         });
       }
     }
@@ -59,6 +64,7 @@ export function useServerThreadMetadata({
         snapshot.connected,
         snapshot.descriptor?.runnerId,
         snapshot.descriptor?.capabilities.threadManagement === true,
+        snapshot.tasks.map((task) => [task.conversationId ?? task.id, task.projectId]).sort(),
       ])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   );
@@ -157,20 +163,79 @@ export function useServerThreadMetadata({
     [eligible, gateway, captured, report, live, legacyChange, refresh],
   );
   const reorder = useCallback(
-    async (threadId: string, targetThreadId: string, placement: "before" | "after") => {
+    async (
+      threadId: string,
+      targetThreadId: string,
+      placement: "before" | "after",
+      destination?: AgentThreadDropSection,
+    ) => {
       const endpoint = committed.current.epoch;
-      const active = () =>
-        live() && committed.current.epoch === endpoint && committed.current.targets.has(threadId);
       const source = eligible(threadId);
       const target = committed.current.targets.get(targetThreadId);
+      const active = () =>
+        live() &&
+        committed.current.epoch === endpoint &&
+        committed.current.targets.has(threadId) &&
+        committed.current.targets.has(targetThreadId);
       if (
         !source ||
         !target ||
         !gateway?.reorderThread ||
         source.snapshot.serverId !== target.snapshot.serverId ||
-        source.snapshot.descriptor?.runnerId !== target.snapshot.descriptor?.runnerId
+        source.snapshot.descriptor?.runnerId !== target.snapshot.descriptor?.runnerId ||
+        source.projectId !== target.projectId ||
+        (placement !== "before" && placement !== "after") ||
+        (destination !== undefined && !["pinned", "active", "settled"].includes(destination))
       )
         return;
+      const section = (
+        metadata:
+          | {
+              archived?: boolean;
+              removed?: boolean;
+              pinned?: boolean;
+              settledAt?: number | null;
+              snoozedUntil?: number | null;
+            }
+          | undefined,
+      ) => {
+        if (metadata?.archived || metadata?.removed) return "archived";
+        if (metadata?.settledAt != null) return "settled";
+        if ((metadata?.snoozedUntil ?? 0) > Date.now()) return "snoozed";
+        return metadata?.pinned ? "pinned" : "active";
+      };
+      const sourceMetadata = source.snapshot.threadMetadata?.get(source.taskId);
+      const targetMetadata = target.snapshot.threadMetadata?.get(target.taskId);
+      const targetSection = destination ?? section(targetMetadata);
+      if (
+        section(sourceMetadata) === "archived" ||
+        targetSection === "archived" ||
+        targetSection === "snoozed" ||
+        (threadId !== targetThreadId && section(targetMetadata) !== targetSection)
+      )
+        return;
+      const canMove = () =>
+        active() &&
+        section(
+          committed.current.targets.get(threadId)?.snapshot.threadMetadata?.get(source.taskId),
+        ) !== "archived" &&
+        (threadId === targetThreadId ||
+          section(
+            committed.current.targets
+              .get(targetThreadId)
+              ?.snapshot.threadMetadata?.get(target.taskId),
+          ) === targetSection) &&
+        !(
+          targetSection === "settled" &&
+          committed.current.targets
+            .get(threadId)
+            ?.snapshot.tasks.some(
+              (task) =>
+                (task.conversationId ?? task.id) === source.taskId &&
+                (task.status === "running" || task.status === "queued"),
+            )
+        );
+      if (!canMove()) return;
       if (
         captured.busy.has(threadId) ||
         captured.busy.has(targetThreadId) ||
@@ -180,16 +245,59 @@ export function useServerThreadMetadata({
       captured.busy.add(threadId);
       captured.busy.add(targetThreadId);
       try {
-        await gateway.reorderThread({
-          serverId: source.snapshot.serverId,
-          taskId: source.taskId,
-          targetTaskId: target.taskId,
-          placement,
-        });
+        if (section(sourceMetadata) !== targetSection) {
+          if (!gateway.getThreadMetadata || !gateway.updateThreadMetadata) return;
+          const current = await gateway.getThreadMetadata({
+            serverId: source.snapshot.serverId,
+            taskId: source.taskId,
+          });
+          if (!canMove() || current.archived || current.removed) return;
+          if (threadId !== targetThreadId) {
+            const currentTarget = await gateway.getThreadMetadata({
+              serverId: target.snapshot.serverId,
+              taskId: target.taskId,
+            });
+            if (!canMove() || section(currentTarget) !== targetSection) return;
+          }
+          await gateway.updateThreadMetadata({
+            serverId: source.snapshot.serverId,
+            taskId: source.taskId,
+            patch: {
+              expectedRevision: current.revision,
+              pinned:
+                targetSection === "pinned"
+                  ? true
+                  : targetSection === "active"
+                    ? false
+                    : current.pinned,
+              snoozedUntil: null,
+              settledAt: targetSection === "settled" ? (current.settledAt ?? Date.now()) : null,
+            },
+          });
+          if (!canMove()) {
+            if (active()) {
+              report(
+                "The conversation section was saved, but its order changed before the move finished. Refreshing server state.",
+              );
+              if (active()) await refresh().catch(() => undefined);
+            }
+            return;
+          }
+        }
+        if (threadId !== targetThreadId)
+          await gateway.reorderThread({
+            serverId: source.snapshot.serverId,
+            taskId: source.taskId,
+            targetTaskId: target.taskId,
+            placement,
+          });
         if (!active()) return;
         await refresh();
       } catch {
-        if (active()) report("The conversation order could not be saved on the server.");
+        if (active()) {
+          report("The conversation order could not be saved on the server.");
+          await refresh().catch(() => undefined);
+        }
       } finally {
         captured.busy.delete(threadId);
         captured.busy.delete(targetThreadId);

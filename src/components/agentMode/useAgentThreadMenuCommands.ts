@@ -196,6 +196,7 @@ export function useAgentThreadMenuCommands({
             threadId,
             command.targetThreadId,
             command.kind === "moveBefore" ? "before" : "after",
+            ...(command.destination === undefined ? [] : [command.destination]),
           );
           return;
         case "togglePin":

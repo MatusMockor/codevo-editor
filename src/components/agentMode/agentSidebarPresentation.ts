@@ -1,3 +1,4 @@
+import type { AgentThreadDropSection } from "../../domain/agentThreadOrganization";
 import { compareAgentThreadOrder } from "../../domain/agentThreadOrganization";
 import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import {
@@ -119,7 +120,11 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "unsnooze" }
   | { readonly kind: "settle" }
   | { readonly kind: "restore" }
-  | { readonly kind: "moveBefore" | "moveAfter"; readonly targetThreadId: string };
+  | {
+      readonly kind: "moveBefore" | "moveAfter";
+      readonly targetThreadId: string;
+      readonly destination?: AgentThreadDropSection;
+    };
 
 export type AgentThreadMenuIcon =
   | "newThread"

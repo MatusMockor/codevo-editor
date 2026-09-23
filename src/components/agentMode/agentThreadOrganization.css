@@ -25,3 +25,31 @@
   outline: 2px solid var(--codevo-primary);
   outline-offset: 2px;
 }
+
+.agent-thread-drop-zone {
+  padding: 5px 12px;
+  min-height: 24px;
+  box-sizing: border-box;
+  color: var(--codevo-fg-muted);
+  font-size: 11px;
+  border-radius: var(--codevo-r-sm);
+}
+
+.agent-list [data-drop-placement="before"] {
+  background-image: linear-gradient(var(--codevo-primary), var(--codevo-primary));
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+  background-position: top;
+}
+
+.agent-list [data-drop-placement="after"] {
+  background-image: linear-gradient(var(--codevo-primary), var(--codevo-primary));
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+  background-position: bottom;
+}
+
+.agent-thread-drop-zone[data-drop-placement] {
+  color: var(--codevo-fg);
+  background: var(--codevo-well);
+}

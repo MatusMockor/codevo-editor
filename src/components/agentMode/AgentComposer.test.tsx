@@ -809,6 +809,34 @@ describe("AgentComposer", () => {
     expect(host.textContent).not.toContain("Resume with less context");
   });
 
+  it("opens an accessible compaction explanation and dismisses it with Escape", () => {
+    const onCompactContext = vi.fn();
+    const onSubmit = vi.fn();
+    render({
+      compactionOffer: { key: "a:1", contextTokens: 120_000 },
+      mode: { kind: "followUp", blockedReason: null },
+      onCompactContext,
+      onSubmit,
+    });
+    const info = host.querySelector<HTMLButtonElement>('[aria-label="Why compact this session?"]')!;
+    const explanation = host.querySelector<HTMLParagraphElement>(
+      ".agent-compaction-offer__explanation",
+    )!;
+    expect(info.type).toBe("button");
+    expect(info.getAttribute("aria-describedby")).toBe(explanation.id);
+    expect(info.getAttribute("aria-controls")).toBe(explanation.id);
+    expect(explanation.hidden).toBe(true);
+    act(() => info.click());
+    expect(info.getAttribute("aria-expanded")).toBe("true");
+    expect(explanation.hidden).toBe(false);
+    expect(explanation.textContent).toContain("may no longer be cached");
+    act(() => info.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(info.getAttribute("aria-expanded")).toBe("false");
+    expect(explanation.hidden).toBe(true);
+    expect(onCompactContext).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("keeps dismissals per snapshot across switching threads and hides the live meter", () => {
     const onCompactContext = vi.fn();
     const props = { mode: { kind: "followUp" as const, blockedReason: null }, onCompactContext };
@@ -840,6 +868,18 @@ describe("AgentComposer", () => {
     expect(host.textContent).not.toContain("Resume with less context");
     render({ compactionOffer: props.compactionOffer });
     expect(host.textContent).not.toContain("Resume with less context");
+  });
+
+  it("keeps compact unavailable when the follow-up is blocked", () => {
+    const onCompactContext = vi.fn();
+    render({
+      compactionOffer: { key: "a:1", contextTokens: 120_000 },
+      mode: { kind: "followUp", blockedReason: "Waiting for approval" },
+      onCompactContext,
+    });
+    expect(compactAction().disabled).toBe(true);
+    act(() => compactAction().click());
+    expect(onCompactContext).not.toHaveBeenCalled();
   });
 
   it("compacts an older session from an empty composer", () => {

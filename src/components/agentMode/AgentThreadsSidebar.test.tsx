@@ -54,7 +54,7 @@ describe("AgentThreadsSidebar", () => {
     __resetKeymapPlatformCacheForTests();
   });
 
-  it("moves a dragged thread relative to a row and rejects cross-section drops", () => {
+  it("moves a dragged thread within its project across active and pinned sections", () => {
     const command = vi.fn();
     const views = threeThreads();
     const pinned = { ...views[2]!, thread: { ...views[2]!.thread, pinned: true } };
@@ -72,12 +72,71 @@ describe("AgentThreadsSidebar", () => {
     };
     drag("dragstart", "agt-2");
     drag("drop", "agt-1");
-    expect(command).toHaveBeenCalledWith("agt-2", { kind: "moveBefore", targetThreadId: "agt-1" });
+    expect(command).toHaveBeenCalledWith("agt-2", {
+      kind: "moveBefore",
+      targetThreadId: "agt-1",
+      destination: "active",
+    });
     command.mockClear();
     drag("dragstart", "agt-2");
     drag("drop", "agt-3");
-    expect(command).not.toHaveBeenCalled();
+    expect(command).toHaveBeenCalledWith("agt-2", {
+      kind: "moveBefore",
+      targetThreadId: "agt-3",
+      destination: "pinned",
+    });
+    command.mockClear();
     drag("drop", "agt-1");
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it("offers empty destination zones and rejects foreign projects, snoozed targets and stale drag owners", () => {
+    const command = vi.fn();
+    const views = threeThreads();
+    const foreign = {
+      ...views[1]!,
+      thread: {
+        ...views[1]!.thread,
+        owner: { ...views[1]!.thread.owner, ownerId: "another-owner" },
+      },
+    };
+    const sleeping = { ...views[2]!, thread: { ...views[2]!.thread, snoozedUntil: NOW + 1000 } };
+    const draw = (first = views[0]!) =>
+      render({
+        groups: [group(ROOT, "app", [first, foreign, sleeping])],
+        onThreadMenuCommand: command,
+      });
+    draw();
+    const dispatch = (type: string, selector: string) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientY: 0 });
+      Object.defineProperty(event, "dataTransfer", {
+        value: { setData: vi.fn(), effectAllowed: "", dropEffect: "" },
+      });
+      act(() => host.querySelector(selector)!.dispatchEvent(event));
+    };
+    const start = () => {
+      dispatch("dragstart", '[data-thread-id="agt-1"]');
+    };
+    start();
+    expect(host.querySelector('[data-thread-drop-section="pinned"]')).not.toBeNull();
+    dispatch("drop", '[data-thread-drop-section="pinned"]');
+    expect(command).toHaveBeenCalledWith("agt-1", {
+      kind: "moveAfter",
+      targetThreadId: "agt-1",
+      destination: "pinned",
+    });
+    command.mockClear();
+    for (const id of ["agt-2", "agt-3"]) {
+      start();
+      dispatch("drop", `[data-thread-id="${id}"]`);
+      expect(command).not.toHaveBeenCalled();
+    }
+    start();
+    draw({
+      ...views[0]!,
+      thread: { ...views[0]!.thread, owner: { ...views[0]!.thread.owner, ownerId: "replaced" } },
+    });
+    dispatch("drop", '[data-thread-drop-section="settled"]');
     expect(command).not.toHaveBeenCalled();
   });
 
@@ -516,7 +575,7 @@ describe("AgentThreadsSidebar", () => {
     expect(row("agt-1").getAttribute("aria-current")).toBe("true");
   });
 
-  it("puts pinned cards first behind a hairline divider and unpins from the pin glyph", () => {
+  it("puts pinned cards before the Active drop heading and unpins from the pin glyph", () => {
     const onTogglePin = vi.fn();
     render({
       groups: [
@@ -529,7 +588,7 @@ describe("AgentThreadsSidebar", () => {
     });
 
     expect(rowIds()).toEqual(["agt-p", "agt-1"]);
-    expect(host.querySelector(".agent-list__divider")).not.toBeNull();
+    expect(host.querySelector('[data-thread-drop-section="active"]')?.textContent).toBe("Active");
     expect(row("agt-1").querySelector(".agent-row__pin")).toBeNull();
 
     click('[aria-label="Unpin thread"]');

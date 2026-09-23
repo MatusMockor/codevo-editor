@@ -276,3 +276,177 @@ it("retains pending writes across metadata-only inventory refresh", async () => 
     patch: { pinned: true, expectedRevision: 5 },
   });
 });
+it("persists a section change before ordering and refreshes a partial failure", async () => {
+  const base = snapshot();
+  const h = await harness({
+    snapshots: [
+      {
+        ...base,
+        tasks: [task, { ...task, id: "other" }],
+        threadMetadata: new Map([
+          ["t", record()],
+          ["other", record({ taskId: "other", pinned: true })],
+        ]),
+      },
+    ],
+  });
+  h.gateway.getThreadMetadata.mockImplementation(async ({ taskId }: { taskId: string }) =>
+    record({ taskId, revision: 3, pinned: taskId === "other" }),
+  );
+  h.gateway.reorderThread.mockRejectedValue(new Error("conflict"));
+  await h
+    .current()
+    .reorder(view.thread.threadId, view.thread.threadId.replace(/t$/, "other"), "before", "pinned");
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledWith({
+    serverId: "s",
+    taskId: "t",
+    patch: {
+      expectedRevision: 3,
+      pinned: true,
+      snoozedUntil: null,
+      settledAt: null,
+    },
+  });
+  expect(h.gateway.updateThreadMetadata.mock.invocationCallOrder[0]).toBeLessThan(
+    h.gateway.reorderThread.mock.invocationCallOrder[0]!,
+  );
+  expect(h.report).toHaveBeenCalledTimes(1);
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("supports an empty-section drop without a reorder request", async () => {
+  const h = await harness();
+  await h.current().reorder(view.thread.threadId, view.thread.threadId, "after", "pinned");
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+  expect(h.gateway.reorderThread).not.toHaveBeenCalled();
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("does not order after section persistence if its target disappears", async () => {
+  const base = snapshot();
+  const targetId = view.thread.threadId.replace(/t$/, "other");
+  const h = await harness({
+    snapshots: [
+      {
+        ...base,
+        tasks: [task, { ...task, id: "other" }],
+        threadMetadata: new Map([
+          ["t", record()],
+          ["other", record({ taskId: "other", pinned: true })],
+        ]),
+      },
+    ],
+  });
+  h.gateway.getThreadMetadata.mockImplementation(async ({ taskId }: { taskId: string }) =>
+    record({ taskId, pinned: taskId === "other" }),
+  );
+  let settle!: () => void;
+  h.gateway.updateThreadMetadata.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = h.current().reorder(view.thread.threadId, targetId, "before", "pinned");
+  });
+  await h.snapshots([base]);
+  settle();
+  await pending;
+  expect(h.gateway.reorderThread).not.toHaveBeenCalled();
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+it("rejects cross-project drops and settling running conversations", async () => {
+  const h = await harness({
+    snapshots: [{ ...snapshot(), tasks: [task, { ...task, id: "other", projectId: "foreign" }] }],
+  });
+  await h
+    .current()
+    .reorder(view.thread.threadId, view.thread.threadId.replace(/t$/, "other"), "before", "active");
+  await h.snapshots([{ ...snapshot(), tasks: [{ ...task, status: "running" }] }]);
+  await h.current().reorder(view.thread.threadId, view.thread.threadId, "after", "settled");
+  expect(h.gateway.updateThreadMetadata).not.toHaveBeenCalled();
+  expect(h.gateway.reorderThread).not.toHaveBeenCalled();
+});
+it("does not move when the target section changes during the metadata read", async () => {
+  const base = snapshot();
+  const other = { ...task, id: "other" };
+  const withTarget = {
+    ...base,
+    tasks: [task, other],
+    threadMetadata: new Map([
+      ["t", record()],
+      ["other", record({ taskId: "other", pinned: true })],
+    ]),
+  };
+  const h = await harness({ snapshots: [withTarget] });
+  let settle!: (value: RemoteThreadMetadata) => void;
+  h.gateway.getThreadMetadata.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+  );
+  const pending = h
+    .current()
+    .reorder(view.thread.threadId, view.thread.threadId.replace(/t$/, "other"), "before", "pinned");
+  await h.snapshots([
+    {
+      ...withTarget,
+      threadMetadata: new Map([
+        ["t", record()],
+        ["other", record({ taskId: "other" })],
+      ]),
+    },
+  ]);
+  settle(record());
+  await pending;
+  expect(h.gateway.updateThreadMetadata).not.toHaveBeenCalled();
+  expect(h.gateway.reorderThread).not.toHaveBeenCalled();
+});
+it("reconciles a saved section when the target moves while persistence is pending", async () => {
+  const withTarget = {
+    ...snapshot(),
+    tasks: [task, { ...task, id: "other" }],
+    threadMetadata: new Map([
+      ["t", record()],
+      ["other", record({ taskId: "other", pinned: true })],
+    ]),
+  };
+  const h = await harness({ snapshots: [withTarget] });
+  h.gateway.getThreadMetadata.mockImplementation(async ({ taskId }: { taskId: string }) =>
+    record({ taskId, pinned: taskId === "other" }),
+  );
+  let settle!: () => void;
+  h.gateway.updateThreadMetadata.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = h
+      .current()
+      .reorder(
+        view.thread.threadId,
+        view.thread.threadId.replace(/t$/, "other"),
+        "before",
+        "pinned",
+      );
+  });
+  await h.snapshots([
+    {
+      ...withTarget,
+      threadMetadata: new Map([
+        ["t", record()],
+        ["other", record({ taskId: "other" })],
+      ]),
+    },
+  ]);
+  settle();
+  await pending;
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+  expect(h.gateway.reorderThread).not.toHaveBeenCalled();
+  expect(h.report).toHaveBeenCalledWith(expect.stringContaining("section was saved"));
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});

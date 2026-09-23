@@ -3,6 +3,7 @@ import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import {
   compareAgentThreadOrder,
   type AgentThreadOrganizationPatch,
+  type AgentThreadDropSection,
   type AgentThreadPlacement,
 } from "../domain/agentThreadOrganization";
 import { agentRootOwnerId } from "../domain/agentProject";
@@ -490,7 +491,12 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [currentState, projects, dispatchAction],
   );
   const reorderThread = useCallback(
-    (threadId: string, targetThreadId: string, placement: AgentThreadPlacement): void => {
+    (
+      threadId: string,
+      targetThreadId: string,
+      placement: AgentThreadPlacement,
+      destination?: AgentThreadDropSection,
+    ): void => {
       const thread = currentState().threads.get(threadId);
       if (thread === undefined || !ownsThread(projects, thread)) return;
       dispatchAction({
@@ -499,6 +505,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
         owner: thread.owner,
         targetThreadId,
         placement,
+        destination,
         now: now(),
       });
     },

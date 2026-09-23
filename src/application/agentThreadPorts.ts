@@ -1,6 +1,7 @@
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
 import type {
   AgentThreadOrganizationPatch,
+  AgentThreadDropSection,
   AgentThreadPlacement,
 } from "../domain/agentThreadOrganization";
 import type { AgentHistoryCatalogSurface } from "./useAgentHistoryCatalog";
@@ -361,7 +362,12 @@ export interface AgentThreadsSurface {
   markThreadUnread(threadId: string): void;
   renameThread(threadId: string, title: string): void;
   updateThreadOrganization?(threadId: string, patch: AgentThreadOrganizationPatch): void;
-  reorderThread?(threadId: string, targetThreadId: string, placement: AgentThreadPlacement): void;
+  reorderThread?(
+    threadId: string,
+    targetThreadId: string,
+    placement: AgentThreadPlacement,
+    destination?: AgentThreadDropSection,
+  ): void;
   threadCopyDetail(threadId: string, detail: AgentThreadCopyDetail): string | null;
   lastUsedLaunch(projectRootKey: string): AgentLaunchOptions | null;
   isolationPreview(repositoryRoot: string, projectRootKey?: string): AgentIsolationPreview;

@@ -1,3 +1,4 @@
+import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import type { AgentThreadsSurface, AgentThreadView, AgentTasksNotice } from "./agentThreadPorts";
 import type { RemoteAgentMetadata } from "./remoteAgentMetadata";
 
@@ -17,6 +18,7 @@ interface Options {
     threadId: string,
     targetThreadId: string,
     placement: "before" | "after",
+    destination?: AgentThreadDropSection,
   ) => void;
 }
 
@@ -81,14 +83,19 @@ export function remoteAgentThreadActions({
         update(id, change);
       } else local.updateThreadOrganization?.(id, change);
     },
-    reorderThread(id: string, targetId: string, placement: "before" | "after") {
+    reorderThread(
+      id: string,
+      targetId: string,
+      placement: "before" | "after",
+      destination?: AgentThreadDropSection,
+    ) {
       if (remote(id)) {
         if (!remote(targetId) || !reorder) {
           unsupported(id);
           return;
         }
-        reorder(id, targetId, placement);
-      } else if (!remote(targetId)) local.reorderThread?.(id, targetId, placement);
+        reorder(id, targetId, placement, destination);
+      } else if (!remote(targetId)) local.reorderThread?.(id, targetId, placement, destination);
     },
     togglePin(id: string) {
       if (remote(id)) update(id, { pinned: !byId.get(id)?.thread.pinned });

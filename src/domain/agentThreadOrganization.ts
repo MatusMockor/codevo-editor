@@ -6,6 +6,7 @@ export interface AgentThreadOrganizationPatch {
   readonly settledAt?: number | null;
   readonly sortOrder?: number | null;
 }
+export type AgentThreadDropSection = "pinned" | "active" | "settled";
 export type AgentThreadPlacement = "before" | "after";
 export const MAX_THREAD_ORGANIZATION_VALUE = 8_640_000_000_000_000;
 
@@ -139,11 +140,41 @@ export function reorderAgentThread(
   targetThreadId: string,
   placement: AgentThreadPlacement,
   now: number,
+  destination?: AgentThreadDropSection,
 ): AgentThreadsState {
   const thread = state.threads.get(threadId);
-  if (thread === undefined || !sameThreadOrganizationOwner(thread.owner, owner)) return state;
+  if (
+    thread === undefined ||
+    !sameThreadOrganizationOwner(thread.owner, owner) ||
+    (placement !== "before" && placement !== "after")
+  )
+    return state;
+  const target = state.threads.get(targetThreadId);
+  if (!target || !sameThreadOrganizationOwner(thread.owner, target.owner)) return state;
+  let prepared = state;
+  if (destination !== undefined) {
+    if (
+      !["pinned", "active", "settled"].includes(destination) ||
+      !validThreadOrganizationValue(now) ||
+      thread.archived ||
+      target.archived ||
+      (targetThreadId !== threadId && section(target, now) !== destination) ||
+      (destination === "settled" && runningTurn(thread) !== null)
+    )
+      return state;
+    const next = {
+      ...thread,
+      pinned: destination === "pinned" ? true : destination === "active" ? false : thread.pinned,
+      snoozedUntil: null,
+      settledAt: destination === "settled" ? (thread.settledAt ?? now) : null,
+    };
+    const threads = new Map(state.threads);
+    threads.set(threadId, next);
+    prepared = { threads };
+    if (targetThreadId === threadId) return prepared;
+  }
   const plan = agentThreadReorderPlan(
-    [...state.threads.values()],
+    [...prepared.threads.values()],
     threadId,
     targetThreadId,
     placement,
@@ -152,8 +183,8 @@ export function reorderAgentThread(
   const changed = plan.filter(
     (item) => state.threads.get(item.threadId)?.sortOrder !== item.sortOrder,
   );
-  if (changed.length === 0) return state;
-  const threads = new Map(state.threads);
+  if (changed.length === 0) return prepared;
+  const threads = new Map(prepared.threads);
   for (const item of changed)
     threads.set(item.threadId, { ...threads.get(item.threadId)!, sortOrder: item.sortOrder });
   return { threads };

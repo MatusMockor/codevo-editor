@@ -2,6 +2,7 @@ import {
   updateAgentThreadOrganization,
   reorderAgentThread,
   type AgentThreadOrganizationPatch,
+  type AgentThreadDropSection,
   type AgentThreadPlacement,
 } from "./agentThreadOrganization";
 import {
@@ -328,6 +329,7 @@ export type AgentThreadsAction =
       readonly owner: AgentThreadOwner;
       readonly targetThreadId: string;
       readonly placement: AgentThreadPlacement;
+      readonly destination?: AgentThreadDropSection;
       readonly now: number;
     }
   | {
@@ -601,6 +603,7 @@ export function agentThreadsReducer(
         action.targetThreadId,
         action.placement,
         action.now,
+        action.destination,
       );
     case "threadRenamed":
       return renameThread(state, action.threadId, action.title);

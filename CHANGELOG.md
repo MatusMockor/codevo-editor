@@ -7,6 +7,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.71] - 2026-09-23
+
+### Changed
+
+- Move conversations between pinned, active, and settled groups by dragging within
+  the same project. Drop targets and insertion markers make the destination clear;
+  conversations cannot be dragged into another project or server.
+- Keep the context usage meter hidden and present the optional resume-compaction
+  suggestion in a quieter, responsive bar with an accessible explanation.
+
+### Fixed
+
+- Persist server conversation group changes before saving their order and reconcile
+  partial updates when a destination changes during the operation.
+
 ## [0.2.0-beta.70] - 2026-09-23
 
 ### Changed

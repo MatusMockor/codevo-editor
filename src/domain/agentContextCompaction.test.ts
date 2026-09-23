@@ -85,6 +85,28 @@ describe("agentContextCompactionOffer", () => {
     ).toBeNull();
   });
 
+  it("does not offer an older snapshot while a new turn is pending", () => {
+    const thread = candidate();
+    expect(
+      agentContextCompactionOffer(
+        {
+          ...thread,
+          turns: [
+            ...thread.turns,
+            {
+              ...thread.turns[0]!,
+              turnId: "pending-turn",
+              status: { kind: "pending" },
+              endedAtEpochMs: null,
+              events: [],
+            },
+          ],
+        },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
   it("does not repeat an offer after the provider compacted the latest context", () => {
     const thread = candidate();
     const turn = thread.turns[0];

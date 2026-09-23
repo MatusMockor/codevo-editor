@@ -137,6 +137,51 @@ describe("thread organization", () => {
     });
     expect(restored.threads.get(t.threadId)?.snoozedUntil).toBeNull();
   });
+  it("moves across sections atomically, preserves history, and rejects foreign or stale destinations", () => {
+    const a = thread();
+    const b = { ...thread("agt-t2-0002"), pinned: true };
+    const initial = state(a, b);
+    const move = (
+      destination: "active" | "pinned" | "settled",
+      targetThreadId = b.threadId,
+      base = initial,
+    ) =>
+      agentThreadsReducer(base, {
+        kind: "threadReordered",
+        threadId: a.threadId,
+        owner: a.owner,
+        targetThreadId,
+        placement: "before",
+        destination,
+        now: 3000,
+      });
+    const pinned = move("pinned");
+    expect(pinned.threads.get(a.threadId)).toMatchObject({
+      pinned: true,
+      sortOrder: 0,
+      settledAt: null,
+      snoozedUntil: null,
+    });
+    expect(pinned.threads.get(a.threadId)?.turns).toBe(a.turns);
+    const settled = move("settled", a.threadId, pinned);
+    expect(settled.threads.get(a.threadId)?.settledAt).toBe(3000);
+    const active = move("active", a.threadId, settled);
+    expect(active.threads.get(a.threadId)).toMatchObject({
+      pinned: false,
+      settledAt: null,
+      snoozedUntil: null,
+    });
+    expect(move("settled")).toBe(initial); // target is pinned, not settled
+    const foreign = state(a, { ...b, owner: { ...b.owner, ownerId: "foreign" } });
+    expect(move("pinned", b.threadId, foreign)).toBe(foreign);
+    const running = state({ ...a, turns: [{ ...newTurn, status: { kind: "running" } }] }, b);
+    expect(move("settled", a.threadId, running)).toBe(running);
+    const archived = state({ ...a, archived: true }, b);
+    expect(move("pinned", b.threadId, archived)).toBe(archived);
+    const snoozed = state(a, { ...b, pinned: false, snoozedUntil: 4000 });
+    expect(move("active", b.threadId, snoozed)).toBe(snoozed);
+  });
+
   it("renumbers only exact owner and section and does not lose precision on repeated moves", () => {
     const a = thread(),
       b = thread("agt-t2-0002"),
