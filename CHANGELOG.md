@@ -7,6 +7,37 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.72] - 2026-09-23
+
+### Added
+
+- Review recorded file changes and historical diffs for each agent turn, with
+  clear explanations when capture is unavailable and no changes panel for non-Git
+  projects.
+- Open local file links in agent messages directly in the editor at the referenced
+  line.
+- Review and respond to local agent approval requests in the conversation, with clear
+  pending, completed, and failed decision states.
+- Edit queued messages and their attachments before they are sent.
+
+### Changed
+
+- Show reasoning as Thought and Thinking rows grouped with tool activity. Use
+  summarized Claude thinking when the installed CLI supports it.
+- Show "Waiting for N agents" and a composer banner with Stop while background
+  agents continue working. Group batched agent launches and retain activity history.
+- Improve transcript readability with highlighted code, clearer tool rows, and a
+  jump-to-latest control. Remove the per-turn usage line from the transcript.
+- Redact sensitive tool arguments from agent activity details.
+
+### Fixed
+
+- Restore recorded turn changes through the workbench gateway wiring and keep
+  checkpoint reads tied to the correct project and turn.
+- Prevent stray result messages from prematurely ending a resumed conversation.
+- Avoid false legacy transcript warnings for conversations with retained history.
+- Correct cached input accounting for Claude usage.
+
 ## [0.2.0-beta.71] - 2026-09-23
 
 ### Changed
