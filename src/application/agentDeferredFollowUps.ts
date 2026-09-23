@@ -10,6 +10,7 @@ export interface DeferredFollowUp {
   /** Presentation only; never an executable attachment reference. */
   readonly displayAttachmentCount?: number;
   readonly queuedAtEpochMs: number;
+  readonly editLease?: number;
 }
 
 export type DeferredFollowUps = ReadonlyMap<string, ReadonlyArray<DeferredFollowUp>>;
@@ -22,11 +23,6 @@ export interface DeferredFollowUpEnqueue {
 export interface DeferredFollowUpHead {
   readonly map: DeferredFollowUps;
   readonly head: DeferredFollowUp | null;
-}
-
-export interface DeferredFollowUpTake {
-  readonly map: DeferredFollowUps;
-  readonly entry: DeferredFollowUp | null;
 }
 
 const EMPTY_QUEUE: ReadonlyArray<DeferredFollowUp> = [];
@@ -62,24 +58,6 @@ export function takeDeferredHead(map: DeferredFollowUps, threadId: string): Defe
   return { map: withQueue(map, threadId, queue.slice(1)), head };
 }
 
-export function takeDeferred(
-  map: DeferredFollowUps,
-  threadId: string,
-  id: string,
-): DeferredFollowUpTake {
-  const queue = deferredFollowUpsForThread(map, threadId);
-  const entry = queue.find((candidate) => candidate.id === id);
-  if (entry === undefined) return { map, entry: null };
-  return {
-    map: withQueue(
-      map,
-      threadId,
-      queue.filter((candidate) => candidate.id !== id),
-    ),
-    entry,
-  };
-}
-
 export function removeDeferred(
   map: DeferredFollowUps,
   threadId: string,
@@ -89,6 +67,58 @@ export function removeDeferred(
   const retained = queue.filter((candidate) => candidate.id !== id);
   if (retained.length === queue.length) return map;
   return withQueue(map, threadId, retained);
+}
+
+export function deferredQueueIsEditing(queue: ReadonlyArray<DeferredFollowUp>): boolean {
+  return queue.some((entry) => entry.editLease !== undefined);
+}
+
+export function editedDeferredEntry(
+  map: DeferredFollowUps,
+  threadId: string,
+  id: string,
+  lease: number,
+): DeferredFollowUp | null {
+  const entry = deferredFollowUpsForThread(map, threadId).find((candidate) => candidate.id === id);
+  if (entry === undefined || entry.editLease !== lease) return null;
+  return entry;
+}
+
+export function beginDeferredEdit(
+  map: DeferredFollowUps,
+  threadId: string,
+  id: string,
+  lease: number,
+): DeferredFollowUps {
+  const queue = deferredFollowUpsForThread(map, threadId);
+  if (deferredQueueIsEditing(queue)) return map;
+  const entry = queue.find((candidate) => candidate.id === id);
+  if (entry === undefined || entry.state === "uncertain") return map;
+  return withQueue(
+    map,
+    threadId,
+    queue.map((candidate) => (candidate === entry ? { ...entry, editLease: lease } : candidate)),
+  );
+}
+
+export function endDeferredEdit(
+  map: DeferredFollowUps,
+  threadId: string,
+  id: string,
+  lease: number,
+  replacement: DeferredFollowUp["request"] | null,
+): DeferredFollowUps {
+  const entry = editedDeferredEntry(map, threadId, id, lease);
+  if (entry === null) return map;
+  const { editLease: _released, ...rest } = entry;
+  const settled: DeferredFollowUp = replacement === null ? rest : { ...rest, request: replacement };
+  return withQueue(
+    map,
+    threadId,
+    deferredFollowUpsForThread(map, threadId).map((candidate) =>
+      candidate === entry ? settled : candidate,
+    ),
+  );
 }
 
 export function clearDeferred(map: DeferredFollowUps, threadId: string): DeferredFollowUps {

@@ -121,13 +121,14 @@ export function createWorkbenchComposition() {
     agentProviderGateway,
     agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
+    turnChangesGateway: new TauriAgentTurnChangesGateway(),
+    agentTaskGateway: new TauriAgentTaskGateway(),
+    gitWorktreeGateway: new TauriGitWorktreeGateway(),
   };
 
   return {
     ...agentControllerGateways,
     agentControllerGateways,
-    agentTaskGateway: new TauriAgentTaskGateway(),
-    turnChangesGateway: new TauriAgentTurnChangesGateway(),
     htmlFilePreviewGateway: new TauriHtmlFilePreviewGateway(),
     appUpdater: {
       appUpdaterGateway,
@@ -149,7 +150,6 @@ export function createWorkbenchComposition() {
       fileChanges: workspaceFileChangeGateway,
       worktreeFileChanges: workspaceFileChangeGateway,
     },
-    gitWorktreeGateway: new TauriGitWorktreeGateway(),
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(
       undefined,

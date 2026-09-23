@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeAgentThreadTitle } from "../domain/agentThread";
 import type { AgentThreadView } from "./agentThreadPorts";
+import { presentRemoteAgentThread } from "./remoteAgentProjection";
 
 export interface RemoteAgentMetadata {
   readonly threadId: string;
@@ -95,15 +96,7 @@ export function useRemoteAgentMetadata(repository?: RemoteAgentMetadataRepositor
             ? view.thread.viewedAtEpochMs
             : metadata.viewedAtEpochMs,
       };
-      return {
-        ...view,
-        thread,
-        lifecycle: thread.archived ? "archived" : view.lifecycle,
-        attention: thread.archived ? "archived" : view.attention,
-        unread:
-          !thread.archived &&
-          (thread.viewedAtEpochMs === null || thread.updatedAtEpochMs > thread.viewedAtEpochMs),
-      };
+      return presentRemoteAgentThread(view, thread, true);
     },
     [index],
   );

@@ -1,7 +1,4 @@
 import { memo, useMemo } from "react";
-import { ArrowUp, Clock3, Paperclip, Pause, Pencil, X } from "lucide-react";
-import type { AgentTurnAttachmentIntent } from "../../application/agentThreadPorts";
-import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
@@ -78,13 +75,24 @@ export interface AgentTurnHeadProps {
   readonly provider: AgentCliKind;
   readonly startedAtEpochMs: number | null;
   readonly timing: AgentTurnTiming;
+  readonly launchLabel?: string | null;
 }
 
-export function AgentTurnHead({ provider, startedAtEpochMs, timing }: AgentTurnHeadProps) {
+export function AgentTurnHead({
+  provider,
+  startedAtEpochMs,
+  timing,
+  launchLabel = null,
+}: AgentTurnHeadProps) {
   return (
     <header className="agent-turn__head">
       <span aria-hidden="true" className="agent-turn__spark" />
       <span className="agent-turn__agent">{agentCliKindLabel(provider)}</span>
+      {launchLabel !== null && (
+        <span className="agent-turn__launch" title={launchLabel}>
+          {launchLabel}
+        </span>
+      )}
       {startedAtEpochMs !== null && (
         <time className="agent-turn__time agent-num" dateTime={isoTime(startedAtEpochMs)}>
           <AgentRelativeTime epochMs={startedAtEpochMs} />
@@ -118,123 +126,4 @@ function isoTime(epochMs: number): string | undefined {
   if (Math.abs(epochMs) > MAX_TIME_VALUE) return undefined;
 
   return new Date(epochMs).toISOString();
-}
-
-export interface AgentQueuedPromptProps {
-  readonly displayAttachmentCount?: number;
-  readonly attachments?: ReadonlyArray<AgentTurnAttachmentIntent>;
-  readonly id: string;
-  readonly prompt: string;
-  readonly state?: "queued" | "paused" | "uncertain";
-  onEdit?(id: string): void;
-  onSendNow?(id: string): void;
-  onRemove(id: string): void;
-}
-
-export const AGENT_QUEUED_UNCERTAIN_NOTICE =
-  "Delivery could not be confirmed. Remove this message before sending it again.";
-
-export const AGENT_QUEUED_EDIT_LABEL = "Edit queued message";
-export const AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE =
-  "Messages with attachments can't be edited; remove and re-add";
-
-export function AgentQueuedPrompt({
-  id,
-  prompt,
-  attachments,
-  displayAttachmentCount,
-  state = "queued",
-  onEdit,
-  onSendNow,
-  onRemove,
-}: AgentQueuedPromptProps) {
-  const queuedAttachments = (attachments ?? []).slice(0, MAX_AGENT_TURN_ATTACHMENTS);
-  const attachmentCount = attachments?.length
-    ? attachments.length
-    : typeof displayAttachmentCount === "number" &&
-        Number.isSafeInteger(displayAttachmentCount) &&
-        displayAttachmentCount > 0
-      ? displayAttachmentCount
-      : 0;
-  const boundedAttachmentCount = Math.min(attachmentCount, MAX_AGENT_TURN_ATTACHMENTS);
-  const statusDescription =
-    state === "uncertain"
-      ? AGENT_QUEUED_UNCERTAIN_NOTICE
-      : state === "paused"
-        ? "Paused. Resume queued messages when you are ready."
-        : "Waiting for the next tool or response to finish.";
-  const displayText = agentPromptDisplayText(prompt);
-
-  return (
-    <div className="agent-prompt agent-prompt--queued" data-agent-queued={id}>
-      <div className="agent-prompt__bubble" tabIndex={-1}>
-        {displayText !== "" && <p className="agent-prompt__body">{displayText}</p>}
-        <div className="agent-prompt__queue">
-          <span className="agent-prompt__queue-status" title={statusDescription}>
-            {state === "paused" ? <Pause aria-hidden="true" /> : <Clock3 aria-hidden="true" />}
-            {state === "uncertain"
-              ? "Delivery unconfirmed"
-              : state === "paused"
-                ? "Paused"
-                : "Queued"}
-          </span>
-          {state === "uncertain" && (
-            <span className="agent-prompt__queue-note">{AGENT_QUEUED_UNCERTAIN_NOTICE}</span>
-          )}
-          {attachmentCount > 0 && (
-            <span
-              className="agent-prompt__queue-attachments"
-              title={queuedAttachments.map((attachment) => attachment.name).join(", ") || undefined}
-            >
-              <Paperclip aria-hidden="true" />
-              {boundedAttachmentCount}
-              {attachmentCount > MAX_AGENT_TURN_ATTACHMENTS ? "+" : ""}{" "}
-              {attachmentCount === 1 ? "attachment" : "attachments"}
-            </span>
-          )}
-          {attachmentCount > 0 && onEdit !== undefined && (
-            <span className="agent-prompt__queue-note">{AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE}</span>
-          )}
-          {onEdit !== undefined && (
-            <button
-              aria-label={AGENT_QUEUED_EDIT_LABEL}
-              className="agent-prompt__queue-action agent-prompt__queue-action--edit"
-              disabled={attachmentCount > 0 || state === "uncertain"}
-              title={
-                state === "uncertain"
-                  ? AGENT_QUEUED_UNCERTAIN_NOTICE
-                  : attachmentCount > 0
-                    ? AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE
-                    : AGENT_QUEUED_EDIT_LABEL
-              }
-              onClick={() => onEdit(id)}
-              type="button"
-            >
-              <Pencil aria-hidden="true" />
-            </button>
-          )}
-          {state === "queued" && onSendNow !== undefined && (
-            <button
-              aria-label="Send queued message now"
-              className="agent-prompt__queue-action"
-              title="Send now"
-              onClick={() => onSendNow(id)}
-              type="button"
-            >
-              <ArrowUp aria-hidden="true" />
-            </button>
-          )}
-          <button
-            aria-label="Remove queued message"
-            className="agent-prompt__queue-action"
-            title="Remove queued message"
-            onClick={() => onRemove(id)}
-            type="button"
-          >
-            <X aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }

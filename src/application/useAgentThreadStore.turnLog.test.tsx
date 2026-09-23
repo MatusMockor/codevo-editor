@@ -372,7 +372,9 @@ describe("useAgentThreadStore turn log lifecycle", () => {
             rejectSave = reject;
           }),
       );
-      const created = thread({ turns: [turn()] });
+      const created = thread({
+        turns: [turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 20 })],
+      });
       act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
       await settle();
       const lifecycle = { entries: [], truncated: false };
@@ -413,7 +415,9 @@ describe("useAgentThreadStore turn log lifecycle", () => {
       harness.threadGateway.saveAgentThread.mockRejectedValueOnce(
         new Error("The agent thread exceeds the maximum"),
       );
-      const created = thread({ turns: [turn()] });
+      const created = thread({
+        turns: [turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 20 })],
+      });
       act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
       await settle();
       expect(harness.threadGateway.saveAgentThread).toHaveBeenCalledTimes(1);
@@ -480,6 +484,81 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     expect(sealed?.seal).toBe(true);
     expect(sealed?.ops.map((entry) => entry.event)).toEqual([say("hello")]);
     expect(sealed?.expectedNextSeq).toBe(1);
+    harness.unmount();
+  });
+
+  it("opens, records and seals the first turn registered with a new thread", async () => {
+    const harness = renderStore();
+    await settle();
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "threadCreated",
+        thread: thread({ turns: [turn({ status: { kind: "running" } })] }),
+      }),
+    );
+    await settle();
+    act(() => harness.hook().dispatchAction(appended([say("hello")], 1)));
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "taskStatusEvent",
+        threadId: THREAD_ID,
+        event: statusEvent(1, { kind: "exited", exitCode: 0 }),
+        nowEpochMs: 50,
+      }),
+    );
+    await settle();
+
+    expect(harness.seams).toEqual([
+      `openTurn:${TURN_ID}`,
+      `recordEvents:${TURN_ID}:1`,
+      `sealTurn:${TURN_ID}`,
+    ]);
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "none" });
+    expect(harness.logGateway.opens[0]?.prompt).toBe("do the thing");
+    const sealed = lastAppend(harness.logGateway.appends);
+    expect(sealed?.seal).toBe(true);
+    expect(sealed?.ops.map((entry) => entry.event)).toEqual([say("hello")]);
+    harness.unmount();
+  });
+
+  it("records events already held by a created thread and skips its settled turns", async () => {
+    const harness = renderStore();
+    await settle();
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "threadCreated",
+        thread: thread({
+          turns: [
+            turn({
+              turnId: "agt-1-0a1d",
+              status: { kind: "exited", exitCode: 0 },
+              endedAtEpochMs: 5,
+            }),
+            turn({ status: { kind: "running" }, events: [say("early")] }),
+          ],
+        }),
+      }),
+    );
+    await settle();
+
+    expect(harness.seams).toEqual([`openTurn:${TURN_ID}`, `recordEvents:${TURN_ID}:1`]);
+    harness.unmount();
+  });
+
+  it("does not open a log for a created remote thread", async () => {
+    const harness = renderStore();
+    await settle();
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "threadCreated",
+        thread: thread({
+          threadId: "remote-thread:server/one",
+          turns: [turn({ status: { kind: "running" } })],
+        }),
+      }),
+    );
+    await settle();
+    expect(harness.seams).toEqual([]);
     harness.unmount();
   });
 

@@ -9,6 +9,7 @@ import {
   AGENT_TASKS_SOURCE,
   attempt,
   failure,
+  sameLaunchAuthority,
   warning,
   type AgentTaskLaunchAuthority,
 } from "./agentProjectAuthority";
@@ -218,12 +219,6 @@ export function retryAttachmentThreadId(
   usedIds: ReadonlySet<string>,
 ): string | null {
   if (reservation === null || usedIds.has(reservation.threadId)) return null;
-  const previous = reservation.authority;
-  return previous.rootKey === authority.rootKey &&
-    previous.ownerId === authority.ownerId &&
-    previous.generation === authority.generation &&
-    previous.workspaceId === authority.workspaceId &&
-    previous.workspaceGeneration === authority.workspaceGeneration
-    ? reservation.threadId
-    : null;
+  if (!sameLaunchAuthority(reservation.authority, authority)) return null;
+  return reservation.threadId;
 }

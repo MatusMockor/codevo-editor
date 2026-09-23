@@ -514,6 +514,7 @@ fn try_agent_invocation_args(
     template.extend_from_slice(launch.browser_args());
     template.extend(catalog_args.effort.iter().map(String::as_str));
     template.extend(catalog_args.settings.iter().map(String::as_str));
+    template.extend_from_slice(launch.thinking_display_args(cli_version));
     let mut args: Vec<String> = template.into_iter().map(str::to_string).collect();
     args.extend(attachment_args(attachment_paths));
     if let Some(session_id) = resume_session_id {

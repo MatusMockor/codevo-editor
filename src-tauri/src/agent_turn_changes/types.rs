@@ -7,7 +7,7 @@ pub(super) const MAX_READ_BYTES: usize = 128 * 1024 * 1024;
 pub(super) const MAX_HASH_FILE_BYTES: u64 = 32 * 1024 * 1024;
 pub(super) const MAX_RECORD_BYTES: u64 = 128 * 1024 * 1024;
 pub(super) const MAX_STORAGE_BYTES: u64 = 256 * 1024 * 1024;
-pub(super) const MAX_TURNS: usize = 32;
+pub(super) const MAX_TURNS: usize = 512;
 pub(super) const MAX_CHANGED_FILES: usize = 500;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -31,6 +31,20 @@ pub(crate) struct TurnChangesSummary {
 pub(crate) enum ChangesState {
     Ready,
     Unavailable,
+    Unsupported,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnsupportedReason {
+    NotGitRepository,
+    NotWorktreeRoot,
+}
+impl UnsupportedReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NotGitRepository => "notGitRepository",
+            Self::NotWorktreeRoot => "notWorktreeRoot",
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -95,6 +109,8 @@ pub(super) struct Record {
     pub after: Option<Snapshot>,
     pub summary: TurnChangesSummary,
     pub finished: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoints: Option<Checkpoints>,
 }
 impl TurnChangesSummary {
     pub(super) fn unavailable(turn_id: &str, reason: &str) -> Self {
@@ -106,4 +122,29 @@ impl TurnChangesSummary {
             reason: Some(reason.into()),
         }
     }
+    pub(super) fn unsupported(turn_id: &str, reason: UnsupportedReason) -> Self {
+        Self {
+            turn_id: turn_id.into(),
+            state: ChangesState::Unsupported,
+            files: Vec::new(),
+            truncated: false,
+            reason: Some(reason.as_str().into()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Checkpoint {
+    pub reference: String,
+    pub tree: String,
+    pub bytes: u64,
+    pub git: RootIdentity,
+    pub common: RootIdentity,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Checkpoints {
+    pub before: Option<Checkpoint>,
+    pub after: Option<Checkpoint>,
 }

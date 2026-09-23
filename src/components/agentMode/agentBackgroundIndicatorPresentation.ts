@@ -81,3 +81,47 @@ function agentsIndicator(
 function countLabel(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
+
+export type AgentBackgroundWait =
+  | { readonly kind: "agents"; readonly count: number }
+  | { readonly kind: "tasks"; readonly count: number | null };
+
+export function agentBackgroundWait(
+  activity: AgentBackgroundActivity,
+  subagents: AgentRuntimeSubagents,
+): AgentBackgroundWait {
+  const agentTasks = activity.tasks.filter((task) => task.taskType === "agent").length;
+  const workingAgents = subagents.agents.filter((agent) => agent.status === "working").length;
+  const agents = Math.max(agentTasks, workingAgents);
+  if (agents > 0) return { kind: "agents", count: agents };
+  if (activity.truncated || activity.tasks.length === 0) return { kind: "tasks", count: null };
+  return { kind: "tasks", count: activity.tasks.length };
+}
+
+export function agentBackgroundWaitTitle(wait: AgentBackgroundWait): string {
+  switch (wait.kind) {
+    case "agents":
+      return `Waiting for ${countLabel(wait.count, "agent")}`;
+    case "tasks":
+      if (wait.count === null) return "Waiting for background tasks";
+      return `Waiting for ${countLabel(wait.count, "background task")}`;
+    default:
+      return unreachableWait(wait);
+  }
+}
+
+export function agentBackgroundWaitStatus(wait: AgentBackgroundWait): string {
+  switch (wait.kind) {
+    case "agents":
+      return `${countLabel(wait.count, "agent")} working`;
+    case "tasks":
+      if (wait.count === null) return "Background tasks running";
+      return `${countLabel(wait.count, "background task")} running`;
+    default:
+      return unreachableWait(wait);
+  }
+}
+
+function unreachableWait(wait: never): never {
+  throw new Error(`Unsupported background wait: ${JSON.stringify(wait)}`);
+}

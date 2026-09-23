@@ -6,12 +6,16 @@ export type AgentActivityCategory =
   | { readonly kind: "web" }
   | { readonly kind: "integration"; readonly server: string };
 
-export interface AgentActivityCandidate {
+export interface AgentActivityToolCandidate {
+  readonly kind: "tool";
   readonly stableId: string | null;
-  readonly category: AgentActivityCategory | null;
+  readonly category: AgentActivityCategory;
   readonly running: boolean;
   readonly settledOk: boolean;
 }
+
+export type AgentActivityCandidate =
+  { readonly kind: "boundary" } | { readonly kind: "thought" } | AgentActivityToolCandidate;
 
 export interface AgentActivityCategoryCount {
   readonly category: AgentActivityCategory;
@@ -28,6 +32,7 @@ export type AgentActivityFoldEntry =
       readonly categories: ReadonlyArray<AgentActivityCategoryCount>;
       readonly running: number;
       readonly completed: number;
+      readonly thoughts: number;
     };
 
 export function agentActivityCategoryKey(category: AgentActivityCategory): string {
@@ -62,6 +67,7 @@ interface RunAccumulator {
   start: number;
   running: number;
   completed: number;
+  thoughts: number;
   readonly counts: Map<string, CategoryDraft>;
 }
 
@@ -69,15 +75,25 @@ export function foldAgentActivity(
   candidates: ReadonlyArray<AgentActivityCandidate>,
 ): ReadonlyArray<AgentActivityFoldEntry> {
   const entries: AgentActivityFoldEntry[] = [];
-  const run: RunAccumulator = { start: -1, running: 0, completed: 0, counts: new Map() };
+  const run: RunAccumulator = {
+    start: -1,
+    running: 0,
+    completed: 0,
+    thoughts: 0,
+    counts: new Map(),
+  };
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
-    if (candidate.category === null) {
+    if (candidate.kind === "boundary") {
       closeRun(entries, candidates, run, index);
       entries.push({ kind: "item", index });
       continue;
     }
     if (run.start < 0) run.start = index;
+    if (candidate.kind === "thought") {
+      run.thoughts += 1;
+      continue;
+    }
     const key = agentActivityCategoryKey(candidate.category);
     const draft = run.counts.get(key) ?? { category: candidate.category, count: 0 };
     draft.count += 1;
@@ -97,20 +113,27 @@ function closeRun(
 ): void {
   if (run.start < 0) return;
   entries.push(
-    end - run.start === 1
+    end - run.start === 1 && run.thoughts === 0
       ? { kind: "item", index: run.start }
       : {
           kind: "group",
-          stableId: candidates[run.start].stableId,
+          stableId: candidateStableId(candidates[run.start]),
           start: run.start,
           end,
           categories: [...run.counts.values()].map(({ category, count }) => ({ category, count })),
           running: run.running,
           completed: run.completed,
+          thoughts: run.thoughts,
         },
   );
   run.start = -1;
   run.running = 0;
   run.completed = 0;
+  run.thoughts = 0;
   run.counts.clear();
+}
+
+function candidateStableId(candidate: AgentActivityCandidate): string | null {
+  if (candidate.kind !== "tool") return null;
+  return candidate.stableId;
 }

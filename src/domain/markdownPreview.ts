@@ -29,13 +29,23 @@ export function isSafeExternalMarkdownUrl(value: string): boolean {
   }
 }
 
+export interface MarkdownLinkPolicy {
+  readonly allowedUriPattern: RegExp | null;
+  accepts(href: string): boolean;
+}
+
+export const EXTERNAL_MARKDOWN_LINK_POLICY: MarkdownLinkPolicy = Object.freeze({
+  allowedUriPattern: null,
+  accepts: isSafeExternalMarkdownUrl,
+});
+
 type MarkedModule = typeof import("marked");
 type DomPurifyInstance = (typeof import("dompurify"))["default"];
 
 export interface HardenedMarkdown {
   lexBlocks(markdown: string): ReadonlyArray<Token>;
   renderTokens(tokens: ReadonlyArray<Token>): string;
-  sanitizeToFragment(html: string): DocumentFragment;
+  sanitizeToFragment(html: string, linkPolicy?: MarkdownLinkPolicy): DocumentFragment;
   renderDocument(markdown: string): string;
 }
 
@@ -74,16 +84,22 @@ export function createHardenedMarkdown(
   const renderTokens = (tokens: ReadonlyArray<Token>): string =>
     marked.parser([...tokens], options);
 
-  const sanitizeToFragment = (html: string): DocumentFragment => {
+  const sanitizeToFragment = (
+    html: string,
+    linkPolicy: MarkdownLinkPolicy = EXTERNAL_MARKDOWN_LINK_POLICY,
+  ): DocumentFragment => {
     const sanitized = DOMPurify.sanitize(html, {
       FORBID_ATTR: [...FORBIDDEN_ATTRIBUTES],
       FORBID_TAGS: [...FORBIDDEN_TAGS],
       USE_PROFILES: { html: true },
+      ...(linkPolicy.allowedUriPattern === null
+        ? {}
+        : { ALLOWED_URI_REGEXP: linkPolicy.allowedUriPattern }),
     });
     const template = document.createElement("template");
     template.innerHTML = sanitized;
     stripUnsafeImages(template.content);
-    hardenLinks(template.content);
+    hardenLinks(template.content, linkPolicy);
     return template.content;
   };
 
@@ -105,10 +121,10 @@ function stripUnsafeImages(root: ParentNode): void {
   });
 }
 
-function hardenLinks(root: ParentNode): void {
+function hardenLinks(root: ParentNode, policy: MarkdownLinkPolicy): void {
   root.querySelectorAll("a").forEach((link) => {
     const href = link.getAttribute("href");
-    if (href === null || !isSafeExternalMarkdownUrl(href)) {
+    if (href === null || !policy.accepts(href)) {
       link.removeAttribute("href");
       link.removeAttribute("target");
       link.removeAttribute("rel");

@@ -3,7 +3,7 @@ use super::*;
 fn start(id: &str) -> String {
     format!("{{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"{id}\",\"task_type\":\"local_bash\"}}\n")
 }
-const RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\"}\n";
+const RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"num_turns\":1}\n";
 const DONE: &[u8] = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"watch\",\"status\":\"completed\"}\n";
 
 #[test]
@@ -173,4 +173,235 @@ fn explicit_terminal_update_then_root_result_settles_per_run_session() {
     detector.feed(RESULT).unwrap();
     detector.feed(b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{\"status\":\"completed\"}}\n").unwrap();
     assert!(detector.feed(RESULT).unwrap());
+}
+
+const INIT: &[u8] = b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"resumed\"}\n";
+const STRAY_STOP: &[u8] = b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"bkxy1q4sh\",\"patch\":{\"status\":\"stopped\"},\"session_id\":\"resumed\"}\n";
+const STRAY_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"\",\"num_turns\":0,\"total_cost_usd\":22.1702505,\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"session_id\":\"resumed\"}\n";
+const ASSISTANT: &[u8] = b"{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Spustam testy znova.\"}]},\"parent_tool_use_id\":null,\"session_id\":\"resumed\"}\n";
+const REAL_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Hotovo.\",\"num_turns\":3,\"usage\":{\"input_tokens\":1200,\"output_tokens\":80},\"session_id\":\"resumed\"}\n";
+
+#[test]
+fn resume_stray_empty_result_does_not_close_before_real_result() {
+    for prelude in [
+        [INIT, STRAY_STOP, STRAY_RESULT].concat(),
+        [STRAY_STOP, STRAY_RESULT, INIT].concat(),
+    ] {
+        let stream = [prelude.as_slice(), ASSISTANT, REAL_RESULT, REAL_RESULT].concat();
+        let mut detector = ResultLineDetector::new();
+        let closes = stream
+            .split_inclusive(|byte| *byte == b'\n')
+            .map(|line| detector.feed(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(closes, [false, false, false, false, true, false]);
+    }
+}
+
+#[test]
+fn resume_stray_result_survives_every_chunk_boundary() {
+    let stream = [INIT, STRAY_STOP, STRAY_RESULT, ASSISTANT, REAL_RESULT].concat();
+    for split in 0..stream.len() {
+        let mut detector = ResultLineDetector::new();
+        let one = detector.feed(&stream[..split]).unwrap();
+        let two = detector.feed(&stream[split..]).unwrap();
+        assert!(!one, "split {split}");
+        assert!(two, "split {split}");
+    }
+}
+
+#[test]
+fn result_without_output_or_turns_is_ignored_until_assistant_output() {
+    let mut detector = ResultLineDetector::new();
+    let empty = b"{\"type\":\"result\",\"subtype\":\"success\"}\n";
+    assert!(!detector.feed(empty).unwrap());
+    assert!(!detector.feed(ASSISTANT).unwrap());
+    assert!(detector.feed(empty).unwrap());
+}
+
+#[test]
+fn init_resets_root_output_for_next_run() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(ASSISTANT).unwrap();
+    assert!(!detector.feed(REAL_RESULT).unwrap());
+    detector.feed(DONE).unwrap();
+    detector.feed(INIT).unwrap();
+    assert!(!detector.feed(STRAY_RESULT).unwrap());
+    detector.feed(ASSISTANT).unwrap();
+    assert!(detector.feed(STRAY_RESULT).unwrap());
+}
+
+#[test]
+fn failed_result_before_output_still_closes() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(INIT).unwrap();
+    assert!(detector
+        .feed(b"{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"num_turns\":0,\"session_id\":\"resumed\"}\n")
+        .unwrap());
+}
+
+fn closes_per_line(frames: &[&[u8]]) -> Vec<bool> {
+    let mut detector = ResultLineDetector::new();
+    frames
+        .iter()
+        .map(|frame| detector.feed(frame).unwrap())
+        .collect()
+}
+
+const LOCAL_EMPTY_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"\",\"num_turns\":0,\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"session_id\":\"resumed\"}\n";
+
+#[test]
+fn compact_boundary_is_evidence_for_empty_local_command_result() {
+    let boundary = b"{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"compact_metadata\":{\"trigger\":\"manual\",\"pre_tokens\":90000},\"session_id\":\"resumed\"}\n";
+    assert_eq!(
+        closes_per_line(&[INIT, boundary, LOCAL_EMPTY_RESULT]),
+        [false, false, true]
+    );
+}
+
+#[test]
+fn local_command_result_text_closes_without_assistant_frame() {
+    let cost = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Total cost: $0.0000\",\"num_turns\":0,\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"session_id\":\"resumed\"}\n";
+    assert_eq!(closes_per_line(&[INIT, cost]), [false, true]);
+}
+
+#[test]
+fn synthetic_local_command_assistant_frame_closes() {
+    let synthetic = b"{\"type\":\"assistant\",\"message\":{\"model\":\"<synthetic>\",\"content\":[{\"type\":\"text\",\"text\":\"## Context Usage\"}]},\"parent_tool_use_id\":null,\"session_id\":\"resumed\"}\n";
+    assert_eq!(
+        closes_per_line(&[INIT, synthetic, LOCAL_EMPTY_RESULT]),
+        [false, false, true]
+    );
+}
+
+#[test]
+fn output_tokens_are_evidence_of_work() {
+    let result = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"\",\"num_turns\":0,\"usage\":{\"output_tokens\":12},\"session_id\":\"resumed\"}\n";
+    assert_eq!(closes_per_line(&[INIT, result]), [false, true]);
+}
+
+#[test]
+fn whitespace_result_text_is_not_evidence_of_work() {
+    let result = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\" \\n\",\"num_turns\":0,\"usage\":{\"output_tokens\":0},\"session_id\":\"resumed\"}\n";
+    assert_eq!(closes_per_line(&[INIT, result]), [false, false]);
+}
+
+#[test]
+fn clear_rebinds_to_new_session_and_closes_on_empty_result() {
+    let reset = b"{\"type\":\"conversation_reset\",\"new_conversation_id\":\"next\",\"session_id\":\"resumed\"}\n";
+    let hook = b"{\"type\":\"system\",\"subtype\":\"hook_started\",\"session_id\":\"cleared\"}\n";
+    let init = b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"cleared\"}\n";
+    let result = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"\",\"num_turns\":0,\"usage\":{\"output_tokens\":0},\"session_id\":\"cleared\"}\n";
+    assert_eq!(
+        closes_per_line(&[INIT, reset, hook, init, result]),
+        [false, false, false, false, true]
+    );
+}
+
+#[test]
+fn foreign_session_reset_does_not_rebind() {
+    let reset = b"{\"type\":\"conversation_reset\",\"session_id\":\"foreign\"}\n";
+    let init = b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"cleared\"}\n";
+    let result = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\",\"session_id\":\"cleared\"}\n";
+    assert_eq!(
+        closes_per_line(&[INIT, reset, init, result]),
+        [false, false, false, false]
+    );
+}
+
+#[test]
+fn reset_evidence_does_not_outlive_the_following_run() {
+    let reset = b"{\"type\":\"conversation_reset\",\"session_id\":\"resumed\"}\n";
+    let init = b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"cleared\"}\n";
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(INIT).unwrap();
+    detector.feed(reset).unwrap();
+    detector.feed(init).unwrap();
+    detector.feed(DONE).unwrap();
+    detector.feed(init).unwrap();
+    let stray = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"\",\"num_turns\":0,\"session_id\":\"cleared\"}\n";
+    assert!(!detector.feed(stray).unwrap());
+}
+
+const CLEAR_RESET: &[u8] = b"{\"type\":\"conversation_reset\",\"new_conversation_id\":\"f702f92e\",\"session_id\":\"resumed\"}\n";
+const CLEARED_INIT: &[u8] =
+    b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"cleared\"}\n";
+const CLEARED_EMPTY_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"\",\"num_turns\":0,\"usage\":{\"output_tokens\":0},\"session_id\":\"cleared\"}\n";
+
+#[test]
+fn retired_session_straggler_does_not_repin_after_clear() {
+    let killed = b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{\"status\":\"killed\"},\"session_id\":\"resumed\"}\n";
+    let mut detector = ResultLineDetector::new();
+    detector.feed(INIT).unwrap();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert!(!detector.feed(CLEAR_RESET).unwrap());
+    assert!(!detector.feed(killed).unwrap());
+    assert!(!detector.feed(CLEARED_INIT).unwrap());
+    assert!(detector.feed(CLEARED_EMPTY_RESULT).unwrap());
+}
+
+#[test]
+fn retired_session_result_never_settles_the_cleared_session() {
+    let old_result = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"late\",\"num_turns\":2,\"session_id\":\"resumed\"}\n";
+    assert_eq!(
+        closes_per_line(&[
+            INIT,
+            CLEAR_RESET,
+            old_result,
+            CLEARED_INIT,
+            old_result,
+            CLEARED_EMPTY_RESULT
+        ]),
+        [false, false, false, false, false, true]
+    );
+}
+
+#[test]
+fn retired_session_output_is_not_evidence_for_the_cleared_session() {
+    let old_init = b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"resumed\"}\n";
+    let old_assistant =
+        b"{\"type\":\"assistant\",\"message\":{\"content\":[]},\"session_id\":\"resumed\"}\n";
+    let mut detector = ResultLineDetector::new();
+    detector.feed(INIT).unwrap();
+    detector.feed(CLEAR_RESET).unwrap();
+    detector.feed(CLEARED_INIT).unwrap();
+    detector.feed(old_init).unwrap();
+    detector.feed(old_assistant).unwrap();
+    detector.feed(CLEARED_INIT).unwrap();
+    assert!(!detector.feed(CLEARED_EMPTY_RESULT).unwrap());
+}
+
+#[test]
+fn pre_clear_live_task_without_terminal_does_not_block_cleared_result() {
+    let progress = b"{\"type\":\"system\",\"subtype\":\"task_progress\",\"task_id\":\"watch\"}\n";
+    let mut detector = ResultLineDetector::new();
+    detector.feed(INIT).unwrap();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(CLEAR_RESET).unwrap();
+    detector.feed(CLEARED_INIT).unwrap();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(progress).unwrap();
+    assert!(detector.feed(CLEARED_EMPTY_RESULT).unwrap());
+}
+
+#[test]
+fn cleared_session_tasks_still_retain_input() {
+    let cleared_start = b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"next\",\"session_id\":\"cleared\"}\n";
+    let cleared_done = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"next\",\"status\":\"completed\",\"session_id\":\"cleared\"}\n";
+    let old_done = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"next\",\"status\":\"completed\",\"session_id\":\"resumed\"}\n";
+    assert_eq!(
+        closes_per_line(&[
+            INIT,
+            CLEAR_RESET,
+            CLEARED_INIT,
+            cleared_start,
+            CLEARED_EMPTY_RESULT,
+            old_done,
+            CLEARED_EMPTY_RESULT,
+            cleared_done,
+            CLEARED_EMPTY_RESULT
+        ]),
+        [false, false, false, false, false, false, false, false, true]
+    );
 }

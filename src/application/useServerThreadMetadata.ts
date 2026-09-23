@@ -6,7 +6,17 @@ import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import type { AgentThreadView } from "./agentThreadPorts";
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
-import { remoteAgentThreadKey } from "./remoteAgentProjection";
+import { presentRemoteAgentThread, remoteAgentThreadKey } from "./remoteAgentProjection";
+import {
+  MAX_METADATA_SAVES_IN_FLIGHT,
+  MAX_METADATA_SLOT_WAIT_MS,
+  nextMetadataSlotWake,
+  releaseMetadataSlot,
+  rememberPendingViewed,
+  serverThreadMetadataLease,
+  takeRunnableViewed,
+  viewedOnlyChange,
+} from "./serverThreadMetadataLease";
 
 type Change = Omit<RemoteThreadMetadataPatch, "expectedRevision">;
 interface Options {
@@ -76,20 +86,19 @@ export function useServerThreadMetadata({
       targets,
     };
   }, [connectionKey, targets]);
-  const lease = useRef({ owner, busy: new Set<string>(), attempted: new Set<string>() });
-  if (lease.current.owner !== owner)
-    lease.current = { owner, busy: new Set(), attempted: new Set() };
+  const lease = useRef(serverThreadMetadataLease(owner));
+  if (lease.current.owner !== owner) lease.current = serverThreadMetadataLease(owner);
   const captured = lease.current;
   const live = useCallback(
     () => lease.current === captured && valid(owner),
     [captured, owner, valid],
   );
   const eligible = useCallback(
-    (threadId: string) => {
+    (threadId: string, quiet = false) => {
       const target = committed.current.targets.get(threadId);
       if (!live()) return null;
       if (!gateway || !target?.snapshot.connected) {
-        report("Connect to the server to change this conversation.");
+        if (!quiet) report("Connect to the server to change this conversation.");
         return null;
       }
       if (
@@ -98,7 +107,7 @@ export function useServerThreadMetadata({
         !gateway.updateThreadMetadata ||
         !gateway.reorderThread
       ) {
-        report("Update the server to manage conversations across devices.");
+        if (!quiet) report("Update the server to manage conversations across devices.");
         return null;
       }
       return target;
@@ -115,21 +124,49 @@ export function useServerThreadMetadata({
     },
     [legacy],
   );
+  const refreshAfterSave = useCallback(async (): Promise<void> => {
+    if (captured.batch.depth > 0) {
+      captured.batch.refreshPending = true;
+      return;
+    }
+    await refresh().catch(() => undefined);
+  }, [captured, refresh]);
   const update = useCallback(
-    async (threadId: string, change: Change) => {
+    async function save(threadId: string, change: Change): Promise<boolean> {
       const endpoint = committed.current.epoch;
       const active = () =>
         live() && committed.current.epoch === endpoint && committed.current.targets.has(threadId);
-      const target = eligible(threadId);
-      if (!target || !gateway?.getThreadMetadata || !gateway.updateThreadMetadata) return;
-      if (captured.busy.has(threadId) || captured.busy.size >= 4) {
+      const viewed = viewedOnlyChange(change);
+      const target = eligible(threadId, viewed !== null);
+      if (!target || !gateway?.getThreadMetadata || !gateway.updateThreadMetadata) return false;
+      if (
+        viewed !== null &&
+        (captured.busy.has(threadId) || captured.busy.size >= MAX_METADATA_SAVES_IN_FLIGHT)
+      ) {
+        rememberPendingViewed(captured, threadId, viewed);
+        return false;
+      }
+      if (captured.busy.has(threadId)) {
         report("Conversation changes are still being saved. Try again shortly.");
-        return;
+        return false;
       }
       if (change.title !== undefined && change.title !== null) {
         const title = normalizeAgentThreadTitle(change.title);
-        if (title === null || /[\u0000-\u001f\u007f]/u.test(title)) return;
+        if (title === null || /[\u0000-\u001f\u007f]/u.test(title)) return false;
         change = { ...change, title };
+      }
+      const deadline = Date.now() + MAX_METADATA_SLOT_WAIT_MS;
+      while (captured.busy.size >= MAX_METADATA_SAVES_IN_FLIGHT) {
+        if (Date.now() >= deadline) {
+          report("Conversation changes are still being saved. Try again shortly.");
+          return false;
+        }
+        await nextMetadataSlotWake(captured);
+        if (!active()) return false;
+      }
+      if (captured.busy.has(threadId)) {
+        report("Conversation changes are still being saved. Try again shortly.");
+        return false;
       }
       captured.busy.add(threadId);
       try {
@@ -137,7 +174,14 @@ export function useServerThreadMetadata({
           serverId: target.snapshot.serverId,
           taskId: target.taskId,
         });
-        if (!active()) return;
+        if (!active()) return false;
+        if (
+          viewed !== null &&
+          current.revision > 0 &&
+          current.viewedAtEpochMs !== null &&
+          current.viewedAtEpochMs >= viewed
+        )
+          return true;
         await gateway.updateThreadMetadata({
           serverId: target.snapshot.serverId,
           taskId: target.taskId,
@@ -147,20 +191,41 @@ export function useServerThreadMetadata({
             expectedRevision: current.revision,
           },
         });
-        if (!active()) return;
-        await refresh();
+        if (!active()) return false;
+        await refreshAfterSave();
+        return true;
       } catch {
         if (active()) {
           report(
             "The conversation change could not be saved on the server. Refresh and try again.",
           );
-          await refresh().catch(() => undefined);
+          await refreshAfterSave();
         }
+        return false;
       } finally {
-        captured.busy.delete(threadId);
+        releaseMetadataSlot(captured, threadId);
+        for (const [pendingId, pendingViewed] of takeRunnableViewed(captured))
+          void save(pendingId, { viewedAtEpochMs: pendingViewed });
       }
     },
-    [eligible, gateway, captured, report, live, legacyChange, refresh],
+    [eligible, gateway, captured, report, live, legacyChange, refreshAfterSave],
+  );
+  const batch = useCallback(
+    async <T>(work: () => Promise<T>): Promise<T> => {
+      const endpoint = committed.current.epoch;
+      captured.batch.depth += 1;
+      try {
+        return await work();
+      } finally {
+        captured.batch.depth -= 1;
+        if (captured.batch.depth === 0 && captured.batch.refreshPending) {
+          captured.batch.refreshPending = false;
+          if (live() && committed.current.epoch === endpoint)
+            await refresh().catch(() => undefined);
+        }
+      }
+    },
+    [captured, live, refresh],
   );
   const reorder = useCallback(
     async (
@@ -299,8 +364,8 @@ export function useServerThreadMetadata({
           await refresh().catch(() => undefined);
         }
       } finally {
-        captured.busy.delete(threadId);
-        captured.busy.delete(targetThreadId);
+        releaseMetadataSlot(captured, threadId);
+        releaseMetadataSlot(captured, targetThreadId);
       }
     },
     [eligible, gateway, captured, live, refresh, report],
@@ -325,7 +390,12 @@ export function useServerThreadMetadata({
       let changed = false;
       for (const [id, target] of candidates) {
         if (!current()) return;
-        if (captured.busy.has(id) || captured.busy.size >= 4) continue;
+        if (
+          captured.busy.has(id) ||
+          captured.busy.size >= MAX_METADATA_SAVES_IN_FLIGHT - 1 ||
+          captured.waiters.length > 0
+        )
+          continue;
         captured.attempted.add(id);
         captured.busy.add(id);
         try {
@@ -343,7 +413,7 @@ export function useServerThreadMetadata({
           );
           changed = true;
         } finally {
-          captured.busy.delete(id);
+          releaseMetadataSlot(captured, id);
         }
       }
       if (changed && current()) await refresh();
@@ -359,10 +429,9 @@ export function useServerThreadMetadata({
     (view: AgentThreadView): AgentThreadView | null => {
       const target = targets.get(view.thread.threadId);
       const canonical = target?.snapshot.threadMetadata?.get(target.taskId);
-      const metadata =
-        canonical && canonical.revision > 0
-          ? canonical
-          : (legacy.get(view.thread.threadId) ?? canonical);
+      const stored = canonical !== undefined && canonical.revision > 0;
+      const legacyRecord = legacy.get(view.thread.threadId);
+      const metadata = stored ? canonical : (legacyRecord ?? canonical);
       if (metadata?.removed) return null;
       if (!metadata) return view;
       const thread = {
@@ -378,17 +447,12 @@ export function useServerThreadMetadata({
             ? view.thread.viewedAtEpochMs
             : metadata.viewedAtEpochMs,
       };
-      return {
-        ...view,
-        thread,
-        lifecycle: thread.archived ? "archived" : view.lifecycle,
-        attention: thread.archived ? "archived" : view.attention,
-        unread:
-          !thread.archived &&
-          (thread.viewedAtEpochMs === null || thread.updatedAtEpochMs > thread.viewedAtEpochMs),
-      };
+      const tracksViews =
+        target?.snapshot.descriptor?.capabilities.threadManagement === true &&
+        (stored || legacyRecord !== undefined);
+      return presentRemoteAgentThread(view, thread, tracksViews);
     },
     [targets, legacy],
   );
-  return { project, update, reorder, persistenceError: null };
+  return { project, update, reorder, batch, persistenceError: null };
 }

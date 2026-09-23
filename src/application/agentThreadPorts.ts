@@ -14,6 +14,7 @@ import type { AgentThreadHistorySurface } from "./useAgentThreadHistory";
 import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import type { AgentImageMime } from "../domain/agentAttachment";
 import type { DeferredFollowUps } from "./agentDeferredFollowUps";
+import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
 import type { AgentComposerAttachmentsSurface } from "./useAgentComposerAttachments";
 import type { AgentProjectOrigin } from "../domain/agentProject";
@@ -160,6 +161,8 @@ export interface AgentThreadStoreGateway {
   saveAgentThread(request: SaveAgentThreadRequest): Promise<void>;
   deleteAgentThread(request: DeleteAgentThreadRequest): Promise<void>;
 }
+
+export type AgentThreadMutationResult = boolean | Promise<boolean>;
 
 export interface AgentThreadStoreSurface {
   readonly state: AgentThreadsState;
@@ -328,6 +331,7 @@ export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
   readonly delivery?: "queued" | "immediate";
   readonly threadId: string;
   readonly prompt: string;
+  readonly dangerousLaunchConfirmed?: boolean;
 }
 
 export type AgentSteerOutcome = "sent" | "deferred" | "kept";
@@ -352,6 +356,7 @@ export interface AgentThreadsSurface {
   readonly orphanedWorktrees: ReadonlyArray<OrphanedWorktreeView>;
   readonly notice: AgentTasksNotice | null;
   readonly dispatching: boolean;
+  readonly dispatchingKeys?: ReadonlySet<string>;
   readonly agentCliConfigured: boolean;
   readonly agentCliKind: AgentCliKind;
   readonly agentCliVersion: string | null;
@@ -384,14 +389,21 @@ export interface AgentThreadsSurface {
   sendDeferredFollowUpNow?(threadId: string, id: string): Promise<void>;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
-  takeDeferredFollowUp(threadId: string, id: string): AgentFollowUpRequest | null;
+  beginDeferredFollowUpEdit?(threadId: string, id: string): AgentQueuedEditSession | null;
+  cancelDeferredFollowUpEdit?(session: AgentQueuedEditSession): void;
+  commitDeferredFollowUpEdit?(
+    session: AgentQueuedEditSession,
+    commit: AgentQueuedEditCommit,
+  ): Promise<boolean>;
   importExternalSession(
     request: ExternalSessionImportRequest,
   ): Promise<ExternalSessionImportResult | null>;
   stop(threadId: string): Promise<void>;
   togglePin(threadId: string): void;
-  archive(threadId: string): void;
-  remove(threadId: string): void;
+  archive(threadId: string): AgentThreadMutationResult | void;
+  unarchive?(threadId: string): AgentThreadMutationResult | void;
+  remove(threadId: string): AgentThreadMutationResult | void;
+  batchThreadMutations?<T>(work: () => Promise<T>): Promise<T>;
   hasLiveTasksForOwner(ownerId: string): boolean;
   stopProjectTasks(ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void>;
   releaseProjectTasks(ownerId: string): void;

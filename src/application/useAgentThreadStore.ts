@@ -12,7 +12,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentProject";
+import {
+  agentProjectOwnsOwner,
+  agentRootOwnerId,
+  type AgentProjectDescriptor,
+} from "../domain/agentProject";
 import { isTerminalAgentTaskStatus } from "../domain/agentTask";
 import {
   AGENT_THREAD_STORE_FULL_ERROR,
@@ -25,6 +29,7 @@ import {
   type AgentThreadOwner,
   type AgentThreadsAction,
   type AgentThreadsState,
+  type AgentTurn,
   type AgentTurnEvent,
 } from "../domain/agentThread";
 import { agentPromptLooksClipped } from "../domain/agentPromptClipping";
@@ -37,7 +42,6 @@ import {
   attempt,
   errorMessageOf,
   projectAuthority,
-  projectByOwnerId,
   projectByRootKey,
   sameProjectAuthority,
   warning,
@@ -703,8 +707,10 @@ function applyTurnLogEffects(
 ): void {
   if (next === state) return;
   switch (action.kind) {
+    case "threadCreated":
+      return openCreatedThreadTurnLogSlots(turnLog, projects, next, action.thread.threadId);
     case "turnStarted":
-      return openTurnLogSlot(turnLog, projects, next, action);
+      return openStartedTurnLogSlot(turnLog, projects, next, action);
     case "turnEventsAppended":
       return recordTurnLogEvents(turnLog, next, action);
     case "turnSteered":
@@ -723,7 +729,7 @@ function applyTurnLogEffects(
   }
 }
 
-function openTurnLogSlot(
+function openStartedTurnLogSlot(
   turnLog: AgentTurnLogIntegration,
   projects: ReadonlyArray<AgentProjectDescriptor>,
   next: AgentThreadsState,
@@ -731,21 +737,47 @@ function openTurnLogSlot(
 ): void {
   const thread = next.threads.get(action.threadId);
   if (thread === undefined) return;
-  if (!isLoggedAgentThread(thread)) return;
+  openTurnLogSlot(turnLog, projects, thread, action.turn);
+}
+
+function openCreatedThreadTurnLogSlots(
+  turnLog: AgentTurnLogIntegration,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  next: AgentThreadsState,
+  threadId: string,
+): void {
+  const thread = next.threads.get(threadId);
+  if (thread === undefined) return;
+  for (const turn of thread.turns) {
+    if (isTerminalAgentTurnStatus(turn.status)) continue;
+    if (!openTurnLogSlot(turnLog, projects, thread, turn)) return;
+    if (turn.events.length === 0) continue;
+    turnLog.writer.recordEvents(turn.turnId, turn.events);
+  }
+}
+
+function openTurnLogSlot(
+  turnLog: AgentTurnLogIntegration,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  thread: AgentThread,
+  turn: AgentTurn,
+): boolean {
+  if (!isLoggedAgentThread(thread)) return false;
   const authority = threadAuthority(projects, thread);
-  if (authority === null) return;
+  if (authority === null) return false;
   turnLog.writer.openTurn({
     scope: {
       rootKey: thread.owner.rootKey,
       ownerId: agentRootOwnerId(thread.owner.rootKey),
       threadId: thread.threadId,
-      turnId: action.turn.turnId,
+      turnId: turn.turnId,
     },
     generation: authority.generation,
     provider: thread.provider.kind,
-    priorLoss: resumedTurnLoss(action.turn.eventsTruncated),
-    prompt: loggablePrompt(action.turn.prompt),
+    priorLoss: resumedTurnLoss(turn.eventsTruncated),
+    prompt: loggablePrompt(turn.prompt),
   });
+  return true;
 }
 
 function loggablePrompt(prompt: string): string | null {
@@ -891,6 +923,8 @@ function persistIntent(
       return NO_PERSIST;
     case "pinToggled":
     case "archived":
+    case "unarchived":
+    case "providerSessionInvalidated":
     case "integrationRecorded":
       return state.threads.has(action.threadId)
         ? saveIntent(action.threadId, "immediate")
@@ -1043,11 +1077,7 @@ function threadOwnerAuthority(
 ): AgentProjectAuthority | null {
   const project = projectByRootKey(projects, owner.rootKey);
   if (project === undefined) return null;
-  if (
-    project.ownerId !== owner.ownerId &&
-    project.runtimeOwnerIds?.includes(owner.ownerId) !== true
-  )
-    return null;
+  if (!agentProjectOwnsOwner(project, owner)) return null;
   return projectAuthority(project, owner.ownerId);
 }
 
@@ -1055,9 +1085,9 @@ function ownsProjectRoot(
   projects: ReadonlyArray<AgentProjectDescriptor>,
   authority: AgentProjectAuthority,
 ): boolean {
-  const project = projectByOwnerId(projects, authority.ownerId);
+  const project = projectByRootKey(projects, authority.rootKey);
   if (project === undefined) return false;
-  if (project.rootKey !== authority.rootKey) return false;
+  if (!agentProjectOwnsOwner(project, authority)) return false;
   return sameProjectAuthority(projectAuthority(project, authority.ownerId), authority);
 }
 

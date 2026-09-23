@@ -7,8 +7,11 @@ import {
   emptyDeferredFollowUps,
   enqueueDeferred,
   removeDeferred,
-  takeDeferred,
   takeDeferredHead,
+  beginDeferredEdit,
+  deferredQueueIsEditing,
+  editedDeferredEntry,
+  endDeferredEdit,
   type DeferredFollowUp,
   type DeferredFollowUps,
 } from "./agentDeferredFollowUps";
@@ -93,30 +96,42 @@ describe("agentDeferredFollowUps", () => {
     expect(map.size).toBe(64);
   });
 
-  it("takes one entry by id, returns it and leaves the rest in order", () => {
+  it("leases one entry for editing and replaces it in place", () => {
     const map = filled(3);
-    const taken = takeDeferred(map, "agt-t1-0001", "d1");
+    const editing = beginDeferredEdit(map, "agt-t1-0001", "d1", 4);
+    const queue = deferredFollowUpsForThread(editing, "agt-t1-0001");
 
-    expect(taken.entry?.id).toBe("d1");
-    expect(taken.entry?.request.prompt).toBe("prompt d1");
-    expect(deferredFollowUpsForThread(taken.map, "agt-t1-0001").map((item) => item.id)).toEqual([
-      "d0",
-      "d2",
-    ]);
-    expect(deferredFollowUpsForThread(map, "agt-t1-0001")).toHaveLength(3);
+    expect(queue.map((item) => item.editLease)).toEqual([undefined, 4, undefined]);
+    expect(deferredQueueIsEditing(queue)).toBe(true);
+    expect(editedDeferredEntry(editing, "agt-t1-0001", "d1", 4)?.id).toBe("d1");
+    expect(editedDeferredEntry(editing, "agt-t1-0001", "d1", 5)).toBeNull();
+    expect(beginDeferredEdit(editing, "agt-t1-0001", "d2", 6)).toBe(editing);
+
+    const replacement = { ...queue[1].request, prompt: "edited" };
+    const saved = endDeferredEdit(editing, "agt-t1-0001", "d1", 4, replacement);
+    const savedQueue = deferredFollowUpsForThread(saved, "agt-t1-0001");
+    expect(savedQueue.map((item) => item.id)).toEqual(["d0", "d1", "d2"]);
+    expect(savedQueue[1]).toEqual({ ...entry("d1"), request: replacement });
+    expect("editLease" in savedQueue[1]).toBe(false);
+    expect(deferredQueueIsEditing(savedQueue)).toBe(false);
   });
 
-  it("keeps the queue intact for an unknown id, an unknown thread and the last entry", () => {
+  it("releases an edit without touching the entry and ignores stale or foreign leases", () => {
     const map = filled(2);
+    const editing = beginDeferredEdit(map, "agt-t1-0001", "d0", 1);
 
-    expect(takeDeferred(map, "agt-t1-0001", "missing")).toEqual({ map, entry: null });
-    expect(takeDeferred(map, "agt-t1-0001", "missing").map).toBe(map);
-    expect(takeDeferred(map, "agt-t9-0009", "d0")).toEqual({ map, entry: null });
-
-    const single = filled(1);
-    const drained = takeDeferred(single, "agt-t1-0001", "d0");
-    expect(drained.entry?.id).toBe("d0");
-    expect(drained.map.has("agt-t1-0001")).toBe(false);
+    expect(endDeferredEdit(editing, "agt-t1-0001", "d0", 2, null)).toBe(editing);
+    expect(endDeferredEdit(editing, "agt-t9-0009", "d0", 1, null)).toBe(editing);
+    const released = endDeferredEdit(editing, "agt-t1-0001", "d0", 1, null);
+    expect(deferredFollowUpsForThread(released, "agt-t1-0001")).toEqual(
+      deferredFollowUpsForThread(map, "agt-t1-0001"),
+    );
+    expect(beginDeferredEdit(map, "agt-t1-0001", "missing", 1)).toBe(map);
+    const uncertain = enqueueDeferred(emptyDeferredFollowUps(), "agt-t1-0001", {
+      ...entry("u0"),
+      state: "uncertain",
+    }).map;
+    expect(beginDeferredEdit(uncertain, "agt-t1-0001", "u0", 1)).toBe(uncertain);
   });
 
   it("clears one thread's slot and reports an empty queue", () => {

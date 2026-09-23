@@ -85,6 +85,11 @@ it("shows an unavailable reason without opening a current working-tree diff", ()
   expect(host.textContent).toContain(summary.reason);
   expect(host.querySelector("button")).toBeNull();
 });
+it("renders nothing for a workspace where turn changes are unsupported", () => {
+  summary = { ...summary, state: "unsupported", files: [], reason: "notGitRepository" };
+  render();
+  expect(host.innerHTML).toBe("");
+});
 it("hides a verified empty turn but keeps an incomplete empty summary visible", () => {
   summary = { ...summary, files: [] };
   render();

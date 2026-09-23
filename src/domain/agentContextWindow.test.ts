@@ -231,3 +231,83 @@ it("keeps occupancy observation time across later capacity metadata and serializ
     agentContextWindow(thread([measured, input("main", 200), capacity("main", 1000)])),
   ).toEqual({ usedTokens: 200, contextWindow: 1000 });
 });
+
+describe("Codex context occupancy", () => {
+  const codexCapacity: AgentTurnEvent = {
+    kind: "contextUsage",
+    model: "codex",
+    inputTokens: null,
+    contextWindow: 258_400,
+  };
+  const codexOccupancy = (inputTokens: number): AgentTurnEvent => ({
+    kind: "contextUsage",
+    model: "codex",
+    inputTokens,
+    contextWindow: null,
+  });
+  const running = (codex: AgentThread): AgentThread => ({
+    ...codex,
+    turns: codex.turns.map((turn) => ({ ...turn, status: { kind: "running" } })),
+  });
+
+  it("publishes mid-turn usage before the turn result arrives", () => {
+    const codex = running(thread([codexCapacity, codexOccupancy(16_328)], "codex"));
+
+    expect(agentContextWindow(codex)).toEqual({ usedTokens: 16_328, contextWindow: 258_400 });
+  });
+
+  it("keeps the latest measured usage for failed and interrupted Codex turns", () => {
+    const codex = thread(
+      [
+        codexCapacity,
+        codexOccupancy(20_000),
+        { kind: "result", text: "boom", isError: true, usage: null },
+      ],
+      "codex",
+    );
+    const turn = codex.turns[0]!;
+
+    for (const status of [
+      { kind: "failed", message: "boom" },
+      { kind: "interrupted" },
+      { kind: "exited", exitCode: 1 },
+    ] as const)
+      expect(agentContextWindow({ ...codex, turns: [{ ...turn, status }] })).toEqual({
+        usedTokens: 20_000,
+        contextWindow: 258_400,
+      });
+  });
+
+  it("does not reset the meter for a retry notice row", () => {
+    const codex = running(
+      thread(
+        [
+          codexCapacity,
+          codexOccupancy(12_000),
+          {
+            kind: "toolCall",
+            toolId: "codex-notice-1",
+            name: "Codex notice",
+            inputSummary: "Codex hit a transient error and is retrying: Reconnecting... 1/5",
+          },
+          { kind: "toolResult", toolId: "codex-notice-1", outputSummary: "", isError: false },
+        ],
+        "codex",
+      ),
+    );
+
+    expect(agentContextWindow(codex)).toEqual({ usedTokens: 12_000, contextWindow: 258_400 });
+  });
+
+  it("still hides Claude occupancy after a failed turn", () => {
+    const claude = thread([input("main", 100), capacity("main", 1000)]);
+    const turn = claude.turns[0]!;
+
+    expect(
+      agentContextWindow({
+        ...claude,
+        turns: [{ ...turn, status: { kind: "exited", exitCode: 1 } }],
+      }),
+    ).toBeNull();
+  });
+});

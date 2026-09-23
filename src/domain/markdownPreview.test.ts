@@ -87,4 +87,15 @@ const answer = 42;
 
     expect(container.querySelector("img")?.hasAttribute("src") ?? false).toBe(false);
   });
+
+  it.each(["/Users/x/prepis.txt", "file:///Users/x/prepis.txt", "src/a.ts:12"])(
+    "keeps stripping local file link %s in the shared preview",
+    async (href) => {
+      const html = await renderMarkdownPreview(`[local](${href})`);
+      const container = document.createElement("div");
+      container.innerHTML = html;
+
+      expect(container.querySelector("a")?.hasAttribute("href") ?? false).toBe(false);
+    },
+  );
 });

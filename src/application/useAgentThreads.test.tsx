@@ -35,8 +35,9 @@ import {
   IMPORT_STORE_NOT_READY_NOTICE,
   useAgentThreads,
   type AgentThreadsDependencies,
+  type AgentThreadsHookSurface,
 } from "./useAgentThreads";
-import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentQuestionRequest } from "../domain/agentQuestion";
 
@@ -145,6 +146,35 @@ describe("useAgentThreads facade", () => {
       rootKey: ROOT,
       ownerId: PERSISTENT_OWNER,
     });
+    harness.unmount();
+  });
+
+  it("exposes the per-draft dispatch keys while a new thread is still starting", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      harness.startedRequests.push(payload);
+      await gate;
+      return { taskId: payload.taskId };
+    });
+    expect(harness.hook().dispatchingKeys?.size).toBe(0);
+
+    let started!: ReturnType<AgentThreadsHookSurface["startThread"]>;
+    await act(async () => {
+      started = harness.hook().startThread(startRequest());
+      await vi.waitFor(() => expect(harness.startedRequests).toHaveLength(1));
+    });
+    expect(harness.hook().dispatchingKeys).toEqual(new Set([`new:${ROOT}`]));
+
+    await act(async () => {
+      release();
+      await started;
+    });
+    expect(harness.hook().dispatchingKeys?.size).toBe(0);
     harness.unmount();
   });
 
@@ -308,7 +338,7 @@ function startRequest(overrides: Partial<AgentThreadStartRequest> = {}): AgentTh
     prompt: "Fix the failing test",
     isolation: "worktree" as const,
     unsafeInPlaceConfirmationKey: null,
-    launch: defaultAgentLaunchOptions("claudeCode"),
+    launch: concreteLaunch("claudeCode"),
     ...overrides,
   };
 }
@@ -475,7 +505,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     leaseToken: 1,
   });
 
-  let current: AgentThreadsSurface | null = null;
+  let current: AgentThreadsHookSurface | null = null;
 
   function Harness() {
     const dependencies: AgentThreadsDependencies = {
@@ -544,9 +574,9 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       expect(outputHandler).not.toBeNull();
       outputHandler?.({ taskId: turnId, sequence, stream: "stdout", chunk, truncated: false });
     },
-    hook(): AgentThreadsSurface {
+    hook(): AgentThreadsHookSurface {
       expect(current).not.toBeNull();
-      return current as AgentThreadsSurface;
+      return current as AgentThreadsHookSurface;
     },
     emitStatus(threadId: string, sequence: number, status: AgentTaskStatus): void {
       expect(statusHandler).not.toBeNull();
@@ -694,6 +724,47 @@ describe("useAgentThreads views and viewed marks", () => {
     harness.unmount();
   });
 
+  it("archives, unarchives and pins only threads of the owning project and reports the outcome", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ storedThreads: [stored] });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    harness.store.saveAgentThread.mockClear();
+
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    let outcome: boolean | null = null;
+    act(() => {
+      outcome = harness.hook().archive(stored.threadId);
+    });
+    act(() => harness.hook().togglePin(stored.threadId));
+    expect(outcome).toBe(false);
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.store.saveAgentThread).not.toHaveBeenCalled();
+
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    act(() => {
+      outcome = harness.hook().archive(stored.threadId);
+    });
+    expect(outcome).toBe(true);
+    await waitForReact(() => expect(harness.hook().threads[0]?.thread.archived).toBe(true));
+    expect(harness.hook().threads[0]?.unread).toBe(false);
+    act(() => {
+      outcome = harness.hook().archive(stored.threadId);
+    });
+    expect(outcome).toBe(true);
+    act(() => {
+      outcome = harness.hook().unarchive(stored.threadId);
+    });
+    expect(outcome).toBe(true);
+    await waitForReact(() => expect(harness.hook().threads[0]?.thread.archived).toBe(false));
+    expect(harness.hook().threads[0]?.unread).toBe(true);
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(2));
+    expect(harness.store.saveAgentThread.mock.calls[1]?.[0]?.thread.archived).toBe(false);
+    harness.unmount();
+  });
+
   it("returns copy details for the owned thread only and fails closed for foreign owners", async () => {
     const stored = storedThread("agt-stored-0001", "agt-stored-0002");
     const harness = renderThreads({
@@ -719,6 +790,25 @@ describe("useAgentThreads views and viewed marks", () => {
     await waitForReact(() =>
       expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBe(stored.threadId),
     );
+    harness.unmount();
+  });
+
+  it("keeps a root-owned thread visible and owned after the project owner becomes a workspace id", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ ownerId: PERSISTENT_OWNER, storedThreads: [stored] });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    harness.store.loadAgentThreads.mockImplementation(() => new Promise(() => undefined));
+
+    harness.set({ ownerId: OWNER, generation: 2 });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalledTimes(2));
+    expect(harness.hook().threads.map((view) => view.thread.owner)).toEqual([
+      { rootKey: ROOT, ownerId: PERSISTENT_OWNER, repositoryRoot: ROOT },
+    ]);
+    expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBe(stored.threadId);
+
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 3 });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(0));
+    expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBeNull();
     harness.unmount();
   });
 
@@ -756,7 +846,7 @@ describe("useAgentThreads views and viewed marks", () => {
     async (cliKind) => {
       const harness = renderThreads({ cliKind });
       await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
-      const launch = defaultAgentLaunchOptions(cliKind);
+      const launch = concreteLaunch(cliKind);
       const result = await act(() => harness.hook().startThread(startRequest({ launch })));
       expect(result).not.toBeNull();
       const threadId = result!.threadId;
@@ -809,7 +899,11 @@ describe("useAgentThreads views and viewed marks", () => {
 
     await act(() => harness.hook().startThread(startRequest({ launch })));
 
-    expect(harness.hook().lastUsedLaunch(ROOT)).toEqual(launch);
+    expect(harness.hook().lastUsedLaunch(ROOT)).toEqual({
+      ...launch,
+      effort: "high",
+      context: "1m",
+    });
     expect(harness.hook().lastUsedLaunch("/workspace/other")).toBeNull();
     harness.unmount();
   });
@@ -886,7 +980,7 @@ describe("useAgentThreads ship and editor wiring", () => {
       harness.hook().sendFollowUp({
         threadId: stored.threadId,
         prompt: "Keep going",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       }),
     );
     expect(sent).toBe(true);
@@ -1100,7 +1194,7 @@ describe("useAgentThreads external session import", () => {
       harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       }),
     );
     expect(started).toBe(true);
@@ -1137,7 +1231,7 @@ describe("useAgentThreads external session import", () => {
       harness.hook().sendFollowUp({
         threadId: restored.threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       }),
     );
     expect(sent).toBe(true);
@@ -1317,7 +1411,7 @@ describe("useAgentThreads external session import", () => {
       harness.hook().sendFollowUp({
         threadId: result?.threadId ?? "",
         prompt: "continue from the imported session",
-        launch: defaultAgentLaunchOptions("codex"),
+        launch: concreteLaunch("codex"),
       }),
     );
 
@@ -1363,7 +1457,7 @@ describe("useAgentThreads external session import", () => {
       harness.hook().sendFollowUp({
         threadId: result?.threadId ?? "",
         prompt: "which word?",
-        launch: defaultAgentLaunchOptions("codex"),
+        launch: concreteLaunch("codex"),
       }),
     );
 
@@ -1472,3 +1566,16 @@ describe("useAgentThreads external session import", () => {
     harness.unmount();
   });
 });
+
+function concreteLaunch(provider: AgentCliKind): AgentLaunchOptions {
+  if (provider === "codex") return { provider: "codex", model: "default", mode: "workspaceWrite" };
+  return {
+    provider: "claudeCode",
+    model: "default",
+    mode: "supervised",
+    effort: "high",
+    context: "1m",
+    fastMode: false,
+    thinkingMode: false,
+  };
+}

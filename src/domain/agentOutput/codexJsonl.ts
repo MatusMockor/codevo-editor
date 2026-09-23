@@ -8,6 +8,8 @@ import {
   type AgentTurnUsage,
 } from "../agentThread";
 import type { ParsedAgentLine } from "./agentOutputParser";
+import { clipHeadTail } from "./clipHeadTail";
+import { redactToolArguments } from "./toolArgumentRedaction";
 import { boundedUtf8Text, utf8ByteLength } from "./utf8Text";
 
 export const MAX_CODEX_EMITTED_ITEM_IDS = 1_024;
@@ -21,7 +23,13 @@ const IGNORED: ParsedAgentLine = { kind: "ignored" };
 const SHELL_TOOL_NAME = "shell";
 const APPLY_PATCH_TOOL_NAME = "apply_patch";
 const WEB_SEARCH_TOOL_NAME = "web_search";
+const TODO_LIST_TOOL_NAME = "update_plan";
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
+const MAX_EXEC_TYPE_LABEL_BYTES = 64;
+const MAX_TODO_ITEMS = 32;
+const MAX_CHANGE_ENTRIES = 64;
+const MAX_MCP_CONTENT_PARTS = 16;
+const IGNORED_EVENT_TYPES: ReadonlySet<string> = new Set(["turn.started", "item.updated"]);
 
 interface CodexItemEvents {
   readonly events: ReadonlyArray<AgentTurnEvent>;
@@ -42,7 +50,16 @@ export function parseCodexJsonlLine(
   if (value.type === "turn.completed") return { result: turnCompleted(value), state };
   if (value.type === "turn.failed") return { result: turnFailed(value), state };
   if (value.type === "error") return { result: topLevelError(value), state };
-  return { result: IGNORED, state };
+  if (typeof value.type === "string" && IGNORED_EVENT_TYPES.has(value.type))
+    return { result: IGNORED, state };
+  return {
+    result: { kind: "unknown", raw: `Unsupported Codex exec event: ${typeLabel(value.type)}` },
+    state,
+  };
+}
+
+function typeLabel(value: unknown): string {
+  return safeIdentifier(value, MAX_EXEC_TYPE_LABEL_BYTES) ?? "<invalid type>";
 }
 
 function threadStarted(value: Record<string, unknown>): ParsedAgentLine {
@@ -109,11 +126,43 @@ function itemEvents(
   const itemId = safeIdentifier(item.id, MAX_AGENT_TOOL_ID_BYTES);
   if (itemId === null) return NO_ITEM_EVENTS;
   if (item.type === "command_execution") return commandEvents(item, itemId, completed, state);
-  if (item.type === "file_change") return fileChangeEvents(item, itemId, state);
-  if (item.type === "mcp_tool_call") return mcpToolCallEvents(item, itemId, state);
-  if (item.type === "web_search") return webSearchEvents(item, itemId, state);
+  if (item.type === "file_change") return fileChangeEvents(item, itemId, completed, state);
+  if (item.type === "mcp_tool_call") return mcpToolCallEvents(item, itemId, completed, state);
+  if (item.type === "web_search") return webSearchEvents(item, itemId, completed, state);
+  if (item.type === "todo_list") return todoListEvents(item, itemId, completed, state);
   if (item.type === "error") return errorItemEvents(item, itemId, state);
-  return NO_ITEM_EVENTS;
+  return unknownItemEvents(item, itemId, state);
+}
+
+function unknownItemEvents(
+  item: Record<string, unknown>,
+  itemId: string,
+  state: ReadonlySet<string>,
+): CodexItemEvents {
+  if (state.has(itemId)) return NO_ITEM_EVENTS;
+  return {
+    events: [
+      {
+        kind: "unknownLine",
+        stream: "stdout",
+        raw: `Unsupported Codex exec item: ${typeLabel(item.type)}`,
+        clipped: false,
+      },
+    ],
+    emittedItemId: itemId,
+  };
+}
+
+function toolEvents(
+  call: Extract<AgentTurnEvent, { kind: "toolCall" }>,
+  result: Extract<AgentTurnEvent, { kind: "toolResult" }> | null,
+  state: ReadonlySet<string>,
+): CodexItemEvents {
+  const alreadyEmitted = state.has(call.toolId);
+  const events: AgentTurnEvent[] = alreadyEmitted ? [] : [call];
+  if (result !== null) events.push(result);
+  if (events.length === 0) return NO_ITEM_EVENTS;
+  return { events, emittedItemId: alreadyEmitted ? null : call.toolId };
 }
 
 function compactionEvents(
@@ -154,78 +203,179 @@ function commandEvents(
   completed: boolean,
   state: ReadonlySet<string>,
 ): CodexItemEvents {
-  const events: AgentTurnEvent[] = [];
-  const alreadyEmitted = state.has(itemId);
-  if (!alreadyEmitted) {
-    events.push({
+  return toolEvents(
+    {
       kind: "toolCall",
       toolId: itemId,
       name: SHELL_TOOL_NAME,
       inputSummary: toolSummary(item.command),
-    });
-  }
-  if (completed) {
-    events.push({
-      kind: "toolResult",
-      toolId: itemId,
-      outputSummary: toolSummary(item.aggregated_output),
-      isError: item.exit_code !== 0,
-    });
-  }
-  if (events.length === 0) return NO_ITEM_EVENTS;
-  return { events, emittedItemId: alreadyEmitted ? null : itemId };
+    },
+    completed
+      ? {
+          kind: "toolResult",
+          toolId: itemId,
+          outputSummary: commandOutputSummary(item),
+          isError: item.exit_code !== 0,
+        }
+      : null,
+    state,
+  );
+}
+
+function commandOutputSummary(item: Record<string, unknown>): string {
+  const output = typeof item.aggregated_output === "string" ? item.aggregated_output : "";
+  const prefix = commandStatusPrefix(item);
+  if (prefix === null) return clipHeadTail(output, MAX_AGENT_TOOL_SUMMARY_BYTES).text;
+  const header = output === "" ? prefix : `${prefix}\n`;
+  const budget = MAX_AGENT_TOOL_SUMMARY_BYTES - utf8ByteLength(header);
+  return `${header}${clipHeadTail(output, budget).text}`;
+}
+
+function commandStatusPrefix(item: Record<string, unknown>): string | null {
+  if (item.status === "declined") return "declined";
+  const exitCode = item.exit_code;
+  if (!Number.isSafeInteger(exitCode) || exitCode === 0) return null;
+  return `exit ${exitCode as number}`;
 }
 
 function fileChangeEvents(
   item: Record<string, unknown>,
   itemId: string,
+  completed: boolean,
   state: ReadonlySet<string>,
 ): CodexItemEvents {
-  if (state.has(itemId)) return NO_ITEM_EVENTS;
-  return {
-    events: [
-      {
-        kind: "toolCall",
-        toolId: itemId,
-        name: APPLY_PATCH_TOOL_NAME,
-        inputSummary: boundedUtf8Text(changedPaths(item.changes), MAX_AGENT_TOOL_SUMMARY_BYTES),
-      },
-    ],
-    emittedItemId: itemId,
-  };
+  const failed = item.status !== "completed";
+  return toolEvents(
+    {
+      kind: "toolCall",
+      toolId: itemId,
+      name: APPLY_PATCH_TOOL_NAME,
+      inputSummary: boundedUtf8Text(changedPaths(item.changes), MAX_AGENT_TOOL_SUMMARY_BYTES),
+    },
+    completed
+      ? {
+          kind: "toolResult",
+          toolId: itemId,
+          outputSummary: fileChangeSummary(item),
+          isError: failed,
+        }
+      : null,
+    state,
+  );
+}
+
+function fileChangeSummary(item: Record<string, unknown>): string {
+  const status = item.status === "completed" ? [] : [statusLabel("patch", item.status)];
+  const changes = Array.isArray(item.changes) ? item.changes.slice(0, MAX_CHANGE_ENTRIES) : [];
+  const lines = changes.flatMap((change) => {
+    const record = objectValue(change);
+    if (record === null || typeof record.path !== "string") return [];
+    const kind = typeof record.kind === "string" ? record.kind : "change";
+    return [`${kind} ${record.path}`];
+  });
+  return boundedUtf8Text([...status, ...lines].join("\n"), MAX_AGENT_TOOL_SUMMARY_BYTES);
 }
 
 function mcpToolCallEvents(
   item: Record<string, unknown>,
   itemId: string,
+  completed: boolean,
   state: ReadonlySet<string>,
 ): CodexItemEvents {
-  if (state.has(itemId)) return NO_ITEM_EVENTS;
   const name = mcpToolName(item);
   if (name === null) return NO_ITEM_EVENTS;
-  return {
-    events: [{ kind: "toolCall", toolId: itemId, name, inputSummary: toolSummary(item.arguments) }],
-    emittedItemId: itemId,
-  };
+  const error = objectValue(item.error);
+  return toolEvents(
+    { kind: "toolCall", toolId: itemId, name, inputSummary: argumentsSummary(item.arguments) },
+    completed
+      ? {
+          kind: "toolResult",
+          toolId: itemId,
+          outputSummary: mcpResultSummary(item, error),
+          isError: item.status !== "completed" || error !== null,
+        }
+      : null,
+    state,
+  );
+}
+
+function mcpResultSummary(
+  item: Record<string, unknown>,
+  error: Record<string, unknown> | null,
+): string {
+  if (error !== null && typeof error.message === "string")
+    return clipHeadTail(error.message, MAX_AGENT_TOOL_SUMMARY_BYTES).text;
+  if (item.status !== "completed") return statusLabel("MCP call", item.status);
+  const result = objectValue(item.result);
+  if (result === null) return "";
+  const content = Array.isArray(result.content) ? result.content : [];
+  if (content.length === 0) return toolSummary(result.structured_content);
+  const parts = content.slice(0, MAX_MCP_CONTENT_PARTS).map((part) => {
+    const record = objectValue(part);
+    if (record?.type === "text" && typeof record.text === "string") return record.text;
+    const label = safeIdentifier(record?.type, MAX_EXEC_TYPE_LABEL_BYTES);
+    return label === null ? "[content]" : `[${label}]`;
+  });
+  return clipHeadTail(parts.join("\n"), MAX_AGENT_TOOL_SUMMARY_BYTES).text;
 }
 
 function webSearchEvents(
   item: Record<string, unknown>,
   itemId: string,
+  completed: boolean,
   state: ReadonlySet<string>,
 ): CodexItemEvents {
-  if (state.has(itemId)) return NO_ITEM_EVENTS;
-  return {
-    events: [
-      {
-        kind: "toolCall",
-        toolId: itemId,
-        name: WEB_SEARCH_TOOL_NAME,
-        inputSummary: toolSummary(item.query),
-      },
-    ],
-    emittedItemId: itemId,
-  };
+  return toolEvents(
+    {
+      kind: "toolCall",
+      toolId: itemId,
+      name: WEB_SEARCH_TOOL_NAME,
+      inputSummary: toolSummary(item.query),
+    },
+    completed
+      ? {
+          kind: "toolResult",
+          toolId: itemId,
+          outputSummary: toolSummary(item.query),
+          isError: false,
+        }
+      : null,
+    state,
+  );
+}
+
+function statusLabel(subject: string, status: unknown): string {
+  if (status === "failed" || status === "declined") return `${subject} ${status}`;
+  if (status === "in_progress") return `${subject} did not finish`;
+  const label = safeIdentifier(status, MAX_EXEC_TYPE_LABEL_BYTES) ?? "<missing>";
+  return `${subject} status unknown: ${label}`;
+}
+
+function todoListEvents(
+  item: Record<string, unknown>,
+  itemId: string,
+  completed: boolean,
+  state: ReadonlySet<string>,
+): CodexItemEvents {
+  const summary = todoListSummary(item.items);
+  return toolEvents(
+    { kind: "toolCall", toolId: itemId, name: TODO_LIST_TOOL_NAME, inputSummary: summary },
+    completed
+      ? { kind: "toolResult", toolId: itemId, outputSummary: summary, isError: false }
+      : null,
+    state,
+  );
+}
+
+function todoListSummary(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  const lines = value.slice(0, MAX_TODO_ITEMS).flatMap((entry) => {
+    const record = objectValue(entry);
+    if (record === null || typeof record.text !== "string") return [];
+    return [`${record.completed === true ? "[x]" : "[ ]"} ${record.text}`];
+  });
+  const omitted = value.length > MAX_TODO_ITEMS ? [`… ${value.length - MAX_TODO_ITEMS} more`] : [];
+  return boundedUtf8Text([...lines, ...omitted].join("\n"), MAX_AGENT_TOOL_SUMMARY_BYTES);
 }
 
 function errorItemEvents(
@@ -281,6 +431,11 @@ function rememberItemId(state: ReadonlySet<string>, itemId: string | null): Read
   if (state.size < MAX_CODEX_EMITTED_ITEM_IDS) return new Set([...state, itemId]);
   const retained = [...state].slice(state.size - MAX_CODEX_EMITTED_ITEM_IDS + 1);
   return new Set([...retained, itemId]);
+}
+
+function argumentsSummary(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return toolSummary(redactToolArguments(value).value);
 }
 
 function toolSummary(value: unknown): string {

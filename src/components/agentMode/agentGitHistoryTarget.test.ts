@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentRootOwnerId } from "../../domain/agentProject";
 import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { NO_AGENT_SURFACE_SCOPE, type AgentSurfaceScope } from "./agentSurfacePolicy";
 import {
@@ -59,6 +60,35 @@ describe("agentGitHistoryScope", () => {
     };
     expect(resolve([runtime], thread).kind).toBe("available");
     expect(resolve([{ ...runtime, runtimeOwnerIds: [] }], thread).kind).toBe("unavailable");
+  });
+
+  it("resolves a root-owned thread after the project owner is replaced by a workspace id", () => {
+    const base = surfaceThreadView();
+    const rootOwned = surfaceThreadView({
+      thread: {
+        ...base.thread,
+        owner: { ...base.thread.owner, ownerId: agentRootOwnerId(project.rootKey) },
+      },
+    });
+    const replaced = { ...project, ownerId: "ws-current", runtimeOwnerIds: ["ws-current"] };
+    expect(resolve([replaced], rootOwned)).toMatchObject({
+      kind: "available",
+      target: { rootPath: SURFACE_FIXTURE_WORKTREE },
+    });
+    const foreignRoot = surfaceThreadView({
+      thread: {
+        ...base.thread,
+        owner: { ...base.thread.owner, ownerId: agentRootOwnerId("/workspace/other") },
+      },
+    });
+    expect(resolve([replaced], foreignRoot)).toMatchObject({
+      kind: "unavailable",
+      reason: "This thread's project is no longer available.",
+    });
+    const foreignWorkspace = surfaceThreadView({
+      thread: { ...base.thread, owner: { ...base.thread.owner, ownerId: "ws-foreign" } },
+    });
+    expect(resolve([replaced], foreignWorkspace).kind).toBe("unavailable");
   });
 
   it("rejects stale project scopes after replacement or trust revocation", () => {

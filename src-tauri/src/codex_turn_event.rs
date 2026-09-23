@@ -1,10 +1,9 @@
 const MAX_AGENT_TOOL_SUMMARY_BYTES: usize = 512;
 use super::codex_app_server_protocol::{
-    CommandExecutionItem, CommandExecutionStatus, ErrorNotification, FileChangeItem,
-    ItemNotification, McpToolCallItem, ReasoningItem, ServerNotification, SubAgentActivityItem,
-    SubAgentActivityKind, ThreadCompactedNotification, ThreadItem, ThreadStartedNotification,
-    ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, TurnError,
-    TurnStatus, WebSearchItem, MAX_PROTOCOL_METHOD_BYTES,
+    ErrorNotification, ItemNotification, ModelReroutedNotification, ServerNotification,
+    SubAgentActivityItem, SubAgentActivityKind, ThreadCompactedNotification, ThreadItem,
+    ThreadStartedNotification, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification,
+    TokenUsageBreakdown, TurnError, TurnStatus, MAX_PROTOCOL_METHOD_BYTES,
 };
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -20,6 +19,9 @@ pub const MAX_SUBAGENT_THREADS_PER_TURN: usize = 32;
 pub const MAX_CODEX_UNKNOWN_FRAMES_PER_TURN: usize = 8;
 pub const MAX_CODEX_SUBAGENT_ACTIVITY_IDS: usize = 256;
 pub const MAX_CODEX_SUBAGENT_TURN_IDS: usize = 4096;
+pub const MAX_CODEX_NOTICES_PER_TURN: usize = 16;
+pub const MAX_CODEX_NOTICE_BYTES: usize = MAX_AGENT_TOOL_SUMMARY_BYTES;
+pub const RESUME_FALLBACK_NOTICE: &str = "Codex could not resume the previous session; this turn started a new session without earlier context.";
 
 pub const SHELL_TOOL_NAME: &str = "shell";
 pub const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
@@ -30,7 +32,6 @@ const SERIALIZATION_FALLBACK_LINE: &str =
 
 const MAX_SAFE_WIRE_INTEGER: i64 = 9_007_199_254_740_991;
 
-const CHANGED_PATH_SEPARATOR: &str = ", ";
 const TEXT_PART_SEPARATOR: &str = "\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +79,21 @@ impl CodexUsageScope {
         match self {
             Self::Thread => "thread",
             Self::Subagent => "subagent",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexNoticeSeverity {
+    Info,
+    Warning,
+}
+
+impl CodexNoticeSeverity {
+    fn wire_severity(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
         }
     }
 }
@@ -276,6 +292,11 @@ pub enum CodexTurnEvent {
         message: CodexClippedText,
         thread_id: Option<String>,
     },
+    Notice {
+        notice_id: String,
+        severity: CodexNoticeSeverity,
+        message: CodexClippedText,
+    },
     UnknownFrame {
         method: String,
     },
@@ -428,6 +449,17 @@ impl Serialize for CodexTurnEvent {
                 map.serialize_entry("clipped", &message.clipped)?;
                 map.serialize_entry("threadId", thread_id)?;
             }
+            Self::Notice {
+                notice_id,
+                severity,
+                message,
+            } => {
+                map.serialize_entry("t", "notice")?;
+                map.serialize_entry("noticeId", notice_id)?;
+                map.serialize_entry("severity", severity.wire_severity())?;
+                map.serialize_entry("message", &message.text)?;
+                map.serialize_entry("clipped", &message.clipped)?;
+            }
             Self::UnknownFrame { method } => {
                 map.serialize_entry("t", "unknownFrame")?;
                 map.serialize_entry("method", method)?;
@@ -468,6 +500,7 @@ pub struct CodexTurnProjection {
     root_thread_id: Option<String>,
     subagent_threads: Vec<CodexSubagentThread>,
     unknown_frames_emitted: usize,
+    notices_emitted: usize,
     subagent_activity_ids: Vec<String>,
     root_usage: Option<CodexUsage>,
     subagent_turns: HashMap<String, String>,
@@ -480,6 +513,7 @@ impl CodexTurnProjection {
             root_thread_id: root_thread_id.and_then(|id| session_identity(id.as_str())),
             subagent_threads: Vec::new(),
             unknown_frames_emitted: 0,
+            notices_emitted: 0,
             subagent_activity_ids: Vec::new(),
             root_usage: None,
             subagent_turns: HashMap::new(),
@@ -536,6 +570,7 @@ impl CodexTurnProjection {
             ServerNotification::ThreadCompacted(payload) => self.compacted(payload),
             ServerNotification::ThreadQueueChanged { thread_id } => self.queue_changed(thread_id),
             ServerNotification::Error(payload) => self.error(payload),
+            ServerNotification::ModelRerouted(payload) => self.model_rerouted(payload),
             ServerNotification::Ignored { .. } => Vec::new(),
             ServerNotification::Unknown { method } => self.unknown_frame(method.as_str()),
         }
@@ -796,7 +831,43 @@ impl CodexTurnProjection {
         }
     }
 
+    pub fn notice(&mut self, severity: CodexNoticeSeverity, message: &str) -> Vec<CodexTurnEvent> {
+        if self.notices_emitted >= MAX_CODEX_NOTICES_PER_TURN {
+            return Vec::new();
+        }
+        self.notices_emitted += 1;
+        vec![CodexTurnEvent::Notice {
+            notice_id: format!("codex-notice-{}", self.notices_emitted),
+            severity,
+            message: clipped_text(message, MAX_CODEX_NOTICE_BYTES),
+        }]
+    }
+
+    fn model_rerouted(&mut self, payload: ModelReroutedNotification) -> Vec<CodexTurnEvent> {
+        let from = clipped_text(payload.from_model.as_str(), MAX_CODEX_TOOL_NAME_BYTES).text;
+        let to = clipped_text(payload.to_model.as_str(), MAX_CODEX_TOOL_NAME_BYTES).text;
+        let reason = payload
+            .reason
+            .as_deref()
+            .map(|reason| clipped_text(reason, MAX_CODEX_TOOL_NAME_BYTES).text)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| format!(" (reason: {reason})"))
+            .unwrap_or_default();
+        let subject = match self.role(payload.thread_id.as_str()) {
+            CodexThreadRole::Root => "this turn",
+            CodexThreadRole::Subagent => "a subagent turn",
+            CodexThreadRole::Foreign => return self.unknown_frame("model/rerouted"),
+        };
+        let message = format!("Codex switched {subject} from model {from} to {to}{reason}.");
+        self.notice(CodexNoticeSeverity::Warning, message.as_str())
+    }
+
     fn error(&mut self, payload: ErrorNotification) -> Vec<CodexTurnEvent> {
+        if payload.will_retry {
+            let detail = turn_error_text(&payload.error).text;
+            let message = format!("Codex hit a transient error and is retrying: {detail}");
+            return self.notice(CodexNoticeSeverity::Info, message.as_str());
+        }
         vec![CodexTurnEvent::Error {
             message: turn_error_text(&payload.error),
             thread_id: payload
@@ -867,140 +938,6 @@ fn subagent_kind(kind: &SubAgentActivityKind) -> Option<CodexSubagentKind> {
     }
 }
 
-fn project_item(item: &ThreadItem, phase: CodexItemPhase) -> CodexItemOutcome {
-    match item {
-        ThreadItem::UserMessage { .. } => CodexItemOutcome::Dropped,
-        ThreadItem::ContextCompaction { .. } => CodexItemOutcome::Dropped,
-        ThreadItem::Ignored { .. } => CodexItemOutcome::Dropped,
-        ThreadItem::AgentMessage(message) => {
-            message_outcome(CodexTextRole::Assistant, message.text.as_deref(), phase)
-        }
-        ThreadItem::Reasoning(reasoning) => {
-            let text = reasoning_text(reasoning);
-            message_outcome(CodexTextRole::Reasoning, Some(text.as_str()), phase)
-        }
-        ThreadItem::CommandExecution(command) => command_outcome(command, phase),
-        ThreadItem::FileChange(change) => file_change_outcome(change, phase),
-        ThreadItem::McpToolCall(call) => mcp_tool_call_outcome(call, phase),
-        ThreadItem::WebSearch(search) => web_search_outcome(search, phase),
-        ThreadItem::SubAgentActivity(_) => CodexItemOutcome::Unknown,
-        ThreadItem::Unrecognized { .. } => CodexItemOutcome::Unknown,
-    }
-}
-
-fn message_outcome(
-    role: CodexTextRole,
-    text: Option<&str>,
-    phase: CodexItemPhase,
-) -> CodexItemOutcome {
-    if !matches!(phase, CodexItemPhase::Completed) {
-        return CodexItemOutcome::Dropped;
-    }
-    let bounded = clipped_text(text.unwrap_or_default(), MAX_CODEX_EVENT_TEXT_BYTES);
-    if bounded.text.is_empty() {
-        return CodexItemOutcome::Dropped;
-    }
-    CodexItemOutcome::Events(vec![CodexItemEvent::Text {
-        role,
-        text: bounded,
-    }])
-}
-
-fn reasoning_text(reasoning: &ReasoningItem) -> String {
-    match reasoning.summary.is_empty() {
-        true => reasoning.content.join(TEXT_PART_SEPARATOR),
-        false => reasoning.summary.join(TEXT_PART_SEPARATOR),
-    }
-}
-
-fn command_outcome(command: &CommandExecutionItem, phase: CodexItemPhase) -> CodexItemOutcome {
-    let Some(tool_id) = bounded_identity(command.id.as_str(), MAX_CODEX_TOOL_ID_BYTES) else {
-        return CodexItemOutcome::Unknown;
-    };
-    match phase {
-        CodexItemPhase::Started => CodexItemOutcome::Events(vec![CodexItemEvent::ToolCall {
-            tool_id,
-            name: clipped_text(SHELL_TOOL_NAME, MAX_CODEX_TOOL_NAME_BYTES),
-            input_summary: clipped_text(
-                command.command.as_deref().unwrap_or_default(),
-                MAX_AGENT_TOOL_SUMMARY_BYTES,
-            ),
-        }]),
-        CodexItemPhase::Completed => CodexItemOutcome::Events(vec![CodexItemEvent::ToolResult {
-            tool_id,
-            output_summary: clipped_text(
-                command.aggregated_output.as_deref().unwrap_or_default(),
-                MAX_AGENT_TOOL_SUMMARY_BYTES,
-            ),
-            is_error: command_is_error(command),
-        }]),
-    }
-}
-
-fn command_is_error(command: &CommandExecutionItem) -> bool {
-    if !matches!(command.status, CommandExecutionStatus::Completed) {
-        return true;
-    }
-    command.exit_code != Some(0)
-}
-
-fn file_change_outcome(change: &FileChangeItem, phase: CodexItemPhase) -> CodexItemOutcome {
-    if !matches!(phase, CodexItemPhase::Started) {
-        return CodexItemOutcome::Dropped;
-    }
-    let Some(tool_id) = bounded_identity(change.id.as_str(), MAX_CODEX_TOOL_ID_BYTES) else {
-        return CodexItemOutcome::Unknown;
-    };
-    let paths = change
-        .changes
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .collect::<Vec<_>>()
-        .join(CHANGED_PATH_SEPARATOR);
-    CodexItemOutcome::Events(vec![CodexItemEvent::ToolCall {
-        tool_id,
-        name: clipped_text(APPLY_PATCH_TOOL_NAME, MAX_CODEX_TOOL_NAME_BYTES),
-        input_summary: clipped_text(paths.as_str(), MAX_AGENT_TOOL_SUMMARY_BYTES),
-    }])
-}
-
-fn mcp_tool_call_outcome(call: &McpToolCallItem, phase: CodexItemPhase) -> CodexItemOutcome {
-    if !matches!(phase, CodexItemPhase::Started) {
-        return CodexItemOutcome::Dropped;
-    }
-    let Some(tool_id) = bounded_identity(call.id.as_str(), MAX_CODEX_TOOL_ID_BYTES) else {
-        return CodexItemOutcome::Unknown;
-    };
-    let (Some(server), Some(tool)) = (call.server.as_deref(), call.tool.as_deref()) else {
-        return CodexItemOutcome::Dropped;
-    };
-    CodexItemOutcome::Events(vec![CodexItemEvent::ToolCall {
-        tool_id,
-        name: clipped_text(
-            format!("{server}/{tool}").as_str(),
-            MAX_CODEX_TOOL_NAME_BYTES,
-        ),
-        input_summary: CodexClippedText::default(),
-    }])
-}
-
-fn web_search_outcome(search: &WebSearchItem, phase: CodexItemPhase) -> CodexItemOutcome {
-    if !matches!(phase, CodexItemPhase::Started) {
-        return CodexItemOutcome::Dropped;
-    }
-    let Some(tool_id) = bounded_identity(search.id.as_str(), MAX_CODEX_TOOL_ID_BYTES) else {
-        return CodexItemOutcome::Unknown;
-    };
-    CodexItemOutcome::Events(vec![CodexItemEvent::ToolCall {
-        tool_id,
-        name: clipped_text(WEB_SEARCH_TOOL_NAME, MAX_CODEX_TOOL_NAME_BYTES),
-        input_summary: clipped_text(
-            search.query.as_deref().unwrap_or_default(),
-            MAX_AGENT_TOOL_SUMMARY_BYTES,
-        ),
-    }])
-}
-
 fn turn_error_text(error: &TurnError) -> CodexClippedText {
     let combined = match error.additional_details.as_deref() {
         Some(details) if !details.is_empty() => {
@@ -1054,6 +991,20 @@ fn clipped_text(text: &str, limit: usize) -> CodexClippedText {
     }
 }
 
+#[path = "codex_turn_event_items.rs"]
+mod items;
+#[path = "codex_argument_redaction.rs"]
+mod redaction;
+use items::project_item;
+
 #[cfg(test)]
 #[path = "codex_turn_event_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "codex_turn_event_fidelity_tests.rs"]
+mod fidelity_tests;
+
+#[cfg(test)]
+#[path = "codex_argument_redaction_tests.rs"]
+mod redaction_tests;

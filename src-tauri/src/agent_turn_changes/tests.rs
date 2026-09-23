@@ -235,9 +235,31 @@ fn oversized_file_marks_capture_unavailable_and_retention_is_bounded() {
         started.elapsed().as_millis()
     );
     fs::remove_file(fixture.root.join("huge")).unwrap();
+    let (_, identity) = snapshot::root_identity(&fixture.root).unwrap();
+    let mut latest = PathBuf::new();
     for n in 0..MAX_TURNS + 2 {
-        fixture.capture(&format!("turn-{n}"), CapturePhase::Before);
+        let turn_id = format!("turn-{n}");
+        let record = Record {
+            version: 1,
+            root: identity.clone(),
+            turn_id: turn_id.clone(),
+            before: Snapshot::new(),
+            after: None,
+            checkpoints: None,
+            summary: TurnChangesSummary::unavailable(&turn_id, "Capture failed."),
+            finished: true,
+        };
+        latest = storage::record_path(&fixture.store.base, &identity, &turn_id);
+        storage::write(&latest, &record).unwrap();
+        fs::File::open(&latest)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(n as u64)),
+            )
+            .unwrap();
     }
+    storage::prune(&fixture.store.base, &latest).unwrap();
     assert_eq!(
         fixture
             .store
@@ -321,10 +343,20 @@ fn malformed_saved_summaries_are_rejected() {
     let (_, identity) = snapshot::root_identity(&fixture.root).unwrap();
     let path = storage::record_path(&fixture.store.base, &identity, "bad");
     let original = storage::read(&path).unwrap().unwrap();
-    let cases: [fn(&mut Record); 10] = [
+    let cases: [fn(&mut Record); 11] = [
+        |record| {
+            record.summary.files.clear();
+            record.summary.state = ChangesState::Unsupported;
+            record.summary.reason = Some("notGitRepository".into());
+        },
         |record| record.summary.files.clear(),
         |record| record.summary.truncated = true,
-        |record| record.after = None,
+        |record| {
+            record.after = None;
+            if let Some(checkpoints) = &mut record.checkpoints {
+                checkpoints.after = None;
+            }
+        },
         |record| record.finished = false,
         |record| record.summary.files[0].relative_path = "../secret".into(),
         |record| record.summary.files[0].relative_path = "absent".into(),
@@ -340,6 +372,173 @@ fn malformed_saved_summaries_are_rejected() {
         assert!(fixture.store.get(&fixture.root, "bad").is_err());
         assert!(fixture.store.file_diff(&fixture.root, "bad", "a").is_err());
     }
+}
+fn assert_unsupported(summary: &TurnChangesSummary, reason: UnsupportedReason) {
+    assert_eq!(summary.state, ChangesState::Unsupported);
+    assert!(summary.files.is_empty());
+    assert!(!summary.truncated);
+    assert_eq!(summary.reason.as_deref(), Some(reason.as_str()));
+}
+fn assert_no_record(store: &AgentTurnChangesStore, root: &Path, turn_id: &str) {
+    let (_, identity) = snapshot::root_identity(root).unwrap();
+    assert!(!storage::record_path(&store.base, &identity, turn_id).exists());
+}
+#[test]
+fn non_git_workspace_is_unsupported_and_writes_no_record() {
+    let fixture = Fixture::new();
+    let plain = fixture.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+    fs::write(plain.join("transcript.txt"), b"before\n").unwrap();
+    for phase in [CapturePhase::Before, CapturePhase::After] {
+        let summary = fixture.store.capture(&plain, "turn", phase).unwrap();
+        assert_unsupported(&summary, UnsupportedReason::NotGitRepository);
+        fs::write(plain.join("transcript.txt"), b"after\n").unwrap();
+    }
+    assert_unsupported(
+        &fixture.store.get(&plain, "turn").unwrap(),
+        UnsupportedReason::NotGitRepository,
+    );
+    assert!(fixture
+        .store
+        .file_diff(&plain, "turn", "transcript.txt")
+        .is_err());
+    assert_no_record(&fixture.store, &plain, "turn");
+}
+#[test]
+fn repository_subfolder_workspace_is_unsupported_and_writes_no_record() {
+    let fixture = Fixture::new();
+    let nested = fixture.root.join("nested");
+    fs::create_dir(&nested).unwrap();
+    fs::write(nested.join("file.txt"), b"one\n").unwrap();
+    for phase in [CapturePhase::Before, CapturePhase::After] {
+        let summary = fixture.store.capture(&nested, "turn", phase).unwrap();
+        assert_unsupported(&summary, UnsupportedReason::NotWorktreeRoot);
+    }
+    assert_unsupported(
+        &fixture.store.get(&nested, "turn").unwrap(),
+        UnsupportedReason::NotWorktreeRoot,
+    );
+    assert_no_record(&fixture.store, &nested, "turn");
+    assert_eq!(
+        fixture.store.get(&fixture.root, "turn").unwrap().state,
+        ChangesState::Unavailable
+    );
+}
+#[test]
+fn legacy_failure_without_any_capture_in_non_git_workspace_reads_as_unsupported() {
+    let fixture = Fixture::new();
+    let plain = fixture.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+    let (_, identity) = snapshot::root_identity(&plain).unwrap();
+    let path = storage::record_path(&fixture.store.base, &identity, "legacy");
+    storage::write(
+        &path,
+        &Record {
+            version: 1,
+            root: identity,
+            turn_id: "legacy".into(),
+            before: Snapshot::new(),
+            after: None,
+            summary: TurnChangesSummary::unavailable("legacy", "Snapshot Git command failed."),
+            finished: true,
+            checkpoints: None,
+        },
+    )
+    .unwrap();
+    assert_unsupported(
+        &fixture.store.get(&plain, "legacy").unwrap(),
+        UnsupportedReason::NotGitRepository,
+    );
+}
+#[test]
+fn broken_repository_is_a_recorded_failure_not_unsupported() {
+    let fixture = Fixture::new();
+    let broken = fixture.base.join("broken");
+    fs::create_dir(&broken).unwrap();
+    fs::write(broken.join(".git"), b"gitdir: missing\n").unwrap();
+    let summary = fixture
+        .store
+        .capture(&broken, "turn", CapturePhase::Before)
+        .unwrap();
+    assert_eq!(summary.state, ChangesState::Unavailable);
+    let saved = fixture.store.get(&broken, "turn").unwrap();
+    assert_eq!(saved.state, ChangesState::Unavailable);
+    assert_eq!(saved.reason, summary.reason);
+}
+#[test]
+fn stray_ancestor_git_marker_rejected_by_git_is_unsupported_and_writes_no_record() {
+    let fixture = Fixture::new();
+    let home = fixture.base.join("home");
+    let plain = home.join("project");
+    fs::create_dir_all(home.join(".git")).unwrap();
+    fs::create_dir(&plain).unwrap();
+    for phase in [CapturePhase::Before, CapturePhase::After] {
+        let summary = fixture.store.capture(&plain, "turn", phase).unwrap();
+        assert_unsupported(&summary, UnsupportedReason::NotGitRepository);
+    }
+    assert_unsupported(
+        &fixture.store.get(&plain, "turn").unwrap(),
+        UnsupportedReason::NotGitRepository,
+    );
+    assert_no_record(&fixture.store, &plain, "turn");
+}
+#[test]
+fn persisted_failure_under_stray_ancestor_git_marker_reads_as_unsupported() {
+    let fixture = Fixture::new();
+    let home = fixture.base.join("home");
+    let plain = home.join("project");
+    fs::create_dir_all(home.join(".git")).unwrap();
+    fs::create_dir(&plain).unwrap();
+    let (_, identity) = snapshot::root_identity(&plain).unwrap();
+    let path = storage::record_path(&fixture.store.base, &identity, "failed");
+    storage::write(
+        &path,
+        &Record {
+            version: 2,
+            root: identity,
+            turn_id: "failed".into(),
+            before: Snapshot::new(),
+            after: None,
+            summary: TurnChangesSummary::unavailable("failed", "Snapshot Git command failed."),
+            finished: true,
+            checkpoints: Some(Checkpoints {
+                before: None,
+                after: None,
+            }),
+        },
+    )
+    .unwrap();
+    assert_unsupported(
+        &fixture.store.get(&plain, "failed").unwrap(),
+        UnsupportedReason::NotGitRepository,
+    );
+}
+#[test]
+fn invalid_ancestor_git_file_is_a_recorded_failure_not_unsupported() {
+    let fixture = Fixture::new();
+    let home = fixture.base.join("home");
+    let workspace = home.join("project");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(home.join(".git"), b"not a gitfile\n").unwrap();
+    let summary = fixture
+        .store
+        .capture(&workspace, "turn", CapturePhase::Before)
+        .unwrap();
+    assert_eq!(summary.state, ChangesState::Unavailable);
+    assert_eq!(
+        fixture.store.get(&workspace, "turn").unwrap().state,
+        ChangesState::Unavailable
+    );
+}
+#[test]
+fn repository_workspace_still_captures_changes() {
+    let fixture = Fixture::new();
+    fixture.write("file.txt", b"before\n");
+    fixture.capture("turn", CapturePhase::Before);
+    fixture.write("file.txt", b"after\n");
+    let summary = fixture.capture("turn", CapturePhase::After);
+    assert_eq!(summary.state, ChangesState::Ready);
+    assert_eq!(summary.files.len(), 1);
 }
 #[cfg(unix)]
 #[test]
@@ -381,4 +580,166 @@ fn measured_snapshots_cover_small_large_and_limit_exhaustion() {
             .len();
         eprintln!("snapshot {label}: {count} files x {size} bytes; before={baseline_ms}ms after={after_ms}ms stored={stored}bytes");
     }
+}
+
+#[test]
+fn checkpoints_survive_commits_garbage_collection_and_restart() {
+    let fixture = Fixture::new();
+    fixture.write("a", b"baseline before commit\n");
+    fixture.capture("committing", CapturePhase::Before);
+    fixture.write("a", b"agent committed result\n");
+    git(&fixture.root, &["add", "."]);
+    git(&fixture.root, &["commit", "-qm", "agent commit"]);
+    let summary = fixture.capture("committing", CapturePhase::After);
+    assert_eq!(summary.state, ChangesState::Ready);
+    assert_eq!(summary.files.len(), 1);
+    fixture.write("a", b"later changes\n");
+    git(&fixture.root, &["gc", "--prune=now"]);
+    let reopened = AgentTurnChangesStore::new(fixture.base.join("appdata"));
+    let diff = reopened
+        .file_diff(&fixture.root, "committing", "a")
+        .unwrap();
+    assert_eq!(diff.original.text, "baseline before commit\n");
+    assert_eq!(diff.modified.text, "agent committed result\n");
+    assert_eq!(reopened.get(&fixture.root, "committing").unwrap(), summary);
+}
+
+#[test]
+fn checkpoint_metadata_does_not_duplicate_source_contents() {
+    let fixture = Fixture::new();
+    let before = "unique baseline source content\n".repeat(1000);
+    let after = "unique changed source content\n".repeat(1000);
+    fixture.write("a", before.as_bytes());
+    fixture.capture("compact", CapturePhase::Before);
+    fixture.write("a", after.as_bytes());
+    fixture.capture("compact", CapturePhase::After);
+    let (_, identity) = snapshot::root_identity(&fixture.root).unwrap();
+    let path = storage::record_path(&fixture.store.base, &identity, "compact");
+    let json = fs::read_to_string(&path).unwrap();
+    assert!(json.len() < 8192, "checkpoint metadata must remain compact");
+    assert!(!json.contains("unique baseline source content"));
+    assert!(!json.contains("unique changed source content"));
+    let record = storage::read(&path).unwrap().unwrap();
+    assert_eq!(record.version, 2);
+    assert!(record.before.is_empty());
+    assert!(record.after.as_ref().is_none_or(Snapshot::is_empty));
+    assert!(record.checkpoints.is_some());
+}
+
+#[test]
+fn missing_checkpoint_ref_fails_closed_without_reading_live_worktree() {
+    let fixture = Fixture::new();
+    fixture.write("a", b"before\n");
+    fixture.capture("missing-ref", CapturePhase::Before);
+    fixture.write("a", b"after\n");
+    fixture.capture("missing-ref", CapturePhase::After);
+    let (_, identity) = snapshot::root_identity(&fixture.root).unwrap();
+    let path = storage::record_path(&fixture.store.base, &identity, "missing-ref");
+    let record = storage::read(&path).unwrap().unwrap();
+    let checkpoint = record.checkpoints.unwrap().after.unwrap();
+    git(&fixture.root, &["update-ref", "-d", &checkpoint.reference]);
+    fixture.write("a", b"unrelated live contents\n");
+    let reopened = AgentTurnChangesStore::new(fixture.base.join("appdata"));
+    if let Ok(summary) = reopened.get(&fixture.root, "missing-ref") {
+        assert_eq!(summary.state, ChangesState::Unavailable);
+    }
+    assert!(reopened
+        .file_diff(&fixture.root, "missing-ref", "a")
+        .is_err());
+}
+
+#[test]
+fn legacy_json_snapshots_remain_readable_without_checkpoint_fields() {
+    let fixture = Fixture::new();
+    let (_, identity) = snapshot::root_identity(&fixture.root).unwrap();
+    let entry = |text: &str| Entry {
+        digest: snapshot::digest(text.as_bytes()),
+        executable: false,
+        text: Some(text.into()),
+        unavailable: None,
+    };
+    let summary = TurnChangesSummary {
+        turn_id: "legacy".into(),
+        state: ChangesState::Ready,
+        files: vec![TurnChangedFile {
+            relative_path: "a".into(),
+            old_relative_path: None,
+            status: ChangeStatus::Modified,
+            added_lines: Some(1),
+            deleted_lines: Some(1),
+        }],
+        truncated: false,
+        reason: None,
+    };
+    let record = Record {
+        version: 1,
+        root: identity.clone(),
+        turn_id: "legacy".into(),
+        before: Snapshot::from([("a".into(), entry("old\n"))]),
+        after: Some(Snapshot::from([("a".into(), entry("new\n"))])),
+        checkpoints: None,
+        summary: summary.clone(),
+        finished: true,
+    };
+    let path = storage::record_path(&fixture.store.base, &identity, "legacy");
+    storage::write(&path, &record).unwrap();
+    let mut json = serde_json::to_value(&record).unwrap();
+    json.as_object_mut().unwrap().remove("checkpoints");
+    fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+    assert_eq!(fixture.store.get(&fixture.root, "legacy").unwrap(), summary);
+    let diff = fixture
+        .store
+        .file_diff(&fixture.root, "legacy", "a")
+        .unwrap();
+    assert_eq!(diff.original.text, "old\n");
+    assert_eq!(diff.modified.text, "new\n");
+}
+
+#[test]
+fn later_git_attributes_do_not_reinterpret_frozen_changes() {
+    let fixture = Fixture::new();
+    fixture.write("a.txt", b"before\n");
+    fixture.capture("attributes", CapturePhase::Before);
+    fixture.write("a.txt", b"after\n");
+    let summary = fixture.capture("attributes", CapturePhase::After);
+    assert_eq!(summary.state, ChangesState::Ready);
+    assert_eq!(summary.files[0].added_lines, Some(1));
+    fixture.write(".gitattributes", b"*.txt -diff\n");
+    fixture.write("a.txt", b"unrelated later contents\n");
+    let reopened = AgentTurnChangesStore::new(fixture.base.join("appdata"));
+    assert_eq!(reopened.get(&fixture.root, "attributes").unwrap(), summary);
+    let diff = reopened
+        .file_diff(&fixture.root, "attributes", "a.txt")
+        .unwrap();
+    assert_eq!(diff.original.text, "before\n");
+    assert_eq!(diff.modified.text, "after\n");
+    assert_eq!(diff.unavailable_reason, None);
+}
+
+#[test]
+fn replacement_workspace_at_same_path_does_not_poison_new_retention() {
+    let fixture = Fixture::new();
+    fixture.write("a", b"old root\n");
+    fixture.capture("old", CapturePhase::Before);
+    fixture.capture("old", CapturePhase::After);
+    fs::rename(&fixture.root, fixture.base.join("original-repository")).unwrap();
+    fs::create_dir(&fixture.root).unwrap();
+    git(&fixture.root, &["init", "--quiet"]);
+    fixture.write("a", b"new root before\n");
+    fixture.capture("new", CapturePhase::Before);
+    fixture.write("a", b"new root after\n");
+    assert_eq!(
+        fixture.capture("new", CapturePhase::After).state,
+        ChangesState::Ready
+    );
+    assert_eq!(
+        fixture
+            .store
+            .file_diff(&fixture.root, "new", "a")
+            .unwrap()
+            .original
+            .text,
+        "new root before\n"
+    );
+    assert!(fixture.store.get(&fixture.root, "old").is_err());
 }

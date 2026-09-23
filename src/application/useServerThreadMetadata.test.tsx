@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import { emptyRemoteInventory } from "./remoteAgentInventoryLoad";
-import { projectRemoteAgentThreads } from "./remoteAgentProjection";
+import { projectRemoteAgentThreads, remoteAgentThreadKey } from "./remoteAgentProjection";
 import { useServerThreadMetadata } from "./useServerThreadMetadata";
 
 const task = {
@@ -176,11 +176,11 @@ it("locks concurrent writes and ignores late persistence after owner revocation"
         settle = resolve;
       }),
   );
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = h.current().update(view.thread.threadId, { pinned: true });
   });
-  await h.current().update(view.thread.threadId, { archived: true });
+  expect(await h.current().update(view.thread.threadId, { archived: true })).toBe(false);
   expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
   await h.replaceOwner();
   await act(async () => {
@@ -201,7 +201,7 @@ it("does not reject to callers if saving and refreshing both fail", async () => 
   const h = await harness();
   h.gateway.updateThreadMetadata.mockRejectedValue(new Error("disconnected"));
   h.refresh.mockRejectedValue(new Error("disconnected"));
-  await expect(h.current().update(view.thread.threadId, { pinned: true })).resolves.toBeUndefined();
+  await expect(h.current().update(view.thread.threadId, { pinned: true })).resolves.toBe(false);
 });
 it("does not invoke optional commands when a capable descriptor lacks an adapter", async () => {
   const report = vi.fn();
@@ -449,4 +449,131 @@ it("reconciles a saved section when the target moves while persistence is pendin
   expect(h.gateway.reorderThread).not.toHaveBeenCalled();
   expect(h.report).toHaveBeenCalledWith(expect.stringContaining("section was saved"));
   expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("refreshes the inventory once after a batch of saves instead of after every save", async () => {
+  const h = await harness();
+  let outcomes: ReadonlyArray<boolean> = [];
+  await act(async () => {
+    outcomes = await h.current().batch(async () => {
+      const first = await h.current().update(view.thread.threadId, { archived: true });
+      const second = await h.current().update(view.thread.threadId, { pinned: true });
+      expect(h.refresh).not.toHaveBeenCalled();
+      return [first, second];
+    });
+  });
+  expect(outcomes).toEqual([true, true]);
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(2);
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => h.current().update(view.thread.threadId, { pinned: false }));
+  expect(h.refresh).toHaveBeenCalledTimes(2);
+});
+it("skips the deferred batch refresh when the owner changed during the batch", async () => {
+  const h = await harness();
+  await act(async () => {
+    await h.current().batch(async () => {
+      await h.current().update(view.thread.threadId, { archived: true });
+      await h.replaceOwner();
+    });
+  });
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+it("reports unread only for threads with a stored view marker on a capable server", async () => {
+  const finished = { ...view.thread, viewedAtEpochMs: null };
+  const untracked = await harness();
+  expect(untracked.current().project({ ...view, thread: finished })?.unread).toBe(false);
+
+  const legacyOnly = await harness({
+    snapshots: [snapshot(record(), true, false)],
+    repository: {
+      load: () => [{ threadId: view.thread.threadId, viewedAtEpochMs: 1 }],
+      save: vi.fn(),
+    },
+  });
+  const unsupported = legacyOnly.current().project(view);
+  expect(unsupported?.unread).toBe(false);
+  expect(unsupported?.attention).toBe("settled");
+
+  const tracked = await harness({
+    snapshots: [snapshot(record({ revision: 3, viewedAtEpochMs: 1 }))],
+  });
+  expect(tracked.current().project(view)?.unread).toBe(true);
+  const seen = await harness({
+    snapshots: [snapshot(record({ revision: 3, viewedAtEpochMs: view.thread.updatedAtEpochMs }))],
+  });
+  expect(seen.current().project(view)?.unread).toBe(false);
+});
+it("coalesces view marks that arrive while a save is in flight and never warns about them", async () => {
+  const h = await harness();
+  let settle!: () => void;
+  h.gateway.updateThreadMetadata.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        settle = () => resolve(record({ revision: 1 }));
+      }),
+  );
+  let first!: Promise<boolean>;
+  await act(async () => {
+    first = h.current().update(view.thread.threadId, { viewedAtEpochMs: 10 });
+  });
+  await act(async () => {
+    await h.current().update(view.thread.threadId, { viewedAtEpochMs: 30 });
+    await h.current().update(view.thread.threadId, { viewedAtEpochMs: 20 });
+  });
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    settle();
+    await first;
+  });
+  await vi.waitFor(() => expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(2));
+  expect(h.gateway.updateThreadMetadata.mock.calls[1]?.[0].patch).toMatchObject({
+    viewedAtEpochMs: 30,
+  });
+  expect(h.report).not.toHaveBeenCalled();
+});
+it("never warns when a view mark cannot be stored on an unsupported server", async () => {
+  const h = await harness({ snapshots: [snapshot(record(), true, false)] });
+  await act(async () => h.current().update(view.thread.threadId, { viewedAtEpochMs: 5 }));
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.gateway.updateThreadMetadata).not.toHaveBeenCalled();
+});
+it("skips a view mark the server already recorded at a later time", async () => {
+  const h = await harness();
+  h.gateway.getThreadMetadata.mockResolvedValueOnce(record({ revision: 2, viewedAtEpochMs: 50 }));
+  let saved = false;
+  await act(async () => {
+    saved = await h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 });
+  });
+  expect(saved).toBe(true);
+  expect(h.gateway.updateThreadMetadata).not.toHaveBeenCalled();
+});
+it("makes a save wait for a free slot instead of failing when the budget is exhausted", async () => {
+  const ids = ["t1", "t2", "t3", "t4", "t5"];
+  const tasks = ids.map((id, index) => ({ ...task, id, sequence: index + 1 }));
+  const many = {
+    ...snapshot(),
+    tasks,
+    threadMetadata: new Map(ids.map((id) => [id, record({ taskId: id })])),
+  };
+  const h = await harness({ snapshots: [many] });
+  const releases: Array<() => void> = [];
+  h.gateway.updateThreadMetadata.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releases.push(() => resolve(record({ revision: 1 })));
+      }),
+  );
+  const key = (id: string) => remoteAgentThreadKey("s", "r", id);
+  const saves: Promise<boolean>[] = [];
+  await act(async () => {
+    for (const id of ids) saves.push(h.current().update(key(id), { archived: true }));
+    await vi.waitFor(() => expect(releases).toHaveLength(4));
+  });
+  expect(h.report).not.toHaveBeenCalled();
+  await act(async () => {
+    releases[0]?.();
+    await vi.waitFor(() => expect(releases).toHaveLength(5));
+    for (const release of releases.slice(1)) release();
+  });
+  expect(await Promise.all(saves)).toEqual([true, true, true, true, true]);
+  expect(h.report).not.toHaveBeenCalled();
 });

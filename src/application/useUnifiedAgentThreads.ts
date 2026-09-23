@@ -15,6 +15,7 @@ import { useRemoteAgentInventory } from "./useRemoteAgentInventory";
 import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
+import { agentDraftDispatchKey, agentThreadDispatchKey } from "./agentDispatchKeys";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
 import { useServerThreadMetadata } from "./useServerThreadMetadata";
@@ -25,7 +26,7 @@ import {
 } from "./remoteAgentSurface";
 import { useRemoteAgentStableSurface } from "./useRemoteAgentStableSurface";
 import { useRemoteAgentTurnChanges } from "./useRemoteAgentTurnChanges";
-import { unavailableTurnChanges } from "./agentTurnChangesReader";
+import { unsupportedAgentTurnChanges } from "../domain/agentTurnChanges";
 import { useRemoteAgentChanges } from "./useRemoteAgentChanges";
 import { useRemoteAgentImages } from "./useRemoteAgentImages";
 import { useRemoteAgentThreadHistory } from "./useRemoteAgentThreadHistory";
@@ -404,11 +405,20 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     report,
     update: metadata.update,
     reorder: metadata.reorder,
+    batch: metadata.batch,
     stop: async (id) => {
       const target = targetForThread(id);
       if (target) await mutations.stop(target);
     },
   });
+  const sharedRemoteBusy = pendingMessages.busy || remoteSteer.busy;
+  const dispatchingKeys = useMemo(
+    () =>
+      sharedRemoteBusy
+        ? undefined
+        : mergedDispatchingKeys(local.dispatchingKeys, mutations.busyKeys),
+    [local.dispatchingKeys, mutations.busyKeys, sharedRemoteBusy],
+  );
   const selectedRemote = selectedThreadId === null ? null : remoteById.get(selectedThreadId);
   const remoteMode =
     selectedThreadId === null ? selectedServerId !== null : isRemoteAgentIdentity(selectedThreadId);
@@ -505,7 +515,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       isRemoteAgentIdentity(threadId)
         ? remoteTurnChanges.getTurnChanges(threadId, turnId)
         : (local.getTurnChanges?.(threadId, turnId) ??
-          Promise.resolve(unavailableTurnChanges(turnId))),
+          Promise.resolve(unsupportedAgentTurnChanges(turnId, "notApplicable"))),
     getTurnFileDiff: (threadId, turnId, relativePath) =>
       isRemoteAgentIdentity(threadId)
         ? remoteTurnChanges.getTurnFileDiff(threadId, turnId, relativePath)
@@ -569,9 +579,17 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       if (isRemoteAgentIdentity(threadId)) void pendingMessages.remove(threadId, id);
       else local.removeDeferredFollowUp(threadId, id);
     },
-    takeDeferredFollowUp: (threadId, id) => {
+    beginDeferredFollowUpEdit: (threadId, id) => {
       if (isRemoteAgentIdentity(threadId)) return null;
-      return local.takeDeferredFollowUp(threadId, id);
+      return local.beginDeferredFollowUpEdit?.(threadId, id) ?? null;
+    },
+    cancelDeferredFollowUpEdit: (session) => {
+      if (isRemoteAgentIdentity(session.threadId)) return;
+      local.cancelDeferredFollowUpEdit?.(session);
+    },
+    commitDeferredFollowUpEdit: async (session, commit) => {
+      if (isRemoteAgentIdentity(session.threadId)) return false;
+      return (await local.commitDeferredFollowUpEdit?.(session, commit)) === true;
     },
     resumeDeferredFollowUps: async (threadId) => {
       if (isRemoteAgentIdentity(threadId)) await pendingMessages.resume(threadId);
@@ -590,6 +608,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       else await local.sendDeferredFollowUpNow?.(threadId, id);
     },
     dispatching: local.dispatching || mutations.busy || pendingMessages.busy || remoteSteer.busy,
+    ...(dispatchingKeys === undefined ? {} : { dispatchingKeys }),
     agentCliConfigured: remoteMode ? serverReady : local.agentCliConfigured,
     agentCliKind: selectedRemote?.thread.provider.kind ?? local.agentCliKind,
     agentCliVersion: remoteMode ? null : local.agentCliVersion,
@@ -643,7 +662,11 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         report("Update this server's runner to support the selected model settings.");
         return null;
       }
-      const task = await mutations.start(request, target);
+      const task = await mutations.start(
+        request,
+        target,
+        agentDraftDispatchKey(request.projectRootKey),
+      );
       return task === null
         ? null
         : {
@@ -679,7 +702,11 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         (pendingMessages.deferred.get(request.threadId)?.length ?? 0) > 0
       )
         return pendingMessages.enqueue(request);
-      return target !== null && (await mutations.followUp(request, target)) !== null;
+      return (
+        target !== null &&
+        (await mutations.followUp(request, target, agentThreadDispatchKey(request.threadId))) !==
+          null
+      );
     },
     steer: async (request) => {
       if (isRemoteAgentIdentity(request.threadId)) {
@@ -736,4 +763,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     remoteLoading: inventory.loading,
     refreshRemote: inventory.refresh,
   };
+}
+
+function mergedDispatchingKeys(
+  local: ReadonlySet<string> | undefined,
+  remote: ReadonlySet<string>,
+): ReadonlySet<string> | undefined {
+  if (local === undefined) return undefined;
+  if (remote.size === 0) return local;
+  if (local.size === 0) return remote;
+  return new Set([...local, ...remote]);
 }

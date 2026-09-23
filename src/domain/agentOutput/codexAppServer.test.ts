@@ -58,7 +58,14 @@ describe("Codex app-server projection parser", () => {
         "stdout",
         JSON.stringify(assistant) + "\n",
       ).events,
-    ).toEqual([]);
+    ).toEqual([
+      {
+        kind: "unknownLine",
+        stream: "stdout",
+        raw: "Unsupported Codex exec event: <invalid type>",
+        clipped: false,
+      },
+    ]);
   });
   it.each([
     { ...assistant, v: 2 },
@@ -126,9 +133,26 @@ describe("Codex app-server projection parser", () => {
       kind: "events",
       events: [{ kind: "subagentUsage", agentThreadId: "child", usage: { scope: "thread" } }],
     });
-    expect(parse({ v: 1, t: "usage", scope: "thread", threadId: "root", usage })).toMatchObject({
+    expect(parse({ v: 1, t: "usage", scope: "thread", threadId: "root", usage })).toEqual({
       kind: "events",
-      events: [],
+      sessionId: null,
+      events: [
+        { kind: "contextUsage", model: "codex", inputTokens: null, contextWindow: 1000 },
+        { kind: "contextUsage", model: "codex", inputTokens: 13, contextWindow: null },
+      ],
+    });
+    expect(
+      parse({
+        v: 1,
+        t: "usage",
+        scope: "thread",
+        threadId: "root",
+        usage: { ...usage, contextWindow: null },
+      }),
+    ).toEqual({
+      kind: "events",
+      sessionId: null,
+      events: [{ kind: "contextUsage", model: "codex", inputTokens: 13, contextWindow: null }],
     });
     expect(parse({ v: 1, t: "usage", scope: "other", threadId: "root", usage }).kind).toBe(
       "unknown",
@@ -166,6 +190,49 @@ describe("Codex app-server projection parser", () => {
       { kind: "events", events: [], sessionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" },
     );
     expect(parse({ v: 1, t: "session", threadId: "invalid\n" }).kind).toBe("unknown");
+  });
+  it("renders notices as settled, non-error rows", () => {
+    const notice = {
+      v: 1,
+      t: "notice",
+      noticeId: "codex-notice-1",
+      severity: "warning",
+      message: "Codex could not resume the previous session.",
+      clipped: false,
+    };
+    expect(parse(notice)).toEqual({
+      kind: "events",
+      sessionId: null,
+      events: [
+        {
+          kind: "toolCall",
+          toolId: "codex-notice-1",
+          name: "Codex warning",
+          inputSummary: "Codex could not resume the previous session.",
+        },
+        { kind: "toolResult", toolId: "codex-notice-1", outputSummary: "", isError: false },
+      ],
+    });
+    expect(parse({ ...notice, severity: "info" })).toMatchObject({
+      events: [{ name: "Codex notice" }, { isError: false }],
+    });
+  });
+  it.each([
+    { severity: "error" },
+    { noticeId: "" },
+    { message: "x".repeat(513) },
+    { clipped: "no" },
+    { extra: true },
+  ])("fails closed for an invalid notice %#", (patch) => {
+    const notice = {
+      v: 1,
+      t: "notice",
+      noticeId: "codex-notice-1",
+      severity: "info",
+      message: "retrying",
+      clipped: false,
+    };
+    expect(parse({ ...notice, ...patch }).kind).toBe("unknown");
   });
   it("handles malformed JSON and non-object values", () => {
     for (const line of ["{", "null", "[]", "42"])

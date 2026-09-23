@@ -60,7 +60,7 @@ export function AgentLaunchControls({
 }: AgentLaunchControlsProps) {
   const catalog = useAgentClaudeModelCatalog();
   const effectiveLaunch = normalizeAgentComposerLaunch(launch);
-  const modeChoices = agentLaunchModeChoices(effectiveLaunch.provider);
+  const modeChoices = agentLaunchModeChoices(effectiveLaunch.provider, executionTarget);
   const configuredModelFor = (provider: AgentCliKind): string | null => {
     const discovered = providerManagement?.cliDiscovery[provider];
     return discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
@@ -102,7 +102,7 @@ export function AgentLaunchControls({
         variant="ghost"
       />
       <span className="agent-visually-hidden" id={`${MODE_ID}-hint`}>
-        {agentLaunchModeHint(effectiveLaunch)}
+        {agentLaunchModeHint(effectiveLaunch, executionTarget)}
       </span>
     </>
   );

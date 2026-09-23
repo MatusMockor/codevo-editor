@@ -362,6 +362,34 @@ describe("useAgentThreadStore persistence", () => {
     harness.unmount();
   });
 
+  it("persists a cleared dead provider session immediately and saves nothing for a stale id", async () => {
+    const harness = renderStore();
+    await waitForReact(() => expect(harness.gateway.loadAgentThreads).toHaveBeenCalled());
+    const created = thread({ provider: { kind: "claudeCode", sessionId: "session-dead-0001" } });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+    harness.gateway.saveAgentThread.mockClear();
+
+    const invalidate = (sessionId: string) =>
+      act(() =>
+        harness.hook().dispatchAction({
+          kind: "providerSessionInvalidated",
+          threadId: created.threadId,
+          owner: created.owner,
+          sessionId,
+        }),
+      );
+    invalidate("session-other-0002");
+    invalidate("session-dead-0001");
+
+    await waitForReact(() => expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+    expect(harness.gateway.saveAgentThread.mock.calls[0]?.[0].thread.provider).toEqual({
+      kind: "claudeCode",
+      sessionId: null,
+    });
+    harness.unmount();
+  });
+
   it("coalesces running-turn saves to one per interval", async () => {
     const harness = await renderLoadedStore();
     const created = thread({ turns: [turn("agt-1-0a1c")] });

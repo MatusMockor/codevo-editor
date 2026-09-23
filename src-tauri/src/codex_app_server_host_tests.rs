@@ -390,6 +390,7 @@ fn a_host_with_a_live_turn_is_never_evicted() {
                 model: None,
                 sandbox: None,
                 approval_policy: None,
+                developer_instructions: None,
             })
             .expect("thread");
         let turn = host
@@ -435,6 +436,7 @@ fn idle_hosts_are_retired_and_busy_hosts_are_kept() {
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         })
         .expect("thread");
     let _turn = busy
@@ -474,6 +476,7 @@ fn host_death_settles_every_live_turn_and_removes_the_host() {
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         })
         .expect("thread");
     let _turn = host
@@ -516,6 +519,7 @@ fn a_notification_reaches_the_thread_route() {
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         })
         .expect("thread");
     spawner.control(0).emit(&json!({
@@ -644,6 +648,7 @@ fn update_retires_idle_hosts_but_refuses_open_thread_authority() {
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         })
         .unwrap();
     assert!(registry.retire_all_idle_for_update().is_err());
@@ -699,6 +704,7 @@ fn an_uncertain_turn_start_retires_and_reaps_the_host() {
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         })
         .unwrap();
     let result = host.start_turn_within(

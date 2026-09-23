@@ -2,9 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { AgentTurnEvent } from "./agentThread";
 import {
   projectAgentBackgroundActivity,
+  projectAgentBackgroundState,
+  resolveAgentBackgroundActivity,
   MAX_AGENT_BACKGROUND_TASKS,
   MAX_AGENT_BACKGROUND_OBSERVED_TASKS,
+  MAX_AGENT_BACKGROUND_OPEN_ROOT_TOOLS,
 } from "./agentBackgroundActivity";
+
+const settledByInference = (events: ReadonlyArray<AgentTurnEvent>, processAlive: boolean) =>
+  resolveAgentBackgroundActivity(projectAgentBackgroundState(events, processAlive), "settled");
 
 const task = (
   status: Extract<AgentTurnEvent, { kind: "backgroundTask" }>["status"],
@@ -18,6 +24,39 @@ const task = (
   description: "Watch pipeline",
 });
 const result: AgentTurnEvent = { kind: "result", text: "Watching", isError: false, usage: null };
+const backgroundAgentLaunch: AgentTurnEvent[] = [
+  {
+    kind: "toolCall",
+    toolId: "spawn",
+    name: "Agent",
+    inputSummary: "Review the gateway",
+    description: "Gateway review",
+  },
+  { kind: "subagent", status: "starting", toolId: "spawn", taskId: "agent-task" },
+  task("starting", "agent", "agent-task"),
+  {
+    kind: "toolResult",
+    toolId: "spawn",
+    outputSummary: "Async agent launched successfully.",
+    isError: false,
+  },
+];
+const launchShell: AgentTurnEvent = {
+  kind: "toolCall",
+  toolId: "shell",
+  name: "Bash",
+  inputSummary: "npm test",
+};
+const launchShellResult: AgentTurnEvent = {
+  kind: "toolResult",
+  toolId: "shell",
+  outputSummary: "Command running in background",
+  isError: false,
+};
+const leadAnswer: AgentTurnEvent = {
+  kind: "assistantText",
+  text: "The gateway review is running; I will summarize when it finishes.",
+};
 
 describe("factual background activity", () => {
   it("separates settled foreground from ongoing monitor and late provider response", () => {
@@ -29,7 +68,7 @@ describe("factual background activity", () => {
     });
     expect(
       projectAgentBackgroundActivity(
-        [...events, { kind: "assistantText", text: "Pipeline completed" }],
+        [...events, { kind: "toolCall", toolId: "late", name: "Bash", inputSummary: "gh run" }],
         true,
       ),
     ).toMatchObject({ phase: "working", foregroundSettled: false });
@@ -56,7 +95,7 @@ describe("factual background activity", () => {
     });
     expect(
       projectAgentBackgroundActivity(
-        [...events, { kind: "assistantText", text: "root reply" }],
+        [...events, { kind: "toolCall", toolId: "root", name: "Read", inputSummary: "a.ts" }],
         true,
       ),
     ).toMatchObject({ phase: "working", foregroundSettled: false });
@@ -74,6 +113,120 @@ describe("factual background activity", () => {
         true,
       ).tasks,
     ).toEqual([]);
+  });
+  it("settles an idle lead without result while live tasks run and no root tool is open", () => {
+    const events = [...backgroundAgentLaunch, leadAnswer];
+    expect(projectAgentBackgroundActivity(events, true).foregroundSettled).toBe(false);
+    expect(settledByInference(events, true)).toMatchObject({
+      phase: "working",
+      foregroundSettled: true,
+      tasks: [{ taskId: "agent-task", taskType: "agent" }],
+    });
+    expect(
+      settledByInference([task("starting"), launchShell, launchShellResult, leadAnswer], true),
+    ).toMatchObject({ phase: "monitoring", foregroundSettled: true });
+    expect(
+      settledByInference(
+        [...events, { kind: "assistantText", text: "child", parentToolId: "spawn" }],
+        true,
+      ).foregroundSettled,
+    ).toBe(true);
+  });
+  it("does not infer an idle lead while a root tool call is open", () => {
+    const foregroundAgent: AgentTurnEvent[] = [
+      { kind: "toolCall", toolId: "spawn", name: "Agent", inputSummary: "Echo alpha" },
+      task("starting", "agent", "agent-task"),
+      { kind: "assistantText", text: "I will wait for the agent" },
+    ];
+    expect(projectAgentBackgroundActivity(foregroundAgent, true)).toMatchObject({
+      phase: "working",
+      foregroundSettled: false,
+    });
+    expect(
+      projectAgentBackgroundActivity([...backgroundAgentLaunch, leadAnswer, launchShell], true)
+        .foregroundSettled,
+    ).toBe(false);
+    expect(
+      projectAgentBackgroundActivity(
+        [...backgroundAgentLaunch, leadAnswer, { kind: "reasoning", text: "Next step" }],
+        true,
+      ).foregroundSettled,
+    ).toBe(false);
+  });
+  it("never infers an idle lead from prose alone, from history, or from lossy events", () => {
+    expect(projectAgentBackgroundActivity([leadAnswer], true)).toMatchObject({
+      phase: "inactive",
+      foregroundSettled: false,
+    });
+    expect(
+      projectAgentBackgroundActivity(
+        [...backgroundAgentLaunch, leadAnswer, task("completed", "agent", "agent-task")],
+        true,
+      ).foregroundSettled,
+    ).toBe(false);
+    expect(
+      projectAgentBackgroundActivity([...backgroundAgentLaunch, leadAnswer], false),
+    ).toMatchObject({ phase: "inactive", foregroundSettled: false });
+    expect(
+      projectAgentBackgroundActivity([...backgroundAgentLaunch, leadAnswer], true, true),
+    ).toMatchObject({ phase: "working", foregroundSettled: false, truncated: true });
+  });
+  it("distinguishes result-confirmed settlement from inferred idle", () => {
+    const shell = [launchShell, launchShellResult, task("starting")];
+    expect(projectAgentBackgroundState([...shell, leadAnswer, result], true).foreground).toEqual({
+      kind: "settled",
+    });
+    expect(projectAgentBackgroundState([...shell, launchShell], true).foreground).toEqual({
+      kind: "running",
+    });
+    const inferred = projectAgentBackgroundState([...shell, leadAnswer], true);
+    expect(inferred.foreground.kind).toBe("inferredIdle");
+    expect(resolveAgentBackgroundActivity(inferred, "pending")).toMatchObject({
+      phase: "working",
+      foregroundSettled: false,
+    });
+    expect(resolveAgentBackgroundActivity(inferred, "settled")).toMatchObject({
+      phase: "monitoring",
+      foregroundSettled: true,
+    });
+    expect(projectAgentBackgroundActivity([...shell, leadAnswer], true)).toEqual(
+      resolveAgentBackgroundActivity(inferred, "pending"),
+    );
+  });
+  it("moves the inferred idle anchor on every new root event but not on background progress", () => {
+    const shell = [launchShell, launchShellResult, task("starting")];
+    const anchor = (events: ReadonlyArray<AgentTurnEvent>) => {
+      const { foreground } = projectAgentBackgroundState(events, true);
+      return foreground.kind === "inferredIdle" ? foreground.anchor : null;
+    };
+    const first = anchor([...shell, leadAnswer]);
+    expect(first).not.toBeNull();
+    expect(anchor([...shell, leadAnswer, task("running")])).toBe(first);
+    const grown = anchor([...shell, { kind: "assistantText", text: "The gateway review" }]);
+    expect(grown).not.toBe(first);
+    const later = anchor([...shell, leadAnswer, launchShell, launchShellResult, leadAnswer]);
+    expect(later).not.toBeNull();
+    expect(later).not.toBe(first);
+  });
+  it("fails closed when open root tool tracking overflows", () => {
+    const calls: AgentTurnEvent[] = Array.from(
+      { length: MAX_AGENT_BACKGROUND_OPEN_ROOT_TOOLS + 1 },
+      (_, i) => ({ kind: "toolCall", toolId: `t-${i}`, name: "Read", inputSummary: "a" }),
+    );
+    const results: AgentTurnEvent[] = calls.map((_, i) => ({
+      kind: "toolResult",
+      toolId: `t-${i}`,
+      outputSummary: "ok",
+      isError: false,
+    }));
+    expect(
+      settledByInference([...calls, ...results, task("starting"), leadAnswer], true)
+        .foregroundSettled,
+    ).toBe(false);
+    expect(
+      settledByInference([...calls.slice(1), ...results, task("starting"), leadAnswer], true)
+        .foregroundSettled,
+    ).toBe(true);
   });
   it("does not resurrect terminal IDs from late progress or duplicate starts", () => {
     for (const terminal of ["completed", "failed", "stopped"] as const) {

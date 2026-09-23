@@ -15,6 +15,11 @@ pub mod agent_task_steering;
 #[path = "agent_task_stop_escalation.rs"]
 pub mod agent_task_stop_escalation;
 
+#[path = "agent_task_pending_stops.rs"]
+pub mod agent_task_pending_stops;
+
+use agent_task_pending_stops::{PendingAgentTaskStops, AGENT_TASK_STOPPED_BEFORE_START_ERROR};
+
 use agent_task_steering::{
     close_agent_task_input, close_input_after_result, result_watch, AgentTaskStopTargets,
 };
@@ -636,6 +641,7 @@ struct AgentTaskRegistryState {
     entries: HashMap<String, AgentTaskEntry>,
     starts_closed: bool,
     terminal_order: VecDeque<String>,
+    pending_stops: PendingAgentTaskStops,
 }
 
 struct AgentTaskShared {
@@ -834,6 +840,12 @@ impl AgentTaskRegistry {
             if state.entries.contains_key(&task_id) {
                 return Err(DUPLICATE_AGENT_TASK_ERROR.to_string());
             }
+            if state
+                .pending_stops
+                .take(&task_id, &metadata.workspace_id, Instant::now())
+            {
+                return Err(AGENT_TASK_STOPPED_BEFORE_START_ERROR.to_string());
+            }
             let mut entry = AgentTaskEntry::new(metadata, admission, Arc::clone(&watchdog));
             entry.cwd_authority = plan.retained_cwd_authority();
             state.entries.insert(task_id.clone(), entry);
@@ -1020,12 +1032,14 @@ impl AgentTaskRegistry {
         let (group, input, questions) = {
             let mut state = self.shared.state();
             let Some(entry) = state.entries.get_mut(task_id) else {
-                return Ok(());
+                return state
+                    .pending_stops
+                    .record(task_id, workspace_id, Instant::now());
             };
             if workspace_id.is_some_and(|expected| entry.metadata.workspace_id != expected) {
                 return Err(AGENT_TASK_NOT_REGISTERED_ERROR.to_string());
             }
-            if matches!(entry.phase, AgentTaskPhase::Terminal) {
+            if matches!(entry.phase, AgentTaskPhase::Terminal) || entry.stop_requested {
                 return Ok(());
             }
             entry.stop_requested = true;
@@ -1044,6 +1058,20 @@ impl AgentTaskRegistry {
         };
         self.escalate_stop(group);
         Ok(())
+    }
+
+    pub fn discard_pending_stop(&self, task_id: &str, workspace_id: &str) {
+        let mut state = self.shared.state();
+        state
+            .pending_stops
+            .take(task_id, workspace_id, Instant::now());
+    }
+
+    pub fn stop_pending_before_start(&self, task_id: &str, workspace_id: &str) -> bool {
+        let state = self.shared.state();
+        state
+            .pending_stops
+            .is_pending(task_id, workspace_id, Instant::now())
     }
 
     pub fn stop_for_root(&self, root: &Path) {

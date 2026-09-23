@@ -34,6 +34,11 @@ import {
 import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
 import { AgentComposerAttachments } from "./AgentComposerAttachments";
 import {
+  AGENT_COMPOSER_SAVE_QUEUED_LABEL,
+  AgentComposerQueuedEditBar,
+} from "./AgentComposerQueuedEditBar";
+import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
+import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
   openAgentAttachmentPicker,
   openAgentImageAttachmentPicker,
@@ -83,6 +88,7 @@ export interface AgentComposerProps {
   readonly immediateBlockedReason?: string | null;
   readonly executionServerId?: string | null;
   readonly attachments?: AgentComposerAttachmentsSurface | null;
+  readonly queuedEdit?: AgentComposerQueuedEdit | null;
   readonly attachmentTargetKey?: string | null;
   readonly attachmentPicker?: AgentComposerFilePicker;
   readonly attachmentImageReader?: (path: string) => Promise<ArrayBuffer>;
@@ -127,6 +133,7 @@ export function AgentComposer({
   immediateBlockedReason = null,
   executionServerId = null,
   attachments = null,
+  queuedEdit = null,
   attachmentTargetKey = null,
   attachmentPicker = executionServerId === null
     ? openAgentAttachmentPicker
@@ -252,7 +259,10 @@ export function AgentComposer({
     targetReason !== null;
   const shortcut = agentSubmitShortcut();
   const effectiveFollowUpBehavior = immediateBlockedReason === null ? followUpBehavior : "queue";
-  const submitName = submitAccessibleName(dispatching, mode, effectiveFollowUpBehavior);
+  const editingQueued = queuedEdit !== null;
+  const submitName = editingQueued
+    ? AGENT_COMPOSER_SAVE_QUEUED_LABEL
+    : submitAccessibleName(dispatching, mode, effectiveFollowUpBehavior);
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -500,6 +510,11 @@ export function AgentComposer({
       (commands.exactCommand === "new" || !allProvidersDisabled));
 
   const dispatch = (alternate = false): void => {
+    if (editingQueued) {
+      if (alternate) return;
+      onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
+      return;
+    }
     const queue = (effectiveFollowUpBehavior === "queue") !== alternate;
     if (steering && !queue && immediateBlockedReason !== null) return;
     onSubmit({
@@ -520,6 +535,12 @@ export function AgentComposer({
     textPaste.keyDown(event);
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (commands.onKeyDown(event)) return;
+    if (event.key === "Escape" && queuedEdit !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) queuedEdit.onCancel();
+      return;
+    }
     if (event.key === "Escape") {
       if (!running) return;
       event.preventDefault();
@@ -629,6 +650,7 @@ export function AgentComposer({
         }
         data-agent-composer-drop={dropActive ? "active" : undefined}
       >
+        {queuedEdit !== null && <AgentComposerQueuedEditBar edit={queuedEdit} />}
         {attachments !== null && (
           <AgentComposerAttachments
             key={JSON.stringify([attachmentTargetKey, executionServerId, promptOwnerKey])}
@@ -664,7 +686,12 @@ export function AgentComposer({
           }}
           onKeyDown={onKeyDown}
           onPaste={pasteAttachments}
-          placeholder={targetReason ?? composerPlaceholder(mode, effectiveFollowUpBehavior)}
+          placeholder={
+            targetReason ??
+            (editingQueued
+              ? "Edit the queued message"
+              : composerPlaceholder(mode, effectiveFollowUpBehavior))
+          }
           value={prompt}
         />
 
@@ -701,6 +728,7 @@ export function AgentComposer({
           <AgentComposerSubmitControls
             running={running}
             steering={steering}
+            editingQueued={editingQueued}
             dispatching={dispatching}
             disabled={blocked && !localCommandAvailable}
             submitName={submitName}

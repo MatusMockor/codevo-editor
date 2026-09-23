@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import type * as Monaco from "monaco-editor";
 import type { EditorRevealTarget } from "../../domain/languageServerFeatures";
@@ -6,6 +6,13 @@ import type { EditorDocument } from "../../domain/workspace";
 import type { EditorRuntimeContextValue } from "../editorRuntimeContext";
 import { activeDocumentModelForReveal } from "../editorSurfaceLiveModelContentAuthority";
 import { dismissTransientEditorWidgets } from "../editorTransientWidgetDismissal";
+import {
+  appliedNavigationViewportClaim,
+  pendingNavigationViewportClaim,
+  withoutForeignNavigationViewportClaim,
+  withoutPendingNavigationViewportClaim,
+  type EditorNavigationViewportClaim,
+} from "./editorNavigationViewportClaim";
 
 interface EditorNavigationLifecycleOptions {
   readonly activeDocument: EditorDocument | null;
@@ -15,8 +22,6 @@ interface EditorNavigationLifecycleOptions {
   readonly groupId: string;
   readonly isOpeningFile: boolean;
   readonly onRevealTargetHandled: (target: EditorRevealTarget) => void;
-  readonly previousActiveDocumentPathRef: MutableRefObject<string | null>;
-  readonly previousTransientWidgetDismissKeyRef: MutableRefObject<string | undefined>;
   readonly runtime: EditorRuntimeContextValue | null;
   readonly transientWidgetDismissKey: string | undefined;
   readonly workspaceRoot: string | null;
@@ -34,12 +39,21 @@ export function useEditorNavigationLifecycle({
   groupId,
   isOpeningFile,
   onRevealTargetHandled,
-  previousActiveDocumentPathRef,
-  previousTransientWidgetDismissKeyRef,
   runtime,
   transientWidgetDismissKey,
   workspaceRoot,
-}: EditorNavigationLifecycleOptions): void {
+}: EditorNavigationLifecycleOptions): MutableRefObject<EditorNavigationViewportClaim | null> {
+  const previousActiveDocumentPathRef = useRef<string | null>(activeDocument?.path ?? null);
+  const previousTransientWidgetDismissKeyRef = useRef(transientWidgetDismissKey);
+  const navigationViewportClaimRef = useRef<EditorNavigationViewportClaim | null>(null);
+
+  useEffect(() => {
+    navigationViewportClaimRef.current = withoutForeignNavigationViewportClaim(
+      navigationViewportClaimRef.current,
+      activeDocument?.path ?? null,
+    );
+  }, [activeDocument?.path]);
+
   useEffect(() => {
     if (!editor) {
       return;
@@ -54,7 +68,7 @@ export function useEditorNavigationLifecycle({
     }
 
     dismissTransientEditorWidgets(editor, "document-switch");
-  }, [activeDocument?.path, editor, previousActiveDocumentPathRef]);
+  }, [activeDocument?.path, editor]);
 
   useEffect(() => {
     if (!editor || transientWidgetDismissKey === undefined) {
@@ -67,22 +81,25 @@ export function useEditorNavigationLifecycle({
 
     previousTransientWidgetDismissKeyRef.current = transientWidgetDismissKey;
     dismissTransientEditorWidgets(editor, "floating-surface");
-  }, [editor, previousTransientWidgetDismissKeyRef, transientWidgetDismissKey]);
+  }, [editor, transientWidgetDismissKey]);
 
   useEffect(() => {
     if (!editorRevealTarget) {
+      navigationViewportClaimRef.current = withoutPendingNavigationViewportClaim(
+        navigationViewportClaimRef.current,
+      );
       return;
     }
 
-    if (!activeDocument) {
+    if (!activeDocument || editorRevealTarget.path !== activeDocument.path) {
+      navigationViewportClaimRef.current = withoutPendingNavigationViewportClaim(
+        navigationViewportClaimRef.current,
+      );
       onRevealTargetHandled(editorRevealTarget);
       return;
     }
 
-    if (editorRevealTarget.path !== activeDocument.path) {
-      onRevealTargetHandled(editorRevealTarget);
-      return;
-    }
+    navigationViewportClaimRef.current = pendingNavigationViewportClaim(activeDocument.path);
 
     if (!editor) {
       return;
@@ -109,6 +126,10 @@ export function useEditorNavigationLifecycle({
       editor.setPosition(editorRevealTarget.position);
       editor.revealPositionInCenter(editorRevealTarget.position);
       editor.focus();
+      navigationViewportClaimRef.current = appliedNavigationViewportClaim(
+        activeDocument.path,
+        model,
+      );
       onRevealTargetHandled(editorRevealTarget);
       return true;
     };
@@ -137,4 +158,6 @@ export function useEditorNavigationLifecycle({
     runtime,
     workspaceRoot,
   ]);
+
+  return navigationViewportClaimRef;
 }

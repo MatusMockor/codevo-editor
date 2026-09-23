@@ -50,6 +50,7 @@ function TurnChangesContent({
   const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
   const partial = summary.truncated || tree.truncated;
   const count = tree.stats.fileCount;
+  if (summary.state === "unsupported") return null;
   if (summary.state === "ready" && count === 0 && !partial) return null;
   if (summary.state === "unavailable")
     return (

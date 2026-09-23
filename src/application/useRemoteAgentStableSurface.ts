@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
-import { unavailableTurnChanges } from "./agentTurnChangesReader";
+import { unsupportedAgentTurnChanges } from "../domain/agentTurnChanges";
+import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import type { AgentThreadsSurface } from "./agentThreadPorts";
 
 type Methods = {
@@ -42,12 +43,22 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
         current.current.sendDeferredFollowUpNow?.(threadId, id) ?? Promise.resolve(),
       steer: (...args) => current.current.steer(...args),
       removeDeferredFollowUp: (...args) => current.current.removeDeferredFollowUp(...args),
-      takeDeferredFollowUp: (...args) => current.current.takeDeferredFollowUp(...args),
+      beginDeferredFollowUpEdit: (threadId: string, id: string) =>
+        current.current.beginDeferredFollowUpEdit?.(threadId, id) ?? null,
+      cancelDeferredFollowUpEdit: (session: AgentQueuedEditSession) =>
+        current.current.cancelDeferredFollowUpEdit?.(session),
+      commitDeferredFollowUpEdit: (
+        session: AgentQueuedEditSession,
+        commit: AgentQueuedEditCommit,
+      ) => current.current.commitDeferredFollowUpEdit?.(session, commit) ?? Promise.resolve(false),
       importExternalSession: (...args) => current.current.importExternalSession(...args),
       stop: (...args) => current.current.stop(...args),
       togglePin: (...args) => current.current.togglePin(...args),
       archive: (...args) => current.current.archive(...args),
+      unarchive: (threadId: string) => current.current.unarchive?.(threadId) ?? false,
       remove: (...args) => current.current.remove(...args),
+      batchThreadMutations: <T>(work: () => Promise<T>) =>
+        current.current.batchThreadMutations?.(work) ?? work(),
       hasLiveTasksForOwner: (...args) => current.current.hasLiveTasksForOwner(...args),
       stopProjectTasks: (...args) => current.current.stopProjectTasks(...args),
       releaseProjectTasks: (...args) => current.current.releaseProjectTasks(...args),
@@ -59,7 +70,7 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
         current.current,
       getTurnChanges: (...args: Parameters<NonNullable<AgentThreadsSurface["getTurnChanges"]>>) =>
         current.current.getTurnChanges?.(...args) ??
-        Promise.resolve(unavailableTurnChanges(args[1])),
+        Promise.resolve(unsupportedAgentTurnChanges(args[1], "notApplicable")),
       getTurnFileDiff: (...args: Parameters<NonNullable<AgentThreadsSurface["getTurnFileDiff"]>>) =>
         current.current.getTurnFileDiff?.(...args) ??
         Promise.reject(new Error("Recorded changes are not available for this turn.")),

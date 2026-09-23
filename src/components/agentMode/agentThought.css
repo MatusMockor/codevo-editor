@@ -1,0 +1,91 @@
+.agent-thought {
+  display: grid;
+  min-width: 0;
+}
+
+.agent-thought__label {
+  flex: none;
+  color: var(--agent-text-muted);
+  white-space: nowrap;
+}
+
+.agent-thought__preview {
+  overflow: hidden;
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--agent-text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thought__chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--agent-text-muted);
+  transition: transform var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-thought__toggle[aria-expanded="true"] .agent-thought__chevron {
+  transform: rotate(180deg);
+}
+
+.agent-thought__panel {
+  min-width: 0;
+  margin: 2px 0 4px 23px;
+}
+
+.agent-thought__panel[hidden] {
+  display: none;
+}
+
+.agent-thought__body {
+  display: flow-root;
+  overflow: auto;
+  max-height: 24rem;
+  min-width: 0;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  user-select: text;
+}
+
+.agent-thought__body > :first-child {
+  margin-top: 0;
+}
+
+.agent-thought__body > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-thought__body .agent-text__paragraph,
+.agent-thought__body .agent-md__list,
+.agent-thought__body .agent-md__heading {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-thought--live .agent-thought__label {
+  animation: agent-tool-row-shimmer 1800ms linear infinite;
+  background-image: linear-gradient(
+    90deg,
+    var(--agent-text-muted) 0%,
+    var(--agent-text-strong) 50%,
+    var(--agent-text-muted) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-thought__chevron {
+    transition: none;
+  }
+
+  .agent-thought--live .agent-thought__label {
+    animation: none;
+    background-image: none;
+    color: var(--agent-text-muted);
+    -webkit-text-fill-color: var(--agent-text-muted);
+  }
+}

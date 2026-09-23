@@ -209,7 +209,7 @@ export function agentFollowUpBlockedReason(
   context: AgentFollowUpContext,
 ): string | null {
   if (view.thread.archived) {
-    return "This thread is archived. Start a new thread to continue.";
+    return "This thread is archived. Unarchive it from the thread menu to continue.";
   }
   if (view.worktreeMissing) {
     return "The worktree for this thread no longer exists.";
@@ -228,9 +228,6 @@ export function agentFollowUpBlockedReason(
   }
   if (view.execution?.kind === "remote") {
     return remoteFollowUpBlockedReason(view.execution.resume, context);
-  }
-  if (view.thread.provider.sessionId === null) {
-    return "This thread has no resumable session; start a new thread.";
   }
   if (!context.agentCliConfigured) {
     return "No agent CLI is configured. Set the agent CLI path in settings.";

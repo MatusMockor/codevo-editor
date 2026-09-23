@@ -20,6 +20,8 @@ import {
   type AgentTurn,
 } from "../domain/agentThread";
 import { isRemoteAgentIdentity } from "./remoteAgentSurface";
+import { admitStoredAgentLaunch } from "../domain/agentStoredLaunch";
+import { agentResumePlan, type AgentResumePlan } from "../domain/agentSessionIdentity";
 import { normalizeAgentCliKind, normalizeMaxConcurrentAgentTasks } from "../domain/agentSettings";
 import {
   AGENT_TASKS_SOURCE,
@@ -90,6 +92,8 @@ export const AGENT_THREAD_PROJECT_CLOSED_NOTICE =
 export const AGENT_THREAD_TURN_FULL_NOTICE =
   "This turn is full. Wait for it to finish, then send your message.";
 export const AGENT_THREAD_STARTING_NOTICE = "The agent is still starting. Try again in a moment.";
+export const AGENT_THREAD_ARCHIVED_NOTICE =
+  "This thread is archived. Unarchive it from the thread menu to continue.";
 const UTF8_ENCODER = new TextEncoder();
 
 export function agentPromptByteLength(prompt: string): number {
@@ -175,7 +179,7 @@ export interface AdmittedFollowUp {
   readonly projectRoot: string;
   readonly prompt: string;
   readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
-  readonly sessionId: string;
+  readonly resumePlan: AgentResumePlan;
   readonly launch: AgentLaunchOptions;
 }
 
@@ -183,6 +187,8 @@ export function admitFollowUp(
   deps: AdmissionDependencies,
   request: AgentFollowUpRequest,
   inFlightThreads: ReadonlySet<string>,
+  resumePlanOf: (thread: AgentThread) => AgentResumePlan = (thread) =>
+    agentResumePlan(thread.provider.sessionId, null),
 ): AdmittedFollowUp | null {
   const thread = deps.store.state.threads.get(request.threadId);
   if (thread === undefined) {
@@ -190,7 +196,7 @@ export function admitFollowUp(
     return null;
   }
   if (thread.archived) {
-    deps.setNotice(warning("This thread is archived. Start a new thread."));
+    deps.setNotice(warning(AGENT_THREAD_ARCHIVED_NOTICE));
     return null;
   }
   if (runningTurn(thread) !== null || inFlightThreads.has(thread.threadId)) {
@@ -217,10 +223,6 @@ export function admitFollowUp(
   if (launch === null) return null;
   const providerAdmission = admitCapacity(deps, thread.provider.kind);
   if (providerAdmission === null) return null;
-  if (thread.provider.sessionId === null) {
-    deps.setNotice(warning("This thread has no resumable session; start a new thread."));
-    return null;
-  }
   if (deps.isWorktreeMissing(thread.threadId)) {
     deps.setNotice(warning("The worktree for this thread no longer exists."));
     return null;
@@ -239,7 +241,7 @@ export function admitFollowUp(
     projectRoot: project.rootPath,
     prompt,
     providerAuthority: providerAdmission,
-    sessionId: thread.provider.sessionId,
+    resumePlan: resumePlanOf(thread),
     launch,
   };
 }
@@ -277,7 +279,7 @@ export function admitSteer(
     return null;
   }
   if (thread.archived) {
-    deps.setNotice(warning("This thread is archived. Start a new thread."));
+    deps.setNotice(warning(AGENT_THREAD_ARCHIVED_NOTICE));
     return null;
   }
   const turn = runningTurn(thread);
@@ -358,16 +360,20 @@ function admitLaunch(
   request: LaunchRequest,
   provider: AgentCliKind,
 ): AgentLaunchOptions | null {
-  const launch = request.launch;
-  if (!agentLaunchMatchesProvider(launch, provider)) {
+  if (!agentLaunchMatchesProvider(request.launch, provider)) {
     deps.setNotice(failure(LAUNCH_PROVIDER_MISMATCH_NOTICE));
     return null;
   }
-  if (agentLaunchIsDangerous(launch) && request.dangerousLaunchConfirmed !== true) {
+  const confirmed = request.dangerousLaunchConfirmed === true;
+  const admitted = admitStoredAgentLaunch(request.launch, confirmed);
+  if (
+    admitted.kind === "needsConfirmation" ||
+    (agentLaunchIsDangerous(admitted.launch) && !confirmed)
+  ) {
     deps.setNotice(warning(DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE));
     return null;
   }
-  return launch;
+  return admitted.launch;
 }
 
 function hasAttachments(request: AgentTurnAttachmentRequest): boolean {

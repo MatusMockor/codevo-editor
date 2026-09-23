@@ -1,0 +1,71 @@
+.agent-background-banner {
+  display: flex;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--agent-space-2);
+  width: 100%;
+  max-width: 768px;
+  margin: var(--agent-space-2) auto 0;
+  padding: var(--agent-space-1) var(--agent-space-1) var(--agent-space-1) var(--agent-space-2);
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-well);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+}
+
+.agent-background-banner__status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--agent-space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-background-banner__pulse {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--agent-radius-pill);
+  background: var(--agent-status-working);
+  animation: agent-background-banner-pulse 1.6s ease-in-out infinite;
+}
+
+.agent-background-banner__stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--agent-space-1);
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-strong);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px var(--agent-space-2);
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-background-banner__stop:hover {
+  background: var(--agent-hover);
+}
+
+.agent-background-banner__stop:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
+@keyframes agent-background-banner-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-background-banner__pulse {
+    animation: none;
+  }
+}

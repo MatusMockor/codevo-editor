@@ -193,7 +193,7 @@ describe("remote grouped activity", () => {
     expect(failed?.textContent).toContain("check-2");
     expect(failed?.closest(".agent-activity-group")).toBeNull();
   });
-  it("does not invent confirmed success counts for remote MCP calls without result telemetry", () => {
+  function renderMcpCalls(status: string | undefined): void {
     const events = remote(
       "codex",
       [1, 2].map((id) => ({
@@ -203,15 +203,31 @@ describe("remote grouped activity", () => {
           type: "mcp_tool_call",
           server: "chrome",
           tool: "snapshot",
-          status: "completed",
+          ...(status === undefined ? {} : { status }),
         },
       })),
     );
     render(events, { kind: "exited", exitCode: 0 }, "Inspect", "codex");
+  }
+  function mcpSummary(status: string | undefined): string | null | undefined {
+    renderMcpCalls(status);
     const summary = [...host.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("Used chrome"),
     );
     expect(summary).toBeDefined();
-    expect(summary?.textContent).not.toMatch(/completed|passed/);
+    return summary?.textContent;
+  }
+
+  it("counts remote MCP calls the provider reported as completed without an error", () => {
+    expect(mcpSummary("completed")).toBe("Used chrome · 2 calls2 completed");
   });
+
+  it.each([undefined, "in_progress"])(
+    "does not count remote MCP calls with a missing or unknown status (%s) as success",
+    (status) => {
+      renderMcpCalls(status);
+      expect(host.querySelectorAll(".agent-tool-row--failed")).toHaveLength(2);
+      expect(host.textContent).not.toMatch(/completed|passed/);
+    },
+  );
 });

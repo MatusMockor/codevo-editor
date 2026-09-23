@@ -679,26 +679,20 @@ describe("AgentThreadsSidebar", () => {
       "Archive",
       "Delete",
     ]);
-    expect(
-      (items.find((item) => item.textContent === "Archive") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    const item = (label: string) =>
+      items.find((candidate) => candidate.textContent === label) as HTMLButtonElement;
+    expect(item("Archive").disabled).toBe(true);
+    expect(item("Delete").disabled).toBe(true);
+    expect(item("Delete").title).toBe("Stop the agent before deleting this thread.");
+    expect(item("Mark unread").disabled).toBe(true);
+    expect(item("Mark unread").title).toBe("Available after a run finishes.");
 
-    act(() => {
-      (
-        items.find(
-          (item) => item.textContent === "Delete" || item.textContent === "Confirm delete",
-        ) as HTMLButtonElement
-      ).click();
-    });
-    act(() => {
-      (
-        items.find(
-          (item) => item.textContent === "Delete" || item.textContent === "Confirm delete",
-        ) as HTMLButtonElement
-      ).click();
-    });
+    act(() => item("Delete").click());
+    expect(onThreadMenuCommand).not.toHaveBeenCalled();
 
-    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
+    act(() => item("Stop").click());
+
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "stop" });
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
@@ -970,6 +964,42 @@ describe("AgentThreadsSidebar", () => {
 
     key(row("agt-1"), "Enter");
     expect(onSelectThread).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("offers Unarchive from the archived shelf and keeps the archived thread openable", () => {
+    const onThreadMenuCommand = vi.fn();
+    const onSelectThread = vi.fn();
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-1", "Live"),
+          settled("arc-1", "Old", { archived: true, updatedAtEpochMs: NOW - 86_400_000 }),
+        ]),
+      ],
+      onSelectThread,
+      onThreadMenuCommand,
+    });
+
+    click(".agent-shelf");
+    act(() => {
+      row("arc-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
+      );
+    });
+    const labels = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map(
+      (item) => item.textContent,
+    );
+    expect(labels).toContain("Unarchive");
+    expect(labels).not.toContain("Archive");
+    expect(labels).not.toContain("Snooze…");
+    const unarchive = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Unarchive",
+    );
+    act(() => unarchive?.click());
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("arc-1", { kind: "unarchive" });
+
+    clickRow("arc-1");
+    expect(onSelectThread).toHaveBeenCalledWith("arc-1");
   });
 
   it("returns focus to the row that opened the context menu once it closes", () => {

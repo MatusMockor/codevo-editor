@@ -161,7 +161,7 @@ const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DIGITS_ONLY = /^\d+$/;
 const DURATION_TOKEN = /^\d+(\.\d+)?[smhd]?$/;
 const VARIABLE_REFERENCE = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/;
-const PATH_LIST_SEPARATOR = ", ";
+export const AGENT_TOOL_PATH_LIST_SEPARATOR = ", ";
 const MAX_PATH_LIST_ITEMS = 32;
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/;
 const PATH_SEPARATOR = /[\\/]/;
@@ -286,7 +286,7 @@ function preferred(candidate: string, fallback: string): string {
 
 function displayPaths(summary: string, workspaceRoot: string | null): string {
   const parts = summary
-    .split(PATH_LIST_SEPARATOR)
+    .split(AGENT_TOOL_PATH_LIST_SEPARATOR)
     .map((part) => part.trim())
     .filter((part) => part !== "")
     .slice(0, MAX_PATH_LIST_ITEMS);

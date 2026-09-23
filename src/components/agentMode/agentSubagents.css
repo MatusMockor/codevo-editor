@@ -487,6 +487,46 @@
   font-variant-numeric: tabular-nums;
 }
 
+.agents-panel__item {
+  display: flex;
+  flex-direction: column;
+}
+
+.agents-panel__history {
+  margin: 0 8px 4px 25px;
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-2xs);
+}
+
+.agents-panel__history-summary {
+  width: fit-content;
+  border-radius: var(--agent-radius-md);
+  cursor: pointer;
+  padding: 1px 4px;
+}
+
+.agents-panel__history-summary:hover {
+  color: var(--agent-text-muted);
+}
+
+.agents-panel__history-summary:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agents-panel__history-list {
+  margin: 2px 0 0;
+  padding: 0 0 0 16px;
+  font-family: var(--agent-mono);
+}
+
+.agents-panel__history-entry {
+  overflow: hidden;
+  color: var(--agent-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agents-panel__empty {
   display: flex;
   flex: 1;

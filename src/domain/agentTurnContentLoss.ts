@@ -26,9 +26,25 @@ export function agentTurnContentLost(
   evidence: AgentTurnLogEvidence | null,
 ): boolean {
   if (evidence === null) return eventsTruncated;
-  if (evidence.loss.kind !== "none") return true;
+  if (agentTurnLogLossVisible(evidence.loss, eventsTruncated)) return true;
   if (!eventsTruncated) return false;
   return !agentTurnLogProvablyComplete(evidence);
+}
+
+function agentTurnLogLossVisible(loss: AgentTurnLogLoss, eventsTruncated: boolean): boolean {
+  switch (loss.kind) {
+    case "none":
+      return false;
+    case "legacyWindow":
+      return eventsTruncated;
+    case "supervisorGap":
+    case "turnCeiling":
+    case "unreadable":
+    case "diskBudget":
+      return true;
+    default:
+      return unsupportedAgentTurnLogLoss(loss);
+  }
 }
 
 export function agentTurnWindowDisplay(
@@ -39,4 +55,8 @@ export function agentTurnWindowDisplay(
   if (!eventsTruncated) return "complete";
   if (evidence !== null && evidence.hydration === "complete") return "complete";
   return "savedNotShown";
+}
+
+function unsupportedAgentTurnLogLoss(loss: never): never {
+  throw new TypeError(`Unsupported agent turn log loss: ${JSON.stringify(loss)}.`);
 }

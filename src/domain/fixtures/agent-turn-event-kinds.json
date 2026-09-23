@@ -39,7 +39,8 @@
     },
     "reasoning": {
       "kind": "reasoning",
-      "text": "weighing the options"
+      "text": "weighing the options",
+      "parentToolId": "toolu_01parent"
     },
     "result": {
       "kind": "result",
@@ -127,6 +128,10 @@
     {
       "kind": "assistantText",
       "text": "done"
+    },
+    {
+      "kind": "reasoning",
+      "text": "weighing the options"
     },
     {
       "kind": "backgroundTask",

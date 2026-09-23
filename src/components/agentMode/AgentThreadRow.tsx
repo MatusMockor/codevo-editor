@@ -15,6 +15,7 @@ import {
   agentRowClassName,
   agentThreadImportedBadgeLabel,
   agentThreadRowModel,
+  agentViewCanMarkUnread,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
 
@@ -98,6 +99,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       archived={thread.archived}
       snoozed={(thread.snoozedUntil ?? 0) > Date.now()}
       settled={thread.settledAt != null}
+      canMarkUnread={agentViewCanMarkUnread(view)}
       moveUpId={props.moveUpId}
       moveDownId={props.moveDownId}
       branch={agentShipBranchLabel(view.ship)}

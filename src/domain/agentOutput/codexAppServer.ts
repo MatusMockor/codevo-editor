@@ -16,7 +16,10 @@ type InnerEvent = Extract<
   AgentTurnEvent,
   { kind: "assistantText" | "reasoning" | "toolCall" | "toolResult" }
 >;
+type ContextUsageEvent = Extract<AgentTurnEvent, { kind: "contextUsage" }>;
 const UNKNOWN = Symbol("invalid app-server event");
+const CODEX_CONTEXT_MODEL = "codex";
+const NOTICE_TOOL_NAMES = { info: "Codex notice", warning: "Codex warning" } as const;
 
 export function parseCodexAppServerLine(line: string): ParsedAgentLine {
   try {
@@ -39,8 +42,7 @@ export function parseCodexAppServerLine(line: string): ParsedAgentLine {
       if (!isAgentSessionId(value.threadId)) throw UNKNOWN;
       return { kind: "events", events: [], sessionId: value.threadId };
     }
-    const event = parseEvent(value);
-    const events = event === null ? [] : [event];
+    const events = [...parseEvents(value)];
     if (
       value.clipped === true ||
       (value.t === "subagentItem" && record(value.inner).clipped === true)
@@ -56,6 +58,57 @@ export function parseCodexAppServerLine(line: string): ParsedAgentLine {
   } catch {
     return { kind: "unknown", raw: line };
   }
+}
+
+function parseEvents(value: RecordValue): ReadonlyArray<AgentTurnEvent> {
+  if (value.t === "notice") return noticeEvents(value);
+  if (value.t === "usage") return usageEvents(value);
+  const event = parseEvent(value);
+  return event === null ? [] : [event];
+}
+
+function noticeEvents(value: RecordValue): ReadonlyArray<AgentTurnEvent> {
+  keys(value, ["v", "t", "noticeId", "severity", "message", "clipped"]);
+  flag(value.clipped);
+  const severity = value.severity;
+  if (severity !== "info" && severity !== "warning") throw UNKNOWN;
+  const toolId = identifier(value.noticeId);
+  const message = text(value.message, MAX_AGENT_TOOL_SUMMARY_BYTES);
+  return [
+    { kind: "toolCall", toolId, name: NOTICE_TOOL_NAMES[severity], inputSummary: message },
+    { kind: "toolResult", toolId, outputSummary: "", isError: false },
+  ];
+}
+
+function usageEvents(value: RecordValue): ReadonlyArray<AgentTurnEvent> {
+  keys(value, ["v", "t", "scope", "threadId", "usage"]);
+  const agentThreadId = identifier(value.threadId);
+  const usage = parseUsage(value.usage);
+  if (usage === null) throw UNKNOWN;
+  if (value.scope === "thread") return threadContextUsage(usage);
+  if (value.scope !== "subagent") throw UNKNOWN;
+  return [{ kind: "subagentUsage", agentThreadId, usage }];
+}
+
+function threadContextUsage(usage: AgentTurnUsage): ReadonlyArray<ContextUsageEvent> {
+  const measured = usage.appServerUsage;
+  if (measured === undefined) return [];
+  const occupancy: ContextUsageEvent = {
+    kind: "contextUsage",
+    model: CODEX_CONTEXT_MODEL,
+    inputTokens: measured.last.totalTokens,
+    contextWindow: null,
+  };
+  if (measured.contextWindow === null || measured.contextWindow === 0) return [occupancy];
+  return [
+    {
+      kind: "contextUsage",
+      model: CODEX_CONTEXT_MODEL,
+      inputTokens: null,
+      contextWindow: measured.contextWindow,
+    },
+    occupancy,
+  ];
 }
 
 function parseEvent(value: RecordValue): AgentTurnEvent | null {
@@ -85,15 +138,6 @@ function parseEvent(value: RecordValue): AgentTurnEvent | null {
       const event = innerEvent(record(value.inner), false);
       if (event === null) throw UNKNOWN;
       return { kind: "subagentEvent", agentThreadId: identifier(value.agentThreadId), event };
-    }
-    case "usage": {
-      keys(value, ["v", "t", "scope", "threadId", "usage"]);
-      const agentThreadId = identifier(value.threadId);
-      const usage = parseUsage(value.usage);
-      if (usage === null) throw UNKNOWN;
-      if (value.scope === "thread") return null;
-      if (value.scope !== "subagent") throw UNKNOWN;
-      return { kind: "subagentUsage", agentThreadId, usage };
     }
     case "result":
       keys(value, ["v", "t", "isError", "durationMs", "text", "clipped", "usage"]);

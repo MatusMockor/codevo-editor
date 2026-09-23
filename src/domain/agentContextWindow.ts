@@ -18,13 +18,14 @@ export function agentContextWindow(
   // Never pair a new request with an older launch's capacity (for example a changed 1M option).
   const turn = thread.turns[thread.turns.length - 1];
   if (turn === undefined) return null;
-  if (turn.eventsTruncated) return settledContextWindow(turn.status, loggedWindow);
+  const provider = thread.provider.kind;
+  if (turn.eventsTruncated) return settledContextWindow(provider, turn.status, loggedWindow);
   for (const event of turn.events) {
-    if (invalidatesContext(event)) {
+    if (invalidatesContext(provider, event)) {
       current = null;
       primary = null;
       capacities.clear();
-    } else if (thread.provider.kind === "claudeCode" && event.kind === "contextUsage") {
+    } else if (event.kind === "contextUsage") {
       if (event.contextWindow !== null && positive(event.contextWindow)) {
         // Bound retained model metadata even for manually constructed domain values.
         if (!capacities.has(event.model) && capacities.size >= 16)
@@ -46,7 +47,7 @@ export function agentContextWindow(
               ...observationTimestamp(primary),
             }
           : null;
-    } else if (thread.provider.kind === "codex" && event.kind === "result" && !event.isError) {
+    } else if (provider === "codex" && event.kind === "result") {
       const usage = event.usage?.appServerUsage;
       if (usage !== undefined)
         current =
@@ -55,13 +56,15 @@ export function agentContextWindow(
             : null;
     }
   }
-  return settledContextWindow(turn.status, current);
+  return settledContextWindow(provider, turn.status, current);
 }
 
 function settledContextWindow(
+  provider: AgentThread["provider"]["kind"],
   status: AgentTurn["status"],
   current: AgentContextWindow | null,
 ): AgentContextWindow | null {
+  if (provider === "codex") return current;
   if (
     status.kind === "failed" ||
     status.kind === "interrupted" ||
@@ -73,11 +76,14 @@ function settledContextWindow(
   return current;
 }
 
-function invalidatesContext(event: AgentTurnEvent): boolean {
+function invalidatesContext(
+  provider: AgentThread["provider"]["kind"],
+  event: AgentTurnEvent,
+): boolean {
   return (
     event.kind === "contextCompaction" ||
     event.kind === "error" ||
-    (event.kind === "result" && event.isError) ||
+    (event.kind === "result" && event.isError && provider !== "codex") ||
     (event.kind === "contextCompactionStatus" && event.status !== "idle")
   );
 }

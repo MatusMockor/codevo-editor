@@ -360,6 +360,16 @@ impl AgentLaunchOptions {
         }
     }
 
+    pub fn thinking_display_args(&self, version: Option<&str>) -> &'static [&'static str] {
+        let Self::ClaudeCode { .. } = self else {
+            return &[];
+        };
+        if !claude_supports_thinking_display(version) {
+            return &[];
+        }
+        CLAUDE_SUMMARIZED_THINKING_DISPLAY_ARGS
+    }
+
     #[cfg(test)]
     pub fn effort_args(&self) -> &'static [&'static str] {
         match self {
@@ -509,6 +519,21 @@ fn claude_model_args(
         ""
     };
     vec!["--model".to_string(), format!("{}{suffix}", model.as_str())]
+}
+
+pub const CLAUDE_THINKING_DISPLAY_MIN_VERSION: &str = "2.1.220";
+const CLAUDE_SUMMARIZED_THINKING_DISPLAY_ARGS: &[&str] = &["--thinking-display", "summarized"];
+
+fn claude_supports_thinking_display(version: Option<&str>) -> bool {
+    use crate::agent_task_spawner::agent_provider::compare_versions;
+    use std::cmp::Ordering;
+    let Some(version) = version else {
+        return false;
+    };
+    matches!(
+        compare_versions(version, CLAUDE_THINKING_DISPLAY_MIN_VERSION),
+        Some(Ordering::Equal | Ordering::Greater)
+    )
 }
 
 fn claude_mode_args(mode: ClaudePermissionMode) -> &'static [&'static str] {

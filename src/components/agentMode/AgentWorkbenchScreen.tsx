@@ -80,6 +80,8 @@ import {
   initialAgentTerminalPanelIntentState,
   type AgentWorkbenchChrome,
 } from "./agentWorkbenchChrome";
+import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
+import { openThenRevealFiles } from "./openThenRevealFiles";
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
 
@@ -320,6 +322,11 @@ export function AgentWorkbenchScreen({
     [nodePackageScripts],
   );
 
+  const { dispatch: dispatchAgentWorkbench } = agentWorkbench;
+  const revealFilesSurface = useCallback(() => {
+    dispatchAgentWorkbench({ kind: "openSurface", surface: "files" });
+  }, [dispatchAgentWorkbench]);
+
   const openScriptsView = useCallback(() => {
     agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
     setSidebarView("scripts");
@@ -384,13 +391,17 @@ export function AgentWorkbenchScreen({
         DEFAULT_ARTIFACT_FILE_LOCATOR,
         {
           openFile: async (location, shouldCommit) => {
-            const opened = await openPinnedFile(
-              {
-                kind: "file",
-                name: location.filePath.slice(location.filePath.lastIndexOf("/") + 1),
-                path: location.filePath,
-              },
-              shouldCommit,
+            const opened = await openThenRevealFiles(
+              () =>
+                openPinnedFile(
+                  {
+                    kind: "file",
+                    name: location.filePath.slice(location.filePath.lastIndexOf("/") + 1),
+                    path: location.filePath,
+                  },
+                  shouldCommit,
+                ),
+              revealFilesSurface,
             );
             if (!opened) throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
           },
@@ -399,21 +410,43 @@ export function AgentWorkbenchScreen({
       ),
       reportError: reportAgentArtifactFailure,
     }),
-    [openPinnedFile],
+    [openPinnedFile, revealFilesSurface],
   );
 
   const openTerminalLink = useCallback(
     (path: string, line?: number, column?: number) => {
       const position = { column: column ?? 1, lineNumber: line ?? 1 };
-      void openProblemNotice({
-        id: `agent-terminal:${path}:${position.lineNumber}:${position.column}`,
-        message: path,
-        navigationTarget: { path, range: { end: position, start: position } },
-        severity: "info",
-        source: "Terminal",
-      });
+      void openThenRevealFiles(
+        () =>
+          openProblemNotice({
+            id: `agent-terminal:${path}:${position.lineNumber}:${position.column}`,
+            message: path,
+            navigationTarget: { path, range: { end: position, start: position } },
+            severity: "info",
+            source: "Terminal",
+          }),
+        revealFilesSurface,
+      );
     },
-    [openProblemNotice],
+    [openProblemNotice, revealFilesSurface],
+  );
+
+  const openFileLocation = useCallback<AgentFileLocationOpener>(
+    (location) => {
+      const position = { column: location.column ?? 1, lineNumber: location.line ?? 1 };
+      return openThenRevealFiles(
+        () =>
+          openProblemNotice({
+            id: `agent-link:${location.path}:${position.lineNumber}:${position.column}`,
+            message: location.path,
+            navigationTarget: { path: location.path, range: { end: position, start: position } },
+            severity: "info",
+            source: "Agent",
+          }),
+        revealFilesSurface,
+      );
+    },
+    [openProblemNotice, revealFilesSurface],
   );
 
   const localCloneSession = useRef<LocalProjectCloneSession["current"]>(null);
@@ -518,6 +551,7 @@ export function AgentWorkbenchScreen({
       onShowTerminalPanel: showTerminalPanel,
       onOpenScriptsView: openScriptsView,
       revealPath,
+      openFileLocation,
       onTrustWorkspace,
       onResizeRightPanelStart,
     }),
@@ -545,6 +579,7 @@ export function AgentWorkbenchScreen({
       onToggleBottomPanel,
       onTrustWorkspace,
       openPinnedFile,
+      openFileLocation,
       openScriptsView,
       openTerminalLink,
       previewFile,

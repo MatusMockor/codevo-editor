@@ -3,11 +3,12 @@ import type { RemoteReplayGap } from "./remoteAgentReplayWindow";
 import {
   agentThreadAttention,
   agentThreadLifecycle,
-  agentThreadTitle,
+  isTerminalAgentTurnStatus,
   MAX_AGENT_TURNS_PER_THREAD,
   type AgentThread,
   type AgentTurnStatus,
 } from "../domain/agentThread";
+import { agentThreadAutoTitle } from "../domain/agentThreadAutoTitle";
 import {
   appendRemoteAgentTranscript,
   createRemoteAgentTranscript,
@@ -217,11 +218,11 @@ function projectConversation(
     owner: { rootKey: projectKey, ownerId: projectKey, repositoryRoot: projectKey },
     target: { isolation: first.isolation ?? "worktree", worktreePath: null },
     provider: { kind: first.provider === "claude" ? "claudeCode" : "codex", sessionId: null },
-    title: agentThreadTitle(prompt(first)),
+    title: agentThreadAutoTitle(prompt(first)),
     pinned: false,
     archived: false,
     createdAtEpochMs: timestamp(first.createdAt),
-    updatedAtEpochMs: timestamp(latest.createdAt),
+    updatedAtEpochMs: latestActivityAt(latest, transcripts.get(latest.id)),
     turns: tasks.map((task) => {
       const transcript = transcripts.get(task.id)!;
       return {
@@ -293,7 +294,7 @@ function projectConversation(
   return {
     thread,
     lifecycle: agentThreadLifecycle(thread),
-    attention: agentThreadAttention(thread),
+    attention: agentThreadAttention(thread, false),
     unread: false,
     repositoryLabel:
       input.projects.find((project) => project.id === projectId)?.name ?? "Server project",
@@ -316,6 +317,39 @@ function projectConversation(
       resume: input.resumes.get(latest.id) ?? null,
     },
   };
+}
+
+export function remoteAgentThreadUnread(thread: AgentThread): boolean {
+  if (thread.archived) return false;
+  const last = thread.turns[thread.turns.length - 1];
+  if (last === undefined || !isTerminalAgentTurnStatus(last.status)) return false;
+  if (thread.viewedAtEpochMs === null) return true;
+  return thread.updatedAtEpochMs > thread.viewedAtEpochMs;
+}
+
+export function presentRemoteAgentThread(
+  view: AgentThreadView,
+  thread: AgentThread,
+  tracksViews: boolean,
+): AgentThreadView {
+  const unread = tracksViews && remoteAgentThreadUnread(thread);
+  return {
+    ...view,
+    thread,
+    lifecycle: thread.archived ? "archived" : view.lifecycle,
+    attention: agentThreadAttention(thread, unread),
+    unread,
+  };
+}
+
+function latestActivityAt(
+  latest: RemoteRunnerTask,
+  transcript: RemoteAgentTranscript | undefined,
+): number {
+  const createdAt = timestamp(latest.createdAt);
+  if (!isTerminal(latest)) return createdAt;
+  const endedAt = transcript?.finished === true ? transcript.endedAtEpochMs : null;
+  return Math.max(createdAt + 1, endedAt ?? 0);
 }
 
 function prompt(task: RemoteRunnerTask): string {

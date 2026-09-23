@@ -37,6 +37,17 @@ interface Options {
   ): Promise<readonly RemoteRunnerPart[]>;
 }
 type Request = AgentThreadStartRequest | AgentFollowUpRequest;
+interface Execution {
+  stopAfter: boolean;
+}
+const EMPTY_KEYS: ReadonlySet<string> = new Set();
+export const MAX_REMOTE_IN_FLIGHT_MUTATIONS = 32;
+export const REMOTE_CONVERSATION_BUSY_NOTICE =
+  "This remote conversation is already sending a message. Wait for it to arrive.";
+export const REMOTE_STOP_UNAPPLIED_NOTICE =
+  "Stop could not be applied because the message was not confirmed. Refresh the conversation and stop it if it is running.";
+export const REMOTE_MUTATIONS_FULL_NOTICE =
+  "Too many remote actions are in progress. Wait for one to finish.";
 function sameLaunch(task: RemoteRunnerTask, expected: AgentLaunchOptions): boolean {
   const actual = task.launch;
   if (!actual) return false;
@@ -87,8 +98,11 @@ function sameParts(left: readonly RemoteRunnerPart[], right: readonly RemoteRunn
 
 /** Owns exact commands across uncertain delivery; display selection never grants execution authority. */
 export function useRemoteAgentMutations(options: Options) {
-  const [busy, setBusy] = useState(false);
-  const active = useRef(false);
+  const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(EMPTY_KEYS);
+  const [stopping, setStopping] = useState(false);
+  const executions = useRef(new Map<string, Execution>());
+  const executionKeys = useRef(new Map<string, string>());
+  const stops = useRef(new Map<string, Promise<void>>());
   const mounted = useRef(true);
   const latest = useRef(options);
   latest.current = options;
@@ -105,16 +119,63 @@ export function useRemoteAgentMutations(options: Options) {
     latest.current.gateway === options.gateway &&
     options.valid(options.owner);
 
+  const publishActivity = () => {
+    if (!mounted.current) return;
+    setBusyKeys(
+      executionKeys.current.size === 0 ? EMPTY_KEYS : new Set(executionKeys.current.values()),
+    );
+    setStopping(stops.current.size > 0);
+  };
+
   async function execute(
     request: Request,
     target: RemoteAgentMutationTarget,
     continuation: boolean,
+    dispatchKey: string,
   ): Promise<RemoteRunnerTask | null> {
     const gateway = options.gateway;
-    if (!gateway || !valid() || active.current) return null;
-    active.current = true;
-    setBusy(true);
+    if (!gateway || !valid()) return null;
     const targetKey = key(target);
+    if (executions.current.has(targetKey)) {
+      options.report(REMOTE_CONVERSATION_BUSY_NOTICE);
+      return null;
+    }
+    if (executions.current.size >= MAX_REMOTE_IN_FLIGHT_MUTATIONS) {
+      options.report(REMOTE_MUTATIONS_FULL_NOTICE);
+      return null;
+    }
+    const execution: Execution = { stopAfter: false };
+    executions.current.set(targetKey, execution);
+    executionKeys.current.set(targetKey, dispatchKey);
+    publishActivity();
+    let task: RemoteRunnerTask | null;
+    try {
+      task = await executeOwned(gateway, request, target, continuation, targetKey);
+    } finally {
+      executions.current.delete(targetKey);
+      executionKeys.current.delete(targetKey);
+      publishActivity();
+    }
+    if (!execution.stopAfter) return task;
+    if (task === null) {
+      if (valid()) options.report(REMOTE_STOP_UNAPPLIED_NOTICE);
+      return null;
+    }
+    await stop({
+      ...target,
+      conversationId: task.conversationId ?? task.id,
+      latestTaskId: task.id,
+    });
+    return task;
+  }
+
+  async function executeOwned(
+    gateway: RemoteRunnerGateway,
+    request: Request,
+    target: RemoteAgentMutationTarget,
+    continuation: boolean,
+    targetKey: string,
+  ): Promise<RemoteRunnerTask | null> {
     const launch = agentLaunchWithoutBrowser(request.launch);
     const signature = JSON.stringify([
       continuation,
@@ -294,24 +355,47 @@ export function useRemoteAgentMutations(options: Options) {
         );
       }
       return null;
-    } finally {
-      active.current = false;
-      if (mounted.current) setBusy(false);
     }
   }
-  async function stop(target: RemoteAgentMutationTarget): Promise<void> {
+  function stop(target: RemoteAgentMutationTarget): Promise<void> {
     const gateway = options.gateway;
-    if (!gateway || !target.latestTaskId || !valid() || active.current) return;
-    active.current = true;
-    setBusy(true);
+    if (!gateway || !valid()) return Promise.resolve();
+    const targetKey = key(target);
+    const execution = executions.current.get(targetKey);
+    if (execution !== undefined) {
+      execution.stopAfter = true;
+      return Promise.resolve();
+    }
+    const latestTaskId = target.latestTaskId;
+    if (!latestTaskId) return Promise.resolve();
+    const stopKey = JSON.stringify([targetKey, latestTaskId]);
+    const existing = stops.current.get(stopKey);
+    if (existing !== undefined) return existing;
+    if (stops.current.size >= MAX_REMOTE_IN_FLIGHT_MUTATIONS) {
+      options.report(REMOTE_MUTATIONS_FULL_NOTICE);
+      return Promise.resolve();
+    }
+    const running = cancelOwned(gateway, target, latestTaskId).finally(() => {
+      stops.current.delete(stopKey);
+      publishActivity();
+    });
+    stops.current.set(stopKey, running);
+    publishActivity();
+    return running;
+  }
+  async function cancelOwned(
+    gateway: RemoteRunnerGateway,
+    target: RemoteAgentMutationTarget,
+    latestTaskId: string,
+  ): Promise<void> {
     try {
       const task = await gateway.getTask({
         serverId: target.serverId,
-        taskId: target.latestTaskId,
+        taskId: latestTaskId,
       });
       if (!valid()) return;
       if (
-        task.id !== target.latestTaskId ||
+        task.id !== latestTaskId ||
         task.runnerId !== target.runnerId ||
         task.projectId !== target.projectId ||
         (task.conversationId ?? task.id) !== target.conversationId
@@ -333,17 +417,21 @@ export function useRemoteAgentMutations(options: Options) {
     } catch (error) {
       if (valid())
         options.report(remoteRunnerErrorMessage(error, "Could not stop remote execution."));
-    } finally {
-      active.current = false;
-      if (mounted.current) setBusy(false);
     }
   }
   return {
-    busy,
-    start: (request: AgentThreadStartRequest, target: RemoteAgentMutationTarget) =>
-      execute(request, target, false),
-    followUp: (request: AgentFollowUpRequest, target: RemoteAgentMutationTarget) =>
-      execute(request, target, true),
+    busy: busyKeys.size > 0 || stopping,
+    busyKeys,
+    start: (
+      request: AgentThreadStartRequest,
+      target: RemoteAgentMutationTarget,
+      dispatchKey: string = key(target),
+    ) => execute(request, target, false, dispatchKey),
+    followUp: (
+      request: AgentFollowUpRequest,
+      target: RemoteAgentMutationTarget,
+      dispatchKey: string = key(target),
+    ) => execute(request, target, true, dispatchKey),
     stop,
   };
 }

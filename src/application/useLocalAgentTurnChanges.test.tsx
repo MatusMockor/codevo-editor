@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentThread, AgentTurn } from "../domain/agentThread";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentTurnChangeSummary, AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import {
   useLocalAgentTurnChanges,
@@ -58,6 +58,45 @@ const summary: AgentTurnChangeSummary = {
   truncated: false,
   reason: null,
 };
+const notes: AgentTurnChangeSummary = {
+  ...summary,
+  files: [
+    {
+      relativePath: "notes.md",
+      oldRelativePath: null,
+      status: "added",
+      addedLines: 1,
+      deletedLines: 0,
+    },
+  ],
+};
+const gitProject: AgentProjectDescriptor = {
+  ...project,
+  ownerId: "workspace-1",
+  runtimeOwnerIds: ["workspace-1"],
+  repositories: [
+    {
+      mapping: { rootRelativePath: "" },
+      repositoryRoot: "/repo",
+      repositoryRelativePath: "",
+    },
+  ],
+};
+const rootOwnedThread: AgentThread = {
+  ...thread,
+  owner: { rootKey: "/repo", ownerId: agentRootOwnerId("/repo"), repositoryRoot: "/repo" },
+  target: { isolation: "in-place", worktreePath: null },
+};
+const deniedDeps = (
+  projectValue: AgentProjectDescriptor,
+  threadValue: AgentThread,
+  port: AgentTurnChangesGateway | null,
+): LocalAgentTurnChangesDependencies => ({
+  gateway: port,
+  projects: [projectValue],
+  threads: new Map([[threadValue.threadId, threadValue]]),
+  historyPage: null,
+});
 function gateway(): AgentTurnChangesGateway {
   return {
     getSummary: vi.fn(async () => summary),
@@ -104,8 +143,8 @@ describe("local recorded turn changes authority", () => {
     try {
       expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("ready");
       expect(port.getSummary).toHaveBeenCalledExactlyOnceWith("/worktrees/one", "old");
-      expect((await h.surface.getTurnChanges("thread", "other")).state).toBe("unavailable");
-      expect((await h.surface.getTurnChanges("foreign", "old")).state).toBe("unavailable");
+      expect((await h.surface.getTurnChanges("thread", "other")).state).toBe("unsupported");
+      expect((await h.surface.getTurnChanges("foreign", "old")).state).toBe("unsupported");
       h.render({
         ...deps,
         historyPage: null,
@@ -113,7 +152,7 @@ describe("local recorded turn changes authority", () => {
           [thread.threadId, { ...thread, turns: [{ ...turn, status: { kind: "running" } }] }],
         ]),
       });
-      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unavailable");
+      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unsupported");
       expect(port.getSummary).toHaveBeenCalledTimes(1);
     } finally {
       h.close();
@@ -139,16 +178,16 @@ describe("local recorded turn changes authority", () => {
     const h = harness(deps);
     try {
       const pending = h.surface.getTurnChanges("thread", "old");
-      await Promise.resolve();
+      await vi.waitFor(() => expect(port.getSummary).toHaveBeenCalledTimes(1));
       h.render({ ...deps, projects: [] });
       h.render(deps);
       finish(summary);
-      expect((await pending).state).toBe("unavailable");
+      expect((await pending).state).toBe("unsupported");
       const again = h.surface.getTurnChanges("thread", "old");
-      await Promise.resolve();
+      await vi.waitFor(() => expect(port.getSummary).toHaveBeenCalledTimes(2));
       h.render({ ...deps, gateway: gateway() });
       finish(summary);
-      expect((await again).state).toBe("unavailable");
+      expect((await again).state).toBe("unsupported");
     } finally {
       h.close();
     }
@@ -231,6 +270,130 @@ describe("local recorded turn changes authority", () => {
       h.close();
     }
   });
+  it("reads a finished in-place turn whose thread kept the agent-root owner after the workspace id replaced it", async () => {
+    const port = { ...gateway(), getSummary: vi.fn(async () => notes) };
+    const h = harness({
+      gateway: port,
+      projects: [gitProject],
+      threads: new Map([[rootOwnedThread.threadId, rootOwnedThread]]),
+      historyPage: null,
+    });
+    try {
+      const result = await h.surface.getTurnChanges("thread", "old");
+      expect(port.getSummary).toHaveBeenCalledExactlyOnceWith("/repo", "old");
+      expect(result.state).toBe("ready");
+      expect(result.files.map((file) => file.relativePath)).toEqual(["notes.md"]);
+    } finally {
+      h.close();
+    }
+  });
+  it.each([
+    [
+      "a foreign workspace owner",
+      gitProject,
+      { ...rootOwnedThread, owner: { ...rootOwnedThread.owner, ownerId: "workspace-2" } },
+      "Recorded changes belong to a project session that is no longer open.",
+    ],
+    [
+      "an agent-root owner derived from a different root",
+      gitProject,
+      {
+        ...rootOwnedThread,
+        owner: { ...rootOwnedThread.owner, ownerId: agentRootOwnerId("/other") },
+      },
+      "Recorded changes belong to a project session that is no longer open.",
+    ],
+    [
+      "an untrusted git project",
+      { ...gitProject, trust: "untrusted" as const },
+      rootOwnedThread,
+      "Trust this project to view recorded changes.",
+    ],
+    [
+      "a launch root outside the project repositories",
+      gitProject,
+      { ...rootOwnedThread, owner: { ...rootOwnedThread.owner, repositoryRoot: "/elsewhere" } },
+      "Recorded changes are outside this project's repositories.",
+    ],
+  ])("reports %s as a muted unavailable line without reading", async (_, p, t, reason) => {
+    const port = gateway();
+    const h = harness(deniedDeps(p, t, port));
+    try {
+      const result = await h.surface.getTurnChanges("thread", "old");
+      expect(result).toEqual({
+        turnId: "old",
+        state: "unavailable",
+        files: [],
+        truncated: false,
+        reason,
+      });
+      expect(port.getSummary).not.toHaveBeenCalled();
+    } finally {
+      h.close();
+    }
+  });
+  it("reports a missing gateway in a git project and hides non-git or unfinished turns", async () => {
+    const missing = harness(deniedDeps(gitProject, rootOwnedThread, null));
+    try {
+      expect((await missing.surface.getTurnChanges("thread", "old")).reason).toBe(
+        "Recorded changes cannot be read in this session.",
+      );
+    } finally {
+      missing.close();
+    }
+    const port = gateway();
+    const running = {
+      ...rootOwnedThread,
+      turns: [{ ...turn, status: { kind: "running" as const } }],
+    };
+    const h = harness(deniedDeps({ ...gitProject, trust: "untrusted" }, running, port));
+    try {
+      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unsupported");
+      expect((await h.surface.getTurnChanges("missing", "old")).state).toBe("unsupported");
+      h.render(
+        deniedDeps({ ...gitProject, repositories: [], trust: "untrusted" }, rootOwnedThread, port),
+      );
+      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unsupported");
+      expect(port.getSummary).not.toHaveBeenCalled();
+    } finally {
+      h.close();
+    }
+  });
+  it("revokes an agent-root thread read across project A-B-A and never reads the replaced owner", async () => {
+    let finish!: (value: AgentTurnChangeSummary) => void;
+    const port = {
+      ...gateway(),
+      getSummary: vi.fn(
+        () =>
+          new Promise<AgentTurnChangeSummary>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    };
+    const deps = deniedDeps(gitProject, rootOwnedThread, port);
+    const h = harness(deps);
+    try {
+      const pending = h.surface.getTurnChanges("thread", "old");
+      await vi.waitFor(() => expect(port.getSummary).toHaveBeenCalledTimes(1));
+      const other = {
+        ...gitProject,
+        rootKey: "/other",
+        rootPath: "/other",
+        ownerId: "workspace-2",
+      };
+      h.render({ ...deps, projects: [other] });
+      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unsupported");
+      h.render({ ...deps, projects: [{ ...gitProject, generation: 2 }] });
+      finish(notes);
+      expect((await pending).state).toBe("unsupported");
+      const again = h.surface.getTurnChanges("thread", "old");
+      await vi.waitFor(() => expect(port.getSummary).toHaveBeenCalledTimes(2));
+      finish(notes);
+      expect((await again).files.map((file) => file.relativePath)).toEqual(["notes.md"]);
+    } finally {
+      h.close();
+    }
+  });
   it("never reads an untrusted or foreign project owner", async () => {
     const port = gateway();
     const deps = {
@@ -241,10 +404,70 @@ describe("local recorded turn changes authority", () => {
     };
     const h = harness(deps);
     try {
-      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unavailable");
+      expect((await h.surface.getTurnChanges("thread", "old")).state).toBe("unsupported");
       expect(port.getSummary).not.toHaveBeenCalled();
     } finally {
       h.close();
     }
   });
+});
+
+it("retains authority for a full burst of completed turns while reads queue", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const port = {
+    ...gateway(),
+    getSummary: vi.fn(async (_root: string, turnId: string) => {
+      await gate;
+      return { ...summary, turnId };
+    }),
+  };
+  const turns = Array.from({ length: 100 }, (_, i) => ({ ...turn, turnId: String(i) }));
+  const h = harness({
+    gateway: port,
+    projects: [project],
+    threads: new Map([[thread.threadId, { ...thread, turns }]]),
+    historyPage: null,
+  });
+  try {
+    const jobs = turns.map((value) => h.surface.getTurnChanges("thread", value.turnId));
+    await vi.waitFor(() => expect(port.getSummary).toHaveBeenCalledTimes(4));
+    release();
+    expect((await Promise.all(jobs)).every((value) => value.state === "ready")).toBe(true);
+    expect(port.getSummary).toHaveBeenCalledTimes(100);
+  } finally {
+    release();
+    h.close();
+  }
+});
+it("settles queued work on unmount before active backend work finishes", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const port = {
+    ...gateway(),
+    getSummary: vi.fn(async (_root: string, turnId: string) => {
+      await gate;
+      return { ...summary, turnId };
+    }),
+  };
+  const turns = Array.from({ length: 8 }, (_, i) => ({ ...turn, turnId: String(i) }));
+  const h = harness({
+    gateway: port,
+    projects: [project],
+    threads: new Map([[thread.threadId, { ...thread, turns }]]),
+    historyPage: null,
+  });
+  const jobs = turns.map((value) => h.surface.getTurnChanges("thread", value.turnId));
+  await vi.waitFor(() => expect(port.getSummary).toHaveBeenCalledTimes(4));
+  h.close();
+  expect((await Promise.all(jobs.slice(4))).every((value) => value.state === "unsupported")).toBe(
+    true,
+  );
+  release();
+  expect((await Promise.all(jobs)).every((value) => value.state === "unsupported")).toBe(true);
+  expect(port.getSummary).toHaveBeenCalledTimes(4);
 });

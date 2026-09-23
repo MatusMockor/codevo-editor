@@ -409,28 +409,14 @@ impl CodexHostStderrRing {
     }
 }
 
+#[path = "codex_app_server_approvals.rs"]
+pub mod approvals;
+
 pub struct CodexApprovalDecliner;
 
 impl CodexServerRequestHandler for CodexApprovalDecliner {
     fn decline(&self, method: &str, _params: &Value) -> Option<Value> {
-        match method {
-            "item/commandExecution/requestApproval" => Some(json!({ "decision": "decline" })),
-            "item/fileChange/requestApproval" => Some(json!({ "decision": "decline" })),
-            "execCommandApproval" => Some(json!({ "decision": "denied" })),
-            "applyPatchApproval" => Some(json!({ "decision": "denied" })),
-            "item/permissions/requestApproval" => {
-                Some(json!({ "permissions": {}, "scope": "turn" }))
-            }
-            "mcpServer/elicitation/request" => Some(json!({ "action": "decline" })),
-            "item/tool/call" => Some(json!({
-                "success": false,
-                "contentItems": [{
-                    "type": "inputText",
-                    "text": "Codevo runs Codex without interactive approvals.",
-                }],
-            })),
-            _ => None,
-        }
+        approvals::decline_result(method)
     }
 }
 

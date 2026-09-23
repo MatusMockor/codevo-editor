@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
 
+#[path = "agent_approvals.rs"]
+pub mod approvals;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentQuestionOption {
@@ -153,15 +156,21 @@ struct State {
 #[derive(Default)]
 pub struct AgentQuestionSession {
     state: Mutex<State>,
+    approvals: approvals::AgentApprovalRegistry,
 }
 impl AgentQuestionSession {
+    pub fn approvals(&self) -> &approvals::AgentApprovalRegistry {
+        &self.approvals
+    }
     pub fn has_pending(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entries
-            .iter()
-            .any(|entry| entry.request.status == AgentQuestionStatus::Pending)
+        self.approvals.has_pending()
+            || self
+                .state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entries
+                .iter()
+                .any(|entry| entry.request.status == AgentQuestionStatus::Pending)
     }
     pub fn failure(&self) -> Option<String> {
         self.state
@@ -230,6 +239,7 @@ impl AgentQuestionSession {
             .collect()
     }
     pub fn expire(&self, request_id: &str) {
+        self.approvals.expire(request_id);
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = state
             .entries
@@ -243,6 +253,7 @@ impl AgentQuestionSession {
         }
     }
     pub fn cancel(&self, request_id: &str) {
+        self.approvals.cancel(request_id);
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = state
             .entries
@@ -256,6 +267,7 @@ impl AgentQuestionSession {
         }
     }
     pub fn finish(&self) {
+        self.approvals.finish();
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.closed = true;
         for entry in &mut state.entries {
@@ -266,6 +278,7 @@ impl AgentQuestionSession {
         }
     }
     pub fn close(&self) {
+        self.approvals.close();
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.closed = true;
         for entry in &mut state.entries {

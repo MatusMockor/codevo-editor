@@ -41,6 +41,10 @@ import type { ExternalAgentSessionView } from "../../domain/externalAgentSession
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { COMPOSER_REPOSITORY_PREFERENCE_KEY } from "./useAgentComposerRepositoryPreference";
+import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
+import type { AgentQueuedEditSession } from "../../application/agentQueuedFollowUpEdit";
+
+const QUEUED_ATTACHMENT_ID = "0123456789abcdef0123456789abcdef";
 
 const ROOT = "/workspace/app";
 const DEFAULT_DISPATCH_LAUNCH = agentLaunchForDispatch(defaultAgentComposerLaunch("claudeCode"));
@@ -589,9 +593,11 @@ describe("AgentModeView", () => {
     expect(promptField().value).toBe("Also update the tests");
   });
 
-  it("blocks a follow-up into a thread without a resumable session", () => {
+  it("lets a thread without a resumable session continue in a new session", async () => {
+    const sendFollowUp = vi.fn(async () => true);
     render({
       agents: surface({
+        sendFollowUp,
         threads: [threadView({ threadId: "agt-1", sessionId: null })],
       }),
     });
@@ -599,8 +605,12 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
     typePrompt("Also update the tests");
 
-    expect(host.textContent).toContain("This thread has no resumable session");
-    expect(submitButton().disabled).toBe(true);
+    expect(host.textContent).not.toContain("no resumable session");
+    expect(submitButton().disabled).toBe(false);
+    await submitFormAsync();
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: "agt-1", prompt: "Also update the tests" }),
+    );
   });
 
   it("blocks a follow-up while a nonqueueable thread is running but keeps Stop usable", () => {
@@ -668,6 +678,7 @@ describe("AgentModeView", () => {
         delivery: followUpBehavior === "queue" ? "queued" : "immediate",
         threadId: "agt-1",
         prompt: "also run the tests",
+        dangerousLaunchConfirmed: true,
       });
       expect(sendFollowUp).not.toHaveBeenCalled();
 
@@ -741,127 +752,302 @@ describe("AgentModeView", () => {
     expect(removeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
   });
 
-  it("edits a queued message back into the composer and empties the queue", () => {
-    const queued = {
+  function queuedImageEntry(editLease?: number): DeferredFollowUp {
+    return {
       id: "deferred-1",
       request: {
         threadId: "agt-1",
         prompt: "and then ship it",
         launch: defaultAgentComposerLaunch("claudeCode"),
+        attachments: [
+          {
+            kind: "staged",
+            attachmentId: QUEUED_ATTACHMENT_ID,
+            name: "shot.png",
+            bytes: 2_048,
+            mime: "image/png",
+            width: 800,
+            height: 600,
+          },
+        ],
       },
       queuedAtEpochMs: NOW,
+      ...(editLease === undefined ? {} : { editLease }),
     };
-    const takeDeferredFollowUp = vi.fn(() => queued.request);
-    const threads = [
-      threadView({
-        threadId: "agt-1",
-        status: { kind: "running" },
-        launch: defaultAgentComposerLaunch("claudeCode"),
-      }),
-    ];
-    render({
-      agents: surface({
-        takeDeferredFollowUp,
-        deferredFollowUps: new Map([["agt-1", [queued]]]),
-        threads,
-      }),
-    });
+  }
 
-    clickText("Refactor the parser");
-    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("and then ship it");
-
-    click('button[aria-label="Edit queued message"]');
-    expect(takeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
-
-    render({
-      agents: surface({ takeDeferredFollowUp, deferredFollowUps: new Map(), threads }),
-    });
-
-    expect(host.querySelector(".agent-prompt--queued")).toBeNull();
-    expect(promptField().value).toBe("and then ship it");
-    expect(document.activeElement).toBe(promptField());
-    expect(promptField().selectionStart).toBe("and then ship it".length);
-  });
-
-  it("appends an edited queued message under the unsent composer text", () => {
-    const queued = {
-      id: "deferred-1",
-      request: {
-        threadId: "agt-1",
-        prompt: "and then ship it",
-        launch: defaultAgentComposerLaunch("claudeCode"),
-      },
-      queuedAtEpochMs: NOW,
+  function queuedEditSession(): AgentQueuedEditSession {
+    return {
+      threadId: "agt-1",
+      entryId: "deferred-1",
+      lease: 7,
+      prompt: "and then ship it",
+      attachments: [
+        {
+          key: "attachment-0",
+          attachment: {
+            kind: "image",
+            attachmentId: QUEUED_ATTACHMENT_ID,
+            name: "shot.png",
+            mime: "image/png",
+            bytes: 2_048,
+            width: 800,
+            height: 600,
+            storedPath: `/data/threads/agt-1/${QUEUED_ATTACHMENT_ID}.png`,
+          },
+        },
+      ],
     };
-    const takeDeferredFollowUp = vi.fn(() => queued.request);
-    const threads = [
-      threadView({
-        threadId: "agt-1",
-        status: { kind: "running" },
-        launch: defaultAgentComposerLaunch("claudeCode"),
-      }),
-    ];
-    render({
-      agents: surface({
-        takeDeferredFollowUp,
-        deferredFollowUps: new Map([["agt-1", [queued]]]),
-        threads,
-      }),
-    });
+  }
 
+  function queuedEditSurface(
+    entry: DeferredFollowUp,
+    edits: Partial<AgentModeViewProps["agents"]>,
+  ): AgentModeViewProps["agents"] {
+    return surface({
+      ...edits,
+      deferredFollowUps: new Map([["agt-1", [entry]]]),
+      threads: [
+        threadView({
+          threadId: "agt-1",
+          status: { kind: "running" },
+          launch: defaultAgentComposerLaunch("claudeCode"),
+        }),
+        threadView({ threadId: "agt-2", title: "Second task" }),
+      ],
+    });
+  }
+
+  it("edits a queued message with an attachment in the composer and saves it in place", async () => {
+    const session = queuedEditSession();
+    const beginDeferredFollowUpEdit = vi.fn(() => session);
+    const commitDeferredFollowUpEdit = vi.fn(async () => true);
+    const cancelDeferredFollowUpEdit = vi.fn();
+    const steer = vi.fn(async () => "deferred" as const);
+    const edits = {
+      beginDeferredFollowUpEdit,
+      commitDeferredFollowUpEdit,
+      cancelDeferredFollowUpEdit,
+      steer,
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
     clickText("Refactor the parser");
     typePrompt("half a thought");
 
+    const pencil = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Edit queued message"]',
+    );
+    expect(pencil?.disabled).toBe(false);
+    expect(host.textContent).not.toContain("can't be edited");
     click('button[aria-label="Edit queued message"]');
-    render({
-      agents: surface({ takeDeferredFollowUp, deferredFollowUps: new Map(), threads }),
-    });
+    expect(beginDeferredFollowUpEdit).toHaveBeenCalledWith("agt-1", "deferred-1");
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
 
-    const merged = "half a thought\n\nand then ship it";
-    expect(promptField().value).toBe(merged);
-    expect(document.activeElement).toBe(promptField());
-    expect(promptField().selectionStart).toBe(merged.length);
-    expect(host.querySelector(".agent-prompt--queued")).toBeNull();
+    expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Editing");
+    expect(promptField().value).toBe("and then ship it");
+    const bar = host.querySelector('[aria-label="Editing queued message"]');
+    expect(bar?.querySelector('[aria-label="Remove shot.png"]')).not.toBeNull();
+
+    typePrompt("ship it after the tests pass");
+    await submitFormAsync();
+
+    expect(commitDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session, {
+      prompt: "ship it after the tests pass",
+      keptAttachmentKeys: ["attachment-0"],
+    });
+    expect(steer).not.toHaveBeenCalled();
+    expect(cancelDeferredFollowUpEdit).not.toHaveBeenCalled();
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    expect(promptField().value).toBe("half a thought");
   });
 
-  it("keeps the composer untouched when the queued message can no longer be taken", () => {
-    const takeDeferredFollowUp = vi.fn(() => null);
+  it("removes a kept attachment while editing and saves without it", async () => {
+    const session = queuedEditSession();
+    const commitDeferredFollowUpEdit = vi.fn(async () => true);
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit,
+      cancelDeferredFollowUpEdit: vi.fn(),
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+
+    click('[aria-label="Editing queued message"] [aria-label="Remove shot.png"]');
+    expect(host.querySelector('[aria-label="Remove shot.png"]')).toBeNull();
+    await submitFormAsync();
+
+    expect(commitDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session, {
+      prompt: "and then ship it",
+      keptAttachmentKeys: [],
+    });
+  });
+
+  it("cancels an edit, restores the parked draft, and leaves the queued entry alone", () => {
+    const session = queuedEditSession();
+    const cancelDeferredFollowUpEdit = vi.fn();
+    const commitDeferredFollowUpEdit = vi.fn(async () => true);
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit,
+      cancelDeferredFollowUpEdit,
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    typePrompt("half a thought");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+    typePrompt("discard this change");
+
+    click('button[aria-label="Cancel editing queued message"]');
+
+    expect(cancelDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session);
+    expect(commitDeferredFollowUpEdit).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    expect(promptField().value).toBe("half a thought");
+  });
+
+  it("ends an edit when the thread changes and keeps the typed text as a draft on A", () => {
+    const session = queuedEditSession();
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit: vi.fn(async () => true),
+      cancelDeferredFollowUpEdit: vi.fn(),
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    typePrompt("half a thought");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+    typePrompt("edited on A");
+
+    clickText("Second task");
+    expect(edits.cancelDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session);
+    expect(edits.commitDeferredFollowUpEdit).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    expect(promptField().value).toBe("");
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+
+    clickText("Refactor the parser");
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Queued");
+    expect(promptField().value).toBe("half a thought\n\nedited on A");
+    expect(edits.cancelDeferredFollowUpEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the parked draft when an untouched edit is left for another thread", () => {
+    const session = queuedEditSession();
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit: vi.fn(async () => true),
+      cancelDeferredFollowUpEdit: vi.fn(),
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    typePrompt("half a thought");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+
+    clickText("Second task");
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+
+    expect(promptField().value).toBe("half a thought");
+  });
+
+  it("labels the submit control as saving while editing and hides the delivery toggle", async () => {
+    const session = queuedEditSession();
+    const steer = vi.fn(async () => "deferred" as const);
+    const stop = vi.fn(async () => undefined);
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit: vi.fn(async () => true),
+      cancelDeferredFollowUpEdit: vi.fn(),
+      steer,
+      stop,
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    expect(host.querySelector('button[aria-label="Send now"]')).not.toBeNull();
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+
+    expect(submitButton().getAttribute("aria-label")).toBe("Save queued message");
+    expect(host.querySelector('button[aria-label="Send now"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="Queue message"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="Stop agent"]')).not.toBeNull();
+
+    typePrompt("edited");
+    await act(async () => {
+      for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+        promptField().dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter", ...modifier }),
+        );
+      }
+      await Promise.resolve();
+    });
+    expect(edits.commitDeferredFollowUpEdit).not.toHaveBeenCalled();
+    expect(steer).not.toHaveBeenCalled();
+    expect(promptField().value).toBe("edited");
+
+    await act(async () => {
+      promptField().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      await Promise.resolve();
+    });
+    expect(edits.commitDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session, {
+      prompt: "edited",
+      keptAttachmentKeys: ["attachment-0"],
+    });
+    expect(steer).not.toHaveBeenCalled();
+  });
+
+  it("cancels the edit on Escape instead of stopping the running agent", () => {
+    const session = queuedEditSession();
+    const stop = vi.fn(async () => undefined);
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit: vi.fn(async () => true),
+      cancelDeferredFollowUpEdit: vi.fn(),
+      stop,
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    typePrompt("half a thought");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+
+    act(() => {
+      promptField().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+
+    expect(edits.cancelDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session);
+    expect(stop).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    expect(promptField().value).toBe("half a thought");
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+
+    act(() => {
+      promptField().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+    expect(stop).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("keeps the composer untouched when the queued message can no longer be edited", () => {
+    const beginDeferredFollowUpEdit = vi.fn(() => null);
     render({
-      agents: surface({
-        takeDeferredFollowUp,
-        deferredFollowUps: new Map([
-          [
-            "agt-1",
-            [
-              {
-                id: "deferred-1",
-                request: {
-                  threadId: "agt-1",
-                  prompt: "and then ship it",
-                  launch: defaultAgentComposerLaunch("claudeCode"),
-                },
-                queuedAtEpochMs: NOW,
-              },
-            ],
-          ],
-        ]),
-        threads: [
-          threadView({
-            threadId: "agt-1",
-            status: { kind: "running" },
-            launch: defaultAgentComposerLaunch("claudeCode"),
-          }),
-        ],
-      }),
+      agents: queuedEditSurface(queuedImageEntry(), { beginDeferredFollowUpEdit }),
     });
 
     clickText("Refactor the parser");
-    typePrompt("");
+    typePrompt("keep me");
     click('button[aria-label="Edit queued message"]');
 
-    expect(takeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
-    expect(promptField().value).toBe("");
-    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("and then ship it");
+    expect(beginDeferredFollowUpEdit).toHaveBeenCalledWith("agt-1", "deferred-1");
+    expect(promptField().value).toBe("keep me");
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Queued");
   });
 
   it("blocks a follow-up when the worktree is gone", () => {
@@ -2527,11 +2713,22 @@ describe("AgentModeView", () => {
   it("routes rename and mark unread from the row menu to the surface", () => {
     const renameThread = vi.fn();
     const markThreadUnread = vi.fn();
+    const settled = threadView({ threadId: "agt-1" });
+    const finished = {
+      ...settled,
+      thread: {
+        ...settled.thread,
+        turns: settled.thread.turns.map((entry) => ({
+          ...entry,
+          endedAtEpochMs: 1_700_000_060_000,
+        })),
+      },
+    };
     render({
       agents: surface({
         markThreadUnread,
         renameThread,
-        threads: [threadView({ threadId: "agt-1" })],
+        threads: [finished],
       }),
     });
 
@@ -3627,7 +3824,6 @@ function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeVie
     deferredFollowUps: new Map(),
     steer: async () => "sent" as const,
     removeDeferredFollowUp: () => undefined,
-    takeDeferredFollowUp: () => null,
     importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentProjectOwnsOwner, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentThread } from "../domain/agentThread";
 import type {
   WorkspaceFileChangeEvent,
@@ -26,12 +26,7 @@ export function externalAgentWorktreeRoot(
 ): string | null {
   const { project, thread, openWorkspaceRoots } = input;
   if (!project || !thread || thread.archived || thread.target.isolation !== "worktree") return null;
-  if (
-    thread.owner.rootKey !== project.rootKey ||
-    (thread.owner.ownerId !== project.ownerId &&
-      !project.runtimeOwnerIds?.includes(thread.owner.ownerId))
-  )
-    return null;
+  if (!agentProjectOwnsOwner(project, thread.owner)) return null;
   if (
     thread.owner.repositoryRoot !== project.rootPath &&
     !project.repositories.some((entry) => entry.repositoryRoot === thread.owner.repositoryRoot)

@@ -54,6 +54,7 @@ export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set
   "Agent task workspace is closing or busy.",
   "Agent task trust authority is busy.",
   "Agent task startup is closed.",
+  "The agent was stopped before it started.",
   "Too many agent tasks are starting or running.",
   "Too many agent tasks are starting or running in this repository.",
   "An agent task is already using this repository's working tree.",

@@ -33,6 +33,10 @@ import {
   type AgentTurnLogSummary,
 } from "../domain/agentTurnLog";
 import { attempt, projectByRootKey } from "./agentProjectAuthority";
+import {
+  settledAgentTurnPriorLoss,
+  type SettledAgentTurnHistory,
+} from "./agentTurnLifecycleMigration";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
 import type { AgentTurnLogIntegration } from "./useAgentTurnLogging";
 
@@ -404,6 +408,7 @@ export function createAgentTurnLogHydrator(
     );
     for (const { turnId, lifecycle } of plan.migrate) {
       if (currentThread(authority) === null) return false;
+      const history = settledTurnHistory(thread, summaries, turnId);
       const stored = await turnLog.storeSettledLifecycle({
         scope: {
           rootKey: authority.rootKey,
@@ -412,7 +417,7 @@ export function createAgentTurnLogHydrator(
           turnId,
         },
         lifecycle,
-        missingLog: !summaries.some((entry) => entry.turnId === turnId),
+        history,
       });
       if (currentThread(authority) === null) return false;
       if (stored) {
@@ -422,8 +427,8 @@ export function createAgentTurnLogHydrator(
             turnId,
             eventCount: 0,
             bytes: 0,
-            loss: { kind: "legacyWindow" },
-            sealed: true,
+            loss: settledAgentTurnPriorLoss(history),
+            sealed: history === "preLog",
             digest: null,
             prompt: null,
             promptOmitted: false,
@@ -537,6 +542,17 @@ function clippedPromptTurn(turn: AgentTurn): boolean {
   if (!isTerminalAgentTurnStatus(turn.status)) return false;
   if (turn.promptRestored === true) return false;
   return agentPromptLooksClipped(turn.prompt);
+}
+
+function settledTurnHistory(
+  thread: AgentThread,
+  summaries: ReadonlyArray<AgentTurnLogSummary>,
+  turnId: string,
+): SettledAgentTurnHistory {
+  if (summaries.some((entry) => entry.turnId === turnId)) return "recorded";
+  const turn = thread.turns.find((candidate) => candidate.turnId === turnId);
+  if (turn?.eventsTruncated !== true) return "recorded";
+  return "preLog";
 }
 
 function lifecycleCheckKey(authority: ThreadAuthority): string {

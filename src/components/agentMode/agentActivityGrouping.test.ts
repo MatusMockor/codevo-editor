@@ -3,6 +3,9 @@ import { toolRowKind } from "../../domain/agentToolRowPresentation";
 import {
   agentActivityEntries,
   agentActivityAttentionCount,
+  agentThoughtPresentation,
+  type AgentActivityEntry,
+  type AgentActivityThought,
   type AgentActivityTool,
 } from "./agentActivityGrouping";
 
@@ -32,7 +35,86 @@ function search(index: number, patch: Partial<AgentActivityTool> = {}): AgentAct
   return activityTool(index, { name: "Grep", rowKind: "search", inputSummary: "todo", ...patch });
 }
 
+function thought(index: number, text = `Thought ${index}`): AgentActivityThought {
+  return { kind: "reasoning", key: `e${index}`, text };
+}
+
+function onlyGroup(
+  entries: ReadonlyArray<AgentActivityEntry>,
+): Extract<AgentActivityEntry, { kind: "group" }> {
+  expect(entries).toHaveLength(1);
+  const [group] = entries;
+  expect(group?.kind).toBe("group");
+  return group as Extract<AgentActivityEntry, { kind: "group" }>;
+}
+
 describe("agentActivityEntries", () => {
+  it("joins reasoning into the surrounding tool run and counts only tools", () => {
+    const group = onlyGroup(
+      agentActivityEntries([activityTool(0), thought(1), activityTool(2), thought(3)]),
+    );
+    expect(group).toMatchObject({
+      key: "group:tool-0",
+      category: "command",
+      label: "Ran 2 commands",
+      phase: "settled",
+      tools: 2,
+    });
+    expect(group.items.map((item) => item.key)).toEqual(["e0", "e1", "e2", "e3"]);
+  });
+
+  it("labels reasoning-only runs as thoughts keyed by their first item", () => {
+    expect(onlyGroup(agentActivityEntries([thought(4)]))).toMatchObject({
+      key: "e4",
+      category: "thought",
+      label: "Thought",
+      tools: 0,
+    });
+    expect(onlyGroup(agentActivityEntries([thought(4), thought(5)])).label).toBe("Thought (×2)");
+  });
+
+  it("keeps reasoning from bridging a conversational boundary", () => {
+    const entries = agentActivityEntries([
+      activityTool(0),
+      thought(1),
+      { kind: "assistantText" as const, key: "e2", text: "Update", paragraphs: ["Update"] },
+      thought(3),
+      activityTool(4),
+    ]);
+    expect(
+      entries.map((entry) => [entry.kind, entry.key, "label" in entry && entry.label]),
+    ).toEqual([
+      ["group", "group:tool-0", "Ran 1 command"],
+      ["item", "e2", false],
+      ["group", "e3", "Ran 1 command"],
+    ]);
+  });
+
+  it("reports thinking only for the live trailing group whose latest item is reasoning", () => {
+    const items = [activityTool(0), thought(1), activityTool(2), thought(3)];
+    const live = onlyGroup(agentActivityEntries(items, "live"));
+    expect([live.phase, live.label]).toEqual(["thinking", "Thinking"]);
+    expect(onlyGroup(agentActivityEntries(items.slice(0, 3), "live")).phase).toBe("settled");
+    expect(onlyGroup(agentActivityEntries(items, "settled")).phase).toBe("settled");
+    const earlier = agentActivityEntries(
+      [thought(0), { kind: "assistantText" as const, key: "e1", text: "Now", paragraphs: ["Now"] }],
+      "live",
+    );
+    expect(earlier[0]).toMatchObject({ kind: "group", phase: "settled", label: "Thought" });
+
+    expect(agentThoughtPresentation(live, thought(3), "root")).toMatchObject({
+      phase: "thinking",
+      layout: "row",
+    });
+    expect(agentThoughtPresentation(live, thought(1), "root").phase).toBe("settled");
+    const bodyOnly = onlyGroup(agentActivityEntries([thought(7)], "live"));
+    expect(agentThoughtPresentation(bodyOnly, thought(7), "child")).toEqual({
+      phase: "thinking",
+      layout: "body",
+      disclosureKey: JSON.stringify(["thought", "child", "e7"]),
+    });
+  });
+
   it("preserves conversational, subagent and failure boundaries", () => {
     const items = [
       activityTool(0),
@@ -84,13 +166,10 @@ describe("agentActivityEntries", () => {
     ]);
     expect(entries.map((entry) => [entry.kind, entry.key])).toEqual([["group", "group:tool-0"]]);
     const [group] = entries;
-    expect(group.kind === "group" && group.items.map((item) => item.parentToolId)).toEqual([
-      undefined,
-      "a",
-      "a",
-      "b",
-      undefined,
-    ]);
+    expect(
+      group.kind === "group" &&
+        group.items.map((item) => (item.kind === "tool" ? item.parentToolId : null)),
+    ).toEqual([undefined, "a", "a", "b", undefined]);
     expect(group).toMatchObject({ label: "3 commands · 1 file read · 1 search" });
   });
 
@@ -237,5 +316,15 @@ describe("agentActivityEntries", () => {
       ],
       ["item", "e5"],
     ]);
+  });
+});
+
+describe("interrupted tool rows", () => {
+  it("keeps a call left without a result by an ended turn out of groups and asks for attention", () => {
+    const interrupted = activityTool(1, { status: "interrupted", outcome: null });
+    const entries = agentActivityEntries([activityTool(0), interrupted, activityTool(2)]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["item", "item", "item"]);
+    expect(entries[1]).toMatchObject({ kind: "item", item: interrupted });
+    expect(agentActivityAttentionCount([activityTool(0), interrupted])).toBe(1);
   });
 });

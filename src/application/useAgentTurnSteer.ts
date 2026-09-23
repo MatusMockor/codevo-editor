@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  admitStoredAgentLaunch,
+  type StoredAgentLaunchAdmission,
+} from "../domain/agentStoredLaunch";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type {
   AgentTaskGateway,
@@ -19,22 +23,36 @@ import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import {
   MAX_DEFERRED_FOLLOW_UPS_PER_THREAD,
   MAX_DEFERRED_FOLLOW_UP_THREADS,
+  beginDeferredEdit,
   clearDeferred,
   deferredFollowUpsForThread,
+  deferredQueueIsEditing,
+  editedDeferredEntry,
   emptyDeferredFollowUps,
+  endDeferredEdit,
   enqueueDeferred,
   removeDeferred,
-  takeDeferred,
   takeDeferredHead,
   type DeferredFollowUp,
   type DeferredFollowUps,
 } from "./agentDeferredFollowUps";
+import {
+  AGENT_QUEUED_EDIT_UNAVAILABLE_NOTICE,
+  admitQueuedEdit,
+  editedFollowUpRequest,
+  keptQueuedEditAttachments,
+  mergeQueuedEditClaim,
+  queuedEditAttachments,
+  type AgentQueuedEditCommit,
+  type AgentQueuedEditSession,
+} from "./agentQueuedFollowUpEdit";
 import {
   AGENT_TASKS_SOURCE,
   attempt,
   failure,
   info,
   isCurrentThreadLaunchAuthority,
+  sameLaunchAuthority,
   warning,
   type AgentTaskLaunchAuthority,
 } from "./agentProjectAuthority";
@@ -52,10 +70,16 @@ import {
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import {
+  AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE,
   prepareTurnAttachments,
+  releaseTurnAttachments,
+  turnAttachmentsWithinPromptCap,
   type AgentTurnAttachmentAuthority,
   type ClaimedTurnAttachments,
 } from "./agentTurnAttachments";
+
+export const STORED_LAUNCH_NEEDS_CONFIRMATION_NOTICE =
+  "This conversation's saved permission mode is no longer offered, so this message would run with full access, as the permission pill shows. Send it again from the composer to run it with full access, or change the permission mode on the pill after the turn finishes.";
 
 export const STEER_FAILED_NOTICE = "The message could not be sent to the running agent.";
 export const STEER_DROPPED_NOTICE =
@@ -100,7 +124,12 @@ export interface AgentTurnSteerSurface {
   readonly deferredFollowUps: DeferredFollowUps;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
-  takeDeferredFollowUp(threadId: string, id: string): AgentFollowUpRequest | null;
+  beginDeferredFollowUpEdit(threadId: string, id: string): AgentQueuedEditSession | null;
+  cancelDeferredFollowUpEdit(session: AgentQueuedEditSession): void;
+  commitDeferredFollowUpEdit(
+    session: AgentQueuedEditSession,
+    commit: AgentQueuedEditCommit,
+  ): Promise<boolean>;
   sendDeferredFollowUpNow(threadId: string, id: string): Promise<void>;
   resumeDeferredFollowUps(threadId: string): Promise<void>;
   onTurnSettled(threadId: string): void;
@@ -132,6 +161,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
   const sendingQueuedRef = useRef<Map<string, string>>(new Map());
   const pausedThreadsRef = useRef<Set<string>>(new Set());
   const deferredSequenceRef = useRef(0);
+  const editLeaseRef = useRef(0);
   const preparedDeferredRef = useRef(new WeakMap<AgentFollowUpRequest, ClaimedTurnAttachments>());
 
   const commitDeferred = useCallback(
@@ -173,11 +203,16 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       prepared: ClaimedTurnAttachments,
     ): AgentSteerOutcome => {
       const deps = dependenciesRef.current;
+      const admission = admitStoredAgentLaunch(launch, request.dangerousLaunchConfirmed === true);
+      if (admission.kind === "needsConfirmation") {
+        deps.setNotice(warning(STORED_LAUNCH_NEEDS_CONFIRMATION_NOTICE));
+        return "kept";
+      }
       const now = deps.now ?? Date.now;
       deferredSequenceRef.current += 1;
       const entry: DeferredFollowUp = {
         id: `deferred-${deferredSequenceRef.current}`,
-        request: deferredFollowUpRequest(threadId, launch, request),
+        request: deferredFollowUpRequest(threadId, admission, request),
         queuedAtEpochMs: now(),
       };
       const priorAuthority = deferredAuthoritiesRef.current.get(threadId);
@@ -421,20 +456,104 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     [commitDeferred],
   );
 
-  const takeDeferredFollowUp = useCallback(
-    (threadId: string, id: string): AgentFollowUpRequest | null => {
+  const beginDeferredFollowUpEdit = useCallback(
+    (threadId: string, id: string): AgentQueuedEditSession | null => {
       const authority = deferredAuthoritiesRef.current.get(threadId);
       if (authority === undefined) return null;
       if (!isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)) return null;
-      if (sendingQueuedRef.current.has(threadId)) return null;
+      if (sendingQueuedRef.current.get(threadId) === id) return null;
       if (drainLeasesRef.current.get(threadId)?.entryId === id) return null;
-      const taken = takeDeferred(deferredRef.current, threadId, id);
-      if (taken.entry === null) return null;
-      if (deferredRequestCarriesAttachments(taken.entry.request)) return null;
-      commitDeferred(taken.map);
-      return taken.entry.request;
+      editLeaseRef.current += 1;
+      const lease = editLeaseRef.current;
+      const next = beginDeferredEdit(deferredRef.current, threadId, id, lease);
+      const entry = editedDeferredEntry(next, threadId, id, lease);
+      if (entry === null) return null;
+      commitDeferred(next);
+      return {
+        threadId,
+        entryId: id,
+        lease,
+        prompt: entry.request.prompt,
+        attachments: queuedEditAttachments(preparedDeferredRef.current.get(entry.request)),
+      };
     },
     [commitDeferred, dependenciesRef, mountedRef],
+  );
+
+  const cancelDeferredFollowUpEdit = useCallback(
+    (session: AgentQueuedEditSession): void => {
+      const { threadId, entryId, lease } = session;
+      const next = endDeferredEdit(deferredRef.current, threadId, entryId, lease, null);
+      if (next === deferredRef.current) return;
+      commitDeferred(next);
+      armDrain(threadId);
+    },
+    [armDrain, commitDeferred],
+  );
+
+  const commitDeferredFollowUpEdit = useCallback(
+    async (session: AgentQueuedEditSession, commit: AgentQueuedEditCommit): Promise<boolean> => {
+      const { threadId, entryId, lease } = session;
+      const deps = dependenciesRef.current;
+      const authority = deferredAuthoritiesRef.current.get(threadId);
+      const editIsCurrent = (): boolean => {
+        const latest = deferredAuthoritiesRef.current.get(threadId);
+        return (
+          authority !== undefined &&
+          latest !== undefined &&
+          sameLaunchAuthority(latest, authority) &&
+          isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) &&
+          editedDeferredEntry(deferredRef.current, threadId, entryId, lease) !== null
+        );
+      };
+      if (authority === undefined || !editIsCurrent()) {
+        deps.setNotice(warning(AGENT_QUEUED_EDIT_UNAVAILABLE_NOTICE));
+        return false;
+      }
+      const kept = keptQueuedEditAttachments(session, commit.keptAttachmentKeys);
+      const admission = admitQueuedEdit(commit.prompt, kept, commit.attachments ?? []);
+      if (admission.kind === "refused") {
+        deps.setNotice(warning(admission.reason));
+        return false;
+      }
+      const added = await prepareTurnAttachments(
+        {
+          ...deps,
+          setNotice: (notice) => {
+            if (editIsCurrent()) dependenciesRef.current.setNotice(notice);
+          },
+        },
+        commit,
+        steerAttachmentAuthority(authority),
+        threadId,
+        "",
+      );
+      if (added === null) return false;
+      const releaseAdded = (): Promise<void> =>
+        releaseQueuedEditClaim(deps, authority.workspaceId, commit);
+      if (added.notice !== null || !editIsCurrent()) {
+        await releaseAdded();
+        return false;
+      }
+      const prepared = mergeQueuedEditClaim(admission.prompt, kept, added);
+      if (!turnAttachmentsWithinPromptCap(admission.prompt, prepared.attachments)) {
+        dependenciesRef.current.setNotice(warning(AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE));
+        await releaseAdded();
+        return false;
+      }
+      const entry = editedDeferredEntry(deferredRef.current, threadId, entryId, lease);
+      if (entry === null) {
+        await releaseAdded();
+        return false;
+      }
+      const request = editedFollowUpRequest(entry.request, admission.prompt, kept, commit);
+      preparedDeferredRef.current.set(request, prepared);
+      commitDeferred(endDeferredEdit(deferredRef.current, threadId, entryId, lease, request));
+      dependenciesRef.current.setNotice(null);
+      armDrain(threadId);
+      return true;
+    },
+    [armDrain, commitDeferred, dependenciesRef, mountedRef],
   );
 
   const sendDeferredFollowUpNow = useCallback(
@@ -445,6 +564,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       const authority = deferredAuthoritiesRef.current.get(threadId);
       if (
         entry === undefined ||
+        entry.editLease !== undefined ||
         authority === undefined ||
         sendingQueuedRef.current.has(threadId) ||
         drainLeasesRef.current.has(threadId)
@@ -603,6 +723,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           blockedThreadsRef.current.has(threadId)
         )
           continue;
+        if (deferredQueueIsEditing(entries)) continue;
         const thread = current.threads.get(threadId);
         if (thread === undefined || !agentThreadIsSteerable(thread)) continue;
         const turn = runningTurn(thread);
@@ -626,7 +747,8 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         if (
           sendingQueuedRef.current.has(threadId) ||
           pausedThreadsRef.current.has(threadId) ||
-          blockedThreadsRef.current.has(threadId)
+          blockedThreadsRef.current.has(threadId) ||
+          deferredQueueIsEditing(deferredFollowUpsForThread(deferredRef.current, threadId))
         )
           continue;
         const thread = current.threads.get(threadId);
@@ -707,17 +829,15 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
-    takeDeferredFollowUp,
+    beginDeferredFollowUpEdit,
+    cancelDeferredFollowUpEdit,
+    commitDeferredFollowUpEdit,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
     onTurnSettled,
     onThreadStopped,
     clearDeferredForOwner,
   };
-}
-
-function deferredRequestCarriesAttachments(request: AgentFollowUpRequest): boolean {
-  return (request.attachments ?? []).length > 0;
 }
 
 async function sendDeferredFollowUp(
@@ -778,6 +898,18 @@ function steerTargetIsCurrent(
   return turn !== null && turn.turnId === turnId;
 }
 
+async function releaseQueuedEditClaim(
+  deps: AgentTurnSteerDependencies,
+  workspaceId: string,
+  commit: AgentQueuedEditCommit,
+): Promise<void> {
+  const gateway = deps.agentAttachmentGateway;
+  if (gateway === undefined) return;
+  await releaseTurnAttachments(gateway, workspaceId, commit.attachments ?? [], (error) =>
+    deps.reportError(AGENT_TASKS_SOURCE, error),
+  );
+}
+
 function steerAttachmentAuthority(
   authority: AgentTaskLaunchAuthority,
 ): AgentTurnAttachmentAuthority {
@@ -809,14 +941,14 @@ function steeredEvent(
 
 function deferredFollowUpRequest(
   threadId: string,
-  launch: AgentLaunchOptions,
+  admission: Extract<StoredAgentLaunchAdmission, { kind: "ready" }>,
   request: AgentSteerRequest,
 ): AgentFollowUpRequest {
   const followUp: AgentFollowUpRequest = {
     threadId,
     prompt: request.prompt,
-    launch,
-    dangerousLaunchConfirmed: true,
+    launch: admission.launch,
+    dangerousLaunchConfirmed: admission.dangerousLaunchConfirmed,
   };
   if (request.attachments === undefined) return followUp;
   if (request.attachmentOwner === undefined) {

@@ -17,6 +17,12 @@ import {
 } from "../agentThread";
 import type { ParsedAgentLine } from "./agentOutputParser";
 import type { AgentAccountUsageWindow } from "../agentAccountUsage";
+import {
+  claudeApiRetryNotice,
+  claudeFailedMcpNotice,
+  claudePermissionDenialNotice,
+  claudeUnknownFrameNotice,
+} from "./claudeStreamNotices";
 import { summarizeToolInput, summarizeToolOutput } from "./toolInputSummary";
 import { boundedUtf8Text, utf8ByteLength } from "./utf8Text";
 
@@ -24,6 +30,20 @@ const IGNORED: ParsedAgentLine = { kind: "ignored" };
 const NO_EVENTS: ParsedAgentLine = { kind: "events", events: [], sessionId: null };
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
 const LOCAL_AGENT_TASK_TYPE = "local_agent";
+const REDACTED_REASONING_TEXT = "Reasoning redacted by provider";
+const BENIGN_FRAME_TYPES: ReadonlySet<string> = new Set([
+  "stream_event",
+  "tool_progress",
+  "tool_use_summary",
+  "keep_alive",
+  "auth_status",
+  "prompt_suggestion",
+  "control_request",
+  "control_response",
+  "control_cancel_request",
+  "streamlined_text",
+  "streamlined_tool_use_summary",
+]);
 
 export function parseClaudeStreamJsonLine(line: string): ParsedAgentLine {
   const value = jsonObject(line);
@@ -33,7 +53,8 @@ export function parseClaudeStreamJsonLine(line: string): ParsedAgentLine {
   if (value.type === "user") return parseUserLine(value);
   if (value.type === "result") return parseResultLine(value);
   if (value.type === "rate_limit_event") return parseRateLimitEvent(value);
-  return IGNORED;
+  if (typeof value.type === "string" && BENIGN_FRAME_TYPES.has(value.type)) return IGNORED;
+  return { kind: "events", events: [claudeUnknownFrameNotice(value.type)], sessionId: null };
 }
 
 function parseRateLimitEvent(value: Record<string, unknown>): ParsedAgentLine {
@@ -95,9 +116,9 @@ function claudeLimitLabel(id: string): string {
 }
 
 function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
-  if (value.subtype === "init") {
-    if (!isAgentSessionId(value.session_id)) return IGNORED;
-    return { kind: "events", events: [], sessionId: value.session_id };
+  if (value.subtype === "init") return parseInitLine(value);
+  if (value.subtype === "api_retry") {
+    return { kind: "events", events: [claudeApiRetryNotice(value)], sessionId: null };
   }
   if (value.subtype === "compact_boundary") return parseCompactBoundaryLine(value);
   const event = claudeCompactionStatus(value) ?? subagentTelemetryEvent(value);
@@ -105,6 +126,13 @@ function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
   const events = [...(event === null ? [] : [event]), ...(background === null ? [] : [background])];
   if (events.length === 0) return IGNORED;
   return { kind: "events", events, sessionId: null };
+}
+
+function parseInitLine(value: Record<string, unknown>): ParsedAgentLine {
+  const sessionId = isAgentSessionId(value.session_id) ? value.session_id : null;
+  const warning = claudeFailedMcpNotice(value.mcp_servers);
+  if (sessionId === null && warning === null) return IGNORED;
+  return { kind: "events", events: warning === null ? [] : [warning], sessionId };
 }
 
 function parseCompactBoundaryLine(value: Record<string, unknown>): ParsedAgentLine {
@@ -246,7 +274,12 @@ function parseResultLine(value: Record<string, unknown>): ParsedAgentLine {
     usage: parseUsage(value.usage, value.total_cost_usd),
   };
   const sessionId = isAgentSessionId(value.session_id) ? value.session_id : null;
-  return { kind: "events", events: [event, ...claudeModelCapacities(value)], sessionId };
+  const denials = claudePermissionDenialNotice(value.permission_denials);
+  return {
+    kind: "events",
+    events: [...(denials === null ? [] : [denials]), event, ...claudeModelCapacities(value)],
+    sessionId,
+  };
 }
 
 function assistantBlockEvents(
@@ -255,12 +288,11 @@ function assistantBlockEvents(
 ): ReadonlyArray<AgentTurnEvent> {
   const block = objectValue(value);
   if (block === null) return [];
-  if (block.type === "text")
-    return textEvents("assistantText", block.text).map((event) => ({
-      ...event,
-      ...present("parentToolId", parentToolId),
-    }));
-  if (block.type === "thinking") return textEvents("reasoning", block.thinking);
+  if (block.type === "text") return textEvents("assistantText", block.text, parentToolId);
+  if (block.type === "thinking") return textEvents("reasoning", block.thinking, parentToolId);
+  if (block.type === "redacted_thinking") {
+    return textEvents("reasoning", REDACTED_REASONING_TEXT, parentToolId);
+  }
   if (block.type !== "tool_use") return [];
   const toolId = safeIdentifier(block.id, MAX_AGENT_TOOL_ID_BYTES);
   const name = safeIdentifier(block.name, MAX_AGENT_TOOL_NAME_BYTES);
@@ -300,27 +332,30 @@ function toolResultEvents(
 function textEvents(
   kind: "assistantText" | "reasoning",
   value: unknown,
+  parentToolId: string | undefined,
 ): ReadonlyArray<AgentTurnEvent> {
   if (typeof value !== "string") return [];
   const text = eventText(value);
   if (text === "") return [];
-  return [{ kind, text }];
+  return [{ kind, text, ...present("parentToolId", parentToolId) }];
 }
 
 function parseUsage(value: unknown, totalCostUsd: unknown): AgentTurnUsage | null {
   const usage = objectValue(value);
   if (usage === null) return null;
-  const inputTokens = tokenCount(usage.input_tokens);
+  const uncachedInputTokens = tokenCount(usage.input_tokens);
   const outputTokens = tokenCount(usage.output_tokens);
-  if (inputTokens === null || outputTokens === null) return null;
+  if (uncachedInputTokens === null || outputTokens === null) return null;
   const cacheCreationTokens = tokenCount(usage.cache_creation_input_tokens) ?? 0;
   const cacheReadTokens = tokenCount(usage.cache_read_input_tokens) ?? 0;
-  const contextTokens = safeTokenSum(inputTokens, cacheCreationTokens, cacheReadTokens);
+  const inputTokens = safeTokenSum(uncachedInputTokens, cacheCreationTokens, cacheReadTokens);
+  if (inputTokens === null) return null;
   const costUsd = nonNegativeFiniteNumber(totalCostUsd);
   return {
     inputTokens,
     outputTokens,
-    contextTokens,
+    cachedInputTokens: cacheReadTokens,
+    contextTokens: inputTokens,
     ...(costUsd === null ? {} : { costUsd }),
   };
 }

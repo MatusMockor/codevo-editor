@@ -492,8 +492,11 @@ pub enum AgentTurnEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_tool_id: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
     Reasoning {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_id: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     ToolCall {
@@ -1227,10 +1230,12 @@ pub(crate) fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), St
         }
     }
     let (text_bytes, summary_bytes) = match event {
-        AgentTurnEvent::UserMessage { text, .. } | AgentTurnEvent::Reasoning { text } => {
-            (text.len(), 0)
-        }
+        AgentTurnEvent::UserMessage { text, .. } => (text.len(), 0),
         AgentTurnEvent::AssistantText {
+            text,
+            parent_tool_id,
+        }
+        | AgentTurnEvent::Reasoning {
             text,
             parent_tool_id,
         } => {

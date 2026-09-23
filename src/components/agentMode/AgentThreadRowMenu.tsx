@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { createPortal } from "react-dom";
 import {
   Archive,
+  ArchiveRestore,
   Clock,
   Check,
   Undo2,
@@ -33,6 +34,7 @@ export interface AgentThreadRowMenuProps {
   readonly running: boolean;
   readonly snoozed?: boolean;
   readonly settled?: boolean;
+  readonly canMarkUnread?: boolean;
   readonly moveUpId?: string;
   readonly moveDownId?: string;
   readonly position: { readonly x: number; readonly y: number };
@@ -185,6 +187,7 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
                 key={entry.id}
                 onClick={() => run(entry)}
                 role="menuitem"
+                title={entry.reason ?? undefined}
                 type="button"
               >
                 <span aria-hidden="true" className="agent-menu__icon">
@@ -224,6 +227,7 @@ function MenuIcon({ icon }: { readonly icon: AgentThreadMenuIcon }) {
   if (icon === "copyThreadId") return <Hash size={size} />;
   if (icon === "stop") return <Square size={size} />;
   if (icon === "archive") return <Archive size={size} />;
+  if (icon === "unarchive") return <ArchiveRestore size={size} />;
   if (icon === "delete") return <Trash2 size={size} />;
   return unsupportedMenuIcon(icon);
 }

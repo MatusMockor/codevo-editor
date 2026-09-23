@@ -22,6 +22,7 @@ import {
   agentRuntimeSubagentActivityLine,
   agentRuntimeSubagentMetricsLabel,
   agentRuntimeSubagentStatusLabel,
+  agentRecentActivityLabel,
   agentTokenCountLabel,
 } from "./agentRuntimeSubagentPresentation";
 import "./agentSubagents.css";
@@ -168,37 +169,58 @@ const AgentsPanelRow = memo(function AgentsPanelRow({
   }, [ticker, tickerKey, observedDurationMs]);
 
   return (
-    <li
-      className="agents-panel__row"
-      data-status={agent.status}
-      data-title={agent.titleKnown ? undefined : "unknown"}
-    >
-      <span aria-hidden="true" className="agents-panel__dot" />
-      <span className="agents-panel__title">
-        <span className="agents-panel__name">{agent.title}</span>
-        {agent.role !== null && <span className="agents-panel__role">{agent.role}</span>}
-      </span>
-      <span className="agents-panel__elapsed">
-        {elapsed.kind === "settled" && <span>{agentElapsedLabel(elapsed.durationMs)}</span>}
-        {elapsed.kind === "live" && (
-          <span aria-hidden="true" ref={clockRef}>
-            {agentElapsedLabel(elapsed.observedDurationMs)}
-          </span>
-        )}
-        {agent.status === "completed" && <Check aria-hidden="true" size={12} />}
-      </span>
-      <span className="agents-panel__activity">
-        <span className="agents-panel__activity-text">
-          {agentRuntimeSubagentActivityLine(agent) ?? statusLabel}
+    <li className="agents-panel__item">
+      <div
+        className="agents-panel__row"
+        data-status={agent.status}
+        data-title={agent.titleKnown ? undefined : "unknown"}
+      >
+        <span aria-hidden="true" className="agents-panel__dot" />
+        <span className="agents-panel__title">
+          <span className="agents-panel__name">{agent.title}</span>
+          {agent.role !== null && <span className="agents-panel__role">{agent.role}</span>}
         </span>
-        {elapsed.kind === "live" && <span className="agents-panel__stale" ref={staleRef} />}
-      </span>
-      <span className="agents-panel__metrics">{agentRuntimeSubagentMetricsLabel(agent)}</span>
-      <span className="agent-visually-hidden">{statusLabel}</span>
-      {elapsed.kind === "live" && <span className="agent-visually-hidden" ref={descriptionRef} />}
+        <span className="agents-panel__elapsed">
+          {elapsed.kind === "settled" && <span>{agentElapsedLabel(elapsed.durationMs)}</span>}
+          {elapsed.kind === "live" && (
+            <span aria-hidden="true" ref={clockRef}>
+              {agentElapsedLabel(elapsed.observedDurationMs)}
+            </span>
+          )}
+          {agent.status === "completed" && <Check aria-hidden="true" size={12} />}
+        </span>
+        <span className="agents-panel__activity">
+          <span className="agents-panel__activity-text">
+            {agentRuntimeSubagentActivityLine(agent) ?? statusLabel}
+          </span>
+          {elapsed.kind === "live" && <span className="agents-panel__stale" ref={staleRef} />}
+        </span>
+        <span className="agents-panel__metrics">{agentRuntimeSubagentMetricsLabel(agent)}</span>
+        <span className="agent-visually-hidden">{statusLabel}</span>
+        {elapsed.kind === "live" && <span className="agent-visually-hidden" ref={descriptionRef} />}
+      </div>
+      <AgentsPanelRecentActivity entries={agent.recentActivity} />
     </li>
   );
 });
+
+function AgentsPanelRecentActivity({ entries }: { readonly entries: ReadonlyArray<string> }) {
+  if (entries.length === 0) return null;
+  return (
+    <details className="agents-panel__history">
+      <summary className="agents-panel__history-summary">
+        {agentRecentActivityLabel(entries.length)}
+      </summary>
+      <ol aria-label="Recent activity" className="agents-panel__history-list">
+        {entries.map((entry, index) => (
+          <li className="agents-panel__history-entry" key={index}>
+            {entry}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
 
 function footerSummary(model: AgentAgentsPanelModel): string {
   return [

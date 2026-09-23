@@ -112,7 +112,11 @@ pub(super) fn capture(
 }
 
 #[cfg(unix)]
-fn read_entry(root: &File, path: &str, read_bytes: &mut usize) -> Result<Option<Entry>, String> {
+pub(super) fn read_raw_entry(
+    root: &File,
+    path: &str,
+    read_bytes: &mut usize,
+) -> Result<Option<(Vec<u8>, u32)>, String> {
     let mut parent = root
         .try_clone()
         .map_err(|_| "Unable to read the workspace.")?;
@@ -145,12 +149,11 @@ fn read_entry(root: &File, path: &str, read_bytes: &mut usize) -> Result<Option<
                     return Err("Unable to record a symbolic link safely.".into());
                 }
                 target.truncate(count as usize);
-                return Ok(Some(Entry {
-                    digest: digest(&target),
-                    executable: false,
-                    text: None,
-                    unavailable: Some(DiffUnavailableReason::Binary),
-                }));
+                *read_bytes += target.len();
+                if *read_bytes > MAX_READ_BYTES {
+                    return Err("The repository exceeds the turn snapshot read limit.".into());
+                }
+                return Ok(Some((target, 0o120000)));
             }
             return Err("A repository file could not be read safely.".into());
         }
@@ -173,7 +176,6 @@ fn read_entry(root: &File, path: &str, read_bytes: &mut usize) -> Result<Option<
             return Err("A repository file exceeds the turn snapshot size limit.".into());
         }
         let mut reader = &file;
-        let mut hash = Sha256::new();
         let mut text_bytes = Vec::new();
         let mut length = 0_u64;
         let mut buffer = [0_u8; 32 * 1024];
@@ -189,12 +191,7 @@ fn read_entry(root: &File, path: &str, read_bytes: &mut usize) -> Result<Option<
             if length > MAX_HASH_FILE_BYTES || *read_bytes > MAX_READ_BYTES {
                 return Err("The repository exceeds the turn snapshot read limit.".into());
             }
-            hash.update(&buffer[..count]);
-            if length <= MAX_FILE_BYTES as u64 {
-                text_bytes.extend_from_slice(&buffer[..count]);
-            } else {
-                text_bytes.clear();
-            }
+            text_bytes.extend_from_slice(&buffer[..count]);
         }
         let after = file
             .metadata()
@@ -207,28 +204,45 @@ fn read_entry(root: &File, path: &str, read_bytes: &mut usize) -> Result<Option<
         {
             return Err("A repository file changed while its snapshot was recorded.".into());
         }
-        let unavailable = if length > MAX_FILE_BYTES as u64 {
-            Some(DiffUnavailableReason::Large)
-        } else if text_bytes.contains(&0) || std::str::from_utf8(&text_bytes).is_err() {
-            Some(DiffUnavailableReason::Binary)
-        } else {
-            None
-        };
-        let text = if unavailable.is_none() {
-            Some(String::from_utf8(text_bytes).map_err(|_| "Invalid file text.")?)
-        } else {
-            None
-        };
-        return Ok(Some(Entry {
-            digest: format!("{:x}", hash.finalize()),
-            executable: metadata.mode() & 0o111 != 0,
-            text,
-            unavailable,
-        }));
+        return Ok(Some((
+            text_bytes,
+            if metadata.mode() & 0o111 != 0 {
+                0o100755
+            } else {
+                0o100644
+            },
+        )));
     }
     Err("Invalid repository file path.".into())
 }
 #[cfg(not(unix))]
-fn read_entry(_: &File, _: &str, _: &mut usize) -> Result<Option<Entry>, String> {
+pub(super) fn read_raw_entry(
+    _: &File,
+    _: &str,
+    _: &mut usize,
+) -> Result<Option<(Vec<u8>, u32)>, String> {
     Err("Turn changes are unavailable on this platform.".into())
+}
+
+fn read_entry(root: &File, path: &str, read_bytes: &mut usize) -> Result<Option<Entry>, String> {
+    let Some((bytes, mode)) = read_raw_entry(root, path, read_bytes)? else {
+        return Ok(None);
+    };
+    let unavailable = if bytes.len() > MAX_FILE_BYTES {
+        Some(DiffUnavailableReason::Large)
+    } else if mode == 0o120000 || bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
+        Some(DiffUnavailableReason::Binary)
+    } else {
+        None
+    };
+    Ok(Some(Entry {
+        digest: digest(&bytes),
+        executable: mode == 0o100755,
+        text: if unavailable.is_none() {
+            Some(String::from_utf8(bytes).map_err(|_| "Invalid file text.")?)
+        } else {
+            None
+        },
+        unavailable,
+    }))
 }

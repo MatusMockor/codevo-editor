@@ -126,7 +126,6 @@ export function threadsSurfaceFixture(
     deferredFollowUps: new Map(),
     steer: async () => "sent" as const,
     removeDeferredFollowUp: () => undefined,
-    takeDeferredFollowUp: () => null,
     importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,

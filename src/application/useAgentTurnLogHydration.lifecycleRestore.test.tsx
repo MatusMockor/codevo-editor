@@ -244,6 +244,49 @@ describe("migrating retained lifecycle detail that an existing thread file still
     await harness.unmount();
   });
 
+  it("stores a fully recorded turn without a log row as recorded, not as lost history", async () => {
+    const harness = renderLogStore({
+      persisted: [threadWith([settledTurn(OLD_TURN_ID, { subagentLifecycle: RETAINED })])],
+      summaries: [],
+    });
+    await settleLogStore();
+
+    act(() => harness.hook().hydrateThread?.(LOG_THREAD_ID));
+    await settleLogStore();
+
+    expect(harness.logGateway.opens).toHaveLength(1);
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "none" });
+    expect(harness.logGateway.appends[0]).toMatchObject({ seal: false, lifecycle: RETAINED });
+    expect(harness.turnLog.facts.factsOf(OLD_TURN_ID)).toMatchObject({
+      loss: { kind: "none" },
+      sealed: false,
+    });
+    await harness.unmount();
+  });
+
+  it("marks a truncated turn without a log row as pre-log history", async () => {
+    const harness = renderLogStore({
+      persisted: [
+        threadWith([
+          settledTurn(OLD_TURN_ID, { subagentLifecycle: RETAINED, eventsTruncated: true }),
+        ]),
+      ],
+      summaries: [],
+    });
+    await settleLogStore();
+
+    act(() => harness.hook().hydrateThread?.(LOG_THREAD_ID));
+    await settleLogStore();
+
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "legacyWindow" });
+    expect(harness.logGateway.appends[0]).toMatchObject({ seal: true, lifecycle: RETAINED });
+    expect(harness.turnLog.facts.factsOf(OLD_TURN_ID)).toMatchObject({
+      loss: { kind: "legacyWindow" },
+      sealed: true,
+    });
+    await harness.unmount();
+  });
+
   it("still rewrites the file in the v1 shape when the log refuses the migration", async () => {
     const harness = renderLogStore({
       persisted: [threadWith([settledTurn(OLD_TURN_ID, { subagentLifecycle: RETAINED })])],

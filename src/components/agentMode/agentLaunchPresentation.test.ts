@@ -7,6 +7,8 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   CLAUDE_EFFORT_CHOICES,
   CLAUDE_MODEL_CHOICES,
+  CLAUDE_PERMISSION_MODES,
+  CODEX_EXECUTION_MODES,
   CODEX_MODEL_CHOICES,
 } from "../../domain/agentLaunch";
 import {
@@ -178,12 +180,60 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("Auto");
+    ).toBe("Claude CLI settings");
     expect(agentLaunchModeLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
-      "Auto",
+      "Codex config",
     );
     expect(agentLaunchModeHint({ provider: "codex", model: "default", mode: "default" })).toContain(
       "configured",
+    );
+  });
+
+  it("gives every access mode a distinct label and an approval-truthful hint", () => {
+    const claudeLabels = CLAUDE_PERMISSION_MODES.map((mode) =>
+      agentLaunchModeLabel({ provider: "claudeCode", model: "default", mode, effort: "default" }),
+    );
+    const codexLabels = CODEX_EXECUTION_MODES.map((mode) =>
+      agentLaunchModeLabel({ provider: "codex", model: "default", mode }),
+    );
+    expect(new Set(claudeLabels).size).toBe(claudeLabels.length);
+    expect(new Set(codexLabels).size).toBe(codexLabels.length);
+    expect(agentLaunchModeHint({ provider: "codex", model: "default", mode: "default" })).toContain(
+      "config.toml",
+    );
+    expect(
+      agentLaunchModeHint({
+        provider: "claudeCode",
+        model: "default",
+        mode: "plan",
+        effort: "default",
+      }),
+    ).toContain("approve the plan");
+    expect(
+      agentLaunchModeHint({
+        provider: "claudeCode",
+        model: "default",
+        mode: "bypassPermissions",
+        effort: "default",
+      }),
+    ).toContain("without prompts");
+  });
+
+  it("does not promise in-editor approvals for remote runners", () => {
+    const supervised: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "supervised",
+      effort: "default",
+    };
+    expect(agentLaunchModeHint(supervised)).toContain("here");
+    expect(agentLaunchModeHint(supervised, "server")).toContain("remote runners");
+    expect(agentLaunchModeHint(supervised, "server")).not.toContain("here");
+    const remoteCodex = agentLaunchModeChoices("codex", "server");
+    for (const choice of remoteCodex) expect(choice.hint).not.toContain("here");
+    expect(remoteCodex.find((choice) => choice.value === "auto")?.hint).toContain("remote runners");
+    expect(agentLaunchModeChoices("codex", "server").map((choice) => choice.label)).toEqual(
+      agentLaunchModeChoices("codex").map((choice) => choice.label),
     );
   });
 

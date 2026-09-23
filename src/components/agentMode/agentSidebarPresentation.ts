@@ -21,6 +21,8 @@ import type {
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import {
+  agentThreadCanMarkUnread,
+  isTerminalAgentTurnStatus,
   runningTurn,
   type AgentThread,
   type AgentThreadExternalOrigin,
@@ -115,6 +117,7 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "copy"; readonly detail: AgentThreadCopyDetail }
   | { readonly kind: "stop" }
   | { readonly kind: "archive" }
+  | { readonly kind: "unarchive" }
   | { readonly kind: "delete" }
   | { readonly kind: "snooze"; readonly until: number }
   | { readonly kind: "unsnooze" }
@@ -137,6 +140,7 @@ export type AgentThreadMenuIcon =
   | "copyThreadId"
   | "stop"
   | "archive"
+  | "unarchive"
   | "delete"
   | "snooze"
   | "settle"
@@ -150,6 +154,7 @@ export type AgentThreadMenuEntry =
       readonly label: string;
       readonly icon: AgentThreadMenuIcon;
       readonly disabled: boolean;
+      readonly reason: string | null;
       readonly destructive: boolean;
       readonly command: AgentThreadMenuCommand | "rename" | "snooze";
     };
@@ -161,7 +166,13 @@ export interface AgentThreadMenuContext {
   readonly running: boolean;
   readonly snoozed?: boolean;
   readonly settled?: boolean;
+  readonly canMarkUnread?: boolean;
 }
+
+export const MARK_UNREAD_UNAVAILABLE_REASON = "Available after a run finishes.";
+export const ARCHIVE_RUNNING_REASON = "Stop the agent before archiving this thread.";
+export const DELETE_RUNNING_REASON = "Stop the agent before deleting this thread.";
+export const ORGANIZE_RUNNING_REASON = "Available after the agent stops.";
 
 export function agentThreadMenuEntries(
   props: AgentThreadMenuContext,
@@ -174,13 +185,20 @@ export function agentThreadMenuEntries(
     }),
     { kind: "separator", id: "s1" },
     menuItem("rename", "Rename", "rename", "rename"),
-    menuItem("unread", "Mark unread", "markUnread", { kind: "markUnread" }),
+    menuItem(
+      "unread",
+      "Mark unread",
+      "markUnread",
+      { kind: "markUnread" },
+      props.canMarkUnread === false ? MARK_UNREAD_UNAVAILABLE_REASON : null,
+    ),
     { kind: "separator", id: "s2" },
     menuItem("copy-path", "Copy path", "copyPath", { kind: "copy", detail: "path" }),
     menuItem("copy-branch", "Copy branch", "copyBranch", { kind: "copy", detail: "branch" }),
     menuItem("copy-id", "Copy thread ID", "copyThreadId", { kind: "copy", detail: "threadId" }),
     { kind: "separator", id: "s3" },
   ];
+  const runningReason = (reason: string): string | null => (props.running ? reason : null);
   if (!props.archived) {
     entries.push(
       menuItem(
@@ -188,7 +206,7 @@ export function agentThreadMenuEntries(
         props.snoozed ? "Wake now" : "Snooze…",
         "snooze",
         props.snoozed ? { kind: "unsnooze" } : "snooze",
-        props.running,
+        runningReason(ORGANIZE_RUNNING_REASON),
       ),
     );
     entries.push(
@@ -197,15 +215,40 @@ export function agentThreadMenuEntries(
         props.settled ? "Restore to active" : "Mark settled",
         "settle",
         { kind: props.settled ? "restore" : "settle" },
-        props.running,
+        runningReason(ORGANIZE_RUNNING_REASON),
       ),
     );
   }
   if (props.running) entries.push(menuItem("stop", "Stop", "stop", { kind: "stop" }));
-  if (!props.archived)
-    entries.push(menuItem("archive", "Archive", "archive", { kind: "archive" }, props.running));
-  entries.push(menuItem("delete", "Delete", "delete", { kind: "delete" }, false, true));
+  entries.push(
+    props.archived
+      ? menuItem("unarchive", "Unarchive", "unarchive", { kind: "unarchive" })
+      : menuItem(
+          "archive",
+          "Archive",
+          "archive",
+          { kind: "archive" },
+          runningReason(ARCHIVE_RUNNING_REASON),
+        ),
+  );
+  entries.push(
+    menuItem(
+      "delete",
+      "Delete",
+      "delete",
+      { kind: "delete" },
+      runningReason(DELETE_RUNNING_REASON),
+      true,
+    ),
+  );
   return entries;
+}
+
+export function agentViewCanMarkUnread(view: AgentThreadView): boolean {
+  if (view.execution?.kind !== "remote") return agentThreadCanMarkUnread(view.thread);
+  if (view.thread.archived) return false;
+  const last = view.thread.turns[view.thread.turns.length - 1];
+  return last !== undefined && isTerminalAgentTurnStatus(last.status);
 }
 
 function menuItem(
@@ -213,10 +256,10 @@ function menuItem(
   label: string,
   icon: AgentThreadMenuIcon,
   command: AgentThreadMenuCommand | "rename" | "snooze",
-  disabled = false,
+  reason: string | null = null,
   destructive = false,
 ): AgentThreadMenuEntry {
-  return { kind: "item", id, label, icon, command, disabled, destructive };
+  return { kind: "item", id, label, icon, command, disabled: reason !== null, reason, destructive };
 }
 
 export function agentRowStatus(

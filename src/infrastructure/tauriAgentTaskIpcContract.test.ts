@@ -295,6 +295,7 @@ describe("invokeStartAgentTaskIpc", () => {
     "Agent task workspace is closing or busy.",
     "Agent task trust authority is busy.",
     "Agent task startup is closed.",
+    "The agent was stopped before it started.",
     "Agent provider settings changed. Retry the operation.",
     "Enable this provider in Settings before starting a turn.",
     "This provider is updating. Wait for the update to finish.",

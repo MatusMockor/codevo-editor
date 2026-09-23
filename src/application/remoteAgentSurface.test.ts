@@ -51,6 +51,7 @@ function setup(running = false) {
     report,
     stop,
     id: threads[0]!.thread.threadId,
+    view: threads[0]!,
     owner: threads[0]!.thread.owner.ownerId,
     actions: remoteAgentThreadActions({ local, threads, update, report, stop }),
   };
@@ -68,7 +69,7 @@ describe("remote conversation action routing", () => {
       [h.id, { title: "Remote title" }],
       [h.id, { pinned: true }],
       [h.id, { archived: true }],
-      [h.id, { viewedAtEpochMs: expect.any(Number) }],
+      [h.id, { viewedAtEpochMs: Date.parse("2026-09-13T00:00:00Z") + 1 }],
       [h.id, { viewedAtEpochMs: null }],
       [h.id, { removed: true }],
     ]);
@@ -95,6 +96,55 @@ describe("remote conversation action routing", () => {
     running.actions.updateThreadOrganization(running.id, { settledAt: 4000 });
     expect(running.update).not.toHaveBeenCalled();
     expect(running.report).toHaveBeenCalled();
+  });
+  it("marks viewed with the server activity time, not the local clock", () => {
+    const h = setup();
+    const now = vi.spyOn(Date, "now").mockReturnValue(9_999_999_999_999);
+    h.actions.markThreadViewed(h.id);
+    now.mockRestore();
+    expect(h.update).toHaveBeenCalledWith(h.id, {
+      viewedAtEpochMs: Date.parse("2026-09-13T00:00:00Z") + 1,
+    });
+  });
+  it("archives and unarchives explicitly and resolves with the server save outcome", async () => {
+    const h = setup();
+    h.update.mockResolvedValueOnce(true);
+    await expect(h.actions.archive(h.id)).resolves.toBe(true);
+    await expect(h.actions.unarchive(h.id)).resolves.toBe(false);
+    expect(h.update.mock.calls).toEqual([[h.id, { archived: true }]]);
+    const archived = remoteAgentThreadActions({
+      local: h.local,
+      threads: [{ ...h.view, thread: { ...h.view.thread, archived: true } }],
+      update: h.update,
+      report: h.report,
+      stop: h.stop,
+    });
+    h.update.mockResolvedValueOnce(false);
+    await expect(archived.archive(h.id)).resolves.toBe(false);
+    await expect(archived.unarchive(h.id)).resolves.toBe(false);
+    expect(h.update.mock.calls).toEqual([
+      [h.id, { archived: true }],
+      [h.id, { archived: false }],
+    ]);
+  });
+  it("runs bulk work inside the metadata batch when one is wired and directly otherwise", async () => {
+    const h = setup();
+    await expect(h.actions.batchThreadMutations(async () => "direct")).resolves.toBe("direct");
+    let batches = 0;
+    const batch = <T>(work: () => Promise<T>): Promise<T> => {
+      batches += 1;
+      return work();
+    };
+    const batched = remoteAgentThreadActions({
+      local: h.local,
+      threads: [h.view],
+      update: h.update,
+      report: h.report,
+      stop: h.stop,
+      batch,
+    });
+    await expect(batched.batchThreadMutations(async () => 7)).resolves.toBe(7);
+    expect(batches).toBe(1);
   });
   it("does not archive or remove a running conversation", () => {
     const h = setup(true);

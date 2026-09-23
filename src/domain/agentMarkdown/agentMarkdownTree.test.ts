@@ -4,6 +4,7 @@ import {
   agentMarkdownBlockHighlights,
   agentMarkdownCodeText,
   agentMarkdownImageLabel,
+  agentMarkdownPlainPreview,
   agentMarkdownPlainReasonLabel,
   resolveAgentMarkdownPresentation,
   type AgentMarkdownBlock,
@@ -146,5 +147,53 @@ describe("labels", () => {
   it("trims exactly one trailing newline from code blocks", () => {
     expect(agentMarkdownCodeText({ kind: "codeBlock", language: null, code: "a\n\n" })).toBe("a\n");
     expect(agentMarkdownCodeText({ kind: "codeBlock", language: null, code: "a" })).toBe("a");
+  });
+});
+
+describe("per-block find degradation", () => {
+  const source = "Intro **bold** text.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+  const blocks: ReadonlyArray<AgentMarkdownBlock> = [
+    { key: "b0", nodes: [paragraph(text("Intro "), text("bold"), text(" text."))] },
+    { key: "b1", nodes: [{ kind: "container", tag: "table", children: [text("a b 1 2")] }] },
+  ];
+  const sources = ["Intro **bold** text.\n", "| a | b |\n|---|---|\n| 1 | 2 |\n"];
+
+  it("shows only the unfaithful block as source and keeps hit indices aligned", () => {
+    const presentation = resolveAgentMarkdownPresentation(
+      { kind: "rendered", blocks },
+      source,
+      "|---",
+      () => sources,
+    );
+    expect(presentation.kind).toBe("rendered");
+    if (presentation.kind !== "rendered") return;
+    expect(presentation.blocks[0]).toBe(blocks[0]);
+    expect(presentation.blocks[1]?.key).toBe("b1s");
+    expect(presentation.hitCount).toBe(2);
+    expect(presentation.hitOffsets).toEqual([0, 0]);
+    expect(presentation.sourceBlockCount).toBe(1);
+  });
+
+  it("falls back to whole-message plain text when sources cannot be aligned", () => {
+    for (const blockSources of [null, () => null, () => [sources[0] as string]]) {
+      expect(
+        resolveAgentMarkdownPresentation(
+          { kind: "rendered", blocks },
+          source,
+          "|---",
+          blockSources,
+        ),
+      ).toEqual({ kind: "plain", reason: "find-syntax" });
+    }
+  });
+});
+
+describe("agentMarkdownPlainPreview", () => {
+  it("drops block syntax so a loading message never flashes raw markdown", () => {
+    expect(
+      agentMarkdownPlainPreview(
+        "## Title\n\n> **Note** use `x`\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst a = 1;\n```\n\n---",
+      ),
+    ).toBe("Title\n\nNote use x\n\na   b\n1   2\n\nconst a = 1;\n");
   });
 });

@@ -15,6 +15,7 @@ struct Control {
     reject_interrupt: bool,
     reject_start: AtomicBool,
     reject_resume: AtomicBool,
+    transient_resume: AtomicBool,
     malformed_resume: AtomicBool,
     unsubscribe: Mutex<Option<Value>>,
     methods: Mutex<Vec<String>>,
@@ -75,6 +76,12 @@ impl CodexHostProcessSpawner for Spawner {
                     continue;
                 }
                 if method == "thread/resume" && control.reject_resume.load(Ordering::SeqCst) {
+                    control.emit(
+                        json!({"id":id,"error":{"code":-32600,"message":"no rollout found for thread id previous-thread"}}),
+                    );
+                    continue;
+                }
+                if method == "thread/resume" && control.transient_resume.load(Ordering::SeqCst) {
                     control.emit(
                         json!({"id":id,"error":{"code":-32000,"message":"resume unavailable"}}),
                     );
@@ -144,6 +151,7 @@ fn setup_host(
         reject_interrupt,
         reject_start: AtomicBool::new(false),
         reject_resume: AtomicBool::new(false),
+        transient_resume: AtomicBool::new(false),
         malformed_resume: AtomicBool::new(false),
         unsubscribe: Mutex::new(None),
         methods: Mutex::new(Vec::new()),
@@ -176,6 +184,7 @@ fn setup(
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         })
         .unwrap();
     let turn = host
@@ -204,6 +213,7 @@ fn resume_params() -> ThreadResumeParams {
         model: None,
         sandbox: None,
         approval_policy: None,
+        developer_instructions: None,
         exclude_turns: true,
     }
 }
@@ -290,6 +300,7 @@ fn validated_plan(
             model: None,
             sandbox: None,
             approval_policy: None,
+            developer_instructions: None,
         },
         thread_resume: None,
         turn_start: TurnStartParams {
@@ -548,7 +559,8 @@ fn confirmed_resume_fallback_emits_exact_old_and_new_authority_before_notice() {
                 json!({"v":1,"t":"sessionFallback","previousThreadId":"previous-thread","threadId":THREAD})
             );
             assert_eq!(frames.len(), 2);
-            assert_eq!(frames[1]["t"], "error");
+            assert_eq!(frames[1]["t"], "notice");
+            assert_eq!(frames[1]["severity"], "warning");
             assert!(!frames.iter().any(|frame| frame["t"] == "session"));
         } else {
             assert_eq!(frames, vec![json!({"v":1,"t":"session","threadId":THREAD})]);
@@ -573,6 +585,27 @@ fn invalid_resume_authority_never_authorizes_a_fallback_session() {
     let mut plan = validated_plan(host.clone(), Arc::new(AtomicUsize::new(0)), usize::MAX);
     plan.thread_resume = Some(resume_params());
     assert!(plan.spawn().is_err());
+    assert_eq!(
+        *control.methods.lock().unwrap(),
+        vec!["initialize", "thread/resume"]
+    );
+    assert_eq!(host.live_turns(), 0);
+}
+
+#[test]
+fn transient_resume_failure_fails_the_turn_without_starting_a_new_session() {
+    let (_registry, host, control) = setup_host(false);
+    control.transient_resume.store(true, Ordering::SeqCst);
+    let mut plan = validated_plan(host.clone(), Arc::new(AtomicUsize::new(0)), usize::MAX);
+    plan.thread_resume = Some(resume_params());
+    let error = plan
+        .spawn()
+        .err()
+        .expect("transient resume failure must fail the turn");
+    assert_eq!(
+        error,
+        "Codex could not resume the previous session: resume unavailable"
+    );
     assert_eq!(
         *control.methods.lock().unwrap(),
         vec!["initialize", "thread/resume"]

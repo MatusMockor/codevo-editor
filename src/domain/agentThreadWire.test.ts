@@ -659,6 +659,31 @@ describe("agentThreadWire tool call description", () => {
 
     expect(roundTrip({ ...CALL, description })).toEqual([{ ...CALL, description }]);
   });
+
+  it("round-trips reasoning with and without a parent tool id", () => {
+    const main = { kind: "reasoning", text: "main plan" };
+    const child = { kind: "reasoning", text: "child plan", parentToolId: "toolu_parent" };
+    const bounded = { kind: "reasoning", text: "x", parentToolId: "a".repeat(256) };
+
+    expect(roundTrip(main)).toEqual([main]);
+    expect(roundTrip(child)).toEqual([child]);
+    expect(roundTrip(bounded)).toEqual([bounded]);
+  });
+
+  it("rejects an empty, oversized, control-bearing or unknown reasoning parent", () => {
+    const rejected = [
+      { kind: "reasoning", text: "x", parentToolId: "" },
+      { kind: "reasoning", text: "x", parentToolId: "a".repeat(257) },
+      { kind: "reasoning", text: "x", parentToolId: "toolu\u0007bell" },
+      { kind: "reasoning", text: "x", parentToolId: 7 },
+      { kind: "reasoning", text: "x", parent_tool_id: "toolu_parent" },
+    ];
+    for (const event of rejected) {
+      expect(() => parseAgentThread(storedWithEvents([event])), JSON.stringify(event)).toThrow(
+        TypeError,
+      );
+    }
+  });
 });
 
 describe("agentThreadWire shared event kind fixture", () => {

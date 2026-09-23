@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentCliKind } from "../domain/agentTask";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -75,7 +76,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Fix the failing test",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       expect(started).not.toBeNull();
     });
@@ -99,7 +100,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Inspect the project",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions(provider),
+          launch: concreteLaunch(provider),
         });
       });
       const request = harness.startedRequests[0];
@@ -165,7 +166,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Use the discovered repository",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -189,7 +190,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Probe before creating a worktree",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await Promise.resolve();
     });
@@ -221,7 +222,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Do not dispatch",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -248,7 +249,7 @@ describe("useWorkbenchAgents composition", () => {
       prompt: "Do not cross ownership generations",
       isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentLaunchOptions("claudeCode"),
+      launch: concreteLaunch("claudeCode"),
     });
 
     harness.setWorkspaceId("workspace-b");
@@ -286,7 +287,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Claude turn",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
     expect(harness.startedRequests[0]).toMatchObject({
@@ -310,7 +311,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Codex turn",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("codex"),
+        launch: concreteLaunch("codex"),
       });
     });
     expect(harness.startedRequests[1]).toMatchObject({
@@ -336,7 +337,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Do not start",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -367,7 +368,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Do not start",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -404,7 +405,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Use detected provider",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -521,7 +522,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Keep working",
         isolation: "in-place",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       expect(started).not.toBeNull();
       firstThreadId = started?.threadId ?? "";
@@ -544,7 +545,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "List files",
         isolation: "in-place",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       expect(started).not.toBeNull();
       secondThreadId = started?.threadId ?? "";
@@ -603,7 +604,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -638,7 +639,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Check trust",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -669,7 +670,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Retry after trust",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -704,7 +705,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Check stale trust",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
     await waitForReact(() => expect(harness.worktree.addAgentWorktree).toHaveBeenCalledOnce());
@@ -758,7 +759,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Check stale cleanup",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
     await waitForReact(() => expect(harness.worktree.removeWorktree).toHaveBeenCalledOnce());
@@ -812,7 +813,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Check orphan accounting",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
     await waitForReact(() => expect(harness.worktree.removeWorktree).toHaveBeenCalledOnce());
@@ -879,7 +880,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -914,7 +915,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Check trust",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -950,7 +951,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -986,7 +987,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -1047,7 +1048,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Wait for the lease",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
 
@@ -1080,7 +1081,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Refactor the API",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
     const taskId = harness.startedRequests[0]?.taskId ?? "";
@@ -1413,5 +1414,18 @@ function renderWorkbenchAgents(options: HarnessOptions) {
       act(() => root.unmount());
       host.remove();
     },
+  };
+}
+
+function concreteLaunch(provider: AgentCliKind): AgentLaunchOptions {
+  if (provider === "codex") return { provider: "codex", model: "default", mode: "workspaceWrite" };
+  return {
+    provider: "claudeCode",
+    model: "default",
+    mode: "supervised",
+    effort: "high",
+    context: "1m",
+    fastMode: false,
+    thinkingMode: false,
   };
 }

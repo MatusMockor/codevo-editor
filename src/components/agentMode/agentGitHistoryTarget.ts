@@ -1,6 +1,10 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentGitHistoryTarget } from "../../application/useAgentGitHistory";
-import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
+import {
+  agentProjectOwnsLaunchRoot,
+  agentProjectOwnsOwner,
+  type AgentProjectDescriptor,
+} from "../../domain/agentProject";
 import { agentSurfaceTargetGone, agentSurfaceTargetPath } from "./agentModePresentation";
 import type { AgentSurfaceScope } from "./agentSurfacePolicy";
 
@@ -47,10 +51,7 @@ export function agentGitHistoryScope(
   const project = projects.find((candidate) => candidate.rootKey === owner.rootKey);
   if (project === undefined || project.origin === "closed-tab-live-tasks")
     return unavailable("Reopen this thread's project to browse its Git history.");
-  if (
-    project.ownerId !== owner.ownerId &&
-    project.runtimeOwnerIds?.includes(owner.ownerId) !== true
-  )
+  if (!agentProjectOwnsOwner(project, owner))
     return unavailable("This thread's project is no longer available.");
   if (workspaceRoot !== project.rootPath)
     return unavailable(`Switch to ${project.label} to browse its Git history.`);

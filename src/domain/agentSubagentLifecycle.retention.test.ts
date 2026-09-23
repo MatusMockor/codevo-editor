@@ -36,11 +36,15 @@ const progress = (toolId: string, description: string): AgentTurnEvent => ({
   lastToolName: "Read",
 });
 
-const launched = (toolId: string): AgentTurnEvent => ({
+const launched = (
+  toolId: string,
+  outputSummary = "Async agent launched successfully.",
+  isError = false,
+): AgentTurnEvent => ({
   kind: "toolResult",
   toolId,
-  outputSummary: "Async agent launched successfully.",
-  isError: false,
+  outputSummary,
+  isError,
 });
 
 function retainInChunks(chunks: ReadonlyArray<ReadonlyArray<AgentTurnEvent>>) {
@@ -127,10 +131,133 @@ describe("retained spawn batch key", () => {
     ]);
 
     expect(lifecycle?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:a"]);
-    expect(lifecycle?.openBatchKey).toBeUndefined();
+    expect(lifecycle?.openBatchKey).toBe("spawn:a");
   });
 
-  it("separates sequential spawns and never rewrites a retained key", () => {
+  it("keeps one batch across interleaved async launch acknowledgements", () => {
+    const lifecycle = retainInChunks([
+      [spawn("a", "Stream A"), launched("a")],
+      [spawn("b", "Stream B"), launched("b")],
+      [spawn("c", "Stream C"), launched("c")],
+      [progress("a", "Reading"), progress("b", "Reading"), progress("c", "Reading")],
+    ]);
+
+    expect(lifecycle?.entries.map((entry) => entry.batchKey)).toEqual([
+      "spawn:a",
+      "spawn:a",
+      "spawn:a",
+    ]);
+    expect(lifecycle?.openBatchKey).toBe("spawn:a");
+  });
+
+  it("separates sequential foreground subagents whose final report closes the batch", () => {
+    const report = (toolId: string): AgentTurnEvent => ({
+      kind: "toolResult",
+      toolId,
+      outputSummary: "Final report: all checks passed.",
+      isError: false,
+    });
+    const completed = (toolId: string): AgentTurnEvent => ({
+      kind: "subagent",
+      status: "completed",
+      toolId,
+      taskId: `task-${toolId}`,
+    });
+    const withTelemetry = retainInChunks([
+      [spawn("a", "First"), progress("a", "Reading"), completed("a"), report("a")],
+      [spawn("b", "Second"), progress("b", "Reading"), completed("b"), report("b")],
+    ]);
+    const withoutTelemetry = retainInChunks([
+      [spawn("a", "First"), report("a")],
+      [spawn("b", "Second"), report("b")],
+    ]);
+
+    expect(withTelemetry?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:b"]);
+    expect(withTelemetry?.openBatchKey).toBeUndefined();
+    expect(withoutTelemetry?.entries.map((entry) => entry.batchKey)).toEqual([
+      "spawn:a",
+      "spawn:b",
+    ]);
+    expect(withoutTelemetry?.openBatchKey).toBeUndefined();
+  });
+
+  it("keeps the batch open while the subagent telemetry reports it still running", () => {
+    const lifecycle = retainInChunks([
+      [spawn("a", "First"), progress("a", "Reading")],
+      [
+        {
+          kind: "toolResult",
+          toolId: "a",
+          outputSummary: "Launched in background.",
+          isError: false,
+        },
+      ],
+      [spawn("b", "Second")],
+    ]);
+
+    expect(lifecycle?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:a"]);
+  });
+
+  it("closes the batch on an error result even when it looks like a launch acknowledgement", () => {
+    const lifecycle = retainInChunks([
+      [spawn("a", "First")],
+      [launched("a", "Async agent launched successfully.", true)],
+      [spawn("b", "Second")],
+    ]);
+
+    expect(lifecycle?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:b"]);
+    expect(lifecycle?.entries[0]?.state).toBe("failed");
+  });
+
+  it("matches the launch acknowledgement only as a bounded leading prefix", () => {
+    const quoted = retainInChunks([
+      [spawn("a", "First")],
+      [
+        {
+          kind: "toolResult",
+          toolId: "a",
+          outputSummary: `${"x".repeat(80)} Async agent launched successfully.`,
+          isError: false,
+        },
+      ],
+      [spawn("b", "Second")],
+    ]);
+    const padded = retainInChunks([
+      [spawn("a", "First")],
+      [launched("a", "\n  Async agent launched successfully.")],
+      [spawn("b", "Second")],
+    ]);
+
+    expect(quoted?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:b"]);
+    expect(padded?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:a"]);
+  });
+
+  it("closes the batch on a root result for a tool that is not a retained subagent", () => {
+    const lifecycle = retainInChunks([
+      [spawn("a", "First"), launched("a")],
+      [{ kind: "toolResult", toolId: "read-1", outputSummary: "file body", isError: false }],
+      [spawn("b", "Second")],
+    ]);
+
+    expect(lifecycle?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:b"]);
+  });
+
+  it("closes the batch on a non-spawn root tool call and on a turn result", () => {
+    const afterTool = retainInChunks([
+      [spawn("a", "First")],
+      [{ kind: "toolCall", toolId: "read-1", name: "Read", inputSummary: "a.ts" }],
+      [spawn("b", "Second")],
+    ]);
+    const afterResult = retainInChunks([
+      [spawn("a", "First")],
+      [{ kind: "result", text: "done", isError: false, usage: null }],
+    ]);
+
+    expect(afterTool?.entries.map((entry) => entry.batchKey)).toEqual(["spawn:a", "spawn:b"]);
+    expect(afterResult?.openBatchKey).toBeUndefined();
+  });
+
+  it("joins spawns across async launch results and never rewrites a retained key", () => {
     const lifecycle = retainInChunks([
       [spawn("a", "First"), launched("a")],
       [spawn("b", "Second")],
@@ -140,7 +267,7 @@ describe("retained spawn batch key", () => {
 
     expect(lifecycle?.entries.map((entry) => entry.batchKey)).toEqual([
       "spawn:a",
-      "spawn:b",
+      "spawn:a",
       "spawn:c",
     ]);
   });

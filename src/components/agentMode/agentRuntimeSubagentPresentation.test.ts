@@ -108,6 +108,10 @@ function toolResult(toolId: string, content: string, isError = false) {
   };
 }
 
+function assistantText(text: string) {
+  return { type: "assistant", message: { content: [{ type: "text", text }] } };
+}
+
 const codexChild = (kind: string, id: string, path: string) => ({
   v: 1,
   t: "subagent",
@@ -196,16 +200,128 @@ describe("agentTurnRuntimeSubagents from Claude stream-json", () => {
     expect(model(events).agents[0]?.activity).toBe("▸ Grep");
   });
 
-  it("separates sequential spawns into their own batches", () => {
+  it("separates spawns that root prose splits into their own batches", () => {
     const events = parse("claudeCode", [
       spawn("tool-a", "First"),
       toolResult("tool-a", "first done"),
+      assistantText("First agent finished, starting the next one."),
       spawn("tool-b", "Second"),
     ]);
     const result = model(events);
 
     expect(result.batches.map((batch) => batch.id)).toEqual(["spawn:tool-a", "spawn:tool-b"]);
     expect(result.agents[0]).toMatchObject({ status: "completed", activity: "first done" });
+  });
+
+  it("folds three async spawns with interleaved launch results into one batch", () => {
+    const events = parse("claudeCode", [
+      spawn("tool-a", "Stream A"),
+      toolResult("tool-a", "Async agent launched successfully."),
+      started("tool-a", "task-a", "Stream A"),
+      spawn("tool-b", "Stream B"),
+      toolResult("tool-b", "Async agent launched successfully."),
+      started("tool-b", "task-b", "Stream B"),
+      spawn("tool-c", "Stream C"),
+      toolResult("tool-c", "Async agent launched successfully."),
+      started("tool-c", "task-c", "Stream C"),
+      progress({ toolId: "tool-b", taskId: "task-b" }, "Reading gateway.ts", "Read"),
+    ]);
+    const result = model(events);
+
+    expect(result.batches.map((batch) => batch.id)).toEqual(["spawn:tool-a"]);
+    expect(result.batches[0]?.agents.map((agent) => agent.title)).toEqual([
+      "Stream A",
+      "Stream B",
+      "Stream C",
+    ]);
+    expect(result.agents.map((agent) => agent.status)).toEqual(["working", "working", "working"]);
+    expect(agentSpawnLeadLabel(summarizeAgentRuntimeSubagents(result.agents), "spawn")).toBe(
+      "Kicked off 3 subagents",
+    );
+  });
+
+  it("separates sequential foreground subagents that return their final reports", () => {
+    const events = parse("claudeCode", [
+      spawn("tool-a", "First"),
+      started("tool-a", "task-a", "First"),
+      progress({ toolId: "tool-a", taskId: "task-a" }, "Reading a.ts", "Read"),
+      notification("task-a", "completed", "tool-a"),
+      toolResult("tool-a", "First report"),
+      spawn("tool-b", "Second"),
+      started("tool-b", "task-b", "Second"),
+      notification("task-b", "completed", "tool-b"),
+      toolResult("tool-b", "Second report"),
+    ]);
+    const result = model(events, SETTLED);
+
+    expect(result.batches.map((batch) => batch.id)).toEqual(["spawn:tool-a", "spawn:tool-b"]);
+    expect(result.batches.map((batch) => batch.agents.length)).toEqual([1, 1]);
+  });
+
+  it("keeps the batch and its members stable from live to settled", () => {
+    const live = [
+      spawn("tool-a", "Stream A"),
+      toolResult("tool-a", "Async agent launched successfully."),
+      started("tool-a", "task-a", "Stream A"),
+      spawn("tool-b", "Stream B"),
+      toolResult("tool-b", "Async agent launched successfully."),
+      started("tool-b", "task-b", "Stream B"),
+    ];
+    const settled = [
+      ...live,
+      notification("task-a", "completed", "tool-a"),
+      notification("task-b", "failed", "tool-b"),
+    ];
+    const running = model(parse("claudeCode", live));
+    const done = model(parse("claudeCode", settled), SETTLED);
+    const summary = summarizeAgentRuntimeSubagents(done.agents);
+
+    expect(running.batches.map((batch) => batch.id)).toEqual(["spawn:tool-a"]);
+    expect(done.batches.map((batch) => batch.id)).toEqual(["spawn:tool-a"]);
+    expect(done.agents.map((agent) => agent.id)).toEqual(running.agents.map((agent) => agent.id));
+    expect(done.agents.map((agent) => agent.status)).toEqual(["completed", "failed"]);
+    expect(agentSpawnLeadLabel(summary, "spawn")).toBe("Ran 2 subagents");
+    expect(agentSpawnStatusLabel(summary)).toBe("1 failed");
+  });
+
+  it("keeps a bounded recent activity history per agent with oldest-first eviction", () => {
+    const steps = Array.from({ length: 9 }, (_, index) =>
+      progress({ toolId: "tool-a", taskId: "task-a" }, `Step ${index}`, "Read"),
+    );
+    const events = parse("claudeCode", [
+      spawn("tool-a", "Stream A"),
+      started("tool-a", "task-a", "Stream A"),
+      progress({ toolId: "tool-a", taskId: "task-a" }, "Step 0", "Read"),
+      ...steps,
+    ]);
+    const agent = model(events).agents[0];
+
+    expect(agent?.recentActivity).toEqual([
+      "Step 3",
+      "Step 4",
+      "Step 5",
+      "Step 6",
+      "Step 7",
+      "Step 8",
+    ]);
+  });
+
+  it("records the last tool when a progress tick carries no description", () => {
+    const events = parse("claudeCode", [
+      spawn("tool-a", "Stream A"),
+      started("tool-a", "task-a", "Stream A"),
+      progress({ toolId: "tool-a", taskId: "task-a" }, "Reading a.ts", "Read"),
+      {
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-a",
+        tool_use_id: "tool-a",
+        last_tool_name: "Grep",
+        usage: { total_tokens: 10, tool_uses: 2, duration_ms: 5 },
+      },
+    ]);
+
+    expect(model(events).agents[0]?.recentActivity).toEqual(["Reading a.ts", "▸ Grep"]);
   });
 
   it("reports failed and stopped agents with their error as the activity", () => {

@@ -292,6 +292,10 @@ fn a_parent_tool_id_is_bounded_exactly_like_the_typescript_optional_tool_id() {
                 text: "done".to_string(),
                 parent_tool_id: Some(parent_tool_id.clone()),
             },
+            AgentTurnEvent::Reasoning {
+                text: "thinking".to_string(),
+                parent_tool_id: Some(parent_tool_id.clone()),
+            },
             AgentTurnEvent::ToolCall {
                 tool_id: "toolu_01call".to_string(),
                 name: "Bash".to_string(),
@@ -325,6 +329,43 @@ fn a_parent_tool_id_is_bounded_exactly_like_the_typescript_optional_tool_id() {
     };
     validate_agent_thread_document(ROOT_KEY, &document_with_events(vec![accepted]))
         .expect("a parent tool id at the exact byte bound is accepted");
+}
+
+#[test]
+fn reasoning_round_trips_an_optional_parent_tool_id() {
+    let parented = json!({"kind":"reasoning","text":"child plan","parentToolId":"toolu_01parent"});
+    let event: AgentTurnEvent =
+        serde_json::from_value(parented.clone()).expect("parented reasoning decodes");
+    assert_eq!(
+        event,
+        AgentTurnEvent::Reasoning {
+            text: "child plan".to_string(),
+            parent_tool_id: Some("toolu_01parent".to_string()),
+        }
+    );
+    assert_eq!(serde_json::to_value(&event).expect("re-encode"), parented);
+
+    let plain = json!({"kind":"reasoning","text":"main plan"});
+    let event: AgentTurnEvent = serde_json::from_value(plain.clone()).expect("plain decodes");
+    assert_eq!(serde_json::to_value(&event).expect("re-encode"), plain);
+
+    let bounded = AgentTurnEvent::Reasoning {
+        text: "child plan".to_string(),
+        parent_tool_id: Some("a".repeat(MAX_AGENT_TOOL_ID_BYTES)),
+    };
+    validate_agent_thread_document(ROOT_KEY, &document_with_events(vec![bounded]))
+        .expect("a reasoning parent tool id at the exact byte bound is accepted");
+
+    for invalid in [
+        json!({"kind":"reasoning","text":"x","parentToolId":7}),
+        json!({"kind":"reasoning","text":"x","parent_tool_id":"toolu_01parent"}),
+        json!({"kind":"reasoning","text":"x","extra":true}),
+    ] {
+        assert!(
+            serde_json::from_value::<AgentTurnEvent>(invalid.clone()).is_err(),
+            "{invalid}"
+        );
+    }
 }
 
 #[test]

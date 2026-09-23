@@ -8,6 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "agent_claude_approvals.rs"]
+mod approvals;
+
 const MAX_CONTROL_LINE_BYTES: usize = 256 * 1024;
 
 pub struct ClaudeQuestionReader<R> {
@@ -78,11 +81,13 @@ impl<R: Read> ClaudeQuestionReader<R> {
                 .fail("The provider sent an interactive request without a valid identifier.");
             return;
         };
-        if self
-            .questions
-            .list("")
-            .iter()
-            .any(|question| question.id == public_request_id(request_id))
+        let public_id = public_request_id(request_id);
+        if self.questions.approvals().contains(&public_id)
+            || self
+                .questions
+                .list("")
+                .iter()
+                .any(|question| question.id == public_id)
         {
             return;
         }
@@ -100,11 +105,12 @@ impl<R: Read> ClaudeQuestionReader<R> {
             );
             return;
         }
-        if request.get("tool_name").and_then(Value::as_str) != Some("AskUserQuestion") {
-            self.deny(
-                request_id,
-                "This tool requires a permission this editor cannot grant interactively.",
-            );
+        let tool_name = request
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if tool_name != "AskUserQuestion" {
+            self.request_permission(request_id, public_id, tool_name, request);
             return;
         }
         let Some(input) = request.get("input") else {
@@ -135,6 +141,34 @@ impl<R: Read> ClaudeQuestionReader<R> {
             self.deny(
                 request_id,
                 "The question could not be registered or is no longer active.",
+            );
+        }
+    }
+
+    fn request_permission(
+        &self,
+        request_id: &str,
+        public_id: String,
+        tool_name: &str,
+        request: &Value,
+    ) {
+        let empty = json!({});
+        let retained = Arc::clone(&self.input);
+        let request_id_owned = request_id.to_string();
+        let registered = approvals::register(
+            self.questions.approvals(),
+            approvals::ClaudePermissionRequest {
+                public_id,
+                tool_name,
+                input: request.get("input").unwrap_or(&empty),
+                request,
+            },
+            Arc::new(move |response| write_response(&retained, &request_id_owned, response)),
+        );
+        if let Err(reason) = registered {
+            self.deny(
+                request_id,
+                &format!("The permission request could not be shown to the user: {reason}"),
             );
         }
     }
@@ -395,6 +429,33 @@ mod tests {
         reader.observe(&vec![b'x'; MAX_CONTROL_LINE_BYTES]);
         assert!(session.failure().unwrap().contains("oversized"));
         assert!(session.list("task-1").is_empty());
+        child.wait().unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn permission_requests_wait_for_the_user_instead_of_auto_denying() {
+        let mut child = std::process::Command::new("/usr/bin/true")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = Arc::new(super::super::agent_task_input::RetainedAgentStdin::new(
+            child.stdin.take().unwrap(),
+        ));
+        let session = Arc::new(AgentQuestionSession::new());
+        let mut reader = ClaudeQuestionReader::new(io::empty(), Arc::clone(&session), input);
+        let request = json!({"type":"control_request","request_id":"perm-1","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"plan":"Ship it"}}});
+        let line = format!("{request}\n");
+        reader.observe(line.as_bytes());
+        reader.observe(line.as_bytes());
+        let approvals = session.approvals().list("task-1");
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0].id, public_request_id("perm-1"));
+        assert!(session.has_pending());
+        reader.observe(b"{\"type\":\"control_cancel_request\",\"request_id\":\"perm-1\"}\n");
+        assert_eq!(
+            session.approvals().list("task-1")[0].status,
+            crate::agent_questions::approvals::AgentApprovalStatus::Cancelled
+        );
         child.wait().unwrap();
     }
     #[test]

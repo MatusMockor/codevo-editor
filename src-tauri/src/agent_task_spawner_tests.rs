@@ -457,7 +457,9 @@ fn claude_first_turn_default_launch_appends_visual_guidance_without_changing_use
             "stream-json",
             "--append-system-prompt",
             agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
-            "--chrome"
+            "--chrome",
+            "--thinking-display",
+            "summarized"
         ]
     );
     assert_eq!(
@@ -490,6 +492,8 @@ fn claude_follow_up_default_launch_appends_visual_guidance_without_changing_user
             "--append-system-prompt",
             agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
             "--chrome",
+            "--thinking-display",
+            "summarized",
             "--resume",
             SESSION_ID
         ]
@@ -566,6 +570,8 @@ fn claude_argv_places_model_then_mode_then_resume_after_the_stream_json_input_fo
             "--permission-mode",
             "acceptEdits",
             "--chrome",
+            "--thinking-display",
+            "summarized",
             "--resume",
             SESSION_ID
         ]
@@ -605,7 +611,9 @@ fn claude_browser_integration_drops_the_chrome_flag_only_when_the_thread_turns_i
             "--model",
             "opus",
             "--permission-mode",
-            "acceptEdits"
+            "acceptEdits",
+            "--thinking-display",
+            "summarized"
         ]
     );
     assert!(!agent_invocation_args(
@@ -656,6 +664,8 @@ fn claude_ultracode_and_fast_mode_reach_the_cli_as_runtime_settings() {
             "xhigh",
             "--settings",
             r#"{"fastMode":true,"ultracode":true}"#,
+            "--thinking-display",
+            "summarized",
         ]
     );
 }
@@ -804,6 +814,7 @@ fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
                         expected.extend(launch.effort_args().iter().map(|arg| (*arg).to_string()));
                         expected
                             .extend(launch.settings_args().iter().map(|arg| (*arg).to_string()));
+                        expected.extend(["--thinking-display", "summarized"].map(str::to_string));
                         if let Some(session_id) = resume {
                             expected.push("--resume".to_string());
                             expected.push(session_id.to_string());
@@ -1293,4 +1304,42 @@ fn without_command_uuid(frame: &[u8]) -> Vec<u8> {
     let mut original = vec![b'{'];
     original.extend_from_slice(&frame[id_end + 2..]);
     original
+}
+
+#[test]
+fn claude_requests_summarized_thinking_only_from_clis_that_support_it() {
+    let argv = |version: Option<&str>| {
+        try_agent_invocation_args(
+            AgentCliInvocation::ClaudeCode,
+            "do it",
+            Some(SESSION_ID),
+            claude_default(),
+            &no_attachments(),
+            version,
+        )
+        .expect("default launch is valid for any version")
+    };
+    let supported = argv(Some("2.1.280"));
+    let display = supported
+        .iter()
+        .position(|arg| arg == "--thinking-display")
+        .expect("summarized thinking requested");
+    assert_eq!(supported[display + 1], "summarized");
+    assert!(display < supported.iter().position(|arg| arg == "--resume").unwrap());
+    for version in [None, Some("2.1.219")] {
+        let older = argv(version);
+        assert!(!older.iter().any(|arg| arg.starts_with("--thinking")));
+        assert_eq!(older.len() + 2, supported.len());
+    }
+    assert!(!try_agent_invocation_args(
+        AgentCliInvocation::CodexExec,
+        "do it",
+        None,
+        codex_default(),
+        &no_attachments(),
+        Some("2.1.280"),
+    )
+    .expect("codex launch")
+    .iter()
+    .any(|arg| arg.starts_with("--thinking")));
 }

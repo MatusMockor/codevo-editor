@@ -72,3 +72,52 @@ pub(crate) async fn answer_agent_question(
     })
     .await
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ApprovalAnswerRequest {
+    task_id: String,
+    workspace_id: WorkspaceId,
+    repository_root: String,
+    request_id: String,
+    decision: crate::agent_questions::approvals::AgentApprovalDecision,
+}
+#[tauri::command]
+pub(crate) async fn list_agent_approvals(
+    app: AppHandle,
+    request: QuestionOwner,
+) -> Result<Vec<crate::agent_questions::approvals::AgentApprovalRequest>, String> {
+    run_blocking_command(move || {
+        let root = validate_owner(&app, &request)?;
+        app.state::<AgentTaskRegistry>().list_approvals(
+            &request.task_id,
+            request.workspace_id.as_str(),
+            &root,
+        )
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn answer_agent_approval(
+    app: AppHandle,
+    request: ApprovalAnswerRequest,
+) -> Result<crate::agent_questions::approvals::AgentApprovalRequest, String> {
+    run_blocking_command(move || {
+        if request.request_id.len() > 128 {
+            return Err("Invalid approval.".into());
+        }
+        let owner = QuestionOwner {
+            task_id: request.task_id,
+            workspace_id: request.workspace_id,
+            repository_root: request.repository_root,
+        };
+        let root = validate_owner(&app, &owner)?;
+        app.state::<AgentTaskRegistry>().answer_approval(
+            &owner.task_id,
+            owner.workspace_id.as_str(),
+            &root,
+            &request.request_id,
+            request.decision,
+        )
+    })
+    .await
+}

@@ -122,7 +122,7 @@ describe("parseCodexJsonlLine items", () => {
         kind: "events",
         events: [
           { kind: "toolCall", toolId: "item_4", name: "shell", inputSummary: "false" },
-          { kind: "toolResult", toolId: "item_4", outputSummary: "", isError: true },
+          { kind: "toolResult", toolId: "item_4", outputSummary: "exit 3", isError: true },
         ],
         sessionId: null,
       },
@@ -174,7 +174,18 @@ describe("parseCodexJsonlLine items", () => {
         ],
         sessionId: null,
       },
-      { kind: "ignored" },
+      {
+        kind: "events",
+        events: [
+          {
+            kind: "toolResult",
+            toolId: "item_6",
+            outputSummary: "update /repo/a.txt\nadd /repo/b.txt",
+            isError: false,
+          },
+        ],
+        sessionId: null,
+      },
     ]);
   });
 
@@ -199,7 +210,18 @@ describe("parseCodexJsonlLine items", () => {
         ],
         sessionId: null,
       },
-      { kind: "ignored" },
+      {
+        kind: "events",
+        events: [
+          {
+            kind: "toolResult",
+            toolId: "item_7",
+            outputSummary: "MCP call status unknown: <missing>",
+            isError: true,
+          },
+        ],
+        sessionId: null,
+      },
       {
         kind: "events",
         events: [
@@ -227,14 +249,142 @@ describe("parseCodexJsonlLine items", () => {
     ]);
   });
 
-  it("ignores items without a safe id and unknown item types", () => {
+  it("ignores items without a safe id and item updates", () => {
     const parsed = parseAll([
       { type: "item.started", item: { type: "command_execution", command: "ls" } },
-      { type: "item.completed", item: { id: "item_10", type: "todo_list", items: [] } },
       { type: "item.updated", item: { id: "item_11", type: "agent_message", text: "hi" } },
     ]);
 
-    expect(parsed.results).toEqual([{ kind: "ignored" }, { kind: "ignored" }, { kind: "ignored" }]);
+    expect(parsed.results).toEqual([{ kind: "ignored" }, { kind: "ignored" }]);
+  });
+
+  it("reports unknown item types visibly once per item", () => {
+    const item = { id: "item_12", type: "hologram", payload: "secret" };
+    const parsed = parseAll([
+      { type: "item.started", item },
+      { type: "item.completed", item },
+    ]);
+
+    expect(parsed.results).toEqual([
+      {
+        kind: "events",
+        events: [
+          {
+            kind: "unknownLine",
+            stream: "stdout",
+            raw: "Unsupported Codex exec item: hologram",
+            clipped: false,
+          },
+        ],
+        sessionId: null,
+      },
+      { kind: "ignored" },
+    ]);
+  });
+
+  it("summarises a todo list as a bounded checklist row", () => {
+    const items = Array.from({ length: 40 }, (_, index) => ({
+      text: `step ${index}`,
+      completed: index === 0,
+    }));
+    const parsed = parseAll([
+      { type: "item.started", item: { id: "todo_1", type: "todo_list", items } },
+      { type: "item.completed", item: { id: "todo_1", type: "todo_list", items } },
+    ]);
+
+    const [started, completed] = parsed.results;
+    expect(started).toMatchObject({
+      kind: "events",
+      events: [{ kind: "toolCall", toolId: "todo_1", name: "update_plan" }],
+    });
+    expect(completed).toMatchObject({
+      kind: "events",
+      events: [{ kind: "toolResult", toolId: "todo_1", isError: false }],
+    });
+    const call = started?.kind === "events" ? started.events[0] : undefined;
+    expect(call?.kind === "toolCall" ? call.inputSummary : "").toMatch(
+      /^\[x\] step 0\n\[ \] step 1\n/u,
+    );
+    expect(utf8ByteLength(call?.kind === "toolCall" ? call.inputSummary : "")).toBeLessThanOrEqual(
+      MAX_AGENT_TOOL_SUMMARY_BYTES,
+    );
+  });
+
+  it("settles failed patches, failed mcp calls, and web searches", () => {
+    const parsed = parseAll([
+      {
+        type: "item.completed",
+        item: {
+          id: "patch_1",
+          type: "file_change",
+          changes: [{ path: "a.ts", kind: "add" }],
+          status: "failed",
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "mcp_1",
+          type: "mcp_tool_call",
+          server: "s",
+          tool: "t",
+          status: "failed",
+          error: { message: "denied" },
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "mcp_2",
+          type: "mcp_tool_call",
+          server: "s",
+          tool: "t",
+          status: "completed",
+          result: { content: [{ type: "text", text: "ok" }, { type: "image" }] },
+        },
+      },
+      { type: "item.completed", item: { id: "web_1", type: "web_search", query: "vitest" } },
+    ]);
+
+    const results = parsed.results.flatMap((result) =>
+      result.kind === "events" ? result.events.filter((event) => event.kind === "toolResult") : [],
+    );
+    expect(results).toEqual([
+      {
+        kind: "toolResult",
+        toolId: "patch_1",
+        outputSummary: "patch failed\nadd a.ts",
+        isError: true,
+      },
+      { kind: "toolResult", toolId: "mcp_1", outputSummary: "denied", isError: true },
+      { kind: "toolResult", toolId: "mcp_2", outputSummary: "ok\n[image]", isError: false },
+      { kind: "toolResult", toolId: "web_1", outputSummary: "vitest", isError: false },
+    ]);
+  });
+
+  it("keeps the exit code and the failing tail of long command output", () => {
+    const output = `${"ok line\n".repeat(400)}FAIL src/a.test.ts\n`;
+    const parsed = parseAll([
+      {
+        type: "item.completed",
+        item: {
+          id: "cmd_1",
+          type: "command_execution",
+          command: "npm test",
+          aggregated_output: output,
+          exit_code: 1,
+          status: "failed",
+        },
+      },
+    ]);
+
+    const result = parsed.results[0];
+    const event = result?.kind === "events" ? result.events[1] : undefined;
+    const summary = event?.kind === "toolResult" ? event.outputSummary : "";
+    expect(summary.startsWith("exit 1\nok line")).toBe(true);
+    expect(summary.endsWith("FAIL src/a.test.ts\n")).toBe(true);
+    expect(summary).toContain("bytes omitted");
+    expect(utf8ByteLength(summary)).toBeLessThanOrEqual(MAX_AGENT_TOOL_SUMMARY_BYTES);
   });
 });
 
@@ -323,8 +473,16 @@ describe("parseCodexJsonlLine bounds and fail-closed handling", () => {
     expect(parseCodexJsonlLine("[]", new Set()).result).toEqual({ kind: "unknown", raw: "[]" });
   });
 
-  it("ignores unknown line types", () => {
+  it("reports unknown line types visibly and ignores known lifecycle lines", () => {
     expect(parseCodexJsonlLine(line({ type: "thread.finished" }), new Set()).result).toEqual({
+      kind: "unknown",
+      raw: "Unsupported Codex exec event: thread.finished",
+    });
+    expect(parseCodexJsonlLine(line({ type: 7 }), new Set()).result).toEqual({
+      kind: "unknown",
+      raw: "Unsupported Codex exec event: <invalid type>",
+    });
+    expect(parseCodexJsonlLine(line({ type: "turn.started" }), new Set()).result).toEqual({
       kind: "ignored",
     });
   });
@@ -387,5 +545,75 @@ describe("parseCodexJsonlLine bounds and fail-closed handling", () => {
         isError: false,
       },
     ]);
+  });
+});
+
+describe("parseCodexJsonlLine completion status", () => {
+  const completedResult = (item: Record<string, unknown>) => {
+    const parsed = parseCodexJsonlLine(line({ type: "item.completed", item }), new Set()).result;
+    const events = parsed.kind === "events" ? parsed.events : [];
+    return events.find((event) => event.kind === "toolResult");
+  };
+
+  it.each([
+    [undefined, "MCP call status unknown: <missing>"],
+    ["in_progress", "MCP call did not finish"],
+    ["paused", "MCP call status unknown: paused"],
+    ["failed", "MCP call failed"],
+  ])("treats an MCP completion with status %s as an error", (status, summary) => {
+    expect(
+      completedResult({ id: "m", type: "mcp_tool_call", server: "s", tool: "t", status }),
+    ).toEqual({ kind: "toolResult", toolId: "m", outputSummary: summary, isError: true });
+  });
+
+  it.each([
+    [undefined, "patch status unknown: <missing>"],
+    ["in_progress", "patch did not finish"],
+    ["declined", "patch declined"],
+  ])("treats a file change completion with status %s as an error", (status, label) => {
+    expect(
+      completedResult({
+        id: "p",
+        type: "file_change",
+        changes: [{ path: "a.ts", kind: "add" }],
+        status,
+      }),
+    ).toEqual({
+      kind: "toolResult",
+      toolId: "p",
+      outputSummary: `${label}\nadd a.ts`,
+      isError: true,
+    });
+  });
+});
+
+describe("parseCodexJsonlLine MCP argument redaction", () => {
+  it("redacts camelCase keys, header pairs, URL credentials, and bearer tokens", () => {
+    const parsed = parseCodexJsonlLine(
+      line({
+        type: "item.started",
+        item: {
+          id: "m",
+          type: "mcp_tool_call",
+          server: "http",
+          tool: "fetch",
+          status: "in_progress",
+          arguments: {
+            privateKey: "pk-1",
+            headers: [{ name: "X-Api-Key", value: "hk-2" }],
+            url: "https://me:pw-3@api.example.com/v1",
+            note: "Bearer tok-4-abcdef",
+          },
+        },
+      }),
+      new Set(),
+    ).result;
+
+    const call = parsed.kind === "events" ? parsed.events[0] : undefined;
+    const summary = call?.kind === "toolCall" ? call.inputSummary : "";
+    for (const secret of ["pk-1", "hk-2", "pw-3", "tok-4"]) expect(summary).not.toContain(secret);
+    expect(summary).not.toContain("abcdef");
+    expect(summary).toContain("https://me:[redacted]@api.example.com/v1");
+    expect(summary).toContain("Bearer [redacted]");
   });
 });

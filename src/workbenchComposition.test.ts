@@ -6,6 +6,9 @@ import { TauriIncrementalLanguageServerDocumentSyncGateway } from "./infrastruct
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
 import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDiscoveryGateway";
+import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
+import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
+import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -90,6 +93,23 @@ describe("workbench live-document runtime composition", () => {
     expect(first.agentCliDiscoveryGateway).toBeInstanceOf(TauriAgentCliDiscoveryGateway);
     expect(first.agentCliDiscoveryGateway).not.toBe(second.agentCliDiscoveryGateway);
     expect("agentCliVersionGateway" in first).toBe(false);
+  });
+
+  it("hands the agent task, worktree and turn changes gateways to the agent controller", () => {
+    const composition = createWorkbenchComposition();
+
+    expect(composition.agentControllerGateways.turnChangesGateway).toBeInstanceOf(
+      TauriAgentTurnChangesGateway,
+    );
+    expect(composition.turnChangesGateway).toBe(
+      composition.agentControllerGateways.turnChangesGateway,
+    );
+    expect(composition.agentControllerGateways.agentTaskGateway).toBeInstanceOf(
+      TauriAgentTaskGateway,
+    );
+    expect(composition.agentControllerGateways.gitWorktreeGateway).toBeInstanceOf(
+      TauriGitWorktreeGateway,
+    );
   });
 
   it("constructs the updater from the package-authoritative application version", () => {

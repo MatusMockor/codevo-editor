@@ -39,6 +39,7 @@ import {
   agentSessionTurnCountLabel,
   agentThreadImportedBadgeLabel,
   agentThreadMenuEntries,
+  agentViewCanMarkUnread,
   agentWorkingDurationLabel,
   sameAgentRailScopeOrder,
   type AgentRailScopeEntry,
@@ -238,6 +239,36 @@ describe("agent row status", () => {
         unread: false,
       }),
     ).toBe("agent-row agent-row--card agent-row--marked");
+  });
+});
+
+describe("mark unread availability", () => {
+  const remote = (base: AgentThreadView): AgentThreadView => ({
+    ...base,
+    execution: {
+      kind: "remote",
+      pendingMessages: false,
+      taskSteering: false,
+      interactiveQuestions: false,
+      serverId: "server",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: base.thread.threadId,
+      latestTaskId: base.thread.threadId,
+      resume: null,
+    },
+  });
+
+  it("follows the local unread finish time and the remote terminal turn", () => {
+    const finished = view({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: NOW });
+    const noEnd = view({ status: { kind: "exited", exitCode: 0 } });
+    expect(agentViewCanMarkUnread(finished)).toBe(true);
+    expect(agentViewCanMarkUnread(noEnd)).toBe(false);
+    expect(agentViewCanMarkUnread(remote(noEnd))).toBe(true);
+    expect(agentViewCanMarkUnread(remote(view({ status: { kind: "running" } })))).toBe(false);
+    expect(
+      agentViewCanMarkUnread(remote(view({ archived: true, status: { kind: "stopped" } }))),
+    ).toBe(false);
   });
 });
 

@@ -57,6 +57,22 @@ describe("agent turn log notices", () => {
     expect(agentTurnLossNotice(null, false)).toBeNull();
   });
 
+  it("hides the legacy window notice for a turn whose document holds every event", () => {
+    const stamped = facts({ loss: { kind: "legacyWindow" }, hydration: "notAttempted" });
+    expect(agentTurnLossNotice(stamped, false)).toBeNull();
+    expect(agentTurnLossNotice(stamped, true)).toBe(
+      "Part of this turn ran before full transcripts were kept, so some activity is gone.",
+    );
+  });
+
+  it("keeps every other loss visible on a turn whose document holds every event", () => {
+    const wording = (loss: AgentTurnLogLoss) => agentTurnLossNotice(facts({ loss }), false);
+    expect(wording({ kind: "supervisorGap" })).not.toBeNull();
+    expect(wording({ kind: "turnCeiling" })).not.toBeNull();
+    expect(wording({ kind: "unreadable" })).not.toBeNull();
+    expect(wording({ kind: "diskBudget", atEpochMs: 1 })).not.toBeNull();
+  });
+
   it("words every real loss kind", () => {
     const wording = (loss: AgentTurnLogLoss) => agentTurnLossNotice(facts({ loss }), true);
     expect(wording({ kind: "legacyWindow" })).toBe(

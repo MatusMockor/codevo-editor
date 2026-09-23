@@ -883,6 +883,10 @@
   word-break: break-word;
 }
 
+.agent-md__link[data-agent-link="localFile"] {
+  cursor: pointer;
+}
+
 .agent-md__link:hover {
   text-decoration-color: var(--agent-accent);
 }
@@ -980,15 +984,6 @@
 .agent-reasoning > summary {
   cursor: pointer;
   list-style: none;
-}
-
-.agent-reasoning__body {
-  color: var(--agent-text-muted);
-  font-size: var(--agent-fs-sm);
-  line-height: var(--agent-lh-prose);
-  margin: 7px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .agent-raw {

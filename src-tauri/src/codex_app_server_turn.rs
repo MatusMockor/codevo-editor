@@ -8,11 +8,14 @@ use authority::{belongs_to_turn, bounded_error};
 mod questions;
 use super::codex_app_server_host::{CodexAppServerHost, ThreadHandle, TurnHandle};
 use super::codex_app_server_protocol::{
-    classify_error, CodexRpcErrorKind, ServerNotification, TurnInterruptParams, TurnSteerParams,
-    UserInput,
+    classify_error, is_thread_not_found, CodexRpcErrorKind, ServerNotification,
+    TurnInterruptParams, TurnSteerParams, UserInput,
 };
 use super::codex_app_server_transport::{CodexRpcFailure, TurnFrame, TurnFrameRecvError};
-use super::codex_turn_event::{CodexClippedText, CodexTurnEvent, CodexTurnProjection};
+use super::codex_turn_event::{
+    CodexClippedText, CodexNoticeSeverity, CodexTurnEvent, CodexTurnProjection,
+    RESUME_FALLBACK_NOTICE,
+};
 use std::io::{self, Cursor, Read};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -42,14 +45,16 @@ impl CodexAppServerTurnPlan {
         let thread = match &self.thread_resume {
             Some(params) => match self.host.resume_thread(params.clone()) {
                 Ok(thread) => thread,
-                Err(CodexRpcFailure::Rpc(_)) if self.host.is_ready() => {
-                    (self.validate_authority)()?;
-                    resumed_fallback = Some(params.thread_id.clone());
-                    self.host
-                        .start_thread(self.thread_start.clone())
-                        .map_err(|failure| failure.message())?
-                }
-                Err(failure) => return Err(failure.message()),
+                Err(failure) => match resume_failure_policy(&failure, self.host.is_ready()) {
+                    ResumeFailurePolicy::StartFreshSession => {
+                        (self.validate_authority)()?;
+                        resumed_fallback = Some(params.thread_id.clone());
+                        self.host
+                            .start_thread(self.thread_start.clone())
+                            .map_err(|failure| failure.message())?
+                    }
+                    ResumeFailurePolicy::FailTurn(reason) => return Err(reason),
+                },
             },
             None => self
                 .host
@@ -107,6 +112,24 @@ impl CodexAppServerTurnPlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumeFailurePolicy {
+    StartFreshSession,
+    FailTurn(String),
+}
+
+fn resume_failure_policy(failure: &CodexRpcFailure, host_ready: bool) -> ResumeFailurePolicy {
+    match failure {
+        CodexRpcFailure::Rpc(error) if host_ready && is_thread_not_found(error) => {
+            ResumeFailurePolicy::StartFreshSession
+        }
+        failure => ResumeFailurePolicy::FailTurn(format!(
+            "Codex could not resume the previous session: {}",
+            failure.message()
+        )),
+    }
+}
+
 const PENDING: i32 = -1;
 const FAILED: i32 = 1;
 const STOPPED: i32 = 130;
@@ -122,6 +145,13 @@ trait CodexTurnPort: Send + Sync {
     fn cleanup(&self, interrupt: bool) -> Result<(), String>;
     fn stderr(&self) -> String;
     fn reject_question(&self, _id: serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
+    fn decline_request(
+        &self,
+        _id: serde_json::Value,
+        _result: serde_json::Value,
+    ) -> Result<(), String> {
         Ok(())
     }
     fn confirm_terminal(&self) {}
@@ -325,6 +355,16 @@ impl CodexTurnPort for HostTurnPort {
             .reject_server_request(id)
             .map_err(|e| e.message())
     }
+    fn decline_request(
+        &self,
+        id: serde_json::Value,
+        result: serde_json::Value,
+    ) -> Result<(), String> {
+        self.host
+            .transport()
+            .answer_server_request(id, result)
+            .map_err(|e| e.message())
+    }
     fn confirm_terminal(&self) {
         self.terminal_seen.store(true, Ordering::SeqCst);
     }
@@ -459,13 +499,16 @@ impl CodexTurnChild {
                 .collect::<String>(),
         };
         if self.resumed_fallback.is_some() {
-            initial.push_str(&CodexTurnEvent::Error { message: bounded_error("The previous Codex session could not be resumed. A new session was started."), thread_id: Some(self.state.thread_id.clone()) }.ndjson_line());
+            let notice = projection.notice(CodexNoticeSeverity::Warning, RESUME_FALLBACK_NOTICE);
+            initial.extend(notice.iter().map(CodexTurnEvent::ndjson_line));
         }
         Ok(Box::new(CodexTurnReader {
             state: Arc::clone(&self.state),
             projection,
             pending: Cursor::new(initial.into_bytes()),
             declined_reported: false,
+            approval_items: Default::default(),
+            approval_notices: Vec::new(),
         }))
     }
 
@@ -592,6 +635,8 @@ struct CodexTurnReader {
     projection: CodexTurnProjection,
     pending: Cursor<Vec<u8>>,
     declined_reported: bool,
+    approval_items: super::codex_app_server_host::approvals::CodexApprovalItems,
+    approval_notices: Vec<super::codex_app_server_host::approvals::CodexApprovalRejection>,
 }
 
 impl CodexTurnReader {
@@ -609,6 +654,82 @@ impl CodexTurnReader {
         );
     }
 
+    fn report_declined(&mut self) {
+        if self.declined_reported {
+            return;
+        }
+        self.declined_reported = true;
+        self.pending = Cursor::new(
+            CodexTurnEvent::Error {
+                message: bounded_error(&format!(
+                    "Codex requested interaction, which is unavailable in {} mode.",
+                    self.state.mode
+                )),
+                thread_id: Some(self.state.thread_id.clone()),
+            }
+            .ndjson_line()
+            .into_bytes(),
+        );
+    }
+
+    fn request_approval(
+        &mut self,
+        id: serde_json::Value,
+        method: &str,
+        params: &serde_json::Value,
+    ) {
+        use super::codex_app_server_host::approvals;
+        let registered = if self.state.input_closed.load(Ordering::SeqCst) {
+            Err(approvals::CodexApprovalRejection::Unavailable)
+        } else {
+            let weak = Arc::downgrade(&self.state);
+            let rpc_id = id.clone();
+            approvals::register(
+                self.state.questions.approvals(),
+                &approvals::CodexApprovalRoute {
+                    thread_id: &self.state.thread_id,
+                    turn_id: &self.state.turn_id,
+                },
+                &id,
+                method,
+                params,
+                &self.approval_items,
+                Arc::new(move |result| {
+                    let state = weak.upgrade().ok_or("Codex turn was released.")?;
+                    let _gate = state
+                        .question_gate
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    state
+                        .port
+                        .answer_question(rpc_id.clone(), result, &state.input_closed)
+                }),
+            )
+        };
+        let Err(rejection) = registered else {
+            return;
+        };
+        let Some(result) = approvals::decline_result(method) else {
+            return;
+        };
+        if let Err(error) = self.state.port.decline_request(id, result) {
+            self.failure(&error);
+            return;
+        }
+        if self.approval_notices.contains(&rejection) {
+            return;
+        }
+        self.approval_notices.push(rejection);
+        self.pending = Cursor::new(
+            CodexTurnEvent::Error {
+                message: bounded_error(rejection.notice()),
+                thread_id: Some(self.state.thread_id.clone()),
+            }
+            .ndjson_line()
+            .into_bytes(),
+        );
+    }
+
     fn project(&mut self, frame: TurnFrame) {
         let notification = match frame {
             TurnFrame::UserInputRequested { id, params } => {
@@ -619,6 +740,10 @@ impl CodexTurnReader {
                 }
                 return;
             }
+            TurnFrame::ApprovalRequested { id, method, params } => {
+                self.request_approval(id, &method, &params);
+                return;
+            }
             TurnFrame::UserInputResolved { id } => {
                 self.state.questions.expire(&questions::request_id(&id));
                 return;
@@ -626,27 +751,15 @@ impl CodexTurnReader {
             TurnFrame::Notification(notification) => *notification,
             TurnFrame::UnknownFrame { method } => ServerNotification::Unknown { method },
             TurnFrame::ServerRequestDeclined { .. } => {
-                if self.declined_reported {
-                    return;
-                }
-                self.declined_reported = true;
-                self.pending = Cursor::new(
-                    CodexTurnEvent::Error {
-                        message: bounded_error(&format!(
-                            "Codex requested interaction, which is unavailable in {} mode.",
-                            self.state.mode
-                        )),
-                        thread_id: Some(self.state.thread_id.clone()),
-                    }
-                    .ndjson_line()
-                    .into_bytes(),
-                );
+                self.report_declined();
                 return;
             }
         };
         if !belongs_to_turn(&notification, &self.state.thread_id, &self.state.turn_id) {
             return;
         }
+        self.approval_items
+            .observe(&notification, &self.state.thread_id, &self.state.turn_id);
         if matches!(&notification, ServerNotification::TurnCompleted(payload) if payload.thread_id == self.state.thread_id && payload.turn.id == self.state.turn_id)
         {
             self.state.port.confirm_terminal();

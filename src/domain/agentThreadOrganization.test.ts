@@ -214,6 +214,77 @@ describe("thread organization", () => {
   });
 });
 
+describe("manual order with recency", () => {
+  const at = (id: string, updatedAtEpochMs: number, sortOrder?: number | null): AgentThread => ({
+    ...thread(id),
+    updatedAtEpochMs,
+    ...(sortOrder === undefined ? {} : { sortOrder }),
+  });
+  const ordered = (current: AgentThreadsState) =>
+    [...current.threads.values()].sort(compareAgentThreadOrder).map((t) => t.threadId);
+  const move = (
+    current: AgentThreadsState,
+    threadId: string,
+    targetThreadId: string,
+    placement: "before" | "after",
+  ) =>
+    agentThreadsReducer(current, {
+      kind: "threadReordered",
+      threadId,
+      owner: thread().owner,
+      targetThreadId,
+      placement,
+      now: 3000,
+    });
+
+  it("keeps new and recently active unordered threads above manually ordered ones", () => {
+    const manual = state(at("agt-a", 1000, 0), at("agt-b", 9000, 1));
+    const withNew = { threads: new Map(manual.threads).set("agt-new", at("agt-new", 500)) };
+    const withNewer = {
+      threads: new Map(withNew.threads).set("agt-newer", at("agt-newer", 700)),
+    };
+    expect(ordered(withNewer)).toEqual(["agt-newer", "agt-new", "agt-a", "agt-b"]);
+  });
+
+  it("writes only the moved thread when neighbours are already ordered", () => {
+    const initial = state(at("agt-a", 1000, 0), at("agt-b", 1000, 1), at("agt-c", 1000, 2));
+    const moved = move(initial, "agt-c", "agt-b", "before");
+    expect(ordered(moved)).toEqual(["agt-a", "agt-c", "agt-b"]);
+    const changed = [...moved.threads.values()].filter(
+      (t) => t !== initial.threads.get(t.threadId),
+    );
+    expect(changed.map((t) => t.threadId)).toEqual(["agt-c"]);
+  });
+
+  it("numbers only the moved thread and the unordered threads it lands above", () => {
+    const initial = state(
+      at("agt-new", 9000),
+      at("agt-mid", 8000),
+      at("agt-a", 1000, 0),
+      at("agt-b", 1000, 1),
+    );
+    const moved = move(initial, "agt-b", "agt-mid", "before");
+    expect(ordered(moved)).toEqual(["agt-new", "agt-b", "agt-mid", "agt-a"]);
+    expect(moved.threads.get("agt-new")).toBe(initial.threads.get("agt-new"));
+    expect(moved.threads.get("agt-a")).toBe(initial.threads.get("agt-a"));
+    const later = {
+      threads: new Map(moved.threads).set("agt-later", at("agt-later", 10_000)),
+    };
+    expect(ordered(later)[0]).toBe("agt-later");
+  });
+
+  it("renumbers the ordered tail when no key fits between neighbours", () => {
+    const initial = state(
+      at("agt-a", 1000, 0),
+      at("agt-b", 1000, Number.MIN_VALUE),
+      at("agt-c", 1000, 1),
+    );
+    const moved = move(initial, "agt-c", "agt-b", "before");
+    expect(ordered(moved)).toEqual(["agt-a", "agt-c", "agt-b"]);
+    expect([...moved.threads.values()].every((t) => Number.isInteger(t.sortOrder))).toBe(true);
+  });
+});
+
 const newTurn: AgentTurn = {
   turnId: "agt-1-0a1b",
   prompt: "continue",

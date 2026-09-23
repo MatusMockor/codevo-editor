@@ -609,6 +609,8 @@ pub fn run() {
             agent_task_commands::close_agent_task_input,
             agent_task_commands::questions::list_agent_questions,
             agent_task_commands::questions::answer_agent_question,
+            agent_task_commands::questions::list_agent_approvals,
+            agent_task_commands::questions::answer_agent_approval,
             agent_task_commands::stop_agent_task,
             agent_task_commands::stop_agent_tasks_for_root,
             agent_task_commands::acquire_agent_root_lease,

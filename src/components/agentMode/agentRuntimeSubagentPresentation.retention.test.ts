@@ -126,8 +126,7 @@ describe("subagent rows after the spawn call left the bounded event window", () 
       result.batches.map((batch) => [batch.id, batch.agents.map((agent) => agent.id)]);
 
     expect(shape(before)).toEqual([
-      ["spawn:toolu_0", ["tool:toolu_0", "tool:toolu_1"]],
-      ["spawn:toolu_2", ["tool:toolu_2"]],
+      ["spawn:toolu_0", ["tool:toolu_0", "tool:toolu_1", "tool:toolu_2"]],
     ]);
     expect(shape(after)).toEqual(shape(before));
   });

@@ -58,14 +58,21 @@ export function isAgentSubagentSpawnToolName(name: string): boolean {
   return spawn(name);
 }
 
-export function closesAgentSubagentSpawnBatch(event: AgentTurnEvent): boolean {
+type AgentToolResultEvent = Extract<AgentTurnEvent, { kind: "toolResult" }>;
+const ASYNC_LAUNCH_ACKNOWLEDGEMENT_PREFIX = "Async agent launched";
+const ASYNC_LAUNCH_ACKNOWLEDGEMENT_SCAN_CHARACTERS = 64;
+
+export function closesAgentSubagentSpawnBatch(
+  event: AgentTurnEvent,
+  acknowledgesAsyncLaunch: (result: AgentToolResultEvent) => boolean = () => false,
+): boolean {
   switch (event.kind) {
     case "toolCall":
       return event.parentToolId === undefined && !spawn(event.name);
     case "assistantText":
       return event.parentToolId === undefined && event.text.trim() !== "";
     case "toolResult":
-      return event.parentToolId === undefined;
+      return event.parentToolId === undefined && !acknowledgesAsyncLaunch(event);
     case "userMessage":
     case "result":
       return true;
@@ -209,7 +216,10 @@ export function retainAgentSubagentLifecycle(
   let openBatchKey = previous?.openBatchKey;
   let changed = false;
   for (const event of events) {
-    if (openBatchKey !== undefined && closesAgentSubagentSpawnBatch(event)) {
+    if (
+      openBatchKey !== undefined &&
+      closesAgentSubagentSpawnBatch(event, (result) => acknowledgesAsyncLaunch(entries, result))
+    ) {
       openBatchKey = undefined;
       changed = true;
     }
@@ -357,6 +367,35 @@ export function retainAgentSubagentLifecycle(
     ...(openBatchKey === undefined ? {} : { openBatchKey }),
     ...(counted.size === 0 ? {} : { countedNestedToolIds: [...counted] }),
   };
+}
+
+function acknowledgesAsyncLaunch(
+  entries: ReadonlyMap<string, AgentSubagentLifecycleEntry>,
+  result: AgentToolResultEvent,
+): boolean {
+  if (result.isError) return false;
+  const entry = rootSubagentByToolId(entries, result.toolId);
+  if (entry === undefined) return false;
+  if (entry.telemetryState === "running") return true;
+  if (entry.telemetryState !== undefined) return false;
+  return isAsyncLaunchAcknowledgementText(result.outputSummary);
+}
+
+function rootSubagentByToolId(
+  entries: ReadonlyMap<string, AgentSubagentLifecycleEntry>,
+  toolId: string,
+): AgentSubagentLifecycleEntry | undefined {
+  for (const entry of entries.values()) {
+    if (entry.toolId === toolId && entry.parentToolId === undefined) return entry;
+  }
+  return undefined;
+}
+
+function isAsyncLaunchAcknowledgementText(outputSummary: string): boolean {
+  return outputSummary
+    .slice(0, ASYNC_LAUNCH_ACKNOWLEDGEMENT_SCAN_CHARACTERS)
+    .trimStart()
+    .startsWith(ASYNC_LAUNCH_ACKNOWLEDGEMENT_PREFIX);
 }
 
 function spawnBatchKey(toolId: string | undefined): string | undefined {

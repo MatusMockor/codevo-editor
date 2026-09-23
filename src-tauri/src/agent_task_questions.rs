@@ -1,4 +1,5 @@
 use super::{AgentTaskPhase, AgentTaskRegistry};
+use crate::agent_questions::approvals::{AgentApprovalDecision, AgentApprovalRequest};
 use crate::agent_questions::{AgentQuestionRequest, AgentQuestionResponse, AgentQuestionSession};
 use std::{path::Path, sync::Arc};
 impl AgentTaskRegistry {
@@ -47,5 +48,28 @@ impl AgentTaskRegistry {
         self.question_session(task_id, workspace_id, root, true)?
             .ok_or("Agent does not support questions.")?
             .answer(task_id, request_id, response)
+    }
+    pub fn list_approvals(
+        &self,
+        task_id: &str,
+        workspace_id: &str,
+        root: &Path,
+    ) -> Result<Vec<AgentApprovalRequest>, String> {
+        Ok(self
+            .question_session(task_id, workspace_id, root, false)?
+            .map_or_else(Vec::new, |s| s.approvals().list(task_id)))
+    }
+    pub fn answer_approval(
+        &self,
+        task_id: &str,
+        workspace_id: &str,
+        root: &Path,
+        request_id: &str,
+        decision: AgentApprovalDecision,
+    ) -> Result<AgentApprovalRequest, String> {
+        self.question_session(task_id, workspace_id, root, true)?
+            .ok_or("Agent does not support approvals.")?
+            .approvals()
+            .answer(task_id, request_id, decision)
     }
 }

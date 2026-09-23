@@ -20,6 +20,9 @@ pub(super) fn belongs_to_turn(
         ServerNotification::ThreadCompacted(payload) => {
             Some((payload.thread_id.as_str(), payload.turn_id.as_deref()))
         }
+        ServerNotification::ModelRerouted(payload) => {
+            Some((payload.thread_id.as_str(), payload.turn_id.as_deref()))
+        }
         ServerNotification::Error(payload) => payload
             .thread_id
             .as_deref()

@@ -115,7 +115,10 @@ describe("agentModePresentation", () => {
     expect(blockedReason(thread({ archived: true }))).toContain("archived");
     expect(blockedReason(thread({ worktreeMissing: true }))).toContain("no longer exists");
     expect(blockedReason(thread({ status: { kind: "running" } }))).toContain("still running");
-    expect(blockedReason(thread({ sessionId: null }))).toContain("no resumable session");
+    expect(blockedReason(thread({ archived: true }))).toBe(
+      "This thread is archived. Unarchive it from the thread menu to continue.",
+    );
+    expect(blockedReason(thread({ sessionId: null }))).toBeNull();
   });
 
   it("keeps the composer open for a running Claude turn that can be steered", () => {
@@ -289,9 +292,8 @@ describe("agentModePresentation", () => {
         expected: "being released",
       },
       { cleared: { projectOrigin: "active-tab" }, context: {}, expected: "started with Codex" },
-      { cleared: { providerKind: "claudeCode" }, context: {}, expected: "no resumable session" },
       {
-        cleared: { sessionId: "session-abcdefgh" },
+        cleared: { providerKind: "claudeCode" },
         context: {},
         expected: "No agent CLI is configured",
       },
@@ -489,7 +491,7 @@ describe("agentModePresentation", () => {
       false,
     );
 
-    expect(fold?.summary).toBe("1 other tool · 2 subagents");
+    expect(fold?.summary).toBe("1 search · 2 subagents");
   });
 
   it("renders a relative start time", () => {
@@ -1503,7 +1505,7 @@ describe("agentWorkSummary subagent double counting", () => {
       false,
     );
 
-    expect(fold?.summary).toBe("1 other tool · 1 subagent");
+    expect(fold?.summary).toBe("1 search · 1 subagent");
   });
 
   it("keeps a lost subagent step out of the parent counts when only its result survives", () => {

@@ -179,7 +179,7 @@ describe("useAgentMarkdown", () => {
     );
   });
 
-  it("never paints markdown source while the renderer chunk is still loading", async () => {
+  it("shows a syntax-free text preview while the renderer chunk is still loading", async () => {
     const source = "## Heading\n\n| check | outcome |\n|---|---|\n| lint | ok |";
     act(() =>
       root.render(
@@ -194,8 +194,11 @@ describe("useAgentMarkdown", () => {
 
     const body = host.querySelector('[data-agent-event="e0"]');
     expect(body?.getAttribute("data-agent-markdown")).toBe("pending");
-    expect(body?.querySelectorAll("p.agent-text__paragraph")).toHaveLength(0);
+    expect(
+      [...(body?.querySelectorAll("p.agent-text__paragraph") ?? [])].map((p) => p.textContent),
+    ).toEqual(["Heading", "check   outcome\nlint   ok"]);
     expect(host.textContent).not.toContain("##");
+    expect(host.textContent).not.toContain("|");
     expect(host.textContent).not.toContain("|---|");
     expect(host.querySelector(".agent-md__note")).toBeNull();
 

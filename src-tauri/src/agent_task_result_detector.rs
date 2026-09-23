@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use serde_json::Value;
 
@@ -6,6 +6,7 @@ const MAX_LINE_BYTES: usize = 1024 * 1024;
 const MAX_LIVE_TASKS: usize = 256;
 const MAX_OBSERVED_TASKS: usize = 4096;
 const MAX_ID_BYTES: usize = 256;
+const MAX_RETIRED_SESSIONS: usize = 16;
 
 /// Owns only lifecycle evidence from root Claude JSONL messages. A foreground
 /// result is not the end of the stream while native background tasks are live.
@@ -20,12 +21,15 @@ pub struct ResultLineDetector {
     live: HashSet<String>,
     terminal: HashSet<String>,
     session: Option<String>,
+    retired: VecDeque<String>,
     lifecycle: Option<
         std::sync::Arc<
             crate::agent_task_spawner::agent_task_input::claude_lifecycle::ClaudeInputLifecycle,
         >,
     >,
     result_candidate: bool,
+    root_output: bool,
+    reset_pending: bool,
 }
 
 impl ResultLineDetector {
@@ -90,26 +94,44 @@ impl ResultLineDetector {
             if !valid_id(session) {
                 return Ok(false);
             }
+            if self.retired.iter().any(|retired| retired == session) {
+                return Ok(false);
+            }
             match &self.session {
                 Some(expected) if expected != session => return Ok(false),
                 None => self.session = Some(session.to_string()),
                 _ => {}
             }
         }
+        let kind = message.get("type").and_then(Value::as_str);
+        let failed = kind == Some("result") && failed_result(&message);
+        if kind == Some("result") && !failed && !self.root_output && !did_work(&message) {
+            return Ok(false);
+        }
         if let Some(lifecycle) = &self.lifecycle {
             lifecycle.observe(&message)?;
         }
-        match message.get("type").and_then(Value::as_str) {
+        match kind {
             Some("result") => {
-                let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
-                    || message
-                        .get("subtype")
-                        .and_then(Value::as_str)
-                        .is_some_and(|subtype| subtype.starts_with("error"));
                 self.result_candidate = self.live.is_empty();
                 Ok(failed || self.settled())
             }
+            Some("assistant") => {
+                self.root_output = true;
+                Ok(false)
+            }
+            Some("conversation_reset") => {
+                self.retire_session();
+                self.root_output = true;
+                self.reset_pending = true;
+                Ok(false)
+            }
             Some("system") => {
+                match message.get("subtype").and_then(Value::as_str) {
+                    Some("init") => self.root_output = std::mem::take(&mut self.reset_pending),
+                    Some("compact_boundary") => self.root_output = true,
+                    _ => {}
+                }
                 self.consume_task(&message)?;
                 if !self.live.is_empty() {
                     self.result_candidate = false;
@@ -128,6 +150,16 @@ impl ResultLineDetector {
                 .lifecycle
                 .as_ref()
                 .is_none_or(|lifecycle| lifecycle.close_if_settled())
+    }
+
+    fn retire_session(&mut self) {
+        if let Some(session) = self.session.take() {
+            if self.retired.len() == MAX_RETIRED_SESSIONS {
+                self.retired.pop_front();
+            }
+            self.retired.push_back(session);
+        }
+        self.terminal.extend(self.live.drain());
     }
 
     fn consume_task(&mut self, message: &Value) -> Result<(), &'static str> {
@@ -179,6 +211,24 @@ impl ResultLineDetector {
         }
         Ok(())
     }
+}
+
+fn failed_result(message: &Value) -> bool {
+    message.get("is_error").and_then(Value::as_bool) == Some(true)
+        || message
+            .get("subtype")
+            .and_then(Value::as_str)
+            .is_some_and(|subtype| subtype.starts_with("error"))
+}
+
+fn did_work(message: &Value) -> bool {
+    let positive = |value: Option<&Value>| value.and_then(Value::as_u64).is_some_and(|n| n > 0);
+    positive(message.get("num_turns"))
+        || positive(message.pointer("/usage/output_tokens"))
+        || message
+            .get("result")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty())
 }
 
 fn valid_id(id: &str) -> bool {

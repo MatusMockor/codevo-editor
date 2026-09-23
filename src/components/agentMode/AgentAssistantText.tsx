@@ -1,15 +1,22 @@
-import { memo, useLayoutEffect, useRef, type MouseEvent } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import { highlightOccurrences } from "../../domain/agentThreadHighlight";
 import {
+  AGENT_MARKDOWN_SOURCE_BLOCKS_NOTE,
+  agentMarkdownPlainPreview,
   agentMarkdownPlainReasonLabel,
   type AgentMarkdownPresentation,
 } from "../../domain/agentMarkdown/agentMarkdownTree";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
-import { AgentMarkdownBlockView } from "./AgentMarkdown";
+import { AgentMarkdownBlockView, type AgentMarkdownLinkActivation } from "./AgentMarkdown";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { agentTextParagraphs } from "./agentModePresentation";
-import { handleAgentMarkdownLinkClick, type AgentExternalLinkOpener } from "./agentMarkdownLinks";
+import {
+  activateAgentMarkdownLink,
+  type AgentExternalLinkOpener,
+  type AgentLocalFileLinkScope,
+} from "./agentMarkdownLinks";
+import { agentMarkdownPathLinks } from "./agentMarkdownPathLinks";
 import { HighlightRun } from "./agentThreadHighlight";
 import {
   useAgentMarkdown,
@@ -17,13 +24,12 @@ import {
   type AgentMarkdownRendererState,
 } from "./useAgentMarkdown";
 
-const NO_PARAGRAPHS: ReadonlyArray<string> = [];
-
 export type AgentProseStream = "streaming" | "streamed" | "settled";
 
 export interface AgentProseContext {
   readonly markdown: AgentMarkdownRendererState;
   readonly openExternalLink: AgentExternalLinkOpener;
+  readonly localFiles: AgentLocalFileLinkScope | null;
   readonly viewport: AgentMarkdownViewport | null;
   readonly onParsed: () => void;
 }
@@ -64,6 +70,12 @@ export const AgentAssistantText = memo(function AgentAssistantText({
   const presentation = useAgentMarkdown(prose.markdown, text, live, query, gate);
   const parsed = presentation.kind === "rendered";
   const onParsed = prose.onParsed;
+  const { openExternalLink: openExternal, localFiles } = prose;
+  const activateLink = useCallback<AgentMarkdownLinkActivation>(
+    (event, link) => activateAgentMarkdownLink(event, link, { openExternal, localFiles }),
+    [localFiles, openExternal],
+  );
+  const pathLinks = useMemo(() => agentMarkdownPathLinks(localFiles), [localFiles]);
 
   useLayoutEffect(() => {
     if (!parsed) return;
@@ -78,9 +90,10 @@ export const AgentAssistantText = memo(function AgentAssistantText({
   );
 
   if (presentation.kind !== "rendered") {
-    const highlight = query === "" ? null : { query, current };
+    const pending = presentation.kind === "pending";
+    const highlight = query === "" || pending ? null : { query, current };
     const note = agentMarkdownNote(presentation);
-    const paragraphs = presentation.kind === "pending" ? NO_PARAGRAPHS : agentTextParagraphs(text);
+    const paragraphs = agentTextParagraphs(pending ? agentMarkdownPlainPreview(text) : text);
     return (
       <div
         aria-label={label}
@@ -92,7 +105,11 @@ export const AgentAssistantText = memo(function AgentAssistantText({
       >
         {paragraphRuns(paragraphs, highlight).map((run, index) => (
           <p className="agent-text__paragraph" key={`${eventKey}p${index}`}>
-            <HighlightRun current={run.current} query={query} text={run.text} />
+            <HighlightRun
+              current={run.current}
+              query={highlight === null ? "" : query}
+              text={run.text}
+            />
           </p>
         ))}
         {note !== null && (
@@ -105,16 +122,12 @@ export const AgentAssistantText = memo(function AgentAssistantText({
     );
   }
 
-  const openLink = (event: MouseEvent<HTMLElement>): void =>
-    handleAgentMarkdownLinkClick(event, prose.openExternalLink);
   return (
     <div
       aria-label={label}
       className="agent-text"
       data-agent-event={eventKey}
       data-agent-markdown="rendered"
-      onAuxClick={openLink}
-      onClick={openLink}
       ref={host}
       role={label === undefined ? undefined : "article"}
     >
@@ -124,10 +137,17 @@ export const AgentAssistantText = memo(function AgentAssistantText({
           current={current}
           hitOffset={presentation.hitOffsets[index] ?? 0}
           key={block.key}
+          onActivateLink={activateLink}
+          pathLinks={pathLinks}
           query={query}
           textClipboard={textClipboard}
         />
       ))}
+      {(presentation.sourceBlockCount ?? 0) > 0 && (
+        <p className="agent-note agent-md__note" role="note">
+          {AGENT_MARKDOWN_SOURCE_BLOCKS_NOTE}
+        </p>
+      )}
       {actions}
     </div>
   );

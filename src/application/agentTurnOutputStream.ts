@@ -23,6 +23,7 @@ import {
   type AgentSessionFallback,
 } from "../domain/agentThread";
 import { EMPTY_PENDING_LINE } from "../domain/agentOutput/lineSplitter";
+import { isAgentSessionNotFoundText } from "../domain/agentSessionIdentity";
 import { warning } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 
@@ -69,6 +70,7 @@ export interface AgentTurnOutputStream {
   rawStreamComplete: boolean;
   sawSessionId: boolean;
   sawResult: boolean;
+  sessionNotFound: boolean;
 }
 
 export type TurnEventsAppendedAction = Extract<AgentThreadsAction, { kind: "turnEventsAppended" }>;
@@ -117,6 +119,7 @@ export function createAgentTurnOutputStream(
       identity.outputSubscriptionEpoch === undefined || identity.outputSubscriptionEpoch !== null,
     sawSessionId: false,
     sawResult: false,
+    sessionNotFound: false,
   };
 }
 
@@ -246,6 +249,9 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
   stream.pendingAccountUsage.push(...result.accountUsage);
   for (const event of result.events) {
     if (event.kind === "result") stream.sawResult = true;
+    if (stream.resumed && reportsSessionNotFound(stream.parser.kind, event)) {
+      stream.sessionNotFound = true;
+    }
   }
   if (result.events.length > 0) {
     const events = result.events.map((event) =>
@@ -264,7 +270,9 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
     );
     stream.pendingDropped = stream.pendingDropped || retained.truncated;
   }
-  if (result.sessionId === null) return;
+  if (result.sessionId === null || stream.sawSessionId) return;
+  stream.sawSessionId = true;
+  stream.pendingSessionId = result.sessionId;
   if (
     stream.resumed &&
     result.sessionFallback !== undefined &&
@@ -272,8 +280,17 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
   ) {
     stream.pendingSessionFallback = result.sessionFallback;
   }
-  stream.sawSessionId = true;
-  if (stream.pendingSessionId === null) stream.pendingSessionId = result.sessionId;
+}
+
+function reportsSessionNotFound(provider: AgentCliKind, event: AgentTurnEvent): boolean {
+  switch (event.kind) {
+    case "error":
+      return isAgentSessionNotFoundText(provider, event.message);
+    case "unknownLine":
+      return event.stream === "stderr" && isAgentSessionNotFoundText(provider, event.raw);
+    default:
+      return false;
+  }
 }
 
 const SESSION_CHANGED_NOTICE =
@@ -287,9 +304,21 @@ export function sessionChangeNotice(
   sessionId: string | null,
 ): AgentTasksNotice | null {
   if (sessionId === null) return null;
-  const known = state.threads.get(threadId)?.provider.sessionId ?? null;
+  const provider = state.threads.get(threadId)?.provider;
+  if (provider === undefined || provider.kind === "claudeCode") return null;
+  const known = provider.sessionId;
   if (known === null || known === sessionId) return null;
   return warning(SESSION_CHANGED_NOTICE);
+}
+
+export function agentSessionLost(
+  stream: AgentTurnOutputStream,
+  event: AgentTaskStatusEvent,
+): boolean {
+  if (!stream.resumed || !stream.sessionNotFound) return false;
+  if (stream.sawSessionId || stream.sawResult) return false;
+  if (event.status.kind === "failed") return true;
+  return event.status.kind === "exited" && event.status.exitCode !== 0;
 }
 
 export function resumeRejected(

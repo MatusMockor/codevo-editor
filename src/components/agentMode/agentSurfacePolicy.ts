@@ -1,5 +1,9 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
+import {
+  agentProjectOwnsLaunchRoot,
+  agentProjectOwnsOwner,
+  type AgentProjectDescriptor,
+} from "../../domain/agentProject";
 import type { AgentThreadTarget } from "../../domain/agentThread";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import {
@@ -125,11 +129,7 @@ export function agentThreadCheckoutRoot(
   const owner = thread.thread.owner;
   const project = projects.find((candidate) => candidate.rootKey === owner.rootKey) ?? null;
   if (project === null) return owner.repositoryRoot;
-  if (
-    project.ownerId !== owner.ownerId &&
-    project.runtimeOwnerIds?.includes(owner.ownerId) !== true
-  )
-    return owner.repositoryRoot;
+  if (!agentProjectOwnsOwner(project, owner)) return owner.repositoryRoot;
   if (!agentProjectOwnsLaunchRoot(project, owner.repositoryRoot)) return owner.repositoryRoot;
   return project.rootPath;
 }

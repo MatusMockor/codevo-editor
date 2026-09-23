@@ -8,6 +8,27 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.agent-activity-group__label--live {
+  animation: agent-tool-row-shimmer 1800ms linear infinite;
+  background-image: linear-gradient(
+    90deg,
+    var(--agent-text-muted) 0%,
+    var(--agent-text-strong) 50%,
+    var(--agent-text-muted) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-activity-group__label--live {
+    animation: none;
+    background-image: none;
+    color: var(--agent-text-muted);
+    -webkit-text-fill-color: var(--agent-text-muted);
+  }
+}
 .agent-activity-group__status {
   margin-left: auto;
   color: var(--agent-text-muted);

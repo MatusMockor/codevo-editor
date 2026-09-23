@@ -605,10 +605,12 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const reasoning = host.querySelector("details.agent-reasoning");
+    const toggle = host.querySelector<HTMLButtonElement>(".agent-activity-group__toggle");
 
-    expect(reasoning?.querySelector("summary")?.textContent).toBe("reasoning");
-    expect((reasoning as HTMLDetailsElement | null)?.open).toBe(false);
+    expect(toggle?.querySelector(".agent-activity-group__label")?.textContent).toBe("Thinking");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".agent-thought__body")).toBeNull();
+    expect(host.textContent).not.toContain("Considering the grammar.");
     expect(host.querySelector("details.agent-raw")).toBeNull();
     expect(host.textContent).not.toContain("Raw output");
   });
@@ -933,8 +935,34 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
-    expect(host.textContent).toContain("7 events hidden");
+    expect(host.textContent).toContain("7 earlier events hidden");
     expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("line 7");
+  });
+
+  it("pages earlier events in bounded increments on request", () => {
+    const events: AgentTurnEvent[] = Array.from(
+      { length: MAX_RENDERED_EVENTS_PER_TURN * 2 + 30 },
+      (_unused, index) => ({ kind: "assistantText", text: `line ${index}` }),
+    );
+    render({
+      thread: threadView({
+        turns: [turn("agt-1-t1", "Refactor the parser", { kind: "running" }, events)],
+      }),
+    });
+    const showEarlier = () =>
+      [...host.querySelectorAll<HTMLButtonElement>(".agent-turn-earlier__action")][0];
+
+    expect(showEarlier()?.textContent).toBe(`Show ${MAX_RENDERED_EVENTS_PER_TURN} earlier`);
+    act(() => showEarlier()?.click());
+
+    expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN * 2);
+    expect(host.textContent).toContain("30 earlier events hidden");
+    expect(showEarlier()?.textContent).toBe("Show 30 earlier");
+    act(() => showEarlier()?.click());
+
+    expect(host.querySelectorAll(".agent-text")).toHaveLength(events.length);
+    expect(host.querySelector(".agent-turn-earlier")).toBeNull();
+    expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("line 0");
   });
 
   it("reveals an older search hit without expanding the rendered event limit", () => {
@@ -994,14 +1022,16 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Some activity from this turn is not shown.");
   });
 
-  it("says when a turn was interrupted by an app restart", () => {
+  it("marks a turn that the app closed before it finished", () => {
     render({
       thread: threadView({
         turns: [turn("agt-1-t1", "Refactor the parser", { kind: "interrupted" }, [])],
       }),
     });
 
-    expect(host.textContent).toContain("Interrupted by app restart");
+    const marker = host.querySelector(".agent-turn-end");
+    expect(marker?.getAttribute("data-kind")).toBe("interrupted");
+    expect(marker?.textContent).toBe("InterruptedThe app closed before this turn finished.");
   });
 
   it("waits for output without pretending the stream is empty", () => {
@@ -1097,7 +1127,7 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).not.toContain("claude 2.1.245");
   });
 
-  it("does not add launch choices to historical turn heads", () => {
+  it("labels each turn head with its model and explicit effort, never the permission mode", () => {
     render({
       thread: threadView({
         turns: [
@@ -1124,8 +1154,16 @@ describe("AgentThreadSession", () => {
 
     expect(host.querySelectorAll("header.agent-turn__head time")).toHaveLength(3);
     expect(host.querySelector(".agent-prompt__launch")).toBeNull();
-    expect(host.textContent).not.toContain("sonnet");
-    expect(host.textContent).not.toContain("gpt-5.5");
+    const labels = [...host.querySelectorAll(".agent-turn__launch")].map(
+      (node) => node.textContent,
+    );
+    expect(labels).toHaveLength(3);
+    expect(labels[0]).toMatch(/Sonnet.* · Low effort$/);
+    expect(labels[1]).toMatch(/Opus/);
+    expect(labels[1]).not.toContain("effort");
+    expect(labels[2]).toMatch(/GPT/i);
+    expect(host.textContent).not.toContain("plan");
+    expect(host.textContent).not.toContain("read only");
   });
 
   it("does not badge permission modes inside the conversation", () => {
@@ -1227,7 +1265,6 @@ describe("AgentThreadSession", () => {
       truncated: false,
       reason: null,
     }));
-    const getTurnFileDiff = vi.fn();
     render({
       thread: threadView({
         turns: [
@@ -1236,7 +1273,6 @@ describe("AgentThreadSession", () => {
         ],
       }),
       getTurnChanges,
-      getTurnFileDiff,
     });
     await act(async () => {});
     expect(getTurnChanges).toHaveBeenCalledTimes(1);

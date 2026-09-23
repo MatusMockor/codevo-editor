@@ -6,7 +6,10 @@ import {
   MAX_AGENT_COMPOSER_DRAFT_BYTES,
   type AgentComposerDraftStore,
 } from "../../application/agentComposerDrafts";
+import { agentDraftDispatchKey } from "../../application/agentDispatchKeys";
 import { mergeRestoredPrompt } from "../../application/agentQueuedMessageEdit";
+import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
+import { useAgentComposerQueuedEditPrompt } from "./useAgentComposerQueuedEditPrompt";
 import {
   agentThreadAcceptsQueuedMessage,
   agentThreadIsSteerable,
@@ -71,6 +74,7 @@ export type AgentComposerSurface = Pick<
   | "agentCliConfigured"
   | "agentCliKind"
   | "dispatching"
+  | "dispatchingKeys"
   | "isolationPreview"
   | "lastUsedLaunch"
   | "liveTaskCount"
@@ -82,15 +86,9 @@ export type AgentComposerSurface = Pick<
   | "stop"
 >;
 
-export interface AgentComposerPromptRestore {
-  readonly token: number;
-  readonly draftKey: string;
-  readonly text: string;
-}
-
 export interface AgentComposerStateOptions {
   readonly agents: AgentComposerSurface;
-  readonly promptRestore?: AgentComposerPromptRestore | null;
+  readonly queuedEdit?: AgentComposerQueuedEdit | null;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
@@ -126,7 +124,6 @@ export type AgentComposerControllerProps = Omit<
 > & {
   readonly recovery?: AgentComposerRecovery | null;
   readonly draftKey: string | null;
-  readonly promptRestore?: AgentComposerPromptRestore | null;
 };
 
 export type AgentComposerPromptProps = Omit<
@@ -183,7 +180,7 @@ export function useAgentComposerControllerState({
   onThreadStarted,
   onSelectProjectEnvironment,
   projects,
-  promptRestore = null,
+  queuedEdit = null,
   providerEnabled,
   railScope,
   repositoryPreferenceStorage,
@@ -343,7 +340,8 @@ export function useAgentComposerControllerState({
     };
   }, []);
   const [steering, setSteering] = useState(false);
-  const dispatching = agents.dispatching || steering;
+  const dispatching =
+    composerDispatching(agents, agentComposerDraftKey(selectedThread, target)) || steering;
   const stopThread = agents.stop;
   const requestStop = useCallback((): void => {
     const threadId = runningThreadIdRef.current;
@@ -428,6 +426,10 @@ export function useAgentComposerControllerState({
   );
   const submissionAuthorityRef = useRef(submissionAuthority);
   submissionAuthorityRef.current = submissionAuthority;
+  const threadQueuedEdit =
+    queuedEdit !== null && selectedThread?.thread.threadId === queuedEdit.threadId
+      ? queuedEdit
+      : null;
 
   const submit = useCallback(
     async (
@@ -449,6 +451,11 @@ export function useAgentComposerControllerState({
       ) {
         return false;
       }
+      if (authority.kind === "followUp" && threadQueuedEdit?.threadId === authority.threadId) {
+        const committed = await threadQueuedEdit.commit(prompt, prepared.request);
+        if (committed && pendingAttachments) attachments?.markSent(prepared.draftIds);
+        return committed;
+      }
       switch (authority.kind) {
         case "followUp": {
           if (authority.steer) {
@@ -459,6 +466,7 @@ export function useAgentComposerControllerState({
                 ...prepared.request,
                 threadId: authority.threadId,
                 prompt,
+                dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
               });
               if (steerKeptThePrompt(outcome)) return false;
               if (pendingAttachments) attachments?.markSent(prepared.draftIds);
@@ -509,6 +517,7 @@ export function useAgentComposerControllerState({
       steerThread,
       submissionBlocked,
       submissionAuthority,
+      threadQueuedEdit,
     ],
   );
 
@@ -565,7 +574,7 @@ export function useAgentComposerControllerState({
         ? "This session supports queued messages only. Use the Codex app-server transport to send now."
         : null,
     draftKey: agentComposerDraftKey(selectedThread, target),
-    promptRestore,
+    queuedEdit: threadQueuedEdit,
     promptOwnerKey: JSON.stringify([
       selectedThread?.thread.threadId ?? null,
       selectedThread?.thread.owner ?? target,
@@ -706,7 +715,8 @@ export function agentComposerPromptBytes(
 export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
 ): AgentComposerPromptProps {
-  const { draftKey, promptRestore = null, recovery, ...composerProps } = controller.composerProps;
+  const { draftKey, recovery, ...composerProps } = controller.composerProps;
+  const queuedEdit = composerProps.queuedEdit ?? null;
   const [ownDrafts] = useState(createAgentComposerDraftStore);
   const drafts = controller.drafts ?? ownDrafts;
   const [draft, setDraft] = useState(() => ({
@@ -734,24 +744,16 @@ export function useAgentComposerPromptState(
   useLayoutEffect(() => {
     draftRef.current = draft;
   }, [draft]);
-  const restoredTokenRef = useRef(promptRestore?.token ?? 0);
-  useEffect(() => {
-    if (promptRestore === null) return;
-    if (promptRestore.draftKey !== draftKey) return;
-    if (promptRestore.token === restoredTokenRef.current) return;
-    restoredTokenRef.current = promptRestore.token;
-    const current = draftRef.current;
-    const merged = mergeRestoredPrompt(
-      current.key === draftKey ? current.text : "",
-      promptRestore.text,
-    );
+  const replaceDraft = useCallback((key: string, text: string, focus: boolean) => {
     promptRevisionRef.current += 1;
-    setDraft({ key: draftKey, text: merged });
-    focusAgentComposerPrompt(merged.length);
-  }, [draftKey, promptRestore]);
+    setDraft({ key, text });
+    if (focus) focusAgentComposerPrompt(text.length);
+  }, []);
+  useAgentComposerQueuedEditPrompt(queuedEdit, draftKey, draftRef, replaceDraft);
   const attachments = composerProps.attachments ?? null;
   const readyAttachments =
-    attachments?.drafts.filter((draft) => draft.state === "ready").length ?? 0;
+    (attachments?.drafts.filter((draft) => draft.state === "ready").length ?? 0) +
+    (queuedEdit?.attachments.length ?? 0);
   const promptBytes = agentComposerPromptBytes(prompt, attachments);
   const promptInvalid =
     (prompt.trim() === "" && readyAttachments === 0) || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
@@ -820,13 +822,22 @@ function focusAgentComposerPrompt(caret: number): void {
   node.setSelectionRange(caret, caret);
 }
 
+function composerDispatching(
+  agents: Pick<AgentComposerSurface, "dispatching" | "dispatchingKeys">,
+  draftKey: string | null,
+): boolean {
+  if (agents.dispatchingKeys === undefined) return agents.dispatching;
+  if (draftKey === null) return false;
+  return agents.dispatchingKeys.has(draftKey);
+}
+
 export function agentComposerDraftKey(
   selectedThread: AgentThreadView | null,
   target: ComposerTarget | null,
 ): string | null {
   if (selectedThread !== null) return selectedThread.thread.threadId;
   if (target === null) return null;
-  return `new:${target.projectRootKey}`;
+  return agentDraftDispatchKey(target.projectRootKey);
 }
 
 function readComposerDraft(drafts: AgentComposerDraftStore, key: string | null): string {

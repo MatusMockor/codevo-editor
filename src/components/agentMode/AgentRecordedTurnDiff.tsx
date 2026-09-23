@@ -3,9 +3,20 @@ import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
 import type { GitFileDiff } from "../../domain/git";
 import type { AgentTurnFileDiff } from "../../domain/agentTurnChanges";
 import { detectLanguage } from "../../domain/workspace";
-import type { RecordedTurnChangesProps } from "./AgentRecordedTurnChanges";
+import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
+import type { MonacoAppTheme } from "../../domain/settings";
 import { AgentTurnChangesCard } from "./AgentTurnChangesCard";
 import "./agentRecordedTurnChanges.css";
+export type AgentTurnFileDiffReader = NonNullable<AgentThreadsSurface["getTurnFileDiff"]>;
+
+export interface AgentRecordedDiffSource {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly revision?: object;
+  readonly getTurnFileDiff: AgentTurnFileDiffReader;
+  readonly monacoTheme: MonacoAppTheme;
+}
+
 const Preview = lazy(() =>
   import("../GitDiffPreview").then((m) => ({ default: m.GitDiffPreview })),
 );
@@ -14,7 +25,7 @@ export interface AgentRecordedTurnSelection {
   readonly summary: AgentTurnChangeSummary;
   readonly relativePath?: string;
   readonly revision?: object;
-  readonly getTurnFileDiff: RecordedTurnChangesProps["getTurnFileDiff"];
+  readonly getTurnFileDiff: AgentTurnFileDiffReader;
 }
 export function AgentRecordedTurnDiff({
   selection,
@@ -23,7 +34,7 @@ export function AgentRecordedTurnDiff({
   ...editorSettings
 }: {
   selection: AgentRecordedTurnSelection;
-  monacoTheme: RecordedTurnChangesProps["monacoTheme"];
+  monacoTheme: MonacoAppTheme;
   onClose(): void;
   editorFontFamily?: string;
   editorFontSize?: number;
@@ -104,10 +115,7 @@ export function RecordedDiff({
   summary,
   relativePath,
   onClose,
-}: Pick<
-  RecordedTurnChangesProps,
-  "threadId" | "turnId" | "getTurnFileDiff" | "monacoTheme" | "revision"
-> & {
+}: AgentRecordedDiffSource & {
   editorFontFamily?: string;
   editorFontSize?: number;
   editorFontLigatures?: boolean;

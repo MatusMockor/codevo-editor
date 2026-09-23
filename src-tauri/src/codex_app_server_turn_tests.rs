@@ -15,6 +15,7 @@ struct FakePort {
     steers: Mutex<Vec<(TurnSteerParams, Duration)>>,
     steer_result: Mutex<Result<String, CodexRpcFailure>>,
     question_answers: Mutex<Vec<(Value, Value)>>,
+    declines: Mutex<Vec<(Value, Value)>>,
     answer_blocked: AtomicBool,
     answer_entered: AtomicBool,
     cleanups: AtomicUsize,
@@ -35,6 +36,7 @@ impl FakePort {
             steers: Mutex::new(Vec::new()),
             steer_result: Mutex::new(Ok(TURN.into())),
             question_answers: Mutex::new(Vec::new()),
+            declines: Mutex::new(Vec::new()),
             answer_blocked: AtomicBool::new(false),
             answer_entered: AtomicBool::new(false),
             cleanups: AtomicUsize::new(0),
@@ -77,6 +79,10 @@ impl CodexTurnPort for FakePort {
             return Err("Closed".into());
         }
         self.question_answers.lock().unwrap().push((id, result));
+        Ok(())
+    }
+    fn decline_request(&self, id: Value, result: Value) -> Result<(), String> {
+        self.declines.lock().unwrap().push((id, result));
         Ok(())
     }
     fn receive(&self) -> Result<TurnFrame, TurnFrameRecvError> {
@@ -484,6 +490,8 @@ fn stale_and_subagent_questions_do_not_abort_parent_turn() {
         projection: CodexTurnProjection::new(Some(THREAD.into())),
         pending: Cursor::new(vec![]),
         declined_reported: false,
+        approval_items: Default::default(),
+        approval_notices: Vec::new(),
     };
     for (thread, turn) in [(THREAD, "previous"), ("child-thread", TURN)] {
         reader.project(TurnFrame::UserInputRequested { id: json!(1), params: json!({"threadId":thread,"turnId":turn,"questions":[{"id":"q","header":"Q","question":"Choose"}]}) });
@@ -503,6 +511,8 @@ fn resolved_question_expires_without_ending_turn() {
         projection: CodexTurnProjection::new(Some(THREAD.into())),
         pending: Cursor::new(vec![]),
         declined_reported: false,
+        approval_items: Default::default(),
+        approval_notices: Vec::new(),
     };
     reader.project(TurnFrame::UserInputResolved { id: json!(9) });
     assert_eq!(
@@ -545,5 +555,220 @@ fn direct_input_cancellation_while_answer_waits_prevents_provider_write() {
     assert!(worker.join().unwrap().is_err());
     assert!(entered);
     assert!(port.question_answers.lock().unwrap().is_empty());
+    child.state.settle(0);
+}
+
+#[test]
+fn a_missing_resume_thread_starts_a_fresh_session_only_when_the_host_is_ready() {
+    let missing = CodexRpcFailure::Rpc(super::super::codex_app_server_protocol::JsonRpcError {
+        code: -32600,
+        message: "no rollout found for thread id 0199".into(),
+        data: None,
+    });
+
+    assert_eq!(
+        resume_failure_policy(&missing, true),
+        ResumeFailurePolicy::StartFreshSession
+    );
+    assert!(matches!(
+        resume_failure_policy(&missing, false),
+        ResumeFailurePolicy::FailTurn(_)
+    ));
+}
+
+#[test]
+fn transient_resume_failures_fail_the_turn_instead_of_forking_the_session() {
+    let overloaded = CodexRpcFailure::Rpc(super::super::codex_app_server_protocol::JsonRpcError {
+        code: -32603,
+        message: "server overloaded".into(),
+        data: None,
+    });
+    for failure in [
+        overloaded,
+        CodexRpcFailure::Timeout,
+        CodexRpcFailure::HostFailed {
+            reason: "Codex app-server exited.".into(),
+        },
+    ] {
+        let ResumeFailurePolicy::FailTurn(reason) = resume_failure_policy(&failure, true) else {
+            panic!("{failure:?} must fail the turn");
+        };
+        assert!(reason.starts_with("Codex could not resume the previous session: "));
+        assert!(reason.ends_with(failure.message().as_str()));
+    }
+}
+
+#[test]
+fn a_resume_fallback_replaces_the_session_once_and_warns_without_an_error() {
+    let port = FakePort::new();
+    let mut child = port.child();
+    child.resumed_fallback = Some("previous-thread".into());
+    let mut output = child.stdout_reader().unwrap();
+    let lines = read_chunk(&mut output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["t"], "sessionFallback");
+    assert_eq!(lines[0]["previousThreadId"], "previous-thread");
+    assert_eq!(lines[0]["threadId"], THREAD);
+    assert_eq!(lines[1]["t"], "notice");
+    assert_eq!(lines[1]["severity"], "warning");
+    assert_eq!(lines[1]["message"], RESUME_FALLBACK_NOTICE);
+    assert!(lines
+        .iter()
+        .all(|line| line["t"] != "error" && line["t"] != "session"));
+}
+
+#[test]
+fn stale_turn_model_reroutes_are_filtered_and_current_ones_are_visible() {
+    let reroute = |turn: &str| json!({"threadId":THREAD,"turnId":turn,"fromModel":"big","toModel":"small","reason":"highRiskCyberActivity"});
+    let port = FakePort::new();
+    port.push("model/rerouted", reroute("old-turn"));
+    port.push("model/rerouted", reroute(TURN));
+    port.complete(THREAD, TURN, "completed");
+    let mut child = port.child();
+    let mut output = child.stdout_reader().unwrap();
+    let mut projected = String::new();
+    while !projected.contains("\"t\":\"result\"") {
+        match read_chunk(&mut output) {
+            Ok(chunk) => projected.push_str(&chunk),
+            Err(error) => assert_eq!(error.kind(), io::ErrorKind::WouldBlock),
+        }
+    }
+    let notices = projected
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line["t"] == "notice")
+        .collect::<Vec<_>>();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["severity"], "warning");
+    assert!(notices[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("from model big to small"));
+}
+
+fn drain_until_blocked(reader: &mut dyn Read) -> String {
+    let mut output = String::new();
+    loop {
+        match read_chunk(reader) {
+            Ok(chunk) if !chunk.is_empty() => output.push_str(&chunk),
+            _ => return output,
+        }
+    }
+}
+
+#[test]
+fn command_approval_round_trips_through_the_turn_and_stop_expires_the_next_one() {
+    use crate::agent_questions::approvals::{AgentApprovalDecision, AgentApprovalStatus};
+    let port = FakePort::new();
+    let mut child = port.child();
+    let mut output = child.stdout_reader().unwrap();
+    drain_until_blocked(output.as_mut());
+    let method = "item/commandExecution/requestApproval".to_string();
+    port.frames
+        .lock()
+        .unwrap()
+        .push_back(Ok(TurnFrame::ApprovalRequested {
+            id: json!(41),
+            method: method.clone(),
+            params: json!({"threadId":THREAD,"turnId":TURN,"command":"cargo test","cwd":"/repo"}),
+        }));
+    drain_until_blocked(output.as_mut());
+    let approvals = child.state.questions.approvals();
+    let pending = approvals.list("task");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, AgentApprovalStatus::Pending);
+    assert_eq!(pending[0].detail, "cargo test");
+    assert!(child.state.questions.has_pending());
+    approvals
+        .answer("task", &pending[0].id, AgentApprovalDecision::AllowOnce)
+        .unwrap();
+    assert_eq!(
+        *port.question_answers.lock().unwrap(),
+        vec![(json!(41), json!({"decision":"accept"}))]
+    );
+    port.frames
+        .lock()
+        .unwrap()
+        .push_back(Ok(TurnFrame::ApprovalRequested {
+            id: json!(42),
+            method,
+            params: json!({"threadId":THREAD,"turnId":TURN,"command":"rm -rf target"}),
+        }));
+    drain_until_blocked(output.as_mut());
+    let second = approvals.list("task").remove(1);
+    child.force_kill();
+    assert_eq!(
+        approvals.list("task")[1].status,
+        AgentApprovalStatus::Expired
+    );
+    assert!(approvals
+        .answer("task", &second.id, AgentApprovalDecision::AllowOnce)
+        .is_err());
+    assert_eq!(port.question_answers.lock().unwrap().len(), 1);
+    assert!(port.declines.lock().unwrap().is_empty());
+}
+
+#[test]
+fn foreign_thread_or_turn_approval_is_declined_with_a_visible_notice() {
+    let port = FakePort::new();
+    let mut child = port.child();
+    let mut output = child.stdout_reader().unwrap();
+    drain_until_blocked(output.as_mut());
+    for (id, thread, turn) in [(51, "child-thread", TURN), (52, THREAD, "previous-turn")] {
+        port.frames
+            .lock()
+            .unwrap()
+            .push_back(Ok(TurnFrame::ApprovalRequested {
+                id: json!(id),
+                method: "item/commandExecution/requestApproval".into(),
+                params: json!({"threadId":thread,"turnId":turn,"command":"ls"}),
+            }));
+    }
+    let notice = drain_until_blocked(output.as_mut());
+    assert!(notice.contains("another thread or an earlier turn"));
+    assert_eq!(
+        notice.matches("another thread or an earlier turn").count(),
+        1
+    );
+    assert!(child.state.questions.approvals().list("task").is_empty());
+    assert_eq!(
+        *port.declines.lock().unwrap(),
+        vec![
+            (json!(51), json!({"decision":"decline"})),
+            (json!(52), json!({"decision":"decline"})),
+        ]
+    );
+    assert!(port.question_answers.lock().unwrap().is_empty());
+    assert!(!child.observe_exit());
+    child.state.settle(0);
+}
+
+#[test]
+fn file_change_approval_shows_the_files_announced_earlier_in_the_same_turn() {
+    let port = FakePort::new();
+    let mut child = port.child();
+    let mut output = child.stdout_reader().unwrap();
+    drain_until_blocked(output.as_mut());
+    port.push(
+        "item/started",
+        json!({"threadId":THREAD,"turnId":TURN,"item":{"type":"fileChange","id":"patch-1","status":"inProgress","changes":[{"path":"src/a.ts","kind":{"type":"add"}},{"path":"src/b.ts","kind":{"type":"delete"}}]}}),
+    );
+    port.frames
+        .lock()
+        .unwrap()
+        .push_back(Ok(TurnFrame::ApprovalRequested {
+            id: json!(61),
+            method: "item/fileChange/requestApproval".into(),
+            params: json!({"threadId":THREAD,"turnId":TURN,"itemId":"patch-1"}),
+        }));
+    drain_until_blocked(output.as_mut());
+    let listed = child.state.questions.approvals().list("task");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].detail, "src/a.ts\nsrc/b.ts");
     child.state.settle(0);
 }

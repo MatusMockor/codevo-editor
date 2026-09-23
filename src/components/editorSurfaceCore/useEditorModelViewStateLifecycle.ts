@@ -3,6 +3,10 @@ import type * as Monaco from "monaco-editor";
 import type { WorkspaceSessionViewState } from "../../domain/settings";
 import { modelMatchesProject } from "../editorSurfaceModelIdentity";
 import {
+  navigationOwnsViewport,
+  type EditorNavigationViewportClaim,
+} from "./editorNavigationViewportClaim";
+import {
   foldingModelForEditor,
   type FoldingModelViewState,
   type FoldingRegionViewState,
@@ -12,6 +16,7 @@ interface EditorModelViewStateLifecycleInput {
   readonly activeDocumentPath?: string;
   readonly captureEnabled: boolean;
   readonly editor: Monaco.editor.IStandaloneCodeEditor | null;
+  readonly navigationViewportClaimRef: MutableRefObject<EditorNavigationViewportClaim | null>;
   readonly onViewStateChangeRef: MutableRefObject<
     ((path: string, viewState: WorkspaceSessionViewState) => void) | undefined
   >;
@@ -24,6 +29,7 @@ export function useEditorModelViewStateLifecycle({
   activeDocumentPath,
   captureEnabled,
   editor,
+  navigationViewportClaimRef,
   onViewStateChangeRef,
   restoredViewStateRevision,
   restoredViewStates,
@@ -59,9 +65,16 @@ export function useEditorModelViewStateLifecycle({
       return model;
     };
 
+    const navigationOwnsModelViewport = (model: Monaco.editor.ITextModel) =>
+      navigationOwnsViewport(navigationViewportClaimRef.current, activeDocumentPath, model);
+
     const applyPosition = (model: Monaco.editor.ITextModel) => {
       if (positionApplied) {
         return false;
+      }
+      if (navigationOwnsModelViewport(model)) {
+        positionApplied = true;
+        return true;
       }
 
       const lineNumber = Math.min(Math.max(viewState.line, 1), Math.max(model.getLineCount(), 1));
@@ -87,7 +100,7 @@ export function useEditorModelViewStateLifecycle({
       if (!active || activeModel() !== model) {
         return;
       }
-      if (viewState.scrollTop !== undefined) {
+      if (viewState.scrollTop !== undefined && !navigationOwnsModelViewport(model)) {
         editor.setScrollTop(viewState.scrollTop);
       }
       finish();
@@ -178,7 +191,14 @@ export function useEditorModelViewStateLifecycle({
       disposable.dispose();
       retryDisposable?.dispose();
     };
-  }, [activeDocumentPath, editor, restoredViewStateRevision, restoredViewStates, workspaceRoot]);
+  }, [
+    activeDocumentPath,
+    editor,
+    navigationViewportClaimRef,
+    restoredViewStateRevision,
+    restoredViewStates,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!editor || !activeDocumentPath || !captureEnabled) {

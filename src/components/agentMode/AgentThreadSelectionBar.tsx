@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from "react";
-import { Archive, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Trash2, X } from "lucide-react";
 import {
   agentThreadBulkConfirmLabel,
   agentThreadBulkConfirmReady,
@@ -10,6 +10,7 @@ import { sameListSelectionOwner, type ListSelectionOwner } from "../../domain/li
 
 export interface AgentThreadSelectionBarProps {
   readonly selectedIds: ReadonlyArray<string>;
+  readonly archivedCount?: number;
   readonly owner: ListSelectionOwner;
   onAction(action: AgentThreadBulkAction, capturedOwner: ListSelectionOwner): void;
   onClear(): void;
@@ -22,6 +23,7 @@ interface ArmedDelete {
 }
 
 export function AgentThreadSelectionBar({
+  archivedCount = 0,
   onAction,
   onClear,
   owner,
@@ -50,6 +52,11 @@ export function AgentThreadSelectionBar({
     onAction("archive", owner);
   };
 
+  const unarchive = (): void => {
+    setArmedState(null);
+    onAction("unarchive", owner);
+  };
+
   const remove = (): void => {
     if (!armed || armedState === null) {
       setArmedState({ owner, ids: [...selectedIds], atEpochMs: Date.now() });
@@ -69,15 +76,28 @@ export function AgentThreadSelectionBar({
       role="group"
     >
       <span className="agent-selection-bar__count">{`${threadCountLabel(count)} selected`}</span>
-      <button
-        className="agent-selection-bar__action"
-        onClick={archive}
-        title="Archive the selected threads"
-        type="button"
-      >
-        <Archive aria-hidden="true" size={14} />
-        Archive
-      </button>
+      {archivedCount < count && (
+        <button
+          className="agent-selection-bar__action"
+          onClick={archive}
+          title="Archive the selected threads"
+          type="button"
+        >
+          <Archive aria-hidden="true" size={14} />
+          Archive
+        </button>
+      )}
+      {archivedCount > 0 && (
+        <button
+          className="agent-selection-bar__action"
+          onClick={unarchive}
+          title="Unarchive the selected archived threads"
+          type="button"
+        >
+          <ArchiveRestore aria-hidden="true" size={14} />
+          Unarchive
+        </button>
+      )}
       <button
         className={deleteClassName(armed)}
         data-armed={armed ? "true" : undefined}

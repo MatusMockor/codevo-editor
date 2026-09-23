@@ -643,3 +643,24 @@ fn newly_discovered_models_use_manifest_effort_mapping() {
         }
     }
 }
+
+#[test]
+fn claude_summarized_thinking_display_is_gated_on_a_verified_cli_version() {
+    let launch = AgentLaunchOptions::default();
+    let summarized: &[&str] = &["--thinking-display", "summarized"];
+    for version in [CLAUDE_THINKING_DISPLAY_MIN_VERSION, "2.1.280", "3.0.0"] {
+        assert_eq!(launch.thinking_display_args(Some(version)), summarized);
+    }
+    for version in [
+        None,
+        Some("2.1.219"),
+        Some("2.1.220-beta.1"),
+        Some("1.9.999"),
+        Some(""),
+        Some("not a version"),
+    ] {
+        assert!(launch.thinking_display_args(version).is_empty());
+    }
+    let codex = codex(CodexModelChoice::Default, CodexExecutionMode::Default);
+    assert!(codex.thinking_display_args(Some("9.9.9")).is_empty());
+}

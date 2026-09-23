@@ -8,6 +8,12 @@ impl TransportShared {
         bytes: usize,
     ) {
         let thread_id = frame_thread_id(&params);
+        if crate::agent_task_spawner::codex_app_server_host::approvals::is_interactive_approval(
+            &method,
+        ) {
+            self.dispatch_approval(thread_id, id, method, params, bytes);
+            return;
+        }
         if method == "item/tool/requestUserInput" {
             let queue = thread_id.as_ref().and_then(|thread| {
                 self.routes
@@ -39,6 +45,45 @@ impl TransportShared {
                 JSON_RPC_METHOD_NOT_FOUND_MESSAGE,
             ));
             self.route(thread_id, TurnFrame::UnknownFrame { method }, bytes);
+            return;
+        };
+        let _ = self.write_line(server_request_result(&id, result));
+        self.route(
+            thread_id,
+            TurnFrame::ServerRequestDeclined { method },
+            bytes,
+        );
+    }
+
+    fn dispatch_approval(
+        &self,
+        thread_id: Option<String>,
+        id: Value,
+        method: String,
+        params: Value,
+        bytes: usize,
+    ) {
+        let queue = thread_id.as_ref().and_then(|thread| {
+            self.routes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .routes
+                .get(thread)
+                .cloned()
+        });
+        if let Some(queue) = queue {
+            queue.push(BufferedFrame {
+                frame: TurnFrame::ApprovalRequested { id, method, params },
+                bytes,
+            });
+            return;
+        }
+        let Some(result) = self.handler.decline(method.as_str(), &params) else {
+            let _ = self.write_line(server_request_error(
+                &id,
+                -32600,
+                "Approval has no active turn owner.",
+            ));
             return;
         };
         let _ = self.write_line(server_request_result(&id, result));

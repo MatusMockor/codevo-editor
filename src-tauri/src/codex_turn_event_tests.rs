@@ -289,7 +289,7 @@ fn a_completed_command_execution_projects_a_tool_result_keyed_on_the_exit_code()
         vec![CodexTurnEvent::tool_result(
             "exec-2".to_string(),
             CodexClippedText {
-                text: "boom\n".to_string(),
+                text: "exit 1\nboom\n".to_string(),
                 clipped: false
             },
             true
@@ -318,7 +318,10 @@ fn a_declined_command_execution_is_an_error_result() {
         events,
         vec![CodexTurnEvent::tool_result(
             "exec-1".to_string(),
-            CodexClippedText::default(),
+            CodexClippedText {
+                text: "declined".to_string(),
+                clipped: false
+            },
             true
         )]
     );
@@ -875,10 +878,9 @@ fn command_output_is_clipped_to_the_tool_summary_budget_on_a_character_boundary(
         panic!("a completed command execution must project a tool result");
     };
     assert!(output_summary.clipped);
-    assert_eq!(
-        output_summary.text,
-        "€".repeat(MAX_AGENT_TOOL_SUMMARY_BYTES / 3)
-    );
+    assert!(output_summary.text.starts_with('€'));
+    assert!(output_summary.text.ends_with('€'));
+    assert!(output_summary.text.contains("bytes omitted"));
     assert!(output_summary.text.len() <= MAX_AGENT_TOOL_SUMMARY_BYTES);
     assert!(lines(&events).contains(r#""clipped":true"#));
 }

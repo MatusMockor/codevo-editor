@@ -13,7 +13,7 @@ import { emptyRemoteInventory } from "./remoteAgentInventoryLoad";
 import type { RemotePendingUpdate } from "./useRemoteAgentInventory";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 
-const launch = { provider: "codex", model: "default", mode: "default" } as const;
+const launch = { provider: "codex", model: "default", mode: "workspaceWrite" } as const;
 const request = { threadId: "agt-1", prompt: "Next step", launch };
 const pending = (
   overrides: Partial<RemoteRunnerPendingMessage> = {},
@@ -180,7 +180,7 @@ describe("server-owned pending message orchestration", () => {
     h.gateway.enqueueMessage.mockResolvedValue({
       pending: pending({
         parts: [{ text: request.prompt, type: "text" }],
-        launch: { mode: "default", model: "default", provider: "codex" },
+        launch: { mode: "workspaceWrite", model: "default", provider: "codex" },
       }),
       created: true,
     });
@@ -209,7 +209,7 @@ describe("server-owned pending message orchestration", () => {
     const claudeLaunch = {
       provider: "claudeCode",
       model: "default",
-      mode: "default",
+      mode: "supervised",
       effort: "default",
     } as const;
     h.gateway.enqueueMessage.mockResolvedValue({
@@ -279,7 +279,7 @@ describe("server-owned pending message orchestration", () => {
       expect(
         await h.result.enqueue({
           ...request,
-          launch: { mode: "default", provider: "codex", model: "default" },
+          launch: { mode: "workspaceWrite", provider: "codex", model: "default" },
         }),
       ).toBe(true);
     });
@@ -488,7 +488,7 @@ function setupClaude() {
   const launch = {
     provider: "claudeCode",
     model: "default",
-    mode: "default",
+    mode: "supervised",
     effort: "high",
   } as const;
   const view = h.options.views.get(request.threadId)!;
@@ -584,4 +584,38 @@ it("queues Codex without collecting rules on a runner without instruction sync",
     vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
       .calls[0]?.[0],
   ).not.toHaveProperty("instructions");
+});
+
+it("refuses a promoted stored default launch until the user confirms full access", async () => {
+  const h = setup();
+  await act(async () => {
+    expect(await h.result.enqueue({ ...request, launch: { ...launch, mode: "default" } })).toBe(
+      false,
+    );
+  });
+  expect(h.gateway.enqueueMessage).not.toHaveBeenCalled();
+  expect(h.options.report).toHaveBeenCalledWith(
+    expect.stringContaining("Choose a permission mode"),
+  );
+});
+
+it("queues a promoted stored default launch as full access only with confirmation", async () => {
+  const h = setup();
+  const normalized = { ...launch, mode: "dangerFullAccess" } as const;
+  h.gateway.enqueueMessage.mockResolvedValue({
+    pending: pending({ launch: normalized }),
+    created: true,
+  });
+  await act(async () => {
+    expect(
+      await h.result.enqueue({
+        ...request,
+        launch: { ...launch, mode: "default" },
+        dangerousLaunchConfirmed: true,
+      }),
+    ).toBe(true);
+  });
+  const sent = JSON.stringify(h.gateway.enqueueMessage.mock.calls[0]);
+  expect(sent).toContain('"mode":"dangerFullAccess"');
+  expect(sent).not.toContain('"mode":"default"');
 });

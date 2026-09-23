@@ -137,7 +137,7 @@ describe("historical server turn changes", () => {
         h.surface().getTurnFileDiff(h.threadId, "old", "elsewhere.ts"),
       ).rejects.toThrow();
       expect(h.getTurnFileDiff).toHaveBeenCalledTimes(1);
-      expect((await h.surface().getTurnChanges(h.threadId, "foreign")).state).toBe("unavailable");
+      expect((await h.surface().getTurnChanges(h.threadId, "foreign")).state).toBe("unsupported");
     } finally {
       await h.dispose();
     }
@@ -177,7 +177,7 @@ describe("historical server turn changes", () => {
               ],
       };
       await h.update({ snapshots: [snapshot] });
-      expect((await h.surface().getTurnChanges(h.threadId, "old")).state).toBe("unavailable");
+      expect((await h.surface().getTurnChanges(h.threadId, "old")).state).toBe("unsupported");
       expect(h.getTurnChanges).not.toHaveBeenCalled();
     } finally {
       await h.dispose();
@@ -211,7 +211,7 @@ describe("historical server turn changes", () => {
           await h.update({ snapshots: [h.snapshot] });
         }
         pending.resolve(summary);
-        expect((await work).state).toBe("unavailable");
+        expect((await work).state).toBe("unsupported");
         expect((await h.surface().getTurnChanges(h.threadId, "old")).state).toBe("ready");
         expect(h.getTurnChanges).toHaveBeenCalledTimes(2);
       } finally {

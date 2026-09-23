@@ -30,12 +30,11 @@ export function validThreadSortOrder(value: unknown): value is number | null {
 }
 
 export function compareAgentThreadOrder(left: AgentThread, right: AgentThread): number {
-  if (left.sortOrder == null && right.sortOrder != null) return 1;
-  if (left.sortOrder != null && right.sortOrder == null) return -1;
-  const a = left.sortOrder ?? Number.MAX_SAFE_INTEGER;
-  const b = right.sortOrder ?? Number.MAX_SAFE_INTEGER;
+  const leftManual = left.sortOrder != null;
+  const rightManual = right.sortOrder != null;
+  if (leftManual !== rightManual) return leftManual ? 1 : -1;
   return (
-    a - b ||
+    (left.sortOrder ?? 0) - (right.sortOrder ?? 0) ||
     right.updatedAtEpochMs - left.updatedAtEpochMs ||
     left.threadId.localeCompare(right.threadId)
   );
@@ -90,14 +89,13 @@ export function updateAgentThreadOrganization(
   return { threads };
 }
 
-/** Renumber one owner/section atomically, avoiding fractional key exhaustion. */
 export function agentThreadReorderPlan(
   threads: ReadonlyArray<AgentThread>,
   threadId: string,
   targetThreadId: string,
   placement: AgentThreadPlacement,
   now: number,
-): ReadonlyArray<{ readonly threadId: string; readonly sortOrder: number }> {
+): ReadonlyArray<AgentThreadSortOrderAssignment> {
   if (
     threadId === targetThreadId ||
     !validThreadOrganizationValue(now) ||
@@ -113,17 +111,83 @@ export function agentThreadReorderPlan(
     section(moved, now) !== section(target, now)
   )
     return [];
-  const siblings = threads
+  const remaining = threads
     .filter(
       (thread) =>
+        thread.threadId !== threadId &&
         sameThreadOrganizationOwner(thread.owner, moved.owner) &&
         section(thread, now) === section(moved, now),
     )
     .sort(compareAgentThreadOrder);
-  const remaining = siblings.filter((thread) => thread.threadId !== threadId);
-  const index = remaining.findIndex((thread) => thread.threadId === targetThreadId);
-  remaining.splice(index + (placement === "after" ? 1 : 0), 0, moved);
-  return remaining.map((thread, sortOrder) => ({ threadId: thread.threadId, sortOrder }));
+  const position =
+    remaining.findIndex((thread) => thread.threadId === targetThreadId) +
+    (placement === "after" ? 1 : 0);
+  const ordered = [...remaining.slice(0, position), moved, ...remaining.slice(position)];
+  return minimalSortOrderPlan(ordered, position);
+}
+
+export interface AgentThreadSortOrderAssignment {
+  readonly threadId: string;
+  readonly sortOrder: number;
+}
+
+function minimalSortOrderPlan(
+  ordered: ReadonlyArray<AgentThread>,
+  position: number,
+): ReadonlyArray<AgentThreadSortOrderAssignment> {
+  const moved = ordered[position];
+  const next = ordered[position + 1];
+  if (moved === undefined) return [];
+  if (next !== undefined && next.sortOrder == null) return numberThrough(ordered, position);
+  const value = sortOrderBetween(ordered[position - 1]?.sortOrder ?? null, next?.sortOrder ?? null);
+  if (value === null) return renumberFrom(ordered, position);
+  return [{ threadId: moved.threadId, sortOrder: value }];
+}
+
+function numberThrough(
+  ordered: ReadonlyArray<AgentThread>,
+  position: number,
+): ReadonlyArray<AgentThreadSortOrderAssignment> {
+  const firstManual = ordered.findIndex(
+    (thread, index) => index > position && thread.sortOrder != null,
+  );
+  const end = firstManual === -1 ? ordered.length : firstManual;
+  const count = end - position;
+  const base = firstManual === -1 ? count : (ordered[firstManual]?.sortOrder ?? count);
+  const assignments = ordered.slice(position, end).map((thread, index) => ({
+    threadId: thread.threadId,
+    sortOrder: base - count + index,
+  }));
+  if (assignments.every((assignment) => validThreadSortOrder(assignment.sortOrder)))
+    return assignments;
+  return renumberFrom(ordered, position);
+}
+
+function renumberFrom(
+  ordered: ReadonlyArray<AgentThread>,
+  position: number,
+): ReadonlyArray<AgentThreadSortOrderAssignment> {
+  const firstManual = ordered.findIndex((thread) => thread.sortOrder != null);
+  const start = firstManual === -1 ? position : Math.min(position, firstManual);
+  return ordered
+    .slice(start)
+    .map((thread, index) => ({ threadId: thread.threadId, sortOrder: index }));
+}
+
+function sortOrderBetween(previous: number | null, next: number | null): number | null {
+  if (previous === null && next === null) return 0;
+  if (previous === null) return validSortOrderOrNull((next ?? 0) - 1);
+  if (next === null) return validSortOrderOrNull(previous + 1);
+  const integer = Math.floor(previous / 2 + next / 2);
+  if (integer > previous && integer < next) return integer;
+  const fraction = previous + (next - previous) / 2;
+  if (fraction > previous && fraction < next) return validSortOrderOrNull(fraction);
+  return null;
+}
+
+function validSortOrderOrNull(value: number): number | null {
+  if (!validThreadSortOrder(value)) return null;
+  return value;
 }
 
 function section(thread: AgentThread, now: number): string {

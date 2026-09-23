@@ -13,9 +13,34 @@ export interface AgentTurnChangedFile {
   readonly deletedLines: number | null;
 }
 
+export type AgentTurnChangesState = "ready" | "unavailable" | "unsupported";
+export type AgentTurnChangesWireUnsupportedReason = "notGitRepository" | "notWorktreeRoot";
+export type AgentTurnChangesUnsupportedReason =
+  AgentTurnChangesWireUnsupportedReason | "notApplicable";
+
+export type AgentTurnChangesDenialReason =
+  "gatewayMissing" | "untrusted" | "ownerMismatch" | "launchRootNotOwned";
+
+export function agentTurnChangesDenialMessage(reason: AgentTurnChangesDenialReason): string {
+  switch (reason) {
+    case "gatewayMissing":
+      return "Recorded changes cannot be read in this session.";
+    case "untrusted":
+      return "Trust this project to view recorded changes.";
+    case "ownerMismatch":
+      return "Recorded changes belong to a project session that is no longer open.";
+    case "launchRootNotOwned":
+      return "Recorded changes are outside this project's repositories.";
+    default: {
+      const unreachable: never = reason;
+      return unreachable;
+    }
+  }
+}
+
 export interface AgentTurnChangeSummary {
   readonly turnId: string;
-  readonly state: "ready" | "unavailable";
+  readonly state: AgentTurnChangesState;
   readonly files: ReadonlyArray<AgentTurnChangedFile>;
   readonly truncated: boolean;
   readonly reason: string | null;
@@ -60,6 +85,22 @@ export function isAgentTurnChangePath(value: unknown): value is string {
   );
 }
 
+const wireStates: ReadonlySet<unknown> = new Set<AgentTurnChangesState>([
+  "ready",
+  "unavailable",
+  "unsupported",
+]);
+const wireUnsupportedReasons: ReadonlySet<unknown> = new Set<AgentTurnChangesWireUnsupportedReason>(
+  ["notGitRepository", "notWorktreeRoot"],
+);
+
+export function unsupportedAgentTurnChanges(
+  turnId: string,
+  reason: AgentTurnChangesUnsupportedReason,
+): AgentTurnChangeSummary {
+  return { turnId, state: "unsupported", files: [], truncated: false, reason };
+}
+
 function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid turn changes response.");
@@ -83,7 +124,7 @@ export function parseAgentTurnChangeSummary(value: unknown): AgentTurnChangeSumm
     !data.turnId ||
     encoder.encode(data.turnId).length > 256 ||
     /[\u0000-\u001f\u007f]/u.test(data.turnId) ||
-    (data.state !== "ready" && data.state !== "unavailable") ||
+    !wireStates.has(data.state) ||
     typeof data.truncated !== "boolean" ||
     !(
       data.reason === null ||
@@ -130,9 +171,14 @@ export function parseAgentTurnChangeSummary(value: unknown): AgentTurnChangeSumm
   });
   if (data.state === "unavailable" && files.length !== 0)
     throw new Error("Unavailable changes must not include files.");
+  if (
+    data.state === "unsupported" &&
+    (files.length !== 0 || data.truncated || !wireUnsupportedReasons.has(data.reason))
+  )
+    throw new Error("Invalid unsupported turn changes.");
   return {
     turnId: data.turnId,
-    state: data.state,
+    state: data.state as AgentTurnChangesState,
     files,
     truncated: data.truncated,
     reason: data.reason,

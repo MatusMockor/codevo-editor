@@ -1,20 +1,25 @@
+import {
+  classifyTurnChangesReadFailure,
+  isRetryableTurnChangesReason,
+} from "../../application/agentTurnChangesReadQueue";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
-import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
-import type { MonacoAppTheme } from "../../domain/settings";
+import {
+  unsupportedAgentTurnChanges,
+  type AgentTurnChangeSummary,
+} from "../../domain/agentTurnChanges";
 import { AgentTurnChangesCard } from "./AgentTurnChangesCard";
 import "./agentRecordedTurnChanges.css";
 
-export interface RecordedTurnChangesProps {
+export interface AgentRecordedTurnChangesProps {
   readonly onOpenDiff?: (summary: AgentTurnChangeSummary, relativePath?: string) => void;
   readonly revision?: object;
   readonly threadId: string;
   readonly turnId: string;
   readonly getTurnChanges: NonNullable<AgentThreadsSurface["getTurnChanges"]>;
-  readonly getTurnFileDiff: NonNullable<AgentThreadsSurface["getTurnFileDiff"]>;
-  readonly monacoTheme: MonacoAppTheme;
 }
-export function AgentRecordedTurnChanges(props: RecordedTurnChangesProps) {
+
+export function AgentRecordedTurnChanges(props: AgentRecordedTurnChangesProps) {
   const { threadId, turnId, getTurnChanges, revision } = props;
   const [retry, setRetry] = useState(0);
   const identity = useMemo(
@@ -31,24 +36,15 @@ export function AgentRecordedTurnChanges(props: RecordedTurnChangesProps) {
       .then((summary) => {
         if (active && summary.turnId === turnId) setResult({ identity, summary });
       })
-      .catch(() => {
-        if (active)
-          setResult({
-            identity,
-            summary: {
-              turnId,
-              state: "unavailable",
-              files: [],
-              truncated: false,
-              reason: "Recorded changes are not available for this turn.",
-            },
-          });
+      .catch((error: unknown) => {
+        if (active) setResult({ identity, summary: readFailureSummary(turnId, error) });
       });
     return () => {
       active = false;
     };
   }, [identity, getTurnChanges, threadId, turnId]);
   if (result?.identity !== identity) return null;
+  if (result.summary.state === "unsupported") return null;
   return (
     <>
       <AgentTurnChangesCard
@@ -56,15 +52,22 @@ export function AgentRecordedTurnChanges(props: RecordedTurnChangesProps) {
         summary={result.summary}
         onOpenDiff={(relativePath) => props.onOpenDiff?.(result.summary, relativePath)}
       />
-      {result.summary.state === "unavailable" && (
-        <button
-          className="agent-turn-changes-retry"
-          type="button"
-          onClick={() => setRetry((value) => value + 1)}
-        >
-          Retry recorded changes
-        </button>
-      )}
+      {result.summary.state === "unavailable" &&
+        isRetryableTurnChangesReason(result.summary.reason) && (
+          <button
+            className="agent-turn-changes-retry"
+            type="button"
+            onClick={() => setRetry((value) => value + 1)}
+          >
+            Retry recorded changes
+          </button>
+        )}
     </>
   );
+}
+
+function readFailureSummary(turnId: string, error: unknown): AgentTurnChangeSummary {
+  const failure = classifyTurnChangesReadFailure(error);
+  if (failure.kind === "notApplicable") return unsupportedAgentTurnChanges(turnId, "notApplicable");
+  return { turnId, state: "unavailable", files: [], truncated: false, reason: failure.reason };
 }

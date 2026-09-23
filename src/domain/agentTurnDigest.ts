@@ -98,16 +98,14 @@ function closeFold(fold: DigestFold): AgentTurnDigestWire {
 }
 
 function acceptDigestEvent(fold: DigestFold, event: AgentTurnEvent): void {
-  if (invalidatesContext(event)) {
+  if (invalidatesContext(fold.provider, event)) {
     fold.current = null;
     fold.primary = null;
     fold.capacities.clear();
     return;
   }
-  if (fold.provider === "claudeCode" && event.kind === "contextUsage")
-    return acceptContextUsage(fold, event);
-  if (fold.provider === "codex" && event.kind === "result" && !event.isError)
-    return acceptResult(fold, event);
+  if (event.kind === "contextUsage") return acceptContextUsage(fold, event);
+  if (fold.provider === "codex" && event.kind === "result") return acceptResult(fold, event);
 }
 
 function acceptContextUsage(fold: DigestFold, event: ContextUsageEvent): void {
@@ -148,11 +146,11 @@ function retainCapacity(fold: DigestFold, model: string, contextWindow: number):
   fold.capacities.set(model, contextWindow);
 }
 
-function invalidatesContext(event: AgentTurnEvent): boolean {
+function invalidatesContext(provider: DigestFold["provider"], event: AgentTurnEvent): boolean {
   return (
     event.kind === "contextCompaction" ||
     event.kind === "error" ||
-    (event.kind === "result" && event.isError) ||
+    (event.kind === "result" && event.isError && provider !== "codex") ||
     (event.kind === "contextCompactionStatus" && event.status !== "idle")
   );
 }

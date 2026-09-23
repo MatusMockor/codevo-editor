@@ -64,6 +64,14 @@
   color: var(--agent-text-subtle);
 }
 
+.agent-tool-row--interrupted .agent-tool-row__label {
+  color: var(--agent-text-muted);
+}
+
+.agent-tool-row--interrupted .agent-tool-row__icon {
+  color: var(--agent-attention);
+}
+
 .agent-tool-row__argument {
   overflow: hidden;
   flex: 1 1 0;

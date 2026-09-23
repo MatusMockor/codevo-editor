@@ -290,6 +290,43 @@ describe("unified original agent surface", () => {
     });
     expect(h.local.startThread).not.toHaveBeenCalled();
   });
+  it("reports a starting remote draft by its own key next to local dispatches", async () => {
+    let releaseCreate!: () => void;
+    const h = await setup(false, (configured) => {
+      configured.createTask.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseCreate = () =>
+              resolve({
+                task: task({ id: "new", sequence: 3, status: "draft", projectId: undefined }),
+                created: true,
+              });
+          }),
+      );
+    });
+    await h.render({
+      selectedServerId: server.id,
+      local: { ...h.local, dispatching: true, dispatchingKeys: new Set(["local-thread"]) },
+    });
+    let starting!: Promise<unknown>;
+    await act(async () => {
+      starting = h.current.agents.startThread(start);
+    });
+    await vi.waitFor(() => expect(h.gw.createTask).toHaveBeenCalledTimes(1));
+    expect(h.current.agents.dispatchingKeys).toEqual(
+      new Set(["local-thread", `new:${projectKey}`]),
+    );
+    await act(async () => {
+      releaseCreate();
+      await starting;
+    });
+    expect(h.current.agents.dispatchingKeys).toEqual(new Set(["local-thread"]));
+  });
+
+  it("leaves per-conversation keys unset when the local surface does not provide them", async () => {
+    const h = await setup();
+    expect(h.current.agents.dispatchingKeys).toBeUndefined();
+  });
   it("follows the conversation's server even after the new conversation picker changes", async () => {
     const h = await setup();
     await h.render({ selectedThreadId: remoteId, selectedServerId: "other" });

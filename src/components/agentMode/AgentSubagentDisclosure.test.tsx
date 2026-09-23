@@ -6,8 +6,46 @@ import {
   projectAgentRuntimeSubagents,
   reconcileAgentRuntimeSubagents,
   type AgentRuntimeSubagentSource,
+  type AgentRuntimeSubagents,
 } from "../../domain/agentRuntimeSubagent";
+import type { AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
+import { agentTurnRuntimeSubagents } from "./agentRuntimeSubagentPresentation";
+
+const asyncSpawn = (id: string, title: string): ReadonlyArray<AgentTurnEvent> => [
+  {
+    kind: "toolCall",
+    toolId: id,
+    name: "Agent",
+    inputSummary: title,
+    description: title,
+  },
+  { kind: "toolResult", toolId: id, outputSummary: "Async agent launched.", isError: false },
+  {
+    kind: "subagent",
+    status: "starting",
+    toolId: id,
+    taskId: `task-${id}`,
+    subagentType: "general-purpose",
+    description: title,
+  },
+];
+
+const tick = (
+  id: string,
+  status: "running" | "completed" | "failed",
+  description: string,
+): AgentTurnEvent => ({
+  kind: "subagent",
+  status,
+  toolId: id,
+  taskId: `task-${id}`,
+  subagentType: "general-purpose",
+  description,
+  durationMs: 12_000,
+  totalTokens: 4_200,
+  toolUses: 3,
+});
 
 function source(overrides: Partial<AgentRuntimeSubagentSource>): AgentRuntimeSubagentSource {
   return {
@@ -256,6 +294,58 @@ describe("AgentSubagentDisclosure", () => {
 
     expect(probe.mock.calls.map(([id]) => id)).toEqual(Array.from({ length: 10 }, () => "b"));
     expect(host.querySelector(".agent-spawn__status")?.textContent).toBe("2 working");
+  });
+
+  it("folds interleaved async launches into one row and keeps it mounted from live to settled", () => {
+    const spawned = [
+      ...asyncSpawn("a", "Stream A"),
+      ...asyncSpawn("b", "Stream B"),
+      ...asyncSpawn("c", "Stream C"),
+    ];
+    let previous: AgentRuntimeSubagents | null = null;
+    const show = (events: ReadonlyArray<AgentTurnEvent>, status: AgentTurnStatus) => {
+      const next = reconcileAgentRuntimeSubagents(
+        previous,
+        agentTurnRuntimeSubagents({ events, status }),
+      );
+      previous = next;
+      act(() => root.render(<AgentSubagentDisclosure subagents={next} />));
+    };
+
+    show(spawned, { kind: "running" });
+    expect(host.querySelectorAll(".agent-spawn")).toHaveLength(1);
+    expect(host.querySelector(".agent-spawn__lead")?.textContent).toBe("Kicked off 3 subagents");
+    expect(host.querySelector(".agent-spawn__status")?.textContent).toBe("3 working");
+    const spawnRow = host.querySelector(".agent-spawn");
+    act(() => row()?.click());
+    expect(
+      [...host.querySelectorAll(".agent-spawn-member__title")].map((node) => node.textContent),
+    ).toEqual(["Stream A", "Stream B", "Stream C"]);
+
+    const live = [...spawned, tick("b", "running", "Reading gateway.ts")];
+    show(live, { kind: "running" });
+    expect(host.querySelector(".agent-spawn")).toBe(spawnRow);
+    expect(row()?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelectorAll(".agent-spawn-member__activity")[1]?.textContent).toBe(
+      "Reading gateway.ts",
+    );
+
+    const settled = [
+      ...live,
+      tick("a", "completed", "Stream A done"),
+      tick("b", "completed", "Stream B done"),
+      tick("c", "failed", "Stream C broke"),
+    ];
+    show(settled, { kind: "exited", exitCode: 0 });
+    expect(host.querySelector(".agent-spawn")).toBe(spawnRow);
+    expect(row()?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".agent-spawn__lead")?.textContent).toBe("Ran 3 subagents");
+    expect(host.querySelector(".agent-spawn__status")?.textContent).toBe("1 failed");
+    expect(
+      [...host.querySelectorAll(".agent-spawn-member")].map((node) =>
+        node.getAttribute("data-status"),
+      ),
+    ).toEqual(["completed", "completed", "failed"]);
   });
 
   it("renders one quiet row per spawn batch", () => {

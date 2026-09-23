@@ -57,7 +57,7 @@ pub(super) fn numstat(before: &Path, after: &Path) -> Result<BTreeMap<String, (u
     parse_numstat(&run(command, true)?, before, after)
 }
 
-fn git_command() -> Command {
+pub(super) fn git_command() -> Command {
     let mut command = Command::new("git");
     // Do not inherit alternate indexes, injected config, external diff helpers,
     // or repository/worktree redirection from the launching environment.
@@ -79,15 +79,58 @@ fn git_command() -> Command {
         "core.hooksPath=/dev/null",
         "diff.external=",
         "core.attributesFile=/dev/null",
+        "core.splitIndex=false",
+        "core.untrackedCache=false",
+        "core.sparseCheckout=false",
+        "index.sparse=false",
+        "gc.auto=0",
+        "maintenance.auto=false",
     ] {
         command.arg("-c").arg(config);
     }
     command
 }
 
-fn run(command: Command, diff: bool) -> Result<Vec<u8>, String> {
-    let mut guard =
-        ChildGuard::spawn(command).map_err(|_| "Could not start snapshot Git command.")?;
+const FAILED: &str = "Snapshot Git command failed.";
+const DISCOVERY_EXHAUSTED: &[u8] = b"not a git repository (or any ";
+
+pub(super) enum Failure {
+    NotRepository,
+    Other(String),
+}
+
+impl From<Failure> for String {
+    fn from(failure: Failure) -> Self {
+        match failure {
+            Failure::NotRepository => FAILED.into(),
+            Failure::Other(reason) => reason,
+        }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(reason: &str) -> Self {
+        Self::Other(reason.into())
+    }
+}
+
+pub(super) fn run(command: Command, diff: bool) -> Result<Vec<u8>, String> {
+    Ok(run_guard(ChildGuard::spawn(command), diff)?)
+}
+
+pub(super) fn discover(command: Command) -> Result<Vec<u8>, Failure> {
+    run_guard(ChildGuard::spawn(command), false)
+}
+
+pub(super) fn run_input(command: Command, input: std::fs::File) -> Result<Vec<u8>, String> {
+    Ok(run_guard(
+        ChildGuard::spawn_with_input(command, input),
+        false,
+    )?)
+}
+
+fn run_guard(child: std::io::Result<ChildGuard>, diff: bool) -> Result<Vec<u8>, Failure> {
+    let mut guard = child.map_err(|_| "Could not start snapshot Git command.")?;
     let deadline = Instant::now() + TIMEOUT;
     let (stdout, stderr) = guard
         .take_streams()
@@ -117,14 +160,26 @@ fn run(command: Command, diff: bool) -> Result<Vec<u8>, String> {
     if expired || matches!(streams, StreamsResult::TimedOut) {
         return Err("Snapshot Git command timed out.".into());
     }
+    if exited && status.code() == Some(128) && discovery_exhausted(&streams) {
+        return Err(Failure::NotRepository);
+    }
     if !exited || !(status.success() || diff && status.code() == Some(1)) {
-        return Err("Snapshot Git command failed.".into());
+        return Err(FAILED.into());
     }
     match streams {
         StreamsResult::Complete { stdout, .. } => Ok(stdout),
         StreamsResult::TooLarge => Err("Snapshot Git output exceeded its limit.".into()),
         _ => Err("Could not read snapshot Git output.".into()),
     }
+}
+
+fn discovery_exhausted(streams: &StreamsResult) -> bool {
+    let StreamsResult::Complete { stderr, .. } = streams else {
+        return false;
+    };
+    stderr
+        .windows(DISCOVERY_EXHAUSTED.len())
+        .any(|window| window.eq_ignore_ascii_case(DISCOVERY_EXHAUSTED))
 }
 
 fn nul_records(bytes: &[u8]) -> Result<Vec<&str>, String> {
@@ -243,6 +298,30 @@ mod tests {
         let files = inventory(&after).unwrap();
         assert_eq!(files, vec![".gitignore", "added", "changed"]);
         assert!(!after.join(".git/index").exists());
+    }
+
+    #[test]
+    fn only_exhausted_discovery_is_classified_as_not_a_repository() {
+        let complete = |stderr: &[u8]| StreamsResult::Complete {
+            stdout: Vec::new(),
+            stderr: stderr.to_vec(),
+        };
+        for stderr in [
+            &b"fatal: not a git repository (or any of the parent directories): .git\n"[..],
+            &b"FATAL: NOT A GIT REPOSITORY (OR ANY PARENT UP TO MOUNT POINT /)\n"[..],
+        ] {
+            assert!(discovery_exhausted(&complete(stderr)));
+        }
+        for stderr in [
+            &b"fatal: not a git repository: /missing\n"[..],
+            &b"fatal: invalid gitfile format: /home/.git\n"[..],
+            &b"fatal: detected dubious ownership in repository at '/x'\n"[..],
+            &b"not a git repository (or any"[..],
+        ] {
+            assert!(!discovery_exhausted(&complete(stderr)));
+        }
+        assert!(!discovery_exhausted(&StreamsResult::TooLarge));
+        assert!(!discovery_exhausted(&StreamsResult::TimedOut));
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::agent_task_spawner::{
     AgentImageAttachment, AgentInvocationRequest, AgentTaskSpawnPlan,
     AGENT_TURN_IMAGE_BUDGET_ERROR, MAX_AGENT_PROMPT_BYTES, MAX_AGENT_TURN_IMAGE_BYTES,
 };
+use crate::agent_task_supervisor::agent_task_pending_stops::AGENT_TASK_STOPPED_BEFORE_START_ERROR;
 use crate::agent_task_supervisor::{
     AgentTaskEventSink, AgentTaskIsolation, AgentTaskMetadata, AgentTaskOutputEvent,
     AgentTaskRegistry, AgentTaskStartRequest as AgentTaskRegistryStartRequest,
@@ -518,6 +519,23 @@ pub(crate) async fn start_agent_task(
     request: StartAgentTaskRequest,
     state: AgentTaskRuntimeState<'_>,
 ) -> Result<AgentTaskStartResult, String> {
+    let task_id = request.task_id.clone();
+    let workspace_id = request.workspace_id.clone();
+    let discard_app = app.clone();
+    let result = start_owned_agent_task(app, request, state).await;
+    if result.is_err() {
+        discard_app
+            .state::<AgentTaskRegistry>()
+            .discard_pending_stop(&task_id, workspace_id.as_str());
+    }
+    result
+}
+
+async fn start_owned_agent_task(
+    app: AppHandle,
+    request: StartAgentTaskRequest,
+    state: AgentTaskRuntimeState<'_>,
+) -> Result<AgentTaskStartResult, String> {
     let preparation_app = app.clone();
     let preparation_request = request.clone();
     let prepared = run_blocking_command(move || {
@@ -566,6 +584,12 @@ pub(crate) async fn start_agent_task(
             plan,
             authority,
         } = prepared;
+        if app
+            .state::<AgentTaskRegistry>()
+            .stop_pending_before_start(&registry_request.task_id, request.workspace_id.as_str())
+        {
+            return Err(AGENT_TASK_STOPPED_BEFORE_START_ERROR.to_string());
+        }
         let workspace_registry = app.state::<WorkspaceRegistry>();
         let trust_state = app.state::<Mutex<WorkspaceTrustService>>();
         revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;

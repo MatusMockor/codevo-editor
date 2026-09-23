@@ -51,7 +51,7 @@ describe("AgentStatusBarHost", () => {
     expect(host.querySelector(".status-agent-attention")?.textContent).toBe("2 need attention");
   });
 
-  it("explains exact failed, stopped and interrupted latest run counts, independent of unread", () => {
+  it("explains exact failed and interrupted latest run counts and never lists user stops", () => {
     render({
       agents: agents({
         threads: [
@@ -82,8 +82,9 @@ describe("AgentStatusBarHost", () => {
     });
     const indicator = host.querySelector<HTMLElement>(".status-agent-attention");
     expect(indicator?.textContent).toBe("4 need attention");
-    expect(indicator?.title).toContain("2 failed · 1 stopped · 1 interrupted.");
-    expect(indicator?.title).toContain("Reading a thread does not clear its run status");
+    expect(indicator?.title).toContain("2 failed · 1 interrupted.");
+    expect(indicator?.title).not.toContain("stopped ·");
+    expect(indicator?.title).toContain("Opening a thread clears it from this count");
     expect(indicator?.title).not.toContain("private error");
   });
 

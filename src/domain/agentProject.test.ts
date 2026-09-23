@@ -3,6 +3,7 @@ import { MAX_AGENT_TASK_PATH_BYTES, MAX_AGENT_TASK_WORKSPACE_ID_BYTES } from "./
 import {
   agentProjectNestedRepositories,
   agentProjectOwnsLaunchRoot,
+  agentProjectOwnsOwner,
   agentProjectRootIsRepository,
   agentRootOwnerId,
   fnv1a64hex,
@@ -16,6 +17,18 @@ import {
 const ENCODER = new TextEncoder();
 
 describe("agent project domain", () => {
+  it("owns exact, runtime and root-derived owners of the same root only", () => {
+    const project = { rootKey: "/repo", ownerId: "workspace-1", runtimeOwnerIds: ["workspace-0"] };
+    const owns = (rootKey: string, ownerId: string) =>
+      agentProjectOwnsOwner(project, { rootKey, ownerId });
+    expect(owns("/repo", "workspace-1")).toBe(true);
+    expect(owns("/repo", "workspace-0")).toBe(true);
+    expect(owns("/repo", agentRootOwnerId("/repo"))).toBe(true);
+    expect(owns("/repo", "workspace-2")).toBe(false);
+    expect(owns("/repo", agentRootOwnerId("/other"))).toBe(false);
+    expect(owns("/other", agentRootOwnerId("/other"))).toBe(false);
+    expect(owns("/other", "workspace-1")).toBe(false);
+  });
   it("pins the maximum project root count", () => {
     expect(MAX_AGENT_PROJECT_ROOTS).toBe(64);
   });

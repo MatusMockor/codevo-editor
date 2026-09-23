@@ -1,10 +1,11 @@
 export const AGENT_THREAD_BULK_LIMIT = 200;
 export const AGENT_THREAD_BULK_CONFIRM_DELAY_MS = 350;
+export const AGENT_THREAD_BULK_CONCURRENCY = 2;
 
-export type AgentThreadBulkAction = "archive" | "delete";
+export type AgentThreadBulkAction = "archive" | "unarchive" | "delete";
 
 export type AgentThreadBulkSkipReason =
-  "missing" | "foreignOwner" | "running" | "alreadyArchived" | "overLimit";
+  "missing" | "foreignOwner" | "running" | "alreadyArchived" | "notArchived" | "overLimit";
 
 export interface AgentThreadBulkCandidate {
   readonly threadId: string;
@@ -38,9 +39,10 @@ export type AgentThreadBulkCommand =
 const SKIP_REASON_RANK: Readonly<Record<AgentThreadBulkSkipReason, number>> = {
   running: 0,
   alreadyArchived: 1,
-  missing: 2,
-  foreignOwner: 3,
-  overLimit: 4,
+  notArchived: 2,
+  missing: 3,
+  foreignOwner: 4,
+  overLimit: 5,
 };
 
 const SKIP_REASON_LABEL: Readonly<Record<AgentThreadBulkSkipReason, string>> = {
@@ -48,6 +50,7 @@ const SKIP_REASON_LABEL: Readonly<Record<AgentThreadBulkSkipReason, string>> = {
   foreignOwner: "owned by another project",
   running: "still running",
   alreadyArchived: "already archived",
+  notArchived: "not archived",
   overLimit: "beyond the batch limit",
 };
 
@@ -88,15 +91,24 @@ export function agentThreadBulkPlan(
   return { action: request.action, applyIds, skipped };
 }
 
-export function agentThreadBulkReport(plan: AgentThreadBulkPlan): string {
-  const applied = `${appliedVerb(plan.action)} ${threadCountLabel(plan.applyIds.length)}.`;
-  if (plan.skipped.length === 0) return applied;
+export function agentThreadBulkReport(
+  plan: AgentThreadBulkPlan,
+  failedIds: ReadonlyArray<string> = [],
+): string {
+  const failed = new Set(failedIds.filter((threadId) => plan.applyIds.includes(threadId)));
+  const succeeded = plan.applyIds.length - failed.size;
+  const sentences = [`${appliedVerb(plan.action)} ${threadCountLabel(succeeded)}.`];
+  if (failed.size > 0) {
+    sentences.push(`Failed ${failed.size}: the change could not be saved.`);
+  }
+  if (plan.skipped.length === 0) return sentences.join(" ");
   const counted = new Map<AgentThreadBulkSkipReason, number>();
   for (const skip of plan.skipped) counted.set(skip.reason, (counted.get(skip.reason) ?? 0) + 1);
   const groups = [...counted.entries()]
     .sort(([left], [right]) => SKIP_REASON_RANK[left] - SKIP_REASON_RANK[right])
     .map(([reason, count]) => `${count} ${SKIP_REASON_LABEL[reason]}`);
-  return `${applied} Skipped ${plan.skipped.length}: ${groups.join(", ")}.`;
+  sentences.push(`Skipped ${plan.skipped.length}: ${groups.join(", ")}.`);
+  return sentences.join(" ");
 }
 
 export function agentThreadBulkConfirmLabel(
@@ -119,6 +131,7 @@ export function threadCountLabel(count: number): string {
 
 function appliedVerb(action: AgentThreadBulkAction): string {
   if (action === "archive") return "Archived";
+  if (action === "unarchive") return "Unarchived";
   if (action === "delete") return "Deleted";
   return unsupportedAgentThreadBulkAction(action);
 }
@@ -131,6 +144,10 @@ function blockedReason(
   if (action === "delete") return null;
   if (action === "archive") {
     if (candidate.archived) return "alreadyArchived";
+    return null;
+  }
+  if (action === "unarchive") {
+    if (!candidate.archived) return "notArchived";
     return null;
   }
   return unsupportedAgentThreadBulkAction(action);

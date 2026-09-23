@@ -597,7 +597,7 @@ describe("AgentComposer", () => {
     render({
       mode: {
         kind: "followUp",
-        blockedReason: "This thread has no resumable session; start a new thread.",
+        blockedReason: "This thread is archived. Unarchive it from the thread menu to continue.",
       },
       onSubmit,
       prompt: "Also update the tests",
@@ -605,7 +605,7 @@ describe("AgentComposer", () => {
 
     expect(submitButton().disabled).toBe(true);
     expect(host.querySelector(".agent-composer__reason")?.textContent).toBe(
-      "This thread has no resumable session; start a new thread.",
+      "This thread is archived. Unarchive it from the thread menu to continue.",
     );
 
     submitForm();

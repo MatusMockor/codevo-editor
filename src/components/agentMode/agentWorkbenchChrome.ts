@@ -26,6 +26,7 @@ import type { FileEntry } from "../../domain/workspace";
 import type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import type { AgentThreadHeaderProject } from "./AgentThreadHeader";
 import type { AgentProjectGroup } from "./agentModePresentation";
+import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 
 export interface AgentWorkbenchFileTreeChrome {
   readonly files: AgentSurfaceFileTreeDependencies["files"];
@@ -131,6 +132,7 @@ export interface AgentWorkbenchChrome {
   onShowTerminalPanel(): void;
   onOpenScriptsView: (() => void) | null;
   revealPath(path: string): Promise<void>;
+  readonly openFileLocation?: AgentFileLocationOpener;
   onTrustWorkspace?(): void;
   onResizeRightPanelStart?(event: PointerEvent<HTMLDivElement>): void;
 }

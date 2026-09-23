@@ -1,11 +1,14 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentThread, AgentThreadsAction, AgentThreadsState } from "../domain/agentThread";
 import {
   parseExternalAgentSessionHistory,
   type ExternalAgentSessionHistory,
 } from "../domain/externalAgentSession";
-import { agentRootOwnerId } from "../domain/agentProject";
+import {
+  agentProjectOwnsOwner,
+  agentRootOwnerId,
+  type AgentProjectDescriptor,
+} from "../domain/agentProject";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
 import { importSavedSessionHistory } from "./importSavedSessionHistory";
 import type { ExternalSessionGateway } from "./agentThreadPorts";
@@ -238,11 +241,7 @@ function identityFor(deps: Dependencies, threadId: string): string | null {
     project.origin === "closed-tab-live-tasks"
   )
     return null;
-  if (
-    project.ownerId !== thread.owner.ownerId &&
-    !project.runtimeOwnerIds?.includes(thread.owner.ownerId)
-  )
-    return null;
+  if (!agentProjectOwnsOwner(project, thread.owner)) return null;
   if (
     project.rootPath !== thread.owner.repositoryRoot &&
     !project.repositories.some((repo) => repo.repositoryRoot === thread.owner.repositoryRoot)

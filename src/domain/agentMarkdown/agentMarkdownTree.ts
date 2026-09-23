@@ -1,4 +1,5 @@
 import { highlightNeedle, highlightOccurrences } from "../agentThreadHighlight";
+import type { AgentMarkdownLink } from "./agentMarkdownLink";
 
 export const MAX_AGENT_MARKDOWN_CHARS = 32_768;
 export const MAX_AGENT_MARKDOWN_BLOCKS = 1_024;
@@ -37,7 +38,7 @@ export type AgentMarkdownNode =
     }
   | {
       readonly kind: "link";
-      readonly href: string | null;
+      readonly target: AgentMarkdownLink;
       readonly children: ReadonlyArray<AgentMarkdownNode>;
     }
   | {
@@ -81,6 +82,7 @@ export type AgentMarkdownPresentation =
       readonly blocks: ReadonlyArray<AgentMarkdownBlock>;
       readonly hitOffsets: ReadonlyArray<number>;
       readonly hitCount: number;
+      readonly sourceBlockCount?: number;
     }
   | { readonly kind: "plain"; readonly reason: AgentMarkdownPlainReason }
   | { readonly kind: "pending" }
@@ -112,6 +114,9 @@ export function agentMarkdownPlainReasonLabel(reason: AgentMarkdownPlainReason):
       return unsupportedReason(reason);
   }
 }
+
+export const AGENT_MARKDOWN_SOURCE_BLOCKS_NOTE =
+  "Some formatting is shown as source while searching: matches sit inside Markdown syntax.";
 
 export function agentMarkdownCodeText(
   node: Extract<AgentMarkdownNode, { kind: "codeBlock" }>,
@@ -152,10 +157,13 @@ export function agentMarkdownBlockHighlights(block: AgentMarkdownBlock, query: s
   return childHighlights(block.nodes, query);
 }
 
+export type AgentMarkdownBlockSources = () => ReadonlyArray<string> | null;
+
 export function resolveAgentMarkdownPresentation(
   view: AgentMarkdownView | null,
   text: string,
   query: string,
+  blockSources: AgentMarkdownBlockSources | null = null,
 ): AgentMarkdownPresentation {
   if (view === null) return { kind: "pending" };
   if (view.kind === "plain") return view;
@@ -175,10 +183,92 @@ export function resolveAgentMarkdownPresentation(
     hitOffsets.push(hitCount);
     hitCount += agentMarkdownBlockHighlights(block, query);
   }
-  if (hitCount !== highlightOccurrences(text, query)) {
-    return { kind: "plain", reason: "find-syntax" };
+  const expected = highlightOccurrences(text, query);
+  if (hitCount === expected) {
+    return { kind: "rendered", blocks: view.blocks, hitOffsets, hitCount };
   }
-  return { kind: "rendered", blocks: view.blocks, hitOffsets, hitCount };
+  return (
+    sourceDegradedPresentation(view.blocks, query, expected, blockSources) ?? {
+      kind: "plain",
+      reason: "find-syntax",
+    }
+  );
+}
+
+export function agentMarkdownSourceBlock(key: string, source: string): AgentMarkdownBlock {
+  const children: AgentMarkdownNode[] = [];
+  source
+    .replace(TRAILING_LINE_BREAKS, "")
+    .split("\n")
+    .forEach((line, index) => {
+      if (index > 0) children.push({ kind: "lineBreak" });
+      if (line !== "") children.push({ kind: "text", text: line });
+    });
+  return {
+    key: `${key}${SOURCE_BLOCK_KEY_SUFFIX}`,
+    nodes: [{ kind: "container", tag: "p", children }],
+  };
+}
+
+const TRAILING_LINE_BREAKS = /\n+$/;
+const SOURCE_BLOCK_KEY_SUFFIX = "s";
+
+function sourceDegradedPresentation(
+  blocks: ReadonlyArray<AgentMarkdownBlock>,
+  query: string,
+  expected: number,
+  blockSources: AgentMarkdownBlockSources | null,
+): AgentMarkdownPresentation | null {
+  if (blockSources === null) return null;
+  const sources = blockSources();
+  if (sources === null || sources.length !== blocks.length) return null;
+  const presented: AgentMarkdownBlock[] = [];
+  const hitOffsets: number[] = [];
+  let hitCount = 0;
+  let sourceBlockCount = 0;
+  for (const [index, block] of blocks.entries()) {
+    const source = sources[index] ?? "";
+    const faithful =
+      agentMarkdownBlockHighlights(block, query) === highlightOccurrences(source, query);
+    const next = faithful ? block : agentMarkdownSourceBlock(block.key, source);
+    if (!faithful) sourceBlockCount += 1;
+    hitOffsets.push(hitCount);
+    hitCount += agentMarkdownBlockHighlights(next, query);
+    presented.push(next);
+  }
+  if (hitCount !== expected || sourceBlockCount === 0) return null;
+  return { kind: "rendered", blocks: presented, hitOffsets, hitCount, sourceBlockCount };
+}
+
+const PREVIEW_FENCE = /^\s{0,3}(?:`{3,}|~{3,})/;
+const PREVIEW_HEADING = /^\s{0,3}#{1,6}\s+/;
+const PREVIEW_TABLE_DELIMITER = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const PREVIEW_RULE = /^\s{0,3}(?:[-*_]\s*){3,}$/;
+const PREVIEW_QUOTE = /^\s{0,3}>\s?/;
+const PREVIEW_TABLE_ROW = /^\s*\|(.*)\|\s*$/;
+const PREVIEW_EMPHASIS = /(\*\*|__|~~|`)/g;
+
+export function agentMarkdownPlainPreview(text: string): string {
+  return text
+    .slice(0, MAX_AGENT_MARKDOWN_CHARS)
+    .split("\n")
+    .filter((line) => !PREVIEW_FENCE.test(line))
+    .filter((line) => !PREVIEW_TABLE_DELIMITER.test(line) && !PREVIEW_RULE.test(line))
+    .map(previewLine)
+    .join("\n");
+}
+
+function previewLine(line: string): string {
+  const unquoted = line.replace(PREVIEW_QUOTE, "").replace(PREVIEW_HEADING, "");
+  const row = PREVIEW_TABLE_ROW.exec(unquoted);
+  const cells =
+    row === null
+      ? unquoted
+      : (row[1] ?? "")
+          .split("|")
+          .map((cell) => cell.trim())
+          .join("   ");
+  return cells.replace(PREVIEW_EMPHASIS, "");
 }
 
 function childHighlights(children: ReadonlyArray<AgentMarkdownNode>, query: string): number {

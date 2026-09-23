@@ -90,6 +90,22 @@ describe("historical turn changes boundary", () => {
     ).toEqual([]);
   });
 
+  it("accepts closed unsupported workspace reasons and rejects unknown variants", () => {
+    for (const reason of ["notGitRepository", "notWorktreeRoot"])
+      expect(
+        parseAgentTurnChangeSummary({ ...summary, state: "unsupported", files: [], reason }),
+      ).toEqual({ turnId: "turn-1", state: "unsupported", files: [], truncated: false, reason });
+    for (const invalid of [
+      { ...summary, state: "unsupported", files: [], reason: "notApplicable" },
+      { ...summary, state: "unsupported", files: [], reason: null },
+      { ...summary, state: "unsupported", files: [], reason: "Not a Git repository." },
+      { ...summary, state: "unsupported", reason: "notGitRepository" },
+      { ...summary, state: "unsupported", files: [], truncated: true, reason: "notGitRepository" },
+      { ...summary, state: "skipped", files: [] },
+    ])
+      expect(() => parseAgentTurnChangeSummary(invalid)).toThrow();
+  });
+
   it("bounds both diff sides by UTF-8 bytes and rejects unknown states", () => {
     expect(parseAgentTurnFileDiff(diff)).toEqual(diff);
     expect(parseAgentTurnFileDiff({ ...diff, unavailableReason: "binary" }).unavailableReason).toBe(

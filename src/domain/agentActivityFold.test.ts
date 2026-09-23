@@ -5,24 +5,32 @@ import {
   type AgentActivityCandidate,
   type AgentActivityCategory,
   type AgentActivityFoldEntry,
+  type AgentActivityToolCandidate,
 } from "./agentActivityFold";
+
+type ToolPatch = Partial<Omit<AgentActivityToolCandidate, "kind" | "category">>;
+
+const BOUNDARY: AgentActivityCandidate = { kind: "boundary" };
+const THOUGHT: AgentActivityCandidate = { kind: "thought" };
 
 function candidate(
   category: AgentActivityCategory | null,
-  patch: Partial<AgentActivityCandidate> = {},
+  patch: ToolPatch = {},
 ): AgentActivityCandidate {
+  if (category === null) return BOUNDARY;
   return {
+    kind: "tool",
     stableId: null,
     category,
     running: false,
-    settledOk: category !== null,
+    settledOk: true,
     ...patch,
   };
 }
 
 function tool(
   kind: "command" | "edit" | "read" | "search" | "web",
-  patch: Partial<AgentActivityCandidate> = {},
+  patch: ToolPatch = {},
 ): AgentActivityCandidate {
   return candidate({ kind }, patch);
 }
@@ -74,6 +82,29 @@ describe("foldAgentActivity", () => {
       ["item", 2],
       ["group", 3],
     ]);
+  });
+
+  it("absorbs thoughts into the surrounding run without counting them as tools", () => {
+    const entries = foldAgentActivity([tool("command"), THOUGHT, tool("command"), THOUGHT]);
+    expect(entries).toHaveLength(1);
+    const [group] = groups(entries);
+    expect([group.start, group.end, group.thoughts]).toEqual([0, 4, 2]);
+    expect(group.categories).toEqual([{ category: { kind: "command" }, count: 2 }]);
+  });
+
+  it("groups a lone thought and gives a thought-led group no stable id", () => {
+    const entries = foldAgentActivity([BOUNDARY, THOUGHT, BOUNDARY, THOUGHT, tool("read")]);
+    expect(
+      entries.map((entry) => [entry.kind, entry.kind === "group" ? entry.start : entry.index]),
+    ).toEqual([
+      ["item", 0],
+      ["group", 1],
+      ["item", 2],
+      ["group", 3],
+    ]);
+    const [lone, mixed] = groups(entries);
+    expect([lone.thoughts, lone.categories.length, lone.stableId]).toEqual([1, 0, null]);
+    expect([mixed.thoughts, mixed.end, mixed.stableId]).toEqual([1, 5, null]);
   });
 
   it("keeps a single groupable activity as a plain item", () => {

@@ -299,7 +299,11 @@ export function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknow
         ...optionalField("parentToolId", event.parentToolId),
       };
     case "reasoning":
-      return { kind: event.kind, text: event.text };
+      return {
+        kind: event.kind,
+        text: event.text,
+        ...optionalField("parentToolId", event.parentToolId),
+      };
     case "userMessage":
       return {
         kind: event.kind,
@@ -846,8 +850,15 @@ export function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
         ),
       };
     case "reasoning":
-      exactKeys(event, ["kind", "text"], path);
-      return { kind, text: eventText(event.text, `${path}.text`) };
+      boundedKeys(event, ["kind", "text"], ["parentToolId"], path);
+      return {
+        kind,
+        text: eventText(event.text, `${path}.text`),
+        ...optionalField(
+          "parentToolId",
+          optionalToolId(event.parentToolId, `${path}.parentToolId`),
+        ),
+      };
     case "userMessage":
       boundedKeys(event, ["kind", "text"], ["attachments"], path);
       return {

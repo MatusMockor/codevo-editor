@@ -1,4 +1,5 @@
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
+import { settleAgentThreadMutation } from "./agentThreadMutationOutcome";
 import type { AgentThreadsSurface, AgentThreadView, AgentTasksNotice } from "./agentThreadPorts";
 import type { RemoteAgentMetadata } from "./remoteAgentMetadata";
 
@@ -12,8 +13,9 @@ interface Options {
   readonly update: (
     threadId: string,
     change: Partial<Omit<RemoteAgentMetadata, "threadId">>,
-  ) => void;
+  ) => Promise<boolean> | void;
   readonly stop: (threadId: string) => Promise<void>;
+  readonly batch?: <T>(work: () => Promise<T>) => Promise<T>;
   readonly reorder?: (
     threadId: string,
     targetThreadId: string,
@@ -30,6 +32,7 @@ export function remoteAgentThreadActions({
   update,
   stop,
   reorder,
+  batch,
 }: Options) {
   const byId = new Map(threads.map((view) => [view.thread.threadId, view]));
   const remote = (id: string) => isRemoteAgentIdentity(id) || byId.get(id)?.execution !== undefined;
@@ -57,14 +60,14 @@ export function remoteAgentThreadActions({
         thread &&
         (thread.viewedAtEpochMs === null || thread.viewedAtEpochMs < thread.updatedAtEpochMs)
       )
-        update(id, { viewedAtEpochMs: Date.now() });
+        void update(id, { viewedAtEpochMs: thread.updatedAtEpochMs });
     },
     markThreadUnread(id: string) {
-      if (remote(id)) update(id, { viewedAtEpochMs: null });
+      if (remote(id)) void update(id, { viewedAtEpochMs: null });
       else local.markThreadUnread(id);
     },
     renameThread(id: string, title: string) {
-      if (remote(id)) update(id, { title });
+      if (remote(id)) void update(id, { title });
       else local.renameThread(id, title);
     },
     updateThreadOrganization(
@@ -80,7 +83,7 @@ export function remoteAgentThreadActions({
           report("Stop the agent before marking this conversation as settled.");
           return;
         }
-        update(id, change);
+        void update(id, change);
       } else local.updateThreadOrganization?.(id, change);
     },
     reorderThread(
@@ -98,24 +101,36 @@ export function remoteAgentThreadActions({
       } else if (!remote(targetId)) local.reorderThread?.(id, targetId, placement, destination);
     },
     togglePin(id: string) {
-      if (remote(id)) update(id, { pinned: !byId.get(id)?.thread.pinned });
+      if (remote(id)) void update(id, { pinned: !byId.get(id)?.thread.pinned });
       else local.togglePin(id);
     },
-    archive(id: string) {
-      if (!remote(id)) return local.archive(id);
-      if (byId.get(id)?.lifecycle === "running") {
+    archive(id: string): Promise<boolean> {
+      if (!remote(id)) return settleAgentThreadMutation(local.archive(id));
+      const view = byId.get(id);
+      if (view === undefined || view.thread.archived) return Promise.resolve(false);
+      if (view.lifecycle === "running") {
         report("Stop the agent before archiving this conversation.");
-        return;
+        return Promise.resolve(false);
       }
-      update(id, { archived: !byId.get(id)?.thread.archived });
+      return settleAgentThreadMutation(update(id, { archived: true }));
     },
-    remove(id: string) {
-      if (!remote(id)) return local.remove(id);
+    unarchive(id: string): Promise<boolean> {
+      if (!remote(id)) return settleAgentThreadMutation(local.unarchive?.(id));
+      const view = byId.get(id);
+      if (view === undefined || !view.thread.archived) return Promise.resolve(false);
+      return settleAgentThreadMutation(update(id, { archived: false }));
+    },
+    batchThreadMutations<T>(work: () => Promise<T>): Promise<T> {
+      if (batch === undefined) return work();
+      return batch(work);
+    },
+    remove(id: string): Promise<boolean> {
+      if (!remote(id)) return settleAgentThreadMutation(local.remove(id));
       if (byId.get(id)?.lifecycle === "running") {
         report("Stop the agent before removing this conversation.");
-        return;
+        return Promise.resolve(false);
       }
-      update(id, { removed: true });
+      return settleAgentThreadMutation(update(id, { removed: true }));
     },
     threadCopyDetail: ((id, detail) => {
       if (!remote(id)) return local.threadCopyDetail(id, detail);

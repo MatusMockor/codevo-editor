@@ -67,8 +67,8 @@
       "structuralTokens": 9875
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 2502,
-      "structuralTokens": 10325
+      "rawLines": 2499,
+      "structuralTokens": 10301
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
       "rawLines": 2192,

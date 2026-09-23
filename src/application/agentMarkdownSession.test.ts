@@ -180,10 +180,16 @@ describe("createAgentMarkdownSession", () => {
     expect(firstLink(before)).toBeUndefined();
 
     const after = session.update(text, true);
-    expect(firstLink(after)).toMatchObject({ kind: "link", href: "https://example.com" });
+    expect(firstLink(after)).toMatchObject({
+      kind: "link",
+      target: { kind: "external", url: "https://example.com" },
+    });
 
     const settled = session.update(text, false);
-    expect(firstLink(settled)).toMatchObject({ kind: "link", href: "https://example.com" });
+    expect(firstLink(settled)).toMatchObject({
+      kind: "link",
+      target: { kind: "external", url: "https://example.com" },
+    });
     expect(createAgentMarkdownSession(spyRenderer()).update(text, false)).toEqual(settled);
   });
 

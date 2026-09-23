@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { MAX_AGENT_STEERS_PER_TURN } from "../domain/agentTask";
 import {
@@ -11,14 +11,16 @@ import {
   type AgentTurnEvent,
 } from "../domain/agentThread";
 import {
+  AGENT_THREAD_ARCHIVED_NOTICE,
   AGENT_THREAD_RUNNING_NOTICE,
   AGENT_THREAD_STARTING_NOTICE,
   AGENT_THREAD_STEER_LIMIT_NOTICE,
+  admitFollowUp,
   admitSteer,
   agentThreadIsSteerable,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
-import type { AgentSteerRequest, AgentTasksNotice } from "./agentThreadPorts";
+import type { AgentFollowUpRequest, AgentSteerRequest, AgentTasksNotice } from "./agentThreadPorts";
 
 const CLAUDE_LAUNCH: AgentLaunchOptions = {
   provider: "claudeCode",
@@ -340,4 +342,63 @@ describe("Codex transport steering admission", () => {
       ).toBe(codexTransport === "appServer");
     },
   );
+});
+
+describe("admitFollowUp session planning", () => {
+  const settledTurn = turn({ status: { kind: "failed", message: "boom" }, endedAtEpochMs: 2_000 });
+  const followUp = (): AgentFollowUpRequest => ({
+    threadId: "agt-t1-0001",
+    prompt: "continue",
+    launch: { ...CLAUDE_LAUNCH, mode: "plan", effort: "high", context: "1m" },
+  });
+
+  it("admits a thread without a session as a fresh provider session", () => {
+    const { deps, notices } = harness(thread({ turns: [settledTurn] }));
+
+    const admitted = admitFollowUp(deps, followUp(), new Set());
+
+    expect(admitted?.resumePlan).toEqual({ kind: "fresh", reason: "noSession" });
+    expect(notices).toEqual([]);
+  });
+
+  it("resumes the persisted session unless the continuity plan replaces it", () => {
+    const target = thread({
+      turns: [settledTurn],
+      provider: { kind: "claudeCode", sessionId: "sess-0001-abcd" },
+    });
+    expect(admitFollowUp(harness(target).deps, followUp(), new Set())?.resumePlan).toEqual({
+      kind: "resume",
+      sessionId: "sess-0001-abcd",
+    });
+    expect(
+      admitFollowUp(harness(target).deps, followUp(), new Set(), () => ({
+        kind: "fresh",
+        reason: "sessionLost",
+      }))?.resumePlan,
+    ).toEqual({ kind: "fresh", reason: "sessionLost" });
+  });
+
+  it("rebinds a root-owned thread to the live workspace owner before launching", () => {
+    const rootOwner = agentRootOwnerId(OWNER.rootKey);
+    const target = thread({ owner: { ...OWNER, ownerId: rootOwner }, turns: [settledTurn] });
+    const { deps } = harness(target, [project({ runtimeOwnerIds: ["ws-1"] })]);
+
+    const admitted = admitFollowUp(deps, followUp(), new Set());
+
+    expect(admitted?.previousOwnerId).toBe(rootOwner);
+    expect(admitted?.thread.owner).toEqual({ ...OWNER, ownerId: "ws-1" });
+    expect(admitted?.authority).toMatchObject({
+      rootKey: OWNER.rootKey,
+      ownerId: "ws-1",
+      workspaceId: "ws-1",
+    });
+  });
+
+  it("tells the user to unarchive an archived thread", () => {
+    const { deps, notices } = harness(thread({ archived: true, turns: [settledTurn] }));
+
+    expect(admitFollowUp(deps, followUp(), new Set())).toBeNull();
+    expect(notices[notices.length - 1]?.message).toBe(AGENT_THREAD_ARCHIVED_NOTICE);
+    expect(AGENT_THREAD_ARCHIVED_NOTICE).toContain("Unarchive");
+  });
 });

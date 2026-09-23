@@ -838,3 +838,37 @@ fn orphan_question_is_rejected() {
         json!(-32600)
     );
 }
+
+#[test]
+fn interactive_approval_is_routed_to_the_owning_turn_without_an_automatic_answer() {
+    let harness = Harness::new(true);
+    let frames = harness.transport.subscribe("thread-1");
+    let params = json!({ "threadId": "thread-1", "turnId": "turn-1", "command": "ls" });
+    harness.emit(&json!({
+        "id": 11,
+        "method": "item/commandExecution/requestApproval",
+        "params": params,
+    }));
+    assert_eq!(
+        frames.recv_timeout(PROBE_TIMEOUT),
+        Ok(TurnFrame::ApprovalRequested {
+            id: json!(11),
+            method: "item/commandExecution/requestApproval".to_string(),
+            params,
+        })
+    );
+    assert!(harness.client_line(0).is_none());
+}
+
+#[test]
+fn interactive_approval_without_an_active_turn_is_answered_immediately() {
+    let harness = Harness::new(true);
+    harness.emit(&json!({
+        "id": 12,
+        "method": "item/fileChange/requestApproval",
+        "params": { "threadId": "orphan", "turnId": "turn-1" },
+    }));
+    let answer = wait_for(|| harness.client_line(0));
+    assert_eq!(answer["id"], json!(12));
+    assert!(answer.get("error").is_some() || answer.get("result").is_some());
+}

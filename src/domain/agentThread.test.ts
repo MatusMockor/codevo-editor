@@ -20,6 +20,7 @@ import {
   agentThreadLifecycle,
   agentThreadTitle,
   agentThreadUnread,
+  agentThreadCanMarkUnread,
   agentThreadsReducer,
   agentTurnAcceptsSteerBytes,
   agentTurnEventUtf8Bytes,
@@ -585,12 +586,25 @@ describe("agentThreadsReducer output events", () => {
     );
   });
 
-  it("captures the first session id only and ignores a later different one", () => {
+  it("adopts a replacement Claude session id so it is persisted with the thread", () => {
     const first = agentThreadsReducer(
       stateWith(thread()),
       appendAction([], { sessionId: "session-0001" }),
     );
     expect(first.threads.get("agt-t1-0001")?.provider.sessionId).toBe("session-0001");
+    const second = agentThreadsReducer(
+      first,
+      appendAction([], { outputSequence: 2, sessionId: "session-0002" }),
+    );
+    expect(second.threads.get("agt-t1-0001")?.provider.sessionId).toBe("session-0002");
+  });
+
+  it("keeps the first Codex session id and ignores a later different one", () => {
+    const codex = thread({ provider: { kind: "codex", sessionId: null } });
+    const first = agentThreadsReducer(
+      stateWith(codex),
+      appendAction([], { sessionId: "session-0001" }),
+    );
     const second = agentThreadsReducer(
       first,
       appendAction([], { outputSequence: 2, sessionId: "session-0002" }),
@@ -1132,7 +1146,7 @@ describe("agentThreadAttention", () => {
       agentThreadAttention(thread({ turns: [turn({ status: { kind: "interrupted" } })] })),
     ).toBe("attention");
     expect(agentThreadAttention(thread({ turns: [turn({ status: { kind: "stopped" } })] }))).toBe(
-      "attention",
+      "settled",
     );
     expect(
       agentThreadAttention(thread({ turns: [turn({ status: { kind: "exited", exitCode: 2 } })] })),
@@ -1141,6 +1155,32 @@ describe("agentThreadAttention", () => {
       agentThreadAttention(thread({ turns: [turn({ status: { kind: "exited", exitCode: 0 } })] })),
     ).toBe("settled");
     expect(agentThreadAttention(thread({ turns: [] }))).toBe("settled");
+  });
+
+  it("stops demanding attention once the failed run was viewed and re-raises it on mark unread", () => {
+    const failed = thread({
+      turns: [turn({ status: { kind: "failed", message: "x" }, endedAtEpochMs: 2_000 })],
+    });
+    const state = agentThreadsReducer(stateWith(failed), {
+      kind: "threadViewed",
+      threadId: failed.threadId,
+      atEpochMs: 3_000,
+    });
+    const viewed = state.threads.get(failed.threadId) as AgentThread;
+    expect(agentThreadAttention(failed)).toBe("attention");
+    expect(agentThreadAttention(viewed)).toBe("settled");
+    const unread = agentThreadsReducer(state, {
+      kind: "threadMarkedUnread",
+      threadId: failed.threadId,
+    }).threads.get(failed.threadId) as AgentThread;
+    expect(agentThreadAttention(unread)).toBe("attention");
+    expect(agentThreadAttention(failed, false)).toBe("settled");
+  });
+
+  it("clears an interrupted run without a recorded end once it was viewed after it started", () => {
+    const interrupted = thread({ turns: [turn({ status: { kind: "interrupted" } })] });
+    expect(agentThreadAttention(interrupted)).toBe("attention");
+    expect(agentThreadAttention({ ...interrupted, viewedAtEpochMs: 1_000 })).toBe("settled");
   });
 
   it("treats a signal exit as attention and a clean exit after a failure as settled", () => {
@@ -1207,6 +1247,9 @@ describe("agentThreadUnread", () => {
       false,
     );
     expect(agentThreadUnread(thread({ turns: [settled(null)] }))).toBe(false);
+    const interrupted = turn({ status: { kind: "interrupted" }, endedAtEpochMs: null });
+    expect(agentThreadUnread(thread({ turns: [interrupted] }))).toBe(true);
+    expect(agentThreadUnread(thread({ turns: [interrupted], viewedAtEpochMs: 1_000 }))).toBe(false);
     expect(agentThreadUnread(thread({ turns: [turn({ status: { kind: "running" } })] }))).toBe(
       false,
     );
@@ -1226,7 +1269,7 @@ describe("agentThreadUnread", () => {
     );
   });
 
-  it("reads only the last turn and ignores pinning and archiving", () => {
+  it("reads only the last turn, ignores pinning, and never reports archived threads", () => {
     const trailing = (viewedAtEpochMs: number | null): AgentThread =>
       thread({
         viewedAtEpochMs,
@@ -1246,7 +1289,93 @@ describe("agentThreadUnread", () => {
 
     expect(agentThreadUnread(trailing(3_000))).toBe(false);
     expect(agentThreadUnread(trailing(1_000))).toBe(true);
-    expect(agentThreadUnread({ ...trailing(1_000), pinned: true, archived: true })).toBe(true);
+    expect(agentThreadUnread({ ...trailing(1_000), pinned: true })).toBe(true);
+    expect(agentThreadUnread({ ...trailing(1_000), archived: true })).toBe(false);
+  });
+});
+
+describe("agentThreadCanMarkUnread", () => {
+  it("allows marking unread only after a run finished on a live thread", () => {
+    const finished = thread({
+      turns: [turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 2_000 })],
+    });
+    expect(agentThreadCanMarkUnread(finished)).toBe(true);
+    expect(agentThreadCanMarkUnread({ ...finished, archived: true })).toBe(false);
+    expect(agentThreadCanMarkUnread(thread({ turns: [] }))).toBe(false);
+    const withoutEnd = thread({ turns: [turn({ status: { kind: "exited", exitCode: 0 } })] });
+    expect(agentThreadCanMarkUnread(withoutEnd)).toBe(agentThreadUnread(withoutEnd));
+    const interrupted = thread({ turns: [turn({ status: { kind: "interrupted" } })] });
+    expect(agentThreadCanMarkUnread(interrupted)).toBe(true);
+    expect(
+      agentThreadCanMarkUnread(thread({ turns: [turn({ status: { kind: "running" } })] })),
+    ).toBe(false);
+  });
+});
+
+describe("providerSessionInvalidated", () => {
+  const dead = "session-dead-0001";
+  const withSession = (sessionId: string | null) =>
+    settledThread({ provider: { kind: "claudeCode", sessionId } });
+
+  it("clears exactly the dead session id of the owning thread and survives a wire roundtrip", () => {
+    const original = withSession(dead);
+    const state = stateWith(original);
+    const cleared = agentThreadsReducer(state, {
+      kind: "providerSessionInvalidated",
+      threadId: original.threadId,
+      owner: original.owner,
+      sessionId: dead,
+    });
+    const after = cleared.threads.get(original.threadId) as AgentThread;
+    expect(after.provider).toEqual({ kind: "claudeCode", sessionId: null });
+    expect(after.turns).toBe(original.turns);
+    expect(parseAgentThread(serializeAgentThread(after)).provider.sessionId).toBeNull();
+  });
+
+  it("ignores a different session id, a foreign owner, and unknown threads", () => {
+    const original = withSession(dead);
+    const state = stateWith(original);
+    const invalidate = (
+      overrides: Partial<{ threadId: string; sessionId: string }>,
+      owner = original.owner,
+    ) =>
+      agentThreadsReducer(state, {
+        kind: "providerSessionInvalidated",
+        threadId: original.threadId,
+        owner,
+        sessionId: dead,
+        ...overrides,
+      });
+    expect(invalidate({ sessionId: "session-live-0002" })).toBe(state);
+    expect(invalidate({}, { ...original.owner, ownerId: "other-owner" })).toBe(state);
+    expect(invalidate({}, { ...original.owner, repositoryRoot: "/elsewhere" })).toBe(state);
+    expect(invalidate({ threadId: "missing" })).toBe(state);
+    const empty = stateWith(withSession(null));
+    expect(
+      agentThreadsReducer(empty, {
+        kind: "providerSessionInvalidated",
+        threadId: original.threadId,
+        owner: original.owner,
+        sessionId: dead,
+      }),
+    ).toBe(empty);
+  });
+});
+
+describe("thread archive lifecycle", () => {
+  it("unarchives an archived thread and ignores live or missing ones", () => {
+    const archived = settledThread({ archived: true });
+    const state = stateWith(archived);
+    const restored = agentThreadsReducer(state, {
+      kind: "unarchived",
+      threadId: archived.threadId,
+    });
+    expect(restored.threads.get(archived.threadId)?.archived).toBe(false);
+    expect(restored.threads.get(archived.threadId)?.turns).toBe(archived.turns);
+    expect(agentThreadsReducer(restored, { kind: "unarchived", threadId: archived.threadId })).toBe(
+      restored,
+    );
+    expect(agentThreadsReducer(state, { kind: "unarchived", threadId: "missing" })).toBe(state);
   });
 });
 

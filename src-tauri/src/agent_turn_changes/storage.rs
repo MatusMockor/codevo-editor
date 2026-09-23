@@ -1,4 +1,4 @@
-use super::{snapshot, types::*};
+use super::{checkpoint, read_errors, record_validation, snapshot, types::*};
 #[cfg(unix)]
 use std::os::unix::{
     fs::{MetadataExt, OpenOptionsExt},
@@ -14,7 +14,7 @@ static NONCE: AtomicU64 = AtomicU64::new(0);
 
 // Every component is opened relative to its already-owned parent. Symlinks
 // cannot redirect publication or retention outside the selected storage tree.
-fn directory(path: &Path, create: bool) -> std::io::Result<File> {
+pub(super) fn directory(path: &Path, create: bool) -> std::io::Result<File> {
     use std::path::Component;
     if !path.is_absolute() {
         return Err(std::io::Error::other("absolute storage path required"));
@@ -64,7 +64,11 @@ fn child_directory(parent: &File, name: &std::ffi::OsStr, create: bool) -> std::
     // SAFETY: successful openat transfers a fresh descriptor to this File.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
-fn child_file(parent: &File, name: &std::ffi::OsStr, flags: i32) -> std::io::Result<File> {
+pub(super) fn child_file(
+    parent: &File,
+    name: &std::ffi::OsStr,
+    flags: i32,
+) -> std::io::Result<File> {
     let name = c_name(name)?;
     // SAFETY: parent is retained and name is NUL terminated and one component.
     let fd = unsafe {
@@ -81,7 +85,7 @@ fn child_file(parent: &File, name: &std::ffi::OsStr, flags: i32) -> std::io::Res
     // SAFETY: successful openat returns a uniquely owned descriptor.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
-fn unlink(parent: &File, name: &std::ffi::OsStr, flags: i32) -> std::io::Result<()> {
+pub(super) fn unlink(parent: &File, name: &std::ffi::OsStr, flags: i32) -> std::io::Result<()> {
     let name = c_name(name)?;
     // SAFETY: retained directory descriptor and validated single component.
     if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), flags) } != 0 {
@@ -98,7 +102,7 @@ unsafe fn errno_pointer() -> *mut libc::c_int {
     unsafe { libc::__errno_location() }
 }
 
-fn names(directory: &File, limit: usize) -> Result<Vec<std::ffi::OsString>, String> {
+pub(super) fn names(directory: &File, limit: usize) -> Result<Vec<std::ffi::OsString>, String> {
     use std::os::unix::ffi::OsStringExt;
     // Open a fresh description so enumeration does not share directory offsets.
     let dot = std::ffi::CString::new(".").unwrap();
@@ -156,7 +160,7 @@ fn names(directory: &File, limit: usize) -> Result<Vec<std::ffi::OsString>, Stri
     }
     Ok(result)
 }
-fn hash_name(name: &std::ffi::OsStr) -> bool {
+pub(super) fn hash_name(name: &std::ffi::OsStr) -> bool {
     name.to_str()
         .is_some_and(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
 }
@@ -184,14 +188,14 @@ pub(super) fn read(path: &Path) -> Result<Option<Record>, String> {
     };
     let metadata = file
         .metadata()
-        .map_err(|_| "Saved turn changes are unavailable.")?;
+        .map_err(|_| read_errors::RECORD_UNAVAILABLE)?;
     if !metadata.is_file() || metadata.len() > MAX_RECORD_BYTES {
         return Err("Saved turn changes exceed the supported size.".into());
     }
     let mut bytes = Vec::new();
     file.take(MAX_RECORD_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| "Saved turn changes could not be read.")?;
+        .map_err(|_| read_errors::RECORD_READ_FAILED)?;
     if bytes.len() as u64 > MAX_RECORD_BYTES {
         return Err("Saved turn changes exceed the supported size.".into());
     }
@@ -232,6 +236,10 @@ impl TemporaryDirectory {
             return Err("Turn comparison directory changed.".into());
         }
         Ok(())
+    }
+    pub(super) fn open_read(&self, name: &str) -> Result<File, String> {
+        child_file(&self.2, std::ffi::OsStr::new(name), libc::O_RDONLY)
+            .map_err(|_| "Unable to read private checkpoint input.".into())
     }
     pub(super) fn write_relative(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
         if path.is_absolute() || path.as_os_str().len() > 4096 {
@@ -415,6 +423,29 @@ pub(super) fn prune(base: &Path, current: &Path) -> Result<(), String> {
     }
     for (_, root, name, bytes, protected) in records {
         if !protected && (total > MAX_STORAGE_BYTES || counts[root] > MAX_TURNS) {
+            // Read through the retained directory, then only remove exact-owner refs.
+            // A missing/replaced repository cannot authorize touching its replacement.
+            let mut saved_bytes = Vec::new();
+            child_file(&roots[root], &name, libc::O_RDONLY)
+                .and_then(|file| {
+                    file.take(MAX_RECORD_BYTES + 1)
+                        .read_to_end(&mut saved_bytes)
+                })
+                .map_err(|_| "Unable to read expired turn metadata.")?;
+            if saved_bytes.len() as u64 <= MAX_RECORD_BYTES {
+                if let Ok(record) = serde_json::from_slice::<Record>(&saved_bytes) {
+                    if record_validation::validate_record(&record, &record.root, &record.turn_id)
+                        .is_ok()
+                        && snapshot::verify_root(&record.root).is_ok()
+                    {
+                        if let Some(checkpoints) = &record.checkpoints {
+                            for saved in checkpoints.before.iter().chain(checkpoints.after.iter()) {
+                                let _ = checkpoint::delete(&record.root, saved);
+                            }
+                        }
+                    }
+                }
+            }
             unlink(&roots[root], &name, 0)
                 .map_err(|_| "Unable to enforce turn history retention.")?;
             total = total.saturating_sub(bytes);

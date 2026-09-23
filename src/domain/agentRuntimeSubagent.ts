@@ -1,3 +1,8 @@
+import {
+  boundedAgentRuntimeSubagentActivity,
+  sameAgentRuntimeSubagentActivity,
+} from "./agentRuntimeSubagentActivity";
+
 export const MAX_RUNTIME_SUBAGENTS = 32;
 export const MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS = 120;
 export const MAX_RUNTIME_SUBAGENT_ROLE_CHARACTERS = 48;
@@ -35,6 +40,7 @@ export interface AgentRuntimeSubagentSource {
   readonly totalTokens?: number;
   readonly toolUses?: number;
   readonly nestedCount?: number;
+  readonly recentActivity?: ReadonlyArray<string>;
 }
 
 export interface AgentRuntimeSubagent {
@@ -47,6 +53,7 @@ export interface AgentRuntimeSubagent {
   readonly status: AgentRuntimeSubagentStatus;
   readonly activity: string | null;
   readonly activityTruncated: boolean;
+  readonly recentActivity: ReadonlyArray<string>;
   readonly elapsed: AgentRuntimeSubagentElapsed;
   readonly totalTokens: number | null;
   readonly toolUses: number | null;
@@ -200,6 +207,7 @@ function runtimeSubagent(source: AgentRuntimeSubagentSource): AgentRuntimeSubage
     status,
     activity: activity.text,
     activityTruncated: activity.truncated,
+    recentActivity: boundedAgentRuntimeSubagentActivity(source.recentActivity),
     elapsed: elapsed(source, status),
     totalTokens: source.totalTokens ?? null,
     toolUses: source.toolUses ?? null,
@@ -294,6 +302,7 @@ function sameAgent(previous: AgentRuntimeSubagent, next: AgentRuntimeSubagent): 
     previous.status === next.status &&
     previous.activity === next.activity &&
     previous.activityTruncated === next.activityTruncated &&
+    sameAgentRuntimeSubagentActivity(previous.recentActivity, next.recentActivity) &&
     previous.totalTokens === next.totalTokens &&
     previous.toolUses === next.toolUses &&
     previous.activityOrder === next.activityOrder &&

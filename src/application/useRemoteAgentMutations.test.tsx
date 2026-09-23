@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
-import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
+import {
+  REMOTE_CONVERSATION_BUSY_NOTICE,
+  REMOTE_STOP_UNAPPLIED_NOTICE,
+  useRemoteAgentMutations,
+} from "./useRemoteAgentMutations";
 const target = { serverId: "s", runnerId: "r", projectId: "p" };
 const request: AgentThreadStartRequest = {
   projectRootKey: "",
@@ -507,5 +511,121 @@ describe("remote checkout isolation", () => {
       ).toBeNull();
     });
     expect(h.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe("per-conversation remote run control", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  it("sends Stop for one conversation while another conversation is still starting", async () => {
+    const h = await render();
+    const created = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    h.gw.createTask.mockReturnValueOnce(created.promise);
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start(request, target, "new:remote-project");
+    });
+    expect(h.current().busyKeys).toEqual(new Set(["new:remote-project"]));
+    expect(h.current().busy).toBe(true);
+
+    h.gw.getTask.mockResolvedValueOnce(task({ id: "other", status: "running" }));
+    h.gw.cancelTask.mockResolvedValueOnce(task({ id: "other", status: "cancelled" }));
+    await act(async () => {
+      await h.current().stop({ ...target, conversationId: "other", latestTaskId: "other" });
+    });
+    expect(h.gw.cancelTask).toHaveBeenCalledWith({ serverId: "s", taskId: "other" });
+
+    await act(async () => {
+      created.resolve({ task: task({ status: "draft", projectId: undefined }), created: true });
+      await starting;
+    });
+    expect(h.current().busyKeys.size).toBe(0);
+    expect(h.current().busy).toBe(false);
+  });
+
+  it("applies a Stop pressed during a continuation to the task it creates", async () => {
+    const h = await render();
+    const continued = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    h.gw.continueTask.mockReturnValueOnce(continued.promise);
+    const destination = { ...target, conversationId: "t", latestTaskId: "t" };
+    let sending!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      sending = h
+        .current()
+        .followUp(
+          { prompt: "hello", launch: request.launch, threadId: "display" },
+          destination,
+          "display",
+        );
+    });
+    await vi.waitFor(() => expect(h.gw.continueTask).toHaveBeenCalledTimes(1));
+    expect(h.current().busyKeys).toEqual(new Set(["display"]));
+    await act(async () => {
+      await h.current().stop(destination);
+    });
+    expect(h.gw.cancelTask).not.toHaveBeenCalled();
+
+    const child = task({ id: "child", sequence: 2, parentTaskId: "t", conversationId: "t" });
+    h.gw.getTask.mockResolvedValueOnce(child);
+    h.gw.cancelTask.mockResolvedValueOnce({ ...child, status: "cancelled" });
+    await act(async () => {
+      continued.resolve({ task: child, created: true });
+      await sending;
+    });
+    expect(h.gw.cancelTask).toHaveBeenCalledWith({ serverId: "s", taskId: "child" });
+    expect(h.report).not.toHaveBeenCalled();
+  });
+
+  it("tells the user when a Stop recorded during an unconfirmed continuation cannot be applied", async () => {
+    const h = await render();
+    let failContinuation!: (error: Error) => void;
+    h.gw.continueTask.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        failContinuation = reject;
+      }),
+    );
+    const destination = { ...target, conversationId: "t", latestTaskId: "t" };
+    let sending!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      sending = h
+        .current()
+        .followUp(
+          { prompt: "hello", launch: request.launch, threadId: "display" },
+          destination,
+          "display",
+        );
+    });
+    await vi.waitFor(() => expect(h.gw.continueTask).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await h.current().stop({ ...destination, latestTaskId: undefined });
+      failContinuation(new Error("disconnected"));
+      expect(await sending).toBeNull();
+    });
+    expect(h.gw.cancelTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenLastCalledWith(REMOTE_STOP_UNAPPLIED_NOTICE);
+  });
+
+  it("refuses a second send to the same conversation with a visible notice", async () => {
+    const h = await render();
+    const created = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    h.gw.createTask.mockReturnValueOnce(created.promise);
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start(request, target);
+    });
+    await act(async () => {
+      expect(await h.current().start(request, target)).toBeNull();
+    });
+    expect(h.report).toHaveBeenCalledWith(REMOTE_CONVERSATION_BUSY_NOTICE);
+    await act(async () => {
+      created.resolve({ task: task({ status: "draft", projectId: undefined }), created: true });
+      await starting;
+    });
   });
 });

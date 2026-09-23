@@ -1,4 +1,5 @@
 import { collectRemoteInstructions } from "./collectRemoteInstructions";
+import { admitStoredAgentLaunch } from "../domain/agentStoredLaunch";
 import type { RemoteRunnerInstructionSnapshot } from "../domain/remoteRunnerInstructions";
 import { agentLaunchWithoutBrowser } from "../domain/agentLaunch";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -155,7 +156,15 @@ export function useRemotePendingMessages(options: Options) {
             })();
       if (!rawLaunch)
         throw new Error("This conversation has no model settings for queued messages.");
-      const launch = agentLaunchWithoutBrowser(rawLaunch);
+      const admission =
+        rawLaunch.mode === "default"
+          ? admitStoredAgentLaunch(rawLaunch, request.dangerousLaunchConfirmed === true)
+          : null;
+      if (admission?.kind === "needsConfirmation")
+        throw new Error(
+          "Choose a permission mode in the composer before queueing messages in this conversation.",
+        );
+      const launch = agentLaunchWithoutBrowser(admission?.launch ?? rawLaunch);
       if (options.views.get(request.threadId)?.thread.provider.kind !== launch.provider)
         throw new Error("Use this conversation's provider for queued messages.");
       commandKey = `${execution.serverId}:${execution.runnerId}:${execution.conversationId}`;

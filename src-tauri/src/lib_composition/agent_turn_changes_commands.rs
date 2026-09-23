@@ -1,6 +1,6 @@
 //! Read-only access to saved turn snapshots under exact workspace and trust authority.
 use crate::{
-    agent_turn_changes::{AgentTurnChangesStore, TurnChangesSummary, TurnFileDiff},
+    agent_turn_changes::{read_errors, AgentTurnChangesStore, TurnChangesSummary, TurnFileDiff},
     run_blocking_command,
     trust::{WorkspaceTrustService, WorkspaceTrustSnapshot},
 };
@@ -25,7 +25,7 @@ impl<'a> ReadPermit<'a> {
                 (count < MAX_READS).then_some(count + 1)
             })
             .map(|_| Self(active))
-            .map_err(|_| "Too many turn changes reads. Try again shortly.".into())
+            .map_err(|_| read_errors::READ_BUSY.into())
     }
 }
 impl Drop for ReadPermit<'_> {
@@ -89,13 +89,12 @@ fn trust_snapshot(app: &AppHandle, root: &str) -> Result<WorkspaceTrustSnapshot,
 }
 fn check_trust(app: &AppHandle, expected: &WorkspaceTrustSnapshot) -> Result<(), String> {
     if trust_snapshot(app, &expected.root_path)? != *expected {
-        return Err("Workspace trust changed while loading turn changes.".into());
+        return Err(read_errors::TRUST_CHANGED.into());
     }
     Ok(())
 }
 fn retain_root(root: &str, trust: &WorkspaceTrustSnapshot) -> Result<(PathBuf, File), String> {
-    let canonical =
-        std::fs::canonicalize(root).map_err(|_| "Turn changes workspace is unavailable.")?;
+    let canonical = std::fs::canonicalize(root).map_err(|_| read_errors::WORKSPACE_UNAVAILABLE)?;
     if canonical.to_str() != Some(trust.root_path.as_str()) {
         return Err("Workspace identity changed.".into());
     }
@@ -116,7 +115,7 @@ fn retain_root(root: &str, trust: &WorkspaceTrustSnapshot) -> Result<(PathBuf, F
     };
     let handle = options
         .open(&canonical)
-        .map_err(|_| "Turn changes workspace is unavailable.")?;
+        .map_err(|_| read_errors::WORKSPACE_UNAVAILABLE)?;
     if !handle
         .metadata()
         .map_err(|_| "Workspace identity unavailable.")?

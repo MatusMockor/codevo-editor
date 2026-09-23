@@ -1,0 +1,112 @@
+.agent-approval-card {
+  margin-block: 12px;
+  padding: 16px;
+  min-width: 0;
+  color: var(--codevo-fg);
+  background: var(--codevo-raised);
+  border-radius: var(--codevo-r-lg);
+  font-size: var(--codevo-fs-ui);
+  overflow-wrap: anywhere;
+}
+.agent-approval-card--settled {
+  padding-block: 10px;
+}
+.agent-approval-card__settled {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  color: var(--codevo-fg-muted);
+  font-size: var(--codevo-fs-meta);
+}
+.agent-approval-card__status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--codevo-fg-muted);
+  font-size: var(--codevo-fs-meta);
+}
+.agent-approval-card__status > :first-child {
+  color: var(--codevo-primary);
+}
+.agent-approval-card__title {
+  margin: 0 0 10px;
+  color: var(--codevo-fg-strong);
+  font-size: inherit;
+  font-weight: 500;
+}
+.agent-approval-card__label,
+.agent-approval-card__note {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--codevo-fg-muted);
+  font-size: var(--codevo-fs-meta);
+}
+.agent-approval-card__note {
+  margin: 4px 0 0;
+}
+.agent-approval-card pre {
+  max-block-size: min(280px, 35vh);
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  font-family: var(--codevo-mono);
+  font-size: var(--codevo-fs-meta);
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+}
+.agent-approval-card__facts {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+}
+.agent-approval-card__facts > div {
+  display: flex;
+  gap: 8px;
+}
+.agent-approval-card__facts dt {
+  flex: none;
+  color: var(--codevo-fg-muted);
+}
+.agent-approval-card__facts dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.agent-approval-card__error {
+  margin-block: 10px 0;
+  color: var(--codevo-danger);
+}
+.agent-approval-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.agent-approval-card__action {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  color: var(--codevo-fg);
+  font: inherit;
+  cursor: pointer;
+}
+.agent-approval-card__action--primary {
+  background: var(--codevo-primary);
+  color: var(--codevo-primary-fg);
+}
+.agent-approval-card__action--danger {
+  color: var(--codevo-danger);
+}
+.agent-approval-card__action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.agent-approval-card :is(button, pre):focus-visible {
+  outline: 2px solid var(--codevo-primary);
+  outline-offset: 2px;
+}

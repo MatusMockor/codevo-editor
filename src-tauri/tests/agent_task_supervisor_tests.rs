@@ -845,6 +845,8 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--append-system-prompt".to_string(),
             "Codevo can preview workspace files in this conversation. When the user requests a visual design or diagram, you may create self-contained HTML inside the current workspace and return a workspace-relative Markdown link. Inline all CSS and JavaScript; previews have no network access or external assets. If available tools create an image, save it inside the workspace and return a workspace-relative Markdown image. This does not provide an image-generation tool. Follow user and repository instructions; do not create files for ordinary answers or publish externally unless requested.".to_string(),
             "--chrome".to_string(),
+            "--thinking-display".to_string(),
+            "summarized".to_string(),
         ]
     );
     assert_eq!(
@@ -906,6 +908,8 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--append-system-prompt".to_string(),
             "Codevo can preview workspace files in this conversation. When the user requests a visual design or diagram, you may create self-contained HTML inside the current workspace and return a workspace-relative Markdown link. Inline all CSS and JavaScript; previews have no network access or external assets. If available tools create an image, save it inside the workspace and return a workspace-relative Markdown image. This does not provide an image-generation tool. Follow user and repository instructions; do not create files for ordinary answers or publish externally unless requested.".to_string(),
             "--chrome".to_string(),
+            "--thinking-display".to_string(),
+            "summarized".to_string(),
             "--resume".to_string(),
             "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
         ]
@@ -3368,7 +3372,7 @@ fn a_result_line_split_across_chunks_still_closes_the_input() {
     let harness = SteerSetup::new("agt-steer-split", 9307).start();
 
     harness.emit_stdout(b"{\"type\":\"resu");
-    harness.emit_stdout(b"lt\",\"is_error\":false}\n");
+    harness.emit_stdout(b"lt\",\"is_error\":false,\"num_turns\":1}\n");
 
     assert!(
         wait_until(EVENT_DEADLINE, || harness.recorded_input().is_closed()),
@@ -3832,3 +3836,6 @@ mod steer_eof;
 
 #[path = "support/agent_task_capture_lifecycle.rs"]
 mod capture_lifecycle;
+
+#[path = "support/agent_task_pending_stop_tests.rs"]
+mod pending_stop;

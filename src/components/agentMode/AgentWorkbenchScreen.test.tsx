@@ -1298,7 +1298,6 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     deferredFollowUps: new Map(),
     steer: async () => "sent" as const,
     removeDeferredFollowUp: () => undefined,
-    takeDeferredFollowUp: () => null,
     importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,

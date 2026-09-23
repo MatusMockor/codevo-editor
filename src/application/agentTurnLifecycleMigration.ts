@@ -1,12 +1,18 @@
 import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
-import { NO_AGENT_TURN_LOG_LOSS, type AgentTurnLogScope } from "../domain/agentTurnLog";
+import {
+  NO_AGENT_TURN_LOG_LOSS,
+  type AgentTurnLogLoss,
+  type AgentTurnLogScope,
+} from "../domain/agentTurnLog";
 import { attempt } from "./agentProjectAuthority";
 import type { AgentTurnLogGateway } from "./agentTurnLogPorts";
+
+export type SettledAgentTurnHistory = "recorded" | "preLog";
 
 export interface StoreSettledAgentTurnLifecycleRequest {
   readonly scope: AgentTurnLogScope;
   readonly lifecycle: AgentSubagentLifecycle;
-  readonly missingLog?: boolean;
+  readonly history: SettledAgentTurnHistory;
 }
 
 export interface SettledAgentTurnLifecyclePorts {
@@ -22,7 +28,7 @@ export async function storeSettledAgentTurnLifecycle(
   const opened = await attempt(() =>
     ports.gateway.openTurnLog({
       scope: request.scope,
-      priorLoss: request.missingLog === true ? { kind: "legacyWindow" } : NO_AGENT_TURN_LOG_LOSS,
+      priorLoss: settledAgentTurnPriorLoss(request.history),
       prompt: null,
     }),
   );
@@ -35,10 +41,25 @@ export async function storeSettledAgentTurnLifecycle(
       expectedNextSeq: opened.value.nextSeq,
       ops: [],
       digest: null,
-      seal: request.missingLog === true,
+      seal: request.history === "preLog",
       loss: NO_AGENT_TURN_LOG_LOSS,
       lifecycle: request.lifecycle,
     }),
   );
   return stored.ok && ports.owned();
+}
+
+export function settledAgentTurnPriorLoss(history: SettledAgentTurnHistory): AgentTurnLogLoss {
+  switch (history) {
+    case "recorded":
+      return NO_AGENT_TURN_LOG_LOSS;
+    case "preLog":
+      return { kind: "legacyWindow" };
+    default:
+      return unsupportedSettledAgentTurnHistory(history);
+  }
+}
+
+function unsupportedSettledAgentTurnHistory(history: never): never {
+  throw new TypeError(`Unsupported settled agent turn history: ${JSON.stringify(history)}.`);
 }

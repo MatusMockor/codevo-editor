@@ -26,6 +26,7 @@ import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 import { recoverAgentTurnResultStatus } from "./agentTurnRestartRecovery";
+import { agentProviderSessionAfterReport } from "./agentSessionIdentity";
 import { restorableAgentTurnLifecycle } from "./agentTurnLifecycleRestore";
 import {
   capAgentTurnEvents,
@@ -171,7 +172,7 @@ export type AgentTurnEvent =
       readonly clientUserMessageId: string | null;
     }
   | { readonly kind: "assistantText"; readonly text: string; readonly parentToolId?: string }
-  | { readonly kind: "reasoning"; readonly text: string }
+  | { readonly kind: "reasoning"; readonly text: string; readonly parentToolId?: string }
   | {
       readonly kind: "userMessage";
       readonly remoteMessageId?: string;
@@ -418,6 +419,13 @@ export type AgentThreadsAction =
     }
   | { readonly kind: "pinToggled"; readonly threadId: string }
   | { readonly kind: "archived"; readonly threadId: string }
+  | { readonly kind: "unarchived"; readonly threadId: string }
+  | {
+      readonly kind: "providerSessionInvalidated";
+      readonly threadId: string;
+      readonly owner: AgentThreadOwner;
+      readonly sessionId: string;
+    }
   | { readonly kind: "deleted"; readonly threadId: string }
   | { readonly kind: "ownerReleased"; readonly ownerId: string };
 
@@ -472,11 +480,15 @@ export function agentThreadLifecycle(thread: AgentThread): AgentThreadLifecycle 
   return "settled";
 }
 
-export function agentThreadAttention(thread: AgentThread): AgentThreadAttention {
+export function agentThreadAttention(
+  thread: AgentThread,
+  unread: boolean = agentThreadUnread(thread),
+): AgentThreadAttention {
   if (thread.archived) return "archived";
   if (runningTurn(thread) !== null) return "running";
   const last = thread.turns[thread.turns.length - 1];
   if (last === undefined) return "settled";
+  if (!unread) return "settled";
   if (turnNeedsAttention(last.status)) return "attention";
   return "settled";
 }
@@ -485,8 +497,9 @@ function turnNeedsAttention(status: AgentTurnStatus): boolean {
   switch (status.kind) {
     case "failed":
     case "interrupted":
-    case "stopped":
       return true;
+    case "stopped":
+      return false;
     case "exited":
       return status.exitCode !== 0;
     case "pending":
@@ -498,12 +511,25 @@ function turnNeedsAttention(status: AgentTurnStatus): boolean {
 }
 
 export function agentThreadUnread(thread: AgentThread): boolean {
-  const last = thread.turns[thread.turns.length - 1];
-  if (last === undefined) return false;
-  if (!isTerminalAgentTurnStatus(last.status)) return false;
-  if (last.endedAtEpochMs === null) return false;
+  if (thread.archived) return false;
+  const finishedAt = agentThreadFinishedAt(thread);
+  if (finishedAt === null) return false;
   if (thread.viewedAtEpochMs === null) return true;
-  return last.endedAtEpochMs > thread.viewedAtEpochMs;
+  return finishedAt > thread.viewedAtEpochMs;
+}
+
+export function agentThreadCanMarkUnread(thread: AgentThread): boolean {
+  if (thread.archived) return false;
+  return agentThreadFinishedAt(thread) !== null;
+}
+
+function agentThreadFinishedAt(thread: AgentThread): number | null {
+  const last = thread.turns[thread.turns.length - 1];
+  if (last === undefined) return null;
+  if (!isTerminalAgentTurnStatus(last.status)) return null;
+  if (last.endedAtEpochMs !== null) return last.endedAtEpochMs;
+  if (!turnNeedsAttention(last.status)) return null;
+  return last.startedAtEpochMs;
 }
 
 export function lastUsedAgentLaunch(
@@ -613,6 +639,10 @@ export function agentThreadsReducer(
       return togglePin(state, action.threadId);
     case "archived":
       return archiveThread(state, action.threadId);
+    case "unarchived":
+      return unarchiveThread(state, action.threadId);
+    case "providerSessionInvalidated":
+      return invalidateProviderSession(state, action);
     case "deleted":
       return deleteThread(state, action.threadId);
     case "ownerReleased":
@@ -843,7 +873,7 @@ function appendTurnEvents(
     isAgentSessionId(fallback.previousThreadId) &&
     isAgentSessionId(fallback.threadId)
       ? { ...thread.provider, sessionId: fallback.threadId }
-      : providerWithSession(thread.provider, action.sessionId);
+      : agentProviderSessionAfterReport(thread.provider, action.sessionId);
   const turns = thread.turns.map((candidate, position) =>
     position === index ? updatedTurn : candidate,
   );
@@ -935,16 +965,6 @@ function validStreamMetricBytes(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
-function providerWithSession(
-  provider: AgentProviderSession,
-  sessionId: string | null,
-): AgentProviderSession {
-  if (sessionId === null) return provider;
-  if (provider.sessionId !== null) return provider;
-  if (!isAgentSessionId(sessionId)) return provider;
-  return { ...provider, sessionId };
-}
-
 /** Retain a bounded recent window while continuing to accept live output after eviction. */
 export function mergeTurnEvents(
   existing: ReadonlyArray<AgentTurnEvent>,
@@ -974,7 +994,8 @@ export function agentTurnEventUtf8Bytes(event: AgentTurnEvent): number {
   if (event.kind === "assistantText" || event.kind === "reasoning" || event.kind === "result") {
     return (
       agentTextEventByteState(event).byteLength +
-      (event.kind === "assistantText" && event.parentToolId !== undefined
+      ((event.kind === "assistantText" || event.kind === "reasoning") &&
+      event.parentToolId !== undefined
         ? UTF8_ENCODER.encode(event.parentToolId).byteLength
         : 0)
     );
@@ -1038,8 +1059,8 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
     case "contextCompaction":
       return [];
     case "assistantText":
-      return definedStrings([event.text, event.parentToolId]);
     case "reasoning":
+      return definedStrings([event.text, event.parentToolId]);
     case "result":
       return [event.text];
     default:
@@ -1110,8 +1131,8 @@ export function coalesceAgentTextEvents(
   if (next.kind !== "assistantText" && next.kind !== "reasoning") return null;
   if (last.kind !== next.kind) return null;
   if (
-    last.kind === "assistantText" &&
-    next.kind === "assistantText" &&
+    (last.kind === "assistantText" || last.kind === "reasoning") &&
+    (next.kind === "assistantText" || next.kind === "reasoning") &&
     last.parentToolId !== next.parentToolId
   )
     return null;
@@ -1324,6 +1345,26 @@ function archiveThread(state: AgentThreadsState, threadId: string): AgentThreads
   if (thread.archived) return state;
   if (runningTurn(thread) !== null) return state;
   return replaceThread(state, { ...thread, archived: true });
+}
+
+function unarchiveThread(state: AgentThreadsState, threadId: string): AgentThreadsState {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return state;
+  if (!thread.archived) return state;
+  return replaceThread(state, { ...thread, archived: false });
+}
+
+function invalidateProviderSession(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "providerSessionInvalidated" }>,
+): AgentThreadsState {
+  const thread = state.threads.get(action.threadId);
+  if (thread === undefined) return state;
+  if (thread.owner.ownerId !== action.owner.ownerId) return state;
+  if (thread.owner.rootKey !== action.owner.rootKey) return state;
+  if (thread.owner.repositoryRoot !== action.owner.repositoryRoot) return state;
+  if (thread.provider.sessionId !== action.sessionId) return state;
+  return replaceThread(state, { ...thread, provider: { ...thread.provider, sessionId: null } });
 }
 
 function deleteThread(state: AgentThreadsState, threadId: string): AgentThreadsState {

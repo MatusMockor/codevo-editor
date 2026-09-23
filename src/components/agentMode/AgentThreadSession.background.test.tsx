@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
@@ -10,6 +10,7 @@ import {
   feedAgentOutput,
 } from "../../domain/agentOutput/agentOutputParser";
 import { AgentThreadSession } from "./AgentThreadSession";
+import { AGENT_FOREGROUND_QUIESCENCE_MS } from "./useAgentBackgroundActivity";
 
 const started: AgentTurnEvent = {
   kind: "backgroundTask",
@@ -43,12 +44,15 @@ describe("thread background activity visibility", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    vi.useRealTimers();
   });
   function render(
     events: readonly AgentTurnEvent[],
     status: AgentTurnStatus = { kind: "running" },
     prompt = "Watch pipeline",
     provider: AgentCliKind = "claudeCode",
+    onStopBackground?: () => void,
+    threadId = "thread",
   ) {
     const turn: AgentTurn = {
       turnId: "turn",
@@ -65,7 +69,7 @@ describe("thread background activity visibility", () => {
     };
     const view: AgentThreadView = {
       thread: {
-        threadId: "thread",
+        threadId,
         owner: { rootKey: "/app", repositoryRoot: "/app", ownerId: "owner" },
         target: { isolation: "in-place", worktreePath: null },
         provider: { kind: provider, sessionId: "session" },
@@ -97,6 +101,7 @@ describe("thread background activity visibility", () => {
           thread={view}
           composerRepositoryLabel="app"
           onReviewInDiff={() => {}}
+          onStopBackground={onStopBackground}
         />,
       ),
     );
@@ -145,7 +150,7 @@ describe("thread background activity visibility", () => {
     render([started, result, { ...started, status: "stopped" }]);
     expect(host.textContent).not.toContain("Monitoring");
   });
-  it("never infers liveness from prose, and leaves Codex presentation unchanged", () => {
+  it("never infers liveness from prose alone, and leaves Codex presentation unchanged", () => {
     render([result]);
     expect(host.textContent).not.toContain("Monitoring");
     render([started, result], { kind: "running" }, "Watch", "codex");
@@ -247,6 +252,210 @@ describe("thread background activity visibility", () => {
     render([started, work]);
     expect(host.textContent).toContain("1 background task running");
     expect(host.textContent).not.toContain("Monitoring");
+  });
+  function streamed(lines: ReadonlyArray<unknown>): AgentTurnEvent[] {
+    let parser = createAgentOutputParserState("claudeCode");
+    const events: AgentTurnEvent[] = [];
+    for (const line of lines) {
+      const next = feedAgentOutput(parser, "stdout", `${JSON.stringify(line)}\n`);
+      parser = next.state;
+      events.push(...next.events);
+    }
+    return events;
+  }
+  const leadAnswer =
+    "The gateway review runs in the background; I will summarize it when it lands.";
+  const spawnBackgroundAgent = [
+    {
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_spawn",
+            name: "Agent",
+            input: {
+              description: "Gateway review",
+              subagent_type: "general-purpose",
+              prompt: "Review the gateway",
+              run_in_background: true,
+            },
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    },
+    {
+      type: "system",
+      subtype: "task_started",
+      task_id: "agent_1",
+      tool_use_id: "toolu_spawn",
+      description: "Gateway review",
+      subagent_type: "general-purpose",
+      is_backgrounded: true,
+      task_type: "local_agent",
+    },
+    {
+      type: "user",
+      message: {
+        content: [
+          {
+            tool_use_id: "toolu_spawn",
+            type: "tool_result",
+            content: "Async agent launched successfully.",
+            is_error: false,
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    },
+  ];
+  const answerLine = {
+    type: "assistant",
+    message: { content: [{ type: "text", text: leadAnswer }] },
+    parent_tool_use_id: null,
+  };
+  const workTitle = () => host.querySelector(".agent-work__title")?.textContent;
+  const banner = () => host.querySelector(".agent-background-banner");
+  const elapse = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+
+  it("shows an idle lead waiting on background agents without a result event", () => {
+    vi.useFakeTimers();
+    const stop = vi.fn();
+    render(
+      streamed([
+        ...spawnBackgroundAgent,
+        answerLine,
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_child", name: "Read", input: {} }],
+          },
+          parent_tool_use_id: "toolu_spawn",
+        },
+      ]),
+      { kind: "running" },
+      "Review",
+      "claudeCode",
+      stop,
+    );
+    expect(banner()).toBeNull();
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
+    expect(workTitle()).toBe("Waiting for 1 agent");
+    expect(host.textContent).not.toContain("Working for");
+    expect(host.querySelector(".agent-work")?.hasAttribute("open")).toBe(false);
+    expect(host.querySelector(".agent-work")?.textContent).not.toContain(leadAnswer);
+    expect(host.querySelector(".agent-turn__events")?.textContent).toContain(leadAnswer);
+    expect(banner()?.textContent).toContain("1 agent working");
+    act(() => host.querySelector<HTMLButtonElement>(".agent-background-banner__stop")?.click());
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the lead working while a root tool call is still open", () => {
+    render(
+      streamed([
+        ...spawnBackgroundAgent,
+        answerLine,
+        {
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_lead", name: "Bash", input: {} }],
+          },
+          parent_tool_use_id: null,
+        },
+      ]),
+      { kind: "running" },
+      "Review",
+      "claudeCode",
+      () => {},
+    );
+    expect(workTitle()).toContain("Working for");
+    expect(banner()).toBeNull();
+  });
+  it("counts background shells and hides the banner once the run or provider does not apply", () => {
+    const shells: AgentTurnEvent[] = [
+      { kind: "toolCall", toolId: "b1", name: "Bash", inputSummary: "npm test" },
+      { kind: "toolResult", toolId: "b1", outputSummary: "Running in background", isError: false },
+      { kind: "backgroundTask", taskId: "s1", taskType: "shell", status: "starting" },
+      { kind: "backgroundTask", taskId: "s2", taskType: "shell", status: "starting" },
+      { kind: "assistantText", text: "Both suites run in the background." },
+    ];
+    vi.useFakeTimers();
+    render(shells, { kind: "running" }, "Test", "claudeCode", () => {});
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
+    expect(workTitle()).toBe("Waiting for 2 background tasks");
+    expect(banner()?.textContent).toContain("2 background tasks running");
+    render(shells, { kind: "exited", exitCode: 0 }, "Test", "claudeCode", () => {});
+    expect(banner()).toBeNull();
+    render(shells, { kind: "running" }, "Test", "codex", () => {});
+    expect(banner()).toBeNull();
+    render(shells, { kind: "running" }, "Test", "claudeCode");
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
+    expect(banner()?.textContent).toContain("2 background tasks running");
+    expect(host.querySelector(".agent-background-banner__stop")).toBeNull();
+  });
+  const shellLaunch: AgentTurnEvent[] = [
+    { kind: "toolCall", toolId: "b1", name: "Bash", inputSummary: "npm test" },
+    { kind: "toolResult", toolId: "b1", outputSummary: "Running in background", isError: false },
+    { kind: "backgroundTask", taskId: "s1", taskType: "shell", status: "starting" },
+  ];
+  const leadText: AgentTurnEvent = { kind: "assistantText", text: "Now I will edit the file." };
+  const leadEdit: AgentTurnEvent = {
+    kind: "toolCall",
+    toolId: "edit",
+    name: "Edit",
+    inputSummary: "src/app.ts",
+  };
+  const leadEdited: AgentTurnEvent = {
+    kind: "toolResult",
+    toolId: "edit",
+    outputSummary: "Edited",
+    isError: false,
+  };
+  const leadDone: AgentTurnEvent = { kind: "assistantText", text: "Edit done; tests still run." };
+  const renderShells = (events: readonly AgentTurnEvent[], threadId = "thread") =>
+    render(events, { kind: "running" }, "Test", "claudeCode", () => {}, threadId);
+
+  it("does not settle in the gap between a lead text block and its following tool call", () => {
+    vi.useFakeTimers();
+    renderShells([...shellLaunch, leadText]);
+    const fold = host.querySelector(".agent-work");
+    expect(fold).not.toBeNull();
+    expect(workTitle()).toContain("Working for");
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS - 1);
+    renderShells([...shellLaunch, leadText, leadEdit]);
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS * 2);
+    expect(banner()).toBeNull();
+    expect(workTitle()).toContain("Working for");
+    expect(host.querySelector(".agent-work")).toBe(fold);
+
+    renderShells([...shellLaunch, leadText, leadEdit, leadEdited, leadDone]);
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS - 1);
+    expect(banner()).toBeNull();
+    expect(host.querySelector(".agent-work")).toBe(fold);
+    elapse(1);
+    expect(banner()?.textContent).toContain("1 background task running");
+    expect(workTitle()).toBe("Waiting for 1 background task");
+    expect(host.querySelector(".agent-work")).toBe(fold);
+  });
+  it("settles immediately on a result without waiting for quiescence", () => {
+    vi.useFakeTimers();
+    renderShells([...shellLaunch, leadText, result]);
+    expect(banner()?.textContent).toContain("1 background task running");
+    expect(workTitle()).toBe("Waiting for 1 background task");
+  });
+  it("restarts quiescence after a thread switch instead of carrying a pending timer", () => {
+    vi.useFakeTimers();
+    const idle = [...shellLaunch, leadDone];
+    renderShells(idle);
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS - 1000);
+    renderShells([leadDone], "other");
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
+    expect(banner()).toBeNull();
+    renderShells(idle);
+    elapse(AGENT_FOREGROUND_QUIESCENCE_MS - 1);
+    expect(banner()).toBeNull();
+    elapse(1);
+    expect(banner()?.textContent).toContain("1 background task running");
   });
   it("projects native streamed task lifecycle through reconnect and terminal process exit", async () => {
     let parser = createAgentOutputParserState("claudeCode");

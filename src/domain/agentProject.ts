@@ -88,6 +88,21 @@ export function agentRootOwnerId(rootKey: string): string {
   return `agent-root:${fnv1a64hex(rootKey)}`;
 }
 
+export interface AgentProjectOwnerClaim {
+  readonly rootKey: string;
+  readonly ownerId: string;
+}
+
+export function agentProjectOwnsOwner(
+  project: Pick<AgentProjectDescriptor, "rootKey" | "ownerId" | "runtimeOwnerIds">,
+  owner: AgentProjectOwnerClaim,
+): boolean {
+  if (project.rootKey !== owner.rootKey) return false;
+  if (project.ownerId === owner.ownerId) return true;
+  if (project.runtimeOwnerIds?.includes(owner.ownerId) === true) return true;
+  return owner.ownerId === agentRootOwnerId(project.rootKey);
+}
+
 export function validateAgentRootLeaseAcquireRequest(value: unknown): AgentRootLeaseAcquireRequest {
   const request = record(value, "request");
   exactKeys(request, ["rootPath"], "request");

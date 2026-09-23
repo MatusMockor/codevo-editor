@@ -205,16 +205,59 @@ describe("agent markdown renderer adapter", () => {
     expect(JSON.stringify(nodes)).not.toContain('"tag":"b"');
   });
 
-  it("strips javascript links and keeps only http(s) targets", () => {
+  it("strips unsafe schemes and keeps http(s) and local file targets", () => {
     const paragraph = expectContainer(
-      render("[bad](javascript:alert(1)) [ok](https://example.com) [file](file:///etc)")[0],
+      render(
+        "[bad](javascript:alert(1)) [ok](https://example.com) [file](file:///etc) [data](data:text/html,x) [app](vscode://file/x) [text](</Users/x/My Proj/prepis ž.txt>) [rel](src/a.ts:12:3)",
+      )[0],
       "p",
     );
     const links = paragraph.children.filter((child) => child.kind === "link");
-    expect(links.map((link) => (link.kind === "link" ? link.href : ""))).toEqual([
-      null,
-      "https://example.com",
-      null,
+    expect(links.map((link) => (link.kind === "link" ? link.target : null))).toEqual([
+      { kind: "none" },
+      { kind: "external", url: "https://example.com" },
+      {
+        kind: "localFile",
+        anchor: "absolute",
+        location: { path: "/etc", line: null, column: null },
+      },
+      { kind: "none" },
+      { kind: "none" },
+      {
+        kind: "localFile",
+        anchor: "absolute",
+        location: { path: "/Users/x/My Proj/prepis ž.txt", line: null, column: null },
+      },
+      {
+        kind: "localFile",
+        anchor: "relative",
+        location: { path: "src/a.ts", line: 12, column: 3 },
+      },
+    ]);
+  });
+
+  it("keeps bare files with a line suffix and drops whitespace-prefixed schemes", () => {
+    const paragraph = expectContainer(
+      render(
+        "[readme](README:12) [make](Makefile:3:1) [js](javascript:12) [space](%20javascript:alert(1)) [nbsp](%C2%A0javascript:alert(1))",
+      )[0],
+      "p",
+    );
+    const links = paragraph.children.filter((child) => child.kind === "link");
+    expect(links.map((link) => (link.kind === "link" ? link.target : null))).toEqual([
+      {
+        kind: "localFile",
+        anchor: "relative",
+        location: { path: "README", line: 12, column: null },
+      },
+      {
+        kind: "localFile",
+        anchor: "relative",
+        location: { path: "Makefile", line: 3, column: 1 },
+      },
+      { kind: "none" },
+      { kind: "none" },
+      { kind: "none" },
     ]);
   });
 

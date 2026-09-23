@@ -64,24 +64,13 @@ pub(super) fn prepare_transport(
         .model_args()
         .get(1)
         .map(|model| (*model).to_string());
-    let (sandbox, sandbox_policy) = sandbox_for(mode, &cwd);
-    let thread_start = ThreadStartParams {
-        cwd: Some(cwd.clone()),
-        model: model.clone(),
-        sandbox: Some(sandbox),
-        approval_policy: Some(ApprovalPolicy::Never),
-    };
-    let thread_resume = request
-        .resume_session_id
-        .as_ref()
-        .map(|id| ThreadResumeParams {
-            thread_id: id.clone(),
-            cwd: Some(cwd.clone()),
-            model: model.clone(),
-            sandbox: Some(sandbox),
-            approval_policy: Some(ApprovalPolicy::Never),
-            exclude_turns: true,
-        });
+    let access = access_for(mode, &cwd);
+    let (thread_start, thread_resume) = thread_params(
+        &cwd,
+        model.as_deref(),
+        &access,
+        request.resume_session_id.as_deref(),
+    );
     let AgentPromptTransport::Argv(prompt) = plan.prompt() else {
         return Err("Codex prompt transport is invalid.".into());
     };
@@ -91,8 +80,8 @@ pub(super) fn prepare_transport(
         input,
         cwd: Some(cwd),
         model,
-        approval_policy: Some(ApprovalPolicy::Never),
-        sandbox_policy: Some(sandbox_policy),
+        approval_policy: access.approval_policy,
+        sandbox_policy: access.sandbox_policy,
         effort: None,
         client_user_message_id: Some(request.task_id.clone()),
         turn_trigger: None,
@@ -107,27 +96,67 @@ pub(super) fn prepare_transport(
     }))
 }
 
-fn sandbox_for(mode: CodexExecutionMode, cwd: &str) -> (SandboxMode, SandboxPolicy) {
+fn thread_params(
+    cwd: &str,
+    model: Option<&str>,
+    access: &CodexAccess,
+    resume_session_id: Option<&str>,
+) -> (ThreadStartParams, Option<ThreadResumeParams>) {
+    let start = ThreadStartParams {
+        cwd: Some(cwd.to_string()),
+        model: model.map(str::to_string),
+        sandbox: access.sandbox,
+        approval_policy: access.approval_policy,
+        developer_instructions: Some(VISUAL_OUTPUT_INSTRUCTIONS.to_string()),
+    };
+    let resume = resume_session_id.map(|id| ThreadResumeParams {
+        thread_id: id.to_string(),
+        cwd: start.cwd.clone(),
+        model: start.model.clone(),
+        sandbox: start.sandbox,
+        approval_policy: start.approval_policy,
+        developer_instructions: start.developer_instructions.clone(),
+        exclude_turns: true,
+    });
+    (start, resume)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexAccess {
+    sandbox: Option<SandboxMode>,
+    sandbox_policy: Option<SandboxPolicy>,
+    approval_policy: Option<ApprovalPolicy>,
+}
+
+fn access_for(mode: CodexExecutionMode, cwd: &str) -> CodexAccess {
+    let workspace_write = |approval: ApprovalPolicy| CodexAccess {
+        sandbox: Some(SandboxMode::WorkspaceWrite),
+        sandbox_policy: Some(SandboxPolicy::WorkspaceWrite {
+            network_access: false,
+            writable_roots: vec![cwd.to_string()],
+        }),
+        approval_policy: Some(approval),
+    };
     match mode {
-        CodexExecutionMode::ReadOnly => (
-            SandboxMode::ReadOnly,
-            SandboxPolicy::ReadOnly {
+        CodexExecutionMode::Default => CodexAccess {
+            sandbox: None,
+            sandbox_policy: None,
+            approval_policy: None,
+        },
+        CodexExecutionMode::ReadOnly => CodexAccess {
+            sandbox: Some(SandboxMode::ReadOnly),
+            sandbox_policy: Some(SandboxPolicy::ReadOnly {
                 network_access: false,
-            },
-        ),
-        CodexExecutionMode::DangerFullAccess => (
-            SandboxMode::DangerFullAccess,
-            SandboxPolicy::DangerFullAccess,
-        ),
-        CodexExecutionMode::Default
-        | CodexExecutionMode::WorkspaceWrite
-        | CodexExecutionMode::Auto => (
-            SandboxMode::WorkspaceWrite,
-            SandboxPolicy::WorkspaceWrite {
-                network_access: false,
-                writable_roots: vec![cwd.to_string()],
-            },
-        ),
+            }),
+            approval_policy: Some(ApprovalPolicy::Never),
+        },
+        CodexExecutionMode::WorkspaceWrite => workspace_write(ApprovalPolicy::Untrusted),
+        CodexExecutionMode::Auto => workspace_write(ApprovalPolicy::OnRequest),
+        CodexExecutionMode::DangerFullAccess => CodexAccess {
+            sandbox: Some(SandboxMode::DangerFullAccess),
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
+            approval_policy: Some(ApprovalPolicy::Never),
+        },
     }
 }
 
@@ -135,14 +164,9 @@ pub(super) fn codex_input(
     prompt: &str,
     images: &[std::path::PathBuf],
 ) -> Result<Vec<UserInput>, String> {
-    let mut input = vec![
-        UserInput::Text {
-            text: VISUAL_OUTPUT_INSTRUCTIONS.to_string(),
-        },
-        UserInput::Text {
-            text: prompt.to_string(),
-        },
-    ];
+    let mut input = vec![UserInput::Text {
+        text: prompt.to_string(),
+    }];
     for image in images {
         let path = image
             .to_str()

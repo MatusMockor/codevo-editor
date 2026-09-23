@@ -4,9 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   AgentRecordedTurnChanges,
-  type RecordedTurnChangesProps,
+  type AgentRecordedTurnChangesProps,
 } from "./AgentRecordedTurnChanges";
-import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
+import {
+  agentTurnChangesDenialMessage,
+  unsupportedAgentTurnChanges,
+  type AgentTurnChangeSummary,
+  type AgentTurnChangesDenialReason,
+} from "../../domain/agentTurnChanges";
+import { createAgentTurnChangesReader } from "../../application/agentTurnChangesReader";
 vi.mock("../GitDiffPreview", () => ({
   GitDiffPreview: (props: {
     diff: { originalContent: string; modifiedContent: string } | null;
@@ -46,18 +52,11 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
 });
-const render = async (props: Partial<RecordedTurnChangesProps> = {}) => {
-  const full: RecordedTurnChangesProps = {
+const render = async (props: Partial<AgentRecordedTurnChangesProps> = {}) => {
+  const full: AgentRecordedTurnChangesProps = {
     threadId: "thread",
     turnId: "t1",
-    monacoTheme: "calm-dark",
     getTurnChanges: async (_, id) => summary(id),
-    getTurnFileDiff: async (_, __, relativePath) => ({
-      relativePath,
-      original: { text: "before", truncated: false },
-      modified: { text: "after", truncated: false },
-      unavailableReason: null,
-    }),
     ...props,
   };
   await act(async () => {
@@ -72,11 +71,9 @@ function click(text: string) {
 }
 it("routes Open diff to the sidebar callback without mounting an inline viewer", async () => {
   const onOpenDiff = vi.fn();
-  const getTurnFileDiff = vi.fn();
-  await render({ onOpenDiff, getTurnFileDiff });
+  await render({ onOpenDiff });
   act(() => click("Open diff"));
   expect(onOpenDiff).toHaveBeenCalledWith(summary("t1"), undefined);
-  expect(getTurnFileDiff).not.toHaveBeenCalled();
   expect(host.querySelector('[aria-label="Recorded turn diff"]')).toBeNull();
 });
 it("ignores a previous thread's late summary", async () => {
@@ -113,7 +110,7 @@ it("rereads on availability generation changes", async () => {
   await render({ ...props, revision: {} });
   expect(getTurnChanges).toHaveBeenCalledTimes(2);
 });
-it("lets unavailable snapshots be retried explicitly", async () => {
+it("offers Retry only for a transient read failure and recovers on retry", async () => {
   const getTurnChanges = vi
     .fn()
     .mockResolvedValueOnce({
@@ -121,18 +118,110 @@ it("lets unavailable snapshots be retried explicitly", async () => {
       state: "unavailable",
       files: [],
       truncated: false,
-      reason: "Unavailable",
+      reason: "Saved turn changes could not be read.",
     })
     .mockResolvedValue(summary("t1"));
   await render({ getTurnChanges });
+  expect(host.textContent).toContain("Saved turn changes could not be read.");
   await act(async () => click("Retry recorded changes"));
+  await vi.waitFor(() => expect(host.textContent).toContain("1 changed file"));
   expect(getTurnChanges).toHaveBeenCalledTimes(2);
-  expect(host.textContent).toContain("1 changed file");
+  expect(host.textContent).not.toContain("Retry recorded changes");
+});
+it("shows a persisted capture failure as final without Retry", async () => {
+  await render({
+    getTurnChanges: async (_, turnId) => ({
+      turnId,
+      state: "unavailable",
+      files: [],
+      truncated: false,
+      reason: "Snapshot Git command failed.",
+    }),
+  });
+  expect(host.textContent).toContain("Snapshot Git command failed.");
+  expect(host.querySelector(".agent-turn-changes--unavailable")).not.toBeNull();
+  expect(host.textContent).not.toContain("Retry recorded changes");
+});
+it.each<AgentTurnChangesDenialReason>([
+  "gatewayMissing",
+  "untrusted",
+  "ownerMismatch",
+  "launchRootNotOwned",
+])("shows the %s authority denial as a muted line without Retry", async (reason) => {
+  const reader = createAgentTurnChangesReader(() => ({ kind: "denied", reason }));
+  await render({ getTurnChanges: reader.getTurnChanges });
+  expect(host.querySelector(".agent-turn-changes--unavailable")?.textContent).toBe(
+    agentTurnChangesDenialMessage(reason),
+  );
+  expect(host.textContent).not.toContain("Retry recorded changes");
+});
+it("renders nothing for unsupported workspaces and not-applicable owners", async () => {
+  for (const reason of ["notGitRepository", "notWorktreeRoot", "notApplicable"] as const) {
+    const getTurnChanges = vi.fn(async (_: string, turnId: string) =>
+      unsupportedAgentTurnChanges(turnId, reason),
+    );
+    await render({ getTurnChanges, revision: {} });
+    await vi.waitFor(() => expect(getTurnChanges).toHaveBeenCalled());
+    expect(host.innerHTML).toBe("");
+  }
+  for (const message of [
+    "Recorded changes owner is no longer available.",
+    "Viewing turn changes requires a trusted workspace.",
+  ]) {
+    const getTurnChanges = vi.fn(async () => {
+      throw new Error(message);
+    });
+    await render({ getTurnChanges, revision: {} });
+    await vi.waitFor(() => expect(getTurnChanges).toHaveBeenCalled());
+    expect(host.innerHTML).toBe("");
+  }
 });
 
 it("keeps the summary across unrelated parent updates", async () => {
   const getTurnChanges = vi.fn(async (_: string, id: string) => summary(id));
   const props = await render({ getTurnChanges, revision: {} });
-  await render({ ...props, monacoTheme: "calm-light" });
+  await render({ ...props, onOpenDiff: vi.fn() });
   expect(getTurnChanges).toHaveBeenCalledTimes(1);
+});
+
+it("shows safe known read failures without exposing unknown backend details", async () => {
+  await render({
+    getTurnChanges: async () => {
+      throw new Error("Saved turn changes exceed the supported size.");
+    },
+  });
+  expect(host.textContent).toContain("exceed the supported size");
+  expect(host.textContent).not.toContain("Retry recorded changes");
+  await render({
+    getTurnChanges: async () => {
+      throw new Error("/private/source.ts contains secret content");
+    },
+  });
+  await vi.waitFor(() =>
+    expect(host.textContent).toContain("Recorded changes could not be loaded"),
+  );
+  expect(host.textContent).not.toContain("private");
+  expect(host.textContent).not.toContain("Retry recorded changes");
+});
+
+it("offers retry only for transient read failures", async () => {
+  await render({
+    getTurnChanges: async () => {
+      throw new Error("Saved turn changes contain invalid checkpoint data.");
+    },
+  });
+  await vi.waitFor(() =>
+    expect(host.textContent).toContain("Recorded changes could not be loaded"),
+  );
+  expect(host.textContent).not.toContain("invalid checkpoint data");
+  expect(host.textContent).not.toContain("Retry recorded changes");
+  const getTurnChanges = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Too many turn changes reads. Try again shortly."))
+    .mockResolvedValue(summary("t1"));
+  await render({ getTurnChanges });
+  await vi.waitFor(() => expect(host.textContent).toContain("Retry recorded changes"));
+  await act(async () => click("Retry recorded changes"));
+  await vi.waitFor(() => expect(host.textContent).toContain("a.ts"));
+  expect(getTurnChanges).toHaveBeenCalledTimes(2);
 });

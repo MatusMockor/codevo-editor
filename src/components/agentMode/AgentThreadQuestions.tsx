@@ -4,6 +4,8 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { agentQuestionOwner } from "../../application/agentQuestionOwner";
 import { useAgentQuestions } from "../../application/useAgentQuestions";
 import { AgentQuestionCard } from "./AgentQuestionCard";
+import { isAgentApprovalGateway } from "../../application/agentApprovalPorts";
+import { AgentThreadApprovals } from "./AgentThreadApprovals";
 
 export function AgentThreadQuestions({
   gateway,
@@ -25,10 +27,16 @@ function QuestionScope({
 }) {
   // The keyed parent remounts on exact task/owner changes; stream updates preserve the lease.
   const [owner] = useState(() => agentQuestionOwner(thread));
-  const questions = useAgentQuestions(gateway, owner, thread?.lifecycle === "running");
+  const running = thread?.lifecycle === "running";
+  const questions = useAgentQuestions(gateway, owner, running);
   if (!owner) return null;
   return (
     <div className="agent-thread-questions" aria-label="Agent questions">
+      <AgentThreadApprovals
+        gateway={isAgentApprovalGateway(gateway) ? gateway : null}
+        owner={owner}
+        running={running}
+      />
       {questions.requests.map((request) => (
         <AgentQuestionCard
           key={request.id}

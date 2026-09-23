@@ -4,6 +4,7 @@ import type {
   TerminalOutputEvent,
   TerminalRuntimeStatus,
 } from "../../domain/terminal";
+import { agentRootOwnerId } from "../../domain/agentProject";
 import { TauriTerminalGateway } from "../../infrastructure/tauriTerminalGateway";
 import type { ComposerScope } from "./agentComposerTarget";
 import {
@@ -278,6 +279,23 @@ describe("agentSurfaceBlockedReason", () => {
     expect(agentThreadCheckoutRoot(worktree, [project])).toBe(SURFACE_FIXTURE_WORKTREE);
     expect(agentThreadCheckoutRoot(stranger, [project])).toBe("/workspace/other");
     expect(agentThreadCheckoutRoot(inPlace, [{ ...project, ownerId: "owner-2" }])).toBe(nested);
+    const replaced = { ...project, ownerId: "ws-current", runtimeOwnerIds: ["ws-current"] };
+    const rootOwned = {
+      ...inPlace,
+      thread: {
+        ...inPlace.thread,
+        owner: { ...inPlace.thread.owner, ownerId: agentRootOwnerId(project.rootKey) },
+      },
+    };
+    const foreignRootOwned = {
+      ...rootOwned,
+      thread: {
+        ...rootOwned.thread,
+        owner: { ...rootOwned.thread.owner, ownerId: agentRootOwnerId("key:other") },
+      },
+    };
+    expect(agentThreadCheckoutRoot(rootOwned, [replaced])).toBe(SURFACE_FIXTURE_ROOT);
+    expect(agentThreadCheckoutRoot(foreignRootOwned, [replaced])).toBe(nested);
   });
 
   it("describes the Files card by thread first, then by scope", () => {

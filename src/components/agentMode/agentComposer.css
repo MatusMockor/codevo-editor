@@ -512,6 +512,49 @@
   box-shadow: var(--agent-focus-ring);
 }
 
+.agent-composer__queued-edit {
+  display: grid;
+  gap: var(--agent-space-2);
+  padding: 10px 12px 0;
+}
+
+.agent-composer__queued-edit .agent-composer__attachments {
+  padding: 0;
+}
+
+.agent-composer__queued-edit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--agent-space-2);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-composer__queued-edit-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-composer__queued-edit-cancel {
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 6px;
+}
+
+.agent-composer__queued-edit-cancel:hover,
+.agent-composer__queued-edit-cancel:focus-visible {
+  color: var(--agent-text-strong);
+  outline: none;
+}
+
+.agent-composer__queued-edit-cancel:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+}
+
 /* Drop target: the whole box answers an OS drag, so a miss is never silent. */
 .agent-composer__box--drop {
   background: var(--agent-hover);

@@ -386,7 +386,7 @@ describe("imported conversation history", () => {
     expect(prompt?.textContent).toBe("Where does the parser live");
   });
 
-  it("degrades an imported answer to plain text when a match sits inside markdown syntax", () => {
+  it("shows an imported table as source when a match sits inside its markdown syntax", () => {
     const thread = imported([user("Tabuľka"), assistant(OWNER_TABLE)]);
     const hits = hitsFor(thread, "|---");
     expect(hits).toHaveLength(2);
@@ -394,9 +394,9 @@ describe("imported conversation history", () => {
     render({ thread, findQuery: "|---", findHits: hits, findHitIndex: 1 });
 
     const body = importedMessage(1);
-    expect(body.getAttribute("data-agent-markdown")).toBe("plain");
+    expect(body.getAttribute("data-agent-markdown")).toBe("rendered");
     expect(body.querySelector(".agent-md__note")?.textContent).toBe(
-      "Shown as plain text while searching: some matches sit inside Markdown formatting.",
+      "Some formatting is shown as source while searching: matches sit inside Markdown syntax.",
     );
     expect(body.querySelector("mark.agent-find__hit--current")?.textContent).toBe("|---");
     expect(body.querySelectorAll("mark.agent-find__hit")).toHaveLength(2);

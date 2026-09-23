@@ -67,10 +67,24 @@ impl CodexRpcFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnFrame {
     Notification(Box<ServerNotification>),
-    UserInputRequested { id: Value, params: Value },
-    UserInputResolved { id: Value },
-    UnknownFrame { method: String },
-    ServerRequestDeclined { method: String },
+    UserInputRequested {
+        id: Value,
+        params: Value,
+    },
+    ApprovalRequested {
+        id: Value,
+        method: String,
+        params: Value,
+    },
+    UserInputResolved {
+        id: Value,
+    },
+    UnknownFrame {
+        method: String,
+    },
+    ServerRequestDeclined {
+        method: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

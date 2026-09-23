@@ -56,16 +56,19 @@ describe("AgentThreadSession log hydration", () => {
     restoreRects = null;
   });
 
-  it("keeps an expanded activity disclosure mounted when older events are prepended", () => {
+  it("keeps an expanded thought group mounted when older events are prepended", () => {
     render(viewOf(settledTurn(TAIL)));
-    const before = reasoningDetails("Thinking hard.");
-    before.open = true;
+    const toggle = host.querySelector<HTMLButtonElement>(".agent-activity-group__toggle");
+    expect(toggle?.textContent).toContain("Thought");
+    act(() => toggle?.click());
+    const before = thoughtGroup("Thinking hard.");
 
     render(viewOf(hydratedTurn()));
 
-    const after = reasoningDetails("Thinking hard.");
+    const after = thoughtGroup("Thinking hard.");
     expect(after).toBe(before);
-    expect(after.open).toBe(true);
+    expect(after.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelectorAll(".agent-thought__body")).toHaveLength(1);
   });
 
   it("reveals the exact event of a hydrated turn", () => {
@@ -123,12 +126,12 @@ describe("AgentThreadSession log hydration", () => {
     );
   }
 
-  function reasoningDetails(text: string): HTMLDetailsElement {
-    const found = [...host.querySelectorAll<HTMLDetailsElement>("details.agent-reasoning")].find(
+  function thoughtGroup(text: string): HTMLElement {
+    const found = [...host.querySelectorAll<HTMLElement>(".agent-activity-group")].find(
       (candidate) => (candidate.textContent ?? "").includes(text),
     );
     expect(found).toBeDefined();
-    return found as HTMLDetailsElement;
+    return found as HTMLElement;
   }
 
   function scrollContainer(dimensions: {

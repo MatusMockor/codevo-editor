@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import wire from "../../contracts/agent-subagent-lifecycle-wire.json";
 import {
   RemoteAgentProjection,
+  presentRemoteAgentThread,
   projectRemoteAgentThreads,
+  remoteAgentThreadUnread,
   type RemoteAgentProjectionInput,
 } from "./remoteAgentProjection";
 import type { RemoteRunnerTask } from "../domain/remoteRunner";
@@ -293,6 +295,55 @@ it("uses durable server subagent summaries when historical output was already ev
   });
   expect(projected[0]!.thread.turns[0]!.subagentLifecycle).toBe(lifecycle);
   expect(projected[0]!.thread.turns[0]!.eventsTruncated).toBe(true);
+});
+
+describe("remote conversation activity and unread", () => {
+  const created = Date.parse(root.createdAt);
+  it("advances activity when the latest task finishes, even before its replay is loaded", () => {
+    const running = projectRemoteAgentThreads(input([{ ...root, status: "running" }]))[0]!;
+    const finished = projectRemoteAgentThreads(input([root]))[0]!;
+    expect(running.thread.updatedAtEpochMs).toBe(created);
+    expect(finished.thread.updatedAtEpochMs).toBeGreaterThan(created);
+    expect(running.unread).toBe(false);
+  });
+  it("never reports unread or attention before a view marker is tracked", () => {
+    const finished = projectRemoteAgentThreads(input([root]))[0]!;
+    const failed = projectRemoteAgentThreads(input([{ ...root, status: "failed" }]))[0]!;
+    expect(finished.unread).toBe(false);
+    expect(failed.unread).toBe(false);
+    expect(failed.attention).toBe("settled");
+    expect(presentRemoteAgentThread(failed, failed.thread, false).attention).toBe("settled");
+  });
+  it("tracks unread against the stored marker and clears it once seen", () => {
+    const view = projectRemoteAgentThreads(input([root]))[0]!;
+    expect(presentRemoteAgentThread(view, view.thread, true).unread).toBe(true);
+    const seen = presentRemoteAgentThread(
+      view,
+      { ...view.thread, viewedAtEpochMs: view.thread.updatedAtEpochMs },
+      true,
+    );
+    expect(seen.unread).toBe(false);
+    expect(remoteAgentThreadUnread({ ...view.thread, archived: true })).toBe(false);
+  });
+  it("demands attention for a tracked background failure only until it was viewed", () => {
+    const failed = projectRemoteAgentThreads(input([{ ...root, status: "failed" }]))[0]!;
+    const viewedWhileRunning = { ...failed.thread, viewedAtEpochMs: created };
+    expect(presentRemoteAgentThread(failed, viewedWhileRunning, true).attention).toBe("attention");
+    const seen = presentRemoteAgentThread(
+      failed,
+      { ...failed.thread, viewedAtEpochMs: failed.thread.updatedAtEpochMs },
+      true,
+    );
+    expect(seen.attention).toBe("settled");
+    const cancelled = projectRemoteAgentThreads(input([{ ...root, status: "cancelled" }]))[0]!;
+    expect(presentRemoteAgentThread(cancelled, cancelled.thread, true).attention).toBe("settled");
+  });
+  it("derives a normalized title from the first prompt", () => {
+    const view = projectRemoteAgentThreads(
+      input([{ ...root, parts: [{ type: "text", text: "/fix  **Repair** the `parser` crash" }] }]),
+    )[0]!;
+    expect(view.thread.title).toBe("Repair the parser crash");
+  });
 });
 
 describe("remote subagent lifecycle wire compatibility", () => {

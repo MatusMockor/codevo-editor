@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { AgentQueuedPrompt, AGENT_QUEUED_UNCERTAIN_NOTICE } from "./AgentTurnParts";
+import { AgentQueuedPrompt, AGENT_QUEUED_UNCERTAIN_NOTICE } from "./AgentQueuedPrompt";
 
 it("retains uncertain messages without allowing edit or duplicate send", () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

@@ -292,6 +292,15 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     [bulkCommand, selection],
   );
 
+  const archivedIds = useMemo(
+    () => new Set(sections.archived.map((view) => view.thread.threadId)),
+    [sections.archived],
+  );
+  const selectedArchivedCount = useMemo(
+    () => selection.orderedIds.filter((threadId) => archivedIds.has(threadId)).length,
+    [archivedIds, selection.orderedIds],
+  );
+
   const toggleArchived = useCallback(() => {
     setArchivedExpanded((current) => !current);
     setArchivedShown(ARCHIVED_PAGE_COUNT);
@@ -434,6 +443,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       ))}
       {!search.active && selection.count > 1 && (
         <AgentThreadSelectionBar
+          archivedCount={selectedArchivedCount}
           onAction={runBulkAction}
           onClear={selection.clear}
           owner={selection.owner}

@@ -251,6 +251,19 @@ pub fn classify_error(error: &JsonRpcError) -> CodexRpcErrorKind {
     }
 }
 
+const THREAD_NOT_FOUND_MARKERS: &[&str] = &[
+    "no rollout found",
+    "thread not found",
+    "conversation not found",
+];
+
+pub fn is_thread_not_found(error: &JsonRpcError) -> bool {
+    let message = error.message.to_ascii_lowercase();
+    THREAD_NOT_FOUND_MARKERS
+        .iter()
+        .any(|marker| message.contains(marker))
+}
+
 fn bounded_tag(tag: &str) -> String {
     bounded_text(tag, MAX_PROTOCOL_TAG_BYTES)
 }
@@ -375,6 +388,8 @@ pub struct ThreadStartParams {
     pub sandbox: Option<SandboxMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<ApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -389,6 +404,8 @@ pub struct ThreadResumeParams {
     pub sandbox: Option<SandboxMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<ApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<String>,
     pub exclude_turns: bool,
 }
 
@@ -692,8 +709,14 @@ impl<'de> Deserialize<'de> for ThreadStatus {
 pub enum PatchChangeKind {
     Add,
     Delete,
-    Update,
+    Update { move_path: Option<String> },
     Unrecognized { tag: String },
+}
+
+#[derive(Deserialize)]
+struct UpdatePatchChangePayload {
+    #[serde(default, alias = "movePath")]
+    move_path: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for PatchChangeKind {
@@ -706,7 +729,12 @@ impl<'de> Deserialize<'de> for PatchChangeKind {
         match tag.as_str() {
             "add" => Ok(Self::Add),
             "delete" => Ok(Self::Delete),
-            "update" => Ok(Self::Update),
+            "update" => {
+                let payload: UpdatePatchChangePayload = tagged_payload::<D, _>(value)?;
+                Ok(Self::Update {
+                    move_path: payload.move_path,
+                })
+            }
             _ => Ok(Self::Unrecognized { tag }),
         }
     }
@@ -786,6 +814,15 @@ pub struct McpToolCallError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpToolCallResult {
+    #[serde(default)]
+    pub content: Vec<Value>,
+    #[serde(default)]
+    pub structured_content: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpToolCallItem {
     pub id: String,
     pub status: McpToolCallStatus,
@@ -794,9 +831,82 @@ pub struct McpToolCallItem {
     #[serde(default)]
     pub tool: Option<String>,
     #[serde(default)]
+    pub arguments: Option<Value>,
+    #[serde(default)]
     pub duration_ms: Option<i64>,
     #[serde(default)]
+    pub result: Option<McpToolCallResult>,
+    #[serde(default)]
     pub error: Option<McpToolCallError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebSearchAction {
+    Search {
+        query: Option<String>,
+        queries: Vec<String>,
+    },
+    OpenPage {
+        url: Option<String>,
+    },
+    FindInPage {
+        url: Option<String>,
+        pattern: Option<String>,
+    },
+    Other,
+    Unrecognized {
+        tag: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchWebSearchActionPayload {
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    queries: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageWebSearchActionPayload {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    pattern: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for WebSearchAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let tag = tagged_object_tag::<D>(&value)?;
+        match tag.as_str() {
+            "search" => {
+                let payload: SearchWebSearchActionPayload = tagged_payload::<D, _>(value)?;
+                Ok(Self::Search {
+                    query: payload.query,
+                    queries: payload.queries.unwrap_or_default(),
+                })
+            }
+            "openPage" => {
+                let payload: PageWebSearchActionPayload = tagged_payload::<D, _>(value)?;
+                Ok(Self::OpenPage { url: payload.url })
+            }
+            "findInPage" => {
+                let payload: PageWebSearchActionPayload = tagged_payload::<D, _>(value)?;
+                Ok(Self::FindInPage {
+                    url: payload.url,
+                    pattern: payload.pattern,
+                })
+            }
+            "other" => Ok(Self::Other),
+            _ => Ok(Self::Unrecognized { tag }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -805,6 +915,18 @@ pub struct WebSearchItem {
     pub id: String,
     #[serde(default)]
     pub query: Option<String>,
+    #[serde(default)]
+    pub action: Option<WebSearchAction>,
+    #[serde(default, rename = "results", deserialize_with = "optional_array_len")]
+    pub result_count: Option<usize>,
+}
+
+fn optional_array_len<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let entries = Option::<Vec<serde::de::IgnoredAny>>::deserialize(deserializer)?;
+    Ok(entries.map(|entries| entries.len()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1011,6 +1133,18 @@ pub struct ErrorNotification {
     pub will_retry: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelReroutedNotification {
+    pub thread_id: String,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    pub from_model: String,
+    pub to_model: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerNotification {
     ThreadStarted(ThreadStartedNotification),
@@ -1022,6 +1156,7 @@ pub enum ServerNotification {
     ThreadCompacted(ThreadCompactedNotification),
     ThreadQueueChanged { thread_id: String },
     Error(ErrorNotification),
+    ModelRerouted(ModelReroutedNotification),
     Ignored { method: String },
     Unknown { method: String },
 }
@@ -1066,7 +1201,6 @@ const IGNORED_NOTIFICATION_METHODS: &[&str] = &[
     "mcpServer/event/stream/notification",
     "mcpServer/oauthLogin/completed",
     "mcpServer/startupStatus/updated",
-    "model/rerouted",
     "model/safetyBuffering/updated",
     "model/verification",
     "modelProvider/authRecoveryCompleted",
@@ -1165,6 +1299,11 @@ fn decode_known_notification(method: &str, params: Value) -> Option<ServerNotifi
             method,
             params,
             ServerNotification::Error,
+        )),
+        "model/rerouted" => Some(decoded_notification(
+            method,
+            params,
+            ServerNotification::ModelRerouted,
         )),
         _ => None,
     }

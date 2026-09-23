@@ -18,7 +18,7 @@ import { findInThread } from "../../domain/agentThreadSearch";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
-import { AgentQueuedPrompt, AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE } from "./AgentTurnParts";
+import { AgentQueuedPrompt } from "./AgentQueuedPrompt";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 
@@ -247,9 +247,9 @@ describe("agent thread turns", () => {
     expect(group?.open).toBe(false);
     expect(group?.textContent).toContain("Child-only response");
     expect(group?.textContent).not.toContain("Parent response");
-    expect(group?.textContent).toContain("20 input");
-    expect(group?.textContent).toContain("3 cached input");
-    expect(group?.textContent).toContain("4s");
+    expect(group?.querySelector("summary")?.textContent).toContain("4s · 28 tok");
+    expect(group?.textContent).not.toContain("Subagent total");
+    expect(group?.textContent).not.toContain("20 in");
     act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__row")?.click());
     const member = host.querySelector<HTMLElement>(".agent-spawn-member");
     expect(member?.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
@@ -258,7 +258,7 @@ describe("agent thread turns", () => {
     expect(member?.textContent).not.toContain("Parent response");
   });
 
-  it("labels root cumulative usage as thread usage", () => {
+  it("keeps thread and per-turn token usage out of the transcript", () => {
     render({
       thread: threadView([
         turn("t1", "Prompt", RUNNING, [
@@ -276,10 +276,23 @@ describe("agent thread turns", () => {
             },
           },
         ]),
+        turn("t2", "Follow up", RUNNING, [
+          {
+            kind: "result",
+            text: "Done again",
+            isError: false,
+            usage: { inputTokens: 4, outputTokens: 230, contextTokens: 4 },
+          },
+        ]),
       ]),
     });
-    expect(host.textContent).toContain("Thread usage: 120 input");
-    expect(host.textContent).toContain("40 cached input");
+    const transcript = host.textContent ?? "";
+    expect(transcript).toContain("Done again");
+    expect(transcript).not.toContain("Thread total");
+    expect(transcript).not.toContain("This turn");
+    expect(transcript).not.toContain("120 in");
+    expect(transcript).not.toContain("230 out");
+    expect(host.querySelector("[title*='Tokens used']")).toBeNull();
   });
 
   it("shows a queue notice only when the provider reports accepted queueing", () => {
@@ -451,7 +464,7 @@ describe("agent thread turns", () => {
     expect(onEditDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
   });
 
-  it("disables the pencil and explains why while a queued message carries attachments", () => {
+  it("lets a queued message with attachments be edited", () => {
     const onEditDeferredFollowUp = vi.fn();
     render({
       thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]),
@@ -486,13 +499,43 @@ describe("agent thread turns", () => {
     });
 
     const edit = host.querySelector<HTMLButtonElement>('button[aria-label="Edit queued message"]');
-    expect(edit?.disabled).toBe(true);
-    expect(edit?.title).toBe(AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE);
-    expect(host.querySelector(".agent-prompt__queue-note")?.textContent).toBe(
-      AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE,
+    expect(edit?.disabled).toBe(false);
+    expect(host.querySelector(".agent-prompt__queue-note")).toBeNull();
+    expect(host.querySelector(".agent-prompt__queue-attachments")?.textContent).toBe(
+      "1 attachment",
     );
     act(() => edit?.click());
-    expect(onEditDeferredFollowUp).not.toHaveBeenCalled();
+    expect(onEditDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-image");
+  });
+
+  it("marks a queued message under edit and withholds edit and send now", () => {
+    render({
+      thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]),
+      deferredFollowUps: [
+        {
+          id: "deferred-1",
+          request: {
+            threadId: "agt-1",
+            prompt: "and then ship it",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+          },
+          queuedAtEpochMs: NOW,
+          editLease: 3,
+        },
+      ],
+      onEditDeferredFollowUp: vi.fn(),
+      onSendDeferredFollowUpNow: vi.fn(),
+    });
+
+    expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Editing");
+    expect(host.querySelector('button[aria-label="Edit queued message"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="Send queued message now"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="Remove queued message"]')).not.toBeNull();
   });
 
   it("hides the pencil when the surface cannot edit queued messages", () => {
@@ -813,7 +856,7 @@ describe("agent thread turns", () => {
     const answer = host.querySelector<HTMLElement>(".agent-answer");
     expect(answer).not.toBeNull();
     for (const selector of [
-      ".agent-reasoning",
+      ".agent-activity-group",
       ".agent-tool-row",
       ".agent-spawn",
       ".agent-text",
@@ -965,9 +1008,18 @@ describe("agent thread turns", () => {
       thread: threadView([turn("t1", "Run it", { kind: "failed", message: "boom" }, events)]),
     });
 
+    expect(host.querySelector("button.agent-tool-row")?.className).toBe(
+      "agent-tool-row agent-tool-row--interrupted",
+    );
+    expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Interrupted npm test");
+    expect(host.querySelector(".agent-tool-row--running")).toBeNull();
+
+    render({
+      thread: threadView([turn("t1", "Run it", { kind: "exited", exitCode: 0 }, events)]),
+    });
+
     expect(host.querySelector("button.agent-tool-row")?.className).toBe("agent-tool-row");
     expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Ran npm test");
-    expect(host.querySelector(".agent-tool-row--running")).toBeNull();
   });
 
   it("keeps a row expanded when the turn settles and the work fold remounts", () => {

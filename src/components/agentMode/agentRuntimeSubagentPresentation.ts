@@ -14,6 +14,7 @@ import {
   isAgentSubagentSpawnToolName,
   retainAgentSubagentLifecycle,
 } from "../../domain/agentSubagentLifecycle";
+import { appendAgentRuntimeSubagentActivity } from "../../domain/agentRuntimeSubagentActivity";
 import type { AgentTurn, AgentTurnEvent } from "../../domain/agentThread";
 import {
   agentTurnDurationLabel,
@@ -36,6 +37,7 @@ interface EntryObservation {
   title?: string;
   progress?: string;
   lastToolName?: string;
+  recentActivity: ReadonlyArray<string>;
   order: number;
 }
 
@@ -66,6 +68,7 @@ export function agentTurnRuntimeSubagents(turn: RuntimeSubagentTurn): AgentRunti
       ...present("totalTokens", entry.totalTokens),
       ...present("toolUses", entry.steps),
       ...present("nestedCount", entry.nestedCount),
+      ...present("recentActivity", observation?.recentActivity),
     };
   });
   return projectAgentRuntimeSubagents(sources, lifecycle?.truncated === true);
@@ -194,7 +197,7 @@ function observeEntries(
       known.order = order;
       return known;
     }
-    const created: EntryObservation = { order };
+    const created: EntryObservation = { order, recentActivity: [] };
     observations.set(key, created);
     return created;
   };
@@ -204,6 +207,11 @@ function observeEntries(
       if (key === undefined) continue;
       const observation = observe(key, order);
       if (event.lastToolName !== undefined) observation.lastToolName = event.lastToolName;
+      if (event.status === "running")
+        observation.recentActivity = appendAgentRuntimeSubagentActivity(
+          observation.recentActivity,
+          event.description ?? toolActivity(event.lastToolName),
+        );
       if (event.description === undefined) continue;
       if (event.status === "starting") observation.title ??= event.description;
       if (event.status === "running") observation.progress = event.description;
@@ -215,6 +223,10 @@ function observeEntries(
       const observation = observe(key, order);
       observation.lastToolName = event.event.name;
       observation.progress = event.event.description ?? event.event.inputSummary;
+      observation.recentActivity = appendAgentRuntimeSubagentActivity(
+        observation.recentActivity,
+        presentLine(observation.progress) ?? toolActivity(event.event.name),
+      );
       continue;
     }
     if (event.kind !== "toolCall" || event.parentToolId !== undefined) continue;
@@ -234,6 +246,15 @@ function entryBatchId(
   if (entryThreadId(entry) !== undefined) return RUNTIME_SUBAGENT_TURN_BATCH_ID;
   if (settlement === "running") return `${RUNTIME_SUBAGENT_ENTRY_BATCH_PREFIX}${entry.toolId}`;
   return RUNTIME_SUBAGENT_LEGACY_BATCH_ID;
+}
+
+function toolActivity(toolName: string | undefined): string | undefined {
+  if (toolName === undefined || toolName.trim() === "") return undefined;
+  return `▸ ${toolName}`;
+}
+
+function presentLine(value: string): string | undefined {
+  return value.trim() === "" ? undefined : value;
 }
 
 function nestedAgentsLabel(count: number): string | null {
@@ -281,4 +302,8 @@ function carriedProgress(
 
 function present<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
   return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
+}
+
+export function agentRecentActivityLabel(count: number): string {
+  return `Recent activity · ${count}`;
 }

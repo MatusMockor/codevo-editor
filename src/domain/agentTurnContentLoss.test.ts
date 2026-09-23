@@ -57,6 +57,18 @@ describe("agentTurnContentLost", () => {
     expect(agentTurnWindowDisplay(false, interrupted)).toBe("complete");
   });
 
+  it("does not call a fully recorded turn lost for a stale legacy window marker", () => {
+    const stamped = evidence({ loss: { kind: "legacyWindow" } });
+    expect(agentTurnContentLost(false, stamped)).toBe(false);
+    expect(agentTurnWindowDisplay(false, stamped)).toBe("complete");
+  });
+
+  it("calls a truncated turn lost when its log predates full transcripts", () => {
+    const stamped = evidence({ loss: { kind: "legacyWindow" } });
+    expect(agentTurnContentLost(true, stamped)).toBe(true);
+    expect(agentTurnWindowDisplay(true, stamped)).toBe("lost");
+  });
+
   it("calls a never truncated turn lost when its log admits a supervisor gap", () => {
     expect(agentTurnContentLost(false, evidence({ loss: { kind: "supervisorGap" } }))).toBe(true);
   });

@@ -1,4 +1,9 @@
 import {
+  flushClaudeNotices,
+  throttleClaudeNotices,
+  type ClaudeNoticeThrottle,
+} from "./claudeNoticeThrottle";
+import {
   classifyClaudeSubagentTelemetry,
   type ClaudeSubagentClassification,
 } from "./claudeSubagentClassification";
@@ -38,6 +43,7 @@ export interface AgentOutputParserState {
   readonly stderr: AgentOutputPendingLine;
   readonly emittedToolIds: ReadonlySet<string>;
   readonly claudeSubagentClassification?: ClaudeSubagentClassification;
+  readonly claudeNoticeThrottle?: ClaudeNoticeThrottle;
   readonly sessionId: string | null;
 }
 
@@ -60,6 +66,7 @@ interface ParsedLines {
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly emittedToolIds: ReadonlySet<string>;
   readonly claudeSubagentClassification?: ClaudeSubagentClassification;
+  readonly claudeNoticeThrottle?: ClaudeNoticeThrottle;
   readonly capturedSessionId: string | null;
   readonly reportedSessionId: string | null;
   readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
@@ -107,6 +114,7 @@ export function feedAgentOutput(
       ...withPendingLine(state, stream, split.state),
       emittedToolIds: parsed.emittedToolIds,
       claudeSubagentClassification: parsed.claudeSubagentClassification,
+      claudeNoticeThrottle: parsed.claudeNoticeThrottle,
       sessionId: parsed.capturedSessionId,
     },
     events: [...overflowEvents, ...parsed.events],
@@ -117,12 +125,19 @@ export function feedAgentOutput(
 }
 
 export function finishAgentOutput(state: AgentOutputParserState): AgentOutputFeedResult {
+  const notices = flushClaudeNotices(state.claudeNoticeThrottle);
   const events = [
+    ...notices.events,
     ...trailingLineEvents("stdout", state.stdout),
     ...trailingLineEvents("stderr", state.stderr),
   ];
   return {
-    state: { ...state, stdout: EMPTY_PENDING_LINE, stderr: EMPTY_PENDING_LINE },
+    state: {
+      ...state,
+      stdout: EMPTY_PENDING_LINE,
+      stderr: EMPTY_PENDING_LINE,
+      ...(state.claudeNoticeThrottle === undefined ? {} : { claudeNoticeThrottle: notices.state }),
+    },
     events,
     sessionId: null,
     accountUsage: [],
@@ -137,6 +152,7 @@ function parseLines(
   const events: AgentTurnEvent[] = [];
   let emittedToolIds = state.emittedToolIds;
   let claudeSubagentClassification = state.claudeSubagentClassification;
+  let claudeNoticeThrottle = state.claudeNoticeThrottle;
   let capturedSessionId = state.sessionId;
   let reportedSessionId: string | null = null;
   let sessionFallback: AgentSessionFallback | undefined;
@@ -171,7 +187,9 @@ function parseLines(
         parsed.result.events,
       );
       claudeSubagentClassification = classified.state;
-      events.push(...classified.events);
+      const throttled = throttleClaudeNotices(claudeNoticeThrottle, classified.events);
+      claudeNoticeThrottle = throttled.state;
+      events.push(...throttled.events);
     } else events.push(...parsed.result.events);
     const candidate = parsed.result.sessionId;
     if (candidate === null || candidate === capturedSessionId) continue;
@@ -182,6 +200,7 @@ function parseLines(
     events,
     emittedToolIds,
     claudeSubagentClassification,
+    claudeNoticeThrottle,
     capturedSessionId,
     reportedSessionId,
     accountUsage,

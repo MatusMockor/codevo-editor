@@ -283,6 +283,53 @@ describe("AgentAgentsPanel", () => {
     expect(rows[1]?.querySelector(".agents-panel__activity")?.textContent).toBe("task unknown");
   });
 
+  it("renders a collapsed recent activity history that stays open across live updates", () => {
+    const history = ["Reading a.ts", "▸ Grep", "Running npx vitest run"];
+    const first = group("t1", [source({ id: "a", title: "One", recentActivity: history })]);
+    act(() => root.render(<AgentAgentsPanel groups={[first]} />));
+    const details = host.querySelector<HTMLDetailsElement>(".agents-panel__history");
+    const entries = () =>
+      [...host.querySelectorAll(".agents-panel__history-entry")].map((node) => node.textContent);
+
+    expect(details?.open).toBe(false);
+    expect(host.querySelector(".agents-panel__history-summary")?.textContent).toBe(
+      "Recent activity · 3",
+    );
+    expect(entries()).toEqual(history);
+
+    act(() => {
+      if (details !== null) details.open = true;
+    });
+    const longer = [...history, "Step 4", "Step 5", "Step 6", "Step 7"];
+    const second = group(
+      "t1",
+      [source({ id: "a", title: "One", recentActivity: longer })],
+      first.subagents,
+    );
+    act(() => root.render(<AgentAgentsPanel groups={[second]} />));
+
+    expect(host.querySelector(".agents-panel__history")).toBe(details);
+    expect(details?.open).toBe(true);
+    expect(entries()).toEqual([
+      "▸ Grep",
+      "Running npx vitest run",
+      "Step 4",
+      "Step 5",
+      "Step 6",
+      "Step 7",
+    ]);
+    expect(host.querySelector(".agents-panel__history-summary")?.textContent).toBe(
+      "Recent activity · 6",
+    );
+  });
+
+  it("omits the history for an agent that has reported no activity", () => {
+    act(() => root.render(<AgentAgentsPanel groups={[group("t1", [source({ id: "a" })])]} />));
+
+    expect(host.querySelector(".agents-panel__row")).not.toBeNull();
+    expect(host.querySelector(".agents-panel__history")).toBeNull();
+  });
+
   it("bounds the rendered rows and says so", () => {
     const groups = Array.from({ length: 4 }, (_, turn) =>
       group(

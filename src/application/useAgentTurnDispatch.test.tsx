@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { CodexTransport } from "../domain/agentProviderSettings";
-import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement, useMemo, useReducer } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import {
 } from "../domain/agentProject";
 import {
   AgentTaskStartRejectedError,
+  MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
   type AgentTaskGateway,
   type AgentTaskOutputEvent,
@@ -41,7 +42,6 @@ import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type {
-  AgentFollowUpRequest,
   AgentSteerOutcome,
   AgentSteerRequest,
   AgentTasksNotice,
@@ -50,7 +50,10 @@ import type {
 } from "./agentThreadPorts";
 import { AGENT_TASKS_SOURCE } from "./agentProjectAuthority";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
-import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
+import {
+  AGENT_ATTACHMENTS_DISCARDED_NOTICE,
+  AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE,
+} from "./agentTurnAttachments";
 import type { AgentOutputParserPort } from "./agentTurnOutputStream";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 import {
@@ -68,7 +71,22 @@ import {
   DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE,
   LAUNCH_PROVIDER_MISMATCH_NOTICE,
 } from "./agentTurnAdmission";
-import { MAX_DEFERRED_FOLLOW_UPS_PER_THREAD } from "./agentDeferredFollowUps";
+import {
+  MAX_DEFERRED_FOLLOW_UPS_PER_THREAD,
+  type DeferredFollowUp,
+} from "./agentDeferredFollowUps";
+import {
+  AGENT_QUEUED_EDIT_UNAVAILABLE_NOTICE,
+  type AgentQueuedEditCommit,
+  type AgentQueuedEditSession,
+} from "./agentQueuedFollowUpEdit";
+import {
+  AGENT_FRESH_SESSION_NOTICE,
+  AGENT_REPLACED_SESSION_NOTICE,
+  AGENT_RESUME_REJECTED_NOTICE,
+  AGENT_SESSION_LOST_NOTICE,
+} from "./agentTurnDispatchPolicy";
+import { AGENT_DISPATCH_IN_PROGRESS_NOTICE } from "./agentDispatchKeys";
 import {
   DEFERRED_CLEARED_NOTICE,
   DEFERRED_FULL_NOTICE,
@@ -84,6 +102,11 @@ import {
   type AgentTurnDispatchDependencies,
   type AgentTurnDispatchSurface,
 } from "./useAgentTurnDispatch";
+
+function concreteLaunch(provider: AgentCliKind): AgentLaunchOptions {
+  if (provider === "codex") return { provider: "codex", model: "default", mode: "workspaceWrite" };
+  return { provider: "claudeCode", model: "default", mode: "supervised", effort: "high" };
+}
 
 const ROOT_A = "/workspace/app";
 const ROOT_B = "/workspace/other";
@@ -339,7 +362,7 @@ describe("useAgentTurnDispatch startThread", () => {
       const starting = harness.hook().startThread(
         startRequest({
           isolation: "in-place",
-          launch: defaultAgentLaunchOptions("codex"),
+          launch: concreteLaunch("codex"),
         }),
       );
       await waitForReact(() => expect(ensureProjectLease).toHaveBeenCalledWith(ROOT_A));
@@ -976,9 +999,10 @@ describe("useAgentTurnDispatch launch admission", () => {
       harness.hook().startThread(startRequest({ launch, dangerousLaunchConfirmed: true })),
     );
 
+    const admitted = { ...launch, effort: "high", context: "1m" };
     expect(result).not.toBeNull();
-    expect(harness.startedRequests[0]?.launch).toEqual(launch);
-    expect(harness.thread(result?.threadId ?? "").turns[0]?.launch).toEqual(launch);
+    expect(harness.startedRequests[0]?.launch).toEqual(admitted);
+    expect(harness.thread(result?.threadId ?? "").turns[0]?.launch).toEqual(admitted);
     expect(harness.notice()).toBeNull();
     harness.unmount();
   });
@@ -998,7 +1022,7 @@ describe("useAgentTurnDispatch launch admission", () => {
     expect(harness.startedRequests[0]).toMatchObject({
       agentCliKind: "claudeCode",
       providerGeneration: 1,
-      launch: defaultAgentLaunchOptions("claudeCode"),
+      launch: concreteLaunch("claudeCode"),
     });
     expect(harness.thread(result?.threadId ?? "").provider.kind).toBe("claudeCode");
     expect(harness.notice()).toBeNull();
@@ -1019,9 +1043,10 @@ describe("useAgentTurnDispatch launch admission", () => {
       true,
     );
 
-    expect(harness.startedRequests[1]?.launch).toEqual(launch);
+    const admitted = { ...launch, effort: "high", context: "1m" };
+    expect(harness.startedRequests[1]?.launch).toEqual(admitted);
     expect(harness.startedRequests[1]?.resumeSessionId).toBe(SESSION_ID);
-    expect(harness.thread(threadId).turns[1]?.launch).toEqual(launch);
+    expect(harness.thread(threadId).turns[1]?.launch).toEqual(admitted);
     harness.unmount();
   });
 
@@ -1031,9 +1056,7 @@ describe("useAgentTurnDispatch launch admission", () => {
     harness.agent.startAgentTask.mockClear();
 
     const sent = await act(() =>
-      harness
-        .hook()
-        .sendFollowUp({ threadId, prompt: "Go", launch: defaultAgentLaunchOptions("codex") }),
+      harness.hook().sendFollowUp({ threadId, prompt: "Go", launch: concreteLaunch("codex") }),
     );
 
     expect(sent).toBe(false);
@@ -1304,7 +1327,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
     });
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
@@ -1326,7 +1349,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1360,7 +1383,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       );
 
@@ -1385,7 +1408,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
       replaceProviderAtoBtoA(harness.environment);
@@ -1412,7 +1435,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await waitForReact(() =>
         expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2),
@@ -1438,7 +1461,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(true);
@@ -1466,7 +1489,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue after reopening",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(true);
@@ -1511,7 +1534,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue from the restored tab",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(true);
@@ -1537,7 +1560,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue from the background tab",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(true);
@@ -1565,7 +1588,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue through the durable owner",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(true);
@@ -1588,7 +1611,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       }),
     );
 
@@ -1597,7 +1620,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Again",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1619,13 +1642,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const first = act(() =>
       harness
         .hook()
-        .sendFollowUp({ threadId, prompt: "One", launch: defaultAgentLaunchOptions("claudeCode") }),
+        .sendFollowUp({ threadId, prompt: "One", launch: concreteLaunch("claudeCode") }),
     );
     await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
     const second = await act(() =>
       harness
         .hook()
-        .sendFollowUp({ threadId, prompt: "Two", launch: defaultAgentLaunchOptions("claudeCode") }),
+        .sendFollowUp({ threadId, prompt: "Two", launch: concreteLaunch("claudeCode") }),
     );
     pendingStart.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
 
@@ -1649,7 +1672,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
       expect(harness.actionsOf("turnStarted")).toHaveLength(1);
@@ -1684,7 +1707,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
       harness.dropThread(threadId);
@@ -1716,7 +1739,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1738,7 +1761,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Retry",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(true);
@@ -1759,7 +1782,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
       harness.environment.generation += 1;
@@ -1795,7 +1818,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
       harness.environment.generation += 1;
@@ -1824,7 +1847,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await waitForReact(() => expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1));
       harness.environment.generation += 1;
@@ -1854,7 +1877,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       });
       await waitForReact(() =>
         expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2),
@@ -1880,7 +1903,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "Continue",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1900,7 +1923,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "More",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1919,7 +1942,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId,
           prompt: "More",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1941,7 +1964,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         harness.hook().sendFollowUp({
           threadId: settled,
           prompt: "x",
-          launch: defaultAgentLaunchOptions("claudeCode"),
+          launch: concreteLaunch("claudeCode"),
         }),
       ),
     ).toBe(false);
@@ -1963,7 +1986,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       await act(() =>
         harness
           .hook()
-          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+          .sendFollowUp({ threadId, prompt: "x", launch: concreteLaunch("claudeCode") }),
       ),
     ).toBe(false);
 
@@ -1982,7 +2005,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       await act(() =>
         harness
           .hook()
-          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+          .sendFollowUp({ threadId, prompt: "x", launch: concreteLaunch("claudeCode") }),
       ),
     ).toBe(true);
 
@@ -1994,24 +2017,37 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
-  it("blocks a follow-up when no session id was captured", async () => {
+  it("starts a fresh session in the same thread when no session id was captured", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startThread();
     await act(async () => {
-      harness.emitStatus(harness.turnIdOf(threadId, 0), 1, { kind: "exited", exitCode: 0 });
+      harness.emitStatus(harness.turnIdOf(threadId, 0), 1, {
+        kind: "failed",
+        message: "boom",
+      });
     });
 
     expect(
       await act(() =>
         harness
           .hook()
-          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+          .sendFollowUp({ threadId, prompt: "x", launch: concreteLaunch("claudeCode") }),
       ),
-    ).toBe(false);
+    ).toBe(true);
 
-    expect(harness.notice()?.message).toBe(
-      "This thread has no resumable session; start a new thread.",
+    expect(harness.startedRequests[1]).toMatchObject({ threadId, resumeSessionId: null });
+    expect(harness.thread(threadId).turns).toHaveLength(2);
+    expect(harness.notice()?.message).toBe(AGENT_FRESH_SESSION_NOTICE);
+    const freshTurnId = harness.turnIdOf(threadId, 1);
+    await act(async () => {
+      harness.emitOutput(freshTurnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(freshTurnId, 1, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.thread(threadId).provider.sessionId).toBe(SESSION_ID));
+    await act(() =>
+      harness.hook().sendFollowUp({ threadId, prompt: "y", launch: concreteLaunch("claudeCode") }),
     );
+    expect(harness.startedRequests[2]).toMatchObject({ resumeSessionId: SESSION_ID });
     harness.unmount();
   });
 
@@ -2024,7 +2060,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       await act(() =>
         harness
           .hook()
-          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+          .sendFollowUp({ threadId, prompt: "x", launch: concreteLaunch("claudeCode") }),
       ),
     ).toBe(false);
 
@@ -2039,7 +2075,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       harness.hook().sendFollowUp({
         threadId,
         prompt: "Continue",
-        launch: defaultAgentLaunchOptions("claudeCode"),
+        launch: concreteLaunch("claudeCode"),
       }),
     );
 
@@ -2047,7 +2083,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "exited", exitCode: 2 });
     });
 
-    expect(harness.notice()?.message).toContain("rejected the resume request");
+    expect(harness.notice()?.message).toBe(AGENT_RESUME_REJECTED_NOTICE);
     harness.unmount();
   });
 });
@@ -2112,7 +2148,7 @@ function startRequest(
     prompt: "Fix the failing test",
     isolation: "worktree" as const,
     unsafeInPlaceConfirmationKey: null,
-    launch: defaultAgentLaunchOptions("claudeCode"),
+    launch: concreteLaunch("claudeCode"),
     ...overrides,
   };
 }
@@ -2165,12 +2201,26 @@ function fakeParser(): AgentOutputParserPort & {
             }
           : chunk.startsWith("session:")
             ? { state, events: [], sessionId: chunk.slice("session:".length), accountUsage: [] }
-            : {
-                state,
-                events: [{ kind: "assistantText" as const, text: chunk }],
-                sessionId: null,
-                accountUsage: [],
-              },
+            : chunk.startsWith("stderr:")
+              ? {
+                  state,
+                  events: [
+                    {
+                      kind: "unknownLine" as const,
+                      stream: "stderr" as const,
+                      raw: chunk.slice("stderr:".length),
+                      clipped: false,
+                    },
+                  ],
+                  sessionId: null,
+                  accountUsage: [],
+                }
+              : {
+                  state,
+                  events: [{ kind: "assistantText" as const, text: chunk }],
+                  sessionId: null,
+                  accountUsage: [],
+                },
   );
   const finish = vi.fn((state: AgentOutputParserState) => ({
     state,
@@ -2611,7 +2661,7 @@ describe("useAgentTurnDispatch steering", () => {
       const started = await act(() =>
         harness.hook().startThread(
           startRequest({
-            launch: defaultAgentLaunchOptions("codex"),
+            launch: concreteLaunch("codex"),
           }),
         ),
       );
@@ -2776,7 +2826,7 @@ describe("useAgentTurnDispatch steering", () => {
       const started = await act(() =>
         harness.hook().startThread(
           startRequest({
-            launch: defaultAgentLaunchOptions(cliKind),
+            launch: concreteLaunch(cliKind),
           }),
         ),
       );
@@ -2811,6 +2861,83 @@ describe("useAgentTurnDispatch steering", () => {
       harness.unmount();
     },
   );
+
+  async function runningCodexThread(
+    harness: ReturnType<typeof renderDispatch>,
+    launch: AgentLaunchOptions,
+    dangerousLaunchConfirmed = false,
+  ): Promise<{ threadId: string; turnId: string }> {
+    const started = await act(() =>
+      harness.hook().startThread(startRequest({ launch, dangerousLaunchConfirmed })),
+    );
+    const threadId = started!.threadId;
+    const turnId = harness.turnIdOf(threadId, 0);
+    await act(async () => harness.emitStatus(turnId, 1, { kind: "running" }));
+    return { threadId, turnId };
+  }
+
+  async function finishTurn(harness: ReturnType<typeof renderDispatch>, turnId: string) {
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+  }
+
+  const RETIRED_CODEX: AgentLaunchOptions = {
+    provider: "codex",
+    model: "default",
+    mode: "default",
+  };
+  const FULL_CODEX: AgentLaunchOptions = {
+    provider: "codex",
+    model: "default",
+    mode: "dangerFullAccess",
+  };
+
+  it("does not start a promoted default launch without confirmation", async () => {
+    const harness = renderDispatch({ cliKind: "codex", codexTransport: "exec" });
+    const started = await act(() =>
+      harness.hook().startThread(startRequest({ launch: RETIRED_CODEX })),
+    );
+    expect(started).toBeNull();
+    expect(harness.notice()?.message).toBe(DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE);
+    expect(harness.startedRequests).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("runs a confirmed promoted default launch as full access and keeps it for queued messages", async () => {
+    const harness = renderDispatch({ cliKind: "codex", codexTransport: "exec" });
+    const { threadId, turnId } = await runningCodexThread(harness, RETIRED_CODEX, true);
+    expect(harness.startedRequests[0].launch).toEqual(FULL_CODEX);
+    expect(
+      await steerOnce(harness, {
+        threadId,
+        prompt: "later",
+        delivery: "queued",
+        dangerousLaunchConfirmed: true,
+      }),
+    ).toBe("deferred");
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0]?.request).toMatchObject({
+      launch: FULL_CODEX,
+      dangerousLaunchConfirmed: true,
+    });
+    await finishTurn(harness, turnId);
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].launch).toEqual(FULL_CODEX);
+    harness.unmount();
+  });
+
+  it("keeps the confirmation of an explicitly chosen full-access launch for queued messages", async () => {
+    const harness = renderDispatch({ cliKind: "codex", codexTransport: "exec" });
+    const { threadId, turnId } = await runningCodexThread(harness, FULL_CODEX, true);
+    expect(await steerOnce(harness, { threadId, prompt: "later", delivery: "queued" })).toBe(
+      "deferred",
+    );
+    await finishTurn(harness, turnId);
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].launch).toEqual(FULL_CODEX);
+    harness.unmount();
+  });
 
   function appendBoundary(
     harness: ReturnType<typeof renderDispatch>,
@@ -3555,43 +3682,377 @@ describe("useAgentTurnDispatch steering", () => {
     harness.unmount();
   });
 
-  it("takes a queued message out of the queue and returns it for editing", async () => {
+  const SECOND_ATTACHMENT_ID = "fedcba9876543210fedcba9876543210";
+
+  async function queueWithImage(
+    harness: ReturnType<typeof renderDispatch>,
+    threadId: string,
+  ): Promise<ReadonlyArray<DeferredFollowUp>> {
+    expect(
+      await steerOnce(harness, {
+        threadId,
+        prompt: "look at this",
+        delivery: "queued",
+        attachments: [IMAGE_INTENT],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe("deferred");
+    expect(await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" })).toBe(
+      "deferred",
+    );
+    return harness.hook().deferredFollowUps.get(threadId) ?? [];
+  }
+
+  function beginEdit(
+    harness: ReturnType<typeof renderDispatch>,
+    threadId: string,
+    id: string,
+  ): AgentQueuedEditSession | null {
+    let session: AgentQueuedEditSession | null = null;
+    act(() => {
+      session = harness.hook().beginDeferredFollowUpEdit(threadId, id);
+    });
+    return session;
+  }
+
+  async function commitEdit(
+    harness: ReturnType<typeof renderDispatch>,
+    session: AgentQueuedEditSession,
+    commit: AgentQueuedEditCommit,
+  ): Promise<boolean> {
+    const outcomes: boolean[] = [];
+    await act(async () => {
+      outcomes.push(await harness.hook().commitDeferredFollowUpEdit(session, commit));
+    });
+    return outcomes[0];
+  }
+
+  it("edits a queued message with an attachment in place and keeps the claimed attachment", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startRunningThread();
-    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
-    await steerOnce(harness, { threadId, prompt: "queued one" });
-    await steerOnce(harness, { threadId, prompt: "queued two" });
-    const queued = harness.hook().deferredFollowUps.get(threadId) ?? [];
-    const taken: Array<AgentFollowUpRequest | null> = [];
+    const queued = await queueWithImage(harness, threadId);
 
-    act(() => {
-      taken.push(harness.hook().takeDeferredFollowUp(threadId, queued[0].id));
+    const session = beginEdit(harness, threadId, queued[0].id);
+    expect(session).not.toBeNull();
+    expect(session!.prompt).toBe("look at this");
+    expect(session!.attachments.map((entry) => entry.attachment)).toEqual([
+      {
+        kind: "image",
+        attachmentId: ATTACHMENT_ID,
+        name: "shot.png",
+        mime: "image/png",
+        bytes: 2_048,
+        width: 800,
+        height: 600,
+        storedPath: `/data/agent-attachments/threads/${threadId}/${ATTACHMENT_ID}.png`,
+      },
+    ]);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].editLease).toBe(session!.lease);
+
+    const committed = await commitEdit(harness, session!, {
+      prompt: "  look closer  ",
+      keptAttachmentKeys: session!.attachments.map((entry) => entry.key),
     });
 
-    expect(taken[0]?.prompt).toBe("queued one");
-    expect(taken[0]?.threadId).toBe(threadId);
+    expect(committed).toBe(true);
+    const edited = harness.hook().deferredFollowUps.get(threadId) ?? [];
+    expect(edited.map((entry) => entry.id)).toEqual(queued.map((entry) => entry.id));
+    expect(edited.map((entry) => entry.request.prompt)).toEqual(["look closer", "second"]);
+    expect(edited[0].editLease).toBeUndefined();
+    expect(edited[0].request.attachments).toEqual([IMAGE_INTENT]);
+    expect(edited[0].request.attachmentOwner).toEqual(OWNER_INTENT);
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
+    expect(harness.attachmentGateway.releaseAgentAttachment).not.toHaveBeenCalled();
+
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, queued[0].id));
+    const payload = harness.agent.steerAgentTask.mock.calls[0][0];
+    expect(payload.prompt.startsWith("look closer\n\n")).toBe(true);
+    expect(payload.prompt).toContain(ATTACHMENT_ID);
+    expect(payload.attachments).toEqual([{ kind: "staged", attachmentId: ATTACHMENT_ID }]);
     expect(
       (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
-    ).toEqual(["queued two"]);
-    expect(harness.hook().takeDeferredFollowUp(threadId, queued[0].id)).toBeNull();
+    ).toEqual(["second"]);
     harness.unmount();
   });
 
-  it("refuses to take a queued message that carries attachments", async () => {
+  it("drops an attachment removed during the edit without deleting its stored file", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startRunningThread();
-    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
-    await steerOnce(harness, {
-      threadId,
-      prompt: "queued image",
-      attachments: [IMAGE_INTENT],
-      attachmentOwner: OWNER_INTENT,
-    });
-    const queued = harness.hook().deferredFollowUps.get(threadId) ?? [];
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
 
-    expect(harness.hook().takeDeferredFollowUp(threadId, queued[0].id)).toBeNull();
+    expect(
+      await commitEdit(harness, session!, { prompt: "text only", keptAttachmentKeys: [] }),
+    ).toBe(true);
+
+    const edited = harness.hook().deferredFollowUps.get(threadId)?.[0];
+    expect(edited?.request.attachments).toBeUndefined();
+    expect(edited?.request.attachmentOwner).toBeUndefined();
+    expect(harness.attachmentGateway.releaseAgentAttachment).not.toHaveBeenCalled();
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, queued[0].id));
+    expect(harness.agent.steerAgentTask.mock.calls[0][0]).toEqual({
+      taskId: harness.turnIdOf(threadId, 0),
+      workspaceId: OWNER_A,
+      threadId,
+      prompt: "text only",
+    });
+    harness.unmount();
+  });
+
+  it("claims only the attachments added while editing", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
+    const added = { ...IMAGE_INTENT, attachmentId: SECOND_ATTACHMENT_ID, name: "two.png" };
+
+    expect(
+      await commitEdit(harness, session!, {
+        prompt: "both",
+        keptAttachmentKeys: session!.attachments.map((entry) => entry.key),
+        attachments: [added],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe(true);
+
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(2);
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenLastCalledWith({
+      workspaceId: OWNER_A,
+      threadId,
+      attachmentIds: [SECOND_ATTACHMENT_ID],
+    });
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].request.attachments).toEqual([
+      IMAGE_INTENT,
+      added,
+    ]);
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, queued[0].id));
+    expect(harness.agent.steerAgentTask.mock.calls[0][0].attachments).toEqual([
+      { kind: "staged", attachmentId: ATTACHMENT_ID },
+      { kind: "staged", attachmentId: SECOND_ATTACHMENT_ID },
+    ]);
+    harness.unmount();
+  });
+
+  it("refuses an edit that would exceed the attachment count before claiming anything", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
+    const extra = Array.from({ length: 8 }, (_, index) => ({
+      ...IMAGE_INTENT,
+      attachmentId: index.toString(16).padStart(32, "a"),
+      bytes: 16,
+    }));
+
+    expect(
+      await commitEdit(harness, session!, {
+        prompt: "too many",
+        keptAttachmentKeys: session!.attachments.map((entry) => entry.key),
+        attachments: extra,
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe(false);
+
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0]).toEqual({
+      ...queued[0],
+      editLease: session!.lease,
+    });
+    harness.unmount();
+  });
+
+  it("leaves the queued message unchanged when the edit is cancelled", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
+
+    act(() => harness.hook().cancelDeferredFollowUpEdit(session!));
+
+    const after = harness.hook().deferredFollowUps.get(threadId) ?? [];
+    expect(after).toEqual(queued);
+    expect(after[0].request).toBe(queued[0].request);
+    expect(harness.attachmentGateway.releaseAgentAttachment).not.toHaveBeenCalled();
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, queued[0].id));
+    expect(harness.agent.steerAgentTask.mock.calls[0][0].attachments).toEqual([
+      { kind: "staged", attachmentId: ATTACHMENT_ID },
+    ]);
+    harness.unmount();
+  });
+
+  it("holds the queue while a message is being edited and releases it on cancel", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    const entry = harness.hook().deferredFollowUps.get(threadId)![0];
+    const session = beginEdit(harness, threadId, entry.id);
+
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, entry.id));
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.turn(threadId, 0).status.kind).toBe("exited"));
+    expect(harness.startedRequests).toHaveLength(1);
     expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(1);
-    expect(harness.hook().takeDeferredFollowUp("agt-missing-0000", queued[0].id)).toBeNull();
+
+    act(() => harness.hook().cancelDeferredFollowUpEdit(session!));
+
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].prompt).toBe("first");
+    harness.unmount();
+  });
+
+  it("refuses stale, foreign, and concurrent queued edits", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+
+    expect(beginEdit(harness, "agt-missing-0000", queued[0].id)).toBeNull();
+    expect(beginEdit(harness, threadId, "deferred-missing")).toBeNull();
+    const session = beginEdit(harness, threadId, queued[0].id);
+    expect(beginEdit(harness, threadId, queued[1].id)).toBeNull();
+    expect(
+      await commitEdit(
+        harness,
+        { ...session!, threadId: "agt-missing-0000" },
+        { prompt: "foreign", keptAttachmentKeys: [] },
+      ),
+    ).toBe(false);
+    expect(
+      await commitEdit(
+        harness,
+        { ...session!, lease: session!.lease + 1 },
+        { prompt: "stale lease", keptAttachmentKeys: [] },
+      ),
+    ).toBe(false);
+
+    act(() => harness.hook().removeDeferredFollowUp(threadId, queued[0].id));
+    expect(await commitEdit(harness, session!, { prompt: "late", keptAttachmentKeys: [] })).toBe(
+      false,
+    );
+    expect(harness.notice()?.message).toBe(AGENT_QUEUED_EDIT_UNAVAILABLE_NOTICE);
+    expect(
+      (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
+    ).toEqual(["second"]);
+    expect(beginEdit(harness, threadId, queued[1].id)).not.toBeNull();
+    harness.unmount();
+  });
+
+  it("drains the queue after a turn settles once an abandoned edit releases its lease", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    const entry = harness.hook().deferredFollowUps.get(threadId)![0];
+    const session = beginEdit(harness, threadId, entry.id);
+
+    act(() => harness.hook().cancelDeferredFollowUpEdit(session!));
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].prompt).toBe("first");
+    expect(await commitEdit(harness, session!, { prompt: "late", keptAttachmentKeys: [] })).toBe(
+      false,
+    );
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("keeps an edit committable after another message is queued meanwhile", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
+    const added = { ...IMAGE_INTENT, attachmentId: SECOND_ATTACHMENT_ID, name: "two.png" };
+    const claim = harness.attachmentGateway.claimAgentAttachments.getMockImplementation();
+    expect(claim).toBeDefined();
+    const outcomes: AgentSteerOutcome[] = [];
+    harness.attachmentGateway.claimAgentAttachments.mockImplementationOnce(async (request) => {
+      outcomes.push(await harness.hook().steer({ threadId, prompt: "third", delivery: "queued" }));
+      return claim!(request);
+    });
+
+    expect(
+      await commitEdit(harness, session!, {
+        prompt: "edited",
+        keptAttachmentKeys: session!.attachments.map((entry) => entry.key),
+        attachments: [added],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe(true);
+    expect(outcomes).toEqual(["deferred"]);
+    expect(
+      (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
+    ).toEqual(["edited", "second", "third"]);
+    expect(harness.attachmentGateway.releaseAgentAttachment).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("releases attachments claimed for an edit that exceeds the prompt cap", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
+    const added = { ...IMAGE_INTENT, attachmentId: SECOND_ATTACHMENT_ID, name: "two.png" };
+
+    expect(
+      await commitEdit(harness, session!, {
+        prompt: "x".repeat(MAX_AGENT_TASK_PROMPT_BYTES - 8),
+        keptAttachmentKeys: [],
+        attachments: [added],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe(false);
+
+    expect(harness.notice()?.message).toBe(AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE);
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenLastCalledWith({
+      workspaceId: OWNER_A,
+      threadId,
+      attachmentIds: [SECOND_ATTACHMENT_ID],
+    });
+    expect(harness.attachmentGateway.releaseAgentAttachment).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: OWNER_A,
+      attachmentId: SECOND_ATTACHMENT_ID,
+    });
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].request).toBe(queued[0].request);
+    harness.unmount();
+  });
+
+  it("releases attachments claimed for an edit whose entry left the queue meanwhile", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const queued = await queueWithImage(harness, threadId);
+    const session = beginEdit(harness, threadId, queued[0].id);
+    const added = { ...IMAGE_INTENT, attachmentId: SECOND_ATTACHMENT_ID, name: "two.png" };
+    const claim = harness.attachmentGateway.claimAgentAttachments.getMockImplementation();
+    expect(claim).toBeDefined();
+    harness.attachmentGateway.claimAgentAttachments.mockImplementationOnce(async (request) => {
+      harness.hook().removeDeferredFollowUp(threadId, queued[0].id);
+      return claim!(request);
+    });
+
+    expect(
+      await commitEdit(harness, session!, {
+        prompt: "gone",
+        keptAttachmentKeys: [],
+        attachments: [added],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe(false);
+
+    expect(harness.attachmentGateway.releaseAgentAttachment).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: OWNER_A,
+      attachmentId: SECOND_ATTACHMENT_ID,
+    });
+    expect(
+      (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
+    ).toEqual(["second"]);
     harness.unmount();
   });
 
@@ -3694,6 +4155,347 @@ describe("useAgentTurnDispatch steering", () => {
       ]),
     );
     expect(harness.agent.closeAgentTaskInput).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+});
+
+describe("useAgentTurnDispatch run control", () => {
+  it("applies a Stop pressed during the follow-up start window once the start settles", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    let sent = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      const turnId = harness.startedRequests[1]?.taskId ?? "";
+      await harness.hook().stop(threadId);
+      expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+        taskId: turnId,
+        workspaceId: OWNER_A,
+      });
+      started.resolve({ taskId: turnId });
+      sent = await sending;
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    await act(async () => {
+      harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "exited", exitCode: 143 });
+    });
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "exited", exitCode: 143 });
+    harness.unmount();
+  });
+
+  it("settles a stopped started turn locally when the backend stop cannot be confirmed", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+    harness.agent.stopAgentTask.mockRejectedValue(new Error("ipc down"));
+
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      await harness.hook().stop(threadId);
+      started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      await sending;
+    });
+
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    harness.unmount();
+  });
+
+  it("settles a turn stopped before its backend registration as stopped, not failed", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      await harness.hook().stop(threadId);
+      started.reject(new Error("The agent was stopped before it started."));
+      await sending;
+    });
+
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    expect(harness.notice()?.kind).not.toBe("failure");
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("stops again and reports when a stopped turn's start result is uncertain", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      await harness.hook().stop(threadId);
+      started.reject(new Error("ipc timeout"));
+      await sending;
+    });
+
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      AGENT_TASKS_SOURCE,
+      expect.objectContaining({ message: "ipc timeout" }),
+    );
+    harness.unmount();
+  });
+
+  it("keeps a failed Stop during the start window as a pending intent without a false failure", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+    harness.agent.stopAgentTask.mockRejectedValueOnce(new Error("ipc down"));
+
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      await harness.hook().stop(threadId);
+      expect(harness.notice()?.message).not.toBe("The agent could not be stopped.");
+      started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      await sending;
+    });
+
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    await act(async () => {
+      harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "stopped" });
+    });
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    harness.unmount();
+  });
+
+  it("keeps the output warning next to the fresh-session notice", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+    await act(async () => {
+      harness.emitStatus(harness.turnIdOf(threadId, 0), 1, { kind: "failed", message: "boom" });
+    });
+    harness.agent.acknowledgeAgentTaskStart.mockRejectedValueOnce(new Error("detached"));
+
+    expect(
+      await act(() =>
+        harness
+          .hook()
+          .sendFollowUp({ threadId, prompt: "x", launch: concreteLaunch("claudeCode") }),
+      ),
+    ).toBe(true);
+
+    expect(harness.notice()?.message).toContain("live output could not be attached");
+    expect(harness.notice()?.message).toContain(AGENT_FRESH_SESSION_NOTICE);
+    harness.unmount();
+  });
+
+  it("lets a thread continue while a new thread in the project is still starting", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    let draft!: Promise<AgentThreadStartResult | null>;
+    await act(async () => {
+      draft = harness.hook().startThread(startRequest());
+      await harness.waitForStartedRequests(2);
+    });
+    expect(harness.hook().dispatchingKeys).toEqual(new Set([`new:${ROOT_A}`]));
+    expect(harness.hook().dispatching).toBe(true);
+
+    expect(await act(() => harness.hook().startThread(startRequest()))).toBeNull();
+    expect(harness.notice()?.message).toBe(AGENT_DISPATCH_IN_PROGRESS_NOTICE);
+    const followedUp = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    expect(followedUp).toBe(true);
+    expect(harness.startedRequests[2]).toMatchObject({ threadId, resumeSessionId: SESSION_ID });
+
+    await act(async () => {
+      started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      await draft;
+    });
+    expect(harness.hook().dispatchingKeys.size).toBe(0);
+    expect(harness.hook().dispatching).toBe(false);
+    harness.unmount();
+  });
+
+  it.each([
+    ["reported its session", `session:${SESSION_ID}`],
+    ["produced a result", "result"],
+  ])(
+    "keeps the session when a resumed turn that %s later fails with not-found wording",
+    async (_label, progress) => {
+      const harness = renderDispatch();
+      const threadId = await harness.settleThreadWithSession();
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: concreteLaunch("claudeCode"),
+        }),
+      );
+      const turnId = harness.turnIdOf(threadId, 1);
+      await act(async () => {
+        harness.emitOutput(turnId, 1, progress);
+        harness.emitOutput(
+          turnId,
+          2,
+          `stderr:No conversation found with session ID: ${SESSION_ID}`,
+        );
+        harness.emitStatus(turnId, 1, { kind: "exited", exitCode: 1 });
+      });
+
+      expect(harness.notice()?.message).not.toBe(AGENT_SESSION_LOST_NOTICE);
+      expect(harness.thread(threadId).provider.sessionId).toBe(SESSION_ID);
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Again",
+          launch: concreteLaunch("claudeCode"),
+        }),
+      );
+      expect(harness.startedRequests[2]).toMatchObject({ resumeSessionId: SESSION_ID });
+      harness.unmount();
+    },
+  );
+
+  it("drops a session the CLI cannot find and continues the thread in a new session", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    const failedTurnId = harness.turnIdOf(threadId, 1);
+    await act(async () => {
+      harness.emitOutput(
+        failedTurnId,
+        1,
+        `stderr:No conversation found with session ID: ${SESSION_ID}`,
+      );
+      harness.emitStatus(failedTurnId, 1, { kind: "exited", exitCode: 1 });
+    });
+    expect(harness.notice()?.message).toBe(AGENT_SESSION_LOST_NOTICE);
+    expect(harness.thread(threadId).provider.sessionId).toBeNull();
+    expect(harness.actionsOf("providerSessionInvalidated")).toEqual([
+      {
+        kind: "providerSessionInvalidated",
+        threadId,
+        owner: harness.thread(threadId).owner,
+        sessionId: SESSION_ID,
+      },
+    ]);
+
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Again",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    expect(harness.startedRequests[2]).toMatchObject({ threadId, resumeSessionId: null });
+    expect(harness.notice()?.message).toBe(AGENT_REPLACED_SESSION_NOTICE);
+    const freshTurnId = harness.turnIdOf(threadId, 2);
+    await act(async () => {
+      harness.emitOutput(freshTurnId, 1, "session:sess-0002-beef");
+      harness.emitStatus(freshTurnId, 1, { kind: "exited", exitCode: 0 });
+    });
+
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Later",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    expect(harness.startedRequests[3]).toMatchObject({ resumeSessionId: "sess-0002-beef" });
+    harness.unmount();
+  });
+
+  it("adopts a changed Claude session id once and resumes it next time without a warning", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    const resumedTurnId = harness.turnIdOf(threadId, 1);
+    await act(async () => {
+      harness.emitOutput(resumedTurnId, 1, "session:sess-0003-cafe");
+      harness.emitOutput(resumedTurnId, 2, "session:sess-0004-dead");
+      harness.emitStatus(resumedTurnId, 1, { kind: "exited", exitCode: 0 });
+    });
+    expect(harness.notice()?.message ?? "").not.toContain("different session id");
+
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Next",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    expect(harness.startedRequests[2]).toMatchObject({ resumeSessionId: "sess-0003-cafe" });
     harness.unmount();
   });
 });

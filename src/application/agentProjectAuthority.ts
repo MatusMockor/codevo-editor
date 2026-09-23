@@ -137,6 +137,19 @@ export function isCurrentTaskLaunchAuthority(
   );
 }
 
+export function sameLaunchAuthority(
+  left: AgentTaskLaunchAuthority,
+  right: AgentTaskLaunchAuthority,
+): boolean {
+  return (
+    left.rootKey === right.rootKey &&
+    left.ownerId === right.ownerId &&
+    left.generation === right.generation &&
+    left.workspaceId === right.workspaceId &&
+    left.workspaceGeneration === right.workspaceGeneration
+  );
+}
+
 export function isCurrentThreadLaunchAuthority(
   dependenciesRef: AgentLaunchProjectsRef,
   mountedRef: MountedRef,

@@ -1,10 +1,13 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { mapWithBoundedConcurrency } from "../../application/boundedConcurrency";
+import { settleAgentThreadMutation } from "../../application/agentThreadMutationOutcome";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
 import {
+  AGENT_THREAD_BULK_CONCURRENCY,
   agentThreadBulkPlan,
   agentThreadBulkReport,
   type AgentThreadBulkAction,
@@ -39,7 +42,7 @@ export const REVEAL_FAILED_NOTICE: AgentTasksNotice = {
 export function staleSelectionNotice(action: AgentThreadBulkAction): AgentTasksNotice {
   return {
     kind: "warning",
-    message: `The thread selection no longer belongs to this project, nothing was ${action === "archive" ? "archived" : "deleted"}.`,
+    message: `The thread selection no longer belongs to this project, nothing was ${bulkPastTense(action)}.`,
     action: null,
   };
 }
@@ -50,7 +53,9 @@ export type AgentMenuCommandSurface = Pick<
   | "togglePin"
   | "stop"
   | "archive"
+  | "unarchive"
   | "remove"
+  | "batchThreadMutations"
   | "renameThread"
   | "markThreadUnread"
   | "threadCopyDetail"
@@ -90,13 +95,37 @@ export function useAgentThreadMenuCommands({
   startNewThread,
 }: AgentThreadMenuCommandOptions): AgentThreadMenuCommands {
   const threadViews = agents.threads;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const remove = useCallback(
-    (threadId: string) => {
-      agents.remove(threadId);
-      onThreadRemoved(threadId);
+    async (threadId: string): Promise<boolean> => {
+      const removed = await settleAgentThreadMutation(agents.remove(threadId));
+      if (removed && mounted.current) onThreadRemoved(threadId);
+      return removed;
     },
     [agents, onThreadRemoved],
+  );
+
+  const applyBulkAction = useCallback(
+    (action: AgentThreadBulkAction, threadId: string): Promise<boolean> => {
+      switch (action) {
+        case "archive":
+          return settleAgentThreadMutation(agents.archive(threadId));
+        case "unarchive":
+          return settleAgentThreadMutation(agents.unarchive?.(threadId));
+        case "delete":
+          return remove(threadId);
+        default:
+          return unsupportedBulkAction(action);
+      }
+    },
+    [agents, remove],
   );
 
   const copyText = useCallback(
@@ -206,10 +235,13 @@ export function useAgentThreadMenuCommands({
           void agents.stop(threadId);
           return;
         case "archive":
-          agents.archive(threadId);
+          void agents.archive(threadId);
+          return;
+        case "unarchive":
+          void agents.unarchive?.(threadId);
           return;
         case "delete":
-          remove(threadId);
+          void remove(threadId);
           return;
         case "newThread": {
           const repositoryRoot = threadRepositoryRoot(threadViews, threadId);
@@ -242,16 +274,26 @@ export function useAgentThreadMenuCommands({
         return;
       }
       const plan = agentThreadBulkPlan(command.request, bulkCandidates(threadViews));
-      for (const threadId of plan.applyIds) {
-        if (plan.action === "archive") {
-          agents.archive(threadId);
-          continue;
-        }
-        remove(threadId);
-      }
-      reportNotice({ kind: "info", message: agentThreadBulkReport(plan), action: null });
+      const run = () =>
+        mapWithBoundedConcurrency(
+          plan.applyIds,
+          AGENT_THREAD_BULK_CONCURRENCY,
+          async (threadId) => ({
+            threadId,
+            ok: await applyBulkAction(plan.action, threadId),
+          }),
+        );
+      void (agents.batchThreadMutations?.(run) ?? run()).then((outcomes) => {
+        if (!mounted.current) return;
+        const failed = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.threadId);
+        reportNotice({
+          kind: failed.length === 0 ? "info" : "warning",
+          message: agentThreadBulkReport(plan, failed),
+          action: null,
+        });
+      });
     },
-    [agents, remove, reportNotice, threadViews],
+    [agents, applyBulkAction, reportNotice, threadViews],
   );
 
   return { handleProjectCommand, handleThreadBulkCommand, handleThreadMenuCommand };
@@ -291,6 +333,23 @@ function projectRootKeyForRepository(
     candidate.repos.some((repo) => repo.repositoryRoot === repositoryRoot),
   );
   return group?.projectRootKey ?? null;
+}
+
+function bulkPastTense(action: AgentThreadBulkAction): string {
+  switch (action) {
+    case "archive":
+      return "archived";
+    case "unarchive":
+      return "unarchived";
+    case "delete":
+      return "deleted";
+    default:
+      return unsupportedBulkAction(action);
+  }
+}
+
+function unsupportedBulkAction(action: never): never {
+  throw new TypeError(`Unsupported agent thread bulk action: ${String(action)}.`);
 }
 
 function unsupportedProjectCommand(command: never): never {

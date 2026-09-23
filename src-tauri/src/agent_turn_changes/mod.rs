@@ -1,34 +1,26 @@
-//! Durable bounded snapshots of the on-disk working tree before and after each agent turn.
-//! These never mutate the live Git index, references, files, or repository configuration.
+//! Durable Git checkpoints of the on-disk working tree before and after each agent turn.
+//! Private refs retain history without changing HEAD, the live index, or working files.
+mod admission;
+mod checkpoint;
+mod checkpoint_diff;
+mod checkpoint_retention;
 mod compare;
+mod git_authority;
 mod git_process;
+pub(crate) mod read_errors;
+mod record_validation;
 mod snapshot;
 mod storage;
+mod storage_catalog;
 mod types;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use record_validation::validate_record;
+use std::path::{Path, PathBuf};
 use types::*;
-pub(crate) use types::{CapturePhase, TurnChangesSummary, TurnFileDiff};
+pub(crate) use types::{CapturePhase, ChangesState, TurnChangesSummary, TurnFileDiff};
 
 pub(crate) struct AgentTurnChangesStore {
     base: PathBuf,
-    active: Mutex<HashSet<String>>,
-}
-struct Permit<'a> {
-    store: &'a AgentTurnChangesStore,
-    root: String,
-}
-impl Drop for Permit<'_> {
-    fn drop(&mut self) {
-        self.store
-            .active
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.root);
-    }
+    admission: admission::Admission,
 }
 impl AgentTurnChangesStore {
     pub(crate) fn new(base: PathBuf) -> Self {
@@ -40,21 +32,8 @@ impl AgentTurnChangesStore {
             .unwrap_or(base);
         Self {
             base: base.join("agent-turn-changes"),
-            active: Mutex::new(HashSet::new()),
+            admission: admission::Admission::default(),
         }
-    }
-    fn permit(&self, root: &str) -> Result<Permit<'_>, String> {
-        let mut active = self
-            .active
-            .lock()
-            .map_err(|_| "Turn changes are temporarily unavailable.")?;
-        if active.len() >= 2 || !active.insert(root.to_owned()) {
-            return Err("Turn changes are already being recorded.".into());
-        }
-        Ok(Permit {
-            store: self,
-            root: root.to_owned(),
-        })
     }
     #[cfg(test)]
     pub(crate) fn capture(
@@ -84,16 +63,25 @@ impl AgentTurnChangesStore {
         validate_turn(turn_id)?;
         let (handle, identity) = snapshot::root_identity(root)?;
         verify_authority(&identity, authority)?;
-        let _permit = self.permit(&identity.path)?;
+        let _permit = self.admission.acquire(&identity.path)?;
+        snapshot::verify_root(&identity)?;
         let path = storage::record_path(&self.base, &identity, turn_id);
         let existing = storage::read(&path)?;
+        if existing.is_none() {
+            if let Some(reason) = unsupported_reason(&identity) {
+                return Ok(TurnChangesSummary::unsupported(turn_id, reason));
+            }
+        }
         if let Some(record) = &existing {
             validate_record(record, &identity, turn_id)?;
             if record.finished || matches!(phase, CapturePhase::Before) {
                 snapshot::verify_root(&identity)?;
-                return Ok(record.summary.clone());
+                return recorded_summary(record, &identity);
             }
         }
+        let previous = existing
+            .as_ref()
+            .and_then(|record| record.checkpoints.clone());
         let mut record = match (existing, phase) {
             (Some(record), CapturePhase::After) => record,
             (None, CapturePhase::After) => {
@@ -103,7 +91,7 @@ impl AgentTurnChangesStore {
                 ))
             }
             (_, CapturePhase::Before) => Record {
-                version: 1,
+                version: 2,
                 root: identity.clone(),
                 turn_id: turn_id.into(),
                 before: Snapshot::new(),
@@ -113,32 +101,105 @@ impl AgentTurnChangesStore {
                     "No completed snapshot is available for this turn.",
                 ),
                 finished: false,
+                checkpoints: Some(Checkpoints::default()),
             },
         };
-        match snapshot::capture(
-            &handle,
-            &identity,
-            matches!(phase, CapturePhase::After).then_some(&record.before),
-        ) {
-            Ok(captured) => match phase {
-                CapturePhase::Before => record.before = captured,
-                CapturePhase::After => {
-                    record.summary = match compare::summary(&self.base, &record, &captured) {
-                        Ok(summary) => summary,
-                        Err(reason) => TurnChangesSummary::unavailable(turn_id, &reason),
-                    };
-                    record.after = Some(captured);
+        if record.version == 1 {
+            match snapshot::capture(
+                &handle,
+                &identity,
+                matches!(phase, CapturePhase::After).then_some(&record.before),
+            ) {
+                Ok(captured) => match phase {
+                    CapturePhase::Before => record.before = captured,
+                    CapturePhase::After => {
+                        record.summary = match compare::summary(&self.base, &record, &captured) {
+                            Ok(summary) => summary,
+                            Err(reason) => TurnChangesSummary::unavailable(turn_id, &reason),
+                        };
+                        record.after = Some(captured);
+                        record.finished = true;
+                    }
+                },
+                Err(reason) => {
+                    record.summary = TurnChangesSummary::unavailable(turn_id, &reason);
                     record.finished = true;
                 }
-            },
-            Err(reason) => {
-                record.summary = TurnChangesSummary::unavailable(turn_id, &reason);
-                record.finished = true;
+            }
+        } else {
+            let checkpoints = record
+                .checkpoints
+                .as_mut()
+                .ok_or("Missing checkpoint metadata.")?;
+            let capture = checkpoint::capture(
+                &self.base,
+                &handle,
+                &identity,
+                turn_id,
+                phase,
+                checkpoints.before.as_ref(),
+            );
+            match capture {
+                Ok(captured) => match phase {
+                    CapturePhase::Before => checkpoints.before = Some(captured),
+                    CapturePhase::After => {
+                        checkpoints.after = Some(captured);
+                        record.finished = true;
+                        record.summary = match checkpoint::summary(
+                            &identity,
+                            checkpoints
+                                .before
+                                .as_ref()
+                                .ok_or("Missing baseline checkpoint.")?,
+                            checkpoints
+                                .after
+                                .as_ref()
+                                .ok_or("Missing final checkpoint.")?,
+                            turn_id,
+                        ) {
+                            Ok(summary) => summary,
+                            Err(reason) => TurnChangesSummary::unavailable(turn_id, &reason),
+                        };
+                    }
+                },
+                Err(reason) => {
+                    record.summary = TurnChangesSummary::unavailable(turn_id, &reason);
+                    record.finished = true;
+                }
             }
         }
         snapshot::verify_root(&identity)?;
-        storage::write(&path, &record)?;
+        if let Err(error) = storage::write(&path, &record) {
+            // Only undo this attempt's new refs. Existing durable checkpoints remain owned
+            // by their earlier metadata, including the baseline of an incomplete turn.
+            // rename may already have published metadata when directory fsync fails.
+            // Preserve refs if publication is visible or cannot be settled safely.
+            let published = storage::read(&path)
+                .map(|saved| saved.is_some_and(|saved| saved.checkpoints == record.checkpoints))
+                .unwrap_or(true);
+            if let Some(saved) = record.checkpoints.as_ref().filter(|_| !published) {
+                let previous = previous.as_ref();
+                for (created, existed) in [
+                    (
+                        &saved.before,
+                        previous.and_then(|saved| saved.before.as_ref()),
+                    ),
+                    (
+                        &saved.after,
+                        previous.and_then(|saved| saved.after.as_ref()),
+                    ),
+                ] {
+                    if existed.is_none() {
+                        if let Some(created) = created {
+                            let _ = checkpoint::delete(&identity, created);
+                        }
+                    }
+                }
+            }
+            return Err(error);
+        }
         storage::prune(&self.base, &path)?;
+        checkpoint_retention::enforce(&self.base, &identity, turn_id)?;
         Ok(record.summary)
     }
     #[cfg(test)]
@@ -164,14 +225,22 @@ impl AgentTurnChangesStore {
         verify_authority(&identity, authority)?;
         let Some(record) = storage::read(&storage::record_path(&self.base, &identity, turn_id))?
         else {
+            if let Some(reason) = unsupported_reason(&identity) {
+                return Ok(TurnChangesSummary::unsupported(turn_id, reason));
+            }
             return Ok(TurnChangesSummary::unavailable(
                 turn_id,
                 "No snapshot is available for this turn.",
             ));
         };
         validate_record(&record, &identity, turn_id)?;
+        if never_captured(&record) {
+            if let Some(reason) = unsupported_reason(&identity) {
+                return Ok(TurnChangesSummary::unsupported(turn_id, reason));
+            }
+        }
         snapshot::verify_root(&identity)?;
-        Ok(record.summary)
+        recorded_summary(&record, &identity)
     }
     #[cfg(test)]
     pub(crate) fn file_diff(
@@ -216,6 +285,23 @@ impl AgentTurnChangesStore {
         {
             return Err("This file is not available in the recorded turn changes.".into());
         }
+        if let Some(checkpoints) = &record.checkpoints {
+            let before = checkpoints
+                .before
+                .as_ref()
+                .ok_or("Missing baseline checkpoint.")?;
+            let after = checkpoints
+                .after
+                .as_ref()
+                .ok_or("Missing final checkpoint.")?;
+            let summary = checkpoint::summary(&identity, before, after, turn_id)?;
+            if summary != record.summary {
+                return Err("Saved turn changes do not match their checkpoints.".into());
+            }
+            let diff = checkpoint::file_diff(&identity, before, after, relative_path)?;
+            snapshot::verify_root(&identity)?;
+            return Ok(diff);
+        }
         let before = record.before.get(relative_path);
         let after = record
             .after
@@ -249,118 +335,20 @@ fn validate_turn(turn_id: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn validate_record(record: &Record, root: &RootIdentity, turn_id: &str) -> Result<(), String> {
-    if record.version != 1
-        || &record.root != root
-        || record.turn_id != turn_id
-        || record.summary.turn_id != turn_id
-    {
-        return Err("Saved turn changes belong to a different workspace or turn.".into());
-    }
-    if record.before.len() > 10000
-        || record
-            .after
-            .as_ref()
-            .is_some_and(|after| after.len() > 10000)
-        || record.summary.files.len() > MAX_CHANGED_FILES
-    {
-        return Err("Saved turn changes exceed the supported bounds.".into());
-    }
-    if record
-        .summary
-        .reason
-        .as_ref()
-        .is_some_and(|reason| reason.len() > 1024)
-        || (record.summary.state == ChangesState::Ready
-            && (!record.finished || record.after.is_none()))
-        || (record.summary.state == ChangesState::Unavailable && !record.summary.files.is_empty())
-    {
-        return Err("Saved turn changes contain invalid summary data.".into());
-    }
-    if record.summary.state == ChangesState::Ready {
-        let after = record
-            .after
-            .as_ref()
-            .ok_or("Saved turn changes have no completion snapshot.")?;
-        let paths: std::collections::BTreeSet<_> =
-            record.before.keys().chain(after.keys()).collect();
-        let changed: Vec<_> =
-            paths
-                .into_iter()
-                .filter(|path| {
-                    !record.before.get(*path).zip(after.get(*path)).is_some_and(
-                        |(before, after)| {
-                            before.digest == after.digest
-                                && before.executable == after.executable
-                                && before.unavailable == after.unavailable
-                        },
-                    )
-                })
-                .collect();
-        if record.summary.truncated != (changed.len() > MAX_CHANGED_FILES)
-            || !record
-                .summary
-                .files
-                .iter()
-                .map(|file| &file.relative_path)
-                .eq(changed.into_iter().take(MAX_CHANGED_FILES))
-        {
-            return Err("Saved turn changes do not match their frozen snapshots.".into());
-        }
-    }
-    let mut seen = HashSet::new();
-    for file in &record.summary.files {
-        let after = record
-            .after
-            .as_ref()
-            .and_then(|after| after.get(&file.relative_path));
-        let before = record.before.get(&file.relative_path);
-        if !snapshot::valid_relative(&file.relative_path)
-            || file.old_relative_path.is_some()
-            || !seen.insert(&file.relative_path)
-            || (before.is_none() && after.is_none())
-            || before.zip(after).is_some_and(|(before, after)| {
-                before.digest == after.digest
-                    && before.executable == after.executable
-                    && before.unavailable == after.unavailable
-            })
-            || file.added_lines.is_some()
-                != before
-                    .into_iter()
-                    .chain(after)
-                    .all(|entry| entry.unavailable.is_none())
-            || [file.added_lines, file.deleted_lines]
-                .into_iter()
-                .flatten()
-                .any(|count| count > 9_007_199_254_740_991)
-            || file.added_lines.is_some() != file.deleted_lines.is_some()
-            || matches!(file.status, ChangeStatus::Added) != before.is_none()
-            || matches!(file.status, ChangeStatus::Deleted) != after.is_none()
-        {
-            return Err("Saved turn changes contain invalid file summary data.".into());
-        }
-    }
-    for (path, entry) in record
-        .before
-        .iter()
-        .chain(record.after.iter().flat_map(|after| after.iter()))
-    {
-        if entry.digest.len() != 64
-            || !entry.digest.bytes().all(|b| b.is_ascii_hexdigit())
-            || !snapshot::valid_relative(path)
-            || entry
-                .text
-                .as_ref()
-                .is_some_and(|text| text.len() > MAX_FILE_BYTES)
-            || (entry.text.is_some() == entry.unavailable.is_some())
-        {
-            return Err("Saved turn changes contain invalid file data.".into());
-        }
-    }
-    Ok(())
-}
 #[cfg(test)]
 mod tests;
+
+fn unsupported_reason(identity: &RootIdentity) -> Option<UnsupportedReason> {
+    git_authority::unsupported_reason(identity).ok().flatten()
+}
+
+fn never_captured(record: &Record) -> bool {
+    let captured = match &record.checkpoints {
+        Some(checkpoints) => checkpoints.before.is_some() || checkpoints.after.is_some(),
+        None => !record.before.is_empty() || record.after.is_some(),
+    };
+    record.finished && record.summary.state == ChangesState::Unavailable && !captured
+}
 
 fn verify_authority(
     identity: &RootIdentity,
@@ -381,4 +369,33 @@ fn verify_authority(
         return Err("Turn changes are unavailable on this platform.".into());
     }
     Ok(())
+}
+
+fn recorded_summary(
+    record: &Record,
+    identity: &RootIdentity,
+) -> Result<TurnChangesSummary, String> {
+    if let Some(checkpoints) = &record.checkpoints {
+        for checkpoint in checkpoints.before.iter().chain(checkpoints.after.iter()) {
+            if let Err(reason) = checkpoint::verify(identity, checkpoint) {
+                return Ok(TurnChangesSummary::unavailable(&record.turn_id, &reason));
+            }
+        }
+        if record.summary.state == ChangesState::Ready {
+            let before = checkpoints
+                .before
+                .as_ref()
+                .ok_or("Missing baseline checkpoint.")?;
+            let after = checkpoints
+                .after
+                .as_ref()
+                .ok_or("Missing final checkpoint.")?;
+            let summary = checkpoint::summary(identity, before, after, &record.turn_id)?;
+            if summary != record.summary {
+                return Err("Saved turn changes do not match their checkpoints.".into());
+            }
+        }
+    }
+    snapshot::verify_root(identity)?;
+    Ok(record.summary.clone())
 }

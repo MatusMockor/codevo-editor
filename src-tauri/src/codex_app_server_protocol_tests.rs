@@ -20,6 +20,7 @@ const HANDLED_NOTIFICATION_METHODS: &[&str] = &[
     "error",
     "item/completed",
     "item/started",
+    "model/rerouted",
     "thread/compacted",
     "thread/queue/changed",
     "thread/started",
@@ -516,6 +517,7 @@ fn client_params_round_trip() {
         model: Some("gpt-5.6".to_string()),
         sandbox: Some(SandboxMode::WorkspaceWrite),
         approval_policy: Some(ApprovalPolicy::Never),
+        developer_instructions: None,
     });
     round_trip(&ThreadResumeParams {
         thread_id: "thread-1".to_string(),
@@ -523,6 +525,7 @@ fn client_params_round_trip() {
         model: None,
         sandbox: Some(SandboxMode::ReadOnly),
         approval_policy: Some(ApprovalPolicy::Never),
+        developer_instructions: None,
         exclude_turns: true,
     });
     round_trip(&sample_turn_start_params());
@@ -573,8 +576,13 @@ fn client_params_use_the_app_server_wire_names() {
         model: None,
         sandbox: Some(SandboxMode::DangerFullAccess),
         approval_policy: Some(ApprovalPolicy::OnRequest),
+        developer_instructions: Some("Render diagrams as files.".to_string()),
     })
     .expect("serializes");
+    assert_eq!(
+        start["developerInstructions"],
+        json!("Render diagrams as files.")
+    );
     assert_eq!(start["sandbox"], json!("danger-full-access"));
     assert_eq!(start["approvalPolicy"], json!("on-request"));
     assert!(start.get("model").is_none());
@@ -966,5 +974,95 @@ fn background_terminal_cleanup_uses_exact_thread_scoped_wire_contracts() {
         })
         .unwrap(),
         json!({"experimentalApi":true})
+    );
+}
+
+#[test]
+fn thread_not_found_resume_errors_are_classified_by_message() {
+    let error = |message: &str| JsonRpcError {
+        code: -32600,
+        message: message.into(),
+        data: None,
+    };
+    assert!(is_thread_not_found(&error(
+        "no rollout found for thread id 0199"
+    )));
+    assert!(is_thread_not_found(&error("Thread not found: 0199")));
+    assert!(!is_thread_not_found(&error("server overloaded")));
+    assert!(!is_thread_not_found(&error(
+        "cannot resume thread while running"
+    )));
+}
+
+#[test]
+fn model_rerouted_notifications_decode() {
+    let classified = classify_notification(
+        "model/rerouted",
+        json!({
+            "threadId": "t-1",
+            "turnId": "turn-1",
+            "fromModel": "a",
+            "toModel": "b",
+            "reason": "highRiskCyberActivity",
+        }),
+    );
+    assert_eq!(
+        classified,
+        ServerNotification::ModelRerouted(ModelReroutedNotification {
+            thread_id: "t-1".into(),
+            turn_id: Some("turn-1".into()),
+            from_model: "a".into(),
+            to_model: "b".into(),
+            reason: Some("highRiskCyberActivity".into()),
+        })
+    );
+}
+
+#[test]
+fn mcp_and_web_search_items_decode_their_completion_payloads() {
+    let mcp: ThreadItem = serde_json::from_value(json!({
+        "type": "mcpToolCall",
+        "id": "m",
+        "status": "completed",
+        "server": "s",
+        "tool": "t",
+        "arguments": { "a": 1 },
+        "result": { "content": [{ "type": "text", "text": "ok" }], "structuredContent": null },
+        "error": null,
+    }))
+    .unwrap();
+    let ThreadItem::McpToolCall(mcp) = mcp else {
+        panic!("mcpToolCall must decode");
+    };
+    assert_eq!(mcp.arguments, Some(json!({ "a": 1 })));
+    assert_eq!(mcp.result.unwrap().content.len(), 1);
+
+    let search: ThreadItem = serde_json::from_value(json!({
+        "type": "webSearch",
+        "id": "w",
+        "query": "q",
+        "action": { "type": "findInPage", "url": "https://x", "pattern": "p" },
+        "results": [1, 2, 3],
+    }))
+    .unwrap();
+    let ThreadItem::WebSearch(search) = search else {
+        panic!("webSearch must decode");
+    };
+    assert_eq!(search.result_count, Some(3));
+    assert_eq!(
+        search.action,
+        Some(WebSearchAction::FindInPage {
+            url: Some("https://x".into()),
+            pattern: Some("p".into()),
+        })
+    );
+
+    let moved: PatchChangeKind =
+        serde_json::from_value(json!({ "type": "update", "move_path": "b.ts" })).unwrap();
+    assert_eq!(
+        moved,
+        PatchChangeKind::Update {
+            move_path: Some("b.ts".into())
+        }
     );
 }

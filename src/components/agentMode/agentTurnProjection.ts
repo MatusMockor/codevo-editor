@@ -8,6 +8,7 @@ import type { AgentAttachment } from "../../domain/agentAttachment";
 import type { AgentTaskOutputStream } from "../../domain/agentTask";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import {
+  AGENT_TOOL_PATH_LIST_SEPARATOR,
   toolRowKind,
   toolRowLabel,
   type AgentToolRowKind,
@@ -15,6 +16,13 @@ import {
 } from "../../domain/agentToolRowPresentation";
 
 export const MAX_RENDERED_EVENTS_PER_TURN = 200;
+export const MAX_REVEALED_EVENTS_PER_TURN = MAX_RENDERED_EVENTS_PER_TURN * 5;
+
+const MULTI_PATH_EDIT_TOOLS: ReadonlySet<string> = new Set(["apply_patch", "applypatch"]);
+const MAX_COUNTED_CHANGED_PATHS = 4_096;
+const INTERRUPTED_TOOL_VERB = "Interrupted";
+
+export type AgentToolItemStatus = AgentToolRowStatus | "interrupted";
 
 export interface AgentToolOutcome {
   readonly outputSummary: string;
@@ -30,7 +38,12 @@ export type AgentTurnItem =
       readonly text: string;
       readonly paragraphs: ReadonlyArray<string>;
     }
-  | { readonly kind: "reasoning"; readonly key: string; readonly text: string }
+  | {
+      readonly kind: "reasoning";
+      readonly key: string;
+      readonly text: string;
+      readonly parentToolId?: string;
+    }
   | {
       readonly kind: "userMessage";
       readonly key: string;
@@ -46,7 +59,7 @@ export type AgentTurnItem =
       readonly outcome: AgentToolOutcome | null;
       readonly parentToolId?: string;
       readonly rowKind: AgentToolRowKind;
-      readonly status: AgentToolRowStatus;
+      readonly status: AgentToolItemStatus;
       readonly label: string;
       readonly argument: string | null;
       readonly command: string | null;
@@ -95,6 +108,39 @@ export function agentTurnSettlement(status: AgentTurnStatus): AgentTurnSettlemen
   return "settled";
 }
 
+export type AgentToolSettlement = AgentTurnSettlement | "interrupted";
+
+export function agentToolSettlement(status: AgentTurnStatus): AgentToolSettlement {
+  switch (status.kind) {
+    case "pending":
+    case "running":
+      return "running";
+    case "stopped":
+      return "stopped";
+    case "interrupted":
+    case "failed":
+      return "interrupted";
+    case "exited":
+      return status.exitCode === 0 ? "settled" : "interrupted";
+    default:
+      return unsupportedTurnStatus(status);
+  }
+}
+
+export function agentSubagentGroupSettlement(
+  groupState: string,
+  parent: AgentToolSettlement,
+): AgentToolSettlement {
+  if (groupState === "completed") return "settled";
+  if (groupState === "failed" || groupState === "interrupted") return "interrupted";
+  if (parent === "settled") return "interrupted";
+  return parent;
+}
+
+function unsupportedTurnStatus(status: never): never {
+  throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
+}
+
 type AgentToolRowFields = Pick<
   Extract<AgentTurnItem, { kind: "tool" }>,
   "rowKind" | "status" | "label" | "argument" | "command" | "output"
@@ -105,35 +151,38 @@ interface AgentToolRowSource {
   readonly inputSummary: string;
   readonly description?: string;
   readonly outcome: AgentToolOutcome | null;
-  readonly settlement: AgentTurnSettlement;
+  readonly settlement: AgentToolSettlement;
   readonly workspaceRoot: string | null;
 }
 
 function toolRowStatus(
   outcome: AgentToolOutcome | null,
-  settlement: AgentTurnSettlement,
-): AgentToolRowStatus {
+  settlement: AgentToolSettlement,
+): AgentToolItemStatus {
   if (outcome !== null) return outcome.isError ? "error" : "ok";
   if (settlement === "running") return "running";
   if (settlement === "stopped") return "stopped";
+  if (settlement === "interrupted") return "interrupted";
   return "ok";
 }
 
 function toolRowFields(source: AgentToolRowSource): AgentToolRowFields {
   const rowKind = toolRowKind(source.name);
   const status = toolRowStatus(source.outcome, source.settlement);
+  const interrupted = status === "interrupted";
   const label = toolRowLabel({
     name: source.name,
     inputSummary: source.inputSummary,
-    status,
+    status: interrupted ? "stopped" : status,
     workspaceRoot: source.workspaceRoot,
     ...presentField("description", source.description),
   });
+  const verb = interrupted ? INTERRUPTED_TOOL_VERB : label.verb;
   const output = source.outcome?.outputSummary ?? "";
   return {
     rowKind,
     status,
-    label: `${label.verb} ${label.subject}`.trim(),
+    label: `${verb} ${label.subject}`.trim(),
     argument: label.argument,
     command: rowKind === "command" && source.inputSummary !== "" ? source.inputSummary : null,
     output: output === "" ? null : output,
@@ -142,39 +191,44 @@ function toolRowFields(source: AgentToolRowSource): AgentToolRowFields {
 
 export function agentTurnLiveActivity(turn: AgentTurn): AgentTurnLiveActivity | null {
   if (turn.status.kind !== "running" && turn.status.kind !== "pending") return null;
-  const unresolved = unresolvedAgentToolCallIds(turn.events);
-  const latest = unresolved[unresolved.length - 1];
-  if (latest === undefined) return { kind: "working" };
+  const latest = latestLiveToolCallId(turn.events);
+  if (latest === null) return { kind: "working" };
   return { kind: "tool", toolId: latest };
 }
 
-function unresolvedAgentToolCallIds(events: ReadonlyArray<AgentTurnEvent>): ReadonlyArray<string> {
-  const order: string[] = [];
-  const open = new Set<string>();
-  for (const event of agentToolLifecycleEvents(events)) {
-    if (event.kind === "toolCall") {
-      if (open.has(event.toolId)) continue;
-      open.add(event.toolId);
-      order.push(event.toolId);
-      continue;
+function latestLiveToolCallId(events: ReadonlyArray<AgentTurnEvent>): string | null {
+  const open = new Map<string, number>();
+  let activityBoundary = -1;
+  events.forEach((event, position) => {
+    if (event.kind === "toolCall" && event.parentToolId === undefined) {
+      if (!open.has(event.toolId)) open.set(event.toolId, position);
+      return;
     }
-    open.delete(event.toolId);
+    if (event.kind === "toolResult" && event.parentToolId === undefined) {
+      open.delete(event.toolId);
+      return;
+    }
+    if (supersedesToolActivity(event)) activityBoundary = position;
+  });
+  let latest: string | null = null;
+  let latestPosition = activityBoundary;
+  for (const [toolId, position] of open) {
+    if (position <= latestPosition) continue;
+    latest = toolId;
+    latestPosition = position;
   }
-  return order.filter((toolId) => open.has(toolId));
+  return latest;
 }
 
-type AgentToolLifecycleEvent = Extract<AgentTurnEvent, { kind: "toolCall" | "toolResult" }>;
-
-function agentToolLifecycleEvents(
-  events: ReadonlyArray<AgentTurnEvent>,
-): ReadonlyArray<AgentToolLifecycleEvent> {
-  const lifecycle: AgentToolLifecycleEvent[] = [];
-  for (const event of events) {
-    if (event.kind !== "toolCall" && event.kind !== "toolResult") continue;
-    if (event.parentToolId !== undefined) continue;
-    lifecycle.push(event);
+function supersedesToolActivity(event: AgentTurnEvent): boolean {
+  if (event.kind === "assistantText" || event.kind === "reasoning") {
+    return event.parentToolId === undefined && event.text.trim() !== "";
   }
-  return lifecycle;
+  return event.kind === "userMessage";
+}
+
+function isSubagentNarration(event: AgentTurnEvent): boolean {
+  return event.kind === "assistantText" && event.parentToolId !== undefined;
 }
 
 const PARAGRAPH_SEPARATOR = /\n{2,}/;
@@ -183,9 +237,11 @@ export function agentTurnProjection(
   events: ReadonlyArray<AgentTurnEvent>,
   revealEventIndex: number | null = null,
   workspaceRoot: string | null = null,
-  settlement: AgentTurnSettlement = "running",
+  settlement: AgentToolSettlement = "running",
   firstEventOffset = 0,
+  renderedLimit: number = MAX_RENDERED_EVENTS_PER_TURN,
 ): AgentTurnProjection {
+  const limit = agentRenderedEventLimit(renderedLimit);
   const groups = appServerGroups(events, revealEventIndex);
   const seenGroups = new Set<string>();
   const renderableGroups = new Set<string>();
@@ -193,13 +249,14 @@ export function agentTurnProjection(
     .map((event, offset) => ({ event, offset }))
     .filter(({ event }) => {
       if (event.kind === "subagent") return false;
+      if (isSubagentNarration(event)) return false;
       const id = appServerGroupId(event);
       if (id === null) return true;
       if (renderableGroups.has(id)) return false;
       renderableGroups.add(id);
       return true;
     });
-  const hiddenCount = Math.max(0, renderable.length - MAX_RENDERED_EVENTS_PER_TURN);
+  const hiddenCount = Math.max(0, renderable.length - limit);
   const revealEvent = revealEventIndex === null ? undefined : events[revealEventIndex];
   const revealGroup = revealEvent === undefined ? null : appServerGroupId(revealEvent);
   const revealPosition =
@@ -212,9 +269,9 @@ export function agentTurnProjection(
         );
   const firstVisible =
     revealPosition >= 0 && revealPosition < hiddenCount
-      ? Math.max(0, revealPosition - Math.floor(MAX_RENDERED_EVENTS_PER_TURN / 2))
+      ? Math.max(0, revealPosition - Math.floor(limit / 2))
       : hiddenCount;
-  const visible = renderable.slice(firstVisible, firstVisible + MAX_RENDERED_EVENTS_PER_TURN);
+  const visible = renderable.slice(firstVisible, firstVisible + limit);
   const calls = toolCallIndex(events);
   const visibleAssistantText = new Set(
     visible
@@ -263,6 +320,11 @@ export function agentTurnProjection(
   return { items, rawLines, hiddenCount };
 }
 
+export function agentRenderedEventLimit(requested: number): number {
+  if (!Number.isSafeInteger(requested)) return MAX_RENDERED_EVENTS_PER_TURN;
+  return Math.min(MAX_REVEALED_EVENTS_PER_TURN, Math.max(MAX_RENDERED_EVENTS_PER_TURN, requested));
+}
+
 export function agentTurnWorkFold(
   items: ReadonlyArray<AgentTurnItem>,
   running: boolean,
@@ -299,36 +361,125 @@ export function agentTurnWorkFold(
   };
 }
 
+interface AgentWorkTally {
+  commands: number;
+  reads: number;
+  searches: number;
+  fetches: number;
+  tools: number;
+  updates: number;
+  subagents: number;
+  unnamedChanges: number;
+  readonly changedPaths: Set<string>;
+}
+
+const EMPTY_WORK_SUMMARY = "Activity";
+
+export function agentPartialWorkSummary(summary: string, hiddenCount: number): string {
+  if (hiddenCount <= 0) return summary;
+  if (summary === EMPTY_WORK_SUMMARY) return `${EMPTY_WORK_SUMMARY} · earlier events hidden`;
+  return `At least ${summary}`;
+}
+
 function agentWorkSummary(items: ReadonlyArray<AgentTurnItem>): string {
-  let commands = 0;
-  let reads = 0;
-  let changes = 0;
-  let tools = 0;
-  let updates = 0;
-  let subagents = 0;
+  const tally: AgentWorkTally = {
+    commands: 0,
+    reads: 0,
+    searches: 0,
+    fetches: 0,
+    tools: 0,
+    updates: 0,
+    subagents: 0,
+    unnamedChanges: 0,
+    changedPaths: new Set(),
+  };
   for (const item of items) {
-    if (item.kind === "assistantText") updates += 1;
+    if (item.kind === "assistantText") tally.updates += 1;
     if (item.kind !== "tool") continue;
     if (item.parentToolId !== undefined) continue;
-    if (isAgentSubagentToolItem(item)) {
-      subagents += 1;
-      continue;
-    }
-    const name = item.name.toLowerCase();
-    if (name === "bash" || name === "shell" || name === "command_execution") commands += 1;
-    else if (name === "read") reads += 1;
-    else if (name === "edit" || name === "write" || name === "apply_patch") changes += 1;
-    else tools += 1;
+    tallyTool(tally, item);
   }
+  const changes = tally.changedPaths.size + tally.unnamedChanges;
   const parts = [
-    countLabel(commands, "command"),
-    countLabel(updates, "update"),
-    countLabel(reads, "file read", "files read"),
+    countLabel(tally.commands, "command"),
+    countLabel(tally.updates, "update"),
+    countLabel(tally.reads, "file read", "files read"),
+    countLabel(tally.searches, "search", "searches"),
     countLabel(changes, "file changed", "files changed"),
-    countLabel(tools, "other tool"),
-    countLabel(subagents, "subagent"),
+    countLabel(tally.fetches, "page fetched", "pages fetched"),
+    countLabel(tally.tools, "other tool"),
+    countLabel(tally.subagents, "subagent"),
   ].filter((part): part is string => part !== null);
-  return parts.length === 0 ? "Activity" : parts.join(" · ");
+  return parts.length === 0 ? EMPTY_WORK_SUMMARY : parts.join(" · ");
+}
+
+function tallyTool(tally: AgentWorkTally, item: Extract<AgentTurnItem, { kind: "tool" }>): void {
+  if (isAgentSubagentToolItem(item)) {
+    tally.subagents += 1;
+    return;
+  }
+  switch (item.rowKind) {
+    case "command":
+      tally.commands += 1;
+      return;
+    case "read":
+      tally.reads += 1;
+      return;
+    case "search":
+      tally.searches += 1;
+      return;
+    case "web":
+      tallyWebTool(tally, item.name);
+      return;
+    case "edit":
+      tallyChangedPaths(tally, item);
+      return;
+    case "agent":
+    case "other":
+      tally.tools += 1;
+      return;
+    default:
+      unsupportedRowKind(item.rowKind);
+  }
+}
+
+function tallyWebTool(tally: AgentWorkTally, name: string): void {
+  const normalized = name.toLowerCase();
+  if (normalized === "websearch" || normalized === "web_search") {
+    tally.searches += 1;
+    return;
+  }
+  tally.fetches += 1;
+}
+
+function tallyChangedPaths(
+  tally: AgentWorkTally,
+  item: Extract<AgentTurnItem, { kind: "tool" }>,
+): void {
+  if (item.status !== "ok") return;
+  const paths = editedPaths(item);
+  if (paths.length === 0) {
+    tally.unnamedChanges += 1;
+    return;
+  }
+  for (const path of paths) {
+    if (tally.changedPaths.size >= MAX_COUNTED_CHANGED_PATHS) return;
+    tally.changedPaths.add(path);
+  }
+}
+
+function editedPaths(item: Extract<AgentTurnItem, { kind: "tool" }>): ReadonlyArray<string> {
+  const summary = item.inputSummary.trim();
+  if (summary === "") return [];
+  if (!MULTI_PATH_EDIT_TOOLS.has(item.name.toLowerCase())) return [summary];
+  return summary
+    .split(AGENT_TOOL_PATH_LIST_SEPARATOR)
+    .map((path) => path.trim())
+    .filter((path) => path !== "");
+}
+
+function unsupportedRowKind(kind: never): never {
+  throw new TypeError(`Unsupported agent tool row kind: ${String(kind)}.`);
 }
 
 function countLabel(count: number, singular: string, plural = `${singular}s`): string | null {
@@ -353,7 +504,7 @@ interface TurnItemAppend {
   readonly items: AgentTurnItem[];
   readonly key: string;
   readonly rawLines: AgentRawLine[];
-  readonly settlement: AgentTurnSettlement;
+  readonly settlement: AgentToolSettlement;
   readonly toolItemByToolId: Map<string, number>;
   readonly workspaceRoot: string | null;
 }
@@ -378,7 +529,13 @@ function appendTurnItem({
     return;
   }
   if (event.kind === "reasoning") {
-    items.push({ kind: "reasoning", key, text: event.text });
+    if (event.text.trim() === "") return;
+    items.push({
+      kind: "reasoning",
+      key,
+      text: event.text,
+      ...presentField("parentToolId", event.parentToolId),
+    });
     return;
   }
   if (event.kind === "toolCall") {
@@ -445,7 +602,7 @@ interface ToolResultAttach {
   readonly event: Extract<AgentTurnEvent, { kind: "toolResult" }>;
   readonly items: AgentTurnItem[];
   readonly key: string;
-  readonly settlement: AgentTurnSettlement;
+  readonly settlement: AgentToolSettlement;
   readonly toolItemByToolId: Map<string, number>;
   readonly workspaceRoot: string | null;
 }

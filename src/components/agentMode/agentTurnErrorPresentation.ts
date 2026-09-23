@@ -78,3 +78,44 @@ function reportedError(
     return classifyAgentProviderError(item.text, provider);
   return null;
 }
+
+export type AgentTurnEndMarker =
+  | { readonly kind: "stopped"; readonly label: string }
+  | { readonly kind: "interrupted"; readonly label: string; readonly detail: string }
+  | { readonly kind: "exited"; readonly label: string; readonly detail: string };
+
+export function agentTurnEndMarker(
+  status: AgentTurnStatus,
+  executionTarget: "local" | "remote" = "local",
+): AgentTurnEndMarker | null {
+  switch (status.kind) {
+    case "pending":
+    case "running":
+    case "failed":
+      return null;
+    case "stopped":
+      return { kind: "stopped", label: "Stopped" };
+    case "interrupted":
+      return {
+        kind: "interrupted",
+        label: "Interrupted",
+        detail:
+          executionTarget === "remote"
+            ? "The remote run ended before this turn finished."
+            : "The app closed before this turn finished.",
+      };
+    case "exited":
+      if (status.exitCode === 0) return null;
+      return {
+        kind: "exited",
+        label: `Exited with code ${status.exitCode}`,
+        detail: "The agent process ended with an error.",
+      };
+    default:
+      return unsupportedTurnStatus(status);
+  }
+}
+
+function unsupportedTurnStatus(status: never): never {
+  throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
+}

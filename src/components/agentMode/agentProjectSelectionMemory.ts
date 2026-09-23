@@ -2,6 +2,7 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   MAX_AGENT_PROJECT_ROOTS,
   agentProjectOwnsLaunchRoot,
+  agentProjectOwnsOwner,
   type AgentProjectDescriptor,
 } from "../../domain/agentProject";
 
@@ -70,8 +71,7 @@ export function projectOwnsRememberedThread(
 ): boolean {
   const owner = view.thread.owner;
   return (
-    owner.rootKey === project.rootKey &&
-    agentProjectOwnsLaunchRoot(project, owner.repositoryRoot) &&
-    (owner.ownerId === project.ownerId || project.runtimeOwnerIds?.includes(owner.ownerId) === true)
+    agentProjectOwnsOwner(project, owner) &&
+    agentProjectOwnsLaunchRoot(project, owner.repositoryRoot)
   );
 }

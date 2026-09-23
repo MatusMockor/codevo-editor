@@ -96,10 +96,18 @@ impl ChildGuard {
         Some((stdout, stderr))
     }
 
-    pub(crate) fn spawn(mut command: Command) -> io::Result<Self> {
+    pub(crate) fn spawn(command: Command) -> io::Result<Self> {
+        Self::spawn_with_stdin(command, Stdio::null())
+    }
+
+    pub(crate) fn spawn_with_input(command: Command, input: std::fs::File) -> io::Result<Self> {
+        Self::spawn_with_stdin(command, Stdio::from(input))
+    }
+
+    fn spawn_with_stdin(mut command: Command, input: Stdio) -> io::Result<Self> {
         configure_process_group(&mut command);
         let child = command
-            .stdin(Stdio::null())
+            .stdin(input)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;

@@ -248,7 +248,7 @@ describe("AgentThreadSession markdown", () => {
     expect(scrolled[0]?.closest("pre.agent-md__code-body")).not.toBeNull();
   });
 
-  it("degrades visibly to plain text when a match sits inside markdown syntax", () => {
+  it("shows only the block whose match sits inside markdown syntax as source", () => {
     const thread = view(SETTLED, FIND_TEXT);
     const hits = hitsFor(thread, "|---");
     expect(hits).toHaveLength(2);
@@ -256,10 +256,11 @@ describe("AgentThreadSession markdown", () => {
     render({ thread, findQuery: "|---", findHits: hits, findHitIndex: 1 });
 
     const body = message();
-    expect(body.getAttribute("data-agent-markdown")).toBe("plain");
+    expect(body.getAttribute("data-agent-markdown")).toBe("rendered");
     expect(body.querySelector(".agent-md__note")?.textContent).toBe(
-      "Shown as plain text while searching: some matches sit inside Markdown formatting.",
+      "Some formatting is shown as source while searching: matches sit inside Markdown syntax.",
     );
+    expect(body.querySelector("ul.agent-md__list")?.textContent).toContain("list parser item");
     expect(currentHit().textContent).toBe("|---");
     expect(currentHit().getAttribute("data-hit-index")).toBe("1");
     expect(body.querySelectorAll("mark.agent-find__hit")).toHaveLength(2);
@@ -384,6 +385,57 @@ describe("AgentThreadSession markdown", () => {
     });
     expect(openExternalLink).toHaveBeenCalledTimes(button === 2 ? 0 : 1);
     expect(event.defaultPrevented).toBe(button !== 2);
+  });
+
+  it("opens local file links through the injected editor port and keeps http external", () => {
+    const openExternalLink = vi.fn(async () => undefined);
+    const open = vi.fn();
+    const reject = vi.fn();
+    render({
+      thread: view(
+        SETTLED,
+        [
+          `[Otvoriť textový prepis](<${ROOT}/odovzdávky/prepis ž.txt:12:4>)`,
+          "[server](src/server.ts#L7)",
+          "[outside](/etc/passwd)",
+          "[docs](https://example.com/docs)",
+        ].join(" "),
+      ),
+      openExternalLink,
+      localFileLinks: { open, reject },
+    });
+
+    const links = [...host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")];
+    expect(links.map((link) => link.getAttribute("data-agent-link"))).toEqual([
+      "localFile",
+      "localFile",
+      "localFile",
+      "external",
+    ]);
+    const clickAt = (index: number): MouseEvent => {
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      act(() => {
+        links[index]?.dispatchEvent(event);
+      });
+      return event;
+    };
+
+    expect(clickAt(0).defaultPrevented).toBe(true);
+    expect(open).toHaveBeenLastCalledWith({
+      path: `${ROOT}/odovzdávky/prepis ž.txt`,
+      line: 12,
+      column: 4,
+    });
+    clickAt(1);
+    expect(open).toHaveBeenLastCalledWith({ path: `${ROOT}/src/server.ts`, line: 7, column: null });
+
+    expect(clickAt(2).defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(reject).toHaveBeenCalledOnce();
+
+    clickAt(3);
+    expect(openExternalLink).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   it("re-renders only the streaming message when a chunk arrives", () => {

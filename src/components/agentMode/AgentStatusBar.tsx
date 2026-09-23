@@ -17,7 +17,7 @@ export interface AgentStatusBarProps {
 
 export function AgentStatusBar({
   attentionCount = 0,
-  attentionExplanation = "Previous runs ended with an error, were stopped, or were interrupted. Open the threads to see what happened. Reading a thread does not clear its run status. Right-click the status bar to hide this indicator.",
+  attentionExplanation = "Runs that ended with an error or were interrupted and have not been opened since. Opening a thread clears it from this count; runs you stopped are not counted. Right-click the status bar to hide this indicator.",
   statusBar,
   onChangeVisibility,
   cliVersionLabel = null,

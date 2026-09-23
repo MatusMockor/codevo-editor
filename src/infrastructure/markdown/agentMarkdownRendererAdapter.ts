@@ -16,6 +16,10 @@ import {
   type AgentMarkdownNode,
 } from "../../domain/agentMarkdown/agentMarkdownTree";
 import {
+  AGENT_MARKDOWN_LINK_POLICY,
+  parseAgentMarkdownLink,
+} from "../../domain/agentMarkdown/agentMarkdownLink";
+import {
   isSafeExternalMarkdownUrl,
   loadHardenedMarkdown,
   type HardenedMarkdown,
@@ -86,7 +90,10 @@ export function createAgentMarkdownRenderer(pipeline: HardenedMarkdown): AgentMa
     renderBlock(block) {
       const html = pipeline.renderTokens([block.token as unknown as Token]);
       if (html === "") return { kind: "nodes", nodes: [] };
-      return projectFragment(pipeline.sanitizeToFragment(html), MAX_AGENT_MARKDOWN_NODES_PER_BLOCK);
+      return projectFragment(
+        pipeline.sanitizeToFragment(html, AGENT_MARKDOWN_LINK_POLICY),
+        MAX_AGENT_MARKDOWN_NODES_PER_BLOCK,
+      );
     },
     renderDocument(markdown) {
       const tokens = pipeline.lexBlocks(markdown);
@@ -96,7 +103,7 @@ export function createAgentMarkdownRenderer(pipeline: HardenedMarkdown): AgentMa
       const html = pipeline.renderTokens(tokens);
       if (html === "") return { kind: "nodes", nodes: [] };
       return projectFragment(
-        pipeline.sanitizeToFragment(html),
+        pipeline.sanitizeToFragment(html, AGENT_MARKDOWN_LINK_POLICY),
         MAX_AGENT_MARKDOWN_NODES_PER_DOCUMENT,
       );
     },
@@ -186,7 +193,11 @@ function projectElement(
   }
   switch (tag) {
     case "a":
-      return { kind: "link", href: safeUrl(element.getAttribute("href")), children: children() };
+      return {
+        kind: "link",
+        target: parseAgentMarkdownLink(element.getAttribute("href")),
+        children: children(),
+      };
     case "ul":
       return { kind: "list", ordered: false, start: 1, children: children() };
     case "ol":

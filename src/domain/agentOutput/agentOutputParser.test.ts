@@ -106,7 +106,8 @@ describe("agent output parser fixtures", () => {
         text: "done",
         isError: false,
         usage: {
-          inputTokens: 58,
+          inputTokens: 64_935,
+          cachedInputTokens: 48_271,
           outputTokens: 163,
           contextTokens: 64_935,
           costUsd: 0.38912100000000005,
@@ -132,7 +133,13 @@ describe("agent output parser fixtures", () => {
         kind: "result",
         text: "hello",
         isError: false,
-        usage: { inputTokens: 2, outputTokens: 4, contextTokens: 32_591, costUsd: 0.34952 },
+        usage: {
+          inputTokens: 32_591,
+          outputTokens: 4,
+          cachedInputTokens: 15_920,
+          contextTokens: 32_591,
+          costUsd: 0.34952,
+        },
       },
       {
         kind: "contextUsage",
@@ -160,6 +167,12 @@ describe("agent output parser fixtures", () => {
       },
       { kind: "toolResult", toolId: "item_3", outputSummary: "hi\nhello\n", isError: false },
       { kind: "toolCall", toolId: "item_4", name: "apply_patch", inputSummary: "/repo/a.txt" },
+      {
+        kind: "toolResult",
+        toolId: "item_4",
+        outputSummary: "update /repo/a.txt",
+        isError: false,
+      },
       { kind: "assistantText", text: "done" },
       {
         kind: "result",

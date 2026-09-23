@@ -58,35 +58,46 @@ interface LaunchText {
 
 const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
   default: {
-    label: "Auto",
-    meta: "automatic access",
-    hint: "Uses the access mode configured in Claude CLI.",
+    label: "Claude CLI settings",
+    meta: "CLI settings",
+    hint: "Uses the permission mode from your Claude CLI settings; anything it asks about waits for your approval here.",
   },
   plan: {
     label: "Plan mode",
     meta: "plan only",
-    hint: "The agent plans the work and does not change files.",
+    hint: "The agent plans without changing files, then waits for you to approve the plan or keep planning.",
   },
   supervised: {
     label: "Supervised",
     meta: "supervised",
-    hint: "Asks before commands and file changes.",
+    hint: "Asks before commands and file changes; you approve or deny each one here.",
   },
   acceptEdits: {
     label: "Auto-accept edits",
     meta: "auto-accept edits",
-    hint: "Auto-approve edits, ask before other actions.",
+    hint: "Applies file edits without asking; asks for your approval before commands and other actions.",
   },
   auto: {
     label: "Auto",
     meta: "automatic approvals",
-    hint: "Supported providers approve routine actions; others still ask.",
+    hint: "Claude approves routine actions itself and asks for your approval when an action looks risky.",
   },
   bypassPermissions: {
     label: "Full access",
     meta: "bypass permissions",
     hint: "Allow commands and edits without prompts.",
   },
+};
+
+const REMOTE_APPROVAL_NOTE =
+  "Approval prompts from remote runners cannot be answered in this editor yet.";
+
+const REMOTE_CLAUDE_MODE_HINT: Partial<Record<ClaudePermissionMode, string>> = {
+  default: `Uses the permission mode from the server's Claude CLI settings. ${REMOTE_APPROVAL_NOTE}`,
+  plan: `The agent plans without changing files. ${REMOTE_APPROVAL_NOTE}`,
+  supervised: `Asks before commands and file changes. ${REMOTE_APPROVAL_NOTE}`,
+  acceptEdits: `Applies file edits without asking; other actions need approval. ${REMOTE_APPROVAL_NOTE}`,
+  auto: `Claude approves routine actions itself; risky actions need approval. ${REMOTE_APPROVAL_NOTE}`,
 };
 
 const CLAUDE_EFFORT_TEXT: Record<ClaudeEffortChoice, LaunchText> = {
@@ -170,26 +181,32 @@ const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
   },
 };
 
+const REMOTE_CODEX_MODE_HINT: Partial<Record<CodexExecutionMode, string>> = {
+  default: `Uses the sandbox and approval policy from the server's Codex config.toml. ${REMOTE_APPROVAL_NOTE}`,
+  workspaceWrite: `Writes only inside the workspace; other commands need approval. ${REMOTE_APPROVAL_NOTE}`,
+  auto: `Works inside the workspace without asking; leaving the sandbox needs approval. ${REMOTE_APPROVAL_NOTE}`,
+};
+
 const CODEX_MODE_TEXT: Record<CodexExecutionMode, LaunchText> = {
   default: {
-    label: "Auto",
-    meta: "automatic access",
-    hint: "Uses the sandbox and approval policy configured in Codex CLI.",
+    label: "Codex config",
+    meta: "Codex config",
+    hint: "Uses the sandbox and approval policy configured in your Codex config.toml; any approval it requests waits for you here.",
   },
   readOnly: {
     label: "Read-only",
     meta: "read-only",
-    hint: "Commands run without permission to change any file.",
+    hint: "Commands run without permission to change any file and never ask for more access.",
   },
   workspaceWrite: {
     label: "Workspace write",
     meta: "workspace write",
-    hint: "Commands may write inside the workspace and nowhere else.",
+    hint: "Writes only inside the workspace and asks for your approval before commands that are not known to be safe.",
   },
   auto: {
     label: "Auto",
     meta: "automatic approvals",
-    hint: "Approves routine actions automatically inside the workspace.",
+    hint: "Works inside the workspace without asking and asks for your approval only when Codex needs to leave the sandbox.",
   },
   dangerFullAccess: {
     label: "Full access",
@@ -292,19 +309,34 @@ export function agentModelRowIsFavorite(row: AgentModelRow, keys: ReadonlySet<st
   );
 }
 
-export function agentLaunchModeChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
+export function agentLaunchModeChoices(
+  provider: AgentCliKind,
+  target: AgentExecutionTarget = "local",
+): ReadonlyArray<AgentLaunchChoice> {
   if (provider === "claudeCode") {
     return choices(
       ["supervised", "acceptEdits", "auto", "bypassPermissions"] as const,
-      CLAUDE_MODE_TEXT,
+      targetModeText(CLAUDE_MODE_TEXT, REMOTE_CLAUDE_MODE_HINT, target),
       (mode) => agentLaunchTone({ provider, model: "default", mode, effort: "default" }),
     );
   }
   return choices(
     ["readOnly", "workspaceWrite", "auto", "dangerFullAccess"] as const,
-    CODEX_MODE_TEXT,
+    targetModeText(CODEX_MODE_TEXT, REMOTE_CODEX_MODE_HINT, target),
     (mode) => agentLaunchTone({ provider, model: "default", mode }),
   );
+}
+
+function targetModeText<Mode extends string>(
+  text: Record<Mode, LaunchText>,
+  remote: Partial<Record<Mode, string>>,
+  target: AgentExecutionTarget,
+): Record<Mode, LaunchText> {
+  if (target === "local") return text;
+  const entries = Object.entries(text) as [Mode, LaunchText][];
+  return Object.fromEntries(
+    entries.map(([mode, value]) => [mode, { ...value, hint: remote[mode] ?? value.hint }]),
+  ) as Record<Mode, LaunchText>;
 }
 
 export function agentLaunchEffortChoices(): ReadonlyArray<AgentLaunchChoice> {
@@ -536,8 +568,16 @@ export function agentLaunchModeLabel(launch: AgentLaunchOptions): string {
   return modeText(launch).label;
 }
 
-export function agentLaunchModeHint(launch: AgentLaunchOptions): string {
-  return modeText(launch).hint;
+export function agentLaunchModeHint(
+  launch: AgentLaunchOptions,
+  target: AgentExecutionTarget = "local",
+): string {
+  if (target === "local") return modeText(launch).hint;
+  const remote =
+    launch.provider === "claudeCode"
+      ? REMOTE_CLAUDE_MODE_HINT[launch.mode]
+      : REMOTE_CODEX_MODE_HINT[launch.mode];
+  return remote ?? modeText(launch).hint;
 }
 
 export function agentLaunchModelMeta(

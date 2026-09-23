@@ -37,7 +37,11 @@ import {
 } from "../../application/useAgentThreadScripts";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
-import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
+import {
+  agentProjectOwnsLaunchRoot,
+  agentProjectOwnsOwner,
+  type AgentProjectDescriptor,
+} from "../../domain/agentProject";
 import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
@@ -83,11 +87,10 @@ import {
 } from "./agentSidebarPresentation";
 import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
 import { useScopedAgentNotice } from "./useScopedAgentNotice";
+import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
-import {
-  useAgentComposerControllerState,
-  type AgentComposerPromptRestore,
-} from "./useAgentComposerState";
+import { useAgentComposerControllerState } from "./useAgentComposerState";
+import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
 import { useAgentShipActions } from "./useAgentShipActions";
 import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
@@ -354,8 +357,7 @@ function LocalAgentModeView({
           composerScope.kind !== "missing" &&
           composerScope.ownerId === selectedProject.ownerId &&
           composerScope.generation === selectedProject.generation
-        : (owner.ownerId === selectedProject.ownerId ||
-            selectedProject.runtimeOwnerIds?.includes(owner.ownerId) === true) &&
+        : agentProjectOwnsOwner(selectedProject, owner) &&
           agentProjectOwnsLaunchRoot(selectedProject, owner.repositoryRoot);
     selectWorkspace(valid ? selectedProject : null);
   }, [composerScope, selectedProject, selectedThread, selectWorkspace, workspaceRoot]);
@@ -372,24 +374,11 @@ function LocalAgentModeView({
       prefix === null ? !project.rootKey.startsWith("remote:") : project.rootKey.startsWith(prefix),
     );
   }, [projects, selectedServerId, selectedThread]);
-  const [promptRestore, setPromptRestore] = useState<AgentComposerPromptRestore | null>(null);
-  const takeQueued = useAgentLatestCallback(agents.takeDeferredFollowUp);
-  const editQueued = useCallback(
-    (threadId: string, id: string): void => {
-      const taken = takeQueued(threadId, id);
-      if (taken === null) return;
-      setPromptRestore((current) => ({
-        token: (current?.token ?? 0) + 1,
-        draftKey: threadId,
-        text: taken.prompt,
-      }));
-    },
-    [takeQueued],
-  );
+  const queuedEdit = useAgentQueuedFollowUpEdit(agents, selectedThreadId);
   const composer = useAgentComposerControllerState({
     agents,
     groups: executionGroups,
-    promptRestore,
+    queuedEdit: queuedEdit.edit,
     projects: composerProjects,
     providerEnabled: effectiveProviderEnabled,
     railScope: composerScope,
@@ -562,6 +551,7 @@ function LocalAgentModeView({
     );
   }, [groups, terminalSessionsTarget]);
 
+  const localFileLinks = useAgentLocalFileLinks(chrome.openFileLocation, setLocalNotice);
   const menu = useAgentThreadMenuCommands({
     agents,
     groups,
@@ -964,6 +954,7 @@ function LocalAgentModeView({
                   }
                   artifactLoader={artifactLoader}
                   artifactPreview={artifactPreview}
+                  localFileLinks={localFileLinks}
                   attachmentImages={agents.attachmentImages}
                   onRevealAttachment={revealAttachment}
                   findBar={
@@ -1007,9 +998,11 @@ function LocalAgentModeView({
                   }
                   onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
                   onEditDeferredFollowUp={
-                    sessionThread === null || sessionThread.execution?.kind === "remote"
+                    sessionThread === null ||
+                    sessionThread.execution?.kind === "remote" ||
+                    !queuedEdit.supported
                       ? undefined
-                      : editQueued
+                      : queuedEdit.begin
                   }
                   onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
                   onSendDeferredFollowUpNow={
@@ -1021,6 +1014,7 @@ function LocalAgentModeView({
                       : undefined
                   }
                   onReviewInDiff={reviewInDiff}
+                  onStopBackground={composer.composerProps.onStop}
                   onOpenTurnDiff={openRecordedDiff}
                   turnChangesRevision={
                     sessionThread
@@ -1029,7 +1023,6 @@ function LocalAgentModeView({
                       : agents.turnChangesRevision
                   }
                   getTurnChanges={agents.getTurnChanges}
-                  getTurnFileDiff={agents.getTurnFileDiff}
                   monacoTheme={monacoTheme}
                   reveal={find.reveal}
                   textClipboard={textClipboard}

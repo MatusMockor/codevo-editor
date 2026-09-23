@@ -145,34 +145,52 @@ describe("useAgentThreadMenuCommands", () => {
   });
 
   it("routes thread commands to the surface and starts a new thread in the same repository", async () => {
-    const agents = threadsSurfaceFixture({
-      threads: [surfaceThreadView()],
-      togglePin: vi.fn(),
-      stop: vi.fn(async () => undefined),
-      archive: vi.fn(),
-      remove: vi.fn(),
-      renameThread: vi.fn(),
-      markThreadUnread: vi.fn(),
-    });
+    const agents = {
+      ...threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        togglePin: vi.fn(),
+        stop: vi.fn(async () => undefined),
+        archive: vi.fn(() => true),
+        remove: vi.fn(() => true),
+        renameThread: vi.fn(),
+        markThreadUnread: vi.fn(),
+      }),
+      unarchive: vi.fn(() => true),
+    };
     render({ agents });
 
     act(() => current().handleThreadMenuCommand("agt-1", { kind: "togglePin" }));
     await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "stop" }));
     act(() => current().handleThreadMenuCommand("agt-1", { kind: "archive" }));
+    act(() => current().handleThreadMenuCommand("agt-1", { kind: "unarchive" }));
     act(() => current().handleThreadMenuCommand("agt-1", { kind: "rename", title: "Renamed" }));
     act(() => current().handleThreadMenuCommand("agt-1", { kind: "markUnread" }));
-    act(() => current().handleThreadMenuCommand("agt-1", { kind: "delete" }));
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "delete" }));
     act(() => current().handleThreadMenuCommand("agt-1", { kind: "newThread" }));
     act(() => current().handleThreadMenuCommand("missing", { kind: "newThread" }));
 
     expect(agents.togglePin).toHaveBeenCalledWith("agt-1");
     expect(agents.stop).toHaveBeenCalledWith("agt-1");
     expect(agents.archive).toHaveBeenCalledWith("agt-1");
+    expect(agents.unarchive).toHaveBeenCalledWith("agt-1");
     expect(agents.renameThread).toHaveBeenCalledWith("agt-1", "Renamed");
     expect(agents.markThreadUnread).toHaveBeenCalledWith("agt-1");
     expect(agents.remove).toHaveBeenCalledWith("agt-1");
     expect(removed).toEqual(["agt-1"]);
     expect(started).toEqual([[SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT]]);
+  });
+
+  it("keeps the selection when the surface refuses to delete the thread", async () => {
+    const agents = threadsSurfaceFixture({
+      threads: [surfaceThreadView()],
+      remove: vi.fn(() => false),
+    });
+    render({ agents });
+
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "delete" }));
+
+    expect(agents.remove).toHaveBeenCalledWith("agt-1");
+    expect(removed).toEqual([]);
   });
 
   it("copies a thread detail and falls back to notices when nothing or no clipboard is available", async () => {
@@ -207,7 +225,7 @@ describe("useAgentThreadMenuCommands", () => {
     ]);
   });
 
-  it("archives only the threads a bulk selection may legitimately archive", () => {
+  it("archives only the threads a bulk selection may legitimately archive", async () => {
     const agents = threadsSurfaceFixture({
       threads: [
         surfaceThreadView(),
@@ -215,12 +233,12 @@ describe("useAgentThreadMenuCommands", () => {
         archivedView("agt-old"),
         foreignView("agt-foreign"),
       ],
-      archive: vi.fn(),
-      remove: vi.fn(),
+      archive: vi.fn(() => true),
+      remove: vi.fn(() => true),
     });
     render({ agents });
 
-    act(() =>
+    await act(async () =>
       current().handleThreadBulkCommand({
         kind: "apply",
         request: {
@@ -245,15 +263,15 @@ describe("useAgentThreadMenuCommands", () => {
     ]);
   });
 
-  it("never routes a running thread into a bulk delete the surface would refuse", () => {
+  it("never routes a running thread into a bulk delete the surface would refuse", async () => {
     const agents = threadsSurfaceFixture({
       threads: [surfaceThreadView(), runningView("agt-run"), foreignView("agt-foreign")],
-      archive: vi.fn(),
-      remove: vi.fn(),
+      archive: vi.fn(() => true),
+      remove: vi.fn(() => true),
     });
     render({ agents });
 
-    act(() =>
+    await act(async () =>
       current().handleThreadBulkCommand({
         kind: "apply",
         request: {
@@ -273,6 +291,125 @@ describe("useAgentThreadMenuCommands", () => {
         message: "Deleted 1 thread. Skipped 2: 1 still running, 1 owned by another project.",
         action: null,
       },
+    ]);
+  });
+
+  it("awaits server saves with bounded concurrency and reports the real outcome", async () => {
+    const ids = ["srv-1", "srv-2", "srv-3", "srv-4", "srv-5", "srv-6"];
+    const pending = new Map<string, (ok: boolean) => void>();
+    let inFlight = 0;
+    let peak = 0;
+    const archive = vi.fn(
+      (threadId: string) =>
+        new Promise<boolean>((resolve) => {
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          pending.set(threadId, (ok) => {
+            inFlight -= 1;
+            resolve(ok);
+          });
+        }),
+    );
+    const agents = threadsSurfaceFixture({
+      threads: ids.map((threadId) => ({
+        ...surfaceThreadView(),
+        thread: { ...surfaceThreadView().thread, threadId },
+      })),
+      archive,
+    });
+    render({ agents });
+
+    act(() =>
+      current().handleThreadBulkCommand({
+        kind: "apply",
+        request: {
+          action: "archive",
+          ownerKey: SURFACE_FIXTURE_ROOT,
+          threadIds: ids,
+          missingIds: [],
+        },
+      }),
+    );
+    for (const threadId of ids) {
+      await act(async () => {
+        await vi.waitFor(() => expect(pending.has(threadId)).toBe(true));
+        pending.get(threadId)?.(threadId !== "srv-2" && threadId !== "srv-5");
+      });
+    }
+    await act(async () => {
+      await vi.waitFor(() => expect(notices).toHaveLength(1));
+    });
+
+    expect(archive).toHaveBeenCalledTimes(6);
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(notices).toEqual([
+      {
+        kind: "warning",
+        message: "Archived 4 threads. Failed 2: the change could not be saved.",
+        action: null,
+      },
+    ]);
+  });
+
+  it("wraps a bulk run in one mutation batch", async () => {
+    const order: string[] = [];
+    const agents: AgentMenuCommandSurface = {
+      ...threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        archive: vi.fn(() => {
+          order.push("archive");
+          return true;
+        }),
+      }),
+      batchThreadMutations: async <T,>(work: () => Promise<T>) => {
+        order.push("begin");
+        const result = await work();
+        order.push("end");
+        return result;
+      },
+    };
+    render({ agents });
+
+    await act(async () =>
+      current().handleThreadBulkCommand({
+        kind: "apply",
+        request: {
+          action: "archive",
+          ownerKey: SURFACE_FIXTURE_ROOT,
+          threadIds: ["agt-1"],
+          missingIds: [],
+        },
+      }),
+    );
+
+    expect(order).toEqual(["begin", "archive", "end"]);
+    expect(notices).toEqual([{ kind: "info", message: "Archived 1 thread.", action: null }]);
+  });
+
+  it("unarchives only archived threads from a bulk selection", async () => {
+    const unarchive = vi.fn(() => true);
+    const agents: AgentMenuCommandSurface = {
+      ...threadsSurfaceFixture({ threads: [surfaceThreadView(), archivedView("agt-old")] }),
+      unarchive,
+    };
+    render({ agents });
+
+    await act(async () =>
+      current().handleThreadBulkCommand({
+        kind: "apply",
+        request: {
+          action: "unarchive",
+          ownerKey: SURFACE_FIXTURE_ROOT,
+          threadIds: ["agt-1", "agt-old"],
+          missingIds: [],
+        },
+      }),
+    );
+
+    expect(unarchive).toHaveBeenCalledTimes(1);
+    expect(unarchive).toHaveBeenCalledWith("agt-old");
+    expect(notices).toEqual([
+      { kind: "info", message: "Unarchived 1 thread. Skipped 1: 1 not archived.", action: null },
     ]);
   });
 

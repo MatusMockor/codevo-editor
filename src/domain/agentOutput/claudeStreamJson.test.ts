@@ -5,6 +5,8 @@ import {
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_TOOL_DESCRIPTION_BYTES,
   MAX_AGENT_TOOL_SUMMARY_BYTES,
+  agentTurnEventUtf8Bytes,
+  coalesceAgentTextEvents,
   type AgentTurnEvent,
 } from "../agentThread";
 import { parseClaudeStreamJsonLine } from "./claudeStreamJson";
@@ -64,6 +66,29 @@ describe("parseClaudeStreamJsonLine session ids", () => {
 });
 
 describe("parseClaudeStreamJsonLine content", () => {
+  it("maps summarized signed thinking to reasoning and drops signature-only thinking", () => {
+    const parsed = parseClaudeStreamJsonLine(
+      assistant([
+        { type: "thinking", thinking: "", signature: "CAQSjwUKEAgS" },
+        {
+          type: "thinking",
+          thinking: "391 = 17 × 23, so it is not prime.\n\n",
+          signature: "CAQSjwUKEAgT",
+        },
+        { type: "text", text: "No." },
+      ]),
+    );
+
+    expect(parsed).toEqual({
+      kind: "events",
+      events: [
+        { kind: "reasoning", text: "391 = 17 × 23, so it is not prime.\n\n" },
+        { kind: "assistantText", text: "No." },
+      ],
+      sessionId: null,
+    });
+  });
+
   it("maps text, thinking, and tool_use blocks in order", () => {
     const parsed = parseClaudeStreamJsonLine(
       assistant([
@@ -171,12 +196,63 @@ describe("parseClaudeStreamJsonLine content", () => {
           kind: "result",
           text: "boom",
           isError: true,
-          usage: { inputTokens: 5, outputTokens: 7, contextTokens: 5 },
+          usage: { inputTokens: 5, outputTokens: 7, cachedInputTokens: 0, contextTokens: 5 },
         },
       ],
       sessionId: SESSION_ID,
     });
     expect(partialUsage).toEqual({
+      kind: "events",
+      events: [{ kind: "result", text: "done", isError: false, usage: null }],
+      sessionId: null,
+    });
+  });
+
+  it("reports total processed input including cache writes and reads, with reads as cached input", () => {
+    const parsed = parseClaudeStreamJsonLine(
+      line({
+        type: "result",
+        subtype: "success",
+        result: "done",
+        usage: {
+          input_tokens: 4,
+          cache_creation_input_tokens: 1_000,
+          cache_read_input_tokens: 30_000,
+          output_tokens: 230,
+        },
+      }),
+    );
+    const overflow = parseClaudeStreamJsonLine(
+      line({
+        type: "result",
+        subtype: "success",
+        result: "done",
+        usage: {
+          input_tokens: Number.MAX_SAFE_INTEGER,
+          cache_read_input_tokens: 1,
+          output_tokens: 1,
+        },
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "events",
+      events: [
+        {
+          kind: "result",
+          text: "done",
+          isError: false,
+          usage: {
+            inputTokens: 31_004,
+            outputTokens: 230,
+            cachedInputTokens: 30_000,
+            contextTokens: 31_004,
+          },
+        },
+      ],
+      sessionId: null,
+    });
+    expect(overflow).toEqual({
       kind: "events",
       events: [{ kind: "result", text: "done", isError: false, usage: null }],
       sessionId: null,
@@ -340,7 +416,7 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
     const event = parsed.kind === "events" ? parsed.events[0] : null;
     const summary = event !== null && event.kind === "toolCall" ? event.inputSummary : "";
     expect(utf8ByteLength(summary)).toBeLessThanOrEqual(MAX_AGENT_TOOL_SUMMARY_BYTES);
-    expect(summary).toBe("€".repeat(Math.floor(MAX_AGENT_TOOL_SUMMARY_BYTES / 3)));
+    expect(summary).toBe(`${"€".repeat(Math.floor((MAX_AGENT_TOOL_SUMMARY_BYTES - 3) / 3))}…`);
   });
 });
 
@@ -701,5 +777,273 @@ describe("parseClaudeStreamJsonLine tool call description", () => {
     expect(description.length).toBeGreaterThan(0);
     expect(description).not.toContain("\u0000");
     expect(/\p{Cc}/u.test(description)).toBe(false);
+  });
+});
+
+describe("parseClaudeStreamJsonLine stream fidelity", () => {
+  const SUBAGENT_PARENT = "toolu_01SubagentParent";
+
+  function events(raw: string): ReadonlyArray<AgentTurnEvent> {
+    const parsed = parseClaudeStreamJsonLine(raw);
+    expect(parsed.kind).toBe("events");
+    return parsed.kind === "events" ? parsed.events : [];
+  }
+
+  function notice(raw: string) {
+    return { kind: "unknownLine", stream: "stdout", raw, clipped: false };
+  }
+
+  it("keeps subagent thinking attached to its parent tool", () => {
+    expect(
+      events(
+        line({
+          type: "assistant",
+          parent_tool_use_id: SUBAGENT_PARENT,
+          session_id: SESSION_ID,
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "child plan", signature: "sig" },
+              { type: "text", text: "child answer" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { kind: "reasoning", text: "child plan", parentToolId: SUBAGENT_PARENT },
+      { kind: "assistantText", text: "child answer", parentToolId: SUBAGENT_PARENT },
+    ]);
+  });
+
+  it("never coalesces reasoning across different parents and counts the parent bytes", () => {
+    const main: AgentTurnEvent = { kind: "reasoning", text: "a" };
+    const child: AgentTurnEvent = { kind: "reasoning", text: "b", parentToolId: SUBAGENT_PARENT };
+
+    expect(coalesceAgentTextEvents(main, child)).toBeNull();
+    expect(coalesceAgentTextEvents(child, main)).toBeNull();
+    expect(coalesceAgentTextEvents(child, { ...child, text: "c" })).toEqual({
+      kind: "reasoning",
+      text: "bc",
+      parentToolId: SUBAGENT_PARENT,
+    });
+    expect(agentTurnEventUtf8Bytes(child)).toBe(1 + utf8ByteLength(SUBAGENT_PARENT));
+  });
+
+  it("keeps main-thread thinking unparented", () => {
+    expect(events(assistant([{ type: "thinking", thinking: "main plan" }]))).toEqual([
+      { kind: "reasoning", text: "main plan" },
+    ]);
+  });
+
+  it("emits a bounded placeholder for redacted thinking", () => {
+    expect(events(assistant([{ type: "redacted_thinking", data: "EmwKAhgBEgy3va" }]))).toEqual([
+      { kind: "reasoning", text: "Reasoning redacted by provider" },
+    ]);
+    expect(
+      events(
+        line({
+          type: "assistant",
+          parent_tool_use_id: SUBAGENT_PARENT,
+          message: { content: [{ type: "redacted_thinking", data: "x" }] },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "reasoning",
+        text: "Reasoning redacted by provider",
+        parentToolId: SUBAGENT_PARENT,
+      },
+    ]);
+  });
+
+  it("surfaces API retries as a non-error notice", () => {
+    expect(
+      events(
+        line({
+          type: "system",
+          subtype: "api_retry",
+          attempt: 2,
+          max_retries: 10,
+          retry_delay_ms: 5_300,
+          error_status: 529,
+          error: "server_error",
+          session_id: SESSION_ID,
+        }),
+      ),
+    ).toEqual([notice("Claude API request failed; retry 2/10 in 5.3s (server_error, HTTP 529)")]);
+    expect(
+      events(
+        line({
+          type: "system",
+          subtype: "api_retry",
+          attempt: -1,
+          max_retries: "10",
+          retry_delay_ms: 250,
+          error_status: null,
+          error: "bad\nclass",
+        }),
+      ),
+    ).toEqual([notice("Claude API request failed; retry in 250ms")]);
+  });
+
+  it("warns only about failed MCP servers from init", () => {
+    const parsed = parseClaudeStreamJsonLine(
+      line({
+        type: "system",
+        subtype: "init",
+        session_id: SESSION_ID,
+        mcp_servers: [
+          { name: "linear", status: "needs-auth" },
+          { name: "db", status: "failed" },
+          { name: "ok", status: "connected" },
+          { name: "later", status: "pending" },
+          { name: "bad\u0007name", status: "failed" },
+          { status: "failed" },
+        ],
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "events",
+      events: [notice("Warning: MCP servers failed to start: db")],
+      sessionId: SESSION_ID,
+    });
+  });
+
+  it("bounds the MCP warning to the first servers", () => {
+    const servers = Array.from({ length: 1_000 }, (_, index) => ({
+      name: `server-${index}`,
+      status: "failed",
+    }));
+    const [warning] = events(
+      line({ type: "system", subtype: "init", session_id: SESSION_ID, mcp_servers: servers }),
+    );
+
+    expect(warning).toEqual(
+      notice(
+        `Warning: MCP servers failed to start: ${Array.from(
+          { length: 8 },
+          (_, index) => `server-${index}`,
+        ).join(", ")}, +248 more`,
+      ),
+    );
+  });
+
+  it("keeps init without failed MCP servers event-free", () => {
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "system",
+          subtype: "init",
+          session_id: SESSION_ID,
+          mcp_servers: [
+            { name: "ok", status: "connected" },
+            { name: "linear", status: "needs-auth" },
+            { name: "later", status: "pending" },
+          ],
+        }),
+      ),
+    ).toEqual({ kind: "events", events: [], sessionId: SESSION_ID });
+  });
+
+  it("summarizes permission denials before the result", () => {
+    const denials = [
+      { tool_name: "Bash", tool_use_id: "toolu_1", tool_input: { command: "rm -rf /" } },
+      { tool_name: "Write", tool_use_id: "toolu_2", tool_input: {} },
+      { tool_use_id: "toolu_3" },
+      ...Array.from({ length: 7 }, (_, index) => ({ tool_name: `Tool${index}` })),
+    ];
+    const [summary, result] = events(
+      line({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        session_id: SESSION_ID,
+        permission_denials: denials,
+      }),
+    );
+
+    expect(summary).toEqual(
+      notice(
+        "Permission denied for 10 tool calls: Bash, Write, unknown tool, Tool0, Tool1, Tool2, Tool3, Tool4, +2 more",
+      ),
+    );
+    expect(result).toMatchObject({ kind: "result", text: "done", isError: false });
+  });
+
+  it("does not add a denial notice when nothing was denied", () => {
+    const parsed = events(
+      line({ type: "result", subtype: "success", result: "done", permission_denials: [] }),
+    );
+
+    expect(parsed.map((event) => event.kind)).toEqual(["result"]);
+  });
+
+  it("ignores known benign frames explicitly", () => {
+    for (const type of [
+      "stream_event",
+      "tool_progress",
+      "keep_alive",
+      "control_request",
+      "control_response",
+    ]) {
+      expect(parseClaudeStreamJsonLine(line({ type }))).toEqual({ kind: "ignored" });
+    }
+  });
+
+  it("surfaces unknown frames as bounded unknown rows", () => {
+    expect(events(line({ type: "brand_new_frame", payload: "x".repeat(10_000) }))).toEqual([
+      notice("Unsupported Claude stream frame: brand_new_frame"),
+    ]);
+    expect(events(line({ type: "x".repeat(200) }))).toEqual([
+      notice("Unsupported Claude stream frame: <invalid type>"),
+    ]);
+    expect(events(line({ type: "bad type\n" }))).toEqual([
+      notice("Unsupported Claude stream frame: <invalid type>"),
+    ]);
+    expect(events(line({ kind: "no-type" }))).toEqual([
+      notice("Unsupported Claude stream frame: <missing type>"),
+    ]);
+  });
+
+  it("clips long tool results to head and tail with an omission marker", () => {
+    const output = `head line\n${"x".repeat(5_000)}\nError: tail failure`;
+    const [event] = events(
+      line({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "toolu_9", content: output }],
+        },
+      }),
+    );
+
+    expect(event?.kind).toBe("toolResult");
+    const summary = event?.kind === "toolResult" ? event.outputSummary : "";
+    expect(summary.startsWith("head line\n")).toBe(true);
+    expect(summary.endsWith("Error: tail failure")).toBe(true);
+    expect(summary).toMatch(/\n… \d+ bytes omitted …\n/u);
+    expect(utf8ByteLength(summary)).toBeLessThanOrEqual(MAX_AGENT_TOOL_SUMMARY_BYTES);
+  });
+
+  it("summarizes TodoWrite calls readably", () => {
+    const [event] = events(
+      assistant([
+        {
+          type: "tool_use",
+          id: "toolu_todo",
+          name: "TodoWrite",
+          input: {
+            todos: [
+              { content: "a", status: "completed", activeForm: "A" },
+              { content: "b", status: "in_progress", activeForm: "B" },
+              { content: "c", status: "pending", activeForm: "C" },
+            ],
+          },
+        },
+      ]),
+    );
+
+    expect(event).toMatchObject({ kind: "toolCall", inputSummary: "3 todos: ✓ a, → b, ○ c" });
   });
 });

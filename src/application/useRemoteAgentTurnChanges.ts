@@ -2,7 +2,12 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isTerminalAgentTurnStatus } from "../domain/agentThread";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentThreadView } from "./agentThreadPorts";
-import { createAgentTurnChangesReader } from "./agentTurnChangesReader";
+import {
+  authorizedTurnChanges,
+  createAgentTurnChangesReader,
+  MAX_TURN_CHANGES_LEASES,
+  TURN_CHANGES_NOT_APPLICABLE,
+} from "./agentTurnChangesReader";
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import { remoteAgentProjectKey, remoteAgentThreadKey } from "./remoteAgentProjection";
 import { isRemoteTaskTerminal } from "./remoteRunnerTaskState";
@@ -24,7 +29,6 @@ interface Lease {
   readonly turnId: string;
   readonly identity: string;
 }
-const MAX_LEASES = 96; // The reader retains 32 summaries and permits 64 in-flight reads.
 
 /** Resolves a historical projected turn to its own server task, never the latest task. */
 export function useRemoteAgentTurnChanges(input: RemoteAgentTurnChangesInput) {
@@ -217,27 +221,29 @@ export function useRemoteAgentTurnChanges(input: RemoteAgentTurnChangesInput) {
   }
   const resolver = useRef(resolveTarget);
   resolver.current = resolveTarget;
-  const [reader] = useState(() =>
+  const [reader] = useState<ReturnType<typeof createAgentTurnChangesReader>>(() =>
     createAgentTurnChangesReader((threadId, turnId) => {
-      if (!mounted.current) return null;
+      if (!mounted.current) return TURN_CHANGES_NOT_APPLICABLE;
       const target = resolver.current(threadId, turnId);
-      if (!target) return null;
+      if (!target) return TURN_CHANGES_NOT_APPLICABLE;
       const key = JSON.stringify([threadId, turnId]);
       let lease = leases.current.get(key);
       if (!lease || lease.identity !== target.identity) {
         lease = { threadId, turnId, identity: target.identity };
         leases.current.set(key, lease);
-        while (leases.current.size > MAX_LEASES)
-          leases.current.delete(leases.current.keys().next().value!);
+        for (const [candidateKey, candidate] of leases.current) {
+          if (leases.current.size <= MAX_TURN_CHANGES_LEASES) break;
+          if (!reader.retainsLease(candidate)) leases.current.delete(candidateKey);
+        }
       }
       const request = { serverId: target.serverId, taskId: target.taskId };
-      return {
+      return authorizedTurnChanges({
         lease,
         identity: target.identity,
         getSummary: () => target.gateway.getTurnChanges!(request),
         getFileDiff: (relativePath) =>
           target.gateway.getTurnFileDiff!({ ...request, relativePath }),
-      };
+      });
     }),
   );
   useLayoutEffect(() => {
@@ -246,8 +252,9 @@ export function useRemoteAgentTurnChanges(input: RemoteAgentTurnChangesInput) {
     return () => {
       mounted.current = false;
       owned.clear();
+      reader.cancelPendingReads();
     };
-  }, []);
+  }, [reader]);
   return {
     turnChangesRevision: revision.current.value,
     getTurnChangesRevision,

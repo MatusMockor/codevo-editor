@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createAgentMarkdownSession } from "../../application/agentMarkdownSession";
 import { sharedAgentMarkdownDocumentCache } from "../../application/agentMarkdownDocumentCache";
+import { normalizeAgentMarkdownText } from "../../application/agentMarkdownDocument";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMarkdownRenderer";
 import {
@@ -144,9 +145,27 @@ function agentMarkdownPresentation(
       return UNAVAILABLE;
     case "ready":
       if (gate === "defer") return DEFERRED;
-      return resolveAgentMarkdownPresentation(view, text, query);
+      return resolveAgentMarkdownPresentation(view, text, query, () =>
+        agentMarkdownBlockSources(renderer.renderer, text),
+      );
     default:
       return unsupportedRendererState(renderer);
+  }
+}
+
+const NON_RENDERING_TOKEN_TYPES: ReadonlySet<string> = new Set(["space", "def"]);
+
+function agentMarkdownBlockSources(
+  renderer: AgentMarkdownRenderer,
+  text: string,
+): ReadonlyArray<string> | null {
+  try {
+    return renderer
+      .lexBlocks(normalizeAgentMarkdownText(text))
+      .filter((token) => !NON_RENDERING_TOKEN_TYPES.has(token.type))
+      .map((token) => token.raw);
+  } catch {
+    return null;
   }
 }
 

@@ -12,6 +12,7 @@ import { AgentScriptRunControl } from "./AgentScriptRunControl";
 import type { AgentShipActions } from "./AgentShipPanel";
 import {
   agentThreadImportedBadgeLabel,
+  agentViewCanMarkUnread,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
@@ -193,6 +194,9 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
       {thread !== null && menuAnchor !== null && (
         <AgentThreadRowMenu
           archived={thread.thread.archived}
+          snoozed={(thread.thread.snoozedUntil ?? 0) > Date.now()}
+          settled={thread.thread.settledAt != null}
+          canMarkUnread={agentViewCanMarkUnread(thread)}
           branch={agentShipBranchLabel(thread.ship)}
           onClose={closeMenu}
           onCommand={(command) => onThreadMenuCommand(thread.thread.threadId, command)}

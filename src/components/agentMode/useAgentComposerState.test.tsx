@@ -31,11 +31,47 @@ import {
   NOT_REPOSITORY_COMPOSER_CAPTION,
   NOT_REPOSITORY_WORKTREE_ONLY_CAPTION,
   useAgentComposerState,
-  type AgentComposerPromptRestore,
   type AgentComposerState,
 } from "./useAgentComposerState";
 import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
 import { COMPOSER_REPOSITORY_PREFERENCE_KEY } from "./useAgentComposerRepositoryPreference";
+import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
+import type { AgentComposerAttachmentDraft } from "../../application/useAgentComposerAttachments";
+
+function queuedEditFixture(
+  overrides: Partial<AgentComposerQueuedEdit> = {},
+): AgentComposerQueuedEdit {
+  return {
+    threadId: "agt-1",
+    lease: 1,
+    prompt: "and then ship it",
+    attachments: [],
+    onRemoveAttachment: vi.fn(),
+    onCancel: vi.fn(),
+    commit: vi.fn(async () => true),
+    ...overrides,
+  };
+}
+
+function keptAttachmentDraft(): AgentComposerAttachmentDraft {
+  return {
+    draftId: "queued-edit:attachment-0",
+    kind: "image",
+    state: "ready",
+    name: "shot.png",
+    bytes: 2_048,
+    mime: "image/png",
+    width: 800,
+    height: 600,
+    attachmentId: "0123456789abcdef0123456789abcdef",
+    path: null,
+    previewUrl: null,
+    failure: null,
+    notice: null,
+    missing: false,
+    promptLineBytesMax: 0,
+  };
+}
 
 const ALL_PROVIDERS: Readonly<Record<"claudeCode" | "codex", boolean>> = {
   claudeCode: true,
@@ -600,6 +636,7 @@ describe("useAgentComposerState", () => {
       threadId: "agt-1",
       prompt: "also run the tests",
       delivery: "queued",
+      dangerousLaunchConfirmed: false,
     });
     expect(sendFollowUp).not.toHaveBeenCalled();
     expect(current().composer.composerProps.prompt).toBe("");
@@ -744,9 +781,35 @@ describe("useAgentComposerState", () => {
         threadId: "agt-1",
         prompt: "Send this now",
         delivery: "immediate",
+        dangerousLaunchConfirmed: false,
       });
     },
   );
+
+  it("marks only the composer whose own conversation is starting as dispatching", () => {
+    const thread = surfaceThreadView();
+    render(
+      threadsSurfaceFixture({
+        threads: [thread],
+        dispatching: true,
+        dispatchingKeys: new Set([`new:${SURFACE_FIXTURE_ROOT}`]),
+      }),
+    );
+    expect(current().composer.composerProps.dispatching).toBe(true);
+
+    act(() => current().navigation.selectThread(thread.thread.threadId));
+
+    expect(current().composer.composerProps.dispatching).toBe(false);
+  });
+
+  it("falls back to the shared dispatching flag when per-conversation keys are unavailable", () => {
+    const thread = surfaceThreadView();
+    render(threadsSurfaceFixture({ threads: [thread], dispatching: true }));
+
+    act(() => current().navigation.selectThread(thread.thread.threadId));
+
+    expect(current().composer.composerProps.dispatching).toBe(true);
+  });
 
   it("shows the running launch even if a next-turn preference is changed", () => {
     const thread = steerableThreadView();
@@ -1720,119 +1783,129 @@ describe("useAgentComposerState", () => {
     expect(drafts.readDraft("agt-1")).toBe("Continue");
   });
 
-  it("restores a taken queued message into the focused composer of the same thread", () => {
+  it("loads a queued message for editing and gives the parked draft back when editing ends", () => {
     const drafts = createAgentComposerDraftStore();
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-    );
+    const agents = threadsSurfaceFixture({ threads: [surfaceThreadView()] });
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts);
     act(() => current().navigation.selectThread("agt-1"));
-    expect(current().composer.composerProps.prompt).toBe("");
+    act(() => current().composer.composerProps.onPromptChange("half a thought"));
 
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-      { token: 1, draftKey: "agt-1", text: "and then ship it" },
-    );
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts, queuedEditFixture());
 
     expect(current().composer.composerProps.prompt).toBe("and then ship it");
-    expect(drafts.readDraft("agt-1")).toBe("and then ship it");
+    expect(current().composer.composerProps.queuedEdit?.threadId).toBe("agt-1");
     const field = host.querySelector<HTMLTextAreaElement>(`textarea#${AGENT_COMPOSER_PROMPT_ID}`);
     expect(document.activeElement).toBe(field);
     expect(field?.selectionStart).toBe("and then ship it".length);
-    expect(field?.selectionEnd).toBe("and then ship it".length);
+
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts, null);
+
+    expect(current().composer.composerProps.prompt).toBe("half a thought");
+    expect(drafts.readDraft("agt-1")).toBe("half a thought");
   });
 
-  it("appends a taken queued message after a blank line when the composer holds unsent text", () => {
+  it("saves the edit through the queued entry instead of sending a new message", async () => {
     const drafts = createAgentComposerDraftStore();
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-    );
+    const sendFollowUp = vi.fn(async () => true);
+    const steer = vi.fn(async () => "deferred" as const);
+    const agents = threadsSurfaceFixture({ threads: [surfaceThreadView()], sendFollowUp, steer });
+    const commit = vi.fn(async () => true);
+    const edit = queuedEditFixture({ commit, attachments: [keptAttachmentDraft()] });
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts);
     act(() => current().navigation.selectThread("agt-1"));
-    act(() => current().composer.composerProps.onPromptChange("half a thought\n\n"));
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts, edit);
+    act(() => current().composer.composerProps.onPromptChange(""));
 
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-      { token: 1, draftKey: "agt-1", text: "and then ship it" },
-    );
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: true,
+      });
+    });
 
-    const merged = "half a thought\n\nand then ship it";
-    expect(current().composer.composerProps.prompt).toBe(merged);
-    expect(drafts.readDraft("agt-1")).toBe(merged);
-    const field = host.querySelector<HTMLTextAreaElement>(`textarea#${AGENT_COMPOSER_PROMPT_ID}`);
-    expect(document.activeElement).toBe(field);
-    expect(field?.selectionStart).toBe(merged.length);
+    expect(commit).toHaveBeenCalledWith("", {});
+    expect(sendFollowUp).not.toHaveBeenCalled();
+    expect(steer).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.prompt).toBe("");
   });
 
-  it("applies each taken queued message once and appends the next one below it", () => {
+  it("keeps the edited text in the composer when the queued entry refuses the edit", async () => {
     const drafts = createAgentComposerDraftStore();
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-    );
+    const agents = threadsSurfaceFixture({ threads: [surfaceThreadView()] });
+    const commit = vi.fn(async () => false);
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts);
     act(() => current().navigation.selectThread("agt-1"));
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts, queuedEditFixture({ commit }));
+    act(() => current().composer.composerProps.onPromptChange("tighten it up"));
 
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-      { token: 1, draftKey: "agt-1", text: "first queued" },
-    );
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-      { token: 1, draftKey: "agt-1", text: "first queued" },
-    );
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: true,
+      });
+    });
 
-    expect(current().composer.composerProps.prompt).toBe("first queued");
-
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
-      { token: 2, draftKey: "agt-1", text: "second queued" },
-    );
-
-    expect(current().composer.composerProps.prompt).toBe("first queued\n\nsecond queued");
-    expect(drafts.readDraft("agt-1")).toBe("first queued\n\nsecond queued");
+    expect(commit).toHaveBeenCalledWith("tighten it up", {});
+    expect(current().composer.composerProps.prompt).toBe("tighten it up");
   });
 
-  it("ignores a restore aimed at another composer target and keeps the typed draft", () => {
+  it("parks an edit of thread A while thread B is composed and resumes it on A", async () => {
     const drafts = createAgentComposerDraftStore();
-    render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
-      [projectFixture()],
-      ALL_PROVIDERS,
-      drafts,
+    const base = surfaceThreadView();
+    const a = surfaceThreadView({ thread: { ...base.thread, threadId: "thread-a" } });
+    const b = surfaceThreadView({ thread: { ...base.thread, threadId: "thread-b" } });
+    const sendFollowUp = vi.fn(async () => true);
+    const agents = threadsSurfaceFixture({ threads: [a, b], sendFollowUp });
+    const commit = vi.fn(async () => true);
+    const edit = queuedEditFixture({ threadId: "thread-a", commit });
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts);
+    act(() => current().navigation.selectThread("thread-b"));
+    act(() => current().composer.composerProps.onPromptChange("b draft"));
+    act(() => current().navigation.selectThread("thread-a"));
+    act(() => current().composer.composerProps.onPromptChange("a draft"));
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts, edit);
+    act(() => current().composer.composerProps.onPromptChange("edited on a"));
+
+    act(() => current().navigation.selectThread("thread-b"));
+    expect(current().composer.composerProps.prompt).toBe("b draft");
+    expect(current().composer.composerProps.queuedEdit).toBeNull();
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: true,
+      });
+    });
+    expect(commit).not.toHaveBeenCalled();
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: "thread-b", prompt: "b draft" }),
     );
+
+    act(() => current().navigation.selectThread("thread-a"));
+    expect(current().composer.composerProps.prompt).toBe("edited on a");
+    expect(current().composer.composerProps.queuedEdit?.threadId).toBe("thread-a");
+
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts, null);
+    expect(current().composer.composerProps.prompt).toBe("a draft");
+  });
+
+  it("ignores an edit that belongs to another thread", () => {
+    const drafts = createAgentComposerDraftStore();
+    const agents = threadsSurfaceFixture({ threads: [surfaceThreadView()] });
+    render(agents, [projectFixture()], ALL_PROVIDERS, drafts);
     act(() => current().navigation.selectThread("agt-1"));
     act(() => current().composer.composerProps.onPromptChange("keep me"));
 
     render(
-      threadsSurfaceFixture({ threads: [surfaceThreadView()] }),
+      agents,
       [projectFixture()],
       ALL_PROVIDERS,
       drafts,
-      { token: 1, draftKey: "agt-other", text: "foreign text" },
+      queuedEditFixture({ threadId: "agt-other" }),
     );
 
     expect(current().composer.composerProps.prompt).toBe("keep me");
+    expect(current().composer.composerProps.queuedEdit).toBeNull();
     expect(drafts.readDraft("agt-other")).toBe("");
   });
 
@@ -1844,7 +1917,7 @@ describe("useAgentComposerState", () => {
       codex: true,
     },
     drafts?: AgentComposerDraftStore,
-    promptRestore: AgentComposerPromptRestore | null = null,
+    queuedEdit: AgentComposerQueuedEdit | null = null,
   ): void {
     act(() => {
       root.render(
@@ -1853,7 +1926,7 @@ describe("useAgentComposerState", () => {
           projects={projects}
           providerEnabled={providerEnabled}
           drafts={drafts}
-          promptRestore={promptRestore}
+          queuedEdit={queuedEdit}
         />,
       );
     });
@@ -1869,13 +1942,13 @@ describe("useAgentComposerState", () => {
     projects,
     providerEnabled,
     drafts,
-    promptRestore = null,
+    queuedEdit = null,
   }: {
     readonly agents: AgentThreadsSurface;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
     readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
     readonly drafts?: AgentComposerDraftStore;
-    readonly promptRestore?: AgentComposerPromptRestore | null;
+    readonly queuedEdit?: AgentComposerQueuedEdit | null;
   }) {
     const groups = useMemo(
       () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
@@ -1892,7 +1965,7 @@ describe("useAgentComposerState", () => {
       drafts,
       groups,
       projects,
-      promptRestore,
+      queuedEdit,
       providerEnabled,
       railScope: navigation.composerScope,
       selectedThread: navigation.selectedThread,

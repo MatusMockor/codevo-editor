@@ -5,6 +5,7 @@ import { agentSubmitKeyShortcuts, type AgentSubmitShortcut } from "./agentSubmit
 export function AgentComposerSubmitControls({
   running,
   steering,
+  editingQueued,
   dispatching,
   disabled,
   submitName,
@@ -16,6 +17,7 @@ export function AgentComposerSubmitControls({
 }: {
   readonly running: boolean;
   readonly steering: boolean;
+  readonly editingQueued: boolean;
   readonly dispatching: boolean;
   readonly disabled: boolean;
   readonly submitName: string;
@@ -26,9 +28,10 @@ export function AgentComposerSubmitControls({
   readonly onAlternate: () => void;
 }) {
   const alternateName = followUpBehavior === "queue" ? "Send now" : "Queue message";
+  const enterOnly = steering || editingQueued;
   return (
     <>
-      {steering && (
+      {steering && !editingQueued && (
         <button
           className="agent-composer__alternate"
           disabled={disabled || immediateBlockedReason !== null}
@@ -57,17 +60,17 @@ export function AgentComposerSubmitControls({
           )}
         </button>
       )}
-      {(!running || steering) && (
+      {(!running || enterOnly) && (
         <button
           aria-busy={dispatching || undefined}
-          aria-keyshortcuts={steering ? "Enter" : agentSubmitKeyShortcuts(shortcut)}
+          aria-keyshortcuts={enterOnly ? "Enter" : agentSubmitKeyShortcuts(shortcut)}
           aria-label={submitName}
           className={
             dispatching ? "agent-composer__send agent-composer__send--busy" : "agent-composer__send"
           }
           disabled={disabled}
           title={
-            steering
+            enterOnly
               ? `${submitName} (Enter)`
               : `${submitName} (Enter or ${shortcut.secondary.glyphs})`
           }

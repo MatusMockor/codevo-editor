@@ -6,7 +6,7 @@ import {
   type AgentThreadDropSection,
   type AgentThreadPlacement,
 } from "../domain/agentThreadOrganization";
-import { agentRootOwnerId } from "../domain/agentProject";
+import { agentProjectOwnsOwner, agentRootOwnerId } from "../domain/agentProject";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
 import { importSavedSessionHistory } from "./importSavedSessionHistory";
 import { useAgentThreadHistory } from "./useAgentThreadHistory";
@@ -16,10 +16,10 @@ import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import { agentThreadAutoTitle } from "../domain/agentThreadAutoTitle";
 import {
   agentThreadAttention,
   agentThreadLifecycle,
-  agentThreadTitle,
   agentThreadUnread,
   lastUsedAgentLaunch,
   normalizeAgentThreadTitle,
@@ -57,7 +57,6 @@ import {
   AGENT_TASKS_SOURCE,
   attempt,
   info,
-  projectByOwnerId,
   projectByRootKey,
   warning,
 } from "./agentProjectAuthority";
@@ -164,6 +163,10 @@ const UNWIRED_EXTERNAL_SESSION_GATEWAY: ExternalSessionGateway = {
 
 export interface AgentThreadsHookSurface extends AgentThreadsSurface {
   readonly externalSessions: ExternalSessionsSurface;
+  togglePin(threadId: string): void;
+  archive(threadId: string): boolean;
+  unarchive(threadId: string): boolean;
+  remove(threadId: string): boolean;
 }
 
 export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentThreadsHookSurface {
@@ -428,23 +431,56 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const { clear: clearSummary } = changes;
 
   const remove = useCallback(
-    (threadId: string): void => {
-      const thread = threads.get(threadId);
-      if (thread === undefined) return;
+    (threadId: string): boolean => {
+      const thread = store.currentState().threads.get(threadId);
+      if (thread === undefined) return false;
+      if (!ownsThread(projects, thread)) return false;
       if (runningTurn(thread) !== null) {
         setNotice({
           kind: "warning",
           message: "Stop the agent before removing its thread.",
           action: null,
         });
-        return;
+        return false;
       }
       removeFromStore(threadId);
+      if (store.currentState().threads.has(threadId)) return false;
       clearSummary(threadId);
       clearShip(threadId);
       void refreshOrphanedWorktrees();
+      return true;
     },
-    [clearShip, clearSummary, refreshOrphanedWorktrees, removeFromStore, threads],
+    [clearShip, clearSummary, projects, refreshOrphanedWorktrees, removeFromStore, store],
+  );
+
+  const { togglePin: togglePinInStore, archive: archiveInStore } = store;
+  const togglePin = useCallback(
+    (threadId: string): void => {
+      const thread = store.currentState().threads.get(threadId);
+      if (thread === undefined || !ownsThread(projects, thread)) return;
+      togglePinInStore(threadId);
+    },
+    [projects, store, togglePinInStore],
+  );
+
+  const archive = useCallback(
+    (threadId: string): boolean => {
+      const thread = store.currentState().threads.get(threadId);
+      if (thread === undefined || !ownsThread(projects, thread)) return false;
+      archiveInStore(threadId);
+      return store.currentState().threads.get(threadId)?.archived === true;
+    },
+    [archiveInStore, projects, store],
+  );
+
+  const unarchive = useCallback(
+    (threadId: string): boolean => {
+      const thread = store.currentState().threads.get(threadId);
+      if (thread === undefined || !ownsThread(projects, thread)) return false;
+      dispatchAction({ kind: "unarchived", threadId });
+      return store.currentState().threads.get(threadId)?.archived === false;
+    },
+    [dispatchAction, projects, store],
   );
 
   const releaseProjectTasks = useCallback(
@@ -683,7 +719,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
         },
         target: { isolation: "in-place", worktreePath: null },
         provider: { kind: request.provider, sessionId: request.sessionId },
-        title: normalizeAgentThreadTitle(request.title) ?? agentThreadTitle(request.firstPrompt),
+        title:
+          normalizeAgentThreadTitle(request.title) ?? agentThreadAutoTitle(request.firstPrompt),
         pinned: false,
         archived: false,
         createdAtEpochMs: createdAt,
@@ -810,6 +847,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     orphanedWorktrees: worktrees.orphanedWorktrees,
     notice,
     dispatching: dispatch.dispatching,
+    dispatchingKeys: dispatch.dispatchingKeys,
     agentCliConfigured,
     agentCliKind,
     agentCliVersion,
@@ -830,7 +868,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     deferredFollowUps: dispatch.deferredFollowUps,
     steer: dispatch.steer,
     removeDeferredFollowUp: dispatch.removeDeferredFollowUp,
-    takeDeferredFollowUp: dispatch.takeDeferredFollowUp,
+    beginDeferredFollowUpEdit: dispatch.beginDeferredFollowUpEdit,
+    cancelDeferredFollowUpEdit: dispatch.cancelDeferredFollowUpEdit,
+    commitDeferredFollowUpEdit: dispatch.commitDeferredFollowUpEdit,
     sendDeferredFollowUpNow: dispatch.sendDeferredFollowUpNow,
     resumeDeferredFollowUps: dispatch.resumeDeferredFollowUps,
     importExternalSession,
@@ -840,8 +880,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     catalog: durableHistory ? catalog : undefined,
     turnLog: turnLog.facts,
     stop: dispatch.stop,
-    togglePin: store.togglePin,
-    archive: store.archive,
+    togglePin,
+    archive,
+    unarchive,
     remove,
     hasLiveTasksForOwner: dispatch.hasLiveTasksForOwner,
     stopProjectTasks: dispatch.stopProjectTasks,
@@ -907,9 +948,7 @@ function loggedThreadRootKey(
 }
 
 function ownsThread(projects: ReadonlyArray<AgentProjectDescriptor>, thread: AgentThread): boolean {
-  const project = projectByOwnerId(projects, thread.owner.ownerId);
-  if (project === undefined) return false;
-  return project.rootKey === thread.owner.rootKey;
+  return projects.some((project) => agentProjectOwnsOwner(project, thread.owner));
 }
 
 function copyDetailOf(
@@ -950,16 +989,20 @@ function agentThreadViews(
   editor: AgentEditorBridgeSurface,
   projects: ReadonlyArray<AgentProjectDescriptor>,
 ): ReadonlyArray<AgentThreadView> {
-  const projectsByOwnerId = new Map<string, AgentProjectDescriptor>();
+  const projectsByRootKey = new Map<string, AgentProjectDescriptor[]>();
   for (const project of projects) {
-    for (const ownerId of project.runtimeOwnerIds ?? [project.ownerId]) {
-      if (projectsByOwnerId.has(ownerId)) continue;
-      projectsByOwnerId.set(ownerId, project);
+    const siblings = projectsByRootKey.get(project.rootKey);
+    if (siblings === undefined) {
+      projectsByRootKey.set(project.rootKey, [project]);
+      continue;
     }
+    siblings.push(project);
   }
   const views: AgentThreadView[] = [];
   for (const thread of threads.values()) {
-    const project = projectsByOwnerId.get(thread.owner.ownerId);
+    const project = projectsByRootKey
+      .get(thread.owner.rootKey)
+      ?.find((candidate) => agentProjectOwnsOwner(candidate, thread.owner));
     if (project === undefined) continue;
     const next: AgentThreadView = {
       thread,

@@ -703,8 +703,6 @@ function EditorSurfaceComponent({
   const resolveDocumentForModelRef = useRef(
     (_model: Monaco.editor.ITextModel): EditorDocument | null => null,
   );
-  const previousActiveDocumentPathRef = useRef<string | null>(activeDocument?.path ?? null);
-  const previousTransientWidgetDismissKeyRef = useRef(transientWidgetDismissKey);
   // Warms TextMate tokens for the active model on idle, off the synchronous
   // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
   // tokens instead of forcing a main-thread tokenization burst (cold-start lag).
@@ -2130,7 +2128,7 @@ function EditorSurfaceComponent({
     workspaceRoot,
   });
 
-  useEditorNavigationLifecycle({
+  const navigationViewportClaimRef = useEditorNavigationLifecycle({
     activeDocument,
     activeDocumentContentReady,
     editor: editorApi,
@@ -2138,8 +2136,6 @@ function EditorSurfaceComponent({
     groupId,
     isOpeningFile,
     onRevealTargetHandled,
-    previousActiveDocumentPathRef,
-    previousTransientWidgetDismissKeyRef,
     runtime,
     transientWidgetDismissKey,
     workspaceRoot,
@@ -2168,6 +2164,7 @@ function EditorSurfaceComponent({
     activeDocumentPath,
     captureEnabled: editorViewStateCaptureEnabled,
     editor: editorApi,
+    navigationViewportClaimRef,
     onViewStateChangeRef: onEditorViewStateChangeRef,
     restoredViewStateRevision,
     restoredViewStates,
