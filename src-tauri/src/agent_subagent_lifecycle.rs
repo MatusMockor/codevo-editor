@@ -6,6 +6,8 @@ const MAX_BATCH_KEY_BYTES: usize = 272;
 const MAX_PARENT_TOOL_ID_BYTES: usize = 256;
 const MAX_NESTED_COUNT: u64 = 999;
 const MAX_COUNTED_NESTED_IDS: usize = 32;
+const MAX_MODEL_BYTES: usize = 64;
+const EFFORTS: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
 /// Closed bounded metadata shared by persisted turns and remote replay snapshots.
 pub(crate) fn valid(value: &Value) -> bool {
@@ -65,6 +67,8 @@ pub(crate) fn valid(value: &Value) -> bool {
                     | "batchKey"
                     | "nestedCount"
                     | "parentToolId"
+                    | "model"
+                    | "effort"
             )
         }) {
             return false;
@@ -112,10 +116,19 @@ pub(crate) fn valid(value: &Value) -> bool {
             ("taskTitle", MAX_TASK_TITLE_BYTES),
             ("batchKey", MAX_BATCH_KEY_BYTES),
             ("parentToolId", MAX_PARENT_TOOL_ID_BYTES),
+            ("model", MAX_MODEL_BYTES),
         ] {
             if fields.contains_key(key) && text(key, max).is_none_or(str::is_empty) {
                 return false;
             }
+        }
+        if fields.contains_key("effort")
+            && !fields
+                .get("effort")
+                .and_then(Value::as_str)
+                .is_some_and(|effort| EFFORTS.contains(&effort))
+        {
+            return false;
         }
         if fields.contains_key("nestedCount")
             && fields["nestedCount"]
@@ -156,7 +169,14 @@ pub(crate) fn valid(value: &Value) -> bool {
     true
 }
 
-const RETAINED_ENTRY_KEYS: [&str; 4] = ["taskTitle", "batchKey", "nestedCount", "parentToolId"];
+const RETAINED_ENTRY_KEYS: [&str; 6] = [
+    "taskTitle",
+    "batchKey",
+    "nestedCount",
+    "parentToolId",
+    "model",
+    "effort",
+];
 
 pub(crate) fn valid_legacy(value: &Value) -> bool {
     valid(value) && !carries_retained_detail(value)
@@ -331,8 +351,9 @@ mod tests {
         );
         assert_eq!(
             wire["limits"].as_object().map(serde_json::Map::len),
-            Some(6)
+            Some(7)
         );
+        assert_eq!(wire["limits"]["modelBytes"], json!(MAX_MODEL_BYTES));
         for name in ["legacy", "retained"] {
             let input = json!({"lifecycle": wire["valid"][name]});
             let turn: Turn = serde_json::from_value(input.clone()).unwrap();

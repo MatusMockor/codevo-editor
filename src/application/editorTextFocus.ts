@@ -19,3 +19,7 @@ export function editorTextFocusOwner(event: Pick<KeyboardEvent, "target">): Elem
 
   return textInput.closest(MONACO_EDITOR_SELECTOR);
 }
+
+export function editorTextFocused(doc: Pick<Document, "activeElement">): boolean {
+  return editorTextFocusOwner({ target: doc.activeElement }) !== null;
+}

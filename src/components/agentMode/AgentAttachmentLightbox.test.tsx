@@ -101,7 +101,7 @@ describe("agent attachment lightbox", () => {
     expect(dialog.closest(".agent-session__scroll")).toBeNull();
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(dialog.getAttribute("aria-label")).toBe("shot.png");
-    expect(dialog.classList.contains("palette-backdrop")).toBe(true);
+    expect(dialog.classList.contains("agent-lightbox")).toBe(true);
     const image = dialog.querySelector<HTMLImageElement>(".agent-lightbox__image");
     expect(image?.getAttribute("src")).toBe(IMAGE_URL);
     expect(image?.alt).toBe("shot.png");

@@ -1,4 +1,5 @@
 import { isAgentSessionId } from "../agentTask";
+import { parseAgentSubagentSpawnFields } from "../agentSubagentSpawn";
 import {
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_TOOL_ID_BYTES,
@@ -115,6 +116,23 @@ function parseEvent(value: RecordValue): AgentTurnEvent | null {
   const item = innerEvent(value, true);
   if (item !== null) return item;
   switch (value.t) {
+    case "subagentSpawn": {
+      keys(value, [
+        "v",
+        "t",
+        "callId",
+        "status",
+        "taskTitle",
+        "model",
+        "reasoningEffort",
+        "agentThreadIds",
+      ]);
+      try {
+        return parseAgentSubagentSpawnFields(value);
+      } catch {
+        throw UNKNOWN;
+      }
+    }
     case "subagent": {
       keys(value, ["v", "t", "kind", "agentThreadId", "agentPath", "clipped"]);
       flag(value.clipped);

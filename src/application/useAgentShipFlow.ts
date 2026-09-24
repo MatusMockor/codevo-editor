@@ -18,8 +18,15 @@ import {
   type AgentShipIntegrationMode,
   type AgentShipState,
   type AgentShipStep,
+  type AgentShipStepResult,
 } from "../domain/agentShip";
 import type { GitGateway } from "../domain/git";
+import {
+  ALL_CHANGES,
+  STALE_COMMIT_SELECTION_MESSAGE,
+  selectCommitChanges,
+  type AgentCommitSelection,
+} from "../domain/gitCommitSelection";
 import {
   MAX_GIT_INTEGRATION_MESSAGE_BYTES,
   type GitIntegrationGateway,
@@ -83,8 +90,12 @@ export interface AgentShipFlowDependencies {
 export interface AgentShipFlowSurface {
   readonly states: ReadonlyMap<string, AgentShipState>;
   refreshShipStatus(threadId: string): Promise<void>;
-  commit(threadId: string, message: string): Promise<void>;
-  push(threadId: string): Promise<void>;
+  commit(
+    threadId: string,
+    message: string,
+    selection?: AgentCommitSelection,
+  ): Promise<AgentShipStepResult>;
+  push(threadId: string): Promise<AgentShipStepResult>;
   openCompareUrl(threadId: string): Promise<void>;
   integrate(threadId: string, mode: AgentShipIntegrationMode): Promise<void>;
   removeWorktree(threadId: string, options: { readonly deleteBranch: boolean }): Promise<void>;
@@ -93,11 +104,35 @@ export interface AgentShipFlowSurface {
 }
 
 interface ShipTarget {
+  readonly kind: "target";
   readonly threadId: string;
   readonly authority: AgentProjectAuthority;
   readonly repositoryRoot: string;
   readonly worktreePath: string | null;
   readonly targetPath: string;
+}
+
+interface TargetUnavailable {
+  readonly kind: "unavailable";
+  readonly message: string;
+  readonly notify: boolean;
+}
+
+const THREAD_UNAVAILABLE_MESSAGE = "This thread cannot ship changes right now.";
+const STOP_AGENT_MESSAGE = "Stop the agent before shipping its changes.";
+const MISSING_WORKTREE_MESSAGE = "The worktree no longer exists.";
+const COMMIT_MESSAGE_LIMIT_MESSAGE = `Enter a commit message of at most ${MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES} bytes.`;
+const COMMITTED_STATUS_UNAVAILABLE_MESSAGE =
+  "The commit was created, but its status could not be refreshed.";
+const STEP_IN_FLIGHT_MESSAGE = "Another Git step is still running for this thread.";
+const STEP_SUCCEEDED: AgentShipStepResult = Object.freeze({ kind: "succeeded" });
+
+function unavailable(message: string, notify: boolean): TargetUnavailable {
+  return { kind: "unavailable", message, notify };
+}
+
+function notRun(message: string): AgentShipStepResult {
+  return { kind: "notRun", message };
 }
 
 export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): AgentShipFlowSurface {
@@ -211,22 +246,19 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
     [],
   );
 
-  const resolveTarget = useCallback((threadId: string, quiet: boolean): ShipTarget | null => {
+  const locateTarget = useCallback((threadId: string): ShipTarget | TargetUnavailable => {
     const deps = dependenciesRef.current;
     const thread = deps.threads.get(threadId);
-    if (thread === undefined) return null;
-    if (runningTurn(thread) !== null) {
-      if (!quiet) deps.setNotice(warning("Stop the agent before shipping its changes."));
-      return null;
-    }
+    if (thread === undefined) return unavailable(THREAD_UNAVAILABLE_MESSAGE, false);
+    if (runningTurn(thread) !== null) return unavailable(STOP_AGENT_MESSAGE, true);
     if (deps.missingWorktreeThreadIds.has(threadId)) {
-      if (!quiet) deps.setNotice(warning("The worktree no longer exists."));
-      return null;
+      return unavailable(MISSING_WORKTREE_MESSAGE, true);
     }
     const project = projectByOwnerId(deps.projects, thread.owner.ownerId);
-    if (project === undefined) return null;
+    if (project === undefined) return unavailable(THREAD_UNAVAILABLE_MESSAGE, false);
     const worktreePath = thread.target.worktreePath;
     return {
+      kind: "target",
       threadId,
       authority: projectAuthority(project, thread.owner.ownerId),
       repositoryRoot: thread.owner.repositoryRoot,
@@ -234,6 +266,16 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       targetPath: worktreePath ?? thread.owner.repositoryRoot,
     };
   }, []);
+
+  const resolveTarget = useCallback(
+    (threadId: string, quiet: boolean): ShipTarget | null => {
+      const located = locateTarget(threadId);
+      if (located.kind === "target") return located;
+      if (!quiet && located.notify) dependenciesRef.current.setNotice(warning(located.message));
+      return null;
+    },
+    [locateTarget],
+  );
 
   const refreshShipStatus = useCallback(
     async (threadId: string): Promise<void> => {
@@ -256,66 +298,105 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
   );
 
   const authorityLost = useCallback(
-    (threadId: string, step: AgentShipStep): void => {
-      apply(threadId, { kind: "stepFailed", failure: { step, reason: "authorityLost" } });
+    (threadId: string, step: AgentShipStep): AgentShipStepResult => {
+      const lost: AgentShipFailure = { step, reason: "authorityLost" };
+      apply(threadId, { kind: "stepFailed", failure: lost });
+      return { kind: "failed", failure: lost };
     },
     [apply],
+  );
+
+  const stepFailed = useCallback(
+    (threadId: string, failed: AgentShipFailure): AgentShipStepResult => {
+      apply(threadId, { kind: "stepFailed", failure: failed });
+      return { kind: "failed", failure: failed };
+    },
+    [apply],
+  );
+
+  const runStep = useCallback(
+    async (
+      threadId: string,
+      step: AgentShipStep,
+      operation: (target: ShipTarget) => Promise<AgentShipStepResult>,
+    ): Promise<AgentShipStepResult> => {
+      if (inFlightRef.current.has(threadId)) return notRun(STEP_IN_FLIGHT_MESSAGE);
+      const located = locateTarget(threadId);
+      if (located.kind === "unavailable") {
+        if (located.notify) dependenciesRef.current.setNotice(warning(located.message));
+        return notRun(located.message);
+      }
+      inFlightRef.current.add(threadId);
+      try {
+        return await operation(located);
+      } catch (error) {
+        dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
+        if (!owns(located)) return authorityLost(threadId, step);
+        return stepFailed(threadId, gitErrorFailure(step, error));
+      } finally {
+        inFlightRef.current.delete(threadId);
+      }
+    },
+    [authorityLost, locateTarget, owns, stepFailed],
   );
 
   const run = useCallback(
     async (
       threadId: string,
       step: AgentShipStep,
-      operation: (target: ShipTarget) => Promise<void>,
+      operation: (target: ShipTarget) => Promise<unknown>,
     ): Promise<void> => {
-      if (inFlightRef.current.has(threadId)) return;
-      const target = resolveTarget(threadId, false);
-      if (target === null) return;
-      inFlightRef.current.add(threadId);
-      try {
+      await runStep(threadId, step, async (target) => {
         await operation(target);
-      } catch (error) {
-        dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
-        if (!owns(target)) return authorityLost(threadId, step);
-        apply(threadId, { kind: "stepFailed", failure: gitErrorFailure(step, error) });
-      } finally {
-        inFlightRef.current.delete(threadId);
-      }
+        return STEP_SUCCEEDED;
+      });
     },
-    [apply, authorityLost, owns, resolveTarget],
+    [runStep],
   );
 
   const commit = useCallback(
-    (threadId: string, message: string): Promise<void> =>
-      run(threadId, "commit", async (target) => {
+    (
+      threadId: string,
+      message: string,
+      selection: AgentCommitSelection = ALL_CHANGES,
+    ): Promise<AgentShipStepResult> =>
+      runStep(threadId, "commit", async (target) => {
         const deps = dependenciesRef.current;
         const bounded = boundedCommitMessage(message);
         if (bounded === null) {
-          deps.setNotice(
-            warning(
-              `Enter a commit message of at most ${MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES} bytes.`,
-            ),
-          );
-          return;
+          deps.setNotice(warning(COMMIT_MESSAGE_LIMIT_MESSAGE));
+          return notRun(COMMIT_MESSAGE_LIMIT_MESSAGE);
         }
-        if (!allowed(threadId, { kind: "commitStarted", message: bounded })) return;
+        if (!allowed(threadId, { kind: "commitStarted", message: bounded })) {
+          return notRun(STEP_IN_FLIGHT_MESSAGE);
+        }
         apply(threadId, { kind: "commitStarted", message: bounded });
         const status = await deps.gitGateway.getStatus(target.targetPath);
         if (!owns(target)) return authorityLost(threadId, "commit");
-        if (status.changes.length === 0) {
-          apply(threadId, {
-            kind: "stepFailed",
-            failure: { step: "commit", reason: "nothingToCommit", message: "Nothing to commit." },
-          });
+        const selected = selectCommitChanges(status.changes, selection);
+        if (selected.kind !== "ok") {
+          const failed = stepFailed(threadId, selectionFailure(selected.kind));
           void refreshShipStatus(threadId);
-          return;
+          return failed;
         }
-        await dependenciesRef.current.gitGateway.stageFiles(target.targetPath, status.changes);
+        const changes = [...selected.changes];
+        await dependenciesRef.current.gitGateway.stageFiles(target.targetPath, changes);
         if (!owns(target)) return authorityLost(threadId, "commit");
-        await dependenciesRef.current.gitGateway.commit(target.targetPath, bounded, status.changes);
+        await dependenciesRef.current.gitGateway.commit(target.targetPath, bounded, changes);
         if (!owns(target)) return authorityLost(threadId, "commit");
-        const shipStatus = await loadStatus(target);
+        const loaded = await attempt(() => loadStatus(target));
         if (!owns(target)) return authorityLost(threadId, "commit");
+        dependenciesRef.current.onShipStepCompleted?.(threadId);
+        if (!loaded.ok) {
+          dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, loaded.error);
+          stepFailed(threadId, {
+            step: "commit",
+            reason: "gitError",
+            message: COMMITTED_STATUS_UNAVAILABLE_MESSAGE,
+          });
+          return STEP_SUCCEEDED;
+        }
+        const shipStatus = loaded.value;
         statusLoadedAtRef.current.set(threadId, nowMs());
         apply(threadId, {
           kind: "commitSucceeded",
@@ -323,7 +404,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
           status: shipStatus,
         });
         persistReceipt(threadId, { lastCommitSha: shipStatus.worktree.head });
-        dependenciesRef.current.onShipStepCompleted?.(threadId);
+        return STEP_SUCCEEDED;
       }),
     [
       allowed,
@@ -334,14 +415,15 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       owns,
       persistReceipt,
       refreshShipStatus,
-      run,
+      runStep,
+      stepFailed,
     ],
   );
 
   const push = useCallback(
-    (threadId: string): Promise<void> =>
-      run(threadId, "push", async (target) => {
-        if (!allowed(threadId, { kind: "pushStarted" })) return;
+    (threadId: string): Promise<AgentShipStepResult> =>
+      runStep(threadId, "push", async (target) => {
+        if (!allowed(threadId, { kind: "pushStarted" })) return notRun(STEP_IN_FLIGHT_MESSAGE);
         apply(threadId, { kind: "pushStarted" });
         const pushed = await attempt(() =>
           dependenciesRef.current.gitIntegrationGateway.pushBranchUpstream({
@@ -352,8 +434,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         if (!owns(target)) return authorityLost(threadId, "push");
         if (!pushed.ok) {
           dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, pushed.error);
-          apply(threadId, { kind: "stepFailed", failure: pushFailure(pushed.error) });
-          return;
+          return stepFailed(threadId, pushFailure(pushed.error));
         }
         persistReceipt(threadId, {
           pushed: { remote: pushed.value.remote, branch: pushed.value.branch },
@@ -370,12 +451,24 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
               message: "The branch was pushed, but its status could not be refreshed.",
             },
           });
-          return;
+          return STEP_SUCCEEDED;
         }
         if (status.ok) statusLoadedAtRef.current.set(threadId, nowMs());
         apply(threadId, { kind: "pushSucceeded", receipt: pushed.value, status: known });
+        return STEP_SUCCEEDED;
       }),
-    [allowed, apply, authorityLost, currentState, loadStatus, nowMs, owns, persistReceipt, run],
+    [
+      allowed,
+      apply,
+      authorityLost,
+      currentState,
+      loadStatus,
+      nowMs,
+      owns,
+      persistReceipt,
+      runStep,
+      stepFailed,
+    ],
   );
 
   const openCompareUrl = useCallback(
@@ -626,6 +719,13 @@ function boundedCommitMessage(message: string): string | null {
   if (new TextEncoder().encode(trimmed).byteLength > MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES)
     return null;
   return trimmed;
+}
+
+function selectionFailure(kind: "empty" | "stale"): AgentShipFailure {
+  if (kind === "stale") {
+    return { step: "commit", reason: "staleSelection", message: STALE_COMMIT_SELECTION_MESSAGE };
+  }
+  return { step: "commit", reason: "nothingToCommit", message: "Nothing to commit." };
 }
 
 function mergeMessage(branch: string, title: string): string {

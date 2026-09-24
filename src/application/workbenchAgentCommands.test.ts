@@ -55,6 +55,8 @@ const LAYOUT_COMMAND_IDS = [
   "agent.openTerminalSurface",
 ] as const;
 
+const SHELL_COMMAND_IDS = ["agent.toggleSidebar", "panel.toggleMaximized"] as const;
+
 function handlers(
   threadSelected = true,
   blockedSurfaces: ReadonlyArray<AgentSurfaceKind> = [],
@@ -93,10 +95,13 @@ describe("workbenchAgentCommands", () => {
     expect(commands.map((command) => command.id)).toEqual([
       ...VIEW_COMMAND_IDS,
       ...LAYOUT_COMMAND_IDS,
+      ...SHELL_COMMAND_IDS,
     ]);
     expect(commands.map((command) => command.category)).toEqual(commands.map(() => "Agents"));
     expect(commands.map((command) => command.shortcut)).toEqual(
-      [...VIEW_COMMAND_IDS, ...LAYOUT_COMMAND_IDS].map((id) => `shortcut:${id}`),
+      [...VIEW_COMMAND_IDS, ...LAYOUT_COMMAND_IDS, ...SHELL_COMMAND_IDS].map(
+        (id) => `shortcut:${id}`,
+      ),
     );
     expect(commands.find((command) => command.id === "agent.jumpToThread.4")?.title).toBe(
       "Jump to Thread 4",
@@ -126,6 +131,7 @@ describe("workbenchAgentCommands", () => {
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
       ...VIEW_COMMAND_IDS.map(() => false),
       ...LAYOUT_COMMAND_IDS.map(() => true),
+      ...SHELL_COMMAND_IDS.map(() => false),
     ]);
 
     const unbind = bridge.bind(handlers());
@@ -139,6 +145,7 @@ describe("workbenchAgentCommands", () => {
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
       ...VIEW_COMMAND_IDS.map(() => false),
       ...LAYOUT_COMMAND_IDS.map(() => true),
+      ...SHELL_COMMAND_IDS.map(() => false),
     ]);
   });
 
@@ -282,6 +289,52 @@ describe("workbenchAgentCommands", () => {
     return agentLayout.actions;
   }
 
+  it("toggles the sidebar only in agent mode and yields the shortcut to a focused editor", async () => {
+    let editorFocused = false;
+    const bridge = createAgentViewCommandBridge();
+    const agentLayout = recordingLayout();
+    const commands = workbenchAgentCommands({ agentLayout, viewCommands: bridge });
+    const toggle = commands.find(
+      (command) => command.id === "agent.toggleSidebar",
+    ) as ShortcutScopedCommand;
+
+    expect(toggle.isEnabled(enabledContext)).toBe(false);
+    expect(toggle.isShortcutEnabled(enabledContext)).toBe(false);
+
+    bridge.bind({ ...handlers(), editorTextFocused: () => editorFocused });
+
+    expect(toggle.isEnabled(enabledContext)).toBe(true);
+    expect(toggle.isShortcutEnabled(enabledContext)).toBe(true);
+    expect(toggle.isEnabled(disabledContext)).toBe(false);
+
+    editorFocused = true;
+
+    expect(toggle.isEnabled(enabledContext)).toBe(true);
+    expect(toggle.isShortcutEnabled(enabledContext)).toBe(false);
+
+    await toggle.run();
+
+    expect(agentLayout.actions).toEqual([{ kind: "toggleRail" }]);
+  });
+
+  it("routes Toggle Maximized Panel to the agent view's responsive panel toggle", async () => {
+    const toggleMaximizedPanel = vi.fn();
+    const bridge = createAgentViewCommandBridge();
+    const agentLayout = recordingLayout();
+    const commands = workbenchAgentCommands({ agentLayout, viewCommands: bridge });
+    const maximize = commands.find((command) => command.id === "panel.toggleMaximized");
+
+    expect(maximize?.title).toBe("Toggle Maximized Panel");
+    expect(maximize?.isEnabled(enabledContext)).toBe(false);
+
+    bridge.bind({ ...handlers(), toggleMaximizedPanel });
+    await maximize?.run();
+
+    expect(maximize?.isEnabled(enabledContext)).toBe(true);
+    expect(toggleMaximizedPanel).toHaveBeenCalledTimes(1);
+    expect(agentLayout.actions).toEqual([]);
+  });
+
   it("stays inert when no agent view or layout port is bound", async () => {
     const commands = workbenchAgentCommands({});
 
@@ -292,6 +345,7 @@ describe("workbenchAgentCommands", () => {
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
       ...VIEW_COMMAND_IDS.map(() => false),
       ...LAYOUT_COMMAND_IDS.map(() => true),
+      ...SHELL_COMMAND_IDS.map(() => false),
     ]);
   });
 

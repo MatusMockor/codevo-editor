@@ -51,12 +51,6 @@
   color: var(--codevo-fg-subtle);
 }
 
-.agent-remote-add-project .palette-search:has(input:focus-visible) {
-  outline: 2px solid var(--codevo-fg-muted);
-  outline-offset: 2px;
-  box-shadow: none;
-}
-
 .agent-remote-add-project .palette-search input:focus-visible {
   box-shadow: none;
 }
@@ -220,7 +214,7 @@
 }
 
 .agent-remote-add-project__field input:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-hair-strong);
 }
 
 .agent-remote-add-project__prefixed {
@@ -469,7 +463,7 @@
   color: var(--codevo-fg-muted);
 }
 
-.agent-remote-add-project :is(button, input, select):focus-visible {
+.agent-remote-add-project :is(button, select):focus-visible {
   outline: 2px solid var(--codevo-fg-muted);
   outline-offset: 2px;
   box-shadow: none;

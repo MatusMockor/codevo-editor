@@ -96,9 +96,12 @@ export const LazyAgentWorkbenchScreen = retryableLazy<
   <AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />,
 );
 export const LazyCommandPalette = retryableLazy<
-  ComponentProps<typeof import("./CommandPalette").CommandPalette>
+  ComponentProps<typeof import("./commandPalette/WorkbenchCommandPalette").WorkbenchCommandPalette>
 >(
-  () => import("./CommandPalette").then((module) => ({ default: module.CommandPalette })),
+  () =>
+    import("./commandPalette/WorkbenchCommandPalette").then((module) => ({
+      default: module.WorkbenchCommandPalette,
+    })),
   "command palette",
 );
 export const LazyArtisanMakePalette = retryableLazy<
@@ -106,10 +109,6 @@ export const LazyArtisanMakePalette = retryableLazy<
 >(
   () => import("./ArtisanMakePalette").then((module) => ({ default: module.ArtisanMakePalette })),
   "Artisan command palette",
-);
-export const LazyQuickOpen = retryableLazy<ComponentProps<typeof import("./QuickOpen").QuickOpen>>(
-  () => import("./QuickOpen").then((module) => ({ default: module.QuickOpen })),
-  "Quick Open",
 );
 export const LazySearchEverywhere = retryableLazy<
   ComponentProps<typeof import("./SearchEverywhere").SearchEverywhere>

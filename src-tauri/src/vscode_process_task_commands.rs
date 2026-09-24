@@ -8,6 +8,7 @@ use std::{
 use crate::{
     node_package_problem_matcher::NodePackageProblemMatcher,
     terminal::{TerminalEventSink, TerminalOutputEvent},
+    terminal_line_endings::TerminalLineEndingTranslator,
     terminal_task_process::TerminalTaskOwnership,
     vscode_process_task_events::{
         VscodeProcessTaskEventSink, VscodeProcessTaskOutputStream, VscodeProcessTaskOwner,
@@ -530,6 +531,7 @@ fn spawn_output_reader(
     thread::spawn(move || {
         let result = (|| {
             let mut buffer = [0_u8; READER_BUFFER_BYTES];
+            let mut line_endings = TerminalLineEndingTranslator::default();
             loop {
                 let count = reader
                     .read(&mut buffer)
@@ -538,7 +540,7 @@ fn spawn_output_reader(
                     break;
                 }
                 terminal_sink.emit_output(TerminalOutputEvent {
-                    data: String::from_utf8_lossy(&buffer[..count]).into_owned(),
+                    data: line_endings.translate_to_terminal_text(&buffer[..count]),
                     session_id: owner.session_id,
                 });
                 registry.record_output(&owner, stream, &buffer[..count], event_sink.as_ref())?;

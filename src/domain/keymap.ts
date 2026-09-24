@@ -1,4 +1,5 @@
 import {
+  findKeymapSequenceConflicts as findScopedSequenceConflicts,
   normalizeShortcutSequenceInput,
   parseShortcutSequence,
   shortcutKeyFromKeyboardEvent,
@@ -6,7 +7,6 @@ import {
 } from "./shortcutSequence";
 
 export {
-  findKeymapSequenceConflicts,
   lookupKeymapShortcutSequence,
   normalizeShortcutSequenceInput,
   parseShortcutSequence,
@@ -61,36 +61,42 @@ export const keymapCommands = [
   {
     category: "Editor Groups",
     defaultShortcut: "Cmd+K Cmd+\\",
+    focus: "editorText",
     id: "editor.splitDown",
     label: "Split Editor Down",
   },
   {
     category: "Editor Groups",
     defaultShortcut: "Cmd+K Cmd+ArrowRight",
+    focus: "editorText",
     id: "editor.focusNextGroup",
     label: "Focus Next Editor Group",
   },
   {
     category: "Editor Groups",
     defaultShortcut: "Cmd+K Cmd+ArrowLeft",
+    focus: "editorText",
     id: "editor.focusPreviousGroup",
     label: "Focus Previous Editor Group",
   },
   {
     category: "Editor Groups",
     defaultShortcut: "Cmd+K Cmd+Shift+ArrowRight",
+    focus: "editorText",
     id: "editor.moveTabToNextGroup",
     label: "Move Tab to Next Group",
   },
   {
     category: "Editor Groups",
     defaultShortcut: "Cmd+K Cmd+Shift+ArrowLeft",
+    focus: "editorText",
     id: "editor.moveTabToPreviousGroup",
     label: "Move Tab to Previous Group",
   },
   {
     category: "Editor Groups",
     defaultShortcut: "Cmd+K W",
+    focus: "editorText",
     id: "editor.closeGroup",
     label: "Close Editor Group",
   },
@@ -103,6 +109,7 @@ export const keymapCommands = [
   {
     category: "Editor",
     defaultShortcut: "Cmd+B",
+    focus: "editorText",
     id: "editor.goToDefinition",
     label: "Go to Definition",
   },
@@ -969,6 +976,13 @@ export const keymapCommands = [
   },
   {
     category: "Agent",
+    defaultShortcut: "Cmd+B",
+    focus: "outsideEditorText",
+    id: "agent.toggleSidebar",
+    label: "Toggle Sidebar",
+  },
+  {
+    category: "Agent",
     defaultShortcut: "Cmd+Alt+F",
     id: "agent.openFilesSurface",
     label: "Show Files Surface",
@@ -997,6 +1011,26 @@ export const keymapCommands = [
     id: "agent.openCommitMenu",
     label: "Commit Thread Changes",
   },
+  {
+    category: "Workbench",
+    defaultShortcut: "Cmd+K",
+    focus: "outsideEditorText",
+    id: "palette.open",
+    label: "Open Command Palette",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "Cmd+/",
+    focus: "outsideEditorText",
+    id: "palette.shortcuts",
+    label: "Keyboard Shortcuts",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "",
+    id: "panel.toggleMaximized",
+    label: "Toggle Maximized Panel",
+  },
 ] as const;
 
 export type KeymapCommand = (typeof keymapCommands)[number];
@@ -1005,6 +1039,35 @@ export type RebindableKeymapCommand = Exclude<KeymapCommand, { readonly rebindab
 export type RebindableKeymapCommandId = RebindableKeymapCommand["id"];
 export type KeymapPlatform = "linux" | "mac" | "other" | "windows";
 export type KeymapSettings = Record<KeymapCommandId, string>;
+
+export function isKeymapCommandId(value: string): value is KeymapCommandId {
+  return keymapCommands.some((command) => command.id === value);
+}
+
+export type KeymapFocusScope = "any" | "editorText" | "outsideEditorText";
+
+const KEYMAP_FOCUS_SCOPES: ReadonlyMap<string, KeymapFocusScope> = new Map(
+  keymapCommands.map(
+    (command) => [command.id, "focus" in command ? command.focus : "any"] as const,
+  ),
+);
+
+export function keymapCommandFocusScope(commandId: string): KeymapFocusScope {
+  return KEYMAP_FOCUS_SCOPES.get(commandId) ?? "any";
+}
+
+export function keymapFocusScopesOverlap(left: string, right: string): boolean {
+  const scopes = new Set([keymapCommandFocusScope(left), keymapCommandFocusScope(right)]);
+  return !(scopes.has("editorText") && scopes.has("outsideEditorText"));
+}
+
+export function findKeymapSequenceConflicts<CommandId extends string>(
+  keymap: Readonly<Record<CommandId, string>>,
+  commandId: CommandId,
+  platform?: KeymapPlatform,
+) {
+  return findScopedSequenceConflicts(keymap, commandId, platform, keymapFocusScopesOverlap);
+}
 
 export const rebindableKeymapCommands = keymapCommands.filter(
   (command): command is RebindableKeymapCommand => !("rebindable" in command),
@@ -1225,6 +1288,7 @@ export function findKeymapConflicts(
 
   return keymapCommands
     .filter((command) => command.id !== commandId)
+    .filter((command) => keymapFocusScopesOverlap(commandId, command.id))
     .filter(
       (command) =>
         normalizeShortcutInput(shortcutForCommand(keymap, command.id, platform)) === shortcut,

@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { trapTab } from "./agentFocusTrap";
+import "./conversation/agentLightbox.css";
 import type { AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
 import {
   agentAttachmentLightboxFit,
@@ -127,7 +128,7 @@ function AgentAttachmentLightboxDialog({
     <div
       aria-label={request.name}
       aria-modal="true"
-      className="palette-backdrop agent-lightbox"
+      className="agent-lightbox"
       onKeyDown={handleKeyDown}
       role="dialog"
       tabIndex={-1}

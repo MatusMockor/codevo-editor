@@ -1,5 +1,14 @@
-import { memo, useCallback, useState, type MouseEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { Check, Folder, FolderGit2, Pin } from "lucide-react";
+import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
@@ -7,10 +16,13 @@ import {
 } from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
 import { AgentCompactRelativeTime } from "./agentClock";
-import { AgentProviderGlyph } from "./AgentProviderGlyph";
-import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
-import { RemoteThreadIndicator, RenameInput, StatusSlot } from "./AgentThreadRowParts";
+import {
+  AgentThreadRowStatusSlot,
+  RemoteThreadIndicator,
+  RenameInput,
+} from "./AgentThreadRowParts";
 import { agentShipBranchLabel } from "./agentModePresentation";
+import { agentProjectMonogram } from "./agentRailFilter";
 import {
   agentRowClassName,
   agentThreadImportedBadgeLabel,
@@ -18,7 +30,9 @@ import {
   agentViewCanMarkUnread,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
+import { agentRowIsLive, agentRowWorkingAgents } from "./agentThreadRowStatus";
 import { useAgentRowBackgroundActivity } from "./useAgentRowBackgroundActivity";
+import { useAgentThreadRowMenu } from "./useAgentThreadRowMenu";
 
 export interface AgentThreadRowProps {
   readonly view: AgentThreadView;
@@ -31,14 +45,9 @@ export interface AgentThreadRowProps {
   readonly moveDownId?: string;
   readonly reorderable?: boolean;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
+  readonly pending: AgentPendingInteraction | null;
   onSelect(threadId: string, modifiers: ListSelectionModifiers): void;
-  onTogglePin(threadId: string): void;
   onMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
-}
-
-interface MenuAnchor {
-  readonly x: number;
-  readonly y: number;
 }
 
 export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRowProps) {
@@ -49,7 +58,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     on,
     onMenuCommand,
     onSelect,
-    onTogglePin,
+    pending,
     projectLabel,
     selected,
     view,
@@ -57,20 +66,49 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   const thread = view.thread;
   const threadId = thread.threadId;
   const background = useAgentRowBackgroundActivity(view, evidenceOf);
-  const model = agentThreadRowModel(view, on, projectLabel, evidenceOf, background);
+  const workingAgents = agentRowWorkingAgents(view);
+  const model = agentThreadRowModel(view, on, projectLabel, evidenceOf, background, {
+    pending,
+    workingAgents,
+  });
   const status = model.status;
   const importedLabel = agentThreadImportedBadgeLabel(thread.externalOrigin);
-  const [menu, setMenu] = useState<MenuAnchor | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const [renaming, setRenaming] = useState(false);
-  const closeMenu = useCallback(() => setMenu(null), []);
+  const wasRenaming = useRef(false);
+  useEffect(() => {
+    const ended = wasRenaming.current && !renaming;
+    wasRenaming.current = renaming;
+    if (!ended) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) return;
+    rowRef.current?.focus();
+  }, [renaming]);
   const command = useCallback(
     (next: AgentThreadMenuCommand) => onMenuCommand(threadId, next),
     [onMenuCommand, threadId],
   );
-
-  const openMenu = (event: MouseEvent<HTMLDivElement>): void => {
-    event.preventDefault();
-    setMenu({ x: event.clientX, y: event.clientY });
+  const menu = useAgentThreadRowMenu({
+    title: model.title,
+    returnFocusRef: rowRef,
+    context: () => ({
+      branch: agentShipBranchLabel(view.ship),
+      pinned: thread.pinned,
+      archived: thread.archived,
+      running: agentRowIsLive(status),
+      snoozed: (thread.snoozedUntil ?? 0) > Date.now(),
+      settled: thread.settledAt != null,
+      canMarkUnread: agentViewCanMarkUnread(view),
+      moveUpId: props.moveUpId,
+      moveDownId: props.moveDownId,
+    }),
+    onCommand: command,
+    onRename: () => setRenaming(true),
+  });
+  const openMenu = menu.openAtPointer;
+  const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (renaming) return;
+    menu.openFromKeyboard(event);
   };
 
   const commitRename = (next: string): void => {
@@ -96,24 +134,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       ctrlKey: event.ctrlKey,
     });
   };
-  const menuNode = menu !== null && (
-    <AgentThreadRowMenu
-      archived={thread.archived}
-      snoozed={(thread.snoozedUntil ?? 0) > Date.now()}
-      settled={thread.settledAt != null}
-      canMarkUnread={agentViewCanMarkUnread(view)}
-      moveUpId={props.moveUpId}
-      moveDownId={props.moveDownId}
-      branch={agentShipBranchLabel(view.ship)}
-      onClose={closeMenu}
-      onCommand={command}
-      onRename={() => setRenaming(true)}
-      pinned={thread.pinned}
-      position={menu}
-      running={status.kind === "working"}
-      threadId={threadId}
-    />
-  );
+  const menuNode = menu.overlays;
 
   if (model.variant === "slim") {
     return (
@@ -126,6 +147,8 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           draggable={!renaming && props.reorderable === true}
           onClick={selectRow}
           onContextMenu={openMenu}
+          onKeyDown={onRowKeyDown}
+          ref={rowRef}
           role="option"
           tabIndex={focused ? 0 : -1}
         >
@@ -152,8 +175,9 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     );
   }
 
+  const canSettle = !agentRowIsLive(status) && thread.settledAt == null && !renaming;
   return (
-    <li className="agent-card-slot" role="none">
+    <li className="cv-sb-item" data-menu-open={menu.open ? "true" : undefined} role="none">
       <div
         aria-current={on ? "true" : undefined}
         aria-selected={selected}
@@ -162,76 +186,69 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
         draggable={!renaming && props.reorderable === true}
         onClick={selectRow}
         onContextMenu={openMenu}
+        onDoubleClick={() => setRenaming(true)}
+        onKeyDown={onRowKeyDown}
+        ref={rowRef}
         role="option"
         tabIndex={focused ? 0 : -1}
       >
-        <div className="agent-row__line1">
-          <Icon aria-hidden="true" className="agent-row__icon" size={16} />
-          <span className="agent-row__project">{model.project}</span>
-          {thread.pinned && (
-            <button
-              aria-label="Unpin thread"
-              className="agent-row__pin"
-              onClick={(event) => {
-                event.stopPropagation();
-                onTogglePin(threadId);
-              }}
-              tabIndex={-1}
-              title="Unpin thread"
-              type="button"
-            >
-              <Pin aria-hidden="true" size={12} />
-            </button>
-          )}
-          <span className="agent-row__slot">
-            <StatusSlot status={status} updatedAtEpochMs={thread.updatedAtEpochMs} />
-            <span className="agent-row__actions">
-              <button
-                aria-label="Archive thread"
-                className="agent-row__action"
-                disabled={status.kind === "working"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  command({ kind: "archive" });
-                }}
-                tabIndex={-1}
-                title="Archive thread"
-                type="button"
-              >
-                <Check aria-hidden="true" size={14} />
-                Archive
-              </button>
-            </span>
+        <span className="cv-card-row__l1">
+          <span aria-hidden="true" className="cv-favicon">
+            {agentProjectMonogram(model.project)}
           </span>
-        </div>
-        <div className="agent-row__line2">
-          {view.execution?.kind === "remote" && (
-            <RemoteThreadIndicator serverId={view.execution.serverId} />
+          <span className="cv-card-row__project">{model.project}</span>
+          {thread.pinned && (
+            <span aria-label="Pinned" className="cv-card-row__pin" role="img" title="Pinned">
+              <Pin aria-hidden="true" size={12} />
+            </span>
           )}
-          {renaming ? (
-            <RenameInput
-              initial={thread.title}
-              onCancel={() => setRenaming(false)}
-              onCommit={commitRename}
-            />
-          ) : (
-            <span className="agent-row__title">{model.title}</span>
-          )}
-        </div>
-        <div className="agent-row__line3">
-          <span className="agent-row__branch">{model.branch}</span>
+          <span className="cv-card-row__slot">
+            <AgentThreadRowStatusSlot status={status} updatedAtEpochMs={thread.updatedAtEpochMs} />
+          </span>
+        </span>
+        {renaming ? (
+          <RenameInput
+            initial={thread.title}
+            onCancel={() => setRenaming(false)}
+            onCommit={commitRename}
+          />
+        ) : (
+          <span className="cv-card-row__title">
+            {view.execution?.kind === "remote" && (
+              <RemoteThreadIndicator serverId={view.execution.serverId} />
+            )}
+            {model.title}
+          </span>
+        )}
+        <span className="cv-card-row__l3">
+          <span className="cv-card-row__branch">{model.branch}</span>
           {model.filesLabel !== null && (
-            <span className="agent-row__files agent-num">{model.filesLabel}</span>
+            <span className="cv-card-row__files">{model.filesLabel}</span>
           )}
           {importedLabel !== null && <ImportedBadge label={importedLabel} />}
-          <AgentProviderGlyph kind={model.provider} />
-        </div>
+        </span>
         {jumpLabel !== null && (
-          <span aria-hidden="true" className="agent-row__jump agent-num">
+          <span aria-hidden="true" className="cv-card-row__jump">
             {jumpLabel}
           </span>
         )}
       </div>
+      {canSettle && (
+        <button
+          aria-label="Settle thread"
+          className="cv-card-row__act"
+          onClick={(event) => {
+            event.stopPropagation();
+            command({ kind: "settle" });
+          }}
+          tabIndex={-1}
+          title="Settle thread"
+          type="button"
+        >
+          <Check aria-hidden="true" size={12} />
+          Settle
+        </button>
+      )}
       {menuNode}
     </li>
   );

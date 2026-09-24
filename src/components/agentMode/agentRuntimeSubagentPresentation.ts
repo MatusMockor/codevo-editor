@@ -61,6 +61,7 @@ export function agentTurnRuntimeSubagents(turn: RuntimeSubagentTurn): AgentRunti
       activityOrder: observation?.order ?? index - entries.length,
       ...present("title", title),
       ...present("role", entryRole(entry)),
+      ...present("model", entryModel(entry)),
       ...present("progress", observation?.progress ?? carriedProgress(entry, title)),
       ...present("lastToolName", observation?.lastToolName ?? entry.lastToolName),
       ...present("outcome", entry.detail),
@@ -280,10 +281,19 @@ function entryThreadId(entry: AgentSubagentDisclosureEntry): string | undefined 
 }
 
 function entryRole(entry: AgentSubagentDisclosureEntry): string | undefined {
-  if (entryThreadId(entry) !== undefined) return undefined;
+  if (entryThreadId(entry) !== undefined) {
+    if (entry.taskTitle === undefined) return undefined;
+    const role = codexTitle(entry);
+    return role === undefined || FALLBACK_ROLE_NAMES.has(role) ? undefined : role;
+  }
   const name = entry.subagentType ?? entry.name;
   if (isAgentSubagentSpawnToolName(name) || FALLBACK_ROLE_NAMES.has(name)) return undefined;
   return name;
+}
+
+function entryModel(entry: AgentSubagentDisclosureEntry): string | undefined {
+  if (entry.model === undefined) return undefined;
+  return entry.effort === undefined ? entry.model : `${entry.model} · ${entry.effort}`;
 }
 
 function codexTitle(entry: AgentSubagentDisclosureEntry): string | undefined {

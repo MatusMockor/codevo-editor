@@ -48,8 +48,10 @@ import type {
   AgentShipAvailability,
   AgentShipIntegrationMode,
   AgentShipState,
+  AgentShipStepResult,
 } from "../domain/agentShip";
 import type { GitChangedFile } from "../domain/git";
+import type { AgentCommitSelection } from "../domain/gitCommitSelection";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import type { RemoteRunnerTaskResume } from "../domain/remoteRunner";
 
@@ -423,8 +425,12 @@ export interface AgentThreadsSurface {
   hideFileDiff(threadId: string): void;
   removeWorktree(threadId: string): Promise<void>;
   refreshShipStatus(threadId: string): Promise<void>;
-  commitThreadChanges(threadId: string, message: string): Promise<void>;
-  pushThreadBranch(threadId: string): Promise<void>;
+  commitThreadChanges(
+    threadId: string,
+    message: string,
+    selection?: AgentCommitSelection,
+  ): Promise<AgentShipStepResult>;
+  pushThreadBranch(threadId: string): Promise<AgentShipStepResult>;
   openThreadCompareUrl(threadId: string): Promise<void>;
   integrateThreadBranch(threadId: string, mode: AgentShipIntegrationMode): Promise<void>;
   removeThreadWorktree(

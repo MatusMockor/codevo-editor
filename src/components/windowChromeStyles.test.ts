@@ -17,6 +17,9 @@ describe("window chrome styles", () => {
 
     expect(cssRule(css, ".window-native-control-space")).toContain("align-self: stretch;");
     expect(cssRule(css, ".window-chrome-action-spacer")).toContain("align-self: stretch;");
+    expect(cssRule(css, ".window-native-control-space")).toContain(
+      "width: var(--cv-traffic-light-inset);",
+    );
   });
 
   it("drops the app title row only for the macOS agent workbench", () => {
@@ -26,7 +29,7 @@ describe("window chrome styles", () => {
     expect(css).toContain("--window-native-controls-inset: 0px;");
     expect(css).toContain("--window-native-controls-row: 0px;");
     expect(macAgent).toContain("--window-chrome-height: 0px;");
-    expect(macAgent).toContain("--window-native-controls-inset: 78px;");
+    expect(macAgent).toContain("--window-native-controls-inset: var(--cv-traffic-light-inset);");
     expect(macAgent).toContain("--window-native-controls-row: 36px;");
     expect(macAgent).toContain("--toast-top: 60px;");
     const hiddenChrome = cssRule(css, ".app-shell--agent-mode.app-shell--mac > .window-chrome");
@@ -35,40 +38,11 @@ describe("window chrome styles", () => {
     expect(hiddenChrome).not.toContain("display: none;");
   });
 
-  it("reserves the traffic-light space in the rail, the header and the settings sidebar", () => {
-    const railCss = readFileSync(resolve(import.meta.dirname, "agentMode/agentRail.css"), "utf8");
-    const threadCss = readFileSync(
-      resolve(import.meta.dirname, "agentMode/agentThread.css"),
-      "utf8",
-    );
+  it("reserves the traffic-light space in the settings sidebar", () => {
     const settingsCss = readFileSync(resolve(import.meta.dirname, "settings/settings.css"), "utf8");
 
-    expect(cssRule(railCss, ".agent-rail > .agent-rail__chrome")).toContain(
-      "max(4px, var(--window-native-controls-inset, 0px))",
-    );
-    expect(cssRule(railCss, ".agent-mode__grid > .agent-rail__chrome")).toContain(
-      "padding-top: var(--window-native-controls-row, 0px);",
-    );
-    expect(cssRule(threadCss, ".agent-thread-head").replace(/\s+/g, " ")).toContain(
-      "padding-left: max( 18px, calc(var(--window-native-controls-inset, 0px) - var(--agent-rail-track, 0px)) );",
-    );
     expect(cssRule(settingsCss, ".app-shell--agent-mode .settings-screen__sidebar")).toContain(
       "padding-top: calc(14px + var(--window-native-controls-row, 0px));",
-    );
-  });
-
-  it("keeps the maximized surface header clear of the traffic lights", () => {
-    const surfaceCss = readFileSync(
-      resolve(import.meta.dirname, "agentMode/agentSurface.css"),
-      "utf8",
-    );
-    const head = cssRule(
-      surfaceCss,
-      '.workbench-frame[data-right-panel="maximized"] .agent-surface__head',
-    );
-
-    expect(head.replace(/\s+/g, " ")).toContain(
-      "padding-left: max( var(--agent-space-3), calc(var(--window-native-controls-inset, 0px) - var(--agent-rail-track, 0px)) );",
     );
   });
 

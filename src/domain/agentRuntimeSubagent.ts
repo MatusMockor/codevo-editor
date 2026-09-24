@@ -22,6 +22,7 @@ export type AgentRuntimeSubagentObservedState =
 export type AgentRuntimeSubagentElapsed =
   | { readonly kind: "settled"; readonly durationMs: number }
   | { readonly kind: "live"; readonly observedDurationMs: number }
+  | { readonly kind: "running" }
   | { readonly kind: "unknown" };
 
 export interface AgentRuntimeSubagentSource {
@@ -237,9 +238,9 @@ function elapsed(
   source: AgentRuntimeSubagentSource,
   status: AgentRuntimeSubagentStatus,
 ): AgentRuntimeSubagentElapsed {
-  if (source.durationMs === undefined) return { kind: "unknown" };
-  if (isLiveAgentRuntimeSubagentStatus(status))
-    return { kind: "live", observedDurationMs: source.durationMs };
+  const live = isLiveAgentRuntimeSubagentStatus(status);
+  if (source.durationMs === undefined) return live ? { kind: "running" } : { kind: "unknown" };
+  if (live) return { kind: "live", observedDurationMs: source.durationMs };
   return { kind: "settled", durationMs: source.durationMs };
 }
 
@@ -318,7 +319,7 @@ function sameElapsed(
     return previous.durationMs === next.durationMs;
   if (previous.kind === "live" && next.kind === "live")
     return previous.observedDurationMs === next.observedDurationMs;
-  return previous.kind === "unknown" && next.kind === "unknown";
+  return previous.kind === next.kind && (next.kind === "running" || next.kind === "unknown");
 }
 
 function presentText(value: string | undefined): string | null {

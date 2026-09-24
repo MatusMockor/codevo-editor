@@ -42,11 +42,38 @@ export type NativeWorkspaceOpenResult =
 export type WorkspaceOpenResult =
   { status: "cancelled" } | { status: "opened"; descriptor: WorkspaceIdentityDescriptor };
 
+export interface WorkspaceIdentityReleaseOwner {
+  readonly workspaceId: string;
+  readonly admissionToken: number | null;
+  readonly canonicalRootPath: string;
+}
+
+export interface WorkspaceAdmissionAdoption {
+  readonly workspaceId: string;
+  readonly newToken: number;
+  readonly replacedToken: number;
+}
+
+export type WorkspaceAdmissionAdoptionResult =
+  | { readonly status: "adopted" }
+  | { readonly status: "staleAdmission" }
+  | { readonly status: "unknownWorkspace" }
+  | { readonly status: "releasing" };
+
+export type WorkspaceOwnerReleaseResult =
+  | { readonly status: "released" }
+  | { readonly status: "releasing" }
+  | { readonly status: "retainedByOtherOwners" }
+  | { readonly status: "unknownWorkspace" }
+  | { readonly status: "staleOwner" };
+
 export interface WorkspaceIdentityGateway {
   openFromPicker(): Promise<WorkspaceOpenResult>;
   openPath?(path: string): Promise<WorkspaceIdentityDescriptor>;
   getDescriptor(workspaceId: string): Promise<NativeWorkspaceDescriptor>;
-  unregister(workspaceId: string): Promise<void>;
+  unregister(owner: WorkspaceIdentityReleaseOwner): Promise<WorkspaceOwnerReleaseResult>;
+  adoptAdmission(adoption: WorkspaceAdmissionAdoption): Promise<WorkspaceAdmissionAdoptionResult>;
+  rollbackAdmission(descriptor: WorkspaceIdentityDescriptor): Promise<WorkspaceOwnerReleaseResult>;
   settleClosedDescriptor?(descriptor: WorkspaceIdentityDescriptor): boolean;
 }
 

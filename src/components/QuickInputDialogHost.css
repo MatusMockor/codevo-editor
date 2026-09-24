@@ -37,7 +37,6 @@
   width: 100%;
 }
 
-.quick-input-dialog input:focus-visible,
 .quick-input-dialog button:focus-visible,
 .quick-input-dialog:focus-visible {
   box-shadow: var(--focus-ring);

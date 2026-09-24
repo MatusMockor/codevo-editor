@@ -93,6 +93,20 @@ describe("useRestoreFocus", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("keeps focus that moved outside the surface before it closed", () => {
+    const trigger = document.createElement("button");
+    const elsewhere = document.createElement("textarea");
+    document.body.append(trigger, elsewhere);
+    trigger.focus();
+    ui = mountUi();
+    ui.render(<RestoringSurface />);
+
+    elsewhere.focus();
+    ui.render(null);
+
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
   it("does nothing when the previous element left the document", () => {
     const trigger = document.createElement("button");
     document.body.append(trigger);

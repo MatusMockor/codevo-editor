@@ -21,11 +21,6 @@ import {
   agentExternalOriginNote,
   agentExternalSessionRowTitle,
   agentExternalSessionsStatusNote,
-  agentProjectClosable,
-  agentProjectCloseLabel,
-  agentProjectMenuEntries,
-  agentProjectMenuTarget,
-  agentProjectRepositoryCountLabel,
   agentRailDefaultScopeEntry,
   agentRailDetachedThreadCount,
   agentRailNeighbourScopeEntry,
@@ -34,21 +29,23 @@ import {
   agentRailScopeFromEntry,
   agentRailScopeLabel,
   agentRailScopeOrder,
-  agentRailScopeState,
   agentRailSections,
   agentRailViews,
   agentRowClassName,
   agentRowRecedes,
-  agentRowStatus,
-  agentRowStatusLabel,
   agentSessionTurnCountLabel,
   agentThreadImportedBadgeLabel,
-  agentThreadMenuEntries,
   agentViewCanMarkUnread,
   agentWorkingDurationLabel,
   sameAgentRailScopeOrder,
-  type AgentRailScopeEntry,
 } from "./agentSidebarPresentation";
+import { agentRowStatus, agentRowStatusLabel } from "./agentThreadRowStatus";
+import {
+  agentProjectClosable,
+  agentProjectMenuEntries,
+  agentProjectRepositoryCountLabel,
+  agentRailScopeState,
+} from "./agentProjectMenuPresentation";
 
 const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
@@ -245,7 +242,17 @@ describe("agent row status", () => {
         status: { kind: "working", startedAtEpochMs: 0 },
         unread: true,
       }),
-    ).toBe("agent-row agent-row--card agent-row--on agent-row--inflight agent-row--unread");
+    ).toBe("cv-card-row is-current is-live is-unread");
+    expect(
+      agentRowClassName({
+        variant: "card",
+        on: false,
+        marked: false,
+        recede: false,
+        status: { kind: "approval" },
+        unread: false,
+      }),
+    ).toBe("cv-card-row is-live");
     expect(
       agentRowClassName({
         variant: "slim",
@@ -268,7 +275,7 @@ describe("agent row status", () => {
         status: { kind: "none" },
         unread: false,
       }),
-    ).toBe("agent-row agent-row--card agent-row--on agent-row--marked");
+    ).toBe("cv-card-row is-current is-marked");
   });
 
   it("marks a multi-selected row after the open state", () => {
@@ -281,7 +288,7 @@ describe("agent row status", () => {
         status: { kind: "none" },
         unread: false,
       }),
-    ).toBe("agent-row agent-row--card agent-row--marked");
+    ).toBe("cv-card-row is-marked");
   });
 });
 
@@ -328,15 +335,13 @@ describe("agent rail sections", () => {
       decorate("first", { sortOrder: 1, updatedAtEpochMs: NOW - 10000 }),
       decorate("second", { sortOrder: 2, updatedAtEpochMs: NOW }),
     ];
-    const sections = agentRailSections(views, ROOT_SCOPE, true, 20, NOW);
+    const sections = agentRailSections(views, true, 20, NOW);
     expect(ids(sections.snoozed ?? [])).toEqual(["snoozed"]);
     expect(ids(sections.settled ?? [])).toEqual(["settled"]);
     expect(ids(sections.archived)).toEqual(["archived"]);
     expect(ids(sections.active)).toEqual(["first", "second"]);
     expect(sections.pinned).toEqual([]);
-    expect(ids(agentRailSections(views, ROOT_SCOPE, true, 20, NOW + 1000).pinned)).toEqual([
-      "snoozed",
-    ]);
+    expect(ids(agentRailSections(views, true, 20, NOW + 1000).pinned)).toEqual(["snoozed"]);
   });
 
   it("orders pinned, active and archived by recency and pages the archive", () => {
@@ -349,37 +354,25 @@ describe("agent rail sections", () => {
       ),
     ];
 
-    const collapsed = agentRailSections(views, ROOT_SCOPE, false, ARCHIVED_PAGE_COUNT);
+    const collapsed = agentRailSections(views, false, ARCHIVED_PAGE_COUNT);
     expect(ids(collapsed.pinned)).toEqual(["pin"]);
     expect(ids(collapsed.active)).toEqual(["new", "old"]);
     expect(collapsed.archived).toEqual([]);
     expect(collapsed.hiddenArchivedCount).toBe(ARCHIVED_PAGE_COUNT + 3);
 
-    const expanded = agentRailSections(views, ROOT_SCOPE, true, ARCHIVED_PAGE_COUNT);
+    const expanded = agentRailSections(views, true, ARCHIVED_PAGE_COUNT);
     expect(expanded.archived).toHaveLength(ARCHIVED_PAGE_COUNT);
     expect(expanded.archived[0]?.thread.threadId).toBe("arc-0");
     expect(expanded.hiddenArchivedCount).toBe(3);
   });
 
-  it("scopes the sections to one repository", () => {
-    const views = [view({ threadId: "a" }), view({ threadId: "b", repositoryRoot: OTHER })];
-    const scoped = agentRailSections(
-      views,
-      { projectRootKey: OTHER, repositoryRoot: OTHER },
-      false,
-      0,
-    );
-
-    expect(ids(scoped.active)).toEqual(["b"]);
-  });
-
   it("assigns jump slots to the first nine visible cards only when more than one exists", () => {
     const many = Array.from({ length: 12 }, (_, index) => view({ threadId: `t-${index}` }));
-    const slots = agentJumpSlots(agentRailSections(many, ROOT_SCOPE, false, 0));
+    const slots = agentJumpSlots(agentRailSections(many, false, 0));
 
     expect(slots.size).toBe(9);
     expect(slots.get("t-0")).toBe(1);
-    expect(agentJumpSlots(agentRailSections([view({})], ROOT_SCOPE, false, 0)).size).toBe(0);
+    expect(agentJumpSlots(agentRailSections([view({})], false, 0)).size).toBe(0);
   });
 
   it("flattens groups and labels projects only when several exist", () => {
@@ -430,13 +423,14 @@ describe("agent rail sections", () => {
   it("describes the empty states truthfully", () => {
     const groups = [group(ROOT, "app", [])];
     const entries = agentRailScopeEntries(groups);
-    const sections = agentRailSections([], ROOT_SCOPE, false, 0);
+    const sections = agentRailSections([], false, 0);
 
-    expect(agentRailEmptyState([], sections, null, entries)).toEqual({
-      kind: "noProjects",
+    expect(agentRailEmptyState([], sections, null)).toEqual({ kind: "noProjects" });
+    expect(agentRailEmptyState(groups, sections, null)).toEqual({
+      kind: "noThreads",
+      scopeLabel: null,
     });
-    expect(agentRailEmptyState(groups, sections, null, entries)).toEqual({ kind: "noScope" });
-    expect(agentRailEmptyState(groups, sections, ROOT_SCOPE, entries)).toEqual({
+    expect(agentRailEmptyState(groups, sections, entries[0]?.label ?? null)).toEqual({
       kind: "noThreads",
       scopeLabel: "app",
     });
@@ -489,103 +483,6 @@ describe("agent rail scope", () => {
     expect(sameAgentRailScopeOrder(previous, [ROOT, OTHER, third])).toBe(true);
     expect(sameAgentRailScopeOrder(previous, [ROOT, third, OTHER])).toBe(false);
     expect(sameAgentRailScopeOrder(previous, [ROOT])).toBe(false);
-  });
-
-  it("surfaces trust and origin state with the matching action", () => {
-    const untrusted = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
-    );
-    const closed = {
-      ...projectEntry(agentRailScopeEntries([group(ROOT, "app", [])])),
-      origin: "closed-tab-live-tasks" as const,
-    };
-    const background = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { origin: "background-tab" })]),
-    );
-
-    expect(agentRailScopeState(untrusted)).toEqual({ label: "Project unavailable", action: null });
-    expect(agentRailScopeState(closed)).toEqual({ label: "Tab closed", action: "release" });
-    expect(agentRailScopeState(background)).toEqual({ label: "Background", action: null });
-    expect(agentRailScopeState(null)).toBeNull();
-  });
-
-  it("offers the project actions that match the project state without a filter entry", () => {
-    const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
-    const untrusted = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
-    );
-    const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
-    const detached = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { rootPath: null })]),
-    );
-
-    expect(agentProjectMenuEntries(trusted).map((entry) => entry.label)).toEqual([
-      "Close project",
-      "Terminal sessions…",
-      "Reveal in Finder",
-      "Copy path",
-    ]);
-    expect(agentProjectMenuEntries(untrusted).some((entry) => entry.command === "trust")).toBe(
-      false,
-    );
-    expect(agentRailScopeState({ ...untrusted, trust: "unknown" })).toEqual({
-      label: "Opening project…",
-      action: null,
-    });
-    expect(agentProjectMenuEntries(closed)[0]?.command).toBe("release");
-    expect(agentProjectMenuEntries(detached).map((entry) => entry.command)).toEqual([
-      "terminalSessions",
-    ]);
-    for (const entry of [trusted, untrusted, closed, detached]) {
-      expect(agentProjectMenuEntries(entry).map((item) => item.label)).not.toContain(
-        "Filter to this project",
-      );
-    }
-  });
-
-  it("marks a project closable only while it owns a live root path", () => {
-    const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
-    const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
-    const detached = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { rootPath: null })]),
-    );
-
-    expect(agentProjectClosable(trusted)).toBe(true);
-    expect(agentProjectClosable(closed)).toBe(false);
-    expect(agentProjectClosable(detached)).toBe(false);
-    expect(agentProjectCloseLabel(trusted)).toBe("Close project app");
-  });
-
-  it("offers terminal sessions only for a trusted project with a live owner", () => {
-    const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
-    const untrusted = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
-    );
-    const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
-
-    const command = (entry: AgentRailScopeEntry) =>
-      agentProjectMenuEntries(entry).find((candidate) => candidate.command === "terminalSessions");
-
-    expect(command(trusted)).toEqual({
-      id: "terminal-sessions",
-      label: "Terminal sessions…",
-      command: "terminalSessions",
-      disabled: false,
-    });
-    expect(command(untrusted)?.disabled).toBe(true);
-    expect(command(closed)?.disabled).toBe(true);
-    expect(agentProjectMenuTarget(trusted)).toEqual({
-      projectRootKey: ROOT,
-      repositoryRoot: ROOT,
-      rootPath: ROOT,
-    });
-  });
-
-  it("reports the repository count only for a multi-repository project", () => {
-    const single = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
-
-    expect(agentProjectRepositoryCountLabel(single)).toBeNull();
-    expect(agentProjectRepositoryCountLabel({ ...single, repositoryCount: 3 })).toBe("3 repos");
   });
 
   it("lists each open editor project once instead of expanding its repositories", () => {
@@ -688,46 +585,6 @@ describe("agent rail labels", () => {
     expect(agentWorkingDurationLabel(NOW - 12_000, NOW)).toBe("12s");
     expect(agentWorkingDurationLabel(NOW - 3 * 60_000, NOW)).toBe("3m");
     expect(agentWorkingDurationLabel(NOW - 62 * 60_000, NOW)).toBe("1h 2m");
-  });
-
-  it("lists the context menu in the T3 order and disables archive while running", () => {
-    const entries = agentThreadMenuEntries({
-      branch: "main",
-      pinned: false,
-      archived: false,
-      running: true,
-    });
-    const labels = entries.map((entry) => (entry.kind === "item" ? entry.label : "-"));
-
-    expect(labels).toEqual([
-      "New thread on main",
-      "Pin",
-      "-",
-      "Rename",
-      "Mark unread",
-      "-",
-      "Copy path",
-      "Copy branch",
-      "Copy thread ID",
-      "-",
-      "Snooze…",
-      "Mark settled",
-      "Stop",
-      "Archive",
-      "Delete",
-    ]);
-    const archive = entries.find((entry) => entry.kind === "item" && entry.label === "Archive");
-    expect(archive?.kind === "item" && archive.disabled).toBe(true);
-    expect(
-      agentThreadMenuEntries({ branch: null, pinned: true, archived: true, running: false }).map(
-        (entry) => (entry.kind === "item" ? entry.label : "-"),
-      ),
-    ).not.toContain("Archive");
-    expect(
-      agentThreadMenuEntries({ branch: null, pinned: false, archived: false, running: false }).map(
-        (entry) => (entry.kind === "item" ? entry.label : "-"),
-      ),
-    ).not.toContain("Stop");
   });
 });
 
@@ -852,12 +709,6 @@ function summary(loading: boolean, paths: ReadonlyArray<string>): AgentTaskChang
     removing: false,
     diff: null,
   };
-}
-
-function projectEntry(entries: ReadonlyArray<AgentRailScopeEntry>): AgentRailScopeEntry {
-  const entry = entries[0];
-  expect(entry).toBeDefined();
-  return entry as AgentRailScopeEntry;
 }
 
 describe("terminal session presentation", () => {

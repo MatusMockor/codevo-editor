@@ -38,6 +38,7 @@ import {
 } from "../../domain/agentWorkbenchLayout";
 import {
   defaultAppSettings,
+  defaultWorkspaceSettings,
   normalizeWorkspaceSettings,
   WORKSPACE_SESSION_VERSION,
 } from "../../domain/settings";
@@ -55,7 +56,7 @@ import {
   composerAttachmentsSurfaceFixture,
   externalSessionsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
-import { ariaKeyShortcuts } from "./agentWorkbenchChrome";
+import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
 import {
   ADD_PROJECT_REFUSED_REASON,
   AgentWorkbenchScreen,
@@ -86,12 +87,15 @@ describe("AgentWorkbenchScreen", () => {
       },
     };
     directoryListingGateway = {
-      listDirectoryEntries: async () => ({
-        path: "/Users/dev",
-        parent: "/Users",
-        entries: [{ name: "Developer", kind: "directory", hidden: false }],
-        truncated: false,
-      }),
+      listDirectoryEntries: async ({ path }) =>
+        path === "/Users/dev/Developer"
+          ? { path, parent: "/Users/dev", entries: [], truncated: false }
+          : {
+              path: "/Users/dev",
+              parent: "/Users",
+              entries: [{ name: "Developer", kind: "directory", hidden: false }],
+              truncated: false,
+            },
       revealDirectory: async () => undefined,
     };
   });
@@ -126,7 +130,7 @@ describe("AgentWorkbenchScreen", () => {
     await act(async () => {});
     expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
     expect(next.openWorkspaceRootWithReceipt).not.toHaveBeenCalled();
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain(
+    expect(host.querySelector('button[aria-label="New thread"]')?.getAttribute("title")).toContain(
       project(ROOT_B).label,
     );
   });
@@ -138,7 +142,7 @@ describe("AgentWorkbenchScreen", () => {
     expect(
       host.querySelector<HTMLButtonElement>('button[aria-label="dev (running elsewhere)"]'),
     ).not.toBeNull();
-    expect(host.querySelector('button[aria-label="Toggle terminal panel (⌘J)"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Toggle terminal panel"]')).not.toBeNull();
   });
 
   it("opens the real source control sidebar from the rail footer", () => {
@@ -300,13 +304,13 @@ describe("AgentWorkbenchScreen", () => {
     const hidden = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false });
     render(hidden);
 
-    click('button[aria-label="Toggle terminal panel (⌘J)"]');
+    click('button[aria-label="Toggle terminal panel"]');
     expect(hidden.showBottomPanelView).toHaveBeenCalledWith("terminal");
     expect(hidden.hideBottomPanel).not.toHaveBeenCalled();
 
     const visible = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: true });
     render(visible);
-    click('button[aria-label="Toggle terminal panel (⌘J)"]');
+    click('button[aria-label="Toggle terminal panel"]');
     expect(visible.hideBottomPanel).toHaveBeenCalledTimes(1);
   });
 
@@ -422,7 +426,7 @@ describe("AgentWorkbenchScreen", () => {
     expect(other.showBottomPanelView).not.toHaveBeenCalled();
   });
 
-  it("runs Quick Open from the Files tree search button with the keymap chord", () => {
+  it("hints the Quick Open chord on the Files surface search field", () => {
     const layout = recordedLayoutState({
       rightPanel: "open",
       openSurfaces: ["files"],
@@ -432,14 +436,45 @@ describe("AgentWorkbenchScreen", () => {
     render(workbench);
     click('[data-thread-id="agt-1"]');
 
-    const search = host.querySelector<HTMLButtonElement>(".agent-surface-tree__search");
-    expect(search?.getAttribute("aria-keyshortcuts")).toBe(
-      ariaKeyShortcuts(shortcutForCommand(defaultAppSettings().keymap, SEARCH_FILES_COMMAND)),
+    expect(host.querySelector('input[aria-label="Search workspace files"]')).not.toBeNull();
+    expect(host.querySelector(".cv-files__search .cv-kbd")?.textContent).toBe(
+      agentShortcutGlyphs(shortcutForCommand(defaultAppSettings().keymap, SEARCH_FILES_COMMAND)),
     );
-    click(".agent-surface-tree__search");
-
-    expect(workbench.runCommand).toHaveBeenCalledWith(SEARCH_FILES_COMMAND);
+    expect(workbench.runCommand).not.toHaveBeenCalledWith(SEARCH_FILES_COMMAND);
     expect(layout.actions).toEqual([]);
+  });
+
+  it("searches Files through the injected workspace file search gateway", async () => {
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["files"],
+      activeSurface: "files",
+    });
+    const searchFiles = vi.fn(async (root: string, _query: string) => [
+      { name: "users.ts", path: `${root}/users.ts`, relativePath: "users.ts" },
+    ]);
+    const workbench = createWorkbench(ROOT_A, { agentWorkbench: layout });
+    act(() =>
+      root.render(
+        <AgentWorkbenchScreen {...defaultProps(workbench)} fileSearch={{ searchFiles }} />,
+      ),
+    );
+    click('[data-thread-id="agt-1"]');
+    const input = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Search workspace files"]',
+    );
+    expect(input?.disabled).toBe(false);
+    act(() => {
+      if (input === null) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "users",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await waitForReact(() => expect(searchFiles).toHaveBeenCalledOnce());
+    expect(searchFiles.mock.calls[0]?.[1]).toBe("users");
   });
 
   it("opens the editor sidebar with scripts from the scripts menu", async () => {
@@ -494,6 +529,7 @@ describe("AgentWorkbenchScreen", () => {
       source!.click();
     });
     await act(async () => {});
+    await openAddProjectDeveloper();
 
     const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
     expect(input).not.toBeNull();
@@ -503,7 +539,7 @@ describe("AgentWorkbenchScreen", () => {
       );
     });
 
-    expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev");
+    expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev/Developer");
   });
 
   it.each([false, true])(
@@ -532,6 +568,7 @@ describe("AgentWorkbenchScreen", () => {
         source!.click();
       });
       await act(async () => {});
+      await openAddProjectDeveloper();
       await act(async () => {
         host
           .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')
@@ -539,7 +576,7 @@ describe("AgentWorkbenchScreen", () => {
             new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
           );
       });
-      expect(opening).toHaveBeenCalledWith("/Users/dev");
+      expect(opening).toHaveBeenCalledWith("/Users/dev/Developer");
       const nextAgents = {
         ...next.agents,
         agentProjects: {
@@ -564,7 +601,9 @@ describe("AgentWorkbenchScreen", () => {
           },
         },
       });
-      expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("api");
+      expect(
+        host.querySelector('button[aria-label="New thread"]')?.getAttribute("title"),
+      ).toContain("api");
     },
   );
 
@@ -919,6 +958,7 @@ describe("AgentWorkbenchScreen", () => {
       source!.click();
     });
     await act(async () => {});
+    await openAddProjectDeveloper();
 
     const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
     expect(input).not.toBeNull();
@@ -929,7 +969,7 @@ describe("AgentWorkbenchScreen", () => {
     });
     await act(async () => {});
 
-    expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev");
+    expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev/Developer");
     expect(host.textContent).toContain(ADD_PROJECT_REFUSED_REASON);
   });
 
@@ -1041,6 +1081,18 @@ describe("AgentWorkbenchScreen", () => {
   }
 });
 
+async function openAddProjectDeveloper(): Promise<void> {
+  await waitForReact(() => {
+    expect(document.querySelector('.agent-add-project [role="option"]')).not.toBeNull();
+  });
+  act(() => document.querySelector<HTMLElement>('.agent-add-project [role="option"]')?.click());
+  await waitForReact(() => {
+    expect(document.querySelector(".agent-add-project__path-value")?.textContent).toBe(
+      "~/Developer",
+    );
+  });
+}
+
 function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScreenProps {
   return {
     activeFileRevealSignal: 0,
@@ -1151,6 +1203,7 @@ function createWorkbench(
       workspaceId: "workspace-app",
     } as AgentWorkbenchScreenWorkbench["workspaceIdentityDescriptor"],
     workspaceRoot,
+    workspaceSettings: defaultWorkspaceSettings(),
     ...overrides,
   } as MockedWorkbench;
 }
@@ -1314,8 +1367,8 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     hideFileDiff: () => undefined,
     removeWorktree: async () => undefined,
     refreshShipStatus: async () => undefined,
-    commitThreadChanges: async () => undefined,
-    pushThreadBranch: async () => undefined,
+    commitThreadChanges: async () => ({ kind: "succeeded" }),
+    pushThreadBranch: async () => ({ kind: "succeeded" }),
     openThreadCompareUrl: async () => undefined,
     integrateThreadBranch: async () => undefined,
     removeThreadWorktree: async () => undefined,

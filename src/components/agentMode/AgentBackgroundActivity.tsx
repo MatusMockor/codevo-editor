@@ -1,7 +1,7 @@
-import { Activity, Bot, ChevronRight, Radar } from "lucide-react";
+import { Activity, Radar } from "lucide-react";
 import { memo } from "react";
 import type { AgentBackgroundIndicator } from "./agentBackgroundIndicatorPresentation";
-import "./agentSubagents.css";
+import { AgentLiveRow } from "./conversation/AgentLiveRow";
 
 export const AgentBackgroundActivity = memo(function AgentBackgroundActivity({
   indicator,
@@ -13,37 +13,31 @@ export const AgentBackgroundActivity = memo(function AgentBackgroundActivity({
   if (indicator.kind === "hidden") return null;
   if (indicator.kind === "agents") {
     return (
-      <div className="agent-background-row">
-        <button
-          aria-label={`${indicator.label}. Open Agents panel`}
-          className="agent-background-row__action"
-          disabled={onOpenAgents === undefined}
-          onClick={onOpenAgents}
-          type="button"
-        >
-          <Bot aria-hidden="true" className="agent-background-row__icon" size={14} />
-          <span className="agent-background-row__label">{indicator.label}</span>
-          {indicator.latest !== null && (
-            <span className="agent-background-row__latest">{indicator.latest}</span>
-          )}
-          <ChevronRight aria-hidden="true" className="agent-background-row__chevron" size={13} />
-        </button>
-      </div>
+      <AgentLiveRow
+        activateLabel={`${indicator.label}. Open Agents panel`}
+        label={indicator.label}
+        onActivate={onOpenAgents}
+        tone="agents"
+      />
     );
   }
   const Icon = indicator.monitoring ? Radar : Activity;
   return (
-    <details className="agent-background-activity">
-      <summary>
-        <Icon size={14} aria-hidden="true" />
-        <span role="status" aria-live="polite">
+    <details className="agent-background-activity cv-work-disclosure">
+      <summary className="cv-work-row">
+        <span aria-hidden="true" className="cv-work-row__icon">
+          <Icon size={14} aria-hidden="true" />
+        </span>
+        <span className="cv-work-row__label" role="status" aria-live="polite">
           {indicator.label}
         </span>
         {indicator.count !== null && (
-          <span className="agent-background-activity__count">{indicator.count}</span>
+          <span className="agent-background-activity__count cv-work-row__meta">
+            {indicator.count}
+          </span>
         )}
       </summary>
-      <ul>
+      <ul className="agent-background-activity__tasks">
         {indicator.tasks.map((task) => (
           <li key={task.taskId}>{task.description || "Background task"}</li>
         ))}

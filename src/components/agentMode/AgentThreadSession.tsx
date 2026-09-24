@@ -1,7 +1,5 @@
 import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
 import { AgentThreadSessionEmpty } from "./AgentThreadSessionEmpty";
-import { AgentHistoryActivity } from "./AgentHistoryActivity";
-import { AgentHistoryPager } from "./AgentHistoryPager";
 import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
 import { AgentAgentsDock } from "./AgentAgentsDock";
 import { AgentBackgroundWorkBanner } from "./AgentBackgroundWorkBanner";
@@ -14,6 +12,7 @@ import type {
 } from "../../application/agentArtifactPorts";
 import type { AgentArtifactScope } from "./AgentTurnArtifacts";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -22,7 +21,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Clock3, Play } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
@@ -39,8 +37,7 @@ import { AgentRecordedTurnChanges } from "./AgentRecordedTurnChanges";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
 import type { MonacoAppTheme } from "../../domain/settings";
 import { isTerminalAgentTurnStatus } from "../../domain/agentThread";
-import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
-import { AgentQueuedPrompt } from "./AgentQueuedPrompt";
+import type { AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
 import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
@@ -58,23 +55,34 @@ import {
   agentMinimapHitStripWidth,
 } from "./agentMinimapPlacement";
 import { agentMinimapEntryIndex, agentThreadMinimapModel } from "./agentThreadMinimapPresentation";
-import { agentThreadColumnKey, type AgentThreadColumnAnchor } from "./agentThreadColumn";
+import type { AgentThreadColumnAnchor } from "./agentThreadColumn";
 import { useAgentThreadTurnInView } from "./useAgentThreadTurnInView";
 import { agentImportedHighlights, agentImportedTurns } from "./agentImportedPresentation";
 import { useAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
 import { agentTurnCarriesAttachments, agentWorktreeRemovalLabel } from "./agentModePresentation";
-import {
-  agentTurnHydrationScrollTop,
-  agentTurnItemKey,
-  normalizeAgentTurnEventOffset,
-} from "./agentTurnItemKeys";
-import type { AgentTurnHighlight, AgentTurnHighlightCursor } from "./agentTurnHighlightModel";
+import { agentTurnHydrationScrollTop, normalizeAgentTurnEventOffset } from "./agentTurnItemKeys";
+import type { AgentTurnHighlight } from "./agentTurnHighlightModel";
 import { AgentTurnView } from "./AgentTurnView";
-import { AgentJumpToLatest } from "./AgentJumpToLatest";
 import { useAgentThreadFollow } from "./useAgentThreadFollow";
 import { AgentCodeColorizerContext, type AgentCodeColorizer } from "./agentCodeColorizer";
 import { defaultAgentCodeColorizer } from "./shikiAgentCodeColorizer";
+import { AgentSessionDock } from "./conversation/AgentSessionDock";
+import { agentAgentsBannerModel } from "./conversation/agentAgentsBannerPresentation";
+import { AgentLiveRow } from "./conversation/AgentLiveRow";
+import { AgentSessionPreamble } from "./conversation/AgentSessionPreamble";
+import { AgentQueuedMessages } from "./conversation/AgentQueuedMessages";
+import {
+  columnElement,
+  prependedTurnIds,
+  revealTarget,
+  turnCursor,
+  turnInsertionTops,
+} from "./conversation/agentSessionDom";
+import { useAgentActivitySources } from "./conversation/useAgentActivitySources";
+import "./conversation/conversation.css";
+import "./conversation/agentWorkRows.css";
+import "./conversation/agentProse.css";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
 const NO_DEFERRED_FOLLOW_UPS: ReadonlyArray<DeferredFollowUp> = [];
@@ -82,10 +90,7 @@ const NO_EXCHANGES: ReadonlyArray<ExternalSessionExchange> = [];
 
 export const AGENT_FIND_REVEAL_INSET = 34;
 
-interface AgentRevealTarget {
-  readonly element: HTMLElement;
-  readonly block: "start" | "center";
-}
+export type AgentThreadAwaiting = "approval" | "input";
 
 export interface AgentThreadSessionProps {
   readonly history?: AgentThreadHistorySurface;
@@ -127,6 +132,8 @@ export interface AgentThreadSessionProps {
     relativePath?: string,
   ) => void;
   readonly turnChangesRevision?: object;
+  readonly activeDiffTurnId?: string | null;
+  readonly awaiting?: AgentThreadAwaiting | null;
   readonly getTurnChanges?: AgentThreadsSurface["getTurnChanges"];
   readonly monacoTheme?: MonacoAppTheme;
   readonly codeColorizer?: AgentCodeColorizer | null;
@@ -168,6 +175,8 @@ function AgentThreadSessionBody({
   goToTurnSignal = 0,
   onOpenTurnDiff,
   turnChangesRevision,
+  activeDiffTurnId = null,
+  awaiting = null,
   getTurnChanges,
   monacoTheme = "calm-dark",
   codeColorizer,
@@ -189,6 +198,8 @@ function AgentThreadSessionBody({
   const historyPage = history?.page?.threadId === threadId ? history.page : null;
   const displayedTurns = historyPage?.turns ?? record.turns;
   const agents = useAgentThreadAgents(threadId, displayedTurns);
+  const activitySources = useAgentActivitySources(history, threadId, displayedTurns);
+  const agentsBanner = useMemo(() => agentAgentsBannerModel(agents.groups), [agents.groups]);
   const serverId = thread.execution?.serverId;
   const runnerId = thread.execution?.runnerId;
   const artifactScope = useMemo<AgentArtifactScope | null>(
@@ -464,151 +475,87 @@ function AgentThreadSessionBody({
       )}
 
       <div className="agent-session__scroll" ref={scrollRef} tabIndex={-1}>
-        <div className="agent-session__body">
-          {history !== undefined && (
-            <AgentHistoryPager
-              page={historyPage}
-              hasEarlier={record.turnsTruncated}
-              onEarlier={() => {
-                void history.older(threadId);
-              }}
-              onNewer={
-                history.newer === undefined
-                  ? undefined
-                  : () => {
-                      void history.newer?.(threadId);
-                    }
-              }
-              onLatest={history.latest}
-            />
-          )}
-          {record.turnsTruncated && history === undefined && (
-            <p className="agent-note agent-note--warning">
-              Earlier turns were dropped to bound memory.
-            </p>
-          )}
-
-          {provenanceNote !== null && (
-            <p className="agent-note agent-session__provenance">{provenanceNote}</p>
-          )}
-
-          {record.externalOrigin != null && onEarlierImportedHistory !== undefined && (
-            <nav aria-label="Original conversation history" className="agent-history-pager">
-              <button
-                type="button"
-                disabled={externalHistoryState === "loading" || !hasEarlierImportedHistory}
-                onClick={onEarlierImportedHistory}
-              >
-                Earlier imported messages
-              </button>
-              <button
-                type="button"
-                disabled={externalHistoryState === "loading"}
-                onClick={onRetryExternalHistory}
-              >
-                Latest imported messages
-              </button>
-            </nav>
-          )}
-          {record.externalOrigin != null && (
-            <AgentImportedHistory
-              attachmentImages={importedCarriesAttachments ? attachmentImageViewer : null}
-              highlights={importedHighlights}
-              history={displayedImportedHistory}
-              key={`${threadId}:${record.externalOrigin.sessionId}`}
-              onRetry={onRetryExternalHistory}
-              prose={prose}
-              state={externalHistoryState}
-              textClipboard={textClipboard}
-            />
-          )}
+        <div className="agent-session__body cv-conversation-column">
+          <AgentSessionPreamble
+            externalHistoryState={externalHistoryState}
+            hasEarlierImportedHistory={hasEarlierImportedHistory}
+            history={history}
+            historyPage={historyPage}
+            importedHighlights={importedHighlights}
+            importedHistory={displayedImportedHistory}
+            importedImages={importedCarriesAttachments ? attachmentImageViewer : null}
+            importedSessionId={record.externalOrigin?.sessionId ?? null}
+            onEarlierImportedHistory={onEarlierImportedHistory}
+            onRetryExternalHistory={onRetryExternalHistory}
+            prose={prose}
+            provenanceNote={provenanceNote}
+            textClipboard={textClipboard}
+            threadId={threadId}
+            turnsTruncated={record.turnsTruncated}
+          />
 
           <AgentArtifactPreviewScope
             key={`${threadId}:${serverId ?? "local"}:${runnerId ?? record.owner.ownerId}`}
           >
             <div className="agent-turn-list">
               {displayedTurns.map((turn) => (
-                <AgentHistoryActivity
-                  key={turn.turnId}
-                  turn={turn}
-                  source={history?.activitySource?.(threadId, turn.turnId) ?? null}
-                >
-                  {(historyWork) => (
-                    <>
-                      <AgentTurnView
-                        historyWork={historyWork}
-                        attachmentImages={
-                          agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
-                        }
-                        artifactScope={artifactScope}
-                        highlight={highlightFor(turn.turnId)}
-                        key={turn.turnId}
-                        onOpenAgents={agents.openPanel}
-                        subagents={agents.subagentsFor(turn.turnId)}
-                        prose={prose}
-                        provider={record.provider.kind}
-                        executionTarget={thread.execution?.kind ?? "local"}
-                        renderProbe={turnRenderProbe}
-                        textClipboard={textClipboard}
-                        turn={turn}
-                        turnLog={turnLog}
-                        workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
-                      />
-                      {isTerminalAgentTurnStatus(turn.status) && getTurnChanges && (
-                        <AgentRecordedTurnChanges
-                          key={`${threadId}:${turn.turnId}`}
-                          threadId={threadId}
-                          turnId={turn.turnId}
-                          onOpenDiff={(summary, path) => onOpenTurnDiff?.(threadId, summary, path)}
-                          revision={turnChangesRevision}
-                          getTurnChanges={getTurnChanges}
-                        />
-                      )}
-                    </>
+                <Fragment key={turn.turnId}>
+                  <AgentTurnView
+                    activitySource={activitySources.get(turn.turnId) ?? null}
+                    attachmentImages={
+                      agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
+                    }
+                    artifactScope={artifactScope}
+                    highlight={highlightFor(turn.turnId)}
+                    onOpenAgents={agents.openPanel}
+                    subagents={agents.subagentsFor(turn.turnId)}
+                    prose={prose}
+                    provider={record.provider.kind}
+                    executionTarget={thread.execution?.kind ?? "local"}
+                    renderProbe={turnRenderProbe}
+                    textClipboard={textClipboard}
+                    turn={turn}
+                    turnLog={turnLog}
+                    workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
+                  />
+                  {isTerminalAgentTurnStatus(turn.status) && getTurnChanges && (
+                    <AgentRecordedTurnChanges
+                      active={activeDiffTurnId === turn.turnId}
+                      getTurnChanges={getTurnChanges}
+                      key={`${threadId}:${turn.turnId}`}
+                      onOpenDiff={(summary, relativePath) =>
+                        onOpenTurnDiff?.(threadId, summary, relativePath)
+                      }
+                      revision={turnChangesRevision}
+                      threadId={threadId}
+                      turnId={turn.turnId}
+                    />
                   )}
-                </AgentHistoryActivity>
+                </Fragment>
               ))}
             </div>
           </AgentArtifactPreviewScope>
+          {awaiting !== null &&
+            liveTurn !== null &&
+            !isTerminalAgentTurnStatus(liveTurn.status) && (
+              <AgentLiveRow
+                label={awaiting === "approval" ? "Waiting for approval" : "Waiting for your answer"}
+                tone={awaiting === "approval" ? "approval" : "input"}
+              />
+            )}
 
-          {deferredFollowUps.length > 0 && (
-            <div
-              className="agent-queued-list"
-              role="region"
-              aria-label="Pending messages"
-              ref={queueRef}
-              tabIndex={-1}
-            >
-              {deferredFollowUps.some((entry) => entry.state === "paused") &&
-                onResumeDeferredFollowUps !== undefined && (
-                  <div className="agent-queued-list__controls">
-                    <button
-                      aria-label="Resume queued messages"
-                      className="agent-prompt__queue-action agent-prompt__queue-action--resume"
-                      onClick={() => void onResumeDeferredFollowUps(threadId)}
-                      title="Resume queued messages"
-                      type="button"
-                    >
-                      <Play aria-hidden="true" />
-                      Resume
-                    </button>
-                  </div>
-                )}
-              {deferredFollowUps.map((entry) => (
-                <AgentQueuedPrompt
-                  attachments={entry.request.attachments}
-                  displayAttachmentCount={entry.displayAttachmentCount}
-                  id={entry.id}
-                  key={entry.id}
-                  onEdit={onEditDeferredFollowUp === undefined ? undefined : editQueued}
-                  onRemove={removeQueued}
-                  onSendNow={onSendDeferredFollowUpNow === undefined ? undefined : sendQueuedNow}
-                  state={entry.editLease === undefined ? entry.state : "editing"}
-                  prompt={entry.request.prompt}
-                />
-              ))}
-            </div>
-          )}
+          <AgentQueuedMessages
+            entries={deferredFollowUps}
+            listRef={queueRef}
+            onEdit={onEditDeferredFollowUp === undefined ? undefined : editQueued}
+            onRemove={removeQueued}
+            onResume={
+              onResumeDeferredFollowUps === undefined
+                ? undefined
+                : () => void onResumeDeferredFollowUps(threadId)
+            }
+            onSendNow={onSendDeferredFollowUpNow === undefined ? undefined : sendQueuedNow}
+          />
 
           {thread.worktreeMissing && (
             <p className="agent-note agent-note--warning">
@@ -620,31 +567,21 @@ function AgentThreadSessionBody({
         </div>
       </div>
 
-      <AgentJumpToLatest
-        onJump={follow.jumpToLatest}
-        unseenActivity={follow.unseenActivity}
-        visible={!follow.atLatest}
+      <AgentSessionDock
+        agents={agentsBanner}
+        background={
+          <AgentBackgroundWorkBanner
+            onStop={onStopBackground}
+            provider={record.provider.kind}
+            threadId={threadId}
+            turn={liveTurn}
+          />
+        }
+        follow={follow}
+        onOpenAgents={agents.openPanel}
+        onRevealQueue={revealQueue}
+        queuedCount={deferredFollowUps.length}
       />
-      <AgentBackgroundWorkBanner
-        onStop={onStopBackground}
-        provider={record.provider.kind}
-        threadId={threadId}
-        turn={liveTurn}
-      />
-      {deferredFollowUps.length > 0 && (
-        <div className="agent-session__queue-summary">
-          <button
-            aria-label={`Show ${deferredFollowUps.length} queued ${deferredFollowUps.length === 1 ? "message" : "messages"}`}
-            className="agent-prompt__queue-action agent-session__queue-count"
-            onClick={revealQueue}
-            title="Show pending messages, including paused messages"
-            type="button"
-          >
-            <Clock3 aria-hidden="true" />
-            {deferredFollowUps.length} queued
-          </button>
-        </div>
-      )}
 
       <AgentAttachmentLightbox
         entry={lightbox.entry}
@@ -660,127 +597,4 @@ function AgentThreadSessionBody({
       <AgentAgentsDock agents={agents}>{session}</AgentAgentsDock>
     </AgentCodeColorizerContext.Provider>
   );
-}
-
-function turnCursor(
-  hits: ReadonlyArray<AgentThreadFindHit>,
-  index: number,
-): AgentTurnHighlightCursor | null {
-  const hit = hits[index];
-  if (hit === undefined) return null;
-
-  if (hit.scope !== "turn") return null;
-
-  let occurrence = 0;
-  for (let position = 0; position < index; position += 1) {
-    const other = hits[position];
-    if (other === undefined) continue;
-    if (other.scope !== "turn") continue;
-    if (other.turnId !== hit.turnId) continue;
-    if (other.eventIndex !== hit.eventIndex) continue;
-    occurrence += 1;
-  }
-
-  if (hit.eventIndex === null) return { kind: "prompt", occurrence };
-  return { kind: "event", eventIndex: hit.eventIndex, occurrence };
-}
-
-function revealTarget(
-  container: HTMLElement,
-  reveal: AgentThreadRevealRequest | null,
-  activeHit: AgentThreadFindHit | null,
-): AgentRevealTarget | null {
-  const current = container.querySelector<HTMLElement>(".agent-find__hit--current");
-  if (current !== null) return { element: current, block: "center" };
-
-  const turnHit = activeHit === null || activeHit.scope !== "turn" ? null : activeHit;
-  const turnId = reveal?.turnId ?? turnHit?.turnId ?? null;
-  if (turnId === null) {
-    const imported = importedElement(container, activeHit);
-    return imported === null ? null : { element: imported, block: "start" };
-  }
-
-  const turn = turnElement(container, turnId);
-  if (turn === null) return null;
-
-  const eventIndex = reveal?.eventIndex ?? turnHit?.eventIndex ?? null;
-  if (eventIndex === null) return { element: turn, block: "start" };
-
-  const event = eventElement(turn, eventIndex);
-  if (event === null) return { element: turn, block: "start" };
-
-  return { element: event, block: "start" };
-}
-
-function importedElement(
-  container: HTMLElement,
-  activeHit: AgentThreadFindHit | null,
-): HTMLElement | null {
-  if (activeHit === null) return null;
-  if (activeHit.scope !== "imported") return null;
-
-  return container.querySelector<HTMLElement>(`[data-agent-event="x${activeHit.exchangeIndex}"]`);
-}
-
-function columnElement(
-  container: HTMLElement,
-  anchor: AgentThreadColumnAnchor,
-): HTMLElement | null {
-  const key = agentThreadColumnKey(anchor);
-  const candidates = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-column]"));
-  return candidates.find((candidate) => candidate.dataset.agentColumn === key) ?? null;
-}
-
-interface AgentTurnEventOffset {
-  readonly turnId: string;
-  readonly offset: number;
-}
-
-function prependedTurnIds(
-  previous: ReadonlyArray<AgentTurnEventOffset>,
-  next: ReadonlyArray<AgentTurnEventOffset>,
-): ReadonlyArray<string> {
-  if (previous.length === 0) return [];
-  const before = new Map(previous.map((entry) => [entry.turnId, entry.offset]));
-  const shifted: string[] = [];
-  for (const entry of next) {
-    const was = before.get(entry.turnId);
-    if (was === undefined) continue;
-    if (entry.offset >= was) continue;
-    shifted.push(entry.turnId);
-  }
-  return shifted;
-}
-
-function turnInsertionTops(
-  container: HTMLElement,
-  turnIds: ReadonlyArray<string>,
-): ReadonlyArray<number> | null {
-  const containerTop = container.getBoundingClientRect().top;
-  const tops: number[] = [];
-  for (const turnId of turnIds) {
-    const turn = turnElement(container, turnId);
-    if (turn === null) return null;
-    const events = turn.querySelector<HTMLElement>(".agent-turn__events");
-    if (events === null) return null;
-    tops.push(container.scrollTop + events.getBoundingClientRect().top - containerTop);
-  }
-  return tops;
-}
-
-function turnElement(container: HTMLElement, turnId: string): HTMLElement | null {
-  const candidates = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-turn]"));
-  return candidates.find((candidate) => candidate.dataset.agentTurn === turnId) ?? null;
-}
-
-function eventElement(turn: HTMLElement, eventIndex: number): HTMLElement | null {
-  const key = agentTurnItemKey(eventIndex, turnEventOffset(turn));
-  const candidates = Array.from(turn.querySelectorAll<HTMLElement>("[data-agent-event]"));
-  return candidates.find((candidate) => candidate.dataset.agentEvent === key) ?? null;
-}
-
-function turnEventOffset(turn: HTMLElement): number {
-  const raw = turn.dataset.agentTurnOffset;
-  if (raw === undefined) return 0;
-  return normalizeAgentTurnEventOffset(Number.parseInt(raw, 10));
 }

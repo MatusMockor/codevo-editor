@@ -12,7 +12,13 @@ import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
-import { AGENT_THREAD_BULK_CONFIRM_DELAY_MS } from "../../domain/agentThreadBulkAction";
+import type { AgentThreadBulkCommand } from "../../domain/agentThreadBulkAction";
+import {
+  AGENT_THREAD_BULK_CONFIRM_DELAY_MS,
+  agentThreadBulkOwnerKey,
+  agentThreadBulkPlan,
+} from "../../domain/agentThreadBulkAction";
+import { agentThreadBulkCandidates } from "./useAgentThreadMenuCommands";
 import { __resetKeymapPlatformCacheForTests } from "../../domain/keymap";
 import { createAgentTurnLogFactsStore } from "../../application/agentTurnLogStatusStore";
 import { AgentClockProvider } from "./agentClock";
@@ -29,6 +35,7 @@ const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
 const NOW = 1_700_000_600_000;
 const AGENT_MODE_CSS = readAgentModeStyles();
+const ROOT_OWNER = agentThreadBulkOwnerKey({ rootKey: ROOT, ownerId: `agent-root:${ROOT}` });
 
 describe("AgentThreadsSidebar", () => {
   let host: HTMLDivElement;
@@ -107,6 +114,7 @@ describe("AgentThreadsSidebar", () => {
         onThreadMenuCommand: command,
       });
     draw();
+    click('.cv-sb-shelf[data-shelf="snoozed"]');
     const dispatch = (type: string, selector: string) => {
       const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientY: 0 });
       Object.defineProperty(event, "dataTransfer", {
@@ -140,6 +148,79 @@ describe("AgentThreadsSidebar", () => {
     expect(command).not.toHaveBeenCalled();
   });
 
+  it("keeps Settled collapsed behind a counted shelf and excludes its rows from keyboard navigation", () => {
+    const [first, second] = threeThreads();
+    const settledView = { ...second!, thread: { ...second!.thread, settledAt: NOW - 1_000 } };
+    render({ groups: [group(ROOT, "app", [first!, settledView])] });
+    const shelf = settledShelf();
+    expect(shelf?.textContent).toContain("Settled (1)");
+    expect(shelf?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector('[data-thread-id="agt-2"]')).toBeNull();
+    act(() => row("agt-1").focus());
+    key(row("agt-1"), "End");
+    expect(document.activeElement).toBe(row("agt-1"));
+    act(() => shelf?.click());
+    expect(settledShelf()?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('[data-thread-id="agt-2"]')).not.toBeNull();
+    key(row("agt-1"), "End");
+    expect(document.activeElement).toBe(row("agt-2"));
+  });
+
+  it("collapses Snoozed behind a counted shelf", () => {
+    const [first, second] = threeThreads();
+    const sleeping = { ...second!, thread: { ...second!.thread, snoozedUntil: NOW + 60_000 } };
+    render({ groups: [group(ROOT, "app", [first!, sleeping])] });
+    const shelf = [...host.querySelectorAll<HTMLButtonElement>("button.cv-sb-shelf")].find(
+      (button) => button.textContent?.startsWith("Snoozed"),
+    );
+    expect(shelf?.textContent).toContain("Snoozed (1)");
+    expect(host.querySelector('[data-thread-id="agt-2"]')).toBeNull();
+    act(() => shelf?.click());
+    expect(host.querySelector('[data-thread-id="agt-2"]')).not.toBeNull();
+  });
+
+  it("hides the Pins and Active drop markers until a drag starts", () => {
+    render({ groups: [group(ROOT, "app", threeThreads())] });
+    const list = host.querySelector(".agent-list");
+    expect(list?.getAttribute("data-dragging")).toBeNull();
+    const event = new MouseEvent("dragstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", {
+      value: { setData: vi.fn(), effectAllowed: "", dropEffect: "" },
+    });
+    act(() => row("agt-1").dispatchEvent(event));
+    expect(host.querySelector(".agent-list")?.getAttribute("data-dragging")).toBe("true");
+    act(() => {
+      row("agt-1").dispatchEvent(new MouseEvent("dragend", { bubbles: true }));
+    });
+    expect(host.querySelector(".agent-list")?.getAttribute("data-dragging")).toBeNull();
+  });
+
+  it("shows search hits with the project monogram and relative time", () => {
+    const search = searchSurface("parser", {
+      query: "parser",
+      truncated: false,
+      documentsTruncated: false,
+      matches: [
+        {
+          threadId: "agt-1",
+          source: "title",
+          turnId: null,
+          eventIndex: null,
+          snippet: "Fix the parser",
+          ranges: [{ start: 8, end: 14 }],
+          segmentStart: 8,
+          segmentEnd: 14,
+          score: 1,
+        },
+      ],
+    });
+    render({ search });
+    const option = host.querySelector(".cv-sb-results .cv-sr");
+    expect(option?.querySelector(".cv-favicon")?.textContent).toBe("A");
+    expect(option?.querySelector(".cv-sr__title mark")?.textContent).toBe("parser");
+    expect(option?.querySelector(".cv-sr__when")?.textContent).toBe("2m");
+  });
+
   it("moves snoozed rows back to active at their deadline without a data refresh", () => {
     const original = settled("sleep", "Sleeping");
     const sleeping = { ...original, thread: { ...original.thread, snoozedUntil: NOW + 1000 } };
@@ -158,7 +239,8 @@ describe("AgentThreadsSidebar", () => {
       host.querySelector('input[role="combobox"][aria-label="Search threads"]'),
     ).not.toBeNull();
     expect(host.querySelector('[aria-label="New thread"]')).not.toBeNull();
-    expect(host.querySelector("#agent-rail-scope")?.textContent).toContain("app");
+    expect(host.querySelector('[aria-label="Filter threads by project"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Add project"]')).not.toBeNull();
     expect(host.querySelector(".agent-rail__title")).toBeNull();
     expect(host.querySelector(".agent-rail__filters")).toBeNull();
     expect(host.textContent).not.toContain("running");
@@ -190,13 +272,23 @@ describe("AgentThreadsSidebar", () => {
   it("hands the rail chrome row to the window as a drag region", () => {
     render();
 
-    const chrome = host.querySelector(".agent-rail__chrome");
-    expect(chrome?.getAttribute("data-tauri-drag-region")).toBe("");
+    const chrome = host.querySelector(".cv-topbar--sidebar");
+    expect(chrome?.getAttribute("data-tauri-drag-region")).toBe("deep");
     expect(
       chrome
         ?.querySelector('[aria-label="Collapse sidebar"]')
         ?.hasAttribute("data-tauri-drag-region"),
     ).toBe(false);
+  });
+
+  it("puts the collapse control in the sidebar top bar with its chord", () => {
+    render();
+
+    const collapse = host.querySelector<HTMLButtonElement>(
+      '.cv-topbar--sidebar button[aria-label="Collapse sidebar"]',
+    );
+    expect(collapse?.title).toBe("Collapse sidebar (⌘B)");
+    expect(collapse?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("places provider status after the independently scrolling thread list", () => {
@@ -217,84 +309,19 @@ describe("AgentThreadsSidebar", () => {
     expect(AGENT_MODE_CSS).toContain("@media (max-width: 560px)");
   });
 
-  it("pins the Airy rail metrics: 44px chrome, two-column head and scaled 78px cards", () => {
-    expect(cssRule("\n.agent-rail {")).toContain("background: var(--codevo-canvas)");
+  it("pins the rail frame and the scaled 78px cards", () => {
+    expect(cssRule("\n.agent-rail {")).toContain("background: var(--cv-side)");
     expect(cssRule("\n.agent-rail {")).toContain("padding: 0 6px 8px");
-    expect(cssRule("\n.agent-rail {")).not.toContain("border");
-    expect(cssRule("\n.agent-rail__chrome {")).toContain("height: 44px");
-    expect(cssRule("\n.agent-rail__head {")).toContain(
-      "grid-template-columns: minmax(0, 1fr) 32px",
-    );
-    expect(cssRule("\n.agent-rail__head {")).toContain("gap: 4px");
-    expect(cssRule("\n.agent-rail__head {")).toContain("padding: 0 4px 4px");
+    expect(cssRule("\n.agent-rail {")).toContain("box-shadow: var(--cv-edge-end-divider)");
+    expect(AGENT_MODE_CSS).not.toContain(".agent-rail__chrome");
     expect(cssRule("\n.agent-rail__scroll {")).toContain("padding: 6px 4px 4px");
     expect(cssRule(".agent-iconbutton {")).toContain("width: 32px");
     expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--codevo-r-sm)");
-    expect(cssRule(".agent-search {")).toContain("height: calc(30px * var(--codevo-fs-scale))");
-    expect(cssRule(".agent-search {")).toContain("border-radius: var(--codevo-r-sm)");
-    expect(cssRule(".agent-search {")).toContain("background: var(--codevo-raised)");
-    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain(
-      "height: calc(30px * var(--codevo-fs-scale))",
-    );
-    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("background: transparent");
-    expect(cssRule(".agent-row {")).toContain("border-radius: var(--codevo-r-md)");
-    expect(cssRule(".agent-row:hover {")).toContain("background: var(--codevo-hover)");
-    const on = cssRule(".agent-row--selected,\n.agent-row--on,\n.agent-row--on:hover {");
-    expect(on).toContain("background: var(--codevo-raised)");
-    expect(on).toContain("box-shadow: var(--codevo-shadow-card)");
-    expect(cssRule(".agent-row--card {")).toContain("height: calc(78px * var(--codevo-fs-scale))");
-    expect(cssRule(".agent-row--card {")).toContain("border-radius: var(--codevo-r-md)");
-    expect(cssRule(".agent-row--card {")).toContain("padding: var(--agent-row-pad)");
-    expect(cssRule(".agent-row__project {")).toContain("color: var(--codevo-fg-muted)");
-    expect(cssRule(".agent-row__files {")).toContain("font-family: var(--agent-mono)");
-    expect(cssRule(".agent-row__files {")).toContain("font-size: 11px");
-    expect(cssRule(".agent-row__line3 .agent-row__provider svg {")).toContain("width: 14px");
-    expect(cssRule(".agent-list__divider {")).toContain("background: var(--codevo-hover)");
-    expect(cssRule(".agent-list__divider {")).toContain("margin: 6px var(--agent-rail-row-inset)");
-    expect(cssRule(".agent-shelf__rule {")).toContain("background: var(--codevo-hover)");
-    expect(cssRule(".agent-shelf {")).toContain("font-size: 12px");
-    expect(cssRule(".agent-shelf {")).toContain("font-weight: 500");
-  });
-
-  it("fills the rail search with the well tone under every light theme", () => {
-    for (const selector of [
-      '.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])\n  .agent-search {',
-      '.app-shell[data-theme="system"] .agent-search {',
-    ]) {
-      expect(cssRule(selector)).toContain("background: var(--codevo-well)");
-    }
-  });
-
-  it("floats the rail menus as raised 12px sheets with scaled 30px rows and tone separators", () => {
-    const menu = cssRule(".agent-menu.agent-scope-menu__menu,\n.agent-menu.agent-row-menu {");
-    expect(menu).toContain("border-radius: var(--codevo-r-lg)");
-    expect(menu).toContain("background: var(--codevo-raised)");
-    expect(menu).toContain("box-shadow: var(--codevo-shadow-float)");
-    const item = cssRule(
-      ".agent-scope-menu__menu .agent-menu__item,\n.agent-row-menu .agent-menu__item {",
-    );
-    expect(item).toContain("min-height: calc(30px * var(--codevo-fs-scale))");
-    expect(item).toContain("border-radius: 7px");
-    const highlight = cssRule(
-      ".agent-scope-menu__menu .agent-menu__item:hover:not(:disabled),\n.agent-scope-menu__menu .agent-menu__item:focus-visible,\n.agent-row-menu .agent-menu__item:hover:not(:disabled),\n.agent-row-menu .agent-menu__item:focus-visible {",
-    );
-    expect(highlight).toContain("background: var(--codevo-active)");
-    expect(highlight).not.toContain("box-shadow");
-    const focus = cssRule(
-      ".agent-scope-menu__menu .agent-menu__item:focus-visible,\n.agent-row-menu .agent-menu__item:focus-visible {",
-    );
-    expect(focus).toContain("box-shadow: var(--codevo-focus-ring)");
-    expect(AGENT_MODE_CSS).toContain(
-      ".agent-row-menu .agent-menu__item--armed:focus-visible {\n  box-shadow: var(--codevo-focus-ring);\n}",
-    );
-    const separator = cssRule(
-      ".agent-scope-menu__menu .agent-menu__separator,\n.agent-row-menu .agent-menu__separator {",
-    );
-    expect(separator).toContain("height: 1px");
-    expect(separator).toContain("background: var(--codevo-hover)");
-    expect(separator).not.toContain("border");
-    expect(cssRule(".agent-scope-menu__search {")).toContain("background: var(--agent-raised)");
-    expect(cssRule(".agent-scope-menu__search {")).not.toContain("border");
+    expect(cssRule(".agent-row {")).toContain("border-radius: var(--cv-r-card)");
+    expect(cssRule(".agent-row:hover {")).toContain("background: var(--cv-row-hover)");
+    const on = cssRule("\n.agent-row--on,\n.agent-row--on:hover {");
+    expect(on).toContain("background: var(--cv-raised)");
+    expect(on).toContain("box-shadow: var(--cv-lift)");
   });
 
   it("styles the thread search palette as a raised 14px sheet with primary marks", () => {
@@ -304,13 +331,11 @@ describe("AgentThreadsSidebar", () => {
     expect(palette).toContain("box-shadow: var(--codevo-shadow-float)");
     expect(cssRule(".agent-thread-palette .palette-search {")).toContain("border-bottom: 0");
     expect(cssRule(".agent-thread-palette .palette-search input {")).toContain("height: 46px");
-    expect(cssRule(".agent-search-row {")).toContain(
-      "min-height: calc(32px * var(--codevo-fs-scale))",
-    );
-    expect(cssRule(".agent-search-row--active {")).toContain("background: var(--codevo-hover)");
+    expect(cssRule(".agent-search-row {")).toContain("min-height: 32px");
+    expect(cssRule(".agent-search-row--active {")).toContain("background: var(--cv-row-hover)");
     expect(cssRule(".agent-search-row--active {")).not.toContain("box-shadow");
     const mark = cssRule(".agent-search-row__title mark,\n.agent-search-row__snippet mark {");
-    expect(mark).toContain("color: var(--codevo-primary)");
+    expect(mark).toContain("color: var(--cv-accent)");
     expect(mark).toContain("background: transparent");
   });
 
@@ -373,20 +398,14 @@ describe("AgentThreadsSidebar", () => {
       '.app-shell[data-theme="system"]',
     ]) {
       const scope = light.slice(light.indexOf(selector));
-      expect(scope).toContain(".agent-shelf,");
-      expect(scope).toContain(".agent-rail__note,");
       expect(scope).toContain(".agent-row--recede,");
-      expect(scope).toContain(".agent-row__line3,");
       expect(scope).toContain(".agent-row__time,");
       expect(scope).toContain(".agent-row--slim .agent-row__title,");
       expect(scope).toContain(".agent-search-results__note");
-      expect(scope).toContain("color: var(--codevo-fg-muted)");
-      expect(scope).toContain("color: var(--codevo-fg-strong)");
+      expect(scope).toContain("color: var(--cv-fg-muted)");
+      expect(scope).toContain("color: var(--cv-fg-strong)");
     }
     expect(light).toContain("@media (prefers-color-scheme: light)");
-    expect(cssRule("\n.agent-shelf {")).toContain(
-      "color: color-mix(in srgb, var(--codevo-fg-muted) 75%, transparent)",
-    );
     expect(AGENT_MODE_CSS).toContain(
       ".agent-iconbutton:focus-visible {\n  box-shadow: var(--codevo-focus-ring);\n}",
     );
@@ -478,17 +497,17 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).not.toContain("+ New thread");
   });
 
-  it("renders the card lines: project, title, branch and provider glyph", () => {
+  it("renders the card lines: monogram, project, title, branch and time", () => {
     render({
       groups: [group(ROOT, "app", [settled("agt-1", "Fix the parser", { branch: "main" })])],
     });
 
     const card = row("agt-1");
-    expect(card.querySelector(".agent-row__project")?.textContent).toBe("app");
-    expect(card.querySelector(".agent-row__title")?.textContent).toBe("Fix the parser");
-    expect(card.querySelector(".agent-row__branch")?.textContent).toBe("main");
-    expect(card.querySelector('[aria-label="Claude Code"] svg')).not.toBeNull();
-    expect(card.querySelector(".agent-row__time")?.textContent).toBe("2m");
+    expect(card.querySelector(".cv-favicon")?.textContent).toBe("A");
+    expect(card.querySelector(".cv-card-row__project")?.textContent).toBe("app");
+    expect(card.querySelector(".cv-card-row__title")?.textContent).toBe("Fix the parser");
+    expect(card.querySelector(".cv-card-row__branch")?.textContent).toBe("main");
+    expect(card.querySelector(".cv-card-row__when")?.textContent).toBe("2m");
   });
 
   it("prefixes the repository with the project label only for multi-repository projects", () => {
@@ -496,8 +515,8 @@ describe("AgentThreadsSidebar", () => {
       groups: [{ ...group(ROOT, "app", [settled("agt-1", "One")]), singleRepo: false }],
     });
 
-    expect(row("agt-1").querySelector(".agent-row__project")?.textContent).toBe("app / app");
-    expect(row("agt-1").querySelector(".agent-row__branch")?.textContent).toBe("worktree");
+    expect(row("agt-1").querySelector(".cv-card-row__project")?.textContent).toBe("app / app");
+    expect(row("agt-1").querySelector(".cv-card-row__branch")?.textContent).toBe("worktree");
   });
 
   it("labels every row of a nested-checkout project, including the scoped repository", () => {
@@ -525,25 +544,19 @@ describe("AgentThreadsSidebar", () => {
       ],
     });
 
-    expect(row("agt-1").querySelector(".agent-row__project")?.textContent).toBe("app / app");
-    expect(row("agt-2").querySelector(".agent-row__project")?.textContent).toBe(
+    expect(row("agt-1").querySelector(".cv-card-row__project")?.textContent).toBe("app / app");
+    expect(row("agt-2").querySelector(".cv-card-row__project")?.textContent).toBe(
       "app / packages/api",
     );
-  });
-
-  it("shows the Codex mark for codex threads", () => {
-    render({ groups: [group(ROOT, "app", [settled("agt-1", "One", { provider: "codex" })])] });
-
-    expect(row("agt-1").querySelector('[aria-label="Codex"]')).not.toBeNull();
   });
 
   it("replaces the time with Working plus a live duration while a turn runs", () => {
     render({ groups: [group(ROOT, "app", [running("agt-1", "Busy")])] });
 
-    const status = row("agt-1").querySelector(".agent-row__status--working");
+    const status = row("agt-1").querySelector('.cv-card-row__status[data-tone="work"]');
     expect(status?.textContent).toContain("Working");
-    expect(status?.querySelector("time")?.textContent).toBe("10m");
-    expect(row("agt-1").classList.contains("agent-row--inflight")).toBe(true);
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("10:00");
+    expect(row("agt-1").classList.contains("is-live")).toBe(true);
   });
 
   it("labels failed, stopped and unread done threads and keeps read ones quiet", () => {
@@ -558,24 +571,30 @@ describe("AgentThreadsSidebar", () => {
       ],
     });
 
-    expect(row("agt-f").querySelector(".agent-row__status--failed")?.textContent).toBe("Failed");
-    expect(row("agt-s").querySelector(".agent-row__status--stopped")?.textContent).toBe("Stopped");
-    expect(row("agt-d").querySelector(".agent-row__status--done")?.textContent).toBe("Done");
-    expect(row("agt-d").classList.contains("agent-row--unread")).toBe(true);
-    expect(row("agt-r").querySelector(".agent-row__status")).toBeNull();
-    expect(row("agt-r").classList.contains("agent-row--recede")).toBe(true);
-    expect(row("agt-f").classList.contains("agent-row--recede")).toBe(false);
+    expect(row("agt-f").querySelector('.cv-card-row__status[data-tone="fail"]')?.textContent).toBe(
+      "Failed",
+    );
+    expect(row("agt-s").querySelector('.cv-card-row__status[data-tone="quiet"]')?.textContent).toBe(
+      "Stopped",
+    );
+    expect(row("agt-d").querySelector('.cv-card-row__status[data-tone="ok"]')?.textContent).toBe(
+      "Done",
+    );
+    expect(row("agt-d").classList.contains("is-unread")).toBe(true);
+    expect(row("agt-r").querySelector(".cv-card-row__status")).toBeNull();
+    expect(row("agt-r").classList.contains("is-recede")).toBe(true);
+    expect(row("agt-f").classList.contains("is-recede")).toBe(false);
   });
 
   it("marks the selected card as on and never receded", () => {
     render({ groups: [group(ROOT, "app", [settled("agt-1", "Read")])], selectedThreadId: "agt-1" });
 
-    expect(row("agt-1").classList.contains("agent-row--on")).toBe(true);
-    expect(row("agt-1").classList.contains("agent-row--recede")).toBe(false);
+    expect(row("agt-1").classList.contains("is-current")).toBe(true);
+    expect(row("agt-1").classList.contains("is-recede")).toBe(false);
     expect(row("agt-1").getAttribute("aria-current")).toBe("true");
   });
 
-  it("puts pinned cards before the Active drop heading and unpins from the pin glyph", () => {
+  it("puts pinned cards before the Active drop heading and unpins with the P key", () => {
     const onTogglePin = vi.fn();
     render({
       groups: [
@@ -589,27 +608,30 @@ describe("AgentThreadsSidebar", () => {
 
     expect(rowIds()).toEqual(["agt-p", "agt-1"]);
     expect(host.querySelector('[data-thread-drop-section="active"]')?.textContent).toBe("Active");
-    expect(row("agt-1").querySelector(".agent-row__pin")).toBeNull();
+    expect(row("agt-1").querySelector(".cv-card-row__pin")).toBeNull();
+    expect(row("agt-p").querySelector('.cv-card-row__pin[aria-label="Pinned"]')).not.toBeNull();
 
-    click('[aria-label="Unpin thread"]');
+    act(() => row("agt-p").focus());
+    key(row("agt-p"), "p");
 
     expect(onTogglePin).toHaveBeenCalledWith("agt-p");
   });
 
-  it("offers the hover Archive action on cards and disables it while working", () => {
+  it("offers the hover Settle action on cards and hides it while working", () => {
     const onThreadMenuCommand = vi.fn();
     render({
       groups: [group(ROOT, "app", [running("agt-r", "Busy"), settled("agt-s", "Done")])],
       onThreadMenuCommand,
     });
 
-    const busy = row("agt-r").querySelector<HTMLButtonElement>('[aria-label="Archive thread"]');
-    expect(busy?.disabled).toBe(true);
-    expect(busy?.closest(".agent-row__actions")).not.toBeNull();
+    expect(row("agt-r").closest("li")?.querySelector('[aria-label="Settle thread"]')).toBeNull();
+    const settle = row("agt-s")
+      .closest("li")
+      ?.querySelector<HTMLButtonElement>('[aria-label="Settle thread"]');
+    expect(settle).not.toBeNull();
+    act(() => settle?.click());
 
-    click('[data-thread-id="agt-s"] [aria-label="Archive thread"]');
-
-    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-s", { kind: "archive" });
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-s", { kind: "settle" });
   });
 
   it("collapses archived threads into a slim shelf paginated by twenty", () => {
@@ -621,14 +643,14 @@ describe("AgentThreadsSidebar", () => {
     );
     render({ groups: [group(ROOT, "app", [settled("agt-1", "Live"), ...archived])] });
 
-    expect(host.querySelector(".agent-shelf")?.textContent).toBe(
+    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')?.textContent).toBe(
       `Archived (${ARCHIVED_PAGE_COUNT + 5})`,
     );
     expect(host.querySelector(".agent-row--slim")).toBeNull();
 
-    click('.agent-shelf[aria-expanded="false"]');
+    click('.cv-sb-shelf[data-shelf="archived"][aria-expanded="false"]');
 
-    expect(host.querySelector(".agent-shelf")?.textContent).toBe(
+    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')?.textContent).toBe(
       `Archived (${ARCHIVED_PAGE_COUNT + 5})`,
     );
     expect(host.querySelectorAll(".agent-row--slim[data-thread-id]")).toHaveLength(
@@ -645,156 +667,150 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".agent-row--more")).toBeNull();
   });
 
-  it("opens the T3-ordered context menu and dispatches commands", () => {
+  it("opens the thread context menu in the mockup order and dispatches commands", () => {
     const onThreadMenuCommand = vi.fn();
     render({
       groups: [group(ROOT, "app", [running("agt-1", "Busy", { branch: "feat/x" })])],
       onThreadMenuCommand,
     });
 
-    act(() => {
-      row("agt-1").dispatchEvent(
-        new MouseEvent("contextmenu", {
-          bubbles: true,
-          cancelable: true,
-          clientX: 20,
-          clientY: 30,
-        }),
-      );
-    });
+    openRowMenu("agt-1");
 
-    const menu = document.querySelector('[role="menu"]');
+    const menu = document.querySelector('[role="menu"][aria-label="Thread actions"]');
     const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
     expect(items.map((item) => item.textContent)).toEqual([
       "New thread on feat/x",
-      "Pin",
-      "Rename",
+      "Pin thread",
+      "Settle thread",
+      "Snooze",
+      "Stop agent",
+      "Rename thread",
       "Mark unread",
-      "Copy path",
-      "Copy branch",
-      "Copy thread ID",
-      "Snooze…",
-      "Mark settled",
-      "Stop",
-      "Archive",
+      "Move to",
+      "Copy",
+      "Archive thread",
       "Delete",
     ]);
     const item = (label: string) =>
       items.find((candidate) => candidate.textContent === label) as HTMLButtonElement;
-    expect(item("Archive").disabled).toBe(true);
-    expect(item("Delete").disabled).toBe(true);
-    expect(item("Delete").title).toBe("Stop the agent before deleting this thread.");
-    expect(item("Mark unread").disabled).toBe(true);
-    expect(item("Mark unread").title).toBe("Available after a run finishes.");
+    expect(item("Archive thread").getAttribute("aria-disabled")).toBe("true");
+    expect(item("Delete").getAttribute("aria-disabled")).toBe("true");
+    expect(item("Delete").getAttribute("title")).toBe(
+      "Stop the agent before deleting this thread.",
+    );
+    expect(item("Mark unread").getAttribute("title")).toBe("Available after a run finishes.");
 
     act(() => item("Delete").click());
     expect(onThreadMenuCommand).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
 
-    act(() => item("Stop").click());
+    act(() => item("Stop agent").click());
 
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "stop" });
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("requires a second activation before deleting and keeps the primed item focused", () => {
+  it("confirms Delete in a dialog and cancels without deleting", () => {
     const onThreadMenuCommand = vi.fn();
     render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
 
-    act(() => {
-      row("agt-1").dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
-      );
-    });
-
+    openRowMenu("agt-1");
     act(() => deleteItem().click());
-
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Delete thread?");
+    expect(dialog?.textContent).toContain("Old name");
+    act(() => dialogButton("Cancel").click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(onThreadMenuCommand).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="menu"]')).not.toBeNull();
-    expect(deleteItem().textContent).toBe("Confirm delete");
-    expect(deleteItem().classList.contains("agent-menu__item--armed")).toBe(true);
-    expect(deleteItem().getAttribute("data-armed")).toBe("true");
-    expect(document.activeElement).toBe(deleteItem());
 
+    openRowMenu("agt-1");
     act(() => deleteItem().click());
-
+    expect(dialogButton("Delete thread").className).toContain("cv-button--danger");
+    act(() => dialogButton("Delete thread").click());
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
-    expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("disarms the primed delete on Escape before closing the menu", () => {
+  it("keeps list navigation keys inside the Delete dialog instead of moving to rows behind it", () => {
+    const onSelectThread = vi.fn();
     const onThreadMenuCommand = vi.fn();
-    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
-
-    act(() => {
-      row("agt-1").dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
-      );
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
+          settled("agt-2", "Two", { updatedAtEpochMs: NOW - 2000 }),
+        ]),
+      ],
+      onSelectThread,
+      onThreadMenuCommand,
     });
+
+    openRowMenu("agt-1");
     act(() => deleteItem().click());
-    act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-
-    expect(document.querySelector('[role="menu"]')).not.toBeNull();
-    expect(deleteItem().textContent).toBe("Delete");
-    expect(deleteItem().classList.contains("agent-menu__item--armed")).toBe(false);
-
-    act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(onThreadMenuCommand).not.toHaveBeenCalled();
+    const cancel = dialogButton("Cancel");
+    act(() => cancel.focus());
+    for (const name of ["ArrowDown", "ArrowUp", "Home", "End"]) {
+      key(document.activeElement as HTMLElement, name);
+      expect(document.activeElement).toBe(cancel);
+    }
+    key(document.activeElement as HTMLElement, "Enter");
+    key(document.activeElement as HTMLElement, " ");
+    key(document.activeElement as HTMLElement, "p");
+    expect(onSelectThread).not.toHaveBeenCalled();
+    expect(markedIds()).toEqual([]);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
-  it("drops the primed delete when the menu is dismissed by an outside click", () => {
-    const onThreadMenuCommand = vi.fn();
-    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
-
-    const open = (): void => {
-      act(() => {
-        row("agt-1").dispatchEvent(
-          new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
-        );
-      });
-    };
-
-    open();
-    act(() => deleteItem().click());
-    act(() => {
-      document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  it("keeps list navigation keys inside the custom Snooze dialog", () => {
+    const onSelectThread = vi.fn();
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
+          settled("agt-2", "Two", { updatedAtEpochMs: NOW - 2000 }),
+        ]),
+      ],
+      onSelectThread,
     });
 
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(onThreadMenuCommand).not.toHaveBeenCalled();
-
-    open();
-
-    expect(deleteItem().textContent).toBe("Delete");
+    openRowMenu("agt-1");
+    const snooze = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+      item.textContent?.startsWith("Snooze"),
+    );
+    expect(snooze).toBeDefined();
+    act(() => snooze?.click());
+    const custom = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+      item.textContent?.includes("Choose date"),
+    );
+    expect(custom).toBeDefined();
+    act(() => custom?.click());
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    const focusable = dialog?.querySelector<HTMLElement>("button");
+    act(() => focusable?.focus());
+    const before = document.activeElement;
+    for (const name of ["ArrowDown", "End"]) {
+      key(document.activeElement as HTMLElement, name);
+      expect(document.activeElement).toBe(before);
+    }
+    expect(onSelectThread).not.toHaveBeenCalled();
   });
 
-  it("dresses the context menu as a T3 popover with a lucide icon on every item", () => {
+  it("dresses the context menu as a foundation menu with icons and a danger Delete", () => {
     render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name", { branch: "feat/x" })])] });
 
-    act(() => {
-      row("agt-1").dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
-      );
-    });
+    openRowMenu("agt-1");
 
     const menu = document.querySelector('[role="menu"]');
     const items = [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
 
-    expect(menu?.className).toBe("agent-menu agent-row-menu");
-    expect(menu?.querySelectorAll(".agent-menu__separator").length).toBe(3);
-    expect(items.every((item) => item.classList.contains("agent-menu__item"))).toBe(true);
-    expect(
-      items.every((item) => item.querySelector(".agent-menu__icon > svg.lucide") !== null),
-    ).toBe(true);
+    expect(menu?.classList.contains("cv-menu")).toBe(true);
+    expect(menu?.querySelectorAll(".cv-menu__separator").length).toBe(3);
+    expect(items.every((item) => item.querySelector(".cv-menu__icon > svg.lucide") !== null)).toBe(
+      true,
+    );
     expect(items[1]?.querySelector(".lucide-pin")).not.toBeNull();
-    expect(items[2]?.querySelector(".lucide-pencil")).not.toBeNull();
     const last = items[items.length - 1];
-    expect(last?.classList.contains("agent-menu__item--danger")).toBe(true);
+    expect(last?.classList.contains("cv-menu__item--danger")).toBe(true);
     expect(last?.querySelector(".lucide-trash2, .lucide-trash-2")).not.toBeNull();
   });
 
@@ -803,14 +819,10 @@ describe("AgentThreadsSidebar", () => {
       groups: [group(ROOT, "app", [settled("agt-1", "Pinned", { branch: null, pinned: true })])],
     });
 
-    act(() => {
-      row("agt-1").dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
-      );
-    });
+    openRowMenu("agt-1");
 
     const pin = [...document.querySelectorAll('[role="menuitem"]')].find(
-      (item) => item.textContent === "Unpin",
+      (item) => item.textContent === "Unpin thread",
     );
 
     expect(pin?.querySelector(".lucide-pin-off")).not.toBeNull();
@@ -826,7 +838,7 @@ describe("AgentThreadsSidebar", () => {
       );
     });
     const rename = [...document.querySelectorAll('[role="menuitem"]')].find(
-      (item) => item.textContent === "Rename",
+      (item) => item.textContent === "Rename thread",
     );
     act(() => {
       (rename as HTMLButtonElement).click();
@@ -889,12 +901,12 @@ describe("AgentThreadsSidebar", () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
     });
-    expect(host.querySelector(".agent-row__jump")).toBeNull();
+    expect(host.querySelector(".cv-card-row__jump")).toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
     });
-    expect([...host.querySelectorAll(".agent-row__jump")].map((el) => el.textContent)).toEqual([
+    expect([...host.querySelectorAll(".cv-card-row__jump")].map((el) => el.textContent)).toEqual([
       "⌘1",
       "⌘2",
     ]);
@@ -902,7 +914,7 @@ describe("AgentThreadsSidebar", () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" }));
     });
-    expect(host.querySelector(".agent-row__jump")).toBeNull();
+    expect(host.querySelector(".cv-card-row__jump")).toBeNull();
   });
 
   it("uses Control and the Ctrl glyph off macOS and clears hints when the tab hides", () => {
@@ -913,13 +925,13 @@ describe("AgentThreadsSidebar", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
       vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
     });
-    expect(host.querySelector(".agent-row__jump")).toBeNull();
+    expect(host.querySelector(".cv-card-row__jump")).toBeNull();
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
       vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
     });
-    expect([...host.querySelectorAll(".agent-row__jump")].map((el) => el.textContent)).toEqual([
+    expect([...host.querySelectorAll(".cv-card-row__jump")].map((el) => el.textContent)).toEqual([
       "Ctrl1",
       "Ctrl2",
     ]);
@@ -927,7 +939,7 @@ describe("AgentThreadsSidebar", () => {
     withVisibility("hidden", () => {
       act(() => document.dispatchEvent(new Event("visibilitychange")));
     });
-    expect(host.querySelector(".agent-row__jump")).toBeNull();
+    expect(host.querySelector(".cv-card-row__jump")).toBeNull();
   });
 
   it("lets Enter on the archived shelf expand it instead of selecting the focused thread", () => {
@@ -944,22 +956,25 @@ describe("AgentThreadsSidebar", () => {
       onTogglePin,
     });
 
-    const shelf = host.querySelector<HTMLButtonElement>(".agent-shelf");
+    const shelf = host.querySelector<HTMLButtonElement>('.cv-sb-shelf[data-shelf="archived"]');
     expect(shelf?.getAttribute("aria-controls")).toBeNull();
     act(() => shelf?.focus());
     key(shelf as HTMLElement, "Enter");
     expect(onSelectThread).not.toHaveBeenCalled();
     expect(onTogglePin).not.toHaveBeenCalled();
 
-    click(".agent-shelf");
+    click('.cv-sb-shelf[data-shelf="archived"]');
     expect(shelf?.getAttribute("aria-expanded")).toBe("true");
     expect(shelf?.getAttribute("aria-controls")).toBe("agent-rail-archived");
     expect(host.querySelector("#agent-rail-archived")).not.toBeNull();
 
     key(shelf as HTMLElement, "p");
     expect(onTogglePin).not.toHaveBeenCalled();
-    const archive = row("agt-1").querySelector<HTMLElement>('[aria-label="Archive thread"]');
-    key(archive as HTMLElement, "Enter");
+    const settle = row("agt-1")
+      .closest("li")
+      ?.querySelector<HTMLElement>('[aria-label="Settle thread"]');
+    expect(settle).not.toBeNull();
+    key(settle as HTMLElement, "Enter");
     expect(onSelectThread).not.toHaveBeenCalled();
 
     key(row("agt-1"), "Enter");
@@ -980,7 +995,7 @@ describe("AgentThreadsSidebar", () => {
       onThreadMenuCommand,
     });
 
-    click(".agent-shelf");
+    click('.cv-sb-shelf[data-shelf="archived"]');
     act(() => {
       row("arc-1").dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
@@ -989,11 +1004,11 @@ describe("AgentThreadsSidebar", () => {
     const labels = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map(
       (item) => item.textContent,
     );
-    expect(labels).toContain("Unarchive");
-    expect(labels).not.toContain("Archive");
-    expect(labels).not.toContain("Snooze…");
+    expect(labels).toContain("Unarchive thread");
+    expect(labels).not.toContain("Archive thread");
+    expect(labels).not.toContain("Snooze");
     const unarchive = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-      (item) => item.textContent === "Unarchive",
+      (item) => item.textContent === "Unarchive thread",
     );
     act(() => unarchive?.click());
     expect(onThreadMenuCommand).toHaveBeenCalledWith("arc-1", { kind: "unarchive" });
@@ -1025,9 +1040,14 @@ describe("AgentThreadsSidebar", () => {
         new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
       );
     });
+    const copyMenu = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Copy",
+    );
+    act(() => copyMenu?.click());
     const copy = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (item) => item.textContent === "Copy thread ID",
     );
+    expect(copy).toBeDefined();
     act(() => copy?.click());
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(row("agt-1"));
@@ -1043,44 +1063,113 @@ describe("AgentThreadsSidebar", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-search-results__note")?.textContent).toBe(
-      "Some saved history could not be searched",
-    );
-    expect(host.querySelector(".agent-search-results__empty")?.textContent).toBe(
+    expect([...host.querySelectorAll(".cv-sb-hint")].map((node) => node.textContent)).toEqual([
       "No threads found",
-    );
+      "Some saved history could not be searched",
+    ]);
   });
 
-  it("changes the scope from the project menu and reports scope state", () => {
+  it("lists threads from every project under All projects and narrows through the filter", () => {
+    const onChangeFilter = vi.fn();
     const onChangeScope = vi.fn();
+    const appThread = settled("agt-1", "One");
+    const apiThread = settled("agt-api", "Api", { repositoryRoot: OTHER });
+    const groups = [group(ROOT, "app", [appThread]), group(OTHER, "api", [apiThread])];
+    render({ groups, railFilter: { kind: "all" }, onChangeFilter, onChangeScope });
+    expect(rowIds()).toEqual(expect.arrayContaining(["agt-1", "agt-api"]));
+    click('button[aria-label="Filter threads by project"]');
+    const api = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.querySelector(".cv-filter__label")?.textContent === "api",
+    );
+    expect(api).toBeDefined();
+    act(() => api?.click());
+    expect(onChangeFilter).toHaveBeenCalledWith({ kind: "project", projectRootKey: OTHER });
+    expect(onChangeScope).toHaveBeenCalledWith(expect.objectContaining({ projectRootKey: OTHER }));
+    render({ groups, railFilter: { kind: "project", projectRootKey: OTHER } });
+    expect(rowIds()).toEqual(["agt-api"]);
+  });
+
+  it("routes Trust and Release through the project actions of the filter", () => {
+    const onProjectCommand = vi.fn();
     const groups = [
-      group(ROOT, "app", [settled("agt-1", "One")]),
+      group(ROOT, "app", [settled("agt-1", "One")], { origin: "closed-tab-live-tasks" }),
       group(OTHER, "api", [settled("agt-2", "Two", { repositoryRoot: OTHER })], {
         trust: "untrusted",
       }),
     ];
-    render({ groups, onChangeScope });
+    render({ groups, onProjectCommand });
+    click('button[aria-label="Filter threads by project"]');
+    const labels = [...document.querySelectorAll<HTMLElement>('.cv-filter [role="option"]')].map(
+      (option) => option.textContent,
+    );
+    expect(labels.find((label) => label?.includes("api"))).toContain("Not trusted");
+    expect(labels.find((label) => label?.includes("app"))).toContain("Tab closed");
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Project settings for api"]')
+        ?.click(),
+    );
+    const trust = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Trust project…",
+    );
+    act(() => trust?.click());
+    expect(onProjectCommand).toHaveBeenCalledWith(
+      { projectRootKey: OTHER, repositoryRoot: OTHER, rootPath: OTHER },
+      "trust",
+    );
+    click('button[aria-label="Filter threads by project"]');
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Project settings for app"]')
+        ?.click(),
+    );
+    const release = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Release project",
+    );
+    act(() => release?.click());
+    expect(onProjectCommand).toHaveBeenLastCalledWith(
+      { projectRootKey: ROOT, repositoryRoot: ROOT, rootPath: ROOT },
+      "release",
+    );
+  });
 
-    click("#agent-rail-scope");
-    click(`[role="menuitemradio"][data-value="${OTHER}"]`);
+  it("shows a compact state for the filtered project and releases a closed tab from it", () => {
+    const onProjectCommand = vi.fn();
+    const groups = [
+      group(ROOT, "app", [settled("agt-1", "One")], { origin: "closed-tab-live-tasks" }),
+      group(OTHER, "api", [settled("agt-2", "Two", { repositoryRoot: OTHER })], {
+        trust: "untrusted",
+      }),
+    ];
+    const state = () => host.querySelector<HTMLElement>(".cv-sb-state");
+    render({ groups, onProjectCommand });
+    expect(state()).toBeNull();
 
-    expect(onChangeScope).toHaveBeenCalledWith({
-      projectRootKey: OTHER,
-      repositoryRoot: OTHER,
-    });
+    render({ groups, onProjectCommand, railFilter: { kind: "project", projectRootKey: ROOT } });
+    expect(state()?.textContent).toContain("Tab closed");
+    act(() =>
+      state()
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Release project app"]')
+        ?.click(),
+    );
+    expect(onProjectCommand).toHaveBeenCalledWith(
+      { projectRootKey: ROOT, repositoryRoot: ROOT, rootPath: ROOT },
+      "release",
+    );
 
-    const onTrustProject = vi.fn();
+    render({ groups, onProjectCommand, railFilter: { kind: "project", projectRootKey: OTHER } });
+    expect(state()?.textContent).toBe("Not trusted");
+    expect(state()?.querySelector("button")).toBeNull();
+  });
+
+  it("says No threads yet for an empty All projects list and names the project otherwise", () => {
+    render({ groups: [group(ROOT, "app", [])], railFilter: { kind: "all" } });
+    expect(host.textContent).toContain("No threads yet");
     render({
-      groups,
-      onTrustProject,
-      scope: { projectRootKey: OTHER, repositoryRoot: OTHER },
+      groups: [group(ROOT, "app", [])],
+      railFilter: { kind: "project", projectRootKey: ROOT },
     });
-
-    expect(rowIds()).toEqual(["agt-2"]);
-    expect(host.querySelector(".agent-scope__state")?.textContent).toContain("Project unavailable");
-    expect(host.querySelector('[aria-label="Trust project api"]')).toBeNull();
-    expect(onTrustProject).not.toHaveBeenCalled();
-    expect(host.querySelector(".agent-trust")).toBeNull();
+    expect(host.textContent).toContain("No threads in app yet");
   });
 
   it("starts a new thread in the scoped repository and fails closed when untrusted", () => {
@@ -1088,6 +1177,9 @@ describe("AgentThreadsSidebar", () => {
     const groups = [group(ROOT, "app", [], { trust: "untrusted" }), group(OTHER, "api", [])];
     render({ groups, onNewThread, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
 
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
+      "New thread in api (⌘N)",
+    );
     click('[aria-label="New thread"]');
     expect(onNewThread).toHaveBeenCalledWith(OTHER, OTHER);
 
@@ -1097,13 +1189,11 @@ describe("AgentThreadsSidebar", () => {
 
   it("renders the empty states and the overflow note", () => {
     render({ groups: [] });
-    expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe("No projects yet");
+    expect(host.querySelector(".cv-sb-empty")?.textContent).toBe("No projects yet");
 
     render({ groups: [group(ROOT, "app", [])], overflowRootPaths: ["/workspace/nine"] });
-    expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe(
-      "No threads in app yet",
-    );
-    expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
+    expect(host.querySelector(".cv-sb-empty")?.textContent).toBe("No threads yet");
+    expect(host.querySelector(".cv-sb-note")?.textContent).toBe(
       "1 more project is not shown (limit 64)",
     );
   });
@@ -1186,7 +1276,7 @@ describe("AgentThreadsSidebar", () => {
     expect(onSelectThread).not.toHaveBeenCalled();
     expect(markedIds()).toEqual(["agt-1", "agt-3"]);
     expect(row("agt-2").getAttribute("aria-selected")).toBe("false");
-    expect(row("agt-1").classList.contains("agent-row--marked")).toBe(true);
+    expect(row("agt-1").classList.contains("is-marked")).toBe(true);
     expect(selectionBar()?.textContent).toContain("2 threads selected");
 
     clickRow("agt-3", { metaKey: true });
@@ -1239,7 +1329,7 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-3", { shiftKey: true });
     expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
 
-    click(".agent-shelf");
+    click('.cv-sb-shelf[data-shelf="archived"]');
     clickRow("agt-old", { shiftKey: true });
     expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3", "agt-old"]);
   });
@@ -1302,13 +1392,48 @@ describe("AgentThreadsSidebar", () => {
       kind: "apply",
       request: {
         action: "delete",
-        ownerKey: ROOT,
         threadIds: ["agt-1", "agt-2"],
+        ownerKeys: new Map([
+          ["agt-1", ROOT_OWNER],
+          ["agt-2", ROOT_OWNER],
+        ]),
         missingIds: [],
       },
     });
     expect(markedIds()).toEqual([]);
     expect(selectionBar()).toBeNull();
+  });
+
+  it("skips threads whose owner was replaced between selection and commit (A to B to A)", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const onThreadBulkCommand = vi.fn();
+    const views = threeThreads();
+    render({ groups: [group(ROOT, "app", views)], onThreadBulkCommand });
+
+    clickRow("agt-1");
+    clickRow("agt-2", { metaKey: true });
+
+    const reopened = views.map((view) =>
+      view.thread.threadId === "agt-1"
+        ? {
+            ...view,
+            thread: {
+              ...view.thread,
+              owner: { ...view.thread.owner, ownerId: `agent-root:${ROOT}:reopened` },
+            },
+          }
+        : view,
+    );
+    render({ groups: [group(ROOT, "app", reopened)], onThreadBulkCommand });
+    act(() => barButton("Archive").click());
+
+    expect(onThreadBulkCommand).toHaveBeenCalledTimes(1);
+    const command = onThreadBulkCommand.mock.calls[0]?.[0] as AgentThreadBulkCommand;
+    expect(command.kind).toBe("apply");
+    if (command.kind !== "apply") return;
+    const plan = agentThreadBulkPlan(command.request, agentThreadBulkCandidates(reopened));
+    expect(plan.applyIds).toEqual(["agt-2"]);
+    expect(plan.skipped).toEqual([{ threadId: "agt-1", reason: "foreignOwner" }]);
   });
 
   it("archives the whole selection in one command without arming", () => {
@@ -1324,8 +1449,11 @@ describe("AgentThreadsSidebar", () => {
       kind: "apply",
       request: {
         action: "archive",
-        ownerKey: ROOT,
         threadIds: ["agt-1", "agt-3"],
+        ownerKeys: new Map([
+          ["agt-1", ROOT_OWNER],
+          ["agt-3", ROOT_OWNER],
+        ]),
         missingIds: [],
       },
     });
@@ -1402,7 +1530,7 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-3", { shiftKey: true });
     expect(markedIds()).toEqual(["agt-2", "agt-3"]);
 
-    const shelf = host.querySelector<HTMLElement>(".agent-shelf");
+    const shelf = host.querySelector<HTMLElement>('.cv-sb-shelf[data-shelf="archived"]');
     expect(shelf).not.toBeNull();
     act(() => shelf?.focus());
     keyWith(shelf as HTMLElement, "ArrowDown", { shiftKey: true });
@@ -1410,7 +1538,7 @@ describe("AgentThreadsSidebar", () => {
     expect(markedIds()).toEqual(["agt-2", "agt-3"]);
   });
 
-  it("drops the selection when the rail changes project scope", () => {
+  it("drops the selection when the rail filter changes", () => {
     withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     const groups = [
       group(ROOT, "app", threeThreads()),
@@ -1422,10 +1550,10 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-2", { metaKey: true });
     expect(markedIds()).toEqual(["agt-1", "agt-2"]);
 
-    render({ groups, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
+    render({ groups, railFilter: { kind: "project", projectRootKey: OTHER } });
     expect(markedIds()).toEqual([]);
 
-    render({ groups, scope: { projectRootKey: ROOT, repositoryRoot: ROOT } });
+    render({ groups, railFilter: { kind: "all" } });
     expect(markedIds()).toEqual([]);
     expect(selectionBar()).toBeNull();
   });
@@ -1442,18 +1570,18 @@ describe("AgentThreadsSidebar", () => {
 
   it("tints every marked row, the open one included, without borders or outlines", () => {
     const marked = cssRule("\n.agent-row--marked {");
-    expect(marked).toContain("color-mix(in srgb, var(--codevo-primary) 18%, var(--codevo-raised))");
+    expect(marked).toContain("color-mix(in srgb, var(--cv-accent) 18%, var(--cv-raised))");
     expect(marked).not.toContain("border");
     expect(marked).not.toContain("outline");
     expect(marked).not.toContain("opacity");
     expect(cssRule(".agent-row--marked:hover {")).toContain(
-      "color-mix(in srgb, var(--codevo-primary) 26%, var(--codevo-raised))",
+      "color-mix(in srgb, var(--cv-accent) 26%, var(--cv-raised))",
     );
     expect(AGENT_MODE_CSS).not.toContain(".agent-row--marked:not(.agent-row--on)");
     expect(AGENT_MODE_CSS.indexOf("\n.agent-row--marked {")).toBeGreaterThan(
-      AGENT_MODE_CSS.indexOf(".agent-row--selected,\n.agent-row--on,"),
+      AGENT_MODE_CSS.indexOf("\n.agent-row--on,\n.agent-row--on:hover {"),
     );
-    expect(cssRule(".agent-selection-bar {")).toContain("border-radius: var(--codevo-r-md)");
+    expect(cssRule(".agent-selection-bar {")).toContain("border-radius: var(--cv-r-card)");
   });
 
   it("keeps the in-flight dimming and the strong title on a marked row", () => {
@@ -1472,8 +1600,8 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-3", { shiftKey: true });
 
     expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
-    expect(row("agt-1").classList.contains("agent-row--on")).toBe(true);
-    expect(row("agt-1").classList.contains("agent-row--marked")).toBe(true);
+    expect(row("agt-1").classList.contains("is-current")).toBe(true);
+    expect(row("agt-1").classList.contains("is-marked")).toBe(true);
     expect(selectionBar()?.textContent).toContain("3 threads selected");
   });
 
@@ -1569,9 +1697,10 @@ describe("AgentThreadsSidebar", () => {
       onThreadMenuCommand: vi.fn(),
       onNewThread: vi.fn(),
       onAddProject: vi.fn(),
-      onTrustProject: vi.fn(),
-      onReleaseProject: vi.fn(),
       onProjectCommand: vi.fn(),
+      railFilter: { kind: "all" },
+      onChangeFilter: vi.fn(),
+      collapseShortcut: "Cmd+B",
       ...overrides,
     };
     act(() => {
@@ -1590,10 +1719,38 @@ describe("AgentThreadsSidebar", () => {
   }
 
   function deleteItem(): HTMLButtonElement {
-    const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
-    const element = items[items.length - 1];
+    const element = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Delete",
+    );
     expect(element).toBeInstanceOf(HTMLButtonElement);
     return element as HTMLButtonElement;
+  }
+
+  function dialogButton(label: string): HTMLButtonElement {
+    const element = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+    ].find((button) => button.textContent === label);
+    expect(element).toBeInstanceOf(HTMLButtonElement);
+    return element as HTMLButtonElement;
+  }
+
+  function settledShelf(): HTMLButtonElement | undefined {
+    return [...host.querySelectorAll<HTMLButtonElement>("button.cv-sb-shelf")].find((button) =>
+      button.textContent?.startsWith("Settled"),
+    );
+  }
+
+  function openRowMenu(threadId: string): void {
+    act(() => {
+      row(threadId).dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 20,
+          clientY: 30,
+        }),
+      );
+    });
   }
 
   function rowIds(): ReadonlyArray<string> {

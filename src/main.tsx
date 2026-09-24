@@ -5,8 +5,12 @@ import {
 } from "./startupShell";
 import { createStartupErrorScreen } from "./startupErrorScreen";
 import { applyBrowserStartupTheme } from "./startupTheme";
+import { createTauriNativeWindow } from "./infrastructure/tauriNativeWindow";
+import { revealStartupWindow } from "./startupWindowReveal";
+import { applyBrowserStartupRail } from "./startupRail";
 
-applyBrowserStartupTheme();
+applyBrowserStartupRail();
+void revealStartupWindow(createTauriNativeWindow(), applyBrowserStartupTheme());
 
 const rootElement = document.getElementById("root");
 

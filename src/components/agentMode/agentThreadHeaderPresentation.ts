@@ -14,6 +14,8 @@ export interface AgentShipQuickAction {
 export interface AgentPanelLayoutShortcuts {
   readonly bottomPanel: string;
   readonly rightPanel: string;
+  readonly sidebar: string;
+  readonly newThread: string;
 }
 
 export interface AgentOpenTarget {
@@ -87,6 +89,8 @@ export function defaultAgentPanelLayoutShortcuts(): AgentPanelLayoutShortcuts {
   return {
     bottomPanel: defaultShortcutForCommand("panel.toggle"),
     rightPanel: defaultShortcutForCommand("agent.toggleRightPanel"),
+    sidebar: defaultShortcutForCommand("agent.toggleSidebar"),
+    newThread: defaultShortcutForCommand("agent.newThread"),
   };
 }
 

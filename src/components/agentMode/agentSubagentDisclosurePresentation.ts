@@ -12,6 +12,8 @@ export interface AgentSubagentDisclosureEntry extends Omit<AgentSubagentEntry, "
   readonly batchKey?: string;
   readonly nestedCount?: number;
   readonly parentToolId?: string;
+  readonly model?: string;
+  readonly effort?: string;
 }
 
 const MAX_DETAIL_CHARACTERS = 2_000;

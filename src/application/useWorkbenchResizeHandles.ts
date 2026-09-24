@@ -75,6 +75,27 @@ export function maxAgentRightPanelWidth(
   );
 }
 
+export interface AgentRightPanelMeasurement {
+  readonly width: number;
+  readonly max: number;
+}
+
+export function measureAgentRightPanel(
+  panel: Element,
+  fallbackWidth: number,
+  rail: AgentRailState = "expanded",
+  expandedRailWidth: number = DEFAULT_AGENT_RAIL_WIDTH,
+): AgentRightPanelMeasurement {
+  const frame = panel.closest<HTMLElement>(AGENT_WORKBENCH_SELECTOR);
+  const max = maxAgentRightPanelWidth(
+    frame?.clientWidth || window.innerWidth,
+    rail,
+    expandedRailWidth,
+  );
+  const rendered = panel.getBoundingClientRect().width || fallbackWidth;
+  return { width: Math.min(rendered, max), max };
+}
+
 export function maxAgentBottomPanelHeight(viewportHeight: number): number {
   return Math.max(
     MIN_AGENT_BOTTOM_PANEL_HEIGHT,

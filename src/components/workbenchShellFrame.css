@@ -37,7 +37,7 @@
   0 px while the surface reports no tree.
 */
 .app-shell {
-  --agent-surface-header-height: 40px;
+  --agent-surface-header-height: var(--cv-topbar-h);
   --agent-surface-tree-width: 210px;
   --agent-surface-editor-gutter: 8px;
 }
@@ -62,8 +62,9 @@
   );
   --agent-center-min-width: 560px;
   --agent-rail-inset: 8px;
-  --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
+  --agent-rail-collapsed-width: 0px;
   --agent-rail-track: var(--agent-rail-width);
+  --cv-shell-sidebar-track: var(--agent-rail-track);
   display: grid;
   overflow: hidden;
   grid-template-columns:
@@ -230,11 +231,13 @@
 }
 
 .workbench-frame[data-right-panel="maximized"] .agent-mode__grid {
-  grid-template-columns: var(--agent-rail-track);
+  grid-template-columns: var(--agent-rail-track) 0px;
 }
 
 .workbench-frame[data-right-panel="maximized"] .agent-mode__center {
-  display: none;
+  overflow: hidden;
+  visibility: hidden;
+  content-visibility: hidden;
 }
 
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
@@ -319,8 +322,7 @@
 }
 
 @media (max-width: 720px) {
-  .workbench-frame[data-layout="agent"][data-right-panel="overlay"] .agent-rail,
-  .workbench-frame[data-layout="agent"][data-right-panel="overlay"] .agent-rail__chrome {
+  .workbench-frame[data-layout="agent"][data-right-panel="overlay"] .agent-rail {
     display: none;
   }
 }

@@ -152,7 +152,7 @@ describe("thread compaction visibility", () => {
   });
   it("uses an accessible compact activity without a redundant provider header", () => {
     render([], { kind: "pending" });
-    expect(host.querySelector(".agent-turn__head")).toBeNull();
+    expect(host.querySelector(".agent-answer > .cv-turn-meta")).toBeNull();
     expect(host.querySelector('.agent-compaction-activity[role="status"]')).not.toBeNull();
     expect(host.querySelector('.agent-compaction-activity svg[aria-hidden="true"]')).not.toBeNull();
   });
@@ -162,7 +162,7 @@ describe("thread compaction visibility", () => {
       exitCode: 0,
     });
     expect(host.querySelector('.agent-compaction-event[role="separator"]')).not.toBeNull();
-    expect(host.querySelector(".agent-turn__head")).toBeNull();
+    expect(host.querySelector(".agent-answer > .cv-turn-meta")).toBeNull();
     const details = host.querySelector<HTMLDetailsElement>(".agent-compaction-event__details");
     expect(details?.open).toBe(false);
     expect(details?.textContent).toContain("330,123 → 8,123 tokens");
@@ -176,7 +176,7 @@ describe("thread compaction visibility", () => {
     { kind: "error", message: "Provider failed" },
   ])("retains the provider header and output in a mixed compaction turn %j", async (event) => {
     render([event, completed]);
-    expect(host.querySelector(".agent-turn__head")).not.toBeNull();
+    expect(host.querySelector(".agent-answer > .cv-turn-meta")).not.toBeNull();
     expect(host.querySelector('.agent-compaction-event[role="separator"]')).not.toBeNull();
     if (event.kind === "assistantText" || event.kind === "result")
       await act(async () => {
@@ -207,9 +207,9 @@ describe("thread compaction visibility", () => {
   });
   it("keeps a header for automatic compaction and failed manual compaction", () => {
     render([completed], { kind: "exited", exitCode: 0 }, "Inspect code");
-    expect(host.querySelector(".agent-turn__head")).not.toBeNull();
+    expect(host.querySelector(".agent-answer > .cv-turn-meta")).not.toBeNull();
     render([completed], { kind: "failed", message: "Provider failed" });
-    expect(host.querySelector(".agent-turn__head")).not.toBeNull();
+    expect(host.querySelector(".agent-answer > .cv-turn-meta")).not.toBeNull();
   });
   it("keeps pending Codex startup as a single status", () => {
     render([], { kind: "pending" }, "hello", "codex");

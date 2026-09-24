@@ -34,6 +34,7 @@ pub(super) fn project_item(item: &ThreadItem, phase: CodexItemPhase) -> CodexIte
         ThreadItem::McpToolCall(call) => mcp_tool_call_outcome(call, phase),
         ThreadItem::WebSearch(search) => web_search_outcome(search, phase),
         ThreadItem::SubAgentActivity(_) => CodexItemOutcome::Unknown,
+        ThreadItem::CollabAgentToolCall(_) => CodexItemOutcome::Dropped,
         ThreadItem::Unrecognized { .. } => CodexItemOutcome::Unknown,
     }
 }

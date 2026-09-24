@@ -1,7 +1,14 @@
 import type { AgentSurfaceKind } from "./agentWorkbenchLayout";
 import type { RemoteSurfaceCapabilities } from "./remoteRunnerSurfaces";
 
-export type AgentRemoteSurfaceKind = Exclude<AgentSurfaceKind, "diff">;
+export const AGENT_REMOTE_SURFACE_KINDS = ["files", "history", "terminal"] as const;
+export type AgentRemoteSurfaceKind = (typeof AGENT_REMOTE_SURFACE_KINDS)[number];
+
+export function isAgentRemoteSurfaceKind(
+  kind: AgentSurfaceKind | null,
+): kind is AgentRemoteSurfaceKind {
+  return kind !== null && (AGENT_REMOTE_SURFACE_KINDS as ReadonlyArray<string>).includes(kind);
+}
 
 export interface AgentSurfaceActivation {
   readonly remote: boolean;
@@ -34,7 +41,8 @@ export function agentSurfaceServes(
   kind: AgentSurfaceKind,
 ): boolean {
   if (!activation.remote) return true;
-  if (kind === "diff") return activation.threadPresent;
+  if (kind === "diff" || kind === "agents") return activation.threadPresent;
+  if (!isAgentRemoteSurfaceKind(kind)) return false;
   return remoteSurfaceCapabilityOpen(activation.remoteCapabilities, kind);
 }
 

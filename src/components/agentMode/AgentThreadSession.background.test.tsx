@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useCallback, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -9,6 +9,8 @@ import {
   createAgentOutputParserState,
   feedAgentOutput,
 } from "../../domain/agentOutput/agentOutputParser";
+import { AgentAgentsPanelProvider } from "./agents/agentAgentsPanelContext";
+import { AgentAgentsPanelSurface } from "./agents/AgentAgentsPanelSurface";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AGENT_FOREGROUND_QUIESCENCE_MS } from "./useAgentBackgroundActivity";
 
@@ -31,6 +33,18 @@ const work: AgentTurnEvent = {
   toolId: "shell",
   inputSummary: "Watch pipeline",
 };
+
+function RightPanelHarness({ children }: { readonly children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const onOpen = useCallback(() => setOpen(true), []);
+  const onToggle = useCallback(() => setOpen((current) => !current), []);
+  return (
+    <AgentAgentsPanelProvider isOpen={open} onOpen={onOpen} onToggle={onToggle}>
+      {children}
+      {open && <AgentAgentsPanelSurface />}
+    </AgentAgentsPanelProvider>
+  );
+}
 
 describe("thread background activity visibility", () => {
   let host: HTMLDivElement;
@@ -97,12 +111,14 @@ describe("thread background activity visibility", () => {
     };
     act(() =>
       root.render(
-        <AgentThreadSession
-          thread={view}
-          composerRepositoryLabel="app"
-          onReviewInDiff={() => {}}
-          onStopBackground={onStopBackground}
-        />,
+        <RightPanelHarness>
+          <AgentThreadSession
+            thread={view}
+            composerRepositoryLabel="app"
+            onReviewInDiff={() => {}}
+            onStopBackground={onStopBackground}
+          />
+        </RightPanelHarness>,
       ),
     );
   }
@@ -203,34 +219,26 @@ describe("thread background activity visibility", () => {
     },
     { kind: "assistantText", text: "Lead keeps working." },
   ];
-  const indicator = () => host.querySelector<HTMLButtonElement>(".agent-background-row__action");
+  const indicator = () => host.querySelector<HTMLButtonElement>(".cv-live-row__action");
 
   it("shows live agents while the Claude lead is still working and opens the Agents panel", () => {
     render(claudeAgents);
-    expect(host.querySelector(".agent-background-row__label")?.textContent).toBe(
+    expect(host.querySelector(".cv-live-row__action .cv-live-row__label")?.textContent).toBe(
       "2 agents working",
     );
-    expect(host.querySelector(".agent-background-row__latest")?.textContent).toBe(
-      "Stream B gateway \u00B7 Running vitest",
-    );
-    expect(host.querySelector(".agents-panel")).toBeNull();
+    expect(host.querySelector(".cv-agents")).toBeNull();
 
     act(() => indicator()?.click());
-    const rows = [...host.querySelectorAll(".agents-panel__name")].map((row) => row.textContent);
+    const rows = [...host.querySelectorAll(".cv-agents-row__name")].map((row) => row.textContent);
     expect(rows).toEqual(["Stream A backend", "Stream B gateway"]);
-
-    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Close Agents panel"]')?.click());
-    expect(host.querySelector(".agents-panel")).toBeNull();
   });
   it("shows live agents while the Codex lead is still working", () => {
     render(codexAgents, { kind: "running" }, "Delegate", "codex");
-    expect(host.querySelector(".agent-background-row__label")?.textContent).toBe("1 agent working");
-    expect(host.querySelector(".agent-background-row__latest")?.textContent).toBe(
-      "explorer \u00B7 rg subagent",
+    expect(host.querySelector(".cv-live-row__action .cv-live-row__label")?.textContent).toBe(
+      "1 agent working",
     );
-    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__row")?.click());
-    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__open")?.click());
-    expect(host.querySelector(".agents-panel__name")?.textContent).toBe("explorer");
+    act(() => host.querySelector<HTMLButtonElement>(".cv-spawn__open")?.click());
+    expect(host.querySelector(".cv-agents-row__name")?.textContent).toBe("explorer");
   });
   it("hides the agent indicator once the agents or the run settle", () => {
     render(

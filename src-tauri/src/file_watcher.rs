@@ -1,4 +1,6 @@
-use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
+use crate::ignore_matcher::{
+    GitignoreWorkspaceIgnoreMatcher, IgnoreRulesCompleteness, WorkspaceIgnoreMatcher,
+};
 use notify::{
     event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
     Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
@@ -9,7 +11,10 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -73,11 +78,26 @@ pub struct WorkspaceWatchEventBatch {
 #[derive(Debug, Clone)]
 pub struct WorkspaceWatchRequest {
     pub root_path: PathBuf,
+    cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl WorkspaceWatchRequest {
     pub fn new(root_path: PathBuf) -> Self {
-        Self { root_path }
+        Self {
+            root_path,
+            cancellation: None,
+        }
+    }
+
+    pub fn with_cancellation(mut self, cancellation: Arc<AtomicBool>) -> Self {
+        self.cancellation = Some(cancellation);
+        self
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation
+            .as_ref()
+            .is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
     }
 }
 
@@ -88,6 +108,10 @@ pub trait WorkspaceWatchEventSink: Send + Sync {
 
 pub trait WorkspaceWatchSession: Send {
     fn stop(&mut self) {}
+
+    fn ignore_rules(&self) -> IgnoreRulesCompleteness {
+        IgnoreRulesCompleteness::Complete
+    }
 }
 
 /// Abstraction over "arm a one-shot flush after the debounce window". The
@@ -337,6 +361,7 @@ enum NativeMetadataWatch {
 }
 
 pub struct NotifyWorkspaceWatchSession {
+    ignore_rules: IgnoreRulesCompleteness,
     _git_head: Option<git_head::GitHeadWatchSession>,
     _watcher: Arc<Mutex<RecommendedWatcher>>,
     // Owns the per-session coalescing sink (buffer + flush window). Dropping the
@@ -345,7 +370,11 @@ pub struct NotifyWorkspaceWatchSession {
     _coalescer: Arc<CoalescingWorkspaceWatchEventSink>,
 }
 
-impl WorkspaceWatchSession for NotifyWorkspaceWatchSession {}
+impl WorkspaceWatchSession for NotifyWorkspaceWatchSession {
+    fn ignore_rules(&self) -> IgnoreRulesCompleteness {
+        self.ignore_rules
+    }
+}
 
 impl WorkspaceFileWatcher for NativeNotifyWorkspaceFileWatcher {
     fn watch(
@@ -373,7 +402,11 @@ fn watch_native(
     metadata: NativeMetadataWatch,
 ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
     let root = request.root_path.canonicalize()?;
-    let matcher = Arc::new(GitignoreWorkspaceIgnoreMatcher::load(&root)?);
+    let matcher = Arc::new(GitignoreWorkspaceIgnoreMatcher::load_with_cancellation(
+        &root,
+        &|| request.is_cancelled(),
+    )?);
+    let ignore_rules = matcher.completeness();
     let metadata = match metadata {
         NativeMetadataWatch::Ignore => None,
         NativeMetadataWatch::GitHead => {
@@ -432,6 +465,7 @@ fn watch_native(
         .transpose()?;
 
     Ok(Box::new(NotifyWorkspaceWatchSession {
+        ignore_rules,
         _git_head: git_head,
         _watcher: watcher,
         _coalescer: coalescer,

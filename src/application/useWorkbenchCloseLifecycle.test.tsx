@@ -23,15 +23,10 @@ import type {
 import { OwnerDocumentSaveRepository } from "./ownerDocumentSaveRepository";
 import { documentSaveOwnershipKey } from "./documentSaveIdentity";
 import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
-import {
-  editorConfigCacheKey,
-  invalidateEditorConfigCacheForRoot,
-} from "./editorConfigCache";
+import { editorConfigCacheKey, invalidateEditorConfigCacheForRoot } from "./editorConfigCache";
 
 const tauriMocks = vi.hoisted(() => ({
-  invoke: vi.fn<(command: string, args?: unknown) => Promise<void>>(
-    async () => undefined,
-  ),
+  invoke: vi.fn<(command: string, args?: unknown) => Promise<void>>(async () => undefined),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 
@@ -41,21 +36,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(
-    async (event: string, handler: (event: { payload: unknown }) => void) => {
-      tauriMocks.listeners.set(event, handler);
-      return () => tauriMocks.listeners.delete(event);
-    },
-  ),
+  listen: vi.fn(async (event: string, handler: (event: { payload: unknown }) => void) => {
+    tauriMocks.listeners.set(event, handler);
+    return () => tauriMocks.listeners.delete(event);
+  }),
 }));
 
 const WORKSPACE_A = "/workspace-a";
 const WORKSPACE_B = "/workspace-b";
 
-function workspaceIdentity(
-  selectedPath = WORKSPACE_A,
-  canonicalRoot = "/real/workspace-a",
-) {
+function workspaceIdentity(selectedPath = WORKSPACE_A, canonicalRoot = "/real/workspace-a") {
   return {
     workspaceId: "ws-a",
     selectedPath,
@@ -102,9 +92,8 @@ function recordShutdownOrder(): string[] {
 }
 
 function nativeShutdownInvocationCount(): number {
-  return tauriMocks.invoke.mock.calls.filter(
-    ([command]) => command === "confirm_native_shutdown",
-  ).length;
+  return tauriMocks.invoke.mock.calls.filter(([command]) => command === "confirm_native_shutdown")
+    .length;
 }
 
 interface Deferred<T> {
@@ -121,8 +110,7 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-type DocumentSaveExclusionMock = RunWithDocumentSaveExclusion &
-  ReturnType<typeof vi.fn>;
+type DocumentSaveExclusionMock = RunWithDocumentSaveExclusion & ReturnType<typeof vi.fn>;
 
 function documentSaveExclusionMock(
   implementation: (
@@ -220,9 +208,7 @@ interface Harness {
   };
 }
 
-function renderLifecycle(
-  overrides: Partial<WorkbenchCloseLifecycleDependencies> = {},
-): Harness {
+function renderLifecycle(overrides: Partial<WorkbenchCloseLifecycleDependencies> = {}): Harness {
   const container = globalThis.document.createElement("div");
   const root = createRoot(container);
   const captured: { lifecycle: WorkbenchCloseLifecycle | null } = {
@@ -248,12 +234,8 @@ function renderLifecycle(
   const persistAppSettings = vi.fn(async (settings: AppSettings) => {
     appSettingsRef.current = settings;
   });
-  const closeSyncedLanguageServerDocumentsForRoot = vi.fn(
-    async () => undefined,
-  );
-  const closeSyncedJavaScriptTypeScriptDocumentsForRoot = vi.fn(
-    async () => undefined,
-  );
+  const closeSyncedLanguageServerDocumentsForRoot = vi.fn(async () => undefined);
+  const closeSyncedJavaScriptTypeScriptDocumentsForRoot = vi.fn(async () => undefined);
   const runWithDocumentSaveExclusion = documentSaveExclusionMock();
   const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
   const reportError = vi.fn();
@@ -293,15 +275,12 @@ function renderLifecycle(
     active: repositoryCandidate,
     cached: () => null,
   });
-  const ownerResolvingDocumentSaveService =
-    new OwnerResolvingDocumentSaveService({
-      repository: ownerDocumentSaveRepository,
-      resolvePipeline: () => null,
-    });
+  const ownerResolvingDocumentSaveService = new OwnerResolvingDocumentSaveService({
+    repository: ownerDocumentSaveRepository,
+    resolvePipeline: () => null,
+  });
   const liveWorkspaceRoot =
-    overrides.workspaceRoot === undefined
-      ? WORKSPACE_B
-      : overrides.workspaceRoot;
+    overrides.workspaceRoot === undefined ? WORKSPACE_B : overrides.workspaceRoot;
   const liveDirtyCount = overrides.dirtyCount ?? 0;
   const liveWorkspaceHasExternalFileConflicts =
     overrides.workspaceHasExternalFileConflicts ?? vi.fn(() => false);
@@ -318,6 +297,7 @@ function renderLifecycle(
     disposeRegisteredWorkspace: vi.fn(async () => ({ status: "closed" as const })),
     prepareRegisteredWorkspaceIdentitySettlement: () => ({
       canSettleClosed: () => true,
+      flushCompensations: async () => undefined,
       isCurrent: () => true,
       settle: (settleLocalIdentity) => {
         settleLocalIdentity();
@@ -337,7 +317,9 @@ function renderLifecycle(
           scope === "quit"
             ? "Quit and discard unsaved changes?"
             : "Close workspace and discard unsaved changes?",
-        ) ? "discard" : "cancel",
+        )
+          ? "discard"
+          : "cancel",
     },
     captureDirtyCloseTargets: (requestedRoot) => {
       const session = dependencies.workspaceCloseSession.current();
@@ -347,18 +329,11 @@ function renderLifecycle(
         (!requestedRoot || workspaceRootKeysEqual(session.activeRoot, requestedRoot)) &&
         session.needsAttention,
       );
-      const cachedEntries = Object.entries(
-        dependencies.workspaceStateCacheRef.current,
-      );
+      const cachedEntries = Object.entries(dependencies.workspaceStateCacheRef.current);
       for (const [cacheKey, cached] of cachedEntries) {
         const identity = cached.workspaceIdentityDescriptor;
-        const roots = identity
-          ? [identity.selectedPath, identity.canonicalRoot]
-          : [cacheKey];
-        if (
-          requestedRoot &&
-          !roots.some((root) => workspaceRootKeysEqual(root, requestedRoot))
-        ) {
+        const roots = identity ? [identity.selectedPath, identity.canonicalRoot] : [cacheKey];
+        if (requestedRoot && !roots.some((root) => workspaceRootKeysEqual(root, requestedRoot))) {
           continue;
         }
         if (
@@ -369,13 +344,9 @@ function renderLifecycle(
           continue;
         }
         const dirty = Object.values(cached.editorSurface.documents).some(
-          (document) =>
-            document.readOnly !== true &&
-            document.savedContent !== document.content,
+          (document) => document.readOnly !== true && document.savedContent !== document.content,
         );
-        const conflict = roots.some((root) =>
-          dependencies.workspaceHasExternalFileConflicts(root),
-        );
+        const conflict = roots.some((root) => dependencies.workspaceHasExternalFileConflicts(root));
         if (!dirty && !conflict) {
           continue;
         }
@@ -396,21 +367,22 @@ function renderLifecycle(
       if (!documentIdentity) {
         return null;
       }
-      return [{
-        owner: capturedOwner,
-        targetId: `${capturedOwner.ownerKey}\0${documentIdentity}`,
-        identity: {
-          ownership,
-          saveTarget: {
-            owner: capturedOwner,
-            documentIdentity,
-            document: capturedDocument,
+      return [
+        {
+          owner: capturedOwner,
+          targetId: `${capturedOwner.ownerKey}\0${documentIdentity}`,
+          identity: {
+            ownership,
+            saveTarget: {
+              owner: capturedOwner,
+              documentIdentity,
+              document: capturedDocument,
+            },
           },
         },
-      }];
+      ];
     },
-    isWorkspaceRuntimeOwnerCurrent: (owner) =>
-      owner.ownerKey === capturedOwner.ownerKey,
+    isWorkspaceRuntimeOwnerCurrent: (owner) => owner.ownerKey === capturedOwner.ownerKey,
     ownerDocumentSaveRepository,
     ownerResolvingDocumentSaveService,
     requestOwnerDocumentSave: async () => ({ status: "stale" }),
@@ -434,10 +406,7 @@ function renderLifecycle(
         activeRoot: liveWorkspaceRoot,
         needsAttention:
           liveDirtyCount > 0 ||
-          Boolean(
-            liveWorkspaceRoot &&
-              liveWorkspaceHasExternalFileConflicts(liveWorkspaceRoot),
-          ),
+          Boolean(liveWorkspaceRoot && liveWorkspaceHasExternalFileConflicts(liveWorkspaceRoot)),
       }),
     },
     workspaceStateCacheRef,
@@ -495,19 +464,20 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
     const commitWorkspaceClose = vi.fn();
     const harness = renderLifecycle({
-      captureDirtyCloseTargets: () => saved ? [] : [fixture.target],
+      captureDirtyCloseTargets: () => (saved ? [] : [fixture.target]),
       commitWorkspaceClose,
       dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
       isWorkspaceRuntimeOwnerCurrent: () => true,
       ownerDocumentSaveRepository: fixture.repository,
       ownerResolvingDocumentSaveService: fixture.service,
-      requestOwnerDocumentSave: async (_ownership, operation) => operation({
-        path: original.path,
-        rootPath: WORKSPACE_A,
-        epoch: 1,
-        isCurrent: () => true,
-        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
-      }),
+      requestOwnerDocumentSave: async (_ownership, operation) =>
+        operation({
+          path: original.path,
+          rootPath: WORKSPACE_A,
+          epoch: 1,
+          isCurrent: () => true,
+          tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+        }),
     });
 
     await act(async () => {
@@ -540,13 +510,14 @@ describe("useWorkbenchCloseLifecycle", () => {
       isWorkspaceRuntimeOwnerCurrent: () => true,
       ownerDocumentSaveRepository: fixture.repository,
       ownerResolvingDocumentSaveService: fixture.service,
-      requestOwnerDocumentSave: async (_ownership, operation) => operation({
-        path: original.path,
-        rootPath: WORKSPACE_A,
-        epoch: 1,
-        isCurrent: () => true,
-        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
-      }),
+      requestOwnerDocumentSave: async (_ownership, operation) =>
+        operation({
+          path: original.path,
+          rootPath: WORKSPACE_A,
+          epoch: 1,
+          isCurrent: () => true,
+          tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+        }),
     });
 
     const close = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
@@ -578,13 +549,14 @@ describe("useWorkbenchCloseLifecycle", () => {
       isWorkspaceRuntimeOwnerCurrent: () => true,
       ownerDocumentSaveRepository: fixture.repository,
       ownerResolvingDocumentSaveService: fixture.service,
-      requestOwnerDocumentSave: async (_ownership, operation) => operation({
-        path: document.path,
-        rootPath: WORKSPACE_A,
-        epoch: 1,
-        isCurrent: () => true,
-        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
-      }),
+      requestOwnerDocumentSave: async (_ownership, operation) =>
+        operation({
+          path: document.path,
+          rootPath: WORKSPACE_A,
+          epoch: 1,
+          isCurrent: () => true,
+          tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+        }),
     });
 
     await act(async () => {
@@ -598,7 +570,8 @@ describe("useWorkbenchCloseLifecycle", () => {
 
   it("permits a native close retry after cancellation", async () => {
     const fixture = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/Retry.php`));
-    const decideDirtyClose = vi.fn()
+    const decideDirtyClose = vi
+      .fn()
       .mockResolvedValueOnce("cancel")
       .mockResolvedValueOnce("discard");
     const harness = renderLifecycle({
@@ -672,7 +645,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     const persistenceStarted = createDeferred<void>();
     const lateDocument = dirtyDocument(`${WORKSPACE_A}/Late.php`);
     const fixture = ownerCloseFixture(lateDocument);
-    let capturedTargets: typeof fixture.target[] = [];
+    let capturedTargets: (typeof fixture.target)[] = [];
     const persistAppSettings = vi.fn(async (settings: AppSettings) => {
       if (persistAppSettings.mock.calls.length === 1) {
         persistenceStarted.resolve();
@@ -700,11 +673,9 @@ describe("useWorkbenchCloseLifecycle", () => {
   it("preserves workspace state when an edit lands during async disposal", async () => {
     const documentClose = createDeferred<void>();
     const documentCloseStarted = createDeferred<void>();
-    const fixture = ownerCloseFixture(
-      dirtyDocument(`${WORKSPACE_A}/DuringDisposal.php`),
-    );
+    const fixture = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/DuringDisposal.php`));
     const forgetCachedWorkspaceState = vi.fn();
-    let capturedTargets: typeof fixture.target[] = [];
+    let capturedTargets: (typeof fixture.target)[] = [];
     const harness = renderLifecycle({
       captureDirtyCloseTargets: () => capturedTargets,
       closeSyncedLanguageServerDocumentsForRoot: async () => {
@@ -728,10 +699,8 @@ describe("useWorkbenchCloseLifecycle", () => {
   it("blocks quit when an edit lands during final session persistence", async () => {
     const persistence = createDeferred<void>();
     const persistenceStarted = createDeferred<void>();
-    const fixture = ownerCloseFixture(
-      dirtyDocument(`${WORKSPACE_A}/LateQuit.php`),
-    );
-    let capturedTargets: typeof fixture.target[] = [];
+    const fixture = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/LateQuit.php`));
+    let capturedTargets: (typeof fixture.target)[] = [];
     const harness = renderLifecycle({
       captureDirtyCloseTargets: () => capturedTargets,
       persistWorkspaceSession: async () => {
@@ -760,17 +729,15 @@ describe("useWorkbenchCloseLifecycle", () => {
       await Promise.resolve();
     });
 
-    expect(tauriMocks.invoke).toHaveBeenCalledWith(
-      "set_native_close_listener_ready",
-      { ready: true },
-    );
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("set_native_close_listener_ready", {
+      ready: true,
+    });
 
     act(() => harness.unmount());
 
-    expect(tauriMocks.invoke).toHaveBeenCalledWith(
-      "set_native_close_listener_ready",
-      { ready: false },
-    );
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("set_native_close_listener_ready", {
+      ready: false,
+    });
   });
 
   it("unregisters the opaque identity when its workspace tab closes", async () => {
@@ -801,7 +768,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(unregisterWorkspace).toHaveBeenCalledOnce();
-    expect(unregisterWorkspace).toHaveBeenCalledWith("ws-a");
+    expect(unregisterWorkspace).toHaveBeenCalledWith("ws-a", "abandonWhenDeferred");
   });
 
   it("uses one exact backend teardown after synced didClose for a registered descriptor", async () => {
@@ -833,6 +800,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       disposeRegisteredWorkspace,
       prepareRegisteredWorkspaceIdentitySettlement: () => ({
         canSettleClosed: () => true,
+        flushCompensations: async () => undefined,
         isCurrent: () => true,
         settle: (settleLocalIdentity) => {
           settleLocalIdentity();
@@ -902,6 +870,125 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.reportError).toHaveBeenCalledWith(
       "Runtime cleanup",
       expect.objectContaining({ message: "Agent workspace cleanup lease-release-incomplete." }),
+    );
+    harness.unmount();
+  });
+
+  it.each([[["retainedByOtherOwners"] as const], [["releasing", "releasing", "closed"] as const]])(
+    "closes the tab without a second teardown after backend statuses %j",
+    async (statuses) => {
+      const descriptor = { ...workspaceIdentity(), admissionToken: 29 };
+      const unregisterWorkspace = vi.fn(async () => undefined);
+      const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
+      const pending = [...statuses];
+      const disposeRegisteredWorkspace = vi.fn(async () => ({
+        status: pending.shift() ?? "closed",
+      }));
+      const workspaceIdentityByRootRef = {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      };
+      const harness = renderLifecycle({
+        disposeRegisteredWorkspace,
+        stopProjectRuntimes,
+        unregisterWorkspace,
+        workspaceIdentityByRootRef,
+      });
+
+      await act(async () => {
+        await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+      });
+
+      expect(harness.appSettingsRef.current.workspaceTabs).not.toContain(descriptor.selectedPath);
+      expect(workspaceIdentityByRootRef.current[descriptor.selectedPath]).toBeUndefined();
+      expect(disposeRegisteredWorkspace).toHaveBeenCalledTimes(statuses.length);
+      expect(unregisterWorkspace).not.toHaveBeenCalled();
+      expect(stopProjectRuntimes).not.toHaveBeenCalled();
+      expect(harness.reportError).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
+
+  it("cancels a releasing close retry timer on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const descriptor = { ...workspaceIdentity(), admissionToken: 31 };
+      const disposeRegisteredWorkspace = vi.fn(async () => ({ status: "releasing" as const }));
+      const harness = renderLifecycle({
+        disposeRegisteredWorkspace,
+        workspaceIdentityByRootRef: {
+          current: {
+            [descriptor.selectedPath]: descriptor,
+            [descriptor.canonicalRoot]: descriptor,
+          },
+        },
+      });
+
+      const closing = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(disposeRegisteredWorkspace).toHaveBeenCalledOnce();
+
+      harness.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.runAllTimersAsync();
+      await closing;
+
+      expect(disposeRegisteredWorkspace).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a legacy tab without stopping runtimes retained by other owners", async () => {
+    const unregisterWorkspace = vi.fn(async () => "retained" as const);
+    const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
+    const descriptor = workspaceIdentity();
+    const harness = renderLifecycle({
+      stopProjectRuntimes,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: { [descriptor.selectedPath]: descriptor, [descriptor.canonicalRoot]: descriptor },
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(unregisterWorkspace).toHaveBeenCalledExactlyOnceWith(
+      descriptor.workspaceId,
+      "abandonWhenDeferred",
+    );
+    expect(stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).not.toContain(descriptor.selectedPath);
+    harness.unmount();
+  });
+
+  it("keeps a legacy tab open when its identity release owner is stale", async () => {
+    const unregisterWorkspace = vi.fn(async () => "stale" as const);
+    const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
+    const descriptor = workspaceIdentity();
+    const harness = renderLifecycle({
+      stopProjectRuntimes,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: { [descriptor.selectedPath]: descriptor, [descriptor.canonicalRoot]: descriptor },
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(descriptor.selectedPath);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Workspace",
+      expect.objectContaining({ message: "Workspace identity release owner is stale." }),
     );
     harness.unmount();
   });
@@ -1005,6 +1092,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       }),
       prepareRegisteredWorkspaceIdentitySettlement: () => ({
         canSettleClosed: () => true,
+        flushCompensations: async () => undefined,
         isCurrent: () => true,
         settle,
       }),
@@ -1088,15 +1176,10 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(unregisterWorkspace).toHaveBeenCalledOnce();
     expect(harness.closeSyncedLanguageServerDocumentsForRoot).not.toHaveBeenCalled();
-    expect(
-      harness.closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.closeSyncedJavaScriptTypeScriptDocumentsForRoot).not.toHaveBeenCalled();
     expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
     expect(harness.appSettingsRef.current.workspaceTabs).toContain(WORKSPACE_A);
-    expect(harness.reportError).toHaveBeenCalledWith(
-      "Workspace",
-      unregisterFailure,
-    );
+    expect(harness.reportError).toHaveBeenCalledWith("Workspace", unregisterFailure);
     harness.unmount();
   });
 
@@ -1113,10 +1196,9 @@ describe("useWorkbenchCloseLifecycle", () => {
       workspaceIdentityDescriptor: descriptor,
     };
     const cache = { [descriptor.canonicalRoot]: canonicalState };
-    const resolveCachedWorkspaceState = vi.fn(() => canonicalState) as unknown as
-      NonNullable<
-        WorkbenchCloseLifecycleDependencies["resolveCachedWorkspaceState"]
-      >;
+    const resolveCachedWorkspaceState = vi.fn(() => canonicalState) as unknown as NonNullable<
+      WorkbenchCloseLifecycleDependencies["resolveCachedWorkspaceState"]
+    >;
     const harness = renderLifecycle({
       resolveCachedWorkspaceState,
       workspaceIdentityByRootRef: {
@@ -1144,10 +1226,7 @@ describe("useWorkbenchCloseLifecycle", () => {
 
   it("keeps fallback cache ownership isolated across same-id canonical roots", async () => {
     const closingIdentity = workspaceIdentity();
-    const foreignIdentity = workspaceIdentity(
-      "/workspace-foreign",
-      "/real/workspace-foreign",
-    );
+    const foreignIdentity = workspaceIdentity("/workspace-foreign", "/real/workspace-foreign");
     const closingState = {
       editorSurface: { documents: {} },
       workspaceIdentityDescriptor: closingIdentity,
@@ -1217,22 +1296,18 @@ describe("useWorkbenchCloseLifecycle", () => {
       [descriptor.canonicalRoot]: descriptor,
       [describedAlias]: descriptor,
     };
-    const forgetCachedWorkspaceState = vi.fn(
-      (_rootPath: string, identity = descriptor) => {
-        for (const [key, cached] of Object.entries(cache)) {
-          if (cached.workspaceIdentityDescriptor !== identity) {
-            continue;
-          }
-
-          delete cache[key as keyof typeof cache];
+    const forgetCachedWorkspaceState = vi.fn((_rootPath: string, identity = descriptor) => {
+      for (const [key, cached] of Object.entries(cache)) {
+        if (cached.workspaceIdentityDescriptor !== identity) {
+          continue;
         }
-      },
-    );
+
+        delete cache[key as keyof typeof cache];
+      }
+    });
     const resolveCachedWorkspaceState = vi.fn(
       () => cache[descriptor.canonicalRoot],
-    ) as unknown as NonNullable<
-      WorkbenchCloseLifecycleDependencies["resolveCachedWorkspaceState"]
-    >;
+    ) as unknown as NonNullable<WorkbenchCloseLifecycleDependencies["resolveCachedWorkspaceState"]>;
     const harness = renderLifecycle({
       forgetCachedWorkspaceState,
       persistAppSettings,
@@ -1245,12 +1320,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     let selectedClose!: Promise<void>;
     let canonicalClose!: Promise<void>;
     await act(async () => {
-      selectedClose = harness
-        .lifecycle()
-        .closeWorkspaceTab(descriptor.selectedPath);
-      canonicalClose = harness
-        .lifecycle()
-        .closeWorkspaceTab(descriptor.canonicalRoot);
+      selectedClose = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+      canonicalClose = harness.lifecycle().closeWorkspaceTab(descriptor.canonicalRoot);
       await Promise.resolve();
     });
 
@@ -1266,16 +1337,11 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(cache).toEqual({});
     expect(identities).toEqual({});
     expect(unregisterWorkspace).toHaveBeenCalledOnce();
-    expect(unregisterWorkspace).toHaveBeenCalledWith(descriptor.workspaceId);
+    expect(unregisterWorkspace).toHaveBeenCalledWith(descriptor.workspaceId, "abandonWhenDeferred");
     expect(forgetCachedWorkspaceState).toHaveBeenCalledOnce();
-    expect(forgetCachedWorkspaceState).toHaveBeenCalledWith(
-      descriptor.selectedPath,
-      descriptor,
-    );
+    expect(forgetCachedWorkspaceState).toHaveBeenCalledWith(descriptor.selectedPath, descriptor);
     expect(harness.stopProjectRuntimes).toHaveBeenCalledOnce();
-    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(
-      descriptor.selectedPath,
-    );
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(descriptor.selectedPath);
     harness.unmount();
   });
 
@@ -1298,12 +1364,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     let canonicalClose!: Promise<void>;
     let selectedClose!: Promise<void>;
     await act(async () => {
-      canonicalClose = harness
-        .lifecycle()
-        .closeWorkspaceTab(descriptor.canonicalRoot);
-      selectedClose = harness
-        .lifecycle()
-        .closeWorkspaceTab(descriptor.selectedPath);
+      canonicalClose = harness.lifecycle().closeWorkspaceTab(descriptor.canonicalRoot);
+      selectedClose = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
       await Promise.resolve();
     });
 
@@ -1319,9 +1381,7 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(unregisterWorkspace).toHaveBeenCalledOnce();
     expect(harness.stopProjectRuntimes).toHaveBeenCalledOnce();
-    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(
-      descriptor.selectedPath,
-    );
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(descriptor.selectedPath);
     harness.unmount();
   });
 
@@ -1371,10 +1431,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       editorSurface: { documents: {} },
       workspaceIdentityDescriptor: reopenedDescriptor,
     };
-    harness.appSettingsRef.current.workspaceTabs = [
-      reopenedDescriptor.selectedPath,
-      WORKSPACE_B,
-    ];
+    harness.appSettingsRef.current.workspaceTabs = [reopenedDescriptor.selectedPath, WORKSPACE_B];
 
     settings.resolve();
     await act(async () => closing);
@@ -1382,15 +1439,9 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
     expect(unregisterWorkspace).not.toHaveBeenCalled();
     expect(stopProjectRuntimes).not.toHaveBeenCalled();
-    expect(identities[reopenedDescriptor.selectedPath]).toBe(
-      reopenedDescriptor,
-    );
-    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(
-      reopenedDescriptor,
-    );
-    expect(harness.appSettingsRef.current.workspaceTabs).toContain(
-      reopenedDescriptor.selectedPath,
-    );
+    expect(identities[reopenedDescriptor.selectedPath]).toBe(reopenedDescriptor);
+    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(reopenedDescriptor);
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(reopenedDescriptor.selectedPath);
     harness.unmount();
   });
 
@@ -1440,10 +1491,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       editorSurface: { documents: {} },
       workspaceIdentityDescriptor: reopenedDescriptor,
     };
-    harness.appSettingsRef.current.workspaceTabs = [
-      reopenedDescriptor.selectedPath,
-      WORKSPACE_B,
-    ];
+    harness.appSettingsRef.current.workspaceTabs = [reopenedDescriptor.selectedPath, WORKSPACE_B];
 
     unregister.resolve();
     await act(async () => closing);
@@ -1451,12 +1499,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
     expect(stopProjectRuntimes).not.toHaveBeenCalled();
     expect(unregisterWorkspace).toHaveBeenCalledOnce();
-    expect(identities[reopenedDescriptor.selectedPath]).toBe(
-      reopenedDescriptor,
-    );
-    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(
-      reopenedDescriptor,
-    );
+    expect(identities[reopenedDescriptor.selectedPath]).toBe(reopenedDescriptor);
+    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(reopenedDescriptor);
     harness.unmount();
   });
 
@@ -1512,10 +1556,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       editorSurface: { documents: {} },
       workspaceIdentityDescriptor: reopenedDescriptor,
     };
-    harness.appSettingsRef.current.workspaceTabs = [
-      reopenedDescriptor.selectedPath,
-      WORKSPACE_B,
-    ];
+    harness.appSettingsRef.current.workspaceTabs = [reopenedDescriptor.selectedPath, WORKSPACE_B];
 
     runtimeStop.resolve();
     await act(async () => closing);
@@ -1523,12 +1564,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
     expect(forgetLanguageServerRuntimeStatuses).not.toHaveBeenCalled();
     expect(forgetLatencyTrackerForRoot).not.toHaveBeenCalled();
-    expect(identities[reopenedDescriptor.selectedPath]).toBe(
-      reopenedDescriptor,
-    );
-    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(
-      reopenedDescriptor,
-    );
+    expect(identities[reopenedDescriptor.selectedPath]).toBe(reopenedDescriptor);
+    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(reopenedDescriptor);
     harness.unmount();
   });
 
@@ -1546,10 +1583,9 @@ describe("useWorkbenchCloseLifecycle", () => {
     const replacementState = {
       editorSurface: {
         documents: {
-          [`${replacementIdentity.selectedPath}/Replacement.php`]:
-            dirtyDocument(
-              `${replacementIdentity.selectedPath}/Replacement.php`,
-            ),
+          [`${replacementIdentity.selectedPath}/Replacement.php`]: dirtyDocument(
+            `${replacementIdentity.selectedPath}/Replacement.php`,
+          ),
         },
       },
       workspaceIdentityDescriptor: replacementIdentity,
@@ -1559,8 +1595,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       [closingIdentity.canonicalRoot]: closingIdentity,
     };
     const cache = {
-      [workspaceIdentityStateCacheKey(closingIdentity.workspaceId)]:
-        closingState,
+      [workspaceIdentityStateCacheKey(closingIdentity.workspaceId)]: closingState,
     };
     const harness = renderLifecycle({
       unregisterWorkspace: vi.fn(() => unregister.promise),
@@ -1570,38 +1605,27 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     let closing!: Promise<void>;
     await act(async () => {
-      closing = harness
-        .lifecycle()
-        .closeWorkspaceTab(closingIdentity.selectedPath);
+      closing = harness.lifecycle().closeWorkspaceTab(closingIdentity.selectedPath);
       await Promise.resolve();
       await Promise.resolve();
     });
 
     delete cache[workspaceIdentityStateCacheKey(closingIdentity.workspaceId)];
-    cache[workspaceIdentityStateCacheKey(replacementIdentity.workspaceId)] =
-      replacementState;
+    cache[workspaceIdentityStateCacheKey(replacementIdentity.workspaceId)] = replacementState;
     cache[replacementIdentity.selectedPath] = replacementState;
     identities[replacementIdentity.selectedPath] = replacementIdentity;
     identities[replacementIdentity.canonicalRoot] = replacementIdentity;
-    harness.appSettingsRef.current.workspaceTabs = [
-      replacementIdentity.selectedPath,
-      WORKSPACE_B,
-    ];
+    harness.appSettingsRef.current.workspaceTabs = [replacementIdentity.selectedPath, WORKSPACE_B];
 
     unregister.resolve();
     await act(async () => closing);
 
     expect(cache).toEqual({
-      [workspaceIdentityStateCacheKey(replacementIdentity.workspaceId)]:
-        replacementState,
+      [workspaceIdentityStateCacheKey(replacementIdentity.workspaceId)]: replacementState,
       [replacementIdentity.selectedPath]: replacementState,
     });
-    expect(identities[replacementIdentity.selectedPath]).toBe(
-      replacementIdentity,
-    );
-    expect(identities[replacementIdentity.canonicalRoot]).toBe(
-      replacementIdentity,
-    );
+    expect(identities[replacementIdentity.selectedPath]).toBe(replacementIdentity);
+    expect(identities[replacementIdentity.canonicalRoot]).toBe(replacementIdentity);
     harness.unmount();
   });
 
@@ -1690,9 +1714,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: {
         documents: {
-          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
-            `${WORKSPACE_A}/src/Dirty.php`,
-          ),
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(`${WORKSPACE_A}/src/Dirty.php`),
         },
       },
     };
@@ -1709,10 +1731,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     expect(commitWorkspaceClose).not.toHaveBeenCalled();
     expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
-    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
-      WORKSPACE_A,
-      WORKSPACE_B,
-    ]);
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([WORKSPACE_A, WORKSPACE_B]);
     harness.unmount();
   });
 
@@ -1741,9 +1760,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       openWorkspaceRequestPathRef,
       openWorkspaceRequestTokenRef,
       persistWorkspaceSession,
-      workspaceHasExternalFileConflicts: vi.fn(
-        (root) => root === WORKSPACE_B,
-      ),
+      workspaceHasExternalFileConflicts: vi.fn((root) => root === WORKSPACE_B),
     });
     harness.prompter.confirm.mockReturnValueOnce(false);
 
@@ -1759,21 +1776,14 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(openFileRequestTokenRef.current).toBe(12);
     expect(gitDiffRequestTokenRef.current).toBe(13);
     expect(editorGitBaselineRequestTokenRef.current).toBe(14);
-    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
-      WORKSPACE_A,
-      WORKSPACE_B,
-    ]);
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([WORKSPACE_A, WORKSPACE_B]);
     expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     expect(commitWorkspaceClose).not.toHaveBeenCalled();
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(harness.persistAppSettings).not.toHaveBeenCalled();
     expect(clearExternalFileConflictsForRoot).not.toHaveBeenCalled();
-    expect(
-      harness.closeSyncedLanguageServerDocumentsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.closeSyncedLanguageServerDocumentsForRoot).not.toHaveBeenCalled();
+    expect(harness.closeSyncedJavaScriptTypeScriptDocumentsForRoot).not.toHaveBeenCalled();
     expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
     expect(openWorkspacePath).not.toHaveBeenCalled();
     expect(clearActiveWorkspace).not.toHaveBeenCalled();
@@ -1807,10 +1817,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(harness.persistAppSettings).not.toHaveBeenCalled();
-    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
-      WORKSPACE_A,
-      WORKSPACE_B,
-    ]);
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([WORKSPACE_A, WORKSPACE_B]);
     harness.unmount();
   });
 
@@ -1829,9 +1836,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: {
         documents: {
-          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
-            `${WORKSPACE_A}/src/Dirty.php`,
-          ),
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(`${WORKSPACE_A}/src/Dirty.php`),
         },
       },
     };
@@ -1901,12 +1906,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       kind: "workspace",
       rootPath: WORKSPACE_A,
     });
-    expect(events).toEqual([
-      "lock",
-      `commit:${WORKSPACE_A}`,
-      "persist",
-      "runtime",
-    ]);
+    expect(events).toEqual(["lock", `commit:${WORKSPACE_A}`, "persist", "runtime"]);
 
     runtimeStop.resolve();
     await act(async () => {
@@ -1916,13 +1916,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(persistAppSettings).toHaveBeenCalledOnce();
     expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeUndefined();
     expect(stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
-    expect(events).toEqual([
-      "lock",
-      `commit:${WORKSPACE_A}`,
-      "persist",
-      "runtime",
-      "unlock",
-    ]);
+    expect(events).toEqual(["lock", `commit:${WORKSPACE_A}`, "persist", "runtime", "unlock"]);
     harness.unmount();
   });
 
@@ -2010,8 +2004,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     const closePhpDocuments = vi.fn(() => phpClosed.promise);
     const closeJavaScriptTypeScriptDocuments = vi.fn(() => jsClosed.promise);
     const harness = renderLifecycle({
-      closeSyncedJavaScriptTypeScriptDocumentsForRoot:
-        closeJavaScriptTypeScriptDocuments,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot: closeJavaScriptTypeScriptDocuments,
       closeSyncedLanguageServerDocumentsForRoot: closePhpDocuments,
     });
 
@@ -2032,9 +2025,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
-    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(
-      WORKSPACE_A,
-    );
+    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(WORKSPACE_A);
     expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
     expect(harness.persistAppSettings).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2051,8 +2042,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     const closePhpDocuments = vi.fn(() => neverClosed);
     const closeJavaScriptTypeScriptDocuments = vi.fn(async () => undefined);
     const harness = renderLifecycle({
-      closeSyncedJavaScriptTypeScriptDocumentsForRoot:
-        closeJavaScriptTypeScriptDocuments,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot: closeJavaScriptTypeScriptDocuments,
       closeSyncedLanguageServerDocumentsForRoot: closePhpDocuments,
     });
 
@@ -2066,9 +2056,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
-    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(
-      WORKSPACE_A,
-    );
+    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(WORKSPACE_A);
     expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
     harness.unmount();
   });
@@ -2117,9 +2105,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       await Promise.resolve();
     });
 
-    expect(
-      runWithDocumentSaveExclusion.mock.calls.map(([scope]) => scope),
-    ).toEqual([
+    expect(runWithDocumentSaveExclusion.mock.calls.map(([scope]) => scope)).toEqual([
       { kind: "workspace", rootPath: WORKSPACE_A },
       { kind: "workspace", rootPath: WORKSPACE_B },
     ]);
@@ -2156,9 +2142,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
-    expect(harness.prompter.confirm).toHaveBeenCalledWith(
-      "Quit and discard unsaved changes?",
-    );
+    expect(harness.prompter.confirm).toHaveBeenCalledWith("Quit and discard unsaved changes?");
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(tauriMocks.invoke).not.toHaveBeenCalledWith("quit_application");
     expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
@@ -2182,10 +2166,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       persistWorkspaceSession,
       runWithDocumentSaveExclusion,
     });
-    harness.appSettingsRef.current.workspaceTabs = [
-      `${WORKSPACE_A}/`,
-      WORKSPACE_A,
-    ];
+    harness.appSettingsRef.current.workspaceTabs = [`${WORKSPACE_A}/`, WORKSPACE_A];
 
     await act(async () => {
       harness.lifecycle().quitApplication();
@@ -2193,9 +2174,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
-    expect(
-      runWithDocumentSaveExclusion.mock.calls.map(([scope]) => scope),
-    ).toEqual([
+    expect(runWithDocumentSaveExclusion.mock.calls.map(([scope]) => scope)).toEqual([
       { kind: "workspace", rootPath: WORKSPACE_A },
       { kind: "workspace", rootPath: WORKSPACE_B },
     ]);
@@ -2220,9 +2199,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: {
         documents: {
-          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
-            `${WORKSPACE_A}/src/Dirty.php`,
-          ),
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(`${WORKSPACE_A}/src/Dirty.php`),
         },
       },
     };
@@ -2249,38 +2226,35 @@ describe("useWorkbenchCloseLifecycle", () => {
       request: () => requestNativeClose("close"),
       invocation: ["confirm_native_shutdown", { kind: "close" }],
     },
-  ])("saves an inactive dirty project before $name", async ({
-    request,
-    invocation,
-  }) => {
+  ])("saves an inactive dirty project before $name", async ({ request, invocation }) => {
     const path = `${WORKSPACE_A}/src/Inactive.php`;
     const original = dirtyDocument(path);
     const fixture = ownerCloseFixture(original);
     const acknowledged = cleanDocument(path);
     let saved = false;
-    const saveDocument = vi.spyOn(fixture.service, "saveDocument")
-      .mockImplementation(async () => {
-        fixture.setCurrentDocument(acknowledged);
-        saved = true;
-        return {
-          status: "saved",
-          document: acknowledged,
-          contentIsCurrent: true,
-        };
-      });
+    const saveDocument = vi.spyOn(fixture.service, "saveDocument").mockImplementation(async () => {
+      fixture.setCurrentDocument(acknowledged);
+      saved = true;
+      return {
+        status: "saved",
+        document: acknowledged,
+        contentIsCurrent: true,
+      };
+    });
     const harness = renderLifecycle({
-      captureDirtyCloseTargets: () => saved ? [] : [fixture.target],
+      captureDirtyCloseTargets: () => (saved ? [] : [fixture.target]),
       dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
       isWorkspaceRuntimeOwnerCurrent: () => true,
       ownerDocumentSaveRepository: fixture.repository,
       ownerResolvingDocumentSaveService: fixture.service,
-      requestOwnerDocumentSave: async (_ownership, operation) => operation({
-        path,
-        rootPath: WORKSPACE_A,
-        epoch: 1,
-        isCurrent: () => true,
-        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
-      }),
+      requestOwnerDocumentSave: async (_ownership, operation) =>
+        operation({
+          path,
+          rootPath: WORKSPACE_A,
+          epoch: 1,
+          isCurrent: () => true,
+          tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+        }),
     });
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: { documents: { [path]: original } },
@@ -2340,12 +2314,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
-    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledWith(
-      descriptor.selectedPath,
-    );
-    expect(workspaceHasExternalFileConflicts).not.toHaveBeenCalledWith(
-      identityKey,
-    );
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledWith(descriptor.selectedPath);
+    expect(workspaceHasExternalFileConflicts).not.toHaveBeenCalledWith(identityKey);
     harness.unmount();
   });
 
@@ -2359,9 +2329,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.workspaceStateCacheRef.current[`${WORKSPACE_B}/`] = {
       editorSurface: {
         documents: {
-          [`${WORKSPACE_B}/src/Stale.php`]: dirtyDocument(
-            `${WORKSPACE_B}/src/Stale.php`,
-          ),
+          [`${WORKSPACE_B}/src/Stale.php`]: dirtyDocument(`${WORKSPACE_B}/src/Stale.php`),
         },
       },
     };
@@ -2379,10 +2347,7 @@ describe("useWorkbenchCloseLifecycle", () => {
   });
 
   it("excludes an active selected alias canonical cache from shutdown dirtiness", async () => {
-    const descriptor = workspaceIdentity(
-      WORKSPACE_B,
-      "/real/workspace-b",
-    );
+    const descriptor = workspaceIdentity(WORKSPACE_B, "/real/workspace-b");
     const persistWorkspaceSession = vi.fn(async () => undefined);
     const canonicalState = {
       editorSurface: {
@@ -2432,9 +2397,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.workspaceStateCacheRef.current[`${WORKSPACE_A}/`] = {
       editorSurface: {
         documents: {
-          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
-            `${WORKSPACE_A}/src/Dirty.php`,
-          ),
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(`${WORKSPACE_A}/src/Dirty.php`),
         },
       },
     };
@@ -2446,14 +2409,8 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
     expect(workspaceHasExternalFileConflicts).toHaveBeenCalledTimes(3);
-    expect(workspaceHasExternalFileConflicts).toHaveBeenNthCalledWith(
-      2,
-      WORKSPACE_A,
-    );
-    expect(workspaceHasExternalFileConflicts).toHaveBeenNthCalledWith(
-      3,
-      `${WORKSPACE_A}/`,
-    );
+    expect(workspaceHasExternalFileConflicts).toHaveBeenNthCalledWith(2, WORKSPACE_A);
+    expect(workspaceHasExternalFileConflicts).toHaveBeenNthCalledWith(3, `${WORKSPACE_A}/`);
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     harness.unmount();
   });
@@ -2461,9 +2418,7 @@ describe("useWorkbenchCloseLifecycle", () => {
   it("blocks shutdown for a conflict on an alternate clean cache alias", async () => {
     const persistWorkspaceSession = vi.fn(async () => undefined);
     const alternateRoot = `${WORKSPACE_A}/`;
-    const workspaceHasExternalFileConflicts = vi.fn(
-      (root) => root === alternateRoot,
-    );
+    const workspaceHasExternalFileConflicts = vi.fn((root) => root === alternateRoot);
     const harness = renderLifecycle({
       persistWorkspaceSession,
       workspaceHasExternalFileConflicts,
@@ -2471,9 +2426,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: {
         documents: {
-          [`${WORKSPACE_A}/src/Clean.php`]: cleanDocument(
-            `${WORKSPACE_A}/src/Clean.php`,
-          ),
+          [`${WORKSPACE_A}/src/Clean.php`]: cleanDocument(`${WORKSPACE_A}/src/Clean.php`),
         },
       },
     };
@@ -2487,9 +2440,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
-    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledWith(
-      alternateRoot,
-    );
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledWith(alternateRoot);
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(nativeShutdownInvocationCount()).toBe(0);
     harness.unmount();
@@ -2545,10 +2496,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       await Promise.resolve();
     });
 
-    expect(harness.reportError).toHaveBeenCalledWith(
-      "Application",
-      expect.any(Error),
-    );
+    expect(harness.reportError).toHaveBeenCalledWith("Application", expect.any(Error));
     expect(persistWorkspaceSession).toHaveBeenCalledOnce();
     expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
       kind: "quit",
@@ -2644,9 +2592,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       await Promise.resolve();
     });
 
-    expect(prepareAgentQuit).toHaveBeenCalledWith(
-      AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS,
-    );
+    expect(prepareAgentQuit).toHaveBeenCalledWith(AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS);
     expect(nativeShutdownInvocationCount()).toBe(0);
 
     await act(async () => {
@@ -2676,9 +2622,7 @@ describe("useWorkbenchCloseLifecycle", () => {
   });
 
   it("does not confirm a native shutdown when the scope goes stale during agent quit preparation", async () => {
-    const fixture = ownerCloseFixture(
-      dirtyDocument(`${WORKSPACE_A}/StaleQuit.php`),
-    );
+    const fixture = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/StaleQuit.php`));
     const preparationStarted = createDeferred<void>();
     const preparation = createDeferred<void>();
     let capturedTargets: (typeof fixture.target)[] = [];
@@ -2803,13 +2747,14 @@ describe("useWorkbenchCloseLifecycle", () => {
       isWorkspaceRuntimeOwnerCurrent: () => true,
       ownerDocumentSaveRepository: repository,
       ownerResolvingDocumentSaveService: service,
-      requestOwnerDocumentSave: async (_ownership, operation) => operation({
-        path: first.path,
-        rootPath: WORKSPACE_A,
-        epoch: 1,
-        isCurrent: () => true,
-        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
-      }),
+      requestOwnerDocumentSave: async (_ownership, operation) =>
+        operation({
+          path: first.path,
+          rootPath: WORKSPACE_A,
+          epoch: 1,
+          isCurrent: () => true,
+          tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+        }),
     });
 
     await act(async () => {
@@ -2832,12 +2777,8 @@ describe("useWorkbenchCloseLifecycle", () => {
   });
 
   it("identifies equal dirty paths by workspace in a quit prompt", async () => {
-    const first = ownerCloseFixture(
-      dirtyDocument(`${WORKSPACE_A}/config/config.php`),
-    ).target;
-    const secondDocument = dirtyDocument(
-      `${WORKSPACE_B}/config/config.php`,
-    );
+    const first = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/config/config.php`)).target;
+    const secondDocument = dirtyDocument(`${WORKSPACE_B}/config/config.php`);
     const secondOwner = createLegacyWorkspaceRuntimeOwner(WORKSPACE_B);
     const second = {
       ...first,
@@ -2861,18 +2802,20 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.lifecycle().quitApplication();
     await vi.waitFor(() => expect(decideDirtyClose).toHaveBeenCalledOnce());
 
-    expect(decideDirtyClose).toHaveBeenCalledWith(expect.objectContaining({
-      documents: [
-        expect.objectContaining({
-          workspaceLabel: "workspace-a",
-          relativePath: "config/config.php",
-        }),
-        expect.objectContaining({
-          workspaceLabel: "workspace-b",
-          relativePath: "config/config.php",
-        }),
-      ],
-    }));
+    expect(decideDirtyClose).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documents: [
+          expect.objectContaining({
+            workspaceLabel: "workspace-a",
+            relativePath: "config/config.php",
+          }),
+          expect.objectContaining({
+            workspaceLabel: "workspace-b",
+            relativePath: "config/config.php",
+          }),
+        ],
+      }),
+    );
     harness.unmount();
   });
 
@@ -2880,10 +2823,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     const runtimeStop = createDeferred<void>();
     const runtimeStarted = createDeferred<void>();
     const descriptor = workspaceIdentity();
-    const fixture = ownerCloseFixture(
-      dirtyDocument(`${WORKSPACE_A}/LateIdentity.php`),
-    );
-    let capturedTargets: typeof fixture.target[] = [];
+    const fixture = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/LateIdentity.php`));
+    let capturedTargets: (typeof fixture.target)[] = [];
     const unregisterWorkspace = vi.fn(async () => undefined);
     const harness = renderLifecycle({
       captureDirtyCloseTargets: () => capturedTargets,
@@ -2901,9 +2842,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       },
     });
 
-    const closing = harness.lifecycle().closeWorkspaceTab(
-      descriptor.selectedPath,
-    );
+    const closing = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
     await runtimeStarted.promise;
     capturedTargets = [fixture.target];
     runtimeStop.resolve();
@@ -2935,10 +2874,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeDefined();
     expect(forgetLanguageServerRuntimeStatuses).not.toHaveBeenCalled();
     expect(forgetLatencyTrackerForRoot).not.toHaveBeenCalled();
-    expect(harness.reportError).toHaveBeenCalledWith(
-      "Runtime cleanup",
-      runtimeFailure,
-    );
+    expect(harness.reportError).toHaveBeenCalledWith("Runtime cleanup", runtimeFailure);
     harness.unmount();
   });
 
@@ -2952,7 +2888,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     };
     const clearExternalFileConflictsForRoot = vi.fn();
     const invalidateWorkspaceResourceCachesForRoot = vi.fn((rootPath: string) =>
-      invalidateEditorConfigCacheForRoot(cache, rootPath)
+      invalidateEditorConfigCacheForRoot(cache, rootPath),
     );
     const harness = renderLifecycle({
       clearExternalFileConflictsForRoot,
@@ -2970,12 +2906,8 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(cache[compositeKey]).toBeUndefined();
     expect(cache[WORKSPACE_B]).toBeDefined();
-    expect(invalidateWorkspaceResourceCachesForRoot).toHaveBeenCalledWith(
-      descriptor.canonicalRoot,
-    );
-    expect(clearExternalFileConflictsForRoot).toHaveBeenCalledWith(
-      descriptor.canonicalRoot,
-    );
+    expect(invalidateWorkspaceResourceCachesForRoot).toHaveBeenCalledWith(descriptor.canonicalRoot);
+    expect(clearExternalFileConflictsForRoot).toHaveBeenCalledWith(descriptor.canonicalRoot);
     harness.unmount();
   });
 });

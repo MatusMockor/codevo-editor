@@ -9,7 +9,6 @@ import {
   SURFACE_TREE_GONE_MESSAGE,
   SURFACE_TREE_NO_PROJECT_MESSAGE,
   SURFACE_TREE_PROJECT_GONE_MESSAGE,
-  SURFACE_TREE_SEARCH_LABEL,
   SURFACE_TREE_UNTRUSTED_MESSAGE,
   type AgentSurfaceFileTreeProps,
 } from "./AgentSurfaceFileTree";
@@ -34,50 +33,21 @@ describe("AgentSurfaceFileTree", () => {
     host.remove();
   });
 
-  it("renders a tools row with Refresh and Search files instead of a files subhead", () => {
-    const open = vi.fn();
-    render({ searchFiles: { shortcut: "Cmd+P", open } });
+  it("renders only the tree: search and refresh live in the Files surface header", () => {
+    render({ searchFiles: { shortcut: "Cmd+P" } });
 
     expect(host.querySelector(".agent-surface__subhead")).toBeNull();
-    expect(host.querySelector(".agent-microlabel")).toBeNull();
     expect(host.querySelector("header")).toBeNull();
-    const tools = host.querySelector(".agent-surface-tree__tools");
-    expect(tools?.previousElementSibling).toBeNull();
-    expect(tools?.querySelector('[aria-label="Refresh workspace files"]')).not.toBeNull();
-
-    const search = host.querySelector<HTMLButtonElement>(".agent-surface-tree__search");
-    expect(search?.textContent).toBe(SURFACE_TREE_SEARCH_LABEL);
-    expect(search?.getAttribute("aria-keyshortcuts")).toBe("Meta+P");
-    expect(search?.title).toBe("Search files (⌘P)");
-    expect(search?.disabled).toBe(false);
-
-    act(() => search?.click());
-    expect(open).toHaveBeenCalledTimes(1);
-  });
-
-  it("disables the search button without a quick-open capability", () => {
-    render({ searchFiles: null });
-
-    const search = host.querySelector<HTMLButtonElement>(".agent-surface-tree__search");
-    expect(search?.disabled).toBe(true);
-    expect(search?.hasAttribute("aria-keyshortcuts")).toBe(false);
-    expect(search?.title).toBe(SURFACE_TREE_SEARCH_LABEL);
-  });
-
-  it("refreshes through the surface and disables refresh once the checkout is gone", () => {
-    const refresh = vi.fn();
-    render({ tree: { ...tree(), refresh } });
-    const button = host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]');
-    act(() => button?.click());
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".agent-surface-tree__tools")).toBeNull();
+    expect(host.querySelector(".agent-surface-tree__search")).toBeNull();
+    expect(host.querySelector('[aria-label="Refresh workspace files"]')).toBeNull();
     expect(
       host.querySelector("[data-agent-surface-tree] .agent-surface-tree__viewport"),
     ).not.toBeNull();
+  });
 
-    render({ tree: { ...tree(), rootPath: null, refresh } });
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]')?.disabled,
-    ).toBe(true);
+  it("drops the viewport once the checkout is gone", () => {
+    render({ tree: { ...tree(), rootPath: null } });
     expect(host.querySelector(".agent-note--warning")?.textContent).toBe(SURFACE_TREE_GONE_MESSAGE);
     expect(host.querySelector(".agent-surface-tree__viewport")).toBeNull();
   });
@@ -93,9 +63,6 @@ describe("AgentSurfaceFileTree", () => {
       SURFACE_TREE_NO_PROJECT_MESSAGE,
     );
     expect(host.querySelector(".agent-surface-tree__viewport")).toBeNull();
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]')?.disabled,
-    ).toBe(true);
 
     const onTrust = vi.fn();
     render({
@@ -185,7 +152,7 @@ function defaultProps(): AgentSurfaceFileTreeProps {
     unavailable: null,
     activePath: null,
     revealActivePathSignal: 0,
-    searchFiles: { shortcut: "Cmd+P", open: () => undefined },
+    searchFiles: { shortcut: "Cmd+P" },
     onOpenFile: () => undefined,
     onPreviewFile: () => undefined,
   };

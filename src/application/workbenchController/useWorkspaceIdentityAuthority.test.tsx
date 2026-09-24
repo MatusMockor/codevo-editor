@@ -22,19 +22,23 @@ afterEach(() => {
 
 describe("useWorkspaceIdentityAuthority", () => {
   it("keeps the adopted A2 generation authoritative when pending A1 retires after B", async () => {
-    const unregister = vi.fn(async () => undefined);
-    const harness = renderAuthority(unregister);
+    const gateway = identityGateway();
+    const harness = renderAuthority(gateway);
     const a1 = descriptor("workspace-a", "/alias/a-one", "/canonical/a", 11);
     const b = descriptor("workspace-b", "/selected/b", "/canonical/b", 21);
     const a2 = descriptor("workspace-a", "/alias/a-two", "/canonical/a", 12);
     const a1Use = deferred<void>();
     const pendingA1 = harness.managed().withManagedLease(a1, async (adopt) => {
       await a1Use.promise;
-      adopt();
+      await adopt();
     });
 
-    await harness.managed().withManagedLease(b, async (adopt) => adopt());
-    await harness.managed().withManagedLease(a2, async (adopt) => adopt());
+    await harness.managed().withManagedLease(b, async (adopt) => {
+      await adopt();
+    });
+    await harness.managed().withManagedLease(a2, async (adopt) => {
+      await adopt();
+    });
     a1Use.resolve();
     await pendingA1;
 
@@ -42,17 +46,22 @@ describe("useWorkspaceIdentityAuthority", () => {
       "workspace-a": 3,
       "workspace-b": 2,
     });
-    expect(unregister).not.toHaveBeenCalledWith("workspace-a");
+    expect(gateway.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(a1);
+    expect(gateway.unregister).not.toHaveBeenCalled();
 
-    await harness.managed().releaseOwned("workspace-a");
+    await harness.managed().releaseOwned("workspace-a", "retryLater");
 
-    expect(unregister).toHaveBeenCalledExactlyOnceWith("workspace-a");
+    expect(gateway.unregister).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: "workspace-a",
+      admissionToken: 12,
+      canonicalRootPath: "/canonical/a",
+    });
     expect(harness.retireRuntimeOwnerClaim).toHaveBeenCalledWith("workspace-a", 3);
   });
 
-  it("rejects adoption after the exact alias admission descriptor changes", async () => {
-    const unregister = vi.fn(async () => undefined);
-    const harness = renderAuthority(unregister);
+  it("rolls back the exact admission when its descriptor changes before adoption", async () => {
+    const gateway = identityGateway();
+    const harness = renderAuthority(gateway);
     const admitted = descriptor("workspace-a", "/alias/a", "/canonical/a", 31);
     const mutable = admitted as {
       admissionToken?: number;
@@ -62,24 +71,27 @@ describe("useWorkspaceIdentityAuthority", () => {
 
     await harness.managed().withManagedLease(admitted, async (adopt) => {
       mutable.selectedPath = "/alias/replaced";
-      adopt();
+      await adopt();
     });
 
     expect(harness.authority().ownedWorkspaceIdentityIdsRef.current).not.toContain("workspace-a");
-    expect(unregister).toHaveBeenCalledExactlyOnceWith("workspace-a");
+    expect(gateway.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(admitted);
+    expect(gateway.unregister).not.toHaveBeenCalled();
   });
 
-  it("does not mark A2 released when A1 unregister settles after replacement admission", async () => {
-    const unregisterRequest = deferred<void>();
-    const unregister = vi.fn(() => unregisterRequest.promise);
-    const harness = renderAuthority(unregister);
+  it("does not disturb A2 when the A1 rollback settles after replacement admission", async () => {
+    const rollbackRequest = deferred<{ readonly status: "released" }>();
+    const gateway = identityGateway({ rollbackAdmission: vi.fn(() => rollbackRequest.promise) });
+    const harness = renderAuthority(gateway);
     const a1 = descriptor("workspace-a", "/alias/a-one", "/canonical/a", 41);
     const a2 = descriptor("workspace-a", "/alias/a-two", "/canonical/a", 42);
     const retiringA1 = harness.managed().withManagedLease(a1, async () => undefined);
 
-    await vi.waitFor(() => expect(unregister).toHaveBeenCalledExactlyOnceWith("workspace-a"));
-    await harness.managed().withManagedLease(a2, async (adopt) => adopt());
-    unregisterRequest.resolve();
+    await vi.waitFor(() => expect(gateway.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(a1));
+    await harness.managed().withManagedLease(a2, async (adopt) => {
+      await adopt();
+    });
+    rollbackRequest.resolve({ status: "released" });
     await retiringA1;
 
     expect(harness.authority().ownedWorkspaceIdentityIdsRef.current).toContain("workspace-a");
@@ -89,10 +101,11 @@ describe("useWorkspaceIdentityAuthority", () => {
     expect(harness.authority().ownedWorkspaceIdentityGenerationByIdRef.current["workspace-a"]).toBe(
       2,
     );
+    expect(gateway.adoptAdmission).not.toHaveBeenCalled();
   });
 });
 
-function renderAuthority(unregister: (workspaceId: string) => Promise<void>) {
+function renderAuthority(gateway: WorkspaceIdentityGateway) {
   let authority: ReturnType<typeof useWorkspaceIdentityAuthority> | null = null;
   let managed: ReturnType<typeof useManagedWorkspaceIdentityOwnership> | null = null;
   const retireRuntimeOwnerClaim = vi.fn();
@@ -103,7 +116,7 @@ function renderAuthority(unregister: (workspaceId: string) => Promise<void>) {
     authority = useWorkspaceIdentityAuthority();
     managed = useManagedWorkspaceIdentityOwnership({
       deferredCleanupIdsRef: authority.deferredWorkspaceIdentityCleanupIdsRef,
-      identityGateway: identityGateway(unregister),
+      identityGateway: gateway,
       identityRequestTokensRef: authority.pendingWorkspaceIdentityRequestTokensRef,
       latestAdmissionGenerationByIdRef: authority.latestWorkspaceIdentityAdmissionGenerationByIdRef,
       mountedRef: { current: true },
@@ -141,19 +154,24 @@ function renderAuthority(unregister: (workspaceId: string) => Promise<void>) {
   };
 }
 
-function identityGateway(
-  unregister: (workspaceId: string) => Promise<void>,
-): WorkspaceIdentityGateway {
+function identityGateway(overrides: Partial<WorkspaceIdentityGateway> = {}) {
   return {
-    getDescriptor: async (workspaceId) => ({
+    getDescriptor: vi.fn(async (workspaceId: string) => ({
       canonicalRootPath: "/canonical",
       caseSensitive: true,
       selectedRootPath: "/selected",
-      unicodeNormalizationPolicy: "preserved",
+      unicodeNormalizationPolicy: "preserved" as const,
       workspaceId,
-    }),
-    openFromPicker: async () => ({ status: "cancelled" }),
-    unregister,
+    })),
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    unregister: vi.fn<WorkspaceIdentityGateway["unregister"]>(async () => ({ status: "released" })),
+    adoptAdmission: vi.fn<WorkspaceIdentityGateway["adoptAdmission"]>(async () => ({
+      status: "adopted",
+    })),
+    rollbackAdmission: vi.fn<WorkspaceIdentityGateway["rollbackAdmission"]>(async () => ({
+      status: "released",
+    })),
+    ...overrides,
   };
 }
 

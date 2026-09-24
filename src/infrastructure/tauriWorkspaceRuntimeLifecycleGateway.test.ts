@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import wire from "../../contracts/workspace-owner-release-wire.json";
 import {
   parseRegisteredWorkspaceRuntimeDisposalResult,
   TauriWorkspaceRuntimeLifecycleGateway,
@@ -82,6 +83,28 @@ describe("TauriWorkspaceRuntimeLifecycleGateway", () => {
     expect(() =>
       parseRegisteredWorkspaceRuntimeDisposalResult({ status: "incomplete", errors: [] }),
     ).toThrow("invalid bounded errors");
+  });
+
+  it.each(["closed", "unknownWorkspace", "releasing", "retainedByOtherOwners"] as const)(
+    "parses the settled %s disposal status and rejects extra keys",
+    (status) => {
+      expect(parseRegisteredWorkspaceRuntimeDisposalResult({ status })).toEqual({ status });
+      expect(() =>
+        parseRegisteredWorkspaceRuntimeDisposalResult({ status, errors: ["x"] }),
+      ).toThrow(`Invalid ${status} workspace runtime disposal result`);
+    },
+  );
+
+  it("accepts exactly the shared contract disposal statuses", () => {
+    const accepted = wire.disposeRegisteredWorkspace.statuses.filter((status) => {
+      const value = status === "incomplete" ? { status, errors: ["failed"] } : { status };
+      return parseRegisteredWorkspaceRuntimeDisposalResult(value).status === status;
+    });
+
+    expect(accepted).toEqual(wire.disposeRegisteredWorkspace.statuses);
+    expect(() => parseRegisteredWorkspaceRuntimeDisposalResult({ status: "staleOwner" })).toThrow(
+      "unsupported status",
+    );
   });
 
   it("rejects invalid exact targets before transport", async () => {

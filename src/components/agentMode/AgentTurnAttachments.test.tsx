@@ -19,7 +19,6 @@ import {
 } from "../../domain/externalAgentSession";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
-import { AgentTurnAttachments } from "./AgentTurnAttachments";
 import { AgentClockProvider } from "./agentClock";
 import {
   AGENT_ATTACHMENT_DECODE_FAILED_REASON,
@@ -131,35 +130,7 @@ describe("agent turn attachments", () => {
     });
 
     const pending = host.querySelector<HTMLElement>(".agent-attachments__pending");
-    expect(pending?.style.width).toBe("320px");
-    expect(pending?.style.height).toBe("96px");
-  });
-
-  it("keeps the default placeholder for an image view without dimensions", () => {
-    act(() => {
-      root.render(
-        <AgentTurnAttachments
-          attachments={[
-            {
-              kind: "image",
-              key: IMAGE_ID,
-              name: "shot.png",
-              attachmentId: IMAGE_ID,
-              mime: "image/png",
-            },
-          ]}
-          images={{
-            stateOf: () => ({ kind: "loading" }),
-            ensure: () => undefined,
-            reveal: () => undefined,
-            open: () => undefined,
-          }}
-        />,
-      );
-    });
-
-    const pending = host.querySelector<HTMLElement>(".agent-attachments__pending");
-    expect(pending).not.toBeNull();
+    expect(pending?.getAttribute("role")).toBe("img");
     expect(pending?.getAttribute("style")).toBeNull();
   });
 
@@ -182,7 +153,7 @@ describe("agent turn attachments", () => {
     );
   });
 
-  it("keeps every attachment inside the prompt bubble under the text", () => {
+  it("keeps every attachment inside the prompt bubble above the text", () => {
     render({
       attachmentImages: imagesSurface({
         state: { kind: "unavailable", reason: UNAVAILABLE_REASON },
@@ -196,8 +167,8 @@ describe("agent turn attachments", () => {
     expect(body).not.toBeNull();
     expect(attachments).not.toBeNull();
     expect(bubble?.children).toHaveLength(2);
-    expect(bubble?.firstElementChild).toBe(body);
-    expect(bubble?.lastElementChild).toBe(attachments);
+    expect(bubble?.firstElementChild).toBe(attachments);
+    expect(bubble?.lastElementChild).toBe(body);
     expect(host.querySelector(".agent-prompt > .agent-attachments")).toBeNull();
     expect(bubble?.getAttribute("tabindex")).toBe("-1");
   });

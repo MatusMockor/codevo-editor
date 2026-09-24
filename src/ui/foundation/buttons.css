@@ -64,6 +64,21 @@
   color: var(--cv-fg-muted);
 }
 
+.cv-button--danger {
+  background: color-mix(in srgb, var(--cv-danger) 12%, transparent);
+  box-shadow: var(--cv-ring-danger);
+  color: var(--cv-danger);
+}
+
+.cv-button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cv-danger) 20%, transparent);
+  color: var(--cv-danger);
+}
+
+.cv-button--danger .cv-button__icon {
+  color: inherit;
+}
+
 .cv-button__icon {
   display: inline-grid;
   place-items: center;

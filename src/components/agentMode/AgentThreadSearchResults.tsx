@@ -4,6 +4,8 @@ import {
   type AgentThreadSearchMatch,
   type AgentThreadSearchRange,
 } from "../../domain/agentThreadSearch";
+import { AgentCompactRelativeTime } from "./agentClock";
+import { agentProjectMonogram } from "./agentRailFilter";
 import {
   agentThreadRevealForMatch,
   type AgentThreadRevealRequest,
@@ -12,7 +14,16 @@ import {
 export const AGENT_THREAD_SEARCH_LISTBOX_ID = "agent-thread-search-listbox";
 export const AGENT_THREAD_SEARCH_OPTION_PREFIX = "agent-thread-search-option-";
 
+export type AgentThreadSearchResultsAppearance = "palette" | "sidebar";
+
+export interface AgentThreadSearchResultRow {
+  readonly projectLabel: string;
+  readonly updatedAtEpochMs: number;
+}
+
 export interface AgentThreadSearchResultsProps {
+  readonly appearance?: AgentThreadSearchResultsAppearance;
+  readonly rows?: ReadonlyMap<string, AgentThreadSearchResultRow>;
   readonly matches: ReadonlyArray<AgentThreadSearchMatch>;
   readonly titles: ReadonlyMap<string, string>;
   readonly query: string;
@@ -27,7 +38,12 @@ export interface AgentThreadSearchResultsProps {
   onSelect(threadId: string, reveal: AgentThreadRevealRequest | null): void;
 }
 
-export function AgentThreadSearchResults({
+export function AgentThreadSearchResults(props: AgentThreadSearchResultsProps) {
+  if (props.appearance === "sidebar") return <SidebarSearchResults {...props} />;
+  return <PaletteSearchResults {...props} />;
+}
+
+function PaletteSearchResults({
   activeIndex,
   documentsTruncated = false,
   label = "Thread search results",
@@ -82,6 +98,80 @@ export function AgentThreadSearchResults({
       {documentsTruncated && (
         <p className="agent-search-results__note">Some saved history could not be searched</p>
       )}
+    </div>
+  );
+}
+
+function SidebarSearchResults({
+  activeIndex,
+  documentsTruncated = false,
+  label = "Thread search results",
+  listboxId = AGENT_THREAD_SEARCH_LISTBOX_ID,
+  matches,
+  onHighlight,
+  onSelect,
+  optionPrefix = AGENT_THREAD_SEARCH_OPTION_PREFIX,
+  pending,
+  query,
+  rows,
+  titles,
+  truncated,
+}: AgentThreadSearchResultsProps) {
+  const empty = !pending && matches.length === 0;
+  return (
+    <div className="cv-sb-search-results">
+      <p aria-live="polite" className="cv-sb-results__status" role="status">
+        {statusLabel(pending, matches.length)}
+      </p>
+      <ul aria-label={label} className="cv-sb-results" id={listboxId} role="listbox">
+        {matches.map((match, index) => {
+          const row = rows?.get(match.threadId);
+          return (
+            <li
+              aria-selected={index === activeIndex}
+              className="cv-sr"
+              id={`${optionPrefix}${index}`}
+              key={matchKey(match)}
+              onClick={() => onSelect(match.threadId, agentThreadRevealForMatch(query, match))}
+              onMouseMove={() => onHighlight(index)}
+              role="option"
+            >
+              <span aria-hidden="true" className="cv-favicon">
+                {agentProjectMonogram(row?.projectLabel ?? "")}
+              </span>
+              <span className="cv-sr__body">
+                <span className="cv-sr__line">
+                  <span className="cv-sr__title">
+                    {match.source === "title"
+                      ? marked(match.snippet, match.ranges)
+                      : (titles.get(match.threadId) ?? match.threadId)}
+                  </span>
+                  {row !== undefined && (
+                    <span className="cv-sr__when">
+                      <AgentCompactRelativeTime epochMs={row.updatedAtEpochMs} />
+                    </span>
+                  )}
+                </span>
+                {match.source !== "title" && (
+                  <span className="cv-sr__snippet">
+                    <span
+                      className={
+                        match.source === "user" ? "cv-sr__who" : "cv-sr__who cv-sr__who--agent"
+                      }
+                    >
+                      {whoLabel(match.source)}
+                    </span>{" "}
+                    {marked(match.snippet, match.ranges)}
+                  </span>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {empty && <p className="cv-sb-hint">No threads found</p>}
+      {truncated && <p className="cv-sb-hint">Showing first {MAX_THREAD_SEARCH_RESULTS}</p>}
+      {documentsTruncated && <p className="cv-sb-hint">Some saved history could not be searched</p>}
     </div>
   );
 }

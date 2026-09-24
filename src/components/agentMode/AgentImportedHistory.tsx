@@ -6,7 +6,9 @@ import type {
 } from "../../domain/externalAgentSession";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentAssistantText, type AgentProseContext } from "./AgentAssistantText";
-import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import { AgentTurnPrompt } from "./AgentTurnParts";
+import { AgentTurnMeta } from "./conversation/AgentTurnMeta";
+import { agentCliKindLabel } from "./agentModePresentation";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import { agentThreadColumnKey } from "./agentThreadColumn";
 import { AGENT_TURN_UNTIMED } from "./agentTurnHeadPresentation";
@@ -125,7 +127,6 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
         />
       )}
       <div className="agent-answer">
-        <AgentTurnHead provider={provider} startedAtEpochMs={null} timing={AGENT_TURN_UNTIMED} />
         <div className="agent-turn__events">
           {turn.responses.map((response) => {
             const highlight = highlights.get(response.exchangeIndex);
@@ -144,6 +145,11 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
             );
           })}
         </div>
+        <AgentTurnMeta
+          agentLabel={agentCliKindLabel(provider)}
+          atEpochMs={null}
+          timing={AGENT_TURN_UNTIMED}
+        />
       </div>
     </article>
   );

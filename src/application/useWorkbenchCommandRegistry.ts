@@ -63,6 +63,8 @@ import {
 import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
+import { workbenchPaletteCommands } from "./workbenchPaletteCommands";
+import { workbenchCommandPaletteLaunch } from "./commandPalette/commandPaletteLaunch";
 import { workbenchJsTestCommands } from "./workbenchJsTestCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpstanCommands } from "./workbenchPhpstanCommands";
@@ -939,23 +941,33 @@ export function useWorkbenchCommandRegistry(
 
     appearanceCommands.workbenchCommands.forEach((command) => registry.register(command));
 
+    const openPaletteSurface = () => {
+      setClassOpenOpen(false);
+      setWorkspaceSymbolsOpen(false);
+      setRecentFilesSwitcherOpen(false);
+      setPaletteOpen(true);
+      markFloatingSurfaceActivated();
+    };
+
     workbenchPanelCommands({
       canShowExpressRoutes: canShowWorkspaceExpressRoutes(workspaceRoot, workspaceDescriptor),
       canShowNette,
       canShowSymfony,
       openExpressRoutesPanel,
       shortcut,
-      openCommandsPalette: () => {
-        setClassOpenOpen(false);
-        setWorkspaceSymbolsOpen(false);
-        setRecentFilesSwitcherOpen(false);
-        setPaletteOpen(true);
-        markFloatingSurfaceActivated();
-      },
+      openCommandsPalette: openPaletteSurface,
       showBottomPanelView,
       toggleBottomPanel,
       toggleTodoPanel,
       refreshWorkspaceTodos,
+    }).forEach((command) => registry.register(command));
+
+    workbenchPaletteCommands({
+      shortcut,
+      openPalette: (request) => {
+        workbenchCommandPaletteLaunch.request(request);
+        openPaletteSurface();
+      },
     }).forEach((command) => registry.register(command));
 
     workbenchBookmarkCommands({

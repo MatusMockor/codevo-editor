@@ -42,6 +42,8 @@ export function agentSubagentLifecycleHasRetainedDetail(
   if (lifecycle.countedNestedToolIds !== undefined) return true;
   return lifecycle.entries.some(
     (entry) =>
+      entry.model !== undefined ||
+      entry.effort !== undefined ||
       entry.taskTitle !== undefined ||
       entry.batchKey !== undefined ||
       entry.nestedCount !== undefined ||
@@ -89,6 +91,8 @@ function legacyEntry(entry: AgentSubagentLifecycleEntry): AgentSubagentLifecycle
     batchKey: _batchKey,
     nestedCount: _nestedCount,
     parentToolId: _parentToolId,
+    model: _model,
+    effort: _effort,
     ...legacy
   } = entry;
   return { ...legacy, state: derivedState(legacy) };

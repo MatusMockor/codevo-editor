@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
-import { AlertTriangle, FileText, ImageIcon, Link2, Loader2, X } from "lucide-react";
+import { AlertTriangle, FileText, ImageIcon, Link2, X } from "lucide-react";
+import { Spinner } from "../../ui/foundation/Spinner";
 import type { AgentComposerAttachmentDraft } from "../../application/useAgentComposerAttachments";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { useAgentComposerPreview } from "./useAgentComposerPreview";
@@ -177,16 +178,7 @@ function AgentComposerAttachmentDetail({
 
 function AgentComposerAttachmentGlyph({ draft }: { readonly draft: AgentComposerAttachmentDraft }) {
   const size = 14;
-  if (draft.state === "staging") {
-    return (
-      <Loader2
-        aria-hidden="true"
-        className="agent-composer-attachment__spinner"
-        size={size}
-        strokeWidth={2.5}
-      />
-    );
-  }
+  if (draft.state === "staging") return <Spinner />;
   if (draft.state === "failed") return <AlertTriangle aria-hidden="true" size={size} />;
   if (draft.kind === "image") return <ImageIcon aria-hidden="true" size={20} />;
   if (draft.kind === "reference") return <Link2 aria-hidden="true" size={size} />;

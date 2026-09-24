@@ -4,11 +4,9 @@ export function AgentThreadSessionEmpty({
   readonly repositoryLabel: string | null;
 }) {
   return (
-    <section aria-label="New agent thread" className="agent-session">
-      <div className="agent-session__scroll">
-        <div className="agent-session__body agent-session__body--empty">
-          <AgentEmptyTitle repositoryLabel={repositoryLabel} />
-        </div>
+    <section aria-label="New agent thread" className="agent-session cv-empty-hero">
+      <div className="cv-empty-hero__body cv-conversation-column">
+        <AgentEmptyTitle repositoryLabel={repositoryLabel} />
       </div>
     </section>
   );

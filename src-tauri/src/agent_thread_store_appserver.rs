@@ -1,4 +1,4 @@
-use super::{AgentAttachment, AgentTurnEvent, AgentTurnUsage, MAX_AGENT_SAFE_INTEGER};
+use super::{AgentAttachment, AgentTurn, AgentTurnEvent, AgentTurnUsage, MAX_AGENT_SAFE_INTEGER};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -21,6 +21,26 @@ pub enum SubagentActivity {
     Interacted,
     Interrupted,
     Completed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentSpawnStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentSpawnEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -163,6 +183,21 @@ pub(super) fn validate_usage(usage: &AgentTurnUsage) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) const AGENT_THREAD_HISTORY_ONLY_EVENT_ERROR: &str =
+    "Agent thread subagent spawns belong to the turn log, not the v1 thread file.";
+
+pub(super) fn ensure_v1_event_kinds(turns: &[AgentTurn]) -> Result<(), String> {
+    let history_only = turns.iter().any(|turn| {
+        turn.events
+            .iter()
+            .any(|event| matches!(event, AgentTurnEvent::SubagentSpawn { .. }))
+    });
+    if history_only {
+        return Err(AGENT_THREAD_HISTORY_ONLY_EVENT_ERROR.to_string());
+    }
+    Ok(())
+}
+
 pub(super) fn validate_event(event: &AgentTurnEvent) -> Result<(), String> {
     if let Some(id) = child_id(event) {
         identifier(id, false)?;
@@ -175,6 +210,32 @@ pub(super) fn validate_event(event: &AgentTurnEvent) -> Result<(), String> {
             bounded_identifier(agent_path, true, 4096)
         }
         AgentTurnEvent::SubagentEvent { event, .. } => validate_nested_content(event),
+        AgentTurnEvent::SubagentSpawn {
+            call_id,
+            task_title,
+            model,
+            agent_thread_ids,
+            ..
+        } => {
+            identifier(call_id, false)?;
+            if let Some(title) = task_title {
+                bounded_identifier(title, false, 480)?;
+            }
+            if let Some(model) = model {
+                bounded_identifier(model, false, 64)?;
+            }
+            if agent_thread_ids.len() > 32 {
+                return Err("Agent subagent spawn lists too many agents.".to_string());
+            }
+            let mut seen = std::collections::HashSet::new();
+            for id in agent_thread_ids {
+                identifier(id, false)?;
+                if !seen.insert(id.as_str()) {
+                    return Err("Agent subagent spawn repeats an agent.".to_string());
+                }
+            }
+            Ok(())
+        }
         AgentTurnEvent::SubagentUsage { usage, .. } => super::validate_agent_turn_usage(usage),
         AgentTurnEvent::SubagentTurnDone { duration_ms, .. }
         | AgentTurnEvent::Result { duration_ms, .. } => safe_count(*duration_ms),

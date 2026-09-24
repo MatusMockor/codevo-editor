@@ -1,5 +1,8 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
-import { memo } from "react";
+import { memo, useState, type ReactNode } from "react";
+import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import { agentQuestionOwner } from "../../application/agentQuestionOwner";
+import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
@@ -7,12 +10,20 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
+import type { AgentComposerDrawerContext } from "./composer/AgentComposerFrame";
+import type { AgentComposerInteraction } from "./composer/agentComposerInteraction";
+import { AgentComposerInteractionSource } from "./composer/AgentComposerInteractionSource";
 import {
   useAgentComposerPromptState,
   WITHOUT_COMPOSER_ATTACHMENTS,
   type AgentComposerControllerProps as AgentComposerPresentation,
   type AgentComposerPromptController,
 } from "./useAgentComposerState";
+
+export interface AgentComposerInteractionsInput {
+  readonly gateway: AgentQuestionGateway | null;
+  readonly thread: AgentThreadView | null;
+}
 
 export interface AgentComposerControllerProps {
   readonly followUpBehavior?: AgentFollowUpBehavior;
@@ -26,6 +37,9 @@ export interface AgentComposerControllerProps {
   readonly submit: AgentComposerPromptController["submit"];
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
+  readonly banners?: ReactNode;
+  readonly renderDrawerEnd?: (context: AgentComposerDrawerContext) => ReactNode;
+  readonly interactions?: AgentComposerInteractionsInput;
 }
 
 export const AgentComposerController = memo(function AgentComposerController({
@@ -40,6 +54,9 @@ export const AgentComposerController = memo(function AgentComposerController({
   providerEnabled,
   submissionBlocked,
   submit,
+  banners,
+  renderDrawerEnd,
+  interactions,
 }: AgentComposerControllerProps) {
   const controlledProps = useAgentComposerPromptState({
     composerProps,
@@ -47,21 +64,38 @@ export const AgentComposerController = memo(function AgentComposerController({
     submissionBlocked,
     submit,
   });
+  const [interaction, setInteraction] = useState<AgentComposerInteraction | null>(null);
+  const owner = interactions === undefined ? null : agentQuestionOwner(interactions.thread);
+  const ownerKey = JSON.stringify(owner);
   const compactContext = (submission: Parameters<typeof submit>[1]): Promise<boolean> =>
     submit("/compact", submission, WITHOUT_COMPOSER_ATTACHMENTS);
   return (
-    <AgentComposer
-      {...controlledProps}
-      followUpBehavior={followUpBehavior}
-      executionServerId={executionServerId}
-      compactionOffer={compactionOffer}
-      modelFavoritesPersistence={modelFavoritesPersistence}
-      onOpenProviderSettings={onOpenProviderSettings}
-      onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-      onCompactContext={compactContext}
-      providerEnabled={providerEnabled}
-      providerManagement={providerManagement}
-    />
+    <>
+      {interactions !== undefined && (
+        <AgentComposerInteractionSource
+          gateway={interactions.gateway}
+          key={ownerKey}
+          onChange={setInteraction}
+          owner={owner}
+          running={interactions.thread?.lifecycle === "running"}
+        />
+      )}
+      <AgentComposer
+        {...controlledProps}
+        interaction={interactions === undefined ? null : interaction}
+        followUpBehavior={followUpBehavior}
+        executionServerId={executionServerId}
+        compactionOffer={compactionOffer}
+        modelFavoritesPersistence={modelFavoritesPersistence}
+        onOpenProviderSettings={onOpenProviderSettings}
+        onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+        onCompactContext={compactContext}
+        providerEnabled={providerEnabled}
+        providerManagement={providerManagement}
+        banners={banners}
+        renderDrawerEnd={renderDrawerEnd}
+      />
+    </>
   );
 }, agentComposerControllerPropsEqual);
 
@@ -72,6 +106,9 @@ function agentComposerControllerPropsEqual(
   const leftProps = left.composerProps;
   const rightProps = right.composerProps;
   return (
+    left.banners === right.banners &&
+    left.renderDrawerEnd === right.renderDrawerEnd &&
+    sameInteractions(left.interactions, right.interactions) &&
     left.followUpBehavior === right.followUpBehavior &&
     left.executionServerId === right.executionServerId &&
     left.compactionOffer?.key === right.compactionOffer?.key &&
@@ -107,6 +144,19 @@ function agentComposerControllerPropsEqual(
     sameComposerMode(leftProps.mode, rightProps.mode) &&
     sameComposerTarget(leftProps.target, rightProps.target) &&
     agentLaunchOptionsEqual(leftProps.launch, rightProps.launch)
+  );
+}
+
+function sameInteractions(
+  left: AgentComposerInteractionsInput | undefined,
+  right: AgentComposerInteractionsInput | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if (left.gateway !== right.gateway) return false;
+  if (left.thread?.lifecycle !== right.thread?.lifecycle) return false;
+  return (
+    JSON.stringify(agentQuestionOwner(left.thread)) ===
+    JSON.stringify(agentQuestionOwner(right.thread))
   );
 }
 

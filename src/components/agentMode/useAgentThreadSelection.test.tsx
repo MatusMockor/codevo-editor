@@ -65,7 +65,45 @@ describe("useAgentThreadSelection", () => {
       owner: current().owner,
       ids: ["agt-1"],
       missingIds: ["agt-3"],
+      ownerKeys: new Map(),
     });
+  });
+
+  it("commits the thread owners captured when each thread was selected", () => {
+    render(
+      ROOT,
+      ["agt-1", "agt-2"],
+      new Map([
+        ["agt-1", "gen-1"],
+        ["agt-2", "gen-1"],
+      ]),
+    );
+    act(() => current().apply("agt-1", "toggle"));
+    render(
+      ROOT,
+      ["agt-1", "agt-2"],
+      new Map([
+        ["agt-1", "gen-3"],
+        ["agt-2", "gen-3"],
+      ]),
+    );
+    act(() => current().apply("agt-2", "toggle"));
+
+    const commit = commitNow();
+    expect(commit.kind).toBe("ready");
+    if (commit.kind !== "ready") return;
+    expect(commit.ownerKeys).toEqual(
+      new Map([
+        ["agt-1", "gen-1"],
+        ["agt-2", "gen-3"],
+      ]),
+    );
+
+    act(() => current().apply("agt-1", "open"));
+    const reopened = commitNow();
+    expect(reopened.kind === "ready" ? reopened.ownerKeys : null).toEqual(
+      new Map([["agt-1", "gen-3"]]),
+    );
   });
 
   it("ignores a gesture aimed at a row the list does not render", () => {
@@ -97,20 +135,28 @@ describe("useAgentThreadSelection", () => {
     return captured as AgentThreadSelection;
   }
 
-  function render(ownerKey: string | null, visibleIds: ReadonlyArray<string>): void {
+  function render(
+    ownerKey: string | null,
+    visibleIds: ReadonlyArray<string>,
+    threadOwners?: ReadonlyMap<string, string>,
+  ): void {
     act(() => {
-      root.render(<Harness ownerKey={ownerKey} visibleIds={visibleIds} />);
+      root.render(
+        <Harness ownerKey={ownerKey} threadOwners={threadOwners} visibleIds={visibleIds} />,
+      );
     });
   }
 
   function Harness({
     ownerKey,
+    threadOwners,
     visibleIds,
   }: {
     readonly ownerKey: string | null;
+    readonly threadOwners?: ReadonlyMap<string, string>;
     readonly visibleIds: ReadonlyArray<string>;
   }) {
-    captured = useAgentThreadSelection(ownerKey, visibleIds);
+    captured = useAgentThreadSelection(ownerKey, visibleIds, threadOwners);
     return null;
   }
 });

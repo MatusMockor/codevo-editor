@@ -118,7 +118,11 @@ mod tests {
                 provider: AgentCliInvocation::ClaudeCode,
                 session_id: SESSION_ID.to_string(),
                 project_root: project.to_string_lossy().into_owned(),
-                repository_root: "/".to_string(),
+                repository_root: std::env::temp_dir()
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
                 before_epoch_ms: 1,
             },
             true,

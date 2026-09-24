@@ -207,10 +207,9 @@ describe("agent workbench remote clone adoption", () => {
     );
 
     expect(host.querySelector('section[aria-label="Choose server project"]')).toBeNull();
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("Server app");
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).not.toContain(
-      "storefront-api",
-    );
+    const scopeTitle = host.querySelector('button[aria-label="New thread"]')?.getAttribute("title");
+    expect(scopeTitle).toContain("Server app");
+    expect(scopeTitle).not.toContain("storefront-api");
     const cloneRow = host.querySelector('[aria-label="Repository clone"]');
     expect(cloneRow?.textContent).toContain("storefront-api");
     expect(

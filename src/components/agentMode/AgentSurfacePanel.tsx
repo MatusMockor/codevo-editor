@@ -1,28 +1,41 @@
 import type { AgentSurfaceHistoryProps } from "./AgentSurfaceHistory";
-import { FolderTree, GitCompare, History, PanelLeft, SquareTerminal, X } from "lucide-react";
-import {
-  Suspense,
-  lazy,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type PointerEvent,
-  type ReactNode,
-} from "react";
+import { PanelLeft } from "lucide-react";
+import { Suspense, lazy, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
-import type { AgentSurfaceProjectDiffProps } from "./AgentSurfaceProjectDiff";
+import {
+  DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
+  MIN_AGENT_RIGHT_PANEL_WIDTH,
+  type AgentSurfaceKind,
+  type AgentWorkbenchLayout,
+} from "../../domain/agentWorkbenchLayout";
+import {
+  isAgentRemoteSurfaceKind,
+  type AgentRemoteSurfaceKind,
+} from "../../domain/agentSurfaceActivation";
+import { TopBar } from "../../ui/shell/TopBar";
+import {
+  AGENT_RIGHT_PANEL_ADD_MENU_ORDER,
+  AGENT_RIGHT_PANEL_SURFACE_CATALOG,
+} from "./rightPanel/agentRightPanelSurfaceCatalog";
+import {
+  agentRightPanelTabEntries,
+  type AgentRightPanelEditorDocuments,
+  type AgentTerminalSessionCommand,
+} from "./rightPanel/agentRightPanelTabEntries";
+import { useAgentTerminalStrip } from "./rightPanel/useAgentTerminalStrip";
+import { AgentRightPanelTabStrip } from "./rightPanel/AgentRightPanelTabStrip";
+import {
+  AgentRightPanelSurfaceBody,
+  type AgentSurfaceTerminalPanelProps,
+} from "./rightPanel/AgentRightPanelSurfaceBody";
+import { useAgentPanelKeyboardResize } from "./agentSurfaceResize";
 import type { AgentSurfaceDiffProps } from "./AgentSurfaceDiff";
 import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
-import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
-import type { AgentSurfaceTerminalProps } from "./AgentSurfaceTerminal";
-import {
-  agentSurfaceBlockedReason,
-  isRemoteAgentSurfaceThread,
-  type AgentSurfaceScope,
-} from "./agentSurfacePolicy";
+import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
+import { isRemoteAgentSurfaceThread, type AgentSurfaceScope } from "./agentSurfacePolicy";
 import {
   agentSurfaceEditorSlot,
+  agentSurfaceServes,
   effectiveAgentSurface,
   servedAgentSurfaces,
   type AgentSurfaceActivation,
@@ -48,95 +61,64 @@ const RemoteTerminalPanel = lazy(() =>
   })),
 );
 
-export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
-
-const LazyAgentSurfaceHistory = lazy(() =>
-  import("./AgentSurfaceHistory").then((module) => ({ default: module.AgentSurfaceHistory })),
-);
-
-const LazyAgentSurfaceProjectDiff = lazy(() =>
-  import("./AgentSurfaceProjectDiff").then((module) => ({
-    default: module.AgentSurfaceProjectDiff,
-  })),
-);
-
-const LazyAgentSurfaceDiff = lazy(() =>
-  import("./AgentSurfaceDiff").then((module) => ({ default: module.AgentSurfaceDiff })),
-);
-const LazyAgentSurfaceTerminal = lazy(() =>
-  import("./AgentSurfaceTerminal").then((module) => ({ default: module.AgentSurfaceTerminal })),
-);
+export { AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE } from "./rightPanel/AgentRightPanelSurfaceBody";
+export type { AgentSurfaceTerminalPanelProps } from "./rightPanel/AgentRightPanelSurfaceBody";
 
 export type AgentSurfaceDiffPanelProps = Omit<AgentSurfaceDiffProps, "thread">;
-export type AgentSurfaceTerminalPanelProps = Omit<
-  AgentSurfaceTerminalProps,
-  "isActive" | "layoutRevision" | "thread"
->;
+
+export type AgentSurfacePanelLayout = Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface"> &
+  Partial<
+    Pick<AgentWorkbenchLayout, "rightPanelWidth" | "rightPanelMaximized" | "rail" | "railWidth">
+  >;
 
 export interface AgentSurfacePanelProps {
   readonly unavailable?: ReactNode;
   readonly remote?: boolean;
   readonly remoteSurface?: AgentRemoteSurface | null;
   readonly remoteTerminalTheme?: AgentSurfaceTerminalPanelProps["terminalTheme"];
-  readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
+  readonly layout: AgentSurfacePanelLayout;
   readonly thread: AgentThreadView | null;
   readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
   readonly layoutControls: ReactNode;
+  readonly leadingControls?: ReactNode;
   readonly hidden: boolean;
   readonly chooserAutoFocus: boolean;
   readonly fileTree: AgentSurfaceFileTreeProps | null;
-  readonly diff: AgentSurfaceDiffPanelProps | null;
-  readonly projectDiff?: AgentSurfaceProjectDiffProps | null;
+  readonly remoteMonacoTheme?: AgentSurfaceDiffPanelProps["monacoTheme"];
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   readonly history?: AgentSurfaceHistoryProps | null;
+  readonly agentsPanel?: ReactNode;
+  readonly editorDocuments?: AgentRightPanelEditorDocuments | null;
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
   onTrustWorkspace?(): void;
   onResizeStart?(event: PointerEvent<HTMLDivElement>): void;
-}
-
-interface SurfaceTab {
-  readonly kind: AgentSurfaceKind;
-  readonly label: string;
-  readonly icon: typeof FolderTree;
-}
-
-const TABS: ReadonlyArray<SurfaceTab> = [
-  { kind: "files", label: "Files", icon: FolderTree },
-  { kind: "diff", label: "Diff", icon: GitCompare },
-  { kind: "terminal", label: "Terminal", icon: SquareTerminal },
-  { kind: "history", label: "History", icon: History },
-];
-
-function nextAgentSurfaceTabIndex(key: string, count: number, current: number): number | null {
-  if (count === 0) return null;
-  if (key === "ArrowRight") return (current + 1) % count;
-  if (key === "ArrowLeft") return (current - 1 + count) % count;
-  if (key === "Home") return 0;
-  if (key === "End") return count - 1;
-  return null;
+  readonly onResizeWidth?: (width: number) => void;
 }
 
 export function AgentSurfacePanel({
+  agentsPanel = null,
+  editorDocuments = null,
   unavailable = null,
   remote = false,
   remoteSurface = null,
   remoteTerminalTheme,
   chooserAutoFocus,
-  diff,
-  projectDiff = null,
+  remoteMonacoTheme,
   fileTree,
   hidden,
   history = null,
   layout,
   layoutControls,
+  leadingControls = null,
   onActivateSurface,
   onCloseSurfaceTab,
   onOpenSurface,
   onResizeStart,
+  onResizeWidth,
   onTrustWorkspace,
   scope,
   terminal,
@@ -144,6 +126,19 @@ export function AgentSurfacePanel({
   workspaceRoot,
   workspaceTrusted,
 }: AgentSurfacePanelProps) {
+  const maximized = layout.rightPanelMaximized === true;
+  const panelRef = useRef<HTMLElement>(null);
+  const resize = useAgentPanelKeyboardResize({
+    disabled: maximized,
+    onCommit: onResizeWidth,
+    panelRef,
+    rail: layout.rail,
+    railWidth: layout.railWidth,
+    savedWidth: layout.rightPanelWidth ?? DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
+  });
+  const terminalStrip = useAgentTerminalStrip();
+  const onTerminalSessionCommand = (command: AgentTerminalSessionCommand): void =>
+    terminalStrip.command(command, () => onCloseSurfaceTab("terminal"));
   const server = remote || isRemoteAgentSurfaceThread(thread);
   const activation: AgentSurfaceActivation = {
     remote: server,
@@ -161,20 +156,8 @@ export function AgentSurfacePanel({
   const treeShown = filesActive && (treeVisible || !documentOpen);
   const treeToggleShown = filesActive && documentOpen;
   useWorkbenchFrameTreeReport(treeShown);
-  const tabRefs = useRef(new Map<AgentSurfaceKind, HTMLButtonElement | null>());
   const chooserShown = activeSurface === null;
   const terminalLayoutRevision = agentSurfaceLayoutRevision(openSurfaces, hidden);
-
-  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
-    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    const next = nextAgentSurfaceTabIndex(event.key, openSurfaces.length, index);
-    if (next === null) return;
-    const surface = openSurfaces[next];
-    if (surface === undefined) return;
-    event.preventDefault();
-    onActivateSurface(surface);
-    tabRefs.current.get(surface)?.focus();
-  };
 
   return (
     <aside
@@ -183,63 +166,54 @@ export function AgentSurfacePanel({
       data-editor-slot={editorSlot}
       data-surface={activeSurface ?? "empty"}
       data-tree={treeShown ? "visible" : "hidden"}
+      ref={panelRef}
     >
       <div
+        aria-disabled={maximized || undefined}
         aria-label="Resize right panel"
         aria-orientation="vertical"
+        aria-valuemax={resize.valueMax}
+        aria-valuemin={MIN_AGENT_RIGHT_PANEL_WIDTH}
+        aria-valuenow={resize.valueNow}
         className="agent-surface__resize"
+        onBlur={resize.onBlur}
+        onFocus={resize.onFocus}
+        onKeyDown={resize.onKeyDown}
+        onKeyUp={resize.onKeyUp}
         onPointerDown={onResizeStart}
         role="separator"
+        tabIndex={maximized ? -1 : 0}
       />
-      <header className="agent-surface__head" data-agent-surface-head data-tauri-drag-region="deep">
-        {openSurfaces.length > 0 && (
-          <div aria-label="Surfaces" className="agent-surface__tabs" role="tablist">
-            {openSurfaces.map((kind, index) => {
-              const tab = TABS.find((candidate) => candidate.kind === kind) ?? TABS[0];
-              const Icon = tab.icon;
-              const active = activeSurface === kind;
-              return (
-                <span
-                  className={
-                    active
-                      ? "agent-surface__tabitem agent-surface__tabitem--active"
-                      : "agent-surface__tabitem"
-                  }
-                  key={kind}
-                  role="presentation"
-                >
-                  <button
-                    aria-controls={`agent-surface-panel-${kind}`}
-                    aria-selected={active}
-                    className="agent-surface__tab"
-                    id={`agent-surface-tab-${kind}`}
-                    onClick={() => onActivateSurface(kind)}
-                    onKeyDown={(event) => onTabKeyDown(event, index)}
-                    ref={(node) => {
-                      tabRefs.current.set(kind, node);
-                    }}
-                    role="tab"
-                    tabIndex={active ? 0 : -1}
-                    type="button"
-                  >
-                    <Icon aria-hidden="true" size={14} />
-                    <span>{tab.label}</span>
-                  </button>
-                  <button
-                    aria-controls={`agent-surface-panel-${kind}`}
-                    aria-label={`Close ${tab.label} tab`}
-                    className="agent-surface__tab-close"
-                    onClick={() => onCloseSurfaceTab(kind)}
-                    title={`Close ${tab.label}`}
-                    type="button"
-                  >
-                    <X aria-hidden="true" size={14} />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        )}
+      <TopBar
+        className="agent-surface__head"
+        data-agent-surface-head=""
+        label="Right panel"
+        leading={leadingControls}
+        region="panel"
+        trailing={layoutControls}
+        windowEdge={maximized}
+      >
+        <AgentRightPanelTabStrip
+          addableSurfaces={AGENT_RIGHT_PANEL_ADD_MENU_ORDER.filter((kind) =>
+            agentSurfaceServes(activation, kind),
+          )}
+          editorDocuments={editorDocuments}
+          entries={agentRightPanelTabEntries({
+            openSurfaces,
+            activeSurface,
+            terminal: terminalStrip.state,
+            editorDocuments,
+          })}
+          onActivateSurface={onActivateSurface}
+          onAddSurface={(kind) =>
+            kind === "terminal" && openSurfaces.includes("terminal")
+              ? onTerminalSessionCommand({ kind: "create" })
+              : onOpenSurface(kind)
+          }
+          onCloseSurface={onCloseSurfaceTab}
+          onTerminalSessionCommand={onTerminalSessionCommand}
+          tabPanelsRendered={unavailable === null}
+        />
         {editorSlot === "open" && <WorkbenchEditorTabsPortalTarget />}
         {activeSurface !== "files" && <span className="agent-session__spacer" />}
         {treeToggleShown && (
@@ -253,8 +227,7 @@ export function AgentSurfacePanel({
             <PanelLeft aria-hidden="true" size={14} />
           </button>
         )}
-        <div className="agent-surface__layout-controls">{layoutControls}</div>
-      </header>
+      </TopBar>
       <div className="agent-surface__body" data-agent-surface-body>
         {unavailable}
         {unavailable === null && chooserShown && (
@@ -273,7 +246,7 @@ export function AgentSurfacePanel({
         {unavailable === null &&
           openSurfaces.map((kind) => (
             <div
-              aria-labelledby={`agent-surface-tab-${kind}`}
+              aria-label={AGENT_RIGHT_PANEL_SURFACE_CATALOG[kind].label}
               className="agent-surface__tabpanel"
               data-surface-panel={kind}
               hidden={activeSurface !== kind}
@@ -281,7 +254,7 @@ export function AgentSurfacePanel({
               key={kind}
               role="tabpanel"
             >
-              {server && kind !== "diff" && remoteSurface?.gateway ? (
+              {server && isAgentRemoteSurfaceKind(kind) && remoteSurface?.gateway ? (
                 <Suspense fallback={<p className="agent-note">Opening server panel…</p>}>
                   <RemoteSurfaceBody
                     key={JSON.stringify(remoteSurface.scope)}
@@ -289,20 +262,22 @@ export function AgentSurfacePanel({
                     surface={remoteSurface}
                     active={!hidden && activeSurface === kind}
                     terminalTheme={remoteTerminalTheme}
-                    monacoTheme={diff?.monacoTheme}
+                    monacoTheme={remoteMonacoTheme}
                   />
                 </Suspense>
               ) : (
-                <SurfaceBody
-                  diff={diff}
-                  projectDiff={projectDiff}
-                  scope={scope}
+                <AgentRightPanelSurfaceBody
+                  active={!hidden && activeSurface === kind}
+                  agentsPanel={agentsPanel}
                   fileTree={fileTree}
                   history={history}
-                  historyActive={!hidden && activeSurface === "history"}
                   kind={kind}
-                  terminal={terminal}
-                  terminalActive={!hidden && activeSurface === "terminal"}
+                  scope={scope}
+                  terminal={
+                    terminal === null
+                      ? null
+                      : { ...terminal, externalStrip: terminalStrip.externalStrip }
+                  }
                   terminalLayoutRevision={terminalLayoutRevision}
                   thread={thread}
                   treeShown={treeShown}
@@ -317,103 +292,12 @@ export function AgentSurfacePanel({
   );
 }
 
-interface SurfaceBodyProps {
-  readonly scope: AgentSurfaceScope;
-  readonly history: AgentSurfaceHistoryProps | null;
-  readonly historyActive: boolean;
-  readonly kind: AgentSurfaceKind;
-  readonly thread: AgentThreadView | null;
-  readonly workspaceRoot: string | null;
-  readonly workspaceTrusted: boolean;
-  readonly treeShown: boolean;
-  readonly fileTree: AgentSurfaceFileTreeProps | null;
-  readonly diff: AgentSurfaceDiffPanelProps | null;
-  readonly projectDiff?: AgentSurfaceProjectDiffProps | null;
-  readonly terminal: AgentSurfaceTerminalPanelProps | null;
-  readonly terminalActive: boolean;
-  readonly terminalLayoutRevision: number;
-}
-
-function SurfaceBody({
-  scope,
-  projectDiff,
-  history,
-  historyActive,
-  diff,
-  fileTree,
-  kind,
-  terminal,
-  terminalActive,
-  terminalLayoutRevision,
-  thread,
-  treeShown,
-  workspaceRoot,
-  workspaceTrusted,
-}: SurfaceBodyProps) {
-  if (kind === "files") {
-    return (
-      <div className="agent-surface__files">
-        {treeShown && fileTree !== null && <AgentSurfaceFileTree {...fileTree} />}
-        <div
-          className="agent-surface__editor-slot"
-          {...{ [AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE]: "" }}
-        />
-      </div>
-    );
-  }
-
-  if (kind === "history") {
-    if (!historyActive) return null;
-    if (history === null) return <p className="agent-note">Git history is unavailable.</p>;
-    return (
-      <Suspense fallback={<p className="agent-note">Loading Git history…</p>}>
-        <LazyAgentSurfaceHistory {...history} />
-      </Suspense>
-    );
-  }
-
-  const reason = agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot, scope);
-  if (reason !== null) {
-    return <p className="agent-note agent-note--warning">{reason}</p>;
-  }
-
-  if (kind === "diff") {
-    if (thread === null) {
-      if (projectDiff === null || projectDiff === undefined)
-        return <p className="agent-note">Project changes are unavailable.</p>;
-      return (
-        <Suspense fallback={<p className="agent-note">Loading project changes…</p>}>
-          <LazyAgentSurfaceProjectDiff {...projectDiff} />
-        </Suspense>
-      );
-    }
-    if (diff === null) return null;
-    return (
-      <Suspense fallback={<p className="agent-note">Loading the diff surface…</p>}>
-        <LazyAgentSurfaceDiff {...diff} thread={thread} />
-      </Suspense>
-    );
-  }
-
-  if (terminal === null) return null;
-  return (
-    <Suspense fallback={<p className="agent-note">Loading the terminal…</p>}>
-      <LazyAgentSurfaceTerminal
-        {...terminal}
-        isActive={terminalActive}
-        layoutRevision={terminalLayoutRevision}
-        thread={thread}
-      />
-    </Suspense>
-  );
-}
-
 function agentSurfaceLayoutRevision(
   openSurfaces: ReadonlyArray<AgentSurfaceKind>,
   hidden: boolean,
 ): number {
   const openMask = openSurfaces.reduce((mask, surface) => mask | agentSurfaceMask(surface), 0);
-  return hidden ? openMask | 16 : openMask;
+  return hidden ? openMask | 256 : openMask;
 }
 
 function agentSurfaceMask(surface: AgentSurfaceKind): number {
@@ -426,6 +310,14 @@ function agentSurfaceMask(surface: AgentSurfaceKind): number {
       return 4;
     case "history":
       return 8;
+    case "git":
+      return 16;
+    case "scripts":
+      return 32;
+    case "pullRequest":
+      return 64;
+    case "agents":
+      return 128;
   }
 }
 
@@ -436,7 +328,7 @@ function RemoteSurfaceBody({
   terminalTheme,
   monacoTheme,
 }: {
-  readonly kind: "files" | "history" | "terminal";
+  readonly kind: AgentRemoteSurfaceKind;
   readonly surface: AgentRemoteSurface;
   readonly active: boolean;
   readonly terminalTheme: AgentSurfaceTerminalPanelProps["terminalTheme"] | undefined;

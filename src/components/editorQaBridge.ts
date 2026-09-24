@@ -6,6 +6,12 @@ import {
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  isEligibleWorkspaceRoot,
+  UNKNOWN_WORKSPACE_HOME,
+  type WorkspaceHomeReference,
+} from "../domain/workspaceRootEligibility";
+import { resolveTauriWorkspaceHome } from "../infrastructure/tauriHomeDirectory";
 import type {
   BladeCompletion,
   LatteCompletion,
@@ -64,6 +70,7 @@ interface EditorQaBridgeDependencies {
   getWorkspaceRoot(): string | null;
   openWorkspaceFile?(path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean>;
   openWorkspaceRoot?(path: string): Promise<boolean>;
+  resolveWorkspaceHome?(): Promise<WorkspaceHomeReference>;
   provideBladeDefinition(
     source: string,
     offset: number,
@@ -225,6 +232,11 @@ async function openWorkspaceRoot(
     return false;
   }
 
+  const home = await qaWorkspaceHome(dependencies);
+  if (!isEligibleWorkspaceRoot(requestedPath, home)) {
+    return false;
+  }
+
   let requestSettled = false;
   let requestAccepted = false;
   void dependencies.openWorkspaceRoot(requestedPath).then(
@@ -253,6 +265,18 @@ async function openWorkspaceRoot(
   }
 
   return false;
+}
+
+async function qaWorkspaceHome(
+  dependencies: EditorQaBridgeDependencies,
+): Promise<WorkspaceHomeReference> {
+  const resolveWorkspaceHome = dependencies.resolveWorkspaceHome ?? resolveTauriWorkspaceHome;
+
+  try {
+    return await resolveWorkspaceHome();
+  } catch {
+    return UNKNOWN_WORKSPACE_HOME;
+  }
 }
 
 async function providerCompletionItems(

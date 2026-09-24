@@ -65,7 +65,7 @@ describe("AgentBackgroundActivity agents indicator", () => {
     );
 
     expect(host.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(0);
-    const action = host.querySelector<HTMLButtonElement>(".agent-background-row__action");
+    const action = host.querySelector<HTMLButtonElement>(".cv-live-row__action");
     expect(action?.getAttribute("aria-label")).toBe("1 agent working. Open Agents panel");
     act(() => action?.click());
     expect(onOpenAgents).toHaveBeenCalledTimes(1);

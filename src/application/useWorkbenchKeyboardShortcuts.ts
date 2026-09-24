@@ -19,6 +19,7 @@ import {
   type CommandRegistry,
 } from "./commandRegistry";
 import { editorTextFocusOwner } from "./editorTextFocus";
+import { commandActiveForEditorFocus, keymapCommandIdsForEditorFocus } from "./shortcutFocusScope";
 import {
   dispatchResolvedWorkbenchShortcutCommands,
   dispatchWorkbenchShortcutCommand,
@@ -113,7 +114,8 @@ export function useWorkbenchKeyboardShortcuts({
           keymapPlatform,
         );
         const commandIsInContext = (commandId: KeymapCommandId) =>
-          !EDITOR_TEXT_FOCUS_COMMAND_IDS.has(commandId) || chordContextEditorOwner !== null;
+          (!EDITOR_TEXT_FOCUS_COMMAND_IDS.has(commandId) || chordContextEditorOwner !== null) &&
+          commandActiveForEditorFocus(commandId, chordContextEditorOwner !== null);
         return {
           exact: lookup.exact.filter(commandIsInContext),
           prefix: lookup.prefix.filter(commandIsInContext),
@@ -258,6 +260,7 @@ export function useWorkbenchKeyboardShortcuts({
       if (
         dispatchWorkbenchShortcutCommand({
           commandContext,
+          commandIds: keymapCommandIdsForEditorFocus(editorOwner !== null),
           commandRegistry,
           event,
           keymap,

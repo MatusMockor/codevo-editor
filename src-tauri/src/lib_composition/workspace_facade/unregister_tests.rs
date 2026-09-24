@@ -28,7 +28,6 @@ fn exact_teardown_closes_only_the_requested_registered_workspace() {
         &registry,
         &registration_a.receipt.workspace_id,
         registration_a.receipt.admission_token,
-        &registration_a.descriptor.selected_root_path,
         &registration_a.descriptor.canonical_root_path,
         |descriptor| {
             cleaned.push(descriptor.workspace_id.clone());
@@ -65,7 +64,6 @@ fn stale_first_generation_teardown_cannot_touch_reopened_workspace() {
         &registry,
         &first_a.receipt.workspace_id,
         first_a.receipt.admission_token,
-        &first_a.descriptor.selected_root_path,
         &first_a.descriptor.canonical_root_path,
         |_| Vec::new(),
     )
@@ -84,7 +82,6 @@ fn stale_first_generation_teardown_cannot_touch_reopened_workspace() {
         &registry,
         &first_a.receipt.workspace_id,
         first_a.receipt.admission_token,
-        &first_a.descriptor.selected_root_path,
         &first_a.descriptor.canonical_root_path,
         move |_| {
             cleanup_called_for_request.store(true, Ordering::SeqCst);
@@ -92,7 +89,10 @@ fn stale_first_generation_teardown_cannot_touch_reopened_workspace() {
         },
     );
 
-    assert!(stale.is_err());
+    assert!(matches!(
+        stale,
+        Ok(ExactWorkspaceTeardownOutcome::UnknownWorkspace)
+    ));
     assert!(!cleanup_called.load(Ordering::SeqCst));
     assert_eq!(
         registry
@@ -130,7 +130,6 @@ fn delayed_exact_teardown_fences_same_root_replacement_without_blocking_other_ro
             &teardown_registry,
             &first_a.receipt.workspace_id,
             first_a.receipt.admission_token,
-            &first_a.descriptor.selected_root_path,
             &first_a.descriptor.canonical_root_path,
             |_| {
                 started_tx.send(()).expect("publish cleanup start");
@@ -171,50 +170,68 @@ fn delayed_exact_teardown_fences_same_root_replacement_without_blocking_other_ro
     fs::remove_dir_all(root_b).expect("cleanup B");
 }
 
+#[cfg(unix)]
 #[test]
-fn replaced_admission_for_the_same_identity_rejects_the_predecessor() {
+fn closing_one_admission_of_a_shared_identity_retains_the_other_owner() {
     let registry = WorkspaceRegistry::new();
-    let root = temporary_workspace("exact-admission-replacement");
+    let root = temporary_workspace("exact-admission-shared");
+    let alias = root.with_extension("tab-alias");
+    std::os::unix::fs::symlink(&root, &alias).expect("tab alias");
     let first = registry
+        .register_with_receipt(&alias)
+        .expect("register alias tab");
+    let second = registry
         .register_with_receipt(&root)
-        .expect("register first admission");
-    let replacement = registry
-        .register_with_receipt(&root)
-        .expect("register replacement admission");
-    assert_eq!(first.receipt.workspace_id, replacement.receipt.workspace_id);
-    let cleanup_called = Arc::new(AtomicBool::new(false));
-    let cleanup_called_for_request = Arc::clone(&cleanup_called);
+        .expect("register canonical tab");
+    assert_eq!(first.receipt.workspace_id, second.receipt.workspace_id);
+    let cleanup_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let first_cleanup = Arc::clone(&cleanup_calls);
 
-    let stale = teardown_exact_workspace(
+    let retained = teardown_exact_workspace(
         &registry,
         &first.receipt.workspace_id,
         first.receipt.admission_token,
-        &first.descriptor.selected_root_path,
         &first.descriptor.canonical_root_path,
         move |_| {
-            cleanup_called_for_request.store(true, Ordering::SeqCst);
+            first_cleanup.fetch_add(1, Ordering::SeqCst);
             Vec::new()
         },
+    )
+    .expect("release first admission");
+    let repeated = teardown_exact_workspace(
+        &registry,
+        &first.receipt.workspace_id,
+        first.receipt.admission_token,
+        &first.descriptor.canonical_root_path,
+        |_| Vec::new(),
     );
 
-    assert!(stale.is_err());
-    assert!(!cleanup_called.load(Ordering::SeqCst));
+    assert!(matches!(
+        retained,
+        ExactWorkspaceTeardownOutcome::RetainedByOtherOwners
+    ));
     assert_eq!(
-        registry
-            .descriptor(&replacement.receipt.workspace_id)
-            .expect("replacement remains current"),
-        replacement.descriptor
+        repeated.map(|_| ()).map_err(|error| error.kind()),
+        Err(std::io::ErrorKind::PermissionDenied)
     );
+    assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
+    assert!(registry.descriptor(&second.receipt.workspace_id).is_ok());
+    let second_cleanup = Arc::clone(&cleanup_calls);
     let closed = teardown_exact_workspace(
         &registry,
-        &replacement.receipt.workspace_id,
-        replacement.receipt.admission_token,
-        &replacement.descriptor.selected_root_path,
-        &replacement.descriptor.canonical_root_path,
-        |_| Vec::new(),
+        &second.receipt.workspace_id,
+        second.receipt.admission_token,
+        &second.descriptor.canonical_root_path,
+        move |_| {
+            second_cleanup.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        },
     )
-    .expect("close replacement");
+    .expect("close second admission");
     assert!(matches!(closed, ExactWorkspaceTeardownOutcome::Closed));
+    assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
+    assert!(registry.descriptor(&second.receipt.workspace_id).is_err());
+    fs::remove_file(alias).expect("cleanup alias");
     fs::remove_dir_all(root).expect("cleanup root");
 }
 
@@ -233,7 +250,6 @@ fn exact_teardown_rejects_descriptor_path_mismatch_before_cleanup() {
         &registry,
         &registration.receipt.workspace_id,
         registration.receipt.admission_token,
-        &registration.descriptor.selected_root_path,
         &foreign_root,
         move |_| {
             cleanup_called_for_request.store(true, Ordering::SeqCst);
@@ -274,7 +290,6 @@ fn exact_teardown_accepts_the_registered_alias_and_canonical_descriptor_pair() {
         &registry,
         &registration.receipt.workspace_id,
         registration.receipt.admission_token,
-        &alias,
         &registration.descriptor.canonical_root_path,
         |_| Vec::new(),
     )
@@ -300,7 +315,6 @@ fn incomplete_exact_teardown_preserves_identity_and_can_be_retried() {
         &registry,
         &registration.receipt.workspace_id,
         registration.receipt.admission_token,
-        &registration.descriptor.selected_root_path,
         &registration.descriptor.canonical_root_path,
         |_| vec!["terminal cleanup incomplete".to_string()],
     )
@@ -310,7 +324,12 @@ fn incomplete_exact_teardown_preserves_identity_and_can_be_retried() {
         ExactWorkspaceTeardownOutcome::Incomplete(errors) => {
             assert_eq!(errors, vec!["terminal cleanup incomplete"]);
         }
-        ExactWorkspaceTeardownOutcome::Closed => panic!("cleanup must remain incomplete"),
+        ExactWorkspaceTeardownOutcome::Closed
+        | ExactWorkspaceTeardownOutcome::UnknownWorkspace
+        | ExactWorkspaceTeardownOutcome::Releasing
+        | ExactWorkspaceTeardownOutcome::RetainedByOtherOwners => {
+            panic!("cleanup must remain incomplete")
+        }
     }
     assert_eq!(
         registry
@@ -323,7 +342,6 @@ fn incomplete_exact_teardown_preserves_identity_and_can_be_retried() {
         &registry,
         &registration.receipt.workspace_id,
         registration.receipt.admission_token,
-        &registration.descriptor.selected_root_path,
         &registration.descriptor.canonical_root_path,
         |_| Vec::new(),
     )
@@ -348,7 +366,6 @@ fn panicking_exact_cleanup_finalizes_the_reserved_identity() {
             &registry,
             &registration.receipt.workspace_id,
             registration.receipt.admission_token,
-            &registration.descriptor.selected_root_path,
             &registration.descriptor.canonical_root_path,
             |_| panic!("destructive cleanup panic"),
         );
@@ -374,7 +391,6 @@ fn registered_workspace_teardown_executes_each_collaborator_once_in_owned_order(
         &registry,
         &registration.receipt.workspace_id,
         registration.receipt.admission_token,
-        &registration.descriptor.selected_root_path,
         &registration.descriptor.canonical_root_path,
         |_| {
             execute_registered_workspace_teardown(|step| {
@@ -406,7 +422,6 @@ fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_hist
         &registry,
         &registration.receipt.workspace_id,
         registration.receipt.admission_token,
-        &registration.descriptor.selected_root_path,
         &registration.descriptor.canonical_root_path,
         |_| {
             execute_registered_workspace_teardown(|step| {
@@ -437,7 +452,12 @@ fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_hist
                 vec!["document cleanup failed", "terminal cleanup failed"]
             );
         }
-        ExactWorkspaceTeardownOutcome::Closed => panic!("mixed errors must remain incomplete"),
+        ExactWorkspaceTeardownOutcome::Closed
+        | ExactWorkspaceTeardownOutcome::UnknownWorkspace
+        | ExactWorkspaceTeardownOutcome::Releasing
+        | ExactWorkspaceTeardownOutcome::RetainedByOtherOwners => {
+            panic!("mixed errors must remain incomplete")
+        }
     }
     assert_eq!(
         steps,

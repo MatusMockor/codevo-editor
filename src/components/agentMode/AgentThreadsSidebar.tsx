@@ -9,17 +9,18 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
-import { PanelLeftClose, X } from "lucide-react";
-import { createPortal } from "react-dom";
+import { PanelLeftClose } from "lucide-react";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import type { RemoteAddProjectPendingClone } from "../../application/useRemoteAddProject";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
-import type {
-  AgentThreadBulkAction,
-  AgentThreadBulkCommand,
+import {
+  agentThreadBulkOwnerKey,
+  type AgentThreadBulkAction,
+  type AgentThreadBulkCommand,
 } from "../../domain/agentThreadBulkAction";
 import { detectKeymapPlatform } from "../../domain/keymap";
 import {
@@ -27,40 +28,68 @@ import {
   type ListSelectionModifiers,
   type ListSelectionOwner,
 } from "../../domain/listSelection";
+import { IconButton } from "../../ui/foundation/IconButton";
+import { TopBar } from "../../ui/shell/TopBar";
+import { COLLAPSE_SIDEBAR_LABEL } from "./AgentSidebarReveal";
+import {
+  agentControlTooltip,
+  defaultAgentPanelLayoutShortcuts,
+} from "./agentThreadHeaderPresentation";
 import { AgentRailCloneRow } from "./remoteAddProject/AgentRailCloneRow";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
-import { AgentUsagePanel } from "./AgentUsagePanel";
+import { AgentRailUsagePopover } from "./AgentRailUsagePopover";
+import { focusUsageSuccessor } from "./agentRailUsageFocus";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
+import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
+import {
+  agentRailFilterKey,
+  agentRailFilterLabel,
+  agentThreadsInFilter,
+  type AgentRailFilter,
+} from "./agentRailFilter";
 import { AgentThreadList } from "./AgentThreadList";
+import {
+  focusRow,
+  isThreadRow,
+  jumpLabelsFor,
+  nextThreadIndex,
+  rovingThreadId,
+} from "./agentThreadListNavigation";
+import "./agentSidebar.css";
 import { AgentThreadSelectionBar } from "./AgentThreadSelectionBar";
 import { useAgentThreadSelection } from "./useAgentThreadSelection";
-import { AgentThreadSearchResults } from "./AgentThreadSearchResults";
+import {
+  AgentThreadSearchResults,
+  type AgentThreadSearchResultRow,
+} from "./AgentThreadSearchResults";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import {
   ARCHIVED_PAGE_COUNT,
-  agentJumpSlots,
   agentRailEmptyState,
   agentRailProjectLabels,
+  agentRowProjectLabel,
   agentRailSections,
   agentRailViews,
   agentThreadRevealForMatch,
-  type AgentProjectMenuCommand,
-  type AgentProjectMenuTarget,
   type AgentRailScope,
   type AgentRailScopeEntry,
-  type AgentRailSections,
   type AgentThreadMenuCommand,
   type AgentThreadRevealRequest,
 } from "./agentSidebarPresentation";
+import type {
+  AgentProjectMenuCommand,
+  AgentProjectMenuTarget,
+} from "./agentProjectMenuPresentation";
 
 export const SEARCH_LISTBOX_ID = "agent-rail-search-results";
 export const SEARCH_OPTION_PREFIX = "agent-rail-search-result-";
 const EMPTY_JUMP_LABELS: ReadonlyMap<string, string> = new Map();
 const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const EMPTY_SEARCH_ROWS: ReadonlyMap<string, AgentThreadSearchResultRow> = new Map();
 const NO_BULK_COMMAND: (command: AgentThreadBulkCommand) => void = () => undefined;
 const MAX_AGENT_RAIL_FACTS_REQUESTS = 8;
 export interface AgentThreadsSidebarProps {
@@ -85,6 +114,8 @@ export interface AgentThreadsSidebarProps {
   onOpenProviderSettings(): void;
   onOpenSourceControl(): void;
   onCollapseSidebar?(): void;
+  readonly collapseShortcut?: string | null;
+  readonly footerActivity?: ReactNode;
   onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
   onChangeScope(scope: AgentRailScope): void;
@@ -92,8 +123,9 @@ export interface AgentThreadsSidebarProps {
   onThreadBulkCommand?(command: AgentThreadBulkCommand): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onAddProject(): void;
-  onTrustProject(projectRootKey: string): void;
-  onReleaseProject(projectRootKey: string): void;
+  readonly railFilter: AgentRailFilter;
+  readonly pendingInteractions?: ReadonlyMap<string, AgentPendingInteraction>;
+  onChangeFilter(filter: AgentRailFilter): void;
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
@@ -105,8 +137,11 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   groups,
   onAddProject,
   onCancelPendingClone,
+  onChangeFilter,
   onChangeScope,
   onCollapseSidebar,
+  collapseShortcut = null,
+  footerActivity = null,
   onDismissPendingClone,
   onNewThread,
   onProjectCommand,
@@ -117,13 +152,13 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   providerManagement,
   onOpenProviderSettings,
   onOpenSourceControl,
-  onReleaseProject,
   onSelectThread,
   onThreadBulkCommand,
   onThreadMenuCommand,
   onTogglePin,
-  onTrustProject,
   overflowRootPaths,
+  pendingInteractions,
+  railFilter,
   scope,
   scopeEntries,
   search,
@@ -131,6 +166,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   turnLog = null,
 }: AgentThreadsSidebarProps) {
   const [archivedExpanded, setArchivedExpanded] = useState(false);
+  const [settledExpanded, setSettledExpanded] = useState(false);
+  const [snoozedExpanded, setSnoozedExpanded] = useState(false);
   const [archivedShown, setArchivedShown] = useState(ARCHIVED_PAGE_COUNT);
   const [focusRequest, setFocusRequest] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -138,7 +175,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const railRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const usageDialogRef = useRef<HTMLDivElement | null>(null);
   const usageButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const closeUsage = useCallback(() => {
@@ -167,28 +203,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     [groups],
   );
 
-  useLayoutEffect(() => {
-    if (!usageOpen) return;
-    const dialog = usageDialogRef.current;
-    const trigger = usageButtonRef.current;
-    dialog?.focus();
-    const closeOutside = (event: MouseEvent) => {
-      if (dialog?.contains(event.target as Node)) return;
-      if (
-        event.target instanceof Element &&
-        event.target.closest('button[aria-label="Open Usage"]') !== null
-      ) {
-        return;
-      }
-      closeUsage();
-    };
-    document.addEventListener("mousedown", closeOutside);
-    return () => {
-      document.removeEventListener("mousedown", closeOutside);
-      if (dialog?.contains(document.activeElement) !== true) return;
-      queueMicrotask(() => focusUsageSuccessor(trigger));
-    };
-  }, [closeUsage, usageOpen]);
   const [organizationNow, setOrganizationNow] = useState(() => Date.now());
   useEffect(() => {
     const now = Date.now();
@@ -206,24 +220,27 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     );
     return () => clearTimeout(timer);
   }, [views, organizationNow]);
+  const filteredViews = useMemo(
+    () => agentThreadsInFilter(views, railFilter, scopeEntries),
+    [railFilter, scopeEntries, views],
+  );
   const sections = useMemo(
     () =>
       agentRailSections(
-        views,
-        scope,
+        filteredViews,
         archivedExpanded,
         archivedShown,
         Math.max(organizationNow, Date.now()),
       ),
-    [archivedExpanded, archivedShown, scope, views, organizationNow],
+    [archivedExpanded, archivedShown, filteredViews, organizationNow],
   );
   useEffect(() => {
     if (turnLog === null) return;
     const visible = [
       ...sections.pinned,
       ...sections.active,
-      ...(sections.snoozed ?? []),
-      ...(sections.settled ?? []),
+      ...(snoozedExpanded ? (sections.snoozed ?? []) : []),
+      ...(settledExpanded ? (sections.settled ?? []) : []),
       ...sections.archived,
     ];
     for (const view of visible.slice(0, MAX_AGENT_RAIL_FACTS_REQUESTS)) {
@@ -232,10 +249,15 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         view.thread.turns.map((turn) => turn.turnId),
       );
     }
-  }, [sections, turnLog]);
+  }, [sections, settledExpanded, snoozedExpanded, turnLog]);
   const empty = useMemo(
-    () => agentRailEmptyState(groups, sections, scope, scopeEntries),
-    [groups, scope, scopeEntries, sections],
+    () =>
+      agentRailEmptyState(
+        groups,
+        sections,
+        railFilter.kind === "all" ? null : agentRailFilterLabel(railFilter, scopeEntries),
+      ),
+    [groups, railFilter, scopeEntries, sections],
   );
   const jumpLabels = useMemo(
     () => (jumpHints.shown ? jumpLabelsFor(sections, jumpHints.glyph) : EMPTY_JUMP_LABELS),
@@ -246,16 +268,27 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       [
         ...sections.pinned,
         ...sections.active,
-        ...(sections.snoozed ?? []),
-        ...(sections.settled ?? []),
+        ...(snoozedExpanded ? (sections.snoozed ?? []) : []),
+        ...(settledExpanded ? (sections.settled ?? []) : []),
         ...sections.archived,
       ].map((view) => view.thread.threadId),
-    [sections],
+    [sections, settledExpanded, snoozedExpanded],
   );
   const focusedThreadId = rovingThreadId(focusRequest, selectedThreadId, visibleThreadIds);
 
   const platform = useMemo(() => detectKeymapPlatform(), []);
-  const selection = useAgentThreadSelection(scope?.projectRootKey ?? null, visibleThreadIds);
+  const threadOwners = useMemo(
+    () =>
+      new Map(
+        views.map((view) => [view.thread.threadId, agentThreadBulkOwnerKey(view.thread.owner)]),
+      ),
+    [views],
+  );
+  const selection = useAgentThreadSelection(
+    agentRailFilterKey(railFilter),
+    visibleThreadIds,
+    threadOwners,
+  );
   const bulkCommand = useStableCallback(onThreadBulkCommand ?? NO_BULK_COMMAND);
 
   const moveFocus = useCallback((threadId: string | undefined) => {
@@ -283,9 +316,9 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         kind: "apply",
         request: {
           action,
-          ownerKey: commit.owner.key,
           threadIds: commit.ids,
           missingIds: commit.missingIds,
+          ownerKeys: commit.ownerKeys,
         },
       });
     },
@@ -306,12 +339,16 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     setArchivedShown(ARCHIVED_PAGE_COUNT);
   }, []);
 
+  const toggleSettled = useCallback(() => setSettledExpanded((current) => !current), []);
+  const toggleSnoozed = useCallback(() => setSnoozedExpanded((current) => !current), []);
+
   const showMoreArchived = useCallback(() => {
     setArchivedShown((current) => current + ARCHIVED_PAGE_COUNT);
   }, []);
 
   const handleListKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
+      if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
       if (event.target instanceof HTMLInputElement) return;
       if (visibleThreadIds.length === 0) return;
       const fromRow = focusedThreadId !== null && isThreadRow(event.target, focusedThreadId);
@@ -373,6 +410,22 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     [searchActive, views],
   );
 
+  const searchRows = useMemo(
+    () =>
+      searchActive
+        ? new Map(
+            views.map((view) => [
+              view.thread.threadId,
+              {
+                projectLabel: agentRowProjectLabel(projectLabels, view),
+                updatedAtEpochMs: view.thread.updatedAtEpochMs,
+              },
+            ]),
+          )
+        : EMPTY_SEARCH_ROWS,
+    [projectLabels, searchActive, views],
+  );
+
   const selectHit = useCallback(
     (threadId: string, reveal: AgentThreadRevealRequest | null) => {
       onSelectThread(threadId, reveal ?? undefined);
@@ -401,28 +454,32 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   return (
     <aside aria-label="Agent threads" className="agent-rail" ref={railRef}>
-      <div className="agent-rail__chrome" data-tauri-drag-region="">
-        <button
-          aria-expanded="true"
-          aria-label="Collapse sidebar"
-          className="agent-iconbutton"
-          onClick={() => onCollapseSidebar?.()}
-          title="Collapse sidebar (⌘B)"
-          type="button"
-        >
-          <PanelLeftClose aria-hidden="true" size={16} />
-        </button>
-      </div>
+      <TopBar
+        label="Sidebar"
+        region="sidebar"
+        trailing={
+          <IconButton
+            aria-expanded
+            icon={<PanelLeftClose size={16} />}
+            label={COLLAPSE_SIDEBAR_LABEL}
+            onClick={() => onCollapseSidebar?.()}
+            title={agentControlTooltip(
+              COLLAPSE_SIDEBAR_LABEL,
+              collapseShortcut ?? defaultAgentPanelLayoutShortcuts().sidebar,
+            )}
+          />
+        }
+      />
       <AgentRailHeader
         addProjectAvailable={addProjectAvailable}
         groups={groups}
         onAddProject={onAddProject}
+        onChangeFilter={onChangeFilter}
         onChangeScope={onChangeScope}
         onNewThread={onNewThread}
         onProjectCommand={onProjectCommand}
-        onReleaseProject={onReleaseProject}
-        onTrustProject={onTrustProject}
         overflowRootPaths={overflowRootPaths}
+        railFilter={railFilter}
         scope={scope}
         scopeEntries={scopeEntries}
         onSearchKeyDown={handleSearchKeyDown}
@@ -457,6 +514,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         {search.active ? (
           <AgentThreadSearchResults
             activeIndex={activeHit}
+            appearance="sidebar"
+            rows={searchRows}
             documentsTruncated={search.result?.documentsTruncated ?? false}
             listboxId={SEARCH_LISTBOX_ID}
             matches={matches}
@@ -471,6 +530,10 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         ) : (
           <AgentThreadList
             archivedExpanded={archivedExpanded}
+            settledExpanded={settledExpanded}
+            snoozedExpanded={snoozedExpanded}
+            onToggleSettled={toggleSettled}
+            onToggleSnoozed={toggleSnoozed}
             empty={empty}
             evidenceOf={evidenceOf}
             focusedThreadId={focusedThreadId}
@@ -480,7 +543,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             onShowMoreArchived={showMoreArchived}
             onThreadMenuCommand={menuCommand}
             onToggleArchived={toggleArchived}
-            onTogglePin={togglePin}
+            pendingInteractions={pendingInteractions}
             projectLabels={projectLabels}
             sections={sections}
             selectedThreadId={selectedThreadId}
@@ -488,6 +551,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         )}
       </div>
       <AgentProviderRailFooter
+        activity={footerActivity}
         management={providerManagement}
         onOpenSourceControl={onOpenSourceControl}
         onOpenSettings={onOpenProviderSettings}
@@ -496,101 +560,17 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         usageButtonRef={usageButtonRef}
         usageOpen={usageOpen}
       />
-      {usageOpen
-        ? createPortal(
-            <div className="agent-usage-layer">
-              <div
-                aria-label="Usage details"
-                className="agent-usage-popover"
-                id="agent-usage-panel-dialog"
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape") return;
-                  event.preventDefault();
-                  closeUsage();
-                }}
-                ref={usageDialogRef}
-                role="dialog"
-                tabIndex={-1}
-              >
-                <header className="agent-usage-popover__header">
-                  <h2>Usage</h2>
-                  <button
-                    aria-label="Close Usage"
-                    className="agent-iconbutton agent-usage-popover__close"
-                    onClick={closeUsage}
-                    title="Close Usage"
-                    type="button"
-                  >
-                    <X aria-hidden="true" size={14} />
-                  </button>
-                </header>
-                <div className="agent-usage-popover__scroll">
-                  <AgentUsagePanel
-                    accountUsage={accountUsage}
-                    evidenceOf={evidenceOf}
-                    projectLabels={usageProjectLabels}
-                    threads={usageThreads}
-                    turnLog={turnLog}
-                  />
-                </div>
-              </div>
-            </div>,
-            railRef.current?.closest(".workbench-frame") ?? document.body,
-          )
-        : null}
+      <AgentRailUsagePopover
+        accountUsage={accountUsage}
+        evidenceOf={evidenceOf}
+        onClose={closeUsage}
+        open={usageOpen}
+        projectLabels={usageProjectLabels}
+        railRef={railRef}
+        threads={usageThreads}
+        triggerRef={usageButtonRef}
+        turnLog={turnLog}
+      />
     </aside>
   );
 });
-
-function rovingThreadId(
-  request: string | null,
-  selected: string | null,
-  visible: ReadonlyArray<string>,
-): string | null {
-  if (request !== null && visible.includes(request)) return request;
-  if (selected !== null && visible.includes(selected)) return selected;
-  return visible[0] ?? null;
-}
-
-function nextThreadIndex(key: string, index: number, length: number): number | null {
-  if (key === "ArrowDown") return Math.min(index + 1, length - 1);
-  if (key === "ArrowUp") return Math.max(index - 1, 0);
-  if (key === "Home") return 0;
-  if (key === "End") return length - 1;
-  return null;
-}
-
-function jumpLabelsFor(sections: AgentRailSections, glyph: string): ReadonlyMap<string, string> {
-  const labels = new Map<string, string>();
-  for (const [threadId, slot] of agentJumpSlots(sections)) labels.set(threadId, `${glyph}${slot}`);
-  return labels;
-}
-
-function isThreadRow(target: EventTarget, threadId: string): boolean {
-  return target instanceof HTMLElement && target.dataset.threadId === threadId;
-}
-
-function focusRow(list: HTMLDivElement | null, threadId: string): void {
-  const rows = list?.querySelectorAll<HTMLElement>("[data-thread-id]");
-  for (const row of Array.from(rows ?? [])) {
-    if (row.dataset.threadId !== threadId) continue;
-    row.focus();
-    return;
-  }
-}
-
-function focusUsageSuccessor(trigger: HTMLButtonElement | null): void {
-  if (isConnectedVisibleButton(trigger)) {
-    trigger.focus();
-    return;
-  }
-  const expand = document.querySelector<HTMLButtonElement>('button[aria-label="Expand sidebar"]');
-  if (isConnectedVisibleButton(expand)) expand.focus();
-}
-
-function isConnectedVisibleButton(button: HTMLButtonElement | null): button is HTMLButtonElement {
-  if (button === null || !button.isConnected || button.disabled || button.hidden) return false;
-  if (button.closest('[hidden], [aria-hidden="true"]') !== null) return false;
-  const style = getComputedStyle(button);
-  return style.display !== "none" && style.visibility !== "hidden";
-}

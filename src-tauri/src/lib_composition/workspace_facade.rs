@@ -41,15 +41,17 @@ use crate::php_symbols::{PhpSymbolExtractor, TreeSitterPhpSymbolExtractor};
 use crate::runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
 use crate::smart_mode::SmartModeService;
 use crate::terminal_session::TerminalSupervisor;
-use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
+use crate::workspace::protected_paths::ProtectedPathPolicy;
+use crate::workspace_commands;
+use crate::workspace_file_watcher::WorkspaceWatchDisposalGuard;
 use crate::workspace_registry::registration::{
     WorkspaceRegistration, WorkspaceRegistrationReceipt,
 };
 use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use crate::workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
+    WorkspaceWatchDisposer,
 };
-use crate::{workspace_commands, workspace_file_watcher};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -61,7 +63,22 @@ use tauri_plugin_dialog::DialogExt;
 #[path = "workspace_facade/unregister.rs"]
 mod unregister;
 pub(crate) use unregister::dispose_registered_workspace;
-use unregister::{unregister_workspace_with_runtime_cleanup, NoopDebugSessionDisposer};
+pub(crate) use unregister::WorkspaceOwnerCloseResult;
+use unregister::{
+    release_workspace_owner_with_runtime_cleanup, NoopDebugSessionDisposer, WorkspaceOwnerClose,
+    WorkspaceOwnerCloseOutcome,
+};
+
+#[path = "workspace_facade/lifecycle_commands.rs"]
+mod lifecycle_commands;
+pub(crate) use lifecycle_commands::{
+    adopt_workspace_admission, close_workspace_owner, dispose_workspace_root,
+    rollback_workspace_registration, unregister_workspace,
+};
+
+#[path = "workspace_facade/file_watch_commands.rs"]
+mod file_watch_commands;
+pub(crate) use file_watch_commands::{start_workspace_file_watch, stop_workspace_file_watch};
 
 #[path = "workspace_facade/index_operation_commands.rs"]
 mod index_operation_commands;
@@ -275,60 +292,34 @@ pub(crate) async fn register_workspace_path(
     })
 }
 
-#[tauri::command]
-pub(crate) fn rollback_workspace_registration(
-    registry: State<'_, WorkspaceRegistry>,
-    local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
-    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
-    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
-    workspace_id: WorkspaceId,
-    admission_token: u64,
-) -> Result<bool, String> {
-    let rollback = registry
-        .rollback_registration(&workspace_id, admission_token)
-        .map_err(|error| error.to_string())?;
-    let Some(mut rollback) = rollback else {
-        return Ok(false);
-    };
-    if rollback.removed_identity {
-        rollback.begin_cleanup();
-        eslint_processes.stop_root(&rollback.descriptor.canonical_root_path);
-        debug_sessions.deactivate_root(&rollback.descriptor.canonical_root_path.to_string_lossy());
-    }
-    let removed_identity = rollback.removed_identity;
-    rollback.finalize().map_err(|error| error.to_string())?;
-    if removed_identity {
-        local_history_authorizer.revoke(&workspace_id);
-    }
-    Ok(true)
-}
-
-#[tauri::command]
-pub(crate) fn unregister_workspace(
-    app: AppHandle,
+fn close_workspace_owner_blocking(
+    app: &AppHandle,
     state: WorkspaceLifecycleState<'_>,
-    workspace_id: WorkspaceId,
-) -> Result<(), String> {
+    close: WorkspaceOwnerClose<'_>,
+    watch_disposer: &dyn WorkspaceWatchDisposer,
+) -> Result<WorkspaceOwnerCloseResult, String> {
+    let workspace_id = close.workspace_id.clone();
     let mut errors = Vec::new();
-    state.file_search_lifecycle.cancel_workspace(&workspace_id);
-    if state.node_attach_candidates.invalidate_listings().is_err() {
-        errors.push("Node attach candidate invalidation failed.".to_string());
-    }
     let mut debug_deactivation = None;
-    let unregister = unregister_workspace_with_runtime_cleanup(
+    let closed = release_workspace_owner_with_runtime_cleanup(
         &state.workspace_registry,
-        &workspace_id,
+        close,
         WorkspaceRuntimeDisposal {
             index_lifecycle: &*state.index_lifecycle,
             javascript_typescript_language_servers: &*state.javascript_typescript_language_servers,
             javascript_typescript_watch_registry: &*state.javascript_typescript_watch_registry,
-            workspace_file_change_watch_registry: &*state.workspace_file_change_watch_registry,
+            workspace_file_change_watch_registry: watch_disposer,
             php_language_servers: &*state.php_language_servers,
             debug_sessions: &NoopDebugSessionDisposer,
             eslint_processes: &**state.eslint_processes,
             terminal_sessions: &*state.terminal_sessions,
         },
         |descriptor| {
+            watch_disposer.stop_workspace_watch(&descriptor.canonical_root_path.to_string_lossy());
+            state.file_search_lifecycle.cancel_workspace(&workspace_id);
+            if state.node_attach_candidates.invalidate_listings().is_err() {
+                errors.push("Node attach candidate invalidation failed.".to_string());
+            }
             debug_deactivation = Some(
                 state
                     .debug_sessions
@@ -356,21 +347,18 @@ pub(crate) fn unregister_workspace(
     if let Some(deactivation) = debug_deactivation {
         DebugSessionRegistry::complete_root_deactivation(deactivation);
     }
-    let unregister_error = match unregister {
-        Ok(mut cleanup_errors) => {
-            errors.append(&mut cleanup_errors);
-            state.local_history_authorizer.revoke(&workspace_id);
-            None
-        }
-        Err(error) => Some(format!("Workspace unregister failed: {error}")),
-    };
+    let outcome = closed.map_err(|error| format!("Workspace unregister failed: {error}"))?;
+    if let WorkspaceOwnerCloseOutcome::Released(cleanup_errors) = &outcome {
+        errors.extend(cleanup_errors.iter().cloned());
+        state.local_history_authorizer.revoke(&workspace_id);
+    }
     if !errors.is_empty() {
         eprintln!(
             "Workspace unregister completed with cleanup warnings: {}",
             errors.join("\n")
         );
     }
-    unregister_error.map_or(Ok(()), Err)
+    Ok(WorkspaceOwnerCloseResult::from(&outcome))
 }
 
 pub(crate) struct WorkspaceLifecycleState<'a> {
@@ -378,7 +366,6 @@ pub(crate) struct WorkspaceLifecycleState<'a> {
     javascript_typescript_language_servers: State<'a, JavaScriptTypeScriptLanguageServerRegistry>,
     javascript_typescript_watch_registry: State<'a, JavaScriptTypeScriptWorkspaceWatchRegistry>,
     document_change_admission: State<'a, DocumentChangeAdmissionRegistry>,
-    workspace_file_change_watch_registry: State<'a, WorkspaceFileChangeWatchRegistry>,
     php_language_servers: State<'a, PhpLanguageServerRegistry>,
     debug_sessions: State<'a, Arc<DebugSessionRegistry>>,
     node_attach_candidates: State<'a, Arc<debug_cdp::NodeAttachCandidatePublicationRegistry>>,
@@ -389,6 +376,27 @@ pub(crate) struct WorkspaceLifecycleState<'a> {
     file_search_lifecycle: State<'a, workspace_commands::WorkspaceFileSearchLifecycle>,
     js_test_batches: State<'a, Arc<JsTestBatchRegistry>>,
     local_history_authorizer: State<'a, LegacyLocalHistoryWorkspaceAuthorizer>,
+}
+
+impl<'a> WorkspaceLifecycleState<'a> {
+    pub(crate) fn from_app(app: &'a AppHandle) -> Self {
+        Self {
+            index_lifecycle: app.state(),
+            javascript_typescript_language_servers: app.state(),
+            javascript_typescript_watch_registry: app.state(),
+            document_change_admission: app.state(),
+            php_language_servers: app.state(),
+            debug_sessions: app.state(),
+            node_attach_candidates: app.state(),
+            smart_mode_service: app.state(),
+            terminal_sessions: app.state(),
+            eslint_processes: app.state(),
+            workspace_registry: app.state(),
+            file_search_lifecycle: app.state(),
+            js_test_batches: app.state(),
+            local_history_authorizer: app.state(),
+        }
+    }
 }
 
 pub(crate) fn state_from_command<'r, 'de: 'r, T, R>(
@@ -418,7 +426,6 @@ impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
             javascript_typescript_language_servers: state_from_command(&command)?,
             javascript_typescript_watch_registry: state_from_command(&command)?,
             document_change_admission: state_from_command(&command)?,
-            workspace_file_change_watch_registry: state_from_command(&command)?,
             php_language_servers: state_from_command(&command)?,
             debug_sessions: state_from_command(&command)?,
             node_attach_candidates: state_from_command(&command)?,
@@ -433,18 +440,19 @@ impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
     }
 }
 
-#[tauri::command]
-pub(crate) fn dispose_workspace_root(
+pub(crate) fn dispose_workspace_root_blocking(
     root_path: String,
-    app: AppHandle,
+    app: &AppHandle,
     state: WorkspaceLifecycleState<'_>,
+    watch_disposal: &WorkspaceWatchDisposalGuard<'_>,
 ) -> Result<(), String> {
+    watch_disposal.stop_watches_before_arrival();
     state
         .node_attach_candidates
         .invalidate_listings()
         .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
     let root = registered_runtime_root(&state.workspace_registry, &root_path);
-    stop_agent_tasks_on_dispose(&app, &root);
+    stop_agent_tasks_on_dispose(app, &root);
     if let Ok(descriptor) = state
         .workspace_registry
         .descriptor_for_registered_path(&root)
@@ -463,7 +471,7 @@ pub(crate) fn dispose_workspace_root(
             index_lifecycle: &*state.index_lifecycle,
             javascript_typescript_language_servers: &*state.javascript_typescript_language_servers,
             javascript_typescript_watch_registry: &*state.javascript_typescript_watch_registry,
-            workspace_file_change_watch_registry: &*state.workspace_file_change_watch_registry,
+            workspace_file_change_watch_registry: watch_disposal,
             php_language_servers: &*state.php_language_servers,
             debug_sessions: &**state.debug_sessions,
             eslint_processes: &**state.eslint_processes,
@@ -525,28 +533,6 @@ pub(crate) fn initialize_workspace_index(
     let root = canonicalize_workspace_root(&root_path)?;
     let index = open_workspace_index(&app, &root)?;
     index.summary().map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn start_workspace_file_watch(
-    root_path: String,
-    app: AppHandle,
-    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
-) -> Result<workspace_file_watcher::WorkspaceFileWatchStartReceipt, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    workspace_file_change_watch_registry.start(&root.to_string_lossy(), app)
-}
-
-#[tauri::command]
-pub(crate) fn stop_workspace_file_watch(
-    root_path: String,
-    watch_generation: u64,
-    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
-) -> Result<bool, String> {
-    if root_path.len() > 32_768 || root_path.contains('\0') || Path::new(&root_path).is_relative() {
-        return Err("Workspace watcher stop root is invalid.".to_string());
-    }
-    Ok(workspace_file_change_watch_registry.stop_generation(&root_path, watch_generation))
 }
 
 #[tauri::command]
@@ -629,9 +615,13 @@ pub(crate) fn local_history_store(app: &AppHandle) -> Result<LocalHistoryStore, 
 }
 
 pub(crate) fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
-    PathBuf::from(root_path)
+    let root = PathBuf::from(root_path)
         .canonicalize()
-        .map_err(|error| format!("Failed to resolve workspace root: {error}"))
+        .map_err(|error| format!("Failed to resolve workspace root: {error}"))?;
+    ProtectedPathPolicy::current()
+        .check_workspace_root(&root)
+        .map_err(|refusal| refusal.to_string())?;
+    Ok(root)
 }
 
 pub(crate) fn workspace_root_for_disposal(root_path: &str) -> PathBuf {

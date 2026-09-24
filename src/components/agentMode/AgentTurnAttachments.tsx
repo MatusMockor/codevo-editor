@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, ImageIcon, ImageOff, Link2 } from "lucide-react";
 import type { AgentAttachmentImageState } from "../../application/useAgentAttachmentImages";
 import type { AgentImageMime } from "../../domain/agentAttachment";
@@ -9,7 +9,6 @@ import {
   AGENT_ATTACHMENT_UNAVAILABLE_LABEL,
   AGENT_ATTACHMENT_UNRESOLVABLE_REASON,
   agentAttachmentImageIsResolvable,
-  agentAttachmentPlaceholderSize,
   type AgentTurnAttachmentGlyph,
   type AgentTurnAttachmentImageView,
   type AgentTurnAttachmentView,
@@ -137,7 +136,6 @@ function AgentAttachmentImage({
         aria-label={AGENT_ATTACHMENT_LOADING_LABEL}
         className="agent-attachments__pending"
         role="img"
-        style={placeholderStyle(attachment)}
       />
     );
   }
@@ -174,12 +172,6 @@ function unavailableReason(
     return AGENT_ATTACHMENT_DECODE_FAILED_REASON;
   }
   return null;
-}
-
-function placeholderStyle(attachment: AgentTurnAttachmentImageView): CSSProperties | undefined {
-  const size = agentAttachmentPlaceholderSize(attachment);
-  if (size === null) return undefined;
-  return { width: `${size.width}px`, height: `${size.height}px` };
 }
 
 function AgentAttachmentChip({

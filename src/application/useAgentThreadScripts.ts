@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentTaskIsolation } from "../domain/agentTask";
 import type { NodePackageScript, NodePackageTaskLaunchTarget } from "../domain/nodePackageScripts";
+import type { NodePackageTaskState } from "./nodePackageTaskLifecycle";
 
 export const MAX_AGENT_THREAD_SCRIPT_ENTRIES = 64;
+export const MAX_AGENT_THREAD_SCRIPT_OUTCOMES = 64;
 export const AGENT_SCRIPT_WORKTREE_MISSING_REASON = "The worktree no longer exists";
 export const AGENT_SCRIPT_BUSY_REASON = "Another script is already running";
 const PREFERRED_SCRIPT_NAMES: ReadonlyArray<string> = ["dev", "start", "test"];
@@ -25,6 +27,23 @@ export interface AgentThreadScriptEntry {
   readonly availability: AgentThreadScriptAvailability;
 }
 
+export interface AgentThreadScriptDetailEntry extends AgentThreadScriptEntry {
+  readonly manifestRelativePath: string;
+  readonly command: string;
+}
+
+export type AgentThreadScriptOutcome =
+  | { readonly kind: "exited"; readonly exitCode: number | null }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "stopped" };
+
+export interface AgentThreadScriptRunnerOutcome {
+  readonly runId: string;
+  readonly scriptName: string;
+  readonly manifestRelativePath: string;
+  readonly outcome: AgentThreadScriptOutcome;
+}
+
 export type AgentThreadScriptRunState =
   | { readonly kind: "idle" }
   | {
@@ -44,6 +63,12 @@ export interface AgentThreadScriptsSurface {
   stopScript(): void;
 }
 
+export interface AgentThreadScripts extends AgentThreadScriptsSurface {
+  readonly entries: ReadonlyArray<AgentThreadScriptDetailEntry>;
+  readonly preferred: AgentThreadScriptDetailEntry | null;
+  readonly outcomes: ReadonlyMap<string, AgentThreadScriptOutcome>;
+}
+
 export interface AgentThreadScriptRunner {
   readonly scripts: ReadonlyArray<NodePackageScript>;
   readonly truncated: boolean;
@@ -54,6 +79,7 @@ export interface AgentThreadScriptRunner {
     readonly scriptName: string;
     readonly manifestRelativePath: string;
   } | null;
+  readonly lastOutcome?: AgentThreadScriptRunnerOutcome | null;
   run(
     script: NodePackageScript,
     target: NodePackageTaskLaunchTarget,
@@ -62,9 +88,13 @@ export interface AgentThreadScriptRunner {
   stop(): void;
 }
 
-interface AgentThreadScriptOwner {
-  readonly runId: string;
+interface AgentThreadScriptStarter {
   readonly threadId: string;
+  readonly workspaceRoot: string;
+}
+
+interface AgentThreadScriptOwner extends AgentThreadScriptStarter {
+  readonly runId: string;
 }
 
 export interface UseAgentThreadScriptsOptions {
@@ -77,14 +107,18 @@ export interface UseAgentThreadScriptsOptions {
 export function useAgentThreadScripts({
   onBeforeRun,
   runner,
-  target,
+  target: requestedTarget,
   workspaceRoot,
-}: UseAgentThreadScriptsOptions): AgentThreadScriptsSurface {
+}: UseAgentThreadScriptsOptions): AgentThreadScripts {
+  const target = useStableScriptTarget(requestedTarget);
   const [preferredByRepository, setPreferredByRepository] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
   );
   const [owner, setOwner] = useState<AgentThreadScriptOwner | null>(null);
-  const startedByRef = useRef<string | null>(null);
+  const [recorded, setRecorded] = useState<ReadonlyMap<string, AgentThreadScriptOutcome>>(
+    () => new Map(),
+  );
+  const startedByRef = useRef<AgentThreadScriptStarter | null>(null);
   const repositoryRoot = target?.repositoryRoot ?? null;
   const threadId = target?.threadId ?? null;
   const activeRunId = runner.active?.runId ?? null;
@@ -92,19 +126,27 @@ export function useAgentThreadScripts({
   useEffect(() => {
     if (activeRunId === null) {
       startedByRef.current = null;
-      setOwner(null);
       return;
     }
     const startedBy = startedByRef.current;
     startedByRef.current = null;
-    setOwner((current) =>
-      current !== null && current.runId === activeRunId
-        ? current
-        : startedBy === null
-          ? null
-          : { runId: activeRunId, threadId: startedBy },
-    );
+    setOwner((current) => {
+      if (current !== null && current.runId === activeRunId) return current;
+      if (startedBy === null) return null;
+      return { ...startedBy, runId: activeRunId };
+    });
   }, [activeRunId]);
+
+  const runnerOutcome = runner.lastOutcome ?? null;
+  const runnerScripts = runner.scripts;
+  useEffect(() => {
+    if (runnerOutcome === null || owner === null) return;
+    if (runnerOutcome.runId !== owner.runId) return;
+    const key = scriptKey(runnerScripts, runnerOutcome);
+    setOwner(null);
+    if (key === null) return;
+    setRecorded((current) => withOutcome(current, outcomeKey(owner, key), runnerOutcome.outcome));
+  }, [owner, runnerOutcome, runnerScripts]);
 
   const ownedByThread =
     owner !== null &&
@@ -136,12 +178,7 @@ export function useAgentThreadScripts({
 
   const run = useMemo<AgentThreadScriptRunState>(() => {
     if (runner.active === null) return { kind: "idle" };
-    const activeKey =
-      scoped.scripts.find(
-        (script) =>
-          script.scriptName === runner.active?.scriptName &&
-          script.manifestRelativePath === runner.active?.manifestRelativePath,
-      )?.key ?? null;
+    const activeKey = scriptKey(scoped.scripts, runner.active);
     return {
       kind: "running",
       key: activeKey,
@@ -151,6 +188,11 @@ export function useAgentThreadScripts({
     };
   }, [ownedByThread, runner.active, scoped.scripts]);
 
+  const outcomes = useMemo(
+    () => threadOutcomes(recorded, scoped.scripts, threadId, workspaceRoot),
+    [recorded, scoped.scripts, threadId, workspaceRoot],
+  );
+
   const runScript = useCallback(
     (key: string): boolean => {
       if (runner.active !== null) return false;
@@ -159,18 +201,31 @@ export function useAgentThreadScripts({
       const script = scoped.scripts.find((candidate) => candidate.key === key);
       if (script === undefined) return false;
       if (availability.kind === "blocked") return false;
+      if (workspaceRoot === null) return false;
       if (repositoryRoot !== null) {
         setPreferredByRepository((current) => new Map(current).set(repositoryRoot, key));
       }
       onBeforeRun();
-      startedByRef.current = threadId;
+      const starter = { threadId, workspaceRoot };
+      startedByRef.current = starter;
       const started = runner.run(script, launchTarget(target), target.repositoryRoot);
       if (!started) {
         startedByRef.current = null;
+        return false;
       }
-      return started;
+      setRecorded((current) => withoutOutcome(current, outcomeKey(starter, key)));
+      return true;
     },
-    [availability, onBeforeRun, repositoryRoot, runner, scoped.scripts, target, threadId],
+    [
+      availability,
+      onBeforeRun,
+      repositoryRoot,
+      runner,
+      scoped.scripts,
+      target,
+      threadId,
+      workspaceRoot,
+    ],
   );
 
   const stopScript = useCallback(() => {
@@ -178,14 +233,113 @@ export function useAgentThreadScripts({
     runner.stop();
   }, [ownedByThread, runner]);
 
+  const truncated = scoped.truncated || runner.truncated;
+  return useMemo(
+    () => ({ entries, preferred, truncated, run, outcomes, runScript, stopScript }),
+    [entries, outcomes, preferred, run, runScript, stopScript, truncated],
+  );
+}
+
+export function agentScriptRunnerOutcome(
+  task: NodePackageTaskState | null,
+): AgentThreadScriptRunnerOutcome | null {
+  if (task === null) return null;
+  const outcome = settledOutcome(task);
+  if (outcome === null) return null;
   return {
-    entries,
-    preferred,
-    truncated: scoped.truncated || runner.truncated,
-    run,
-    runScript,
-    stopScript,
+    runId: task.runId,
+    scriptName: task.scriptName,
+    manifestRelativePath: task.manifestRelativePath,
+    outcome,
   };
+}
+
+function settledOutcome(task: NodePackageTaskState): AgentThreadScriptOutcome | null {
+  switch (task.status) {
+    case "exited":
+      return { kind: "exited", exitCode: task.exitCode };
+    case "failed":
+      return { kind: "failed", message: task.message };
+    case "stopped":
+      return { kind: "stopped" };
+    case "acquiring-terminal":
+    case "starting":
+    case "running":
+    case "stopping":
+      return null;
+    default: {
+      const exhaustive: never = task;
+      return exhaustive;
+    }
+  }
+}
+
+function outcomeKey(starter: AgentThreadScriptStarter, key: string): string {
+  return `${starter.workspaceRoot}\u0000${starter.threadId}\u0000${key}`;
+}
+
+function withOutcome(
+  current: ReadonlyMap<string, AgentThreadScriptOutcome>,
+  key: string,
+  outcome: AgentThreadScriptOutcome,
+): ReadonlyMap<string, AgentThreadScriptOutcome> {
+  const next = new Map(current);
+  next.delete(key);
+  next.set(key, outcome);
+  while (next.size > MAX_AGENT_THREAD_SCRIPT_OUTCOMES) {
+    const oldest = next.keys().next().value;
+    if (oldest === undefined) break;
+    next.delete(oldest);
+  }
+  return next;
+}
+
+function withoutOutcome(
+  current: ReadonlyMap<string, AgentThreadScriptOutcome>,
+  key: string,
+): ReadonlyMap<string, AgentThreadScriptOutcome> {
+  if (!current.has(key)) return current;
+  const next = new Map(current);
+  next.delete(key);
+  return next;
+}
+
+function threadOutcomes(
+  recorded: ReadonlyMap<string, AgentThreadScriptOutcome>,
+  scripts: ReadonlyArray<NodePackageScript>,
+  threadId: string | null,
+  workspaceRoot: string | null,
+): ReadonlyMap<string, AgentThreadScriptOutcome> {
+  const outcomes = new Map<string, AgentThreadScriptOutcome>();
+  if (threadId === null || workspaceRoot === null) return outcomes;
+  for (const script of scripts) {
+    const outcome = recorded.get(outcomeKey({ threadId, workspaceRoot }, script.key));
+    if (outcome !== undefined) outcomes.set(script.key, outcome);
+  }
+  return outcomes;
+}
+
+export function projectScriptTarget(repositoryRoot: string): AgentThreadScriptTarget {
+  return {
+    threadId: `project:${repositoryRoot}`,
+    repositoryRoot,
+    isolation: "in-place",
+    worktreePath: null,
+    worktreeMissing: false,
+  };
+}
+
+function scriptKey(
+  scripts: ReadonlyArray<NodePackageScript>,
+  identity: { readonly scriptName: string; readonly manifestRelativePath: string },
+): string | null {
+  return (
+    scripts.find(
+      (script) =>
+        script.scriptName === identity.scriptName &&
+        script.manifestRelativePath === identity.manifestRelativePath,
+    )?.key ?? null
+  );
 }
 
 export function scopedScripts(
@@ -205,10 +359,10 @@ export function scopedScripts(
   };
 }
 
-export function preferredEntry(
-  entries: ReadonlyArray<AgentThreadScriptEntry>,
+export function preferredEntry<Entry extends AgentThreadScriptEntry>(
+  entries: ReadonlyArray<Entry>,
   rememberedKey: string | null,
-): AgentThreadScriptEntry | null {
+): Entry | null {
   const remembered = entries.find((entry) => entry.key === rememberedKey);
   if (remembered !== undefined) return remembered;
   for (const name of PREFERRED_SCRIPT_NAMES) {
@@ -216,6 +370,20 @@ export function preferredEntry(
     if (match !== undefined) return match;
   }
   return entries[0] ?? null;
+}
+
+function useStableScriptTarget(
+  target: AgentThreadScriptTarget | null,
+): AgentThreadScriptTarget | null {
+  const threadId = target?.threadId ?? null;
+  const repositoryRoot = target?.repositoryRoot ?? null;
+  const isolation = target?.isolation ?? null;
+  const worktreePath = target?.worktreePath ?? null;
+  const worktreeMissing = target?.worktreeMissing ?? false;
+  return useMemo(() => {
+    if (threadId === null || repositoryRoot === null || isolation === null) return null;
+    return { threadId, repositoryRoot, isolation, worktreePath, worktreeMissing };
+  }, [isolation, repositoryRoot, threadId, worktreeMissing, worktreePath]);
 }
 
 function targetAvailability(
@@ -239,12 +407,14 @@ function launchTarget(target: AgentThreadScriptTarget): NodePackageTaskLaunchTar
 function scriptEntry(
   script: NodePackageScript,
   availability: AgentThreadScriptAvailability,
-): AgentThreadScriptEntry {
+): AgentThreadScriptDetailEntry {
   return {
     key: script.key,
     label: script.scriptName,
     detail: script.packageRootRelativePath === "" ? null : script.packageRootRelativePath,
     availability,
+    manifestRelativePath: script.manifestRelativePath,
+    command: `${script.packageManager} run ${script.scriptName}`,
   };
 }
 

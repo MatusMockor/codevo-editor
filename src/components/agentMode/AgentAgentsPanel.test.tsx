@@ -57,9 +57,9 @@ describe("AgentAgentsPanel", () => {
 
   it("shows the empty state when the thread has no agents", () => {
     act(() => root.render(<AgentAgentsPanel groups={[]} />));
-    expect(host.querySelector(".agents-panel__empty-title")?.textContent).toBe("No agents yet");
-    expect(host.querySelector(".agents-panel__list")).toBeNull();
-    expect(host.querySelector(".agents-panel__foot")).toBeNull();
+    expect(host.querySelector(".cv-agents__empty-title")?.textContent).toBe("No agents yet");
+    expect(host.querySelector(".cv-agents__list")).toBeNull();
+    expect(host.querySelector(".cv-agents__foot")).toBeNull();
   });
 
   it("renders the three-line row anatomy in stable spawn order across turns", () => {
@@ -83,33 +83,53 @@ describe("AgentAgentsPanel", () => {
       ]),
     ];
     act(() => root.render(<AgentAgentsPanel groups={groups} />));
-    const rows = [...host.querySelectorAll<HTMLElement>(".agents-panel__row")];
-
-    expect(rows.map((row) => row.querySelector(".agents-panel__name")?.textContent)).toEqual([
-      "Stream 0 contract",
+    const current = [
+      ...host.querySelectorAll<HTMLElement>(
+        '.cv-agents__section[data-section="current"] .cv-agents-row',
+      ),
+    ];
+    expect(current.map((row) => row.querySelector(".cv-agents-row__name")?.textContent)).toEqual([
       "Stream A",
       "Breaks",
     ]);
+    const earlier = host.querySelector<HTMLButtonElement>(".cv-agents-earlier");
+    expect(host.querySelectorAll(".cv-agents-earlier")).toHaveLength(1);
+    expect(earlier?.getAttribute("aria-expanded")).toBe("false");
+    expect(earlier?.textContent).toContain("Ran 1 subagent");
+    act(() => earlier?.click());
+    expect(earlier?.getAttribute("aria-expanded")).toBe("true");
+    const rows = [...host.querySelectorAll<HTMLElement>(".cv-agents-row")];
+
+    expect(rows.map((row) => row.querySelector(".cv-agents-row__name")?.textContent)).toEqual([
+      "Stream A",
+      "Breaks",
+      "Stream 0 contract",
+    ]);
     expect(rows.map((row) => row.getAttribute("data-status"))).toEqual([
-      "completed",
       "working",
       "failed",
+      "completed",
     ]);
-    expect(rows[0]?.querySelector(".agents-panel__role")?.textContent).toBe("general-purpose");
-    expect(rows[0]?.querySelector(".agents-panel__elapsed")?.textContent).toBe("10m 54s");
-    expect(rows[0]?.querySelector(".agents-panel__elapsed svg")).not.toBeNull();
-    expect(rows[0]?.querySelector(".agents-panel__activity")?.textContent).toBe("167 tests passed");
-    expect(rows[0]?.querySelector(".agents-panel__metrics")?.textContent).toBe(
+    expect(rows[2]?.querySelector(".cv-role")?.textContent).toBe("general-purpose");
+    expect(rows[2]?.querySelector(".cv-agents-row__elapsed")?.textContent).toBe("10m 54s");
+    expect(rows[2]?.querySelector(".cv-agents-row__elapsed svg")).not.toBeNull();
+    expect(rows[2]?.querySelector(".cv-agents-row__activity")?.textContent).toBe(
+      "167 tests passed",
+    );
+    expect(rows[2]?.querySelector(".cv-agents-row__metrics")?.textContent).toBe(
       "opus-5 · 137.0k tok · 35 tools",
     );
-    expect(rows[1]?.querySelector(".agents-panel__metrics")?.textContent).toBe("— tok");
-    expect(rows[2]?.querySelector(".agents-panel__activity")?.textContent).toBe(
+    expect(rows[0]?.querySelector(".cv-agents-row__metrics")?.textContent).toBe("— tok");
+    expect(rows[1]?.querySelector(".cv-agents-row__activity")?.textContent).toBe(
       "cargo test failed",
     );
-    expect(rows[2]?.querySelector(".agents-panel__elapsed")?.textContent).toBe("");
-    expect(host.querySelector(".agents-panel__foot")?.textContent).toBe(
-      "1 working · 2 settledΣ 137.0k tok",
-    );
+    expect(rows[1]?.querySelector(".cv-agents-row__elapsed")?.textContent).toBe("");
+    expect(
+      [...host.querySelectorAll(".cv-agents__foot .cv-agents__count")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["● 1 working", "2 settled"]);
+    expect(host.querySelector(".cv-agents__total")?.textContent).toBe("Σ 137.0k tok");
     expect(host.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(0);
   });
 
@@ -128,7 +148,7 @@ describe("AgentAgentsPanel", () => {
     ];
     act(() => root.render(<AgentAgentsPanel groups={groups} rowRenderProbe={probe} />));
     const elapsed = () =>
-      [...host.querySelectorAll(".agents-panel__elapsed")].map((node) => node.textContent);
+      [...host.querySelectorAll(".cv-agents-row__elapsed")].map((node) => node.textContent);
     expect(elapsed()).toEqual(["58s", "5s", "9s"]);
     expect(setIntervalSpy).toHaveBeenCalledTimes(1);
     const commits = probe.mock.calls.length;
@@ -162,51 +182,7 @@ describe("AgentAgentsPanel", () => {
     act(() => root.render(<AgentAgentsPanel groups={[second]} rowRenderProbe={probe} />));
 
     expect(probe.mock.calls.map(([id]) => id)).toEqual(["b"]);
-    expect(host.querySelectorAll(".agents-panel__activity")[1]?.textContent).toBe("after");
-  });
-
-  it("closes from the button and Escape, and takes focus only for a user-initiated open", () => {
-    const onClose = vi.fn();
-    const groups = [group("t1", [source({})])];
-    const opener = document.createElement("button");
-    document.body.append(opener);
-    opener.focus();
-    act(() => root.render(<AgentAgentsPanel groups={groups} onClose={onClose} />));
-    expect(document.activeElement).toBe(opener);
-
-    act(() => root.render(<div />));
-    act(() => root.render(<AgentAgentsPanel autoFocus groups={groups} onClose={onClose} />));
-    const close = host.querySelector<HTMLButtonElement>('[aria-label="Close Agents panel"]');
-    expect(document.activeElement).toBe(close);
-    act(() => close?.click());
-    act(() => {
-      host
-        .querySelector(".agents-panel")
-        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    expect(onClose).toHaveBeenCalledTimes(2);
-    act(() => root.render(<div />));
-    expect(document.activeElement).toBe(opener);
-    opener.remove();
-  });
-
-  it("becomes a focus-trapped dialog only as a modal overlay", () => {
-    const groups = [group("t1", [source({})])];
-    act(() => root.render(<AgentAgentsPanel groups={groups} onClose={() => undefined} />));
-    expect(host.querySelector(".agents-panel")?.getAttribute("role")).toBeNull();
-
-    act(() => root.render(<AgentAgentsPanel groups={groups} modal onClose={() => undefined} />));
-    const panel = host.querySelector<HTMLElement>(".agents-panel");
-    const close = host.querySelector<HTMLButtonElement>('[aria-label="Close Agents panel"]');
-    expect(panel?.getAttribute("role")).toBe("dialog");
-    expect(panel?.getAttribute("aria-modal")).toBe("true");
-    expect(document.activeElement).toBe(close);
-    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-    act(() => {
-      close?.dispatchEvent(tab);
-    });
-    expect(tab.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(close);
+    expect(host.querySelectorAll(".cv-agents-row__activity")[1]?.textContent).toBe("after");
   });
 
   it("marks a silent agent as stale through DOM writes and clears it on the next report", () => {
@@ -219,9 +195,9 @@ describe("AgentAgentsPanel", () => {
     const text = (selector: string) => host.querySelector(selector)?.textContent;
 
     vi.advanceTimersByTime(6 * 3_600_000);
-    expect(text(".agents-panel__elapsed")).toBe("3m 00s");
-    expect(text(".agents-panel__stale")).toBe("no update for 6h 00m");
-    expect(host.querySelector(".agents-panel__row")?.getAttribute("data-status")).toBe("working");
+    expect(text(".cv-agents-row__elapsed")).toBe("3m 00s");
+    expect(text(".cv-agents-row__stale")).toBe("no update for 6h 00m");
+    expect(host.querySelector(".cv-agents-row")?.getAttribute("data-status")).toBe("working");
     expect(probe.mock.calls.length).toBe(commits);
 
     const second = group(
@@ -230,8 +206,8 @@ describe("AgentAgentsPanel", () => {
       first.subagents,
     );
     act(() => root.render(<AgentAgentsPanel groups={[second]} rowRenderProbe={probe} />));
-    expect(text(".agents-panel__elapsed")).toBe("1m 15s");
-    expect(text(".agents-panel__stale")).toBe("");
+    expect(text(".cv-agents-row__elapsed")).toBe("1m 15s");
+    expect(text(".cv-agents-row__stale")).toBe("");
   });
 
   it("exposes live elapsed time as a static description instead of a per-second one", () => {
@@ -243,7 +219,7 @@ describe("AgentAgentsPanel", () => {
       ),
     );
     const hidden = () =>
-      [...host.querySelectorAll(".agents-panel__row .agent-visually-hidden")].map(
+      [...host.querySelectorAll(".cv-agents-row .agent-visually-hidden")].map(
         (node) => node.textContent,
       );
     expect(hidden()).toEqual(["Working", "Elapsed 58s"]);
@@ -252,12 +228,12 @@ describe("AgentAgentsPanel", () => {
     expect(hidden()).toEqual(["Working", "Elapsed 58s"]);
     vi.advanceTimersByTime(1_000);
     expect(hidden()).toEqual(["Working", "Elapsed 1m 28s"]);
-    expect(host.querySelector(".agents-panel__elapsed span")?.getAttribute("aria-hidden")).toBe(
+    expect(host.querySelector(".cv-agents-row__elapsed span")?.getAttribute("aria-hidden")).toBe(
       "true",
     );
   });
 
-  it("states truncation once in the header and shows nested agents and unknown tasks", () => {
+  it("states truncation once above the list and shows nested agents and unknown tasks", () => {
     const truncated: AgentAgentsPanelGroup = {
       key: "t1",
       subagents: projectAgentRuntimeSubagents(
@@ -269,37 +245,38 @@ describe("AgentAgentsPanel", () => {
       ),
     };
     act(() => root.render(<AgentAgentsPanel groups={[truncated]} />));
-    const rows = [...host.querySelectorAll<HTMLElement>(".agents-panel__row")];
+    const rows = [...host.querySelectorAll<HTMLElement>(".cv-agents-row")];
 
-    expect(host.querySelector(".agents-panel__head .agents-panel__notice")?.textContent).toBe(
+    expect(host.querySelector(".cv-agents__notice")?.textContent).toBe(
       "Showing the first 2 agents",
     );
-    expect(host.querySelectorAll(".agents-panel__notice")).toHaveLength(1);
-    expect(rows[0]?.querySelector(".agents-panel__metrics")?.textContent).toBe(
+    expect(host.querySelectorAll(".cv-agents__notice")).toHaveLength(1);
+    expect(rows[0]?.querySelector(".cv-agents-row__metrics")?.textContent).toBe(
       "1.0k tok · +2 nested agents",
     );
     expect(rows[1]?.getAttribute("data-title")).toBe("unknown");
-    expect(rows[1]?.querySelector(".agents-panel__role")?.textContent).toBe("general-purpose");
-    expect(rows[1]?.querySelector(".agents-panel__activity")?.textContent).toBe("task unknown");
+    expect(rows[1]?.querySelector(".cv-role")?.textContent).toBe("general-purpose");
+    expect(rows[1]?.querySelector(".cv-agents-row__activity")?.textContent).toBe("task unknown");
   });
 
   it("renders a collapsed recent activity history that stays open across live updates", () => {
     const history = ["Reading a.ts", "▸ Grep", "Running npx vitest run"];
     const first = group("t1", [source({ id: "a", title: "One", recentActivity: history })]);
     act(() => root.render(<AgentAgentsPanel groups={[first]} />));
-    const details = host.querySelector<HTMLDetailsElement>(".agents-panel__history");
+    const toggle = () => host.querySelector<HTMLButtonElement>(".cv-agents-recent > button");
     const entries = () =>
-      [...host.querySelectorAll(".agents-panel__history-entry")].map((node) => node.textContent);
+      [...host.querySelectorAll(".cv-agents-recent ol li")].map((node) => node.textContent);
 
-    expect(details?.open).toBe(false);
-    expect(host.querySelector(".agents-panel__history-summary")?.textContent).toBe(
-      "Recent activity · 3",
-    );
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle()?.textContent).toBe("Recent activity · 3");
+    expect(host.querySelector(".cv-agents-recent ol")).toBeNull();
+
+    act(() => toggle()?.click());
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
+    const listId = toggle()?.getAttribute("aria-controls");
+    expect(host.querySelector(".cv-agents-recent ol")?.id).toBe(listId);
     expect(entries()).toEqual(history);
 
-    act(() => {
-      if (details !== null) details.open = true;
-    });
     const longer = [...history, "Step 4", "Step 5", "Step 6", "Step 7"];
     const second = group(
       "t1",
@@ -308,8 +285,7 @@ describe("AgentAgentsPanel", () => {
     );
     act(() => root.render(<AgentAgentsPanel groups={[second]} />));
 
-    expect(host.querySelector(".agents-panel__history")).toBe(details);
-    expect(details?.open).toBe(true);
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
     expect(entries()).toEqual([
       "▸ Grep",
       "Running npx vitest run",
@@ -318,16 +294,14 @@ describe("AgentAgentsPanel", () => {
       "Step 6",
       "Step 7",
     ]);
-    expect(host.querySelector(".agents-panel__history-summary")?.textContent).toBe(
-      "Recent activity · 6",
-    );
+    expect(toggle()?.textContent).toBe("Recent activity · 6");
   });
 
   it("omits the history for an agent that has reported no activity", () => {
     act(() => root.render(<AgentAgentsPanel groups={[group("t1", [source({ id: "a" })])]} />));
 
-    expect(host.querySelector(".agents-panel__row")).not.toBeNull();
-    expect(host.querySelector(".agents-panel__history")).toBeNull();
+    expect(host.querySelector(".cv-agents-row")).not.toBeNull();
+    expect(host.querySelector(".cv-agents-recent")).toBeNull();
   });
 
   it("bounds the rendered rows and says so", () => {
@@ -338,9 +312,12 @@ describe("AgentAgentsPanel", () => {
       ),
     );
     const model = agentAgentsPanelModel(groups);
-    expect(model.rows).toHaveLength(MAX_AGENTS_PANEL_ROWS);
+    const earlierRows = model.earlier.flatMap((entry) => entry.rows);
+    expect(model.current).toHaveLength(32);
+    expect(model.current.length + earlierRows.length).toBe(MAX_AGENTS_PANEL_ROWS);
+    expect(model.earlier.map((entry) => entry.key)).toEqual(["t2", "t1"]);
     expect(model.notice).toBe(`Showing the latest ${MAX_AGENTS_PANEL_ROWS} agents`);
     expect(model.totalTokens).toBe(128);
-    expect(model.rows[model.rows.length - 1]?.key).toBe("t3:a31");
+    expect(model.current[model.current.length - 1]?.key).toBe("t3:a31");
   });
 });

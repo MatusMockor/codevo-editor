@@ -1,6 +1,7 @@
 import { Columns2, Plus, Trash2, X } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -22,7 +23,19 @@ import type {
   AgentProviderSignInTerminalIntent,
 } from "../application/useAgentProviderSignIn";
 import { TerminalPanel } from "./TerminalPanel";
+import { TerminalFloatingToolbar } from "./TerminalFloatingToolbar";
+import {
+  useTerminalExitedSessions,
+  type TerminalTabsExternalStrip,
+  type TerminalTabsSnapshot,
+} from "./terminalTabsExternalStrip";
 import "./terminalPanel.css";
+
+export type {
+  TerminalTabsCommands,
+  TerminalTabsExternalStrip,
+  TerminalTabsSnapshot,
+} from "./terminalTabsExternalStrip";
 
 interface TerminalRuntime {
   readonly cwd: string | null;
@@ -43,6 +56,7 @@ export interface TerminalTabsPanelProps {
   readonly terminalTheme: TerminalTheme;
   readonly toolbarHost?: HTMLElement | null;
   readonly providerSignIn?: AgentProviderSignInSurface;
+  readonly externalStrip?: TerminalTabsExternalStrip;
   onActiveCwdChange?(cwd: string | null): void;
   onActiveProfileChange?(profileId: string | null): void;
   onActiveSessionReady?(sessionId: number | null): void;
@@ -52,6 +66,7 @@ export interface TerminalTabsPanelProps {
 const styles: Record<string, CSSProperties> = {
   shell: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
   viewport: { flex: "1 1 auto", minHeight: 0 },
+  floatingHost: { position: "relative" },
 };
 
 export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
@@ -61,6 +76,10 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
       new Map([[tabs.activeTabId!, { cwd: null, profileId: props.profileId, sessionId: null }]]),
   );
   const [splitIds, setSplitIds] = useState<readonly [string, string] | null>(null);
+  const { exited: exitedSessions, markExited } = useTerminalExitedSessions(props.terminalGateway);
+  const [paneGenerations, setPaneGenerations] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
   const newButtonRef = useRef<HTMLButtonElement>(null);
   const sequenceRef = useRef(1);
   const runtimeRef = useRef(runtime);
@@ -172,6 +191,33 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     if (closingWasActive) publishActive(fallback, next);
     dispatch({ ownerKey: props.ownerKey, tabId, type: "close" });
   };
+  const stopActive = () => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    const sessionId = runtimeRef.current.get(tabId)?.sessionId ?? null;
+    if (sessionId === null) return;
+    void props.terminalGateway.stop(sessionId).then(
+      () => markExited(sessionId),
+      () => undefined,
+    );
+  };
+  const restartActive = () => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId || !liveTabIdsRef.current.has(tabId)) return;
+    const current = runtimeRef.current.get(tabId);
+    if (current === undefined || current.signInIntent !== undefined) return;
+    updateRuntime(tabId, (previous) =>
+      previous ? { ...previous, cwd: null, sessionId: null } : undefined,
+    );
+    onActiveSessionReadyRef.current?.(null);
+    setPaneGenerations((generations) =>
+      new Map(generations).set(tabId, (generations.get(tabId) ?? 0) + 1),
+    );
+  };
+  const createUnsplit = () => {
+    setSplitIds(null);
+    create();
+  };
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (event.key === "Delete") {
       event.preventDefault();
@@ -253,6 +299,52 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     }
   }, [props.ownerKey, props.providerSignIn, props.providerSignIn?.terminalIntents, tabs.mruTabIds]);
 
+  const externalStrip = props.externalStrip;
+  const activeRuntime = runtime.get(tabs.activeTabId ?? "");
+  const activeSessionId = activeRuntime?.sessionId ?? null;
+  const activeSessionLive = activeSessionId !== null && !exitedSessions.has(activeSessionId);
+  const snapshot: TerminalTabsSnapshot = {
+    tabs: tabs.tabs.map((tab) => {
+      const sessionId = runtime.get(tab.id)?.sessionId ?? null;
+      return {
+        id: tab.id,
+        title: tab.title,
+        live: sessionId !== null && !exitedSessions.has(sessionId),
+        closable: !signInTabIsAwaitingSession(runtime.get(tab.id), props.providerSignIn),
+      };
+    }),
+    activeTabId: tabs.activeTabId,
+    canCreate: tabs.tabs.length < MAX_TERMINAL_TABS,
+    split: splitIds !== null,
+  };
+  const snapshotKey = JSON.stringify(snapshot);
+  useEffect(() => {
+    if (externalStrip === undefined) return;
+    externalStrip.onSnapshot(JSON.parse(snapshotKey) as TerminalTabsSnapshot);
+  }, [externalStrip, snapshotKey]);
+  useEffect(() => {
+    if (externalStrip === undefined) return;
+    return () => externalStrip.onSnapshot(null);
+  }, [externalStrip]);
+  useLayoutEffect(() => {
+    if (externalStrip === undefined) return;
+    externalStrip.commandsRef.current = {
+      activate,
+      close,
+      create: createUnsplit,
+      toggleSplit,
+      stopActive,
+      restartActive,
+    };
+  });
+  useLayoutEffect(() => {
+    if (externalStrip === undefined) return;
+    const { commandsRef } = externalStrip;
+    return () => {
+      commandsRef.current = null;
+    };
+  }, [externalStrip]);
+
   const sessionList = (
     <div
       aria-label="Terminal sessions"
@@ -315,10 +407,7 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
         aria-label="New Terminal"
         className="terminal-tabs-toolbar__new"
         disabled={tabs.tabs.length >= MAX_TERMINAL_TABS}
-        onClick={() => {
-          setSplitIds(null);
-          create();
-        }}
+        onClick={createUnsplit}
         ref={newButtonRef}
         title="New Terminal"
         type="button"
@@ -349,12 +438,28 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
       className="terminal-tabs-panel"
       style={{ ...styles.shell, background: props.terminalTheme.background }}
     >
-      {props.toolbarHost === undefined
-        ? toolbar
-        : props.toolbarHost
-          ? createPortal(toolbar, props.toolbarHost)
-          : null}
-      <div className="terminal-tabs-body">
+      {externalStrip === undefined &&
+        (props.toolbarHost === undefined
+          ? toolbar
+          : props.toolbarHost
+            ? createPortal(toolbar, props.toolbarHost)
+            : null)}
+      <div
+        className="terminal-tabs-body"
+        style={externalStrip === undefined ? undefined : styles.floatingHost}
+      >
+        {externalStrip !== undefined && (
+          <TerminalFloatingToolbar
+            canCreate={tabs.tabs.length < MAX_TERMINAL_TABS}
+            canRestart={activeRuntime !== undefined && activeRuntime.signInIntent === undefined}
+            canStop={activeSessionLive}
+            onCreate={createUnsplit}
+            onRestart={restartActive}
+            onStop={stopActive}
+            onToggleSplit={toggleSplit}
+            split={splitIds !== null}
+          />
+        )}
         <div className="terminal-tabs-panes" style={styles.viewport}>
           {tabs.tabs.map((tab) => {
             const metadata = runtime.get(tab.id);
@@ -364,7 +469,7 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
               <div
                 className="terminal-tabs-pane"
                 hidden={!visible}
-                key={tab.id}
+                key={`${tab.id}:${paneGenerations.get(tab.id) ?? 0}`}
                 onFocusCapture={() => activate(tab.id)}
                 onPointerDown={() => activate(tab.id)}
               >
@@ -437,7 +542,7 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
             );
           })}
         </div>
-        {sessionList}
+        {externalStrip === undefined && sessionList}
       </div>
     </section>
   );

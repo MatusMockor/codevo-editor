@@ -251,9 +251,9 @@ describe("original agent workbench with remote execution", () => {
     );
     await waitForReact(() => expect(gateway.listProjects).toHaveBeenCalled());
     const chooseProject = (name: string) => {
-      click(host.querySelector("button#agent-rail-scope")!);
-      const row = [...host.querySelectorAll('#agent-rail-scope-list [role="menuitemradio"]')].find(
-        (entry) => entry.textContent?.includes(name),
+      click(host.querySelector('button[aria-label="Filter threads by project"]')!);
+      const row = [...document.querySelectorAll('.cv-filter [role="option"]')].find(
+        (entry) => entry.querySelector(".cv-filter__label")?.textContent === name,
       );
       expect(row).toBeDefined();
       click(row!);
@@ -268,8 +268,8 @@ describe("original agent workbench with remote execution", () => {
     await waitForReact(() =>
       expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull(),
     );
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).not.toContain("Server app");
+    expect(railScopeTitle(host)).toContain("app");
+    expect(railScopeTitle(host)).not.toContain("Server app");
     expect(selectWorkspace).toHaveBeenLastCalledWith(
       expect.objectContaining({ rootKey: SURFACE_FIXTURE_ROOT }),
     );
@@ -279,7 +279,7 @@ describe("original agent workbench with remote execution", () => {
         host.querySelector(`section[aria-label="Agent thread ${remoteThreadId}"]`),
       ).not.toBeNull(),
     );
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("Server app");
+    expect(railScopeTitle(host)).toContain("Server app");
     expect(gateway.createTask).not.toHaveBeenCalled();
   });
 
@@ -361,7 +361,7 @@ describe("original agent workbench with remote execution", () => {
     );
     expect(host.querySelectorAll(`[data-thread-id="${remoteThreadId}"]`)).toHaveLength(1);
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
+    expect(railScopeTitle(host)).toContain("app");
     expect(host.querySelector('[aria-label="Remote tasks"]')).toBeNull();
     const pasteImage = async () => {
       const file = new File([new Uint8Array(16)], "clipboard.png", { type: "image/png" });
@@ -426,7 +426,7 @@ describe("original agent workbench with remote execution", () => {
     await waitForReact(() => expect(host.querySelectorAll("[data-agent-turn]")).toHaveLength(3));
     expect(host.querySelectorAll(`[data-thread-id="${remoteThreadId}"]`)).toHaveLength(1);
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("app");
+    expect(railScopeTitle(host)).toContain("app");
     await waitForReact(() =>
       expect(surfacesGateway.capabilities).toHaveBeenLastCalledWith({
         serverId: "linux",
@@ -645,6 +645,10 @@ describe("original agent workbench with remote execution", () => {
     ).toBe(false);
   });
 });
+function railScopeTitle(host: HTMLElement): string | null | undefined {
+  return host.querySelector('button[aria-label="New thread"]')?.getAttribute("title");
+}
+
 function click(element: Element) {
   act(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }

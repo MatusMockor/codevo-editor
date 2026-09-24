@@ -18,9 +18,10 @@ export interface AgentTurnLogNoticeModel {
 export function agentTurnLogNoticeModel(
   facts: AgentTurnLogFacts | null,
   eventsTruncated: boolean,
+  readerAvailable = false,
 ): AgentTurnLogNoticeModel {
   return {
-    loss: agentTurnLossNotice(facts, eventsTruncated),
+    loss: agentTurnLossNotice(facts, eventsTruncated, readerAvailable),
     unsaved: agentTurnUnsavedNotice(facts),
   };
 }
@@ -28,12 +29,14 @@ export function agentTurnLogNoticeModel(
 export function agentTurnLossNotice(
   facts: AgentTurnLogFacts | null,
   eventsTruncated: boolean,
+  readerAvailable = false,
 ): string | null {
   const evidence = agentTurnLogEvidence(facts);
   if (evidence === null) return eventsTruncated ? AGENT_TURN_WINDOW_NOTICE : null;
   const display = agentTurnWindowDisplay(eventsTruncated, evidence);
   if (display === "complete") return null;
-  if (display === "savedNotShown") return AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE;
+  if (display === "savedNotShown")
+    return readerAvailable ? null : AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE;
   return (
     agentTurnLogLossNotice(evidence.loss) ?? (eventsTruncated ? AGENT_TURN_WINDOW_NOTICE : null)
   );

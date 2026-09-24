@@ -23,7 +23,14 @@ import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLo
 import { terminalTurnKey } from "./agentComposerLaunch";
 import type { ComposerScope } from "./agentComposerTarget";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
-import { adjacentThreadId, agentThreadsInScope, orderedRailThreadIds } from "./agentModeNavigation";
+import { adjacentThreadId, orderedRailThreadIds } from "./agentModeNavigation";
+import {
+  ALL_PROJECTS_FILTER,
+  agentRailFilterFollowingProject,
+  agentThreadsInFilter,
+  reconcileAgentRailFilter,
+  type AgentRailFilter,
+} from "./agentRailFilter";
 import {
   agentRailDefaultScopeEntry,
   agentRailNeighbourScopeEntry,
@@ -96,6 +103,7 @@ export interface AgentThreadNavigation {
   readonly selectedThreadId: string | null;
   readonly selectedThread: AgentThreadView | null;
   readonly railScope: AgentRailScope | null;
+  readonly railFilter: AgentRailFilter;
   readonly composerScope: ComposerScope | null;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly search: AgentThreadSearchSurface;
@@ -105,6 +113,7 @@ export interface AgentThreadNavigation {
   readonly terminalSessions: AgentTerminalSessionsPaletteState;
   readonly commands: AgentNavigationCommandHandlers;
   setRailScope(scope: AgentRailScope): void;
+  setRailFilter(filter: AgentRailFilter): void;
   setProjectScope(projectRootKey: string): boolean;
   selectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   selectStartedThread(threadId: string): void;
@@ -142,6 +151,7 @@ export interface AgentNavigationSession {
     readonly selectedThreadId: string | null;
     readonly selectedThreadOwnerKey: string | null;
     readonly scopeState: AgentNavigationScopeState;
+    readonly railFilter?: AgentRailFilter;
   };
 }
 
@@ -233,6 +243,11 @@ export function useAgentThreadNavigation({
   }, [projects, terminalSessionsTarget]);
 
   const scopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
+  const [storedFilter, setStoredFilter] = useState<AgentRailFilter>(
+    () => session?.current.railFilter ?? ALL_PROJECTS_FILTER,
+  );
+  const railFilter = reconcileAgentRailFilter(storedFilter, scopeEntries);
+  if (railFilter !== storedFilter) setStoredFilter(railFilter);
   const threadViews = agents.threads;
   const committedThreadViews = useRef(threadViews);
   useLayoutEffect(() => {
@@ -296,9 +311,11 @@ export function useAgentThreadNavigation({
           ? (pendingRemoteSelection.current?.ownerKey ?? null)
           : JSON.stringify(selectedThread.thread.owner),
       scopeState,
+      railFilter,
     };
   }, [
     projects,
+    railFilter,
     scopeEntries,
     selectedProjectRootKey,
     scopeState,
@@ -313,12 +330,12 @@ export function useAgentThreadNavigation({
   );
 
   const scopedViews = useMemo(
-    () => agentThreadsInScope(threadViews, railScope),
-    [railScope, threadViews],
+    () => agentThreadsInFilter(threadViews, railFilter, scopeEntries),
+    [railFilter, scopeEntries, threadViews],
   );
   const scopedPresentationViews = useMemo(
-    () => agentThreadsInScope(presentationThreads, railScope),
-    [presentationThreads, railScope],
+    () => agentThreadsInFilter(presentationThreads, railFilter, scopeEntries),
+    [presentationThreads, railFilter, scopeEntries],
   );
   const search = useAgentThreadSearch(scopedViews, {
     historySearch: agents.historySearch,
@@ -420,6 +437,9 @@ export function useAgentThreadNavigation({
           railScope: scope,
           authority: captureScopeAuthority(scope, projects),
         }));
+        setStoredFilter((current) =>
+          agentRailFilterFollowingProject(current, entry.projectRootKey, scopeEntries),
+        );
       }
       setPendingSearchReveal(null);
       if (reveal !== undefined) {
@@ -476,6 +496,9 @@ export function useAgentThreadNavigation({
         setPendingSearchReveal(null);
         setSelectedThreadId(retained?.threadId ?? null);
       }
+      setStoredFilter((current) =>
+        agentRailFilterFollowingProject(current, railScope.projectRootKey, scopeEntries),
+      );
       setScopeState((current) => ({
         intent: "automatic",
         railScope,
@@ -491,6 +514,8 @@ export function useAgentThreadNavigation({
       storedScopeState.railScope?.projectRootKey,
     ],
   );
+
+  const setRailFilter = useCallback((filter: AgentRailFilter) => setStoredFilter(filter), []);
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
@@ -511,8 +536,8 @@ export function useAgentThreadNavigation({
   }, [closeFind]);
 
   const orderedThreadIds = useMemo(
-    () => orderedRailThreadIds(scopedPresentationViews, railScope),
-    [railScope, scopedPresentationViews],
+    () => orderedRailThreadIds(scopedPresentationViews),
+    [scopedPresentationViews],
   );
   const openFind = find.openBar;
   const commands = useMemo<AgentNavigationCommandHandlers>(
@@ -590,6 +615,7 @@ export function useAgentThreadNavigation({
     selectedThreadId,
     selectedThread,
     railScope,
+    railFilter,
     composerScope,
     scopeEntries,
     search,
@@ -599,6 +625,7 @@ export function useAgentThreadNavigation({
     terminalSessions,
     commands,
     setRailScope,
+    setRailFilter,
     setProjectScope,
     selectThread,
     selectStartedThread,

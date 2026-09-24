@@ -1,4 +1,5 @@
 import { cx } from "./classNames";
+import { Spinner } from "./Spinner";
 import "./buttons.css";
 
 export type SubmitButtonMode = "send" | "stop" | "update";
@@ -7,6 +8,10 @@ export interface SubmitButtonProps {
   readonly mode: SubmitButtonMode;
   readonly disabled?: boolean;
   readonly label?: string;
+  readonly title?: string;
+  readonly busy?: boolean;
+  readonly keyShortcuts?: string;
+  readonly className?: string;
   onClick?(): void;
 }
 
@@ -16,21 +21,38 @@ const LABELS: Readonly<Record<SubmitButtonMode, string>> = {
   update: "Update queued message",
 };
 
-export function SubmitButton({ disabled = false, label, mode, onClick }: SubmitButtonProps) {
+export function SubmitButton({
+  busy = false,
+  className,
+  disabled = false,
+  keyShortcuts,
+  label,
+  mode,
+  onClick,
+  title,
+}: SubmitButtonProps) {
   const accessibleLabel = label ?? LABELS[mode];
   const stopping = mode === "stop";
   return (
     <button
+      aria-busy={busy || undefined}
+      aria-keyshortcuts={keyShortcuts}
       aria-label={accessibleLabel}
-      className={cx("cv-submit", stopping && "cv-submit--stop")}
+      className={cx("cv-submit", stopping && "cv-submit--stop", className)}
       disabled={disabled}
       onClick={onClick}
-      title={accessibleLabel}
+      title={title ?? accessibleLabel}
       type={stopping ? "button" : "submit"}
     >
-      {stopping ? <StopGlyph /> : <ArrowGlyph />}
+      {submitGlyph(busy, stopping)}
     </button>
   );
+}
+
+function submitGlyph(busy: boolean, stopping: boolean) {
+  if (busy) return <Spinner />;
+  if (stopping) return <StopGlyph />;
+  return <ArrowGlyph />;
 }
 
 function ArrowGlyph() {

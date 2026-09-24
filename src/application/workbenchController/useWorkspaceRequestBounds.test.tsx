@@ -60,7 +60,7 @@ describe("workspace request bounds", () => {
         reportError: vi.fn(),
         resolveCachedWorkspaceState: () => null,
         withManagedWorkspaceIdentityLease: async (_descriptor, leaseOperation) =>
-          leaseOperation(() => undefined),
+          leaseOperation(async () => false),
         workbenchMountedRef: { current: true },
         workspaceCloseGenerationByRootRef: { current: {} },
         workspaceCloseOwnershipByKeyRef: { current: {} },
@@ -76,7 +76,9 @@ describe("workspace request bounds", () => {
             caseSensitive: true,
             unicodeNormalizationPolicy: "preserved",
           }),
-          unregister: async () => undefined,
+          unregister: async () => ({ status: "released" as const }),
+          adoptAdmission: async () => ({ status: "adopted" as const }),
+          rollbackAdmission: async () => ({ status: "released" as const }),
         },
         workspaceRoot: null,
       });

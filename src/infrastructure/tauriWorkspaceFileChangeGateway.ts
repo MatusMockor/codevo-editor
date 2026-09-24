@@ -15,10 +15,27 @@ type ListenToFileChangeEvent = (
 ) => Promise<WorkspaceFileChangeUnsubscribeFn>;
 type RuntimeDetector = () => boolean;
 
+type WorkspaceFileWatchIgnoreRulesTruncation =
+  "depthLimit" | "directoryLimit" | "entryLimit" | "timeLimit" | "unreadableDirectory";
+
+type WorkspaceFileWatchIgnoreRules =
+  | { readonly status: "complete" }
+  | { readonly status: "truncated"; readonly reason: WorkspaceFileWatchIgnoreRulesTruncation };
+
 interface WorkspaceFileWatchStartReceipt {
-  rootPath: string;
-  watchGeneration: number;
+  readonly rootPath: string;
+  readonly watchGeneration: number;
+  readonly ignoreRules: WorkspaceFileWatchIgnoreRules;
 }
+
+const IGNORE_RULES_TRUNCATION_REASONS: ReadonlySet<string> =
+  new Set<WorkspaceFileWatchIgnoreRulesTruncation>([
+    "depthLimit",
+    "directoryLimit",
+    "entryLimit",
+    "timeLimit",
+    "unreadableDirectory",
+  ]);
 
 type WorkspaceFileChangeWireEvent = WorkspaceFileChangeEvent & {
   watchGeneration: number;
@@ -660,15 +677,31 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 }
 
 function parseStartReceipt(value: unknown): WorkspaceFileWatchStartReceipt {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["rootPath", "watchGeneration"])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["rootPath", "watchGeneration", "ignoreRules"])) {
     throw new Error("Workspace watcher returned an invalid start receipt.");
   }
   const rootPath = boundedString(value.rootPath);
   const watchGeneration = safeGeneration(value.watchGeneration);
-  if (!rootPath || watchGeneration === null) {
+  const ignoreRules = parseIgnoreRules(value.ignoreRules);
+  if (!rootPath || watchGeneration === null || ignoreRules === null) {
     throw new Error("Workspace watcher returned an invalid start receipt.");
   }
-  return { rootPath, watchGeneration };
+  return { rootPath, watchGeneration, ignoreRules };
+}
+
+function parseIgnoreRules(value: unknown): WorkspaceFileWatchIgnoreRules | null {
+  if (!isRecord(value)) return null;
+  if (value.status === "complete" && hasOnlyKeys(value, ["status"])) {
+    return { status: "complete" };
+  }
+  if (value.status !== "truncated" || !hasOnlyKeys(value, ["status", "reason"])) return null;
+  const reason = value.reason;
+  if (!isIgnoreRulesTruncation(reason)) return null;
+  return { status: "truncated", reason };
+}
+
+function isIgnoreRulesTruncation(value: unknown): value is WorkspaceFileWatchIgnoreRulesTruncation {
+  return typeof value === "string" && IGNORE_RULES_TRUNCATION_REASONS.has(value);
 }
 
 function parseWireEvent(value: unknown): WorkspaceFileChangeWireEvent | null {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useReducer } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it } from "vitest";
 import {
@@ -8,6 +8,10 @@ import {
   type AgentSurfaceLayoutOptions,
 } from "./useAgentSurfaceLayout";
 import { recordedLayoutState } from "./agentWorkbenchChromeTestFixtures";
+import {
+  agentWorkbenchLayoutReducer,
+  initialAgentWorkbenchLayout,
+} from "../../domain/agentWorkbenchLayout";
 
 it("restores each remote conversation's panel selection without altering local surfaces", () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -78,6 +82,45 @@ it("shows the global panel shell when opening a remote surface from a closed pan
     act(() => current.openSurface("files"));
     expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }]);
     expect(current.layout.activeSurface).toBe("files");
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it("toggles a surface closed when it is the active tab and open otherwise", () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const root = createRoot(document.createElement("div"));
+  let current!: AgentSurfaceLayout;
+  function Harness() {
+    const [state, dispatch] = useReducer(agentWorkbenchLayoutReducer, initialAgentWorkbenchLayout);
+    current = useAgentSurfaceLayout({
+      chrome: {
+        layout: {
+          layout: state,
+          effectiveLayout: state.layout,
+          persistedBottomPanel: false,
+          dispatch,
+        },
+        workspaceTrusted: true,
+      },
+      selectedThread: null,
+      workspaceRoot: "/local",
+    });
+    return null;
+  }
+  try {
+    act(() => root.render(<Harness />));
+    act(() => current.toggleSurface("agents"));
+    expect(current.layout.activeSurface).toBe("agents");
+    expect(current.isSurfaceOpen("agents")).toBe(true);
+
+    act(() => current.openSurface("git"));
+    act(() => current.toggleSurface("agents"));
+    expect(current.layout.activeSurface).toBe("agents");
+
+    act(() => current.toggleSurface("agents"));
+    expect(current.isSurfaceOpen("agents")).toBe(false);
+    expect(current.layout.activeSurface).toBe("git");
   } finally {
     act(() => root.unmount());
   }

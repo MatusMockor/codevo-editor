@@ -67,6 +67,19 @@ describe("ComposerBanner", () => {
     render(<ComposerBanner tone="working">Waiting for 2 agents</ComposerBanner>);
     expect(host.querySelector(".cv-composer-banner--working .cv-spinner")).not.toBeNull();
   });
+
+  it("stays silent when another region already announces the same state", () => {
+    const { host } = mount(
+      <ComposerBanner announce={false} tone="working">
+        2 agents running
+      </ComposerBanner>,
+    );
+    const banner = host.querySelector(".cv-composer-banner");
+
+    expect(banner?.getAttribute("role")).toBeNull();
+    expect(banner?.getAttribute("aria-live")).toBeNull();
+    expect(banner?.textContent).toBe("2 agents running");
+  });
 });
 
 describe("Toast", () => {

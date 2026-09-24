@@ -4,8 +4,8 @@ use super::{
     detect_case_sensitivity, detect_unicode_policy, lock_error, normalize_registered_path,
     open_selected_root, opened_root_path, random_workspace_id, unknown_workspace, ManagedWorkspace,
     ManagedWorkspaceDescriptor, RegisteredPathOwner, RegisteredRootIdentity, RegistrationAdmission,
-    WorkspaceId, WorkspaceRegistrationAuthority, WorkspaceRegistry, MAX_REGISTERED_PATHS_GLOBAL,
-    MAX_REGISTERED_PATHS_PER_WORKSPACE,
+    RegistrationOwner, WorkspaceId, WorkspaceRegistrationAuthority, WorkspaceRegistry,
+    MAX_REGISTERED_PATHS_GLOBAL, MAX_REGISTERED_PATHS_PER_WORKSPACE,
 };
 use serde::Serialize;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -153,14 +153,22 @@ impl WorkspaceRegistry {
         &self,
         selected_root: impl AsRef<Path>,
     ) -> io::Result<WorkspaceRegistration> {
+        self.register_owner_with_receipt(selected_root, RegistrationOwner::Editor)
+    }
+
+    pub(crate) fn register_owner_with_receipt(
+        &self,
+        selected_root: impl AsRef<Path>,
+        owner: RegistrationOwner,
+    ) -> io::Result<WorkspaceRegistration> {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let _ = selected_root;
+            let _ = (selected_root, owner);
             return Err(unsupported_platform());
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            self.register_with_receipt_and_hook(selected_root.as_ref(), || Ok(()))
+            self.register_with_receipt_and_hook(selected_root.as_ref(), owner, || Ok(()))
         }
     }
 
@@ -173,7 +181,7 @@ impl WorkspaceRegistry {
     where
         F: FnOnce() -> io::Result<()>,
     {
-        self.register_with_receipt_and_hook(selected_root, post_open)
+        self.register_with_receipt_and_hook(selected_root, RegistrationOwner::Editor, post_open)
             .map(|registration| registration.descriptor)
     }
 
@@ -181,6 +189,7 @@ impl WorkspaceRegistry {
     fn register_with_receipt_and_hook<F>(
         &self,
         selected_root: &Path,
+        owner: RegistrationOwner,
         post_open: F,
     ) -> io::Result<WorkspaceRegistration>
     where
@@ -191,6 +200,8 @@ impl WorkspaceRegistry {
         let root = open_selected_root(selected_root)?;
         post_open()?;
         let canonical_root_path = opened_root_path(&root)?;
+        crate::workspace::protected_paths::ProtectedPathPolicy::current()
+            .check_workspace_root(&canonical_root_path)?;
         let root_metadata = root.metadata()?;
         let root_identity = RegisteredRootIdentity {
             device: root_metadata.dev(),
@@ -204,7 +215,7 @@ impl WorkspaceRegistry {
         }
         let selected_path = normalize_registered_path(selected_root)?;
         let canonical_path = normalize_registered_path(&canonical_root_path)?;
-        let requested_paths = BTreeSet::from([selected_path, canonical_path]);
+        let requested_paths = BTreeSet::from([selected_path.clone(), canonical_path]);
 
         let operation = self.lock_operations()?;
         let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
@@ -320,6 +331,9 @@ impl WorkspaceRegistry {
                 admission_token,
                 RegistrationAdmission {
                     added_registered_paths,
+                    owner,
+                    selected_path: selected_path.clone(),
+                    published: false,
                 },
             );
             ManagedWorkspaceDescriptor {
@@ -344,6 +358,9 @@ impl WorkspaceRegistry {
                 admission_token,
                 RegistrationAdmission {
                     added_registered_paths,
+                    owner,
+                    selected_path: selected_path.clone(),
+                    published: false,
                 },
             )]
             .into_iter()
@@ -370,6 +387,12 @@ impl WorkspaceRegistry {
         drop(path_owners);
         drop(workspaces);
         drop(operation);
+        let mut unpublished = UnpublishedAdmission {
+            registry: self,
+            workspace_id: workspace_id.clone(),
+            admission_token,
+            settled: false,
+        };
         transition.wait()?;
         let _operation = self.lock_operations()?;
         let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
@@ -388,11 +411,19 @@ impl WorkspaceRegistry {
                 &workspace_id,
                 admission_token,
             );
+            unpublished.settled = true;
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "workspace registration admission was replaced before publication",
             ));
         }
+        if let Some(admission) = workspaces
+            .get_mut(&workspace_id)
+            .and_then(|workspace| workspace.registration_admissions.get_mut(&admission_token))
+        {
+            admission.published = true;
+        }
+        unpublished.settled = true;
         self.registration_operations
             .publish_latest(&workspace_id, admission_token)?;
         Ok(WorkspaceRegistration {
@@ -457,24 +488,17 @@ impl WorkspaceRegistry {
                     settled: false,
                 }));
             }
-            let Some(admission) = workspace.registration_admissions.remove(&admission_token) else {
-                return Ok(None);
-            };
             let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
-            for path in admission.added_registered_paths {
-                if path_owners.get(&path).is_some_and(|owner| {
-                    owner.workspace_id == *workspace_id && owner.admission_token == admission_token
-                }) {
-                    path_owners.remove(&path);
-                    workspace.registered_paths.remove(&path);
-                }
-            }
-            workspace.latest_admission_token = *workspace
-                .registration_admissions
-                .keys()
-                .max()
-                .expect("non-empty admission registry");
-            let latest_admission_token = workspace.latest_admission_token;
+            remove_losing_registration_admission(
+                &mut workspaces,
+                &mut path_owners,
+                workspace_id,
+                admission_token,
+            );
+            let latest_admission_token = workspaces
+                .get(workspace_id)
+                .map(|workspace| workspace.latest_admission_token)
+                .ok_or_else(unknown_workspace)?;
             let transition = self
                 .registration_operations
                 .begin_transition(workspace_id)?;
@@ -512,7 +536,7 @@ impl WorkspaceRegistry {
             let workspace = workspaces
                 .get_mut(workspace_id)
                 .ok_or_else(unknown_workspace)?;
-            workspace
+            let retained = workspace
                 .registration_admissions
                 .remove(&admission_token)
                 .ok_or_else(|| io::Error::other("workspace registration admission is stale"))?;
@@ -521,6 +545,9 @@ impl WorkspaceRegistry {
                 .entry(RETAINED_REGISTRATION_ADMISSION)
                 .or_insert_with(|| RegistrationAdmission {
                     added_registered_paths: BTreeSet::new(),
+                    owner: retained.owner,
+                    selected_path: retained.selected_path,
+                    published: true,
                 });
             workspace.latest_admission_token = *workspace
                 .registration_admissions
@@ -540,7 +567,7 @@ impl WorkspaceRegistry {
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn publish_registration_if_latest(
+    pub(super) fn publish_registration_if_latest(
         &self,
         workspace_id: &WorkspaceId,
         admission_token: u64,
@@ -649,7 +676,75 @@ fn remove_path_from_admission(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn remove_losing_registration_admission(
+struct UnpublishedAdmission<'a> {
+    registry: &'a WorkspaceRegistry,
+    workspace_id: WorkspaceId,
+    admission_token: u64,
+    settled: bool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Drop for UnpublishedAdmission<'_> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let _operation = self
+            .registry
+            .operations
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut workspaces = self
+            .registry
+            .workspaces
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut path_owners = self
+            .registry
+            .path_owners
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let only_admission = workspaces.get(&self.workspace_id).is_some_and(|workspace| {
+            workspace.registration_admissions.len() == 1
+                && workspace
+                    .registration_admissions
+                    .contains_key(&self.admission_token)
+        });
+        if !only_admission {
+            remove_losing_registration_admission(
+                &mut workspaces,
+                &mut path_owners,
+                &self.workspace_id,
+                self.admission_token,
+            );
+            let surviving_latest = workspaces
+                .get(&self.workspace_id)
+                .filter(|workspace| workspace.unregister_generation.is_none())
+                .map(|workspace| workspace.latest_admission_token);
+            if let Some(latest) = surviving_latest {
+                let _ = self
+                    .registry
+                    .registration_operations
+                    .publish_latest(&self.workspace_id, latest);
+            }
+            return;
+        }
+        let Some(removed) = workspaces.remove(&self.workspace_id) else {
+            return;
+        };
+        for path in &removed.registered_paths {
+            if path_owners
+                .get(path)
+                .is_some_and(|owner| owner.workspace_id == self.workspace_id)
+            {
+                path_owners.remove(path);
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) fn remove_losing_registration_admission(
     workspaces: &mut std::collections::HashMap<WorkspaceId, ManagedWorkspace>,
     path_owners: &mut std::collections::HashMap<PathBuf, RegisteredPathOwner>,
     workspace_id: &WorkspaceId,
@@ -666,6 +761,9 @@ fn remove_losing_registration_admission(
             RETAINED_REGISTRATION_ADMISSION,
             RegistrationAdmission {
                 added_registered_paths: BTreeSet::new(),
+                owner: admission.owner,
+                selected_path: admission.selected_path.clone(),
+                published: true,
             },
         );
         workspace.latest_admission_token = RETAINED_REGISTRATION_ADMISSION;

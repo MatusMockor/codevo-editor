@@ -1,4 +1,4 @@
-import { useRef, type DragEvent } from "react";
+import { useRef, useState, type DragEvent } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { runningTurn } from "../../domain/agentThread";
 import {
@@ -6,6 +6,7 @@ import {
   type AgentThreadDropSection,
 } from "../../domain/agentThreadOrganization";
 import type { AgentRailSections, AgentThreadMenuCommand } from "./agentSidebarPresentation";
+import "./agentThreadOrganization.css";
 
 export function useAgentThreadDrag(
   sections: AgentRailSections,
@@ -13,6 +14,7 @@ export function useAgentThreadDrag(
 ) {
   const source = useRef<AgentThreadView | null>(null);
   const indicator = useRef<HTMLElement | null>(null);
+  const [dragging, setDragging] = useState(false);
   const rows = [
     ...sections.pinned,
     ...sections.active,
@@ -26,6 +28,7 @@ export function useAgentThreadDrag(
   const finish = () => {
     source.current = null;
     clearIndicator();
+    setDragging(false);
   };
   const resolve = (event: DragEvent) => {
     const captured = source.current;
@@ -85,6 +88,7 @@ export function useAgentThreadDrag(
       </li>
     ),
     handlers: {
+      "data-dragging": dragging ? ("true" as const) : undefined,
       onDragStart(event: DragEvent<HTMLUListElement>) {
         const id =
           event.target instanceof Element
@@ -97,6 +101,7 @@ export function useAgentThreadDrag(
         }
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", source.current.thread.threadId);
+        setDragging(true);
       },
       onDragEnd: finish,
       onDragLeave(event: DragEvent<HTMLUListElement>) {

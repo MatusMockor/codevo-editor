@@ -57,7 +57,7 @@ describe("AgentComposer", () => {
     render();
 
     expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
-    expect(host.querySelector(".agent-composer__row .agent-picker__prefix")).toBeNull();
+    expect(host.querySelector(".cv-composer__foot .agent-picker__prefix")).toBeNull();
     expect(pickerOptionLabels(CHECKOUT_ID)).toEqual([
       "Local checkout",
       "Isolated worktree",
@@ -279,7 +279,7 @@ describe("AgentComposer", () => {
     const box = host.querySelector(".agent-composer__box");
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
-    expect(box?.nextElementSibling).toBe(footer);
+    expect(box?.closest(".cv-composer__slab")?.nextElementSibling).toBe(footer);
     expect(footer?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
     expect(trigger(CHECKOUT_ID).textContent).toContain("Local checkout");
@@ -335,7 +335,7 @@ describe("AgentComposer", () => {
     expect(trigger(CHECKOUT_ID).textContent).toContain("Isolated worktree");
     const reason = host.querySelector(".agent-composer__reason");
     expect(reason?.textContent).toBe("The working tree has uncommitted changes.");
-    expect(reason?.parentElement?.nextElementSibling).toBe(
+    expect(reason?.closest(".cv-composer__slab")?.nextElementSibling).toBe(
       host.querySelector(".agent-composer__footer"),
     );
   });
@@ -379,7 +379,9 @@ describe("AgentComposer", () => {
     expect(lock?.querySelector("button")).toBeNull();
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.contains(lock)).toBe(true);
-    expect(host.querySelector(".agent-composer__box")?.nextElementSibling).toBe(footer);
+    expect(
+      host.querySelector(".agent-composer__box")?.closest(".cv-composer__slab")?.nextElementSibling,
+    ).toBe(footer);
   });
 
   it("never repeats the thread title or a new-thread button above the prompt in follow-up mode", () => {
@@ -526,7 +528,7 @@ describe("AgentComposer", () => {
     expect(button.textContent).toBe("");
     expect(button.querySelector("svg")).not.toBeNull();
     expect(button.classList.contains("agent-composer__send")).toBe(true);
-    expect(button.classList.contains("agent-composer__send--busy")).toBe(false);
+    expect(button.matches('.agent-composer__send[aria-busy="true"]')).toBe(false);
   });
 
   it("shows checkout choices without a second confirmation step", () => {
@@ -577,8 +579,8 @@ describe("AgentComposer", () => {
     expect(submitButton().getAttribute("aria-label")).toBe("Starting…");
     expect(submitButton().getAttribute("aria-busy")).toBe("true");
     expect(submitButton().title).toMatch(/^Starting… \(.+↩\)$/);
-    expect(submitButton().classList.contains("agent-composer__send--busy")).toBe(true);
-    expect(submitButton().querySelector(".agent-composer__send-spinner")).not.toBeNull();
+    expect(submitButton().matches('.agent-composer__send[aria-busy="true"]')).toBe(true);
+    expect(submitButton().querySelector(".cv-spinner")).not.toBeNull();
     expect(submitButton().disabled).toBe(true);
     expect(trigger(CHECKOUT_ID).disabled).toBe(true);
 
@@ -1181,7 +1183,7 @@ describe("AgentComposer", () => {
     expect(stop.type).toBe("button");
     expect(stop.disabled).toBe(false);
     expect(host.querySelector(".agent-composer__send")).not.toBeNull();
-    expect(promptField().placeholder).toBe("Queue a message for the next turn");
+    expect(promptField().placeholder).toBe("Queue a follow-up");
     expect(host.querySelector("form")?.getAttribute("aria-label")).toBe(
       "Follow up on agent thread",
     );
@@ -1285,7 +1287,7 @@ describe("AgentComposer", () => {
       onStop,
     });
     expect(stopButton().getAttribute("aria-busy")).toBe("true");
-    expect(stopButton().querySelector(".agent-composer__send-spinner")).not.toBeNull();
+    expect(stopButton().querySelector(".cv-spinner")).not.toBeNull();
     expect(stopButton().disabled).toBe(false);
     pressAccelerator();
     expect(onSubmit).not.toHaveBeenCalled();
@@ -1614,49 +1616,6 @@ describe("AgentComposer", () => {
 
 describe("AgentComposer Airy styling contract", () => {
   const css = readAgentModeStyles();
-
-  it("centres the composer box at 768px, raised on radius 14 with the card shadow only", () => {
-    const box = cssRule(css, "\n.agent-composer__box {");
-    expect(box).toContain("max-width: 768px");
-    expect(box).toContain("border-radius: var(--agent-radius-xl)");
-    expect(box).toContain("box-shadow: var(--agent-shadow-raised)");
-    expect(box).toContain("background: var(--agent-composer-surface)");
-    expect(box).not.toContain("--agent-composer-outline");
-    expect(box).not.toContain("--agent-composer-highlight");
-    expect(cssRule(css, "\n.agent-composer__box:focus-within {")).toContain(
-      "box-shadow: var(--agent-shadow-raised), var(--codevo-focus-ring)",
-    );
-    expect(cssRule(css, "\n.agent-composer {")).not.toMatch(/border-top: 1px/);
-    const textarea = cssRule(css, "\n.agent-composer__textarea {");
-    expect(textarea).toContain("font-size: var(--codevo-fs-body)");
-    expect(textarea).toContain("line-height: 1.5");
-    expect(textarea).toContain("min-height: calc(96px * var(--codevo-fs-scale))");
-    expect(textarea).toContain("max-height: min(40vh, calc(420px * var(--codevo-fs-scale)))");
-    expect(css).not.toContain(".agent-composer__context");
-    expect(css).not.toContain(".agent-composer__chip");
-    expect(css).not.toContain(".agent-composer__new");
-    expect(cssRule(css, "\n.agent-composer__reason {")).not.toContain("border-top");
-  });
-
-  it("renders the send button as a 30px round primary control that idles on the active tone", () => {
-    const send = cssRule(css, "\n.agent-composer__send {");
-    expect(send).toContain("width: 30px");
-    expect(send).toContain("height: 30px");
-    expect(send).toContain("border-radius: 999px");
-    expect(send).toContain("background: var(--agent-cta-bg)");
-    expect(send).toContain("color: var(--agent-cta-fg)");
-    expect(cssRule(css, "\n.agent-composer__send:hover:not(:disabled) {")).toContain(
-      "background: var(--agent-cta-bg-hover)",
-    );
-    const idle = cssRule(css, "\n.agent-composer__send:disabled {");
-    expect(idle).toContain("background: var(--agent-fill)");
-    expect(idle).toContain("color: var(--agent-text-muted)");
-    expect(idle).not.toContain("opacity");
-    expect(cssRule(css, "\n.agent-composer__send:focus-visible {")).toContain(
-      "box-shadow: var(--agent-focus-ring)",
-    );
-    expect(css).not.toContain(".agent-composer__kbd");
-  });
 
   it("scales ghost pickers from the 28px step on radius 8 with the hover tone and a tone divider", () => {
     const ghost = cssRule(css, "\n.agent-picker__trigger--ghost {");

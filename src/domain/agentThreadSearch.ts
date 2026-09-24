@@ -362,9 +362,9 @@ function eventSegment(
     case "assistantText":
     case "result":
       return segment("assistant", turnId, eventIndex, event.text);
-    case "subagentEvent":
-      return eventSegment(event.event, turnId, eventIndex);
     case "queued":
+    case "subagentEvent":
+    case "subagentSpawn":
     case "subagentActivity":
     case "subagentUsage":
     case "subagentTurnDone":

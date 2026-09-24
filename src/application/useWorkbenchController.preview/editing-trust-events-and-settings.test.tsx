@@ -41,6 +41,7 @@ import {
   type PhpLanguageServerPlanOptions,
   type SmartModeGateway,
   type WorkbenchController,
+  identityGatewayDouble,
 } from "./testSupport";
 import {
   registeredIdentityFixture,
@@ -5037,12 +5038,9 @@ describe("useWorkbenchController document editing and language-service mutations
     };
     const { dependencies, getWorkbench } = renderController({
       languageServerGateway,
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      workspaceIdentityGateway: identityGatewayDouble({
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
-      },
+      }),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         intelligenceMode: "basic",
@@ -5092,12 +5090,9 @@ describe("useWorkbenchController document editing and language-service mutations
       setTrust: vi.fn(() => firstTrustRevocation.promise),
     };
     const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      workspaceIdentityGateway: identityGatewayDouble({
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
-      },
+      }),
       workspaceTrustGateway,
     });
 

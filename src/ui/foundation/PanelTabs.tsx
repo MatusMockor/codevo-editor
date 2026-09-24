@@ -8,7 +8,7 @@ export interface PanelTabItem {
   readonly id: string;
   readonly title: string;
   readonly icon: ReactNode;
-  readonly panelId: string;
+  readonly panelId?: string;
   readonly dirty?: boolean;
   readonly preview?: boolean;
   readonly live?: boolean;

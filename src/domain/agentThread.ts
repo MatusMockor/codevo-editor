@@ -11,6 +11,7 @@ import {
 } from "./agentSubagentLifecycle";
 import type { AgentAttachment } from "./agentAttachment";
 import type { AgentLaunchOptions } from "./agentLaunch";
+import type { AgentSubagentSpawnEvent } from "./agentSubagentSpawn";
 import {
   MAX_AGENT_STEERS_PER_TURN,
   MAX_AGENT_TASK_PROMPT_BYTES,
@@ -155,6 +156,7 @@ export type AgentTurnEvent =
       readonly agentThreadId: string;
       readonly event: AgentSubagentContentEvent;
     }
+  | AgentSubagentSpawnEvent
   | {
       readonly kind: "subagentUsage";
       readonly agentThreadId: string;
@@ -1024,6 +1026,15 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
     case "subagentUsage":
     case "subagentTurnDone":
       return [event.agentThreadId];
+    case "subagentSpawn":
+      return [
+        event.callId,
+        event.status,
+        event.taskTitle ?? "",
+        event.model ?? "",
+        event.reasoningEffort ?? "",
+        ...event.agentThreadIds,
+      ];
     case "queued":
       return [event.threadId, event.clientUserMessageId ?? ""];
     case "toolCall":

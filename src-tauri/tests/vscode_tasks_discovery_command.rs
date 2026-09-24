@@ -149,6 +149,11 @@ mod process_task_plan;
 mod process_task_resolver;
 #[path = "../src/process_task_runtime.rs"]
 mod process_task_runtime;
+#[path = "../src/protected_paths.rs"]
+mod protected_paths;
+mod workspace {
+    pub(crate) use super::protected_paths;
+}
 #[path = "../src/trust.rs"]
 mod trust;
 #[path = "../src/vscode_process_tasks.rs"]

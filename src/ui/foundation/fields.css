@@ -57,7 +57,7 @@
 .cv-input:focus-visible,
 .cv-textarea:focus-visible {
   outline: none;
-  box-shadow: var(--cv-ring-focus);
+  box-shadow: var(--cv-ring-hair-strong);
 }
 
 .cv-input[aria-invalid="true"],

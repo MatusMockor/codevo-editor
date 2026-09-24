@@ -1,5 +1,5 @@
 import { memo, useCallback, useId, useMemo } from "react";
-import { Brain, ChevronDown } from "lucide-react";
+import { Brain, ChevronRight } from "lucide-react";
 import {
   agentThoughtPreview,
   MAX_AGENT_THOUGHT_PREVIEW_SOURCE_CHARS,
@@ -17,7 +17,6 @@ import {
 import { activateAgentMarkdownLink } from "./agentMarkdownLinks";
 import { agentTextParagraphs } from "./agentModePresentation";
 import { useAgentMarkdown } from "./useAgentMarkdown";
-import "./agentThought.css";
 
 interface AgentThoughtProps {
   readonly item: AgentActivityThought;
@@ -64,14 +63,22 @@ function AgentThoughtRow({ item, presentation, prose, textClipboard }: AgentThou
       <button
         aria-controls={bodyId}
         aria-expanded={expanded}
-        className="agent-tool-row agent-thought__toggle"
+        className="cv-work-row agent-thought__toggle"
         onClick={disclosure.toggle}
         type="button"
       >
-        <Brain aria-hidden="true" className="agent-tool-row__icon" size={15} />
+        <span aria-hidden="true" className="cv-work-row__icon">
+          <Brain size={16} strokeWidth={1.5} />
+        </span>
         <span className="agent-thought__label">{live ? "Thinking" : "Thought"}</span>
-        {!expanded && preview !== "" && <span className="agent-thought__preview">{preview}</span>}
-        <ChevronDown aria-hidden="true" className="agent-thought__chevron" size={14} />
+        {!expanded && preview !== "" && (
+          <span className="agent-thought__preview cv-work-row__label">{preview}</span>
+        )}
+        <ChevronRight
+          aria-hidden="true"
+          className="agent-thought__chevron cv-work-row__chevron"
+          size={14}
+        />
       </button>
       <div className="agent-thought__panel" hidden={!expanded} id={bodyId}>
         {expanded && (

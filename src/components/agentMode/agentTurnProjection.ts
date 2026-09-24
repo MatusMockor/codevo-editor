@@ -1,8 +1,4 @@
-import {
-  appServerGroupId,
-  appServerGroups,
-  type AgentAppServerGroup,
-} from "./agentAppServerGroups";
+import { appServerGroupId } from "./agentAppServerGroups";
 import { agentTurnItemKey } from "./agentTurnItemKeys";
 import type { AgentAttachment } from "../../domain/agentAttachment";
 import type { AgentTaskOutputStream } from "../../domain/agentTask";
@@ -30,7 +26,6 @@ export interface AgentToolOutcome {
 }
 
 export type AgentTurnItem =
-  | { readonly kind: "subagentGroup"; readonly key: string; readonly group: AgentAppServerGroup }
   | { readonly kind: "queued"; readonly key: string }
   | {
       readonly kind: "assistantText";
@@ -125,16 +120,6 @@ export function agentToolSettlement(status: AgentTurnStatus): AgentToolSettlemen
     default:
       return unsupportedTurnStatus(status);
   }
-}
-
-export function agentSubagentGroupSettlement(
-  groupState: string,
-  parent: AgentToolSettlement,
-): AgentToolSettlement {
-  if (groupState === "completed") return "settled";
-  if (groupState === "failed" || groupState === "interrupted") return "interrupted";
-  if (parent === "settled") return "interrupted";
-  return parent;
 }
 
 function unsupportedTurnStatus(status: never): never {
@@ -240,33 +225,21 @@ export function agentTurnProjection(
   settlement: AgentToolSettlement = "running",
   firstEventOffset = 0,
   renderedLimit: number = MAX_RENDERED_EVENTS_PER_TURN,
+  keyOf?: (offset: number) => string,
 ): AgentTurnProjection {
   const limit = agentRenderedEventLimit(renderedLimit);
-  const groups = appServerGroups(events, revealEventIndex);
-  const seenGroups = new Set<string>();
-  const renderableGroups = new Set<string>();
   const renderable = events
     .map((event, offset) => ({ event, offset }))
     .filter(({ event }) => {
-      if (event.kind === "subagent") return false;
+      if (event.kind === "subagent" || event.kind === "subagentSpawn") return false;
       if (isSubagentNarration(event)) return false;
-      const id = appServerGroupId(event);
-      if (id === null) return true;
-      if (renderableGroups.has(id)) return false;
-      renderableGroups.add(id);
-      return true;
+      return appServerGroupId(event) === null;
     });
   const hiddenCount = Math.max(0, renderable.length - limit);
-  const revealEvent = revealEventIndex === null ? undefined : events[revealEventIndex];
-  const revealGroup = revealEvent === undefined ? null : appServerGroupId(revealEvent);
   const revealPosition =
     revealEventIndex === null
       ? -1
-      : renderable.findIndex(
-          ({ event, offset }) =>
-            offset === revealEventIndex ||
-            (revealGroup !== null && appServerGroupId(event) === revealGroup),
-        );
+      : renderable.findIndex(({ offset }) => offset === revealEventIndex);
   const firstVisible =
     revealPosition >= 0 && revealPosition < hiddenCount
       ? Math.max(0, revealPosition - Math.floor(limit / 2))
@@ -295,16 +268,7 @@ export function agentTurnProjection(
     ) {
       continue;
     }
-    const key = agentTurnItemKey(offset, firstEventOffset);
-    const groupId = appServerGroupId(event);
-    if (groupId !== null) {
-      const group = groups.get(groupId);
-      if (group !== undefined && !seenGroups.has(groupId)) {
-        items.push({ kind: "subagentGroup", key, group });
-        seenGroups.add(groupId);
-      }
-      continue;
-    }
+    const key = keyOf === undefined ? agentTurnItemKey(offset, firstEventOffset) : keyOf(offset);
     appendTurnItem({
       calls,
       event,
@@ -331,8 +295,7 @@ export function agentTurnWorkFold(
 ): AgentTurnWorkFold | null {
   const hasWork = items.some((item) => item.kind === "tool" || item.kind === "reasoning");
   if (!hasWork) return null;
-  if (items.some((item) => item.kind === "userMessage" || item.kind === "subagentGroup"))
-    return null;
+  if (items.some((item) => item.kind === "userMessage")) return null;
   if (running) {
     return { workItems: items, visibleItems: [], summary: agentWorkSummary(items) };
   }

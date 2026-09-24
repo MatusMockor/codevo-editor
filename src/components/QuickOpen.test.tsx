@@ -1,11 +1,27 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileSearchResult } from "../domain/workspace";
 import { parseQuickOpenQuery } from "../domain/quickOpenQuery";
+import { CommandSurface } from "../ui/foundation/CommandList";
 import { QuickOpen } from "./QuickOpen";
+
+const PAGE_PROPS = {
+  canGoBack: false,
+  groupLabel: "orders-api",
+  onBack: () => undefined,
+  onLocalShortcut: () => false,
+} as const;
+
+function surface(node: ReactNode, onClose: () => void = () => undefined) {
+  return (
+    <CommandSurface label="Command palette" onClose={onClose}>
+      {node}
+    </CommandSurface>
+  );
+}
 
 function fileResult(name: string): FileSearchResult {
   return { name, path: `/workspace/src/${name}`, relativePath: `src/${name}` };
@@ -25,6 +41,7 @@ describe("QuickOpen", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    document.body.replaceChildren();
     vi.useRealTimers();
   });
 
@@ -37,19 +54,23 @@ describe("QuickOpen", () => {
 
     act(() => {
       root.render(
-        <QuickOpen
-          isOpen
-          isLoading={false}
-          isTruncated={false}
-          query={query}
-          request={parseQuickOpenQuery(query)}
-          results={[fileResult("User.ts"), fileResult("Post.ts")]}
-          onChangeQuery={onChangeQuery}
-          onClose={onClose}
-          onOpen={onOpen}
-          onOpenCurrentFileLocation={onOpenCurrentFileLocation}
-          {...props}
-        />,
+        surface(
+          <QuickOpen
+            {...PAGE_PROPS}
+            isOpen
+            isLoading={false}
+            isTruncated={false}
+            query={query}
+            request={parseQuickOpenQuery(query)}
+            results={[fileResult("User.ts"), fileResult("Post.ts")]}
+            onChangeQuery={onChangeQuery}
+            onClose={onClose}
+            onOpen={onOpen}
+            onOpenCurrentFileLocation={onOpenCurrentFileLocation}
+            {...props}
+          />,
+          props.onClose ?? onClose,
+        ),
       );
     });
 
@@ -57,18 +78,21 @@ describe("QuickOpen", () => {
   }
 
   function input() {
-    return host.querySelector<HTMLInputElement>(".palette-search input");
+    return document.querySelector<HTMLInputElement>(".cv-command-field input");
   }
 
   it("marks the first result active by default", () => {
     render();
-    const rows = host.querySelectorAll(".quick-open-result");
-    expect(rows[0]?.className).toContain("active");
+    const rows = document.querySelectorAll('[role="option"]');
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
   });
 
   it("renders a footer hint row", () => {
     render();
-    expect(host.querySelector(".palette-footer")).not.toBeNull();
+    const footer = document.querySelector(".cv-command-footer")?.textContent ?? "";
+    expect(footer).toContain("Navigate");
+    expect(footer).toContain("Open file");
+    expect(footer).toContain("Close");
   });
 
   it("focuses the search field when opened and reclaims focus after an editor steals it back", () => {
@@ -79,35 +103,41 @@ describe("QuickOpen", () => {
 
     act(() => {
       root.render(
-        <QuickOpen
-          isOpen={false}
-          isLoading={false}
-          isTruncated={false}
-          query=""
-          request={parseQuickOpenQuery("")}
-          results={[fileResult("User.ts")]}
-          onChangeQuery={vi.fn()}
-          onClose={vi.fn()}
-          onOpen={vi.fn()}
-          onOpenCurrentFileLocation={vi.fn()}
-        />,
+        surface(
+          <QuickOpen
+            {...PAGE_PROPS}
+            isOpen={false}
+            isLoading={false}
+            isTruncated={false}
+            query=""
+            request={parseQuickOpenQuery("")}
+            results={[fileResult("User.ts")]}
+            onChangeQuery={vi.fn()}
+            onClose={vi.fn()}
+            onOpen={vi.fn()}
+            onOpenCurrentFileLocation={vi.fn()}
+          />,
+        ),
       );
     });
 
     act(() => {
       root.render(
-        <QuickOpen
-          isOpen
-          isLoading={false}
-          isTruncated={false}
-          query=""
-          request={parseQuickOpenQuery("")}
-          results={[fileResult("User.ts")]}
-          onChangeQuery={vi.fn()}
-          onClose={vi.fn()}
-          onOpen={vi.fn()}
-          onOpenCurrentFileLocation={vi.fn()}
-        />,
+        surface(
+          <QuickOpen
+            {...PAGE_PROPS}
+            isOpen
+            isLoading={false}
+            isTruncated={false}
+            query=""
+            request={parseQuickOpenQuery("")}
+            results={[fileResult("User.ts")]}
+            onChangeQuery={vi.fn()}
+            onClose={vi.fn()}
+            onOpen={vi.fn()}
+            onOpenCurrentFileLocation={vi.fn()}
+          />,
+        ),
       );
     });
 
@@ -189,7 +219,7 @@ describe("QuickOpen", () => {
 
   it("opens a file on click", () => {
     const { onOpen } = render();
-    const rows = host.querySelectorAll<HTMLButtonElement>(".quick-open-result");
+    const rows = document.querySelectorAll<HTMLElement>('[role="option"]');
 
     act(() => {
       rows[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -206,8 +236,8 @@ describe("QuickOpen", () => {
     });
 
     act(() => {
-      host
-        .querySelector<HTMLButtonElement>(".quick-open-result")
+      document
+        .querySelector<HTMLElement>('[role="option"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -224,8 +254,8 @@ describe("QuickOpen", () => {
     });
 
     act(() => {
-      host
-        .querySelector<HTMLButtonElement>(".quick-open-result")
+      document
+        .querySelector<HTMLElement>('[role="option"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -242,7 +272,7 @@ describe("QuickOpen", () => {
       results: [],
     });
 
-    expect(host.textContent).toContain("Go to line 42");
+    expect(document.body.textContent).toContain("Go to line 42");
     expect(onOpenCurrentFileLocation).not.toHaveBeenCalled();
 
     act(() => {
@@ -254,6 +284,39 @@ describe("QuickOpen", () => {
       line: 42,
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps listing file results under the go-to-line row", () => {
+    const { onOpen, onOpenCurrentFileLocation } = render({
+      query: ":42",
+      request: parseQuickOpenQuery(":42"),
+    });
+
+    const options = [...document.querySelectorAll('[role="option"]')];
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Go to line 42",
+      "User.tssrc/User.ts",
+      "Post.tssrc/Post.ts",
+    ]);
+    expect(new Set(options.map((option) => option.id)).size).toBe(3);
+
+    act(() => {
+      input()?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(onOpenCurrentFileLocation).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("announces the result count politely and ignores Enter during IME composition", () => {
+    const { onOpen } = render({ query: "s" });
+
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("2 results");
+    act(() => {
+      input()?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter", isComposing: true }),
+      );
+    });
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("allows a bare current-file location to be typed before confirmation", () => {
@@ -270,7 +333,7 @@ describe("QuickOpen", () => {
       onOpenCurrentFileLocation,
     });
 
-    expect(host.textContent).toContain("Go to line 42");
+    expect(document.body.textContent).toContain("Go to line 42");
     expect(onOpenCurrentFileLocation).not.toHaveBeenCalled();
   });
 
@@ -286,8 +349,8 @@ describe("QuickOpen", () => {
     });
 
     act(() => {
-      host
-        .querySelector<HTMLButtonElement>(".quick-open-result")
+      document
+        .querySelector<HTMLElement>('[role="option"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -316,18 +379,21 @@ describe("QuickOpen", () => {
 
     act(() => {
       root.render(
-        <QuickOpen
-          isOpen
-          isLoading={false}
-          isTruncated={false}
-          query="initial"
-          request={parseQuickOpenQuery("initial")}
-          results={[fileResult("User.ts"), fileResult("Post.ts")]}
-          onChangeQuery={onChangeQuery}
-          onClose={onClose}
-          onOpen={onOpen}
-          onOpenCurrentFileLocation={vi.fn()}
-        />,
+        surface(
+          <QuickOpen
+            {...PAGE_PROPS}
+            isOpen
+            isLoading={false}
+            isTruncated={false}
+            query="initial"
+            request={parseQuickOpenQuery("initial")}
+            results={[fileResult("User.ts"), fileResult("Post.ts")]}
+            onChangeQuery={onChangeQuery}
+            onClose={onClose}
+            onOpen={onOpen}
+            onOpenCurrentFileLocation={vi.fn()}
+          />,
+        ),
       );
     });
 
@@ -338,18 +404,21 @@ describe("QuickOpen", () => {
 
     act(() => {
       root.render(
-        <QuickOpen
-          isOpen
-          isLoading={false}
-          isTruncated={false}
-          query="post"
-          request={parseQuickOpenQuery("post")}
-          results={[fileResult("Post.ts")]}
-          onChangeQuery={onChangeQuery}
-          onClose={onClose}
-          onOpen={onOpen}
-          onOpenCurrentFileLocation={vi.fn()}
-        />,
+        surface(
+          <QuickOpen
+            {...PAGE_PROPS}
+            isOpen
+            isLoading={false}
+            isTruncated={false}
+            query="post"
+            request={parseQuickOpenQuery("post")}
+            results={[fileResult("Post.ts")]}
+            onChangeQuery={onChangeQuery}
+            onClose={onClose}
+            onOpen={onOpen}
+            onOpenCurrentFileLocation={vi.fn()}
+          />,
+        ),
       );
     });
 
@@ -378,7 +447,7 @@ describe("QuickOpen", () => {
       results: [fileResult("User.ts"), fileResult("Post.ts")],
     });
 
-    const marks = host.querySelectorAll(".quick-open-result strong mark");
+    const marks = document.querySelectorAll(".cv-command-item__title mark");
     expect(marks).toHaveLength(1);
     expect(marks[0]?.textContent).toBe("User");
   });
@@ -389,13 +458,13 @@ describe("QuickOpen", () => {
       results: [fileResult("User.ts")],
     });
 
-    const mark = host.querySelector(".quick-open-result small mark");
+    const mark = document.querySelector(".cv-command-item__description mark");
     expect(mark?.textContent).toBe("src");
   });
 
   it("renders result names without a mark element when the query is empty", () => {
     render({ query: "" });
-    expect(host.querySelector(".quick-open-result mark")).toBeNull();
+    expect(document.querySelector('[role="option"] mark')).toBeNull();
   });
 
   it("does not infer truncation from an exactly full frontend page", () => {
@@ -403,7 +472,7 @@ describe("QuickOpen", () => {
       results: Array.from({ length: 80 }, (_, index) => fileResult(`File${index}.ts`)),
     });
 
-    expect(host.textContent).not.toContain("Results truncated");
+    expect(document.body.textContent).not.toContain("Results truncated");
   });
 
   it("surfaces truncation when the backend walk cap is hit below the frontend cap", () => {
@@ -412,24 +481,41 @@ describe("QuickOpen", () => {
       results: [fileResult("OnlyVisibleResult.ts")],
     });
 
-    expect(host.textContent).toContain("Results truncated");
+    expect(document.body.textContent).toContain("Results truncated");
   });
 
   it("surfaces truncation without inventing a file result when traversal finds no matches", () => {
     render({ isTruncated: true, results: [] });
 
-    expect(host.textContent).toContain("Results truncated");
-    expect(host.textContent).not.toContain("No files found");
-    expect(host.querySelectorAll(".quick-open-result")).toHaveLength(0);
+    expect(document.body.textContent).toContain("Results truncated");
+    expect(document.body.textContent).not.toContain("No matching files.");
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
   });
 
   it("shows an accessible compact syntax hint", () => {
     render();
 
     expect(
-      host.querySelector(
-        '[aria-label*="greater-than commands"][aria-label*="path colon line and optional column"]',
+      document.querySelector(
+        '.cv-command-footer__end [aria-label*="greater-than commands"][aria-label*="path colon line and optional column"]',
       )?.textContent,
-    ).toContain("path:line[:column]");
+    ).toBe("> commands · @ file symbols · # workspace symbols · path:line");
+  });
+
+  it("shows a back lead and goes back on Backspace with an empty query when nested", () => {
+    const onBack = vi.fn();
+    render({ canGoBack: true, onBack, query: "" });
+    act(() => {
+      input()?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Backspace" }),
+      );
+    });
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('button[aria-label="Back"]')).not.toBeNull();
+  });
+
+  it("labels the result group with the workspace name", () => {
+    render({ groupLabel: "orders-api" });
+    expect(document.querySelector(".cv-command-group__label")?.textContent).toBe("orders-api");
   });
 });

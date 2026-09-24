@@ -453,7 +453,9 @@ function createRegisteredWorkspaceIdentityGateway(
       if (!descriptor) throw new Error(`Unexpected test workspace path: ${path}`);
       return descriptor;
     }),
-    unregister: vi.fn(async () => undefined),
+    unregister: vi.fn(async () => ({ status: "released" as const })),
+    adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+    rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
   };
 }
 
@@ -933,7 +935,9 @@ function createControllerDependencies(
         : {
             getDescriptor: vi.fn(),
             openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-            unregister: vi.fn(async () => undefined),
+            unregister: vi.fn(async () => ({ status: "released" as const })),
+            adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+            rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
           }),
     detection: workspaceDetectionGateway ?? {
       detectWorkspace: vi.fn(async (path) => ({

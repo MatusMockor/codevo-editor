@@ -7,6 +7,7 @@ use crate::workspace_registry::WorkspaceId;
 pub const MAX_AGENT_ROOT_LEASES: usize = 64;
 pub const MAX_AGENT_ROOT_LEASE_TOKEN: u64 = 9_007_199_254_740_991;
 pub const AGENT_ROOT_LEASE_LIMIT_ERROR: &str = "Too many agent project roots are leased.";
+pub const AGENT_ROOT_LEASE_RELEASING_ERROR: &str = "Agent project root lease is being released.";
 pub const AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR: &str =
     "Agent project root lease token capacity is exhausted.";
 
@@ -20,6 +21,7 @@ struct AgentRootLeaseState {
 struct AgentRootLease {
     token: u64,
     registration: Option<AgentRootWorkspaceRegistration>,
+    releasing: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +82,7 @@ impl AgentRootLeaseRegistry {
             AgentRootLease {
                 token,
                 registration: None,
+                releasing: false,
             },
         );
 
@@ -88,7 +91,10 @@ impl AgentRootLeaseRegistry {
 
     pub fn registered(&self, canonical_root: &Path) -> Option<RegisteredAgentRootLease> {
         let state = self.state();
-        let lease = state.leases.get(canonical_root)?;
+        let lease = state
+            .leases
+            .get(canonical_root)
+            .filter(|lease| !lease.releasing)?;
         Some(RegisteredAgentRootLease {
             lease_token: lease.token,
             registration: lease.registration.clone()?,
@@ -100,6 +106,7 @@ impl AgentRootLeaseRegistry {
         state
             .leases
             .values()
+            .filter(|lease| !lease.releasing)
             .filter_map(|lease| {
                 Some(RegisteredAgentRootLease {
                     lease_token: lease.token,
@@ -116,6 +123,9 @@ impl AgentRootLeaseRegistry {
     ) -> Result<RegisteredAgentRootLeaseAcquisition, String> {
         let mut state = self.state();
         if let Some(existing) = state.leases.get(canonical_root) {
+            if existing.releasing {
+                return Err(AGENT_ROOT_LEASE_RELEASING_ERROR.to_string());
+            }
             let registration = existing.registration.clone().ok_or_else(|| {
                 "Agent project root lease has no workspace registration.".to_string()
             })?;
@@ -139,6 +149,7 @@ impl AgentRootLeaseRegistry {
             AgentRootLease {
                 token: lease_token,
                 registration: Some(registration.clone()),
+                releasing: false,
             },
         );
         Ok(RegisteredAgentRootLeaseAcquisition::Acquired(
@@ -165,7 +176,7 @@ impl AgentRootLeaseRegistry {
         AgentRootLeaseReleaseDisposition::Released
     }
 
-    pub fn release_registered(
+    pub fn begin_release_registered(
         &self,
         canonical_root: &Path,
         token: u64,
@@ -174,15 +185,53 @@ impl AgentRootLeaseRegistry {
         Option<AgentRootWorkspaceRegistration>,
     ) {
         let mut state = self.state();
-        let Some(held) = state.leases.get(canonical_root) else {
+        let Some(held) = state.leases.get_mut(canonical_root) else {
             return (AgentRootLeaseReleaseDisposition::NotHeld, None);
         };
         if held.token != token {
             return (AgentRootLeaseReleaseDisposition::ForeignOwner, None);
         }
-        let registration = held.registration.clone();
-        state.leases.remove(canonical_root);
-        (AgentRootLeaseReleaseDisposition::Released, registration)
+        if held.releasing {
+            return (AgentRootLeaseReleaseDisposition::NotHeld, None);
+        }
+        let Some(registration) = held.registration.clone() else {
+            state.leases.remove(canonical_root);
+            return (AgentRootLeaseReleaseDisposition::Released, None);
+        };
+        held.releasing = true;
+        (
+            AgentRootLeaseReleaseDisposition::Released,
+            Some(registration),
+        )
+    }
+
+    pub fn finish_release(&self, canonical_root: &Path, token: u64) {
+        let mut state = self.state();
+        if state
+            .leases
+            .get(canonical_root)
+            .is_some_and(|held| held.token == token && held.releasing)
+        {
+            state.leases.remove(canonical_root);
+        }
+    }
+
+    pub fn abort_release(&self, canonical_root: &Path, token: u64) {
+        let mut state = self.state();
+        if let Some(held) = state
+            .leases
+            .get_mut(canonical_root)
+            .filter(|held| held.token == token)
+        {
+            held.releasing = false;
+        }
+    }
+
+    pub fn is_releasing(&self, canonical_root: &Path) -> bool {
+        self.state()
+            .leases
+            .get(canonical_root)
+            .is_some_and(|lease| lease.releasing)
     }
 
     pub fn is_held(&self, canonical_root: &Path) -> bool {

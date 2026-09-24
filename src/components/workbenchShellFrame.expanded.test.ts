@@ -19,7 +19,6 @@ import {
 
 const SHELL_SHEET = "components/workbenchShellFrame.css";
 const SURFACE_SHEET = "components/agentMode/agentSurface.css";
-const STATUS_BAR_SHEET = "components/agentMode/agentStatusBar.css";
 const MAXIMIZED = '.workbench-frame[data-layout="agent"][data-right-panel="maximized"]';
 const DOCKED_TREE_BESIDE_DOCUMENT = `${MAXIMIZED}[data-tree="visible"]:not([data-editor="empty"])`;
 
@@ -79,7 +78,7 @@ describe("expanded editing shell layout contract", () => {
 
   it("sizes the tree 210 px docked, 300 px maximized and 0 px when hidden, in that order", () => {
     const tokens = declarations(shell, ".app-shell");
-    expect(tokens.get("--agent-surface-header-height")).toBe("40px");
+    expect(tokens.get("--agent-surface-header-height")).toBe("var(--cv-topbar-h)");
     expect(tokens.get("--agent-surface-tree-width")).toBe("210px");
     expect(tokens.get("--agent-surface-editor-gutter")).toBe("8px");
     expect(
@@ -209,11 +208,9 @@ describe("expanded editing shell layout contract", () => {
   });
 
   it("paints the surfaces with tone steps only", () => {
-    const owned = parsed.rules.filter((rule) =>
-      [SHELL_SHEET, SURFACE_SHEET, STATUS_BAR_SHEET].includes(rule.sheet),
-    );
+    const owned = parsed.rules.filter((rule) => [SHELL_SHEET, SURFACE_SHEET].includes(rule.sheet));
     expect(collectBorderViolations(owned, tokenTable)).toEqual([]);
-    expect(declarations(surface, ".agent-surface").get("background")).toBe("var(--codevo-canvas)");
+    expect(declarations(surface, ".agent-surface").get("background")).toBe("var(--cv-canvas)");
     expect(declarations(surface, ".agent-surface-tree").get("background")).toBe(
       "var(--codevo-canvas)",
     );

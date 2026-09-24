@@ -1,10 +1,13 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   AgentWorktreeReceipt,
+  BranchWorktreeReceipt,
+  BranchWorktreeRequest,
   GitWorktreeDescriptor,
   GitWorktreeGateway,
 } from "../domain/gitWorktree";
 import {
+  invokeAddBranchWorktreeIpc,
   invokeAddGitWorktreeIpc,
   invokeListGitWorktreesIpc,
   invokePruneGitWorktreesIpc,
@@ -38,6 +41,13 @@ export class TauriGitWorktreeGateway implements GitWorktreeGateway {
       throw new Error("Git unavailable.");
     }
     return invokeAddGitWorktreeIpc(this.invokeCommand, repositoryRoot, taskId);
+  }
+
+  async addBranchWorktree(request: BranchWorktreeRequest): Promise<BranchWorktreeReceipt> {
+    if (!this.isRuntimeAvailable()) {
+      throw new Error("Git unavailable.");
+    }
+    return invokeAddBranchWorktreeIpc(this.invokeCommand, request);
   }
 
   async removeWorktree(

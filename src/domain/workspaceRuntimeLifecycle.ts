@@ -16,4 +16,7 @@ export interface RegisteredWorkspaceRuntimeDisposalTarget {
 
 export type RegisteredWorkspaceRuntimeDisposalResult =
   | { readonly status: "closed" }
+  | { readonly status: "unknownWorkspace" }
+  | { readonly status: "releasing" }
+  | { readonly status: "retainedByOtherOwners" }
   | { readonly status: "incomplete"; readonly errors: readonly string[] };

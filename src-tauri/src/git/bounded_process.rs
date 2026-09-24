@@ -1,4 +1,5 @@
 use crate::git_worktree::read_bounded_stream;
+use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -82,6 +83,77 @@ pub(crate) fn run_bounded_command_bytes(
         status.map_err(|error| CommandError::Io(format!("Failed to await git: {error}")))?;
     if status.success() {
         return Ok(stdout_bytes);
+    }
+
+    let failure = match stderr_result {
+        Ok(Ok(bytes)) => String::from_utf8_lossy(&bytes).trim().to_string(),
+        _ => String::new(),
+    };
+    if failure.is_empty() {
+        return Err(CommandError::Failed(GENERIC_FAILURE_MESSAGE.to_string()));
+    }
+
+    Err(CommandError::Failed(failure))
+}
+
+pub(crate) fn run_bounded_command_prefix(
+    mut command: Command,
+    timeout: Duration,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, bool), CommandError> {
+    configure_process_group(&mut command);
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| CommandError::Io(format!("Failed to start git: {error}")))?;
+    let mut guard = ChildGuard::new(child);
+
+    let Some(stdout) = guard.child.stdout.take() else {
+        return Err(CommandError::Io(
+            "Failed to capture git output.".to_string(),
+        ));
+    };
+    let Some(stderr) = guard.child.stderr.take() else {
+        return Err(CommandError::Io(
+            "Failed to capture git diagnostics.".to_string(),
+        ));
+    };
+
+    let watchdog = Watchdog::start(guard.process_id, timeout);
+    let stderr_reader =
+        thread::spawn(move || read_bounded_stream(stderr, MAX_INTEGRATION_STDERR_BYTES));
+    let mut stdout_bytes = Vec::new();
+    let stdout_result = stdout
+        .take(max_bytes as u64 + 1)
+        .read_to_end(&mut stdout_bytes);
+    let capped = stdout_bytes.len() > max_bytes;
+    if capped || stdout_result.is_err() {
+        guard.kill();
+    }
+
+    let stderr_result = stderr_reader.join();
+    let status = guard.wait();
+    let timed_out = watchdog.finish();
+
+    if timed_out {
+        return Err(CommandError::TimedOut(timeout));
+    }
+    if let Err(error) = stdout_result {
+        return Err(CommandError::Io(format!(
+            "Failed to read the git output: {error}"
+        )));
+    }
+    if capped {
+        stdout_bytes.truncate(max_bytes);
+        return Ok((stdout_bytes, true));
+    }
+
+    let status =
+        status.map_err(|error| CommandError::Io(format!("Failed to await git: {error}")))?;
+    if status.success() {
+        return Ok((stdout_bytes, false));
     }
 
     let failure = match stderr_result {
@@ -196,3 +268,7 @@ fn terminate_process_group(process_id: u32) {
 
 #[cfg(not(unix))]
 fn terminate_process_group(_process_id: u32) {}
+
+#[cfg(test)]
+#[path = "bounded_process_tests.rs"]
+mod tests;

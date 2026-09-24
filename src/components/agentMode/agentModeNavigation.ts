@@ -1,23 +1,8 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { agentRailSections, type AgentRailScope } from "./agentSidebarPresentation";
+import { agentRailSections } from "./agentSidebarPresentation";
 
-export function agentThreadsInScope(
-  views: ReadonlyArray<AgentThreadView>,
-  scope: AgentRailScope | null,
-): ReadonlyArray<AgentThreadView> {
-  if (scope === null) return [];
-  return views.filter(
-    (view) =>
-      view.thread.owner.rootKey === scope.projectRootKey ||
-      scope.memberProjectRootKeys?.includes(view.thread.owner.rootKey) === true,
-  );
-}
-
-export function orderedRailThreadIds(
-  views: ReadonlyArray<AgentThreadView>,
-  scope: AgentRailScope | null,
-): ReadonlyArray<string> {
-  const sections = agentRailSections(views, scope, false, 0);
+export function orderedRailThreadIds(views: ReadonlyArray<AgentThreadView>): ReadonlyArray<string> {
+  const sections = agentRailSections(views, false, 0);
   return [...sections.pinned, ...sections.active].map((view) => view.thread.threadId);
 }
 

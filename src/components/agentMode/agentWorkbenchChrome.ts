@@ -2,7 +2,7 @@ import type { RemoteAddProjectSession } from "../../application/useRemoteAddProj
 import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
 import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
-import type { AgentSurfaceProjectDiffState } from "./AgentSurfaceProjectDiff";
+import type { AgentRightPanelChrome } from "./rightPanel/useAgentRightPanelChrome";
 import type { AgentProjectWorkspaceSync } from "./useAgentProjectWorkspaceSync";
 import type {
   WorkspaceFileChangeGateway,
@@ -27,6 +27,7 @@ import type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation"
 import type { AgentThreadHeaderProject } from "./AgentThreadHeader";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
+import type { VscodeProcessTasksPanelProps } from "../VscodeProcessTasksPanel";
 
 export interface AgentWorkbenchFileTreeChrome {
   readonly files: AgentSurfaceFileTreeDependencies["files"];
@@ -37,7 +38,6 @@ export interface AgentWorkbenchFileTreeChrome {
   readonly searchFilesShortcut?: string;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
-  onSearchFiles?(): void;
 }
 
 const MAX_ARIA_KEYSHORTCUT_LENGTH = 64;
@@ -67,6 +67,12 @@ export function ariaKeyShortcuts(shortcut: string): string {
     modifiers.push(modifier);
   }
   return [...modifiers, key.length === 1 ? key.toUpperCase() : key].join("+");
+}
+
+export interface AgentScriptsChrome {
+  readonly vscodeProcessTasks: VscodeProcessTasksPanelProps | null;
+  openScriptTerminal(): void;
+  refreshScripts(): void;
 }
 
 export interface AgentWorkbenchDiffChrome {
@@ -101,13 +107,19 @@ export interface AgentWorkbenchAddProjectChrome {
   addProject(path: string): Promise<AgentAddedProjectReceipt>;
 }
 
+export interface AgentWorkbenchThreadActivityChrome {
+  readonly attentionVisible: boolean;
+  readonly onChangeAttentionVisible: ((visible: boolean) => void) | null;
+}
+
 export interface AgentWorkbenchChrome {
-  readonly projectDiff?: AgentSurfaceProjectDiffState | null;
+  readonly rightPanel?: AgentRightPanelChrome | null;
   readonly workspaceActivation?: AgentProjectWorkspaceSync;
   readonly layout: AgentWorkbenchLayoutState;
   readonly bottomPanelVisible: boolean;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
   readonly scripts: AgentThreadScriptRunner;
+  readonly scriptsSurface?: AgentScriptsChrome | null;
   readonly workspaceId: string | null;
   readonly workspaceTrusted: boolean;
   readonly fileTree: AgentWorkbenchFileTreeChrome | null;
@@ -128,6 +140,7 @@ export interface AgentWorkbenchChrome {
     };
   } | null;
   readonly addProject: AgentWorkbenchAddProjectChrome | null;
+  readonly threadActivity?: AgentWorkbenchThreadActivityChrome;
   onToggleBottomPanel(): void;
   onShowTerminalPanel(): void;
   onOpenScriptsView: (() => void) | null;
@@ -200,6 +213,7 @@ export const UNAVAILABLE_AGENT_SCRIPT_RUNNER: AgentThreadScriptRunner = Object.f
   available: false,
   unavailableReason: "Scripts are not available here",
   active: null,
+  lastOutcome: null,
   run: () => false,
   stop: () => undefined,
 });

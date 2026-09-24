@@ -367,7 +367,7 @@ describe("StatusBar", () => {
       );
     });
 
-    const footer = host.querySelector<HTMLElement>("footer.status-bar");
+    const footer = host.querySelector<HTMLElement>('[role="group"][aria-label="Editor status"]');
     await act(async () => {
       footer?.dispatchEvent(
         new MouseEvent("contextmenu", {
@@ -681,7 +681,7 @@ describe("StatusBar", () => {
       );
     });
 
-    const footer = host.querySelector("footer.status-bar");
+    const footer = host.querySelector<HTMLElement>('[role="group"][aria-label="Editor status"]');
 
     await act(async () => {
       footer?.dispatchEvent(
@@ -719,7 +719,7 @@ describe("StatusBar", () => {
       );
     });
 
-    const footer = host.querySelector("footer.status-bar");
+    const footer = host.querySelector<HTMLElement>('[role="group"][aria-label="Editor status"]');
 
     await act(async () => {
       footer?.dispatchEvent(

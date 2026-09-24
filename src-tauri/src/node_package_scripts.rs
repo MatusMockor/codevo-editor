@@ -5,7 +5,6 @@ use crate::{
         WORKTREE_BASE_DIR_NAME,
     },
     node_package_problem_matcher::NodePackageTaskOutputStream,
-    terminal::{TerminalEventSink, TerminalOutputEvent},
     terminal_session::TerminalSupervisor,
     trust::WorkspaceTrustService,
     workspace_registry::{opened_root_path, WorkspaceId, WorkspaceRegistry},
@@ -29,6 +28,9 @@ use tauri::State;
 #[path = "node_package_scripts/effective_environment.rs"]
 mod effective_environment;
 use effective_environment::configure_node_package_environment;
+#[path = "node_package_scripts/output_reader.rs"]
+mod output_reader;
+use output_reader::{join_output_reader, spawn_output_reader};
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::{
@@ -1127,61 +1129,14 @@ fn configure_descriptor_bound_cwd(_command: &mut Command, _directory: &File) -> 
     Err("Descriptor-bound package execution is unsupported on this platform.".to_string())
 }
 
-fn spawn_output_reader<R: Read + Send + 'static>(
-    mut reader: R,
-    sink: Arc<dyn TerminalEventSink>,
-    observer: Arc<dyn NodePackageTaskOutputObserver>,
-    session_id: u64,
-    stream: NodePackageTaskOutputStream,
-) -> thread::JoinHandle<Result<(), String>> {
-    thread::spawn(move || {
-        let result = (|| {
-            let mut buffer = [0_u8; 8192];
-            loop {
-                let count = reader.read(&mut buffer).map_err(|error| {
-                    format!(
-                        "Failed to read package script {}: {error}",
-                        stream_name(stream)
-                    )
-                })?;
-                if count == 0 {
-                    return Ok(());
-                }
-                sink.emit_output(TerminalOutputEvent {
-                    data: String::from_utf8_lossy(&buffer[..count]).to_string(),
-                    session_id,
-                });
-                observer.observe(stream, &buffer[..count]);
-            }
-        })();
-        observer.finish(stream);
-        result
-    })
-}
-
-fn stream_name(stream: NodePackageTaskOutputStream) -> &'static str {
-    match stream {
-        NodePackageTaskOutputStream::Stdout => "stdout",
-        NodePackageTaskOutputStream::Stderr => "stderr",
-    }
-}
-
-fn join_output_reader(
-    reader: Option<thread::JoinHandle<Result<(), String>>>,
-) -> Result<(), String> {
-    let Some(reader) = reader else {
-        return Ok(());
-    };
-    reader
-        .join()
-        .map_err(|_| "Package script output reader panicked.".to_string())?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        terminal::{TerminalProfile, TerminalRuntimeStatus, TerminalSize},
+        terminal::{
+            TerminalEventSink, TerminalOutputEvent, TerminalProfile, TerminalRuntimeStatus,
+            TerminalSize,
+        },
         terminal_session::{
             SpawnedTerminal, TerminalChild, TerminalExitStatus, TerminalKiller, TerminalPtySpawner,
             TerminalResizer,

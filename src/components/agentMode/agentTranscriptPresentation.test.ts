@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import { agentTurnEndMarker } from "./agentTurnErrorPresentation";
-import { sameAgentTurnItem, agentTurnItemsMissingFrom } from "./agentTurnItemEquality";
+import { sameAgentTurnItem } from "./agentTurnItemEquality";
 import { agentSubagentTokensLabel, agentTurnLaunchLabel } from "./agentTurnMetaPresentation";
 import {
   MAX_RENDERED_EVENTS_PER_TURN,
   MAX_REVEALED_EVENTS_PER_TURN,
   agentPartialWorkSummary,
   agentRenderedEventLimit,
-  agentSubagentGroupSettlement,
   agentToolSettlement,
   agentTurnLiveActivity,
   agentTurnProjection,
@@ -56,15 +55,6 @@ describe("agentToolSettlement", () => {
       ["interrupted", "Interrupted npm test"],
       ["ok", "Read src/a.ts"],
     ]);
-  });
-
-  it("settles a subagent group from its own state before falling back to the parent turn", () => {
-    expect(agentSubagentGroupSettlement("completed", "interrupted")).toBe("settled");
-    expect(agentSubagentGroupSettlement("failed", "running")).toBe("interrupted");
-    expect(agentSubagentGroupSettlement("interrupted", "settled")).toBe("interrupted");
-    expect(agentSubagentGroupSettlement("started", "running")).toBe("running");
-    expect(agentSubagentGroupSettlement("started", "settled")).toBe("interrupted");
-    expect(agentSubagentGroupSettlement("started", "stopped")).toBe("stopped");
   });
 });
 
@@ -272,8 +262,6 @@ describe("turn item equality", () => {
     expect(left[0] !== right[0]).toBe(true);
     expect(sameAgentTurnItem(left[0]!, right[0]!)).toBe(true);
     expect(sameAgentTurnItem(left[0]!, other[0]!)).toBe(false);
-    expect(agentTurnItemsMissingFrom(other, left)).toEqual(other);
-    expect(agentTurnItemsMissingFrom(right, left)).toEqual([]);
   });
 });
 

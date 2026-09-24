@@ -1,5 +1,5 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
-import { ArrowUp, Loader2, Square } from "lucide-react";
+import { SubmitButton } from "../../ui/foundation/SubmitButton";
 import { agentSubmitKeyShortcuts, type AgentSubmitShortcut } from "./agentSubmitShortcut";
 
 export function AgentComposerSubmitControls({
@@ -45,43 +45,29 @@ export function AgentComposerSubmitControls({
         </button>
       )}
       {running && (
-        <button
-          aria-label="Stop agent"
+        <SubmitButton
+          busy={dispatching}
           className="agent-composer__stop"
+          label="Stop agent"
+          mode="stop"
           onClick={onStop}
           title="Stop (Esc)"
-          aria-busy={dispatching || undefined}
-          type="button"
-        >
-          {dispatching ? (
-            <Loader2 aria-hidden="true" className="agent-composer__send-spinner" size={14} />
-          ) : (
-            <Square aria-hidden="true" size={14} strokeWidth={2.5} />
-          )}
-        </button>
+        />
       )}
       {(!running || enterOnly) && (
-        <button
-          aria-busy={dispatching || undefined}
-          aria-keyshortcuts={enterOnly ? "Enter" : agentSubmitKeyShortcuts(shortcut)}
-          aria-label={submitName}
-          className={
-            dispatching ? "agent-composer__send agent-composer__send--busy" : "agent-composer__send"
-          }
+        <SubmitButton
+          busy={dispatching}
+          className="agent-composer__send"
           disabled={disabled}
+          keyShortcuts={enterOnly ? "Enter" : agentSubmitKeyShortcuts(shortcut)}
+          label={submitName}
+          mode={editingQueued ? "update" : "send"}
           title={
             enterOnly
               ? `${submitName} (Enter)`
               : `${submitName} (Enter or ${shortcut.secondary.glyphs})`
           }
-          type="submit"
-        >
-          {dispatching ? (
-            <Loader2 aria-hidden="true" className="agent-composer__send-spinner" size={16} />
-          ) : (
-            <ArrowUp aria-hidden="true" size={16} strokeWidth={2.5} />
-          )}
-        </button>
+        />
       )}
     </>
   );

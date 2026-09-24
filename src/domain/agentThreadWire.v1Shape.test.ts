@@ -73,7 +73,7 @@ const V1_EVENT_KEYS = {
   contextCompaction: ["afterTokens", "beforeTokens", "kind"],
   error: ["kind", "message"],
   unknownLine: ["clipped", "kind", "raw", "stream"],
-} as const satisfies Record<AgentTurnEvent["kind"], Keys>;
+} as const satisfies Record<Exclude<AgentTurnEvent["kind"], "subagentSpawn">, Keys>;
 
 const V1_USAGE_KEYS: Keys = [
   "appServerUsage",
@@ -164,6 +164,15 @@ const EVERY_EVENT: ReadonlyArray<AgentTurnEvent> = [
     kind: "subagentEvent",
     agentThreadId: SUBAGENT_THREAD_ID,
     event: { kind: "assistantText", text: "nested" },
+  },
+  {
+    kind: "subagentSpawn",
+    callId: "call-spawn-1",
+    status: "completed",
+    taskTitle: "Review idempotency middleware",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    agentThreadIds: [SUBAGENT_THREAD_ID],
   },
   { kind: "subagentUsage", agentThreadId: SUBAGENT_THREAD_ID, usage: FULL_USAGE },
   { kind: "subagentTurnDone", agentThreadId: SUBAGENT_THREAD_ID, durationMs: 900, isError: false },
@@ -290,6 +299,12 @@ describe("v1 thread JSON shape: shipped builds deny unknown fields and evict rea
     expect(keysOf(nested?.event)).toEqual(["kind", "text"]);
   });
 
+  it("keeps history-only subagent spawns out of the v1 JSON", () => {
+    const events = serializedTurn().events as ReadonlyArray<WireRecord>;
+    expect(events.some((event) => event.kind === "subagentSpawn")).toBe(false);
+    expect(events).toHaveLength(EVERY_EVENT.length - 1);
+  });
+
   it("writes exactly the v1 keys of an imported thread origin", () => {
     const sessionId = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
     const document = serializeAgentThread({
@@ -329,7 +344,7 @@ describe("v1 thread JSON shape: shipped builds deny unknown fields and evict rea
     const document = JSON.parse(JSON.stringify(serializeAgentThread(fullThread()))) as unknown;
     const parsed = parseAgentThread(document);
     expect(keysOf(serializeAgentThread(parsed))).toEqual(V1_THREAD_KEYS);
-    expect(parsed.turns[0]?.events).toHaveLength(EVERY_EVENT.length);
+    expect(parsed.turns[0]?.events).toHaveLength(EVERY_EVENT.length - 1);
   });
 });
 

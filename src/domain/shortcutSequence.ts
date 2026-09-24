@@ -237,6 +237,7 @@ export function findKeymapSequenceConflicts<CommandId extends string>(
   keymap: Readonly<Record<CommandId, string>>,
   commandId: CommandId,
   platform?: ShortcutPlatform,
+  overlaps: (left: CommandId, right: CommandId) => boolean = () => true,
 ): ShortcutSequenceConflict<CommandId>[] {
   const parsedTarget = parseShortcutSequence(keymap[commandId] ?? "");
   const target = parsedTarget && sequenceForLookupPlatform(parsedTarget, platform);
@@ -245,6 +246,7 @@ export function findKeymapSequenceConflicts<CommandId extends string>(
   const conflicts: ShortcutSequenceConflict<CommandId>[] = [];
   for (const [candidateId, value] of Object.entries<string>(keymap)) {
     if (candidateId === commandId) continue;
+    if (!overlaps(commandId, candidateId as CommandId)) continue;
     const parsedCandidate = parseShortcutSequence(value);
     const candidate = parsedCandidate && sequenceForLookupPlatform(parsedCandidate, platform);
     if (!candidate) continue;

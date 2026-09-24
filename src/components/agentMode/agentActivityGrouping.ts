@@ -229,3 +229,28 @@ export function agentThoughtPresentation(
 export function agentThoughtDisclosureKey(scope: string, key: string): string {
   return JSON.stringify(["thought", scope, key]);
 }
+
+type AgentActivityGroupEntry = Extract<AgentActivityEntry, { kind: "group" }>;
+
+function isGroupEntry(entry: AgentActivityEntry): entry is AgentActivityGroupEntry {
+  return entry.kind === "group";
+}
+
+function isLooseTool(entry: AgentActivityEntry): boolean {
+  if (entry.kind !== "item") return false;
+  if (entry.item.kind !== "tool") return false;
+  return !isAgentSubagentToolItem(entry.item);
+}
+
+export function agentWorkFoldLabel(items: ReadonlyArray<AgentTurnItem>, summary: string): string {
+  const entries = agentActivityEntries(items, "settled");
+  const groups = entries.filter(isGroupEntry);
+  if (groups.length !== 1) return summary;
+  if (entries.some(isLooseTool)) return summary;
+  const [group] = groups;
+  if (group === undefined) return summary;
+  if (group.tools === 0) return summary;
+  if (entries.some((entry) => entry.kind === "item" && entry.item.kind === "assistantText"))
+    return summary;
+  return group.label;
+}

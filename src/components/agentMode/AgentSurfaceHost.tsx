@@ -1,4 +1,3 @@
-import type { AgentRecordedTurnSelection } from "./AgentRecordedTurnDiff";
 import { useAgentWorktreeFileChanges } from "../../application/useAgentWorktreeFileChanges";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
@@ -6,10 +5,18 @@ import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { agentHistoryRepositories } from "./agentHistoryRepositories";
 import { memo, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
-import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
+import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import { isAgentRemoteSurfaceKind } from "../../domain/agentSurfaceActivation";
+import type { AgentDiffScope } from "../../domain/diffView/agentDiffScope";
+import type { AgentShipActions } from "./useAgentShipActions";
+import type { AgentThreadScripts } from "../../application/useAgentThreadScripts";
+import { AgentRightPanelContext } from "./rightPanel/agentRightPanelContext";
+import { useAgentRightPanelContextValue } from "./rightPanel/useAgentRightPanelContextValue";
+import { useStableAgentRightPanelThread } from "./rightPanel/agentRightPanelThread";
 import {
   AgentSurfacePanel,
   type AgentSurfaceDiffPanelProps,
+  type AgentSurfacePanelLayout,
   type AgentSurfaceTerminalPanelProps,
 } from "./AgentSurfacePanel";
 import {
@@ -24,15 +31,21 @@ import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 
 export type AgentSurfaceHostAgents = Pick<
   AgentThreadsSurface,
-  "showChanges" | "showFileDiff" | "hideFileDiff" | "openChangedFile" | "openChangedFileDiff"
+  | "showChanges"
+  | "showFileDiff"
+  | "hideFileDiff"
+  | "openChangedFile"
+  | "openChangedFileDiff"
+  | "getTurnChanges"
+  | "getTurnFileDiff"
+  | "turnChangesRevision"
+  | "getTurnChangesRevision"
 >;
 
 export interface AgentSurfaceHostProps {
-  readonly recordedDiff?: AgentRecordedTurnSelection | null;
-  readonly onCloseRecordedDiff?: () => void;
   readonly chrome: AgentWorkbenchChrome;
   readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
-  readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
+  readonly layout: AgentSurfacePanelLayout;
   readonly thread: AgentThreadView | null;
   readonly remoteDraft?: boolean;
   readonly remoteSurface?: AgentRemoteSurface | null;
@@ -41,27 +54,39 @@ export interface AgentSurfaceHostProps {
   readonly workspaceRoot: string | null;
   readonly agents: AgentSurfaceHostAgents;
   readonly layoutControls: ReactNode;
+  readonly leadingControls?: ReactNode;
   readonly hidden: boolean;
   readonly chooserAutoFocus: boolean;
+  readonly agentsPanel?: ReactNode;
+  readonly diffScope?: AgentDiffScope;
+  readonly shipActions?: AgentShipActions | null;
+  readonly scripts?: AgentThreadScripts | null;
+  onDiffScopeChange?(scope: AgentDiffScope): void;
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
   onTrustScope(projectRootKey: string): void;
   readonly onSwitchScope: ((rootPath: string) => void) | null;
+  readonly onResizeWidth?: (width: number) => void;
 }
 
 export const AgentSurfaceHost = memo(function AgentSurfaceHost({
-  recordedDiff = null,
-  onCloseRecordedDiff,
   agents,
+  agentsPanel = null,
   chooserAutoFocus,
+  diffScope,
+  onDiffScopeChange = ignoreDiffScope,
+  shipActions = null,
+  scripts = null,
   chrome,
   hidden,
   layout,
   layoutControls,
+  leadingControls = null,
   onActivateSurface,
   onCloseSurfaceTab,
   onOpenSurface,
+  onResizeWidth,
   onSwitchScope,
   onTrustScope,
   projects = [],
@@ -92,7 +117,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       : null;
   const remoteActiveAvailable =
     layout.activeSurface !== null &&
-    layout.activeSurface !== "diff" &&
+    isAgentRemoteSurfaceKind(layout.activeSurface) &&
     remoteSurfaceSupports(remoteContext, layout.activeSurface);
   const available =
     !remote &&
@@ -124,9 +149,10 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         )}
       </div>
     );
+  const stableThread = useStableAgentRightPanelThread(thread);
   const fileTree = useAgentSurfaceScopeTree({
     chrome,
-    thread: remote ? null : thread,
+    thread: remote ? null : stableThread,
     threadRootPath: remote ? null : threadRootPath,
     scope: remote ? { kind: "none" } : scope,
     filesOpen: available && layout.openSurfaces.includes("files"),
@@ -134,15 +160,15 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     onTrustScope,
   });
 
-  const diff = useMemo<AgentSurfaceDiffPanelProps | null>(
+  const changeSummary = thread?.changeSummary ?? null;
+  const hasThread = thread !== null;
+  const legacyWorkingTreeDiff = useMemo<AgentSurfaceDiffPanelProps | null>(
     () =>
-      (!available && !remote) || thread === null
+      !remote || !hasThread
         ? null
         : {
             ...chrome.diff,
-            recorded: recordedDiff?.threadId === thread.thread.threadId ? recordedDiff : null,
-            onCloseRecorded: onCloseRecordedDiff,
-            summary: thread.changeSummary,
+            summary: changeSummary,
             onShowChanges: (threadId) => void agents.showChanges(threadId),
             onRefreshChanges: (threadId) => void agents.showChanges(threadId),
             onShowFileDiff: (threadId, change) => void agents.showFileDiff(threadId, change),
@@ -151,7 +177,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             onOpenChangedFileDiff: (threadId, change) =>
               void agents.openChangedFileDiff(threadId, change),
           },
-    [agents, available, chrome.diff, remote, thread, recordedDiff, onCloseRecordedDiff],
+    [agents, changeSummary, chrome.diff, hasThread, remote],
   );
 
   const terminalChrome = chrome.terminal;
@@ -238,6 +264,27 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     };
   }, [chrome.branchCheckout, historyScope, historyRepositories]);
 
+  const rightPanelContext = useAgentRightPanelContextValue({
+    available,
+    hidden,
+    thread,
+    threadRootPath,
+    scope,
+    workspaceRoot,
+    chrome,
+    agents,
+    openSurfaces: layout.openSurfaces,
+    diffScope,
+    shipActions,
+    checkout,
+    historyTarget: historyScope.kind === "available" ? historyScope.target : null,
+    scripts,
+    legacyWorkingTreeDiff,
+    onDiffScopeChange,
+    onOpenSurface,
+    onCloseSurfaceTab,
+  });
+
   return (
     <div
       aria-hidden={hidden || undefined}
@@ -245,48 +292,46 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       data-slot="surface"
       hidden={hidden}
     >
-      <AgentSurfacePanel
-        unavailable={unavailable}
-        remote={remote}
-        remoteSurface={remoteContext}
-        remoteTerminalTheme={chrome.terminal?.terminalTheme}
-        history={{
-          scope: historyScope,
-          repositories: historyRepositories,
-          gateway: chrome.gitHistoryGateway ?? null,
-          checkout,
-          fileChanges: chrome.fileTree?.fileChanges ?? null,
-          ...chrome.diff,
-        }}
-        chooserAutoFocus={chooserAutoFocus}
-        diff={diff}
-        projectDiff={
-          !remote &&
-          thread === null &&
-          scope.kind === "repository" &&
-          scope.rootPath === workspaceRoot &&
-          chrome.projectDiff?.rootPath === workspaceRoot
-            ? { ...chrome.projectDiff, ...chrome.diff }
-            : null
-        }
-        hidden={hidden}
-        fileTree={fileTree}
-        layout={layout}
-        layoutControls={layoutControls}
-        onActivateSurface={onActivateSurface}
-        onCloseSurfaceTab={onCloseSurfaceTab}
-        onOpenSurface={onOpenSurface}
-        onResizeStart={chrome.onResizeRightPanelStart}
-        onTrustWorkspace={chrome.onTrustWorkspace}
-        scope={scope}
-        terminal={terminal}
-        thread={thread}
-        workspaceRoot={workspaceRoot}
-        workspaceTrusted={chrome.workspaceTrusted}
-      />
+      <AgentRightPanelContext.Provider value={rightPanelContext}>
+        <AgentSurfacePanel
+          agentsPanel={agentsPanel}
+          unavailable={unavailable}
+          remote={remote}
+          remoteSurface={remoteContext}
+          remoteTerminalTheme={chrome.terminal?.terminalTheme}
+          history={{
+            scope: historyScope,
+            repositories: historyRepositories,
+            gateway: chrome.gitHistoryGateway ?? null,
+            checkout,
+            fileChanges: chrome.fileTree?.fileChanges ?? null,
+            ...chrome.diff,
+          }}
+          chooserAutoFocus={chooserAutoFocus}
+          remoteMonacoTheme={chrome.diff.monacoTheme}
+          hidden={hidden}
+          fileTree={fileTree}
+          layout={layout}
+          layoutControls={layoutControls}
+          leadingControls={leadingControls}
+          onActivateSurface={onActivateSurface}
+          onCloseSurfaceTab={onCloseSurfaceTab}
+          onOpenSurface={onOpenSurface}
+          onResizeStart={chrome.onResizeRightPanelStart}
+          onResizeWidth={onResizeWidth}
+          onTrustWorkspace={chrome.onTrustWorkspace}
+          scope={scope}
+          terminal={terminal}
+          thread={thread}
+          workspaceRoot={workspaceRoot}
+          workspaceTrusted={chrome.workspaceTrusted}
+        />
+      </AgentRightPanelContext.Provider>
     </div>
   );
 });
+
+const ignoreDiffScope = (): void => undefined;
 
 const unavailableWorktreeRefresh = async () => undefined;
 const unavailableWorktreeError = () => undefined;

@@ -1,3 +1,4 @@
+import type { AgentRuntimeSubagentElapsed } from "../../domain/agentRuntimeSubagent";
 import { agentElapsedLabel } from "./agentRuntimeSubagentPresentation";
 
 export const AGENT_ELAPSED_TICK_MS = 1_000;
@@ -20,13 +21,13 @@ export interface AgentElapsedReading {
 }
 
 export interface AgentElapsedTicker {
-  observe(key: string, observedDurationMs: number): void;
-  register(key: string, observedDurationMs: number, target: AgentElapsedTarget): () => void;
+  observe(key: string, observedDurationMs: number | null): void;
+  register(key: string, observedDurationMs: number | null, target: AgentElapsedTarget): () => void;
   dispose(): void;
 }
 
 interface ElapsedAnchor {
-  readonly observedDurationMs: number;
+  readonly observedDurationMs: number | null;
   readonly anchoredAtEpochMs: number;
 }
 
@@ -36,12 +37,29 @@ interface ElapsedRegistration {
   describedAtMs: number | null;
 }
 
+export function agentElapsedObservation(
+  elapsed: AgentRuntimeSubagentElapsed,
+): number | null | undefined {
+  switch (elapsed.kind) {
+    case "live":
+      return elapsed.observedDurationMs;
+    case "running":
+      return null;
+    case "settled":
+    case "unknown":
+      return undefined;
+    default:
+      return unsupportedElapsed(elapsed);
+  }
+}
+
 export function agentElapsedReading(
-  observedDurationMs: number,
+  observedDurationMs: number | null,
   anchoredAtEpochMs: number,
   nowEpochMs: number,
 ): AgentElapsedReading {
   const silentMs = Math.max(0, nowEpochMs - anchoredAtEpochMs);
+  if (observedDurationMs === null) return { displayMs: silentMs, silentForMs: null };
   if (silentMs <= AGENT_ELAPSED_STALE_AFTER_MS)
     return { displayMs: observedDurationMs + silentMs, silentForMs: null };
   return {
@@ -74,7 +92,7 @@ export function createAgentElapsedTicker(now: () => number = Date.now): AgentEla
     }
   };
 
-  const observe = (key: string, observedDurationMs: number): ElapsedAnchor => {
+  const observe = (key: string, observedDurationMs: number | null): ElapsedAnchor => {
     const known = anchors.get(key);
     const anchor =
       known?.observedDurationMs === observedDurationMs
@@ -146,4 +164,8 @@ export function createAgentElapsedTicker(now: () => number = Date.now): AgentEla
 function writeText(element: HTMLElement | null, text: string): void {
   if (element === null || element.textContent === text) return;
   element.textContent = text;
+}
+
+function unsupportedElapsed(elapsed: never): never {
+  throw new TypeError(`Unsupported subagent elapsed kind: ${String(elapsed)}.`);
 }

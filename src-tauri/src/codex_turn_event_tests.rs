@@ -775,11 +775,26 @@ fn ignored_notifications_project_nothing() {
     assert_eq!(projection.unknown_frames_emitted(), 0);
 }
 
+fn spawn_item(id: &str, status: &str, receivers: &[&str], prompt: Option<&str>) -> Value {
+    json!({
+        "type": "collabAgentToolCall",
+        "id": id,
+        "tool": "spawnAgent",
+        "status": status,
+        "senderThreadId": ROOT_THREAD,
+        "receiverThreadIds": receivers,
+        "prompt": prompt,
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium",
+        "agentsStates": {}
+    })
+}
+
 #[test]
-fn echoed_user_messages_and_collab_tool_calls_are_dropped_rather_than_counted() {
+fn echoed_user_messages_and_non_spawn_collab_calls_are_dropped_rather_than_counted() {
     let mut projection = rooted();
     let user_message = json!({ "type": "userMessage", "id": "user-1", "content": [] });
-    let collab = json!({ "type": "collabAgentToolCall", "id": "call-1", "tool": "wait" });
+    let wait = json!({ "type": "collabAgentToolCall", "id": "call-1", "tool": "wait" });
 
     let echoed = project(
         &mut projection,
@@ -789,12 +804,152 @@ fn echoed_user_messages_and_collab_tool_calls_are_dropped_rather_than_counted() 
     let waiting = project(
         &mut projection,
         "item/started",
-        item_params(ROOT_THREAD, collab),
+        item_params(ROOT_THREAD, wait),
     );
 
     assert_eq!(echoed, Vec::new());
     assert_eq!(waiting, Vec::new());
     assert_eq!(projection.unknown_frames_emitted(), 0);
+}
+
+#[test]
+fn a_root_spawn_projects_to_a_typed_subagent_spawn_line() {
+    let mut projection = rooted();
+    let started = project(
+        &mut projection,
+        "item/started",
+        item_params(
+            ROOT_THREAD,
+            spawn_item(
+                "call-spawn",
+                "inProgress",
+                &[],
+                Some("  Review   idempotency\tmiddleware \nsecond line"),
+            ),
+        ),
+    );
+    let completed = project(
+        &mut projection,
+        "item/completed",
+        item_params(
+            ROOT_THREAD,
+            spawn_item(
+                "call-spawn",
+                "completed",
+                &[SUB_THREAD],
+                Some("Review idempotency middleware"),
+            ),
+        ),
+    );
+
+    assert_eq!(
+        lines(&started),
+        format!(
+            "{}\n",
+            r#"{"v":1,"t":"subagentSpawn","callId":"call-spawn","status":"inProgress","taskTitle":"Review idempotency middleware","model":"gpt-5.6-luna","reasoningEffort":"medium","agentThreadIds":[]}"#
+        )
+    );
+    assert_eq!(
+        lines(&completed),
+        format!(
+            r#"{{"v":1,"t":"subagentSpawn","callId":"call-spawn","status":"completed","taskTitle":"Review idempotency middleware","model":"gpt-5.6-luna","reasoningEffort":"medium","agentThreadIds":["{SUB_THREAD}"]}}{}"#,
+            "\n"
+        )
+    );
+    assert_eq!(projection.unknown_frames_emitted(), 0);
+}
+
+#[test]
+fn a_completed_spawn_registers_receivers_so_child_items_stay_nested() {
+    let mut projection = rooted();
+    project(
+        &mut projection,
+        "item/completed",
+        item_params(
+            ROOT_THREAD,
+            spawn_item("call-spawn", "completed", &[SUB_THREAD], None),
+        ),
+    );
+    let child = project(
+        &mut projection,
+        "item/completed",
+        item_params(
+            SUB_THREAD,
+            json!({ "type": "agentMessage", "id": "m1", "text": "done" }),
+        ),
+    );
+
+    assert!(matches!(
+        child.as_slice(),
+        [CodexTurnEvent::SubagentItem { .. }]
+    ));
+}
+
+#[test]
+fn spawn_bounds_titles_models_efforts_and_receivers() {
+    let mut projection = rooted();
+    let receivers: Vec<String> = (0..40)
+        .map(|index| format!("child-thread-{index:04}"))
+        .collect();
+    let receiver_refs: Vec<&str> = receivers.iter().map(String::as_str).collect();
+    let long_prompt = "é".repeat(400);
+    let mut item = spawn_item(
+        "call-big",
+        "completed",
+        &receiver_refs,
+        Some(long_prompt.as_str()),
+    );
+    item["model"] = json!("m".repeat(65));
+    item["reasoningEffort"] = json!("ludicrous");
+
+    let events = project(
+        &mut projection,
+        "item/completed",
+        item_params(ROOT_THREAD, item),
+    );
+
+    let [CodexTurnEvent::SubagentSpawn {
+        task_title,
+        model,
+        reasoning_effort,
+        agent_thread_ids,
+        ..
+    }] = events.as_slice()
+    else {
+        panic!("expected one spawn event, got {events:?}");
+    };
+    assert!(task_title
+        .as_deref()
+        .is_some_and(|title| title.len() <= 480));
+    assert_eq!(model, &None);
+    assert_eq!(reasoning_effort, &None);
+    assert_eq!(agent_thread_ids.len(), MAX_SUBAGENT_THREADS_PER_TURN);
+}
+
+#[test]
+fn spawns_from_child_threads_and_unknown_statuses_fail_closed() {
+    let mut projection = with_subagent();
+    let nested = project(
+        &mut projection,
+        "item/started",
+        item_params(
+            SUB_THREAD,
+            spawn_item("call-nested", "inProgress", &[], None),
+        ),
+    );
+    let mut odd = spawn_item("call-odd", "exploded", &[], None);
+    odd["senderThreadId"] = json!(ROOT_THREAD);
+    let unknown = project(
+        &mut projection,
+        "item/started",
+        item_params(ROOT_THREAD, odd),
+    );
+
+    assert_eq!(nested, Vec::new());
+    assert!(matches!(
+        unknown.as_slice(),
+        [CodexTurnEvent::UnknownFrame { .. }]
+    ));
 }
 
 #[test]
@@ -855,6 +1010,74 @@ fn subagent_registration_stops_at_thirty_two_threads_and_keeps_insertion_order()
             method: "item/started".to_string()
         }]
     );
+}
+
+#[test]
+fn a_spawn_beyond_the_subagent_cap_keeps_only_registered_receivers_and_says_so() {
+    let mut projection = rooted();
+    for index in 0..(MAX_SUBAGENT_THREADS_PER_TURN - 2) {
+        project(
+            &mut projection,
+            "item/started",
+            item_params(
+                ROOT_THREAD,
+                subagent_activity_item(
+                    format!("call-{index}").as_str(),
+                    "started",
+                    format!("thread-{index}").as_str(),
+                ),
+            ),
+        );
+    }
+
+    let events = project(
+        &mut projection,
+        "item/completed",
+        item_params(
+            ROOT_THREAD,
+            spawn_item(
+                "call-spawn",
+                "completed",
+                &["late-a", "late-b", "late-c", "late-d"],
+                None,
+            ),
+        ),
+    );
+    let again = project(
+        &mut projection,
+        "item/completed",
+        item_params(
+            ROOT_THREAD,
+            spawn_item("call-spawn-2", "completed", &["late-e"], None),
+        ),
+    );
+
+    let [CodexTurnEvent::SubagentSpawn {
+        agent_thread_ids, ..
+    }, CodexTurnEvent::Notice {
+        severity, message, ..
+    }] = events.as_slice()
+    else {
+        panic!("expected a spawn and a notice, got {events:?}");
+    };
+    assert_eq!(
+        agent_thread_ids,
+        &vec!["late-a".to_string(), "late-b".to_string()]
+    );
+    assert_eq!(*severity, CodexNoticeSeverity::Warning);
+    assert!(message.text.contains("2 more agents are not shown"));
+    assert_eq!(
+        projection.subagent_threads().len(),
+        MAX_SUBAGENT_THREADS_PER_TURN
+    );
+    let [CodexTurnEvent::SubagentSpawn {
+        agent_thread_ids, ..
+    }, CodexTurnEvent::Notice { message, .. }] = again.as_slice()
+    else {
+        panic!("expected a spawn and a notice, got {again:?}");
+    };
+    assert!(agent_thread_ids.is_empty());
+    assert!(message.text.contains("1 more agent is not shown"));
 }
 
 #[test]

@@ -10,6 +10,7 @@ import type { ComposerScope } from "./agentComposerTarget";
 import {
   NO_AGENT_SURFACE_SCOPE,
   SURFACE_REMOTE_UNAVAILABLE_REASON,
+  SURFACE_UNTRUSTED_GIT_REASON,
   agentSurfaceTerminalLaunchTarget,
   SURFACE_FILES_FOREIGN_ROOT_DESCRIPTION,
   SURFACE_FILES_NO_PROJECT_DESCRIPTION,
@@ -429,6 +430,30 @@ describe("remote surface boundary", () => {
       SURFACE_REMOTE_UNAVAILABLE_REASON,
     );
     expect(() => agentSurfaceTerminalLaunchTargetFor(remote.thread.threadId, "worktree")).toThrow(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+  });
+});
+
+describe("git, scripts and pull request surfaces", () => {
+  it("require a trusted workspace for a thread", () => {
+    const thread = surfaceThreadView();
+    for (const kind of ["git", "scripts", "pullRequest"] as const) {
+      expect(agentSurfaceBlockedReason(kind, thread, false, SURFACE_FIXTURE_ROOT)).toBe(
+        SURFACE_UNTRUSTED_GIT_REASON,
+      );
+      expect(agentSurfaceBlockedReason(kind, thread, true, SURFACE_FIXTURE_ROOT)).toBeNull();
+    }
+  });
+
+  it("never blocks the agents surface", () => {
+    expect(agentSurfaceBlockedReason("agents", null, false, null)).toBeNull();
+  });
+
+  it("blocks them for remote threads", () => {
+    const local = surfaceThreadView();
+    const remote = { ...local, thread: { ...local.thread, threadId: "remote:srv:thread-1" } };
+    expect(agentSurfaceBlockedReason("git", remote, true, SURFACE_FIXTURE_ROOT)).toBe(
       SURFACE_REMOTE_UNAVAILABLE_REASON,
     );
   });

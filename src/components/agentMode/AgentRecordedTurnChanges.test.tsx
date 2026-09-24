@@ -69,10 +69,15 @@ function click(text: string) {
   expect(button).toBeDefined();
   button!.click();
 }
+function openDiff() {
+  const button = host.querySelector<HTMLButtonElement>("button.cv-changes-row");
+  expect(button).not.toBeNull();
+  button?.click();
+}
 it("routes Open diff to the sidebar callback without mounting an inline viewer", async () => {
   const onOpenDiff = vi.fn();
   await render({ onOpenDiff });
-  act(() => click("Open diff"));
+  act(() => openDiff());
   expect(onOpenDiff).toHaveBeenCalledWith(summary("t1"), undefined);
   expect(host.querySelector('[aria-label="Recorded turn diff"]')).toBeNull();
 });
@@ -87,9 +92,12 @@ it("ignores a previous thread's late summary", async () => {
   );
   const props = await render({ getTurnChanges });
   await render({ ...props, threadId: "other", turnId: "t2" });
-  await act(async () => resolve(summary("t1", "stale.ts")));
-  expect(host.textContent).toContain("b.ts");
-  expect(host.textContent).not.toContain("stale.ts");
+  const stale = summary("t1", "stale.ts");
+  await act(async () =>
+    resolve({ ...stale, files: [...stale.files, ...summary("t1", "extra.ts").files] }),
+  );
+  expect(host.querySelector(".cv-changes-row__count")?.textContent).toBe("1 changed file");
+  expect(host.textContent).not.toContain("2 changed files");
 });
 it("never invents live changes when the snapshot is unavailable", async () => {
   await render({
@@ -139,7 +147,7 @@ it("shows a persisted capture failure as final without Retry", async () => {
     }),
   });
   expect(host.textContent).toContain("Snapshot Git command failed.");
-  expect(host.querySelector(".agent-turn-changes--unavailable")).not.toBeNull();
+  expect(host.querySelector(".cv-changes-row--unavailable")).not.toBeNull();
   expect(host.textContent).not.toContain("Retry recorded changes");
 });
 it.each<AgentTurnChangesDenialReason>([
@@ -150,7 +158,7 @@ it.each<AgentTurnChangesDenialReason>([
 ])("shows the %s authority denial as a muted line without Retry", async (reason) => {
   const reader = createAgentTurnChangesReader(() => ({ kind: "denied", reason }));
   await render({ getTurnChanges: reader.getTurnChanges });
-  expect(host.querySelector(".agent-turn-changes--unavailable")?.textContent).toBe(
+  expect(host.querySelector(".cv-changes-row--unavailable")?.textContent).toBe(
     agentTurnChangesDenialMessage(reason),
   );
   expect(host.textContent).not.toContain("Retry recorded changes");
@@ -222,6 +230,6 @@ it("offers retry only for transient read failures", async () => {
   await render({ getTurnChanges });
   await vi.waitFor(() => expect(host.textContent).toContain("Retry recorded changes"));
   await act(async () => click("Retry recorded changes"));
-  await vi.waitFor(() => expect(host.textContent).toContain("a.ts"));
+  await vi.waitFor(() => expect(host.textContent).toContain("1 changed file"));
   expect(getTurnChanges).toHaveBeenCalledTimes(2);
 });

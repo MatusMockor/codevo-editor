@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentAttachmentGateway } from "../../application/agentAttachmentPorts";
 import { useAgentAttachmentImages } from "../../application/useAgentAttachmentImages";
 import { waitForReact } from "../../test/reactTestLifecycle";
-import { AgentComposerQueuedEditBar } from "./AgentComposerQueuedEditBar";
+import { AgentComposerQueuedEditAttachments } from "./AgentComposerQueuedEditBar";
 import { queuedEditAttachmentDraft, type AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
 import {
   queuedEditImageOwner,
@@ -72,7 +72,7 @@ describe("useAgentQueuedEditImagePreviews", () => {
     const previewed = useAgentQueuedEditImagePreviews(edit, images, owner);
     return previewed === null
       ? null
-      : createElement(AgentComposerQueuedEditBar, { edit: previewed });
+      : createElement(AgentComposerQueuedEditAttachments, { edit: previewed });
   }
 
   const render = (

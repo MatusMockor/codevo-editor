@@ -122,6 +122,7 @@ export interface WorkbenchControllerAgentsOptions {
     | "agentProviderGateway"
     | "agentProviderSignInGateway"
     | "agentRootLeaseGateway"
+    | "agentSidebarRailPreference"
     | "agentTaskGateway"
     | "turnChangesGateway"
     | "agentQuestionGateway"
@@ -198,6 +199,7 @@ export function useWorkbenchControllerAgents(
       options.persistedAgentWorkbenchLayout ??
       agentWorkbenchHydration(options.editorSessionOwnerKey, options.workspaceSettingsRef.current),
     persistence: layoutPersistence,
+    sidebarPreference: options.options.agentSidebarRailPreference ?? null,
     reportError: options.reportError,
   });
   const { agentModeActive, agentWorkbench } = agentLayout;

@@ -92,7 +92,11 @@ import {
 } from "./workspaceRuntimePolicy";
 import { beginWorkbenchSmartModeIntent } from "./useWorkbenchLanguageRuntimeCoordinator";
 import { PendingWorkspaceSettingsLoadCapacityError } from "./boundedPendingWorkspaceSettingsLoads";
-import type { WorkspaceCloseOwnership } from "../useWorkbenchCloseLifecycle";
+import type {
+  WorkspaceCloseOwnership,
+  WorkspaceIdentityReleaseDeferral,
+  WorkspaceIdentityReleaseOutcome,
+} from "../useWorkbenchCloseLifecycle";
 import type { WorkspaceSettings } from "../../domain/settings";
 import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";
 import type { WorkspaceIdentityGateway } from "../workspaceIdentityGatewayPort";
@@ -193,7 +197,10 @@ interface FlatWorkspaceTransitionDependencies {
     owner?: WorkspaceRuntimeOwner,
     requestIsValid?: () => boolean,
   ) => Promise<LanguageServerPlan | null>;
-  readonly releaseOwnedWorkspaceIdentity: (workspaceId: string) => Promise<"deferred" | "released">;
+  readonly releaseOwnedWorkspaceIdentity: (
+    workspaceId: string,
+    deferral: WorkspaceIdentityReleaseDeferral,
+  ) => Promise<WorkspaceIdentityReleaseOutcome>;
   readonly reportError: (source: string, error: unknown) => void;
   readonly reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
@@ -349,7 +356,7 @@ interface FlatWorkspaceTransitionDependencies {
   readonly pendingWorkspaceIdentityRequestTokensRef: RefObject<LatestWorkspaceRequestTokenRegistry>;
   readonly withManagedWorkspaceIdentityLease: (
     descriptor: WorkspaceIdentityDescriptor,
-    useLease: (adopt: () => void) => Promise<void>,
+    useLease: (adopt: () => Promise<boolean>) => Promise<void>,
   ) => Promise<void>;
   readonly workspaceCloseGenerationByRootRef: RefObject<Record<string, number>>;
   readonly workspaceCloseOwnershipByKeyRef: RefObject<Record<string, number>>;
@@ -1005,7 +1012,7 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
     async (
       path: string,
       identityDescriptor: WorkspaceIdentityDescriptor | null,
-      adoptIdentity: (() => number | null) | null,
+      adoptIdentity: (() => Promise<number | null>) | null,
       requestToken: number,
       commitOpenWorkspaceRequest: (path: string, admissionGeneration: number | null) => void,
       options: OpenWorkspacePathOptions = {},
@@ -1284,8 +1291,9 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
         }
       }
 
-      const adoptedAdmissionGeneration = adoptIdentity?.() ?? null;
+      const adoptedAdmissionGeneration = adoptIdentity ? await adoptIdentity() : null;
       if (adoptIdentity && adoptedAdmissionGeneration === null) return;
+      if (!isCurrentOpenWorkspaceRequest()) return;
       documentSessionAuthorityLifecycle.deactivate();
       if (identityDescriptor) {
         const previousIdentity =
@@ -1305,8 +1313,8 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
           delete workspaceRuntimeOwnerByTabRef.current[previousIdentity.selectedPath];
           delete workspaceRuntimeOwnerByTabRef.current[previousIdentity.canonicalRoot];
           removeWorkspaceIdentityMappings(workspaceIdentityByRootRef.current, previousIdentity);
-          void releaseOwnedWorkspaceIdentity(previousIdentity.workspaceId).catch((error) =>
-            reportError("Workspace", error),
+          void releaseOwnedWorkspaceIdentity(previousIdentity.workspaceId, "retryLater").catch(
+            (error) => reportError("Workspace", error),
           );
         }
         removeWorkspaceIdentityMappings(workspaceIdentityByRootRef.current, identityDescriptor);
@@ -1894,7 +1902,7 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
       workspaceRuntimeOwnerClaims.clear();
       disposeWorkspaceFileChanges(workspaceFileChangeGateway, externallyRemovedDocumentRootByPath);
       for (const workspaceId of workspaceIds) {
-        void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
+        void releaseOwnedWorkspaceIdentity(workspaceId, "retryLater").catch(() => undefined);
       }
     };
   }, [

@@ -1,5 +1,5 @@
 import { Check } from "lucide-react";
-import type { PointerEvent, ReactNode } from "react";
+import { useId, type PointerEvent, type ReactNode } from "react";
 import { cx } from "./classNames";
 import { useMenuContext } from "./menuContext";
 import "./overlays.css";
@@ -13,12 +13,14 @@ export interface MenuItemProps {
   readonly tone?: MenuItemTone;
   readonly disabled?: boolean;
   readonly checked?: boolean;
+  readonly description?: string;
   onSelect(): void;
 }
 
 export function MenuItem({
   checked,
   children,
+  description,
   disabled = false,
   icon,
   onSelect,
@@ -26,6 +28,8 @@ export function MenuItem({
   tone = "default",
 }: MenuItemProps) {
   const menu = useMenuContext();
+  const descriptionId = useId();
+  const described = description !== undefined && description !== "";
   const handlePointerEnter = (event: PointerEvent<HTMLButtonElement>): void => {
     if (!disabled) event.currentTarget.focus();
     menu.openSubmenu(null);
@@ -36,30 +40,39 @@ export function MenuItem({
     menu.closeAll();
   };
   return (
-    <button
-      aria-checked={checked}
-      aria-disabled={disabled ? true : undefined}
-      className={cx("cv-menu__item", tone === "danger" && "cv-menu__item--danger")}
-      data-cv-menu={menu.menuId}
-      onClick={select}
-      onPointerEnter={handlePointerEnter}
-      role={checked === undefined ? "menuitem" : "menuitemcheckbox"}
-      tabIndex={-1}
-      type="button"
-    >
-      {icon === undefined ? null : (
-        <span aria-hidden="true" className="cv-menu__icon">
-          {icon}
-        </span>
-      )}
-      <span className="cv-menu__text">{children}</span>
-      {shortcut === undefined ? null : <span className="cv-menu__end">{shortcut}</span>}
-      {checked === true ? (
-        <span aria-hidden="true" className="cv-menu__check">
-          <Check size={14} />
+    <>
+      <button
+        aria-checked={checked}
+        aria-describedby={described ? descriptionId : undefined}
+        aria-disabled={disabled ? true : undefined}
+        className={cx("cv-menu__item", tone === "danger" && "cv-menu__item--danger")}
+        data-cv-menu={menu.menuId}
+        onClick={select}
+        onPointerEnter={handlePointerEnter}
+        role={checked === undefined ? "menuitem" : "menuitemcheckbox"}
+        tabIndex={-1}
+        title={described ? description : undefined}
+        type="button"
+      >
+        {icon === undefined ? null : (
+          <span aria-hidden="true" className="cv-menu__icon">
+            {icon}
+          </span>
+        )}
+        <span className="cv-menu__text">{children}</span>
+        {shortcut === undefined ? null : <span className="cv-menu__end">{shortcut}</span>}
+        {checked === true ? (
+          <span aria-hidden="true" className="cv-menu__check">
+            <Check size={14} />
+          </span>
+        ) : null}
+      </button>
+      {described ? (
+        <span hidden id={descriptionId}>
+          {description}
         </span>
       ) : null}
-    </button>
+    </>
   );
 }
 

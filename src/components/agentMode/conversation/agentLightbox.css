@@ -1,0 +1,116 @@
+.agent-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cv-z-dialog);
+  display: grid;
+  place-items: center;
+}
+
+.agent-lightbox__scrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: var(--cv-scrim);
+  cursor: zoom-out;
+}
+
+.agent-lightbox__stage {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: var(--cv-space-4);
+  max-width: calc(92vw - 96px);
+}
+
+.agent-lightbox__frame {
+  position: relative;
+}
+
+.agent-lightbox__image {
+  display: block;
+  max-width: min(92vw, 800px);
+  max-height: min(86vh, 600px);
+  border-radius: var(--cv-r-card);
+  object-fit: contain;
+}
+
+.agent-lightbox__chip {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  box-shadow: var(--cv-ring-media);
+  color: rgba(255, 255, 255, 0.95);
+  cursor: pointer;
+}
+
+.agent-lightbox__chip:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.agent-lightbox__chip:focus-visible {
+  outline: 2px solid var(--cv-focus);
+  outline-offset: 2px;
+}
+
+.agent-lightbox__close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+}
+
+.agent-lightbox__nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.agent-lightbox__nav--previous {
+  left: var(--cv-space-7);
+}
+
+.agent-lightbox__nav--next {
+  right: var(--cv-space-7);
+}
+
+.agent-lightbox__caption {
+  display: flex;
+  align-items: center;
+  gap: var(--cv-space-4);
+  max-width: 100%;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: var(--cv-t-xs);
+}
+
+.agent-lightbox__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-lightbox__reveal {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.agent-lightbox:focus-visible {
+  outline: none;
+}
+
+.agent-lightbox__nav[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}

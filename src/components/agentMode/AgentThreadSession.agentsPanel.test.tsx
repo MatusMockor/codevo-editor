@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn, AgentTurnEvent } from "../../domain/agentThread";
+import { AgentAgentsPanelProvider } from "./agents/agentAgentsPanelContext";
+import { AgentAgentsPanelSurface } from "./agents/AgentAgentsPanelSurface";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AGENT_SUBAGENT_ANNOUNCE_DELAY_MS } from "./AgentSubagentAnnouncer";
 
@@ -73,10 +75,39 @@ function view(threadId: string, events: ReadonlyArray<AgentTurnEvent>): AgentThr
   };
 }
 
+function RightPanelHarness({
+  thread,
+  onOpened,
+}: {
+  readonly thread: AgentThreadView;
+  readonly onOpened: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const onOpen = useCallback(() => {
+    onOpened();
+    setOpen(true);
+  }, [onOpened]);
+  const onToggle = useCallback(() => setOpen((current) => !current), []);
+  return (
+    <AgentAgentsPanelProvider isOpen={open} onOpen={onOpen} onToggle={onToggle}>
+      <AgentThreadSession
+        composerRepositoryLabel="app"
+        onReviewInDiff={() => undefined}
+        thread={thread}
+      />
+      {open && (
+        <aside data-testid="right-panel">
+          <AgentAgentsPanelSurface />
+        </aside>
+      )}
+    </AgentAgentsPanelProvider>
+  );
+}
+
 describe("thread Agents panel", () => {
   let host: HTMLDivElement;
   let root: Root;
-  const innerWidth = window.innerWidth;
+  const opened = vi.fn();
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
@@ -87,71 +118,52 @@ describe("thread Agents panel", () => {
     act(() => root.unmount());
     host.remove();
     vi.useRealTimers();
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: innerWidth });
+    opened.mockReset();
   });
 
   function render(thread: AgentThreadView) {
-    act(() =>
-      root.render(
-        <AgentThreadSession
-          composerRepositoryLabel="app"
-          onReviewInDiff={() => undefined}
-          thread={thread}
-        />,
-      ),
-    );
+    act(() => root.render(<RightPanelHarness onOpened={opened} thread={thread} />));
   }
-  const indicator = () => host.querySelector<HTMLButtonElement>(".agent-background-row__action");
-  const panel = () => host.querySelector<HTMLElement>(".agents-panel");
+  const indicator = () => host.querySelector<HTMLButtonElement>(".cv-live-row__action");
+  const names = () =>
+    [...host.querySelectorAll('[data-testid="right-panel"] .cv-agents-row__name')].map(
+      (node) => node.textContent,
+    );
 
-  it("resets on thread change and never reopens or steals focus on A, B, A", () => {
+  it("opens the right-panel surface through the provider and follows the thread on A, B, A", () => {
     render(view("thread-a", LIVE));
-    act(() => indicator()?.click());
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Close Agents panel");
-
-    render(view("thread-b", LIVE));
-    expect(panel()).toBeNull();
     const outside = document.createElement("button");
     document.body.append(outside);
     outside.focus();
-    render(view("thread-a", LIVE));
+    act(() => indicator()?.click());
 
-    expect(panel()).toBeNull();
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(names()).toEqual(["Stream A", "Stream B"]);
+    expect(document.activeElement).toBe(outside);
+
+    render(view("thread-b", [spawn("z", "Stream Z"), starting("z")]));
+    expect(names()).toEqual(["Stream Z"]);
+    render(view("thread-a", LIVE));
+    expect(names()).toEqual(["Stream A", "Stream B"]);
+    expect(opened).toHaveBeenCalledTimes(1);
     expect(document.activeElement).toBe(outside);
     outside.remove();
   });
 
-  it("docks the panel as a column next to the thread instead of covering it", () => {
+  it("keeps the thread in one plain column instead of docking or overlaying the panel", () => {
     render(view("thread-a", LIVE));
+    act(() => indicator()?.click());
     const dock = host.querySelector<HTMLElement>(".agents-dock");
-    expect(dock?.getAttribute("data-agents")).toBe("closed");
-    act(() => indicator()?.click());
 
-    expect(dock?.getAttribute("data-agents")).toBe("docked");
-    expect(panel()?.parentElement).toBe(dock);
-    expect(panel()?.getAttribute("role")).toBeNull();
-    const main = host.querySelector<HTMLElement>(".agents-dock__main");
-    expect(main?.contains(host.querySelector(".agent-session"))).toBe(true);
-    expect(main?.contains(panel())).toBe(false);
-    expect(main?.hasAttribute("inert")).toBe(false);
-  });
-
-  it("falls back to a modal overlay with an inert thread when the column is narrow", () => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 520 });
-    render(view("thread-a", LIVE));
-    act(() => indicator()?.click());
-
-    expect(host.querySelector(".agents-dock")?.getAttribute("data-agents")).toBe("overlay");
-    expect(panel()?.getAttribute("role")).toBe("dialog");
-    expect(host.querySelector(".agents-dock__main")?.hasAttribute("inert")).toBe(true);
-    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Close Agents panel"]')?.click());
+    expect(dock?.hasAttribute("data-agents")).toBe(false);
+    expect(dock?.querySelector(".cv-agents")).toBeNull();
     expect(host.querySelector(".agents-dock__main")?.hasAttribute("inert")).toBe(false);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("announces subagent state through exactly one debounced polite region", () => {
     vi.useFakeTimers();
     render(view("thread-a", LIVE));
-    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__row")?.click());
     act(() => indicator()?.click());
     const regions = () =>
       [...host.querySelectorAll('[role="status"], [aria-live]')].filter(
@@ -161,7 +173,7 @@ describe("thread Agents panel", () => {
     expect(regions()).toHaveLength(1);
     expect(
       host.querySelectorAll(
-        ':is(.agent-spawn-list, .agents-panel, .agent-background-row) :is([role="status"], [aria-live])',
+        ':is(.cv-spawn-list, .cv-agents, .cv-live-row) :is([role="status"], [aria-live])',
       ),
     ).toHaveLength(0);
     expect(regions()[0]?.getAttribute("aria-live")).toBe("polite");

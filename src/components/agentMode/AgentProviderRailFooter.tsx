@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import type {
   AgentProviderManagementSurface,
   AgentProviderManagementView,
@@ -34,6 +34,7 @@ export interface AgentProviderRailFooterProps {
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly usageButtonRef?: Ref<HTMLButtonElement>;
   readonly usageOpen: boolean;
+  readonly activity?: ReactNode;
   onOpenSourceControl(): void;
   onOpenSettings(): void;
   onOpenUsage(): void;
@@ -42,6 +43,7 @@ export interface AgentProviderRailFooterProps {
 const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 
 export function AgentProviderRailFooter({
+  activity = null,
   management,
   onOpenSourceControl,
   onOpenSettings,
@@ -132,6 +134,7 @@ export function AgentProviderRailFooter({
           />
         </button>
       </nav>
+      {activity}
     </footer>
   );
 }

@@ -153,7 +153,7 @@ describe("useWorkbenchResizeHandles", () => {
       MAX_AGENT_RAIL_WIDTH,
     );
     expect(maxAgentRightPanelWidth(1_400, "expanded", DEFAULT_AGENT_RAIL_WIDTH)).toBe(584);
-    expect(maxAgentRightPanelWidth(1_400, "collapsed", MAX_AGENT_RAIL_WIDTH)).toBe(792);
+    expect(maxAgentRightPanelWidth(1_400, "collapsed", MAX_AGENT_RAIL_WIDTH)).toBe(840);
   });
 
   it("previews a widened rail drag at the same width the committed placement uses", () => {
@@ -169,7 +169,7 @@ describe("useWorkbenchResizeHandles", () => {
   });
 
   it.each([
-    { viewportWidth: 1_000, expectedWidth: 392 },
+    { viewportWidth: 1_000, expectedWidth: 440 },
     { viewportWidth: 900, expectedWidth: 420 },
   ])(
     "keeps a collapsed-rail panel stable at $viewportWidth pixels",

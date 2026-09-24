@@ -21,9 +21,9 @@ export interface AgentThreadBulkSkip {
 
 export interface AgentThreadBulkRequest {
   readonly action: AgentThreadBulkAction;
-  readonly ownerKey: string;
   readonly threadIds: ReadonlyArray<string>;
   readonly missingIds: ReadonlyArray<string>;
+  readonly ownerKeys: ReadonlyMap<string, string>;
 }
 
 export interface AgentThreadBulkPlan {
@@ -35,6 +35,15 @@ export interface AgentThreadBulkPlan {
 export type AgentThreadBulkCommand =
   | { readonly kind: "stale"; readonly action: AgentThreadBulkAction }
   | { readonly kind: "apply"; readonly request: AgentThreadBulkRequest };
+
+export interface AgentThreadBulkOwner {
+  readonly rootKey: string;
+  readonly ownerId: string;
+}
+
+export function agentThreadBulkOwnerKey(owner: AgentThreadBulkOwner): string {
+  return JSON.stringify([owner.rootKey, owner.ownerId]);
+}
 
 const SKIP_REASON_RANK: Readonly<Record<AgentThreadBulkSkipReason, number>> = {
   running: 0,
@@ -72,7 +81,7 @@ export function agentThreadBulkPlan(
       skipped.push({ threadId, reason: "missing" });
       continue;
     }
-    if (candidate.ownerKey !== request.ownerKey) {
+    if (candidate.ownerKey !== request.ownerKeys.get(threadId)) {
       skipped.push({ threadId, reason: "foreignOwner" });
       continue;
     }

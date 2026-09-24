@@ -1,5 +1,6 @@
 import { Suspense, lazy, useMemo } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { TerminalTabsExternalStrip } from "../TerminalTabsPanel";
 import type { TerminalTheme } from "../../domain/settings";
 import {
   DEFAULT_TERMINAL_LAUNCH_TARGET,
@@ -36,11 +37,13 @@ export interface AgentSurfaceTerminalProps {
   readonly profileId: string | null;
   readonly profileLabel: string | null;
   readonly shellIntegrationEnabled: boolean;
+  readonly externalStrip?: TerminalTabsExternalStrip;
   onTrustWorkspace?(): void;
   onOpenLink?(path: string, line?: number, column?: number): void;
 }
 
 export function AgentSurfaceTerminal({
+  externalStrip,
   isActive,
   layoutRevision,
   onOpenLink,
@@ -121,6 +124,7 @@ export function AgentSurfaceTerminal({
     >
       <Suspense fallback={<p className="agent-note">Loading the terminal…</p>}>
         <LazyTerminalTabsPanel
+          externalStrip={externalStrip}
           isActive={isActive}
           key={ownerKey}
           layoutRevision={layoutRevision}

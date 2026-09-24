@@ -558,13 +558,13 @@ function management(
 describe("AgentModelPicker search styling contract", () => {
   const css = readAgentModeStyles();
 
-  it("keeps the search field borderless on the well tone with a focus ring", () => {
+  it("keeps the search field borderless on the well tone with a neutral focus tone", () => {
     const search = cssRule(css, ".agent-model-picker__search {");
     expect(search).toContain("background: var(--agent-well)");
     expect(search).toContain("border-radius: var(--agent-radius-sm)");
     expect(search).not.toMatch(/border-bottom/);
     expect(cssRule(css, ".agent-model-picker__search:focus-within {")).toContain(
-      "box-shadow: var(--agent-focus-ring)",
+      "box-shadow: var(--cv-ring-hair-strong)",
     );
   });
 

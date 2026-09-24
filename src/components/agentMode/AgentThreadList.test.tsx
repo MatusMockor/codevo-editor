@@ -36,11 +36,14 @@ describe("AgentThreadList empty state", () => {
     expect(host.querySelector("button")).toBeNull();
   });
 
-  it("states the no-scope wording without any import action", () => {
-    render({ empty: { kind: "noScope" } });
+  it("states the all-projects and single-project empty wording without any import action", () => {
+    render({ empty: { kind: "noThreads", scopeLabel: null } });
 
-    expect(host.textContent).toBe("No project selected");
+    expect(host.textContent).toBe("No threads yet");
     expect(host.querySelector("button")).toBeNull();
+
+    render({ empty: { kind: "noThreads", scopeLabel: "app" } });
+    expect(host.textContent).toBe("No threads in app yet");
   });
 
   function render(overrides: Partial<AgentThreadListProps> & { empty: AgentRailEmptyState }) {
@@ -57,11 +60,14 @@ function defaults(): AgentThreadListProps {
     focusedThreadId: null,
     jumpLabels: new Map(),
     archivedExpanded: false,
+    settledExpanded: false,
+    snoozedExpanded: false,
     empty: { kind: "noThreads", scopeLabel: "app" },
     onToggleArchived: () => undefined,
+    onToggleSettled: () => undefined,
+    onToggleSnoozed: () => undefined,
     onShowMoreArchived: () => undefined,
     onSelectThread: () => undefined,
-    onTogglePin: () => undefined,
     onThreadMenuCommand: () => undefined,
   };
 }

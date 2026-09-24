@@ -20,8 +20,19 @@ function candidate(
   return { threadId, ownerKey: OWNER, running: false, archived: false, ...overrides };
 }
 
-function request(overrides: Partial<AgentThreadBulkRequest> = {}): AgentThreadBulkRequest {
-  return { action: "archive", ownerKey: OWNER, threadIds: [], missingIds: [], ...overrides };
+function request(
+  overrides: Partial<Omit<AgentThreadBulkRequest, "ownerKeys">> & {
+    readonly ownerKeys?: ReadonlyMap<string, string>;
+  } = {},
+): AgentThreadBulkRequest {
+  const threadIds = overrides.threadIds ?? [];
+  return {
+    action: "archive",
+    missingIds: [],
+    ...overrides,
+    threadIds,
+    ownerKeys: overrides.ownerKeys ?? new Map(threadIds.map((id) => [id, OWNER])),
+  };
 }
 
 describe("agent thread bulk plan", () => {
@@ -83,6 +94,11 @@ describe("agent thread bulk plan", () => {
         action: "delete",
         threadIds: ["gone", "foreign", "plain"],
         missingIds: ["dropped"],
+        ownerKeys: new Map([
+          ["gone", OWNER],
+          ["foreign", OWNER],
+          ["plain", OWNER],
+        ]),
       }),
       [candidate("foreign", { ownerKey: "/workspace/api" }), candidate("plain")],
     );
@@ -96,6 +112,28 @@ describe("agent thread bulk plan", () => {
     expect(agentThreadBulkReport(plan)).toBe(
       "Deleted 1 thread. Skipped 3: 2 no longer in this list, 1 owned by another project.",
     );
+  });
+
+  it("applies across projects but skips a thread whose owner changed after marking", () => {
+    const plan = agentThreadBulkPlan(
+      request({
+        threadIds: ["a", "b"],
+        ownerKeys: new Map([
+          ["a", "/orders"],
+          ["b", "/web"],
+        ]),
+      }),
+      [candidate("a", { ownerKey: "/orders" }), candidate("b", { ownerKey: "/elsewhere" })],
+    );
+    expect(plan.applyIds).toEqual(["a"]);
+    expect(plan.skipped).toEqual([{ threadId: "b", reason: "foreignOwner" }]);
+  });
+
+  it("treats a thread with no captured owner as foreign", () => {
+    const plan = agentThreadBulkPlan(request({ threadIds: ["a"], ownerKeys: new Map() }), [
+      candidate("a"),
+    ]);
+    expect(plan.skipped).toEqual([{ threadId: "a", reason: "foreignOwner" }]);
   });
 
   it("bounds the batch and reports the overflow instead of dropping it", () => {

@@ -5,11 +5,14 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   initialAgentWorkbenchLayout,
+  type AgentRailState,
   type AgentWorkbenchLayout,
   type AgentWorkbenchLayoutPersisted,
 } from "../domain/agentWorkbenchLayout";
 import {
+  AGENT_SIDEBAR_PREFERENCE_SOURCE,
   useAgentWorkbenchLayout,
+  type AgentSidebarRailPreferencePort,
   type AgentWorkbenchLayoutPersistencePort,
   type AgentWorkbenchLayoutSurface,
   type UseAgentWorkbenchLayoutOptions,
@@ -496,6 +499,118 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
+  it("keeps the collapsed sidebar global across workspace A to B to A", async () => {
+    const persistence = recordingPersistence();
+    const sidebarPreference = memorySidebarPreference(null);
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: { ownerKey: "workspace-a", layout: diffLayout },
+      persistence,
+      sidebarPreference,
+    });
+    await harness.settle();
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleRail" }));
+    await harness.settle();
+    expect(harness.result().agentWorkbench.layout.rail).toBe("collapsed");
+
+    harness.rerender({
+      workspaceOwnerKey: "workspace-b",
+      hydration: { ownerKey: "workspace-b", layout: terminalLayout },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.layout).toEqual({
+      ...terminalLayout,
+      rail: "collapsed",
+    });
+
+    harness.rerender({
+      workspaceOwnerKey: "workspace-a",
+      hydration: { ownerKey: "workspace-a", layout: diffLayout },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.layout.rail).toBe("collapsed");
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleRail" }));
+    await harness.settle();
+
+    expect(harness.result().agentWorkbench.layout).toEqual(diffLayout);
+    expect(sidebarPreference.writes).toEqual(["collapsed", "expanded"]);
+    expect(persistence.writes).toEqual([]);
+    harness.unmount();
+  });
+
+  it("restores the global sidebar state and ignores a rail stored in a workspace layout", async () => {
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: { ownerKey: "workspace-a", layout: diffLayout },
+      sidebarPreference: memorySidebarPreference("collapsed"),
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.layout).toEqual({ ...diffLayout, rail: "collapsed" });
+
+    harness.rerender({
+      workspaceOwnerKey: "workspace-b",
+      hydration: { ownerKey: "workspace-b", layout: { ...terminalLayout, rail: "expanded" } },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.layout.rail).toBe("collapsed");
+    harness.unmount();
+
+    const legacy = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: { ownerKey: "workspace-a", layout: { ...diffLayout, rail: "collapsed" } },
+      sidebarPreference: memorySidebarPreference(null),
+    });
+    await legacy.settle();
+    expect(legacy.result().agentWorkbench.layout.rail).toBe("expanded");
+    legacy.unmount();
+  });
+
+  it("toggles the sidebar without a workspace owner", () => {
+    const sidebarPreference = memorySidebarPreference(null);
+    const harness = renderLayout({
+      workspaceOwnerKey: null,
+      hasWorkspace: false,
+      sidebarPreference,
+    });
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleRail" }));
+
+    expect(harness.result().agentWorkbench.layout.rail).toBe("collapsed");
+    expect(sidebarPreference.writes).toEqual(["collapsed"]);
+    harness.unmount();
+  });
+
+  it("keeps toggling the sidebar when its preference store fails", () => {
+    const reportError = vi.fn();
+    const failure = new Error("storage unavailable");
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      reportError,
+      sidebarPreference: {
+        read: () => {
+          throw failure;
+        },
+        write: () => {
+          throw failure;
+        },
+      },
+    });
+
+    expect(harness.result().agentWorkbench.layout.rail).toBe("expanded");
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleRail" }));
+
+    expect(harness.result().agentWorkbench.layout.rail).toBe("collapsed");
+    expect(reportError).toHaveBeenCalledWith(AGENT_SIDEBAR_PREFERENCE_SOURCE, failure);
+    harness.unmount();
+  });
+
   it("rejects stale callbacks captured before an owner change", () => {
     const harness = renderLayout({ workspaceOwnerKey: "workspace-a", hasWorkspace: true });
     const staleA = harness.result();
@@ -507,6 +622,19 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 });
+
+function memorySidebarPreference(stored: AgentRailState | null): AgentSidebarRailPreferencePort & {
+  readonly writes: AgentRailState[];
+} {
+  const writes: AgentRailState[] = [];
+  return {
+    writes,
+    read: () => stored,
+    write: (rail) => {
+      writes.push(rail);
+    },
+  };
+}
 
 function recordingPersistence(): AgentWorkbenchLayoutPersistencePort & {
   readonly writes: Array<{ ownerKey: string; layout: AgentWorkbenchLayoutPersisted }>;

@@ -69,7 +69,7 @@ export function removeWorkspaceIdentityMappings(
 
 export async function withWorkspaceIdentityLease(
   descriptor: WorkspaceIdentityDescriptor,
-  unregister: (workspaceId: string) => Promise<void>,
+  release: (descriptor: WorkspaceIdentityDescriptor) => Promise<void>,
   useLease: (adopt: () => void) => Promise<void>,
 ): Promise<void> {
   let adopted = false;
@@ -79,7 +79,7 @@ export async function withWorkspaceIdentityLease(
     });
   } finally {
     if (!adopted) {
-      await unregister(descriptor.workspaceId);
+      await release(descriptor);
     }
   }
 }

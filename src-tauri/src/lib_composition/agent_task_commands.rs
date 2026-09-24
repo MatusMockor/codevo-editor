@@ -5,6 +5,7 @@ use super::agent_attachment_commands::agent_attachment_store::{
 use super::agent_attachment_commands::agent_thread_store::{
     MAX_AGENT_ATTACHMENT_NAME_BYTES, MAX_AGENT_ATTACHMENT_PATH_BYTES, MAX_AGENT_TURN_ATTACHMENTS,
 };
+use super::workspace_facade::{close_workspace_owner, WorkspaceOwnerCloseResult};
 use super::{canonicalize_workspace_root, trusted_for, workspace_root_for_disposal, GitTrustState};
 use crate::agent_task_admission::AgentTaskAdmissionRegistry;
 use crate::agent_task_spawner::agent_launch::{
@@ -33,10 +34,15 @@ use crate::effective_executable_environment::EffectiveExecutablePath;
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
 use crate::run_blocking_command;
 use crate::trust::WorkspaceTrustService;
-use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
+#[cfg(test)]
+use crate::workspace_registry::unregister::WorkspaceOwnerRelease;
+use crate::workspace_registry::unregister::WorkspaceOwnerScope;
+use crate::workspace_registry::{
+    ManagedWorkspaceDescriptor, RegistrationOwner, WorkspaceId, WorkspaceRegistry,
+};
 use agent_root_lease::{
-    AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, RegisteredAgentRootLease,
-    MAX_AGENT_ROOT_LEASE_TOKEN,
+    AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, AgentRootWorkspaceRegistration,
+    RegisteredAgentRootLease, MAX_AGENT_ROOT_LEASE_TOKEN,
 };
 use agent_root_workspace_registration::{
     acquire_registered_workspace_lease, release_registered_workspace_lease,
@@ -48,7 +54,7 @@ use agent_task_start_authority::{
     revalidate_agent_task_filesystem_authority, AgentTaskProjectAuthority,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -1032,29 +1038,188 @@ pub(crate) async fn acquire_agent_root_lease(
 }
 
 #[tauri::command]
-pub(crate) fn release_agent_root_lease(
-    registry: State<'_, WorkspaceRegistry>,
+pub(crate) async fn release_agent_root_lease(
+    app: AppHandle,
     request: AgentRootLeaseReleaseRequest,
     leases: State<'_, Arc<AgentRootLeaseRegistry>>,
 ) -> Result<AgentRootLeaseReleaseResult, String> {
-    release_agent_root_lease_for_registry(request, leases.inner().as_ref(), Some(&registry))
+    let blocking_leases = Arc::clone(&leases);
+    let (result, pending) = run_blocking_command(move || {
+        begin_agent_root_lease_release(request, blocking_leases.as_ref())
+    })
+    .await?;
+    let Some(pending) = pending else {
+        return Ok(result);
+    };
+    let holds_app = app.clone();
+    complete_agent_root_lease_release(
+        leases.inner().as_ref(),
+        |registration| {
+            holds_app.state::<WorkspaceRegistry>().holds_admission(
+                &registration.workspace_id,
+                RegistrationOwner::Agent,
+                registration.admission_token,
+            )
+        },
+        result,
+        pending,
+        |registration| {
+            close_workspace_owner(
+                app,
+                registration.workspace_id,
+                WorkspaceOwnerScope::Admission {
+                    owner: RegistrationOwner::Agent,
+                    admission_token: registration.admission_token,
+                },
+                None,
+            )
+        },
+    )
+    .await
 }
 
-fn release_agent_root_lease_for_registry(
+async fn complete_agent_root_lease_release<Close, Closing>(
+    leases: &AgentRootLeaseRegistry,
+    registry_holds: impl Fn(&AgentRootWorkspaceRegistration) -> bool,
+    result: AgentRootLeaseReleaseResult,
+    pending: PendingAgentRootLeaseRelease,
+    close: Close,
+) -> Result<AgentRootLeaseReleaseResult, String>
+where
+    Close: FnOnce(AgentRootWorkspaceRegistration) -> Closing,
+    Closing: std::future::Future<Output = Result<WorkspaceOwnerCloseResult, String>>,
+{
+    let mut guard = PendingAgentRootLeaseReleaseGuard {
+        leases,
+        pending,
+        settled: false,
+    };
+    let closed = close(guard.pending.registration.clone()).await;
+    let settled_in_registry = closed
+        .as_ref()
+        .is_ok_and(|status| *status != WorkspaceOwnerCloseResult::Releasing);
+    let restore = !settled_in_registry && registry_holds(&guard.pending.registration);
+    guard.settle(restore);
+    if closed? == WorkspaceOwnerCloseResult::Releasing {
+        return Err("Agent project root workspace is still being released.".to_string());
+    }
+    Ok(result)
+}
+
+struct PendingAgentRootLeaseReleaseGuard<'a> {
+    leases: &'a AgentRootLeaseRegistry,
+    pending: PendingAgentRootLeaseRelease,
+    settled: bool,
+}
+
+impl PendingAgentRootLeaseReleaseGuard<'_> {
+    fn settle(&mut self, restore: bool) {
+        self.settled = true;
+        if restore {
+            self.leases
+                .abort_release(&self.pending.root, self.pending.lease_token);
+            return;
+        }
+        self.leases
+            .finish_release(&self.pending.root, self.pending.lease_token);
+    }
+}
+
+impl Drop for PendingAgentRootLeaseReleaseGuard<'_> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        self.leases
+            .abort_release(&self.pending.root, self.pending.lease_token);
+    }
+}
+
+struct PendingAgentRootLeaseRelease {
+    root: PathBuf,
+    lease_token: u64,
+    registration: AgentRootWorkspaceRegistration,
+}
+
+fn begin_agent_root_lease_release(
     request: AgentRootLeaseReleaseRequest,
     leases: &AgentRootLeaseRegistry,
-    workspace_registry: Option<&WorkspaceRegistry>,
-) -> Result<AgentRootLeaseReleaseResult, String> {
+) -> Result<
+    (
+        AgentRootLeaseReleaseResult,
+        Option<PendingAgentRootLeaseRelease>,
+    ),
+    String,
+> {
     ensure_agent_root_lease_bounds(&request.root_path)?;
     ensure_agent_root_lease_token_bounds(request.lease_token)?;
     let root = workspace_root_for_disposal(&request.root_path);
-    let disposition =
-        release_registered_workspace_lease(&root, request.lease_token, leases, workspace_registry)?;
-
-    Ok(AgentRootLeaseReleaseResult::from_disposition(
-        request.lease_token,
-        disposition,
+    let (disposition, registration) =
+        release_registered_workspace_lease(&root, request.lease_token, leases);
+    let pending = registration.map(|registration| PendingAgentRootLeaseRelease {
+        root,
+        lease_token: request.lease_token,
+        registration,
+    });
+    Ok((
+        AgentRootLeaseReleaseResult::from_disposition(request.lease_token, disposition),
+        pending,
     ))
+}
+
+#[cfg(test)]
+fn release_agent_root_lease_for_registry(
+    request: AgentRootLeaseReleaseRequest,
+    leases: &AgentRootLeaseRegistry,
+    workspace_registry: &WorkspaceRegistry,
+) -> Result<AgentRootLeaseReleaseResult, String> {
+    let (result, pending) = begin_agent_root_lease_release(request, leases)?;
+    let Some(pending) = pending else {
+        return Ok(result);
+    };
+    tauri::async_runtime::block_on(complete_agent_root_lease_release(
+        leases,
+        |registration| {
+            workspace_registry.holds_admission(
+                &registration.workspace_id,
+                RegistrationOwner::Agent,
+                registration.admission_token,
+            )
+        },
+        result,
+        pending,
+        |registration| async move { registry_only_owner_close(workspace_registry, &registration) },
+    ))
+}
+
+#[cfg(test)]
+fn registry_only_owner_close(
+    workspace_registry: &WorkspaceRegistry,
+    registration: &AgentRootWorkspaceRegistration,
+) -> Result<WorkspaceOwnerCloseResult, String> {
+    let release = workspace_registry
+        .release_owner(
+            &registration.workspace_id,
+            WorkspaceOwnerScope::Admission {
+                owner: RegistrationOwner::Agent,
+                admission_token: registration.admission_token,
+            },
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+    match release {
+        WorkspaceOwnerRelease::UnknownWorkspace => Ok(WorkspaceOwnerCloseResult::UnknownWorkspace),
+        WorkspaceOwnerRelease::StaleOwner => Ok(WorkspaceOwnerCloseResult::StaleOwner),
+        WorkspaceOwnerRelease::Releasing => Ok(WorkspaceOwnerCloseResult::Releasing),
+        WorkspaceOwnerRelease::RetainedByOtherOwners => {
+            Ok(WorkspaceOwnerCloseResult::RetainedByOtherOwners)
+        }
+        WorkspaceOwnerRelease::LastOwner(mut reservation) => {
+            reservation.begin_cleanup();
+            reservation.finalize().map_err(|error| error.to_string())?;
+            Ok(WorkspaceOwnerCloseResult::Released)
+        }
+    }
 }
 
 fn agent_root_lease_receipt(lease: RegisteredAgentRootLease) -> AgentRootLeaseReceipt {

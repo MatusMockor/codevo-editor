@@ -374,12 +374,12 @@ describe("agent thread session minimap and find pill", () => {
     expect(declaration(".agent-session", "position")).toBe("relative");
     expect(inset).toBe(AGENT_FIND_REVEAL_INSET);
 
-    const sessionPadding = pixels(sessionPaddingTop());
+    const sessionPadding = pixels(sessionPaddingTop()) + pixels(scrollPaddingTop());
     const pillTop = pixels(tokenValue("--agent-find-pill-top"));
     const pillHeight = pixels(tokenValue("--agent-find-pill-height"));
     expect(sessionPadding + inset).toBeGreaterThanOrEqual(pillTop + pillHeight);
-    expect(tokenValue("--agent-thread-column")).toBe(
-      declaration(".agent-session__body", "max-width"),
+    expect(pixels(tokenValue("--agent-thread-column"))).toBe(
+      pixels(declaration(".cv-conversation-column", "max-width") ?? ""),
     );
     expect(AGENT_MINIMAP_COLUMN_WIDTH).toBe(pixels(tokenValue("--agent-thread-column")));
     expect(AGENT_MINIMAP_PERSISTENT_GUTTER).toBe(
@@ -574,6 +574,12 @@ function sessionPaddingTop(): string {
   return (padding ?? "").split(/\s+/)[0] ?? "";
 }
 
+function scrollPaddingTop(): string {
+  const padding = declaration(".agent-session__scroll", "padding");
+  expect(padding, ".agent-session__scroll padding").not.toBeNull();
+  return (padding ?? "").split(/\s+/)[0] ?? "";
+}
+
 function cssValue(selector: string): string {
   const value = declaration(selector, "padding-block-start");
   expect(value, selector).not.toBeNull();
@@ -591,11 +597,22 @@ function tokenValue(name: string): string {
 }
 
 function pixels(value: string): number {
+  if (value.trim() === "0") return 0;
   const direct = /^(\d+)px$/.exec(value.trim());
   if (direct !== null) return Number(direct[1]);
   const reference = /^var\((--[\w-]+)\)$/.exec(value.trim());
   expect(reference, value).not.toBeNull();
-  return pixels(tokenValue(reference?.[1] ?? ""));
+  return pixels(sharedTokenValue(reference?.[1] ?? ""));
+}
+
+function sharedTokenValue(name: string): string {
+  const values = STYLES.rules
+    .filter((rule) => rule.context.length === 0)
+    .flatMap((rule) =>
+      rule.declarations.filter((entry) => entry.property === name).map((entry) => entry.value),
+    );
+  expect(values.length, name).toBeGreaterThan(0);
+  return values[values.length - 1] ?? "";
 }
 
 function installIntersectionObserver(observers: FakeObserver[]): void {

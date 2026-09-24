@@ -591,7 +591,7 @@ pub fn choose_remote(upstream_remote: Option<&str>, remotes: &[String]) -> Optio
     None
 }
 
-fn parse_hosted_remote(remote_url: &str) -> Option<(String, String, String)> {
+pub(crate) fn parse_hosted_remote(remote_url: &str) -> Option<(String, String, String)> {
     if remote_url.is_empty()
         || remote_url.len() > MAX_COMPARE_URL_BYTES
         || remote_url
@@ -844,7 +844,7 @@ fn remote_compare_url(
     compare_url(url.trim(), base, branch)
 }
 
-fn discover_remote(worktree: &Path, branch: &str) -> Result<Option<String>, String> {
+pub(crate) fn discover_remote(worktree: &Path, branch: &str) -> Result<Option<String>, String> {
     let remotes = list_remotes(worktree)?;
     let upstream = configured_upstream_remote(worktree, branch);
 
@@ -900,7 +900,7 @@ fn upstream_counts(worktree: &Path) -> Result<Option<ShipUpstream>, String> {
     Ok(Some(ShipUpstream { ahead, behind }))
 }
 
-fn current_branch(root: &Path) -> Result<Option<String>, String> {
+pub(crate) fn current_branch(root: &Path) -> Result<Option<String>, String> {
     let output = run_integration_command(
         root,
         &[OsStr::new("branch"), OsStr::new("--show-current")],
@@ -1051,6 +1051,18 @@ pub fn run_integration_command(
     let mut command = integration_git_command(root);
     command.args(arguments);
     run_bounded_command(command, timeout)
+}
+
+pub(crate) fn run_integration_command_prefix(
+    root: &Path,
+    arguments: &[&OsStr],
+    timeout: Duration,
+    max_bytes: usize,
+) -> Result<(String, bool), CommandError> {
+    let mut command = integration_git_command(root);
+    command.args(arguments);
+    crate::git::bounded_process::run_bounded_command_prefix(command, timeout, max_bytes)
+        .map(|(bytes, capped)| (String::from_utf8_lossy(&bytes).to_string(), capped))
 }
 
 fn run_bounded_command(command: Command, timeout: Duration) -> Result<String, CommandError> {

@@ -12,7 +12,7 @@ describe("workspace open under React StrictMode effect replay", () => {
   const { renderController } = setupWorkbenchControllerTestHarness();
 
   it("opens a workspace root after a StrictMode mount replay", async () => {
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(async () => ({ status: "released" as const }));
     const { getWorkbench } = renderController({
       strictMode: true,
       workspaceIdentityGateway: {
@@ -20,6 +20,8 @@ describe("workspace open under React StrictMode effect replay", () => {
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async (path: string) => trustedDescriptor("ws-strict", path)),
         unregister,
+        adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+        rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
       },
     });
 
@@ -42,7 +44,9 @@ describe("workspace open under React StrictMode effect replay", () => {
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async (path: string) => trustedDescriptor("ws-plain", path)),
-        unregister: vi.fn(async () => undefined),
+        unregister: vi.fn(async () => ({ status: "released" as const })),
+        adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+        rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
       },
     });
 

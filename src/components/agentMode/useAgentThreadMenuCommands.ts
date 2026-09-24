@@ -8,6 +8,7 @@ import type {
 } from "../../application/agentThreadPorts";
 import {
   AGENT_THREAD_BULK_CONCURRENCY,
+  agentThreadBulkOwnerKey,
   agentThreadBulkPlan,
   agentThreadBulkReport,
   type AgentThreadBulkAction,
@@ -15,13 +16,16 @@ import {
   type AgentThreadBulkCommand,
 } from "../../domain/agentThreadBulkAction";
 import { runningTurn } from "../../domain/agentThread";
+import {
+  agentThreadSectionMoves,
+  type AgentThreadSectionMove,
+} from "../../domain/agentThreadOrganization";
 import type { AgentProjectGroup } from "./agentModePresentation";
+import type { AgentThreadCopyDetail, AgentThreadMenuCommand } from "./agentSidebarPresentation";
 import type {
   AgentProjectMenuCommand,
   AgentProjectMenuTarget,
-  AgentThreadCopyDetail,
-  AgentThreadMenuCommand,
-} from "./agentSidebarPresentation";
+} from "./agentProjectMenuPresentation";
 
 export const CLIPBOARD_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   kind: "warning",
@@ -219,6 +223,14 @@ export function useAgentThreadMenuCommands({
         case "restore":
           agents.updateThreadOrganization?.(threadId, { settledAt: null, snoozedUntil: null });
           return;
+        case "moveToSection": {
+          const view = threadViews.find((candidate) => candidate.thread.threadId === threadId);
+          if (view === undefined) return;
+          for (const move of agentThreadSectionMoves(view.thread, command.section, Date.now())) {
+            applySectionMove(agents, threadId, move);
+          }
+          return;
+        }
         case "moveBefore":
         case "moveAfter":
           agents.reorderThread?.(
@@ -273,7 +285,7 @@ export function useAgentThreadMenuCommands({
         reportNotice(staleSelectionNotice(command.action));
         return;
       }
-      const plan = agentThreadBulkPlan(command.request, bulkCandidates(threadViews));
+      const plan = agentThreadBulkPlan(command.request, agentThreadBulkCandidates(threadViews));
       const run = () =>
         mapWithBoundedConcurrency(
           plan.applyIds,
@@ -299,12 +311,12 @@ export function useAgentThreadMenuCommands({
   return { handleProjectCommand, handleThreadBulkCommand, handleThreadMenuCommand };
 }
 
-function bulkCandidates(
+export function agentThreadBulkCandidates(
   views: ReadonlyArray<AgentThreadView>,
 ): ReadonlyArray<AgentThreadBulkCandidate> {
   return views.map((view) => ({
     threadId: view.thread.threadId,
-    ownerKey: view.thread.owner.rootKey,
+    ownerKey: agentThreadBulkOwnerKey(view.thread.owner),
     running: runningTurn(view.thread) !== null,
     archived: view.thread.archived,
   }));
@@ -358,4 +370,31 @@ function unsupportedProjectCommand(command: never): never {
 
 function unsupportedThreadMenuCommand(command: never): never {
   throw new TypeError(`Unsupported agent thread menu command: ${JSON.stringify(command)}.`);
+}
+
+function applySectionMove(
+  agents: AgentMenuCommandSurface,
+  threadId: string,
+  move: AgentThreadSectionMove,
+): void {
+  switch (move) {
+    case "togglePin":
+      agents.togglePin(threadId);
+      return;
+    case "settle":
+      agents.updateThreadOrganization?.(threadId, { settledAt: Date.now(), snoozedUntil: null });
+      return;
+    case "restore":
+      agents.updateThreadOrganization?.(threadId, { settledAt: null, snoozedUntil: null });
+      return;
+    case "unsnooze":
+      agents.updateThreadOrganization?.(threadId, { snoozedUntil: null });
+      return;
+    default:
+      return unsupportedSectionMove(move);
+  }
+}
+
+function unsupportedSectionMove(move: never): never {
+  throw new TypeError(`Unsupported thread section move: ${String(move)}.`);
 }

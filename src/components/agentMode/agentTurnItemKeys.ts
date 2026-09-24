@@ -45,3 +45,7 @@ export function agentTurnHydrationScrollTop(shift: AgentTurnHydrationShift): num
   const limit = Math.max(0, shift.scrollHeight - Math.max(0, shift.clientHeight));
   return Math.min(limit, Math.max(0, shift.scrollTop + grown));
 }
+
+export function agentTurnLogItemKey(seq: number): string {
+  return `w${Number.isSafeInteger(seq) && seq > 0 ? seq : 0}`;
+}

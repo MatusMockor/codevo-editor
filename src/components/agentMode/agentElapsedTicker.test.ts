@@ -34,6 +34,14 @@ describe("agentElapsedReading", () => {
     });
     expect(agentElapsedReading(60_000, 5_000, 1_000).displayMs).toBe(60_000);
   });
+
+  it("counts from the first sighting and never goes stale when no duration is reported", () => {
+    expect(agentElapsedReading(null, 1_000, 1_000 + 6 * HOUR_MS)).toEqual({
+      displayMs: 6 * HOUR_MS,
+      silentForMs: null,
+    });
+    expect(agentElapsedReading(null, 5_000, 1_000).displayMs).toBe(0);
+  });
 });
 
 describe("createAgentElapsedTicker", () => {

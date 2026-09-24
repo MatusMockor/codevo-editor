@@ -16,6 +16,7 @@ import {
   surfaceThreadView,
 } from "./agentSurfaceTestFixtures";
 import { fakeTerminalGateway, installResizeObserver } from "./agentSurfaceTerminalTestSupport";
+import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
 import {
   UNAVAILABLE_AGENT_SCRIPT_RUNNER,
   type AgentWorkbenchChrome,
@@ -26,6 +27,7 @@ import {
   reduceRecordedLayout,
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
+import { rightPanelTestContext } from "./rightPanel/agentRightPanelTestSupport";
 
 vi.mock("@xterm/xterm", async () =>
   (await import("./agentSurfaceTerminalTestSupport")).xtermMockModule(),
@@ -46,7 +48,7 @@ vi.mock("../remoteRunner/RemoteTerminalPanel", () => ({
   RemoteTerminalPanel: () => <div data-remote-terminal />,
 }));
 
-const TABLIST = '[role="tablist"][aria-label="Terminal sessions"]';
+const TERMINAL_ACTIONS = '[role="toolbar"][aria-label="Terminal actions"]';
 const FILES_LAYOUT = { openSurfaces: ["files"], activeSurface: "files" } as const;
 const OTHER_ROOT = "/workspace/other";
 
@@ -228,23 +230,6 @@ describe("AgentSurfaceHost", () => {
     const base = {
       ...filesChrome(recordedLayoutState(FILES_LAYOUT), { files: { readDirectory } }),
       terminal: chrome(gateway).terminal,
-      projectDiff: {
-        rootPath: SURFACE_FIXTURE_ROOT,
-        status: {
-          rootPath: SURFACE_FIXTURE_ROOT,
-          branch: "private-local-branch",
-          changes: [],
-          isRepository: true,
-        },
-        repositoryStatuses: [],
-        loading: false,
-        diff: null,
-        diffLoading: false,
-        onRefresh: vi.fn(),
-        onPreviewChange: vi.fn(),
-        onOpenChange: vi.fn(),
-        onClosePreview: vi.fn(),
-      },
     };
     for (const activeSurface of ["files", "history", "terminal", "diff", null] as const) {
       render({
@@ -281,7 +266,7 @@ describe("AgentSurfaceHost", () => {
       chrome: chrome(gateway),
       layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
     });
-    await waitForReact(() => expect(host.querySelector(TABLIST)).not.toBeNull());
+    await waitForReact(() => expect(host.querySelector(TERMINAL_ACTIONS)).not.toBeNull());
     await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
     expect(gateway.start).toHaveBeenCalledWith(
       SURFACE_FIXTURE_ROOT,
@@ -312,7 +297,7 @@ describe("AgentSurfaceHost", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toBe(
       "Select an available project to use this panel.",
     );
-    expect(host.querySelector(TABLIST)).toBeNull();
+    expect(host.querySelector(TERMINAL_ACTIONS)).toBeNull();
     expect(gateway.start).not.toHaveBeenCalled();
     render({ chrome: chrome(gateway), layout: { openSurfaces: [], activeSurface: null }, thread });
     expect(host.querySelector('[aria-label="Open Terminal surface"]')).toBeNull();
@@ -390,7 +375,7 @@ describe("AgentSurfaceHost", () => {
       workspaceRoot: null,
     });
     await act(async () => Promise.resolve());
-    expect(host.querySelector(TABLIST)).toBeNull();
+    expect(host.querySelector(TERMINAL_ACTIONS)).toBeNull();
     expect(gateway.start).not.toHaveBeenCalled();
   });
 
@@ -455,33 +440,103 @@ describe("AgentSurfaceHost", () => {
     expect(restored.actions).toEqual([]);
   });
 
-  it("wires Search files to the quick-open capability with its keymap chord", async () => {
-    const onSearchFiles = vi.fn();
+  it("searches the thread checkout inline from the Files surface header", async () => {
+    const searchFiles = vi.fn(async (root: string) => [
+      { name: "users.ts", path: `${root}/src/users.ts`, relativePath: "src/users.ts" },
+    ]);
+    const onPreviewFile = vi.fn();
     const layout = recordedLayoutState({
       rightPanel: "open",
       openSurfaces: ["files"],
       activeSurface: "files",
     });
     render({
-      chrome: filesChrome(layout, { onSearchFiles, searchFilesShortcut: "Ctrl+P" }),
+      chrome: {
+        ...filesChrome(layout, { onPreviewFile, searchFilesShortcut: "Ctrl+P" }),
+        rightPanel: rightPanelTestContext({}, { fileSearch: { searchFiles } }).chrome,
+      },
       layout: FILES_LAYOUT,
     });
     await treeRow("users.ts");
 
-    const search = host.querySelector<HTMLButtonElement>(".agent-surface-tree__search");
-    expect(search?.getAttribute("aria-keyshortcuts")).toBe("Control+P");
-    act(() => search?.click());
-    expect(onSearchFiles).toHaveBeenCalledTimes(1);
+    const enabled = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Search workspace files"]',
+    );
+    expect(enabled?.disabled).toBe(false);
+    expect(host.querySelector(".cv-files__search .cv-kbd")?.textContent).toBe(
+      agentShortcutGlyphs("Ctrl+P"),
+    );
+    act(() => {
+      if (enabled === null) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        enabled,
+        "users",
+      );
+      enabled.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await waitForReact(() =>
+      expect(host.querySelector('[role="listbox"][aria-label="Matching files"]')).not.toBeNull(),
+    );
+    expect(searchFiles).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE, "users", 201);
+    act(() => host.querySelector<HTMLElement>('[role="option"]')?.click());
+    expect(onPreviewFile).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `${SURFACE_FIXTURE_WORKTREE}/src/users.ts` }),
+    );
     expect(layout.actions).toEqual([]);
   });
 
+  it("shows the thread's package scripts on the Scripts surface", async () => {
+    const runScript = vi.fn(() => true);
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["scripts"],
+      activeSurface: "scripts",
+    });
+    render({
+      chrome: {
+        ...chrome(fakeTerminalGateway()),
+        layout,
+        scriptsSurface: {
+          vscodeProcessTasks: null,
+          openScriptTerminal: () => undefined,
+          refreshScripts: () => undefined,
+        },
+      },
+      layout: { openSurfaces: ["scripts"], activeSurface: "scripts" },
+      scripts: {
+        entries: [
+          {
+            key: "package.json:dev",
+            label: "dev",
+            detail: null,
+            availability: { kind: "available" },
+            manifestRelativePath: "package.json",
+            command: "npm run dev",
+          },
+        ],
+        preferred: null,
+        truncated: false,
+        run: { kind: "idle" },
+        outcomes: new Map(),
+        runScript,
+        stopScript: () => undefined,
+      },
+    });
+
+    const run = host.querySelector<HTMLButtonElement>('button[aria-label="Run dev"]');
+    expect(run?.closest(".cv-script-row")?.querySelector(".cv-script-row__cmd")?.textContent).toBe(
+      "npm run dev",
+    );
+    act(() => run?.click());
+    expect(runScript).toHaveBeenCalledWith("package.json:dev");
+  });
+
   describe("without a selected thread", () => {
-    it("browses the trusted rail scope repository root with Refresh and Search files", async () => {
+    it("browses the trusted rail scope repository root with Refresh", async () => {
       const readDirectory = vi.fn(listing);
-      const onSearchFiles = vi.fn();
       const layout = recordedLayoutState(FILES_LAYOUT);
       render({
-        chrome: filesChrome(layout, { files: { readDirectory }, onSearchFiles }),
+        chrome: filesChrome(layout, { files: { readDirectory } }),
         layout: FILES_LAYOUT,
         thread: null,
         threadRootPath: null,
@@ -505,9 +560,6 @@ describe("AgentSurfaceHost", () => {
       expect(refresh?.disabled).toBe(false);
       act(() => refresh?.click());
       await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(2));
-
-      act(() => host.querySelector<HTMLButtonElement>(".agent-surface-tree__search")?.click());
-      expect(onSearchFiles).toHaveBeenCalledTimes(1);
     });
 
     it.each([false, true])(

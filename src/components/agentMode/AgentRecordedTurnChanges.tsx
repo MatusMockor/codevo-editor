@@ -8,10 +8,10 @@ import {
   unsupportedAgentTurnChanges,
   type AgentTurnChangeSummary,
 } from "../../domain/agentTurnChanges";
-import { AgentTurnChangesCard } from "./AgentTurnChangesCard";
-import "./agentRecordedTurnChanges.css";
+import { AgentTurnChangesRow } from "./conversation/AgentTurnChangesRow";
 
 export interface AgentRecordedTurnChangesProps {
+  readonly active?: boolean;
   readonly onOpenDiff?: (summary: AgentTurnChangeSummary, relativePath?: string) => void;
   readonly revision?: object;
   readonly threadId: string;
@@ -47,15 +47,16 @@ export function AgentRecordedTurnChanges(props: AgentRecordedTurnChangesProps) {
   if (result.summary.state === "unsupported") return null;
   return (
     <>
-      <AgentTurnChangesCard
+      <AgentTurnChangesRow
+        active={props.active ?? false}
         key={`${threadId}:${turnId}`}
-        summary={result.summary}
         onOpenDiff={(relativePath) => props.onOpenDiff?.(result.summary, relativePath)}
+        summary={result.summary}
       />
       {result.summary.state === "unavailable" &&
         isRetryableTurnChangesReason(result.summary.reason) && (
           <button
-            className="agent-turn-changes-retry"
+            className="cv-changes-retry agent-turn-changes-retry"
             type="button"
             onClick={() => setRetry((value) => value + 1)}
           >

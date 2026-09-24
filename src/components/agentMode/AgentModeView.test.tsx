@@ -43,6 +43,7 @@ import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { COMPOSER_REPOSITORY_PREFERENCE_KEY } from "./useAgentComposerRepositoryPreference";
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentQueuedEditSession } from "../../application/agentQueuedFollowUpEdit";
+import { agentClockTime } from "./conversation/agentTurnMetaLine";
 
 const QUEUED_ATTACHMENT_ID = "0123456789abcdef0123456789abcdef";
 
@@ -52,6 +53,7 @@ const NESTED = "/workspace/app/packages/api";
 const OTHER_ROOT = "/workspace/api-service";
 const NOW_TICK_MS = 3_600_000;
 const ADD_PROJECT_HOME = "/Users/dev";
+const ADD_PROJECT_DEVELOPER = `${ADD_PROJECT_HOME}/Developer`;
 const NOW = 1_700_000_600_000;
 
 const columnRenders = vi.hoisted(() => ({
@@ -66,40 +68,41 @@ const columnRenders = vi.hoisted(() => ({
 }));
 const sessionReveals = vi.hoisted((): Array<AgentThreadRevealRequest | null> => []);
 
-vi.mock("./AgentSurfaceDiff", () => ({
-  AgentSurfaceDiff: (props: {
-    readonly thread: { readonly thread: { readonly threadId: string } };
-    readonly summary: { readonly files: ReadonlyArray<unknown> } | null;
-    readonly recorded?: {
-      readonly relativePath?: string;
-      readonly summary: { readonly turnId: string };
-    } | null;
-    onOpenChangedFile(threadId: string, change: unknown): void;
-    onOpenChangedFileDiff(threadId: string, change: unknown): void;
-  }) => {
-    columnRenders.diff += 1;
-    const threadId = props.thread.thread.threadId;
-    const change = props.summary?.files[0];
-    return (
-      <div
-        data-mock-diff={threadId}
-        data-recorded-turn={props.recorded?.summary.turnId}
-        data-recorded-path={props.recorded?.relativePath}
-      >
-        <button
-          data-open-file
-          onClick={() => props.onOpenChangedFile(threadId, change)}
-          type="button"
-        />
-        <button
-          data-open-diff
-          onClick={() => props.onOpenChangedFileDiff(threadId, change)}
-          type="button"
-        />
-      </div>
-    );
-  },
-}));
+vi.mock("./rightPanel/diff/AgentDiffSurfaceContainer", async () => {
+  const { useAgentRightPanelContext } = await import("./rightPanel/agentRightPanelContext");
+  return {
+    AgentDiffSurfaceContainer: () => {
+      const context = useAgentRightPanelContext();
+      columnRenders.diff += 1;
+      const threadId = context.thread?.thread.threadId ?? null;
+      const change = context.thread?.changeSummary?.files[0];
+      const scope = context.diffScope;
+      return (
+        <div
+          data-mock-diff={threadId ?? "project"}
+          data-recorded-turn={scope.kind === "turn" ? scope.turnId : undefined}
+        >
+          <button
+            data-open-file
+            onClick={() => {
+              if (threadId === null || change === undefined) return;
+              void context.agents.openChangedFile(threadId, change);
+            }}
+            type="button"
+          />
+          <button
+            data-open-diff
+            onClick={() => {
+              if (threadId === null || change === undefined) return;
+              void context.agents.openChangedFileDiff(threadId, change);
+            }}
+            type="button"
+          />
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("./AgentSurfaceFileTree", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentSurfaceFileTree")>();
@@ -448,7 +451,7 @@ describe("AgentModeView", () => {
       ],
     });
     chooseScope(OTHER_ROOT);
-    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("api-service");
+    expect(activeProjectLabel()).toContain("api-service");
     expect(submitButton().disabled).toBe(true);
     expect(host.querySelector('button[aria-label="New thread"]')?.hasAttribute("disabled")).toBe(
       true,
@@ -666,9 +669,7 @@ describe("AgentModeView", () => {
 
       expect(host.textContent).not.toContain("This thread is still running");
       expect(promptField().placeholder).toBe(
-        followUpBehavior === "queue"
-          ? "Queue a message for the next turn"
-          : "Send a message to the running agent",
+        followUpBehavior === "queue" ? "Queue a follow-up" : "Send a message to the running agent",
       );
 
       typePrompt("also run the tests");
@@ -845,8 +846,12 @@ describe("AgentModeView", () => {
 
     expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Editing");
     expect(promptField().value).toBe("and then ship it");
-    const bar = host.querySelector('[aria-label="Editing queued message"]');
-    expect(bar?.querySelector('[aria-label="Remove shot.png"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Editing queued message"]')).not.toBeNull();
+    expect(
+      host.querySelector(
+        '.agent-composer__box .agent-composer-attachment [aria-label="Remove shot.png"]',
+      ),
+    ).not.toBeNull();
 
     typePrompt("ship it after the tests pass");
     await submitFormAsync();
@@ -875,7 +880,7 @@ describe("AgentModeView", () => {
     click('button[aria-label="Edit queued message"]');
     render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
 
-    click('[aria-label="Editing queued message"] [aria-label="Remove shot.png"]');
+    click('.agent-composer__box .agent-composer-attachment [aria-label="Remove shot.png"]');
     expect(host.querySelector('[aria-label="Remove shot.png"]')).toBeNull();
     await submitFormAsync();
 
@@ -1128,7 +1133,7 @@ describe("AgentModeView", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-rail__note")?.textContent).toBe("1 orphaned worktree");
+    expect(host.querySelector(".cv-sb-note")?.textContent).toBe("1 orphaned worktree");
     expect(host.querySelector("[data-thread-id]")).toBeNull();
   });
 
@@ -1147,7 +1152,7 @@ describe("AgentModeView", () => {
 
     clickText("Refactor the parser");
     click('[aria-label="Thread actions for Refactor the parser"]');
-    clickMenuItem("Stop");
+    clickMenuItem("Stop agent");
 
     expect(stop).toHaveBeenCalledWith("agt-1");
 
@@ -1155,44 +1160,48 @@ describe("AgentModeView", () => {
 
     clickText("Refactor the parser");
     click('[aria-label="Thread actions for Refactor the parser"]');
-    clickMenuItem("Archive");
+    clickMenuItem("Archive thread");
     click('[aria-label="Thread actions for Refactor the parser"]');
     clickMenuItem("Delete");
-    clickMenuItem("Confirm delete");
+    clickDialogButton("Delete thread");
 
     expect(archive).toHaveBeenCalledWith("agt-1");
     expect(remove).toHaveBeenCalledWith("agt-1");
   });
 
-  it("routes every ship action of the selected thread to the surface", () => {
+  it("routes every ship action of the selected thread through the Git surface", () => {
     const refreshShipStatus = vi.fn(async () => undefined);
-    const commitThreadChanges = vi.fn(async () => undefined);
-    const pushThreadBranch = vi.fn(async () => undefined);
+    const pushThreadBranch = vi.fn(async () => ({ kind: "succeeded" as const }));
     const removeThreadWorktree = vi.fn(async () => undefined);
     const removeWorktree = vi.fn(async () => undefined);
-    const resetThreadShip = vi.fn();
-    render({
-      agents: surface({
-        commitThreadChanges,
-        pushThreadBranch,
-        refreshShipStatus,
-        removeThreadWorktree,
-        removeWorktree,
-        resetThreadShip,
-        threads: [threadView({ threadId: "agt-1" })],
-      }),
+    const threads = [threadView({ threadId: "agt-1" })];
+    let layout = recordedLayoutState();
+    const agents = surface({
+      pushThreadBranch,
+      refreshShipStatus,
+      removeThreadWorktree,
+      removeWorktree,
+      threads,
     });
+    render({ chrome: chromeFixture({ layout }), agents });
 
     clickText("Refactor the parser");
-    click('button[aria-label="Ship options"]');
-    click('[aria-label="Refresh the branch status of agent agt-1"]');
-    click('[aria-label="Commit changes"]');
-    click('[aria-label="Push branch"]');
-    click('[aria-label="Remove worktree"]');
-    click('[aria-label="Discard the worktree of agent agt-1"]');
+    expect(host.querySelector('button[aria-label="Ship options"]')).toBeNull();
+    click('[data-agent-thread-head] button[aria-label="Commit"]');
+    layout = recordedLayoutState(reduceRecordedLayout(layout));
+    render({ chrome: chromeFixture({ layout }), agents });
+
+    expect(layout.layout.activeSurface).toBe("git");
+    expect(host.querySelector('section[aria-label="Git"]')).not.toBeNull();
+    expect(
+      host.querySelector('[data-agent-thread-head] button[aria-label="Commit"]')?.ariaPressed,
+    ).toBe("true");
+    for (const item of ["Refresh status", "Push branch", "Remove worktree", "Discard worktree"]) {
+      click('button[aria-label="More Git actions"]');
+      clickMenuItem(item);
+    }
 
     expect(refreshShipStatus).toHaveBeenCalledWith("agt-1");
-    expect(commitThreadChanges).toHaveBeenCalledWith("agt-1", "Refactor the parser");
     expect(pushThreadBranch).toHaveBeenCalledWith("agt-1");
     expect(removeThreadWorktree).toHaveBeenCalledWith("agt-1", { deleteBranch: false });
     expect(removeWorktree).toHaveBeenCalledWith("agt-1");
@@ -1222,6 +1231,33 @@ describe("AgentModeView", () => {
     });
   });
 
+  it("opens and closes the Agents right-panel surface from the thread header toggle", () => {
+    const threads = [threadView({ threadId: "agt-1" })];
+    let layout = recordedLayoutState();
+    const rerender = (): void => {
+      layout = recordedLayoutState(reduceRecordedLayout(layout));
+      render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+    };
+    render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+    clickText("Refactor the parser");
+    const toggle = () =>
+      host.querySelector<HTMLButtonElement>(
+        '[data-agent-thread-head] button[aria-label="Toggle agents panel"]',
+      );
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
+    expect(host.querySelector(".cv-agents")).toBeNull();
+
+    click('[data-agent-thread-head] button[aria-label="Toggle agents panel"]');
+    rerender();
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector(".cv-agents__empty-title")?.textContent).toBe("No agents yet");
+
+    click('[data-agent-thread-head] button[aria-label="Toggle agents panel"]');
+    rerender();
+    expect(toggle()?.getAttribute("aria-pressed")).toBe("false");
+    expect(host.querySelector(".cv-agents")).toBeNull();
+  });
+
   it("drives the surface tabs: open, add by command, switch, close and maximize", async () => {
     const threads = [threadView({ threadId: "agt-1" })];
     let layout = recordedLayoutState();
@@ -1235,7 +1271,7 @@ describe("AgentModeView", () => {
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
     rerender();
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(4);
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(7);
     expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
 
     click('[aria-label="Open Files surface"]');
@@ -1251,13 +1287,13 @@ describe("AgentModeView", () => {
     expect(surfaceTabs()).toEqual(["Files", "Diff"]);
     expect(activeSurfaceTab()).toBe("Diff");
 
-    click("#agent-surface-tab-files");
+    click('[role="tab"][title="Files"]');
     rerender();
     expect(activeSurfaceTab()).toBe("Files");
     expect(host.querySelector("[data-mock-diff]")).not.toBeNull();
     expect(host.querySelector('[data-surface-panel="diff"]')?.hasAttribute("hidden")).toBe(true);
 
-    click('[aria-label="Close Diff tab"]');
+    click('[role="tab"][title="Diff"] .cv-tab__close');
     rerender();
     expect(surfaceTabs()).toEqual(["Files"]);
     expect(activeSurfaceTab()).toBe("Files");
@@ -1273,11 +1309,12 @@ describe("AgentModeView", () => {
     rerender();
     expect(reduceRecordedLayout(layout).rightPanelMaximized).toBe(false);
 
-    click('[aria-label="Close Files tab"]');
+    click('[role="tab"][title="Files"] .cv-tab__close');
     rerender();
     expect(surfaceTabs()).toEqual([]);
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    expect(host.querySelector('.agent-surface [aria-label="Close panel"]')).toBeNull();
+    expect(host.querySelector('.agent-surface [aria-label="Close panel"]')).not.toBeNull();
+    expect(host.querySelector('.agent-surface [aria-label^="Toggle right panel"]')).toBeNull();
   });
 
   it("maximizes and restores the surface chooser before any surface is selected", () => {
@@ -1295,7 +1332,7 @@ describe("AgentModeView", () => {
       activeSurface: null,
       openSurfaces: [],
     });
-    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(4);
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(7);
     click('.agent-surface [aria-label="Restore panel"]');
     rerender();
     expect(reduceRecordedLayout(layout).rightPanelMaximized).toBe(false);
@@ -1350,8 +1387,7 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
     await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
 
-    expect(host.querySelector('.agent-surface [aria-label="Close panel"]')).toBeNull();
-    click('.agent-surface button[aria-label^="Toggle right panel"]');
+    click('.agent-surface button[aria-label="Close panel"]');
     expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }]);
     rerender();
 
@@ -1442,17 +1478,98 @@ describe("AgentModeView", () => {
     expect(reduceRecordedLayout(layout).railWidth).toBe(256);
   });
 
-  it("keeps the collapsed rail chrome a drag region and drops the rail separator", () => {
+  it("drops the rail and its separator when collapsed and reveals it from the top bar", () => {
+    const layout = recordedLayoutState({ rail: "collapsed" });
     render({
       agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
-      chrome: chromeFixture({ layout: recordedLayoutState({ rail: "collapsed" }) }),
+      chrome: chromeFixture({ layout }),
     });
 
     expect(host.querySelector('[aria-label="Resize thread rail"]')).toBeNull();
-    expect(host.querySelector(".agent-rail__chrome")?.getAttribute("data-tauri-drag-region")).toBe(
-      "",
+    expect(host.querySelector('aside[aria-label="Agent threads"]')).toBeNull();
+    const expand = host.querySelector<HTMLButtonElement>(
+      '[data-agent-thread-head] button[aria-label="Expand sidebar"]',
     );
-    expect(host.querySelector('[aria-label="Expand sidebar"]')).not.toBeNull();
+    expect(expand).not.toBeNull();
+    expect(
+      host.querySelector('[data-agent-thread-head] button[aria-label="New thread"]'),
+    ).not.toBeNull();
+
+    click('[data-agent-thread-head] button[aria-label="Expand sidebar"]');
+
+    expect(layout.actions).toEqual([{ kind: "toggleRail" }]);
+  });
+
+  it("keeps the conversation mounted but inert while the panel is maximized", () => {
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+      rightPanelMaximized: true,
+    });
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout }),
+    });
+
+    const center = host.querySelector(".agent-mode__center");
+    expect(center).not.toBeNull();
+    expect(center?.hasAttribute("inert")).toBe(true);
+    expect(center?.querySelector("[data-agent-thread-head]")).not.toBeNull();
+  });
+
+  it("keeps the composer draft and scroll through maximize and restore and lifts inert on restore", () => {
+    const docked = {
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+    } as const;
+    const agents = surface({ threads: [threadView({ threadId: "agt-1" })] });
+    render({ agents, chrome: chromeFixture({ layout: recordedLayoutState(docked) }) });
+    clickText("Refactor the parser");
+    typePrompt("Keep this draft");
+    const prompt = promptField();
+    const scroll = host.querySelector<HTMLElement>(".agent-session__scroll");
+    expect(scroll).not.toBeNull();
+    if (scroll !== null) scroll.scrollTop = 240;
+
+    render({
+      agents,
+      chrome: chromeFixture({
+        layout: recordedLayoutState({ ...docked, rightPanelMaximized: true }),
+      }),
+    });
+    const center = host.querySelector(".agent-mode__center");
+    expect(center?.hasAttribute("inert")).toBe(true);
+    expect(promptField()).toBe(prompt);
+    expect(host.querySelector(".agent-session__scroll")).toBe(scroll);
+
+    render({ agents, chrome: chromeFixture({ layout: recordedLayoutState(docked) }) });
+    expect(host.querySelector(".agent-mode__center")).toBe(center);
+    expect(center?.hasAttribute("inert")).toBe(false);
+    expect(promptField()).toBe(prompt);
+    expect(prompt.value).toBe("Keep this draft");
+    expect(host.querySelector(".agent-session__scroll")).toBe(scroll);
+    expect(scroll?.scrollTop).toBe(240);
+  });
+
+  it("moves the sidebar reveal into the panel bar when the collapsed sidebar meets a maximized panel", () => {
+    const layout = recordedLayoutState({
+      rail: "collapsed",
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+      rightPanelMaximized: true,
+    });
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout }),
+    });
+
+    expect(host.querySelectorAll('button[aria-label="Expand sidebar"]')).toHaveLength(1);
+    expect(
+      document.querySelector('[data-agent-surface-head] button[aria-label="Expand sidebar"]'),
+    ).not.toBeNull();
   });
 
   it("routes the right panel command to the plain layout action", async () => {
@@ -1481,7 +1598,11 @@ describe("AgentModeView", () => {
     });
 
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    expect(host.querySelector("[data-agent-thread-head] [data-panel-layout-controls]")).toBeNull();
+    expect(
+      host
+        .querySelector('[data-agent-thread-head] button[aria-label^="Toggle right panel"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
     const files = host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]');
     const diff = host.querySelector<HTMLButtonElement>('[aria-label="Open Diff surface"]');
     const terminal = host.querySelector<HTMLButtonElement>('[aria-label="Open Terminal surface"]');
@@ -1493,7 +1614,7 @@ describe("AgentModeView", () => {
     click('[aria-label="Open Files surface"]');
     expect(layout.actions).toEqual([{ kind: "openSurface", surface: "files" }]);
 
-    click('.agent-surface [aria-label^="Toggle right panel"]');
+    click('.agent-surface [aria-label="Close panel"]');
     expect(layout.actions).toEqual([
       { kind: "openSurface", surface: "files" },
       { kind: "toggleRightPanel" },
@@ -1571,7 +1692,7 @@ describe("AgentModeView", () => {
     );
     expect(host.querySelector('.agent-session [aria-label="Recorded turn diff"]')).toBeNull();
     expect(showChanges).not.toHaveBeenCalled();
-    click('[aria-label="Close Diff tab"]');
+    click('[role="tab"][title="Diff"] .cv-tab__close');
     layout = recordedLayoutState(reduceRecordedLayout(layout));
     render({ chrome: chromeFixture({ layout }), agents });
     act(() => layout.dispatch({ kind: "openSurface", surface: "diff" }));
@@ -1650,7 +1771,7 @@ describe("AgentModeView", () => {
     expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
 
     openRowMenu("agt-2");
-    clickMenuItem("Pin");
+    clickMenuItem("Pin thread");
 
     expect(togglePin).toHaveBeenCalledWith("agt-2");
 
@@ -1679,9 +1800,11 @@ describe("AgentModeView", () => {
     });
 
     expect(host.textContent).not.toContain("Archived work");
-    expect(host.querySelector(".agent-shelf")?.textContent).toContain("Archived (1)");
+    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')?.textContent).toContain(
+      "Archived (1)",
+    );
 
-    click(".agent-shelf");
+    click('.cv-sb-shelf[data-shelf="archived"]');
 
     expect(host.textContent).toContain("Archived work");
   });
@@ -1691,9 +1814,9 @@ describe("AgentModeView", () => {
 
     expect(host.querySelector('section[aria-label^="Project "]')).toBeNull();
     expect(scopeOptionLabels()).toEqual(["app", "api-service"]);
-    click("button#agent-rail-scope");
+    openProjectFilter();
     expect(
-      [...host.querySelectorAll("#agent-rail-scope-list .agent-menu__detail")].map(
+      [...document.querySelectorAll(".cv-filter .cv-filter__state")].map(
         (element) => element.textContent,
       ),
     ).toEqual(["Background"]);
@@ -1802,9 +1925,7 @@ describe("AgentModeView", () => {
 
     expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
     expect(submitButton().disabled).toBe(true);
-    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe(
-      "Project unavailable",
-    );
+    expect(projectStateLabel("api-service")).toBe("Not trusted");
 
     expect(host.querySelector('[aria-label="Trust project api-service"]')).toBeNull();
     expect(onTrustProject).not.toHaveBeenCalled();
@@ -1824,6 +1945,7 @@ describe("AgentModeView", () => {
 
     openProjectMenu("api-service");
     expect(projectMenuLabels()).toEqual([
+      "Trust project…",
       "Close project",
       "Terminal sessions…",
       "Reveal in Finder",
@@ -1831,6 +1953,10 @@ describe("AgentModeView", () => {
     ]);
 
     expect(onTrustProject).not.toHaveBeenCalled();
+    clickMenuItem("Trust project…");
+    expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
+
+    openProjectMenu("api-service");
     clickMenuItem("Close project");
     expect(onCloseProject).toHaveBeenCalledWith(OTHER_ROOT);
 
@@ -1846,10 +1972,8 @@ describe("AgentModeView", () => {
 
     chooseScope(OTHER_ROOT);
 
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
-    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe(
-      "Project unavailable",
-    );
+    expect(activeProjectLabel()).toContain("api-service");
+    expect(projectStateLabel("api-service")).toBe("Not trusted");
   });
 
   it("closes a project from the close button on its scope row", () => {
@@ -1859,7 +1983,7 @@ describe("AgentModeView", () => {
     closeProjectFromRow("api-service");
 
     expect(onCloseProject).toHaveBeenCalledExactlyOnceWith(OTHER_ROOT);
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("app");
+    expect(activeProjectLabel()).toContain("app");
   });
 
   it("offers a close action for a trusted active project", () => {
@@ -1882,7 +2006,8 @@ describe("AgentModeView", () => {
 
     expect(host.querySelector("select#agent-project")).toBeNull();
     expect(scopeOptionLabels()).toEqual(["app", "api-service"]);
-    expect(host.querySelector('[aria-label="Close project api-service"]')).toBeNull();
+    openProjectMenu("api-service");
+    expect(projectMenuLabels()).not.toContain("Close project");
   });
 
   it("shows no start target when only a closed-tab draining project remains", () => {
@@ -1895,7 +2020,7 @@ describe("AgentModeView", () => {
   it("starts a thread in the only background project once it is the rail scope", () => {
     render({ projects: [backgroundProject()] });
 
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
+    expect(activeProjectLabel()).toContain("api-service");
     expect(host.textContent).not.toContain("Choose a project in the rail to start a thread.");
   });
 
@@ -1931,12 +2056,16 @@ describe("AgentModeView", () => {
       projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }],
     });
 
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
-    expect(pickerTrigger("agent-rail-scope").disabled).toBe(false);
+    expect(activeProjectLabel()).toContain("api-service");
+    expect(
+      host.querySelector<HTMLButtonElement>('button[aria-label="Filter threads by project"]')
+        ?.disabled,
+    ).toBe(false);
     expect(host.querySelector('[data-thread-id="agt-live"]')).not.toBeNull();
-    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Tab closed");
+    expect(projectStateLabel("api-service")).toBe("Tab closed");
 
-    click('[aria-label="Release project api-service"]');
+    openProjectMenu("api-service");
+    clickMenuItem("Release project");
 
     expect(onReleaseProject).toHaveBeenCalledWith(OTHER_ROOT);
   });
@@ -1944,14 +2073,17 @@ describe("AgentModeView", () => {
   it("shows a neutral scope only when no project is registered", () => {
     render({ projects: [] });
 
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("No project");
-    expect(pickerTrigger("agent-rail-scope").disabled).toBe(true);
+    expect(activeProjectLabel()).toBe("New thread (⌘N)");
+    expect(
+      host.querySelector<HTMLButtonElement>('button[aria-label="Filter threads by project"]')
+        ?.disabled,
+    ).toBe(true);
   });
 
   it("reports the roots beyond the project limit truthfully", () => {
     render({ overflowRootPaths: ["/workspace/nine"] });
 
-    expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
+    expect(host.querySelector(".cv-sb-note")?.textContent).toBe(
       "1 more project is not shown (limit 64)",
     );
   });
@@ -2236,7 +2368,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
-  it("advances session timestamps on clock ticks without rerendering the column", () => {
+  it("keeps session timestamps on clock ticks without rerendering the column", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     vi.setSystemTime(NOW);
     try {
@@ -2246,8 +2378,8 @@ describe("AgentModeView", () => {
       });
       click('[data-thread-id="agt-1"]');
 
-      expect(host.querySelector("header.agent-turn__head time")?.textContent).toContain(
-        "10 minutes ago",
+      expect(host.querySelector(".agent-answer > .cv-turn-meta time")?.textContent).toBe(
+        agentClockTime(1_700_000_000_000)?.label,
       );
       const sessionRenders = columnRenders.session;
       expect(sessionRenders).toBeGreaterThan(0);
@@ -2259,8 +2391,8 @@ describe("AgentModeView", () => {
         });
       }
 
-      expect(host.querySelector("header.agent-turn__head time")?.textContent).toContain(
-        "3 hours ago",
+      expect(host.querySelector(".agent-answer > .cv-turn-meta time")?.textContent).toBe(
+        agentClockTime(1_700_000_000_000)?.label,
       );
       expect(columnRenders.session).toBe(sessionRenders);
     } finally {
@@ -2408,7 +2540,7 @@ describe("AgentModeView", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 160));
     });
-    expect(searchResultTitles().join(" ")).toContain("Stream chunk 120");
+    expect(searchResultTexts().join(" ")).toContain("Stream chunk 120");
     typeSearch("");
 
     resetColumnRenders();
@@ -2488,7 +2620,7 @@ describe("AgentModeView", () => {
   it("renders rail timestamps through the agent clock instead of a now prop", () => {
     render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
 
-    expect(host.querySelector(".agent-row__time")?.textContent).toBe(
+    expect(host.querySelector(".cv-card-row__when")?.textContent).toBe(
       agentCompactTimeLabel(1_700_000_000_000, Date.now()),
     );
   });
@@ -2684,6 +2816,8 @@ describe("AgentModeView", () => {
 
     withClipboard({ writeText }, () => {
       openRowMenu("agt-1");
+      clickMenuItem("Copy");
+      clickMenuItem("Copy");
       clickMenuItem("Copy path");
     });
     expect(threadCopyDetail).toHaveBeenCalledWith("agt-1", "path");
@@ -2692,6 +2826,8 @@ describe("AgentModeView", () => {
 
     withClipboard(undefined, () => {
       openRowMenu("agt-1");
+      clickMenuItem("Copy");
+      clickMenuItem("Copy");
       clickMenuItem("Copy branch");
     });
     expect(threadCopyDetail).toHaveBeenCalledWith("agt-1", "branch");
@@ -2703,6 +2839,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector(".agent-notice")).toBeNull();
 
     openRowMenu("agt-1");
+    clickMenuItem("Copy");
     clickMenuItem("Copy thread ID");
     await act(async () => {
       await Promise.resolve();
@@ -2737,7 +2874,7 @@ describe("AgentModeView", () => {
     expect(markThreadUnread).toHaveBeenCalledWith("agt-1");
 
     openRowMenu("agt-1");
-    clickMenuItem("Rename");
+    clickMenuItem("Rename thread");
     const rename = host.querySelector<HTMLInputElement>('input[aria-label="Rename thread"]');
     expect(rename).not.toBeNull();
     typeInto(rename, "Parser rewrite");
@@ -2826,27 +2963,24 @@ describe("AgentModeView", () => {
     );
   });
 
-  it("opens the ship popover of the selected thread from the view command", () => {
+  it("opens the Git surface of the selected thread from the commit view command", () => {
     const bridge = createAgentViewCommandBridge();
+    const layout = recordedLayoutState();
     render({
       agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout }),
       viewCommands: bridge,
     });
 
     act(() => bridge.run("agent.openCommitMenu"));
-    expect(host.querySelector('[aria-label="Ship Refactor the parser"]')).toBeNull();
+    expect(reduceRecordedLayout(layout).openSurfaces).not.toContain("git");
 
     clickText("Refactor the parser");
-    expect(host.querySelector('[aria-label="Ship Refactor the parser"]')).toBeNull();
-
     act(() => bridge.run("agent.openCommitMenu"));
 
-    const popover = host.querySelector('[aria-label="Ship Refactor the parser"]');
-    expect(popover).not.toBeNull();
-    expect(popover?.getAttribute("role")).toBe("dialog");
-    expect(
-      host.querySelector<HTMLButtonElement>('button[aria-label="Ship options"]')?.ariaExpanded,
-    ).toBe("true");
+    const next = reduceRecordedLayout(layout);
+    expect(next.rightPanel).toBe("open");
+    expect(next.activeSurface).toBe("git");
   });
 
   it("keeps the script and commit commands disabled until a thread is selected", () => {
@@ -2890,12 +3024,16 @@ describe("AgentModeView", () => {
     layout = recordedLayoutState(reduceRecordedLayout(layout));
     render({ agents: surface({ threads }), chrome: chromeFixture({ layout }) });
 
+    expect(document.activeElement).toBe(host.querySelector('button[aria-label="Expand sidebar"]'));
     expect(host.querySelector('aside[aria-label="Agent threads"]')).toBeNull();
     expect(host.querySelector("[data-thread-id]")).toBeNull();
 
     click('[aria-label="Expand sidebar"]');
     layout = recordedLayoutState(reduceRecordedLayout(layout));
     render({ agents: surface({ threads }), chrome: chromeFixture({ layout }) });
+    expect(document.activeElement).toBe(
+      host.querySelector('button[aria-label="Collapse sidebar"]'),
+    );
 
     expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
@@ -2926,7 +3064,7 @@ describe("AgentModeView", () => {
       });
 
       expect(
-        [...host.querySelectorAll('#agent-rail-search-results [role="option"]')].map(
+        [...host.querySelectorAll('#agent-rail-search-results [role="option"] .cv-sr__title')].map(
           (option) => option.textContent,
         ),
       ).toEqual(["Nested parser", "Refactor the parser"]);
@@ -2985,6 +3123,7 @@ describe("AgentModeView", () => {
         ?.click();
     });
     await waitForReact(() => expect(host.querySelector(".agent-add-project")).not.toBeNull());
+    await openAddProjectDeveloper();
     act(() =>
       host
         .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')
@@ -3041,6 +3180,7 @@ describe("AgentModeView", () => {
       await waitForReact(() => {
         expect(host.querySelector(".agent-add-project")).not.toBeNull();
       });
+      await openAddProjectDeveloper();
 
       const input = host.querySelector<HTMLInputElement>(
         '.agent-add-project input[role="combobox"]',
@@ -3056,7 +3196,7 @@ describe("AgentModeView", () => {
         chooseScope(OTHER_ROOT);
         chooseScope(ROOT);
       }
-      expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_HOME);
+      expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_DEVELOPER);
       expect(host.querySelector(".agent-add-project")).toBeNull();
       await act(async () => {});
       render({
@@ -3068,9 +3208,7 @@ describe("AgentModeView", () => {
         ],
         workspaceRoot: OTHER_ROOT,
       });
-      expect(pickerTrigger("agent-rail-scope").textContent).toContain(
-        manualNavigation ? "app" : "api-service",
-      );
+      expect(activeProjectLabel()).toContain(manualNavigation ? "app" : "api-service");
       expect(selectedSessionId()).toBe(manualNavigation ? "agt-1" : null);
     },
   );
@@ -3102,7 +3240,7 @@ describe("AgentModeView", () => {
       ],
       workspaceRoot: OTHER_ROOT,
     });
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("app");
+    expect(activeProjectLabel()).toContain("app");
     expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
       "packages/api",
     );
@@ -3224,7 +3362,7 @@ describe("AgentModeView", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
     render({ agents: surface({ externalSessions }) });
 
-    const empty = host.querySelector(".agent-rail__empty-state");
+    const empty = host.querySelector(".cv-sb-empty");
     expect(empty).not.toBeNull();
     expect(empty?.querySelector("button")).toBeNull();
     expect(host.querySelector(".agent-rail__empty-import")).toBeNull();
@@ -3409,7 +3547,7 @@ describe("AgentModeView", () => {
   }
 
   function surfaceTabs(): string[] {
-    return Array.from(host.querySelectorAll('.agent-surface__tabs [role="tab"]')).map(
+    return Array.from(host.querySelectorAll('[aria-label="Panel surfaces"] [role="tab"]')).map(
       (tab) => tab.textContent ?? "",
     );
   }
@@ -3420,8 +3558,8 @@ describe("AgentModeView", () => {
 
   function activeSurfaceTab(): string {
     return (
-      host.querySelector('.agent-surface__tabs [role="tab"][aria-selected="true"]')?.textContent ??
-      ""
+      host.querySelector('[aria-label="Panel surfaces"] [role="tab"][aria-selected="true"]')
+        ?.textContent ?? ""
     );
   }
 
@@ -3471,10 +3609,16 @@ describe("AgentModeView", () => {
     return element ?? document.createElement("input");
   }
 
+  function searchResultTexts(): readonly string[] {
+    return [
+      ...host.querySelectorAll('#agent-rail-search-results [role="option"] .cv-sr__body'),
+    ].map((option) => option.textContent ?? "");
+  }
+
   function searchResultTitles(): readonly string[] {
-    return [...host.querySelectorAll('#agent-rail-search-results [role="option"]')].map(
-      (option) => option.textContent ?? "",
-    );
+    return [
+      ...host.querySelectorAll('#agent-rail-search-results [role="option"] .cv-sr__title'),
+    ].map((option) => option.textContent ?? "");
   }
 
   function typeInto(element: HTMLInputElement | null, value: string): void {
@@ -3502,17 +3646,54 @@ describe("AgentModeView", () => {
     });
   }
 
+  function openProjectFilter(): void {
+    if (document.querySelector(".cv-filter") !== null) return;
+    click('button[aria-label="Filter threads by project"]');
+  }
+
+  function closeProjectFilter(): void {
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
+    if (input === null) return;
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+  }
+
   function openProjectMenu(label: string): void {
-    if (host.querySelector("#agent-rail-scope-list") === null) {
-      click("button#agent-rail-scope");
-    }
-    click(`[aria-label="Project actions for ${label}"]`);
+    openProjectFilter();
+    const gear = document.querySelector<HTMLButtonElement>(
+      `button[aria-label="Project settings for ${label}"]`,
+    );
+    expect(gear).not.toBeNull();
+    act(() => gear?.click());
   }
 
   function projectMenuLabels(): readonly string[] {
-    return [...host.querySelectorAll<HTMLButtonElement>('.agent-menu__item[role="menuitem"]')].map(
+    return [...document.querySelectorAll<HTMLButtonElement>('.cv-menu__item[role="menuitem"]')].map(
       (item) => item.textContent ?? "",
     );
+  }
+
+  function activeProjectLabel(): string {
+    return host.querySelector<HTMLButtonElement>('button[aria-label="New thread"]')?.title ?? "";
+  }
+
+  function projectStateLabel(label: string): string | null {
+    openProjectFilter();
+    const option = [...document.querySelectorAll<HTMLElement>('.cv-filter [role="option"]')].find(
+      (candidate) => candidate.querySelector(".cv-filter__label")?.textContent === label,
+    );
+    const state = option?.querySelector(".cv-filter__state")?.textContent ?? null;
+    closeProjectFilter();
+    return state;
+  }
+
+  function clickDialogButton(label: string): void {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(
+      (candidate) => candidate.textContent === label,
+    );
+    expect(button).toBeDefined();
+    act(() => button?.click());
   }
 
   function clickMenuItem(label: string): void {
@@ -3529,7 +3710,7 @@ describe("AgentModeView", () => {
 
   function terminalSessionsEntry(): HTMLButtonElement {
     const entry = host.querySelector<HTMLButtonElement>(
-      '.agent-thread-head button[aria-label="Terminal sessions"]',
+      '[data-agent-thread-head] button[aria-label="Terminal sessions"]',
     );
     expect(entry).not.toBeNull();
     return entry as HTMLButtonElement;
@@ -3544,30 +3725,28 @@ describe("AgentModeView", () => {
   }
 
   function scopeOptionLabels(): readonly string[] {
-    click("button#agent-rail-scope");
+    openProjectFilter();
     const labels = [
-      ...host.querySelectorAll('#agent-rail-scope-list [role="menuitemradio"] .agent-menu__label'),
+      ...document.querySelectorAll(
+        '.cv-filter [role="option"]:not([data-value="all"]) .cv-filter__label',
+      ),
     ].map((element) => element.textContent ?? "");
-    click("button#agent-rail-scope");
+    closeProjectFilter();
     return labels;
   }
 
   function chooseScope(projectRootKey: string): void {
-    if (host.querySelector("#agent-rail-scope-list") === null) {
-      click("button#agent-rail-scope");
-    }
-    click(
-      `#agent-rail-scope-list [role="menuitemradio"][data-value="${agentRailScopeValue(
-        projectRootKey,
-      )}"]`,
+    openProjectFilter();
+    const option = document.querySelector<HTMLElement>(
+      `.cv-filter [role="option"][data-value="${agentRailScopeValue(projectRootKey)}"]`,
     );
+    expect(option).not.toBeNull();
+    act(() => option?.click());
   }
 
   function closeProjectFromRow(label: string): void {
-    if (host.querySelector("#agent-rail-scope-list") === null) {
-      click("button#agent-rail-scope");
-    }
-    click(`[aria-label="Close project ${label}"]`);
+    openProjectMenu(label);
+    clickMenuItem("Close project");
   }
 
   function restoreClipboard(descriptor: PropertyDescriptor | undefined): void {
@@ -3667,14 +3846,29 @@ describe("AgentModeView", () => {
 
 function addProjectGateway(): DirectoryListingGateway {
   return {
-    listDirectoryEntries: async () => ({
-      path: ADD_PROJECT_HOME,
-      parent: "/Users",
-      entries: [{ name: "Developer", kind: "directory", hidden: false }],
-      truncated: false,
-    }),
+    listDirectoryEntries: async ({ path }) =>
+      path === ADD_PROJECT_DEVELOPER
+        ? { path, parent: ADD_PROJECT_HOME, entries: [], truncated: false }
+        : {
+            path: ADD_PROJECT_HOME,
+            parent: "/Users",
+            entries: [{ name: "Developer", kind: "directory", hidden: false }],
+            truncated: false,
+          },
     revealDirectory: async () => undefined,
   };
+}
+
+async function openAddProjectDeveloper(): Promise<void> {
+  await waitForReact(() => {
+    expect(document.querySelector('.agent-add-project [role="option"]')).not.toBeNull();
+  });
+  act(() => document.querySelector<HTMLElement>('.agent-add-project [role="option"]')?.click());
+  await waitForReact(() => {
+    expect(document.querySelector(".agent-add-project__path-value")?.textContent).toBe(
+      "~/Developer",
+    );
+  });
 }
 
 function scriptRunner(
@@ -3840,8 +4034,8 @@ function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeVie
     hideFileDiff: () => undefined,
     removeWorktree: async () => undefined,
     refreshShipStatus: async () => undefined,
-    commitThreadChanges: async () => undefined,
-    pushThreadBranch: async () => undefined,
+    commitThreadChanges: async () => ({ kind: "succeeded" }),
+    pushThreadBranch: async () => ({ kind: "succeeded" }),
     openThreadCompareUrl: async () => undefined,
     integrateThreadBranch: async () => undefined,
     removeThreadWorktree: async () => undefined,

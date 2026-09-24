@@ -1,8 +1,10 @@
+import type { WorkspaceHomeReference } from "../domain/workspaceRootEligibility";
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import type { AgentSidebarRailPreferencePort } from "./useAgentWorkbenchLayout";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
 import type {
   AgentProviderHealthGateway,
@@ -71,6 +73,8 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
     Partial<AgentAccountUsageStoreGateway>;
   agentProviderSignInGateway?: AgentProviderSignInGateway;
   agentRootLeaseGateway?: AgentRootLeaseGateway;
+  resolveWorkspaceHome?: () => Promise<WorkspaceHomeReference>;
+  agentSidebarRailPreference?: AgentSidebarRailPreferencePort;
   agentTaskGateway?: AgentTaskGateway;
   turnChangesGateway?: AgentTurnChangesGateway;
   agentQuestionGateway?: AgentQuestionGateway;

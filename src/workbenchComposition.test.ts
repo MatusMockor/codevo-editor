@@ -82,6 +82,14 @@ describe("workbench live-document runtime composition", () => {
     );
   });
 
+  it("hands the identity-aware workspace file search to the agent surfaces", () => {
+    const composition = createWorkbenchComposition();
+
+    expect(composition.agentSurfaceGateways.fileSearch).toBe(
+      composition.workspaceGateways.fileSearch,
+    );
+  });
+
   it("constructs one independent provider gateway per workbench", () => {
     const first = createWorkbenchComposition();
     const second = createWorkbenchComposition();

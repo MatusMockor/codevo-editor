@@ -15,6 +15,7 @@ import {
   agentWorkbenchLayoutSnapshotsEqual,
   agentWorkbenchLayoutsEqual,
   initialAgentWorkbenchLayout,
+  isAgentTransientSurfaceKind,
   parseAgentWorkbenchLayout,
   parsePersistedAgentBottomPanel,
   serializeAgentWorkbenchLayout,
@@ -51,10 +52,17 @@ function open(
 
 const EXPANDED = layoutOf({ layout: "editor-expanded" });
 
+const EXPLORED_SURFACE_KINDS: ReadonlyArray<AgentSurfaceKind> = [
+  "files",
+  "diff",
+  "terminal",
+  "agents",
+];
+
 function orderedSubsets(): ReadonlyArray<ReadonlyArray<AgentSurfaceKind>> {
   const subsets: AgentSurfaceKind[][] = [[]];
   const extend = (prefix: AgentSurfaceKind[]): void => {
-    for (const surface of AGENT_SURFACE_KINDS) {
+    for (const surface of EXPLORED_SURFACE_KINDS) {
       if (prefix.includes(surface)) continue;
       const next = [...prefix, surface];
       subsets.push(next);
@@ -762,8 +770,11 @@ describe("serializeAgentWorkbenchLayout", () => {
     expect(parsePersistedAgentBottomPanel(serializeAgentWorkbenchLayout(state, true))).toBe(true);
   });
 
-  it("round-trips every reachable state through the parser", () => {
-    for (const state of everyReachableState()) {
+  it("round-trips every reachable persistable state through the parser", () => {
+    const persistable = everyReachableState().filter(
+      (state) => !state.openSurfaces.some(isAgentTransientSurfaceKind),
+    );
+    for (const state of persistable) {
       expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(state, false))).toEqual(state);
     }
   });
@@ -803,5 +814,57 @@ describe("agentWorkbenchLayoutsEqual", () => {
         serializeAgentWorkbenchLayout(state, false),
       ),
     ).toBe(false);
+  });
+});
+
+describe("right panel surface kinds", () => {
+  it("lists the redesigned surfaces in catalog order", () => {
+    expect(AGENT_SURFACE_KINDS).toEqual([
+      "files",
+      "diff",
+      "terminal",
+      "history",
+      "git",
+      "scripts",
+      "pullRequest",
+      "agents",
+    ]);
+    expect(MAX_AGENT_OPEN_SURFACES).toBe(8);
+  });
+
+  it("never serializes the pull request or agents surfaces", () => {
+    const withGit = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+      kind: "openSurface",
+      surface: "git",
+    });
+    const withPullRequest = agentWorkbenchLayoutReducer(withGit, {
+      kind: "openSurface",
+      surface: "pullRequest",
+    });
+    const withAgents = agentWorkbenchLayoutReducer(withPullRequest, {
+      kind: "openSurface",
+      surface: "agents",
+    });
+
+    const persisted = serializeAgentWorkbenchLayout(withAgents, false);
+
+    expect(withAgents.openSurfaces).toEqual(["git", "pullRequest", "agents"]);
+    expect(persisted.openSurfaces).toEqual(["git"]);
+    expect(persisted.activeSurface).toBe("git");
+  });
+
+  it("drops transient kinds from persisted input, including the legacy single surface", () => {
+    const parsed = parseAgentWorkbenchLayout({
+      openSurfaces: ["agents", "files", "pullRequest", "scripts"],
+      activeSurface: "agents",
+      rightPanel: "open",
+    });
+    const legacy = parseAgentWorkbenchLayout({ rightSurface: "pullRequest" });
+
+    expect(parsed.openSurfaces).toEqual(["files", "scripts"]);
+    expect(parsed.activeSurface).toBeNull();
+    expect(legacy.openSurfaces).toEqual([]);
+    expect(isAgentTransientSurfaceKind("agents")).toBe(true);
+    expect(isAgentTransientSurfaceKind("git")).toBe(false);
   });
 });

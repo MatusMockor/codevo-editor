@@ -69,6 +69,25 @@ impl CodexSubagentKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexSpawnStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl CodexSpawnStatus {
+    fn wire_status(self) -> &'static str {
+        match self {
+            Self::InProgress => "inProgress",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexUsageScope {
     Thread,
     Subagent,
@@ -264,6 +283,14 @@ pub enum CodexTurnEvent {
         agent_thread_id: String,
         inner: CodexItemEvent,
     },
+    SubagentSpawn {
+        call_id: String,
+        status: CodexSpawnStatus,
+        task_title: Option<String>,
+        model: Option<String>,
+        reasoning_effort: Option<String>,
+        agent_thread_ids: Vec<String>,
+    },
     Usage {
         scope: CodexUsageScope,
         thread_id: String,
@@ -393,6 +420,22 @@ impl Serialize for CodexTurnEvent {
                 map.serialize_entry("t", "subagentItem")?;
                 map.serialize_entry("agentThreadId", agent_thread_id)?;
                 map.serialize_entry("inner", &CodexItemEventPayload(inner))?;
+            }
+            Self::SubagentSpawn {
+                call_id,
+                status,
+                task_title,
+                model,
+                reasoning_effort,
+                agent_thread_ids,
+            } => {
+                map.serialize_entry("t", "subagentSpawn")?;
+                map.serialize_entry("callId", call_id)?;
+                map.serialize_entry("status", status.wire_status())?;
+                map.serialize_entry("taskTitle", task_title)?;
+                map.serialize_entry("model", model)?;
+                map.serialize_entry("reasoningEffort", reasoning_effort)?;
+                map.serialize_entry("agentThreadIds", agent_thread_ids)?;
             }
             Self::Usage {
                 scope,
@@ -665,6 +708,16 @@ impl CodexTurnProjection {
             }
             return self.subagent_activity(role, activity, method);
         }
+        if let ThreadItem::CollabAgentToolCall(call) = &payload.item {
+            if !matches!(role, CodexThreadRole::Root) {
+                return Vec::new();
+            }
+            return match collab::project_collab(call, phase) {
+                collab::CollabOutcome::Spawn(event) => self.spawn(event),
+                collab::CollabOutcome::Dropped => Vec::new(),
+                collab::CollabOutcome::Unknown => self.unknown_frame(method),
+            };
+        }
         match role {
             CodexThreadRole::Root => match project_item(&payload.item, phase) {
                 CodexItemOutcome::Events(events) => {
@@ -743,6 +796,39 @@ impl CodexTurnProjection {
             agent_thread_id,
             agent_path,
         }]
+    }
+
+    fn spawn(&mut self, mut event: CodexTurnEvent) -> Vec<CodexTurnEvent> {
+        let CodexTurnEvent::SubagentSpawn {
+            status: CodexSpawnStatus::Completed,
+            agent_thread_ids,
+            ..
+        } = &mut event
+        else {
+            return vec![event];
+        };
+        let receivers = std::mem::take(agent_thread_ids);
+        let offered = receivers.len();
+        let registered: Vec<String> = receivers
+            .into_iter()
+            .filter(|receiver| self.register_subagent(receiver.as_str(), ""))
+            .collect();
+        let hidden = offered - registered.len();
+        *agent_thread_ids = registered;
+        let mut events = vec![event];
+        if hidden > 0 {
+            let message = if hidden == 1 {
+                format!(
+                    "Codex started more agents than one turn can show (limit {MAX_SUBAGENT_THREADS_PER_TURN}); 1 more agent is not shown."
+                )
+            } else {
+                format!(
+                    "Codex started more agents than one turn can show (limit {MAX_SUBAGENT_THREADS_PER_TURN}); {hidden} more agents are not shown."
+                )
+            };
+            events.extend(self.notice(CodexNoticeSeverity::Warning, message.as_str()));
+        }
+        events
     }
 
     fn register_subagent(&mut self, thread_id: &str, agent_path: &str) -> bool {
@@ -991,6 +1077,8 @@ fn clipped_text(text: &str, limit: usize) -> CodexClippedText {
     }
 }
 
+#[path = "codex_turn_event_collab.rs"]
+mod collab;
 #[path = "codex_turn_event_items.rs"]
 mod items;
 #[path = "codex_argument_redaction.rs"]

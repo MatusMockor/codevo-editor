@@ -32,6 +32,12 @@ import {
 import { useAgentPopover } from "./agentPopover";
 import { trapPopoverTab } from "./agentPopoverFocus";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
+import {
+  configuredProviderModel,
+  configuredProviderVersion,
+  providerAvailabilityReason,
+  providerIsEnabled,
+} from "./agentModelProviderState";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
 
 export interface AgentModelPickerProps {
@@ -485,60 +491,6 @@ function LegacyModelsToggle({
 function favoriteLabel(row: AgentModelRow, favorite: boolean): string {
   if (favorite) return `Remove ${row.label} from favorites`;
   return `Add ${row.label} to favorites`;
-}
-
-function providerIsEnabled(
-  enabled: Readonly<Record<AgentCliKind, boolean>> | null,
-  provider: AgentCliKind,
-): boolean {
-  if (enabled === null) return true;
-  return enabled[provider];
-}
-
-function configuredProviderModel(
-  management: AgentProviderManagementSurface | null,
-  provider: AgentCliKind,
-): string | null {
-  const state = management?.cliDiscovery[provider];
-  return state?.kind === "detected" ? (state.configuredModel ?? null) : null;
-}
-
-function configuredProviderVersion(
-  management: AgentProviderManagementSurface | null,
-  provider: AgentCliKind,
-): string | null {
-  const state = management?.cliDiscovery[provider];
-  return state?.kind === "detected" ? state.version : null;
-}
-
-function providerAvailabilityReason(
-  management: AgentProviderManagementSurface | null,
-  provider: AgentCliKind,
-  enabled: boolean,
-): string | null {
-  if (!enabled) return "Enable this provider in settings";
-  if (management === null) return null;
-  const disposition = management.admissionAuthority(provider).disposition;
-  switch (disposition.kind) {
-    case "ready":
-      return null;
-    case "disabled":
-      return "This provider is disabled";
-    case "initializing":
-      return "This provider is initializing";
-    case "updating":
-      return "This provider is updating";
-    case "policyUnavailable":
-      return disposition.reason === "unregistered"
-        ? "Provider policy is not registered"
-        : "Provider policy registration failed";
-    default:
-      return unsupportedAdmissionDisposition(disposition);
-  }
-}
-
-function unsupportedAdmissionDisposition(disposition: never): never {
-  throw new TypeError(`Unsupported provider disposition: ${String(disposition)}`);
 }
 
 function emptyMessage(filter: AgentModelFilter, query: string): string {

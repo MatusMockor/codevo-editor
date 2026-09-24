@@ -11,12 +11,16 @@ import {
   type AgentThread,
 } from "../../domain/agentThread";
 import { initialAgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
-import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadHeader, type AgentThreadHeaderProps } from "./AgentThreadHeader";
 
 const ROOT = "/workspace/app";
 const PROJECT = { projectRootKey: "root:app", repositoryRoot: ROOT, label: "app" };
-const SHORTCUTS = { bottomPanel: "Cmd+J", rightPanel: "Cmd+Alt+R" };
+const SHORTCUTS = {
+  bottomPanel: "Cmd+J",
+  rightPanel: "Cmd+Alt+R",
+  sidebar: "Cmd+B",
+  newThread: "Cmd+N",
+};
 const SESSION_ID = "34fbe185-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 
 describe("AgentThreadHeader", () => {
@@ -58,9 +62,9 @@ describe("AgentThreadHeader", () => {
       for (const selector of [
         '[aria-label="Thread breadcrumb"]',
         ".agent-crumbs__sep",
-        ".agent-thread-head__actions",
-        ".agent-thread-head__tools",
-        ".agent-thread-head__divider",
+        ".cv-topbar__title",
+        ".cv-topbar__actions",
+        ".cv-topbar__trailing",
         "[data-panel-layout-controls]",
       ]) {
         const target = host.querySelector(selector);
@@ -120,7 +124,6 @@ describe("AgentThreadHeader", () => {
   it.each([
     ["Open options", "menu"],
     ["Choose a script", "menu"],
-    ["Ship options", "dialog"],
   ])("keeps the %s popup and its content out of the native drag region", async (label, role) => {
     render({});
 
@@ -168,10 +171,33 @@ describe("AgentThreadHeader", () => {
     const commit = button("Commit");
     expect(run.title).toBe("Run dev in the terminal panel");
     expect(open.title).toBe("Open the checkout in the editor");
-    expect(commit.title).toBe("Commit");
+    expect(commit.title).toBe("Commit changes in the Git panel");
     expect(run.querySelector(".agent-split__label")?.textContent).toBe("dev");
     expect(open.querySelector(".agent-split__label")?.textContent).toBe("Open");
-    expect(commit.querySelector(".agent-split__label")?.textContent).toBe("Commit");
+  });
+
+  it("opens the Git surface from the Commit button placed right after Run script", () => {
+    const onOpenSurface = vi.fn();
+    render({ onOpenSurface });
+
+    const trailing = host.querySelector(".cv-topbar__trailing");
+    const controls = [...(trailing?.querySelectorAll("button") ?? [])];
+    const run = controls.indexOf(button("Run dev"));
+    const commit = controls.indexOf(button("Commit"));
+    expect(commit).toBeGreaterThan(run);
+    expect(
+      controls.slice(run + 1, commit).every((control) => control.closest(".agent-split") !== null),
+    ).toBe(true);
+    expect(button("Commit").getAttribute("aria-pressed")).toBe("false");
+    expect(host.querySelector('button[aria-label="Ship options"]')).toBeNull();
+
+    act(() => button("Commit").click());
+
+    expect(onOpenSurface).toHaveBeenCalledWith("git");
+    render({ onOpenSurface, gitSurfaceActive: true });
+    expect(button("Commit").getAttribute("aria-pressed")).toBe("true");
+    render({ thread: null });
+    expect(host.querySelector('button[aria-label="Commit"]')).toBeNull();
   });
 
   it("starts a new thread in the project from the project crumb", () => {
@@ -191,9 +217,9 @@ describe("AgentThreadHeader", () => {
     act(() => button("Thread actions for Refactor the parser").click());
     const menu = document.querySelector<HTMLElement>('[role="menu"]');
     expect(menu).not.toBeNull();
-    expect(menuItems(menu)).toContain("Rename");
+    expect(menuItems(menu)).toContain("Rename thread");
 
-    act(() => menuItem(menu, "Rename").click());
+    act(() => menuItem(menu, "Rename thread").click());
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename thread"]');
     expect(input).not.toBeNull();
     expect(input?.value).toBe("Refactor the parser");
@@ -218,9 +244,58 @@ describe("AgentThreadHeader", () => {
         ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 30 }));
     });
     const menu = document.querySelector<HTMLElement>('[role="menu"]');
-    act(() => menuItem(menu, "Pin").click());
+    act(() => menuItem(menu, "Pin thread").click());
 
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "togglePin" });
+  });
+
+  it("opens the thread menu from the keyboard and returns focus to the title", () => {
+    render({});
+    const title = button("Thread actions for Refactor the parser");
+    act(() => title.focus());
+    act(() => title.click());
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="Thread actions"]');
+    expect(menu).not.toBeNull();
+    expect(title.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement?.textContent).toBe("New thread");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.activeElement?.textContent).toBe("Pin thread");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(title);
+    expect(title.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("confirms Delete in a dialog before sending the command", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ onThreadMenuCommand });
+    act(() => button("Thread actions for Refactor the parser").click());
+    act(() => menuItem(document.querySelector('[role="menu"]'), "Delete").click());
+    expect(onThreadMenuCommand).not.toHaveBeenCalled();
+    const confirm = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+    ].find((candidate) => candidate.textContent === "Delete thread");
+    act(() => confirm?.click());
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
+  });
+
+  it("drops a pending delete confirmation when the thread changes", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ onThreadMenuCommand });
+    act(() => button("Thread actions for Refactor the parser").click());
+    act(() => menuItem(document.querySelector('[role="menu"]'), "Delete").click());
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    render({ onThreadMenuCommand, thread: threadView({ threadId: "agt-2", title: "Second" }) });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(onThreadMenuCommand).not.toHaveBeenCalled();
   });
 
   it("copies the path through the Open menu using the thread menu command", () => {
@@ -234,13 +309,13 @@ describe("AgentThreadHeader", () => {
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "copy", detail: "path" });
   });
 
-  it("shows the layout toggles only while the right panel is closed", () => {
+  it("keeps the layout toggles visible and mirrors the panel states in aria-pressed", () => {
     render({});
-    expect(host.querySelector("[data-panel-layout-controls]")).not.toBeNull();
-    expect(button("Toggle terminal panel (⌘J)").getAttribute("aria-pressed")).toBe("false");
+    expect(button("Toggle terminal panel").getAttribute("aria-pressed")).toBe("false");
+    expect(button("Toggle right panel").getAttribute("aria-pressed")).toBe("false");
 
     render({ bottomPanelOpen: true });
-    expect(button("Toggle terminal panel (⌘J)").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Toggle terminal panel").getAttribute("aria-pressed")).toBe("true");
 
     render({
       layout: {
@@ -250,10 +325,39 @@ describe("AgentThreadHeader", () => {
         activeSurface: "files",
       },
     });
-    expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
+    expect(host.querySelector("[data-panel-layout-controls]")).not.toBeNull();
+    expect(button("Toggle right panel").getAttribute("aria-pressed")).toBe("true");
+  });
 
-    render({ layout: { ...initialAgentWorkbenchLayout, rightPanel: "open" } });
-    expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
+  it("shows the project favicon, keeps Run script and Commit visible and hides Open and Terminal sessions until hover", () => {
+    render({});
+
+    expect(host.querySelector(".agent-crumbs__project .cv-favicon")?.textContent).toBe("A");
+    const actions = host.querySelector(".cv-topbar__actions");
+    const trailing = host.querySelector(".cv-topbar__trailing");
+    expect(actions?.contains(button("Open in Editor"))).toBe(true);
+    expect(actions?.contains(button("Terminal sessions"))).toBe(true);
+    expect(actions?.contains(button("Run dev"))).toBe(false);
+    expect(trailing?.contains(button("Run dev"))).toBe(true);
+    expect(trailing?.contains(button("Commit"))).toBe(true);
+    expect(host.querySelector("header")?.className).toContain("cv-topbar--window-edge");
+  });
+
+  it("renders the leading cluster and trailing extras in their slots", () => {
+    render({
+      leading: <button aria-label="Expand sidebar" type="button" />,
+      trailingExtras: <button aria-label="Toggle agents panel" type="button" />,
+    });
+
+    expect(host.querySelector(".cv-topbar__leading")?.contains(button("Expand sidebar"))).toBe(
+      true,
+    );
+    const trailing = host.querySelector(".cv-topbar__trailing");
+    const extras = button("Toggle agents panel");
+    expect(trailing?.contains(extras)).toBe(true);
+    expect(
+      extras.compareDocumentPosition(host.querySelector("[data-panel-layout-controls]") as Node),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("renders the empty state with the project crumb and only the toggles", () => {
@@ -264,9 +368,9 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector("h2.agent-crumbs__heading")?.textContent).toBe("New thread");
     expect(button("Thread actions for New thread").disabled).toBe(true);
     expect(host.querySelector(".agent-split")).toBeNull();
-    act(() => button("Toggle terminal panel (⌘J)").click());
+    act(() => button("Toggle terminal panel").click());
     expect(onToggleBottomPanel).toHaveBeenCalledTimes(1);
-    const right = button("Toggle right panel (⌥⌘R)");
+    const right = button("Toggle right panel");
     expect(right.disabled).toBe(false);
     act(() => right.click());
     expect(onToggleRightPanel).toHaveBeenCalledTimes(1);
@@ -295,7 +399,6 @@ describe("AgentThreadHeader", () => {
     expect(entry.compareDocumentPosition(toggles as HTMLElement)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(host.querySelector(".agent-thread-head__divider")).not.toBeNull();
 
     act(() => entry.click());
 
@@ -310,12 +413,11 @@ describe("AgentThreadHeader", () => {
     expect(entry.title).toBe("Terminal sessions");
   });
 
-  it("keeps the terminal sessions entry while the layout toggles move to the right panel", () => {
+  it("keeps the terminal sessions entry and the toggles while the right panel is open", () => {
     render({ layout: { ...initialAgentWorkbenchLayout, rightPanel: "open" } });
 
     expect(button("Terminal sessions").disabled).toBe(false);
-    expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
-    expect(host.querySelector(".agent-thread-head__divider")).toBeNull();
+    expect(host.querySelector("[data-panel-layout-controls]")).not.toBeNull();
   });
 
   it("routes a reveal failure to the injected notice handler", async () => {
@@ -334,7 +436,7 @@ describe("AgentThreadHeader", () => {
   it("drops the open menu and rename state when the thread changes", () => {
     render({});
     act(() => button("Thread actions for Refactor the parser").click());
-    act(() => menuItem(document.querySelector('[role="menu"]'), "Rename").click());
+    act(() => menuItem(document.querySelector('[role="menu"]'), "Rename thread").click());
     expect(host.querySelector('input[aria-label="Rename thread"]')).not.toBeNull();
 
     render({ thread: threadView({ threadId: "agt-2", title: "Second" }) });
@@ -350,7 +452,6 @@ describe("AgentThreadHeader", () => {
       layout: initialAgentWorkbenchLayout,
       bottomPanelOpen: false,
       scripts: scriptsSurface(),
-      shipActions: shipActions(),
       shortcuts: SHORTCUTS,
       onNewThread: vi.fn(),
       onRenameThread: vi.fn(),
@@ -410,19 +511,6 @@ function scriptsSurface(): AgentThreadScriptsSurface {
     run: { kind: "idle" },
     runScript: vi.fn(() => true),
     stopScript: vi.fn(),
-  };
-}
-
-function shipActions(): AgentShipActions {
-  return {
-    onRefreshShipStatus: vi.fn(),
-    onCommit: vi.fn(),
-    onPush: vi.fn(),
-    onOpenCompareUrl: vi.fn(),
-    onIntegrate: vi.fn(),
-    onRemoveWorktree: vi.fn(),
-    onDiscardWorktree: vi.fn(),
-    onDismissFailure: vi.fn(),
   };
 }
 

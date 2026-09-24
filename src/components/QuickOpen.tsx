@@ -1,4 +1,4 @@
-import { FileCode2, Search } from "lucide-react";
+import { FileCode2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -7,14 +7,29 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type KeyboardEvent as ReactKeyboardEvent,
   type SetStateAction,
 } from "react";
 import type { FileSearchResult } from "../domain/workspace";
 import type { QuickOpenLocation, QuickOpenQuery } from "../domain/quickOpenQuery";
 import { HighlightedText } from "./HighlightedText";
-import { PaletteFooter } from "./PaletteFooter";
+import {
+  CommandEmpty,
+  CommandFooter,
+  CommandFooterHint,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandPanel,
+  CommandResultsStatus,
+} from "../ui/foundation/CommandList";
+import { commandItemId } from "../ui/foundation/commandItemId";
+import "./commandPalette/commandPalette.css";
 
 interface QuickOpenProps {
+  canGoBack: boolean;
+  groupLabel: string;
   isOpen: boolean;
   isLoading: boolean;
   isTruncated: boolean;
@@ -25,15 +40,21 @@ interface QuickOpenProps {
   onClose(): void;
   onOpen(result: FileSearchResult, location?: QuickOpenLocation): void;
   onOpenCurrentFileLocation(location: QuickOpenLocation): void;
+  onBack(): void;
+  onLocalShortcut(event: ReactKeyboardEvent<HTMLInputElement>): boolean;
 }
 
 export function QuickOpen({
+  canGoBack,
+  groupLabel,
   isOpen,
   isLoading,
   isTruncated,
   onChangeQuery,
   onClose,
   onOpen,
+  onBack,
+  onLocalShortcut,
   onOpenCurrentFileLocation,
   query,
   request,
@@ -200,119 +221,147 @@ export function QuickOpen({
     return null;
   }
 
+  const listboxId = "cv-quick-open-list";
+  const listVisible = currentFileLocation !== null || results.length > 0;
+  const resultCount = results.length + (currentFileLocation === null ? 0 : 1);
+  const activeId = activeOptionId(listboxId, currentFileLocation !== null, safeActiveIndex);
+  const handleInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (onLocalShortcut(event)) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key === "Backspace" && query === "" && canGoBack) {
+      event.preventDefault();
+      onBack();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.min(current + 1, Math.max(rowCount - 1, 0)));
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(current - 1, 0));
+      return;
+    }
+    if (event.key === "Enter" && currentFileLocation) {
+      event.preventDefault();
+      openCurrentFileLocation();
+      return;
+    }
+    if (event.key === "Enter" && activeResult) {
+      event.preventDefault();
+      openResult(activeResult);
+    }
+  };
+
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        aria-label="Quick open"
-        className="quick-open"
-        onMouseDown={(event) => event.stopPropagation()}
+    <>
+      <CommandInput
+        activeDescendantId={activeId}
+        expanded={listVisible}
+        inputRef={inputRef}
+        label="Search files"
+        lead={canGoBack ? "back" : "search"}
+        listboxId={listboxId}
+        onBack={onBack}
+        onChange={(value) => {
+          if (!composingRef.current) onChangeQuery(value);
+        }}
+        onCompositionEnd={(value) => {
+          composingRef.current = false;
+          onChangeQuery(value);
+        }}
+        onCompositionStart={() => {
+          composingRef.current = true;
+        }}
+        onKeyDown={handleInputKeyDown}
+        placeholder="Search files…"
+        value={query}
+      />
+      <CommandResultsStatus count={resultCount} />
+      <CommandPanel>
+        {isLoading ? <div className="cv-palette-files-state">Searching…</div> : null}
+        {isTruncated ? <div className="cv-palette-files-state">Results truncated</div> : null}
+        {!isLoading && !isTruncated && results.length === 0 && !currentFileLocation ? (
+          <CommandEmpty>No matching files.</CommandEmpty>
+        ) : null}
+        {listVisible ? (
+          <CommandList id={listboxId} label="Files">
+            <CommandGroup label={groupLabel}>
+              {currentFileLocation ? (
+                <CommandItem
+                  active
+                  description={
+                    currentFileLocation.column ? `Column ${currentFileLocation.column}` : undefined
+                  }
+                  icon={<FileCode2 size={16} />}
+                  id={commandItemId(listboxId, 0)}
+                  onHover={() => undefined}
+                  onSelect={openCurrentFileLocation}
+                  title={`Go to line ${currentFileLocation.line}`}
+                />
+              ) : null}
+              {results.map((result, index) => {
+                const position = currentFileLocation ? index + 1 : index;
+                return (
+                  <CommandItem
+                    active={currentFileLocation === null && index === safeActiveIndex}
+                    description={
+                      <HighlightedText
+                        className="cv-palette-file-match"
+                        query={query}
+                        text={result.relativePath}
+                      />
+                    }
+                    hint={result.path}
+                    icon={<FileCode2 size={16} />}
+                    id={commandItemId(listboxId, position)}
+                    key={result.path}
+                    onHover={() => {
+                      if (currentFileLocation === null) setActiveIndex(index);
+                    }}
+                    onSelect={() => openResult(result)}
+                    title={
+                      <HighlightedText
+                        className="cv-palette-file-match"
+                        query={query}
+                        text={result.name}
+                      />
+                    }
+                  />
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        ) : null}
+      </CommandPanel>
+      <CommandFooter
+        end={
+          <span
+            aria-label="Quick Open syntax: greater-than commands, at-sign file symbols, hash workspace symbols, path colon line and optional column"
+            className="cv-palette-files-syntax"
+            role="note"
+          >
+            &gt; commands · @ file symbols · # workspace symbols · path:line
+          </span>
+        }
       >
-        <div className="palette-search">
-          <Search aria-hidden="true" size={17} />
-          <input
-            aria-label="Search files"
-            autoFocus
-            onChange={(event) => {
-              if (!composingRef.current) {
-                onChangeQuery(event.currentTarget.value);
-              }
-            }}
-            onCompositionEnd={(event) => {
-              composingRef.current = false;
-              onChangeQuery(event.currentTarget.value);
-            }}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                onClose();
-                return;
-              }
-
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setActiveIndex((current) => Math.min(current + 1, Math.max(rowCount - 1, 0)));
-                return;
-              }
-
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setActiveIndex((current) => Math.max(current - 1, 0));
-                return;
-              }
-
-              if (event.key === "Enter" && currentFileLocation) {
-                event.preventDefault();
-                openCurrentFileLocation();
-                return;
-              }
-
-              if (event.key === "Enter" && activeResult) {
-                event.preventDefault();
-                openResult(activeResult);
-              }
-            }}
-            placeholder="Open file"
-            ref={inputRef}
-            value={query}
-          />
-        </div>
-
-        <div className="quick-open-results">
-          {isLoading ? <div className="quick-open-state">Searching...</div> : null}
-          {isTruncated ? <div className="quick-open-state">Results truncated</div> : null}
-          {!isLoading && !isTruncated && results.length === 0 && !currentFileLocation ? (
-            <div className="quick-open-state">No files found</div>
-          ) : null}
-          {currentFileLocation ? (
-            <button
-              className="quick-open-result active"
-              onClick={openCurrentFileLocation}
-              type="button"
-            >
-              <FileCode2 aria-hidden="true" size={16} />
-              <span>
-                <strong>Go to line {currentFileLocation.line}</strong>
-                {currentFileLocation.column ? (
-                  <small>Column {currentFileLocation.column}</small>
-                ) : null}
-              </span>
-            </button>
-          ) : null}
-          {results.map((result, index) => (
-            <button
-              className={
-                index === safeActiveIndex ? "quick-open-result active" : "quick-open-result"
-              }
-              key={result.path}
-              onClick={() => openResult(result)}
-              onMouseEnter={() => setActiveIndex(index)}
-              title={result.path}
-              type="button"
-            >
-              <FileCode2 aria-hidden="true" size={16} />
-              <span>
-                <strong>
-                  <HighlightedText query={query} text={result.name} />
-                </strong>
-                <small>
-                  <HighlightedText query={query} text={result.relativePath} />
-                </small>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <div
-          aria-label="Quick Open syntax: greater-than commands, at-sign file symbols, hash workspace symbols, path colon line and optional column"
-          className="quick-open-hint"
-        >
-          <kbd>&gt;</kbd> commands · <kbd>@</kbd> file symbols · <kbd>#</kbd> workspace symbols ·{" "}
-          <kbd>path:line[:column]</kbd>
-        </div>
-        <PaletteFooter />
-      </section>
-    </div>
+        <CommandFooterHint keys={["↑", "↓"]} label="Navigate" />
+        <CommandFooterHint keys={["Enter"]} label="Open file" />
+        {canGoBack ? <CommandFooterHint keys={["Backspace"]} label="Back" /> : null}
+        <CommandFooterHint keys={["Esc"]} label="Close" />
+      </CommandFooter>
+    </>
   );
+}
+
+function activeOptionId(listboxId: string, hasLocation: boolean, index: number): string | null {
+  if (hasLocation) return commandItemId(listboxId, 0);
+  if (index < 0) return null;
+  return commandItemId(listboxId, index);
 }

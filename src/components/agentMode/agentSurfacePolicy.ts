@@ -167,6 +167,9 @@ export function agentSurfaceTerminalRootMismatch(
   }
 }
 
+export const SURFACE_UNTRUSTED_GIT_REASON =
+  "Trust this project to use Git, scripts and pull requests.";
+
 export function agentSurfaceBlockedReason(
   kind: AgentSurfaceKind,
   thread: AgentThreadView | null,
@@ -174,6 +177,7 @@ export function agentSurfaceBlockedReason(
   workspaceRoot: string | null,
   scope: AgentSurfaceScope = NO_AGENT_SURFACE_SCOPE,
 ): string | null {
+  if (kind === "agents") return null;
   if (isRemoteAgentSurfaceThread(thread))
     return kind === "diff" ? null : SURFACE_REMOTE_UNAVAILABLE_REASON;
   if (kind === "files" || kind === "history") return filesSurfaceBlockedReason(thread);
@@ -185,6 +189,9 @@ export function agentSurfaceBlockedReason(
     return null;
   }
   if (agentSurfaceTargetGone(thread)) return SURFACE_WORKTREE_GONE_REASON;
+  if (kind === "git" || kind === "scripts" || kind === "pullRequest") {
+    return workspaceTrusted ? null : SURFACE_UNTRUSTED_GIT_REASON;
+  }
   if (kind !== "terminal") return null;
   if (agentSurfaceTerminalRootMismatch(thread, workspaceRoot)) {
     return SURFACE_FOREIGN_ROOT_TERMINAL_REASON;

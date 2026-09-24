@@ -27,6 +27,7 @@ import {
   gitChangedFile,
   phpWorkspaceDescriptor,
   trustedDescriptor,
+  identityGatewayDouble,
 } from "./useWorkbenchController.preview/testSupport";
 
 const tabPaths = (tabs: readonly { path: string }[]) => tabs.map(({ path }) => path);
@@ -1373,12 +1374,9 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
         ...saveWriters.workspaceFiles,
       },
       workspaceOwnerFiles: saveWriters.workspaceOwnerFiles,
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      workspaceIdentityGateway: identityGatewayDouble({
         openPath: vi.fn(async () => trustedDescriptor("workspace-local-history", "/workspace")),
-        unregister: vi.fn(async () => undefined),
-      },
+      }),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         autoSave: false,

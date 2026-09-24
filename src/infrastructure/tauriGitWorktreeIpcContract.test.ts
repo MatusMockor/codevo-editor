@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import wireContract from "../../contracts/git-surface-wire.json";
 import { MAX_WORKTREES_PER_REPOSITORY } from "../domain/gitWorktree";
 import {
+  ADD_GIT_BRANCH_WORKTREE_IPC_COMMAND,
   ADD_GIT_WORKTREE_IPC_COMMAND,
+  invokeAddBranchWorktreeIpc,
   invokeAddGitWorktreeIpc,
   invokeListGitWorktreesIpc,
   invokePruneGitWorktreesIpc,
@@ -146,3 +149,109 @@ function invokeMalformedInboundCase(
   }
   return invokePruneGitWorktreesIpc(invoke, repositoryRoot);
 }
+
+describe("add_git_branch_worktree", () => {
+  it("keeps the exact command name", () => {
+    expect(ADD_GIT_BRANCH_WORKTREE_IPC_COMMAND).toBe("add_git_branch_worktree");
+  });
+
+  it("sends the validated request and parses the receipt", async () => {
+    const calls: Array<{ command: string; args: unknown }> = [];
+    const receipt = await invokeAddBranchWorktreeIpc(
+      async (command, args) => {
+        calls.push({ command, args });
+        return { worktreePath: "/repo/.worktrees/branch-feat-x", branch: "feat/x", trusted: true };
+      },
+      { repositoryRoot: "/repo", branch: "feat/x", startPoint: "main" },
+    );
+    expect(calls).toEqual([
+      {
+        command: ADD_GIT_BRANCH_WORKTREE_IPC_COMMAND,
+        args: { request: { repositoryRoot: "/repo", branch: "feat/x", startPoint: "main" } },
+      },
+    ]);
+    expect(receipt).toEqual({
+      worktreePath: "/repo/.worktrees/branch-feat-x",
+      branch: "feat/x",
+      trusted: true,
+    });
+  });
+
+  it("parses the shared contract receipt and request", async () => {
+    const { branchWorktreeReceipt, requests } = wireContract;
+    const calls: unknown[] = [];
+
+    const receipt = await invokeAddBranchWorktreeIpc(async (_command, args) => {
+      calls.push(args);
+      return branchWorktreeReceipt;
+    }, requests.addBranchWorktree);
+
+    expect(receipt).toEqual(branchWorktreeReceipt);
+    expect(receipt.trusted).toBe(false);
+    expect(calls).toEqual([{ request: requests.addBranchWorktree }]);
+  });
+
+  it("rejects option-like and range names before invoking", async () => {
+    const invoked: string[] = [];
+    const record: InvokeGitWorktreeCommand = async (command) => {
+      invoked.push(command);
+      return null;
+    };
+    await expect(
+      invokeAddBranchWorktreeIpc(record, {
+        repositoryRoot: "/repo",
+        branch: "--force",
+        startPoint: null,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      invokeAddBranchWorktreeIpc(record, {
+        repositoryRoot: "/repo",
+        branch: "a..b",
+        startPoint: null,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      invokeAddBranchWorktreeIpc(record, {
+        repositoryRoot: "/repo",
+        branch: "feat/x",
+        startPoint: "--help",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      invokeAddBranchWorktreeIpc(record, {
+        repositoryRoot: "repo",
+        branch: "feat/x",
+        startPoint: null,
+      }),
+    ).rejects.toThrow();
+    expect(invoked).toEqual([]);
+  });
+
+  it("rejects receipts with extra keys, relative paths or a different branch", async () => {
+    const request = { repositoryRoot: "/repo", branch: "feat/x", startPoint: null };
+    const respond = (value: unknown) => invokeAddBranchWorktreeIpc(async () => value, request);
+    const valid = {
+      worktreePath: "/repo/.worktrees/branch-feat-x",
+      branch: "feat/x",
+      trusted: true,
+    };
+
+    await expect(respond({ ...valid, locked: false })).rejects.toThrow();
+    await expect(respond({ ...valid, worktreePath: "branch-feat-x" })).rejects.toThrow();
+    await expect(
+      respond({ ...valid, worktreePath: "/repo/.worktrees/branch-feat-y", branch: "feat/y" }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects receipts without a boolean trust verdict", async () => {
+    const request = { repositoryRoot: "/repo", branch: "feat/x", startPoint: null };
+    const respond = (value: unknown) => invokeAddBranchWorktreeIpc(async () => value, request);
+    const worktree = { worktreePath: "/repo/.worktrees/branch-feat-x", branch: "feat/x" };
+
+    await expect(respond(worktree)).rejects.toThrow();
+    await expect(respond({ ...worktree, trusted: "true" })).rejects.toThrow();
+    await expect(respond({ ...worktree, trusted: null })).rejects.toThrow();
+    await expect(respond({ ...worktree, trusted: 1 })).rejects.toThrow();
+  });
+});

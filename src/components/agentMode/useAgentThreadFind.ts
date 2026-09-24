@@ -227,7 +227,6 @@ function matchesRevealSource(
 }
 
 function eventSource(event: AgentTurnEvent | undefined): "user" | "assistant" | null {
-  if (event?.kind === "subagentEvent") return eventSource(event.event);
   if (event?.kind === "userMessage") return "user";
   if (event?.kind === "assistantText" || event?.kind === "result") return "assistant";
   return null;

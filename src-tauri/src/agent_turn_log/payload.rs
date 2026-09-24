@@ -53,5 +53,6 @@ pub(crate) fn event_kind_code(event: &AgentTurnEvent) -> i64 {
         AgentTurnEvent::ContextUsage { .. } => 16,
         AgentTurnEvent::Error { .. } => 17,
         AgentTurnEvent::UnknownLine { .. } => 18,
+        AgentTurnEvent::SubagentSpawn { .. } => 19,
     }
 }

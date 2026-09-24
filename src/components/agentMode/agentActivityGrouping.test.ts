@@ -3,6 +3,7 @@ import { toolRowKind } from "../../domain/agentToolRowPresentation";
 import {
   agentActivityEntries,
   agentActivityAttentionCount,
+  agentWorkFoldLabel,
   agentThoughtPresentation,
   type AgentActivityEntry,
   type AgentActivityThought,
@@ -326,5 +327,28 @@ describe("interrupted tool rows", () => {
     expect(entries.map((entry) => entry.kind)).toEqual(["item", "item", "item"]);
     expect(entries[1]).toMatchObject({ kind: "item", item: interrupted });
     expect(agentActivityAttentionCount([activityTool(0), interrupted])).toBe(1);
+  });
+});
+
+describe("agentWorkFoldLabel", () => {
+  it("names a fold holding one command run like t3code", () => {
+    expect(
+      agentWorkFoldLabel([activityTool(0), activityTool(1), activityTool(2)], "3 commands"),
+    ).toBe("Ran 3 commands");
+  });
+
+  it("keeps the tally when the fold holds more than one run", () => {
+    const items = [
+      activityTool(0),
+      { kind: "assistantText" as const, key: "e1", text: "Next", paragraphs: ["Next"] },
+      read(2),
+    ];
+    expect(agentWorkFoldLabel(items, "1 command · 1 update · 1 file read")).toBe(
+      "1 command · 1 update · 1 file read",
+    );
+  });
+
+  it("keeps the tally for a thought-only fold", () => {
+    expect(agentWorkFoldLabel([thought(0)], "Activity")).toBe("Activity");
   });
 });

@@ -15,7 +15,6 @@ describe("file tree selected-project action ownership", () => {
   let current: AgentSurfaceFileTreeProps | null;
   const open = vi.fn();
   const preview = vi.fn();
-  const search = vi.fn();
   const read = vi.fn(async () => []);
   const chrome = chromeFixture({
     fileTree: {
@@ -25,7 +24,7 @@ describe("file tree selected-project action ownership", () => {
       revealActivePathSignal: 0,
       onOpenFile: open,
       onPreviewFile: preview,
-      onSearchFiles: search,
+      searchFilesShortcut: "Cmd+P",
     },
   });
   beforeEach(() => {
@@ -81,11 +80,9 @@ describe("file tree selected-project action ownership", () => {
     act(() => {
       stale.onOpenFile(file);
       stale.onPreviewFile(file);
-      stale.searchFiles?.open();
     });
     expect(open).not.toHaveBeenCalled();
     expect(preview).not.toHaveBeenCalled();
-    expect(search).not.toHaveBeenCalled();
     act(() => tree().onOpenFile(file));
     expect(open).toHaveBeenCalledExactlyOnceWith(file);
   });
@@ -97,5 +94,6 @@ describe("file tree selected-project action ownership", () => {
     expect(tree().activePath).toBeNull();
     await render("/b");
     expect(read).toHaveBeenCalledWith("/b");
+    expect(tree().searchFiles).toEqual({ shortcut: "Cmd+P" });
   });
 });

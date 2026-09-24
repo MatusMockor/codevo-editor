@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TauriWorkspaceGateway } from "./tauriWorkspaceGateway";
-import { TauriWorkspaceIdentityGateway } from "./tauriWorkspaceIdentityGateway";
+import wire from "../../contracts/workspace-owner-release-wire.json";
+import {
+  parseWorkspaceAdmissionAdoptionResult,
+  parseWorkspaceOwnerReleaseResult,
+  TauriWorkspaceIdentityGateway,
+} from "./tauriWorkspaceIdentityGateway";
 
 const invoke = vi.hoisted(() => vi.fn());
 
@@ -218,7 +223,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
           }),
         );
       }
-      invoke.mockResolvedValueOnce(undefined);
+      invoke.mockResolvedValueOnce(RELEASED);
       const gateway = new TauriWorkspaceIdentityGateway();
       await gateway.openPath(selectedPaths[0]);
       await gateway.openPath(selectedPaths[1]);
@@ -228,9 +233,10 @@ describe("TauriWorkspaceIdentityGateway", () => {
         relativePath: "src/App.ts",
       });
 
-      const unregistering = gateway.unregister("ws-shared");
-      expect(gateway.matchForPath("/link/project/packages/src/App.ts")).toBeNull();
+      const unregistering = gateway.unregister(owner("ws-shared", "/real/project"));
+      expect(gateway.matchForPath("/link/project/packages/src/App.ts")).not.toBeNull();
       await unregistering;
+      expect(gateway.matchForPath("/link/project/packages/src/App.ts")).toBeNull();
     },
   );
 
@@ -255,7 +261,9 @@ describe("TauriWorkspaceIdentityGateway", () => {
           unicodeNormalizationPolicy: "preserved",
         }),
       )
-      .mockImplementationOnce(() => new Promise<void>((resolve) => (finishUnregister = resolve)));
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (finishUnregister = () => resolve(RELEASED))),
+      );
     const gateway = new TauriWorkspaceIdentityGateway();
     await gateway.openPath("/alias-one/project");
     const latest = await gateway.openPath("/alias-two/project");
@@ -264,12 +272,13 @@ describe("TauriWorkspaceIdentityGateway", () => {
     expect(gateway.descriptorForPath("/alias-two/project/src/App.ts")).toBe(latest);
     expect(gateway.descriptorForPath("/real/project/src/App.ts")).toBe(latest);
 
-    const unregistering = gateway.unregister("ws-shared");
-    expect(gateway.descriptorForPath("/alias-one/project/src/App.ts")).toBeNull();
-    expect(gateway.descriptorForPath("/alias-two/project/src/App.ts")).toBeNull();
+    const unregistering = gateway.unregister(owner("ws-shared", "/real/project"));
     await vi.waitFor(() => expect(finishUnregister).toBeTypeOf("function"));
+    expect(gateway.descriptorForPath("/alias-one/project/src/App.ts")).toBe(latest);
     finishUnregister?.();
     await unregistering;
+    expect(gateway.descriptorForPath("/alias-one/project/src/App.ts")).toBeNull();
+    expect(gateway.descriptorForPath("/alias-two/project/src/App.ts")).toBeNull();
   });
 
   it("uses each retained alias for trusted reads and writes until unregister", async () => {
@@ -328,7 +337,8 @@ describe("TauriWorkspaceIdentityGateway", () => {
       expectedRevision: revision(),
     });
 
-    await identities.unregister("ws-shared");
+    invoke.mockResolvedValueOnce(RELEASED);
+    await identities.unregister(owner("ws-shared", "/real/project"));
     expect(() => files.writeTextFile("/alias-one/project/src/One.ts", "one", revision())).toThrow(
       "Reopen it explicitly",
     );
@@ -346,18 +356,255 @@ describe("TauriWorkspaceIdentityGateway", () => {
         caseSensitive: true,
         unicodeNormalizationPolicy: "preserved",
       })
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(RELEASED);
     const gateway = new TauriWorkspaceIdentityGateway();
 
     await gateway.getDescriptor("ws-2");
-    await gateway.unregister("ws-2");
+    await gateway.unregister(owner("ws-2", "/workspace"));
 
     expect(invoke).toHaveBeenNthCalledWith(1, "get_workspace_descriptor", {
       workspaceId: "ws-2",
     });
     expect(invoke).toHaveBeenNthCalledWith(2, "unregister_workspace", {
       workspaceId: "ws-2",
+      admissionToken: 1,
+      canonicalRootPath: "/workspace",
     });
+  });
+
+  it.each(wire.unregisterWorkspace.statuses)(
+    "sends the owner id and canonical root and parses the %s release result",
+    async (status) => {
+      invoke.mockResolvedValueOnce({ status });
+      const gateway = new TauriWorkspaceIdentityGateway();
+
+      await expect(gateway.unregister(owner("ws-owner", "/real/owner"))).resolves.toEqual({
+        status,
+      });
+
+      expect(invoke).toHaveBeenCalledExactlyOnceWith("unregister_workspace", {
+        workspaceId: "ws-owner",
+        admissionToken: 1,
+        canonicalRootPath: "/real/owner",
+      });
+      expect(Object.keys(invoke.mock.calls[0]?.[1] ?? {}).sort()).toEqual(
+        [...wire.unregisterWorkspace.request].sort(),
+      );
+    },
+  );
+
+  it("accepts exactly the shared contract release statuses", () => {
+    expect(
+      ["released", "releasing", "retainedByOtherOwners", "unknownWorkspace", "staleOwner"].sort(),
+    ).toEqual([...wire.unregisterWorkspace.statuses].sort());
+    for (const status of wire.unregisterWorkspace.statuses) {
+      expect(parseWorkspaceOwnerReleaseResult({ status })).toEqual({ status });
+    }
+  });
+
+  it.each([
+    ["an unknown status", { status: "gone" }],
+    ["a dispose-only status", { status: "closed" }],
+    ["an extra key", { status: "released", extra: true }],
+    ["a missing status", {}],
+    ["a bare string", "released"],
+    ["null", null],
+    ["undefined", undefined],
+  ])("rejects a release result with %s", async (_label, result) => {
+    invoke.mockResolvedValueOnce(result);
+
+    await expect(
+      new TauriWorkspaceIdentityGateway().unregister(owner("ws-bad", "/bad")),
+    ).rejects.toThrow("Workspace release result");
+  });
+
+  it.each([
+    ["an empty canonical root", { workspaceId: "ws", admissionToken: 1, canonicalRootPath: "" }],
+    ["an empty workspace id", { workspaceId: "", admissionToken: 1, canonicalRootPath: "/real" }],
+    [
+      "a NUL canonical root",
+      { workspaceId: "ws", admissionToken: 1, canonicalRootPath: "/re\u0000al" },
+    ],
+    [
+      "a missing admission token",
+      { workspaceId: "ws", admissionToken: null, canonicalRootPath: "/r" },
+    ],
+    ["a fractional token", { workspaceId: "ws", admissionToken: 1.5, canonicalRootPath: "/r" }],
+  ])("rejects an unregister with %s without IPC", async (_label, releaseOwner) => {
+    await expect(new TauriWorkspaceIdentityGateway().unregister(releaseOwner)).rejects.toThrow();
+
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it.each(["releasing", "staleOwner"] as const)(
+    "keeps routing when an unregister is %s",
+    async (status) => {
+      invoke.mockResolvedValueOnce(registration(TAB_A, 1)).mockResolvedValueOnce({ status });
+      const gateway = new TauriWorkspaceIdentityGateway();
+      const current = await gateway.openPath("/link/a");
+
+      await expect(gateway.unregister(owner("ws-a", "/real/a", 1))).resolves.toEqual({ status });
+
+      expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBe(current);
+    },
+  );
+
+  it("keeps the newest admission routable when an older token is released", async () => {
+    invoke
+      .mockResolvedValueOnce(registration(TAB_A, 1))
+      .mockResolvedValueOnce(registration(TAB_A, 2))
+      .mockResolvedValueOnce(RELEASED);
+    const gateway = new TauriWorkspaceIdentityGateway();
+    await gateway.openPath("/link/a");
+    const newest = await gateway.openPath("/link/a");
+
+    await gateway.unregister(owner("ws-a", "/real/a", 1));
+
+    expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBe(newest);
+  });
+
+  it.each(wire.adoptWorkspaceAdmission.statuses)(
+    "sends an exact adoption and parses the %s result",
+    async (status) => {
+      invoke.mockResolvedValueOnce({ status });
+
+      await expect(
+        new TauriWorkspaceIdentityGateway().adoptAdmission({
+          workspaceId: "ws-a",
+          newToken: 2,
+          replacedToken: 1,
+        }),
+      ).resolves.toEqual({ status });
+
+      expect(invoke).toHaveBeenCalledExactlyOnceWith("adopt_workspace_admission", {
+        workspaceId: "ws-a",
+        newToken: 2,
+        replacedToken: 1,
+      });
+      expect(Object.keys(invoke.mock.calls[0]?.[1] ?? {}).sort()).toEqual(
+        [...wire.adoptWorkspaceAdmission.request].sort(),
+      );
+    },
+  );
+
+  it("accepts exactly the shared contract adoption statuses", () => {
+    expect(["adopted", "staleAdmission", "unknownWorkspace", "releasing"].sort()).toEqual(
+      [...wire.adoptWorkspaceAdmission.statuses].sort(),
+    );
+    expect(() => parseWorkspaceAdmissionAdoptionResult({ status: "released" })).toThrow(
+      "not supported",
+    );
+    expect(() => parseWorkspaceAdmissionAdoptionResult({ status: "adopted", extra: true })).toThrow(
+      "malformed",
+    );
+  });
+
+  it("forgets only the replaced token after an adoption", async () => {
+    invoke
+      .mockResolvedValueOnce(registration(TAB_A, 1))
+      .mockResolvedValueOnce(registration(TAB_A, 2))
+      .mockResolvedValueOnce({ status: "adopted" })
+      .mockResolvedValueOnce(RELEASED);
+    const gateway = new TauriWorkspaceIdentityGateway();
+    await gateway.openPath("/link/a");
+    const adopted = await gateway.openPath("/link/a");
+
+    await gateway.adoptAdmission({ workspaceId: "ws-a", newToken: 2, replacedToken: 1 });
+    expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBe(adopted);
+    await gateway.unregister(owner("ws-a", "/real/a", 2));
+
+    expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBeNull();
+  });
+
+  it("rejects an invalid adoption without IPC", async () => {
+    await expect(
+      new TauriWorkspaceIdentityGateway().adoptAdmission({
+        workspaceId: "ws-a",
+        newToken: 0,
+        replacedToken: 1,
+      }),
+    ).rejects.toThrow("positive safe integer");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rolls back an exact admission and falls back to the remaining live admission", async () => {
+    invoke
+      .mockResolvedValueOnce(registration(TAB_A, 1))
+      .mockResolvedValueOnce(registration(TAB_A, 2))
+      .mockResolvedValueOnce(RELEASED);
+    const gateway = new TauriWorkspaceIdentityGateway();
+    const original = await gateway.openPath("/link/a");
+    const reopened = await gateway.openPath("/link/a");
+
+    await gateway.rollbackAdmission(reopened);
+
+    expect(invoke).toHaveBeenLastCalledWith("rollback_workspace_registration", {
+      workspaceId: "ws-a",
+      admissionToken: 2,
+    });
+    expect(Object.keys(invoke.mock.lastCall?.[1] ?? {}).sort()).toEqual(
+      [...wire.rollbackWorkspaceRegistration.request].sort(),
+    );
+    expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBe(original);
+  });
+
+  it("forgets the workspace when its last live admission is rolled back", async () => {
+    invoke.mockResolvedValueOnce(registration(TAB_A, 1)).mockResolvedValueOnce(RELEASED);
+    const gateway = new TauriWorkspaceIdentityGateway();
+    const only = await gateway.openPath("/link/a");
+
+    await gateway.rollbackAdmission(only);
+
+    expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBeNull();
+  });
+
+  it.each([
+    ["the pre-status boolean", true],
+    ["an unknown status", { status: "closed" }],
+  ])(
+    "rejects a rollback result with %s and keeps the admission routable",
+    async (_label, result) => {
+      invoke.mockResolvedValueOnce(registration(TAB_A, 1)).mockResolvedValueOnce(result);
+      const gateway = new TauriWorkspaceIdentityGateway();
+      const only = await gateway.openPath("/link/a");
+
+      await expect(gateway.rollbackAdmission(only)).rejects.toThrow("Workspace release result");
+      expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBe(only);
+    },
+  );
+
+  it("keeps the admission routable while its rollback is still releasing", async () => {
+    invoke
+      .mockResolvedValueOnce(registration(TAB_A, 1))
+      .mockResolvedValueOnce({ status: "releasing" });
+    const gateway = new TauriWorkspaceIdentityGateway();
+    const only = await gateway.openPath("/link/a");
+
+    await expect(gateway.rollbackAdmission(only)).resolves.toEqual({ status: "releasing" });
+    expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBe(only);
+  });
+
+  it.each(wire.rollbackWorkspaceRegistration.settledStatuses)(
+    "treats the settled rollback status %s as removing the exact admission",
+    async (status) => {
+      invoke.mockResolvedValueOnce(registration(TAB_A, 1)).mockResolvedValueOnce({ status });
+      const gateway = new TauriWorkspaceIdentityGateway();
+      const only = await gateway.openPath("/link/a");
+
+      await expect(gateway.rollbackAdmission(only)).resolves.toEqual({ status });
+      expect(gateway.descriptorForPath("/link/a/src/App.ts")).toBeNull();
+    },
+  );
+
+  it("parses exactly the shared contract rollback statuses", () => {
+    expect([...wire.rollbackWorkspaceRegistration.statuses].sort()).toEqual(
+      [...wire.unregisterWorkspace.statuses].sort(),
+    );
+    expect(
+      wire.rollbackWorkspaceRegistration.statuses.filter(
+        (status) => !wire.rollbackWorkspaceRegistration.settledStatuses.includes(status),
+      ),
+    ).toEqual(["releasing"]);
   });
 
   it("rejects a descriptor lookup owned by another workspace", async () => {
@@ -374,7 +621,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
     );
   });
 
-  it("resolves both aliases while registered and invalidates them before unregister completes", async () => {
+  it("keeps both aliases routable until the backend releases the exact owner", async () => {
     let finishUnregister: (() => void) | undefined;
     invoke
       .mockResolvedValueOnce({
@@ -388,30 +635,35 @@ describe("TauriWorkspaceIdentityGateway", () => {
         },
         registration: receipt("ws-1"),
       })
-      .mockImplementationOnce(() => new Promise<void>((resolve) => (finishUnregister = resolve)));
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (finishUnregister = () => resolve(RELEASED))),
+      );
     const gateway = new TauriWorkspaceIdentityGateway();
     await gateway.openFromPicker();
 
     expect(gateway.descriptorForPath("/link/project/src/App.ts")?.workspaceId).toBe("ws-1");
     expect(gateway.descriptorForPath("/real/project/src/App.ts")?.workspaceId).toBe("ws-1");
 
-    const unregistering = gateway.unregister("ws-1");
-    expect(gateway.descriptorForPath("/link/project/src/App.ts")).toBeNull();
+    const unregistering = gateway.unregister(owner("ws-1", "/real/project"));
     await vi.waitFor(() => expect(finishUnregister).toBeTypeOf("function"));
+    expect(gateway.descriptorForPath("/link/project/src/App.ts")?.workspaceId).toBe("ws-1");
     finishUnregister?.();
     await unregistering;
+    expect(gateway.descriptorForPath("/link/project/src/App.ts")).toBeNull();
   });
 
-  it("does not cache a deferred picker result superseded by unregister", async () => {
+  it("forgets a deferred picker admission only after its exact token is released", async () => {
     let finishPicker: ((result: unknown) => void) | undefined;
     let finishUnregister: (() => void) | undefined;
     invoke
       .mockImplementationOnce(() => new Promise((resolve) => (finishPicker = resolve)))
-      .mockImplementationOnce(() => new Promise<void>((resolve) => (finishUnregister = resolve)));
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (finishUnregister = () => resolve(RELEASED))),
+      );
     const gateway = new TauriWorkspaceIdentityGateway();
 
     const opening = gateway.openFromPicker();
-    const unregistering = gateway.unregister("ws-deferred");
+    const unregistering = gateway.unregister(owner("ws-deferred", "/real/deferred"));
     await vi.waitFor(() => expect(finishPicker).toBeTypeOf("function"));
     finishPicker?.({
       status: "opened",
@@ -426,14 +678,17 @@ describe("TauriWorkspaceIdentityGateway", () => {
     });
 
     await opening;
-    expect(gateway.descriptorForPath("/link/deferred/src/App.ts")).toBeNull();
+    expect(gateway.descriptorForPath("/link/deferred/src/App.ts")?.workspaceId).toBe("ws-deferred");
     await vi.waitFor(() =>
       expect(invoke).toHaveBeenLastCalledWith("unregister_workspace", {
         workspaceId: "ws-deferred",
+        admissionToken: 1,
+        canonicalRootPath: "/real/deferred",
       }),
     );
     finishUnregister?.();
     await unregistering;
+    expect(gateway.descriptorForPath("/link/deferred/src/App.ts")).toBeNull();
   });
 
   it("defers an immediate path reopen until unregister completes", async () => {
@@ -448,7 +703,9 @@ describe("TauriWorkspaceIdentityGateway", () => {
           unicodeNormalizationPolicy: "preserved",
         }),
       )
-      .mockImplementationOnce(() => new Promise<void>((resolve) => (finishUnregister = resolve)))
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (finishUnregister = () => resolve(RELEASED))),
+      )
       .mockResolvedValueOnce(
         registration({
           workspaceId: "ws-reopen",
@@ -461,12 +718,12 @@ describe("TauriWorkspaceIdentityGateway", () => {
     const gateway = new TauriWorkspaceIdentityGateway();
     await gateway.openPath("/link/reopen");
 
-    const unregistering = gateway.unregister("ws-reopen");
+    const unregistering = gateway.unregister(owner("ws-reopen", "/real/reopen"));
     const reopening = gateway.openPath("/link/reopen");
     await vi.waitFor(() => expect(finishUnregister).toBeTypeOf("function"));
 
     expect(invoke).toHaveBeenCalledTimes(2);
-    expect(gateway.descriptorForPath("/link/reopen/src/App.ts")).toBeNull();
+    expect(gateway.descriptorForPath("/link/reopen/src/App.ts")?.workspaceId).toBe("ws-reopen");
     finishUnregister?.();
     await unregistering;
     await expect(reopening).resolves.toMatchObject({ workspaceId: "ws-reopen" });
@@ -478,20 +735,22 @@ describe("TauriWorkspaceIdentityGateway", () => {
     try {
       invoke
         .mockImplementationOnce(() => new Promise(() => undefined))
-        .mockResolvedValueOnce(undefined);
+        .mockResolvedValueOnce(RELEASED);
       const gateway = new TauriWorkspaceIdentityGateway({
         operationTimeoutMs: 10,
       });
 
       const opening = gateway.openPath("/never");
       const openingExpectation = expect(opening).rejects.toThrow("timed out");
-      const unregistering = gateway.unregister("ws-never");
+      const unregistering = gateway.unregister(owner("ws-never", "/never"));
       await vi.advanceTimersByTimeAsync(10);
 
       await openingExpectation;
-      await expect(unregistering).resolves.toBeUndefined();
+      await expect(unregistering).resolves.toEqual(RELEASED);
       expect(invoke).toHaveBeenLastCalledWith("unregister_workspace", {
         workspaceId: "ws-never",
+        admissionToken: 1,
+        canonicalRootPath: "/never",
       });
     } finally {
       vi.useRealTimers();
@@ -545,7 +804,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
     let finishOpen: ((descriptor: unknown) => void) | undefined;
     invoke
       .mockImplementationOnce(() => new Promise((resolve) => (finishOpen = resolve)))
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce(RELEASED);
     const gateway = new TauriWorkspaceIdentityGateway();
     const opening = gateway.openPath("/late");
     await vi.waitFor(() => expect(finishOpen).toBeTypeOf("function"));
@@ -604,7 +863,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
           unicodeNormalizationPolicy: "preserved",
         }),
       )
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce(RELEASED);
     const gateway = new TauriWorkspaceIdentityGateway({ maxWorkspaces: 1 });
     await gateway.openPath("/one");
 
@@ -630,7 +889,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
         }),
       );
     }
-    invoke.mockResolvedValueOnce(true);
+    invoke.mockResolvedValueOnce(RELEASED);
     const gateway = new TauriWorkspaceIdentityGateway({
       maxAliasesPerWorkspace: 2,
     });
@@ -679,7 +938,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
           }),
         )
         .mockImplementationOnce(() => new Promise(() => undefined))
-        .mockResolvedValueOnce(undefined);
+        .mockResolvedValueOnce(RELEASED);
       const gateway = new TauriWorkspaceIdentityGateway({
         maxPendingOperations: 1,
         operationTimeoutMs: 10,
@@ -690,10 +949,12 @@ describe("TauriWorkspaceIdentityGateway", () => {
       await vi.advanceTimersByTimeAsync(10);
       await lookupExpectation;
 
-      await expect(gateway.unregister("ws-cleanup")).resolves.toBeUndefined();
+      await expect(gateway.unregister(owner("ws-cleanup", "/cleanup"))).resolves.toEqual(RELEASED);
 
       expect(invoke).toHaveBeenLastCalledWith("unregister_workspace", {
         workspaceId: "ws-cleanup",
+        admissionToken: 1,
+        canonicalRootPath: "/cleanup",
       });
       expect(gateway.descriptorForPath("/cleanup/file.ts")).toBeNull();
     } finally {
@@ -713,7 +974,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
           unexpected: true,
         }),
       )
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce(RELEASED);
     const gateway = new TauriWorkspaceIdentityGateway();
 
     await expect(gateway.openPath("/invalid")).rejects.toThrow("invalid registration descriptor");
@@ -740,7 +1001,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
         }),
         unexpected: true,
       })
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce(RELEASED);
 
     await expect(new TauriWorkspaceIdentityGateway().openPath("/extra")).rejects.toThrow(
       "invalid registration result",
@@ -765,7 +1026,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
         registration: receipt("ws-picker-extra"),
         unexpected: true,
       })
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce(RELEASED);
 
     await expect(new TauriWorkspaceIdentityGateway().openFromPicker()).rejects.toThrow(
       "invalid result",
@@ -776,7 +1037,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
     });
   });
 
-  it.each([false, { confirmed: true }])(
+  it.each([true, { confirmed: true }, { status: "releasing" }])(
     "surfaces a malformed or unconfirmed registration rollback: %j",
     async (rollbackResult) => {
       invoke
@@ -793,11 +1054,24 @@ describe("TauriWorkspaceIdentityGateway", () => {
         .mockResolvedValueOnce(rollbackResult);
 
       await expect(new TauriWorkspaceIdentityGateway().openPath("/unconfirmed")).rejects.toThrow(
-        "rollback was not confirmed",
+        /Workspace release result|still in progress/,
       );
     },
   );
 });
+
+const RELEASED = { status: "released" } as const;
+const TAB_A = {
+  workspaceId: "ws-a",
+  selectedRootPath: "/link/a",
+  canonicalRootPath: "/real/a",
+  caseSensitive: true,
+  unicodeNormalizationPolicy: "preserved",
+};
+
+function owner(workspaceId: string, canonicalRootPath: string, admissionToken = 1) {
+  return { workspaceId, admissionToken, canonicalRootPath };
+}
 
 function receipt(workspaceId: string, admissionToken = 1) {
   return {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
-import type { AgentShipActions } from "./AgentShipPanel";
+import type { AgentShipIntegrationMode, AgentShipStepResult } from "../../domain/agentShip";
+import type { AgentCommitSelection } from "../../domain/gitCommitSelection";
 import { isRemoteAgentSurfaceThread } from "./agentSurfacePolicy";
 import { agentShipStatusUnread } from "./agentModePresentation";
 
@@ -15,6 +16,26 @@ export type AgentShipSurface = Pick<
   | "removeWorktree"
   | "resetThreadShip"
 >;
+
+export interface AgentShipActions {
+  onRefreshShipStatus(threadId: string): void;
+  onCommit(
+    threadId: string,
+    message: string,
+    selection?: AgentCommitSelection,
+  ): Promise<AgentShipStepResult>;
+  onPush(threadId: string): Promise<AgentShipStepResult>;
+  onOpenCompareUrl(threadId: string): void;
+  onIntegrate(threadId: string, mode: AgentShipIntegrationMode): void;
+  onRemoveWorktree(threadId: string, options: { readonly deleteBranch: boolean }): void;
+  onDiscardWorktree(threadId: string): void;
+  onDismissFailure(threadId: string): void;
+}
+
+const SHIP_ACTION_UNAVAILABLE: AgentShipStepResult = Object.freeze({
+  kind: "notRun",
+  message: "This action is not available for a server conversation yet.",
+});
 
 export interface AgentShipActionsOptions {
   readonly agents: AgentShipSurface;
@@ -52,9 +73,14 @@ export function useAgentShipActions({
       threadId !== blockedThreadId && !threadId.startsWith("remote:");
     return {
       onRefreshShipStatus: (threadId) => allowed(threadId) && void refreshShipStatus(threadId),
-      onCommit: (threadId, message) =>
-        allowed(threadId) && void commitThreadChanges(threadId, message),
-      onPush: (threadId) => allowed(threadId) && void pushThreadBranch(threadId),
+      onCommit: async (threadId, message, selection) => {
+        if (!allowed(threadId)) return SHIP_ACTION_UNAVAILABLE;
+        return commitThreadChanges(threadId, message, selection);
+      },
+      onPush: async (threadId) => {
+        if (!allowed(threadId)) return SHIP_ACTION_UNAVAILABLE;
+        return pushThreadBranch(threadId);
+      },
       onOpenCompareUrl: (threadId) => allowed(threadId) && void openThreadCompareUrl(threadId),
       onIntegrate: (threadId, mode) =>
         allowed(threadId) && void integrateThreadBranch(threadId, mode),

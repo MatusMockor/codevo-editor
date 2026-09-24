@@ -116,7 +116,7 @@ type CommitOpenWorkspaceRequest = (
 type PerformOpenWorkspacePath = (
   path: string,
   descriptor: WorkspaceIdentityDescriptor | null,
-  adoptIdentity: (() => number | null) | null,
+  adoptIdentity: (() => Promise<number | null>) | null,
   requestToken: number,
   commitOpenWorkspaceRequest: CommitOpenWorkspaceRequest,
   options?: OpenWorkspacePathOptions,
@@ -137,7 +137,7 @@ interface WorkspaceOpenRequestLifecycleInput {
   }> | null;
   readonly withManagedWorkspaceIdentityLease: (
     descriptor: WorkspaceIdentityDescriptor,
-    useLease: (adopt: () => void) => Promise<void>,
+    useLease: (adopt: () => Promise<boolean>) => Promise<void>,
   ) => Promise<void>;
   readonly workbenchMountedRef: MutableRefObject<boolean>;
   readonly workspaceCloseGenerationByRootRef: MutableRefObject<Record<string, number>>;
@@ -354,15 +354,12 @@ export function useWorkspaceOpenRequestLifecycle({
               return;
             }
             invalidateWorkspaceCloseOwnership(path, descriptor);
-            const adoptExactIdentity = () => {
-              const previousGeneration =
-                ownedWorkspaceIdentityGenerationByIdRef.current[descriptor.workspaceId] ?? null;
-              adoptIdentity();
-              const adoptedGeneration =
-                ownedWorkspaceIdentityGenerationByIdRef.current[descriptor.workspaceId] ?? null;
-              if (adoptedGeneration === previousGeneration) return null;
-              return adoptedGeneration;
-            };
+            const adoptExactIdentity = exactIdentityAdoption(
+              descriptor,
+              adoptIdentity,
+              ownedWorkspaceIdentityGenerationByIdRef,
+              workspaceIdentityByRootRef,
+            );
             await performOpenWorkspacePath(
               descriptor.selectedPath,
               descriptor,
@@ -474,15 +471,12 @@ export function useWorkspaceOpenRequestLifecycle({
           return;
         }
         invalidateWorkspaceCloseOwnership(result.descriptor.selectedPath, result.descriptor);
-        const adoptExactIdentity = () => {
-          const previousGeneration =
-            ownedWorkspaceIdentityGenerationByIdRef.current[result.descriptor.workspaceId] ?? null;
-          adoptIdentity();
-          const adoptedGeneration =
-            ownedWorkspaceIdentityGenerationByIdRef.current[result.descriptor.workspaceId] ?? null;
-          if (adoptedGeneration === previousGeneration) return null;
-          return adoptedGeneration;
-        };
+        const adoptExactIdentity = exactIdentityAdoption(
+          result.descriptor,
+          adoptIdentity,
+          ownedWorkspaceIdentityGenerationByIdRef,
+          workspaceIdentityByRootRef,
+        );
         await performOpenWorkspacePath(
           result.descriptor.selectedPath,
           result.descriptor,
@@ -519,6 +513,7 @@ export function useWorkspaceOpenRequestLifecycle({
     retireStartupRestoreIntent,
     withManagedWorkspaceIdentityLease,
     workbenchMountedRef,
+    workspaceIdentityByRootRef,
     workspaceIdentityGateway,
   ]);
   const openWorkspaceRoot = useCallback(
@@ -599,4 +594,23 @@ export function useWorkspaceOpenRequestLifecycle({
     openWorkspaceRoot,
     openWorkspaceRootWithReceipt,
   } as const;
+}
+
+function exactIdentityAdoption(
+  descriptor: WorkspaceIdentityDescriptor,
+  adoptIdentity: () => Promise<boolean>,
+  ownedGenerationByIdRef: MutableRefObject<Record<string, number>>,
+  identityByRootRef: MutableRefObject<Record<string, WorkspaceIdentityDescriptor>>,
+): () => Promise<number | null> {
+  return async () => {
+    const previousGeneration = ownedGenerationByIdRef.current[descriptor.workspaceId] ?? null;
+    if (!(await adoptIdentity())) return null;
+    const adoptedGeneration = ownedGenerationByIdRef.current[descriptor.workspaceId] ?? null;
+    if (adoptedGeneration === previousGeneration) return null;
+    for (const [rootPath, mapped] of Object.entries(identityByRootRef.current)) {
+      if (mapped.workspaceId !== descriptor.workspaceId || mapped === descriptor) continue;
+      identityByRootRef.current[rootPath] = descriptor;
+    }
+    return adoptedGeneration;
+  };
 }

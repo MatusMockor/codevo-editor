@@ -1794,15 +1794,15 @@ code.settings-readout,
 .settings-screen .settings-screen__page:focus-visible,
 .settings-screen .settings-screen__title:focus-visible,
 .settings-screen .settings-search__input:focus-visible,
+.settings-screen .settings-input:not(.settings-input--rec):focus-visible,
 .settings-screen .settings-select__input:focus-visible,
 .settings-screen .settings-numfield__value:focus-visible,
 .settings-screen .settings-numfield__step:focus-visible {
   box-shadow: none;
 }
 
-.settings-screen .settings-search:focus-within,
 .settings-screen .settings-select:focus-within,
-.settings-screen .settings-numfield:focus-within {
+.settings-screen .settings-numfield:has(.settings-numfield__step:focus-visible) {
   box-shadow: var(--settings-focus-ring);
 }
 

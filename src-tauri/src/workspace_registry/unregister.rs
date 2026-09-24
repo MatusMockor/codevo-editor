@@ -1,7 +1,8 @@
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use super::unsupported_platform;
 use super::{
-    lock_error, unknown_workspace, ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry,
+    lock_error, unknown_workspace, ManagedWorkspaceDescriptor, RegistrationOwner, WorkspaceId,
+    WorkspaceRegistry,
 };
 use std::{io, path::Path, sync::atomic::Ordering};
 
@@ -33,6 +34,33 @@ impl WorkspaceUnregisterReservation<'_> {
         self.settled = true;
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceOwnerScope {
+    Admission {
+        owner: RegistrationOwner,
+        admission_token: u64,
+    },
+    EditorOwnership {
+        admission_token: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceAdmissionAdoption {
+    Adopted,
+    StaleAdmission,
+    UnknownWorkspace,
+    Releasing,
+}
+
+pub(crate) enum WorkspaceOwnerRelease<'a> {
+    UnknownWorkspace,
+    StaleOwner,
+    Releasing,
+    RetainedByOtherOwners,
+    LastOwner(WorkspaceUnregisterReservation<'a>),
 }
 
 impl Drop for WorkspaceUnregisterReservation<'_> {
@@ -77,28 +105,192 @@ impl WorkspaceRegistry {
         }
     }
 
+    pub(crate) fn release_owner(
+        &self,
+        workspace_id: &WorkspaceId,
+        scope: WorkspaceOwnerScope,
+        expected_canonical_root: Option<&Path>,
+    ) -> io::Result<WorkspaceOwnerRelease<'_>> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (workspace_id, scope, expected_canonical_root);
+            return Err(unsupported_platform());
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let operation = self.lock_operations()?;
+            let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
+            let Some(workspace) = workspaces.get_mut(workspace_id) else {
+                return Ok(WorkspaceOwnerRelease::UnknownWorkspace);
+            };
+            let root_matches = expected_canonical_root
+                .is_none_or(|root| workspace.descriptor.canonical_root_path == root);
+            let released = released_admission_tokens(workspace, scope);
+            if !root_matches || released.is_empty() {
+                return Ok(WorkspaceOwnerRelease::StaleOwner);
+            }
+            if workspace.unregister_generation.is_some() {
+                return Ok(WorkspaceOwnerRelease::Releasing);
+            }
+            let is_last_owner = workspace
+                .registration_admissions
+                .keys()
+                .all(|token| released.contains(token));
+            if is_last_owner {
+                if self.has_runtime_start(workspace_id)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "workspace runtime start is in progress",
+                    ));
+                }
+                let generation = self
+                    .next_unregister_generation
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_add(1);
+                workspace.unregister_generation = Some(generation);
+                let descriptor = workspace.descriptor.clone();
+                let transition = match self.registration_operations.begin_transition(workspace_id) {
+                    Ok(transition) => transition,
+                    Err(error) => {
+                        workspace.unregister_generation = None;
+                        return Err(error);
+                    }
+                };
+                drop(workspaces);
+                drop(operation);
+                let reservation = WorkspaceUnregisterReservation {
+                    registry: self,
+                    descriptor,
+                    generation,
+                    cleanup_started: false,
+                    settled: false,
+                };
+                transition.wait()?;
+                return Ok(WorkspaceOwnerRelease::LastOwner(reservation));
+            }
+            let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
+            for token in released {
+                super::registration::remove_losing_registration_admission(
+                    &mut workspaces,
+                    &mut path_owners,
+                    workspace_id,
+                    token,
+                );
+            }
+            let latest_admission_token = workspaces
+                .get(workspace_id)
+                .map(|workspace| workspace.latest_admission_token)
+                .ok_or_else(unknown_workspace)?;
+            let transition = self
+                .registration_operations
+                .begin_transition(workspace_id)?;
+            drop(path_owners);
+            drop(workspaces);
+            drop(operation);
+            transition.wait()?;
+            self.publish_registration_if_latest(workspace_id, latest_admission_token)?;
+            Ok(WorkspaceOwnerRelease::RetainedByOtherOwners)
+        }
+    }
+
+    pub(crate) fn adopt_admission(
+        &self,
+        workspace_id: &WorkspaceId,
+        adopted_token: u64,
+        replaced_token: u64,
+    ) -> io::Result<WorkspaceAdmissionAdoption> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (workspace_id, adopted_token, replaced_token);
+            return Err(unsupported_platform());
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let operation = self.lock_operations()?;
+            let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
+            let Some(workspace) = workspaces.get(workspace_id) else {
+                return Ok(WorkspaceAdmissionAdoption::UnknownWorkspace);
+            };
+            let adopted_is_editor = workspace
+                .registration_admissions
+                .get(&adopted_token)
+                .is_some_and(|admission| {
+                    admission.published && admission.owner == RegistrationOwner::Editor
+                });
+            if !adopted_is_editor {
+                return Ok(WorkspaceAdmissionAdoption::StaleAdmission);
+            }
+            if workspace.unregister_generation.is_some() {
+                return Ok(WorkspaceAdmissionAdoption::Releasing);
+            }
+            let replaces_editor = replaced_token != adopted_token
+                && workspace
+                    .registration_admissions
+                    .get(&replaced_token)
+                    .is_some_and(|admission| admission.owner == RegistrationOwner::Editor);
+            if !replaces_editor {
+                return Ok(WorkspaceAdmissionAdoption::Adopted);
+            }
+            let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
+            super::registration::remove_losing_registration_admission(
+                &mut workspaces,
+                &mut path_owners,
+                workspace_id,
+                replaced_token,
+            );
+            let latest_admission_token = workspaces
+                .get(workspace_id)
+                .map(|workspace| workspace.latest_admission_token)
+                .ok_or_else(unknown_workspace)?;
+            let transition = self
+                .registration_operations
+                .begin_transition(workspace_id)?;
+            drop(path_owners);
+            drop(workspaces);
+            drop(operation);
+            transition.wait()?;
+            self.publish_registration_if_latest(workspace_id, latest_admission_token)?;
+            Ok(WorkspaceAdmissionAdoption::Adopted)
+        }
+    }
+
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn admission_tokens_for_test(&self, workspace_id: &WorkspaceId) -> Vec<u64> {
+        self.workspaces
+            .lock()
+            .expect("workspaces")
+            .get(workspace_id)
+            .map(|workspace| workspace.registration_admissions.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn holds_admission(
+        &self,
+        workspace_id: &WorkspaceId,
+        owner: RegistrationOwner,
+        admission_token: u64,
+    ) -> bool {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (workspace_id, owner, admission_token);
+            false
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.workspaces
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .get(workspace_id)
+                .and_then(|workspace| workspace.registration_admissions.get(&admission_token))
+                .is_some_and(|admission| admission.owner == owner)
+        }
+    }
+
     pub(crate) fn reserve_unregister(
         &self,
         workspace_id: &WorkspaceId,
     ) -> io::Result<WorkspaceUnregisterReservation<'_>> {
         self.reserve_unregister_matching(workspace_id, |_| true)
-    }
-
-    pub(crate) fn reserve_unregister_exact(
-        &self,
-        workspace_id: &WorkspaceId,
-        admission_token: u64,
-        selected_root_path: &Path,
-        canonical_root_path: &Path,
-    ) -> io::Result<WorkspaceUnregisterReservation<'_>> {
-        self.reserve_unregister_matching(workspace_id, |workspace| {
-            workspace.latest_admission_token == admission_token
-                && workspace
-                    .registration_admissions
-                    .contains_key(&admission_token)
-                && workspace.descriptor.selected_root_path == selected_root_path
-                && workspace.descriptor.canonical_root_path == canonical_root_path
-        })
     }
 
     fn reserve_unregister_matching(
@@ -142,19 +334,24 @@ impl WorkspaceRegistry {
                 .wrapping_add(1);
             workspace.unregister_generation = Some(generation);
             let descriptor = workspace.descriptor.clone();
-            let transition = self
-                .registration_operations
-                .begin_transition(workspace_id)?;
+            let transition = match self.registration_operations.begin_transition(workspace_id) {
+                Ok(transition) => transition,
+                Err(error) => {
+                    workspace.unregister_generation = None;
+                    return Err(error);
+                }
+            };
             drop(workspaces);
             drop(operation);
-            transition.wait()?;
-            Ok(WorkspaceUnregisterReservation {
+            let reservation = WorkspaceUnregisterReservation {
                 registry: self,
                 descriptor,
                 generation,
                 cleanup_started: false,
                 settled: false,
-            })
+            };
+            transition.wait()?;
+            Ok(reservation)
         }
     }
 
@@ -241,6 +438,56 @@ impl WorkspaceRegistry {
         }
         Ok(())
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn released_admission_tokens(
+    workspace: &super::ManagedWorkspace,
+    scope: WorkspaceOwnerScope,
+) -> Vec<u64> {
+    let (owner, admission_token) = match scope {
+        WorkspaceOwnerScope::Admission {
+            owner,
+            admission_token,
+        } => (owner, admission_token),
+        WorkspaceOwnerScope::EditorOwnership { admission_token } => {
+            (RegistrationOwner::Editor, admission_token)
+        }
+    };
+    let Some(admission) = workspace
+        .registration_admissions
+        .get(&admission_token)
+        .filter(|admission| admission.owner == owner)
+    else {
+        return Vec::new();
+    };
+    if matches!(scope, WorkspaceOwnerScope::EditorOwnership { .. })
+        && has_newer_published_editor_admission(
+            workspace,
+            admission_token,
+            &admission.selected_path,
+        )
+    {
+        return Vec::new();
+    }
+    vec![admission_token]
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn has_newer_published_editor_admission(
+    workspace: &super::ManagedWorkspace,
+    admission_token: u64,
+    selected_path: &Path,
+) -> bool {
+    workspace
+        .registration_admissions
+        .iter()
+        .any(|(token, admission)| {
+            *token > admission_token
+                && admission.published
+                && admission.owner == RegistrationOwner::Editor
+                && admission.selected_path == selected_path
+        })
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

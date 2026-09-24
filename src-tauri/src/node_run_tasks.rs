@@ -4,6 +4,7 @@ use crate::{
     managed_javascript_typescript::node_executable_path,
     node_package_tasks::task_validation::{validate_run_id, validate_workspace_id},
     terminal::{TerminalEventSink, TerminalOutputEvent},
+    terminal_line_endings::TerminalLineEndingTranslator,
     terminal_session::TerminalSupervisor,
     terminal_task_admission::{TerminalTaskAdmission, TerminalTaskAdmissionRegistry},
     terminal_task_process::TerminalTaskOwnership,
@@ -613,6 +614,7 @@ fn spawn_output_reader<R: Read + Send + 'static>(
 ) -> thread::JoinHandle<Result<(), String>> {
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        let mut line_endings = TerminalLineEndingTranslator::default();
         loop {
             let count = reader
                 .read(&mut buffer)
@@ -621,7 +623,7 @@ fn spawn_output_reader<R: Read + Send + 'static>(
                 return Ok(());
             }
             sink.emit_output(TerminalOutputEvent {
-                data: String::from_utf8_lossy(&buffer[..count]).to_string(),
+                data: line_endings.translate_to_terminal_text(&buffer[..count]),
                 session_id,
             });
         }
@@ -682,6 +684,41 @@ mod tests {
             workspace_id: workspace_id.clone(),
             terminal_session_id: session_id,
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<String>>);
+
+    impl TerminalEventSink for RecordingSink {
+        fn emit_output(&self, event: TerminalOutputEvent) {
+            self.0.lock().expect("terminal output").push(event.data);
+        }
+
+        fn emit_status(&self, _status: crate::terminal::TerminalRuntimeStatus) {}
+    }
+
+    #[test]
+    fn piped_node_run_output_reaches_terminal_as_crlf_across_read_boundaries() {
+        let sink = Arc::new(RecordingSink::default());
+        let reader = std::io::Read::chain(
+            std::io::Cursor::new("first\nsecond\r".as_bytes().to_vec()),
+            std::io::Cursor::new("\nčau\n".as_bytes().to_vec()),
+        );
+
+        spawn_output_reader(
+            reader,
+            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+            5,
+            "stdout",
+        )
+        .join()
+        .expect("reader thread")
+        .expect("reader finishes");
+
+        assert_eq!(
+            sink.0.lock().expect("terminal output").concat(),
+            "first\r\nsecond\r\nčau\r\n"
+        );
     }
 
     #[test]

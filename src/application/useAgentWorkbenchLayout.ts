@@ -7,6 +7,7 @@ import {
   parseAgentWorkbenchLayout,
   parsePersistedAgentBottomPanel,
   serializeAgentWorkbenchLayout,
+  type AgentRailState,
   type AgentWorkbenchLayout,
   type AgentWorkbenchLayoutAction,
   type AgentWorkbenchLayoutMode,
@@ -15,6 +16,11 @@ import {
 
 export interface AgentWorkbenchLayoutPersistencePort {
   write(ownerKey: string, layout: AgentWorkbenchLayoutPersisted): Promise<void>;
+}
+
+export interface AgentSidebarRailPreferencePort {
+  read(): AgentRailState | null;
+  write(rail: AgentRailState): void;
 }
 
 export interface AgentWorkbenchLayoutHydration {
@@ -29,6 +35,7 @@ export interface UseAgentWorkbenchLayoutOptions {
   readonly bottomPanelVisible?: boolean;
   readonly hydration?: AgentWorkbenchLayoutHydration | null;
   readonly persistence?: AgentWorkbenchLayoutPersistencePort | null;
+  readonly sidebarPreference?: AgentSidebarRailPreferencePort | null;
   readonly reportError?: (source: string, error: unknown) => void;
 }
 
@@ -56,6 +63,7 @@ interface OwnedAgentWorkbenchLayout {
 }
 
 export const AGENT_WORKBENCH_LAYOUT_PERSISTENCE_SOURCE = "Agent Layout";
+export const AGENT_SIDEBAR_PREFERENCE_SOURCE = "Agent Sidebar";
 
 export function useAgentWorkbenchLayout(
   options: UseAgentWorkbenchLayoutOptions,
@@ -100,9 +108,15 @@ export function useAgentWorkbenchLayout(
   }
 
   const ownedGeneration = owned.generation;
+  const sidebarRail = useGlobalSidebarRail(options.sidebarPreference ?? null, reportErrorRef);
+  const toggleSidebarRail = sidebarRail.toggle;
 
   const dispatch = useCallback(
     (action: AgentWorkbenchLayoutAction) => {
+      if (action.kind === "toggleRail") {
+        toggleSidebarRail();
+        return;
+      }
       setOwned((current) => {
         if (current.ownerKey !== ownerKey || current.generation !== ownedGeneration) {
           return current;
@@ -116,7 +130,7 @@ export function useAgentWorkbenchLayout(
         return { ...current, hydrated: true, layout, source: "dispatch" };
       });
     },
-    [ownedGeneration, ownerKey],
+    [ownedGeneration, ownerKey, toggleSidebarRail],
   );
 
   useEffect(() => {
@@ -197,11 +211,54 @@ export function useAgentWorkbenchLayout(
     };
   }, [agentLayoutActive, bottomPanelVisible, owned]);
 
-  const { layout, persistedBottomPanel } = owned;
+  const { persistedBottomPanel } = owned;
+  const ownedLayout = owned.layout;
+  const rail = sidebarRail.rail;
+  const layout = useMemo<AgentWorkbenchLayout>(
+    () => (ownedLayout.rail === rail ? ownedLayout : { ...ownedLayout, rail }),
+    [ownedLayout, rail],
+  );
   const agentWorkbench = useMemo<AgentWorkbenchLayoutState>(
     () => ({ dispatch, effectiveLayout, layout, persistedBottomPanel }),
     [dispatch, effectiveLayout, layout, persistedBottomPanel],
   );
 
   return { agentModeActive: effectiveLayout === "agent", agentWorkbench };
+}
+
+function useGlobalSidebarRail(
+  preference: AgentSidebarRailPreferencePort | null,
+  reportErrorRef: { readonly current: ((source: string, error: unknown) => void) | undefined },
+): { readonly rail: AgentRailState; toggle(): void } {
+  const preferenceRef = useRef(preference);
+  preferenceRef.current = preference;
+  const [rail, setRail] = useState<AgentRailState>(() =>
+    readSidebarRail(preference, reportErrorRef.current),
+  );
+  const railRef = useRef(rail);
+
+  const toggle = useCallback(() => {
+    const next: AgentRailState = railRef.current === "expanded" ? "collapsed" : "expanded";
+    railRef.current = next;
+    setRail(next);
+    try {
+      preferenceRef.current?.write(next);
+    } catch (error) {
+      reportErrorRef.current?.(AGENT_SIDEBAR_PREFERENCE_SOURCE, error);
+    }
+  }, [reportErrorRef]);
+
+  return { rail, toggle };
+}
+
+function readSidebarRail(
+  preference: AgentSidebarRailPreferencePort | null,
+  reportError: ((source: string, error: unknown) => void) | undefined,
+): AgentRailState {
+  try {
+    return preference?.read() ?? initialAgentWorkbenchLayout.rail;
+  } catch (error) {
+    reportError?.(AGENT_SIDEBAR_PREFERENCE_SOURCE, error);
+    return initialAgentWorkbenchLayout.rail;
+  }
 }

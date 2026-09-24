@@ -37,7 +37,7 @@ describe("AgentSurfaceEmptyState", () => {
     render();
 
     const cards = Array.from(host.querySelectorAll<HTMLButtonElement>(".agent-surface-card"));
-    expect(cards).toHaveLength(4);
+    expect(cards).toHaveLength(7);
     expect(host.querySelector(".agent-surface-card__top")).toBeNull();
     for (const card of cards) {
       expect(Array.from(card.children).map((child) => child.className)).toEqual([
@@ -54,9 +54,12 @@ describe("AgentSurfaceEmptyState", () => {
     expect(
       Array.from(host.querySelectorAll(".agent-surface-card__key")).map((key) => key.textContent),
     ).toEqual([
+      AGENT_SURFACE_HOTKEYS.terminal,
       AGENT_SURFACE_HOTKEYS.files,
       AGENT_SURFACE_HOTKEYS.diff,
-      AGENT_SURFACE_HOTKEYS.terminal,
+      AGENT_SURFACE_HOTKEYS.git,
+      AGENT_SURFACE_HOTKEYS.scripts,
+      AGENT_SURFACE_HOTKEYS.pullRequest,
       AGENT_SURFACE_HOTKEYS.history,
     ]);
   });
@@ -145,6 +148,15 @@ describe("AgentSurfaceEmptyState", () => {
         ?.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true })),
     );
     expect(onChooseSurface).not.toHaveBeenCalled();
+  });
+
+  it("offers the redesigned surfaces in add-menu order", () => {
+    render({ thread: surfaceThreadView(), workspaceTrusted: true });
+    expect(
+      Array.from(host.querySelectorAll(".agent-surface-card__label")).map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Terminal", "Files", "Diff", "Git", "Scripts", "Pull request", "History"]);
   });
 
   function filesDescription(): string {

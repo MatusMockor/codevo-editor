@@ -18,7 +18,12 @@ import {
   useAgentWorkbenchProjectOpening,
   type AgentPendingProjectOpen,
 } from "./useAgentWorkbenchProjectOpening";
-import { useAgentProjectDiffChrome } from "./useAgentProjectDiffChrome";
+import {
+  UNAVAILABLE_AGENT_FILE_SEARCH,
+  createDefaultAgentRightPanelGateways,
+  type AgentRightPanelGateways,
+} from "./rightPanel/agentRightPanelGateways";
+import { useAgentRightPanelChrome } from "./rightPanel/useAgentRightPanelChrome";
 import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
 import {
   useAgentProjectWorkspaceSync,
@@ -43,7 +48,10 @@ import {
 import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
-import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
+import {
+  agentScriptRunnerOutcome,
+  type AgentThreadScriptRunner,
+} from "../../application/useAgentThreadScripts";
 import type {
   AgentProviderManagementSurface,
   SelectedAgentProviderAuthority,
@@ -62,6 +70,7 @@ import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
+import type { FileSearchGateway } from "../../domain/workspace";
 import { WebviewAgentImageSurface } from "../../infrastructure/webviewAgentImageSurface";
 import { BrowserTextClipboardGateway } from "../../infrastructure/browserTextClipboardGateway";
 import { TauriDirectoryListingGateway } from "../../infrastructure/tauriDirectoryListingGateway";
@@ -78,7 +87,9 @@ import {
 import {
   agentTerminalPanelIntent,
   initialAgentTerminalPanelIntentState,
+  type AgentScriptsChrome,
   type AgentWorkbenchChrome,
+  type AgentWorkbenchThreadActivityChrome,
 } from "./agentWorkbenchChrome";
 import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 import { openThenRevealFiles } from "./openThenRevealFiles";
@@ -126,6 +137,8 @@ export type AgentWorkbenchScreenWorkbench = Pick<
       | "agentWorktreeFileSync"
       | "resolveDocumentSessionDirtyProjection"
       | "documentSessionAuthorityRevision"
+      | "setStatusBarItemVisibility"
+      | "vscodeProcessTasks"
     >
   > & {
     readonly agents: WorkbenchAgentsSurface;
@@ -147,6 +160,8 @@ export interface AgentWorkbenchScreenProps {
   readonly revealPathGateway?: RevealPathGateway;
   readonly directoryListingGateway?: DirectoryListingGateway;
   readonly localCloneGateway?: LocalProjectCloneGateway | null;
+  readonly rightPanelGateways?: AgentRightPanelGateways;
+  readonly fileSearch?: FileSearchGateway;
   onTrustWorkspace(): void;
   onResizeRightPanelStart(event: PointerEvent<HTMLDivElement>): void;
 }
@@ -186,6 +201,8 @@ export function AgentWorkbenchScreen({
   onResizeRightPanelStart,
   onTrustWorkspace,
   revealPathGateway = DEFAULT_REVEAL_PATH_GATEWAY,
+  rightPanelGateways: injectedRightPanelGateways,
+  fileSearch = UNAVAILABLE_AGENT_FILE_SEARCH,
   terminalGateway,
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
@@ -223,7 +240,7 @@ export function AgentWorkbenchScreen({
     [persistedProviderProjection.selectedProvider, workbench.agents],
   );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
-  const { openWorkspaceRootWithReceipt, runCommand } = workbench;
+  const { openWorkspaceRootWithReceipt } = workbench;
   const { openSettingsSection } = workbench;
   const openEnvironmentSettings = useCallback(() => {
     openSettingsSection?.("environments");
@@ -261,9 +278,6 @@ export function AgentWorkbenchScreen({
     () => ({ ...projectWorkspaceSync, select: selectProjectWorkspace }),
     [projectWorkspaceSync, selectProjectWorkspace],
   );
-  const searchFiles = useCallback(() => {
-    runCommand(SEARCH_FILES_COMMAND);
-  }, [runCommand]);
   const searchFilesShortcut = useMemo(
     () => shortcutForCommand(appSettings.keymap, SEARCH_FILES_COMMAND),
     [appSettings.keymap],
@@ -315,6 +329,7 @@ export function AgentWorkbenchScreen({
       available: nodePackageScripts.available,
       unavailableReason: nodePackageScripts.error,
       active: nodePackageScripts.pending ? nodePackageScripts.task : null,
+      lastOutcome: agentScriptRunnerOutcome(nodePackageScripts.task),
       run: (script, target, repositoryRoot) =>
         nodePackageScripts.run(script, target, repositoryRoot),
       stop: () => nodePackageScripts.stop(),
@@ -340,6 +355,16 @@ export function AgentWorkbenchScreen({
   const showTerminalPanel = useCallback(() => {
     showBottomPanelView("terminal");
   }, [showBottomPanelView]);
+
+  const vscodeProcessTasks = workbench.vscodeProcessTasks ?? null;
+  const scriptsSurface = useMemo<AgentScriptsChrome>(
+    () => ({
+      vscodeProcessTasks,
+      openScriptTerminal: showTerminalPanel,
+      refreshScripts: () => void nodePackageScripts.refresh(),
+    }),
+    [nodePackageScripts, showTerminalPanel, vscodeProcessTasks],
+  );
 
   const onToggleBottomPanel = useCallback(() => {
     if (bottomPanelVisible) {
@@ -496,15 +521,37 @@ export function AgentWorkbenchScreen({
       },
     };
   }, [checkoutDirtyRevision, gitBranchGateway, workbench]);
-  const projectDiff = useAgentProjectDiffChrome(workbench);
+  const rightPanelGateways = useMemo(
+    () => injectedRightPanelGateways ?? createDefaultAgentRightPanelGateways(fileSearch),
+    [fileSearch, injectedRightPanelGateways],
+  );
+  const rightPanel = useAgentRightPanelChrome({
+    gateways: rightPanelGateways,
+    workspaceRoot: workbench.workspaceRoot,
+    repositoryStatuses: workbench.gitRepositoryStatuses,
+    clipboard: textClipboard ?? DEFAULT_TEXT_CLIPBOARD,
+  });
+  const setStatusBarItemVisibility = workbench.setStatusBarItemVisibility;
+  const attentionVisible = workbench.workspaceSettings.statusBar.agentAttention;
+  const threadActivity = useMemo<AgentWorkbenchThreadActivityChrome>(
+    () => ({
+      attentionVisible,
+      onChangeAttentionVisible:
+        setStatusBarItemVisibility === undefined
+          ? null
+          : (visible) => setStatusBarItemVisibility("agentAttention", visible),
+    }),
+    [attentionVisible, setStatusBarItemVisibility],
+  );
   const chrome = useMemo<AgentWorkbenchChrome>(
     () => ({
       workspaceActivation,
-      projectDiff,
+      rightPanel,
       layout: agentWorkbench,
       bottomPanelVisible,
       shortcuts,
       scripts,
+      scriptsSurface,
       workspaceId,
       workspaceTrusted,
       gitHistoryGateway,
@@ -532,7 +579,6 @@ export function AgentWorkbenchScreen({
         searchFilesShortcut,
         onOpenFile: openPinnedFile,
         onPreviewFile: previewFile,
-        onSearchFiles: searchFiles,
       },
       diff: {
         monacoTheme,
@@ -554,11 +600,12 @@ export function AgentWorkbenchScreen({
       openFileLocation,
       onTrustWorkspace,
       onResizeRightPanelStart,
+      threadActivity,
     }),
     [
       activeFileRevealSignal,
       workspaceActivation,
-      projectDiff,
+      rightPanel,
       addProject,
       agentWorkbench,
       appSettings.editorFontFamily,
@@ -585,12 +632,13 @@ export function AgentWorkbenchScreen({
       previewFile,
       revealPath,
       scripts,
-      searchFiles,
+      scriptsSurface,
       searchFilesShortcut,
       shortcuts,
       showTerminalPanel,
       terminalGateway,
       terminalTheme,
+      threadActivity,
       workbench.activePath,
       bottomPanelVisible,
       workspaceId,
@@ -757,5 +805,7 @@ function layoutShortcuts(keymap: KeymapSettings): AgentPanelLayoutShortcuts {
   return {
     bottomPanel: shortcutForCommand(keymap, "panel.toggle") ?? "",
     rightPanel: shortcutForCommand(keymap, "agent.toggleRightPanel") ?? "",
+    sidebar: shortcutForCommand(keymap, "agent.toggleSidebar") ?? "",
+    newThread: shortcutForCommand(keymap, "agent.newThread") ?? "",
   };
 }

@@ -239,3 +239,39 @@ describe("Codex app-server projection parser", () => {
       expect(parseCodexAppServerLine(line).kind).toBe("unknown");
   });
 });
+
+describe("subagentSpawn lines", () => {
+  it("maps a spawn line to a typed subagentSpawn turn event", () => {
+    const parsed = parseCodexAppServerLine(
+      '{"v":1,"t":"subagentSpawn","callId":"call-spawn","status":"completed","taskTitle":"Review idempotency middleware","model":"gpt-5.6-luna","reasoningEffort":"medium","agentThreadIds":["01a0a011-eda9-7000-8000-000000000001"]}',
+    );
+    expect(parsed).toEqual({
+      kind: "events",
+      sessionId: null,
+      events: [
+        {
+          kind: "subagentSpawn",
+          callId: "call-spawn",
+          status: "completed",
+          taskTitle: "Review idempotency middleware",
+          model: "gpt-5.6-luna",
+          reasoningEffort: "medium",
+          agentThreadIds: ["01a0a011-eda9-7000-8000-000000000001"],
+        },
+      ],
+    });
+  });
+
+  it("rejects extra fields and unknown statuses fail-closed", () => {
+    expect(
+      parseCodexAppServerLine(
+        '{"v":1,"t":"subagentSpawn","callId":"c","status":"completed","taskTitle":null,"model":null,"reasoningEffort":null,"agentThreadIds":[],"prompt":"secret"}',
+      ).kind,
+    ).toBe("unknown");
+    expect(
+      parseCodexAppServerLine(
+        '{"v":1,"t":"subagentSpawn","callId":"c","status":"exploded","taskTitle":null,"model":null,"reasoningEffort":null,"agentThreadIds":[]}',
+      ).kind,
+    ).toBe("unknown");
+  });
+});

@@ -4,7 +4,9 @@ import { act, StrictMode, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, type AppSettings } from "../../domain/settings";
+import type { WorkspaceHomeReference } from "../../domain/workspaceRootEligibility";
 import {
+  WORKSPACE_HOME_RESOLUTION_TIMEOUT_MS,
   useInitialAppSettingsHydration,
   type InitialAppSettingsHydrationOptions,
 } from "./useInitialAppSettingsHydration";
@@ -12,6 +14,9 @@ import type {
   WorkspaceOpenOutcome,
   WorkspaceStartupRestoreIntent,
 } from "./useWorkspaceOpenRequestLifecycle";
+
+const HOME = "/Users/me";
+const MAC_HOME: WorkspaceHomeReference = { path: HOME, pathCase: "insensitive" };
 
 describe("useInitialAppSettingsHydration", () => {
   let host: HTMLDivElement;
@@ -281,6 +286,229 @@ describe("useInitialAppSettingsHydration", () => {
     await reject(opening, new Error("late open rejection"));
 
     expect(options.reportError).not.toHaveBeenCalled();
+  });
+
+  it("drops a persisted home recent workspace and restores the first eligible tab", async () => {
+    const options = {
+      ...hydrationOptions(
+        Promise.resolve({
+          ...defaultAppSettings(),
+          recentWorkspacePath: `${HOME}/`,
+          recentWorkspacePaths: [HOME, `${HOME}/app`],
+          workspaceTabs: [HOME, `${HOME}/app`],
+        }),
+      ),
+      resolveWorkspaceHome: vi.fn(async () => MAC_HOME),
+    };
+    render(options);
+    await flush();
+    await flush();
+
+    expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        recentWorkspacePath: null,
+        recentWorkspacePaths: [`${HOME}/app`],
+        workspaceTabs: [`${HOME}/app`],
+      }),
+    );
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledExactlyOnceWith(`${HOME}/app`);
+    expect(options.reportError).not.toHaveBeenCalled();
+  });
+
+  it("drops home, its ancestors and the filesystem root from persisted workspace tabs", async () => {
+    const options = {
+      ...hydrationOptions(
+        Promise.resolve({
+          ...defaultAppSettings(),
+          recentWorkspacePath: null,
+          workspaceTabs: ["/", "/Users", HOME, "/Users/me2", `${HOME}/Developer/app`],
+        }),
+      ),
+      resolveWorkspaceHome: vi.fn(async () => MAC_HOME),
+    };
+    render(options);
+    await flush();
+    await flush();
+
+    expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ workspaceTabs: ["/Users/me2", `${HOME}/Developer/app`] }),
+    );
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledExactlyOnceWith("/Users/me2");
+  });
+
+  it("opens nothing when every persisted workspace is ineligible", async () => {
+    const options = {
+      ...hydrationOptions(
+        Promise.resolve({
+          ...defaultAppSettings(),
+          recentWorkspacePath: HOME,
+          workspaceTabs: ["/Users", HOME],
+        }),
+      ),
+      resolveWorkspaceHome: vi.fn(async () => MAC_HOME),
+    };
+    render(options);
+    await flush();
+    await flush();
+
+    expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ recentWorkspacePath: null, workspaceTabs: [] }),
+    );
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledExactlyOnceWith(true);
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["rejects", () => Promise.reject(new Error("home unavailable"))],
+    ["is not wired", undefined],
+  ] as const)(
+    "still drops the filesystem root when the home resolver %s",
+    async (_label, resolver) => {
+      const options = {
+        ...hydrationOptions(
+          Promise.resolve({
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/",
+            workspaceTabs: ["/", HOME],
+          }),
+        ),
+        ...(resolver === undefined ? {} : { resolveWorkspaceHome: resolver }),
+      };
+      render(options);
+      await flush();
+      await flush();
+
+      expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ recentWorkspacePath: null, workspaceTabs: [HOME] }),
+      );
+      expect(options.startupOpenWorkspacePath).toHaveBeenCalledExactlyOnceWith(HOME);
+      expect(options.reportError).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores settings whose home resolution settles after unmount", async () => {
+    const home = deferred<WorkspaceHomeReference>();
+    const options = {
+      ...hydrationOptions(
+        Promise.resolve({ ...defaultAppSettings(), recentWorkspacePath: `${HOME}/app` }),
+      ),
+      resolveWorkspaceHome: vi.fn(() => home.promise),
+    };
+    render(options);
+    await flush();
+    act(() => root.unmount());
+
+    await resolve(home, MAC_HOME);
+
+    expect(options.applyAppSettings).not.toHaveBeenCalled();
+    expect(options.onAppSettingsHydrated).not.toHaveBeenCalled();
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it("compares persisted roots with the home folder exactly on a case-sensitive host", async () => {
+    const options = {
+      ...hydrationOptions(
+        Promise.resolve({
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/home/Me",
+          workspaceTabs: ["/home/me", "/home/Me"],
+        }),
+      ),
+      resolveWorkspaceHome: vi.fn(async () => ({
+        path: "/home/me",
+        pathCase: "sensitive" as const,
+      })),
+    };
+    render(options);
+    await flush();
+    await flush();
+
+    expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ recentWorkspacePath: "/home/Me", workspaceTabs: ["/home/Me"] }),
+    );
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledExactlyOnceWith("/home/Me");
+  });
+
+  it("folds case when dropping the home folder on a case-insensitive host", async () => {
+    const options = {
+      ...hydrationOptions(
+        Promise.resolve({
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/home/Me",
+          workspaceTabs: ["/home/Me"],
+        }),
+      ),
+      resolveWorkspaceHome: vi.fn(async () => ({
+        path: "/home/me",
+        pathCase: "insensitive" as const,
+      })),
+    };
+    render(options);
+    await flush();
+    await flush();
+
+    expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ recentWorkspacePath: null, workspaceTabs: [] }),
+    );
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it("falls back to an unknown home when the resolver never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const options = {
+        ...hydrationOptions(
+          Promise.resolve({
+            ...defaultAppSettings(),
+            recentWorkspacePath: "/",
+            workspaceTabs: ["/", HOME],
+          }),
+        ),
+        resolveWorkspaceHome: vi.fn(() => new Promise<WorkspaceHomeReference>(() => undefined)),
+      };
+      render(options);
+      await flush();
+
+      expect(options.applyAppSettings).not.toHaveBeenCalled();
+      expect(options.onAppSettingsHydrated).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(WORKSPACE_HOME_RESOLUTION_TIMEOUT_MS);
+      });
+
+      expect(options.applyAppSettings).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ recentWorkspacePath: null, workspaceTabs: [HOME] }),
+      );
+      expect(options.onAppSettingsHydrated).toHaveBeenCalledExactlyOnceWith(true);
+      expect(options.startupOpenWorkspacePath).toHaveBeenCalledExactlyOnceWith(HOME);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not publish after unmount while the home resolver is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const options = {
+        ...hydrationOptions(
+          Promise.resolve({ ...defaultAppSettings(), recentWorkspacePath: `${HOME}/app` }),
+        ),
+        resolveWorkspaceHome: vi.fn(() => new Promise<WorkspaceHomeReference>(() => undefined)),
+      };
+      render(options);
+      await flush();
+      act(() => root.unmount());
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(WORKSPACE_HOME_RESOLUTION_TIMEOUT_MS);
+      });
+
+      expect(vi.getTimerCount()).toBe(0);
+      expect(options.applyAppSettings).not.toHaveBeenCalled();
+      expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   function render(options: HydrationTestOptions): void {

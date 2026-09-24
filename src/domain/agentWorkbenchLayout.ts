@@ -1,5 +1,23 @@
-export const AGENT_SURFACE_KINDS = ["files", "diff", "terminal", "history"] as const;
+export const AGENT_SURFACE_KINDS = [
+  "files",
+  "diff",
+  "terminal",
+  "history",
+  "git",
+  "scripts",
+  "pullRequest",
+  "agents",
+] as const;
 export type AgentSurfaceKind = (typeof AGENT_SURFACE_KINDS)[number];
+
+export const AGENT_TRANSIENT_SURFACE_KINDS: ReadonlyArray<AgentSurfaceKind> = Object.freeze([
+  "pullRequest",
+  "agents",
+]);
+
+export function isAgentTransientSurfaceKind(kind: AgentSurfaceKind): boolean {
+  return AGENT_TRANSIENT_SURFACE_KINDS.includes(kind);
+}
 
 export const MAX_AGENT_OPEN_SURFACES = AGENT_SURFACE_KINDS.length;
 
@@ -182,11 +200,13 @@ export function serializeAgentWorkbenchLayout(
   state: AgentWorkbenchLayout,
   bottomPanel: boolean,
 ): AgentWorkbenchLayoutPersisted {
+  const openSurfaces = state.openSurfaces.filter((kind) => !isAgentTransientSurfaceKind(kind));
+  const activeSurface = persistedActiveSurface(state.activeSurface, openSurfaces);
   return {
     layout: state.layout,
     rightPanel: state.rightPanel,
-    openSurfaces: state.openSurfaces,
-    activeSurface: state.activeSurface,
+    openSurfaces,
+    activeSurface,
     rightPanelMaximized: state.rightPanelMaximized,
     rail: state.rail,
     railWidth: state.railWidth,
@@ -194,6 +214,15 @@ export function serializeAgentWorkbenchLayout(
     bottomPanelHeight: state.bottomPanelHeight,
     bottomPanel,
   };
+}
+
+function persistedActiveSurface(
+  activeSurface: AgentSurfaceKind | null,
+  openSurfaces: ReadonlyArray<AgentSurfaceKind>,
+): AgentSurfaceKind | null {
+  if (activeSurface === null) return null;
+  if (openSurfaces.includes(activeSurface)) return activeSurface;
+  return openSurfaces[0] ?? null;
 }
 
 export function agentWorkbenchLayoutsEqual(
@@ -338,17 +367,21 @@ function parseIndependentFields(
 
 function parseOpenSurfaces(value: Record<string, unknown>): ReadonlyArray<AgentSurfaceKind> {
   if (value.openSurfaces === undefined) {
-    return isAgentSurfaceKind(value.rightSurface) ? [value.rightSurface] : NO_SURFACES;
+    return isPersistableSurface(value.rightSurface) ? [value.rightSurface] : NO_SURFACES;
   }
   if (!Array.isArray(value.openSurfaces)) return NO_SURFACES;
 
   const surfaces: AgentSurfaceKind[] = [];
   for (const candidate of value.openSurfaces) {
     if (surfaces.length >= MAX_AGENT_OPEN_SURFACES) break;
-    if (!isAgentSurfaceKind(candidate) || surfaces.includes(candidate)) continue;
+    if (!isPersistableSurface(candidate) || surfaces.includes(candidate)) continue;
     surfaces.push(candidate);
   }
   return surfaces.length === 0 ? NO_SURFACES : surfaces;
+}
+
+function isPersistableSurface(value: unknown): value is AgentSurfaceKind {
+  return isAgentSurfaceKind(value) && !isAgentTransientSurfaceKind(value);
 }
 
 function parseActiveSurface(

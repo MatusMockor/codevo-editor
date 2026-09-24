@@ -3,7 +3,7 @@ use super::*;
 const EVENT_KIND_FIXTURE: &str =
     include_str!("../../src/domain/fixtures/agent-turn-event-kinds.json");
 
-const EXPECTED_EVENT_KINDS: [&str; 18] = [
+const EXPECTED_EVENT_KINDS: [&str; 19] = [
     "assistantText",
     "backgroundTask",
     "contextCompaction",
@@ -16,6 +16,7 @@ const EXPECTED_EVENT_KINDS: [&str; 18] = [
     "subagent",
     "subagentActivity",
     "subagentEvent",
+    "subagentSpawn",
     "subagentTurnDone",
     "subagentUsage",
     "toolCall",
@@ -30,6 +31,7 @@ fn turn_event_kind(event: &AgentTurnEvent) -> &'static str {
         AgentTurnEvent::UserMessage { .. } => "userMessage",
         AgentTurnEvent::SubagentActivity { .. } => "subagentActivity",
         AgentTurnEvent::SubagentEvent { .. } => "subagentEvent",
+        AgentTurnEvent::SubagentSpawn { .. } => "subagentSpawn",
         AgentTurnEvent::SubagentUsage { .. } => "subagentUsage",
         AgentTurnEvent::SubagentTurnDone { .. } => "subagentTurnDone",
         AgentTurnEvent::Queued { .. } => "queued",
@@ -408,4 +410,31 @@ fn a_tool_id_is_bounded_exactly_like_the_typescript_bounded_tool_id() {
     };
     validate_agent_thread_document(ROOT_KEY, &document_with_events(vec![accepted]))
         .expect("a tool id at the exact byte bound is accepted");
+}
+
+#[test]
+fn a_subagent_spawn_rejects_oversize_titles_and_duplicate_receivers() {
+    let spawn = |title: Option<String>, ids: Vec<String>| AgentTurnEvent::SubagentSpawn {
+        call_id: "call_spawn_0001".to_string(),
+        status: SubagentSpawnStatus::Completed,
+        task_title: title,
+        model: Some("gpt-5.6-luna".to_string()),
+        reasoning_effort: Some(SubagentSpawnEffort::Medium),
+        agent_thread_ids: ids,
+    };
+    let valid = spawn(Some("Review".to_string()), vec!["agt-sub-0001".to_string()]);
+    let long_title = spawn(Some("é".repeat(241)), vec![]);
+    let duplicate = spawn(None, vec!["a".to_string(), "a".to_string()]);
+    let too_many = spawn(
+        None,
+        (0..33).map(|index| format!("thread-{index}")).collect(),
+    );
+
+    validate_agent_thread_document(ROOT_KEY, &document_with_events(vec![valid]))
+        .expect("a bounded spawn is valid");
+    for event in [long_title, duplicate, too_many] {
+        assert!(
+            validate_agent_thread_document(ROOT_KEY, &document_with_events(vec![event])).is_err()
+        );
+    }
 }

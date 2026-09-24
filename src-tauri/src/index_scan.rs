@@ -2,6 +2,7 @@ use crate::ignore_matcher::{
     is_default_ignored_name, GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher,
 };
 use crate::index::{BatchOutcome, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore};
+use crate::workspace::protected_paths::ProtectedPathPolicy;
 pub(crate) mod operation_authority;
 
 use self::operation_authority::{run_if_index_operation_current, WorkspaceIndexOperationAuthority};
@@ -26,6 +27,7 @@ const MAX_REGISTERED_SCAN_ENTRIES: usize = 1_000_000;
 const MAX_REGISTERED_SCAN_DIRECTORIES: usize = 100_000;
 const MAX_REGISTERED_SCAN_DEPTH: usize = 256;
 const MAX_GITIGNORE_FILES: usize = 4_096;
+const PRIVACY_PROTECTED_SKIP_REASON: &str = "Privacy-protected home folder skipped.";
 const MAX_GITIGNORE_FILE_BYTES: u64 = 1_048_576;
 const MAX_GITIGNORE_TOTAL_BYTES: usize = 8_388_608;
 /// Number of file metadata rows written per batched SQLite transaction during the initial scan.
@@ -78,6 +80,7 @@ pub trait WorkspaceMetadataScanner {
 
 pub struct LocalWorkspaceMetadataScanner {
     language_detector: Box<dyn MetadataLanguageDetector>,
+    protected_paths: ProtectedPathPolicy,
 }
 
 struct RegisteredScanContext<'a> {
@@ -105,7 +108,15 @@ impl Default for LocalWorkspaceMetadataScanner {
 
 impl LocalWorkspaceMetadataScanner {
     pub fn new(language_detector: Box<dyn MetadataLanguageDetector>) -> Self {
-        Self { language_detector }
+        Self {
+            language_detector,
+            protected_paths: ProtectedPathPolicy::current().clone(),
+        }
+    }
+
+    pub fn with_protected_paths(mut self, protected_paths: ProtectedPathPolicy) -> Self {
+        self.protected_paths = protected_paths;
+        self
     }
 
     fn scan_directory(
@@ -174,6 +185,17 @@ impl LocalWorkspaceMetadataScanner {
             return Ok(());
         }
 
+        if file_type.is_dir()
+            && path != root_path
+            && self.protected_paths.is_protected_directory(path)
+        {
+            collection.report.record_skip(
+                scan_detail_path(root_path, path),
+                PRIVACY_PROTECTED_SKIP_REASON,
+            );
+            return Ok(());
+        }
+
         if matcher.is_ignored(path, file_type.is_dir()) {
             collection.report.record_skip(
                 scan_detail_path(root_path, path),
@@ -217,6 +239,7 @@ impl LocalWorkspaceMetadataScanner {
                 Err(error) => return Err(MetadataScanError::Io(error)),
             };
         let mut collection = MetadataScanCollection::default();
+        record_ignore_rules_completeness(&mut collection.report, &matcher);
 
         ensure_collection_current(is_cancelled)?;
         if !scan_path.exists() {
@@ -245,6 +268,7 @@ impl LocalWorkspaceMetadataScanner {
         let mut budget = RegisteredScanBudget::default();
         self.collect_registered_gitignores(
             authority,
+            root_path,
             Path::new(""),
             0,
             &mut budget,
@@ -267,9 +291,11 @@ impl LocalWorkspaceMetadataScanner {
         Ok(collection)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_registered_gitignores(
         &self,
         authority: &WorkspaceIndexOperationAuthority,
+        root_path: &Path,
         relative_directory: &Path,
         depth: usize,
         budget: &mut RegisteredScanBudget,
@@ -313,11 +339,18 @@ impl LocalWorkspaceMetadataScanner {
                 }
                 return Ok(());
             }
+            if self
+                .protected_paths
+                .is_protected_directory(&root_path.join(&relative))
+            {
+                return Ok(());
+            }
             if authority.open_directory(&relative).is_err() {
                 return Ok(());
             }
             self.collect_registered_gitignores(
                 authority,
+                root_path,
                 &relative,
                 depth + 1,
                 budget,
@@ -341,6 +374,13 @@ impl LocalWorkspaceMetadataScanner {
             register_entry(context.budget)?;
             let relative = relative_directory.join(name);
             let logical_path = context.root_path.join(&relative);
+            if self.protected_paths.is_protected_directory(&logical_path) {
+                context.collection.report.record_skip(
+                    relative.to_string_lossy().to_string(),
+                    PRIVACY_PROTECTED_SKIP_REASON,
+                );
+                return Ok(());
+            }
             if let Ok(child_directory) = context.authority.open_directory(&relative) {
                 if context.matcher.is_ignored(&logical_path, true) {
                     context.collection.report.record_skip(
@@ -1032,6 +1072,16 @@ fn relative_path(root_path: &Path, path: &Path) -> Option<String> {
         .map(|path| path.to_string_lossy().replace('\\', "/"))
 }
 
+fn record_ignore_rules_completeness(
+    report: &mut MetadataScanReport,
+    matcher: &GitignoreWorkspaceIgnoreMatcher,
+) {
+    let Some(truncation) = matcher.completeness().truncation() else {
+        return;
+    };
+    report.record_error(".".to_string(), truncation.description());
+}
+
 fn scan_detail_path(root_path: &Path, path: &Path) -> String {
     match relative_path(root_path, path) {
         Some(path) => path,
@@ -1064,6 +1114,10 @@ fn system_time_unix(time: SystemTime) -> i64 {
 fn size_bytes(metadata: &fs::Metadata) -> i64 {
     i64::try_from(metadata.len()).unwrap_or(i64::MAX)
 }
+
+#[cfg(test)]
+#[path = "index_scan/ignore_rules_tests.rs"]
+mod ignore_rules_tests;
 
 #[cfg(test)]
 mod tests {

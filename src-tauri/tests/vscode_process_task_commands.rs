@@ -2,6 +2,8 @@
 
 #[path = "../src/node_package_problem_matcher.rs"]
 mod node_package_problem_matcher;
+#[path = "../src/terminal_line_endings.rs"]
+mod terminal_line_endings;
 #[path = "../src/terminal_task_admission.rs"]
 mod terminal_task_admission;
 #[path = "../src/vscode_process_task_commands.rs"]
@@ -291,6 +293,52 @@ fn start_replies_before_background_completion_and_ack_flushes_ordered_events() {
         .collect::<Vec<_>>();
     terminal_output.sort();
     assert_eq!(terminal_output, ["stderr", "stdout"]);
+}
+
+#[test]
+fn piped_task_output_reaches_terminal_as_crlf_while_output_events_keep_raw_bytes() {
+    let raw = "one\ntwo\r\nžtri\n";
+    let (_release, receiver) = closed_receiver();
+    let terminal = Arc::new(RawTerminalSink::default());
+    let runtime = FakeRuntime::new({
+        let terminal = Arc::clone(&terminal);
+        move |_| {
+            Ok(prepared(
+                TerminalTaskOwnership::new(9, 13),
+                terminal,
+                Some(raw.as_bytes().to_vec()),
+                None,
+                receiver,
+                Some(0),
+            ))
+        }
+    });
+    let (service, events) = service(runtime);
+    let task_owner = owner("run-crlf", "workspace-a", 9);
+
+    service.start(task_owner.clone()).unwrap();
+    service.acknowledge(task_owner).unwrap();
+    wait_until(|| has_terminal_event(&events));
+
+    let terminal_output = terminal
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|event| event.data.clone())
+        .collect::<String>();
+    assert_eq!(terminal_output, "one\r\ntwo\r\nžtri\r\n");
+    let observed_output = events
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| match event {
+            VscodeProcessTaskEvent::Output { data, .. } => Some(data.clone()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(observed_output, raw);
 }
 
 #[test]

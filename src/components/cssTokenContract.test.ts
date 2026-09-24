@@ -115,10 +115,23 @@ const LIGHT_LADDER = [
   "--codevo-shadow-float",
   "--codevo-shadow-window",
 ] as const;
-const PROMPT_BUBBLE_TONE = "--agent-raised";
-const THREAD_COLUMN_TONE = "--agent-thread-canvas";
-const THREAD_COLUMN_ROOTS = ["--color-control", "--color-sidebar"] as const;
-const THREAD_COLUMN_ROOT = "--color-sidebar";
+const SEMANTIC_SHEET = "ui/tokens/semantic.css";
+const PALETTE_SHEET = "ui/tokens/palettes.css";
+const PROMPT_BUBBLE_SELECTOR = ".agent-prompt__bubble";
+const PROMPT_BUBBLE_TONE = /^--cv-tint-\d+$/;
+const THREAD_COLUMN_SELECTOR = ".agent-mode__center";
+const THREAD_COLUMN_TONE = "--cv-canvas";
+const THREAD_COLUMN_LAYERS = [
+  ".agent-session__scroll",
+  ".agent-session__body",
+  ".cv-conversation-column",
+  ".agent-turn-list",
+  ".agent-turn",
+  ".agent-prompt",
+] as const;
+const CV_SCHEMES = ["dark", "light"] as const;
+const PALETTE_BLOCK = /^:root\[data-cv-palette="([\w-]+)"\]\[data-cv-scheme="(dark|light)"\]$/;
+const RGBA_LITERAL = /^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/;
 const PENDING_T3_SHEETS: readonly string[] = [];
 const PENDING_LITERAL_REMAP_SHEETS: readonly string[] = [];
 const SCHEME_SCALARS = new Set(["--agent-shadow-alpha"]);
@@ -213,8 +226,63 @@ function lightness(hex: string): number {
   return luminance <= 0.008856 ? 903.3 * luminance : 116 * Math.cbrt(luminance) - 16;
 }
 
-function lightnessStep(band: string, column: string): number {
-  return lightness(column) - lightness(band);
+type Tint = { readonly channels: readonly number[]; readonly alpha: number };
+
+function parseTint(value: string): Tint {
+  const match = RGBA_LITERAL.exec(value.trim());
+  expect(match, `expected an rgba tint, received "${value}"`).not.toBeNull();
+  const numbers = (match ?? []).slice(1).map(Number);
+  return { channels: numbers.slice(0, 3), alpha: numbers[3] ?? 0 };
+}
+
+function composite(surface: string, tint: Tint): string {
+  const digits = surface.trim().slice(1);
+  return `#${[0, 2, 4]
+    .map((offset, index) => {
+      const base = Number.parseInt(digits.slice(offset, offset + 2), 16);
+      const mixed = Math.round(base * (1 - tint.alpha) + (tint.channels[index] ?? 0) * tint.alpha);
+      return mixed.toString(16).padStart(2, "0");
+    })
+    .join("")}`;
+}
+
+function backgroundsOf(selector: string): readonly string[] {
+  return parsed.rules
+    .filter((rule) => rule.context.length === 0 && selectorParts(rule.selector).includes(selector))
+    .flatMap((rule) => rule.declarations)
+    .filter((entry) => entry.property === "background" || entry.property === "background-color")
+    .map((entry) => entry.value);
+}
+
+function singleVarToken(value: string | undefined, label: string): string {
+  expect(isSingleVar(value ?? ""), `${label} is a single token: ${value}`).toBe(true);
+  return varReferences(value ?? "")[0] ?? "";
+}
+
+function schemeTable(scheme: string): ReturnType<typeof buildTokenTable> {
+  return buildTokenTable(
+    parsed.rules.filter(
+      (rule) =>
+        rule.sheet === SEMANTIC_SHEET &&
+        rule.context.length === 0 &&
+        selectorParts(rule.selector).includes(`:root[data-cv-scheme="${scheme}"]`),
+    ),
+    "--cv-",
+  );
+}
+
+function paletteBlocks(scheme: string): ReadonlyMap<string, readonly CssRule[]> {
+  const blocks = new Map<string, CssRule[]>();
+  for (const rule of parsed.rules) {
+    if (rule.sheet !== PALETTE_SHEET || rule.context.length !== 0) continue;
+    for (const part of selectorParts(rule.selector)) {
+      const match = PALETTE_BLOCK.exec(part);
+      if (match === null || match[2] !== scheme) continue;
+      const name = match[1] ?? "";
+      blocks.set(name, [...(blocks.get(name) ?? []), rule]);
+    }
+  }
+  return blocks;
 }
 
 describe("codevo token contract", () => {
@@ -337,66 +405,50 @@ describe("codevo token contract", () => {
     }
   });
 
-  it("lifts the prompt bubble off the thread column by tone wherever it has no card shadow", () => {
-    const bubbleRule = parsed.rules.find(
-      (rule) =>
-        rule.context.length === 0 && selectorParts(rule.selector).includes(".agent-prompt__bubble"),
+  it("lifts the prompt bubble off the thread column by tone in every palette and scheme", () => {
+    const bubbleBackgrounds = backgroundsOf(PROMPT_BUBBLE_SELECTOR);
+    expect(bubbleBackgrounds, "prompt bubble backgrounds").toHaveLength(1);
+    const bubbleTone = singleVarToken(bubbleBackgrounds[0], "prompt bubble background");
+    expect(bubbleTone).toMatch(PROMPT_BUBBLE_TONE);
+
+    const columnBackgrounds = backgroundsOf(THREAD_COLUMN_SELECTOR);
+    expect(columnBackgrounds, "thread column backgrounds").toHaveLength(1);
+    expect(singleVarToken(columnBackgrounds[0], "thread column background")).toBe(
+      THREAD_COLUMN_TONE,
     );
-    const bubbleBackground = lastOf(
-      bubbleRule?.declarations.filter((entry) => entry.property === "background"),
-    );
-    expect(bubbleBackground?.value).toBe(`var(${PROMPT_BUBBLE_TONE})`);
+    expect(bubbleTone).not.toBe(THREAD_COLUMN_TONE);
+    for (const layer of THREAD_COLUMN_LAYERS) {
+      expect(backgroundsOf(layer), `${layer} stays transparent over the column`).toEqual([]);
+    }
 
-    const agentTable = buildTokenTable(tokenRules);
-    expect(resolveVarRoots(PROMPT_BUBBLE_TONE, agentTable)).toEqual(["--color-surface"]);
-    expect(resolveVarRoots(THREAD_COLUMN_TONE, agentTable)).toEqual([...THREAD_COLUMN_ROOTS]);
+    const foreignTone = customPropertyDeclarations(parsed.rules, "--cv-")
+      .filter((entry) => entry.property === bubbleTone || entry.property === THREAD_COLUMN_TONE)
+      .filter((entry) => entry.rule.sheet !== SEMANTIC_SHEET)
+      .map((entry) => `${entry.rule.sheet} ${entry.property}`);
+    expect(foreignTone).toEqual([]);
 
-    const blocks: ReadonlyArray<readonly [string, readonly CssRule[], readonly CssRule[]]> = [
-      ...APP_THEME_SELECTORS.map(
-        (selector) =>
-          [selector, appThemeBlock(selector), lightRules(selector)] as readonly [
-            string,
-            readonly CssRule[],
-            readonly CssRule[],
-          ],
-      ),
-      [
-        SYSTEM_LIGHT_CONTEXT,
-        parsed.rules.filter(
-          (rule) =>
-            rule.sheet === APP_SHEET &&
-            rule.context[0] === SYSTEM_LIGHT_CONTEXT &&
-            rule.selector === SYSTEM_THEME_SELECTOR,
-        ),
-        systemLightRules(),
-      ] as readonly [string, readonly CssRule[], readonly CssRule[]],
-    ];
+    const lightPalettes = [...paletteBlocks("light").keys()].sort();
+    expect([...paletteBlocks("dark").keys()].sort()).toEqual(lightPalettes);
 
-    for (const [selector, block, shadowBlock] of blocks) {
-      const table = buildTokenTable(block, "--color-");
-      const bubble = lastOf(table.get("--color-surface"));
-      const column = lastOf(table.get(THREAD_COLUMN_ROOT));
-      expect(bubble, `${selector} bubble tone`).toBeDefined();
-      expect(column, `${selector} column tone`).toBeDefined();
-      expect(bubble, `${selector} bubble vs column`).not.toBe(column);
-      expect(lightness(bubble ?? ""), `${selector} bubble is raised`).toBeGreaterThan(
-        lightness(column ?? ""),
-      );
+    for (const scheme of CV_SCHEMES) {
+      const semantic = schemeTable(scheme);
+      const tint = parseTint(lastOf(semantic.get(bubbleTone)) ?? "");
+      expect(tint.alpha, `${scheme} bubble tint alpha`).toBeGreaterThan(0);
+      const surface = singleVarToken(lastOf(semantic.get(THREAD_COLUMN_TONE)), `${scheme} column`);
 
-      const light =
-        selector === SYSTEM_LIGHT_CONTEXT ||
-        (LIGHT_THEME_SELECTORS as readonly string[]).includes(selector);
-      if (light) {
-        const card = customPropertyDeclarations(shadowBlock, "--codevo-shadow-card");
-        expect(lastOf(card)?.value, `${selector} bubble shadow`).not.toBe("none");
-        continue;
+      const palettes = paletteBlocks(scheme);
+      expect(palettes.size, `${scheme} palettes`).toBeGreaterThan(0);
+      for (const [palette, rules] of palettes) {
+        const label = `${palette} ${scheme}`;
+        const column = lastOf(buildTokenTable(rules, "--cv-").get(surface));
+        expect(column, `${label} column tone`).toBeDefined();
+        const bubble = composite(column ?? "", tint);
+        expect(bubble, `${label} bubble vs column`).not.toBe(column?.toLowerCase());
+        const step = Math.abs(lightness(bubble) - lightness(column ?? ""));
+        expect(step, `${label} bubble vs column lightness step`).toBeGreaterThanOrEqual(
+          PROMPT_BUBBLE_MIN_STEP,
+        );
       }
-
-      expect(codevoValue("--codevo-shadow-card")).toBe("none");
-      const step = lightnessStep(column ?? "", bubble ?? "");
-      expect(step, `${selector} bubble vs column lightness step`).toBeGreaterThanOrEqual(
-        PROMPT_BUBBLE_MIN_STEP,
-      );
     }
   });
 

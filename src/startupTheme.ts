@@ -1,5 +1,9 @@
-import { COLOR_SCHEME_ATTRIBUTE, PALETTE_ATTRIBUTE } from "./domain/appearance";
-import { resolveStartupAppearance, STARTUP_APP_SETTINGS_KEY } from "./domain/startupTheme";
+import { COLOR_SCHEME_ATTRIBUTE, DEFAULT_APPEARANCE, PALETTE_ATTRIBUTE } from "./domain/appearance";
+import {
+  resolveStartupAppearance,
+  STARTUP_APP_SETTINGS_KEY,
+  type DocumentAppearance,
+} from "./domain/startupTheme";
 
 export interface StartupThemeEnvironment {
   readonly prefersLight: () => boolean;
@@ -7,20 +11,26 @@ export interface StartupThemeEnvironment {
   readonly setDocumentAttribute: (name: string, value: string) => void;
 }
 
-export function applyStartupTheme(environment: StartupThemeEnvironment): void {
+export const FALLBACK_STARTUP_APPEARANCE: DocumentAppearance = {
+  palette: DEFAULT_APPEARANCE.palette,
+  colorScheme: "dark",
+};
+
+export function applyStartupTheme(environment: StartupThemeEnvironment): DocumentAppearance {
   const appearance = resolveStartupAppearance(
     readSettingSafely(environment),
     prefersLightSafely(environment),
   );
   environment.setDocumentAttribute(PALETTE_ATTRIBUTE, appearance.palette);
   environment.setDocumentAttribute(COLOR_SCHEME_ATTRIBUTE, appearance.colorScheme);
+  return appearance;
 }
 
-export function applyBrowserStartupTheme(): void {
+export function applyBrowserStartupTheme(): DocumentAppearance {
   try {
-    applyStartupTheme(browserStartupThemeEnvironment());
+    return applyStartupTheme(browserStartupThemeEnvironment());
   } catch {
-    return;
+    return FALLBACK_STARTUP_APPEARANCE;
   }
 }
 

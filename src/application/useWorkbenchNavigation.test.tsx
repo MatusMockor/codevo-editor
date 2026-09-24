@@ -506,3 +506,59 @@ function deferred<T>() {
 
   return { promise, resolve };
 }
+
+describe("useWorkbenchNavigation openSearchResult outcome", () => {
+  const result = {
+    name: "orders.ts",
+    path: `${ROOT}/src/orders.ts`,
+    relativePath: "src/orders.ts",
+  };
+
+  it("resolves true after opening the file and closing Quick Open", async () => {
+    const harness = renderNavigation();
+
+    let opened: boolean | null = null;
+    await act(async () => {
+      opened = await harness.api().openSearchResult(result, { line: 4, column: null });
+    });
+
+    expect(opened).toBe(true);
+    expect(harness.deps.setQuickOpenOpen).toHaveBeenCalledWith(false);
+    expect(harness.deps.setEditorRevealTarget).toHaveBeenCalledWith({
+      path: result.path,
+      position: { column: 1, lineNumber: 4 },
+    });
+  });
+
+  it("resolves false when the file cannot be opened", async () => {
+    const harness = renderNavigation({ openFile: vi.fn(async () => false) });
+
+    let opened: boolean | null = null;
+    await act(async () => {
+      opened = await harness.api().openSearchResult(result);
+    });
+
+    expect(opened).toBe(false);
+    expect(harness.deps.forgetRecentFile).toHaveBeenCalledWith(result.path);
+    expect(harness.deps.setQuickOpenOpen).not.toHaveBeenCalled();
+  });
+
+  it("resolves false when the workspace changed while the file was opening", async () => {
+    const currentWorkspaceRootRef = { current: ROOT as string | null };
+    const harness = renderNavigation({
+      currentWorkspaceRootRef,
+      openFile: vi.fn(async () => {
+        currentWorkspaceRootRef.current = "/other-workspace";
+        return true;
+      }),
+    });
+
+    let opened: boolean | null = null;
+    await act(async () => {
+      opened = await harness.api().openSearchResult(result);
+    });
+
+    expect(opened).toBe(false);
+    expect(harness.deps.setQuickOpenOpen).not.toHaveBeenCalled();
+  });
+});

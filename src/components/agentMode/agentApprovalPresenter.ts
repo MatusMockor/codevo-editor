@@ -39,11 +39,11 @@ function actionLabel(kind: AgentApprovalKind, decision: AgentApprovalDecision): 
   if (kind === "mcpElicitation") return decision === "deny" ? "Decline" : "Accept";
   switch (decision) {
     case "allowOnce":
-      return "Allow once";
+      return "Approve";
     case "allowForSession":
-      return "Allow for this session";
+      return "Approve for this session";
     case "deny":
-      return "Deny";
+      return "Decline";
     default: {
       const unreachable: never = decision;
       return unreachable;

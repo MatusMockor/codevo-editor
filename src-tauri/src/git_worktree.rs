@@ -14,6 +14,9 @@ use std::{
 #[path = "git_worktree_exclude.rs"]
 mod git_worktree_exclude;
 
+#[path = "git_branch_worktree.rs"]
+pub(crate) mod git_branch_worktree;
+
 use git_worktree_exclude::ensure_agent_worktree_excluded;
 #[cfg(test)]
 use git_worktree_exclude::{

@@ -3,6 +3,7 @@ mod shipped_lifecycle;
 #[allow(dead_code, unused_imports)]
 mod shipped_store;
 
+use super::appserver::AGENT_THREAD_HISTORY_ONLY_EVENT_ERROR;
 use super::{AgentThreadDocument, AgentThreadStore, AGENT_THREAD_RETAINED_LIFECYCLE_ERROR};
 use serde_json::{json, Value};
 use std::{
@@ -185,5 +186,44 @@ fn a_retained_lifecycle_is_unreadable_for_the_shipped_loader_and_refused_by_the_
     assert_eq!(
         current.save(&fixture.root_key, &document),
         Err(AGENT_THREAD_RETAINED_LIFECYCLE_ERROR.to_string())
+    );
+}
+
+#[test]
+fn a_subagent_spawn_is_unreadable_for_the_shipped_loader_and_refused_by_the_current_store() {
+    let fixture = fixture();
+    let (_, thread) = fixture
+        .threads
+        .iter()
+        .find(|(_, thread)| {
+            thread["turns"]
+                .as_array()
+                .is_some_and(|turns| !turns.is_empty())
+        })
+        .expect("a document with a turn");
+    let mut spawned = thread.clone();
+    spawned["turns"][0]["events"]
+        .as_array_mut()
+        .expect("events")
+        .push(json!({
+            "kind": "subagentSpawn",
+            "callId": "call_spawn_0001",
+            "status": "completed",
+            "taskTitle": "Review idempotency middleware",
+            "model": null,
+            "reasoningEffort": null,
+            "agentThreadIds": []
+        }));
+
+    assert!(
+        serde_json::from_value::<shipped_store::AgentThreadDocument>(envelope(&spawned)).is_err()
+    );
+    let document: AgentThreadDocument =
+        serde_json::from_value(envelope(&spawned)).expect("current build decodes spawns");
+    let temp = TempBase::create("refuse-spawn");
+    let current = AgentThreadStore::new(temp.path.clone());
+    assert_eq!(
+        current.save(&fixture.root_key, &document),
+        Err(AGENT_THREAD_HISTORY_ONLY_EVENT_ERROR.to_string())
     );
 }

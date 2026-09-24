@@ -21,6 +21,42 @@ const commandContext: CommandContext = {
 };
 
 describe("dispatchWorkbenchShortcutCommand", () => {
+  it("hands Cmd+B to Go to Definition while editor text owns focus and to Toggle Sidebar otherwise", () => {
+    let editorFocused = true;
+    const toggleSidebar = vi.fn();
+    const goToDefinition = vi.fn();
+    const sidebarCommand: ShortcutScopedCommand = {
+      category: "Agents",
+      id: "agent.toggleSidebar",
+      isEnabled: () => true,
+      isShortcutEnabled: () => !editorFocused,
+      run: toggleSidebar,
+      title: "Toggle Sidebar",
+    };
+    const commandRegistry = registry({
+      "agent.toggleSidebar": sidebarCommand,
+      "editor.goToDefinition": command({ id: "editor.goToDefinition", run: goToDefinition }),
+    });
+    const dispatch = () =>
+      dispatchWorkbenchShortcutCommand({
+        commandContext,
+        commandRegistry,
+        event: keyboardEvent({ key: "b", metaKey: true }),
+        keymap: defaultKeymapSettings("mac"),
+        runCommand: registryRunner(commandRegistry),
+      });
+
+    expect(dispatch()).toBe(true);
+    expect(goToDefinition).toHaveBeenCalledTimes(1);
+    expect(toggleSidebar).not.toHaveBeenCalled();
+
+    editorFocused = false;
+
+    expect(dispatch()).toBe(true);
+    expect(toggleSidebar).toHaveBeenCalledTimes(1);
+    expect(goToDefinition).toHaveBeenCalledTimes(1);
+  });
+
   it("dispatches a pre-resolved chord collision in index priority order", () => {
     const runCommand = vi
       .fn<CommandExecutionRunner>()

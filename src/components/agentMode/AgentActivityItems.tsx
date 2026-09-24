@@ -2,7 +2,7 @@ import { useAgentToolDisclosure } from "./AgentToolDisclosure";
 import { Fragment, useId, useMemo, useState, type ReactNode } from "react";
 import {
   Brain,
-  ChevronDown,
+  ChevronRight,
   FileText,
   Globe,
   Search,
@@ -23,7 +23,6 @@ import {
   type AgentActivityTurnState,
   type AgentThoughtPresentation,
 } from "./agentActivityGrouping";
-import "./agentActivityGroups.css";
 
 interface Props {
   readonly scope?: string;
@@ -105,30 +104,36 @@ function AgentActivityGroup({
   return (
     <section className="agent-activity-group">
       <button
-        className="agent-tool-row agent-activity-group__toggle"
+        className="cv-work-row agent-activity-group__toggle"
         type="button"
         aria-expanded={expanded}
         aria-controls={id}
         onClick={disclosure.toggle}
       >
-        <Icon className="agent-tool-row__icon" aria-hidden="true" size={15} />
+        <span aria-hidden="true" className="cv-work-row__icon">
+          <Icon size={16} strokeWidth={1.5} />
+        </span>
         <span
           className={
             group.phase === "thinking"
-              ? "agent-activity-group__label agent-activity-group__label--live"
-              : "agent-activity-group__label"
+              ? "agent-activity-group__label agent-activity-group__label--live cv-work-row__label"
+              : "agent-activity-group__label cv-work-row__label"
           }
         >
           {group.label}
         </span>
-        <span className="agent-activity-group__status">
+        <ChevronRight
+          aria-hidden="true"
+          className="agent-activity-group__chevron cv-work-row__chevron"
+          size={14}
+        />
+        <span className="agent-activity-group__status cv-work-row__meta">
           {group.running > 0
             ? `${group.running} running`
             : group.completed > 0
               ? `${group.completed} completed`
               : null}
         </span>
-        <ChevronDown className="agent-activity-group__chevron" aria-hidden="true" size={14} />
       </button>
       {latest !== undefined && (!expanded || !visible.some((item) => item.key === latest.key)) && (
         <div className="agent-activity-group__live">{renderItem(latest, null)}</div>

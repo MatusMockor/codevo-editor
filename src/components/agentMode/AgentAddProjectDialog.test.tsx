@@ -9,6 +9,11 @@ import type {
   DirectoryListingGateway,
   DirectoryListingRequest,
 } from "../../domain/directoryListing";
+import {
+  WORKSPACE_ROOT_FILESYSTEM_ROOT_REFUSAL,
+  WORKSPACE_ROOT_HOME_ANCESTOR_REFUSAL,
+  WORKSPACE_ROOT_HOME_REFUSAL,
+} from "../../domain/workspaceRootEligibility";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import {
   AgentAddProjectDialog,
@@ -17,6 +22,7 @@ import {
 } from "./AgentAddProjectDialog";
 
 const HOME = "/Users/dev";
+const DEVELOPER = `${HOME}/Developer`;
 
 interface FakeGateway extends DirectoryListingGateway {
   readonly reveals: string[];
@@ -129,20 +135,22 @@ describe("AgentAddProjectDialog", () => {
     const onAdd = vi.fn();
     const onOpenExisting = vi.fn();
     await render({ onAdd, onOpenExisting });
+    await openDeveloper();
 
     expect(addButton().textContent).toBe("Add");
     expect(addButton().getAttribute("aria-describedby")).toBeNull();
 
     await press({ key: "Enter", metaKey: true });
 
-    expect(onAdd).toHaveBeenCalledWith(HOME);
+    expect(onAdd).toHaveBeenCalledWith(DEVELOPER);
     expect(onOpenExisting).not.toHaveBeenCalled();
   });
 
   it("offers the existing project instead of a dead Add when the directory is one", async () => {
     const onAdd = vi.fn();
     const onOpenExisting = vi.fn();
-    await render({ onAdd, onOpenExisting, projectRootPaths: [HOME] });
+    await render({ onAdd, onOpenExisting, projectRootPaths: [DEVELOPER] });
+    await openDeveloper();
 
     const button = addButton();
     expect(button.disabled).toBe(false);
@@ -155,32 +163,34 @@ describe("AgentAddProjectDialog", () => {
 
     await act(async () => button.click());
 
-    expect(onOpenExisting).toHaveBeenCalledWith(HOME);
+    expect(onOpenExisting).toHaveBeenCalledWith(DEVELOPER);
     expect(onAdd).not.toHaveBeenCalled();
   });
 
   it("sends Cmd+Enter to the same action the button performs", async () => {
     const onAdd = vi.fn();
     const onOpenExisting = vi.fn();
-    await render({ onAdd, onOpenExisting, projectRootPaths: [HOME] });
+    await render({ onAdd, onOpenExisting, projectRootPaths: [DEVELOPER] });
+    await openDeveloper();
 
     await press({ key: "Enter", metaKey: true });
 
-    expect(onOpenExisting).toHaveBeenCalledWith(HOME);
+    expect(onOpenExisting).toHaveBeenCalledWith(DEVELOPER);
     expect(onAdd).not.toHaveBeenCalled();
   });
 
   it("opens the registered root, not the browsed spelling of the same directory", async () => {
     const onAdd = vi.fn();
     const onOpenExisting = vi.fn();
-    await render({ onAdd, onOpenExisting, projectRootPaths: [`${HOME}/`] });
+    await render({ onAdd, onOpenExisting, projectRootPaths: [`${DEVELOPER}/`] });
+    await openDeveloper();
 
     expect(addButton().textContent).toBe("Open project");
     expect(host.textContent).toContain("This directory is already a project.");
 
     await act(async () => addButton().click());
 
-    expect(onOpenExisting).toHaveBeenCalledWith(`${HOME}/`);
+    expect(onOpenExisting).toHaveBeenCalledWith(`${DEVELOPER}/`);
     expect(onAdd).not.toHaveBeenCalled();
   });
 
@@ -271,7 +281,107 @@ describe("AgentAddProjectDialog", () => {
     await waitForReact(() => {
       expect(rowNames()).toContain("Developer");
     });
+    await openDeveloper();
     expect(addButton().disabled).toBe(false);
+  });
+
+  it("refuses to add the initial home listing until the user opens a folder", async () => {
+    const onAdd = vi.fn();
+    const onOpenExisting = vi.fn();
+    await render({ onAdd, onOpenExisting });
+
+    expect(pathValue()).toBe("~/");
+    expect(addButton().disabled).toBe(true);
+    expect(addButton().getAttribute("aria-describedby")).toBe("agent-add-project-reason");
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      WORKSPACE_ROOT_HOME_REFUSAL,
+    );
+
+    await press({ key: "Enter", metaKey: true });
+    await act(async () => addButton().click());
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onOpenExisting).not.toHaveBeenCalled();
+
+    await openDeveloper();
+    expect(addButton().disabled).toBe(false);
+    await press({ key: "Enter", metaKey: true });
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith(DEVELOPER);
+  });
+
+  it("refuses home even when it is already registered as a project", async () => {
+    const onOpenExisting = vi.fn();
+    await render({ onOpenExisting, projectRootPaths: [HOME] });
+
+    expect(addButton().disabled).toBe(true);
+    expect(addButton().textContent).toBe("Add");
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      WORKSPACE_ROOT_HOME_REFUSAL,
+    );
+    await press({ key: "Enter", metaKey: true });
+    expect(onOpenExisting).not.toHaveBeenCalled();
+  });
+
+  it("refuses the ancestors of home and the filesystem root after ascending", async () => {
+    const onAdd = vi.fn();
+    await render({ onAdd });
+
+    await press({ key: "Backspace" });
+    await waitForReact(() => {
+      expect(pathValue()).toBe("/Users");
+    });
+    expect(addButton().disabled).toBe(true);
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      WORKSPACE_ROOT_HOME_ANCESTOR_REFUSAL,
+    );
+
+    await press({ key: "Backspace" });
+    await waitForReact(() => {
+      expect(pathValue()).toBe("/");
+    });
+    expect(addButton().disabled).toBe(true);
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      WORKSPACE_ROOT_FILESYSTEM_ROOT_REFUSAL,
+    );
+
+    await press({ key: "Enter", metaKey: true });
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("compares the home folder exactly on a case-sensitive host", async () => {
+    const onAdd = vi.fn();
+    await render({ gateway: aliasedHomeGateway(), onAdd, pathCase: "sensitive" });
+
+    await press({ key: "Backspace" });
+    await waitForReact(() => {
+      expect(pathValue()).toBe("/users/DEV");
+    });
+    expect(addButton().disabled).toBe(false);
+    await press({ key: "Enter", metaKey: true });
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith("/users/DEV");
+  });
+
+  it("folds case when refusing the home folder on a case-insensitive host", async () => {
+    await render({ gateway: aliasedHomeGateway(), pathCase: "insensitive" });
+
+    await press({ key: "Backspace" });
+    await waitForReact(() => {
+      expect(pathValue()).toBe("/users/DEV");
+    });
+    expect(addButton().disabled).toBe(true);
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      WORKSPACE_ROOT_HOME_REFUSAL,
+    );
+  });
+
+  it("still lets the folder picker choose home as a plain directory", async () => {
+    const onAdd = vi.fn();
+    await render({ mode: "selectDirectory", onAdd });
+
+    expect(addButton().disabled).toBe(false);
+    expect(addButton().textContent).toBe("Choose folder");
+    await press({ key: "Enter", metaKey: true });
+
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith(HOME);
   });
 
   it("shows a bounded note when the listing is truncated", async () => {
@@ -321,6 +431,17 @@ describe("AgentAddProjectDialog", () => {
     });
   }
 
+  async function openDeveloper(): Promise<void> {
+    const row = [...host.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (candidate) => candidate.textContent === "Developer",
+    );
+    expect(row).not.toBeUndefined();
+    await act(async () => row?.click());
+    await waitForReact(() => {
+      expect(pathValue()).toBe("~/Developer");
+    });
+  }
+
   async function type(value: string): Promise<void> {
     const input = query<HTMLInputElement>('input[role="combobox"]');
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -360,6 +481,8 @@ describe("AgentAddProjectDialog", () => {
 
 function fakeGateway(): FakeGateway {
   const listings = new Map<string, DirectoryListing>([
+    ["/", listing("/", null, false, [entry("Users", "directory", false)])],
+    ["/Users", listing("/Users", "/", false, [entry("dev", "directory", false)])],
     [
       HOME,
       listing(HOME, "/Users", false, [
@@ -370,10 +493,7 @@ function fakeGateway(): FakeGateway {
         entry("notes.md", "file", false),
       ]),
     ],
-    [
-      `${HOME}/Developer`,
-      listing(`${HOME}/Developer`, HOME, false, [entry("editor", "directory", false)]),
-    ],
+    [DEVELOPER, listing(DEVELOPER, HOME, false, [entry("editor", "directory", false)])],
   ]);
 
   return {
@@ -394,6 +514,16 @@ function fakeGateway(): FakeGateway {
       if (this.revealRejection !== null) throw this.revealRejection;
       this.reveals.push(path);
     },
+  };
+}
+
+function aliasedHomeGateway(): DirectoryListingGateway {
+  return {
+    listDirectoryEntries: async (request) => {
+      if (request.path === null) return listing(HOME, "/users/DEV", false, []);
+      return listing("/users/DEV", "/users", false, []);
+    },
+    revealDirectory: async () => undefined,
   };
 }
 

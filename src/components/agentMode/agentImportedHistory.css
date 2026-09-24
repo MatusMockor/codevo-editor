@@ -1,6 +1,6 @@
 .agent-imported-history {
   display: grid;
-  gap: var(--agent-turn-gap);
+  gap: var(--cv-space-2);
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }

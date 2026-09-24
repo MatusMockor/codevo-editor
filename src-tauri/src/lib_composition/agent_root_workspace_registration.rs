@@ -1,8 +1,9 @@
 use super::agent_root_lease::{
     AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, AgentRootWorkspaceRegistration,
     RegisteredAgentRootLease, RegisteredAgentRootLeaseAcquisition,
+    AGENT_ROOT_LEASE_RELEASING_ERROR,
 };
-use crate::workspace_registry::WorkspaceRegistry;
+use crate::workspace_registry::{RegistrationOwner, WorkspaceRegistry};
 use std::path::Path;
 
 pub(super) fn acquire_registered_workspace_lease(
@@ -10,11 +11,14 @@ pub(super) fn acquire_registered_workspace_lease(
     workspace_registry: &WorkspaceRegistry,
     leases: &AgentRootLeaseRegistry,
 ) -> Result<RegisteredAgentRootLease, String> {
+    if leases.is_releasing(canonical_root) {
+        return Err(AGENT_ROOT_LEASE_RELEASING_ERROR.to_string());
+    }
     if let Some(existing) = leases.registered(canonical_root) {
         return Ok(existing);
     }
     let registration = workspace_registry
-        .register_with_receipt(canonical_root)
+        .register_owner_with_receipt(canonical_root, RegistrationOwner::Agent)
         .map_err(|error| error.to_string())?;
     let workspace_registration = AgentRootWorkspaceRegistration {
         workspace_id: registration.receipt.workspace_id,
@@ -37,15 +41,15 @@ pub(super) fn release_registered_workspace_lease(
     canonical_root: &Path,
     token: u64,
     leases: &AgentRootLeaseRegistry,
-    workspace_registry: Option<&WorkspaceRegistry>,
-) -> Result<AgentRootLeaseReleaseDisposition, String> {
-    let (disposition, registration) = leases.release_registered(canonical_root, token);
-    if disposition == AgentRootLeaseReleaseDisposition::Released {
-        if let (Some(registry), Some(registration)) = (workspace_registry, registration) {
-            rollback_workspace_registration(registry, registration)?;
-        }
+) -> (
+    AgentRootLeaseReleaseDisposition,
+    Option<AgentRootWorkspaceRegistration>,
+) {
+    let (disposition, registration) = leases.begin_release_registered(canonical_root, token);
+    if disposition != AgentRootLeaseReleaseDisposition::Released {
+        return (disposition, None);
     }
-    Ok(disposition)
+    (disposition, registration)
 }
 
 fn rollback_workspace_registration(

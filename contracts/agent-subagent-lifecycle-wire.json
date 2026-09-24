@@ -6,7 +6,8 @@
     "batchKeyBytes": 272,
     "parentToolIdBytes": 256,
     "nestedCount": 999,
-    "countedNestedToolIds": 32
+    "countedNestedToolIds": 32,
+    "modelBytes": 64
   },
   "valid": {
     "legacy": {
@@ -34,8 +35,10 @@
           "batchKey": "spawn:toolu_parent",
           "description": "Running npx vitest run",
           "durationMs": 76099,
+          "effort": "medium",
           "id": "tool:toolu_parent",
           "lastToolName": "Bash",
+          "model": "claude-sonnet-5",
           "name": "general-purpose",
           "nestedCount": 1,
           "state": "running",
@@ -73,6 +76,10 @@
     { "parentToolId": "" },
     { "unknownField": true },
     { "nestedCount": -1 },
+    { "model": "" },
+    { "model": 5 },
+    { "effort": "ludicrous" },
+    { "model": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" },
     {
       "taskTitle": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
     },

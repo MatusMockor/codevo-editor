@@ -940,6 +940,89 @@ pub struct SubAgentActivityItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollabAgentTool {
+    SpawnAgent,
+    SendInput,
+    ResumeAgent,
+    Wait,
+    CloseAgent,
+    SendMessage,
+    FollowupTask,
+    InterruptAgent,
+    ListAgents,
+    Unrecognized { tag: String },
+}
+
+impl<'de> Deserialize<'de> for CollabAgentTool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        string_tag(
+            deserializer,
+            |tag| match tag {
+                "spawnAgent" => Some(Self::SpawnAgent),
+                "sendInput" => Some(Self::SendInput),
+                "resumeAgent" => Some(Self::ResumeAgent),
+                "wait" => Some(Self::Wait),
+                "closeAgent" => Some(Self::CloseAgent),
+                "sendMessage" => Some(Self::SendMessage),
+                "followupTask" => Some(Self::FollowupTask),
+                "interruptAgent" => Some(Self::InterruptAgent),
+                "listAgents" => Some(Self::ListAgents),
+                _ => None,
+            },
+            |tag| Self::Unrecognized { tag },
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollabAgentToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Interrupted,
+    Unrecognized { tag: String },
+}
+
+impl<'de> Deserialize<'de> for CollabAgentToolCallStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        string_tag(
+            deserializer,
+            |tag| match tag {
+                "inProgress" => Some(Self::InProgress),
+                "completed" => Some(Self::Completed),
+                "failed" => Some(Self::Failed),
+                "interrupted" => Some(Self::Interrupted),
+                _ => None,
+            },
+            |tag| Self::Unrecognized { tag },
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollabAgentToolCallItem {
+    pub id: String,
+    pub tool: CollabAgentTool,
+    #[serde(default)]
+    pub status: Option<CollabAgentToolCallStatus>,
+    #[serde(default)]
+    pub receiver_thread_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadItem {
     UserMessage {
         id: String,
@@ -952,6 +1035,7 @@ pub enum ThreadItem {
     McpToolCall(McpToolCallItem),
     WebSearch(WebSearchItem),
     SubAgentActivity(SubAgentActivityItem),
+    CollabAgentToolCall(CollabAgentToolCallItem),
     ContextCompaction {
         id: String,
     },
@@ -964,7 +1048,6 @@ pub enum ThreadItem {
 }
 
 const IGNORED_THREAD_ITEM_TAGS: &[&str] = &[
-    "collabAgentToolCall",
     "dynamicToolCall",
     "enteredReviewMode",
     "exitedReviewMode",
@@ -998,6 +1081,7 @@ impl<'de> Deserialize<'de> for ThreadItem {
             "mcpToolCall" => Ok(Self::McpToolCall(tagged_payload::<D, _>(value)?)),
             "webSearch" => Ok(Self::WebSearch(tagged_payload::<D, _>(value)?)),
             "subAgentActivity" => Ok(Self::SubAgentActivity(tagged_payload::<D, _>(value)?)),
+            "collabAgentToolCall" => Ok(Self::CollabAgentToolCall(tagged_payload::<D, _>(value)?)),
             "contextCompaction" => {
                 let payload: ContextCompactionItemPayload = tagged_payload::<D, _>(value)?;
                 Ok(Self::ContextCompaction { id: payload.id })

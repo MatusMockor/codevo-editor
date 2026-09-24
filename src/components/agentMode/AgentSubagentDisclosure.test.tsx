@@ -83,7 +83,7 @@ describe("AgentSubagentDisclosure", () => {
     );
   }
 
-  const row = () => host.querySelector<HTMLButtonElement>(".agent-spawn__row");
+  const row = () => host.querySelector<HTMLButtonElement>(".cv-spawn__head");
 
   it("renders nothing without subagents", () => {
     render([]);
@@ -159,31 +159,27 @@ describe("AgentSubagentDisclosure", () => {
     ],
   ] as const)("summarizes %#", (sources, truncated, lead, status, tone) => {
     render(sources, truncated);
-    expect(host.querySelector(".agent-spawn__lead")?.textContent).toBe(lead);
-    expect(host.querySelector(".agent-spawn__status")?.textContent).toBe(status);
-    expect(host.querySelector(".agent-spawn")?.getAttribute("data-tone")).toBe(tone);
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe(lead);
+    expect(host.querySelector(".cv-spawn__status")?.textContent).toBe(status);
+    expect(host.querySelector(".cv-spawn")?.getAttribute("data-tone")).toBe(tone);
     expect(host.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(0);
-    const dot = host.querySelector(".agent-spawn__row > .agent-spawn__dot");
+    const dot = host.querySelector(".cv-spawn__head > .cv-spawn__icon");
     expect(dot?.getAttribute("aria-hidden")).toBe("true");
-    expect(dot?.nextElementSibling).toBe(host.querySelector(".agent-spawn__lead"));
+    expect(dot?.nextElementSibling).toBe(host.querySelector(".cv-spawn__lead"));
   });
 
   it("shows an unknown task truthfully: role chip kept and a muted task unknown line", () => {
     render([source({ id: "a", role: "general-purpose", observedState: "completed" })]);
     act(() => row()?.click());
-    const member = host.querySelector(".agent-spawn-member");
+    const member = host.querySelector(".cv-spawn-member");
 
     expect(member?.getAttribute("data-title")).toBe("unknown");
-    expect(member?.querySelector(".agent-spawn-member__title")?.textContent).toBe(
-      "general-purpose",
-    );
-    expect(member?.querySelector(".agent-spawn-member__role")?.textContent).toBe("general-purpose");
-    expect(member?.querySelector(".agent-spawn-member__activity")?.textContent).toBe(
-      "task unknown",
-    );
+    expect(member?.querySelector(".cv-spawn-member__title")?.textContent).toBe("general-purpose");
+    expect(member?.querySelector(".cv-role")?.textContent).toBe("general-purpose");
+    expect(member?.querySelector(".cv-spawn-member__activity")?.textContent).toBe("task unknown");
   });
 
-  it("starts collapsed, expands to one line per member and collapses again", () => {
+  it("opens a live batch by default, collapses it and expands it again", () => {
     render([
       source({
         id: "a",
@@ -200,30 +196,28 @@ describe("AgentSubagentDisclosure", () => {
         outcome: "167 tests passed",
       }),
     ]);
-    expect(row()?.getAttribute("aria-expanded")).toBe("false");
-    expect(host.querySelector(".agent-spawn-member")).toBeNull();
-
-    act(() => row()?.click());
     expect(row()?.getAttribute("aria-expanded")).toBe("true");
-    const members = [...host.querySelectorAll(".agent-spawn-member")];
+    const members = [...host.querySelectorAll(".cv-spawn-member")];
     expect(members).toHaveLength(2);
-    expect(members[0]?.querySelector(".agent-spawn-member__title")?.textContent).toBe(
+    expect(members[0]?.querySelector(".cv-spawn-member__title")?.textContent).toBe(
       "Stream A backend",
     );
-    expect(members[0]?.querySelector(".agent-spawn-member__role")?.textContent).toBe(
-      "general-purpose",
-    );
-    expect(members[0]?.querySelector(".agent-spawn-member__activity")?.textContent).toBe(
+    expect(members[0]?.querySelector(".cv-role")?.textContent).toBe("general-purpose");
+    expect(members[0]?.querySelector(".cv-spawn-member__activity")?.textContent).toBe(
       "Reading hosts.rs",
     );
-    expect(members[0]?.querySelector(".agent-spawn-member__meta")?.textContent).toBe("Working");
-    expect(members[1]?.querySelector(".agent-spawn-member__role")).toBeNull();
-    expect(members[1]?.querySelector(".agent-spawn-member__meta")?.textContent).toBe(
+    expect(members[0]?.querySelector(".cv-spawn-member__meta")?.textContent).toBe("Working");
+    expect(members[1]?.querySelector(".cv-role")).toBeNull();
+    expect(members[1]?.querySelector(".cv-spawn-member__meta")?.textContent).toBe(
       "3m 12s · 61.2k tok",
     );
 
     act(() => row()?.click());
-    expect(host.querySelector(".agent-spawn-member")).toBeNull();
+    expect(row()?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".cv-spawn-member")).toBeNull();
+
+    act(() => row()?.click());
+    expect(host.querySelectorAll(".cv-spawn-member")).toHaveLength(2);
   });
 
   it("expands a member into its full bounded activity and keeps expansion across updates", () => {
@@ -231,38 +225,40 @@ describe("AgentSubagentDisclosure", () => {
       source({ id: "a", title: "Stream A", progress: "line one\nline two", model: "opus-5" }),
     ];
     render(sources);
-    act(() => row()?.click());
-    const head = () => host.querySelector<HTMLButtonElement>(".agent-spawn-member__head--action");
+    const head = () => host.querySelector<HTMLButtonElement>("button.cv-spawn-member__head");
     expect(head()?.getAttribute("aria-expanded")).toBe("false");
 
     act(() => head()?.click());
     expect(head()?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector(".agent-spawn-member__body pre")?.textContent).toBe(
+    expect(host.querySelector(".cv-spawn-member__body pre")?.textContent).toBe(
       "line one\nline two\n\nopus-5",
     );
-    expect(host.querySelector(".agent-spawn-member__activity")).toBeNull();
+    expect(host.querySelector(".cv-spawn-member__activity")).toBeNull();
+
+    render([{ ...sources[0]!, progress: "line three" }]);
+    expect(row()?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".cv-spawn-member__body pre")?.textContent).toBe(
+      "line three\n\nopus-5",
+    );
 
     render([{ ...sources[0]!, observedState: "completed", outcome: "finished" }]);
-    expect(row()?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector(".agent-spawn-member__body pre")?.textContent).toBe(
-      "finished\n\nopus-5",
-    );
+    expect(row()?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".cv-spawn-member")).toBeNull();
   });
 
   it("does not manufacture an expandable body for members without details", () => {
     render([source({ id: "a", title: "Quiet" })]);
-    act(() => row()?.click());
-    expect(host.querySelector(".agent-spawn-member__head--action")).toBeNull();
-    expect(host.querySelector(".agent-spawn-member__meta")?.textContent).toBe("Working");
+    expect(host.querySelector("button.cv-spawn-member__head")).toBeNull();
+    expect(host.querySelector(".cv-spawn-member__meta")?.textContent).toBe("Working");
   });
 
   it("opens the Agents panel from the expanded batch and leaves truncation to the panel", () => {
     const onOpenAgents = vi.fn();
-    render([source({ id: "a" })], true, onOpenAgents);
-    expect(host.querySelector(".agent-spawn__open")).toBeNull();
+    render([source({ id: "a", observedState: "completed" })], true, onOpenAgents);
+    expect(host.querySelector(".cv-spawn__open")).toBeNull();
     act(() => row()?.click());
     expect(host.textContent).not.toContain("Additional subagents");
-    const open = host.querySelector<HTMLButtonElement>(".agent-spawn__open");
+    const open = host.querySelector<HTMLButtonElement>(".cv-spawn__open");
     expect(open?.textContent).toBe("Open Agents panel ›");
     act(() => open?.click());
     expect(onOpenAgents).toHaveBeenCalledTimes(1);
@@ -276,7 +272,6 @@ describe("AgentSubagentDisclosure", () => {
     ];
     const first = projectAgentRuntimeSubagents(sources, false);
     act(() => root.render(<AgentSubagentDisclosure memberRenderProbe={probe} subagents={first} />));
-    act(() => row()?.click());
     probe.mockClear();
 
     for (let tick = 2; tick < 12; tick += 1) {
@@ -293,7 +288,7 @@ describe("AgentSubagentDisclosure", () => {
     }
 
     expect(probe.mock.calls.map(([id]) => id)).toEqual(Array.from({ length: 10 }, () => "b"));
-    expect(host.querySelector(".agent-spawn__status")?.textContent).toBe("2 working");
+    expect(host.querySelector(".cv-spawn__status")?.textContent).toBe("2 working");
   });
 
   it("folds interleaved async launches into one row and keeps it mounted from live to settled", () => {
@@ -313,20 +308,20 @@ describe("AgentSubagentDisclosure", () => {
     };
 
     show(spawned, { kind: "running" });
-    expect(host.querySelectorAll(".agent-spawn")).toHaveLength(1);
-    expect(host.querySelector(".agent-spawn__lead")?.textContent).toBe("Kicked off 3 subagents");
-    expect(host.querySelector(".agent-spawn__status")?.textContent).toBe("3 working");
-    const spawnRow = host.querySelector(".agent-spawn");
-    act(() => row()?.click());
+    expect(host.querySelectorAll(".cv-spawn")).toHaveLength(1);
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe("Kicked off 3 subagents");
+    expect(host.querySelector(".cv-spawn__status")?.textContent).toBe("3 working");
+    const spawnRow = host.querySelector(".cv-spawn");
+    expect(row()?.getAttribute("aria-expanded")).toBe("true");
     expect(
-      [...host.querySelectorAll(".agent-spawn-member__title")].map((node) => node.textContent),
+      [...host.querySelectorAll(".cv-spawn-member__title")].map((node) => node.textContent),
     ).toEqual(["Stream A", "Stream B", "Stream C"]);
 
     const live = [...spawned, tick("b", "running", "Reading gateway.ts")];
     show(live, { kind: "running" });
-    expect(host.querySelector(".agent-spawn")).toBe(spawnRow);
+    expect(host.querySelector(".cv-spawn")).toBe(spawnRow);
     expect(row()?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelectorAll(".agent-spawn-member__activity")[1]?.textContent).toBe(
+    expect(host.querySelectorAll(".cv-spawn-member__activity")[1]?.textContent).toBe(
       "Reading gateway.ts",
     );
 
@@ -337,12 +332,14 @@ describe("AgentSubagentDisclosure", () => {
       tick("c", "failed", "Stream C broke"),
     ];
     show(settled, { kind: "exited", exitCode: 0 });
-    expect(host.querySelector(".agent-spawn")).toBe(spawnRow);
+    expect(host.querySelector(".cv-spawn")).toBe(spawnRow);
+    expect(row()?.getAttribute("aria-expanded")).toBe("false");
+    act(() => row()?.click());
     expect(row()?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector(".agent-spawn__lead")?.textContent).toBe("Ran 3 subagents");
-    expect(host.querySelector(".agent-spawn__status")?.textContent).toBe("1 failed");
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe("Ran 3 subagents");
+    expect(host.querySelector(".cv-spawn__status")?.textContent).toBe("1 failed");
     expect(
-      [...host.querySelectorAll(".agent-spawn-member")].map((node) =>
+      [...host.querySelectorAll(".cv-spawn-member")].map((node) =>
         node.getAttribute("data-status"),
       ),
     ).toEqual(["completed", "completed", "failed"]);
@@ -350,7 +347,7 @@ describe("AgentSubagentDisclosure", () => {
 
   it("renders one quiet row per spawn batch", () => {
     render([source({ id: "a", batchId: "spawn:a" }), source({ id: "b", batchId: "spawn:b" })]);
-    expect(host.querySelectorAll(".agent-spawn__row")).toHaveLength(2);
+    expect(host.querySelectorAll(".cv-spawn__head")).toHaveLength(2);
   });
 
   it("marks a legacy batch and never claims it was kicked off", () => {
@@ -359,7 +356,64 @@ describe("AgentSubagentDisclosure", () => {
       source({ id: "b", batchId: "legacy" }),
     ]);
 
-    expect(host.querySelector(".agent-spawn")?.getAttribute("data-origin")).toBe("legacy");
-    expect(host.querySelector(".agent-spawn__lead")?.textContent).toBe("2 earlier subagents");
+    expect(host.querySelector(".cv-spawn")?.getAttribute("data-origin")).toBe("legacy");
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe("2 earlier subagents");
+  });
+
+  it("opens a live batch by default with titled members, role tags and the panel link", () => {
+    const onOpenAgents = vi.fn();
+    render(
+      [
+        source({
+          id: "a",
+          batchId: "spawn:call-a",
+          title: "Map order creation paths",
+          role: "explorer",
+          observedState: "completed",
+          durationMs: 48_000,
+          totalTokens: 12_400,
+        }),
+        source({
+          id: "b",
+          batchId: "spawn:call-a",
+          title: "Review idempotency middleware",
+          role: "reviewer",
+          progress: "Read src/middleware/idempotency.ts",
+        }),
+      ],
+      false,
+      onOpenAgents,
+    );
+    const head = host.querySelector<HTMLButtonElement>(".cv-spawn__head");
+    expect(head?.getAttribute("aria-expanded")).toBe("true");
+    expect(head?.textContent).toContain("Kicked off 2 subagents");
+    expect(head?.textContent).toContain("1 working");
+    const members = [...host.querySelectorAll(".cv-spawn-member")];
+    expect(
+      members.map((member) => member.querySelector(".cv-spawn-member__title")?.textContent),
+    ).toEqual(["Map order creation paths", "Review idempotency middleware"]);
+    expect(members[0]?.querySelector(".cv-role")?.textContent).toBe("explorer");
+    expect(members[0]?.querySelector(".cv-spawn-member__meta")?.textContent).toBe(
+      "48s · 12.4k tok",
+    );
+    expect(members[1]?.querySelector(".cv-spawn-member__meta")?.textContent).toBe("Working");
+    act(() => host.querySelector<HTMLButtonElement>(".cv-spawn__open")?.click());
+    expect(onOpenAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a settled batch collapsed until the user opens it", () => {
+    render([
+      source({
+        id: "a",
+        batchId: "spawn:call-a",
+        title: "Audit routes",
+        observedState: "completed",
+      }),
+    ]);
+    const head = host.querySelector<HTMLButtonElement>(".cv-spawn__head");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".cv-spawn__members")).toBeNull();
+    act(() => head?.click());
+    expect(host.querySelector(".cv-spawn__members")).not.toBeNull();
   });
 });

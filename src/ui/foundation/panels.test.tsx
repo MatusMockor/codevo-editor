@@ -96,6 +96,19 @@ describe("PanelTabs", () => {
     ]);
   });
 
+  it("omits aria-controls for a tab without a rendered panel", () => {
+    const { host } = mount(
+      <PanelTabs
+        label="Right panel"
+        onSelect={() => undefined}
+        selectedId="solo"
+        tabs={[{ id: "solo", title: "Solo", icon: <svg /> }]}
+      />,
+    );
+
+    expect(host.querySelector('[role="tab"]')?.hasAttribute("aria-controls")).toBe(false);
+  });
+
   it("nests no interactive control inside a tab", () => {
     const { host } = mount(
       <PanelTabs

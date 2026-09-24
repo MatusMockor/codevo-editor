@@ -16,11 +16,13 @@ import {
   agentLaunchWithModel,
   type AgentLaunchAccess,
   type AgentLaunchChoice,
+  type AgentModelChoice,
 } from "./agentLaunchPresentation";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { AgentTraitsPicker } from "./AgentTraitsPicker";
+import { useComposerPaletteBinding } from "./useComposerPaletteBinding";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 
 const MODEL_ID = "agent-launch-model";
@@ -66,6 +68,29 @@ export function AgentLaunchControls({
     return discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
   };
   const configuredModel = configuredModelFor(effectiveLaunch.provider);
+  const selectModel = (
+    model: AgentModelChoice,
+    provider: AgentCliKind = effectiveLaunch.provider,
+  ) =>
+    onLaunchChange(
+      agentLaunchWithModel(
+        provider === effectiveLaunch.provider
+          ? effectiveLaunch
+          : defaultAgentComposerLaunch(provider),
+        model,
+        configuredModelFor(provider),
+        catalog,
+      ),
+    );
+  useComposerPaletteBinding({
+    launch: effectiveLaunch,
+    catalog,
+    providerManagement,
+    providerEnabled,
+    providerSwitchable,
+    disabled,
+    selectModel,
+  });
   const secondaryControls = (
     <>
       {effectiveLaunch.provider === "claudeCode" && (
@@ -117,18 +142,7 @@ export function AgentLaunchControls({
         id={MODEL_ID}
         label="Agent model"
         launch={effectiveLaunch}
-        onSelect={(model, provider = effectiveLaunch.provider) =>
-          onLaunchChange(
-            agentLaunchWithModel(
-              provider === effectiveLaunch.provider
-                ? effectiveLaunch
-                : defaultAgentComposerLaunch(provider),
-              model,
-              configuredModelFor(provider),
-              catalog,
-            ),
-          )
-        }
+        onSelect={selectModel}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
         providerSwitchable={providerSwitchable}

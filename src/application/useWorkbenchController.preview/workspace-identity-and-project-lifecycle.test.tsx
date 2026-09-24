@@ -38,6 +38,10 @@ import {
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
   normalizeWorkspaceSession,
+  identityGatewayDouble,
+  releasedWorkspaceOwner,
+  releaseOwnerOf,
+  workspaceAdmissionDoubles,
   phpactorLanguageServerPlan,
   phpProjectDescriptor,
   phpWorkspaceDescriptor,
@@ -94,7 +98,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
     vi.mocked(
@@ -196,7 +200,7 @@ MissingClass::class;
         openPath: vi.fn(async (path) =>
           path === firstOwner.selectedPath ? firstOwner : secondOwner,
         ),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -251,7 +255,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? firstOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -304,7 +308,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? ownerA),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -379,7 +383,7 @@ MissingClass::class;
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
         openFromPicker,
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -417,7 +421,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath,
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -558,7 +562,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
       workspaceTrustGateway: {
         getTrust: vi.fn(async () => {
@@ -659,7 +663,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -739,7 +743,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
@@ -850,7 +854,7 @@ MissingClass::class;
         openPath: vi.fn(async (path) =>
           path === workspaceA.selectedPath ? workspaceA : workspaceB,
         ),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -920,7 +924,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath,
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1021,7 +1025,7 @@ MissingClass::class;
         openPath: vi.fn(async (path) =>
           path === firstAlias.selectedPath ? firstAlias : secondAlias,
         ),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1181,7 +1185,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? thirdOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1359,7 +1363,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1494,7 +1498,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? firstOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1581,7 +1585,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1716,7 +1720,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath,
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -1729,11 +1733,11 @@ MissingClass::class;
       legacyRawKeys: [descriptor.canonicalRoot, descriptor.selectedPath],
     });
   });
-  it("unregisters a superseded direct admission and never opens it later", async () => {
+  it("rolls back a superseded direct admission and never opens it later", async () => {
     const descriptorA = trustedDescriptor("ws-direct-a", "/workspace-a");
     const descriptorB = trustedDescriptor("ws-direct-b", "/workspace-b");
     const admissionA = createDeferred<typeof descriptorA>();
-    const unregister = vi.fn(async () => undefined);
+    const rollbackAdmission = vi.fn(releasedWorkspaceOwner);
     const openPath = vi.fn((path: string) =>
       path === descriptorA.selectedPath ? admissionA.promise : Promise.resolve(descriptorB),
     );
@@ -1742,7 +1746,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath,
-        unregister,
+        ...workspaceAdmissionDoubles(undefined, rollbackAdmission),
       },
     });
 
@@ -1762,7 +1766,7 @@ MissingClass::class;
       await firstOpen;
     });
 
-    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptorA.workspaceId);
+    expect(rollbackAdmission).toHaveBeenCalledExactlyOnceWith(descriptorA);
     expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
     expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
   });
@@ -1777,7 +1781,7 @@ MissingClass::class;
       canonicalRoot,
     };
     const staleSettings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
       loadWorkspaceSettings: vi.fn((identity) => {
@@ -1798,7 +1802,7 @@ MissingClass::class;
         openPath: vi.fn(async (path) =>
           path === activeDescriptor.selectedPath ? activeDescriptor : staleDescriptor,
         ),
-        unregister,
+        ...workspaceAdmissionDoubles(unregister),
       },
     });
 
@@ -1838,7 +1842,7 @@ MissingClass::class;
     };
     const settingsA = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
     const admissionB = createDeferred<typeof descriptorB>();
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
       loadWorkspaceSettings: vi.fn((identity) => {
@@ -1859,7 +1863,7 @@ MissingClass::class;
         openPath: vi.fn((path) =>
           path === descriptorA.selectedPath ? Promise.resolve(descriptorA) : admissionB.promise,
         ),
-        unregister,
+        ...workspaceAdmissionDoubles(unregister),
       },
     });
 
@@ -1910,7 +1914,7 @@ MissingClass::class;
         message: false,
       },
     };
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
       loadWorkspaceSettings: vi.fn((identity) => {
@@ -1932,7 +1936,7 @@ MissingClass::class;
         openPath: vi.fn(async (path) =>
           path === descriptorA.selectedPath ? descriptorA : descriptorB,
         ),
-        unregister,
+        ...workspaceAdmissionDoubles(unregister),
       },
     });
 
@@ -1969,7 +1973,7 @@ MissingClass::class;
   it("invalidates a deferred openPath admission on unmount", async () => {
     const descriptor = trustedDescriptor("ws-unmounted-open", "/workspace-late");
     const admission = createDeferred<typeof descriptor>();
-    const unregister = vi.fn(async () => undefined);
+    const rollbackAdmission = vi.fn(releasedWorkspaceOwner);
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
       loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
@@ -1982,7 +1986,7 @@ MissingClass::class;
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
         openPath: vi.fn(() => admission.promise),
-        unregister,
+        ...workspaceAdmissionDoubles(undefined, rollbackAdmission),
       },
     });
 
@@ -1999,7 +2003,7 @@ MissingClass::class;
     admission.resolve(descriptor);
     await open;
 
-    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptor.workspaceId);
+    expect(rollbackAdmission).toHaveBeenCalledExactlyOnceWith(descriptor);
     expect(settingsGateway.loadWorkspaceSettings).not.toHaveBeenCalled();
     expect(staleWorkbench.workspaceRoot).toBeNull();
     expect(staleWorkbench.workspaceIdentityDescriptor).toBeNull();
@@ -2010,7 +2014,7 @@ MissingClass::class;
       canonicalRoot: "/real/unmounted",
     };
     const settings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
-    const unregister = vi.fn(async () => undefined);
+    const rollbackAdmission = vi.fn(releasedWorkspaceOwner);
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
       loadWorkspaceSettings: vi.fn(() => settings.promise),
@@ -2019,7 +2023,11 @@ MissingClass::class;
     };
     const { dependencies, getWorkbench } = renderController({
       settingsGateway,
-      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(
+        descriptor,
+        undefined,
+        rollbackAdmission,
+      ),
     });
 
     const staleWorkbench = getWorkbench();
@@ -2038,7 +2046,7 @@ MissingClass::class;
     settings.resolve(defaultWorkspaceSettings());
     await open;
 
-    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptor.workspaceId);
+    expect(rollbackAdmission).toHaveBeenCalledExactlyOnceWith(descriptor);
     expect(dependencies.workspaceGateways.detection.detectWorkspace).not.toHaveBeenCalled();
     expect(dependencies.workspaceTrustGateway.getTrust).not.toHaveBeenCalled();
     expect(staleWorkbench.workspaceRoot).toBeNull();
@@ -2055,7 +2063,7 @@ MissingClass::class;
       canonicalRoot,
     };
     const otherDescriptor = trustedDescriptor("ws-sequential-other", "/workspace-other");
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const { getWorkbench } = renderController({
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
@@ -2069,7 +2077,7 @@ MissingClass::class;
           }
           return descriptorA;
         }),
-        unregister,
+        ...workspaceAdmissionDoubles(unregister),
       },
     });
 
@@ -2110,7 +2118,7 @@ MissingClass::class;
     });
     expect(getWorkbench().workspaceTabs).toEqual([otherDescriptor.selectedPath]);
     expect(getWorkbench().workspaceRoot).toBe(otherDescriptor.selectedPath);
-    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptorB.workspaceId);
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(releaseOwnerOf(descriptorB));
 
     await act(async () => {
       await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
@@ -2126,7 +2134,7 @@ MissingClass::class;
       ...trustedDescriptor("ws-close-cancel", "/link/close-cancel"),
       canonicalRoot: "/real/close-cancel",
     };
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const { dependencies, getWorkbench } = renderController({
       readTextFile: vi.fn(async () => "const clean = true;\n"),
       workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
@@ -2178,7 +2186,7 @@ MissingClass::class;
       ...trustedDescriptor("ws-close-failure", "/link/close-failure"),
       canonicalRoot: "/real/close-failure",
     };
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const { dependencies, getWorkbench } = renderController({
       workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
@@ -2225,9 +2233,9 @@ MissingClass::class;
       canonicalRoot: "/real/retry-close",
     };
     const unregister = vi
-      .fn<(workspaceId: string) => Promise<void>>()
+      .fn<WorkbenchWorkspaceGateways["identity"]["unregister"]>()
       .mockRejectedValueOnce(new Error("transient unregister failure"))
-      .mockResolvedValue(undefined);
+      .mockImplementation(releasedWorkspaceOwner);
     const { dependencies, getWorkbench } = renderController({
       workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
@@ -2252,7 +2260,7 @@ MissingClass::class;
     });
 
     expect(unregister).toHaveBeenCalledTimes(2);
-    expect(unregister).toHaveBeenLastCalledWith(descriptor.workspaceId);
+    expect(unregister).toHaveBeenLastCalledWith(releaseOwnerOf(descriptor));
     expect(getWorkbench().workspaceTabs).toEqual([]);
     expect(
       dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
@@ -2264,9 +2272,9 @@ MissingClass::class;
       canonicalRoot: "/real/retry-unmount",
     };
     const unregister = vi
-      .fn<(workspaceId: string) => Promise<void>>()
+      .fn<WorkbenchWorkspaceGateways["identity"]["unregister"]>()
       .mockRejectedValueOnce(new Error("transient unregister failure"))
-      .mockResolvedValue(undefined);
+      .mockImplementation(releasedWorkspaceOwner);
     const { getWorkbench } = renderController({
       workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
@@ -2285,36 +2293,25 @@ MissingClass::class;
     });
 
     expect(unregister).toHaveBeenCalledTimes(2);
-    expect(unregister).toHaveBeenLastCalledWith(descriptor.workspaceId);
+    expect(unregister).toHaveBeenLastCalledWith(releaseOwnerOf(descriptor));
   });
-  it("defers close cleanup until unrelated admission release succeeds", async () => {
-    const descriptorA = {
-      ...legacyTrustedDescriptor("ws-deferred-release-success", "/workspace-deferred-success"),
-    };
-    const descriptorB = trustedDescriptor(
-      "ws-unrelated-admission-success",
-      "/workspace-unrelated-success",
-    );
+  it("abandons a deferred identity release when its close is restored during an open", async () => {
+    const descriptorA = legacyTrustedDescriptor("ws-deferred-release", "/workspace-deferred");
+    const descriptorB = trustedDescriptor("ws-unrelated-admission", "/workspace-unrelated");
     const admissionB = createDeferred<typeof descriptorB>();
-    const releaseA = createDeferred<void>();
-    const unregister = vi.fn((workspaceId: string) =>
-      workspaceId === descriptorA.workspaceId ? releaseA.promise : Promise.resolve(),
-    );
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      workspaceIdentityGateway: identityGatewayDouble({
         openPath: vi.fn((path) =>
           path === descriptorB.selectedPath ? admissionB.promise : Promise.resolve(descriptorA),
         ),
-        unregister,
-      },
+        ...workspaceAdmissionDoubles(unregister),
+      }),
     });
 
     await act(async () => {
       await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
     });
-
     let openingB!: Promise<boolean>;
     await act(async () => {
       openingB = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
@@ -2323,105 +2320,19 @@ MissingClass::class;
     await act(async () => {
       await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
     });
-
-    expect(unregister).not.toHaveBeenCalled();
     expect(getWorkbench().workspaceTabs).toEqual([descriptorA.selectedPath]);
 
     admissionB.resolve(descriptorB);
     await act(async () => openingB);
-    await waitForReact(() => {
-      expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptorA.workspaceId);
-    });
-
-    releaseA.resolve();
-    await act(async () => {
-      await releaseA.promise;
-      await Promise.resolve();
-    });
+    await flushAsyncTurns(24);
+    expect(unregister).not.toHaveBeenCalled();
     vi.mocked(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
 
     await act(async () => {
       await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
     });
 
-    expect(
-      unregister.mock.calls.filter(([workspaceId]) => workspaceId === descriptorA.workspaceId),
-    ).toHaveLength(1);
-    expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
-    expect(
-      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
-    ).toHaveBeenCalledExactlyOnceWith(descriptorA.selectedPath);
-  });
-  it("preserves deferred close state after unrelated admission release fails and retries", async () => {
-    const descriptorA = {
-      ...legacyTrustedDescriptor("ws-deferred-release-failure", "/workspace-deferred-failure"),
-    };
-    const descriptorB = trustedDescriptor(
-      "ws-unrelated-admission-failure",
-      "/workspace-unrelated-failure",
-    );
-    const admissionB = createDeferred<typeof descriptorB>();
-    const firstReleaseA = createDeferred<void>();
-    let releaseAttempts = 0;
-    const unregister = vi.fn((workspaceId: string) => {
-      if (workspaceId !== descriptorA.workspaceId) {
-        return Promise.resolve();
-      }
-
-      releaseAttempts += 1;
-      if (releaseAttempts === 1) {
-        return firstReleaseA.promise;
-      }
-
-      return Promise.resolve();
-    });
-    const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn((path) =>
-          path === descriptorB.selectedPath ? admissionB.promise : Promise.resolve(descriptorA),
-        ),
-        unregister,
-      },
-    });
-
-    await act(async () => {
-      await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
-    });
-
-    let openingB!: Promise<boolean>;
-    await act(async () => {
-      openingB = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
-    });
-
-    admissionB.resolve(descriptorB);
-    await act(async () => openingB);
-    await waitForReact(() => {
-      expect(releaseAttempts).toBe(1);
-    });
-
-    firstReleaseA.reject(new Error("deferred unregister failed"));
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(getWorkbench().workspaceTabs).toEqual([
-      descriptorA.selectedPath,
-      descriptorB.selectedPath,
-    ]);
-    vi.mocked(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
-
-    await act(async () => {
-      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
-    });
-
-    expect(releaseAttempts).toBe(2);
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(releaseOwnerOf(descriptorA));
     expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
     expect(
       dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
@@ -2438,7 +2349,7 @@ MissingClass::class;
       canonicalRoot,
     };
     const closeSettings = createDeferred<void>();
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const { dependencies, getWorkbench } = renderController({
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
@@ -2446,7 +2357,7 @@ MissingClass::class;
         openPath: vi.fn(async (path) =>
           path === descriptorB.selectedPath ? descriptorB : descriptorA,
         ),
-        unregister,
+        ...workspaceAdmissionDoubles(unregister),
       },
     });
 
@@ -2555,7 +2466,7 @@ MissingClass::class;
     const identityGateway: WorkbenchWorkspaceGateways["identity"] = {
       getDescriptor: vi.fn(),
       openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-      unregister: vi.fn(async () => undefined),
+      ...workspaceAdmissionDoubles(),
     };
     const { getWorkbench } = renderController({ workspaceIdentityGateway: identityGateway });
 
@@ -2596,7 +2507,7 @@ MissingClass::class;
     const identityGateway: WorkbenchWorkspaceGateways["identity"] = {
       getDescriptor: vi.fn(),
       openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-      unregister: vi.fn(async () => undefined),
+      ...workspaceAdmissionDoubles(),
     };
     const { getWorkbench } = renderController({
       workspaceIdentityGateway: identityGateway,
@@ -2731,7 +2642,7 @@ MissingClass::class;
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
         openFromPicker,
-        unregister: vi.fn(async () => undefined),
+        ...workspaceAdmissionDoubles(),
       },
     });
 
@@ -2782,9 +2693,9 @@ MissingClass::class;
         throw new Error("open failed");
       }),
     ).rejects.toThrow("open failed");
-    expect(unregister).toHaveBeenCalledExactlyOnceWith("ws-failed");
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptor);
   });
-  it("releases a picker descriptor when its open is superseded before adoption", async () => {
+  it("rolls back a picker descriptor when its open is superseded before adoption", async () => {
     const firstSettings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
@@ -2798,7 +2709,7 @@ MissingClass::class;
     };
     const descriptorA = trustedDescriptor("ws-a", "/workspace-a");
     const descriptorB = trustedDescriptor("ws-b", "/workspace-b");
-    const unregister = vi.fn(async () => undefined);
+    const rollbackAdmission = vi.fn(releasedWorkspaceOwner);
     const openFromPicker = vi
       .fn()
       .mockResolvedValueOnce({ status: "opened", descriptor: descriptorA })
@@ -2808,7 +2719,7 @@ MissingClass::class;
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
         openFromPicker,
-        unregister,
+        ...workspaceAdmissionDoubles(undefined, rollbackAdmission),
       },
     });
 
@@ -2825,13 +2736,13 @@ MissingClass::class;
       await firstOpen;
     });
 
-    expect(unregister).toHaveBeenCalledExactlyOnceWith("ws-a");
+    expect(rollbackAdmission).toHaveBeenCalledExactlyOnceWith(descriptorA);
     expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
   });
   it("replaces a cached descriptor with a fresh picker identity exactly once", async () => {
     const oldDescriptor = trustedDescriptor("ws-old", "/workspace");
     const freshDescriptor = trustedDescriptor("ws-fresh", "/workspace");
-    const unregister = vi.fn(async () => undefined);
+    const unregister = vi.fn(releasedWorkspaceOwner);
     const openFromPicker = vi
       .fn()
       .mockResolvedValueOnce({ status: "opened", descriptor: oldDescriptor })
@@ -2840,7 +2751,7 @@ MissingClass::class;
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
         openFromPicker,
-        unregister,
+        ...workspaceAdmissionDoubles(unregister),
       },
     });
 
@@ -2851,10 +2762,9 @@ MissingClass::class;
       await getWorkbench().openWorkspace();
     });
     await waitForReact(() => {
-      expect(unregister).toHaveBeenCalledExactlyOnceWith("ws-old");
+      expect(unregister).toHaveBeenCalledExactlyOnceWith(releaseOwnerOf(oldDescriptor));
     });
     expect(getWorkbench().workspaceIdentityDescriptor).toBe(freshDescriptor);
-    expect(unregister).not.toHaveBeenCalledWith("ws-fresh");
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");

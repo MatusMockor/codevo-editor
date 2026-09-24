@@ -107,3 +107,19 @@ describe("applyStartupTheme", () => {
     expect(applied.attributes).toEqual(DEFAULT_ATTRIBUTES);
   });
 });
+
+describe("applyStartupTheme result", () => {
+  it("returns the resolved appearance it stamped on the document", () => {
+    const stamped = new Map<string, string>();
+    const appearance = applyStartupTheme({
+      prefersLight: () => true,
+      readSetting: () =>
+        JSON.stringify({ appearance: { palette: "ink-mint", colorScheme: "system" } }),
+      setDocumentAttribute: (name, value) => stamped.set(name, value),
+    });
+
+    expect(appearance).toEqual({ palette: "ink-mint", colorScheme: "light" });
+    expect(stamped.get("data-cv-palette")).toBe("ink-mint");
+    expect(stamped.get("data-cv-scheme")).toBe("light");
+  });
+});

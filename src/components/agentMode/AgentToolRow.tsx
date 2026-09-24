@@ -1,55 +1,21 @@
 import { useId } from "react";
-import {
-  Bot,
-  FileText,
-  Globe,
-  Search,
-  SquarePen,
-  Terminal,
-  Wrench,
-  type LucideIcon,
-} from "lucide-react";
-import {
-  unsupportedToolRowKind,
-  type AgentToolRowKind,
-} from "../../domain/agentToolRowPresentation";
+import { toolRowIcon } from "./agentToolRowIcon";
 import { useAgentToolDisclosure } from "./AgentToolDisclosure";
 import type { AgentTurnItem } from "./agentModePresentation";
 import type { AgentToolItemStatus } from "./agentTurnProjection";
 
-function toolRowIcon(kind: AgentToolRowKind): LucideIcon {
-  switch (kind) {
-    case "command":
-      return Terminal;
-    case "read":
-      return FileText;
-    case "edit":
-      return SquarePen;
-    case "search":
-      return Search;
-    case "agent":
-      return Bot;
-    case "web":
-      return Globe;
-    case "other":
-      return Wrench;
-    default:
-      return unsupportedToolRowKind(kind);
-  }
-}
-
 function toolRowClassName(status: AgentToolItemStatus): string {
   switch (status) {
     case "running":
-      return "agent-tool-row agent-tool-row--running";
+      return "cv-work-row agent-tool-row agent-tool-row--running";
     case "error":
-      return "agent-tool-row agent-tool-row--failed";
+      return "cv-work-row agent-tool-row agent-tool-row--failed";
     case "stopped":
-      return "agent-tool-row agent-tool-row--stopped";
+      return "cv-work-row agent-tool-row agent-tool-row--stopped";
     case "interrupted":
-      return "agent-tool-row agent-tool-row--interrupted";
+      return "cv-work-row agent-tool-row agent-tool-row--interrupted";
     case "ok":
-      return "agent-tool-row";
+      return "cv-work-row agent-tool-row";
     default:
       return unsupportedToolRowStatus(status);
   }
@@ -79,8 +45,10 @@ export function AgentToolRow({
         onClick={disclosure.toggle}
         type="button"
       >
-        <Icon aria-hidden="true" className="agent-tool-row__icon" size={15} />
-        <span className="agent-tool-row__label">{item.label}</span>
+        <span aria-hidden="true" className="cv-work-row__icon">
+          <Icon className="agent-tool-row__icon" size={16} strokeWidth={1.5} />
+        </span>
+        <span className="agent-tool-row__label cv-work-row__label">{item.label}</span>
         {item.argument !== null && (
           <span className="agent-tool-row__argument">{item.argument}</span>
         )}

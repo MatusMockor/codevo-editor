@@ -54,6 +54,8 @@ describe("agentThreadWire subagent lifecycle", () => {
       taskTitle: _taskTitle,
       batchKey: _batchKey,
       nestedCount: _nestedCount,
+      model: _model,
+      effort: _effort,
       ...legacyParent
     } = parent;
 

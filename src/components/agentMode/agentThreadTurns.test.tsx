@@ -21,6 +21,7 @@ import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadS
 import { AgentQueuedPrompt } from "./AgentQueuedPrompt";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
+import { agentClockTime } from "./conversation/agentTurnMetaLine";
 
 const ROOT = "/workspace/app";
 const NOW = 1_700_000_600_000;
@@ -133,30 +134,24 @@ describe("agent thread turns", () => {
         "agent-prompt",
         "agent-answer",
       ]);
-      expect(section.querySelectorAll("header.agent-turn__head")).toHaveLength(1);
-      expect(section.querySelector("header.agent-turn__head")?.parentElement?.className).toBe(
-        "agent-answer",
-      );
+      expect(section.querySelectorAll(".agent-answer > .cv-turn-meta")).toHaveLength(1);
     }
     expect(turns[0]?.nextElementSibling).toBe(turns[1]);
     expect(turns[0]?.parentElement?.className).toBe("agent-turn-list");
     expect(promptTexts()).toEqual(["First question", "Second question"]);
-    expect(declaration(".agent-turn-list", "gap")).toBe("var(--agent-turn-gap)");
-    expect(declaration(".agent-turn", "gap")).toBe("var(--agent-turn-gap)");
-    expect(declaration(".agent-answer", "gap")).toBe("var(--agent-space-4)");
+    expect(declaration(".agent-answer", "gap")).toBe("var(--cv-space-2)");
   });
 
-  it("caps the prompt bubble at 85% of the column and pins it to the right edge", () => {
+  it("caps the prompt bubble at 80% of the column and pins it to the right edge", () => {
     render({ thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]) });
 
     const prompt = host.querySelector<HTMLElement>(".agent-prompt");
     expect(prompt?.querySelector("p.agent-prompt__body")?.textContent).toBe("First question");
     expect(prompt?.querySelector(".agent-prompt__bubble p.agent-prompt__body")).not.toBeNull();
-    expect(declaration(".agent-prompt__bubble", "max-width")).toBe("85%");
-    expect(declaration(".agent-prompt", "justify-content")).toBe("flex-end");
-    expect(declaration(".agent-prompt__bubble", "border-radius")).toBe("var(--agent-radius-xl)");
-    expect(declaration(".agent-prompt__bubble", "background")).toBe("var(--agent-raised)");
-    expect(declaration(".agent-prompt__bubble", "box-shadow")).toBe("var(--agent-shadow-raised)");
+    expect(declaration(".agent-prompt__bubble", "max-width")).toBe("80%");
+    expect(declaration(".agent-prompt", "align-items")).toBe("flex-end");
+    expect(declaration(".agent-prompt__bubble", "border-radius")).toBe("var(--cv-r-bubble)");
+    expect(declaration(".agent-prompt__bubble", "background")).toBe("var(--cv-tint-2)");
   });
 
   it("renders an imported prompt through the same bubble and head as a live turn", () => {
@@ -205,7 +200,7 @@ describe("agent thread turns", () => {
     expect(events[1]?.getAttribute("data-agent-event")).toBe("e1");
   });
 
-  it("keeps app-server subagent output in a collapsible group with latest thread usage", () => {
+  it("keeps app-server subagent output in the batch member with latest thread usage", () => {
     render({
       thread: threadView([
         turn("t1", "Delegate", RUNNING, [
@@ -241,21 +236,19 @@ describe("agent thread turns", () => {
         ]),
       ]),
     });
-    const group = Array.from(
-      host.querySelectorAll<HTMLDetailsElement>("details.agent-reasoning"),
-    ).find((entry) => entry.querySelector("summary")?.textContent?.includes("tests"));
-    expect(group?.open).toBe(false);
-    expect(group?.textContent).toContain("Child-only response");
-    expect(group?.textContent).not.toContain("Parent response");
-    expect(group?.querySelector("summary")?.textContent).toContain("4s · 28 tok");
-    expect(group?.textContent).not.toContain("Subagent total");
-    expect(group?.textContent).not.toContain("20 in");
-    act(() => host.querySelector<HTMLButtonElement>(".agent-spawn__row")?.click());
-    const member = host.querySelector<HTMLElement>(".agent-spawn-member");
+    expect(host.querySelector("details.agent-reasoning")).toBeNull();
+    const head = host.querySelector<HTMLButtonElement>(".cv-spawn__head");
+    expect(head?.getAttribute("aria-expanded")).toBe("false");
+    act(() => head?.click());
+    const member = host.querySelector<HTMLElement>(".cv-spawn-member");
+    expect(member?.querySelector(".cv-spawn-member__title")?.textContent).toBe("tests");
     expect(member?.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
-    expect(member?.textContent).toContain("28 tok");
+    expect(member?.textContent).toContain("4s · 28 tok");
     expect(member?.textContent).toContain("Child-only response");
     expect(member?.textContent).not.toContain("Parent response");
+    expect(member?.textContent).not.toContain("Subagent total");
+    expect(member?.textContent).not.toContain("20 in");
+    expect(host.querySelectorAll(".cv-spawn-member")).toHaveLength(1);
   });
 
   it("keeps thread and per-turn token usage out of the transcript", () => {
@@ -562,26 +555,21 @@ describe("agent thread turns", () => {
     expect(host.querySelector('button[aria-label="Edit queued message"]')).toBeNull();
   });
 
-  it("shows the accent dot, the provider and the settled duration in the turn head", () => {
+  it("shows the clock time, the provider and the settled duration in the hover row", () => {
     render({ thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]) });
 
-    const head = host.querySelector<HTMLElement>("header.agent-turn__head");
-    expect([...(head?.children ?? [])].map((child) => child.className)).toEqual([
-      "agent-turn__spark",
-      "agent-turn__agent",
-      "agent-turn__time agent-num",
-      "agent-turn__duration agent-num",
+    const meta = host.querySelector<HTMLElement>(".agent-answer > .cv-turn-meta");
+    expect([...(meta?.children ?? [])].map((child) => child.className)).toEqual([
+      "cv-turn-meta__time",
+      "cv-turn-meta__agent",
+      "cv-turn-meta__duration",
     ]);
-    expect(head?.querySelector(".agent-turn__spark")?.getAttribute("aria-hidden")).toBe("true");
-    expect(head?.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
-    expect(head?.querySelector("time")?.textContent).toContain("ago");
-    expect(head?.querySelector("time")?.getAttribute("datetime")).toBe(
-      new Date(NOW - 300_000).toISOString(),
-    );
-    expect(head?.querySelector(".agent-turn__duration")?.textContent).toBe("4m 30s");
+    expect(meta?.querySelector(".cv-turn-meta__agent")?.textContent).toBe("Claude Code");
+    expect(meta?.querySelector("time")?.getAttribute("datetime")).toMatch(/Z$/);
+    expect(meta?.querySelector(".cv-turn-meta__duration")?.textContent).toBe("4m 30s");
   });
 
-  it("drops the machine-readable time rather than throwing on an unusable timestamp", () => {
+  it("drops the time rather than throwing on an unusable timestamp", () => {
     render({
       thread: threadView([
         {
@@ -592,15 +580,13 @@ describe("agent thread turns", () => {
       ]),
     });
 
-    const time = host.querySelector("header.agent-turn__head time");
-    expect(time).not.toBeNull();
-    expect(time?.getAttribute("datetime")).toBeNull();
-    expect(host.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
+    expect(host.querySelector(".agent-answer > .cv-turn-meta time")).toBeNull();
+    expect(host.querySelector(".cv-turn-meta__agent")?.textContent).toBe("Claude Code");
   });
 
-  it("keeps a running head counting and drops the duration when the end is unknown", () => {
+  it("keeps a running answer counting and drops the duration when the end is unknown", () => {
     render({ thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]) });
-    expect(host.querySelector(".agent-turn__duration")).not.toBeNull();
+    expect(host.querySelector(".cv-turn-meta__duration")).not.toBeNull();
 
     render({
       thread: threadView([
@@ -608,12 +594,11 @@ describe("agent thread turns", () => {
       ]),
     });
 
-    expect(host.querySelector(".agent-turn__duration")).toBeNull();
-    expect(host.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
-    expect(host.querySelector("header.agent-turn__head time")).not.toBeNull();
+    expect(host.querySelector(".cv-turn-meta__duration")).toBeNull();
+    expect(host.querySelector(".agent-answer > .cv-turn-meta time")).not.toBeNull();
   });
 
-  it("leaves an imported head without a time or a duration rather than an empty slot", () => {
+  it("leaves an imported answer with only its agent in the hover row", () => {
     render({
       thread: threadView([], {
         exchanges: [
@@ -623,12 +608,13 @@ describe("agent thread turns", () => {
       }),
     });
 
-    const head = host.querySelector<HTMLElement>(".agent-imported-history header.agent-turn__head");
-    expect([...(head?.children ?? [])].map((child) => child.className)).toEqual([
-      "agent-turn__spark",
-      "agent-turn__agent",
+    const meta = host.querySelector<HTMLElement>(
+      ".agent-imported-history .agent-answer > .cv-turn-meta",
+    );
+    expect([...(meta?.children ?? [])].map((child) => child.className)).toEqual([
+      "cv-turn-meta__agent",
     ]);
-    expect(head?.textContent).toBe("Claude Code");
+    expect(meta?.textContent).toBe("Claude Code");
   });
 
   it("keeps every prompt whole with no expand or jump control to chase", () => {
@@ -684,7 +670,7 @@ describe("agent thread turns", () => {
       containingBlockDeclarations(element).filter((entry) => entry.includes("overflow")),
     );
     expect(overflowing).toEqual([
-      "components/agentMode/agentThread.css .agent-md__table-scroll overflow-x",
+      "components/agentMode/conversation/agentProse.css .agent-md__table-scroll overflow-x",
     ]);
     expect(declaration(".agent-md__table", "width")).toBe("100%");
     expect(declaration(".agent-md__table", "max-width")).toBe("100%");
@@ -857,8 +843,8 @@ describe("agent thread turns", () => {
     expect(answer).not.toBeNull();
     for (const selector of [
       ".agent-activity-group",
-      ".agent-tool-row",
-      ".agent-spawn",
+      ".cv-work-row",
+      ".cv-spawn",
       ".agent-text",
       ".agent-md__table-scroll",
       ".agent-md__code-body",
@@ -870,7 +856,9 @@ describe("agent thread turns", () => {
       expect(element, selector).not.toBeNull();
     }
     expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("First question");
-    expect(host.querySelector("header.agent-turn__head time")?.textContent).toContain("ago");
+    expect(host.querySelector(".agent-answer > .cv-turn-meta time")?.textContent).toBe(
+      agentClockTime(NOW - 30_000)?.label,
+    );
   });
 
   it("names a finished bash row by its program and shows the command in mono", () => {
@@ -891,7 +879,7 @@ describe("agent thread turns", () => {
     );
     expect(row?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     expect(row?.getAttribute("type")).toBe("button");
-    expect(row?.className).toBe("agent-tool-row");
+    expect(row?.className).toBe("cv-work-row agent-tool-row");
   });
 
   it("shows the Claude bash description as the subject and the command as the argument", () => {
@@ -957,11 +945,9 @@ describe("agent thread turns", () => {
     });
 
     const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
-    expect(row?.className).toBe("agent-tool-row agent-tool-row--failed");
+    expect(row?.className).toBe("cv-work-row agent-tool-row agent-tool-row--failed");
     expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Failed npm test");
-    expect(declaration(".agent-tool-row--failed .agent-tool-row__label", "color")).toBe(
-      "var(--agent-danger)",
-    );
+    expect(declaration(".agent-tool-row--failed", "color")).toBe("var(--cv-danger)");
   });
 
   it("discloses the command and the output when the row is clicked", () => {
@@ -1000,7 +986,7 @@ describe("agent thread turns", () => {
     render({ thread: threadView([turn("t1", "Run it", { kind: "stopped" }, events)]) });
 
     expect(host.querySelector("button.agent-tool-row")?.className).toBe(
-      "agent-tool-row agent-tool-row--stopped",
+      "cv-work-row agent-tool-row agent-tool-row--stopped",
     );
     expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Stopped npm test");
 
@@ -1009,7 +995,7 @@ describe("agent thread turns", () => {
     });
 
     expect(host.querySelector("button.agent-tool-row")?.className).toBe(
-      "agent-tool-row agent-tool-row--interrupted",
+      "cv-work-row agent-tool-row agent-tool-row--interrupted",
     );
     expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Interrupted npm test");
     expect(host.querySelector(".agent-tool-row--running")).toBeNull();
@@ -1018,7 +1004,9 @@ describe("agent thread turns", () => {
       thread: threadView([turn("t1", "Run it", { kind: "exited", exitCode: 0 }, events)]),
     });
 
-    expect(host.querySelector("button.agent-tool-row")?.className).toBe("agent-tool-row");
+    expect(host.querySelector("button.agent-tool-row")?.className).toBe(
+      "cv-work-row agent-tool-row",
+    );
     expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Ran npm test");
   });
 
@@ -1101,7 +1089,7 @@ describe("agent thread turns", () => {
 
     const live = host.querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
     expect(live?.textContent).toBe("Running npm test");
-    expect(live?.className).toBe("agent-tool-row-live");
+    expect(live?.className).toBe("cv-live-row cv-live-row--pulse agent-tool-row-live");
     expect(host.querySelector(".agent-tool-row--working")).toBeNull();
 
     render({
@@ -1116,7 +1104,7 @@ describe("agent thread turns", () => {
     const after = host.querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
     expect(after).toBe(live);
     expect(after?.textContent).toBe("Working\u2026");
-    expect(after?.className).toBe("agent-tool-row agent-tool-row--working");
+    expect(after?.className).toBe("cv-live-row cv-live-row--pulse agent-tool-row--working");
     expect(host.querySelectorAll('[role="status"][aria-live="polite"]')).toHaveLength(1);
     expect(host.querySelector("button.agent-tool-row")?.getAttribute("aria-live")).toBe("off");
   });
@@ -1132,10 +1120,10 @@ describe("agent thread turns", () => {
 
     expect(host.querySelector(".agent-tool-row--working")).toBeNull();
     expect(host.querySelector("button.agent-tool-row")?.className).toBe(
-      "agent-tool-row agent-tool-row--running",
+      "cv-work-row agent-tool-row agent-tool-row--running",
     );
     expect(declaration(".agent-tool-row--running .agent-tool-row__label", "animation")).toBe(
-      "agent-tool-row-shimmer 1800ms linear infinite",
+      "cv-live-pulse calc(var(--cv-motion-spin) * 2) steps(6) infinite",
     );
   });
 
@@ -1146,7 +1134,7 @@ describe("agent thread turns", () => {
   }
 
   function headNames(): ReadonlyArray<string> {
-    return [...host.querySelectorAll(".agent-turn__agent")].map(
+    return [...host.querySelectorAll(".cv-turn-meta__agent")].map(
       (element) => element.textContent ?? "",
     );
   }

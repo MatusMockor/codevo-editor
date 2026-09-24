@@ -1,0 +1,47 @@
+.cv-term-toolbar {
+  position: absolute;
+  top: var(--cv-space-2);
+  right: 10px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--cv-r-sm);
+  background: var(--cv-canvas);
+  box-shadow: var(--cv-ring-hair-strong);
+  overflow: hidden;
+}
+
+.cv-term-toolbar button {
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cv-space-1);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--cv-t-2xs);
+  color: var(--cv-fg-muted);
+}
+
+.cv-term-toolbar button:hover:not(:disabled),
+.cv-term-toolbar button[aria-pressed="true"] {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.cv-term-toolbar button:disabled {
+  color: var(--cv-fg-disabled);
+}
+
+.cv-term-toolbar button:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-focus);
+}
+
+.cv-term-toolbar__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--cv-hair-strong);
+}

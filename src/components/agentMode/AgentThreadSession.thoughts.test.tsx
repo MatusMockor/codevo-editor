@@ -79,9 +79,9 @@ describe("AgentThreadSession reasoning", () => {
       ),
     ];
     expect(rows.map((row) => row.className.split(" ")[0])).toEqual([
-      "agent-tool-row",
+      "cv-work-row",
       "agent-thought",
-      "agent-tool-row",
+      "cv-work-row",
     ]);
   });
 

@@ -25,6 +25,7 @@ export function remoteRunnerOutput(
       case "backgroundTask":
       case "queued":
       case "subagentActivity":
+      case "subagentSpawn":
       case "subagentEvent":
       case "subagentUsage":
       case "subagentTurnDone":

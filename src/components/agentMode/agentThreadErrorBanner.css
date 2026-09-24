@@ -1,0 +1,61 @@
+.cv-thread-alert-wrap {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: 4px 20px 0;
+}
+
+.cv-thread-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  width: min(var(--cv-column), 100%);
+  padding: 10px 8px 10px 12px;
+  border-radius: var(--cv-r-card);
+  background: color-mix(in srgb, var(--cv-danger) 9%, var(--cv-raised));
+  box-shadow: var(--cv-ring-danger-soft), var(--cv-lift);
+}
+
+.cv-thread-alert__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--cv-danger);
+}
+
+.cv-thread-alert__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.cv-thread-alert__text b {
+  display: block;
+  color: var(--cv-fg-strong);
+  font-size: var(--cv-t-sm);
+  font-weight: 500;
+}
+
+.cv-thread-alert__text span {
+  display: block;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.cv-thread-alert__text .cv-thread-alert__reason {
+  margin-top: 2px;
+  color: var(--cv-fg-subtle);
+}
+
+.cv-thread-alert__text .cv-thread-alert__failure {
+  margin-top: 2px;
+  color: var(--cv-danger);
+}
+
+.cv-thread-alert__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}

@@ -5,12 +5,11 @@ import {
   type AgentRuntimeSubagentStatus,
 } from "../../domain/agentRuntimeSubagent";
 import {
-  AGENTS_DOCK_MIN_WIDTH,
   MAX_AGENTS_PANEL_ROWS,
-  agentAgentsDockMode,
   agentAgentsPanelModel,
   agentAgentsWorkingLabel,
   agentSubagentAnnouncement,
+  agentWorkingAgentNames,
 } from "./agentAgentsPanelPresentation";
 
 const source = (id: string): AgentRuntimeSubagentSource => ({
@@ -94,10 +93,62 @@ describe("subagent announcements", () => {
   });
 });
 
-describe("agentAgentsDockMode", () => {
-  it("docks beside the thread and overlays only below the narrow threshold", () => {
-    expect(agentAgentsDockMode(false, 300)).toBe("closed");
-    expect(agentAgentsDockMode(true, AGENTS_DOCK_MIN_WIDTH)).toBe("docked");
-    expect(agentAgentsDockMode(true, AGENTS_DOCK_MIN_WIDTH - 1)).toBe("overlay");
+const sourceOf = (
+  overrides: Partial<AgentRuntimeSubagentSource> & { readonly id: string },
+): AgentRuntimeSubagentSource => ({ ...source(overrides.id), ...overrides });
+
+const groupOf = (key: string, sources: ReadonlyArray<AgentRuntimeSubagentSource>) => ({
+  key,
+  subagents: projectAgentRuntimeSubagents(sources, false),
+});
+
+describe("agents panel sections", () => {
+  it("puts the latest turn with agents under This turn and older turns under Earlier", () => {
+    const model = agentAgentsPanelModel([
+      groupOf("t1", [
+        sourceOf({
+          id: "a",
+          title: "Old A",
+          observedState: "completed",
+          durationMs: 30_000,
+          totalTokens: 10_000,
+        }),
+        sourceOf({
+          id: "b",
+          title: "Old B",
+          observedState: "completed",
+          durationMs: 65_000,
+          totalTokens: 21_000,
+        }),
+      ]),
+      groupOf("t2", []),
+      groupOf("t3", [
+        sourceOf({ id: "c", title: "Review", role: "reviewer", progress: "Read src/app.ts" }),
+        sourceOf({ id: "d", title: "Map", observedState: "completed", durationMs: 48_000 }),
+      ]),
+    ]);
+    expect(model.current.map((row) => row.agent.title)).toEqual(["Review", "Map"]);
+    expect(model.earlier).toEqual([
+      expect.objectContaining({
+        key: "t1",
+        label: "Ran 2 subagents",
+        summary: "2 agents · 31.0k tok · 1m 05s",
+        tone: "completed",
+      }),
+    ]);
+    expect(model.working).toBe(1);
+    expect(model.settled).toBe(3);
+  });
+
+  it("names the working agents by role, falling back to the title", () => {
+    expect(
+      agentWorkingAgentNames([
+        groupOf("t1", [
+          sourceOf({ id: "a", title: "Review", role: "reviewer" }),
+          sourceOf({ id: "b", title: "Write retry tests" }),
+          sourceOf({ id: "c", title: "Done", observedState: "completed" }),
+        ]),
+      ]),
+    ).toEqual(["reviewer", "Write retry tests"]);
   });
 });

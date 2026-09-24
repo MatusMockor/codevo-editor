@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { responsiveAgentPanelPlacement } from "./agentWorkbenchResponsiveLayout";
+import {
+  AGENT_COLLAPSED_RAIL_WIDTH,
+  agentWorkbenchRailWidth,
+  responsiveAgentPanelPlacement,
+} from "./agentWorkbenchResponsiveLayout";
 
 describe("responsiveAgentPanelPlacement", () => {
   it.each([
@@ -87,5 +91,24 @@ describe("responsiveAgentPanelPlacement", () => {
         viewportWidth: 1_400,
       }),
     ).toEqual({ overlay: false, restore: "none", width: 420 });
+  });
+
+  it("gives a collapsed sidebar no track at any window width", () => {
+    expect(AGENT_COLLAPSED_RAIL_WIDTH).toBe(0);
+    expect(agentWorkbenchRailWidth("collapsed", 1_440)).toBe(0);
+    expect(agentWorkbenchRailWidth("collapsed", 1_000)).toBe(0);
+    expect(agentWorkbenchRailWidth("expanded", 1_440)).toBe(256);
+  });
+
+  it("hands the collapsed sidebar's width to the docked panel", () => {
+    expect(
+      responsiveAgentPanelPlacement({
+        hidden: false,
+        maximized: false,
+        rail: "collapsed",
+        requestedWidth: 540,
+        viewportWidth: 1_000,
+      }),
+    ).toEqual({ overlay: false, restore: "none", width: 440 });
   });
 });

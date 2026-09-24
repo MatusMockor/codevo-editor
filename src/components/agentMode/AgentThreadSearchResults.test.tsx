@@ -140,6 +140,64 @@ describe("AgentThreadSearchResults", () => {
     ).toEqual(["Showing first 50", "Some saved history could not be searched"]);
   });
 
+  it("shows the project monogram, relative time and title highlight like the mockup", () => {
+    const now = Date.now();
+    render({
+      appearance: "sidebar",
+      matches: [
+        {
+          threadId: "a",
+          source: "title",
+          turnId: null,
+          eventIndex: null,
+          snippet: "Idempotency keys for POST /orders",
+          ranges: [{ start: 0, end: 7 }],
+          segmentStart: 0,
+          segmentEnd: 33,
+          score: 1,
+        },
+        {
+          threadId: "b",
+          source: "assistant",
+          turnId: "t",
+          eventIndex: 2,
+          snippet: "the retry reuses the same idempotency key",
+          ranges: [{ start: 26, end: 33 }],
+          segmentStart: 0,
+          segmentEnd: 40,
+          score: 1,
+        },
+      ],
+      titles: new Map([
+        ["a", "Idempotency keys for POST /orders"],
+        ["b", "Flaky Jest timeout in payments"],
+      ]),
+      rows: new Map([
+        ["a", { projectLabel: "orders-api", updatedAtEpochMs: now - 240_000 }],
+        ["b", { projectLabel: "web-dashboard", updatedAtEpochMs: now - 7_200_000 }],
+      ]),
+    });
+    const options = [...host.querySelectorAll('[role="option"]')];
+    expect(host.querySelector(".cv-sb-results")).not.toBeNull();
+    expect(options[0]?.querySelector(".cv-favicon")?.textContent).toBe("O");
+    expect(options[0]?.querySelector(".cv-sr__title mark")?.textContent).toBe("Idempot");
+    expect(options[0]?.querySelector(".cv-sr__when")?.textContent).toBe("4m");
+    expect(options[1]?.querySelector(".cv-sr__title")?.textContent).toBe(
+      "Flaky Jest timeout in payments",
+    );
+    expect(options[1]?.querySelector(".cv-sr__who")?.textContent).toBe("Agent:");
+    expect(options[1]?.querySelector(".cv-sr__snippet mark")?.textContent).toBe("idempot");
+  });
+
+  it("keeps the sidebar status and bounds as hints", () => {
+    render({ appearance: "sidebar", matches: [], truncated: true, documentsTruncated: true });
+    expect([...host.querySelectorAll(".cv-sb-hint")].map((node) => node.textContent)).toEqual([
+      "No threads found",
+      "Showing first 50",
+      "Some saved history could not be searched",
+    ]);
+  });
+
   function clickOption(index: number): void {
     const option = host.querySelectorAll<HTMLElement>('[role="option"]')[index];
     expect(option).not.toBeUndefined();

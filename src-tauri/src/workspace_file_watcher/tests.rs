@@ -8,6 +8,7 @@ use crate::file_watcher::{
     WorkspaceWatchEventBatch, WorkspaceWatchEventKind, WorkspaceWatchEventSink,
     WorkspaceWatchFileKind, WorkspaceWatchRequest, WorkspaceWatchSession,
 };
+use crate::ignore_matcher::{IgnoreRulesCompleteness, IgnoreRulesTruncation};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -759,6 +760,256 @@ fn stop_cancels_a_blocked_start_before_it_can_install_a_session() {
 }
 
 #[test]
+fn stop_during_a_blocked_start_returns_promptly_and_the_late_start_is_torn_down() {
+    let registry = Arc::new(WorkspaceFileChangeWatchRegistry::new());
+    let watcher = BlockingStartWatcher::default();
+    let root = temp_workspace("generic-watch-nonblocking-stop");
+    let start_registry = Arc::clone(&registry);
+    let start_watcher = watcher.clone();
+    let start_root = root.clone();
+    let release_guard = BlockingStartReleaseGuard(watcher.clone());
+    let start_thread = std::thread::spawn(move || {
+        start_registry.start_with_watcher(&path_string(&start_root), &start_watcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+    });
+    watcher.wait_until_entered();
+
+    let stop_started = std::time::Instant::now();
+    registry.stop(&path_string(&root));
+    let stop_elapsed = stop_started.elapsed();
+
+    assert!(
+        stop_elapsed < Duration::from_millis(500),
+        "stop waited {stop_elapsed:?} for a blocked start"
+    );
+    assert!(registry.sessions.lock().expect("sessions").is_empty());
+    assert!(watcher.stopped_roots().is_empty());
+    drop(release_guard);
+    let result = start_thread.join().expect("start thread");
+
+    assert_eq!(
+        result,
+        Err("Workspace watch start was cancelled.".to_string())
+    );
+    assert!(registry.sessions.lock().expect("sessions").is_empty());
+    assert!(registry.transitions.lock().expect("transitions").is_empty());
+    assert_eq!(watcher.stopped_roots(), vec![root]);
+}
+
+#[test]
+fn stop_propagates_cancellation_into_a_pending_backend_watch_request() {
+    let registry = Arc::new(WorkspaceFileChangeWatchRegistry::new());
+    let watcher = CancellationAwareWatcher::default();
+    let root = temp_workspace("generic-watch-cancel-propagation");
+    let start_registry = Arc::clone(&registry);
+    let start_watcher = watcher.clone();
+    let start_root = root.clone();
+    let start_thread = std::thread::spawn(move || {
+        start_registry.start_with_watcher(&path_string(&start_root), &start_watcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+    });
+    watcher.wait_until_entered();
+
+    registry.stop(&path_string(&root));
+
+    let result = start_thread.join().expect("start thread");
+    assert!(watcher.observed_cancellation.load(Ordering::Acquire));
+    assert!(result.is_err());
+    assert!(registry.sessions.lock().expect("sessions").is_empty());
+}
+
+#[test]
+fn start_receipt_serializes_ignore_rules_completeness_on_the_wire() {
+    let complete = WorkspaceFileWatchStartReceipt {
+        root_path: "/workspace".to_string(),
+        watch_generation: 3,
+        ignore_rules: IgnoreRulesCompleteness::Complete,
+    };
+    let truncated = WorkspaceFileWatchStartReceipt {
+        ignore_rules: IgnoreRulesCompleteness::Truncated {
+            reason: IgnoreRulesTruncation::DirectoryLimit,
+        },
+        ..complete.clone()
+    };
+
+    assert_eq!(
+        serde_json::to_value(&complete).expect("complete receipt"),
+        serde_json::json!({
+            "rootPath": "/workspace",
+            "watchGeneration": 3,
+            "ignoreRules": { "status": "complete" }
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&truncated).expect("truncated receipt"),
+        serde_json::json!({
+            "rootPath": "/workspace",
+            "watchGeneration": 3,
+            "ignoreRules": { "status": "truncated", "reason": "directoryLimit" }
+        })
+    );
+    for (reason, wire) in [
+        (IgnoreRulesTruncation::DepthLimit, "depthLimit"),
+        (IgnoreRulesTruncation::EntryLimit, "entryLimit"),
+        (IgnoreRulesTruncation::TimeLimit, "timeLimit"),
+        (
+            IgnoreRulesTruncation::UnreadableDirectory,
+            "unreadableDirectory",
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(reason).expect("reason"), wire);
+    }
+}
+
+#[test]
+fn start_receipt_reports_truncated_ignore_rules_for_new_and_existing_sessions() {
+    let registry = WorkspaceFileChangeWatchRegistry::new();
+    let root = temp_workspace("generic-watch-truncated-ignore-rules");
+    let truncated = IgnoreRulesCompleteness::Truncated {
+        reason: IgnoreRulesTruncation::EntryLimit,
+    };
+
+    let first = registry
+        .start_with_watcher(&path_string(&root), &TruncatedIgnoreRulesWatcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+        .expect("first start");
+    let second = registry
+        .start_with_watcher(&path_string(&root), &TruncatedIgnoreRulesWatcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+        .expect("idempotent start");
+
+    assert_eq!(first.ignore_rules, truncated);
+    assert_eq!(second, first);
+}
+
+#[test]
+fn disposal_fence_keeps_a_start_that_arrived_after_the_disposal_alive() {
+    let registry = Arc::new(WorkspaceFileChangeWatchRegistry::new());
+    let watcher = RecordingWatcher::default();
+    let root = temp_workspace("generic-watch-disposal-fence-late-start");
+    let old = registry
+        .start_with_watcher(&path_string(&root), &watcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+        .expect("old start");
+    let ticket = registry
+        .begin_disposal(&path_string(&root))
+        .expect("disposal ticket");
+    let arrival = registry.allocate_generation().expect("arrival generation");
+    let start_registry = Arc::clone(&registry);
+    let start_watcher = watcher.clone();
+    let start_root = root.clone();
+    let start_thread = std::thread::spawn(move || {
+        start_registry.start_with_generation(
+            &path_string(&start_root),
+            Some(arrival),
+            &start_watcher,
+            |_, _| Arc::new(NoopWatchSink),
+        )
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!start_thread.is_finished());
+    assert_eq!(watcher.started_roots().len(), 1);
+
+    let guard = registry.adopt_disposal(ticket);
+    guard.stop_watches_before_arrival();
+    let late = start_thread
+        .join()
+        .expect("start thread")
+        .expect("late start");
+    drop(guard);
+
+    assert_ne!(late.watch_generation, old.watch_generation);
+    assert_eq!(late.watch_generation, arrival);
+    assert_eq!(watcher.stopped_roots(), vec![root.clone()]);
+    let sessions = registry.sessions.lock().expect("sessions");
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions
+        .values()
+        .all(|session| session.authority.generation == arrival));
+}
+
+#[test]
+fn disposal_fence_stops_a_start_that_arrived_before_the_disposal() {
+    let registry = WorkspaceFileChangeWatchRegistry::new();
+    let watcher = RecordingWatcher::default();
+    let root = temp_workspace("generic-watch-disposal-fence-early-start");
+    let arrival = registry.allocate_generation().expect("arrival generation");
+    let ticket = registry
+        .begin_disposal(&path_string(&root))
+        .expect("disposal ticket");
+    let early = registry
+        .start_with_generation(&path_string(&root), Some(arrival), &watcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+        .expect("early start");
+
+    registry
+        .adopt_disposal(ticket)
+        .stop_watches_before_arrival();
+
+    assert_eq!(early.watch_generation, arrival);
+    assert!(registry.sessions.lock().expect("sessions").is_empty());
+    assert_eq!(watcher.stopped_roots(), vec![root]);
+}
+
+#[test]
+fn dropped_disposal_guard_releases_the_fence_without_stopping() {
+    let registry = WorkspaceFileChangeWatchRegistry::new();
+    let watcher = RecordingWatcher::default();
+    let root = temp_workspace("generic-watch-disposal-fence-release");
+    start_with_watcher(&registry, &root, &watcher);
+    let ticket = registry
+        .begin_disposal(&path_string(&root))
+        .expect("disposal ticket");
+
+    drop(registry.adopt_disposal(ticket));
+    let restarted = registry
+        .start_with_watcher(&path_string(&root), &watcher, |_, _| {
+            Arc::new(NoopWatchSink)
+        })
+        .expect("restart");
+
+    assert!(watcher.stopped_roots().is_empty());
+    assert_eq!(restarted.watch_generation, 1);
+}
+
+#[test]
+fn failed_starts_on_many_distinct_roots_do_not_exhaust_recovery_capacity() {
+    let registry = WorkspaceFileChangeWatchRegistry::new();
+    let parent = temp_workspace("generic-watch-recovery-capacity");
+    for index in 0..(super::MAX_WORKSPACE_WATCH_RECOVERY_ROOTS + 8) {
+        let root = parent.join(format!("root-{index}"));
+        fs::create_dir_all(&root).expect("root");
+        let result =
+            registry.start_with_watcher(&path_string(&root), &PublishingFailWatcher, |_, _| {
+                Arc::new(NoopWatchSink)
+            });
+        assert!(
+            result.is_err_and(|error| error.starts_with("Failed to start workspace watcher")),
+            "root {index} was refused by capacity"
+        );
+    }
+    let watcher = RecordingWatcher::default();
+    let root = parent.join("healthy");
+    fs::create_dir_all(&root).expect("healthy root");
+
+    let receipt = registry.start_with_watcher(&path_string(&root), &watcher, |_, _| {
+        Arc::new(NoopWatchSink)
+    });
+
+    assert!(receipt.is_ok());
+    assert!(
+        registry.recovery_by_root.lock().expect("recovery").len()
+            <= super::MAX_WORKSPACE_WATCH_RECOVERY_ROOTS
+    );
+}
+
+#[test]
 fn watch_registry_drop_stops_all_sessions() {
     let watcher = RecordingWatcher::default();
     let root_a = temp_workspace("generic-watch-drop-a");
@@ -1192,6 +1443,77 @@ impl WorkspaceFileWatcher for BlockingStartWatcher {
             stopped: Arc::clone(&self.stopped),
             stop_gate: None,
         }))
+    }
+}
+
+struct TruncatedIgnoreRulesWatcher;
+
+struct TruncatedIgnoreRulesSession;
+
+impl WorkspaceWatchSession for TruncatedIgnoreRulesSession {
+    fn ignore_rules(&self) -> IgnoreRulesCompleteness {
+        IgnoreRulesCompleteness::Truncated {
+            reason: IgnoreRulesTruncation::EntryLimit,
+        }
+    }
+}
+
+impl WorkspaceFileWatcher for TruncatedIgnoreRulesWatcher {
+    fn watch(
+        &self,
+        _request: WorkspaceWatchRequest,
+        _sink: Arc<dyn WorkspaceWatchEventSink>,
+    ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
+        Ok(Box::new(TruncatedIgnoreRulesSession))
+    }
+}
+
+struct BlockingStartReleaseGuard(BlockingStartWatcher);
+
+impl Drop for BlockingStartReleaseGuard {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+#[derive(Clone, Default)]
+struct CancellationAwareWatcher {
+    entered: Arc<AtomicBool>,
+    observed_cancellation: Arc<AtomicBool>,
+}
+
+impl CancellationAwareWatcher {
+    fn wait_until_entered(&self) {
+        for _ in 0..200 {
+            if self.entered.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            self.entered.load(Ordering::Acquire),
+            "watch start did not reach the backend"
+        );
+    }
+}
+
+impl WorkspaceFileWatcher for CancellationAwareWatcher {
+    fn watch(
+        &self,
+        request: WorkspaceWatchRequest,
+        _sink: Arc<dyn WorkspaceWatchEventSink>,
+    ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
+        self.entered.store(true, Ordering::Release);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !request.is_cancelled() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.observed_cancellation
+            .store(request.is_cancelled(), Ordering::Release);
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "workspace watch start cancelled",
+        ))
     }
 }
 

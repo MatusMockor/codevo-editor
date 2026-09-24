@@ -442,8 +442,9 @@ describe("agentTurnRuntimeSubagents from the Codex app-server", () => {
     ]);
     expect(result.agents[0]).toMatchObject({
       activity: "rg subagent",
-      elapsed: { kind: "unknown" },
+      elapsed: { kind: "running" },
     });
+    expect(result.agents[2]?.elapsed).toEqual({ kind: "unknown" });
     expect(model(events, SETTLED).agents[1]?.status).toBe("completed");
   });
 });
@@ -477,5 +478,55 @@ describe("runtime subagent labels", () => {
     expect(agentRuntimeSubagentBody({ ...agent, activity: "done", model: "opus-5" })).toBe(
       "done\n\nopus-5",
     );
+  });
+});
+
+describe("Codex spawn batches", () => {
+  it("shows Codex children as one titled batch with role, model and effort", () => {
+    const events: AgentTurnEvent[] = [
+      {
+        kind: "subagentSpawn",
+        callId: "call-a",
+        status: "completed",
+        taskTitle: "Map order creation paths",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "medium",
+        agentThreadIds: ["child-a"],
+      },
+      {
+        kind: "subagentActivity",
+        activity: "started",
+        agentThreadId: "child-a",
+        agentPath: "/root/explorer",
+      },
+      {
+        kind: "subagentSpawn",
+        callId: "call-b",
+        status: "completed",
+        taskTitle: "Write retry tests",
+        model: "gpt-5.6-luna",
+        reasoningEffort: null,
+        agentThreadIds: ["child-b"],
+      },
+      {
+        kind: "subagentActivity",
+        activity: "started",
+        agentThreadId: "child-b",
+        agentPath: "/root/tester",
+      },
+    ];
+    const subagents = agentTurnRuntimeSubagents({
+      events,
+      status: { kind: "running" },
+      subagentLifecycle: undefined,
+    });
+    expect(subagents.batches).toHaveLength(1);
+    expect(subagents.batches[0]?.id).toBe("spawn:call-a");
+    expect(
+      subagents.batches[0]?.agents.map((agent) => [agent.title, agent.role, agent.model]),
+    ).toEqual([
+      ["Map order creation paths", "explorer", "gpt-5.6-luna · medium"],
+      ["Write retry tests", "tester", "gpt-5.6-luna"],
+    ]);
   });
 });

@@ -16,8 +16,6 @@ export const AGENT_ATTACHMENT_LOADING_LABEL = "Loading image";
 export const AGENT_ATTACHMENT_UNRESOLVABLE_REASON = "The image reference is not valid.";
 export const AGENT_ATTACHMENT_NO_IMAGES_REASON = "Images cannot be shown here.";
 export const AGENT_ATTACHMENT_DECODE_FAILED_REASON = "The image bytes could not be decoded.";
-export const AGENT_ATTACHMENT_IMAGE_MAX_WIDTH = 320;
-export const AGENT_ATTACHMENT_IMAGE_MAX_HEIGHT = 240;
 export const AGENT_LIGHTBOX_VIEWPORT_WIDTH_FRACTION = 92;
 export const AGENT_LIGHTBOX_VIEWPORT_HEIGHT_FRACTION = 86;
 
@@ -69,28 +67,6 @@ export function formatAgentAttachmentBytes(bytes: number): string {
   if (bytes < 1_024) return `${Math.round(bytes)} B`;
   if (bytes < 1_024 * 1_024) return `${roundedUnit(bytes / 1_024)} KiB`;
   return `${roundedUnit(bytes / (1_024 * 1_024))} MiB`;
-}
-
-export interface AgentAttachmentPlaceholderSize {
-  readonly width: number;
-  readonly height: number;
-}
-
-export function agentAttachmentPlaceholderSize(
-  view: AgentTurnAttachmentImageView,
-): AgentAttachmentPlaceholderSize | null {
-  const { width, height } = view;
-  if (width === undefined || height === undefined) return null;
-  if (!isPositiveDimension(width) || !isPositiveDimension(height)) return null;
-  const scale = Math.min(
-    1,
-    AGENT_ATTACHMENT_IMAGE_MAX_WIDTH / width,
-    AGENT_ATTACHMENT_IMAGE_MAX_HEIGHT / height,
-  );
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
 }
 
 export interface AgentAttachmentLightboxFit {

@@ -23,6 +23,8 @@ import {
   type LanguageServerRuntimeStatus,
   phpWorkspaceDescriptor,
   readyJavaScriptTypeScriptPlan,
+  releaseThroughOwnedGateways,
+  workspaceAdmissionDoubles,
   runningStatus as runningRuntimeStatus,
   singleRegisteredIdentityFixture,
   type SettingsGateway,
@@ -76,9 +78,7 @@ const rootOwnedIdentityFixture = (...roots: string[]) => {
       if (!gateway?.openPath) throw new Error(`Unexpected workspace path: ${path}`);
       return gateway.openPath(path);
     }),
-    unregister: vi.fn(async (workspaceId: string) => {
-      await gateways.get(workspaceId)?.unregister(workspaceId);
-    }),
+    ...workspaceAdmissionDoubles(vi.fn(releaseThroughOwnedGateways(gateways))),
   };
 };
 
@@ -327,7 +327,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
 
     expect(getWorkbench().activeDocument).toBeNull();
 
-    let openPromise: Promise<void> = Promise.resolve();
+    let openPromise: Promise<boolean> = Promise.resolve(false);
     await act(async () => {
       openPromise = getWorkbench().openSearchResult({
         name: "CommentController.php",
@@ -651,7 +651,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
 
     contentsByPath[path] = "<?php\nclass User {}\n";
 
-    let reopen: Promise<void> = Promise.resolve();
+    let reopen: Promise<boolean> = Promise.resolve(false);
     await act(async () => {
       reopen = getWorkbench().openSearchResult({
         name: "User.php",

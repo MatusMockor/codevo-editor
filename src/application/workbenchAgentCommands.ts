@@ -74,6 +74,15 @@ export function workbenchAgentCommands({
     ...viewCommand("agent.findInThread", "Find in Thread", withThread),
     isShortcutEnabled: withFocusedThread,
   };
+  const sidebarCommand: ShortcutScopedCommand = {
+    id: "agent.toggleSidebar",
+    title: "Toggle Sidebar",
+    category: "Agents",
+    shortcut: shortcut?.("agent.toggleSidebar"),
+    isEnabled: inAgentMode,
+    isShortcutEnabled: (context) => inAgentMode(context) && !viewCommands.editorTextFocused(),
+    run: () => agentLayout?.dispatch({ kind: "toggleRail" }),
+  };
 
   return [
     viewCommand("agent.newThread", "New Thread"),
@@ -94,5 +103,7 @@ export function workbenchAgentCommands({
         surface: surfaceCommand.surface,
       }),
     ),
+    sidebarCommand,
+    viewCommand("panel.toggleMaximized", "Toggle Maximized Panel"),
   ];
 }

@@ -1,5 +1,9 @@
 import {
   parseAgentWorktreeReceipt,
+  parseBranchWorktreeReceipt,
+  validateBranchWorktreeRequest,
+  type BranchWorktreeReceipt,
+  type BranchWorktreeRequest,
   parseGitWorktreeDescriptors,
   parsePrunedGitWorktreePaths,
   validateAgentWorktreeTaskId,
@@ -10,6 +14,7 @@ import {
 
 export const LIST_GIT_WORKTREES_IPC_COMMAND = "list_git_worktrees" as const;
 export const ADD_GIT_WORKTREE_IPC_COMMAND = "add_git_worktree" as const;
+export const ADD_GIT_BRANCH_WORKTREE_IPC_COMMAND = "add_git_branch_worktree" as const;
 export const REMOVE_GIT_WORKTREE_IPC_COMMAND = "remove_git_worktree" as const;
 export const PRUNE_GIT_WORKTREES_IPC_COMMAND = "prune_git_worktrees" as const;
 
@@ -43,6 +48,22 @@ export async function invokeAddGitWorktreeIpc(
       taskId: validatedTaskId,
     }),
   );
+}
+
+export async function invokeAddBranchWorktreeIpc(
+  invokeCommand: InvokeGitWorktreeCommand,
+  request: BranchWorktreeRequest,
+): Promise<BranchWorktreeReceipt> {
+  const validated = validateBranchWorktreeRequest(request);
+  const receipt = parseBranchWorktreeReceipt(
+    await invokeCommand(ADD_GIT_BRANCH_WORKTREE_IPC_COMMAND, { request: validated }),
+  );
+  if (receipt.branch !== validated.branch) {
+    throw new TypeError(
+      "Invalid Git worktree value at receipt.branch: expected the requested branch.",
+    );
+  }
+  return receipt;
 }
 
 export async function invokeRemoveGitWorktreeIpc(

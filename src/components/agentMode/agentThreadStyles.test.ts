@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseAllStyleSheets, readStyleSheet, selectorParts } from "../cssContractTestSupport";
-import { agentModeSheetPath, readAgentModeStyles } from "./agentModeCssTestSupport";
+import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 
 const css = readAgentModeStyles();
 
@@ -68,30 +68,10 @@ function winningDeclaration(selector: string, property: string): string | null {
   return values[values.length - 1] ?? null;
 }
 
-function token(name: string): string {
-  const values = RULES.filter((entry) => entry.selectors.includes(".workbench-frame")).flatMap(
-    (entry) => [...entry.body.matchAll(new RegExp(`(?:^|;)\\s*${name}\\s*:([^;]*)`, "g"))],
-  );
-  return (values[values.length - 1]?.[1] ?? "").trim();
-}
-
-function turnGap(): string {
-  return token("--agent-turn-gap");
-}
-
-function space(step: number): string {
-  return token(`--agent-space-${step}`);
-}
-
 describe("agent thread Airy style contract", () => {
   it("drops the rule under the thread header and scales it from the 48px bar height", () => {
-    expect(winningDeclaration(".agent-thread-head", "border-bottom")).toBeNull();
-    expect(winningDeclaration(".agent-thread-head", "border")).toBeNull();
-    expect(winningDeclaration(".agent-thread-head", "box-shadow")).toBeNull();
-    expect(winningDeclaration(".agent-thread-head", "min-height")).toBe(
-      "calc(48px * var(--codevo-fs-scale))",
-    );
-    expect(winningDeclaration(".agent-thread-head", "padding")).toBe("0 12px 0 18px");
+    expect(winningDeclaration(".agent-thread-head", "padding")).toBeNull();
+    expect(winningDeclaration(".agent-thread-head", "min-height")).toBeNull();
   });
 
   it("makes find focus a tone step instead of a ring on the input", () => {
@@ -133,7 +113,9 @@ describe("agent thread Airy style contract", () => {
       ".agent-minimap__dash:focus-visible",
       ".agent-minimap__toggle:focus-visible",
     ]) {
-      expect(winningDeclaration(selector, "box-shadow"), selector).toMatch(/-focus-ring\)$/);
+      expect(winningDeclaration(selector, "box-shadow"), selector).toMatch(
+        /(-focus-ring|--cv-ring-focus)\)$/,
+      );
     }
   });
 
@@ -166,20 +148,20 @@ describe("agent thread Airy style contract", () => {
       winningDeclaration(".agent-minimap--dense .agent-minimap__dash--rail::before", "width"),
     ).toBe("calc(16px - min(var(--minimap-distance, 4), 4) * 2px)");
     expect(winningDeclaration(".agent-minimap__dash--rail::before", "background")).toBe(
-      "var(--agent-text-muted)",
+      "var(--cv-fg-muted)",
     );
     expect(declarations(".agent-minimap__dash--rail::before", "opacity")).toEqual([]);
     expect(
       winningDeclaration('.agent-minimap__dash[aria-current="true"]::before', "background"),
-    ).toBe("var(--agent-accent)");
+    ).toBe("var(--cv-accent)");
     expect(
       winningDeclaration(
         '.agent-minimap__item:hover .agent-minimap__dash--rail:not([aria-current="true"])::before',
         "background",
       ),
-    ).toBe("var(--agent-text-strong)");
+    ).toBe("var(--cv-fg-strong)");
     expect(winningDeclaration(".agent-minimap__dash--live::after", "background")).toBe(
-      "var(--agent-accent)",
+      "var(--cv-accent)",
     );
     expect(winningDeclaration(".agent-minimap__list--rail", "overflow-y")).toBe("auto");
     expect(declarations(".agent-minimap__list--rail", "justify-content")).toEqual([]);
@@ -188,254 +170,8 @@ describe("agent thread Airy style contract", () => {
     expect(declarations(".agent-minimap--rail", "contain")).toEqual([]);
   });
 
-  it("keeps borders limited to the intentional queued-message outline", () => {
-    for (const sheet of ["agentThread.css", "agentComposer.css", "agentUsage.css"] as const) {
-      const source = readStyleSheet(agentModeSheetPath(sheet)).source.replace(
-        /\/\*[\s\S]*?\*\//g,
-        "",
-      );
-      expect(source, sheet).not.toContain("--t3-");
-      const nonQueueSource = source.replace(
-        /\.agent-prompt--queued \.agent-prompt__bubble\s*\{[^}]*\}/g,
-        "",
-      );
-      expect(nonQueueSource, sheet).not.toMatch(
-        /border(-(top|right|bottom|left|block|inline))?:\s*1px/,
-      );
-      expect(source, sheet).not.toMatch(/border-color:/);
-      expect(source, sheet).not.toMatch(/box-shadow:\s*(inset )?0 0 0 \d/);
-      for (const [, property, value] of source.matchAll(
-        /([\w-]+)\s*:\s*([^;{}]*var\(--agent-hairline[^;{}]*)/g,
-      )) {
-        expect(property, `${sheet} ${property}`).toBe("background");
-        expect(value, `${sheet} ${property}`).toContain("linear-gradient(");
-      }
-    }
-  });
-
   it("keeps no header status styling behind after the status element left the header", () => {
     expect(css).not.toContain(".agent-thread-head__status");
-  });
-
-  it("centres the thread column on the T3 measure", () => {
-    expect(winningDeclaration(".agent-session__body", "max-width")).toBe("768px");
-    expect(winningDeclaration(".agent-session__body", "margin")).toBe("0 auto");
-    expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
-  });
-
-  it("puts the prompt back in a right-aligned raised bubble capped at 85% of the column", () => {
-    expect(winningDeclaration(".agent-prompt", "justify-content")).toBe("flex-end");
-    expect(winningDeclaration(".agent-prompt__bubble", "max-width")).toBe("85%");
-    expect(declarations(".agent-prompt", "max-width")).toEqual([]);
-    expect(declarations(".agent-prompt__body", "max-width")).toEqual([]);
-    expect(winningDeclaration(".agent-prompt__bubble", "background")).toBe("var(--agent-raised)");
-    expect(winningDeclaration(".agent-prompt__bubble", "box-shadow")).toBe(
-      "var(--agent-shadow-raised)",
-    );
-    expect(winningDeclaration(".agent-prompt__bubble:focus-visible", "box-shadow")).toBe(
-      "var(--agent-shadow-raised), var(--agent-focus-ring)",
-    );
-    expect(winningDeclaration(".agent-prompt__body", "color")).toBe("var(--agent-text-strong)");
-    expect(winningDeclaration(".agent-prompt__bubble", "border-radius")).toBe(
-      "var(--agent-radius-xl)",
-    );
-    expect(token("--agent-radius-xl")).toBe("var(--codevo-r-xl)");
-    expect(winningDeclaration(".agent-prompt__bubble", "padding")).toBe(
-      "var(--agent-space-4) var(--agent-space-5)",
-    );
-    expect(declarations(".agent-prompt__body", "background")).toEqual([]);
-    expect(declarations(".agent-prompt__body", "padding")).toEqual([]);
-    expect(declarations(".agent-prompt__bubble", "background").join(" ")).not.toMatch(
-      /--agent-rail|--agent-shade|--codevo-side|--agent-well|--agent-code-background/,
-    );
-  });
-
-  it("distinguishes compact queued outlines from sent bubbles using the prompt tokens", () => {
-    expect(RULES.filter((entry) => entry.selectors.includes(".agent-prompt__bubble"))).toHaveLength(
-      1,
-    );
-    expect(winningDeclaration(".agent-queued-list", "gap")).toBe("var(--agent-space-3)");
-    expect(winningDeclaration(".agent-prompt--queued .agent-prompt__bubble", "background")).toBe(
-      "transparent",
-    );
-    expect(winningDeclaration(".agent-prompt--queued .agent-prompt__bubble", "border")).toBe(
-      "1px dashed color-mix(in srgb, var(--agent-text-muted) 45%, transparent)",
-    );
-    expect(winningDeclaration(".agent-prompt__queue", "gap")).toBe("var(--agent-space-2)");
-    expect(winningDeclaration(".agent-prompt__chip", "border-radius")).toBe(
-      "var(--agent-radius-md)",
-    );
-    expect(winningDeclaration(".agent-prompt__chip", "font-size")).toBe("var(--agent-fs-xs)");
-    expect(winningDeclaration(".agent-prompt__chip--queued", "background")).toBe(
-      "var(--agent-well)",
-    );
-    expect(winningDeclaration(".agent-prompt__chip--queued", "color")).toBe(
-      "var(--agent-text-muted)",
-    );
-    expect(winningDeclaration(".agent-prompt__queue-action", "border-radius")).toBe(
-      "var(--agent-radius-sm)",
-    );
-    expect(winningDeclaration(".agent-prompt__queue-action:focus-visible", "box-shadow")).toBe(
-      "var(--agent-focus-ring)",
-    );
-    expect(declarations(".agent-prompt__queue-action", "outline")).toEqual([]);
-  });
-
-  it("mutes a disabled queue action and keeps the hover fill off it", () => {
-    expect(winningDeclaration(".agent-prompt__queue-action:disabled", "color")).toBe(
-      "var(--agent-text-disabled)",
-    );
-    expect(winningDeclaration(".agent-prompt__queue-action:disabled", "cursor")).toBe(
-      "not-allowed",
-    );
-    expect(declarations(".agent-prompt__queue-action:disabled", "background")).toEqual([]);
-    expect(
-      RULES.filter((entry) => entry.selectors.includes(".agent-prompt__queue-action:hover")),
-    ).toEqual([]);
-    expect(
-      winningDeclaration(".agent-prompt__queue-action:hover:not(:disabled)", "background"),
-    ).toBe("var(--agent-hover)");
-    expect(winningDeclaration(".agent-prompt__queue-note", "color")).toBe(
-      "var(--agent-text-muted)",
-    );
-    expect(winningDeclaration(".agent-prompt__queue-note", "font-size")).toBe("var(--agent-fs-xs)");
-  });
-
-  it("keeps the edit pencil on the shared queue-action chip contract", () => {
-    expect(
-      RULES.filter((entry) => entry.selectors.includes(".agent-prompt__queue-action--edit"))
-        .flatMap((entry) => entry.selectors)
-        .every((selector) => selector.startsWith(".agent-prompt__queue-action")),
-    ).toBe(true);
-    expect(declarations(".agent-prompt__queue-action--edit", "border")).toEqual([]);
-    expect(declarations(".agent-prompt__queue-action--edit", "outline")).toEqual([]);
-    expect(declarations(".agent-prompt__queue-action--edit", "box-shadow")).toEqual([]);
-  });
-
-  it("gives the composer Stop control the send geometry on the well tone", () => {
-    expect(winningDeclaration(".agent-composer__stop", "width")).toBe("30px");
-    expect(winningDeclaration(".agent-composer__stop", "height")).toBe("30px");
-    expect(winningDeclaration(".agent-composer__stop", "border-radius")).toBe("999px");
-    expect(winningDeclaration(".agent-composer__stop", "background")).toBe("var(--agent-well)");
-    expect(winningDeclaration(".agent-composer__stop", "color")).toBe("var(--agent-text-strong)");
-    expect(winningDeclaration(".agent-composer__stop:hover", "background")).toBe(
-      "var(--agent-hover)",
-    );
-    expect(winningDeclaration(".agent-composer__stop:focus-visible", "box-shadow")).toBe(
-      "var(--agent-focus-ring)",
-    );
-    expect(winningDeclaration(".agent-composer__stop:focus-visible", "outline")).toBe("none");
-  });
-
-  it("keeps sent attachments inside the bubble under the text and its chips on the agent ladder", () => {
-    expect(winningDeclaration(".agent-prompt__bubble", "display")).toBe("grid");
-    expect(winningDeclaration(".agent-prompt__bubble", "gap")).toBe("var(--agent-space-3)");
-    expect(declarations(".agent-prompt", "flex-wrap")).toEqual([]);
-    expect(declarations(".agent-attachments", "flex-basis")).toEqual([]);
-    expect(declarations(".agent-attachments", "justify-content")).toEqual([]);
-    expect(winningDeclaration(".agent-attachments", "flex-wrap")).toBe("wrap");
-    expect(winningDeclaration(".agent-attachments", "gap")).toBe("var(--agent-space-3)");
-    expect(winningDeclaration(".agent-attachments__image", "max-width")).toBe("min(320px, 100%)");
-    expect(winningDeclaration(".agent-attachments__open", "max-width")).toBe("100%");
-    expect(winningDeclaration(".agent-attachments__image", "max-height")).toBe("240px");
-    expect(winningDeclaration(".agent-attachments__image", "object-fit")).toBe("contain");
-    expect(winningDeclaration(".agent-attachments__image", "border-radius")).toBe(
-      "var(--agent-radius-lg)",
-    );
-    expect(winningDeclaration(".agent-attachments__open", "border-radius")).toBe(
-      "var(--agent-radius-lg)",
-    );
-    expect(winningDeclaration(".agent-attachments__open:focus-visible", "box-shadow")).toBe(
-      "var(--agent-focus-ring)",
-    );
-    expect(winningDeclaration(".agent-attachments__chip", "background")).toBe("var(--agent-well)");
-    expect(winningDeclaration(".agent-attachments__chip", "border-radius")).toBe(
-      "var(--agent-radius-md)",
-    );
-    expect(winningDeclaration(".agent-attachments__chip", "font-size")).toBe("var(--agent-fs-xs)");
-    expect(
-      winningDeclaration('.agent-attachments__chip[data-agent-attachment="unavailable"]', "color"),
-    ).toBe("var(--agent-attention)");
-    expect(winningDeclaration(".agent-attachments__pending", "background")).toBe(
-      "var(--agent-well)",
-    );
-  });
-
-  it("keeps the composer attachment strip at 56px thumbnails on the agent ladder", () => {
-    expect(winningDeclaration(".agent-composer-attachment__thumb", "width")).toBe("56px");
-    expect(winningDeclaration(".agent-composer-attachment__thumb", "height")).toBe("56px");
-    expect(winningDeclaration(".agent-composer-attachment__thumb", "border-radius")).toBe(
-      "var(--agent-radius-md)",
-    );
-    expect(winningDeclaration(".agent-composer-attachment", "border-radius")).toBe(
-      "var(--agent-radius-md)",
-    );
-    expect(winningDeclaration(".agent-composer-attachment__failure", "font-size")).toBe(
-      "var(--agent-fs-2xs)",
-    );
-    expect(winningDeclaration(".agent-composer__box--drop", "box-shadow")).toBe(
-      "var(--agent-shadow-raised), var(--agent-focus-ring)",
-    );
-    expect(winningDeclaration(".agent-composer__box--drop", "background")).toBe(
-      "var(--agent-hover)",
-    );
-    expect(winningDeclaration(".agent-composer__attach", "border-radius")).toBe(
-      "var(--agent-radius-sm)",
-    );
-  });
-
-  it("lets the prompt run to its full length instead of clamping it", () => {
-    expect(winningDeclaration(".agent-prompt__body", "white-space")).toBe("pre-wrap");
-    expect(winningDeclaration(".agent-prompt__body", "word-break")).toBe("break-word");
-    expect(declarations(".agent-prompt__body", "-webkit-line-clamp")).toEqual([]);
-    expect(declarations(".agent-prompt__body", "overflow")).toEqual([]);
-    expect(css).not.toContain("agent-band");
-    expect(css).not.toContain("agent-turn__sentinel");
-  });
-
-  it("gives every prompt and answer block 30px and every block inside an answer 12px", () => {
-    expect(winningDeclaration(".agent-session__body", "gap")).toBe("var(--agent-turn-gap)");
-    expect(winningDeclaration(".agent-turn-list", "gap")).toBe("var(--agent-turn-gap)");
-    expect(winningDeclaration(".agent-turn", "gap")).toBe("var(--agent-turn-gap)");
-    expect(turnGap()).toBe("30px");
-    expect(winningDeclaration(".agent-answer", "gap")).toBe("var(--agent-space-4)");
-    expect(winningDeclaration(".agent-turn__events", "gap")).toBe("var(--agent-space-4)");
-    expect(space(4)).toBe("12px");
-    expect(declarations(".agent-answer", "padding-bottom")).toEqual([]);
-    expect(declarations(".agent-answer", "padding-left")).toEqual([]);
-    expect(winningDeclaration(".agent-session__scroll", "overflow-anchor")).toBe("none");
-  });
-
-  it("sets the prompt and the turn head from the type ladder", () => {
-    expect(winningDeclaration(".agent-prompt__body", "font-size")).toBe("var(--agent-fs-md)");
-    expect(winningDeclaration(".agent-prompt__body", "line-height")).toBe("1.5");
-    expect(winningDeclaration(".agent-turn__head", "font-size")).toBe("var(--agent-fs-xs)");
-    expect(winningDeclaration(".agent-turn__head", "font-weight")).toBe("500");
-    expect(winningDeclaration(".agent-turn__head", "color")).toBe("var(--agent-text-muted)");
-    expect(winningDeclaration(".agent-turn__head", "gap")).toBe("var(--agent-space-3)");
-    for (const selector of [".agent-turn__time", ".agent-turn__duration"]) {
-      expect(winningDeclaration(selector, "font-family"), selector).toBe("var(--agent-mono)");
-      expect(winningDeclaration(selector, "font-size"), selector).toBe("var(--agent-fs-2xs)");
-      expect(winningDeclaration(selector, "color"), selector).toBe("var(--agent-text-subtle)");
-    }
-  });
-
-  it("marks the turn head with an accent dot and pushes the duration to the far end", () => {
-    expect(winningDeclaration(".agent-turn__spark", "width")).toBe("7px");
-    expect(winningDeclaration(".agent-turn__spark", "height")).toBe("7px");
-    expect(winningDeclaration(".agent-turn__spark", "border-radius")).toBe(
-      "var(--agent-radius-pill)",
-    );
-    expect(winningDeclaration(".agent-turn__spark", "background")).toBe("var(--agent-accent)");
-    expect(winningDeclaration(".agent-turn__duration", "margin-left")).toBe("auto");
-  });
-
-  it("reveals the prompt copy control on hover or focus like the other messages", () => {
-    expect(winningDeclaration(".agent-message-copy", "opacity")).toBe("0");
-    expect(winningDeclaration(".agent-prompt:hover .agent-message-copy", "opacity")).toBe("1");
-    expect(winningDeclaration(".agent-prompt:focus-within .agent-message-copy", "opacity")).toBe(
-      "1",
-    );
   });
 
   it("reveals a find hit with a plain centred scroll and no pinned-band inset", () => {
@@ -448,34 +184,13 @@ describe("agent thread Airy style contract", () => {
     expect(css).not.toContain("reveal-slack");
   });
 
-  it("keeps tool rows, subagent rows and the work fold boxless with a hover-only radius", () => {
-    for (const selector of [".agent-subagent", ".agent-subagents"]) {
-      expect(declarations(selector, "box-shadow"), selector).toEqual([]);
-      expect(winningDeclaration(selector, "background"), selector).toBe("transparent");
-      expect(winningDeclaration(selector, "border-radius"), selector).toBe("7px");
-      expect(winningDeclaration(selector, "padding"), selector).toBe("4px 8px");
-      expect(winningDeclaration(`${selector}:hover`, "background"), selector).toBe(
-        "var(--agent-hover)",
-      );
-    }
-    expect(declarations(".agent-work", "border-bottom")).toEqual([]);
-    expect(winningDeclaration(".agent-work__summary", "justify-content")).toBe("start");
-    expect(winningDeclaration(".agent-work__summary", "border-radius")).toBe("7px");
-    expect(winningDeclaration(".agent-work__summary:hover", "background")).toBe(
-      "var(--agent-hover)",
-    );
-  });
-
-  it("puts code blocks on the well tone and the changes summary on a raised card", () => {
-    for (const selector of [".agent-raw__lines", ".agent-diff__text"]) {
+  it("puts the changes summary on a raised card", () => {
+    for (const selector of [".agent-diff__text"]) {
       expect(winningDeclaration(selector, "border-radius"), selector).toBe(
         "var(--agent-radius-md)",
       );
       expect(declarations(selector, "box-shadow"), selector).toEqual([]);
     }
-    expect(winningDeclaration(".agent-raw__lines", "background")).toBe(
-      "var(--agent-code-background)",
-    );
     expect(winningDeclaration(".agent-diff__text", "background")).toBe("var(--agent-well)");
     expect(winningDeclaration(".agent-changes", "background")).toBe("var(--agent-raised)");
     expect(winningDeclaration(".agent-changes", "box-shadow")).toBe("var(--agent-shadow-raised)");
@@ -485,74 +200,9 @@ describe("agent thread Airy style contract", () => {
   });
 
   it("declares every thread-body selector once, in the thread stylesheet", () => {
-    for (const selector of [
-      ".agent-turn",
-      ".agent-turn-list",
-      ".agent-prompt",
-      ".agent-prompt__body",
-      ".agent-turn__head",
-      ".agent-answer",
-      ".agent-turn__events",
-      ".agent-work",
-      ".agent-work__summary",
-      ".agent-text",
-      ".agent-text__paragraph",
-      ".agent-reasoning",
-      ".agent-raw",
-      ".agent-subagents",
-      ".agent-session__body",
-    ]) {
+    for (const selector of [".agent-reasoning", ".agent-subagents"]) {
       expect(RULES.filter((entry) => entry.selectors.includes(selector))).toHaveLength(1);
     }
-    expect(winningDeclaration(".agent-answer", "gap")).toBe("var(--agent-space-4)");
-    expect(winningDeclaration(".agent-turn__events", "gap")).toBe("var(--agent-space-4)");
-  });
-
-  it("hides the result microlabel and keeps no styling for unrendered blocks", () => {
-    expect(winningDeclaration(".agent-finale .agent-microlabel", "display")).toBe("none");
-    expect(winningDeclaration(".agent-finale .agent-microlabel--bad", "display")).toBe("inline");
-    for (const selector of [
-      ".agent-well",
-      ".agent-well__head",
-      ".agent-well__task",
-      ".agent-well__stream",
-      ".agent-session__head",
-      ".agent-session__repo",
-      ".agent-session__title",
-      ".agent-session__status",
-    ]) {
-      expect(RULES.filter((entry) => entry.selectors.includes(selector))).toEqual([]);
-    }
-  });
-
-  it("keeps the work fold legible on light themes", () => {
-    for (const selector of [
-      '.app-shell[data-theme="light"] .agent-work__counts',
-      '.app-shell[data-theme="light"] .agent-work__chevron',
-      '.app-shell[data-theme="catppuccinLatte"] .agent-work__counts',
-      '.app-shell[data-theme="catppuccinLatte"] .agent-work__chevron',
-      '.app-shell[data-theme="oneLight"] .agent-work__counts',
-      '.app-shell[data-theme="oneLight"] .agent-work__chevron',
-    ]) {
-      expect(winningDeclaration(selector, "color")).toBe("var(--agent-text-muted)");
-    }
-    expect(css).toMatch(
-      /\.app-shell\[data-theme="system"\] \.agent-work__counts,\s+\.app-shell\[data-theme="system"\] \.agent-work__chevron \{\s+color: var\(--agent-text-muted\);/,
-    );
-  });
-
-  it("underlines the project in the empty-state question", () => {
-    expect(winningDeclaration(".agent-empty__title", "font-size")).toBe("var(--codevo-fs-hero)");
-    expect(winningDeclaration(".agent-empty__title", "font-weight")).toBe("400");
-    expect(winningDeclaration(".agent-empty__title", "line-height")).toBe("1.2");
-    expect(winningDeclaration(".agent-empty__project", "text-underline-offset")).toBe("6px");
-    expect(winningDeclaration(".agent-empty__project", "text-decoration-color")).toBe(
-      "color-mix(in srgb, currentColor 35%, transparent)",
-    );
-    expect(winningDeclaration(".agent-session__body--empty", "align-content")).toBe("end");
-    expect(css).not.toContain(".agent-empty__figure");
-    expect(css).not.toContain(".agent-empty__hint");
-    expect(css).not.toContain(".agent-empty__chip");
   });
 
   it("raises the header split controls with a tone divider instead of a border", () => {
@@ -573,255 +223,6 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-split__main:hover:not(:disabled)", "background")).toBe(
       "var(--agent-outline-button-hover)",
     );
-    expect(winningDeclaration(".agent-icon-toggle", "width")).toBe("28px");
-    expect(winningDeclaration(".agent-icon-toggle", "height")).toBe("28px");
-    expect(winningDeclaration('.agent-icon-toggle[aria-pressed="true"]', "background")).toBe(
-      "var(--agent-fill)",
-    );
-  });
-
-  it("scopes markdown horizontal scrolling to the code body and table wrapper only", () => {
-    const scrollers = RULES.filter((rule) => /overflow(-x)?\s*:/.test(rule.body)).flatMap(
-      (rule) => rule.selectors,
-    );
-    const markdownScrollers = scrollers.filter((selector) => selector.includes(".agent-md__"));
-    expect(markdownScrollers.sort()).toEqual([".agent-md__code-body", ".agent-md__table-scroll"]);
-    expect(scrollers).not.toContain(".agent-text");
-    expect(winningDeclaration(".agent-text", "min-width")).toBe("0");
-    expect(winningDeclaration(".agent-md__code-body", "overflow-x")).toBe("auto");
-    expect(winningDeclaration(".agent-md__table-scroll", "overflow-x")).toBe("auto");
-  });
-
-  it("wraps code and unbroken tokens without a nested vertical viewport", () => {
-    expect(winningDeclaration(".agent-md__code-body", "white-space")).toBe("pre-wrap");
-    expect(winningDeclaration(".agent-md__code-body", "overflow-wrap")).toBe("anywhere");
-    expect(winningDeclaration(".agent-md__code-body", "min-width")).toBe("0");
-    expect(winningDeclaration('.agent-md__code-body[data-wrap="false"]', "white-space")).toBe(
-      "pre",
-    );
-    for (const selector of [".agent-md__code", ".agent-md__code-body"]) {
-      expect(declarations(selector, "max-height")).toEqual([]);
-      expect(declarations(selector, "height")).toEqual([]);
-      expect(declarations(selector, "overflow-y")).toEqual([]);
-    }
-  });
-
-  it("sets the markdown prose rhythm from one block margin and zeroes the outer edges", () => {
-    expect(winningDeclaration(".agent-text", "display")).toBe("flow-root");
-    expect(declarations(".agent-text", "gap")).toEqual([]);
-    expect(declarations(".agent-text", "font-family")).toEqual([]);
-    for (const selector of [
-      ".agent-text__paragraph",
-      ".agent-md__list",
-      ".agent-md__quote",
-      ".agent-md__code",
-      ".agent-md__table-scroll",
-    ]) {
-      expect(winningDeclaration(selector, "margin"), selector).toBe(
-        "calc(10px * var(--codevo-fs-scale)) 0",
-      );
-    }
-    expect(winningDeclaration(".agent-text > :first-child", "margin-top")).toBe("0");
-    expect(winningDeclaration(".agent-text > :last-child", "margin-bottom")).toBe("0");
-    expect(
-      winningDeclaration(".agent-text > :has(+ .agent-message-actions)", "margin-bottom"),
-    ).toBe("0");
-    expect(winningDeclaration(".agent-md__heading", "margin")).toBe(
-      "calc(20px * var(--codevo-fs-scale)) 0 calc(8px * var(--codevo-fs-scale))",
-    );
-    expect(winningDeclaration(".agent-text > :nth-last-child(2)", "margin-bottom")).toBe("0");
-    expect(winningDeclaration(".agent-text > .agent-message-actions", "margin-top")).toBe(
-      "var(--agent-space-3)",
-    );
-    expect(winningDeclaration(".agent-md__quote > :first-child", "margin-top")).toBe("0");
-    expect(winningDeclaration(".agent-md__quote > :last-child", "margin-bottom")).toBe("0");
-    expect(winningDeclaration(".agent-md__item + .agent-md__item", "margin-top")).toBe(
-      "calc(4px * var(--codevo-fs-scale))",
-    );
-    expect(declarations(".agent-md__list", "gap")).toEqual([]);
-    expect(winningDeclaration(".agent-text__paragraph", "font-size")).toBe("var(--agent-fs-md)");
-    expect(winningDeclaration(".agent-text__paragraph", "line-height")).toBe(
-      "var(--agent-lh-prose)",
-    );
-  });
-
-  it("keeps the code block on one quiet slab and the inline code on the well", () => {
-    expect(declarations(".agent-md__code", "border-radius")).toEqual([]);
-    expect(winningDeclaration(".agent-md__code-bar", "border-radius")).toBe(
-      "var(--agent-radius-lg) var(--agent-radius-lg) 0 0",
-    );
-    expect(winningDeclaration(".agent-md__code-body", "border-radius")).toBe(
-      "0 0 var(--agent-radius-lg) var(--agent-radius-lg)",
-    );
-    expect(winningDeclaration(".agent-md__code-bar", "color")).toBe("var(--agent-text-muted)");
-    expect(winningDeclaration(".agent-md__code-body", "padding")).toBe(
-      "calc(12px * var(--codevo-fs-scale)) calc(14px * var(--codevo-fs-scale))",
-    );
-    expect(winningDeclaration(".agent-md__code-body", "font-size")).toBe("var(--agent-fs-2xs)");
-    expect(winningDeclaration(".agent-md__code-body", "margin")).toBe("0");
-    expect(winningDeclaration(".agent-md__inline-code", "font-size")).toBe("var(--agent-fs-2xs)");
-    expect(winningDeclaration(".agent-md__inline-code", "padding")).toBe("1px 5px");
-    expect(winningDeclaration(".agent-md__inline-code", "border-radius")).toBe(
-      "var(--agent-radius-sm)",
-    );
-    expect(winningDeclaration(".agent-md__inline-code", "color")).toBe("var(--agent-text-strong)");
-    expect(declarations(".agent-md__inline-code", "box-shadow")).toEqual([]);
-    expect(declarations(".agent-md__inline-code", "border")).toEqual([]);
-    expect(declarations(".agent-md__inline-code", "outline")).toEqual([]);
-  });
-
-  it("fits a markdown table to the reading column and rules it with hairlines only", () => {
-    expect(winningDeclaration(".agent-md__table", "width")).toBe("100%");
-    expect(winningDeclaration(".agent-md__table", "border-collapse")).toBe("collapse");
-    expect(declarations(".agent-md__table", "min-width")).toEqual([]);
-    expect(declarations(".agent-md__table", "border-spacing")).toEqual([]);
-    expect(winningDeclaration(".agent-md__table", "max-width")).toBe("100%");
-    expect(winningDeclaration(".agent-md__table", "font-size")).toBe("var(--agent-fs-2xs)");
-    expect(winningDeclaration(".agent-md__th", "padding")).toBe(
-      "calc(7px * var(--codevo-fs-scale)) calc(12px * var(--codevo-fs-scale))",
-    );
-    expect(winningDeclaration(".agent-md__td", "padding")).toBe(
-      "calc(7px * var(--codevo-fs-scale)) calc(12px * var(--codevo-fs-scale))",
-    );
-    expect(winningDeclaration(".agent-md__th", "white-space")).toBe("normal");
-    expect(winningDeclaration(".agent-md__th", "overflow-wrap")).toBe("normal");
-    expect(winningDeclaration(".agent-md__th", "color")).toBe("var(--agent-text-strong)");
-    expect(winningDeclaration(".agent-md__th", "font-weight")).toBe("600");
-    expect(declarations(".agent-md__td", "white-space")).toEqual([]);
-    expect(winningDeclaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
-    expect(winningDeclaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe(
-      "anywhere",
-    );
-    expect(winningDeclaration(".agent-md__td .agent-md__link", "overflow-wrap")).toBe("anywhere");
-    expect(winningDeclaration(".agent-md__th", "vertical-align")).toBe("bottom");
-    expect(winningDeclaration(".agent-md__td", "vertical-align")).toBe("top");
-    expect(winningDeclaration(".agent-md__th", "background")).toBe(
-      "linear-gradient(var(--agent-hairline-strong), var(--agent-hairline-strong)) bottom / 100% 1px no-repeat",
-    );
-    expect(winningDeclaration(".agent-md__td", "background")).toBe(
-      "linear-gradient(var(--agent-hairline), var(--agent-hairline)) bottom / 100% 1px no-repeat",
-    );
-    expect(
-      winningDeclaration(".agent-md__table tbody tr:last-child > .agent-md__td", "background"),
-    ).toBe("none");
-    for (const selector of [".agent-md__th", ".agent-md__td"]) {
-      expect(winningDeclaration(selector, "background"), selector).toMatch(
-        /^linear-gradient\(var\(--agent-hairline(-strong)?\), var\(--agent-hairline(-strong)?\)\) bottom \/ 100% 1px no-repeat$/,
-      );
-    }
-    expect(css).not.toContain("tbody tr:nth-child(even)");
-    for (const rule of RULES.filter((entry) =>
-      entry.selectors.some((selector) => selector.includes(".agent-md__t")),
-    )) {
-      expect(rule.body, rule.selectors.join(",")).not.toMatch(/max-content|table-layout|nowrap/);
-      expect(rule.body, rule.selectors.join(",")).not.toMatch(/(^|[^-])border\s*:/);
-      expect(rule.body, rule.selectors.join(",")).not.toMatch(/box-shadow|outline/);
-    }
-  });
-
-  it("keeps markdown chrome on the well tones without side tone or z-index", () => {
-    const markdownRules = RULES.filter((rule) =>
-      rule.selectors.some((selector) => selector.includes(".agent-md__")),
-    );
-    for (const rule of markdownRules) {
-      expect(rule.body, rule.selectors.join(",")).not.toMatch(/z-index/);
-      expect(rule.body, rule.selectors.join(",")).not.toMatch(
-        /--agent-rail|--agent-shade|--codevo-side/,
-      );
-    }
-    expect(winningDeclaration(".agent-md__code-bar", "background")).toBe("var(--agent-well)");
-    expect(winningDeclaration(".agent-md__code-body", "background")).toBe(
-      "var(--agent-code-background)",
-    );
-    expect(declarations(".agent-md__th", "background-color")).toEqual([]);
-    expect(winningDeclaration(".agent-md__quote", "background")).toBe("var(--agent-well)");
-    expect(winningDeclaration(".agent-md__quote", "color")).toBe("var(--agent-text)");
-    expect(winningDeclaration(".agent-md__inline-code", "background")).toBe("var(--agent-well)");
-    expect(winningDeclaration(".agent-md__heading--h1", "font-size")).toBe("var(--agent-fs-xl)");
-    expect(winningDeclaration(".agent-md__heading--h2", "font-size")).toBe("var(--agent-fs-lg)");
-  });
-
-  it("floats the attachment lightbox on the shade scrim, fitted to the viewport without upscaling", () => {
-    const backdrop = ".palette-backdrop.agent-lightbox";
-    expect(winningDeclaration(backdrop, "background")).toBe(
-      "color-mix(in srgb, var(--agent-shade) 78%, transparent)",
-    );
-    expect(winningDeclaration(backdrop, "align-items")).toBe("center");
-    expect(winningDeclaration(backdrop, "padding")).toBe("var(--agent-space-6)");
-    expect(winningDeclaration(backdrop, "animation")).toBe(
-      "agent-lightbox-in var(--agent-motion-enter) var(--ease-standard)",
-    );
-    expect(css).toMatch(
-      /@keyframes agent-lightbox-in\s*\{\s*from\s*\{\s*opacity: 0;\s*\}\s*to\s*\{\s*opacity: 1;\s*\}\s*\}/,
-    );
-    expect(css).toMatch(
-      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.palette-backdrop\.agent-lightbox\s*\{\s*animation: none;/,
-    );
-    expect(winningDeclaration(".agent-lightbox__scrim", "position")).toBe("absolute");
-    expect(winningDeclaration(".agent-lightbox__scrim", "inset")).toBe("0");
-    expect(winningDeclaration(".agent-lightbox__scrim", "cursor")).toBe("zoom-out");
-    expect(winningDeclaration(".agent-lightbox__scrim", "background")).toBe("transparent");
-    expect(winningDeclaration(".agent-lightbox__stage", "position")).toBe("relative");
-    expect(winningDeclaration(".agent-lightbox__stage", "max-width")).toBe("92vw");
-    expect(winningDeclaration(".agent-lightbox__stage", "max-height")).toBe("92vh");
-    expect(winningDeclaration(".agent-lightbox__frame", "position")).toBe("relative");
-    expect(winningDeclaration(".agent-lightbox__frame", "display")).toBe("inline-block");
-    expect(winningDeclaration(".agent-lightbox__frame", "min-height")).toBe("0");
-    expect(winningDeclaration(".agent-lightbox__frame", "min-width")).toBe("0");
-    expect(winningDeclaration(".agent-lightbox__stage", "min-height")).toBe("0");
-    expect(winningDeclaration(".agent-lightbox__stage", "min-width")).toBe("0");
-    expect(winningDeclaration(".agent-lightbox__image", "max-width")).toBe("92vw");
-    expect(winningDeclaration(".agent-lightbox__image", "max-height")).toBe("86vh");
-    expect(winningDeclaration(".agent-lightbox__image", "width")).toBe("auto");
-    expect(winningDeclaration(".agent-lightbox__image", "height")).toBe("auto");
-    expect(winningDeclaration(".agent-lightbox__image", "object-fit")).toBe("contain");
-    expect(winningDeclaration(".agent-lightbox__image", "box-shadow")).toBe(
-      "var(--codevo-shadow-window)",
-    );
-    expect(winningDeclaration(".agent-lightbox__image", "border-radius")).toBe(
-      "var(--agent-radius-md)",
-    );
-  });
-
-  it("pins the lightbox close chip to the image corner and the chevrons to the viewport edges", () => {
-    expect(winningDeclaration(".agent-lightbox__close", "position")).toBe("absolute");
-    expect(winningDeclaration(".agent-lightbox__close", "top")).toBe("var(--agent-space-3)");
-    expect(winningDeclaration(".agent-lightbox__close", "right")).toBe("var(--agent-space-3)");
-    expect(winningDeclaration(".agent-lightbox__scrim", "z-index")).toBe("0");
-    expect(winningDeclaration(".agent-lightbox__stage", "z-index")).toBe("1");
-    expect(winningDeclaration(".agent-lightbox__nav", "z-index")).toBe("1");
-    expect(winningDeclaration(".agent-lightbox__chip", "width")).toBe("32px");
-    expect(winningDeclaration(".agent-lightbox__chip", "height")).toBe("32px");
-    expect(winningDeclaration(".agent-lightbox__chip", "background")).toBe("var(--agent-raised)");
-    expect(winningDeclaration(".agent-lightbox__chip", "color")).toBe("var(--agent-text-strong)");
-    expect(winningDeclaration(".agent-lightbox__chip", "border-radius")).toBe(
-      "var(--agent-radius-md)",
-    );
-    expect(winningDeclaration(".agent-lightbox__chip", "box-shadow")).toBe(
-      "var(--codevo-shadow-float)",
-    );
-    expect(winningDeclaration(".agent-lightbox__chip:focus-visible", "box-shadow")).toBe(
-      "var(--agent-focus-ring)",
-    );
-    expect(declarations(".agent-lightbox__chip", "outline")).toEqual([]);
-    expect(winningDeclaration(".agent-lightbox__nav", "position")).toBe("absolute");
-    expect(winningDeclaration(".agent-lightbox__nav", "top")).toBe("50%");
-    expect(winningDeclaration(".agent-lightbox__nav--previous", "left")).toBe(
-      "var(--agent-space-5)",
-    );
-    expect(winningDeclaration(".agent-lightbox__nav--next", "right")).toBe("var(--agent-space-5)");
-    expect(winningDeclaration('.agent-lightbox__nav[aria-disabled="true"]', "cursor")).toBe(
-      "default",
-    );
-    expect(winningDeclaration(".agent-lightbox__caption", "justify-content")).toBe("center");
-    expect(winningDeclaration(".agent-lightbox__caption", "max-width")).toBe("100%");
-    expect(winningDeclaration(".agent-lightbox__name", "text-overflow")).toBe("ellipsis");
-    expect(winningDeclaration(".agent-lightbox__name", "white-space")).toBe("nowrap");
-    expect(winningDeclaration(".agent-lightbox__reveal", "background")).toBe("transparent");
-    expect(winningDeclaration(".agent-lightbox__reveal:focus-visible", "box-shadow")).toBe(
-      "var(--agent-focus-ring)",
-    );
-    expect(declarations(".agent-lightbox__reveal", "outline")).toEqual([]);
   });
 
   it("floats menus and popovers on the float shadow without a hairline ring", () => {

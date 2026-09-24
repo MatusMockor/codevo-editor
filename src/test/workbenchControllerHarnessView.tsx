@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { CommandPalette } from "../components/CommandPalette";
-import { QuickOpen } from "../components/QuickOpen";
+import { WorkbenchCommandPalette } from "../components/commandPalette/WorkbenchCommandPalette";
 import { useWorkbenchController } from "../application/useWorkbenchController";
 import type { ControllerDependencies, WorkbenchController } from "./workbenchControllerTestHarness";
 import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
@@ -105,28 +104,11 @@ export function WorkbenchHarness({
 
   if (renderQuickOpenSurfaces) {
     return (
-      <>
-        <CommandPalette
-          commands={workbench.commands}
-          context={workbench.commandContext}
-          initialQuery={workbench.commandPaletteInitialQuery}
-          isOpen={workbench.paletteOpen}
-          onCommandError={workbench.reportCommandError}
-          onClose={() => workbench.setPaletteOpen(false)}
-        />
-        <QuickOpen
-          isLoading={workbench.quickOpenLoading}
-          isOpen={workbench.quickOpenOpen}
-          isTruncated={workbench.quickOpenTruncated}
-          onChangeQuery={workbench.setQuickOpenQuery}
-          onClose={() => workbench.setQuickOpenOpen(false)}
-          onOpen={workbench.openSearchResult}
-          onOpenCurrentFileLocation={workbench.openCurrentFileLocation}
-          query={workbench.quickOpenQuery}
-          request={workbench.quickOpenRequest}
-          results={workbench.quickOpenResults}
-        />
-      </>
+      <WorkbenchCommandPalette
+        fileSearch={dependencies.workspaceGateways.fileSearch}
+        gitGateway={dependencies.gitGateway}
+        workbench={workbench}
+      />
     );
   }
 

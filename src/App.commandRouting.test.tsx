@@ -311,10 +311,11 @@ vi.mock("./components/ScopedEditorSurface", () => ({
   },
 }));
 
-vi.mock("./components/CommandPalette", () => {
+vi.mock("./components/commandPalette/WorkbenchCommandPalette", () => {
   mocks.optionalSurfaceModuleLoads.push("commandPalette");
   return {
-    CommandPalette: ({ isOpen }: { isOpen: boolean }) => {
+    WorkbenchCommandPalette: ({ workbench }: { workbench: { paletteOpen: boolean } }) => {
+      const isOpen = workbench.paletteOpen;
       const mounted = useRef(false);
       if (!mounted.current) {
         mounted.current = true;
@@ -334,11 +335,6 @@ vi.mock("./components/CommandPalette", () => {
 vi.mock("./components/agentMode/AgentWorkbenchScreen", () => {
   mocks.optionalSurfaceModuleLoads.push("agentWorkbench");
   return { AgentWorkbenchScreen: () => <div data-testid="agent-mode-view" /> };
-});
-
-vi.mock("./components/QuickOpen", () => {
-  mocks.optionalSurfaceModuleLoads.push("quickOpen");
-  return { QuickOpen: () => <div data-testid="quick-open" /> };
 });
 
 vi.mock("./components/FileHistoryPanel", () => {
@@ -1022,7 +1018,7 @@ describe("App command routing", () => {
     expect(host.querySelector(".activity-bar")).not.toBeNull();
     expect(host.querySelector(".sidebar")).not.toBeNull();
     expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="status-bar"]')).not.toBeNull();
+    expect(host.querySelector('.workbench-toolbar [data-testid="status-bar"]')).not.toBeNull();
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe(
       "editor-expanded",
     );
@@ -1054,7 +1050,7 @@ describe("App command routing", () => {
     expect(host.querySelector(".sidebar")).toBeNull();
     expect(host.querySelector('[data-testid="project-tabs"]')).toBeNull();
     expect(host.querySelector('[data-testid="status-bar"]')).toBeNull();
-    expect(host.querySelector(".status-bar--agent")?.textContent).toContain("1/3 threads running");
+    expect(host.querySelector(".status-bar--agent")).toBeNull();
     expect(host.querySelector(".workbench-toolbar")).toBeNull();
     expect(host.querySelector(".smart-mode-switch")).toBeNull();
     expect(host.querySelector(".workbench-mode-switch")).toBeNull();
@@ -1071,7 +1067,7 @@ describe("App command routing", () => {
     expect(host.querySelector(".activity-bar")).not.toBeNull();
     expect(host.querySelector(".sidebar")).not.toBeNull();
     expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="status-bar"]')).not.toBeNull();
+    expect(host.querySelector('.workbench-toolbar [data-testid="status-bar"]')).not.toBeNull();
     expect(host.querySelector(".status-bar--agent")).toBeNull();
     expect(host.querySelector(".sidebar-tab.active")?.textContent).toBe("Files");
     expect(host.querySelector(".app-shell")?.className).not.toContain("app-shell--agent-mode");

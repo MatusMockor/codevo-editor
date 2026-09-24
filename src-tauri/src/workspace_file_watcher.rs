@@ -1,9 +1,15 @@
+use crate::ignore_matcher::IgnoreRulesCompleteness;
+
+#[path = "workspace_file_watcher/disposal_fence.rs"]
+mod disposal_fence;
 use crate::file_watcher::{
     CommandWatchmanAvailability, GitAwareNativeWorkspaceFileWatcher, PreferredWorkspaceFileWatcher,
     WatchmanWorkspaceFileWatcher, WorkspaceFileWatcher, WorkspaceWatchError, WorkspaceWatchEvent,
     WorkspaceWatchEventBatch, WorkspaceWatchEventKind, WorkspaceWatchEventSink,
     WorkspaceWatchFileKind, WorkspaceWatchRequest, WorkspaceWatchSession,
 };
+use disposal_fence::WorkspaceWatchDisposalFences;
+pub use disposal_fence::{WorkspaceWatchDisposalGuard, WorkspaceWatchDisposalTicket};
 use serde::Serialize;
 use std::ffi::OsString;
 use std::{
@@ -39,6 +45,7 @@ pub struct WorkspaceFileChangedPayload {
 pub struct WorkspaceFileWatchStartReceipt {
     pub root_path: String,
     pub watch_generation: u64,
+    pub ignore_rules: IgnoreRulesCompleteness,
 }
 
 /// Abstraction over the Tauri event channel so the payload mapping and the
@@ -88,6 +95,7 @@ pub struct WorkspaceFileChangeWatchRegistry {
     transitions: Mutex<HashMap<String, WorkspaceWatchTransition>>,
     stop_completed: Condvar,
     stopping_all: AtomicBool,
+    disposal_fences: WorkspaceWatchDisposalFences,
 }
 
 struct WorkspaceFileChangeWatchSession {
@@ -102,6 +110,46 @@ impl WorkspaceFileChangeWatchSession {
 
     fn stop_backend(&mut self) {
         self.session.stop();
+    }
+}
+
+fn admit_recovery_root(
+    recovery_by_root: &mut HashMap<String, Arc<WorkspaceWatchRecovery>>,
+    sessions: &HashMap<String, WorkspaceFileChangeWatchSession>,
+    transitions: &HashMap<String, WorkspaceWatchTransition>,
+    root_key: &str,
+) -> Result<(), String> {
+    let is_owned = |key: &String| sessions.contains_key(key) || transitions.contains_key(key);
+    recovery_by_root.retain(|key, recovery| is_owned(key) || !recovery.is_settled());
+    if recovery_by_root.contains_key(root_key)
+        || recovery_by_root.len() < MAX_WORKSPACE_WATCH_RECOVERY_ROOTS
+    {
+        return Ok(());
+    }
+    let idle = recovery_by_root
+        .iter()
+        .find(|(key, recovery)| !is_owned(key) && recovery.publishers.load(Ordering::Acquire) == 0)
+        .map(|(key, _)| key.clone());
+    let Some(idle) = idle else {
+        return Err(format!(
+            "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
+        ));
+    };
+    recovery_by_root.remove(&idle);
+    Ok(())
+}
+
+fn cancel_pending_start(
+    cancelled: &AtomicBool,
+    authority: &Mutex<Option<Arc<WorkspaceWatchSinkAuthority>>>,
+) {
+    cancelled.store(true, Ordering::Release);
+    if let Some(authority) = authority
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+    {
+        authority.revoke();
     }
 }
 
@@ -123,6 +171,7 @@ enum WorkspaceWatchTransitionKind {
     Starting {
         cancelled: Arc<AtomicBool>,
         authority: Arc<Mutex<Option<Arc<WorkspaceWatchSinkAuthority>>>>,
+        generation: u64,
     },
     Stopping,
 }
@@ -349,12 +398,22 @@ impl WorkspaceFileChangeWatchRegistry {
             transitions: Mutex::new(HashMap::new()),
             stop_completed: Condvar::new(),
             stopping_all: AtomicBool::new(false),
+            disposal_fences: WorkspaceWatchDisposalFences::default(),
         }
+    }
+
+    pub fn allocate_generation(&self) -> Result<u64, String> {
+        self.next_generation
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |generation| {
+                (generation < MAX_SAFE_JAVASCRIPT_WATCH_GENERATION).then_some(generation + 1)
+            })
+            .map_err(|_| "Workspace watch generation space is exhausted.".to_string())
     }
 
     pub fn start(
         &self,
         root_path: &str,
+        arrival_generation: u64,
         app: AppHandle,
     ) -> Result<WorkspaceFileWatchStartReceipt, String> {
         let watcher = PreferredWorkspaceFileWatcher::new(
@@ -363,15 +422,21 @@ impl WorkspaceFileChangeWatchRegistry {
             CommandWatchmanAvailability,
         );
 
-        self.start_with_watcher(root_path, &watcher, |root_key, authority| {
-            Arc::new(WorkspaceFileChangeSink {
-                authority,
-                emitter: Arc::new(AppHandleWorkspaceFileChangeEmitter::new(app)),
-                root_path: root_key.to_string(),
-            })
-        })
+        self.start_with_generation(
+            root_path,
+            Some(arrival_generation),
+            &watcher,
+            |root_key, authority| {
+                Arc::new(WorkspaceFileChangeSink {
+                    authority,
+                    emitter: Arc::new(AppHandleWorkspaceFileChangeEmitter::new(app)),
+                    root_path: root_key.to_string(),
+                })
+            },
+        )
     }
 
+    #[cfg(test)]
     fn start_with_watcher(
         &self,
         root_path: &str,
@@ -381,6 +446,23 @@ impl WorkspaceFileChangeWatchRegistry {
             Arc<WorkspaceWatchSinkAuthority>,
         ) -> Arc<dyn WorkspaceWatchEventSink>,
     ) -> Result<WorkspaceFileWatchStartReceipt, String> {
+        self.start_with_generation(root_path, None, watcher, sink_factory)
+    }
+
+    fn start_with_generation(
+        &self,
+        root_path: &str,
+        arrival_generation: Option<u64>,
+        watcher: &dyn WorkspaceFileWatcher,
+        sink_factory: impl FnOnce(
+            &str,
+            Arc<WorkspaceWatchSinkAuthority>,
+        ) -> Arc<dyn WorkspaceWatchEventSink>,
+    ) -> Result<WorkspaceFileWatchStartReceipt, String> {
+        let generation = match arrival_generation {
+            Some(generation) => generation,
+            None => self.allocate_generation()?,
+        };
         let root = PathBuf::from(root_path)
             .canonicalize()
             .map_err(|error| format!("Failed to watch workspace: {error}"))?;
@@ -394,17 +476,19 @@ impl WorkspaceFileChangeWatchRegistry {
             if self.stopping_all.load(Ordering::SeqCst) {
                 return Err("Workspace watchers are stopping.".to_string());
             }
-            if let Some(session) = sessions.get(&root_key) {
-                return Ok(WorkspaceFileWatchStartReceipt {
-                    root_path: root_key,
-                    watch_generation: session.authority.generation,
-                });
-            }
             let mut transitions = self
                 .transitions
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            if !transitions.contains_key(&root_key) {
+            let fenced = self.disposal_fences.blocks(&root_key, generation);
+            if let Some(session) = sessions.get(&root_key).filter(|_| !fenced) {
+                return Ok(WorkspaceFileWatchStartReceipt {
+                    root_path: root_key,
+                    watch_generation: session.authority.generation,
+                    ignore_rules: session.session.ignore_rules(),
+                });
+            }
+            if !fenced && !transitions.contains_key(&root_key) {
                 if self.stopping_all.load(Ordering::SeqCst) {
                     return Err("Workspace watchers are stopping.".to_string());
                 }
@@ -412,23 +496,12 @@ impl WorkspaceFileChangeWatchRegistry {
                     .recovery_by_root
                     .lock()
                     .unwrap_or_else(|error| error.into_inner());
-                recovery_by_root.retain(|key, recovery| {
-                    sessions.contains_key(key)
-                        || transitions.contains_key(key)
-                        || !recovery.is_settled()
-                });
                 if sessions.len() + transitions.len() >= MAX_WORKSPACE_WATCH_RECOVERY_ROOTS {
                     return Err(format!(
                         "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
                     ));
                 }
-                if !recovery_by_root.contains_key(&root_key)
-                    && recovery_by_root.len() >= MAX_WORKSPACE_WATCH_RECOVERY_ROOTS
-                {
-                    return Err(format!(
-                        "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
-                    ));
-                }
+                admit_recovery_root(&mut recovery_by_root, &sessions, &transitions, &root_key)?;
                 let token = Arc::new(());
                 let cancelled = Arc::new(AtomicBool::new(false));
                 let authority = Arc::new(Mutex::new(None));
@@ -439,6 +512,7 @@ impl WorkspaceFileChangeWatchRegistry {
                         kind: WorkspaceWatchTransitionKind::Starting {
                             cancelled: Arc::clone(&cancelled),
                             authority: Arc::clone(&authority),
+                            generation,
                         },
                     },
                 );
@@ -461,18 +535,15 @@ impl WorkspaceFileChangeWatchRegistry {
                 .stop_completed
                 .wait_timeout(transitions, transition_deadline - now)
                 .unwrap_or_else(|error| error.into_inner());
-            if timeout.timed_out() && transitions.contains_key(&root_key) {
+            if timeout.timed_out()
+                && (transitions.contains_key(&root_key)
+                    || self.disposal_fences.blocks(&root_key, generation))
+            {
                 return Err("Workspace watch transition timed out.".to_string());
             }
             drop(transitions);
         };
 
-        let generation = self
-            .next_generation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
-                (generation < MAX_SAFE_JAVASCRIPT_WATCH_GENERATION).then_some(generation + 1)
-            })
-            .map_err(|_| "Workspace watch generation space is exhausted.".to_string())?;
         let recovery = {
             let sessions = self
                 .sessions
@@ -486,18 +557,7 @@ impl WorkspaceFileChangeWatchRegistry {
                 .recovery_by_root
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            recovery_by_root.retain(|key, recovery| {
-                sessions.contains_key(key)
-                    || transitions.contains_key(key)
-                    || !recovery.is_settled()
-            });
-            if !recovery_by_root.contains_key(&root_key)
-                && recovery_by_root.len() >= MAX_WORKSPACE_WATCH_RECOVERY_ROOTS
-            {
-                return Err(format!(
-                    "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
-                ));
-            }
+            admit_recovery_root(&mut recovery_by_root, &sessions, &transitions, &root_key)?;
             recovery_by_root
                 .entry(root_key.clone())
                 .or_insert_with(|| Arc::new(WorkspaceWatchRecovery::new()))
@@ -516,7 +576,10 @@ impl WorkspaceFileChangeWatchRegistry {
         }
         let sink = sink_factory(&root_key, Arc::clone(&authority));
         let session = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            watcher.watch(WorkspaceWatchRequest::new(root), Arc::clone(&sink))
+            watcher.watch(
+                WorkspaceWatchRequest::new(root).with_cancellation(Arc::clone(&start_cancelled)),
+                Arc::clone(&sink),
+            )
         })) {
             Ok(Ok(session)) => session,
             Ok(Err(error)) => {
@@ -571,6 +634,7 @@ impl WorkspaceFileChangeWatchRegistry {
                 .is_some_and(|transition| Arc::ptr_eq(&transition.token, &start_reservation.token));
         if may_commit {
             let session = pending_session.commit();
+            let ignore_rules = session.ignore_rules();
             sessions.insert(
                 root_key.clone(),
                 WorkspaceFileChangeWatchSession { authority, session },
@@ -581,6 +645,7 @@ impl WorkspaceFileChangeWatchRegistry {
             return Ok(WorkspaceFileWatchStartReceipt {
                 root_path: root_key,
                 watch_generation: generation,
+                ignore_rules,
             });
         }
         drop(transitions);
@@ -593,59 +658,73 @@ impl WorkspaceFileChangeWatchRegistry {
     }
 
     pub fn stop(&self, root_path: &str) {
-        let candidates = workspace_watch_id_candidates(&PathBuf::from(root_path));
+        self.stop_before(
+            &workspace_watch_id_candidates(&PathBuf::from(root_path)),
+            u64::MAX,
+        );
+    }
+
+    pub fn begin_disposal(&self, root_path: &str) -> Result<WorkspaceWatchDisposalTicket, String> {
+        let watermark = self.allocate_generation()?;
+        let keys = workspace_watch_id_candidates(&PathBuf::from(root_path));
+        self.disposal_fences.insert(watermark, keys)
+    }
+
+    pub fn adopt_disposal(
+        &self,
+        ticket: WorkspaceWatchDisposalTicket,
+    ) -> WorkspaceWatchDisposalGuard<'_> {
+        WorkspaceWatchDisposalGuard::new(self, ticket)
+    }
+
+    fn complete_disposal(&self, ticket: &WorkspaceWatchDisposalTicket, stop: bool) {
+        if stop {
+            self.stop_before(ticket.keys(), ticket.watermark());
+        }
+        let _transitions = self
+            .transitions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.disposal_fences.remove(ticket);
+        self.stop_completed.notify_all();
+    }
+
+    fn stop_before(&self, candidates: &[String], watermark: u64) {
         let mut sessions = self
             .sessions
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let Some(root_key) = candidates
             .iter()
+            .find(|candidate| {
+                sessions
+                    .get(*candidate)
+                    .is_some_and(|session| session.authority.generation < watermark)
+            })
             .cloned()
-            .into_iter()
-            .find(|candidate| sessions.contains_key(candidate))
         else {
-            let mut transitions = self
+            let transitions = self
                 .transitions
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let pending_start = candidates.into_iter().find(|candidate| {
-                transitions.get(candidate).is_some_and(|transition| {
-                    if let WorkspaceWatchTransitionKind::Starting {
-                        cancelled,
-                        authority,
-                    } = &transition.kind
-                    {
-                        cancelled.store(true, Ordering::Release);
-                        if let Some(authority) = authority
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner())
-                            .as_ref()
-                        {
-                            authority.revoke();
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                })
-            });
-            drop(sessions);
-            if let Some(root_key) = pending_start {
-                let deadline = std::time::Instant::now() + WORKSPACE_WATCH_TRANSITION_TIMEOUT;
-                while transitions.contains_key(&root_key) {
-                    let now = std::time::Instant::now();
-                    if now >= deadline {
-                        break;
-                    }
-                    let (next, timeout) = self
-                        .stop_completed
-                        .wait_timeout(transitions, deadline - now)
-                        .unwrap_or_else(|error| error.into_inner());
-                    transitions = next;
-                    if timeout.timed_out() {
-                        break;
-                    }
+            for candidate in candidates {
+                let Some(WorkspaceWatchTransition {
+                    kind:
+                        WorkspaceWatchTransitionKind::Starting {
+                            cancelled,
+                            authority,
+                            generation,
+                        },
+                    ..
+                }) = transitions.get(candidate)
+                else {
+                    continue;
+                };
+                if *generation >= watermark {
+                    continue;
                 }
+                cancel_pending_start(cancelled, authority);
+                break;
             }
             return;
         };
@@ -739,16 +818,10 @@ impl WorkspaceFileChangeWatchRegistry {
                 if let WorkspaceWatchTransitionKind::Starting {
                     cancelled,
                     authority,
+                    ..
                 } = &transition.kind
                 {
-                    cancelled.store(true, Ordering::Release);
-                    if let Some(authority) = authority
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .as_ref()
-                    {
-                        authority.revoke();
-                    }
+                    cancel_pending_start(cancelled, authority);
                 }
             }
         }

@@ -14,7 +14,7 @@ import {
 } from "../test/workbenchControllerTestHarness";
 
 describe("useWorkbenchController Quick Open dispatch", () => {
-  const { getHost, renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupWorkbenchControllerTestHarness();
 
   it("dispatches Quick Open file locations and command prefixes through the workbench", async () => {
     const result: FileSearchResult = {
@@ -62,8 +62,8 @@ describe("useWorkbenchController Quick Open dispatch", () => {
     expect(getWorkbench().quickOpenResults).toEqual([result]);
 
     act(() => {
-      getHost()
-        .querySelector<HTMLButtonElement>(".quick-open-result")
+      document
+        .querySelector<HTMLElement>('[role="option"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsyncTurns();
@@ -85,7 +85,7 @@ describe("useWorkbenchController Quick Open dispatch", () => {
     });
 
     act(() => {
-      getHost()
+      document
         .querySelector<HTMLInputElement>('input[aria-label="Search files"]')
         ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     });
@@ -134,7 +134,10 @@ describe("useWorkbenchController Quick Open dispatch", () => {
     expect(getWorkbench().quickOpenOpen).toBe(false);
     expect(getWorkbench().paletteOpen).toBe(true);
     expect(getWorkbench().commandPaletteInitialQuery).toBe("Toggle Terminal");
-    expect(getHost().querySelector(".command-palette")).not.toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label="Command palette"]')).not.toBeNull();
+    expect(document.querySelector<HTMLInputElement>(".cv-command-field input")?.value).toBe(
+      ">Toggle Terminal",
+    );
 
     act(() => {
       getWorkbench().setPaletteOpen(false);

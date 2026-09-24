@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
-import type { AgentShipState } from "../domain/agentShip";
+import type { AgentShipState, AgentShipStepResult } from "../domain/agentShip";
 import type { AgentThread, AgentThreadsAction, AgentTurn } from "../domain/agentThread";
 import type { GitChangedFile, GitStatus } from "../domain/git";
 import type {
@@ -412,6 +412,45 @@ describe("useAgentShipFlow failures", () => {
     harness.unmount();
   });
 
+  it("commits only the selected paths", async () => {
+    const harness = renderFlow({ changeCount: 3 });
+    const selected = [change(0).relativePath, change(2).relativePath];
+    await act(() =>
+      harness.hook().commit(THREAD_ID, "Pick two", { kind: "paths", relativePaths: selected }),
+    );
+    expect(harness.gitGateway.stageFiles).toHaveBeenCalledWith(WORKTREE, [change(0), change(2)]);
+    expect(harness.gitGateway.commit).toHaveBeenCalledWith(WORKTREE, "Pick two", [
+      change(0),
+      change(2),
+    ]);
+    expect(harness.state()).toMatchObject({ kind: "committed" });
+    harness.unmount();
+  });
+
+  it("fails closed with a stale selection and commits nothing", async () => {
+    const harness = renderFlow({ changeCount: 1 });
+    await act(() =>
+      harness.hook().commit(THREAD_ID, "Stale", {
+        kind: "paths",
+        relativePaths: [change(0).relativePath, "no/longer/changed.ts"],
+      }),
+    );
+    expect(harness.gitGateway.stageFiles).not.toHaveBeenCalled();
+    expect(harness.gitGateway.commit).not.toHaveBeenCalled();
+    expect(harness.state()).toMatchObject({
+      kind: "failed",
+      failure: {
+        step: "commit",
+        reason: "staleSelection",
+        message: "The change list changed. Review the selection and commit again.",
+      },
+    });
+    await waitForReact(() =>
+      expect(harness.gitIntegrationGateway.getShipStatus).toHaveBeenCalledTimes(1),
+    );
+    harness.unmount();
+  });
+
   it("rejects an unbounded or empty commit message without touching git", async () => {
     const harness = renderFlow();
     await act(() => harness.hook().commit(THREAD_ID, "   "));
@@ -453,6 +492,66 @@ describe("useAgentShipFlow failures", () => {
       resumeFrom: "idle",
     });
     expect(receipts(harness.actions)).toEqual([]);
+    harness.unmount();
+  });
+
+  it("returns the real commit and push results for an in-place thread", async () => {
+    const harness = renderFlow({
+      threads: new Map([
+        [THREAD_ID, thread({ target: { isolation: "in-place", worktreePath: null } })],
+      ]),
+    });
+    harness.gitIntegrationGateway.pushBranchUpstream.mockRejectedValueOnce(
+      Object.assign(new Error("No remote is configured for this repository."), {
+        reason: "noRemote",
+      }),
+    );
+
+    let committed: AgentShipStepResult | null = null;
+    await act(async () => {
+      committed = await harness.hook().commit(THREAD_ID, "Ship");
+    });
+    let pushed: AgentShipStepResult | null = null;
+    await act(async () => {
+      pushed = await harness.hook().push(THREAD_ID);
+    });
+
+    expect(committed).toEqual({ kind: "succeeded" });
+    expect(pushed).toEqual({
+      kind: "failed",
+      failure: {
+        step: "push",
+        reason: "noRemote",
+        message: "No remote is configured for this repository.",
+      },
+    });
+    harness.unmount();
+  });
+
+  it("reports a created commit as succeeded even when its status cannot be refreshed", async () => {
+    const harness = renderFlow();
+    harness.gitIntegrationGateway.getShipStatus.mockRejectedValueOnce(new Error("no primary"));
+
+    let committed: AgentShipStepResult | null = null;
+    await act(async () => {
+      committed = await harness.hook().commit(THREAD_ID, "Ship");
+    });
+
+    expect(committed).toEqual({ kind: "succeeded" });
+    expect(harness.gitGateway.commit).toHaveBeenCalled();
+    expect(harness.onShipStepCompleted).toHaveBeenCalledWith(THREAD_ID);
+    harness.unmount();
+  });
+
+  it("says why a step did not run instead of resolving silently", async () => {
+    const harness = renderFlow({ missing: new Set([THREAD_ID]) });
+
+    let result: AgentShipStepResult | null = null;
+    await act(async () => {
+      result = await harness.hook().commit(THREAD_ID, "Ship");
+    });
+
+    expect(result).toEqual({ kind: "notRun", message: "The worktree no longer exists." });
     harness.unmount();
   });
 

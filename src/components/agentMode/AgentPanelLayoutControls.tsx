@@ -1,14 +1,19 @@
-import { Maximize2, Minimize2, PanelBottom, PanelRight } from "lucide-react";
+import { Maximize2, Minimize2, PanelBottom, PanelRight, X } from "lucide-react";
+import { IconButton } from "../../ui/foundation/IconButton";
 import {
   agentControlTooltip,
   defaultAgentPanelLayoutShortcuts,
   type AgentPanelLayoutShortcuts,
 } from "./agentThreadHeaderPresentation";
+import { ariaKeyShortcuts } from "./agentWorkbenchChrome";
 
 export type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 
 export const AGENT_PANEL_MAXIMIZE_LABEL = "Maximize panel";
 export const AGENT_PANEL_RESTORE_LABEL = "Restore panel";
+export const AGENT_PANEL_CLOSE_LABEL = "Close panel";
+const TOGGLE_BOTTOM_PANEL_LABEL = "Toggle terminal panel";
+const TOGGLE_RIGHT_PANEL_LABEL = "Toggle right panel";
 
 export interface AgentPanelMaximizeControl {
   readonly maximized: boolean;
@@ -19,60 +24,52 @@ export interface AgentPanelLayoutControlsProps {
   readonly bottomPanelOpen: boolean;
   readonly rightPanelOpen: boolean;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
-  readonly maximize?: AgentPanelMaximizeControl | null;
   onToggleBottomPanel(): void;
   onToggleRightPanel(): void;
 }
 
 export function AgentPanelLayoutControls({
   bottomPanelOpen,
-  maximize = null,
   onToggleBottomPanel,
   onToggleRightPanel,
   rightPanelOpen,
   shortcuts,
 }: AgentPanelLayoutControlsProps) {
   const chords = shortcuts ?? defaultAgentPanelLayoutShortcuts();
-  const bottomTitle = agentControlTooltip("Toggle terminal panel", chords.bottomPanel);
-  const rightTitle = agentControlTooltip("Toggle right panel", chords.rightPanel);
-  const maximizeTitle =
-    maximize?.maximized === true ? AGENT_PANEL_RESTORE_LABEL : AGENT_PANEL_MAXIMIZE_LABEL;
-  const MaximizeIcon = maximize?.maximized === true ? Minimize2 : Maximize2;
-
   return (
-    <div className="agent-layout-controls" data-panel-layout-controls>
-      {maximize !== null && (
-        <button
-          aria-label={maximizeTitle}
-          aria-pressed={maximize.maximized}
-          className="agent-icon-toggle"
-          onClick={maximize.onToggle}
-          title={maximizeTitle}
-          type="button"
-        >
-          <MaximizeIcon aria-hidden="true" size={14} />
-        </button>
-      )}
-      <button
-        aria-label={bottomTitle}
-        aria-pressed={bottomPanelOpen}
-        className="agent-icon-toggle"
+    <div className="cv-panel-toggles" data-panel-layout-controls="">
+      <IconButton
+        aria-keyshortcuts={ariaKeyShortcuts(chords.bottomPanel) || undefined}
+        icon={<PanelBottom size={16} />}
+        label={TOGGLE_BOTTOM_PANEL_LABEL}
         onClick={onToggleBottomPanel}
-        title={bottomTitle}
-        type="button"
-      >
-        <PanelBottom aria-hidden="true" size={14} />
-      </button>
-      <button
-        aria-label={rightTitle}
-        aria-pressed={rightPanelOpen}
-        className="agent-icon-toggle"
+        pressed={bottomPanelOpen}
+        title={agentControlTooltip(TOGGLE_BOTTOM_PANEL_LABEL, chords.bottomPanel)}
+      />
+      <IconButton
+        aria-keyshortcuts={ariaKeyShortcuts(chords.rightPanel) || undefined}
+        icon={<PanelRight size={16} />}
+        label={TOGGLE_RIGHT_PANEL_LABEL}
         onClick={onToggleRightPanel}
-        title={rightTitle}
-        type="button"
-      >
-        <PanelRight aria-hidden="true" size={14} />
-      </button>
+        pressed={rightPanelOpen}
+        title={agentControlTooltip(TOGGLE_RIGHT_PANEL_LABEL, chords.rightPanel)}
+      />
+    </div>
+  );
+}
+
+export interface AgentPanelWindowControlsProps {
+  readonly maximize: AgentPanelMaximizeControl;
+  onClose(): void;
+}
+
+export function AgentPanelWindowControls({ maximize, onClose }: AgentPanelWindowControlsProps) {
+  const label = maximize.maximized ? AGENT_PANEL_RESTORE_LABEL : AGENT_PANEL_MAXIMIZE_LABEL;
+  const Icon = maximize.maximized ? Minimize2 : Maximize2;
+  return (
+    <div className="cv-panel-window-controls" data-panel-window-controls="">
+      <IconButton icon={<Icon size={16} />} label={label} onClick={maximize.onToggle} />
+      <IconButton icon={<X size={16} />} label={AGENT_PANEL_CLOSE_LABEL} onClick={onClose} />
     </div>
   );
 }

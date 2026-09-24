@@ -41,6 +41,14 @@ describe("Button", () => {
     expect(button?.querySelector(".cv-button__icon")?.getAttribute("aria-hidden")).toBe("true");
   });
 
+  it("offers a danger variant for destructive confirmations", () => {
+    const { host } = mount(<Button variant="danger">Delete thread</Button>);
+
+    expect(host.querySelector("button")?.className).toBe(
+      "cv-button cv-button--danger cv-button--md",
+    );
+  });
+
   it("forwards clicks and blocks them while disabled", () => {
     const onClick = vi.fn();
     const { host, render } = mount(<Button onClick={onClick}>Run</Button>);
@@ -109,5 +117,26 @@ describe("SubmitButton", () => {
     expect(host.querySelector("button")?.disabled).toBe(true);
     render(<SubmitButton label="Send to Codex" mode="send" />);
     expect(host.querySelector("button")?.getAttribute("aria-label")).toBe("Send to Codex");
+  });
+
+  it("shows a busy spinner, a custom title, key shortcuts and an extra class", () => {
+    const { host } = mount(
+      <SubmitButton
+        busy
+        className="agent-composer__send"
+        keyShortcuts="Enter Meta+Enter"
+        label="Send follow-up"
+        mode="send"
+        title="Send follow-up (Enter)"
+      />,
+    );
+    const button = host.querySelector("button");
+
+    expect(button?.getAttribute("aria-busy")).toBe("true");
+    expect(button?.getAttribute("aria-keyshortcuts")).toBe("Enter Meta+Enter");
+    expect(button?.title).toBe("Send follow-up (Enter)");
+    expect(button?.className).toBe("cv-submit agent-composer__send");
+    expect(button?.querySelector(".cv-spinner")).not.toBeNull();
+    expect(button?.querySelector("path[d='M8 3L8 13M8 3L4 7M8 3L12 7']")).toBeNull();
   });
 });

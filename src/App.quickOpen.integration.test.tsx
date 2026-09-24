@@ -257,7 +257,10 @@ describe("App Quick Open integration", () => {
         new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "p", metaKey: true }),
       );
     });
-    const input = await waitForElement<HTMLInputElement>(host, 'input[aria-label="Search files"]');
+    const input = await waitForElement<HTMLInputElement>(
+      document,
+      'input[aria-label="Search files"]',
+    );
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
         input,
@@ -266,7 +269,7 @@ describe("App Quick Open integration", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await waitFor(() => {
-      expect(host.querySelector('button[title="/workspace/large.ts"]')).not.toBeNull();
+      expect(document.querySelector('[role="option"][title="/workspace/large.ts"]')).not.toBeNull();
     });
     act(() => {
       input.dispatchEvent(
@@ -311,7 +314,10 @@ describe("App Quick Open integration", () => {
       );
     });
 
-    const input = await waitForElement<HTMLInputElement>(host, 'input[aria-label="Search files"]');
+    const input = await waitForElement<HTMLInputElement>(
+      document,
+      'input[aria-label="Search files"]',
+    );
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
         input,
@@ -321,8 +327,13 @@ describe("App Quick Open integration", () => {
     });
 
     await waitFor(() => {
-      expect(host.querySelector('section[aria-label="Command palette"]')).not.toBeNull();
-      expect(host.querySelector('section[aria-label="Quick open"]')).toBeNull();
+      expect(
+        document.querySelector('[role="dialog"][aria-label="Command palette"]'),
+      ).not.toBeNull();
+      expect(document.querySelector<HTMLInputElement>(".cv-command-field input")?.value).toBe(
+        ">Toggle Terminal",
+      );
+      expect(document.querySelector('input[aria-label="Search files"]')).toBeNull();
     });
   }, 10_000);
 
@@ -349,7 +360,7 @@ describe("App Quick Open integration", () => {
     });
 
     const quickOpenInput = await waitForElement<HTMLInputElement>(
-      host,
+      document,
       'input[aria-label="Search files"]',
     );
     act(() => {
@@ -377,7 +388,7 @@ describe("App Quick Open integration", () => {
     }
 
     expect(symbolInput.value).toBe("handler");
-    expect(host.querySelector('section[aria-label="Quick open"]')).toBeNull();
+    expect(document.querySelector('input[aria-label="Search files"]')).toBeNull();
   }, 10_000);
 
   it("keeps the mounted editor surface out of twenty Quick Open query commits", async () => {
@@ -401,7 +412,10 @@ describe("App Quick Open integration", () => {
       );
     });
 
-    const input = await waitForElement<HTMLInputElement>(host, 'input[aria-label="Search files"]');
+    const input = await waitForElement<HTMLInputElement>(
+      document,
+      'input[aria-label="Search files"]',
+    );
     const rendersBeforeTyping = mocks.surfaceRenderCount.value;
     let query = "";
     for (const character of "abcdefghijklmnopqrst") {
@@ -480,7 +494,7 @@ describe("App Quick Open integration", () => {
       });
 
       const inputElement = await waitForElement<HTMLInputElement>(
-        host,
+        document,
         'input[aria-label="Search files"]',
       );
       let typedInput = "";
@@ -507,7 +521,7 @@ describe("App Quick Open integration", () => {
         });
       }
 
-      expect(host.querySelector('section[aria-label="Quick open"]')).toBeNull();
+      expect(document.querySelector('input[aria-label="Search files"]')).toBeNull();
       expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
     },
     10_000,

@@ -83,6 +83,15 @@
         "text": "nested reply"
       }
     },
+    "subagentSpawn": {
+      "kind": "subagentSpawn",
+      "callId": "call_spawn_0001",
+      "status": "completed",
+      "taskTitle": "Review idempotency middleware",
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "medium",
+      "agentThreadIds": ["agt-sub-0001"]
+    },
     "subagentTurnDone": {
       "kind": "subagentTurnDone",
       "agentThreadId": "agt-sub-0001",
@@ -214,6 +223,15 @@
       "model": "claude-opus-4",
       "inputTokens": null,
       "contextWindow": null
+    },
+    {
+      "kind": "subagentSpawn",
+      "callId": "call_spawn_0002",
+      "status": "inProgress",
+      "taskTitle": null,
+      "model": null,
+      "reasoningEffort": null,
+      "agentThreadIds": []
     }
   ]
 }

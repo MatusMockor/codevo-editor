@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MAC_TRAFFIC_LIGHTS } from "./domain/appearanceShellStates";
 
 describe("desktop window chrome config", () => {
   it("uses app-rendered chrome on Linux and Windows", () => {
@@ -23,7 +24,7 @@ describe("desktop window chrome config", () => {
       label: "main",
       minWidth: 900,
       titleBarStyle: "Overlay",
-      trafficLightPosition: { x: 14, y: 20 },
+      trafficLightPosition: { x: MAC_TRAFFIC_LIGHTS.x, y: MAC_TRAFFIC_LIGHTS.y },
       transparent: false,
     });
   });
@@ -58,6 +59,7 @@ describe("desktop window chrome config", () => {
       "core:window:allow-close",
       "core:window:allow-minimize",
       "core:window:allow-set-always-on-top",
+      "core:window:allow-set-background-color",
       "core:window:allow-set-focus",
       "core:window:allow-show",
       "core:window:allow-start-dragging",

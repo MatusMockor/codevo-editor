@@ -42,6 +42,12 @@ describe("agent turn log notices", () => {
     );
   });
 
+  it("leaves the saved-but-not-shown case to the load control when a reader exists", () => {
+    const partial = facts({ hydration: "partial" });
+    expect(agentTurnLossNotice(partial, true)).toBe(AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE);
+    expect(agentTurnLossNotice(partial, true, true)).toBeNull();
+  });
+
   it("tells the JSON truth when an unsealed log of a turn that is not live cannot vouch", () => {
     expect(agentTurnLossNotice(facts({ sealed: false, live: false }), true)).toBe(
       AGENT_TURN_WINDOW_NOTICE,

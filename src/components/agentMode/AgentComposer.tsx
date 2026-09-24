@@ -2,7 +2,6 @@ import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import {
   useCallback,
-  useId,
   useMemo,
   useLayoutEffect,
   useRef,
@@ -10,8 +9,9 @@ import {
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
-import { Info, Minimize2, Paperclip, X } from "lucide-react";
+import { AlertTriangle, Paperclip } from "lucide-react";
 import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
@@ -31,10 +31,11 @@ import {
   type AgentTaskIsolation,
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
-import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
+import type { AgentComposerTarget } from "./agentComposerCheckout";
 import { AgentComposerAttachments } from "./AgentComposerAttachments";
 import {
   AGENT_COMPOSER_SAVE_QUEUED_LABEL,
+  AgentComposerQueuedEditAttachments,
   AgentComposerQueuedEditBar,
 } from "./AgentComposerQueuedEditBar";
 import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
@@ -56,12 +57,23 @@ import type { AgentComposerCommandId } from "../../domain/agentComposerCommand";
 import { AgentLaunchControls, type AgentLaunchControlRequest } from "./AgentLaunchControls";
 import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
-import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 import { AgentComposerSubmitControls } from "./AgentComposerSubmitControls";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
-import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
+import { AgentComposerCompactionBanner } from "./AgentComposerCompactionBanner";
+import { AgentComposerDrawerStart } from "./AgentComposerDrawerStart";
+import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
+import { IconButton } from "../../ui/foundation/IconButton";
+import { AgentComposerApprovalPanel } from "./composer/AgentComposerApprovalPanel";
+import type { AgentComposerInteraction } from "./composer/agentComposerInteraction";
+import { AgentComposerQuestionPanel } from "./composer/AgentComposerQuestionPanel";
+import { useAgentComposerFocusReturn } from "./composer/useAgentComposerInteractionFocus";
+import {
+  AgentComposerFrame,
+  type AgentComposerDrawerContext,
+  type AgentComposerLayout,
+} from "./composer/AgentComposerFrame";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
 const NO_SERVER_TARGET_REASON =
@@ -126,6 +138,11 @@ export interface AgentComposerProps {
   onRecoverDraft?(): "started" | "unavailable" | "draftTooLarge";
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void | Promise<boolean>;
+  readonly banners?: ReactNode;
+  readonly placeholder?: string;
+  readonly layout?: AgentComposerLayout;
+  readonly renderDrawerEnd?: (context: AgentComposerDrawerContext) => ReactNode;
+  readonly interaction?: AgentComposerInteraction | null;
 }
 
 export function AgentComposer({
@@ -172,6 +189,11 @@ export function AgentComposer({
   worktreeAvailable,
   worktreeOnly,
   worktreeOnlyReason,
+  banners = null,
+  placeholder,
+  layout,
+  renderDrawerEnd,
+  interaction = null,
 }: AgentComposerProps) {
   const catalog = useAgentClaudeModelCatalog();
   // Replace the lease whenever the draft or its owner changes, including A → B → A.
@@ -203,12 +225,10 @@ export function AgentComposer({
   const composerRef = useRef<HTMLFormElement>(null);
   const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
-  const [dismissedCompactionKeys, setDismissedCompactionKeys] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const compactionInfoId = useId();
-  const [expandedCompactionKey, setExpandedCompactionKey] = useState<string | null>(null);
   const followUp = mode.kind !== "new";
+  const interactionActive = interaction !== null && interaction.kind !== "notice";
+  const slabRef = useRef<HTMLDivElement>(null);
+  useAgentComposerFocusReturn(interactionActive, slabRef, textareaRef);
   const steering = mode.kind === "steer";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason =
@@ -360,46 +380,6 @@ export function AgentComposer({
     void attachmentIntake.open();
   };
 
-  const nestedTargetLabel = agentComposerNestedTargetLabel(target);
-  const targetControls = useMemo(
-    () =>
-      followUp ? null : (
-        <>
-          <AgentComposerCheckout
-            remote={executionTarget === "server"}
-            disabled={dispatching || allProvidersDisabled}
-            isolation={isolation}
-            onIsolationChange={onIsolationChange}
-            onRefreshIsolation={onRefreshIsolation}
-            onSelectRepository={onSelectRepository}
-            target={target}
-            worktreeAvailable={worktreeAvailable && !worktreeOnly}
-            worktreeOnly={worktreeOnly}
-          />
-          {nestedTargetLabel !== null && (
-            <span className="agent-composer__target" data-agent-composer-target>
-              <span className="agent-visually-hidden">Repository:</span>
-              in {nestedTargetLabel}
-            </span>
-          )}
-        </>
-      ),
-    [
-      followUp,
-      dispatching,
-      allProvidersDisabled,
-      isolation,
-      onIsolationChange,
-      onRefreshIsolation,
-      onSelectRepository,
-      target,
-      worktreeAvailable,
-      worktreeOnly,
-      nestedTargetLabel,
-      executionTarget,
-    ],
-  );
-
   const launchControls = useMemo(
     () => (
       <AgentLaunchControls
@@ -441,12 +421,15 @@ export function AgentComposer({
     ],
   );
 
-  const footer = followUp ? (
-    <AgentComposerLockedCheckout isolation={isolation} remote={executionTarget === "server"} />
-  ) : (
-    targetControls
+  const drawerContext = useMemo<AgentComposerDrawerContext>(
+    () => ({
+      repositoryRoot: target?.selectedRepositoryRoot ?? null,
+      isolation,
+      locked: followUp,
+      disabled: dispatching || allProvidersDisabled,
+    }),
+    [target, isolation, followUp, dispatching, allProvidersDisabled],
   );
-
   const chooseCommand = (command: AgentComposerCommandId, submitCommand: boolean): void => {
     if (command === "compact") {
       if (!submitCommand) {
@@ -526,12 +509,14 @@ export function AgentComposer({
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (interactionActive) return;
     if (commands.interceptSubmit()) return;
     if (blocked) return;
     dispatch();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (interactionActive) return;
     textPaste.keyDown(event);
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (commands.onKeyDown(event)) return;
@@ -564,262 +549,233 @@ export function AgentComposer({
     dispatch(event.metaKey || event.ctrlKey);
   };
 
-  return (
-    <form
-      aria-label={followUp ? "Follow up on agent thread" : "New agent thread"}
-      className="agent-composer"
-      onSubmit={submit}
-      ref={composerRef}
-    >
-      {compactionOffer !== null &&
-        !dismissedCompactionKeys.has(compactionOffer.key) &&
-        !running &&
-        !steering &&
-        effectiveLaunch.provider === "claudeCode" &&
-        executionServerId === null &&
-        onCompactContext !== undefined && (
-          <div className="agent-compaction-offer">
-            <Minimize2 aria-hidden="true" className="agent-compaction-offer__icon" size={14} />
-            <div className="agent-compaction-offer__copy">
-              <strong>Resume with less context</strong>
-              <span>{formatContextTokens(compactionOffer.contextTokens)} tokens from earlier</span>
-              <button
-                type="button"
-                className="agent-compaction-offer__info"
-                aria-expanded={expandedCompactionKey === compactionOffer.key}
-                aria-controls={compactionInfoId}
-                aria-describedby={compactionInfoId}
-                onClick={() =>
-                  setExpandedCompactionKey((key) =>
-                    key === compactionOffer.key ? null : compactionOffer.key,
-                  )
-                }
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape") return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setExpandedCompactionKey(null);
-                }}
-                aria-label="Why compact this session?"
-              >
-                <Info aria-hidden="true" size={14} />
-              </button>
-            </div>
-            <button
-              className="agent-compaction-offer__action"
-              disabled={compactionBlocked}
-              onClick={() =>
-                onCompactContext({
-                  launch: effectiveLaunch,
-                  dangerousLaunchConfirmed: dangerousLaunch,
-                })
-              }
-              type="button"
-            >
-              Compact
-            </button>
-            <button
-              aria-label="Keep full history"
-              className="agent-compaction-offer__dismiss"
-              onClick={() =>
-                setDismissedCompactionKeys((keys) => {
-                  const next = new Set(keys);
-                  next.add(compactionOffer.key);
-                  if (next.size > 256) next.delete(next.values().next().value!);
-                  return next;
-                })
-              }
-              type="button"
-            >
-              <X aria-hidden="true" size={14} />
-            </button>
-            <p
-              id={compactionInfoId}
-              className="agent-compaction-offer__explanation"
-              hidden={expandedCompactionKey !== compactionOffer.key}
-            >
-              Claude manages context automatically. This large session has been idle for at least 70
-              minutes, so its earlier context may no longer be cached. Compact optionally summarizes
-              it before continuing; keeping the full history is also fine.
-            </p>
-          </div>
-        )}
-      <div
-        className={
-          dropActive ? "agent-composer__box agent-composer__box--drop" : "agent-composer__box"
-        }
-        data-agent-composer-drop={dropActive ? "active" : undefined}
+  const slab = (
+    <div className="cv-composer__slab" ref={slabRef}>
+      {interaction?.kind === "approval" && (
+        <AgentComposerApprovalPanel interaction={interaction} key={interaction.key} />
+      )}
+      {interaction?.kind === "question" && (
+        <AgentComposerQuestionPanel interaction={interaction} key={interaction.key} />
+      )}
+      <form
+        aria-label={followUp ? "Follow up on agent thread" : "New agent thread"}
+        className="agent-composer"
+        onSubmit={submit}
+        ref={composerRef}
       >
-        {queuedEdit !== null && <AgentComposerQueuedEditBar edit={queuedEdit} />}
-        {attachments !== null && (
-          <AgentComposerAttachments
-            key={JSON.stringify([attachmentTargetKey, executionServerId, promptOwnerKey])}
-            drafts={attachments.drafts}
-            onDismissRefusal={attachments.dismissRefusal}
-            onRemove={attachments.remove}
-            refusal={attachments.refusal}
-          />
-        )}
-
-        <label className="agent-visually-hidden" htmlFor="agent-prompt">
-          Prompt
-        </label>
-        <textarea
-          className="agent-composer__textarea"
-          id="agent-prompt"
-          disabled={targetReason !== null}
-          ref={textareaRef}
-          aria-autocomplete="list"
-          aria-controls={commands.open ? "agent-composer-commands" : undefined}
-          aria-expanded={commands.open}
-          aria-activedescendant={
-            commands.open
-              ? `agent-composer-command-${commands.rows[commands.activeIndex]?.id}`
-              : undefined
+        <div
+          className={
+            dropActive ? "agent-composer__box agent-composer__box--drop" : "agent-composer__box"
           }
-          onFocus={commands.onFocus}
-          onBlur={commands.onBlur}
-          onSelect={(event) => commands.onSelect(event.currentTarget)}
-          onChange={(event) => {
-            commands.onEdit();
-            changePrompt(event.target.value);
-          }}
-          onKeyDown={onKeyDown}
-          onPaste={pasteAttachments}
-          placeholder={
-            targetReason ??
-            (editingQueued
-              ? "Edit the queued message"
-              : composerPlaceholder(mode, effectiveFollowUpBehavior))
-          }
-          value={prompt}
-        />
-
-        {commands.open && (
-          <AgentComposerCommands
-            anchor={textareaRef}
-            rows={commands.rows}
-            activeIndex={commands.activeIndex}
-            onChoose={commands.choose}
-            onClose={commands.close}
-          />
-        )}
-
-        <div className="agent-composer__row" data-presentation={compact ? "compact" : "inline"}>
-          {(attachmentsEnabled || targetReason !== null) && (
-            <button
-              aria-label="Attach files"
-              className="agent-composer__attach"
-              disabled={dispatching || !attachmentsEnabled}
-              onClick={pickAttachments}
-              title={attachmentsEnabled ? "Attach files" : (targetReason ?? "Choose a project")}
-              type="button"
-            >
-              <Paperclip aria-hidden="true" size={15} strokeWidth={2} />
-            </button>
+          data-agent-composer-drop={dropActive ? "active" : undefined}
+          hidden={interactionActive}
+        >
+          {queuedEdit !== null && <AgentComposerQueuedEditAttachments edit={queuedEdit} />}
+          {attachments !== null && (
+            <AgentComposerAttachments
+              key={JSON.stringify([attachmentTargetKey, executionServerId, promptOwnerKey])}
+              drafts={attachments.drafts}
+              onDismissRefusal={attachments.dismissRefusal}
+              onRemove={attachments.remove}
+              refusal={attachments.refusal}
+            />
           )}
 
-          {launchControls}
-
-          <span className="agent-composer__spacer" />
-
-          <AgentComposerBytes promptBytes={promptBytes} />
-
-          <AgentComposerSubmitControls
-            running={running}
-            steering={steering}
-            editingQueued={editingQueued}
-            dispatching={dispatching}
-            disabled={blocked && !localCommandAvailable}
-            submitName={submitName}
-            followUpBehavior={effectiveFollowUpBehavior}
-            immediateBlockedReason={immediateBlockedReason}
-            shortcut={shortcut}
-            onStop={onStop}
-            onAlternate={() => {
-              if (commands.interceptSubmit() || blocked) return;
-              dispatch(true);
+          <label className="agent-visually-hidden" htmlFor="agent-prompt">
+            Prompt
+          </label>
+          <textarea
+            className="agent-composer__textarea"
+            id="agent-prompt"
+            disabled={targetReason !== null}
+            ref={textareaRef}
+            aria-autocomplete="list"
+            aria-controls={commands.open ? "agent-composer-commands" : undefined}
+            aria-expanded={commands.open}
+            aria-activedescendant={
+              commands.open
+                ? `agent-composer-command-${commands.rows[commands.activeIndex]?.id}`
+                : undefined
+            }
+            onFocus={commands.onFocus}
+            onBlur={commands.onBlur}
+            onSelect={(event) => commands.onSelect(event.currentTarget)}
+            onChange={(event) => {
+              commands.onEdit();
+              changePrompt(event.target.value);
             }}
+            onKeyDown={onKeyDown}
+            onPaste={pasteAttachments}
+            placeholder={
+              targetReason ??
+              (editingQueued
+                ? "Edit the queued message"
+                : (placeholder ?? composerPlaceholder(mode, effectiveFollowUpBehavior)))
+            }
+            value={prompt}
           />
-        </div>
 
-        {onRecoverDraft !== undefined && (
-          <div className="agent-composer__caption">
-            <p>
-              This session cannot be resumed. Start a new thread to keep writing. Your unsent text
-              will be copied; the previous conversation is not carried over.
-            </p>
-            <button
-              className="agent-composer__alternate"
-              type="button"
-              onClick={() => {
-                if (onRecoverDraft() === "draftTooLarge")
-                  setRecoveryRefusal({ action: onRecoverDraft });
-              }}
-            >
-              Start new thread with this draft
-            </button>
-            {recoveryRefusal?.action === onRecoverDraft && (
-              <p role="alert">
-                The combined draft is too large. Shorten either draft and try again. Both drafts are
-                unchanged.
-              </p>
-            )}
-          </div>
-        )}
-
-        {promptBytes > MAX_AGENT_TASK_PROMPT_BYTES && (
-          <div className="agent-composer__caption" role="status">
-            <p>
-              This text exceeds the message limit. Attach it as a text file to send the full
-              content.
-            </p>
-            <button
-              type="button"
-              className="agent-composer__alternate"
-              disabled={dispatching || !attachmentsEnabled || textPaste.converting}
-              onClick={textPaste.convertDraft}
-            >
-              {textPaste.converting ? "Attaching text…" : "Attach draft as text file"}
-            </button>
-          </div>
-        )}
-        {unavailableAttachmentNotice !== null && (
-          <p className="agent-composer__caption" role="alert">
-            {unavailableAttachmentNotice}
-          </p>
-        )}
-        {caption && (
-          <p className="agent-composer__reason">
-            <span>{caption}</span>
-            {providerReason === null ? null : (
-              <button onClick={onOpenProviderSettings} type="button">
-                Open provider settings
-              </button>
-            )}
-          </p>
-        )}
-      </div>
-      <div className="agent-composer__footer">
-        {onOpenEnvironmentSettings !== undefined && (
-          <>
-            <AgentExecutionEnvironmentPicker
-              disabled={dispatching}
-              locked={followUp}
-              executionServerId={executionServerId}
-              onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+          {commands.open && (
+            <AgentComposerCommands
+              anchor={textareaRef}
+              rows={commands.rows}
+              activeIndex={commands.activeIndex}
+              onChoose={commands.choose}
+              onClose={commands.close}
             />
-            <span aria-hidden="true" className="agent-composer__divider" />
-          </>
-        )}
-        {footer}
-      </div>
-    </form>
-  );
-}
+          )}
+        </div>
+        <div className="cv-composer__notes" hidden={interactionActive}>
+          {onRecoverDraft !== undefined && (
+            <div className="agent-composer__caption">
+              <p>
+                This session cannot be resumed. Start a new thread to keep writing. Your unsent text
+                will be copied; the previous conversation is not carried over.
+              </p>
+              <button
+                className="agent-composer__alternate"
+                type="button"
+                onClick={() => {
+                  if (onRecoverDraft() === "draftTooLarge")
+                    setRecoveryRefusal({ action: onRecoverDraft });
+                }}
+              >
+                Start new thread with this draft
+              </button>
+              {recoveryRefusal?.action === onRecoverDraft && (
+                <p role="alert">
+                  The combined draft is too large. Shorten either draft and try again. Both drafts
+                  are unchanged.
+                </p>
+              )}
+            </div>
+          )}
 
-function formatContextTokens(tokens: number): string {
-  return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens);
+          {promptBytes > MAX_AGENT_TASK_PROMPT_BYTES && (
+            <div className="agent-composer__caption" role="status">
+              <p>
+                This text exceeds the message limit. Attach it as a text file to send the full
+                content.
+              </p>
+              <button
+                type="button"
+                className="agent-composer__alternate"
+                disabled={dispatching || !attachmentsEnabled || textPaste.converting}
+                onClick={textPaste.convertDraft}
+              >
+                {textPaste.converting ? "Attaching text…" : "Attach draft as text file"}
+              </button>
+            </div>
+          )}
+          {unavailableAttachmentNotice !== null && (
+            <p className="agent-composer__caption" role="alert">
+              {unavailableAttachmentNotice}
+            </p>
+          )}
+          {caption && (
+            <p className="agent-composer__reason">
+              <span>{caption}</span>
+              {providerReason === null ? null : (
+                <button onClick={onOpenProviderSettings} type="button">
+                  Open provider settings
+                </button>
+              )}
+            </p>
+          )}
+        </div>
+        <div
+          className="cv-composer__foot"
+          data-presentation={compact ? "compact" : "inline"}
+          hidden={interactionActive}
+        >
+          <div className="cv-composer__controls">{launchControls}</div>
+          <div className="cv-composer__actions">
+            <AgentComposerBytes promptBytes={promptBytes} />
+            {(attachmentsEnabled || targetReason !== null) && (
+              <IconButton
+                className="agent-composer__attach"
+                disabled={dispatching || !attachmentsEnabled}
+                icon={<Paperclip size={16} strokeWidth={1.5} />}
+                label="Attach files"
+                onClick={pickAttachments}
+                size="round"
+                title={attachmentsEnabled ? "Attach files" : (targetReason ?? "Choose a project")}
+              />
+            )}
+            <AgentComposerSubmitControls
+              running={running}
+              steering={steering}
+              editingQueued={editingQueued}
+              dispatching={dispatching}
+              disabled={blocked && !localCommandAvailable}
+              submitName={submitName}
+              followUpBehavior={effectiveFollowUpBehavior}
+              immediateBlockedReason={immediateBlockedReason}
+              shortcut={shortcut}
+              onStop={onStop}
+              onAlternate={() => {
+                if (commands.interceptSubmit() || blocked) return;
+                dispatch(true);
+              }}
+            />
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+
+  return (
+    <AgentComposerFrame
+      banners={
+        <>
+          {banners}
+          <AgentComposerCompactionBanner
+            available={
+              !running &&
+              !steering &&
+              effectiveLaunch.provider === "claudeCode" &&
+              executionServerId === null &&
+              onCompactContext !== undefined
+            }
+            blocked={compactionBlocked}
+            offer={compactionOffer}
+            onCompact={() =>
+              onCompactContext?.({
+                launch: effectiveLaunch,
+                dangerousLaunchConfirmed: dangerousLaunch,
+              })
+            }
+          />
+          {queuedEdit !== null && <AgentComposerQueuedEditBar edit={queuedEdit} />}
+          {interaction?.kind === "notice" && (
+            <ComposerBanner icon={<AlertTriangle size={12} strokeWidth={1.5} />} tone="warn">
+              {interaction.text}
+            </ComposerBanner>
+          )}
+        </>
+      }
+      drawerEnd={renderDrawerEnd === undefined ? null : renderDrawerEnd(drawerContext)}
+      drawerStart={
+        <AgentComposerDrawerStart
+          checkoutDisabled={dispatching || allProvidersDisabled}
+          dispatching={dispatching}
+          executionServerId={executionServerId}
+          followUp={followUp}
+          isolation={isolation}
+          onIsolationChange={onIsolationChange}
+          onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+          onRefreshIsolation={onRefreshIsolation}
+          onSelectRepository={onSelectRepository}
+          remote={executionTarget === "server"}
+          target={target}
+          worktreeAvailable={worktreeAvailable}
+          worktreeOnly={worktreeOnly}
+        />
+      }
+      layout={layout ?? (mode.kind === "new" ? "hero" : "dock")}
+      slab={slab}
+    />
+  );
 }
 
 const BYTES_WARN_RATIO = 0.8;
@@ -859,10 +815,10 @@ function composerPlaceholder(
 ): string {
   if (mode.kind === "steer")
     return followUpBehavior === "queue"
-      ? "Queue a message for the next turn"
+      ? "Queue a follow-up"
       : "Send a message to the running agent";
-  if (mode.kind === "followUp") return "Reply to the agent in this thread";
-  return "Ask anything or describe the change you want";
+  if (mode.kind === "followUp") return "Ask anything, or / for commands";
+  return "Ask for changes, send follow-ups, or attach images";
 }
 
 function composerTargetReason(

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "gitSurfaceStatus": {
+    "branch": "feat/x",
+    "defaultBase": "main",
+    "hasRemote": true,
+    "upstream": { "name": "origin/feat/x", "ahead": 2, "behind": 1 },
+    "unpushed": [
+      {
+        "sha": "0123456789abcdef0123456789abcdef01234567",
+        "shortSha": "0123456",
+        "subject": "fix: keep pre-1970 dates",
+        "authoredAtEpochSeconds": -86400
+      }
+    ],
+    "unpushedTruncated": false,
+    "lineStats": [
+      { "relativePath": "src/a.ts", "added": 3, "deleted": 1 },
+      { "relativePath": "assets/logo.png", "added": null, "deleted": null }
+    ],
+    "lineStatsTruncated": true,
+    "localBranches": ["feat/x", "main"],
+    "remoteBranches": ["origin/main"],
+    "worktreeBranches": ["fix/payments"],
+    "branchesTruncated": false
+  },
+  "branchChanges": {
+    "mergeBase": "89abcdef0123456789abcdef0123456789abcdef",
+    "headCommit": "fedcba9876543210fedcba9876543210fedcba98",
+    "files": [
+      {
+        "relativePath": "src/new.ts",
+        "oldRelativePath": "src/old.ts",
+        "status": "renamed",
+        "added": 4,
+        "deleted": 2
+      },
+      {
+        "relativePath": "src/added.ts",
+        "oldRelativePath": null,
+        "status": "added",
+        "added": null,
+        "deleted": null
+      }
+    ],
+    "truncated": false,
+    "statsTruncated": true
+  },
+  "branchFileSides": {
+    "original": { "text": "one\n" },
+    "modified": { "text": "two\n" },
+    "unavailableReason": null
+  },
+  "branchFileSidesUnavailable": {
+    "original": { "text": "" },
+    "modified": { "text": "" },
+    "unavailableReason": "large"
+  },
+  "branchWorktreeReceipt": {
+    "worktreePath": "/repo/.worktrees/branch-feat-x",
+    "branch": "feat/x",
+    "trusted": false
+  },
+  "requests": {
+    "surfaceTarget": { "repositoryRoot": "/repo", "worktreePath": null },
+    "branchChanges": {
+      "repositoryRoot": "/repo",
+      "worktreePath": "/repo/.worktrees/t",
+      "baseRef": "main"
+    },
+    "branchFileSides": {
+      "repositoryRoot": "/repo",
+      "worktreePath": null,
+      "mergeBase": "89abcdef0123456789abcdef0123456789abcdef",
+      "headCommit": "fedcba9876543210fedcba9876543210fedcba98",
+      "relativePath": "src/new.ts",
+      "oldRelativePath": "src/old.ts"
+    },
+    "addBranchWorktree": {
+      "repositoryRoot": "/repo",
+      "branch": "feat/x",
+      "startPoint": "main"
+    },
+    "pullRequestContext": {
+      "repositoryRoot": "/repo",
+      "worktreePath": null,
+      "base": "main"
+    },
+    "createPullRequest": {
+      "repositoryRoot": "/repo",
+      "worktreePath": "/repo/.worktrees/branch-feat-x",
+      "base": "main",
+      "title": "Add keys",
+      "body": "Body",
+      "draft": false
+    }
+  }
+}

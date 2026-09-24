@@ -1,12 +1,8 @@
 import type { AgentThreadDropSection } from "../../domain/agentThreadOrganization";
 import { compareAgentThreadOrder } from "../../domain/agentThreadOrganization";
-import {
-  projectAgentBackgroundActivity,
-  type AgentBackgroundActivity,
-} from "../../domain/agentBackgroundActivity";
+import type { AgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
-  agentTurnContentLost,
   type AgentTurnLogEvidenceLookup,
 } from "../../domain/agentTurnContentLoss";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -26,11 +22,7 @@ import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import {
   agentThreadCanMarkUnread,
   isTerminalAgentTurnStatus,
-  runningTurn,
-  type AgentThread,
   type AgentThreadExternalOrigin,
-  type AgentTurn,
-  type AgentTurnStatus,
 } from "../../domain/agentThread";
 import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSession";
 import { providerUpdateResultPresentation } from "../settings/agentProviderUpdatePresentation";
@@ -39,22 +31,20 @@ import {
   agentThreadDisplayTitle,
   type AgentProjectGroup,
 } from "./agentModePresentation";
+import { agentProjectUsable } from "./agentProjectMenuPresentation";
+import type { AgentRailFilter } from "./agentRailFilter";
+import {
+  NO_ROW_SIGNALS,
+  agentRowIsLive,
+  agentRowStatus,
+  type AgentRowSignals,
+  type AgentRowStatus,
+} from "./agentThreadRowStatus";
 
 export const ARCHIVED_PAGE_COUNT = 20;
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 export const MAX_AGENT_THREAD_JUMP_SLOTS = 9;
 export const NO_PROJECT_SCOPE_LABEL = "No project";
-
-export type AgentRowStatus =
-  | {
-      readonly kind: "working";
-      readonly startedAtEpochMs: number;
-      readonly activity?: "background" | "monitoring";
-    }
-  | { readonly kind: "failed" }
-  | { readonly kind: "stopped" }
-  | { readonly kind: "done" }
-  | { readonly kind: "none" };
 
 export type AgentRowVariant = "card" | "slim";
 
@@ -74,22 +64,6 @@ export interface AgentRailScopeEntry {
   readonly origin: AgentProjectOrigin;
   readonly rootPath: string | null;
   readonly repositoryCount: number;
-}
-
-export type AgentProjectMenuCommand =
-  "trust" | "close" | "release" | "reveal" | "copyPath" | "terminalSessions";
-
-export interface AgentProjectMenuTarget {
-  readonly projectRootKey: string;
-  readonly repositoryRoot: string;
-  readonly rootPath: string | null;
-}
-
-export interface AgentProjectMenuEntry {
-  readonly id: string;
-  readonly label: string;
-  readonly command: AgentProjectMenuCommand;
-  readonly disabled: boolean;
 }
 
 export interface AgentRailSections {
@@ -127,180 +101,23 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "unsnooze" }
   | { readonly kind: "settle" }
   | { readonly kind: "restore" }
+  | { readonly kind: "moveToSection"; readonly section: AgentThreadDropSection }
   | {
       readonly kind: "moveBefore" | "moveAfter";
       readonly targetThreadId: string;
       readonly destination?: AgentThreadDropSection;
     };
 
-export type AgentThreadMenuIcon =
-  | "newThread"
-  | "pin"
-  | "unpin"
-  | "rename"
-  | "markUnread"
-  | "copyPath"
-  | "copyBranch"
-  | "copyThreadId"
-  | "stop"
-  | "archive"
-  | "unarchive"
-  | "delete"
-  | "snooze"
-  | "settle"
-  | "restore";
-
-export type AgentThreadMenuEntry =
-  | { readonly kind: "separator"; readonly id: string }
-  | {
-      readonly kind: "item";
-      readonly id: string;
-      readonly label: string;
-      readonly icon: AgentThreadMenuIcon;
-      readonly disabled: boolean;
-      readonly reason: string | null;
-      readonly destructive: boolean;
-      readonly command: AgentThreadMenuCommand | "rename" | "snooze";
-    };
-
-export interface AgentThreadMenuContext {
-  readonly branch: string | null;
-  readonly pinned: boolean;
-  readonly archived: boolean;
-  readonly running: boolean;
-  readonly snoozed?: boolean;
-  readonly settled?: boolean;
-  readonly canMarkUnread?: boolean;
-}
-
 export const MARK_UNREAD_UNAVAILABLE_REASON = "Available after a run finishes.";
 export const ARCHIVE_RUNNING_REASON = "Stop the agent before archiving this thread.";
 export const DELETE_RUNNING_REASON = "Stop the agent before deleting this thread.";
 export const ORGANIZE_RUNNING_REASON = "Available after the agent stops.";
-
-export function agentThreadMenuEntries(
-  props: AgentThreadMenuContext,
-): ReadonlyArray<AgentThreadMenuEntry> {
-  const target = props.branch === null ? "New thread" : `New thread on ${props.branch}`;
-  const entries: AgentThreadMenuEntry[] = [
-    menuItem("new", target, "newThread", { kind: "newThread" }),
-    menuItem("pin", props.pinned ? "Unpin" : "Pin", props.pinned ? "unpin" : "pin", {
-      kind: "togglePin",
-    }),
-    { kind: "separator", id: "s1" },
-    menuItem("rename", "Rename", "rename", "rename"),
-    menuItem(
-      "unread",
-      "Mark unread",
-      "markUnread",
-      { kind: "markUnread" },
-      props.canMarkUnread === false ? MARK_UNREAD_UNAVAILABLE_REASON : null,
-    ),
-    { kind: "separator", id: "s2" },
-    menuItem("copy-path", "Copy path", "copyPath", { kind: "copy", detail: "path" }),
-    menuItem("copy-branch", "Copy branch", "copyBranch", { kind: "copy", detail: "branch" }),
-    menuItem("copy-id", "Copy thread ID", "copyThreadId", { kind: "copy", detail: "threadId" }),
-    { kind: "separator", id: "s3" },
-  ];
-  const runningReason = (reason: string): string | null => (props.running ? reason : null);
-  if (!props.archived) {
-    entries.push(
-      menuItem(
-        "snooze",
-        props.snoozed ? "Wake now" : "Snooze…",
-        "snooze",
-        props.snoozed ? { kind: "unsnooze" } : "snooze",
-        runningReason(ORGANIZE_RUNNING_REASON),
-      ),
-    );
-    entries.push(
-      menuItem(
-        "settle",
-        props.settled ? "Restore to active" : "Mark settled",
-        "settle",
-        { kind: props.settled ? "restore" : "settle" },
-        runningReason(ORGANIZE_RUNNING_REASON),
-      ),
-    );
-  }
-  if (props.running) entries.push(menuItem("stop", "Stop", "stop", { kind: "stop" }));
-  entries.push(
-    props.archived
-      ? menuItem("unarchive", "Unarchive", "unarchive", { kind: "unarchive" })
-      : menuItem(
-          "archive",
-          "Archive",
-          "archive",
-          { kind: "archive" },
-          runningReason(ARCHIVE_RUNNING_REASON),
-        ),
-  );
-  entries.push(
-    menuItem(
-      "delete",
-      "Delete",
-      "delete",
-      { kind: "delete" },
-      runningReason(DELETE_RUNNING_REASON),
-      true,
-    ),
-  );
-  return entries;
-}
 
 export function agentViewCanMarkUnread(view: AgentThreadView): boolean {
   if (view.execution?.kind !== "remote") return agentThreadCanMarkUnread(view.thread);
   if (view.thread.archived) return false;
   const last = view.thread.turns[view.thread.turns.length - 1];
   return last !== undefined && isTerminalAgentTurnStatus(last.status);
-}
-
-function menuItem(
-  id: string,
-  label: string,
-  icon: AgentThreadMenuIcon,
-  command: AgentThreadMenuCommand | "rename" | "snooze",
-  reason: string | null = null,
-  destructive = false,
-): AgentThreadMenuEntry {
-  return { kind: "item", id, label, icon, command, disabled: reason !== null, reason, destructive };
-}
-
-export function agentRowStatus(
-  view: AgentThreadView,
-  evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
-  background?: AgentBackgroundActivity | null,
-): AgentRowStatus {
-  const running = runningTurn(view.thread);
-  if (running !== null) {
-    const activity =
-      background === undefined ? immediateRowBackground(view, running, evidenceOf) : background;
-    return {
-      kind: "working",
-      startedAtEpochMs: running.startedAtEpochMs,
-      ...(activity?.foregroundSettled && activity.phase !== "inactive"
-        ? {
-            activity:
-              activity.phase === "monitoring" ? ("monitoring" as const) : ("background" as const),
-          }
-        : {}),
-    };
-  }
-  const last = lastTurnStatus(view.thread);
-  if (last !== null && isFailedTurnStatus(last)) return { kind: "failed" };
-  if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };
-  if (view.unread && !view.thread.archived) return { kind: "done" };
-  return { kind: "none" };
-}
-
-function immediateRowBackground(
-  view: AgentThreadView,
-  running: AgentTurn,
-  evidenceOf: AgentTurnLogEvidenceLookup,
-): AgentBackgroundActivity | null {
-  if (view.thread.provider.kind !== "claudeCode") return null;
-  const lost = agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
-  return projectAgentBackgroundActivity(running.events, true, lost);
 }
 
 export function agentRowRecedes(view: AgentThreadView, on: boolean): boolean {
@@ -315,20 +132,18 @@ export function agentRowVariant(view: AgentThreadView): AgentRowVariant {
 
 export function agentRailSections(
   views: ReadonlyArray<AgentThreadView>,
-  scope: AgentRailScope | null,
   archivedExpanded: boolean,
   archivedShown: number,
   now: number = Date.now(),
 ): AgentRailSections {
-  const scoped = views.filter((view) => scopeIncludes(scope, view));
-  const settled = scoped.filter((view) => !view.thread.archived && view.thread.settledAt != null);
-  const snoozed = scoped.filter(
+  const settled = views.filter((view) => !view.thread.archived && view.thread.settledAt != null);
+  const snoozed = views.filter(
     (view) =>
       !view.thread.archived &&
       view.thread.settledAt == null &&
       (view.thread.snoozedUntil ?? 0) > now,
   );
-  const available = scoped.filter(
+  const available = views.filter(
     (view) =>
       !view.thread.archived &&
       view.thread.settledAt == null &&
@@ -336,7 +151,7 @@ export function agentRailSections(
   );
   const pinned = available.filter((view) => view.thread.pinned);
   const active = available.filter((view) => !view.thread.pinned);
-  const archived = scoped.filter((view) => view.thread.archived);
+  const archived = views.filter((view) => view.thread.archived);
   pinned.sort(compareManualOrder);
   active.sort(compareManualOrder);
   snoozed.sort(compareManualOrder);
@@ -385,11 +200,6 @@ export function agentRailScopeEntries(
 
 export function agentRailScopeValue(projectRootKey: string): string {
   return projectRootKey;
-}
-
-export function agentRailScopeEntryValue(scope: AgentRailScope | null): string {
-  if (scope === null) return "";
-  return agentRailScopeValue(scope.projectRootKey);
 }
 
 export function agentRailScopeFromEntry(entry: AgentRailScopeEntry): AgentRailScope {
@@ -463,14 +273,6 @@ export function agentRailScopeLabel(
   return entry?.label ?? NO_PROJECT_SCOPE_LABEL;
 }
 
-function scopeIncludes(scope: AgentRailScope | null, view: AgentThreadView): boolean {
-  if (scope === null) return false;
-  return (
-    scope.projectRootKey === view.thread.owner.rootKey ||
-    scope.memberProjectRootKeys?.includes(view.thread.owner.rootKey) === true
-  );
-}
-
 function compareManualOrder(left: AgentThreadView, right: AgentThreadView): number {
   return compareAgentThreadOrder(left.thread, right.thread);
 }
@@ -484,30 +286,9 @@ function compareByRecency(left: AgentThreadView, right: AgentThreadView): number
   return 0;
 }
 
-function lastTurnStatus(thread: AgentThread): AgentTurnStatus | null {
-  const last = thread.turns[thread.turns.length - 1];
-  if (last === undefined) return null;
-  return last.status;
-}
-
-function isFailedTurnStatus(status: AgentTurnStatus): boolean {
-  if (status.kind === "failed") return true;
-  return status.kind === "exited" && status.exitCode !== 0;
-}
-
-function isStoppedTurnStatus(status: AgentTurnStatus): boolean {
-  return status.kind === "stopped" || status.kind === "interrupted";
-}
-
-export interface AgentRailScopeState {
-  readonly label: string;
-  readonly action: "release" | null;
-}
-
 export type AgentRailEmptyState =
   | { readonly kind: "noProjects" }
-  | { readonly kind: "noScope" }
-  | { readonly kind: "noThreads"; readonly scopeLabel: string }
+  | { readonly kind: "noThreads"; readonly scopeLabel: string | null }
   | null;
 
 export function agentRailViews(
@@ -524,15 +305,13 @@ export function agentRailViews(
 
 export function agentRailOrphanCount(
   groups: ReadonlyArray<AgentProjectGroup>,
-  scope: AgentRailScope | null,
+  filter: AgentRailFilter,
 ): number {
-  if (scope === null) return 0;
   let count = 0;
   for (const group of groups) {
-    if (group.projectRootKey !== scope.projectRootKey) continue;
-    for (const repo of group.repos) {
-      count += repo.orphans.length;
-    }
+    if (group.kind !== "project") continue;
+    if (filter.kind === "project" && group.projectRootKey !== filter.projectRootKey) continue;
+    for (const repo of group.repos) count += repo.orphans.length;
   }
   return count;
 }
@@ -540,8 +319,7 @@ export function agentRailOrphanCount(
 export function agentRailEmptyState(
   groups: ReadonlyArray<AgentProjectGroup>,
   sections: AgentRailSections,
-  scope: AgentRailScope | null,
-  entries: ReadonlyArray<AgentRailScopeEntry>,
+  scopeLabel: string | null,
 ): AgentRailEmptyState {
   if (groups.length === 0) return { kind: "noProjects" };
   const total =
@@ -552,8 +330,7 @@ export function agentRailEmptyState(
     (sections.snoozed?.length ?? 0) +
     (sections.settled?.length ?? 0);
   if (total > 0) return null;
-  if (scope === null) return { kind: "noScope" };
-  return { kind: "noThreads", scopeLabel: agentRailScopeLabel(scope, entries) };
+  return { kind: "noThreads", scopeLabel };
 }
 
 export function agentRailDetachedThreadCount(groups: ReadonlyArray<AgentProjectGroup>): number {
@@ -567,71 +344,13 @@ export function agentRailDetachedThreadCount(groups: ReadonlyArray<AgentProjectG
   return count;
 }
 
-export function agentRailScopeState(entry: AgentRailScopeEntry | null): AgentRailScopeState | null {
-  if (entry === null) return null;
-  if (entry.trust === "unknown") return { label: "Opening project…", action: null };
-  if (entry.trust === "untrusted") return { label: "Project unavailable", action: null };
-  if (entry.origin === "background-tab") return { label: "Background", action: null };
-  if (entry.origin === "closed-tab-live-tasks") return { label: "Tab closed", action: "release" };
-  return null;
-}
-
-export function agentProjectMenuTarget(entry: AgentRailScopeEntry): AgentProjectMenuTarget {
-  return {
-    projectRootKey: entry.projectRootKey,
-    repositoryRoot: entry.repositoryRoot,
-    rootPath: entry.rootPath,
-  };
-}
-
-export function agentProjectClosable(entry: AgentRailScopeEntry): boolean {
-  return entry.origin !== "closed-tab-live-tasks" && entry.rootPath !== null;
-}
-
-export function agentProjectCloseLabel(entry: AgentRailScopeEntry): string {
-  return `Close project ${entry.label}`;
-}
-
-export function agentProjectMenuEntries(
-  entry: AgentRailScopeEntry,
-): ReadonlyArray<AgentProjectMenuEntry> {
-  const entries: AgentProjectMenuEntry[] = [];
-  if (entry.origin === "closed-tab-live-tasks" && entry.rootPath !== null) {
-    entries.push(projectMenuEntry("release", "Release project", "release", false));
-  }
-  if (agentProjectClosable(entry)) {
-    entries.push(projectMenuEntry("close", "Close project", "close", false));
-  }
-  entries.push(
-    projectMenuEntry("terminal-sessions", "Terminal sessions…", "terminalSessions", !usable(entry)),
-  );
-  if (entry.rootPath === null) return entries;
-  entries.push(projectMenuEntry("reveal", "Reveal in Finder", "reveal", false));
-  entries.push(projectMenuEntry("copy-path", "Copy path", "copyPath", false));
-  return entries;
-}
-
-export function agentProjectRepositoryCountLabel(entry: AgentRailScopeEntry): string | null {
-  if (entry.repositoryCount <= 1) return null;
-  return `${entry.repositoryCount} repos`;
-}
-
-function projectMenuEntry(
-  id: string,
-  label: string,
-  command: AgentProjectMenuCommand,
-  disabled: boolean,
-): AgentProjectMenuEntry {
-  return { id, label, command, disabled };
-}
-
 export function agentRailNewThreadTarget(
   scope: AgentRailScope | null,
   entries: ReadonlyArray<AgentRailScopeEntry>,
 ): AgentRailScope | null {
   if (scope === null) return null;
   const entry = agentRailScopeEntryFor(entries, scope.projectRootKey);
-  if (!usable(entry)) return null;
+  if (!agentProjectUsable(entry)) return null;
   return { projectRootKey: scope.projectRootKey, repositoryRoot: scope.repositoryRoot };
 }
 
@@ -641,13 +360,8 @@ export function agentProjectTerminalSessionsTarget(
 ): AgentRailScope | null {
   if (project === null) return null;
   const entry = agentRailScopeEntryFor(entries, project.projectRootKey);
-  if (entry === null || !usable(entry)) return null;
+  if (entry === null || !agentProjectUsable(entry)) return null;
   return { projectRootKey: project.projectRootKey, repositoryRoot: project.repositoryRoot };
-}
-
-function usable(entry: AgentRailScopeEntry | null): boolean {
-  if (entry === null) return false;
-  return entry.trust === "trusted" && entry.origin !== "closed-tab-live-tasks";
 }
 
 export function agentJumpSlots(sections: AgentRailSections): ReadonlyMap<string, number> {
@@ -686,25 +400,6 @@ export function agentWorkingDurationLabel(startedAtEpochMs: number, now: number)
   return `${hours}h ${rest}m`;
 }
 
-export function agentRowStatusLabel(status: AgentRowStatus): string | null {
-  switch (status.kind) {
-    case "working":
-      if (status.activity === "monitoring") return "Monitoring";
-      if (status.activity === "background") return "Working in background";
-      return "Working";
-    case "failed":
-      return "Failed";
-    case "stopped":
-      return "Stopped";
-    case "done":
-      return "Done";
-    case "none":
-      return null;
-    default:
-      return unsupportedRowStatus(status);
-  }
-}
-
 export function agentProviderLabel(kind: AgentCliKind): string {
   switch (kind) {
     case "claudeCode":
@@ -714,10 +409,6 @@ export function agentProviderLabel(kind: AgentCliKind): string {
     default:
       return unsupportedProvider(kind);
   }
-}
-
-function unsupportedRowStatus(status: never): never {
-  throw new TypeError(`Unsupported agent row status: ${String(status)}.`);
 }
 
 function unsupportedProvider(kind: never): never {
@@ -756,8 +447,9 @@ export function agentThreadRowModel(
   projectLabel: string = view.repositoryLabel,
   evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
   background?: AgentBackgroundActivity | null,
+  signals: AgentRowSignals = NO_ROW_SIGNALS,
 ): AgentThreadRowModel {
-  const status = agentRowStatus(view, evidenceOf, background);
+  const status = agentRowStatus(view, evidenceOf, background, signals);
   const thread = view.thread;
   return {
     project: projectLabel,
@@ -799,11 +491,22 @@ export interface AgentRowClassNameModel {
 }
 
 export function agentRowClassName(model: AgentRowClassNameModel): string {
-  const classes = ["agent-row", `agent-row--${model.variant}`];
+  if (model.variant === "slim") return slimRowClassName(model);
+  const classes = ["cv-card-row"];
+  if (model.on) classes.push("is-current");
+  if (model.marked) classes.push("is-marked");
+  if (model.recede) classes.push("is-recede");
+  if (agentRowIsLive(model.status)) classes.push("is-live");
+  if (model.unread) classes.push("is-unread");
+  return classes.join(" ");
+}
+
+function slimRowClassName(model: AgentRowClassNameModel): string {
+  const classes = ["agent-row", "agent-row--slim"];
   if (model.on) classes.push("agent-row--on");
   if (model.marked) classes.push("agent-row--marked");
   if (model.recede) classes.push("agent-row--recede");
-  if (model.status.kind === "working") classes.push("agent-row--inflight");
+  if (agentRowIsLive(model.status)) classes.push("agent-row--inflight");
   if (model.unread) classes.push("agent-row--unread");
   return classes.join(" ");
 }

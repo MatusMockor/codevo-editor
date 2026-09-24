@@ -1,0 +1,178 @@
+import type { AgentThreadView } from "../../application/agentThreadPorts";
+import {
+  projectAgentBackgroundActivity,
+  type AgentBackgroundActivity,
+} from "../../domain/agentBackgroundActivity";
+import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
+import {
+  runningTurn,
+  type AgentThread,
+  type AgentTurn,
+  type AgentTurnStatus,
+} from "../../domain/agentThread";
+import {
+  NO_AGENT_TURN_LOG_EVIDENCE,
+  agentTurnContentLost,
+  type AgentTurnLogEvidenceLookup,
+} from "../../domain/agentTurnContentLoss";
+
+export type AgentRowStatus =
+  | {
+      readonly kind: "working";
+      readonly startedAtEpochMs: number;
+      readonly activity?: "background" | "monitoring";
+    }
+  | { readonly kind: "approval" }
+  | { readonly kind: "input" }
+  | { readonly kind: "agents"; readonly count: number }
+  | { readonly kind: "failed" }
+  | { readonly kind: "stopped" }
+  | { readonly kind: "done" }
+  | { readonly kind: "none" };
+
+export type AgentRowStatusTone = "work" | "warn" | "ok" | "fail" | "quiet";
+
+export interface AgentRowSignals {
+  readonly pending: AgentPendingInteraction | null;
+  readonly workingAgents: number;
+}
+
+export const NO_ROW_SIGNALS: AgentRowSignals = Object.freeze({ pending: null, workingAgents: 0 });
+
+export function agentRowStatus(
+  view: AgentThreadView,
+  evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
+  background?: AgentBackgroundActivity | null,
+  signals: AgentRowSignals = NO_ROW_SIGNALS,
+): AgentRowStatus {
+  const running = runningTurn(view.thread);
+  if (running !== null) {
+    if (signals.pending === "approval") return { kind: "approval" };
+    if (signals.pending === "input") return { kind: "input" };
+    if (signals.workingAgents > 0) return { kind: "agents", count: signals.workingAgents };
+    const activity =
+      background === undefined ? immediateRowBackground(view, running, evidenceOf) : background;
+    return {
+      kind: "working",
+      startedAtEpochMs: running.startedAtEpochMs,
+      ...(activity?.foregroundSettled && activity.phase !== "inactive"
+        ? {
+            activity:
+              activity.phase === "monitoring" ? ("monitoring" as const) : ("background" as const),
+          }
+        : {}),
+    };
+  }
+  const last = lastTurnStatus(view.thread);
+  if (last !== null && isFailedTurnStatus(last)) return { kind: "failed" };
+  if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };
+  if (view.unread && !view.thread.archived) return { kind: "done" };
+  return { kind: "none" };
+}
+
+export function agentRowWorkingAgents(view: AgentThreadView): number {
+  const running = runningTurn(view.thread);
+  if (running === null) return 0;
+  return (
+    running.subagentLifecycle?.entries.filter(
+      (entry) => entry.parentToolId === undefined && entry.state === "running",
+    ).length ?? 0
+  );
+}
+
+export function agentRowIsLive(status: AgentRowStatus): boolean {
+  return agentRowStatusTone(status) === "work" || agentRowStatusTone(status) === "warn";
+}
+
+export function agentRowStatusLabel(status: AgentRowStatus): string | null {
+  switch (status.kind) {
+    case "working":
+      if (status.activity === "monitoring") return "Monitoring";
+      if (status.activity === "background") return "Working in background";
+      return "Working";
+    case "approval":
+      return "Approval";
+    case "input":
+      return "Input";
+    case "agents":
+      return agentCountLabel(status.count);
+    case "failed":
+      return "Failed";
+    case "stopped":
+      return "Stopped";
+    case "done":
+      return "Done";
+    case "none":
+      return null;
+    default:
+      return unsupportedRowStatus(status);
+  }
+}
+
+export function agentRowStatusTitle(status: AgentRowStatus): string | null {
+  if (status.kind === "agents") return `Waiting for ${agentCountLabel(status.count)}`;
+  if (status.kind === "approval") return "Waiting for your approval";
+  if (status.kind === "input") return "Waiting for your answer";
+  return null;
+}
+
+export function agentRowStatusTone(status: AgentRowStatus): AgentRowStatusTone {
+  switch (status.kind) {
+    case "working":
+    case "agents":
+      return "work";
+    case "approval":
+    case "input":
+      return "warn";
+    case "done":
+      return "ok";
+    case "failed":
+      return "fail";
+    case "stopped":
+    case "none":
+      return "quiet";
+    default:
+      return unsupportedRowStatus(status);
+  }
+}
+
+export function agentRowElapsedLabel(startedAtEpochMs: number, now: number): string {
+  const total = Math.max(0, Math.floor((now - startedAtEpochMs) / 1_000));
+  const seconds = String(total % 60).padStart(2, "0");
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}:${seconds}`;
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${seconds}`;
+}
+
+function agentCountLabel(count: number): string {
+  return count === 1 ? "1 agent" : `${count} agents`;
+}
+
+function immediateRowBackground(
+  view: AgentThreadView,
+  running: AgentTurn,
+  evidenceOf: AgentTurnLogEvidenceLookup,
+): AgentBackgroundActivity | null {
+  if (view.thread.provider.kind !== "claudeCode") return null;
+  const lost = agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
+  return projectAgentBackgroundActivity(running.events, true, lost);
+}
+
+function lastTurnStatus(thread: AgentThread): AgentTurnStatus | null {
+  const last = thread.turns[thread.turns.length - 1];
+  if (last === undefined) return null;
+  return last.status;
+}
+
+function isFailedTurnStatus(status: AgentTurnStatus): boolean {
+  if (status.kind === "failed") return true;
+  return status.kind === "exited" && status.exitCode !== 0;
+}
+
+function isStoppedTurnStatus(status: AgentTurnStatus): boolean {
+  return status.kind === "stopped" || status.kind === "interrupted";
+}
+
+function unsupportedRowStatus(status: never): never {
+  throw new TypeError(`Unsupported agent row status: ${String(status)}.`);
+}

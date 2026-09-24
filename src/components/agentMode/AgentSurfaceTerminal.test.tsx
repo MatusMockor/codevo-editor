@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTheme } from "../../domain/settings";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import type { TerminalTabsSnapshot } from "../TerminalTabsPanel";
 import {
   AgentSurfaceTerminal,
   SURFACE_TERMINAL_FOREIGN_ROOT_MESSAGE,
@@ -150,6 +151,18 @@ describe("AgentSurfaceTerminal", () => {
     await act(async () => Promise.resolve());
     expect(host.querySelector(TABLIST)).toBeNull();
     expect(gateway.start).not.toHaveBeenCalled();
+  });
+
+  it("publishes the session snapshot to an external strip once the panel mounts", async () => {
+    const snapshots: Array<TerminalTabsSnapshot | null> = [];
+    render({
+      externalStrip: {
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+        commandsRef: { current: null },
+      },
+    });
+    await waitForReact(() => expect(snapshots[snapshots.length - 1]?.tabs).toHaveLength(1));
+    expect(host.querySelector('[role="toolbar"][aria-label="Terminal actions"]')).not.toBeNull();
   });
 
   function render(overrides: Partial<AgentSurfaceTerminalProps> = {}): void {

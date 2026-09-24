@@ -3,6 +3,13 @@ import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import { TauriWorkspaceFileChangeGateway } from "./tauriWorkspaceFileChangeGateway";
 
 type WireChange = WorkspaceFileChangeEvent & { watchGeneration: number };
+type StartReceipt = {
+  rootPath: string;
+  watchGeneration: number;
+  ignoreRules: { status: "complete" } | { status: "truncated"; reason: string };
+};
+
+const COMPLETE_IGNORE_RULES = { status: "complete" } as const;
 
 const wireChange = (
   rootPath: string,
@@ -34,11 +41,10 @@ const change = (
 
 describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("listens before starting and replays an initial event to a later subscriber", async () => {
-    let resolveStart:
-      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    let resolveStart: ((receipt: StartReceipt) => void) | undefined;
     const invoke = vi.fn(
       () =>
-        new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+        new Promise<StartReceipt>((resolve) => {
           resolveStart = resolve;
         }),
     );
@@ -55,7 +61,11 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     const starting = gateway.startWatching("/alias/a");
     await vi.waitFor(() => expect(resolveStart).toBeTypeOf("function"));
     emit?.({ payload: wireChange("/canonical/a", 4) });
-    resolveStart?.({ rootPath: "/canonical/a", watchGeneration: 4 });
+    resolveStart?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 4,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await starting;
     const received: WorkspaceFileChangeEvent[] = [];
     await gateway.subscribeFileChanges((event) => received.push(event));
@@ -69,6 +79,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: "/canonical/a",
         watchGeneration: 3,
+        ignoreRules: COMPLETE_IGNORE_RULES,
       }),
       vi.fn(async (_event, handler) => {
         emit = handler;
@@ -91,11 +102,10 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   });
 
   it("buffers the exact initial generation until the canonical start receipt arrives", async () => {
-    let resolveStart:
-      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    let resolveStart: ((receipt: StartReceipt) => void) | undefined;
     const invoke = vi.fn(
       () =>
-        new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+        new Promise<StartReceipt>((resolve) => {
           resolveStart = resolve;
         }),
     );
@@ -116,18 +126,21 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     emit?.({ payload: wireChange("/canonical/a", 4, "rescanRequired") });
     expect(received).toEqual([]);
 
-    resolveStart?.({ rootPath: "/canonical/a", watchGeneration: 4 });
+    resolveStart?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 4,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await starting;
 
     expect(received).toEqual([change("/alias/a", "rescanRequired")]);
   });
 
   it("escalates a pre-receipt buffer overflow to a truthful rescan", async () => {
-    let resolveStart:
-      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    let resolveStart: ((receipt: StartReceipt) => void) | undefined;
     const invoke = vi.fn(
       () =>
-        new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+        new Promise<StartReceipt>((resolve) => {
           resolveStart = resolve;
         }),
     );
@@ -154,20 +167,23 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
         },
       });
     }
-    resolveStart?.({ rootPath: "/canonical/a", watchGeneration: 6 });
+    resolveStart?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 6,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await starting;
 
     expect(received.some((event) => event.kind === "rescanRequired")).toBe(true);
   });
 
   it("coalesces duplicate pre-receipt events without declaring overflow", async () => {
-    let resolveStart:
-      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    let resolveStart: ((receipt: StartReceipt) => void) | undefined;
     let emit: ((event: { payload: WireChange }) => void) | undefined;
     const gateway = new TauriWorkspaceFileChangeGateway(
       vi.fn(
         () =>
-          new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+          new Promise<StartReceipt>((resolve) => {
             resolveStart = resolve;
           }),
       ),
@@ -185,17 +201,21 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     for (let index = 0; index < 129; index += 1) {
       emit?.({ payload: wireChange("/canonical/a", 6) });
     }
-    resolveStart?.({ rootPath: "/canonical/a", watchGeneration: 6 });
+    resolveStart?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 6,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await starting;
 
     expect(received).toEqual([change("/alias/a")]);
   });
 
   it("attributes a pre-receipt overflow to the root whose event was dropped", async () => {
-    const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
+    const resolvers: Array<(receipt: StartReceipt) => void> = [];
     const invoke = vi.fn(
       () =>
-        new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+        new Promise<StartReceipt>((resolve) => {
           resolvers.push(resolve);
         }),
     );
@@ -225,13 +245,21 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     }
     emit?.({ payload: wireChange("/canonical/a", 1) });
 
-    resolvers[1]?.({ rootPath: "/canonical/a", watchGeneration: 1 });
+    resolvers[1]?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 1,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await startingA;
     expect(
       received.some((event) => event.rootPath === "/alias/a" && event.kind === "rescanRequired"),
     ).toBe(false);
 
-    resolvers[0]?.({ rootPath: "/canonical/b", watchGeneration: 2 });
+    resolvers[0]?.({
+      rootPath: "/canonical/b",
+      watchGeneration: 2,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await startingB;
     expect(
       received.some((event) => event.rootPath === "/alias/b" && event.kind === "rescanRequired"),
@@ -241,9 +269,21 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("rejects delayed A1 after A3 is admitted and still forwards current rescans", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce({ rootPath: "/canonical/a", watchGeneration: 1 })
-      .mockResolvedValueOnce({ rootPath: "/canonical/b", watchGeneration: 2 })
-      .mockResolvedValueOnce({ rootPath: "/canonical/a", watchGeneration: 3 });
+      .mockResolvedValueOnce({
+        rootPath: "/canonical/a",
+        watchGeneration: 1,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
+      .mockResolvedValueOnce({
+        rootPath: "/canonical/b",
+        watchGeneration: 2,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
+      .mockResolvedValueOnce({
+        rootPath: "/canonical/a",
+        watchGeneration: 3,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      });
     let emit: ((event: { payload: WireChange }) => void) | undefined;
     const listen = vi.fn(async (_event, handler) => {
       emit = handler;
@@ -267,7 +307,11 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("revokes the admitted generation when a replacement start fails", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce({ rootPath: "/canonical/a", watchGeneration: 7 })
+      .mockResolvedValueOnce({
+        rootPath: "/canonical/a",
+        watchGeneration: 7,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
       .mockRejectedValueOnce(new Error("watch failed"));
     let emit: ((event: { payload: WireChange }) => void) | undefined;
     const gateway = new TauriWorkspaceFileChangeGateway(
@@ -292,6 +336,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     const invoke = vi.fn().mockResolvedValue({
       rootPath: "/canonical/a",
       watchGeneration: 5,
+      ignoreRules: COMPLETE_IGNORE_RULES,
     });
     let emit: ((event: { payload: unknown }) => void) | undefined;
     const gateway = new TauriWorkspaceFileChangeGateway(
@@ -334,6 +379,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: "/canonical/a",
         watchGeneration: 1,
+        ignoreRules: COMPLETE_IGNORE_RULES,
         unexpected: true,
       }),
       listen,
@@ -347,6 +393,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: `/${"é".repeat(16_384)}`,
         watchGeneration: 1,
+        ignoreRules: COMPLETE_IGNORE_RULES,
       }),
       listen,
       () => true,
@@ -360,11 +407,45 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: exactBoundaryRoot,
         watchGeneration: 2,
+        ignoreRules: COMPLETE_IGNORE_RULES,
       }),
       listen,
       () => true,
     );
     await expect(exactBoundaryGateway.startWatching("/alias/exact")).resolves.toBeUndefined();
+  });
+
+  it("accepts truncated ignore rules and rejects missing or unknown ignore rule states", async () => {
+    const listen = vi.fn(async () => () => undefined);
+    const startWith = (ignoreRules: unknown) =>
+      new TauriWorkspaceFileChangeGateway(
+        vi
+          .fn()
+          .mockResolvedValue(
+            ignoreRules === undefined
+              ? { rootPath: "/canonical/a", watchGeneration: 1 }
+              : { rootPath: "/canonical/a", watchGeneration: 1, ignoreRules },
+          ),
+        listen,
+        () => true,
+      ).startWatching("/alias/a");
+
+    await expect(
+      startWith({ status: "truncated", reason: "directoryLimit" }),
+    ).resolves.toBeUndefined();
+    await expect(startWith({ status: "truncated", reason: "timeLimit" })).resolves.toBeUndefined();
+    await expect(
+      startWith({ status: "truncated", reason: "unreadableDirectory" }),
+    ).resolves.toBeUndefined();
+    await expect(startWith(undefined)).rejects.toThrow("invalid start receipt");
+    await expect(startWith({ status: "truncated", reason: "unknownLimit" })).rejects.toThrow(
+      "invalid start receipt",
+    );
+    await expect(startWith({ status: "truncated" })).rejects.toThrow("invalid start receipt");
+    await expect(startWith({ status: "complete", reason: "depthLimit" })).rejects.toThrow(
+      "invalid start receipt",
+    );
+    await expect(startWith({ status: "partial" })).rejects.toThrow("invalid start receipt");
   });
 
   it("removes a subscriber when transport registration fails", async () => {
@@ -380,6 +461,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: "/canonical/a",
         watchGeneration: 5,
+        ignoreRules: COMPLETE_IGNORE_RULES,
       }),
       listen,
       () => true,
@@ -399,8 +481,16 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("keeps a shared canonical generation admitted when one alias restart fails", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce({ rootPath: "/canonical/shared", watchGeneration: 7 })
-      .mockResolvedValueOnce({ rootPath: "/canonical/shared", watchGeneration: 7 })
+      .mockResolvedValueOnce({
+        rootPath: "/canonical/shared",
+        watchGeneration: 7,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
+      .mockResolvedValueOnce({
+        rootPath: "/canonical/shared",
+        watchGeneration: 7,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
       .mockRejectedValueOnce(new Error("replacement failed"));
     let emit: ((event: { payload: WireChange }) => void) | undefined;
     const gateway = new TauriWorkspaceFileChangeGateway(
@@ -428,6 +518,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: "/canonical/a",
         watchGeneration: 5,
+        ignoreRules: COMPLETE_IGNORE_RULES,
       }),
       vi.fn(async (_event, handler) => {
         emit = handler;
@@ -456,6 +547,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       vi.fn().mockResolvedValue({
         rootPath: "/c",
         watchGeneration: 4,
+        ignoreRules: COMPLETE_IGNORE_RULES,
       }),
       vi.fn(async (_event, handler) => {
         emit = handler;
@@ -490,10 +582,10 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   });
 
   it("does not let an older reordered start settlement overwrite newer authority", async () => {
-    const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
+    const resolvers: Array<(receipt: StartReceipt) => void> = [];
     const invoke = vi.fn(
       () =>
-        new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+        new Promise<StartReceipt>((resolve) => {
           resolvers.push(resolve);
         }),
     );
@@ -512,9 +604,17 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     const older = gateway.startWatching("/alias/a");
     const newer = gateway.startWatching("/alias/a");
     await vi.waitFor(() => expect(resolvers).toHaveLength(2));
-    resolvers[1]?.({ rootPath: "/canonical/new", watchGeneration: 9 });
+    resolvers[1]?.({
+      rootPath: "/canonical/new",
+      watchGeneration: 9,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await newer;
-    resolvers[0]?.({ rootPath: "/canonical/old", watchGeneration: 8 });
+    resolvers[0]?.({
+      rootPath: "/canonical/old",
+      watchGeneration: 8,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await older;
     emit?.({ payload: wireChange("/canonical/old", 8) });
     emit?.({ payload: wireChange("/canonical/new", 9) });
@@ -525,14 +625,11 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("retains newer root capacity when an older same-root transport rejects late", async () => {
     const settlements: Array<{
       reject: (error: Error) => void;
-      resolve: (receipt: { rootPath: string; watchGeneration: number }) => void;
+      resolve: (receipt: StartReceipt) => void;
     }> = [];
     const gateway = new TauriWorkspaceFileChangeGateway(
       vi.fn(
-        () =>
-          new Promise<{ rootPath: string; watchGeneration: number }>((resolve, reject) =>
-            settlements.push({ reject, resolve }),
-          ),
+        () => new Promise<StartReceipt>((resolve, reject) => settlements.push({ reject, resolve })),
       ),
       vi.fn(async () => () => undefined),
       () => true,
@@ -543,7 +640,11 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     const olderExpectation = expect(older).rejects.toThrow("older failed");
     const newer = gateway.startWatching("/a");
     await vi.waitFor(() => expect(settlements).toHaveLength(2));
-    settlements[1]?.resolve({ rootPath: "/a", watchGeneration: 2 });
+    settlements[1]?.resolve({
+      rootPath: "/a",
+      watchGeneration: 2,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await newer;
     settlements[0]?.reject(new Error("older failed"));
     await olderExpectation;
@@ -552,10 +653,10 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   });
 
   it("does not let a slower alias overwrite newer canonical routing", async () => {
-    const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
+    const resolvers: Array<(receipt: StartReceipt) => void> = [];
     const invoke = vi.fn(
       () =>
-        new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+        new Promise<StartReceipt>((resolve) => {
           resolvers.push(resolve);
         }),
     );
@@ -574,9 +675,17 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     const aliasStart = gateway.startWatching("/symlink/project");
     const canonicalStart = gateway.startWatching("/real/project");
     await vi.waitFor(() => expect(resolvers).toHaveLength(2));
-    resolvers[1]?.({ rootPath: "/real/project", watchGeneration: 12 });
+    resolvers[1]?.({
+      rootPath: "/real/project",
+      watchGeneration: 12,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await canonicalStart;
-    resolvers[0]?.({ rootPath: "/real/project", watchGeneration: 12 });
+    resolvers[0]?.({
+      rootPath: "/real/project",
+      watchGeneration: 12,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await aliasStart;
     emit?.({ payload: wireChange("/real/project", 12) });
 
@@ -631,18 +740,21 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("stops a valid late start receipt and releases its root capacity", async () => {
     vi.useFakeTimers();
     try {
-      let resolveStart:
-        ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+      let resolveStart: ((receipt: StartReceipt) => void) | undefined;
       const invoke = vi.fn((command: string) => {
         if (command === "start_workspace_file_watch" && !resolveStart) {
-          return new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+          return new Promise<StartReceipt>((resolve) => {
             resolveStart = resolve;
           });
         }
         if (command === "stop_workspace_file_watch") {
           return Promise.resolve(true);
         }
-        return Promise.resolve({ rootPath: "/b", watchGeneration: 2 });
+        return Promise.resolve({
+          rootPath: "/b",
+          watchGeneration: 2,
+          ignoreRules: COMPLETE_IGNORE_RULES,
+        });
       });
       const gateway = new TauriWorkspaceFileChangeGateway(
         invoke,
@@ -655,7 +767,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       const firstExpectation = expect(first).rejects.toThrow("timed out");
       await vi.advanceTimersByTimeAsync(10);
       await firstExpectation;
-      resolveStart?.({ rootPath: "/a", watchGeneration: 1 });
+      resolveStart?.({ rootPath: "/a", watchGeneration: 1, ignoreRules: COMPLETE_IGNORE_RULES });
 
       await vi.waitFor(() =>
         expect(invoke).toHaveBeenCalledWith("stop_workspace_file_watch", {
@@ -706,11 +818,23 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   it("bounds listener admissions and retains lifetime root capacity after release", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce({ rootPath: "/a", watchGeneration: 1 })
+      .mockResolvedValueOnce({
+        rootPath: "/a",
+        watchGeneration: 1,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
       .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce({ rootPath: "/b", watchGeneration: 2 })
+      .mockResolvedValueOnce({
+        rootPath: "/b",
+        watchGeneration: 2,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      })
       .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce({ rootPath: "/a", watchGeneration: 1 });
+      .mockResolvedValueOnce({
+        rootPath: "/a",
+        watchGeneration: 1,
+        ignoreRules: COMPLETE_IGNORE_RULES,
+      });
     const gateway = new TauriWorkspaceFileChangeGateway(
       invoke,
       vi.fn(async () => () => undefined),
@@ -745,13 +869,13 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
   });
 
   it("keeps an exact-generation tombstone across A-B-A start overlap", async () => {
-    const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
+    const resolvers: Array<(receipt: StartReceipt) => void> = [];
     let emit: ((event: { payload: WireChange }) => void) | undefined;
     const gateway = new TauriWorkspaceFileChangeGateway(
       vi.fn((command) =>
         command === "stop_workspace_file_watch"
           ? Promise.resolve(true)
-          : new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+          : new Promise<StartReceipt>((resolve) => {
               resolvers.push(resolve);
             }),
       ),
@@ -766,19 +890,31 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
 
     const firstA = gateway.startWatching("/a");
     await vi.waitFor(() => expect(resolvers).toHaveLength(1));
-    resolvers[0]?.({ rootPath: "/canonical/a", watchGeneration: 1 });
+    resolvers[0]?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 1,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await firstA;
     await gateway.releaseRoot("/a");
 
     const startingB = gateway.startWatching("/b");
     await vi.waitFor(() => expect(resolvers).toHaveLength(2));
     emit?.({ payload: wireChange("/canonical/a", 1) });
-    resolvers[1]?.({ rootPath: "/canonical/b", watchGeneration: 2 });
+    resolvers[1]?.({
+      rootPath: "/canonical/b",
+      watchGeneration: 2,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await startingB;
 
     const secondA = gateway.startWatching("/a");
     await vi.waitFor(() => expect(resolvers).toHaveLength(3));
-    resolvers[2]?.({ rootPath: "/canonical/a", watchGeneration: 1 });
+    resolvers[2]?.({
+      rootPath: "/canonical/a",
+      watchGeneration: 1,
+      ignoreRules: COMPLETE_IGNORE_RULES,
+    });
     await secondA;
     emit?.({ payload: wireChange("/canonical/a", 1) });
 
@@ -787,12 +923,11 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
 
   it("disposes the transport subscription and rejects late starts", async () => {
     const unlisten = vi.fn();
-    let resolveStart:
-      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    let resolveStart: ((receipt: StartReceipt) => void) | undefined;
     const gateway = new TauriWorkspaceFileChangeGateway(
       vi.fn(
         () =>
-          new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+          new Promise<StartReceipt>((resolve) => {
             resolveStart = resolve;
           }),
       ),
@@ -803,7 +938,7 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     const starting = gateway.startWatching("/a");
     await vi.waitFor(() => expect(resolveStart).toBeTypeOf("function"));
     await gateway.dispose();
-    resolveStart?.({ rootPath: "/a", watchGeneration: 1 });
+    resolveStart?.({ rootPath: "/a", watchGeneration: 1, ignoreRules: COMPLETE_IGNORE_RULES });
 
     await expect(starting).rejects.toThrow("disposed");
     expect(unlisten).toHaveBeenCalledOnce();
@@ -830,7 +965,11 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
       const unlisten = vi.fn();
       const invoke = vi
         .fn()
-        .mockResolvedValueOnce({ rootPath: "/a", watchGeneration: 1 })
+        .mockResolvedValueOnce({
+          rootPath: "/a",
+          watchGeneration: 1,
+          ignoreRules: COMPLETE_IGNORE_RULES,
+        })
         .mockImplementationOnce(() => new Promise(() => undefined));
       const gateway = new TauriWorkspaceFileChangeGateway(
         invoke,

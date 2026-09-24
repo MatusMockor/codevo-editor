@@ -103,17 +103,19 @@ describe("projectAgentRuntimeSubagents", () => {
   });
 
   it("models elapsed time as a closed union", () => {
-    const [live, settled, unknown] = projectAgentRuntimeSubagents(
+    const [live, settled, running, unknown] = projectAgentRuntimeSubagents(
       [
         source({ id: "a", durationMs: 1_000 }),
         source({ id: "b", observedState: "failed", durationMs: 2_000 }),
         source({ id: "c" }),
+        source({ id: "d", observedState: "failed" }),
       ],
       false,
     ).agents;
 
     expect(live?.elapsed).toEqual({ kind: "live", observedDurationMs: 1_000 });
     expect(settled?.elapsed).toEqual({ kind: "settled", durationMs: 2_000 });
+    expect(running?.elapsed).toEqual({ kind: "running" });
     expect(unknown?.elapsed).toEqual({ kind: "unknown" });
   });
 

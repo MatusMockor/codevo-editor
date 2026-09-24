@@ -21,6 +21,7 @@ import {
   type ResolvedColorScheme,
 } from "./domain/appearance";
 import { paletteTokens, surfaceColor } from "./domain/appearancePalettes";
+import { MAC_TRAFFIC_LIGHTS } from "./domain/appearanceShellStates";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
 const STARTUP_SHEET = "public/startup.css";
@@ -291,11 +292,11 @@ describe("startup skeleton", () => {
     expect(chromeHeight).toBe("36px");
     expect(chromeHeight).toBe(appShellDeclaration("--window-chrome-height"));
 
-    const shellRows = appShellDeclaration("grid-template-rows") ?? "";
-    const statusTrack = /(\S+)$/.exec(shellRows)?.[1];
-    expect(statusTrack).toBe("28px");
-    expect(startupDeclaration(":root", "--startup-status-height")).toBe("28px");
-    expect(startupDeclaration(":root", "--startup-status-height")).toBe(statusTrack);
+    expect(appShellDeclaration("grid-template-rows")).toBe(
+      "var(--window-chrome-height) minmax(0, 1fr)",
+    );
+    expect(startupDeclaration(":root", "--startup-status-height")).toBeUndefined();
+    expect(startupDocument.querySelector(".startup-skeleton__status")).toBeNull();
 
     expect(startupDeclaration(":root", "--startup-rail-width")).toBe(
       `${DEFAULT_AGENT_RAIL_WIDTH}px`,
@@ -304,8 +305,18 @@ describe("startup skeleton", () => {
     expect(startupDeclaration(".startup-skeleton", "grid-template-columns")).toBe(
       `${cssVar("--startup-rail-width")} minmax(0, 1fr)`,
     );
-    expect(startupDeclaration(".startup-skeleton", "grid-template-rows")).toBe(
-      `minmax(0, 1fr) ${cssVar("--startup-status-height")}`,
+    expect(startupDeclaration(".startup-skeleton", "grid-template-rows")).toBe("minmax(0, 1fr)");
+    expect(startupDeclaration(".startup-skeleton__rail", "background")).toBe(
+      cssVar("--startup-side"),
+    );
+    expect(startupDeclaration(".startup-skeleton__centre", "background")).toBe(
+      cssVar("--startup-canvas"),
+    );
+  });
+
+  it("paints no sidebar track when the global rail preference is collapsed", () => {
+    expect(startupDeclaration(':root[data-startup-rail="collapsed"]', "--startup-rail-width")).toBe(
+      "0px",
     );
   });
 
@@ -432,18 +443,48 @@ describe("startup error screen", () => {
   });
 });
 
-describe("native window background", () => {
-  it("uses the dark side tone in both window configurations", () => {
+describe("native window", () => {
+  const configs = ["tauri.conf.json", "tauri.macos.conf.json"].map((file) => {
+    const config: unknown = JSON.parse(
+      readFileSync(resolve(REPOSITORY_ROOT, "src-tauri", file), "utf8"),
+    );
+    const windows = (config as { app?: { windows?: readonly Record<string, unknown>[] } }).app
+      ?.windows;
+    return { file, main: windows?.find((entry) => entry.label === "main") };
+  });
+
+  it("keeps the dark side tone as the pre-reveal native background in both configurations", () => {
     const darkSide = startupTone("graphite-teal", "dark", "--startup-side");
-    for (const file of ["tauri.conf.json", "tauri.macos.conf.json"]) {
-      const config: unknown = JSON.parse(
-        readFileSync(resolve(REPOSITORY_ROOT, "src-tauri", file), "utf8"),
-      );
-      const windows = (config as { app?: { windows?: readonly Record<string, unknown>[] } }).app
-        ?.windows;
-      const main = windows?.find((entry) => entry.label === "main");
+    for (const { file, main } of configs) {
       expect(main, file).toBeDefined();
       expect(main?.backgroundColor, file).toBe(darkSide);
     }
+  });
+
+  it("creates the window hidden so the frontend reveals it after painting the palette tone", () => {
+    for (const { file, main } of configs) {
+      expect(main?.visible, file).toBe(false);
+    }
+  });
+
+  it("lets the frontend set the window and webview background and show the window", () => {
+    const capability = JSON.parse(
+      readFileSync(resolve(REPOSITORY_ROOT, "src-tauri/capabilities/default.json"), "utf8"),
+    ) as { permissions: readonly string[] };
+    expect(capability.permissions).toEqual(
+      expect.arrayContaining([
+        "core:window:allow-show",
+        "core:window:allow-set-background-color",
+        "core:webview:allow-set-webview-background-color",
+      ]),
+    );
+  });
+
+  it("places the macOS traffic lights where the 52px top bars expect them", () => {
+    const mac = configs.find((entry) => entry.file === "tauri.macos.conf.json")?.main;
+    expect(mac?.trafficLightPosition).toEqual({
+      x: MAC_TRAFFIC_LIGHTS.x,
+      y: MAC_TRAFFIC_LIGHTS.y,
+    });
   });
 });

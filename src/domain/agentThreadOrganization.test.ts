@@ -6,7 +6,11 @@ import {
   type AgentTurn,
 } from "./agentThread";
 import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
-import { agentThreadReorderPlan, compareAgentThreadOrder } from "./agentThreadOrganization";
+import {
+  agentThreadReorderPlan,
+  agentThreadSectionMoves,
+  compareAgentThreadOrder,
+} from "./agentThreadOrganization";
 
 function thread(id = "agt-t1-0001"): AgentThread {
   return {
@@ -342,4 +346,27 @@ describe("organization on new activity", () => {
       }
     },
   );
+});
+
+describe("agentThreadSectionMoves", () => {
+  const organized = (patch: Partial<AgentThread>): AgentThread => ({ ...thread(), ...patch });
+
+  it("computes the minimal organisation steps", () => {
+    expect(agentThreadSectionMoves(organized({}), "pinned", 0)).toEqual(["togglePin"]);
+    expect(agentThreadSectionMoves(organized({ pinned: true }), "settled", 0)).toEqual([
+      "togglePin",
+      "settle",
+    ]);
+    expect(agentThreadSectionMoves(organized({ settledAt: 5 }), "active", 0)).toEqual(["restore"]);
+    expect(agentThreadSectionMoves(organized({ settledAt: 5 }), "pinned", 0)).toEqual([
+      "restore",
+      "togglePin",
+    ]);
+    expect(agentThreadSectionMoves(organized({ snoozedUntil: 10 }), "active", 5)).toEqual([
+      "unsnooze",
+    ]);
+    expect(agentThreadSectionMoves(organized({ snoozedUntil: 10 }), "active", 20)).toEqual([]);
+    expect(agentThreadSectionMoves(organized({}), "active", 0)).toEqual([]);
+    expect(agentThreadSectionMoves(organized({ settledAt: 5 }), "settled", 0)).toEqual([]);
+  });
 });

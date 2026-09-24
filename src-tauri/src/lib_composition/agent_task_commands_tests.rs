@@ -1327,13 +1327,25 @@ fn release_agent_root_lease_facade_returns_exact_closed_dispositions() {
         lease_token: first_token,
     };
 
-    let released = release_agent_root_lease_for_registry(first_request(), &registry, None)
-        .expect("release exact owner");
-    let not_held = release_agent_root_lease_for_registry(first_request(), &registry, None)
-        .expect("release absent root");
+    let released = release_agent_root_lease_for_registry(
+        first_request(),
+        &registry,
+        &WorkspaceRegistry::new(),
+    )
+    .expect("release exact owner");
+    let not_held = release_agent_root_lease_for_registry(
+        first_request(),
+        &registry,
+        &WorkspaceRegistry::new(),
+    )
+    .expect("release absent root");
     let second_token = registry.acquire(&workspace.root).expect("second acquire");
-    let foreign_owner = release_agent_root_lease_for_registry(first_request(), &registry, None)
-        .expect("refuse foreign owner");
+    let foreign_owner = release_agent_root_lease_for_registry(
+        first_request(),
+        &registry,
+        &WorkspaceRegistry::new(),
+    )
+    .expect("refuse foreign owner");
 
     assert_eq!(
         released,

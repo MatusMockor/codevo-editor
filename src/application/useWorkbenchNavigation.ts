@@ -73,7 +73,7 @@ export interface WorkbenchNavigation {
   openProblemNotice: (notice: WorkbenchNotice) => Promise<boolean>;
   openRecentFile: (entry: RecentFileEntry) => Promise<void>;
   openCurrentFileLocation: (location: QuickOpenLocation) => void;
-  openSearchResult: (result: FileSearchResult, location?: QuickOpenLocation) => Promise<void>;
+  openSearchResult: (result: FileSearchResult, location?: QuickOpenLocation) => Promise<boolean>;
   openWorkspaceSymbolResult: (result: ProjectSymbolSearchResult) => Promise<void>;
   goToNextProblem: () => Promise<boolean>;
   goToPreviousProblem: () => Promise<boolean>;
@@ -125,12 +125,12 @@ export function useWorkbenchNavigation(
       });
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
+        return false;
       }
 
       if (!opened) {
         forgetRecentFile(result.path);
-        return;
+        return false;
       }
 
       if (location) {
@@ -144,6 +144,7 @@ export function useWorkbenchNavigation(
       }
 
       setQuickOpenOpen(false);
+      return true;
     },
     [currentWorkspaceRootRef, forgetRecentFile, openFile, setEditorRevealTarget, setQuickOpenOpen],
   );

@@ -2,6 +2,7 @@ use super::{
     WorkspaceWatchBackend, WorkspaceWatchEvent, WorkspaceWatchEventKind, WorkspaceWatchFileKind,
 };
 use crate::ignore_matcher::is_default_ignored_name;
+use crate::workspace::protected_paths::ProtectedPathPolicy;
 use std::{
     collections::BTreeSet,
     fs,
@@ -22,12 +23,23 @@ pub(super) struct GitHeadWatch {
 }
 
 impl GitHeadWatch {
-    pub(super) fn discover(root: &Path) -> Self {
+    pub(super) fn discover(root: &Path, is_cancelled: &dyn Fn() -> bool) -> Self {
+        Self::discover_with_protected_paths(root, ProtectedPathPolicy::current(), is_cancelled)
+    }
+
+    pub(super) fn discover_with_protected_paths(
+        root: &Path,
+        protected_paths: &ProtectedPathPolicy,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Self {
         let mut external = BTreeSet::new();
         let mut pending = vec![(root.to_path_buf(), 0)];
         let mut entries = 0;
         let deadline = Instant::now() + Duration::from_secs(2);
         while let Some((directory, depth)) = pending.pop() {
+            if is_cancelled() {
+                return Self::cancelled(external);
+            }
             if let Some(git_dir) = linked_git_dir(&directory) {
                 if !git_dir.starts_with(root) {
                     external.insert(git_dir);
@@ -46,6 +58,9 @@ impl GitHeadWatch {
                 continue;
             };
             for entry in children {
+                if is_cancelled() {
+                    return Self::cancelled(external);
+                }
                 entries += 1;
                 if entries > MAX_ENTRIES || Instant::now() >= deadline {
                     return Self {
@@ -63,14 +78,26 @@ impl GitHeadWatch {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
-                if kind.is_dir() && !kind.is_symlink() {
-                    pending.push((entry.path(), depth + 1));
+                if !kind.is_dir() || kind.is_symlink() {
+                    continue;
                 }
+                let child = entry.path();
+                if protected_paths.is_protected_directory(&child) {
+                    continue;
+                }
+                pending.push((child, depth + 1));
             }
         }
         Self {
             external,
             warning: None,
+        }
+    }
+
+    fn cancelled(external: BTreeSet<PathBuf>) -> Self {
+        Self {
+            external,
+            warning: Some("Git metadata watch discovery was cancelled.".into()),
         }
     }
 

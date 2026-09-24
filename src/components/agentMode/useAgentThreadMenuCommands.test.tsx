@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTasksNotice, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
-import type { AgentProjectMenuTarget } from "./agentSidebarPresentation";
+import { agentThreadBulkOwnerKey } from "../../domain/agentThreadBulkAction";
+import type { AgentProjectMenuTarget } from "./agentProjectMenuPresentation";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import {
   CLIPBOARD_UNAVAILABLE_NOTICE,
@@ -74,6 +75,31 @@ describe("useAgentThreadMenuCommands", () => {
       ["one", { settledAt: null, snoozedUntil: null }],
     ]);
     expect(reorderThread).toHaveBeenCalledWith("one", "two", "before");
+  });
+
+  it("moves a pinned thread to Settled by unpinning and settling", () => {
+    const togglePin = vi.fn();
+    const updateThreadOrganization = vi.fn();
+    const pinned = surfaceThreadView();
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [{ ...pinned, thread: { ...pinned.thread, pinned: true } }],
+        togglePin,
+        updateThreadOrganization,
+      }),
+    });
+    act(() =>
+      current().handleThreadMenuCommand("agt-1", { kind: "moveToSection", section: "settled" }),
+    );
+    expect(togglePin).toHaveBeenCalledWith("agt-1");
+    expect(updateThreadOrganization).toHaveBeenCalledWith(
+      "agt-1",
+      expect.objectContaining({ settledAt: expect.any(Number) }),
+    );
+    act(() =>
+      current().handleThreadMenuCommand("missing", { kind: "moveToSection", section: "pinned" }),
+    );
+    expect(togglePin).toHaveBeenCalledTimes(1);
   });
 
   it("does not forward server project actions to local project controls", () => {
@@ -243,8 +269,8 @@ describe("useAgentThreadMenuCommands", () => {
         kind: "apply",
         request: {
           action: "archive",
-          ownerKey: SURFACE_FIXTURE_ROOT,
           threadIds: ["agt-1", "agt-run", "agt-old", "agt-foreign"],
+          ownerKeys: capturedOwners(["agt-1", "agt-run", "agt-old", "agt-foreign"]),
           missingIds: ["agt-gone"],
         },
       }),
@@ -263,6 +289,45 @@ describe("useAgentThreadMenuCommands", () => {
     ]);
   });
 
+  it("skips a thread whose owner was rebound after it was selected", async () => {
+    const rebound = surfaceThreadView();
+    const agents = threadsSurfaceFixture({
+      threads: [
+        {
+          ...rebound,
+          thread: {
+            ...rebound.thread,
+            owner: { ...rebound.thread.owner, ownerId: "agent-root:app:reopened" },
+          },
+        },
+      ],
+      archive: vi.fn(() => true),
+      remove: vi.fn(() => true),
+    });
+    render({ agents });
+
+    await act(async () =>
+      current().handleThreadBulkCommand({
+        kind: "apply",
+        request: {
+          action: "delete",
+          threadIds: ["agt-1"],
+          ownerKeys: capturedOwners(["agt-1"]),
+          missingIds: [],
+        },
+      }),
+    );
+
+    expect(agents.remove).not.toHaveBeenCalled();
+    expect(notices).toEqual([
+      {
+        kind: "info",
+        message: "Deleted 0 threads. Skipped 1: 1 owned by another project.",
+        action: null,
+      },
+    ]);
+  });
+
   it("never routes a running thread into a bulk delete the surface would refuse", async () => {
     const agents = threadsSurfaceFixture({
       threads: [surfaceThreadView(), runningView("agt-run"), foreignView("agt-foreign")],
@@ -276,8 +341,8 @@ describe("useAgentThreadMenuCommands", () => {
         kind: "apply",
         request: {
           action: "delete",
-          ownerKey: SURFACE_FIXTURE_ROOT,
           threadIds: ["agt-1", "agt-run", "agt-foreign"],
+          ownerKeys: capturedOwners(["agt-1", "agt-run", "agt-foreign"]),
           missingIds: [],
         },
       }),
@@ -324,8 +389,8 @@ describe("useAgentThreadMenuCommands", () => {
         kind: "apply",
         request: {
           action: "archive",
-          ownerKey: SURFACE_FIXTURE_ROOT,
           threadIds: ids,
+          ownerKeys: capturedOwners(ids),
           missingIds: [],
         },
       }),
@@ -375,8 +440,8 @@ describe("useAgentThreadMenuCommands", () => {
         kind: "apply",
         request: {
           action: "archive",
-          ownerKey: SURFACE_FIXTURE_ROOT,
           threadIds: ["agt-1"],
+          ownerKeys: capturedOwners(["agt-1"]),
           missingIds: [],
         },
       }),
@@ -399,8 +464,8 @@ describe("useAgentThreadMenuCommands", () => {
         kind: "apply",
         request: {
           action: "unarchive",
-          ownerKey: SURFACE_FIXTURE_ROOT,
           threadIds: ["agt-1", "agt-old"],
+          ownerKeys: capturedOwners(["agt-1", "agt-old"]),
           missingIds: [],
         },
       }),
@@ -512,3 +577,11 @@ describe("useAgentThreadMenuCommands", () => {
     return null;
   }
 });
+
+function capturedOwners(threadIds: ReadonlyArray<string>): ReadonlyMap<string, string> {
+  const owner = agentThreadBulkOwnerKey({
+    rootKey: SURFACE_FIXTURE_ROOT,
+    ownerId: "agent-root:app",
+  });
+  return new Map(threadIds.map((threadId) => [threadId, owner]));
+}

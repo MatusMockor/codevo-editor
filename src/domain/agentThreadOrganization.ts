@@ -253,3 +253,23 @@ export function reorderAgentThread(
     threads.set(item.threadId, { ...threads.get(item.threadId)!, sortOrder: item.sortOrder });
   return { threads };
 }
+
+export type AgentThreadSectionMove = "togglePin" | "settle" | "restore" | "unsnooze";
+
+export function agentThreadSectionMoves(
+  thread: Pick<AgentThread, "pinned" | "settledAt" | "snoozedUntil">,
+  section: AgentThreadDropSection,
+  now: number,
+): ReadonlyArray<AgentThreadSectionMove> {
+  const moves: AgentThreadSectionMove[] = [];
+  const settled = thread.settledAt != null;
+  if (section === "settled") {
+    if (thread.pinned) moves.push("togglePin");
+    if (!settled) moves.push("settle");
+    return moves;
+  }
+  if (settled) moves.push("restore");
+  if ((thread.snoozedUntil ?? 0) > now) moves.push("unsnooze");
+  if ((section === "pinned") !== thread.pinned) moves.push("togglePin");
+  return moves;
+}

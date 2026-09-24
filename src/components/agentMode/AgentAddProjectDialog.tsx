@@ -7,6 +7,8 @@ import {
   type DirectoryEntry,
   type DirectoryListingGateway,
 } from "../../domain/directoryListing";
+import type { WorkspacePathCase } from "../../domain/workspaceRootEligibility";
+import { detectHostWorkspacePathCase } from "../../infrastructure/hostWorkspacePathCase";
 import {
   agentAddProjectActionLabel,
   agentAddProjectIntent,
@@ -24,6 +26,7 @@ export interface AgentAddProjectDialogProps {
   readonly mode?: "addProject" | "selectDirectory";
   readonly environment?: "local" | "remote";
   readonly environmentLabel?: string;
+  readonly pathCase?: WorkspacePathCase;
   readonly initialPath?: string | null;
   readonly projectRootPaths: ReadonlyArray<string>;
   onClose(): void;
@@ -38,6 +41,7 @@ export function AgentAddProjectDialog({
   environment = "local",
   environmentLabel,
   initialPath,
+  pathCase,
   onAdd,
   onClose,
   onNotice,
@@ -68,6 +72,13 @@ export function AgentAddProjectDialog({
     currentPath,
     hasListing: listing !== null,
     projectRootPaths: mode === "selectDirectory" ? [] : projectRootPaths,
+    rootPolicy:
+      mode === "selectDirectory"
+        ? { kind: "anyDirectory" }
+        : {
+            kind: "projectRoot",
+            home: { path: browser.homePath, pathCase: pathCase ?? defaultPathCase(environment) },
+          },
     status,
   });
   const intentReason = agentAddProjectIntentReason(intent);
@@ -317,6 +328,11 @@ export function AgentAddProjectDialog({
       </section>
     </div>
   );
+}
+
+function defaultPathCase(environment: "local" | "remote"): WorkspacePathCase {
+  if (environment === "remote") return "insensitive";
+  return detectHostWorkspacePathCase();
 }
 
 function EntryGlyph({ entry }: { readonly entry: DirectoryEntry }) {

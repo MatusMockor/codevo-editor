@@ -7,6 +7,7 @@ import {
   type AgentWorkbenchLayout,
 } from "../../domain/agentWorkbenchLayout";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import { isAgentRemoteSurfaceKind } from "../../domain/agentSurfaceActivation";
 import {
   agentSurfaceHostPlacement,
   type AgentSurfaceHostPlacement,
@@ -30,10 +31,13 @@ export interface AgentSurfaceLayout {
   openSurface(surface: AgentSurfaceKind): void;
   activateSurface(surface: AgentSurfaceKind): void;
   closeSurfaceTab(surface: AgentSurfaceKind): void;
+  toggleSurface(surface: AgentSurfaceKind): void;
+  isSurfaceOpen(surface: AgentSurfaceKind): boolean;
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
   toggleRightPanel(): void;
   toggleRail(): void;
   resizeRail(width: number): void;
+  resizeRightPanel(width: number): void;
   resetRailWidth(): void;
   toggleMaximized(): void;
 }
@@ -117,10 +121,30 @@ export function useAgentSurfaceLayout({
     },
     [dispatchLayout],
   );
+  const toggleSurface = useCallback(
+    (surface: AgentSurfaceKind) => {
+      if (
+        layout.rightPanel === "open" &&
+        layout.activeSurface === surface &&
+        layout.openSurfaces.includes(surface)
+      ) {
+        dispatchLayout({ kind: "closeSurfaceTab", surface });
+        return;
+      }
+      setChooserRequested(false);
+      dispatchLayout({ kind: "openSurface", surface });
+    },
+    [dispatchLayout, layout.activeSurface, layout.openSurfaces, layout.rightPanel],
+  );
+  const isSurfaceOpen = useCallback(
+    (surface: AgentSurfaceKind) =>
+      layout.rightPanel === "open" && layout.openSurfaces.includes(surface),
+    [layout.openSurfaces, layout.rightPanel],
+  );
   const workspaceTrusted = chrome.workspaceTrusted;
   const surfaceBlocked = useCallback(
     (surface: AgentSurfaceKind) =>
-      surface !== "diff" && remoteSurfaceSupports(remoteSurface, surface)
+      isAgentRemoteSurfaceKind(surface) && remoteSurfaceSupports(remoteSurface, surface)
         ? false
         : agentSurfaceBlockedReason(surface, selectedThread, workspaceTrusted, workspaceRoot) !==
           null,
@@ -133,6 +157,10 @@ export function useAgentSurfaceLayout({
   const toggleRail = useCallback(() => dispatchLayout({ kind: "toggleRail" }), [dispatchLayout]);
   const resizeRail = useCallback(
     (width: number) => dispatchLayout({ kind: "resizeRail", width }),
+    [dispatchLayout],
+  );
+  const resizeRightPanel = useCallback(
+    (width: number) => dispatchLayout({ kind: "resizeRightPanel", width }),
     [dispatchLayout],
   );
   const resetRailWidth = useCallback(
@@ -156,10 +184,13 @@ export function useAgentSurfaceLayout({
     openSurface,
     activateSurface,
     closeSurfaceTab,
+    toggleSurface,
+    isSurfaceOpen,
     surfaceBlocked,
     toggleRightPanel,
     toggleRail,
     resizeRail,
+    resizeRightPanel,
     resetRailWidth,
     toggleMaximized,
   };

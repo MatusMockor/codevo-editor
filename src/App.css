@@ -7,7 +7,6 @@
 @import "./components/agentMode/agentComposer.css";
 @import "./components/agentMode/agentSurface.css";
 @import "./components/agentMode/agentUsage.css";
-@import "./components/agentMode/agentStatusBar.css";
 @import "./components/agentMode/agentTerminalSessionsPalette.css";
 @import "./components/settings/settings.css";
 @import "./components/fileTypeGlyph.css";
@@ -763,6 +762,7 @@ button {
 .app-shell {
   --window-chrome-height: 36px;
   --window-native-controls-inset: 0px;
+  --cv-shell-window-inset: var(--window-native-controls-inset);
   --window-native-controls-row: 0px;
 
   color-scheme: dark;
@@ -772,7 +772,7 @@ button {
   min-width: 100%;
   min-height: 100%;
   grid-template-columns: 46px minmax(180px, var(--sidebar-width, 300px)) minmax(0, 1fr);
-  grid-template-rows: var(--window-chrome-height) minmax(0, 1fr) 28px;
+  grid-template-rows: var(--window-chrome-height) minmax(0, 1fr);
   background: var(--color-app);
 }
 
@@ -796,7 +796,7 @@ button {
 
 .app-shell--agent-mode.app-shell--mac {
   --window-chrome-height: 0px;
-  --window-native-controls-inset: 78px;
+  --window-native-controls-inset: var(--cv-traffic-light-inset);
   --window-native-controls-row: 36px;
   --toast-top: 60px;
 }
@@ -838,10 +838,10 @@ button {
 
 .window-native-control-space {
   display: block;
-  width: 78px;
+  width: var(--cv-traffic-light-inset);
   height: 100%;
   align-self: stretch;
-  flex: 0 0 78px;
+  flex: 0 0 var(--cv-traffic-light-inset);
 }
 
 .window-menu-bar {
@@ -1825,7 +1825,7 @@ button {
 }
 
 .git-commit-message:focus {
-  border-color: var(--color-accent);
+  border-color: var(--color-border-strong);
   outline: none;
 }
 
@@ -2177,6 +2177,13 @@ button {
   border-bottom: 1px solid var(--color-border);
   background: var(--color-tabs);
   padding: 4px 10px;
+}
+
+.workbench-toolbar__status {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: auto;
 }
 
 .smart-mode-switch {
@@ -2833,8 +2840,8 @@ button {
 }
 
 .breakpoint-editor-dialog input:focus {
-  border-color: var(--color-accent);
-  outline: 1px solid var(--color-accent);
+  border-color: var(--color-border-strong);
+  outline: none;
 }
 
 .breakpoint-editor-error {
@@ -4513,20 +4520,17 @@ button.problem-row:focus-visible {
   color: var(--color-text-strong);
 }
 
-.status-bar {
+.editor-status {
   display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  gap: 0;
   min-width: 0;
-  height: 100%;
-  background: var(--color-status);
+  flex: 0 1 auto;
+  align-items: center;
+  overflow: hidden;
   color: var(--color-text-muted);
   font-size: 11.5px;
-  padding: 0 8px;
 }
 
-.status-bar span {
+.editor-status span {
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -6813,6 +6817,24 @@ kbd {
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+:where(
+  textarea,
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"],
+    [type="color"],
+    [type="file"],
+    [type="image"]
+  ),
+  [contenteditable]:not([contenteditable="false"])
+):focus-visible {
+  box-shadow: none;
 }
 
 .runtime-observability-panel {

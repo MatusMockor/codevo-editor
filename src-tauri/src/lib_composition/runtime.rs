@@ -103,6 +103,7 @@ pub fn run() {
         .manage(Mutex::new(SmartModeService::new()))
         .manage(crate::remote_runner::InventoryStreamState::default())
         .manage(startup_metrics)
+        .manage(startup_window_reveal::StartupWindowReveal::default())
         .manage(NativeCloseListenerState::default())
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
@@ -138,6 +139,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
+            startup_window_reveal::schedule_startup_reveal_fallback(app.handle());
             crate::claude_model_manifest::initialize(app.handle().clone(), app.path().app_data_dir()?);
             app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);
             app.manage(Arc::new(crate::agent_turn_changes::AgentTurnChangesStore::new(app.path().app_data_dir()?)));
@@ -202,6 +204,9 @@ pub fn run() {
             app.manage(codex_hosts);
             app.manage(agent_cli_versions);
             app.manage(Arc::new(repository_lookup::RepositoryLookupService::new(
+                Arc::clone(&agent_cli_discovery),
+            )));
+            app.manage(Arc::new(pull_request_commands::PullRequestService::new(
                 Arc::clone(&agent_cli_discovery),
             )));
             app.manage(agent_cli_discovery);
@@ -298,6 +303,7 @@ pub fn run() {
             #[cfg(feature = "perf-capture")]
             perf_capture::perf_capture_prepare_fixture_trust,
             startup_metrics::log_startup_shell_painted,
+            startup_window_reveal::reveal_startup_window,
             amend_git_commit,
             reword_git_commit,
             clear_workspace_index,
@@ -323,6 +329,7 @@ pub fn run() {
             vscode_process_task_tauri::workspace_stop_vscode_process_task,
             register_workspace_path,
             rollback_workspace_registration,
+            adopt_workspace_admission,
             unregister_workspace,
             project_commands::get_workspace_descriptor,
             workspace_commands::workspace_read_text_file,
@@ -646,8 +653,14 @@ pub fn run() {
             git_integration_commands::get_git_ship_status,
             git_integration_commands::push_git_branch_upstream,
             git_integration_commands::integrate_git_worktree_branch,
+            git_surface_commands::get_git_surface_status,
+            git_surface_commands::get_git_branch_changes,
+            git_surface_commands::get_git_branch_file_diff,
+            pull_request_commands::get_pull_request_context,
+            pull_request_commands::create_pull_request,
             git_worktree_commands::list_git_worktrees,
             git_worktree_commands::add_git_worktree,
+            git_worktree_commands::add_git_branch_worktree,
             git_worktree_commands::remove_git_worktree,
             git_worktree_commands::prune_git_worktrees,
             crate::local_clone::local_clone_project,

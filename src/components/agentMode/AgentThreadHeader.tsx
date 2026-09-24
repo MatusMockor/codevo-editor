@@ -1,22 +1,32 @@
-import { memo, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import { ChevronDown, Folder, History } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import { ChevronDown, GitCommitHorizontal, History } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentThreadScriptsSurface } from "../../application/useAgentThreadScripts";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
 import { runningTurn } from "../../domain/agentThread";
-import { AgentCommitMenu } from "./AgentCommitMenu";
+import { Button } from "../../ui/foundation/Button";
+import { IconButton } from "../../ui/foundation/IconButton";
+import { ProjectFavicon } from "../../ui/shell/ProjectFavicon";
+import { TopBar, TopBarSeparator } from "../../ui/shell/TopBar";
 import { agentShipBranchLabel, agentThreadDisplayTitle } from "./agentModePresentation";
 import { AgentOpenMenu } from "./AgentOpenMenu";
 import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import { AgentScriptRunControl } from "./AgentScriptRunControl";
-import type { AgentShipActions } from "./AgentShipPanel";
 import {
   agentThreadImportedBadgeLabel,
   agentViewCanMarkUnread,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
-import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
 import { RemoteThreadIndicator, RenameInput } from "./AgentThreadRowParts";
+import { useAgentThreadRowMenu } from "./useAgentThreadRowMenu";
 import {
   AGENT_TERMINAL_SESSIONS_LABEL,
   AGENT_OPEN_REMOTE_REASON,
@@ -35,9 +45,10 @@ export interface AgentThreadHeaderProps {
   readonly layout: AgentWorkbenchLayout;
   readonly bottomPanelOpen: boolean;
   readonly scripts: AgentThreadScriptsSurface;
-  readonly shipActions: AgentShipActions;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
-  readonly commitMenuOpenSignal?: number;
+  readonly gitSurfaceActive?: boolean;
+  readonly leading?: ReactNode;
+  readonly trailingExtras?: ReactNode;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onRenameThread(threadId: string, title: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -50,14 +61,8 @@ export interface AgentThreadHeaderProps {
   onRevealFailed(error: unknown): void;
 }
 
-interface MenuAnchor {
-  readonly x: number;
-  readonly y: number;
-}
-
 export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThreadHeaderProps) {
   const { layout, onNewThread, onRenameThread, onThreadMenuCommand, project, thread } = props;
-  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [renaming, setRenaming] = useState(false);
   const titleRef = useRef<HTMLButtonElement | null>(null);
   const remote = thread?.execution?.kind === "remote";
@@ -66,23 +71,43 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
   const projectLabel = project?.label ?? thread?.repositoryLabel ?? null;
   const importedLabel = agentThreadImportedBadgeLabel(thread?.thread.externalOrigin ?? null);
 
-  useEffect(() => {
-    setMenuAnchor(null);
-    setRenaming(false);
-  }, [threadId]);
+  const threadCommand = useCallback(
+    (command: AgentThreadMenuCommand) => {
+      if (threadId !== null) onThreadMenuCommand(threadId, command);
+    },
+    [onThreadMenuCommand, threadId],
+  );
+  const menu = useAgentThreadRowMenu({
+    title,
+    returnFocusRef: titleRef,
+    context: () => ({
+      branch: thread === null ? null : agentShipBranchLabel(thread.ship),
+      pinned: thread?.thread.pinned ?? false,
+      archived: thread?.thread.archived ?? false,
+      running: thread !== null && runningTurn(thread.thread) !== null,
+      snoozed: (thread?.thread.snoozedUntil ?? 0) > Date.now(),
+      settled: thread?.thread.settledAt != null,
+      canMarkUnread: thread !== null && agentViewCanMarkUnread(thread),
+    }),
+    onCommand: threadCommand,
+    onRename: () => setRenaming(true),
+  });
+  const resetMenu = menu.reset;
 
-  const closeMenu = useCallback(() => setMenuAnchor(null), []);
+  useEffect(() => {
+    resetMenu();
+    setRenaming(false);
+  }, [resetMenu, threadId]);
 
   const openMenuBelowTitle = (): void => {
     const rect = titleRef.current?.getBoundingClientRect();
     if (rect === undefined) return;
-    setMenuAnchor({ x: rect.left, y: rect.bottom + 4 });
+    menu.openAt({ x: rect.left, y: rect.bottom + 4 });
   };
 
   const onContextMenu = (event: MouseEvent<HTMLElement>): void => {
     if (thread === null) return;
-    event.preventDefault();
-    setMenuAnchor({ x: event.clientX, y: event.clientY });
+    menu.openAtPointer(event);
   };
 
   const commitRename = (next: string): void => {
@@ -96,21 +121,92 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
     onNewThread(project.projectRootKey, project.repositoryRoot);
   };
 
+  const terminalSessions = (
+    <TerminalSessionsButton onOpen={remote ? null : props.onOpenTerminalSessions} remote={remote} />
+  );
+  const actions =
+    thread === null ? (
+      terminalSessions
+    ) : (
+      <>
+        <AgentOpenMenu
+          onCopyPath={() =>
+            onThreadMenuCommand(thread.thread.threadId, { kind: "copy", detail: "path" })
+          }
+          onOpenSurface={props.onOpenSurface}
+          onRevealFailed={props.onRevealFailed}
+          onRevealPath={props.onRevealPath}
+          target={{
+            path: thread.thread.target.worktreePath ?? thread.thread.owner.repositoryRoot,
+            missing: thread.worktreeMissing,
+            blockedReason: remote ? AGENT_OPEN_REMOTE_REASON : null,
+          }}
+        />
+        {terminalSessions}
+      </>
+    );
+  const trailing = (
+    <>
+      {thread === null ? null : (
+        <>
+          <AgentScriptRunControl
+            onOpenScriptsView={props.onOpenScriptsView}
+            scripts={props.scripts}
+          />
+          <Button
+            aria-label="Commit"
+            aria-pressed={props.gitSurfaceActive === true}
+            icon={<GitCommitHorizontal size={14} />}
+            onClick={() => props.onOpenSurface("git")}
+            size="sm"
+            title="Commit changes in the Git panel"
+          >
+            Commit
+          </Button>
+          <TopBarSeparator />
+        </>
+      )}
+      {props.trailingExtras ?? null}
+      <AgentPanelLayoutControls
+        bottomPanelOpen={props.bottomPanelOpen}
+        onToggleBottomPanel={props.onToggleBottomPanel}
+        onToggleRightPanel={props.onToggleRightPanel}
+        rightPanelOpen={layout.rightPanel === "open"}
+        shortcuts={props.shortcuts}
+      />
+    </>
+  );
+
   return (
-    <header className="agent-thread-head" data-agent-thread-head data-tauri-drag-region="deep">
-      <nav aria-label="Thread breadcrumb" className="agent-crumbs" onContextMenu={onContextMenu}>
+    <TopBar
+      actions={actions}
+      className="agent-thread-head"
+      data-agent-thread-head=""
+      label="Thread"
+      leading={props.leading}
+      region="main"
+      trailing={trailing}
+      windowEdge
+    >
+      <nav
+        aria-label="Thread breadcrumb"
+        className="agent-crumbs cv-crumb"
+        onContextMenu={onContextMenu}
+      >
         <button
           aria-label={projectLabel === null ? "New thread" : `New thread in ${projectLabel}`}
-          className="agent-crumbs__project"
+          className="agent-crumbs__project cv-crumb__project"
           disabled={project === null}
           onClick={startNewThread}
           title={project?.repositoryRoot ?? undefined}
           type="button"
         >
-          <Folder aria-hidden="true" size={14} />
-          <span className="agent-crumbs__label">{projectLabel ?? "No project"}</span>
+          <ProjectFavicon label={projectLabel ?? ""} />
+          <span className="agent-crumbs__label cv-crumb__label">
+            {projectLabel ?? "No project"}
+          </span>
         </button>
-        <span aria-hidden="true" className="agent-crumbs__sep">
+        <span aria-hidden="true" className="agent-crumbs__sep cv-crumb__sep">
           /
         </span>
         {thread !== null && renaming ? (
@@ -122,18 +218,22 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
         ) : (
           <button
             aria-current="page"
-            aria-expanded={menuAnchor !== null}
+            aria-expanded={menu.open}
             aria-haspopup="menu"
             aria-label={`Thread actions for ${title}`}
-            className="agent-crumbs__title"
+            className="agent-crumbs__title cv-crumb__here"
             disabled={thread === null}
             onClick={openMenuBelowTitle}
             ref={titleRef}
             title={title}
             type="button"
           >
-            <h2 className="agent-crumbs__heading">{title}</h2>
-            <ChevronDown aria-hidden="true" className="agent-crumbs__chevron" size={14} />
+            <h2 className="agent-crumbs__heading cv-crumb__heading">{title}</h2>
+            <ChevronDown
+              aria-hidden="true"
+              className="agent-crumbs__chevron cv-crumb__chevron"
+              size={14}
+            />
           </button>
         )}
         {remote && <RemoteThreadIndicator />}
@@ -143,71 +243,8 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
           </span>
         )}
       </nav>
-
-      <div className="agent-thread-head__actions">
-        {thread !== null && (
-          <>
-            <AgentScriptRunControl
-              onOpenScriptsView={props.onOpenScriptsView}
-              scripts={props.scripts}
-            />
-            <AgentOpenMenu
-              onCopyPath={() =>
-                onThreadMenuCommand(thread.thread.threadId, { kind: "copy", detail: "path" })
-              }
-              onOpenSurface={props.onOpenSurface}
-              onRevealFailed={props.onRevealFailed}
-              onRevealPath={props.onRevealPath}
-              target={{
-                path: thread.thread.target.worktreePath ?? thread.thread.owner.repositoryRoot,
-                missing: thread.worktreeMissing,
-                blockedReason: remote ? AGENT_OPEN_REMOTE_REASON : null,
-              }}
-            />
-            <AgentCommitMenu
-              actions={props.shipActions}
-              openSignal={props.commitMenuOpenSignal}
-              thread={thread}
-            />
-          </>
-        )}
-        <div className="agent-thread-head__tools">
-          <TerminalSessionsButton
-            onOpen={remote ? null : props.onOpenTerminalSessions}
-            remote={remote}
-          />
-          {layout.rightPanel === "closed" && (
-            <>
-              <span aria-hidden="true" className="agent-thread-head__divider" />
-              <AgentPanelLayoutControls
-                bottomPanelOpen={props.bottomPanelOpen}
-                onToggleBottomPanel={props.onToggleBottomPanel}
-                onToggleRightPanel={props.onToggleRightPanel}
-                rightPanelOpen={false}
-                shortcuts={props.shortcuts}
-              />
-            </>
-          )}
-        </div>
-      </div>
-
-      {thread !== null && menuAnchor !== null && (
-        <AgentThreadRowMenu
-          archived={thread.thread.archived}
-          snoozed={(thread.thread.snoozedUntil ?? 0) > Date.now()}
-          settled={thread.thread.settledAt != null}
-          canMarkUnread={agentViewCanMarkUnread(thread)}
-          branch={agentShipBranchLabel(thread.ship)}
-          onClose={closeMenu}
-          onCommand={(command) => onThreadMenuCommand(thread.thread.threadId, command)}
-          onRename={() => setRenaming(true)}
-          pinned={thread.thread.pinned}
-          position={menuAnchor}
-          running={runningTurn(thread.thread) !== null}
-          threadId={thread.thread.threadId}
-        />
-      )}
-    </header>
+      {thread !== null && menu.overlays}
+    </TopBar>
   );
 });
 
@@ -219,19 +256,16 @@ function TerminalSessionsButton({
   readonly remote: boolean;
 }) {
   return (
-    <button
-      aria-label={AGENT_TERMINAL_SESSIONS_LABEL}
-      className="agent-icon-toggle"
+    <IconButton
       disabled={onOpen === null}
+      icon={<History size={16} />}
+      label={AGENT_TERMINAL_SESSIONS_LABEL}
       onClick={onOpen ?? undefined}
       title={
         remote
           ? "Importing terminal sessions from this server is not available yet"
           : AGENT_TERMINAL_SESSIONS_LABEL
       }
-      type="button"
-    >
-      <History aria-hidden="true" size={14} />
-    </button>
+    />
   );
 }

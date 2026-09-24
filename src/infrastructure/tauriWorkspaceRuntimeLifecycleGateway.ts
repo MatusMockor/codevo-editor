@@ -69,9 +69,10 @@ export function parseRegisteredWorkspaceRuntimeDisposalResult(
   value: unknown,
 ): RegisteredWorkspaceRuntimeDisposalResult {
   const record = strictRecord(value, "workspace runtime disposal result");
-  if (record.status === "closed") {
-    assertExactKeys(record, ["status"], "closed workspace runtime disposal result");
-    return { status: "closed" };
+  const settled = settledRuntimeDisposalResult(record.status);
+  if (settled !== null) {
+    assertExactKeys(record, ["status"], `${settled.status} workspace runtime disposal result`);
+    return settled;
   }
   if (record.status !== "incomplete") {
     throw new Error("Workspace runtime disposal returned an unsupported status.");
@@ -93,6 +94,16 @@ export function parseRegisteredWorkspaceRuntimeDisposalResult(
     return error;
   });
   return { status: "incomplete", errors };
+}
+
+function settledRuntimeDisposalResult(
+  status: unknown,
+): Exclude<RegisteredWorkspaceRuntimeDisposalResult, { readonly status: "incomplete" }> | null {
+  if (status === "closed") return { status: "closed" };
+  if (status === "unknownWorkspace") return { status: "unknownWorkspace" };
+  if (status === "releasing") return { status: "releasing" };
+  if (status === "retainedByOtherOwners") return { status: "retainedByOtherOwners" };
+  return null;
 }
 
 function assertRegisteredWorkspaceRuntimeDisposalTarget(

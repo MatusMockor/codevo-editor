@@ -184,3 +184,100 @@ describe("retained subagent lifecycle", () => {
       expect(() => parseAgentSubagentLifecycle(invalid)).toThrow();
   });
 });
+
+describe("Codex subagent spawns", () => {
+  const spawn = (
+    callId: string,
+    status: "inProgress" | "completed" | "failed",
+    agentThreadIds: ReadonlyArray<string>,
+    taskTitle: string | null = "Review idempotency middleware",
+  ): AgentTurnEvent => ({
+    kind: "subagentSpawn",
+    callId,
+    status,
+    taskTitle,
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    agentThreadIds,
+  });
+  const started = (agentThreadId: string, agentPath: string): AgentTurnEvent => ({
+    kind: "subagentActivity",
+    activity: "started",
+    agentThreadId,
+    agentPath,
+  });
+
+  it("merges a spawn placeholder into the child thread entry once receivers are known", () => {
+    const lifecycle = retainAgentSubagentLifecycle(undefined, [
+      spawn("call-a", "inProgress", []),
+      started("child-a", "/root/reviewer"),
+      spawn("call-a", "completed", ["child-a"]),
+    ]);
+    expect(lifecycle?.entries).toHaveLength(1);
+    expect(lifecycle?.entries[0]).toMatchObject({
+      toolId: "call-a",
+      agentThreadId: "child-a",
+      name: "/root/reviewer",
+      taskTitle: "Review idempotency middleware",
+      batchKey: "spawn:call-a",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      state: "running",
+    });
+  });
+
+  it("groups consecutive spawns into one batch and starts a new batch after narration", () => {
+    const lifecycle = retainAgentSubagentLifecycle(undefined, [
+      spawn("call-a", "completed", ["child-a"], "Map order creation paths"),
+      spawn("call-b", "completed", ["child-b"], "Write retry tests"),
+      { kind: "assistantText", text: "Both agents are running." },
+      spawn("call-c", "completed", ["child-c"], "Audit routes"),
+    ]);
+    const batches = lifecycle?.entries.map((entry) => [entry.taskTitle, entry.batchKey]);
+    expect(batches).toEqual([
+      ["Map order creation paths", "spawn:call-a"],
+      ["Write retry tests", "spawn:call-a"],
+      ["Audit routes", "spawn:call-c"],
+    ]);
+  });
+
+  it("keeps a failed spawn without receivers as one failed member", () => {
+    const lifecycle = retainAgentSubagentLifecycle(undefined, [
+      spawn("call-x", "inProgress", []),
+      spawn("call-x", "failed", []),
+    ]);
+    expect(lifecycle?.entries).toEqual([
+      expect.objectContaining({ toolId: "call-x", state: "failed", taskTitle: expect.any(String) }),
+    ]);
+  });
+
+  it("settles a spawn placeholder when the spawn completes without any receiver", () => {
+    const lifecycle = retainAgentSubagentLifecycle(undefined, [
+      spawn("call-y", "inProgress", []),
+      spawn("call-y", "completed", []),
+    ]);
+    expect(lifecycle?.entries).toEqual([
+      expect.objectContaining({ id: "tool:call-y", toolId: "call-y", state: "completed" }),
+    ]);
+  });
+
+  it("keeps a spawn with receivers running after the spawn call itself completes", () => {
+    const lifecycle = retainAgentSubagentLifecycle(undefined, [
+      spawn("call-z", "inProgress", []),
+      spawn("call-z", "completed", ["child-z"]),
+    ]);
+    expect(lifecycle?.entries).toEqual([
+      expect.objectContaining({ agentThreadId: "child-z", state: "running" }),
+    ]);
+  });
+
+  it("never lets a later spawn overwrite a known task title and never duplicates a child", () => {
+    const lifecycle = retainAgentSubagentLifecycle(undefined, [
+      started("child-a", "/root/explorer"),
+      spawn("call-a", "completed", ["child-a"], "First title"),
+      spawn("call-a", "completed", ["child-a"], "Second title"),
+    ]);
+    expect(lifecycle?.entries).toHaveLength(1);
+    expect(lifecycle?.entries[0]?.taskTitle).toBe("First title");
+  });
+});

@@ -1,5 +1,10 @@
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { memo, useEffect, useMemo, useState } from "react";
+import {
+  agentTurnActivityWindowOf,
+  useAgentTurnEarlierActivity,
+  type AgentHistoryActivitySource,
+} from "../../application/useAgentHistoryActivity";
+import { agentTurnActivityWindowEvents } from "../../domain/agentTurnActivityWindow";
 import {
   agentTurnLogEvidence,
   useAgentTurnLogFacts,
@@ -12,28 +17,45 @@ import { isAgentRawOutputNoise } from "../../domain/agentOutput/agentRawOutput";
 import { agentPromptLooksClipped } from "../../domain/agentPromptClipping";
 import type { AgentRuntimeSubagents } from "../../domain/agentRuntimeSubagent";
 import type { AgentCliKind } from "../../domain/agentTask";
-import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
+import {
+  agentTurnEventUtf8Bytes,
+  type AgentTurn,
+  type AgentTurnStatus,
+} from "../../domain/agentThread";
 import { agentTurnContentLost } from "../../domain/agentTurnContentLoss";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentActivityItems } from "./AgentActivityItems";
 import type { AgentProseContext, AgentProseStream } from "./AgentAssistantText";
 import { AgentBackgroundActivity } from "./AgentBackgroundActivity";
 import { AgentCompactionActivity } from "./AgentCompactionActivity";
-import type { AgentHistoryWork } from "./AgentHistoryActivity";
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
 import { AgentToolDisclosureContext, useAgentTurnToolDisclosure } from "./AgentToolDisclosure";
 import { AgentTurnArtifacts, type AgentArtifactScope } from "./AgentTurnArtifacts";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import { AgentProviderErrorHint, AgentTurnItemView } from "./AgentTurnItemView";
-import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
-import { agentActivityAttentionCount } from "./agentActivityGrouping";
+import { AgentTurnPrompt } from "./AgentTurnParts";
+import { AgentTurnMeta } from "./conversation/AgentTurnMeta";
+import { AgentLiveRow } from "./conversation/AgentLiveRow";
+import { AgentTurnWork } from "./conversation/AgentTurnWork";
+import {
+  AgentTurnEarlierControl,
+  AgentTurnLaterControl,
+} from "./conversation/AgentTurnEarlierActivity";
+import { useAgentScrollAnchor } from "./conversation/useAgentScrollAnchor";
+import {
+  agentFinalResponseItems,
+  agentItemsBeforeFinalResponse,
+} from "./conversation/agentTurnFinalResponse";
+import { savedToolSettlement } from "./conversation/agentTurnWorkSettlement";
+import { toolRowIcon } from "./agentToolRowIcon";
+import { agentTurnMetaAgentLabel, agentTurnMetaAt } from "./conversation/agentTurnMetaLine";
+import { agentActivityAttentionCount, agentWorkFoldLabel } from "./agentActivityGrouping";
 import {
   agentBackgroundIndicator,
   agentBackgroundWait,
   agentBackgroundWaitTitle,
 } from "./agentBackgroundIndicatorPresentation";
 import { agentBackgroundSettledWorkFold } from "./agentBackgroundWorkFold";
-import { AgentWorkingDuration } from "./agentClock";
 import { agentTurnDurationLabel } from "./agentModePresentation";
 import { agentThreadColumnKey } from "./agentThreadColumn";
 import { agentTurnAttachmentViews } from "./agentTurnAttachmentPresentation";
@@ -43,14 +65,15 @@ import {
   repeatsLastError,
   turnFailure,
   type AgentTurnEndMarker,
-  type AgentTurnErrorContext,
 } from "./agentTurnErrorPresentation";
 import { agentTurnTiming } from "./agentTurnHeadPresentation";
 import { itemHighlight, type AgentTurnHighlight } from "./agentTurnHighlightModel";
-import { agentTurnItemsMissingFrom } from "./agentTurnItemEquality";
-import { agentTurnItemKey, normalizeAgentTurnEventOffset } from "./agentTurnItemKeys";
+import {
+  agentTurnItemKey,
+  agentTurnLogItemKey,
+  normalizeAgentTurnEventOffset,
+} from "./agentTurnItemKeys";
 import { agentTurnLogNoticeModel } from "./agentTurnLogNotice";
-import { agentTurnLaunchLabel } from "./agentTurnMetaPresentation";
 import {
   MAX_RENDERED_EVENTS_PER_TURN,
   MAX_REVEALED_EVENTS_PER_TURN,
@@ -62,17 +85,15 @@ import {
   agentTurnWorkFold,
   agentPartialWorkSummary,
   type AgentRawLine,
-  type AgentToolSettlement,
   type AgentTurnItem,
   type AgentTurnLiveActivity,
 } from "./agentTurnProjection";
-import "./agentTranscript.css";
 
 const WORKING_LABEL = "Working…";
 const STANDALONE_COMPACT_PROMPT = /^\/compact(?:\s|$)/;
 
 export interface AgentTurnViewProps {
-  readonly historyWork: AgentHistoryWork;
+  readonly activitySource?: AgentHistoryActivitySource | null;
   readonly artifactScope?: AgentArtifactScope | null;
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
@@ -89,7 +110,7 @@ export interface AgentTurnViewProps {
 }
 
 export const AgentTurnView = memo(function AgentTurnView({
-  historyWork,
+  activitySource = null,
   artifactScope = null,
   attachmentImages = null,
   highlight = null,
@@ -125,6 +146,23 @@ export const AgentTurnView = memo(function AgentTurnView({
     [turn.events, revealEventIndex, workspaceRoot, toolSettlement, eventOffset, renderedLimit],
   );
   const running = settlement === "running";
+  const readerSource =
+    activitySource !== null && activitySource.scope.turnId === turn.turnId && turn.eventsTruncated
+      ? activitySource
+      : null;
+  const earlier = useAgentTurnEarlierActivity(readerSource);
+  const activityWindow = agentTurnActivityWindowOf(earlier.state);
+  const [windowOpenedRunning, setWindowOpenedRunning] = useState(false);
+  const windowStale = activityWindow !== null && windowOpenedRunning;
+  const anchorRevision = useMemo(
+    () => ({ activityWindow, renderedLimit }),
+    [activityWindow, renderedLimit],
+  );
+  const scrollAnchor = useAgentScrollAnchor(anchorRevision);
+  const earlierFailed = earlier.state.kind === "failed";
+  useEffect(() => {
+    if (earlierFailed) scrollAnchor.cancel();
+  }, [earlierFailed, scrollAnchor]);
   const [streamed, setStreamed] = useState(running);
 
   useEffect(() => {
@@ -165,24 +203,36 @@ export const AgentTurnView = memo(function AgentTurnView({
         : agentTurnWorkFold(projection.items, foregroundRunning),
     [backgroundOnly, foregroundRunning, projection.items],
   );
+  const windowEvents = useMemo(
+    () => (activityWindow === null ? null : agentTurnActivityWindowEvents(activityWindow)),
+    [activityWindow],
+  );
+  const windowAtTail = activityWindow !== null && !activityWindow.hasLater && !running;
   const savedWork = useMemo(
     () =>
-      historyWork.turn === null
+      windowEvents === null
         ? null
         : agentTurnProjection(
-            historyWork.turn.events,
+            windowEvents.events,
             null,
             workspaceRoot,
-            savedToolSettlement(historyWork.turn.status),
-            normalizeAgentTurnEventOffset(historyWork.turn.firstEventOffset),
+            savedToolSettlement(turn.status),
+            0,
+            MAX_REVEALED_EVENTS_PER_TURN,
+            (offset) => agentTurnLogItemKey(windowEvents.seqs[offset] ?? 0),
           ),
-    [historyWork.turn, workspaceRoot],
+    [turn.status, windowEvents, workspaceRoot],
   );
-  const visibleItems = workFold?.visibleItems ?? projection.items;
-  const savedItems = useMemo(
-    () => (savedWork === null ? null : agentTurnItemsMissingFrom(savedWork.items, visibleItems)),
-    [savedWork, visibleItems],
-  );
+  const savedItems = useMemo(() => {
+    if (savedWork === null) return null;
+    if (windowAtTail) return agentItemsBeforeFinalResponse(savedWork.items);
+    return savedWork.items;
+  }, [savedWork, windowAtTail]);
+  const visibleItems = useMemo(() => {
+    if (activityWindow === null) return workFold?.visibleItems ?? projection.items;
+    if (foregroundRunning) return [];
+    return agentFinalResponseItems(projection.items);
+  }, [activityWindow, foregroundRunning, projection.items, workFold]);
   const savedRawLines = useMemo(
     () =>
       savedWork?.rawLines.filter(
@@ -222,14 +272,10 @@ export const AgentTurnView = memo(function AgentTurnView({
     );
   const failure = turnFailure(turn.status, errorContext);
   const endMarker = agentTurnEndMarker(turn.status, executionTarget);
-  const launchLabel = agentTurnLaunchLabel(turn.launch);
   const currentEventKey =
     highlight?.current?.kind === "event"
       ? agentTurnItemKey(highlight.current.eventIndex, eventOffset)
       : null;
-  const canShowEarlier = renderedLimit < MAX_REVEALED_EVENTS_PER_TURN;
-  const showEarlier = () =>
-    setRenderedLimit((limit) => agentRenderedEventLimit(limit + MAX_RENDERED_EVENTS_PER_TURN));
 
   return (
     <AgentToolDisclosureContext.Provider value={toolDisclosure}>
@@ -247,35 +293,40 @@ export const AgentTurnView = memo(function AgentTurnView({
           prompt={turn.prompt}
           promptClipped={agentPromptLooksClipped(turn.prompt) && turn.promptRestored !== true}
           query={highlight?.query ?? ""}
+          sentAtEpochMs={turn.startedAtEpochMs}
           textClipboard={textClipboard}
         />
 
         <div className="agent-answer">
-          {!standaloneCompaction && (
-            <AgentTurnHead
-              launchLabel={launchLabel}
-              provider={provider}
-              startedAtEpochMs={turn.startedAtEpochMs}
-              timing={agentTurnTiming(turn)}
-            />
-          )}
-
           {turn.status.kind === "pending" && provider === "codex" && !compacting && (
             <p className="agent-note" role="status">
               Starting Codex…
             </p>
           )}
-          {projection.hiddenCount > 0 && (
-            <AgentTurnEarlierEvents
-              canShowEarlier={canShowEarlier}
-              hiddenCount={projection.hiddenCount}
-              onShowEarlier={showEarlier}
-            />
-          )}
-
           <div className="agent-turn__events">
+            <AgentTurnEarlierControl
+              canRevealMemory={
+                activityWindow === null &&
+                projection.hiddenCount > 0 &&
+                renderedLimit < MAX_REVEALED_EVENTS_PER_TURN
+              }
+              hiddenCount={activityWindow === null ? projection.hiddenCount : 0}
+              logAvailable={readerSource !== null}
+              onLoadEarlier={(from) => {
+                scrollAnchor.capture(from);
+                if (activityWindow === null) setWindowOpenedRunning(running);
+                void earlier.loadEarlier(agentTurnEventsUtf8Bytes(turn.events));
+              }}
+              onRevealMemory={(from) => {
+                scrollAnchor.capture(from);
+                setRenderedLimit((limit) =>
+                  agentRenderedEventLimit(limit + MAX_RENDERED_EVENTS_PER_TURN),
+                );
+              }}
+              state={earlier.state}
+            />
             <AgentSubagentDisclosure onOpenAgents={onOpenAgents} subagents={subagents} />
-            {(workFold !== null || historyWork.available) && (
+            {(workFold !== null || activityWindow !== null) && (
               <AgentTurnWork
                 compacting={compacting}
                 backgroundTitle={backgroundTitle}
@@ -288,20 +339,44 @@ export const AgentTurnView = memo(function AgentTurnView({
                 prose={prose}
                 running={foregroundRunning}
                 settlement={
-                  historyWork.turn === null
-                    ? toolSettlement
-                    : savedToolSettlement(historyWork.turn.status)
+                  activityWindow === null ? toolSettlement : savedToolSettlement(turn.status)
                 }
-                stream={historyWork.turn === null ? stream : "settled"}
-                summary={agentPartialWorkSummary(
-                  workFold?.summary ?? "Activity",
-                  historyWork.turn === null ? projection.hiddenCount : 0,
+                stream={activityWindow === null ? stream : "settled"}
+                label={workFoldTitle(
+                  agentWorkFoldLabel(
+                    savedItems ?? workFold?.workItems ?? [],
+                    agentPartialWorkSummary(
+                      workFold?.summary ?? "Activity",
+                      activityWindow === null ? projection.hiddenCount : 0,
+                    ),
+                  ),
+                  agentActivityAttentionCount(workFold?.workItems ?? []),
                 )}
+                meta={
+                  foregroundRunning
+                    ? null
+                    : agentTurnDurationLabel(
+                        (turn.endedAtEpochMs ?? turn.startedAtEpochMs) - turn.startedAtEpochMs,
+                      )
+                }
                 textClipboard={textClipboard}
-                turn={historyWork.turn ?? turn}
-                historyWork={historyWork}
+                turn={turn}
                 autoOpen={
-                  foregroundRunning || agentActivityAttentionCount(workFold?.workItems ?? []) > 0
+                  activityWindow !== null ||
+                  foregroundRunning ||
+                  agentActivityAttentionCount(workFold?.workItems ?? []) > 0
+                }
+                trailing={
+                  <AgentTurnLaterControl
+                    onLatest={(from) => {
+                      scrollAnchor.capture(from, from.closest<HTMLElement>(".agent-work") ?? from);
+                      setWindowOpenedRunning(false);
+                      earlier.latest();
+                    }}
+                    onLoadLater={() => void earlier.loadLater()}
+                    running={running || windowStale}
+                    state={earlier.state}
+                  />
                 }
                 savedRawOutput={
                   savedRawLines.length > 0 ? <AgentRawOutput lines={savedRawLines} /> : null
@@ -327,7 +402,7 @@ export const AgentTurnView = memo(function AgentTurnView({
                 />
               )}
             />
-            {workFold === null && !historyWork.available && liveStatus}
+            {workFold === null && activityWindow === null && liveStatus}
             {!compacting && (
               <AgentBackgroundActivity
                 indicator={backgroundIndicator}
@@ -359,6 +434,7 @@ export const AgentTurnView = memo(function AgentTurnView({
 
           <AgentTurnLogNotices
             eventsTruncated={turn.eventsTruncated}
+            readerAvailable={readerSource !== null}
             turnId={turn.turnId}
             turnLog={turnLog}
           />
@@ -374,35 +450,18 @@ export const AgentTurnView = memo(function AgentTurnView({
           )}
 
           {endMarker !== null && <AgentTurnEnd marker={endMarker} />}
+          {!standaloneCompaction && (
+            <AgentTurnMeta
+              agentLabel={agentTurnMetaAgentLabel(provider, turn.launch)}
+              atEpochMs={agentTurnMetaAt(turn)}
+              timing={agentTurnTiming(turn)}
+            />
+          )}
         </div>
       </article>
     </AgentToolDisclosureContext.Provider>
   );
 });
-
-function AgentTurnEarlierEvents({
-  canShowEarlier,
-  hiddenCount,
-  onShowEarlier,
-}: {
-  readonly canShowEarlier: boolean;
-  readonly hiddenCount: number;
-  readonly onShowEarlier: () => void;
-}) {
-  const next = Math.min(hiddenCount, MAX_RENDERED_EVENTS_PER_TURN);
-  return (
-    <p className="agent-note agent-turn-earlier">
-      <span>
-        {hiddenCount} earlier {hiddenCount === 1 ? "event" : "events"} hidden
-      </span>
-      {canShowEarlier && (
-        <button className="agent-turn-earlier__action" onClick={onShowEarlier} type="button">
-          Show {next} earlier
-        </button>
-      )}
-    </p>
-  );
-}
 
 function AgentTurnEnd({ marker }: { readonly marker: AgentTurnEndMarker }) {
   const detail = marker.kind === "stopped" ? null : marker.detail;
@@ -418,15 +477,17 @@ function AgentTurnEnd({ marker }: { readonly marker: AgentTurnEndMarker }) {
 
 function AgentTurnLogNotices({
   eventsTruncated,
+  readerAvailable,
   turnId,
   turnLog,
 }: {
   readonly eventsTruncated: boolean;
+  readonly readerAvailable: boolean;
   readonly turnId: string;
   readonly turnLog: AgentTurnLogFactsSource | null;
 }) {
   const facts = useAgentTurnLogFacts(turnLog, turnId);
-  const notices = agentTurnLogNoticeModel(facts, eventsTruncated);
+  const notices = agentTurnLogNoticeModel(facts, eventsTruncated, readerAvailable);
   if (notices.loss === null && notices.unsaved === null) return null;
   return (
     <>
@@ -447,133 +508,8 @@ function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine>
   );
 }
 
-function AgentTurnWork({
-  autoOpen,
-  historyWork,
-  savedRawOutput,
-  compacting,
-  backgroundTitle,
-  attachmentImages,
-  errorContext,
-  highlight,
-  items,
-  liveStatus,
-  prose,
-  running,
-  settlement,
-  stream,
-  summary,
-  textClipboard,
-  turn,
-}: {
-  readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
-  readonly errorContext: AgentTurnErrorContext;
-  readonly highlight: AgentTurnHighlight | null;
-  readonly items: ReadonlyArray<AgentTurnItem>;
-  readonly historyWork: AgentHistoryWork;
-  readonly autoOpen: boolean;
-  readonly savedRawOutput: ReactNode;
-  readonly liveStatus: ReactNode;
-  readonly prose: AgentProseContext;
-  readonly compacting: boolean;
-  readonly backgroundTitle: string | null;
-  readonly running: boolean;
-  readonly settlement: AgentToolSettlement;
-  readonly stream: AgentProseStream;
-  readonly summary: string;
-  readonly textClipboard: TextClipboardGateway | null;
-  readonly turn: AgentTurn;
-}) {
-  const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
-  const attention = agentActivityAttentionCount(items);
-  return (
-    <details className="agent-work" open={autoOpen || undefined}>
-      <summary
-        className="agent-work__summary"
-        onClick={(event) => {
-          const disclosure = event.currentTarget.parentElement;
-          if (disclosure instanceof HTMLDetailsElement && !disclosure.open) historyWork.open();
-        }}
-      >
-        <span className="agent-work__title">
-          <AgentTurnWorkTitle
-            backgroundTitle={backgroundTitle}
-            compacting={compacting}
-            running={running}
-            turn={turn}
-          />
-        </span>
-        <span className="agent-work__counts">
-          {summary}
-          {attention > 0 && ` · ${attention} need attention`}
-        </span>
-        <ChevronDown aria-hidden="true" className="agent-work__chevron" size={14} />
-      </summary>
-      <div className="agent-work__events">
-        {historyWork.controls}
-        {savedRawOutput}
-        <AgentActivityItems
-          items={items}
-          currentEventKey={
-            highlight?.current?.kind === "event"
-              ? agentTurnItemKey(highlight.current.eventIndex, eventOffset)
-              : null
-          }
-          turn={stream === "streaming" ? "live" : "settled"}
-          renderItem={(item, thought) => (
-            <AgentTurnItemView
-              attachmentImages={attachmentImages}
-              errorContext={errorContext}
-              highlight={itemHighlight(highlight, item.key, eventOffset)}
-              groupHighlight={highlight}
-              item={item}
-              prose={prose}
-              settlement={settlement}
-              stream={stream}
-              textClipboard={textClipboard}
-              thought={thought}
-            />
-          )}
-        />
-        {liveStatus}
-      </div>
-    </details>
-  );
-}
-
-function AgentTurnWorkTitle({
-  backgroundTitle,
-  compacting,
-  running,
-  turn,
-}: {
-  readonly backgroundTitle: string | null;
-  readonly compacting: boolean;
-  readonly running: boolean;
-  readonly turn: AgentTurn;
-}) {
-  if (backgroundTitle !== null) return <>{backgroundTitle}</>;
-  if (running) {
-    return (
-      <>
-        {compacting ? "Turn elapsed " : "Working for "}
-        <AgentWorkingDuration startedAtEpochMs={turn.startedAtEpochMs} />
-      </>
-    );
-  }
-  return (
-    <>
-      Worked for{" "}
-      {agentTurnDurationLabel(
-        (turn.endedAtEpochMs ?? turn.startedAtEpochMs) - turn.startedAtEpochMs,
-      )}
-    </>
-  );
-}
-
-function savedToolSettlement(status: AgentTurnStatus): AgentToolSettlement {
-  const settlement = agentToolSettlement(status);
-  return settlement === "running" ? "settled" : settlement;
+function agentTurnEventsUtf8Bytes(events: AgentTurn["events"]): number {
+  return events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0);
 }
 
 function proseStream(running: boolean, streamed: boolean): AgentProseStream {
@@ -596,14 +532,18 @@ function AgentTurnLiveStatus({
   readonly items: ReadonlyArray<AgentTurnItem>;
 }) {
   const working = activity.kind === "working";
+  const thinking = working && items[items.length - 1]?.kind === "reasoning";
+  const live = working
+    ? undefined
+    : items.find((item) => item.kind === "tool" && item.toolId === activity.toolId);
+  const Icon = live !== undefined && live.kind === "tool" ? toolRowIcon(live.rowKind) : null;
   return (
-    <div
-      aria-live="polite"
-      className={working ? "agent-tool-row agent-tool-row--working" : "agent-tool-row-live"}
-      role="status"
-    >
-      <span className="agent-tool-row__label">{liveStatusText(activity, items)}</span>
-    </div>
+    <AgentLiveRow
+      className={working ? "agent-tool-row--working" : "agent-tool-row-live"}
+      icon={Icon === null ? undefined : <Icon size={16} strokeWidth={1.5} />}
+      label={thinking ? "Thinking" : liveStatusText(activity, items)}
+      tone={thinking ? "thinking" : "working"}
+    />
   );
 }
 
@@ -615,4 +555,9 @@ function liveStatusText(
   const live = items.find((item) => item.kind === "tool" && item.toolId === activity.toolId);
   if (live === undefined || live.kind !== "tool") return WORKING_LABEL;
   return live.label;
+}
+
+function workFoldTitle(label: string, attention: number): string {
+  if (attention === 0) return label;
+  return `${label} · ${attention} need attention`;
 }

@@ -3,16 +3,9 @@ import type {
   AgentRuntimeSubagentStatus,
   AgentRuntimeSubagents,
 } from "../../domain/agentRuntimeSubagent";
+import { agentElapsedLabel, agentTokenCountLabel } from "./agentRuntimeSubagentPresentation";
 
 export const MAX_AGENTS_PANEL_ROWS = 96;
-export const AGENTS_DOCK_MIN_WIDTH = 760;
-
-export type AgentAgentsDockMode = "closed" | "docked" | "overlay";
-
-export function agentAgentsDockMode(panelOpen: boolean, width: number): AgentAgentsDockMode {
-  if (!panelOpen) return "closed";
-  return width < AGENTS_DOCK_MIN_WIDTH ? "overlay" : "docked";
-}
 
 export interface AgentAgentsPanelGroup {
   readonly key: string;
@@ -24,8 +17,17 @@ export interface AgentAgentsPanelRow {
   readonly agent: AgentRuntimeSubagent;
 }
 
-export interface AgentAgentsPanelModel {
+export interface AgentAgentsPanelEarlierGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly summary: string;
+  readonly tone: "completed" | "failed" | "inactive";
   readonly rows: ReadonlyArray<AgentAgentsPanelRow>;
+}
+
+export interface AgentAgentsPanelModel {
+  readonly current: ReadonlyArray<AgentAgentsPanelRow>;
+  readonly earlier: ReadonlyArray<AgentAgentsPanelEarlierGroup>;
   readonly notice: string | null;
   readonly truncated: boolean;
   readonly working: number;
@@ -41,25 +43,87 @@ export function agentAgentsPanelRowKey(groupKey: string, agentId: string): strin
 export function agentAgentsPanelModel(
   groups: ReadonlyArray<AgentAgentsPanelGroup>,
 ): AgentAgentsPanelModel {
-  const all = groups.flatMap((group) =>
-    group.subagents.agents.map((agent) => ({
-      key: agentAgentsPanelRowKey(group.key, agent.id),
-      agent,
-    })),
-  );
-  const rows = all.slice(-MAX_AGENTS_PANEL_ROWS);
+  const populated = groups.filter((group) => group.subagents.agents.length > 0);
+  const all = populated.flatMap(rowsOf);
+  const kept = new Set(all.slice(-MAX_AGENTS_PANEL_ROWS).map((row) => row.key));
+  const latest = populated[populated.length - 1];
+  const current = latest === undefined ? [] : rowsOf(latest).filter((row) => kept.has(row.key));
+  const earlier = populated
+    .slice(0, -1)
+    .reverse()
+    .map((group) => earlierGroup(group, kept))
+    .filter((group) => group.rows.length > 0);
   const working = all.filter((row) => row.agent.status === "working").length;
   const idle = all.filter((row) => row.agent.status === "idle").length;
   const truncated = groups.some((group) => group.subagents.truncated);
   return {
-    rows,
-    notice: panelNotice(rows.length, all.length, truncated),
+    current,
+    earlier,
+    notice: panelNotice(kept.size, all.length, truncated),
     truncated,
     working,
     idle,
     settled: all.length - working - idle,
     totalTokens: all.reduce((total, row) => total + (row.agent.totalTokens ?? 0), 0),
   };
+}
+
+export function agentWorkingAgentNames(
+  groups: ReadonlyArray<AgentAgentsPanelGroup>,
+): ReadonlyArray<string> {
+  const names = groups.flatMap((group) =>
+    group.subagents.agents
+      .filter((agent) => agent.status === "working")
+      .map((agent) => agent.role ?? agent.title),
+  );
+  return [...new Set(names)];
+}
+
+function rowsOf(group: AgentAgentsPanelGroup): ReadonlyArray<AgentAgentsPanelRow> {
+  return group.subagents.agents.map((agent) => ({
+    key: agentAgentsPanelRowKey(group.key, agent.id),
+    agent,
+  }));
+}
+
+function earlierGroup(
+  group: AgentAgentsPanelGroup,
+  kept: ReadonlySet<string>,
+): AgentAgentsPanelEarlierGroup {
+  const agents = group.subagents.agents;
+  const count = agents.length;
+  const plural = count === 1 ? "" : "s";
+  return {
+    key: group.key,
+    label: `Ran ${count} subagent${plural}`,
+    summary: earlierSummary(agents),
+    tone: earlierTone(agents),
+    rows: rowsOf(group).filter((row) => kept.has(row.key)),
+  };
+}
+
+function earlierSummary(agents: ReadonlyArray<AgentRuntimeSubagent>): string {
+  const tokens = agents.reduce((total, agent) => total + (agent.totalTokens ?? 0), 0);
+  const longest = agents.reduce(
+    (max, agent) =>
+      agent.elapsed.kind === "settled" ? Math.max(max, agent.elapsed.durationMs) : max,
+    0,
+  );
+  return [
+    `${agents.length} agent${agents.length === 1 ? "" : "s"}`,
+    tokens === 0 ? null : `${agentTokenCountLabel(tokens)} tok`,
+    longest === 0 ? null : agentElapsedLabel(longest),
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+}
+
+function earlierTone(
+  agents: ReadonlyArray<AgentRuntimeSubagent>,
+): AgentAgentsPanelEarlierGroup["tone"] {
+  if (agents.some((agent) => agent.status === "failed")) return "failed";
+  if (agents.every((agent) => agent.status === "completed")) return "completed";
+  return "inactive";
 }
 
 function panelNotice(shown: number, total: number, truncated: boolean): string | null {

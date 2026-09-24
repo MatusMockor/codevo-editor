@@ -229,10 +229,13 @@ export function useWorkbenchController(
   const {
     cancelJavaScriptTypeScriptLanguageServerRequest = ignoreLanguageServerRequestCancellation,
     javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
+    editorMenuCommandRunner,
     editorSurfaceBufferFixRunner,
     editorSurfaceCommandRunner,
     editorSurfaceEslintDisableRunner,
     editorSurfacePhpstanIgnoreRunner,
+    jsTestExplorerScopeRunner,
+    resolveWorkspaceHome,
   } = options;
   const markdownPreviewRenderer = options.markdownPreviewRenderer ?? renderMarkdownPreview;
   const fallbackDirtyCloseDecisionPort = useWorkbenchDirtyCloseDecisionPort(prompter);
@@ -2344,7 +2347,7 @@ export function useWorkbenchController(
       canReopenClosedDocument,
       documentSaveClose,
       editorDocument,
-      editorMenuCommandRunner: options.editorMenuCommandRunner,
+      editorMenuCommandRunner,
       editorSessionOwnerKeyForRoot,
       editorSurfaceCommandRunner,
       fileOperations,
@@ -2400,7 +2403,7 @@ export function useWorkbenchController(
       gitPanels,
       isActiveDocumentJsTest: isActiveDocumentJsTest,
       isActiveDocumentPhpTest: isActiveDocumentPhpTest,
-      jsTestExplorerScopeRunner: options.jsTestExplorerScopeRunner,
+      jsTestExplorerScopeRunner,
       refreshGitStatus,
       selectedGitChange,
       taskDebug,
@@ -2462,6 +2465,7 @@ export function useWorkbenchController(
       settingsGateway,
       hasRestoredRef,
       beginStartupRestore: workspaceTransition.beginStartupRestore,
+      resolveWorkspaceHome,
     },
     diagnosticState: {
       javaScriptTypeScriptDiagnosticsByPath,

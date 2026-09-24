@@ -39,7 +39,7 @@ impl Drop for Fixture {
 #[test]
 fn nested_head_and_linked_head_are_root_rescans_without_metadata_paths() {
     let fixture = Fixture::new();
-    let watch = GitHeadWatch::discover(&fixture.0);
+    let watch = GitHeadWatch::discover(&fixture.0, &|| false);
     for relative in [
         ".git/HEAD",
         "product/.git/HEAD",
@@ -76,7 +76,7 @@ fn linked_pointer_resolves_external_directory_and_only_its_head() {
     fs::create_dir_all(&repo).unwrap();
     fs::create_dir(&metadata).unwrap();
     fs::write(repo.join(".git"), "gitdir: ../../metadata\n").unwrap();
-    let watch = GitHeadWatch::discover(&root);
+    let watch = GitHeadWatch::discover(&root, &|| false);
     assert_eq!(
         watch.external_directories().collect::<Vec<_>>(),
         vec![&metadata]
@@ -90,6 +90,50 @@ fn linked_pointer_resolves_external_directory_and_only_its_head() {
     assert!(watch
         .rescan_for_paths(&root, &[metadata.join("config")])
         .is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn privacy_protected_home_children_are_not_opened_during_discovery() {
+    let fixture = Fixture::new();
+    let home = fixture.0.join("home");
+    let repo = home.join("Music/product");
+    let metadata = fixture.0.join("metadata");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir(&metadata).unwrap();
+    fs::write(repo.join(".git"), "gitdir: ../../../metadata\n").unwrap();
+
+    let unprotected = GitHeadWatch::discover_with_protected_paths(
+        &home,
+        &ProtectedPathPolicy::unprotected(),
+        &|| false,
+    );
+    let protected = GitHeadWatch::discover_with_protected_paths(
+        &home,
+        &ProtectedPathPolicy::for_home(Some(&home)),
+        &|| false,
+    );
+
+    assert_eq!(
+        unprotected.external_directories().collect::<Vec<_>>(),
+        vec![&metadata]
+    );
+    assert_eq!(protected.external_directories().count(), 0);
+}
+
+#[test]
+fn cancelled_discovery_stops_before_walking_and_reports_partial_support() {
+    let fixture = Fixture::new();
+    let repo = fixture.0.join("nested/product");
+    let metadata = fixture.0.join("metadata");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir(&metadata).unwrap();
+    fs::write(repo.join(".git"), "gitdir: ../../metadata\n").unwrap();
+
+    let watch = GitHeadWatch::discover(&fixture.0, &|| true);
+
+    assert_eq!(watch.external_directories().count(), 0);
+    assert!(watch.warning.is_some());
 }
 
 #[test]
@@ -106,7 +150,10 @@ fn oversized_pointer_and_symlinked_repository_are_not_followed() {
         let external = Fixture::new();
         fs::create_dir(external.0.join("repo")).unwrap();
         std::os::unix::fs::symlink(external.0.join("repo"), fixture.0.join("alias")).unwrap();
-        assert_eq!(GitHeadWatch::discover(&fixture.0).external.len(), 0);
+        assert_eq!(
+            GitHeadWatch::discover(&fixture.0, &|| false).external.len(),
+            0
+        );
     }
 }
 
@@ -176,7 +223,7 @@ fn discovery_exhaustion_keeps_direct_root_metadata_and_reports_partial_support()
     for i in 0..=MAX_ENTRIES {
         fs::write(root.join(format!("file-{i}")), "").unwrap();
     }
-    let watch = GitHeadWatch::discover(&root);
+    let watch = GitHeadWatch::discover(&root, &|| false);
     assert!(watch.warning.is_some());
     assert!(watch.external.contains(&metadata));
     let sink = Arc::new(RecordingSink::default());

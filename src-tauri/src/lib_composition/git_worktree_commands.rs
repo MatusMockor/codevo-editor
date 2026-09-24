@@ -2,6 +2,7 @@ use super::{canonicalize_workspace_root, trusted_for, GitTrustState};
 use crate::agent_task_supervisor::AgentTaskRegistry;
 use crate::debug_adapter::DebugSessionRegistry;
 use crate::eslint::EslintProcessRegistry;
+use crate::git_worktree::git_branch_worktree::add_branch_worktree;
 use crate::git_worktree::{
     ensure_worktree_path_in_base, prunable_worktree_path_in_base,
     remove_agent_worktree_with_disposal, AgentWorktreeReceipt, CommandGitWorktreeGateway,
@@ -15,6 +16,7 @@ use crate::terminal_session::TerminalSupervisor;
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use crate::workspace_runtime::{self, WorkspaceRuntimeDisposal};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -50,6 +52,44 @@ fn add_agent_worktree_receipt(
     let trusted = set_trust(&worktree_path).is_ok();
 
     Ok(AgentWorktreeReceipt {
+        worktree_path,
+        branch: created.branch,
+        trusted,
+    })
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AddBranchWorktreeRequest {
+    repository_root: String,
+    branch: String,
+    start_point: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BranchWorktreeReceipt {
+    worktree_path: String,
+    branch: String,
+    trusted: bool,
+}
+
+fn authorize_branch_worktree(
+    trust: &GitTrustState<'_>,
+    request: &AddBranchWorktreeRequest,
+) -> Result<(), String> {
+    ensure_worktree_repository_trusted(trusted_for(trust, &request.repository_root)?)
+}
+
+fn add_branch_worktree_receipt(
+    request: &AddBranchWorktreeRequest,
+    set_trust: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<BranchWorktreeReceipt, String> {
+    let root = canonicalize_workspace_root(&request.repository_root)?;
+    let created = add_branch_worktree(&root, &request.branch, request.start_point.as_deref())?;
+    let worktree_path = created.worktree_path.to_string_lossy().into_owned();
+    let trusted = set_trust(&worktree_path).is_ok();
+    Ok(BranchWorktreeReceipt {
         worktree_path,
         branch: created.branch,
         trusted,
@@ -170,6 +210,21 @@ pub(crate) async fn add_git_worktree(
             &task_id,
             |worktree_path| set_worktree_trust(&app, worktree_path, true),
         )
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn add_git_branch_worktree(
+    request: AddBranchWorktreeRequest,
+    trust: GitTrustState<'_>,
+    app: AppHandle,
+) -> Result<BranchWorktreeReceipt, String> {
+    authorize_branch_worktree(&trust, &request)?;
+    run_blocking_command(move || {
+        add_branch_worktree_receipt(&request, |worktree_path| {
+            set_worktree_trust(&app, worktree_path, true)
+        })
     })
     .await
 }
@@ -323,6 +378,69 @@ mod tests {
     }
 
     #[test]
+    fn branch_worktree_requests_reject_unknown_fields() {
+        let request = serde_json::from_value::<AddBranchWorktreeRequest>(serde_json::json!({
+            "repositoryRoot": "/tmp/x",
+            "branch": "feat/x",
+            "startPoint": null,
+            "force": true
+        }));
+
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn untrusted_repository_cannot_add_a_branch_worktree() {
+        let repository = TempRepository::create("branch-untrusted");
+        let error = authorize_branch_worktree(
+            &false,
+            &AddBranchWorktreeRequest {
+                repository_root: repository.root.to_string_lossy().into_owned(),
+                branch: "feat/x".to_string(),
+                start_point: None,
+            },
+        )
+        .expect_err("untrusted repository must be rejected");
+
+        assert_eq!(error, UNTRUSTED_WORKTREE_REPOSITORY_ERROR);
+        assert!(!repository.root.join(".worktrees").exists());
+    }
+
+    #[test]
+    fn branch_worktree_receipt_grants_trust_to_the_new_worktree() {
+        let repository = TempRepository::create("branch-trusted");
+        let granted = StdMutex::new(Vec::<String>::new());
+
+        let receipt = add_branch_worktree_receipt(
+            &AddBranchWorktreeRequest {
+                repository_root: repository.root.to_string_lossy().into_owned(),
+                branch: "feat/x".to_string(),
+                start_point: Some("main".to_string()),
+            },
+            |worktree_path| {
+                granted
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(worktree_path.to_string());
+                Ok(())
+            },
+        )
+        .expect("add branch worktree");
+
+        assert_eq!(receipt.branch, "feat/x");
+        assert!(receipt.trusted);
+        assert!(Path::new(&receipt.worktree_path).is_dir());
+        assert!(receipt.worktree_path.ends_with("/.worktrees/branch-feat-x"));
+        assert_eq!(
+            granted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_slice(),
+            std::slice::from_ref(&receipt.worktree_path)
+        );
+    }
+
+    #[test]
     fn trusted_list_reports_the_primary_worktree() {
         let repository = TempRepository::create("list");
         let listed = tauri::async_runtime::block_on(list_git_worktrees(
@@ -363,6 +481,42 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .as_slice(),
             std::slice::from_ref(&receipt.worktree_path)
+        );
+    }
+
+    #[test]
+    fn branch_worktree_receipt_reports_untrusted_when_the_trust_grant_fails() {
+        let repository = TempRepository::create("branch-untrusted-grant");
+
+        let receipt = add_branch_worktree_receipt(
+            &AddBranchWorktreeRequest {
+                repository_root: repository.root.to_string_lossy().into_owned(),
+                branch: "feat/y".to_string(),
+                start_point: Some("main".to_string()),
+            },
+            |_worktree_path| Err("persist failed".to_string()),
+        )
+        .expect("worktree creation must survive a trust persist failure");
+
+        assert!(!receipt.trusted);
+        assert!(Path::new(&receipt.worktree_path).is_dir());
+    }
+
+    #[test]
+    fn branch_worktree_receipt_serializes_to_the_shared_contract() {
+        let contract = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../contracts/git-surface-wire.json"
+        ))
+        .expect("parse the git surface contract");
+        let receipt = BranchWorktreeReceipt {
+            worktree_path: "/repo/.worktrees/branch-feat-x".to_string(),
+            branch: "feat/x".to_string(),
+            trusted: false,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&receipt).expect("serialize the receipt"),
+            contract["branchWorktreeReceipt"]
         );
     }
 

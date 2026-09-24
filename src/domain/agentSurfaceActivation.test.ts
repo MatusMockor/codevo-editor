@@ -4,10 +4,12 @@ import {
   agentSurfaceEditorSlot,
   agentSurfaceServes,
   effectiveAgentSurface,
+  isAgentRemoteSurfaceKind,
   remoteSurfaceCapabilityOpen,
   servedAgentSurfaces,
   type AgentSurfaceActivation,
 } from "./agentSurfaceActivation";
+import { AGENT_SURFACE_KINDS } from "./agentWorkbenchLayout";
 
 const REMOTE_NO_PROJECT: AgentSurfaceActivation = {
   remote: true,
@@ -85,5 +87,42 @@ describe("agentSurfaceEditorSlot", () => {
   it("never opens the slot for a remote pane, with or without a server project", () => {
     expect(agentSurfaceEditorSlot(REMOTE_NO_PROJECT, "files")).toBe("none");
     expect(agentSurfaceEditorSlot(REMOTE_WITH_PROJECT, "files")).toBe("none");
+  });
+});
+
+describe("redesigned surfaces on remote threads", () => {
+  const remote: AgentSurfaceActivation = {
+    remote: true,
+    threadPresent: true,
+    remoteCapabilities: { files: true, history: true, terminal: true },
+    unavailable: false,
+    hidden: false,
+  };
+
+  it("serves the agents surface for a remote thread and never without one", () => {
+    expect(agentSurfaceServes(remote, "agents")).toBe(true);
+    expect(agentSurfaceServes({ ...remote, threadPresent: false }, "agents")).toBe(false);
+  });
+
+  it("serves only the remote-capable kinds, diff and agents", () => {
+    expect(AGENT_SURFACE_KINDS.filter((kind) => agentSurfaceServes(remote, kind))).toEqual([
+      "files",
+      "diff",
+      "terminal",
+      "history",
+      "agents",
+    ]);
+  });
+
+  it("serves every kind locally", () => {
+    expect(
+      AGENT_SURFACE_KINDS.every((kind) => agentSurfaceServes(LOCAL_AGENT_SURFACE_ACTIVATION, kind)),
+    ).toBe(true);
+  });
+
+  it("narrows remote kinds", () => {
+    expect(isAgentRemoteSurfaceKind("history")).toBe(true);
+    expect(isAgentRemoteSurfaceKind("git")).toBe(false);
+    expect(isAgentRemoteSurfaceKind(null)).toBe(false);
   });
 });

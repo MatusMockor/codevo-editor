@@ -63,7 +63,7 @@
 .project-repository-picker__result:hover {
   background: var(--codevo-hover);
 }
-.project-repository-picker :is(button, input, select):focus-visible {
+.project-repository-picker :is(button, select):focus-visible {
   outline: 2px solid var(--codevo-fg-muted);
   outline-offset: 2px;
   box-shadow: none;

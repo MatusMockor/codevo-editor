@@ -8,7 +8,6 @@ export const AGENT_MODE_STYLE_SHEETS = [
   "agentComposer.css",
   "agentSurface.css",
   "agentUsage.css",
-  "agentStatusBar.css",
 ] as const;
 
 export function agentModeSheetPath(sheet: (typeof AGENT_MODE_STYLE_SHEETS)[number]): string {

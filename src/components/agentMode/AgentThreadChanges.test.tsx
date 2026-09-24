@@ -9,7 +9,6 @@ import type { AgentShipAvailability } from "../../domain/agentShip";
 import type { AgentThread } from "../../domain/agentThread";
 import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
 import { AgentThreadChanges, type AgentThreadChangesProps } from "./AgentThreadChanges";
-import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 
 const ROOT = "/workspace/app";
 const WORKTREE = `${ROOT}/.worktrees/agt-1`;
@@ -95,35 +94,6 @@ describe("AgentThreadChanges", () => {
       "This file was deleted in the worktree.",
     );
     expect(diff("src/gone.ts").disabled).toBe(false);
-  });
-
-  it("renders the cue line only when files changed and routes to the Diff surface", () => {
-    const onReviewInDiff = vi.fn();
-    act(() =>
-      root.render(
-        <AgentThreadChangesCue
-          onReviewInDiff={onReviewInDiff}
-          summary={summary({ files: [changedFile("a.ts"), changedFile("b.ts")], truncated: true })}
-          threadId="agt-1"
-        />,
-      ),
-    );
-    expect(host.querySelector("[data-agent-changes-cue]")?.textContent).toContain(
-      "2+ files changed",
-    );
-    click('[aria-label="Review changes for agent agt-1 in the Diff surface"]');
-    expect(onReviewInDiff).toHaveBeenCalledWith("agt-1");
-
-    act(() =>
-      root.render(
-        <AgentThreadChangesCue
-          onReviewInDiff={onReviewInDiff}
-          summary={summary({})}
-          threadId="agt-1"
-        />,
-      ),
-    );
-    expect(host.querySelector("[data-agent-changes-cue]")).toBeNull();
   });
 
   function render(overrides: Partial<AgentThreadChangesProps> = {}): void {

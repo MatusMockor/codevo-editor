@@ -292,8 +292,11 @@ impl AgentRootOwnerFixture {
         assert_eq!(self.leases.registered_leases().len(), 1);
         let (disposition, _) = self
             .leases
-            .release_registered(&self.project_root, self.lease_token);
+            .begin_release_registered(&self.project_root, self.lease_token);
         assert_eq!(disposition, AgentRootLeaseReleaseDisposition::Released);
+        assert!(self.leases.registered_leases().is_empty());
+        self.leases
+            .finish_release(&self.project_root, self.lease_token);
         assert!(self.leases.registered_leases().is_empty());
     }
 

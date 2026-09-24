@@ -420,7 +420,7 @@ describe("imported conversation history", () => {
         "agent-prompt",
         "agent-answer",
       ]);
-      expect(section.querySelectorAll("header.agent-turn__head")).toHaveLength(1);
+      expect(section.querySelectorAll(".agent-answer > .cv-turn-meta")).toHaveLength(1);
     }
     expect(turns[0]?.nextElementSibling).toBe(turns[1]);
     expect(promptTexts()).toEqual(["First imported", "Second imported"]);
@@ -444,9 +444,9 @@ describe("imported conversation history", () => {
   });
 
   it("keeps one turn-gap rhythm at the seam and inside the imported history", () => {
-    expect(declaration(".agent-session__body", "gap")).toBe("var(--agent-turn-gap)");
-    expect(declaration(".agent-imported-history", "gap")).toBe("var(--agent-turn-gap)");
-    expect(declaration(".agent-turn-list", "gap")).toBe("var(--agent-turn-gap)");
+    expect(declaration(".agent-session__body", "gap")).toBe("var(--cv-space-2)");
+    expect(declaration(".agent-imported-history", "gap")).toBe("var(--cv-space-2)");
+    expect(declaration(".agent-turn-list", "gap")).toBe("var(--cv-space-2)");
     expect(declaration(".agent-answer", "padding-bottom")).toBeNull();
   });
 
@@ -475,7 +475,7 @@ describe("imported conversation history", () => {
       ["agent-prompt", "agent-answer"],
     ]);
     expect(
-      [...host.querySelectorAll(".agent-turn__agent")].map((element) => element.textContent),
+      [...host.querySelectorAll(".cv-turn-meta__agent")].map((element) => element.textContent),
     ).toEqual(["Claude Code", "Claude Code", "Claude Code", "Claude Code"]);
   });
 

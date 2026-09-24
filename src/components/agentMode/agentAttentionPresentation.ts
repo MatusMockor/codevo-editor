@@ -17,5 +17,5 @@ export function agentAttentionExplanation(threads: readonly AgentThreadView[]): 
   ]
     .filter((label) => label !== null)
     .join(" · ");
-  return `${summary === "" ? "Thread status" : summary}. Runs that ended with an error or were interrupted and have not been opened since. Opening a thread clears it from this count; runs you stopped are not counted. Right-click the status bar to hide this indicator.`;
+  return `${summary === "" ? "Thread status" : summary}. Runs that ended with an error or were interrupted and have not been opened since. Opening a thread clears it from this count; runs you stopped are not counted. Right-click the thread activity in the sidebar footer to hide this indicator.`;
 }

@@ -1,5 +1,6 @@
 use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatchRank};
 use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
+use protected_paths::ProtectedPathPolicy;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -7,6 +8,9 @@ use std::{
     io::{self, Write},
     path::Path,
 };
+
+#[path = "protected_paths.rs"]
+pub(crate) mod protected_paths;
 
 const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
 
@@ -231,44 +235,8 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
             ));
         }
 
-        let normalized_query = query.trim().to_lowercase();
-        let capped_limit = limit.clamp(1, 500);
-        let mut results = Vec::new();
-        let mut truncated = false;
-        let mut result_truncated = false;
-        let mut visited = 0usize;
-
         let matcher = GitignoreWorkspaceIgnoreMatcher::load(root)?;
-        RankedFileSearch {
-            root,
-            query: &normalized_query,
-            limit: capped_limit,
-            visited_limit: WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
-            matcher: &matcher,
-            truncated: &mut truncated,
-            result_truncated: &mut result_truncated,
-            visited: &mut visited,
-            results: &mut results,
-        }
-        .collect(root)?;
-
-        let mut results = results
-            .into_iter()
-            .map(|(mut result, _)| {
-                result.truncated = truncated || result_truncated;
-                result
-            })
-            .collect::<Vec<_>>();
-        if (truncated || result_truncated) && results.is_empty() {
-            results.push(FileSearchResult {
-                name: String::new(),
-                path: String::new(),
-                relative_path: String::new(),
-                truncated: true,
-            });
-        }
-
-        Ok(results)
+        search_ranked_files(root, query, limit, &matcher, ProtectedPathPolicy::current())
     }
 
     fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()> {
@@ -289,6 +257,53 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
     }
 }
 
+fn search_ranked_files(
+    root: &Path,
+    query: &str,
+    limit: usize,
+    matcher: &GitignoreWorkspaceIgnoreMatcher,
+    protected_paths: &ProtectedPathPolicy,
+) -> io::Result<Vec<FileSearchResult>> {
+    let normalized_query = query.trim().to_lowercase();
+    let mut results = Vec::new();
+    let mut truncated = false;
+    let mut result_truncated = false;
+    let mut visited = 0usize;
+
+    RankedFileSearch {
+        protected_paths,
+        root,
+        query: &normalized_query,
+        limit: limit.clamp(1, 500),
+        visited_limit: WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
+        matcher,
+        truncated: &mut truncated,
+        result_truncated: &mut result_truncated,
+        visited: &mut visited,
+        results: &mut results,
+    }
+    .collect(root)?;
+
+    let incomplete = truncated || result_truncated || matcher.completeness().truncation().is_some();
+    let mut results = results
+        .into_iter()
+        .map(|(mut result, _)| {
+            result.truncated = incomplete;
+            result
+        })
+        .collect::<Vec<_>>();
+    if incomplete && results.is_empty() {
+        results.push(FileSearchResult {
+            name: String::new(),
+            path: String::new(),
+            relative_path: String::new(),
+            truncated: true,
+        });
+    }
+
+    Ok(results)
+}
+
 fn file_entry_kind(metadata: &fs::Metadata) -> FileEntryKind {
     if metadata.is_dir() {
         return FileEntryKind::Directory;
@@ -298,6 +313,7 @@ fn file_entry_kind(metadata: &fs::Metadata) -> FileEntryKind {
 }
 
 struct RankedFileSearch<'a> {
+    protected_paths: &'a ProtectedPathPolicy,
     root: &'a Path,
     query: &'a str,
     limit: usize,
@@ -329,6 +345,10 @@ impl RankedFileSearch<'_> {
             }
 
             if self.matcher.is_ignored(&path, file_type.is_dir()) {
+                continue;
+            }
+
+            if file_type.is_dir() && self.protected_paths.is_protected_directory(&path) {
                 continue;
             }
 
@@ -485,9 +505,11 @@ fn normalize_path_string(path: &str) -> String {
 mod tests {
     use super::{
         apply_text_edits_to_files, compare_ranked_paths, file_search_matches, score_result,
-        GitignoreWorkspaceIgnoreMatcher, LocalWorkspaceFileRepository, RankedFileSearch,
-        WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
+        search_ranked_files, GitignoreWorkspaceIgnoreMatcher, LocalWorkspaceFileRepository,
+        ProtectedPathPolicy, RankedFileSearch, WorkspaceFileRepository, WorkspaceTextEdit,
+        WorkspaceTextPosition, WorkspaceTextRange,
     };
+    use crate::ignore_matcher::{ScopeDiscoveryLimits, WorkspaceIgnoreOptions};
     use std::{fs, time::SystemTime};
 
     #[test]
@@ -674,6 +696,7 @@ mod tests {
         let mut visited = 0usize;
 
         RankedFileSearch {
+            protected_paths: &ProtectedPathPolicy::unprotected(),
             root: &root,
             query: "needle",
             limit: 20,
@@ -690,6 +713,106 @@ mod tests {
         assert!(truncated);
         assert!(results.is_empty());
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn truncated_ignore_rules_mark_search_results_incomplete() {
+        let root = create_temp_dir("workspace-search-ignore-truncated");
+        for index in 0..3 {
+            fs::create_dir_all(root.join(format!("dir-{index}"))).expect("create directory");
+        }
+        fs::write(root.join("needle.ts"), "").expect("write match");
+        let options =
+            WorkspaceIgnoreOptions::default().with_discovery_limits(ScopeDiscoveryLimits {
+                max_entries: 1,
+                ..ScopeDiscoveryLimits::default()
+            });
+        let matcher =
+            GitignoreWorkspaceIgnoreMatcher::load_with_options(&root, options).expect("matcher");
+
+        let results = search_ranked_files(
+            &root,
+            "needle",
+            20,
+            &matcher,
+            &ProtectedPathPolicy::unprotected(),
+        )
+        .expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "needle.ts");
+        assert!(results[0].truncated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn complete_ignore_rules_keep_search_results_complete() {
+        let root = create_temp_dir("workspace-search-ignore-complete");
+        fs::write(root.join("needle.ts"), "").expect("write match");
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root).expect("matcher");
+
+        let results = search_ranked_files(
+            &root,
+            "needle",
+            20,
+            &matcher,
+            &ProtectedPathPolicy::unprotected(),
+        )
+        .expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].truncated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn home_root_search_skips_privacy_protected_children() {
+        let home = create_temp_dir("workspace-search-protected-home")
+            .canonicalize()
+            .expect("canonical home");
+        fs::create_dir_all(home.join("Music")).expect("protected directory");
+        fs::write(home.join("Music/needle.ts"), "").expect("protected match");
+        fs::create_dir_all(home.join("code")).expect("regular directory");
+        fs::write(home.join("code/needle.ts"), "").expect("regular match");
+        let policy = ProtectedPathPolicy::for_home(Some(&home));
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load_with_options(
+            &home,
+            WorkspaceIgnoreOptions::default().with_protected_paths(policy.clone()),
+        )
+        .expect("matcher");
+
+        let results =
+            search_ranked_files(&home, "needle", 20, &matcher, &policy).expect("search files");
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["code/needle.ts"]
+        );
+        fs::remove_dir_all(home).expect("cleanup");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn search_rooted_at_a_protected_home_child_is_not_skipped() {
+        let home = create_temp_dir("workspace-search-documents-root")
+            .canonicalize()
+            .expect("canonical home");
+        let documents = home.join("Documents");
+        fs::create_dir_all(documents.join("Music")).expect("documents tree");
+        fs::write(documents.join("Music/needle.ts"), "").expect("nested match");
+        let policy = ProtectedPathPolicy::for_home(Some(&home));
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&documents).expect("matcher");
+
+        let results =
+            search_ranked_files(&documents, "needle", 20, &matcher, &policy).expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "Music/needle.ts");
+        fs::remove_dir_all(home).expect("cleanup");
     }
 
     #[test]

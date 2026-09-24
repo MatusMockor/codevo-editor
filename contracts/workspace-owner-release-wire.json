@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 3,
+  "unregisterWorkspace": {
+    "request": [
+      "workspaceId",
+      "admissionToken",
+      "canonicalRootPath"
+    ],
+    "statuses": [
+      "released",
+      "releasing",
+      "retainedByOtherOwners",
+      "unknownWorkspace",
+      "staleOwner"
+    ],
+    "settledStatuses": [
+      "released",
+      "retainedByOtherOwners",
+      "unknownWorkspace"
+    ]
+  },
+  "disposeRegisteredWorkspace": {
+    "statuses": [
+      "closed",
+      "unknownWorkspace",
+      "releasing",
+      "retainedByOtherOwners",
+      "incomplete"
+    ]
+  },
+  "adoptWorkspaceAdmission": {
+    "request": [
+      "workspaceId",
+      "newToken",
+      "replacedToken"
+    ],
+    "statuses": [
+      "adopted",
+      "staleAdmission",
+      "unknownWorkspace",
+      "releasing"
+    ]
+  },
+  "rollbackWorkspaceRegistration": {
+    "request": [
+      "workspaceId",
+      "admissionToken"
+    ],
+    "statuses": [
+      "released",
+      "releasing",
+      "retainedByOtherOwners",
+      "unknownWorkspace",
+      "staleOwner"
+    ],
+    "settledStatuses": [
+      "released",
+      "retainedByOtherOwners",
+      "unknownWorkspace",
+      "staleOwner"
+    ]
+  }
+}

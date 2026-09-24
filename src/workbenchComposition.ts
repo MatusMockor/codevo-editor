@@ -15,7 +15,9 @@ import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPromp
 import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
 import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDiscoveryGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
+import { resolveTauriWorkspaceHome } from "./infrastructure/tauriHomeDirectory";
 import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
+import { BrowserAgentSidebarRailPreference } from "./infrastructure/browserAgentSidebarRailPreference";
 import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
@@ -70,6 +72,7 @@ import { TauriRuntimeObservabilityGateway } from "./infrastructure/tauriRuntimeO
 import { TauriServerReadyExternalUrlOpener } from "./infrastructure/tauriServerReadyExternalUrlOpener";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriSystemFontGateway } from "./infrastructure/tauriSystemFontGateway";
+import { createTauriNativeWindow } from "./infrastructure/tauriNativeWindow";
 import { TauriSymfonyWorkspaceIntelligenceGateway } from "./infrastructure/tauriSymfonyWorkspaceIntelligenceGateway";
 import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
 import { TauriVscodeProcessTasksGateway } from "./infrastructure/tauriVscodeProcessTasksGateway";
@@ -121,6 +124,8 @@ export function createWorkbenchComposition() {
     agentProviderGateway,
     agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
+    resolveWorkspaceHome: resolveTauriWorkspaceHome,
+    agentSidebarRailPreference: new BrowserAgentSidebarRailPreference(),
     turnChangesGateway: new TauriAgentTurnChangesGateway(),
     agentTaskGateway: new TauriAgentTaskGateway(),
     gitWorktreeGateway: new TauriGitWorktreeGateway(),
@@ -149,6 +154,7 @@ export function createWorkbenchComposition() {
       gitHistoryGateway,
       fileChanges: workspaceFileChangeGateway,
       worktreeFileChanges: workspaceFileChangeGateway,
+      fileSearch: workspaceGateway,
     },
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(
@@ -214,6 +220,7 @@ export function createWorkbenchComposition() {
     settingsGateway,
     smartModeGateway: new TauriSmartModeGateway(),
     systemFontGateway: new TauriSystemFontGateway(),
+    nativeWindow: createTauriNativeWindow(),
     symfonyWorkspaceIntelligenceGateway: new TauriSymfonyWorkspaceIntelligenceGateway(),
     terminalGateway: new TauriTerminalGateway(),
     vscodeProcessTasksGateway: new TauriVscodeProcessTasksGateway(),

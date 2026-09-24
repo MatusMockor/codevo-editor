@@ -1,15 +1,23 @@
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useState, type ComponentType, type KeyboardEvent } from "react";
 import {
+  Bot,
+  CircleAlert,
   CircleCheck,
   CircleDashed,
   CircleStop,
-  CircleX,
+  MessageCircleQuestionMark,
   Server,
+  ShieldQuestionMark,
   type LucideProps,
 } from "lucide-react";
-import { AgentCompactRelativeTime, AgentWorkingDuration } from "./agentClock";
-import { agentRowStatusLabel, type AgentRowStatus } from "./agentSidebarPresentation";
+import { AgentCompactRelativeTime, AgentRowElapsed } from "./agentClock";
+import {
+  agentRowStatusLabel,
+  agentRowStatusTitle,
+  agentRowStatusTone,
+  type AgentRowStatus,
+} from "./agentThreadRowStatus";
 
 type AgentRowStatusKind = AgentRowStatus["kind"];
 
@@ -17,14 +25,17 @@ const STATUS_ICONS: Readonly<
   Record<Exclude<AgentRowStatusKind, "none">, ComponentType<LucideProps>>
 > = {
   working: CircleDashed,
+  agents: Bot,
+  approval: ShieldQuestionMark,
+  input: MessageCircleQuestionMark,
   done: CircleCheck,
-  failed: CircleX,
+  failed: CircleAlert,
   stopped: CircleStop,
 };
 
 export const AGENT_ROW_STATUS_ICON_SIZE = 13;
 
-export function StatusSlot({
+export function AgentThreadRowStatusSlot({
   status,
   updatedAtEpochMs,
 }: {
@@ -34,24 +45,24 @@ export function StatusSlot({
   const label = agentRowStatusLabel(status);
   if (status.kind === "none" || label === null) {
     return (
-      <span className="agent-row__time agent-num">
+      <span className="cv-card-row__when">
         <AgentCompactRelativeTime epochMs={updatedAtEpochMs} />
       </span>
     );
   }
   const Icon = STATUS_ICONS[status.kind];
   return (
-    <span className={`agent-row__status agent-row__status--${status.kind}`}>
-      <Icon
-        aria-hidden="true"
-        className="agent-row__status-icon"
-        size={AGENT_ROW_STATUS_ICON_SIZE}
-      />
-      <span className="agent-row__status-label">{label}</span>
+    <span
+      className="cv-card-row__status"
+      data-tone={agentRowStatusTone(status)}
+      title={agentRowStatusTitle(status) ?? undefined}
+    >
+      <Icon aria-hidden="true" size={AGENT_ROW_STATUS_ICON_SIZE} />
+      <span className="cv-card-row__status-label">{label}</span>
       {status.kind === "working" && (
-        <time className="agent-num">
-          <AgentWorkingDuration startedAtEpochMs={status.startedAtEpochMs} />
-        </time>
+        <span aria-hidden="true" className="cv-card-row__tick">
+          <AgentRowElapsed startedAtEpochMs={status.startedAtEpochMs} />
+        </span>
       )}
     </span>
   );
@@ -82,7 +93,7 @@ export function RenameInput({
     <input
       aria-label="Rename thread"
       autoFocus
-      className="agent-row__rename"
+      className="cv-card-row__rename"
       maxLength={200}
       onBlur={() => onCommit(value)}
       onChange={(event) => setValue(event.target.value)}

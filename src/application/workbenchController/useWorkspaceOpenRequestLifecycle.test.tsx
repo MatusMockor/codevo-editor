@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("useWorkspaceOpenRequestLifecycle close ownership", () => {
-  it("releases a stale direct admission without invalidating an active close", async () => {
+  it("rolls back a stale direct admission without invalidating an active close", async () => {
     const active = descriptor("workspace-active", "/selected/active", "/canonical/shared");
     const stale = descriptor("workspace-stale", "/selected/stale", active.canonicalRoot);
     const replacement = descriptor(
@@ -55,10 +55,11 @@ describe("useWorkspaceOpenRequestLifecycle close ownership", () => {
       active.selectedPath,
       replacement.selectedPath,
     ]);
-    expect(gateway.unregister).toHaveBeenCalledExactlyOnceWith(stale.workspaceId);
+    expect(gateway.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(stale);
+    expect(gateway.unregister).not.toHaveBeenCalled();
   });
 
-  it("releases a stale picker admission without invalidating an active close", async () => {
+  it("rolls back a stale picker admission without invalidating an active close", async () => {
     const active = descriptor("workspace-active", "/selected/active", "/canonical/shared");
     const stale = descriptor("workspace-stale-picker", "/selected/stale", active.canonicalRoot);
     const replacement = descriptor(
@@ -92,7 +93,8 @@ describe("useWorkspaceOpenRequestLifecycle close ownership", () => {
       active.selectedPath,
       replacement.selectedPath,
     ]);
-    expect(gateway.unregister).toHaveBeenCalledExactlyOnceWith(stale.workspaceId);
+    expect(gateway.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(stale);
+    expect(gateway.unregister).not.toHaveBeenCalled();
   });
 });
 
@@ -121,7 +123,8 @@ describe("useWorkspaceOpenRequestLifecycle open intents", () => {
 
     await expect(openingA1).resolves.toBe(false);
     expect(harness.currentWorkspaceIdentity()).toBe(a2);
-    expect(gateway.unregister).not.toHaveBeenCalledWith(a1.workspaceId);
+    expect(gateway.rollbackAdmission).toHaveBeenCalledExactlyOnceWith(a1);
+    expect(gateway.unregister).not.toHaveBeenCalled();
   });
 
   it("accepts an exact registered alias receipt without inferring success from path equality", async () => {
@@ -326,7 +329,7 @@ function renderLifecycle(gateway: WorkspaceIdentityGateway, options: LifecycleHa
     async (
       path: string,
       admitted: WorkspaceIdentityDescriptor | null,
-      adoptIdentity: (() => number | null) | null,
+      adoptIdentity: (() => Promise<number | null>) | null,
       _requestToken: number,
       commitOpenWorkspaceRequest: (
         selectedPath: string,
@@ -341,7 +344,7 @@ function renderLifecycle(gateway: WorkspaceIdentityGateway, options: LifecycleHa
       if (openOptions?.isOpenIntentCurrent && !openOptions.isOpenIntentCurrent()) return;
       if (admitted) options.beforeAdopt?.(admitted);
       const admissionGeneration = adoptIdentity
-        ? adoptIdentity()
+        ? await adoptIdentity()
         : admitted
           ? (ownedGenerationByIdRef.current[admitted.workspaceId] ?? null)
           : null;
@@ -419,6 +422,7 @@ function renderLifecycle(gateway: WorkspaceIdentityGateway, options: LifecycleHa
 function identityGateway(overrides: Partial<WorkspaceIdentityGateway>): WorkspaceIdentityGateway & {
   readonly openFromPicker: ReturnType<typeof vi.fn>;
   readonly openPath: ReturnType<typeof vi.fn>;
+  readonly rollbackAdmission: ReturnType<typeof vi.fn>;
   readonly unregister: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -431,11 +435,14 @@ function identityGateway(overrides: Partial<WorkspaceIdentityGateway>): Workspac
     })),
     openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
     openPath: vi.fn(async (path: string) => descriptor(path, path, path)),
-    unregister: vi.fn(async () => undefined),
+    unregister: vi.fn(async () => ({ status: "released" as const })),
+    adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+    rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
     ...overrides,
   } as WorkspaceIdentityGateway & {
     readonly openFromPicker: ReturnType<typeof vi.fn>;
     readonly openPath: ReturnType<typeof vi.fn>;
+    readonly rollbackAdmission: ReturnType<typeof vi.fn>;
     readonly unregister: ReturnType<typeof vi.fn>;
   };
 }

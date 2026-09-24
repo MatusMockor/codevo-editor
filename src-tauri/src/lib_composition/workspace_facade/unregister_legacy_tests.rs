@@ -1,4 +1,8 @@
-use super::unregister_workspace_with_runtime_cleanup;
+use super::{
+    release_workspace_owner_with_runtime_cleanup, WorkspaceOwnerClose, WorkspaceOwnerCloseOutcome,
+};
+use crate::workspace_registry::unregister::WorkspaceOwnerScope;
+use crate::workspace_registry::RegistrationOwner;
 use crate::workspace_registry::WorkspaceRegistry;
 use crate::workspace_runtime::{
     DebugSessionDisposer, LanguageServerDisposer, TerminalSessionDisposer,
@@ -134,9 +138,16 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
         "terminal stop failed",
     );
 
-    let errors = unregister_workspace_with_runtime_cleanup(
+    let errors = release_workspace_owner_with_runtime_cleanup(
         &registry,
-        &descriptor_a.workspace_id,
+        WorkspaceOwnerClose {
+            workspace_id: &descriptor_a.workspace_id,
+            scope: WorkspaceOwnerScope::Admission {
+                owner: RegistrationOwner::Editor,
+                admission_token: 0,
+            },
+            expected_canonical_root: None,
+        },
         WorkspaceRuntimeDisposal {
             index_lifecycle: &index,
             javascript_typescript_language_servers: &javascript_typescript,
@@ -165,10 +176,10 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
 
     assert_eq!(
         errors,
-        vec![
-            "Workspace runtime cleanup failed: terminal stop failed",
-            "document cleanup failed",
-        ]
+        WorkspaceOwnerCloseOutcome::Released(vec![
+            "Workspace runtime cleanup failed: terminal stop failed".to_string(),
+            "document cleanup failed".to_string(),
+        ])
     );
     assert!(registry.descriptor(&descriptor_a.workspace_id).is_err());
     assert!(registry.descriptor(&descriptor_b.workspace_id).is_ok());
@@ -188,9 +199,16 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
     assert!(eslint.contains(&root_b_key));
     assert!(!terminal.contains(&root_a_key));
     assert!(terminal.contains(&root_b_key));
-    let retry_errors = unregister_workspace_with_runtime_cleanup(
+    let retry = release_workspace_owner_with_runtime_cleanup(
         &registry,
-        &descriptor_a.workspace_id,
+        WorkspaceOwnerClose {
+            workspace_id: &descriptor_a.workspace_id,
+            scope: WorkspaceOwnerScope::Admission {
+                owner: RegistrationOwner::Editor,
+                admission_token: 0,
+            },
+            expected_canonical_root: None,
+        },
         WorkspaceRuntimeDisposal {
             index_lifecycle: &index,
             javascript_typescript_language_servers: &javascript_typescript,
@@ -205,7 +223,7 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
         |_, _| panic!("an idempotent unregister retry must not repeat cleanup"),
     )
     .expect("already-unregistered workspace retry");
-    assert!(retry_errors.is_empty());
+    assert_eq!(retry, WorkspaceOwnerCloseOutcome::UnknownWorkspace);
     assert_eq!(
         calls.lock().expect("calls").as_slice(),
         &[

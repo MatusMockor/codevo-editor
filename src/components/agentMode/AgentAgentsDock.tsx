@@ -1,7 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { useViewportWidth } from "../useViewportWidth";
-import { AgentAgentsPanel } from "./AgentAgentsPanel";
-import { agentAgentsDockMode } from "./agentAgentsPanelPresentation";
+import type { ReactNode } from "react";
+import { usePublishAgentThreadAgents } from "./agents/agentAgentsPanelHooks";
 import { AgentSubagentAnnouncer } from "./AgentSubagentAnnouncer";
 import type { AgentThreadAgents } from "./useAgentThreadAgents";
 import "./agentSubagents.css";
@@ -13,16 +11,10 @@ export function AgentAgentsDock({
   readonly agents: AgentThreadAgents;
   readonly children: ReactNode;
 }) {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
-  const width = useViewportWidth(element);
-  const mode = agentAgentsDockMode(agents.panel !== null, width);
-
+  usePublishAgentThreadAgents(agents);
   return (
-    <div className="agents-dock" data-agents={mode} ref={setElement}>
-      <div className="agents-dock__main" inert={mode === "overlay"}>
-        {children}
-      </div>
-      {agents.panel !== null && <AgentAgentsPanel {...agents.panel} modal={mode === "overlay"} />}
+    <div className="agents-dock">
+      <div className="agents-dock__main">{children}</div>
       {agents.tracked && (
         <AgentSubagentAnnouncer
           key={agents.threadId}

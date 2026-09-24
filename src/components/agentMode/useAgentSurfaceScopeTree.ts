@@ -15,7 +15,7 @@ import type {
   AgentSurfaceTreeUnavailable,
 } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceScope } from "./agentSurfacePolicy";
-import type { AgentWorkbenchChrome, AgentWorkbenchFileTreeChrome } from "./agentWorkbenchChrome";
+import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 
 export interface AgentSurfaceScopeTreeOptions {
   readonly chrome: Pick<
@@ -94,14 +94,6 @@ export function agentSurfaceTreeUnavailable(
   }
 }
 
-function searchFilesFromChrome(
-  chrome: AgentWorkbenchFileTreeChrome,
-): AgentSurfaceFileTreeProps["searchFiles"] {
-  const open = chrome.onSearchFiles;
-  if (open === undefined) return null;
-  return { shortcut: chrome.searchFilesShortcut ?? "", open };
-}
-
 export function useAgentSurfaceScopeTree({
   chrome,
   filesOpen,
@@ -175,8 +167,6 @@ export function useAgentSurfaceScopeTree({
         open(entry);
       };
     const unavailable = agentSurfaceTreeUnavailable(thread, scope, scopeAction);
-    const searchFiles =
-      unavailable === null && workspaceReady ? searchFilesFromChrome(fileTreeChrome) : null;
     return {
       source,
       tree,
@@ -191,15 +181,9 @@ export function useAgentSurfaceScopeTree({
       revealActivePathSignal: fileTreeChrome.revealActivePathSignal,
       fileStatusesByPath: fileTreeChrome.fileStatusesByPath,
       searchFiles:
-        searchFiles === null
-          ? null
-          : {
-              shortcut: searchFiles.shortcut,
-              open: () => {
-                if (!mountedRef.current || authorityRef.current !== authority) return;
-                searchFiles.open();
-              },
-            },
+        unavailable === null && workspaceReady
+          ? { shortcut: fileTreeChrome.searchFilesShortcut ?? "" }
+          : null,
       onOpenFile: guarded(fileTreeChrome.onOpenFile),
       onPreviewFile: guarded(fileTreeChrome.onPreviewFile),
     };

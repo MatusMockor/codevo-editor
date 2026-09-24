@@ -29,7 +29,7 @@ mod registration_operation;
 #[path = "workspace_registry/runtime_start.rs"]
 mod runtime_start;
 #[path = "workspace_registry/unregister.rs"]
-mod unregister;
+pub(crate) mod unregister;
 
 pub(crate) use registration_operation::WorkspaceRegistrationOperationLease;
 
@@ -135,6 +135,15 @@ struct RegisteredRootIdentity {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 struct RegistrationAdmission {
     added_registered_paths: BTreeSet<PathBuf>,
+    owner: RegistrationOwner,
+    selected_path: PathBuf,
+    published: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RegistrationOwner {
+    Editor,
+    Agent,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

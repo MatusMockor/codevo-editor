@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { LoaderCircle, Minimize2, TriangleAlert } from "lucide-react";
 import type { AgentWorkbenchLayoutMode } from "../domain/agentWorkbenchLayout";
 import type { IdeProgressIndicator } from "../domain/ideProgress";
@@ -20,6 +21,7 @@ export interface WorkbenchToolbarProps {
   readonly languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
+  readonly status?: ReactNode;
   onCollapseEditor(): void;
   onShowProgressPanel(): void;
   onToggleSmartMode(): void;
@@ -38,6 +40,7 @@ export function WorkbenchToolbar({
   onShowProgressPanel,
   onToggleSmartMode,
   onTrustWorkspace,
+  status = null,
   workspaceRoot,
   workspaceTrusted,
 }: WorkbenchToolbarProps) {
@@ -108,6 +111,7 @@ export function WorkbenchToolbar({
         <span className="toolbar-status">{indexToolbarLabel(indexProgress)}</span>
       ) : null}
       {trustButton}
+      {status === null ? null : <div className="workbench-toolbar__status">{status}</div>}
     </header>
   );
 }

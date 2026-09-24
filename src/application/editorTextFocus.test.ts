@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { editorTextFocusOwner } from "./editorTextFocus";
+import { editorTextFocused, editorTextFocusOwner } from "./editorTextFocus";
 
 describe("editorTextFocusOwner", () => {
   afterEach(() => {
@@ -44,6 +44,32 @@ describe("editorTextFocusOwner", () => {
     expect(editorTextFocusOwner({ target: nested })).toBeNull();
     expect(editorTextFocusOwner({ target: null })).toBeNull();
     expect(editorTextFocusOwner({ target: new EventTarget() })).toBeNull();
+  });
+});
+
+describe("editorTextFocused", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("reports the caret in a Monaco text input", () => {
+    document.body.innerHTML =
+      '<div class="monaco-editor"><textarea class="inputarea" aria-label="Editor content"></textarea></div>';
+    document.querySelector("textarea")?.focus();
+
+    expect(editorTextFocused(document)).toBe(true);
+  });
+
+  it("ignores the composer, Monaco widgets and an unfocused document", () => {
+    expect(editorTextFocused(document)).toBe(false);
+
+    document.body.innerHTML = '<textarea aria-label="Message"></textarea>';
+    document.querySelector("textarea")?.focus();
+    expect(editorTextFocused(document)).toBe(false);
+
+    document.body.innerHTML = '<div class="monaco-editor"><input class="find-input" /></div>';
+    document.querySelector("input")?.focus();
+    expect(editorTextFocused(document)).toBe(false);
   });
 });
 

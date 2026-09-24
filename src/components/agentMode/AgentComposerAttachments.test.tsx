@@ -470,7 +470,7 @@ describe("AgentComposer attachments", () => {
 
     const draft = host.querySelector<HTMLElement>("[data-agent-attachment-state='staging']");
     expect(draft?.getAttribute("aria-busy")).toBe("true");
-    expect(draft?.querySelector(".agent-composer-attachment__spinner")).not.toBeNull();
+    expect(draft?.querySelector(".cv-spinner")).not.toBeNull();
     expect(submitButton().disabled).toBe(true);
   });
 
@@ -502,6 +502,19 @@ describe("AgentComposer attachments", () => {
     expect(tile?.textContent).toContain("shot.webp");
   });
 
+  it("keeps the queued-edit banner above the slab and the queued image as a tile inside the editor", () => {
+    renderComposerWithQueuedEdit();
+    const banner = host.querySelector(
+      '.cv-composer__banners [aria-label="Editing queued message"]',
+    );
+    expect(banner?.textContent).toBe("Editing queued messagesends after this turnCancel");
+    const tile = host.querySelector(".agent-composer__box .agent-composer-attachment--image");
+    expect(tile?.querySelector("img.agent-composer-attachment__preview")).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Save queued message"]')?.className).toContain(
+      "cv-submit",
+    );
+  });
+
   it("renders a ready image draft as its own preview instead of a glyph", () => {
     render({ attachments: surface({ drafts: [previewImageDraft()] }) });
 
@@ -517,7 +530,7 @@ describe("AgentComposer attachments", () => {
     render({ attachments: surface({ drafts: [stagingPreviewDraft()], staging: true }) });
 
     expect(host.querySelector(".agent-composer-attachment__preview")).toBeNull();
-    expect(host.querySelector(".agent-composer-attachment__spinner")).not.toBeNull();
+    expect(host.querySelector(".cv-spinner")).not.toBeNull();
   });
 
   it("keeps the glyph tile when the draft carries no preview", () => {
@@ -738,6 +751,22 @@ describe("AgentComposer attachments", () => {
 
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
+  }
+
+  function renderComposerWithQueuedEdit(): void {
+    render({
+      running: true,
+      mode: { kind: "steer", threadId: "t" },
+      queuedEdit: {
+        threadId: "t",
+        lease: 1,
+        prompt: "Then regenerate openapi.yaml",
+        attachments: [previewImageDraft()],
+        onRemoveAttachment: vi.fn(),
+        onCancel: vi.fn(),
+        commit: vi.fn(),
+      },
+    });
   }
 
   function textarea(): HTMLTextAreaElement {

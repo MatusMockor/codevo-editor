@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Users } from "lucide-react";
 import { memo, useId, useMemo } from "react";
 import {
   summarizeAgentRuntimeSubagents,
@@ -6,6 +6,7 @@ import {
   type AgentRuntimeSubagentBatch,
   type AgentRuntimeSubagents,
 } from "../../domain/agentRuntimeSubagent";
+import { RoleTag } from "../../ui/foundation/RoleTag";
 import { useAgentToolDisclosure } from "./AgentToolDisclosure";
 import {
   agentRuntimeSubagentActivityLine,
@@ -28,7 +29,7 @@ export const AgentSubagentDisclosure = memo(function AgentSubagentDisclosure({
 }) {
   if (subagents.batches.length === 0) return null;
   return (
-    <div className="agent-spawn-list">
+    <div className="cv-spawn-list">
       {subagents.batches.map((batch) => (
         <AgentSpawnBatchRow
           batch={batch}
@@ -54,41 +55,48 @@ const AgentSpawnBatchRow = memo(function AgentSpawnBatchRow({
   const membersId = useId();
   const summary = useMemo(() => summarizeAgentRuntimeSubagents(batch.agents), [batch]);
   const origin = agentSpawnBatchOrigin(batch.id);
-  const lead = agentSpawnLeadLabel(summary, origin);
-  const status = agentSpawnStatusLabel(summary);
+  const expanded = summary.live ? !disclosure.expanded : disclosure.expanded;
 
   return (
-    <div className="agent-spawn" data-origin={origin} data-tone={summary.tone}>
+    <div
+      className="cv-spawn"
+      data-live={summary.live ? "true" : undefined}
+      data-origin={origin}
+      data-tone={summary.tone}
+    >
       <button
-        aria-controls={membersId}
-        aria-expanded={disclosure.expanded}
-        className="agent-spawn__row"
+        aria-controls={expanded ? membersId : undefined}
+        aria-expanded={expanded}
+        className="cv-spawn__head"
         onClick={disclosure.toggle}
         type="button"
       >
-        <span aria-hidden="true" className="agent-spawn__dot" />
-        <span className="agent-spawn__lead">{lead}</span>
-        <span className="agent-spawn__status">{status}</span>
-        <ChevronRight aria-hidden="true" className="agent-spawn__chevron" size={13} />
+        <span aria-hidden="true" className="cv-spawn__icon">
+          <Users size={16} />
+        </span>
+        <span className="cv-spawn__lead">{agentSpawnLeadLabel(summary, origin)}</span>
+        <span aria-hidden="true" className="cv-spawn__sep">
+          ·
+        </span>
+        <span className="cv-spawn__status">{agentSpawnStatusLabel(summary)}</span>
+        <ChevronRight aria-hidden="true" className="cv-spawn__chevron" size={14} />
       </button>
-      <div className="agent-spawn__members" hidden={!disclosure.expanded} id={membersId}>
-        {disclosure.expanded && (
-          <>
-            <ul aria-label="Subagents" className="agent-spawn__list">
-              {batch.agents.map((agent) => (
-                <li key={agent.id}>
-                  <AgentSpawnMember agent={agent} renderProbe={memberRenderProbe} />
-                </li>
-              ))}
-            </ul>
-            {onOpenAgents !== undefined && (
-              <button className="agent-spawn__open" onClick={onOpenAgents} type="button">
-                Open Agents panel ›
-              </button>
-            )}
-          </>
-        )}
-      </div>
+      {expanded && (
+        <>
+          <ul aria-label="Subagents" className="cv-spawn__members" id={membersId}>
+            {batch.agents.map((agent) => (
+              <li key={agent.id}>
+                <AgentSpawnMember agent={agent} renderProbe={memberRenderProbe} />
+              </li>
+            ))}
+          </ul>
+          {onOpenAgents !== undefined && (
+            <button className="cv-spawn__open" onClick={onOpenAgents} type="button">
+              Open Agents panel ›
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 });
@@ -106,41 +114,42 @@ const AgentSpawnMember = memo(function AgentSpawnMember({
   const body = agentRuntimeSubagentBody(agent);
   const activityLine = agentRuntimeSubagentActivityLine(agent);
   const titleState = agent.titleKnown ? undefined : "unknown";
-  const label = agentRuntimeSubagentMemberLabel(agent);
   const head = (
     <>
-      <span className="agent-spawn-member__title">{agent.title}</span>
-      {agent.role !== null && <span className="agent-spawn-member__role">{agent.role}</span>}
-      <span className="agent-spawn-member__meta">{label}</span>
+      <span className="cv-spawn-member__title">{agent.title}</span>
+      {agent.role !== null && <RoleTag>{agent.role}</RoleTag>}
+      <span className="cv-spawn-member__meta">{agentRuntimeSubagentMemberLabel(agent)}</span>
     </>
   );
 
   if (body === null) {
     return (
-      <div className="agent-spawn-member" data-status={agent.status} data-title={titleState}>
-        <div className="agent-spawn-member__head">{head}</div>
-        {activityLine !== null && <p className="agent-spawn-member__activity">{activityLine}</p>}
+      <div className="cv-spawn-member" data-status={agent.status} data-title={titleState}>
+        <div className="cv-spawn-member__head">{head}</div>
+        {activityLine !== null && <p className="cv-spawn-member__activity">{activityLine}</p>}
       </div>
     );
   }
 
   return (
-    <div className="agent-spawn-member" data-status={agent.status} data-title={titleState}>
+    <div className="cv-spawn-member" data-status={agent.status} data-title={titleState}>
       <button
-        aria-controls={bodyId}
+        aria-controls={disclosure.expanded ? bodyId : undefined}
         aria-expanded={disclosure.expanded}
-        className="agent-spawn-member__head agent-spawn-member__head--action"
+        className="cv-spawn-member__head"
         onClick={disclosure.toggle}
         type="button"
       >
         {head}
       </button>
       {!disclosure.expanded && activityLine !== null && (
-        <p className="agent-spawn-member__activity">{activityLine}</p>
+        <p className="cv-spawn-member__activity">{activityLine}</p>
       )}
-      <div className="agent-spawn-member__body" hidden={!disclosure.expanded} id={bodyId}>
-        {disclosure.expanded && <pre>{body}</pre>}
-      </div>
+      {disclosure.expanded && (
+        <div className="cv-spawn-member__body" id={bodyId}>
+          <pre>{body}</pre>
+        </div>
+      )}
     </div>
   );
 });

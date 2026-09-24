@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { createDiagnosticsCoalescer } from "../../domain/diagnosticsCoalescer";
+import type { WorkspaceHomeReference } from "../../domain/workspaceRootEligibility";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { executeCommandAndReport, type CommandExecutionRunner } from "../commandRegistry";
 import { createJsTestRerunLastRunCommands } from "../workbenchDebugControllerOptions";
@@ -474,6 +475,7 @@ interface CommandEffectsCompositionDependencies {
   ) => void;
   readonly resetJavaScriptTypeScriptLanguageServerDocuments: RuntimeEffectsDependencies["javaScriptTypeScript"]["resetLanguageServerDocuments"];
   readonly resetLanguageServerDocuments: RuntimeEffectsDependencies["php"]["resetLanguageServerDocuments"];
+  readonly resolveWorkspaceHome?: () => Promise<WorkspaceHomeReference>;
   readonly resolveDocumentSessionLifecycleAuthority: RuntimeEffectsDependencies["changedDocumentSync"]["resolveDocumentSessionLifecycleAuthority"];
   readonly runCloseActiveEditorGroup: CommandRegistryDependencies["closeActiveEditorGroup"];
   readonly runCloseActiveEditorGroupSurface: CommandRegistryDependencies["closeActiveEditorGroupSurface"];
@@ -534,6 +536,7 @@ type GroupedCommandEffectsDependency =
   | "settingsGateway"
   | "hasRestoredRef"
   | "beginStartupRestore"
+  | "resolveWorkspaceHome"
   | "javaScriptTypeScriptDiagnosticsByPath"
   | "languageServerDiagnosticsByPath"
   | "frameworkDiagnosticsByPath"
@@ -786,7 +789,11 @@ interface CommandEffectsDependencies extends Omit<
     "appSettings" | "appSettingsRef" | "applyAppSettings" | "persistAppSettings"
   >;
   readonly settingsPersistence: CommandEffectsFacet<
-    "persistWorkspaceSettings" | "settingsGateway" | "hasRestoredRef" | "beginStartupRestore"
+    | "persistWorkspaceSettings"
+    | "settingsGateway"
+    | "hasRestoredRef"
+    | "beginStartupRestore"
+    | "resolveWorkspaceHome"
   >;
   readonly diagnosticState: CommandEffectsFacet<
     | "javaScriptTypeScriptDiagnosticsByPath"
@@ -1254,8 +1261,13 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     workspaceEditorViewStatesRef,
   } = workspaceSettingsState;
   const { appSettings, appSettingsRef, applyAppSettings, persistAppSettings } = applicationSettings;
-  const { persistWorkspaceSettings, settingsGateway, hasRestoredRef, beginStartupRestore } =
-    settingsPersistence;
+  const {
+    persistWorkspaceSettings,
+    settingsGateway,
+    hasRestoredRef,
+    beginStartupRestore,
+    resolveWorkspaceHome,
+  } = settingsPersistence;
   const {
     javaScriptTypeScriptDiagnosticsByPath,
     languageServerDiagnosticsByPath,
@@ -1762,6 +1774,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     hasRestoredRef,
     onAppSettingsHydrated: agents.markAppSettingsHydrated,
     reportError,
+    resolveWorkspaceHome,
     settingsGateway,
   });
 

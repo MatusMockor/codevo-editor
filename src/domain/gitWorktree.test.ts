@@ -4,6 +4,7 @@ import {
   MAX_WORKTREE_BRANCH_BYTES,
   MAX_WORKTREE_PATH_BYTES,
   parseAgentWorktreeReceipt,
+  parseBranchWorktreeReceipt,
   parseGitWorktreeDescriptor,
   parseGitWorktreeDescriptors,
   validateAgentWorktreeTaskId,
@@ -116,6 +117,25 @@ describe("Git worktree domain", () => {
     { worktreePath: descriptor.worktreePath, branch: descriptor.branch, trusted: "false" },
   ])("rejects malformed receipt %# fail-closed", (value) => {
     expect(() => parseAgentWorktreeReceipt(value)).toThrow(TypeError);
+  });
+
+  it("parses the trust verdict of a branch worktree receipt", () => {
+    const receipt = {
+      worktreePath: "/repository/.worktrees/branch-feat-x",
+      branch: "feat/x",
+      trusted: false,
+    };
+
+    expect(parseBranchWorktreeReceipt(receipt)).toEqual(receipt);
+    expect(parseBranchWorktreeReceipt({ ...receipt, trusted: true }).trusted).toBe(true);
+  });
+
+  it.each([
+    { worktreePath: "/repository/.worktrees/branch-feat-x", branch: "feat/x" },
+    { worktreePath: "/repository/.worktrees/branch-feat-x", branch: "feat/x", trusted: "yes" },
+    { worktreePath: "/repository/.worktrees/branch-feat-x", branch: "feat/x", trusted: null },
+  ])("rejects branch worktree receipt %# without a boolean trust verdict", (value) => {
+    expect(() => parseBranchWorktreeReceipt(value)).toThrow(TypeError);
   });
 
   it.each(["agt-123-1a2b", "abc", "a-b-c"])("accepts safe task id %s", (taskId) => {

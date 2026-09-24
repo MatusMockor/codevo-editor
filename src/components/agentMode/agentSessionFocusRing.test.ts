@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
 
-const THREAD_SHEET = "components/agentMode/agentThread.css";
+const SESSION_SHEETS: ReadonlySet<string> = new Set([
+  "components/agentMode/agentThread.css",
+  "components/agentMode/conversation/conversation.css",
+]);
 const PROGRAMMATIC_FOCUS_TARGETS = [
   ".agent-session__scroll:focus-visible",
   ".agent-queued-list:focus-visible",
 ] as const;
 
 const rules = parseAllStyleSheets().rules.filter(
-  (rule) => rule.sheet === THREAD_SHEET && rule.context.length === 0,
+  (rule) => SESSION_SHEETS.has(rule.sheet) && rule.context.length === 0,
 );
 
 function declarationsFor(selector: string): ReadonlyArray<{ property: string; value: string }> {

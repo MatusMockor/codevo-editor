@@ -10,7 +10,13 @@ import {
 } from "../domain/languageServerRuntime";
 import type { IntelligenceMode } from "../domain/workspace";
 import type { WorkbenchWorkspaceGateways } from "../application/useWorkbenchController";
-import type { WorkspaceIdentityDescriptor } from "../application/workspaceIdentityGatewayPort";
+import type {
+  WorkspaceAdmissionAdoptionResult,
+  WorkspaceIdentityDescriptor,
+  WorkspaceIdentityGateway,
+  WorkspaceIdentityReleaseOwner,
+  WorkspaceOwnerReleaseResult,
+} from "../application/workspaceIdentityGatewayPort";
 import {
   flushAsyncTurns,
   setupWorkbenchControllerTestHarness,
@@ -65,7 +71,7 @@ export function registeredIdentityFixture(): WorkbenchWorkspaceGateways["identit
     }),
     openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
     openPath: vi.fn(async (path) => descriptorForPath(path)),
-    unregister: vi.fn(async () => undefined),
+    ...workspaceAdmissionDoubles(),
   };
 }
 
@@ -86,13 +92,57 @@ export function replacementWorkspaceIdentityGateway(
     openPath: vi.fn(
       async () => descriptors[nextDescriptor++] ?? descriptors[descriptors.length - 1]!,
     ),
-    unregister: vi.fn(async () => undefined),
+    ...workspaceAdmissionDoubles(),
   };
+}
+
+export async function releasedWorkspaceOwner(): Promise<WorkspaceOwnerReleaseResult> {
+  return { status: "released" };
+}
+
+export async function adoptedWorkspaceAdmission(): Promise<WorkspaceAdmissionAdoptionResult> {
+  return { status: "adopted" };
+}
+
+export function workspaceAdmissionDoubles(
+  unregister: WorkspaceIdentityGateway["unregister"] = vi.fn(releasedWorkspaceOwner),
+  rollbackAdmission: WorkspaceIdentityGateway["rollbackAdmission"] = vi.fn(releasedWorkspaceOwner),
+): Pick<WorkspaceIdentityGateway, "adoptAdmission" | "rollbackAdmission" | "unregister"> {
+  return { adoptAdmission: vi.fn(adoptedWorkspaceAdmission), rollbackAdmission, unregister };
+}
+
+export function identityGatewayDouble(
+  overrides: Partial<WorkspaceIdentityGateway> = {},
+): WorkspaceIdentityGateway {
+  return {
+    getDescriptor: vi.fn(),
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    ...workspaceAdmissionDoubles(),
+    ...overrides,
+  };
+}
+
+export function releaseOwnerOf(
+  descriptor: Pick<WorkspaceIdentityDescriptor, "admissionToken" | "canonicalRoot" | "workspaceId">,
+): WorkspaceIdentityReleaseOwner {
+  return {
+    workspaceId: descriptor.workspaceId,
+    admissionToken: descriptor.admissionToken ?? null,
+    canonicalRootPath: descriptor.canonicalRoot,
+  };
+}
+
+export function releaseThroughOwnedGateways(
+  gateways: ReadonlyMap<string, Pick<WorkspaceIdentityGateway, "unregister">>,
+): WorkspaceIdentityGateway["unregister"] {
+  return async (owner) =>
+    (await gateways.get(owner.workspaceId)?.unregister(owner)) ?? { status: "unknownWorkspace" };
 }
 
 export function singleRegisteredIdentityFixture(
   descriptor: WorkspaceIdentityDescriptor,
-  unregister: (workspaceId: string) => Promise<void> = vi.fn(async () => undefined),
+  unregister: WorkspaceIdentityGateway["unregister"] = vi.fn(releasedWorkspaceOwner),
+  rollbackAdmission: WorkspaceIdentityGateway["rollbackAdmission"] = vi.fn(releasedWorkspaceOwner),
 ): WorkbenchWorkspaceGateways["identity"] {
   return {
     getDescriptor: vi.fn(async (workspaceId) => {
@@ -108,7 +158,7 @@ export function singleRegisteredIdentityFixture(
       if (path !== descriptor.selectedPath) throw new Error(`Unexpected workspace path: ${path}`);
       return descriptor;
     }),
-    unregister,
+    ...workspaceAdmissionDoubles(unregister, rollbackAdmission),
   };
 }
 

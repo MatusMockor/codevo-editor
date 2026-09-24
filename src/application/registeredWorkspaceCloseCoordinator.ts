@@ -4,6 +4,13 @@ import type {
 } from "../domain/workspaceRuntimeLifecycle";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import { CloseCoordinator } from "./closeCoordinator";
+import {
+  retryWhileWorkspaceReleasing,
+  scheduleWorkspaceReleaseRetry,
+  WORKSPACE_RELEASE_STILL_IN_PROGRESS,
+  type WorkspaceReleaseRetryDelay,
+  type WorkspaceReleaseRetryOutcome,
+} from "./workspaceReleaseRetry";
 
 export interface RegisteredWorkspaceCloseLease {
   readonly target: RegisteredWorkspaceRuntimeDisposalTarget;
@@ -17,6 +24,7 @@ export type RegisteredWorkspaceClosePreparation =
 
 export type RegisteredWorkspaceCloseResult =
   | { readonly status: "closed" }
+  | { readonly status: "retainedByOtherOwners" }
   | { readonly status: "incomplete"; readonly errors: readonly string[] }
   | { readonly status: "stale" };
 
@@ -56,7 +64,10 @@ export function prepareRegisteredWorkspaceClose(
 }
 
 export class RegisteredWorkspaceCloseCoordinator {
-  constructor(private readonly closeCoordinator = new CloseCoordinator()) {}
+  constructor(
+    private readonly closeCoordinator = new CloseCoordinator(),
+    private readonly releaseRetryDelay: WorkspaceReleaseRetryDelay = scheduleWorkspaceReleaseRetry,
+  ) {}
 
   async close(request: RegisteredWorkspaceCloseRequest): Promise<RegisteredWorkspaceCloseResult> {
     if (!request.lease.isCurrent()) {
@@ -77,8 +88,13 @@ export class RegisteredWorkspaceCloseCoordinator {
         if (!request.lease.isCurrent()) {
           return;
         }
-        const result = await request.disposeRegisteredWorkspace(request.lease.target);
-        disposal.result = result;
+        const outcome = await retryWhileWorkspaceReleasing({
+          attempt: () => request.disposeRegisteredWorkspace(request.lease.target),
+          delay: this.releaseRetryDelay,
+          isCurrent: request.lease.isCurrent,
+          isReleasing: (result) => result.status === "releasing",
+        });
+        disposal.result = settledDisposalResult(outcome);
       },
     });
     if (!disposal.result) {
@@ -87,13 +103,35 @@ export class RegisteredWorkspaceCloseCoordinator {
 
     switch (disposal.result.status) {
       case "closed":
+      case "unknownWorkspace":
         return { status: "closed" };
+      case "releasing":
+        return { status: "incomplete", errors: [WORKSPACE_RELEASE_STILL_IN_PROGRESS] };
+      case "retainedByOtherOwners":
+        return { status: "retainedByOtherOwners" };
       case "incomplete":
         return { status: "incomplete", errors: disposal.result.errors };
       default: {
         const exhaustive: never = disposal.result;
         return exhaustive;
       }
+    }
+  }
+}
+
+function settledDisposalResult(
+  outcome: WorkspaceReleaseRetryOutcome<RegisteredWorkspaceRuntimeDisposalResult>,
+): RegisteredWorkspaceRuntimeDisposalResult | null {
+  switch (outcome.kind) {
+    case "settled":
+      return outcome.result;
+    case "abandoned":
+      return null;
+    case "exhausted":
+      return { status: "incomplete", errors: [WORKSPACE_RELEASE_STILL_IN_PROGRESS] };
+    default: {
+      const unsupported: never = outcome;
+      return unsupported;
     }
   }
 }

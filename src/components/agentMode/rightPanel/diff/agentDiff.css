@@ -1,0 +1,239 @@
+.cv-diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  container-name: cv-diff;
+  container-type: inline-size;
+}
+
+.cv-diff__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.cv-diff__files {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--cv-space-1) var(--cv-space-2) var(--cv-space-4);
+}
+
+.cv-diff__files--replacement {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.cv-diff-compare {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cv-space-1);
+  min-width: 0;
+  font-size: var(--cv-t-xs);
+  color: var(--cv-fg-subtle);
+}
+
+.cv-diff-compare__head {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cv-diff-file__head {
+  display: flex;
+  align-items: center;
+  gap: var(--cv-space-1);
+}
+
+.cv-diff-file__row {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--cv-space-2);
+  padding: var(--cv-space-1) var(--cv-space-2);
+  border: 0;
+  border-radius: var(--cv-r-control);
+  background: none;
+  font: inherit;
+  font-size: var(--cv-t-xs);
+  color: var(--cv-fg-strong);
+  text-align: left;
+}
+
+.cv-diff-file__row:hover {
+  background: var(--cv-tint-1);
+}
+
+.cv-diff-file__row:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-focus);
+}
+
+.cv-diff-file__chev {
+  flex: none;
+  color: var(--cv-fg-subtle);
+  transition: transform var(--cv-motion-fast) var(--cv-ease);
+}
+
+.cv-diff-file__row[aria-expanded="true"] .cv-diff-file__chev {
+  transform: rotate(90deg);
+}
+
+.cv-diff-file__glyph {
+  flex: none;
+  color: var(--cv-fg-subtle);
+}
+
+.cv-diff-file__glyph--added {
+  color: var(--cv-ok);
+}
+
+.cv-diff-file__glyph--deleted {
+  color: var(--cv-danger);
+}
+
+.cv-diff-file__path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+}
+
+.cv-diff-file__dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  color: var(--cv-fg-subtle);
+}
+
+.cv-diff-file__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cv-diff-file__note {
+  margin: var(--cv-space-1) var(--cv-space-2) var(--cv-space-2);
+  font-size: var(--cv-t-xs);
+  color: var(--cv-fg-subtle);
+}
+
+.cv-diff-hunk {
+  margin: var(--cv-space-1) 0 var(--cv-space-2);
+  border-radius: var(--cv-r-card);
+  box-shadow: var(--cv-ring-hair);
+  overflow-x: auto;
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+  line-height: var(--cv-lh-sm);
+}
+
+.cv-diff-grid {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+}
+
+.cv-diff-grid--unified {
+  grid-template-columns: auto auto 16px minmax(max-content, 1fr);
+}
+
+.cv-diff-grid--split {
+  grid-template-columns: auto 16px minmax(max-content, 1fr) auto 16px minmax(max-content, 1fr);
+}
+
+.cv-diff[data-wrap="true"] .cv-diff-grid {
+  width: 100%;
+}
+
+.cv-diff[data-wrap="true"] .cv-diff-grid--unified {
+  grid-template-columns: auto auto 16px minmax(0, 1fr);
+}
+
+.cv-diff[data-wrap="true"] .cv-diff-grid--split {
+  grid-template-columns: auto 16px minmax(0, 1fr) auto 16px minmax(0, 1fr);
+}
+
+.cv-diff-cell {
+  min-height: 20px;
+  white-space: pre;
+  color: var(--cv-fg);
+}
+
+.cv-diff[data-wrap="true"] .cv-diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cv-diff-cell--head {
+  grid-column: 1 / -1;
+  padding: 0 var(--cv-space-2);
+  background: var(--cv-tint-1);
+  color: var(--cv-fg-subtle);
+}
+
+.cv-diff-ln {
+  min-width: 28px;
+  padding: 0 var(--cv-space-2) 0 var(--cv-space-3);
+  text-align: right;
+  color: var(--cv-fg-subtle);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.cv-diff-sign {
+  text-align: center;
+  color: var(--cv-fg-subtle);
+  user-select: none;
+}
+
+.cv-diff-code {
+  padding-right: var(--cv-space-3);
+}
+
+.cv-diff-cell--add {
+  background: var(--cv-add-bg);
+}
+
+.cv-diff-sign--add {
+  color: var(--cv-ok);
+}
+
+.cv-diff-cell--del {
+  background: var(--cv-del-bg);
+}
+
+.cv-diff-sign--del {
+  color: var(--cv-danger);
+}
+
+.cv-diff-cell--empty {
+  background: var(--cv-tint-1);
+}
+
+.cv-diff-cell--split-start {
+  box-shadow: var(--cv-edge-start-divider);
+}
+
+.cv-diff-tree {
+  width: min(16rem, 40%);
+  min-width: 160px;
+  flex: none;
+  box-shadow: var(--cv-edge-start-divider);
+  overflow: auto;
+  padding: var(--cv-space-3);
+}
+
+@container cv-diff (max-width: 519px) {
+  .cv-diff-tree {
+    display: none;
+  }
+}

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { agentProjectGroups } from "./agentModePresentation";
-import {
-  agentRailScopeEntries,
-  agentRailScopeFromEntry,
-  agentRailSections,
-} from "./agentSidebarPresentation";
+import { agentThreadsInFilter } from "./agentRailFilter";
+import { agentRailScopeEntries, agentRailSections } from "./agentSidebarPresentation";
 import { environmentComposerScope, groupedEnvironmentProjects } from "./agentEnvironmentProjects";
 import { projectFixture, fixtureRepository } from "./agentThreadsSurfaceTestFixtures";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
@@ -50,7 +47,13 @@ describe("project display across environments", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.label).toBe(local.label);
     const entry = agentRailScopeEntries(groups)[0]!;
-    const sections = agentRailSections(views, agentRailScopeFromEntry(entry), false, 0);
+    const sections = agentRailSections(
+      agentThreadsInFilter(views, { kind: "project", projectRootKey: entry.projectRootKey }, [
+        entry,
+      ]),
+      false,
+      0,
+    );
     expect(sections.active.map((view) => view.thread.threadId)).toEqual(
       expect.arrayContaining(views.map((view) => view.thread.threadId)),
     );

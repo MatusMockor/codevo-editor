@@ -1,7 +1,10 @@
+import type { AgentShipStepResult } from "../domain/agentShip";
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import { settleAgentThreadMutation } from "./agentThreadMutationOutcome";
 import type { AgentThreadsSurface, AgentThreadView, AgentTasksNotice } from "./agentThreadPorts";
 import type { RemoteAgentMetadata } from "./remoteAgentMetadata";
+
+const REMOTE_ACTION_UNAVAILABLE = "This action is not available for a server conversation yet.";
 
 export const isRemoteAgentIdentity = (value: string) =>
   value.startsWith("remote:") || value.startsWith("remote-thread:");
@@ -37,7 +40,7 @@ export function remoteAgentThreadActions({
   const byId = new Map(threads.map((view) => [view.thread.threadId, view]));
   const remote = (id: string) => isRemoteAgentIdentity(id) || byId.get(id)?.execution !== undefined;
   const unsupported = (id: string) => {
-    report("This action is not available for a server conversation yet.");
+    report(REMOTE_ACTION_UNAVAILABLE);
     return id;
   };
   const asyncAction =
@@ -45,6 +48,15 @@ export function remoteAgentThreadActions({
     async (id: string, ...args: A) => {
       if (remote(id)) unsupported(id);
       else await action(id, ...args);
+    };
+  const stepAction =
+    <A extends readonly unknown[]>(
+      action: (id: string, ...args: A) => Promise<AgentShipStepResult>,
+    ) =>
+    async (id: string, ...args: A): Promise<AgentShipStepResult> => {
+      if (!remote(id)) return action(id, ...args);
+      unsupported(id);
+      return { kind: "notRun", message: REMOTE_ACTION_UNAVAILABLE };
     };
   const syncAction =
     <A extends readonly unknown[]>(action: (id: string, ...args: A) => void) =>
@@ -166,8 +178,8 @@ export function remoteAgentThreadActions({
     hideFileDiff: syncAction(local.hideFileDiff),
     removeWorktree: asyncAction(local.removeWorktree),
     refreshShipStatus: asyncAction(local.refreshShipStatus),
-    commitThreadChanges: asyncAction(local.commitThreadChanges),
-    pushThreadBranch: asyncAction(local.pushThreadBranch),
+    commitThreadChanges: stepAction(local.commitThreadChanges),
+    pushThreadBranch: stepAction(local.pushThreadBranch),
     openThreadCompareUrl: asyncAction(local.openThreadCompareUrl),
     integrateThreadBranch: asyncAction(local.integrateThreadBranch),
     removeThreadWorktree: asyncAction(local.removeThreadWorktree),

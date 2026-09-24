@@ -194,7 +194,7 @@ function StatusBarComponent({
       : `${errorCount} ${pluralize(errorCount, "error")}, ${warningCount} ${pluralize(warningCount, "warning")}`;
 
   return (
-    <footer className="status-bar" onContextMenu={openMenu}>
+    <div aria-label="Editor status" className="editor-status" onContextMenu={openMenu} role="group">
       <button
         aria-label={problemsTitle}
         className="status-problems"
@@ -292,7 +292,7 @@ function StatusBarComponent({
           ))}
         </div>
       ) : null}
-    </footer>
+    </div>
   );
 }
 

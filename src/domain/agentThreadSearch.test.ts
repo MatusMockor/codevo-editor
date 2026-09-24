@@ -154,7 +154,7 @@ describe("buildAgentThreadSearchDocument", () => {
     expect(doc.titleLower).toBe("fix the router");
   });
 
-  it("indexes steering and subagent answers with their outer event positions", () => {
+  it("indexes steering answers and skips Codex child thread content", () => {
     const subject = thread({
       title: "other",
       turns: [
@@ -219,19 +219,14 @@ describe("buildAgentThreadSearchDocument", () => {
       { source: "title", eventIndex: null, text: "other" },
       { source: "user", eventIndex: null, text: "initial" },
       { source: "user", eventIndex: 0, text: "find needle" },
-      { source: "assistant", eventIndex: 1, text: "child needle" },
     ]);
     expect(searchAgentThreadDocuments([doc], "needle").matches[0]).toMatchObject({
       source: "user",
       eventIndex: 0,
     });
-    expect(searchAgentThreadDocuments([doc], "child").matches[0]).toMatchObject({
-      source: "assistant",
-      eventIndex: 1,
-    });
+    expect(searchAgentThreadDocuments([doc], "child").matches).toEqual([]);
     expect(findInThread(subject, "needle")).toEqual([
       { scope: "turn", turnId: "agt-1-0001", eventIndex: 0, start: 5, end: 11 },
-      { scope: "turn", turnId: "agt-1-0001", eventIndex: 1, start: 6, end: 12 },
     ]);
     expect(findInThread(subject, "needle", { maxEventsPerTurn: 7 })).toEqual([]);
     expect(findInThread(subject, "secret")).toEqual([]);

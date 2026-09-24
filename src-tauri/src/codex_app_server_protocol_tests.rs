@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 const PROJECTED_THREAD_ITEM_TAGS: &[&str] = &[
     "agentMessage",
+    "collabAgentToolCall",
     "commandExecution",
     "contextCompaction",
     "fileChange",
@@ -95,6 +96,7 @@ fn minimal_thread_item(tag: &str) -> Value {
             "error": { "message": "boom" }
         }),
         "webSearch" => json!({ "query": "rust serde" }),
+        "collabAgentToolCall" => json!({ "tool": "wait" }),
         "subAgentActivity" => json!({
             "kind": "started",
             "agentThreadId": "thread-child",
@@ -1065,4 +1067,53 @@ fn mcp_and_web_search_items_decode_their_completion_payloads() {
             move_path: Some("b.ts".into())
         }
     );
+}
+
+#[test]
+fn collab_agent_tool_calls_decode_to_a_typed_item() {
+    let item: ThreadItem = serde_json::from_value(serde_json::json!({
+        "type": "collabAgentToolCall",
+        "id": "call_spawn_1",
+        "tool": "spawnAgent",
+        "status": "completed",
+        "senderThreadId": "01a0a011-d4d5-7361-90a5-5d46f0e147c4",
+        "receiverThreadIds": ["01a0a011-eda9-7000-8000-000000000001"],
+        "prompt": "Review idempotency middleware\nLook for races",
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium",
+        "agentsStates": { "01a0a011-eda9-7000-8000-000000000001": { "status": "pendingInit" } }
+    }))
+    .expect("collab item must decode");
+    let ThreadItem::CollabAgentToolCall(call) = item else {
+        panic!("expected a collab tool call");
+    };
+    assert_eq!(call.id, "call_spawn_1");
+    assert_eq!(call.tool, CollabAgentTool::SpawnAgent);
+    assert_eq!(call.status, Some(CollabAgentToolCallStatus::Completed));
+    assert_eq!(
+        call.receiver_thread_ids,
+        Some(vec!["01a0a011-eda9-7000-8000-000000000001".to_string()])
+    );
+    assert_eq!(call.model.as_deref(), Some("gpt-5.6-luna"));
+    assert_eq!(call.reasoning_effort.as_deref(), Some("medium"));
+}
+
+#[test]
+fn a_minimal_or_unknown_collab_tool_still_decodes() {
+    let item: ThreadItem = serde_json::from_value(serde_json::json!({
+        "type": "collabAgentToolCall", "id": "call-1", "tool": "summonDragons",
+        "receiverThreadIds": null
+    }))
+    .expect("minimal collab item must decode");
+    let ThreadItem::CollabAgentToolCall(call) = item else {
+        panic!("expected a collab tool call");
+    };
+    assert_eq!(
+        call.tool,
+        CollabAgentTool::Unrecognized {
+            tag: "summonDragons".to_string()
+        }
+    );
+    assert_eq!(call.status, None);
+    assert_eq!(call.receiver_thread_ids, None);
 }

@@ -1,5 +1,10 @@
 use super::{stop_agent_tasks_on_dispose, WorkspaceLifecycleState};
+use crate::blocking_command::run_blocking_command;
 use crate::runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
+use crate::workspace_file_watcher::{
+    WorkspaceFileChangeWatchRegistry, WorkspaceWatchDisposalGuard,
+};
+use crate::workspace_registry::unregister::{WorkspaceOwnerRelease, WorkspaceOwnerScope};
 use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use crate::workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, DebugSessionDisposer,
@@ -8,29 +13,77 @@ use crate::workspace_runtime::{
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 const MAX_WORKSPACE_CLOSE_ID_BYTES: usize = 1_024;
 const MAX_WORKSPACE_CLOSE_PATH_BYTES: usize = 32_768;
 const MAX_WORKSPACE_CLOSE_ERROR_BYTES: usize = 1_024;
 const MAX_JAVASCRIPT_SAFE_INTEGER: u64 = (1_u64 << 53) - 1;
 
-pub(super) fn unregister_workspace_with_runtime_cleanup<F>(
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceOwnerCloseOutcome {
+    Released(Vec<String>),
+    Releasing,
+    RetainedByOtherOwners,
+    UnknownWorkspace,
+    StaleOwner,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub(crate) enum WorkspaceOwnerCloseResult {
+    Released,
+    Releasing,
+    RetainedByOtherOwners,
+    UnknownWorkspace,
+    StaleOwner,
+}
+
+impl From<&WorkspaceOwnerCloseOutcome> for WorkspaceOwnerCloseResult {
+    fn from(outcome: &WorkspaceOwnerCloseOutcome) -> Self {
+        match outcome {
+            WorkspaceOwnerCloseOutcome::Released(_) => Self::Released,
+            WorkspaceOwnerCloseOutcome::Releasing => Self::Releasing,
+            WorkspaceOwnerCloseOutcome::RetainedByOtherOwners => Self::RetainedByOtherOwners,
+            WorkspaceOwnerCloseOutcome::UnknownWorkspace => Self::UnknownWorkspace,
+            WorkspaceOwnerCloseOutcome::StaleOwner => Self::StaleOwner,
+        }
+    }
+}
+
+pub(super) struct WorkspaceOwnerClose<'a> {
+    pub(super) workspace_id: &'a WorkspaceId,
+    pub(super) scope: WorkspaceOwnerScope,
+    pub(super) expected_canonical_root: Option<&'a Path>,
+}
+
+pub(super) fn release_workspace_owner_with_runtime_cleanup<F>(
     workspace_registry: &WorkspaceRegistry,
-    workspace_id: &WorkspaceId,
+    close: WorkspaceOwnerClose<'_>,
     runtime: WorkspaceRuntimeDisposal<'_>,
     before_runtime_cleanup: impl FnOnce(&ManagedWorkspaceDescriptor),
     after_runtime_cleanup: F,
-) -> io::Result<Vec<String>>
+) -> io::Result<WorkspaceOwnerCloseOutcome>
 where
     F: FnOnce(&ManagedWorkspaceDescriptor, &mut Vec<String>),
 {
-    let mut errors = Vec::new();
-    let mut reservation = match workspace_registry.reserve_unregister(workspace_id) {
-        Ok(reservation) => reservation,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(errors),
-        Err(error) => return Err(error),
+    let release = workspace_registry.release_owner(
+        close.workspace_id,
+        close.scope,
+        close.expected_canonical_root,
+    )?;
+    let mut reservation = match release {
+        WorkspaceOwnerRelease::UnknownWorkspace => {
+            return Ok(WorkspaceOwnerCloseOutcome::UnknownWorkspace)
+        }
+        WorkspaceOwnerRelease::StaleOwner => return Ok(WorkspaceOwnerCloseOutcome::StaleOwner),
+        WorkspaceOwnerRelease::Releasing => return Ok(WorkspaceOwnerCloseOutcome::Releasing),
+        WorkspaceOwnerRelease::RetainedByOtherOwners => {
+            return Ok(WorkspaceOwnerCloseOutcome::RetainedByOtherOwners)
+        }
+        WorkspaceOwnerRelease::LastOwner(reservation) => reservation,
     };
+    let mut errors = Vec::new();
     reservation.begin_cleanup();
     let descriptor = reservation.descriptor();
     before_runtime_cleanup(descriptor);
@@ -39,7 +92,7 @@ where
     }
     after_runtime_cleanup(descriptor, &mut errors);
     reservation.finalize()?;
-    Ok(errors)
+    Ok(WorkspaceOwnerCloseOutcome::Released(errors))
 }
 
 pub(super) struct NoopDebugSessionDisposer;
@@ -58,6 +111,9 @@ impl DebugSessionDisposer for DebugRootDeactivator<'_> {
 
 pub(super) enum ExactWorkspaceTeardownOutcome {
     Closed,
+    UnknownWorkspace,
+    Releasing,
+    RetainedByOtherOwners,
     Incomplete(Vec<String>),
 }
 
@@ -103,19 +159,33 @@ pub(super) fn teardown_exact_workspace<F>(
     workspace_registry: &WorkspaceRegistry,
     workspace_id: &WorkspaceId,
     admission_token: u64,
-    selected_root_path: &Path,
     canonical_root_path: &Path,
     cleanup: F,
 ) -> io::Result<ExactWorkspaceTeardownOutcome>
 where
     F: FnOnce(&ManagedWorkspaceDescriptor) -> Vec<String>,
 {
-    let mut reservation = workspace_registry.reserve_unregister_exact(
+    let release = workspace_registry.release_owner(
         workspace_id,
-        admission_token,
-        selected_root_path,
-        canonical_root_path,
+        WorkspaceOwnerScope::EditorOwnership { admission_token },
+        Some(canonical_root_path),
     )?;
+    let mut reservation = match release {
+        WorkspaceOwnerRelease::UnknownWorkspace => {
+            return Ok(ExactWorkspaceTeardownOutcome::UnknownWorkspace)
+        }
+        WorkspaceOwnerRelease::StaleOwner => {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "workspace close identity is stale",
+            ))
+        }
+        WorkspaceOwnerRelease::RetainedByOtherOwners => {
+            return Ok(ExactWorkspaceTeardownOutcome::RetainedByOtherOwners)
+        }
+        WorkspaceOwnerRelease::Releasing => return Ok(ExactWorkspaceTeardownOutcome::Releasing),
+        WorkspaceOwnerRelease::LastOwner(reservation) => reservation,
+    };
     reservation.begin_cleanup();
     let errors = cleanup(reservation.descriptor());
     if !errors.is_empty() {
@@ -140,25 +210,50 @@ pub(crate) struct DisposeRegisteredWorkspaceRequest {
 #[serde(tag = "status", rename_all = "camelCase")]
 pub(crate) enum DisposeRegisteredWorkspaceResult {
     Closed,
+    UnknownWorkspace,
+    Releasing,
+    RetainedByOtherOwners,
     Incomplete { errors: Vec<String> },
 }
 
 #[tauri::command]
-pub(crate) fn dispose_registered_workspace(
+pub(crate) async fn dispose_registered_workspace(
     request: DisposeRegisteredWorkspaceRequest,
     app: AppHandle,
-    state: WorkspaceLifecycleState<'_>,
 ) -> Result<DisposeRegisteredWorkspaceResult, String> {
     validate_dispose_registered_workspace_request(&request)?;
-    let selected_root_path = PathBuf::from(&request.selected_root_path);
+    let ticket = app
+        .state::<WorkspaceFileChangeWatchRegistry>()
+        .begin_disposal(&request.canonical_root_path)?;
+    run_blocking_command(move || {
+        let guard = app
+            .state::<WorkspaceFileChangeWatchRegistry>()
+            .inner()
+            .adopt_disposal(ticket);
+        dispose_registered_workspace_blocking(
+            request,
+            &app,
+            WorkspaceLifecycleState::from_app(&app),
+            &guard,
+        )
+    })
+    .await
+}
+
+fn dispose_registered_workspace_blocking(
+    request: DisposeRegisteredWorkspaceRequest,
+    app: &AppHandle,
+    state: WorkspaceLifecycleState<'_>,
+    watch_disposal: &WorkspaceWatchDisposalGuard<'_>,
+) -> Result<DisposeRegisteredWorkspaceResult, String> {
     let canonical_root_path = PathBuf::from(&request.canonical_root_path);
     let outcome = teardown_exact_workspace(
         &state.workspace_registry,
         &request.workspace_id,
         request.admission_token,
-        &selected_root_path,
         &canonical_root_path,
         |descriptor| {
+            watch_disposal.stop_watches_before_arrival();
             let root = &descriptor.canonical_root_path;
             let root_key = root.to_string_lossy().into_owned();
             let debug_sessions = DebugRootDeactivator(&state.debug_sessions);
@@ -169,7 +264,7 @@ pub(crate) fn dispose_registered_workspace(
                     .err()
                     .map(|_| "Node attach candidate invalidation failed.".to_string()),
                 RegisteredWorkspaceTeardownStep::AgentTasks => {
-                    stop_agent_tasks_on_dispose(&app, root);
+                    stop_agent_tasks_on_dispose(app, root);
                     None
                 }
                 RegisteredWorkspaceTeardownStep::FileSearch => {
@@ -198,8 +293,7 @@ pub(crate) fn dispose_registered_workspace(
                             .javascript_typescript_language_servers,
                         javascript_typescript_watch_registry: &*state
                             .javascript_typescript_watch_registry,
-                        workspace_file_change_watch_registry: &*state
-                            .workspace_file_change_watch_registry,
+                        workspace_file_change_watch_registry: watch_disposal,
                         php_language_servers: &*state.php_language_servers,
                         debug_sessions: &debug_sessions,
                         eslint_processes: &**state.eslint_processes,
@@ -230,6 +324,13 @@ pub(crate) fn dispose_registered_workspace(
 
     match outcome {
         ExactWorkspaceTeardownOutcome::Closed => Ok(DisposeRegisteredWorkspaceResult::Closed),
+        ExactWorkspaceTeardownOutcome::UnknownWorkspace => {
+            Ok(DisposeRegisteredWorkspaceResult::UnknownWorkspace)
+        }
+        ExactWorkspaceTeardownOutcome::Releasing => Ok(DisposeRegisteredWorkspaceResult::Releasing),
+        ExactWorkspaceTeardownOutcome::RetainedByOtherOwners => {
+            Ok(DisposeRegisteredWorkspaceResult::RetainedByOtherOwners)
+        }
         ExactWorkspaceTeardownOutcome::Incomplete(errors) => {
             Ok(DisposeRegisteredWorkspaceResult::Incomplete { errors })
         }
@@ -283,3 +384,7 @@ mod tests;
 #[cfg(test)]
 #[path = "unregister_legacy_tests.rs"]
 mod legacy_tests;
+
+#[cfg(test)]
+#[path = "owner_release_tests.rs"]
+mod owner_release_tests;

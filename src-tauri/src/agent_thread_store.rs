@@ -13,7 +13,10 @@ pub mod agent_attachment_paths;
 #[path = "agent_thread_store_appserver.rs"]
 mod appserver;
 use crate::agent_subagent_lifecycle as subagent_lifecycle;
-pub use appserver::{AgentAppServerUsage, AgentUsageScope, CodexTransport, SubagentActivity};
+pub use appserver::{
+    AgentAppServerUsage, AgentUsageScope, CodexTransport, SubagentActivity, SubagentSpawnEffort,
+    SubagentSpawnStatus,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -469,6 +472,18 @@ pub enum AgentTurnEvent {
         event: Box<AgentTurnEvent>,
     },
     #[serde(rename_all = "camelCase")]
+    SubagentSpawn {
+        call_id: String,
+        status: SubagentSpawnStatus,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        task_title: Option<String>,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        model: Option<String>,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        reasoning_effort: Option<SubagentSpawnEffort>,
+        agent_thread_ids: Vec<String>,
+    },
+    #[serde(rename_all = "camelCase")]
     SubagentUsage {
         agent_thread_id: String,
         usage: AgentTurnUsage,
@@ -692,6 +707,7 @@ impl AgentThreadStore {
     pub fn save(&self, root_key: &str, document: &AgentThreadDocument) -> Result<(), String> {
         validate_agent_thread_document(root_key, document)?;
         ensure_v1_lifecycle_shape(&document.thread)?;
+        appserver::ensure_v1_event_kinds(&document.thread.turns)?;
         let thread_id = safe_agent_task_id(&document.thread.thread_id)?;
         let payload = serde_json::to_vec(document)
             .map_err(|error| format!("Unable to encode the agent thread: {error}"))?;
@@ -1296,6 +1312,7 @@ pub(crate) fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), St
             (optional_len(message), 0)
         }
         AgentTurnEvent::ContextUsage { model, .. } => (model.len(), 0),
+        AgentTurnEvent::SubagentSpawn { task_title, .. } => (optional_len(task_title), 0),
         AgentTurnEvent::ContextCompaction { .. }
         | AgentTurnEvent::SubagentActivity { .. }
         | AgentTurnEvent::SubagentEvent { .. }

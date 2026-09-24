@@ -9,14 +9,21 @@ export interface ComposerBannerProps {
   readonly icon?: ReactNode;
   readonly actions?: ReactNode;
   readonly children: ReactNode;
+  readonly announce?: boolean;
 }
 
-export function ComposerBanner({ actions, children, icon, tone = "neutral" }: ComposerBannerProps) {
+export function ComposerBanner({
+  actions,
+  announce = true,
+  children,
+  icon,
+  tone = "neutral",
+}: ComposerBannerProps) {
   return (
     <div
-      aria-live="polite"
+      aria-live={announce ? "polite" : undefined}
       className={`cv-composer-banner cv-composer-banner--${tone}`}
-      role="status"
+      role={announce ? "status" : undefined}
     >
       {leadingVisual(tone, icon)}
       <span className="cv-composer-banner__message">{children}</span>

@@ -30,9 +30,9 @@ describe("agentApprovalPresenter", () => {
       decisions: ["allowOnce", "allowForSession", "deny"],
     });
     expect(command.actions.map((action) => action.label)).toEqual([
-      "Allow once",
-      "Allow for this session",
-      "Deny",
+      "Approve",
+      "Approve for this session",
+      "Decline",
     ]);
     expect(command.actions.map((action) => action.tone)).toEqual([
       "primary",

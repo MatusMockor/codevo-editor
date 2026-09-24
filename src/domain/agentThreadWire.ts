@@ -1,6 +1,7 @@
 import { validThreadOrganizationValue, validThreadSortOrder } from "./agentThreadOrganization";
 import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { persistedAgentSubagentLifecycle } from "./agentSubagentLifecycleLegacy";
+import { parseAgentSubagentSpawnFields } from "./agentSubagentSpawn";
 import {
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,
@@ -124,6 +125,7 @@ export function serializeAgentHistoryThread(thread: AgentThread): Record<string,
   const document = serializeThreadDocument(bounded);
   document.turns = bounded.turns.map((turn) => ({
     ...serializeTurn(turn),
+    events: turn.events.map(serializeTurnEvent),
     ...optionalField("subagentLifecycle", turn.subagentLifecycle),
   }));
   return document;
@@ -217,7 +219,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     status: serializeTurnStatus(turn.status),
     startedAtEpochMs: turn.startedAtEpochMs,
     endedAtEpochMs: turn.endedAtEpochMs,
-    events: turn.events.map(serializeTurnEvent),
+    events: turn.events.filter(isV1TurnEvent).map(serializeTurnEvent),
     eventsTruncated: turn.eventsTruncated,
     lastStatusSequence: turn.lastStatusSequence,
     lastOutputSequence: turn.lastOutputSequence,
@@ -290,6 +292,10 @@ function serializeTurnStatus(status: AgentTurnStatus): Record<string, unknown> {
   }
 }
 
+function isV1TurnEvent(event: AgentTurnEvent): boolean {
+  return event.kind !== "subagentSpawn";
+}
+
 export function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
   switch (event.kind) {
     case "assistantText":
@@ -360,6 +366,16 @@ export function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknow
         kind: event.kind,
         agentThreadId: event.agentThreadId,
         usage: serializeUsage(event.usage),
+      };
+    case "subagentSpawn":
+      return {
+        kind: event.kind,
+        callId: event.callId,
+        status: event.status,
+        taskTitle: event.taskTitle,
+        model: event.model,
+        reasoningEffort: event.reasoningEffort,
+        agentThreadIds: [...event.agentThreadIds],
       };
     case "subagentTurnDone":
       return {
@@ -1008,6 +1024,17 @@ export function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
         usage,
       };
     }
+    case "subagentSpawn":
+      exactKeys(
+        event,
+        ["kind", "callId", "status", "taskTitle", "model", "reasoningEffort", "agentThreadIds"],
+        path,
+      );
+      try {
+        return parseAgentSubagentSpawnFields(event);
+      } catch {
+        return invalid(path, "a bounded subagent spawn");
+      }
     case "subagentTurnDone":
       exactKeys(event, ["kind", "agentThreadId", "durationMs", "isError"], path);
       return {
@@ -1299,6 +1326,7 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
     value !== "toolResult" &&
     value !== "subagentActivity" &&
     value !== "subagentEvent" &&
+    value !== "subagentSpawn" &&
     value !== "subagentUsage" &&
     value !== "subagentTurnDone" &&
     value !== "queued" &&

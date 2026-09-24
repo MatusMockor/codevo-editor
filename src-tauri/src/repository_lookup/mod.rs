@@ -45,6 +45,16 @@ mod service;
 #[cfg(test)]
 mod tests;
 
+#[cfg(unix)]
+pub(crate) use plan::CliProgram;
+#[cfg(unix)]
+pub(crate) use process::{plan_command, run_bounded, ProcessError, ProcessLimits, ProcessOutput};
+#[cfg(unix)]
+pub(crate) use process_guard::ProcessKillSwitch;
+#[cfg(all(unix, test))]
+pub(crate) use resolver::ResolvedExecutable;
+#[cfg(unix)]
+pub(crate) use resolver::{DiscoveryExecutableResolver, ExecutableResolver};
 pub(crate) use service::RepositoryLookupService;
 pub(crate) use wire::{
     RepositoryHostsSnapshot, RepositoryLookupOutcome, RepositoryLookupRequest,

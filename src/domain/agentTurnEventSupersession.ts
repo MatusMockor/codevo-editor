@@ -56,6 +56,8 @@ export function agentTurnEventSupersession(event: AgentTurnEvent): AgentTurnEven
       return event.status === "idle" ? CONTENT : CONTEXT_BARRIER;
     case "subagentActivity":
       return subagentActivitySupersession(event);
+    case "subagentSpawn":
+      return { kind: "barrier", targets: [SUBAGENT_SCOPE] };
     case "subagentTurnDone":
       return {
         kind: "barrier",

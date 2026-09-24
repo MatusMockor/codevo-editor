@@ -28,18 +28,24 @@ mod agent_turn_log_commands;
 mod directory_listing_commands;
 #[path = "git_integration_commands.rs"]
 mod git_integration_commands;
+#[path = "git_surface_commands.rs"]
+mod git_surface_commands;
 #[path = "git_worktree_commands.rs"]
 mod git_worktree_commands;
 #[path = "language_features_facade.rs"]
 mod language_features_facade;
 #[path = "language_runtime_facade.rs"]
 mod language_runtime_facade;
+#[path = "pull_request_commands.rs"]
+mod pull_request_commands;
 #[path = "../repository_lookup/mod.rs"]
 pub(crate) mod repository_lookup;
 #[path = "repository_lookup_commands.rs"]
 mod repository_lookup_commands;
 #[path = "../startup_metrics.rs"]
 mod startup_metrics;
+#[path = "../startup_window_reveal.rs"]
+mod startup_window_reveal;
 #[path = "workspace_facade.rs"]
 mod workspace_facade;
 #[path = "workspace_services.rs"]
@@ -113,8 +119,8 @@ pub(crate) use language_runtime_facade::{
 #[cfg(test)]
 pub(crate) use workspace_facade::filter_lsp_locations_to_workspace;
 pub(crate) use workspace_facade::{
-    absolute_workspace_candidate, canonicalize_workspace_root, clear_workspace_index,
-    dispose_registered_workspace, dispose_workspace_root,
+    absolute_workspace_candidate, adopt_workspace_admission, canonicalize_workspace_root,
+    clear_workspace_index, dispose_registered_workspace, dispose_workspace_root,
     ensure_lsp_code_action_context_payloads_in_workspace,
     ensure_lsp_code_action_payload_in_workspace, ensure_lsp_path_in_workspace,
     ensure_lsp_position_in_workspace, ensure_lsp_uri_in_workspace,

@@ -445,7 +445,7 @@ describe("agent mode token contract", () => {
 
   it("stamps the agent surfaces with the codevo sans stack", () => {
     const stamp = tokenRules.find((rule) =>
-      selectorParts(rule.selector).includes(".status-bar--agent"),
+      selectorParts(rule.selector).includes(".agent-usage-layer"),
     );
     const fontFamily = stamp?.declarations.find((entry) => entry.property === "font-family");
 
@@ -453,7 +453,6 @@ describe("agent mode token contract", () => {
       ".agent-mode",
       ".agent-surface-host",
       ".agent-usage-layer",
-      ".status-bar--agent",
     ]);
     expect(fontFamily?.value).toBe("var(--codevo-sans)");
   });

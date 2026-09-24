@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   EMPTY_AGENT_RUNTIME_SUBAGENTS,
   reconcileAgentRuntimeSubagents,
@@ -6,22 +6,22 @@ import {
   type AgentRuntimeSubagents,
 } from "../../domain/agentRuntimeSubagent";
 import type { AgentTurn } from "../../domain/agentThread";
-import type { AgentAgentsPanelProps } from "./AgentAgentsPanel";
 import {
   agentAgentsPanelRowKey,
   type AgentAgentsPanelGroup,
   type AgentSubagentStatusCounts,
 } from "./agentAgentsPanelPresentation";
-import { createAgentElapsedTicker } from "./agentElapsedTicker";
+import { useAgentAgentsPanelOpener } from "./agents/agentAgentsPanelHooks";
+import {
+  agentElapsedObservation,
+  createAgentElapsedTicker,
+  type AgentElapsedTicker,
+} from "./agentElapsedTicker";
 import { agentTurnRuntimeSubagents } from "./agentRuntimeSubagentPresentation";
 
 interface CachedTurnSubagents {
   readonly turn: AgentTurn;
-  readonly subagents: AgentRuntimeSubagents;
-}
-
-interface OpenAgentsPanel {
-  readonly threadId: string;
+  readonly group: AgentAgentsPanelGroup;
 }
 
 export interface AgentThreadAgents {
@@ -33,29 +33,40 @@ export interface AgentThreadAgents {
   readonly counts: AgentSubagentStatusCounts;
   readonly truncated: boolean;
   readonly openPanel: () => void;
-  readonly panel: Omit<AgentAgentsPanelProps, "modal"> | null;
+  readonly ticker: AgentElapsedTicker;
 }
 
 export function agentThreadSubagentGroups(
   cache: Map<string, CachedTurnSubagents>,
   turns: ReadonlyArray<AgentTurn>,
+  previous: ReadonlyArray<AgentAgentsPanelGroup> | null = null,
 ): ReadonlyArray<AgentAgentsPanelGroup> {
   const retained = new Set<string>();
   const groups = turns.map((turn): AgentAgentsPanelGroup => {
     retained.add(turn.turnId);
     const cached = cache.get(turn.turnId);
-    if (cached?.turn === turn) return { key: turn.turnId, subagents: cached.subagents };
+    if (cached?.turn === turn) return cached.group;
     const subagents = reconcileAgentRuntimeSubagents(
-      cached?.subagents ?? null,
+      cached?.group.subagents ?? null,
       agentTurnRuntimeSubagents(turn),
     );
-    cache.set(turn.turnId, { turn, subagents });
-    return { key: turn.turnId, subagents };
+    const group =
+      cached?.group.subagents === subagents ? cached.group : { key: turn.turnId, subagents };
+    cache.set(turn.turnId, { turn, group });
+    return group;
   });
   for (const turnId of [...cache.keys()]) {
     if (!retained.has(turnId)) cache.delete(turnId);
   }
+  if (previous !== null && sameGroups(previous, groups)) return previous;
   return groups;
+}
+
+function sameGroups(
+  left: ReadonlyArray<AgentAgentsPanelGroup>,
+  right: ReadonlyArray<AgentAgentsPanelGroup>,
+): boolean {
+  return left.length === right.length && left.every((group, index) => group === right[index]);
 }
 
 export function useAgentThreadAgents(
@@ -64,9 +75,14 @@ export function useAgentThreadAgents(
 ): AgentThreadAgents {
   const [cache] = useState(() => new Map<string, CachedTurnSubagents>());
   const [ticker] = useState(() => createAgentElapsedTicker());
-  const [open, setOpen] = useState<OpenAgentsPanel | null>(null);
-  if (open !== null && open.threadId !== threadId) setOpen(null);
-  const groups = useMemo(() => agentThreadSubagentGroups(cache, turns), [cache, turns]);
+  const previousGroups = useRef<ReadonlyArray<AgentAgentsPanelGroup> | null>(null);
+  const groups = useMemo(
+    () => agentThreadSubagentGroups(cache, turns, previousGroups.current),
+    [cache, turns],
+  );
+  useLayoutEffect(() => {
+    previousGroups.current = groups;
+  }, [groups]);
   const byTurn = useMemo(
     () => new Map(groups.map((group) => [group.key, group.subagents])),
     [groups],
@@ -87,25 +103,30 @@ export function useAgentThreadAgents(
   useEffect(() => {
     for (const group of groups) {
       for (const agent of group.subagents.agents) {
-        if (agent.elapsed.kind !== "live") continue;
-        ticker.observe(
-          agentAgentsPanelRowKey(group.key, agent.id),
-          agent.elapsed.observedDurationMs,
-        );
+        const observedDurationMs = agentElapsedObservation(agent.elapsed);
+        if (observedDurationMs === undefined) continue;
+        ticker.observe(agentAgentsPanelRowKey(group.key, agent.id), observedDurationMs);
       }
     }
   }, [groups, ticker]);
 
-  const openPanel = useCallback(() => setOpen({ threadId }), [threadId]);
-  const closePanel = useCallback(() => setOpen(null), []);
+  const openPanel = useAgentAgentsPanelOpener();
   const subagentsFor = useCallback(
     (turnId: string) => byTurn.get(turnId) ?? EMPTY_AGENT_RUNTIME_SUBAGENTS,
     [byTurn],
   );
-  const panelOpen = open !== null && open.threadId === threadId;
-  const panel = useMemo(
-    () => (panelOpen ? { groups, onClose: closePanel, autoFocus: true, ticker } : null),
-    [panelOpen, groups, closePanel, ticker],
+  return useMemo(
+    () => ({
+      subagentsFor,
+      threadId,
+      groups,
+      tracked,
+      working,
+      counts,
+      truncated,
+      openPanel,
+      ticker,
+    }),
+    [subagentsFor, threadId, groups, tracked, working, counts, truncated, openPanel, ticker],
   );
-  return { subagentsFor, threadId, groups, tracked, working, counts, truncated, openPanel, panel };
 }

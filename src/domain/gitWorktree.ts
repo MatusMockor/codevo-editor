@@ -1,3 +1,5 @@
+import { validateGitBaseRef } from "./gitBranchDiff";
+
 export const MAX_WORKTREES_PER_REPOSITORY = 128;
 export const MAX_WORKTREE_PATH_BYTES = 4_096;
 export const MAX_WORKTREE_BRANCH_BYTES = 512;
@@ -18,9 +20,22 @@ export interface AgentWorktreeReceipt {
   readonly trusted: boolean;
 }
 
+export interface BranchWorktreeRequest {
+  readonly repositoryRoot: string;
+  readonly branch: string;
+  readonly startPoint: string | null;
+}
+
+export interface BranchWorktreeReceipt {
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly trusted: boolean;
+}
+
 export interface GitWorktreeGateway {
   listWorktrees(repositoryRoot: string): Promise<ReadonlyArray<GitWorktreeDescriptor>>;
   addAgentWorktree(repositoryRoot: string, taskId: string): Promise<AgentWorktreeReceipt>;
+  addBranchWorktree?(request: BranchWorktreeRequest): Promise<BranchWorktreeReceipt>;
   removeWorktree(repositoryRoot: string, worktreePath: string, force: boolean): Promise<void>;
   pruneWorktrees(repositoryRoot: string): Promise<ReadonlyArray<string>>;
 }
@@ -71,6 +86,34 @@ export function parseAgentWorktreeReceipt(value: unknown): AgentWorktreeReceipt 
     worktreePath: worktreePath(receipt.worktreePath, "receipt.worktreePath"),
     branch: branch(receipt.branch, "receipt.branch"),
     trusted: boolean(receipt.trusted, "receipt.trusted"),
+  };
+}
+
+export function parseBranchWorktreeReceipt(value: unknown): BranchWorktreeReceipt {
+  const receipt = record(value, "receipt");
+  exactKeys(receipt, ["worktreePath", "branch", "trusted"], "receipt");
+  const path = worktreePath(receipt.worktreePath, "receipt.worktreePath");
+  if (!path.startsWith("/")) {
+    invalid("receipt.worktreePath", "an absolute path");
+  }
+  return {
+    worktreePath: path,
+    branch: validateGitBaseRef(branch(receipt.branch, "receipt.branch")),
+    trusted: boolean(receipt.trusted, "receipt.trusted"),
+  };
+}
+
+export function validateBranchWorktreeRequest(
+  request: BranchWorktreeRequest,
+): BranchWorktreeRequest {
+  const repositoryRoot = validateGitWorktreeRepositoryRoot(request.repositoryRoot);
+  if (!repositoryRoot.startsWith("/")) {
+    invalid("repositoryRoot", "an absolute path");
+  }
+  return {
+    repositoryRoot,
+    branch: validateGitBaseRef(request.branch),
+    startPoint: request.startPoint === null ? null : validateGitBaseRef(request.startPoint),
   };
 }
 

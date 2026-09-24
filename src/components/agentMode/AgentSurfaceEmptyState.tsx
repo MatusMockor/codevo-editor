@@ -1,9 +1,8 @@
-import { FolderTree, GitCompare, History, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import { isAgentRemoteSurfaceKind } from "../../domain/agentSurfaceActivation";
+import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import {
-  SURFACE_FILES_THREAD_DESCRIPTION,
   SURFACE_REMOTE_CAPABILITIES_DESCRIPTION,
   SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
   SURFACE_REMOTE_NO_PROJECT_DESCRIPTION,
@@ -14,6 +13,10 @@ import {
 } from "./agentSurfacePolicy";
 import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
+import {
+  AGENT_RIGHT_PANEL_ADD_MENU_ORDER,
+  AGENT_RIGHT_PANEL_SURFACE_CATALOG,
+} from "./rightPanel/agentRightPanelSurfaceCatalog";
 
 export interface AgentSurfaceEmptyStateProps {
   readonly thread: AgentThreadView | null;
@@ -26,35 +29,6 @@ export interface AgentSurfaceEmptyStateProps {
   onChooseSurface(surface: AgentSurfaceKind): void;
   onTrustWorkspace?(): void;
 }
-
-interface SurfaceCard {
-  readonly kind: AgentSurfaceKind;
-  readonly label: string;
-  readonly description: string;
-  readonly icon: typeof FolderTree;
-}
-
-const CARDS: ReadonlyArray<SurfaceCard> = [
-  {
-    kind: "history",
-    label: "History",
-    description: "Browse commits and file changes across your repositories.",
-    icon: History,
-  },
-  {
-    kind: "files",
-    label: "Files",
-    description: SURFACE_FILES_THREAD_DESCRIPTION,
-    icon: FolderTree,
-  },
-  { kind: "diff", label: "Diff", description: "Review changes in this thread.", icon: GitCompare },
-  {
-    kind: "terminal",
-    label: "Terminal",
-    description: "Start a shell in the thread's checkout.",
-    icon: SquareTerminal,
-  },
-];
 
 export function AgentSurfaceEmptyState({
   autoFocus = false,
@@ -78,8 +52,12 @@ export function AgentSurfaceEmptyState({
           ? SURFACE_REMOTE_CAPABILITIES_DESCRIPTION
           : `Server ${unavailableSurfaces.map((kind) => kind[0].toUpperCase() + kind.slice(1)).join(", ")} ${unavailableSurfaces.length === 1 ? "is" : "are"} not available.`));
   const containerRef = useRef<HTMLDivElement>(null);
+  const remoteServes = (kind: AgentSurfaceKind): boolean =>
+    kind === "diff"
+      ? thread !== null
+      : isAgentRemoteSurfaceKind(kind) && remoteSurfaceSupports(remoteSurface, kind);
   const blockedReason = (kind: AgentSurfaceKind): string | null =>
-    server && kind !== "diff" && remoteSurfaceSupports(remoteSurface, kind)
+    server && kind !== "diff" && remoteServes(kind)
       ? null
       : agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot, scope);
 
@@ -93,12 +71,7 @@ export function AgentSurfaceEmptyState({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const surface = agentSurfaceForHotkey(event.key);
-    if (
-      surface === null ||
-      (server &&
-        (surface === "diff" ? thread === null : !remoteSurfaceSupports(remoteSurface, surface))) ||
-      blockedReason(surface) !== null
-    )
+    if (surface === null || (server && !remoteServes(surface)) || blockedReason(surface) !== null)
       return;
     event.preventDefault();
     onChooseSurface(surface);
@@ -119,53 +92,54 @@ export function AgentSurfaceEmptyState({
           <p className="agent-surface-empty__hint">Choose what to show in the right panel.</p>
         </header>
         <div className="agent-surface-empty__cards">
-          {AGENT_SURFACE_KINDS.filter(
-            (kind) =>
-              !server ||
-              (kind === "diff" ? thread !== null : remoteSurfaceSupports(remoteSurface, kind)),
-          ).map((kind) => {
-            const card = CARDS.find((candidate) => candidate.kind === kind) ?? CARDS[0];
-            const reason = blockedReason(kind);
-            const Icon = card.icon;
-            const description = server
-              ? card.description
-              : kind === "files"
-                ? agentSurfaceFilesDescription(thread, scope)
-                : thread === null && kind === "diff"
-                  ? "Review changes in this project."
-                  : thread === null && kind === "terminal"
-                    ? "Start a shell in this project."
-                    : card.description;
-            return (
-              <div className="agent-surface-card__slot" key={kind}>
-                <button
-                  aria-describedby={reason === null ? undefined : `agent-surface-card-${kind}`}
-                  aria-keyshortcuts={AGENT_SURFACE_HOTKEYS[kind]}
-                  aria-label={`Open ${card.label} surface`}
-                  className="agent-surface-card"
-                  disabled={reason !== null}
-                  onClick={() => onChooseSurface(kind)}
-                  type="button"
-                >
-                  <span className="agent-surface-card__title">
-                    <span className="agent-surface-card__icon">
-                      <Icon aria-hidden="true" size={16} />
+          {AGENT_RIGHT_PANEL_ADD_MENU_ORDER.filter((kind) => !server || remoteServes(kind)).map(
+            (kind) => {
+              const card = AGENT_RIGHT_PANEL_SURFACE_CATALOG[kind];
+              const reason = blockedReason(kind);
+              const Icon = card.icon;
+              const shortcut = AGENT_SURFACE_HOTKEYS[kind];
+              const description = server
+                ? card.description
+                : kind === "files"
+                  ? agentSurfaceFilesDescription(thread, scope)
+                  : thread === null && kind === "diff"
+                    ? "Review changes in this project."
+                    : thread === null && kind === "terminal"
+                      ? "Start a shell in this project."
+                      : card.description;
+              return (
+                <div className="agent-surface-card__slot" key={kind}>
+                  <button
+                    aria-describedby={reason === null ? undefined : `agent-surface-card-${kind}`}
+                    aria-keyshortcuts={shortcut ?? undefined}
+                    aria-label={`Open ${card.label} surface`}
+                    className="agent-surface-card"
+                    disabled={reason !== null}
+                    onClick={() => onChooseSurface(kind)}
+                    type="button"
+                  >
+                    <span className="agent-surface-card__title">
+                      <span className="agent-surface-card__icon">
+                        <Icon aria-hidden="true" size={16} />
+                      </span>
+                      <span className="agent-surface-card__label">{card.label}</span>
                     </span>
-                    <span className="agent-surface-card__label">{card.label}</span>
-                  </span>
-                  <span className="agent-surface-card__description">{description}</span>
-                  <kbd aria-hidden="true" className="agent-surface-card__key">
-                    {AGENT_SURFACE_HOTKEYS[kind]}
-                  </kbd>
-                </button>
-                {reason !== null && (
-                  <p className="agent-surface-card__reason" id={`agent-surface-card-${kind}`}>
-                    {reason}
-                  </p>
-                )}
-              </div>
-            );
-          })}
+                    <span className="agent-surface-card__description">{description}</span>
+                    {shortcut !== null && (
+                      <kbd aria-hidden="true" className="agent-surface-card__key">
+                        {shortcut}
+                      </kbd>
+                    )}
+                  </button>
+                  {reason !== null && (
+                    <p className="agent-surface-card__reason" id={`agent-surface-card-${kind}`}>
+                      {reason}
+                    </p>
+                  )}
+                </div>
+              );
+            },
+          )}
         </div>
         {server && (remoteSurface?.message || unavailableSurfaces.length > 0) && (
           <p className="agent-surface-empty__hint" role="status">

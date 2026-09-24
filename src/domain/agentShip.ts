@@ -20,7 +20,7 @@ export type AgentShipResumeKind = "idle" | "committed" | "pushed" | "integrated"
 export type AgentShipFailure =
   | {
       readonly step: "commit";
-      readonly reason: "nothingToCommit" | "gitError";
+      readonly reason: "nothingToCommit" | "gitError" | "staleSelection";
       readonly message: string;
     }
   | {
@@ -99,6 +99,11 @@ export type AgentShipState =
     };
 
 export type AgentShipStateKind = AgentShipState["kind"];
+
+export type AgentShipStepResult =
+  | { readonly kind: "succeeded" }
+  | { readonly kind: "failed"; readonly failure: AgentShipFailure }
+  | { readonly kind: "notRun"; readonly message: string };
 
 export type AgentShipAction =
   | { readonly kind: "statusRequested" }

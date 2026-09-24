@@ -1,9 +1,12 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { memo } from "react";
 import { useAgentThreadDrag } from "./useAgentThreadDrag";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
+import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
+import type { AgentThreadDropSection } from "../../domain/agentThreadOrganization";
+import { AgentThreadArchivedShelf } from "./AgentThreadArchivedShelf";
 import { AgentThreadRow } from "./AgentThreadRow";
 import {
   agentRowProjectLabel,
@@ -11,6 +14,8 @@ import {
   type AgentRailSections,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
+
+const NO_PENDING_INTERACTIONS: ReadonlyMap<string, AgentPendingInteraction> = new Map();
 
 export interface AgentThreadListProps {
   readonly sections: AgentRailSections;
@@ -20,12 +25,16 @@ export interface AgentThreadListProps {
   readonly focusedThreadId: string | null;
   readonly jumpLabels: ReadonlyMap<string, string>;
   readonly archivedExpanded: boolean;
+  readonly settledExpanded: boolean;
+  readonly snoozedExpanded: boolean;
   readonly empty: AgentRailEmptyState;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
+  readonly pendingInteractions?: ReadonlyMap<string, AgentPendingInteraction>;
   onToggleArchived(): void;
+  onToggleSettled(): void;
+  onToggleSnoozed(): void;
   onShowMoreArchived(): void;
   onSelectThread(threadId: string, modifiers: ListSelectionModifiers): void;
-  onTogglePin(threadId: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
 }
 
@@ -40,14 +49,17 @@ export const AgentThreadList = memo(function AgentThreadList({
   onShowMoreArchived,
   onThreadMenuCommand,
   onToggleArchived,
-  onTogglePin,
+  onToggleSettled,
+  onToggleSnoozed,
+  pendingInteractions = NO_PENDING_INTERACTIONS,
   projectLabels,
   sections,
   selectedThreadId,
+  settledExpanded,
+  snoozedExpanded,
 }: AgentThreadListProps) {
   const drag = useAgentThreadDrag(sections, onThreadMenuCommand);
-  const archivedTotal = sections.archived.length + sections.hiddenArchivedCount;
-  const renderRows = (rows: typeof sections.active) => {
+  const renderRows = (rows: ReadonlyArray<AgentThreadView>) => {
     const neighbors = threadNeighbors(rows);
     return rows.map((view) => {
       const threadId = view.thread.threadId;
@@ -64,7 +76,7 @@ export const AgentThreadList = memo(function AgentThreadList({
           on={selectedThreadId === threadId}
           onMenuCommand={onThreadMenuCommand}
           onSelect={onSelectThread}
-          onTogglePin={onTogglePin}
+          pending={pendingInteractions.get(threadId) ?? null}
           projectLabel={agentRowProjectLabel(projectLabels, view)}
           selected={markedThreadIds.has(threadId)}
           view={view}
@@ -88,64 +100,67 @@ export const AgentThreadList = memo(function AgentThreadList({
       {drag.marker("active", "Active")}
       {renderRows(sections.active)}
       {(sections.snoozed?.length ?? 0) > 0 && (
-        <>
-          <li className="agent-shelf-slot" role="none">
-            <span className="agent-shelf">Snoozed ({sections.snoozed!.length})</span>
-          </li>
-          {renderRows(sections.snoozed!)}
-        </>
+        <Shelf
+          count={sections.snoozed?.length ?? 0}
+          expanded={snoozedExpanded}
+          label="Snoozed"
+          onToggle={onToggleSnoozed}
+        />
       )}
-      {drag.marker(
-        "settled",
-        (sections.settled?.length ?? 0) > 0 ? `Settled (${sections.settled!.length})` : "Settled",
-      )}
-      {renderRows(sections.settled ?? [])}
-      {archivedTotal > 0 && (
-        <li className="agent-shelf-slot" role="none">
-          <button
-            aria-controls={archivedExpanded ? "agent-rail-archived" : undefined}
-            aria-expanded={archivedExpanded}
-            className="agent-shelf"
-            onClick={onToggleArchived}
-            type="button"
-          >
-            {`Archived (${archivedTotal})`}
-            <span aria-hidden="true" className="agent-shelf__rule" />
-            <ChevronDown aria-hidden="true" size={12} />
-          </button>
-        </li>
-      )}
-      {archivedExpanded && (
-        <li className="agent-shelf-body" id="agent-rail-archived" role="none">
-          <ul aria-label="Archived threads" className="agent-list" role="group">
-            {renderRows(sections.archived)}
-            {sections.hiddenArchivedCount > 0 && (
-              <li role="none">
-                <button
-                  className="agent-row agent-row--slim agent-row--more"
-                  onClick={onShowMoreArchived}
-                  type="button"
-                >
-                  <Plus aria-hidden="true" size={16} />
-                  Show {sections.hiddenArchivedCount} more
-                </button>
-              </li>
-            )}
-          </ul>
-        </li>
-      )}
+      {snoozedExpanded && renderRows(sections.snoozed ?? [])}
+      <Shelf
+        count={sections.settled?.length ?? 0}
+        dropSection="settled"
+        expanded={settledExpanded}
+        label="Settled"
+        onToggle={onToggleSettled}
+      />
+      {settledExpanded && renderRows(sections.settled ?? [])}
+      <AgentThreadArchivedShelf
+        expanded={archivedExpanded}
+        onShowMore={onShowMoreArchived}
+        onToggle={onToggleArchived}
+        renderRows={renderRows}
+        sections={sections}
+      />
     </ul>
   );
 });
 
+function Shelf({
+  count,
+  dropSection,
+  expanded,
+  label,
+  onToggle,
+}: {
+  readonly count: number;
+  readonly dropSection?: AgentThreadDropSection;
+  readonly expanded: boolean;
+  readonly label: string;
+  onToggle(): void;
+}) {
+  return (
+    <li className="cv-sb-shelf-slot" data-thread-drop-section={dropSection} role="none">
+      <button
+        aria-expanded={expanded}
+        className="cv-sb-shelf"
+        data-shelf={label.toLowerCase()}
+        onClick={onToggle}
+        type="button"
+      >
+        {count > 0 ? `${label} (${count})` : label}
+        <span aria-hidden="true" className="cv-sb-shelf__rule" />
+        <ChevronDown aria-hidden="true" className="cv-sb-shelf__chevron" size={12} />
+      </button>
+    </li>
+  );
+}
+
 function EmptyState({ state }: { readonly state: NonNullable<AgentRailEmptyState> }) {
-  if (state.kind === "noProjects") {
-    return <div className="agent-rail__empty-state">No projects yet</div>;
-  }
-  if (state.kind === "noScope") {
-    return <div className="agent-rail__empty-state">No project selected</div>;
-  }
-  return <div className="agent-rail__empty-state">{`No threads in ${state.scopeLabel} yet`}</div>;
+  if (state.kind === "noProjects") return <div className="cv-sb-empty">No projects yet</div>;
+  if (state.scopeLabel === null) return <div className="cv-sb-empty">No threads yet</div>;
+  return <div className="cv-sb-empty">{`No threads in ${state.scopeLabel} yet`}</div>;
 }
 
 function threadNeighbors(

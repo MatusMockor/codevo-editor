@@ -12,17 +12,6 @@ export function sameAgentTurnItem(left: AgentTurnItem, right: AgentTurnItem): bo
   return keys.every((key) => sameValue(leftRecord[key], rightRecord[key], MAX_COMPARED_DEPTH));
 }
 
-export function agentTurnItemsMissingFrom(
-  candidates: ReadonlyArray<AgentTurnItem>,
-  shown: ReadonlyArray<AgentTurnItem>,
-): ReadonlyArray<AgentTurnItem> {
-  const byKey = new Map(shown.map((item) => [item.key, item]));
-  return candidates.filter((item) => {
-    const visible = byKey.get(item.key);
-    return visible === undefined || !sameAgentTurnItem(visible, item);
-  });
-}
-
 function sameValue(left: unknown, right: unknown, depth: number): boolean {
   if (Object.is(left, right)) return true;
   if (typeof left !== "object" || typeof right !== "object") return false;

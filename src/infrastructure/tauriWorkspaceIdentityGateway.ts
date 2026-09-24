@@ -13,8 +13,14 @@ import type {
   WorkspaceIdentityDescriptorResolver,
   WorkspaceIdentityGateway,
   WorkspaceIdentityPathMatch,
+  WorkspaceAdmissionAdoption,
+  WorkspaceAdmissionAdoptionResult,
+  WorkspaceIdentityReleaseOwner,
   WorkspaceOpenResult,
+  WorkspaceOwnerReleaseResult,
 } from "../application/workspaceIdentityGatewayPort";
+
+import { WORKSPACE_RELEASE_STILL_IN_PROGRESS } from "../application/workspaceReleaseRetry";
 
 export type {
   NativeUnicodeNormalizationPolicy,
@@ -26,7 +32,11 @@ export type {
   WorkspaceIdentityDescriptorResolver,
   WorkspaceIdentityGateway,
   WorkspaceIdentityPathMatch,
+  WorkspaceAdmissionAdoption,
+  WorkspaceAdmissionAdoptionResult,
+  WorkspaceIdentityReleaseOwner,
   WorkspaceOpenResult,
+  WorkspaceOwnerReleaseResult,
 } from "../application/workspaceIdentityGatewayPort";
 export { workspaceRelativePathForDescriptor } from "../application/workspaceIdentityPath";
 
@@ -59,6 +69,7 @@ const DEFAULT_IDENTITY_OPERATION_TIMEOUT_MS = 15_000;
 const MAX_CACHED_IDENTITY_PATH_CHARACTERS = 4_096;
 const MAX_IDENTITY_PATH_MATCH_CACHE_ENTRIES = 512;
 const MAX_WORKSPACE_ID_UTF8_BYTES = 1_024;
+const MAX_LIVE_ADMISSIONS_PER_WORKSPACE = 8;
 const MAX_WORKSPACE_ROOT_UTF8_BYTES = 32_768;
 const identityUtf8Encoder = new TextEncoder();
 
@@ -68,7 +79,7 @@ export class TauriWorkspaceIdentityGateway
   private readonly descriptors = new Map<string, WorkspaceIdentityDescriptor>();
   private readonly aliases = new Map<string, readonly string[]>();
   private readonly pathMatches = new Map<string, WorkspaceIdentityPathMatch | null>();
-  private readonly unregisterSequences = new Map<string, number>();
+  private readonly liveAdmissions = new Map<string, readonly WorkspaceIdentityDescriptor[]>();
   private readonly operationAdmissions = new Set<OperationAdmission>();
   private readonly maxAliasesPerWorkspace: number;
   private readonly maxPendingOperations: number;
@@ -76,7 +87,6 @@ export class TauriWorkspaceIdentityGateway
   private readonly operationTimeoutMs: number;
   private aliasAdmissionQuarantined = false;
   private cleanupTransportReserved = false;
-  private operationSequence = 0;
   private operationTail: Promise<void> = Promise.resolve();
   private outstandingTransports = 0;
   private pendingOperations = 0;
@@ -102,7 +112,6 @@ export class TauriWorkspaceIdentityGateway
     if (this.aliasAdmissionQuarantined) {
       return Promise.reject(new Error("Workspace identity alias admission is quarantined."));
     }
-    const sequence = this.nextOperationSequence();
     return this.serialize(async (admission) => {
       let result: NativeWorkspaceOpenResult;
       try {
@@ -128,7 +137,6 @@ export class TauriWorkspaceIdentityGateway
       const descriptor = await this.admitDescriptor(
         result.descriptor,
         result.registration,
-        sequence,
         admission,
       );
 
@@ -148,7 +156,6 @@ export class TauriWorkspaceIdentityGateway
     } catch (error) {
       return Promise.reject(error);
     }
-    const sequence = this.nextOperationSequence();
     return this.serialize(async (admission) => {
       let result: NativeWorkspaceRegistrationResult;
       try {
@@ -168,7 +175,7 @@ export class TauriWorkspaceIdentityGateway
         this.assertActive(admission);
       }
       this.assertActive(admission);
-      return this.admitDescriptor(result.descriptor, result.registration, sequence, admission);
+      return this.admitDescriptor(result.descriptor, result.registration, admission);
     });
   }
 
@@ -236,9 +243,16 @@ export class TauriWorkspaceIdentityGateway
     });
   }
 
-  unregister(workspaceId: string): Promise<void> {
+  unregister(owner: WorkspaceIdentityReleaseOwner): Promise<WorkspaceOwnerReleaseResult> {
+    let admissionToken: number;
     try {
-      assertBoundedIdentityText(workspaceId, "Workspace id", MAX_WORKSPACE_ID_UTF8_BYTES);
+      assertBoundedIdentityText(owner.workspaceId, "Workspace id", MAX_WORKSPACE_ID_UTF8_BYTES);
+      admissionToken = requireAdmissionToken(owner.admissionToken);
+      assertBoundedIdentityText(
+        owner.canonicalRootPath,
+        "Canonical workspace root",
+        MAX_WORKSPACE_ROOT_UTF8_BYTES,
+      );
     } catch (error) {
       return Promise.reject(error);
     }
@@ -252,27 +266,95 @@ export class TauriWorkspaceIdentityGateway
       );
     }
     this.cleanupTransportReserved = true;
-    const sequence = this.nextOperationSequence();
-    this.unregisterSequences.set(workspaceId, sequence);
-    this.trimUnregisterSequences();
+    return this.serialize(async (admission) => {
+      this.assertActive(admission);
+      const result = parseWorkspaceOwnerReleaseResult(await this.invokeReservedCleanup(owner));
+      this.assertActive(admission);
+      if (releasesEditorOwnership(result)) {
+        this.forgetAdmission(owner.workspaceId, admissionToken);
+      }
+      return result;
+    });
+  }
+
+  adoptAdmission(adoption: WorkspaceAdmissionAdoption): Promise<WorkspaceAdmissionAdoptionResult> {
+    try {
+      assertBoundedIdentityText(adoption.workspaceId, "Workspace id", MAX_WORKSPACE_ID_UTF8_BYTES);
+      assertAdmissionToken(adoption.newToken);
+      assertAdmissionToken(adoption.replacedToken);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.serialize(async (admission) => {
+      this.assertActive(admission);
+      const result = parseWorkspaceAdmissionAdoptionResult(
+        await this.invokeBounded<unknown>("adopt_workspace_admission", {
+          workspaceId: adoption.workspaceId,
+          newToken: adoption.newToken,
+          replacedToken: adoption.replacedToken,
+        }),
+      );
+      this.assertActive(admission);
+      if (result.status === "adopted") {
+        this.forgetAdmission(adoption.workspaceId, adoption.replacedToken);
+      }
+      return result;
+    });
+  }
+
+  rollbackAdmission(descriptor: WorkspaceIdentityDescriptor): Promise<WorkspaceOwnerReleaseResult> {
+    const admissionToken = descriptor.admissionToken;
+    try {
+      assertBoundedIdentityText(
+        descriptor.workspaceId,
+        "Workspace id",
+        MAX_WORKSPACE_ID_UTF8_BYTES,
+      );
+      assertAdmissionToken(admissionToken);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.serialize(async (admission) => {
+      this.assertActive(admission);
+      const result = await this.invokeRollback(descriptor.workspaceId, admissionToken);
+      this.assertActive(admission);
+      if (result.status !== "releasing") {
+        this.forgetAdmission(descriptor.workspaceId, admissionToken);
+      }
+      return result;
+    });
+  }
+
+  private forgetAdmission(workspaceId: string, admissionToken: number): void {
+    const live = (this.liveAdmissions.get(workspaceId) ?? []).filter(
+      (candidate) => candidate.admissionToken !== admissionToken,
+    );
+    const current = this.descriptors.get(workspaceId);
+    if (current !== undefined && current.admissionToken !== admissionToken) {
+      this.liveAdmissions.set(workspaceId, live);
+      return;
+    }
+    const replacement = live[live.length - 1];
+    if (replacement === undefined) {
+      this.forgetWorkspace(workspaceId);
+      return;
+    }
+    this.liveAdmissions.set(workspaceId, live);
+    this.descriptors.set(workspaceId, replacement);
+    this.invalidatePathMatches();
+  }
+
+  private forgetWorkspace(workspaceId: string): void {
+    this.liveAdmissions.delete(workspaceId);
     this.descriptors.delete(workspaceId);
     this.aliases.delete(workspaceId);
     this.invalidatePathMatches();
-    return this.serialize(async (admission) => {
-      this.assertActive(admission);
-      this.descriptors.delete(workspaceId);
-      this.aliases.delete(workspaceId);
-      await this.invokeReservedCleanup(workspaceId);
-      this.assertActive(admission);
-    });
   }
 
   settleClosedDescriptor(descriptor: WorkspaceIdentityDescriptor): boolean {
     const current = this.descriptors.get(descriptor.workspaceId);
     if (!current || !workspaceIdentityDescriptorsEqual(current, descriptor)) return false;
-    this.descriptors.delete(descriptor.workspaceId);
-    this.aliases.delete(descriptor.workspaceId);
-    this.invalidatePathMatches();
+    this.forgetWorkspace(descriptor.workspaceId);
     return true;
   }
 
@@ -284,7 +366,7 @@ export class TauriWorkspaceIdentityGateway
     this.descriptors.clear();
     this.aliases.clear();
     this.invalidatePathMatches();
-    this.unregisterSequences.clear();
+    this.liveAdmissions.clear();
     const error = new Error("Workspace identity gateway was disposed.");
     for (const admission of this.operationAdmissions) {
       admission.active = false;
@@ -295,17 +377,12 @@ export class TauriWorkspaceIdentityGateway
   private cacheDescriptor(
     nativeDescriptor: NativeWorkspaceDescriptor,
     admissionToken: number,
-    operationSequence: number,
   ): WorkspaceIdentityDescriptor {
     const descriptor = workspaceIdentityDescriptor(
       nativeDescriptor,
       nativeDescriptor.selectedRootPath,
       admissionToken,
     );
-    const unregisterSequence = this.unregisterSequences.get(descriptor.workspaceId) ?? 0;
-    if (unregisterSequence > operationSequence) {
-      return descriptor;
-    }
     if (
       !this.descriptors.has(descriptor.workspaceId) &&
       this.descriptors.size >= this.maxWorkspaces
@@ -324,6 +401,15 @@ export class TauriWorkspaceIdentityGateway
       throw new Error("Workspace identity alias capacity has been reached.");
     }
 
+    const live = (this.liveAdmissions.get(descriptor.workspaceId) ?? []).filter(
+      (candidate) =>
+        candidate.admissionToken !== descriptor.admissionToken &&
+        candidate.canonicalRoot === descriptor.canonicalRoot,
+    );
+    this.liveAdmissions.set(
+      descriptor.workspaceId,
+      [...live, descriptor].slice(-MAX_LIVE_ADMISSIONS_PER_WORKSPACE),
+    );
     this.descriptors.set(descriptor.workspaceId, descriptor);
     this.aliases.set(descriptor.workspaceId, aliases);
     this.invalidatePathMatches();
@@ -348,7 +434,6 @@ export class TauriWorkspaceIdentityGateway
   private async admitDescriptor(
     nativeDescriptor: NativeWorkspaceDescriptor,
     registration: NativeWorkspaceRegistrationReceipt,
-    operationSequence: number,
     admission: OperationAdmission,
   ): Promise<WorkspaceIdentityDescriptor> {
     if (
@@ -360,17 +445,12 @@ export class TauriWorkspaceIdentityGateway
       throw new Error("Workspace identity capacity has been reached.");
     }
     try {
-      return this.cacheDescriptor(nativeDescriptor, registration.admissionToken, operationSequence);
+      return this.cacheDescriptor(nativeDescriptor, registration.admissionToken);
     } catch (error) {
       await this.rollbackRegistration(registration);
       this.assertActive(admission);
       throw error;
     }
-  }
-
-  private nextOperationSequence(): number {
-    this.operationSequence += 1;
-    return this.operationSequence;
   }
 
   private serialize<Result>(
@@ -443,16 +523,6 @@ export class TauriWorkspaceIdentityGateway
     return null;
   }
 
-  private trimUnregisterSequences(): void {
-    while (this.unregisterSequences.size > this.maxPendingOperations) {
-      const oldestWorkspaceId = this.unregisterSequences.keys().next().value;
-      if (oldestWorkspaceId === undefined) {
-        return;
-      }
-      this.unregisterSequences.delete(oldestWorkspaceId);
-    }
-  }
-
   private invokeBounded<Result>(command: string, args?: Record<string, unknown>): Promise<Result> {
     if (this.outstandingTransports >= this.maxPendingOperations) {
       return Promise.reject(new Error("Workspace identity transport capacity has been reached."));
@@ -472,10 +542,14 @@ export class TauriWorkspaceIdentityGateway
     return operation;
   }
 
-  private invokeReservedCleanup(workspaceId: string): Promise<void> {
-    let operation: Promise<void>;
+  private invokeReservedCleanup(owner: WorkspaceIdentityReleaseOwner): Promise<unknown> {
+    let operation: Promise<unknown>;
     try {
-      operation = invoke<void>("unregister_workspace", { workspaceId });
+      operation = invoke<unknown>("unregister_workspace", {
+        workspaceId: owner.workspaceId,
+        admissionToken: owner.admissionToken,
+        canonicalRootPath: owner.canonicalRootPath,
+      });
     } catch (error) {
       this.cleanupTransportReserved = false;
       throw error;
@@ -490,13 +564,22 @@ export class TauriWorkspaceIdentityGateway
   private async rollbackRegistration(
     registration: NativeWorkspaceRegistrationReceipt,
   ): Promise<void> {
-    const confirmed = await this.invokeBounded<unknown>("rollback_workspace_registration", {
-      workspaceId: registration.workspaceId,
-      admissionToken: registration.admissionToken,
-    });
-    if (confirmed !== true) {
-      throw new Error("Workspace registration rollback was not confirmed.");
+    const result = await this.invokeRollback(registration.workspaceId, registration.admissionToken);
+    if (result.status === "releasing") {
+      throw new Error(WORKSPACE_RELEASE_STILL_IN_PROGRESS);
     }
+  }
+
+  private async invokeRollback(
+    workspaceId: string,
+    admissionToken: number,
+  ): Promise<WorkspaceOwnerReleaseResult> {
+    return parseWorkspaceOwnerReleaseResult(
+      await this.invokeBounded<unknown>("rollback_workspace_registration", {
+        workspaceId,
+        admissionToken,
+      }),
+    );
   }
 }
 
@@ -528,6 +611,76 @@ function identityPathMatchCacheKey(path: string, workspaceId: string | undefined
     return null;
   }
   return JSON.stringify([workspaceId ?? null, path]);
+}
+
+const WORKSPACE_OWNER_RELEASE_STATUSES: ReadonlySet<WorkspaceOwnerReleaseResult["status"]> =
+  new Set(["released", "releasing", "retainedByOtherOwners", "unknownWorkspace", "staleOwner"]);
+
+export function parseWorkspaceOwnerReleaseResult(value: unknown): WorkspaceOwnerReleaseResult {
+  if (!isIdentityRecord(value) || !hasExactIdentityKeys(value, ["status"])) {
+    throw new Error("Workspace release result was malformed.");
+  }
+  const status = value.status;
+  if (typeof status !== "string" || !isWorkspaceOwnerReleaseStatus(status)) {
+    throw new Error("Workspace release result status is not supported.");
+  }
+  return { status };
+}
+
+const WORKSPACE_ADMISSION_ADOPTION_STATUSES: ReadonlySet<
+  WorkspaceAdmissionAdoptionResult["status"]
+> = new Set(["adopted", "staleAdmission", "unknownWorkspace", "releasing"]);
+
+export function parseWorkspaceAdmissionAdoptionResult(
+  value: unknown,
+): WorkspaceAdmissionAdoptionResult {
+  if (!isIdentityRecord(value) || !hasExactIdentityKeys(value, ["status"])) {
+    throw new Error("Workspace admission adoption result was malformed.");
+  }
+  const status = value.status;
+  if (typeof status !== "string" || !isWorkspaceAdmissionAdoptionStatus(status)) {
+    throw new Error("Workspace admission adoption status is not supported.");
+  }
+  return { status };
+}
+
+function isWorkspaceAdmissionAdoptionStatus(
+  status: string,
+): status is WorkspaceAdmissionAdoptionResult["status"] {
+  return WORKSPACE_ADMISSION_ADOPTION_STATUSES.has(
+    status as WorkspaceAdmissionAdoptionResult["status"],
+  );
+}
+
+function assertAdmissionToken(value: unknown): asserts value is number {
+  requireAdmissionToken(value);
+}
+
+function requireAdmissionToken(value: unknown): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  throw new Error("Workspace admission token must be a positive safe integer.");
+}
+
+function isWorkspaceOwnerReleaseStatus(
+  status: string,
+): status is WorkspaceOwnerReleaseResult["status"] {
+  return WORKSPACE_OWNER_RELEASE_STATUSES.has(status as WorkspaceOwnerReleaseResult["status"]);
+}
+
+function releasesEditorOwnership(result: WorkspaceOwnerReleaseResult): boolean {
+  switch (result.status) {
+    case "released":
+    case "retainedByOtherOwners":
+    case "unknownWorkspace":
+      return true;
+    case "releasing":
+    case "staleOwner":
+      return false;
+    default: {
+      const unsupported: never = result;
+      return unsupported;
+    }
+  }
 }
 
 function parseNativeWorkspaceOpenResult(value: unknown): NativeWorkspaceOpenResult {

@@ -74,7 +74,10 @@ impl GitHeadWatchEvents {
                     {
                         return;
                     }
-                    let next = GitHeadWatch::discover(&root);
+                    let next = GitHeadWatch::discover(&root, &|| cancelled.load(Ordering::Acquire));
+                    if cancelled.load(Ordering::Acquire) {
+                        return;
+                    }
                     let mut desired = next.external;
                     let mut warning = next.warning;
                     let removals = installed.difference(&desired).cloned().collect::<Vec<_>>();

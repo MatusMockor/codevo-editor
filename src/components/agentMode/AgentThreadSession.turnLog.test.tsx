@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
 import {
   createAgentTurnLogFactsStore,
   type AgentTurnLogFactsStore,
@@ -55,7 +56,12 @@ describe("thread session turn log notices", () => {
     host.remove();
   });
 
-  function render(eventsTruncated: boolean, turnLog: AgentTurnLogFactsStore | null, live = false) {
+  function render(
+    eventsTruncated: boolean,
+    turnLog: AgentTurnLogFactsStore | null,
+    live = false,
+    history?: AgentThreadHistorySurface,
+  ) {
     const turn: AgentTurn = {
       turnId: TURN_ID,
       prompt: "fix the parser",
@@ -102,6 +108,7 @@ describe("thread session turn log notices", () => {
         <AgentThreadSession
           thread={view}
           composerRepositoryLabel="app"
+          history={history}
           onReviewInDiff={() => {}}
           turnLog={turnLog}
           turnRenderProbe={(turnId) => renders.push(turnId)}
@@ -130,6 +137,28 @@ describe("thread session turn log notices", () => {
     render(true, store);
     expect(host.textContent).toContain(AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE);
     expect(host.textContent).not.toContain(AGENT_TURN_WINDOW_NOTICE);
+  });
+
+  function renderWithReader() {
+    const store = createAgentTurnLogFactsStore(() => 0);
+    store.publishSlot(THREAD_ID, slot({ state: { kind: "stopped", reason: "sealed" } }));
+    render(true, store, false, {
+      page: null,
+      older: vi.fn(),
+      latest: vi.fn(),
+      activitySource: (threadId, turnId) => ({
+        scope: { rootKey: "/root", ownerId: "owner", threadId, turnId },
+        generation: 1,
+        leaseToken: null,
+        readPage: vi.fn(),
+      }),
+    });
+  }
+
+  it("replaces the saved-but-not-shown notice with the load control when the log is readable", () => {
+    renderWithReader();
+    expect(host.textContent).not.toContain(AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE);
+    expect(host.querySelector("button.cv-load-earlier")?.textContent).toBe("Load earlier activity");
   });
 
   it("tells the JSON truth when an unsealed log of a turn that is not live cannot vouch", () => {

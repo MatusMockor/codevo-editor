@@ -31,14 +31,11 @@ import { appShellTypeScaleStyle } from "./components/appShellTypeScale";
 import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
 import { useAgentPanelResizeCommit } from "./application/useAgentPanelResizeCommit";
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
-import { commandPaletteProps } from "./components/commandPaletteProps";
 import { editorChangeHunksStatus } from "./components/editorChangeHunksStatus";
 import { phpTestBottomPanelProps } from "./components/phpTestBottomPanelProps";
 import { useAppTestDebugPanels } from "./components/useAppTestDebugPanels";
 import { usePhpCoverageEditorSurfaceProps } from "./components/usePhpCoverageEditorSurfaceProps";
-import { quickOpenProps } from "./components/quickOpenProps";
 import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps";
-import { workspaceInfoLabel } from "./components/appPresentation";
 import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
@@ -75,15 +72,10 @@ import { WorkbenchNavigationChrome } from "./components/WorkbenchNavigationChrom
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import { useAppActiveLargeDocumentPresentation } from "./components/useAppActiveLargeDocumentPresentation";
 import { useAppWorkbenchThemes } from "./components/useAppWorkbenchThemes";
-import { languageServerStatusLabel } from "./domain/languageServerRuntime";
+import { useEditorStatusPresentation } from "./components/useEditorStatusPresentation";
 import { defaultLargeSmartDocumentPolicy } from "./domain/largeDocumentPolicy";
 import type { EditorPosition } from "./domain/languageServerFeatures";
 import { ideProgressIndicator } from "./domain/ideProgress";
-import {
-  ideActivityDetail,
-  ideActivityStatus,
-  phpLanguageServerActivityLabel,
-} from "./domain/ideActivity";
 import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import { isDirty } from "./domain/workspace";
 import type { EditorDocument, ImageTab } from "./domain/workspace";
@@ -92,7 +84,6 @@ import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import { useAgentEditorCollapse } from "./application/useAgentEditorCollapse";
 import type { BottomPanelView } from "./domain/bottomPanel";
-import { AgentStatusBarHost } from "./components/agentMode/AgentStatusBarHost";
 import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
 import {
   LazyAgentWorkbenchHost,
@@ -102,7 +93,6 @@ import {
   LazyFileHistoryPanel,
   LazyGitDiffPreview,
   LazyLocalHistoryPanel,
-  LazyQuickOpen,
   LazyScopedEditorSurface,
   LazySearchEverywhere,
   LazySurfaceHost,
@@ -145,6 +135,7 @@ const {
   languageServerRuntimeGateway,
   liveDocumentRuntime,
   localHistoryGateway,
+  nativeWindow,
   netteWorkspacePresentersGateway,
   netteWorkspaceRoutesGateway,
   netteWorkspaceServicesGateway,
@@ -513,53 +504,7 @@ function App() {
       .filter((bookmark) => bookmark.path === activePath)
       .map((bookmark) => bookmark.lineNumber);
   }, [workbench.activeDocument?.path, workbench.bookmarks]);
-  const workspaceLabel = useMemo(
-    () =>
-      workspaceInfoLabel({
-        activeLanguage,
-        javaScriptTypeScriptVersion: workbench.workspaceSettings.javaScriptTypeScriptVersion,
-        phpTools: workbench.phpTools,
-        phpVersionOverride: workbench.workspaceSettings.phpVersionOverride,
-        workspaceDescriptor: workbench.workspaceDescriptor,
-      }),
-    [
-      activeLanguage,
-      workbench.phpTools,
-      workbench.workspaceDescriptor,
-      workbench.workspaceSettings.javaScriptTypeScriptVersion,
-      workbench.workspaceSettings.phpVersionOverride,
-    ],
-  );
-  const languageServerLabel = useMemo(
-    () =>
-      phpLanguageServerActivityLabel(
-        workbench.intelligenceMode,
-        workbench.languageServerRuntimeStatus,
-        workbench.workspaceRoot,
-        workbench.languageServerPlan,
-      ),
-    [
-      workbench.intelligenceMode,
-      workbench.languageServerPlan,
-      workbench.languageServerRuntimeStatus,
-      workbench.workspaceRoot,
-    ],
-  );
-  const javaScriptTypeScriptLanguageServerLabel = useMemo(
-    () =>
-      languageServerStatusLabel(
-        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-        "TS Server",
-        { workspaceRoot: workbench.workspaceRoot },
-      ),
-    [workbench.javaScriptTypeScriptLanguageServerRuntimeStatus, workbench.workspaceRoot],
-  );
-  const combinedLanguageServerLabel = useMemo(
-    () =>
-      [languageServerLabel, javaScriptTypeScriptLanguageServerLabel].filter(Boolean).join(" · ") ||
-      null,
-    [javaScriptTypeScriptLanguageServerLabel, languageServerLabel],
-  );
+  const editorStatus = useEditorStatusPresentation(workbench, activeLanguage);
   const openWorkspace = useCallback(() => {
     void runCommand("workspace.open");
   }, [runCommand]);
@@ -582,40 +527,6 @@ function App() {
   const openRuntimePanel = useCallback(() => {
     void runCommand("runtime.show");
   }, [runCommand]);
-  const ideActivity = useMemo(
-    () =>
-      ideActivityStatus(
-        workbench.workspaceRoot,
-        workbench.languageServerRuntimeStatus,
-        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-        workbench.indexProgress,
-        combinedLanguageServerLabel,
-        workbench.activeFrameworkActivityLabel,
-      ),
-    [
-      combinedLanguageServerLabel,
-      workbench.activeFrameworkActivityLabel,
-      workbench.indexProgress,
-      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-      workbench.languageServerRuntimeStatus,
-      workbench.workspaceRoot,
-    ],
-  );
-  const ideActivityChipDetail = useMemo(
-    () =>
-      ideActivityDetail(
-        workbench.workspaceRoot,
-        workbench.languageServerRuntimeStatus,
-        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-        workbench.indexProgress,
-      ),
-    [
-      workbench.indexProgress,
-      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-      workbench.languageServerRuntimeStatus,
-      workbench.workspaceRoot,
-    ],
-  );
   const ideProgress = useMemo(
     () =>
       ideProgressIndicator({
@@ -637,6 +548,7 @@ function App() {
   const { colorScheme, monacoTheme, terminalTheme } = useAppWorkbenchThemes(
     workbench.appSettings.appearance,
     prefersLightTheme,
+    nativeWindow,
   );
   const agentLayout = workbench.agentWorkbench;
   const {
@@ -1125,6 +1037,43 @@ function App() {
               onShowProgressPanel={showProgressPanel}
               onToggleSmartMode={toggleSmartMode}
               onTrustWorkspace={trustWorkspace}
+              status={
+                <StatusBar
+                  activeLanguage={activeLanguage}
+                  activePath={workbench.activePath}
+                  cursorAuthority={cursorAuthority}
+                  cursorStore={cursorStore}
+                  dirtyCount={workbench.dirtyCount}
+                  dirtyCountProjection={
+                    workbench.documentSessionAuthorityRevision.ownerDirtyCountProjection
+                  }
+                  errorCount={workbench.diagnosticsSummary.errors}
+                  gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch}
+                  gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
+                  intelligenceMode={workbench.intelligenceMode}
+                  largeDocumentStatus={activeEditorDegradedStatus}
+                  message={workbench.message}
+                  nodeRunStatus={presentOptionalNodeRunWithoutDebugging(
+                    workbench.nodeRunWithoutDebugging.state,
+                  )}
+                  onChangeVisibility={workbench.setStatusBarItemVisibility}
+                  onOpenRuntimePanel={openRuntimePanel}
+                  onStopNodeRun={workbench.nodeRunWithoutDebugging.stop}
+                  onShowGitBranches={workbench.openGitBranchPanel}
+                  onShowGoToLine={showGoToLine}
+                  onShowProblems={showProblemsPanel}
+                  statusBar={workbench.workspaceSettings.statusBar}
+                  warningCount={workbench.diagnosticsSummary.warnings}
+                  workspaceRoot={workbench.workspaceRoot}
+                  workspaceInfoLabel={editorStatus.workspaceLabel}
+                  ideActivityDetail={editorStatus.ideActivityDetail}
+                  ideActivityLabel={editorStatus.ideActivityLabel}
+                  ideActivityState={editorStatus.ideActivityState}
+                  workspaceTrustLabel={
+                    workbench.workspaceRoot ? (workspaceTrusted ? "Trusted" : "Untrusted") : null
+                  }
+                />
+              }
               workspaceRoot={workbench.workspaceRoot}
               workspaceTrusted={workspaceTrusted}
             />
@@ -1170,46 +1119,6 @@ function App() {
         surface={workbench.settingsOpen ? "settings" : "workbench"}
       />
 
-      {workbench.agentModeActive ? (
-        <AgentStatusBarHost workbench={workbench} />
-      ) : (
-        <StatusBar
-          activeLanguage={activeLanguage}
-          activePath={workbench.activePath}
-          cursorAuthority={cursorAuthority}
-          cursorStore={cursorStore}
-          dirtyCount={workbench.dirtyCount}
-          dirtyCountProjection={
-            workbench.documentSessionAuthorityRevision.ownerDirtyCountProjection
-          }
-          errorCount={workbench.diagnosticsSummary.errors}
-          gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch}
-          gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
-          intelligenceMode={workbench.intelligenceMode}
-          largeDocumentStatus={activeEditorDegradedStatus}
-          message={workbench.message}
-          nodeRunStatus={presentOptionalNodeRunWithoutDebugging(
-            workbench.nodeRunWithoutDebugging.state,
-          )}
-          onChangeVisibility={workbench.setStatusBarItemVisibility}
-          onOpenRuntimePanel={openRuntimePanel}
-          onStopNodeRun={workbench.nodeRunWithoutDebugging.stop}
-          onShowGitBranches={workbench.openGitBranchPanel}
-          onShowGoToLine={showGoToLine}
-          onShowProblems={showProblemsPanel}
-          statusBar={workbench.workspaceSettings.statusBar}
-          warningCount={workbench.diagnosticsSummary.warnings}
-          workspaceRoot={workbench.workspaceRoot}
-          workspaceInfoLabel={workspaceLabel}
-          ideActivityDetail={ideActivityChipDetail}
-          ideActivityLabel={ideActivity.label}
-          ideActivityState={ideActivity.state}
-          workspaceTrustLabel={
-            workbench.workspaceRoot ? (workspaceTrusted ? "Trusted" : "Untrusted") : null
-          }
-        />
-      )}
-
       <WorkbenchOverlayHosts composition={workbenchComposition} workbench={workbench} />
       <NodeRunConfigurationPickerHost
         launcher={workbench.nodeRunWithoutDebugging.configurationLauncher}
@@ -1223,7 +1132,12 @@ function App() {
         state={phpChangeSignature.state}
       />
 
-      <LazyCommandPaletteHost active={workbench.paletteOpen} {...commandPaletteProps(workbench)} />
+      <LazyCommandPaletteHost
+        active={workbench.paletteOpen || workbench.quickOpenOpen}
+        fileSearch={workspaceGateways.fileSearch}
+        gitGateway={gitGateway}
+        workbench={workbench}
+      />
 
       <LazySurfaceHost active={workbench.artisanMakePaletteOpen} label="Artisan command palette">
         <LazyArtisanMakePalette
@@ -1231,10 +1145,6 @@ function App() {
           onClose={workbench.closeArtisanMakePalette}
           runInActiveTerminal={workbench.runInActiveTerminal}
         />
-      </LazySurfaceHost>
-
-      <LazySurfaceHost active={workbench.quickOpenOpen} label="Quick Open">
-        <LazyQuickOpen {...quickOpenProps(workbench)} />
       </LazySurfaceHost>
 
       <RecentFilesSwitcher

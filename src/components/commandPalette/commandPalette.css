@@ -1,0 +1,50 @@
+.cv-command-item mark {
+  background: transparent;
+  color: var(--cv-fg-strong);
+  font-weight: 600;
+}
+
+.cv-palette-fuzzy {
+  color: var(--cv-fg-muted);
+}
+
+.cv-palette-fuzzy b {
+  color: var(--cv-fg-strong);
+  font-weight: 600;
+}
+
+.cv-palette-monogram {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--cv-r-xs);
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+  font: 600 var(--cv-t-2xs) / 1 var(--cv-font-ui);
+}
+
+.cv-palette-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 3px;
+  border-radius: 50%;
+}
+
+.cv-palette-files-state {
+  padding: 8px 16px 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
+.cv-palette-file-match {
+  background: transparent;
+  color: var(--cv-fg-strong);
+  font-weight: 600;
+}
+
+.cv-palette-files-syntax {
+  color: var(--cv-fg-subtle);
+  font-weight: 400;
+}

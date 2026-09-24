@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_EFFORT_CHOICES } from "./agentLaunch";
 import type { AgentTurnEvent } from "./agentThread";
-import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
+import {
+  parseAgentThread,
+  serializeAgentHistoryThread,
+  serializeAgentThread,
+} from "./agentThreadWire";
 
 const STORED_TURN = {
   turnId: "agt-1-0a1b",
@@ -700,6 +704,7 @@ describe("agentThreadWire shared event kind fixture", () => {
     subagent: true,
     subagentActivity: true,
     subagentEvent: true,
+    subagentSpawn: true,
     subagentTurnDone: true,
     subagentUsage: true,
     toolCall: true,
@@ -716,11 +721,17 @@ describe("agentThreadWire shared event kind fixture", () => {
   };
 
   function serializedEvents(events: ReadonlyArray<unknown>): ReadonlyArray<unknown> {
-    const stored = storedThreadWithTurn({ ...STORED_TURN, launch: null, events });
-    const turns = serializeAgentThread(parseAgentThread(stored)).turns as ReadonlyArray<
+    const thread = parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null, events }));
+    const v1Turns = serializeAgentThread(thread).turns as ReadonlyArray<Record<string, unknown>>;
+    expect(v1Turns[0].events).toEqual(events.filter((event) => !isHistoryOnlyEvent(event)));
+    const turns = serializeAgentHistoryThread(thread).turns as ReadonlyArray<
       Record<string, unknown>
     >;
     return turns[0].events as ReadonlyArray<unknown>;
+  }
+
+  function isHistoryOnlyEvent(event: unknown): boolean {
+    return (event as { readonly kind?: unknown }).kind === "subagentSpawn";
   }
 
   it("carries exactly one entry per serialised turn event kind", () => {

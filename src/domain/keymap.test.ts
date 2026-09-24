@@ -10,8 +10,11 @@ import {
   findKeymapConflicts,
   findKeymapSequenceConflicts,
   keymapCommandIdForShortcut,
+  isKeymapCommandId,
+  keymapCommandFocusScope,
   keymapCommandIdsForShortcut,
   keymapCommands,
+  keymapFocusScopesOverlap,
   matchesShortcut,
   normalizeKeymapSettings,
   normalizeShortcutInput,
@@ -28,6 +31,7 @@ function defaultShortcutsWithoutIntentionalCollisions(
         shortcut &&
         id !== "workbench.action.debug.disconnect" &&
         id !== "agent.searchThreads" &&
+        id !== "agent.toggleSidebar" &&
         !(id === "debug.setVariable" && platform !== "mac"),
     )
     .map(([, shortcut]) => shortcut);
@@ -35,8 +39,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(156);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(154);
+    expect(keymapCommands).toHaveLength(160);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(158);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -719,6 +723,22 @@ describe("keymap", () => {
       expect(
         keymapCommandIdsForShortcut(defaults, defaults["agent.searchThreads"], platform),
       ).toEqual(["agent.searchThreads", "editor.deleteLine"]);
+    }
+  });
+
+  it("reserves the agent-mode Toggle Sidebar collision with Go to Definition", () => {
+    expect(keymapCommands.find((command) => command.id === "agent.toggleSidebar")).toMatchObject({
+      category: "Agent",
+      defaultShortcut: "Cmd+B",
+      label: "Toggle Sidebar",
+    });
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+
+      expect(defaults["agent.toggleSidebar"]).toBe(defaults["editor.goToDefinition"]);
+      expect(
+        keymapCommandIdsForShortcut(defaults, defaults["agent.toggleSidebar"], platform),
+      ).toEqual(["agent.toggleSidebar", "editor.goToDefinition"]);
     }
   });
 
@@ -1537,3 +1557,45 @@ function keyEvent(
     ...overrides,
   } as KeyboardEvent;
 }
+
+describe("palette shortcuts and focus scopes", () => {
+  it("binds the palette to Cmd+K and the cheatsheet to Cmd+/ outside editor text", () => {
+    const defaults = defaultKeymapSettings("mac");
+    expect(defaults["palette.open"]).toBe("Cmd+K");
+    expect(defaults["palette.shortcuts"]).toBe("Cmd+/");
+    expect(defaults["panel.toggleMaximized"]).toBe("");
+    expect(keymapCommandFocusScope("palette.open")).toBe("outsideEditorText");
+    expect(keymapCommandFocusScope("editor.splitDown")).toBe("editorText");
+    expect(keymapCommandFocusScope("editor.save")).toBe("any");
+  });
+
+  it("does not report Cmd+K chords and the palette as conflicts on any platform", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      expect(findKeymapSequenceConflicts(defaults, "palette.open", platform)).toEqual([]);
+      expect(findKeymapSequenceConflicts(defaults, "editor.splitDown", platform)).toEqual([]);
+      expect(findKeymapConflicts(defaults, "palette.shortcuts", platform)).toEqual([]);
+    }
+  });
+
+  it("still reports conflicts inside the same scope", () => {
+    const keymap = { ...defaultKeymapSettings("mac"), "editor.save": "Cmd+K" };
+    expect(findKeymapSequenceConflicts(keymap, "palette.open", "mac")).toContainEqual({
+      id: "editor.save",
+      kind: "exact",
+    });
+  });
+
+  it("narrows only catalog ids to keymap command ids", () => {
+    expect([isKeymapCommandId("palette.open"), isKeymapCommandId("script.node.k")]).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it("treats only editorText and outsideEditorText as disjoint", () => {
+    expect(keymapFocusScopesOverlap("palette.open", "editor.splitDown")).toBe(false);
+    expect(keymapFocusScopesOverlap("palette.open", "editor.save")).toBe(true);
+    expect(keymapFocusScopesOverlap("editor.splitDown", "editor.save")).toBe(true);
+  });
+});

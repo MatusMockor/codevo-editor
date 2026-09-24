@@ -1,5 +1,6 @@
 import {
   defaultShortcutForCommand,
+  findKeymapSequenceConflicts,
   keymapCommands,
   parseShortcut,
   shortcutForCommand,
@@ -7,10 +8,7 @@ import {
   type KeymapPlatform,
   type KeymapSettings,
 } from "../../../domain/keymap";
-import {
-  findKeymapSequenceConflicts,
-  shortcutSequenceForPlatform,
-} from "../../../domain/shortcutSequence";
+import { shortcutSequenceForPlatform } from "../../../domain/shortcutSequence";
 
 export type KeybindingConflictKind = "exact" | "prefix";
 

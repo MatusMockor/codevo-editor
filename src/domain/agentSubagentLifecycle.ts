@@ -1,5 +1,7 @@
 import { MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS } from "./agentRuntimeSubagent";
 import type { AgentTurnEvent } from "./agentThread";
+import type { AgentSubagentSpawnEffort, AgentSubagentSpawnEvent } from "./agentSubagentSpawn";
+import { AGENT_SUBAGENT_SPAWN_EFFORTS } from "./agentSubagentSpawn";
 
 export const MAX_RETAINED_SUBAGENTS = 32;
 export const MAX_SUBAGENT_TASK_TITLE_BYTES = MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS * 4;
@@ -7,6 +9,7 @@ export const MAX_SUBAGENT_BATCH_KEY_BYTES = 272;
 export const MAX_SUBAGENT_PARENT_TOOL_ID_BYTES = 256;
 export const MAX_SUBAGENT_NESTED_COUNT = 999;
 export const MAX_SUBAGENT_COUNTED_NESTED_IDS = 32;
+export const MAX_SUBAGENT_MODEL_BYTES = 64;
 const MAX_NESTED_ANCESTOR_DEPTH = 8;
 const SPAWN_BATCH_KEY_PREFIX = "spawn:";
 export type AgentSubagentLifecycleState = "running" | "completed" | "failed" | "interrupted";
@@ -28,6 +31,8 @@ export interface AgentSubagentLifecycleEntry {
   readonly batchKey?: string;
   readonly nestedCount?: number;
   readonly parentToolId?: string;
+  readonly model?: string;
+  readonly effort?: AgentSubagentSpawnEffort;
 }
 export interface AgentSubagentLifecycle {
   readonly entries: ReadonlyArray<AgentSubagentLifecycleEntry>;
@@ -223,6 +228,13 @@ export function retainAgentSubagentLifecycle(
       openBatchKey = undefined;
       changed = true;
     }
+    if (event.kind === "subagentSpawn") {
+      const retained = retainSpawn(entries, event, openBatchKey);
+      openBatchKey = retained.openBatchKey;
+      if (retained.truncated) truncated = true;
+      changed = true;
+      continue;
+    }
     if (event.kind === "toolCall" && event.parentToolId !== undefined && spawn(event.name)) {
       if (retainNestedSpawn(entries, counted, event, event.parentToolId) === "truncated")
         truncated = true;
@@ -353,11 +365,7 @@ export function retainAgentSubagentLifecycle(
         telemetryState: event.isError ? "failed" : "completed",
         ...(event.durationMs === null ? {} : { durationMs: event.durationMs }),
       };
-    const state =
-      entry.resultState === "failed" || entry.telemetryState === "failed"
-        ? "failed"
-        : (entry.telemetryState ?? entry.resultState ?? "running");
-    entries.set(key, { ...entry, state });
+    entries.set(key, { ...entry, state: lifecycleState(entry) });
     changed = true;
   }
   if (!changed) return previous;
@@ -367,6 +375,83 @@ export function retainAgentSubagentLifecycle(
     ...(openBatchKey === undefined ? {} : { openBatchKey }),
     ...(counted.size === 0 ? {} : { countedNestedToolIds: [...counted] }),
   };
+}
+
+function retainSpawn(
+  entries: Map<string, AgentSubagentLifecycleEntry>,
+  event: AgentSubagentSpawnEvent,
+  openBatchKey: string | undefined,
+): { readonly openBatchKey: string | undefined; readonly truncated: boolean } {
+  if (!validId(event.callId)) return { openBatchKey, truncated: true };
+  const batchKey = openBatchKey ?? spawnBatchKey(event.callId);
+  const receivers = event.agentThreadIds.filter(validId);
+  const targets: ReadonlyArray<SubagentEventIdentity> =
+    receivers.length === 0
+      ? [{ toolId: event.callId }]
+      : receivers.map((agentThreadId, index) =>
+          index === 0 ? { toolId: event.callId, agentThreadId } : { agentThreadId },
+        );
+  let truncated = false;
+  for (const identity of targets) {
+    const childName =
+      identity.agentThreadId === undefined
+        ? undefined
+        : [...entries.values()].find((entry) => entry.agentThreadId === identity.agentThreadId)
+            ?.name;
+    const found = resolveAlias(entries, identity);
+    if (found === undefined && entries.size >= MAX_RETAINED_SUBAGENTS) {
+      truncated = true;
+      continue;
+    }
+    const base: AgentSubagentLifecycleEntry = found ?? {
+      id:
+        identity.agentThreadId === undefined
+          ? `tool:${event.callId}`
+          : `thread:${identity.agentThreadId}`,
+      name: "subagent",
+      description: "",
+      state: "running",
+    };
+    const named = childName === undefined ? base : { ...base, name: childName };
+    const next = spawnDetails({ ...named, ...identity }, event, batchKey, receivers.length === 0);
+    entries.set(next.id, next);
+  }
+  return { openBatchKey: batchKey, truncated };
+}
+
+function spawnDetails(
+  entry: AgentSubagentLifecycleEntry,
+  event: AgentSubagentSpawnEvent,
+  batchKey: string | undefined,
+  receiverless: boolean,
+): AgentSubagentLifecycleEntry {
+  const taskTitle = entry.taskTitle ?? taskTitleOf(event.taskTitle ?? undefined);
+  const model =
+    entry.model ?? (event.model === null ? undefined : clip(event.model, MAX_SUBAGENT_MODEL_BYTES));
+  const effort = entry.effort ?? event.reasoningEffort ?? undefined;
+  const live = (entry.telemetryState ?? "running") === "running";
+  const telemetryState =
+    event.status === "failed"
+      ? "failed"
+      : event.status === "interrupted" && live
+        ? "interrupted"
+        : event.status === "completed" && receiverless && entry.agentThreadId === undefined && live
+          ? "completed"
+          : entry.telemetryState;
+  const settled: AgentSubagentLifecycleEntry = {
+    ...entry,
+    ...(taskTitle === undefined ? {} : { taskTitle }),
+    ...(entry.batchKey !== undefined || batchKey === undefined ? {} : { batchKey }),
+    ...(model === undefined || model === "" ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
+    ...(telemetryState === undefined ? {} : { telemetryState }),
+  };
+  return { ...settled, state: lifecycleState(settled) };
+}
+
+function lifecycleState(entry: AgentSubagentLifecycleEntry): AgentSubagentLifecycleState {
+  if (entry.resultState === "failed" || entry.telemetryState === "failed") return "failed";
+  return entry.telemetryState ?? entry.resultState ?? "running";
 }
 
 function acknowledgesAsyncLaunch(
@@ -506,6 +591,8 @@ export function parseAgentSubagentLifecycle(value: unknown): AgentSubagentLifecy
       "batchKey",
       "nestedCount",
       "parentToolId",
+      "model",
+      "effort",
     ];
     if (Object.keys(entry).some((key) => !fields.includes(key))) return fail();
     const id = text(entry.id, 272);
@@ -566,6 +653,16 @@ export function parseAgentSubagentLifecycle(value: unknown): AgentSubagentLifecy
       ...(entry.parentToolId === undefined
         ? {}
         : { parentToolId: presentText(entry.parentToolId, MAX_SUBAGENT_PARENT_TOOL_ID_BYTES) }),
+      ...(entry.model === undefined
+        ? {}
+        : { model: presentText(entry.model, MAX_SUBAGENT_MODEL_BYTES) }),
+      ...(entry.effort === undefined
+        ? {}
+        : {
+            effort: (AGENT_SUBAGENT_SPAWN_EFFORTS as ReadonlyArray<unknown>).includes(entry.effort)
+              ? (entry.effort as AgentSubagentSpawnEffort)
+              : fail(),
+          }),
     };
   });
   return {

@@ -21,6 +21,7 @@ import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
+import { agentClockTime } from "./conversation/agentTurnMetaLine";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 
 const ROOT = "/workspace/app";
@@ -276,9 +277,9 @@ describe("AgentThreadSession", () => {
     expect(host.textContent?.indexOf("Original answer")).toBeLessThan(
       host.textContent?.indexOf("Refactor the parser") ?? 0,
     );
-    expect(history?.querySelector("header.agent-turn__head time")).toBeNull();
-    expect(history?.querySelector(".agent-turn__duration")).toBeNull();
-    expect(history?.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
+    expect(history?.querySelector(".agent-answer > .cv-turn-meta time")).toBeNull();
+    expect(history?.querySelector(".cv-turn-meta__duration")).toBeNull();
+    expect(history?.querySelector(".cv-turn-meta__agent")?.textContent).toBe("Claude Code");
     expect(history?.querySelector(".agent-work")).toBeNull();
   });
 
@@ -472,8 +473,8 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-tool-row--working")?.textContent).toBe("Working\u2026");
     expect(rows[0]?.textContent).toContain("Read");
     expect(rows[0]?.textContent).toContain("src/parser.ts");
-    expect(rows[0]?.className).toBe("agent-tool-row");
-    expect(rows[1]?.className).toBe("agent-tool-row agent-tool-row--failed");
+    expect(rows[0]?.className).toBe("cv-work-row agent-tool-row");
+    expect(rows[1]?.className).toBe("cv-work-row agent-tool-row agent-tool-row--failed");
   });
 
   it("keeps a tool call without a result visible as running", () => {
@@ -488,7 +489,7 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelector(".agent-tool-row")?.className).toBe(
-      "agent-tool-row agent-tool-row--running",
+      "cv-work-row agent-tool-row agent-tool-row--running",
     );
     expect(host.querySelector(".agent-tool-row--failed")).toBeNull();
   });
@@ -506,10 +507,10 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-spawn__row")?.textContent).toBe(
-      "Kicked off 2 subagents1 working",
+    expect(host.querySelector(".cv-spawn__head")?.textContent).toBe(
+      "Kicked off 2 subagents·1 working",
     );
-    expect(host.querySelector(".agent-spawn")?.getAttribute("data-tone")).toBe("working");
+    expect(host.querySelector(".cv-spawn")?.getAttribute("data-tone")).toBe("working");
   });
 
   it("counts the subagents and exposes their disclosure outside the work fold", () => {
@@ -527,25 +528,23 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-work__counts")?.textContent).toBe(
+    expect(host.querySelector(".agent-work__title")?.textContent).toBe(
       "2 subagents · 1 need attention",
     );
 
-    const spawn = host.querySelector<HTMLButtonElement>(".agent-spawn__row");
+    const spawn = host.querySelector<HTMLButtonElement>(".cv-spawn__head");
     expect(spawn?.getAttribute("aria-expanded")).toBe("false");
-    expect(spawn?.textContent).toBe("Ran 2 subagents1 failed");
+    expect(spawn?.textContent).toBe("Ran 2 subagents·1 failed");
     expect(host.querySelector('[aria-label="Subagents"]')).toBeNull();
     act(() => spawn?.click());
-    const rows = [...host.querySelectorAll('[aria-label="Subagents"] .agent-spawn-member')];
+    const rows = [...host.querySelectorAll('[aria-label="Subagents"] .cv-spawn-member')];
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.querySelector(".agent-spawn-member__title")?.textContent).toBe(
-      "Review the rail",
-    );
-    expect(rows[0]?.querySelector(".agent-spawn-member__activity")?.textContent).toBe("done");
-    expect(rows[0]?.querySelector(".agent-spawn-member__meta")?.textContent).toBe("Completed");
+    expect(rows[0]?.querySelector(".cv-spawn-member__title")?.textContent).toBe("Review the rail");
+    expect(rows[0]?.querySelector(".cv-spawn-member__activity")?.textContent).toBe("done");
+    expect(rows[0]?.querySelector(".cv-spawn-member__meta")?.textContent).toBe("Completed");
     expect(rows[1]?.getAttribute("data-status")).toBe("failed");
-    expect(rows[1]?.querySelector(".agent-spawn-member__meta")?.textContent).toBe("Failed");
+    expect(rows[1]?.querySelector(".cv-spawn-member__meta")?.textContent).toBe("Failed");
     expect(rows[0]?.closest(".agent-work__events")).toBeNull();
     expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
   });
@@ -561,17 +560,15 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const spawn = host.querySelector<HTMLButtonElement>(".agent-spawn__row");
-    expect(spawn?.textContent).toBe("Ran 1 subagentstatus unavailable");
+    const spawn = host.querySelector<HTMLButtonElement>(".cv-spawn__head");
+    expect(spawn?.textContent).toBe("Ran 1 subagent·status unavailable");
     act(() => spawn?.click());
     const list = host.querySelector('[aria-label="Subagents"]');
 
     expect(host.querySelector(".agent-work")).toBeNull();
     expect(list?.closest(".agent-turn__events")).not.toBeNull();
-    expect(list?.querySelectorAll(".agent-spawn-member")).toHaveLength(1);
-    expect(list?.querySelector(".agent-spawn-member__meta")?.textContent).toBe(
-      "Status unavailable",
-    );
+    expect(list?.querySelectorAll(".cv-spawn-member")).toHaveLength(1);
+    expect(list?.querySelector(".cv-spawn-member__meta")?.textContent).toBe("Status unavailable");
     expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
     expect(host.querySelectorAll('[aria-label="Subagents"]')).toHaveLength(1);
   });
@@ -590,7 +587,7 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelector('[aria-label="Subagents"]')).toBeNull();
-    expect(host.querySelector(".agent-work__counts")?.textContent).not.toContain("subagent");
+    expect(host.querySelector(".agent-work__title")?.textContent).not.toContain("subagent");
   });
 
   it("collapses reasoning and hides raw output while the turn is still running", () => {
@@ -935,7 +932,7 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
-    expect(host.textContent).toContain("7 earlier events hidden");
+    expect(host.querySelector("button.cv-load-earlier")?.textContent).toBe("Load earlier activity");
     expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("line 7");
   });
 
@@ -949,19 +946,17 @@ describe("AgentThreadSession", () => {
         turns: [turn("agt-1-t1", "Refactor the parser", { kind: "running" }, events)],
       }),
     });
-    const showEarlier = () =>
-      [...host.querySelectorAll<HTMLButtonElement>(".agent-turn-earlier__action")][0];
+    const showEarlier = () => host.querySelector<HTMLButtonElement>("button.cv-load-earlier");
 
-    expect(showEarlier()?.textContent).toBe(`Show ${MAX_RENDERED_EVENTS_PER_TURN} earlier`);
+    expect(showEarlier()?.textContent).toBe("Load earlier activity");
     act(() => showEarlier()?.click());
 
     expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN * 2);
-    expect(host.textContent).toContain("30 earlier events hidden");
-    expect(showEarlier()?.textContent).toBe("Show 30 earlier");
+    expect(showEarlier()?.textContent).toBe("Load earlier activity");
     act(() => showEarlier()?.click());
 
     expect(host.querySelectorAll(".agent-text")).toHaveLength(events.length);
-    expect(host.querySelector(".agent-turn-earlier")).toBeNull();
+    expect(host.querySelector(".cv-earlier")).toBeNull();
     expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("line 0");
   });
 
@@ -986,25 +981,33 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("needle 70");
   });
 
-  it("reveals and highlights an old subagent event within bounded group windows", () => {
-    const events: AgentTurnEvent[] = Array.from({ length: 350 }, (_, index) => ({
-      kind: "subagentEvent",
-      agentThreadId: "child",
-      event: { kind: "assistantText", text: `nested needle ${index}` },
-    }));
+  it("renders Codex child threads only through the subagent batch row", () => {
+    const events: AgentTurnEvent[] = [
+      {
+        kind: "subagentActivity",
+        activity: "started",
+        agentThreadId: "child-1",
+        agentPath: "/root/explorer",
+      },
+      {
+        kind: "subagentEvent",
+        agentThreadId: "child-1",
+        event: { kind: "toolCall", toolId: "c1", name: "shell", inputSummary: "rg createOrder" },
+      },
+      {
+        kind: "subagentEvent",
+        agentThreadId: "child-1",
+        event: { kind: "assistantText", text: "createOrder is reached from 2 places" },
+      },
+    ];
     render({
       thread: threadView({
-        turns: [turn("agt-1-t1", "Inspect nested history", { kind: "running" }, events)],
+        turns: [turn("agt-1-t1", "Map order creation paths", { kind: "running" }, events)],
       }),
-      findQuery: "needle",
-      findHits: [{ scope: "turn", turnId: "agt-1-t1", eventIndex: 0, start: 7, end: 13 }],
-      findHitIndex: 0,
     });
-    expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
-    expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("nested needle 0");
-    expect(host.querySelector(".agent-find__hit--current")?.textContent).toBe("needle");
-    expect(host.querySelector("details.agent-reasoning")?.hasAttribute("open")).toBe(true);
-    expect(host.textContent).toContain("150 subagent events hidden");
+    expect(host.querySelector("details.agent-reasoning")).toBeNull();
+    expect(host.textContent).not.toContain("subagent events hidden");
+    expect(host.querySelector(".cv-spawn")).not.toBeNull();
   });
 
   it("reports a bounded turn instead of pretending the output is complete", () => {
@@ -1099,7 +1102,7 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Agent CLI exited with code 1.");
   });
 
-  it("shows only the provider and the turn time in the turn head", () => {
+  it("shows only the model and the turn time in the hover row", () => {
     render({
       thread: threadView({
         turns: [
@@ -1116,10 +1119,10 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const time = host.querySelector("header.agent-turn__head time");
+    const time = host.querySelector(".agent-answer > .cv-turn-meta time");
 
-    expect(time?.textContent).toBe("5 minutes ago");
-    expect(host.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
+    expect(time?.textContent).toBe(agentClockTime(NOW - 5 * 60_000)?.label);
+    expect(host.querySelector(".cv-turn-meta__agent")?.textContent).toBe("Claude Opus 5");
     expect(host.textContent).not.toContain("worktree");
     expect(host.textContent).not.toContain("finished");
     expect(host.textContent).not.toContain("opus");
@@ -1152,9 +1155,9 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelectorAll("header.agent-turn__head time")).toHaveLength(3);
+    expect(host.querySelectorAll(".agent-answer > .cv-turn-meta time")).toHaveLength(3);
     expect(host.querySelector(".agent-prompt__launch")).toBeNull();
-    const labels = [...host.querySelectorAll(".agent-turn__launch")].map(
+    const labels = [...host.querySelectorAll(".cv-turn-meta__agent")].map(
       (node) => node.textContent,
     );
     expect(labels).toHaveLength(3);

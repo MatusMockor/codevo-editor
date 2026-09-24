@@ -4,9 +4,10 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_TERMINAL_TABS } from "../domain/terminalTabSet";
-import type { TerminalGateway } from "../domain/terminal";
+import type { TerminalGateway, TerminalRuntimeStatus } from "../domain/terminal";
 import { classicTerminalTheme } from "../domain/editorColorThemes";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
+import { waitForReact } from "../test/reactTestLifecycle";
 
 interface CapturedTerminal {
   readonly isActive: boolean;
@@ -56,7 +57,12 @@ vi.mock("./TerminalPanel", async () => {
   };
 });
 
-import { TerminalTabsPanel } from "./TerminalTabsPanel";
+import {
+  TerminalTabsPanel,
+  type TerminalTabsCommands,
+  type TerminalTabsExternalStrip,
+  type TerminalTabsSnapshot,
+} from "./TerminalTabsPanel";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -419,6 +425,106 @@ describe("TerminalTabsPanel", () => {
     expect(semanticKeys).not.toContain("provider-sign-in-claudeCode-1");
   });
 
+  describe("external strip mode", () => {
+    it("publishes snapshots instead of rendering its own session list", async () => {
+      const snapshots: Array<TerminalTabsSnapshot | null> = [];
+      const commandsRef: { current: TerminalTabsCommands | null } = { current: null };
+      renderStrip({ onSnapshot: (snapshot) => snapshots.push(snapshot), commandsRef });
+
+      await waitForReact(() => expect(lastSnapshot(snapshots)?.tabs).toHaveLength(1));
+      expect(host.querySelector('[aria-label="Terminal sessions"]')).toBeNull();
+      expect(host.querySelector('[aria-label="New Terminal"]')).toBeNull();
+
+      act(() => commandsRef.current?.create());
+      await waitForReact(() => expect(lastSnapshot(snapshots)?.tabs).toHaveLength(2));
+      expect(lastSnapshot(snapshots)?.activeTabId).toBe(lastSnapshot(snapshots)?.tabs[1]?.id);
+    });
+
+    it("marks a session live until the backend reports it exited", async () => {
+      const snapshots: Array<TerminalTabsSnapshot | null> = [];
+      const gateway = fakeStatusGateway();
+      renderStrip(
+        { onSnapshot: (snapshot) => snapshots.push(snapshot), commandsRef: { current: null } },
+        gateway.gateway,
+      );
+      await waitForReact(() => expect(gateway.listenerCount()).toBe(1));
+      expect(lastSnapshot(snapshots)?.tabs[0]?.live).toBe(false);
+
+      act(() => [...mocks.mounted.values()][0]?.onSessionReady?.(41));
+      await waitForReact(() => expect(lastSnapshot(snapshots)?.tabs[0]?.live).toBe(true));
+
+      act(() => gateway.emitStatus({ kind: "exited", sessionId: 41, exitCode: 0 }));
+      await waitForReact(() => expect(lastSnapshot(snapshots)?.tabs[0]?.live).toBe(false));
+    });
+
+    it("stops and restarts the active session through commands", async () => {
+      const commandsRef: { current: TerminalTabsCommands | null } = { current: null };
+      const gateway = fakeStatusGateway();
+      renderStrip({ onSnapshot: () => undefined, commandsRef }, gateway.gateway);
+      act(() => [...mocks.mounted.values()][0]?.onSessionReady?.(7));
+
+      act(() => commandsRef.current?.stopActive());
+      await waitForReact(() => expect(gateway.stoppedSessionIds()).toEqual([7]));
+
+      act(() => commandsRef.current?.restartActive());
+      expect(mocks.unmounted).toHaveLength(1);
+      expect(mocks.mounted.size).toBe(1);
+      expect(sessions).toHaveBeenLastCalledWith(null);
+    });
+
+    it("renders the floating toolbar with Stop, Restart, Split and New", () => {
+      renderStrip({ onSnapshot: () => undefined, commandsRef: { current: null } });
+      expect(
+        [...host.querySelectorAll('[role="toolbar"] button')].map((item) =>
+          item.getAttribute("aria-label"),
+        ),
+      ).toEqual(["Stop terminal", "Restart terminal", "Split terminal", "New terminal"]);
+    });
+
+    it("clears the published commands on unmount so stale handlers cannot run", async () => {
+      const commandsRef: { current: TerminalTabsCommands | null } = { current: null };
+      renderStrip({ onSnapshot: () => undefined, commandsRef });
+      await waitForReact(() => expect(commandsRef.current).not.toBeNull());
+
+      act(() => root.render(null));
+
+      expect(commandsRef.current).toBeNull();
+    });
+
+    it("publishes null on unmount so the strip forgets the previous owner", async () => {
+      const snapshots: Array<TerminalTabsSnapshot | null> = [];
+      renderStrip({
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+        commandsRef: { current: null },
+      });
+      await waitForReact(() => expect(snapshots.length).toBeGreaterThan(0));
+      act(() => root.render(null));
+      expect(lastSnapshot(snapshots)).toBeNull();
+    });
+  });
+
+  function renderStrip(
+    externalStrip: TerminalTabsExternalStrip,
+    terminalGateway: TerminalGateway = {} as TerminalGateway,
+  ) {
+    act(() => {
+      root.render(
+        <TerminalTabsPanel
+          externalStrip={externalStrip}
+          isActive
+          onActiveSessionReady={sessions}
+          ownerKey={JSON.stringify(["workspace-a", "/workspace"])}
+          profileId="zsh"
+          profileLabel={null}
+          rootPath="/workspace"
+          shellIntegrationEnabled={false}
+          terminalGateway={terminalGateway}
+          terminalTheme={classicTerminalTheme("classicDark")}
+        />,
+      );
+    });
+  }
+
   function render(
     ownerKey = "workspace-a",
     onSessionReady = sessions,
@@ -510,5 +616,36 @@ function signInSurface(
     cancelStart: () => undefined,
     start: vi.fn(async () => null),
     settle: vi.fn(async () => undefined),
+  };
+}
+
+function lastSnapshot(
+  snapshots: ReadonlyArray<TerminalTabsSnapshot | null>,
+): TerminalTabsSnapshot | null | undefined {
+  return snapshots[snapshots.length - 1];
+}
+
+function fakeStatusGateway() {
+  const listeners: Array<(status: TerminalRuntimeStatus) => void> = [];
+  const stopped: number[] = [];
+  const gateway = {
+    subscribeStatus: async (listener: (status: TerminalRuntimeStatus) => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners.splice(listeners.indexOf(listener), 1);
+      };
+    },
+    stop: async (sessionId: number): Promise<TerminalRuntimeStatus> => {
+      stopped.push(sessionId);
+      return { kind: "stopped", sessionId };
+    },
+  } as unknown as TerminalGateway;
+  return {
+    gateway,
+    listenerCount: () => listeners.length,
+    stoppedSessionIds: () => [...stopped],
+    emitStatus: (status: TerminalRuntimeStatus) => {
+      for (const listener of [...listeners]) listener(status);
+    },
   };
 }

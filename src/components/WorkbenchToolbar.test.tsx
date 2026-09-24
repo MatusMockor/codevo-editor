@@ -83,6 +83,16 @@ describe("WorkbenchToolbar", () => {
     expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
   });
 
+  it("hosts the editor status group at the end of the toolbar and never in the agent layout", () => {
+    render({ status: <span data-testid="editor-status">status</span> });
+    const status = host.querySelector(".workbench-toolbar__status");
+    expect(status?.querySelector('[data-testid="editor-status"]')).not.toBeNull();
+    expect(host.querySelector(".workbench-toolbar")?.lastElementChild).toBe(status);
+
+    render({ layout: "agent", status: <span data-testid="editor-status">status</span> });
+    expect(host.querySelector('[data-testid="editor-status"]')).toBeNull();
+  });
+
   function render(overrides: Partial<WorkbenchToolbarProps> = {}): void {
     act(() => root.render(<WorkbenchToolbar {...defaultProps()} {...overrides} />));
   }

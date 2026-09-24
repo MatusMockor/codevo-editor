@@ -465,6 +465,7 @@ function clipEventText(event: AgentTurnEvent, limitBytes: number): AgentTurnEven
     case "backgroundTask":
     case "subagent":
     case "subagentActivity":
+    case "subagentSpawn":
     case "subagentUsage":
     case "subagentTurnDone":
     case "queued":

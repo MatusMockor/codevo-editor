@@ -1,6 +1,6 @@
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
-import type { AgentRecordedTurnSelection } from "./AgentRecordedTurnDiff";
-import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
+import type { AgentDiffTurn } from "../../domain/diffView/agentDiffScope";
+import { useAgentDiffScopeSelection } from "./useAgentDiffScopeSelection";
 import type { MonacoAppTheme } from "../../domain/settings";
 import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
@@ -17,14 +17,13 @@ import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
-import { AgentThreadQuestions } from "./AgentThreadQuestions";
+import { useAgentPendingInteractions } from "../../application/useAgentPendingInteractions";
 import type {
   AgentArtifactLoader,
   AgentArtifactPreviewPort,
 } from "../../application/agentArtifactPorts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
-import { PanelLeftOpen } from "lucide-react";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useRemoteProjectLinks } from "../../application/useRemoteProjectLinks";
 import { groupedEnvironmentProjects, environmentComposerScope } from "./agentEnvironmentProjects";
@@ -64,7 +63,7 @@ import type {
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
 import { AgentComposerController } from "./AgentComposerController";
-import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
+import { AgentPanelWindowControls } from "./AgentPanelLayoutControls";
 import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
@@ -72,7 +71,18 @@ import { AgentRemoteAddProjectDialog } from "./remoteAddProject/AgentRemoteAddPr
 import { remoteAddProjectCloneActive } from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
+import { AgentSidebarReveal } from "./AgentSidebarReveal";
+import { AgentThreadActivity } from "./AgentThreadActivity";
+import {
+  agentThreadActivityDetail,
+  agentThreadActivitySummary,
+} from "./agentThreadActivityPresentation";
+import { useSidebarFocusHandoff } from "./useSidebarFocusHandoff";
 import { AgentThreadHeader } from "./AgentThreadHeader";
+import { AgentThreadErrorBanner } from "./AgentThreadErrorBanner";
+import { AgentAgentsPanelProvider } from "./agents/agentAgentsPanelContext";
+import { AgentAgentsPanelSurface } from "./agents/AgentAgentsPanelSurface";
+import { AgentAgentsToggleButton } from "./agents/AgentAgentsToggleButton";
 import { AgentTerminalSessionsPalette } from "./AgentTerminalSessionsPalette";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
@@ -85,7 +95,11 @@ import {
   agentProjectTerminalSessionsTarget,
   type AgentRailScope,
 } from "./agentSidebarPresentation";
-import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
+import {
+  agentSurfaceScopeFor,
+  agentThreadCheckoutRoot,
+  isRemoteAgentSurfaceThread,
+} from "./agentSurfacePolicy";
 import { useScopedAgentNotice } from "./useScopedAgentNotice";
 import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
@@ -100,13 +114,17 @@ import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
 import { useAgentThreadNavigation, type AgentNavigationSession } from "./useAgentThreadNavigation";
 import { useAgentViewCommands } from "./useAgentViewCommands";
-import { useWorkbenchFrameResponsiveRestore } from "../useWorkbenchFrameResponsiveRestore";
+import { useAgentCommandPaletteProvider } from "./useAgentCommandPaletteProvider";
+import { useResponsivePanelToggle } from "./useResponsivePanelToggle";
 import {
   useAgentLatestCallback,
   useAgentSurfacePresentationView,
   useAgentThreadScriptPresentation,
   useAgentThreadPresentationViews,
 } from "./useAgentThreadPresentationViews";
+
+const AGENTS_TOGGLE_BUTTON = <AgentAgentsToggleButton />;
+const AGENTS_PANEL_SURFACE = <AgentAgentsPanelSurface />;
 
 export interface AgentModeViewProps {
   readonly monacoTheme?: MonacoAppTheme;
@@ -138,6 +156,7 @@ export interface AgentModeViewProps {
 }
 
 const DEFAULT_NOW_TICK_MS = 30_000;
+const NO_DIFF_TURNS: ReadonlyArray<AgentDiffTurn> = [];
 const IDLE_ACCOUNT_USAGE = {
   claudeCode: { kind: "idle" },
   codex: { kind: "idle" },
@@ -247,7 +266,6 @@ function LocalAgentModeView({
   const surfaceEnterClass = useSurfaceEnterClass();
   const remoteContext = useRemoteRunnerContext();
   usePreloadAgentMarkdownRenderer();
-  const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
   const [goToTurnSignal, setGoToTurnSignal] = useState(0);
   const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);
 
@@ -296,6 +314,11 @@ function LocalAgentModeView({
     selectedThreadId === null
       ? null
       : (presentationThreads.find((view) => view.thread.threadId === selectedThreadId) ?? null);
+  const pendingInteractions = useAgentPendingInteractions(
+    questionGateway,
+    agents.threads,
+    selectedThread?.thread.threadId ?? null,
+  );
   const pendingRemoteIdentity =
     selectedThread === null ? parseRemoteAgentThreadIdentity(selectedThreadId) : null;
   const resolvingRemoteThread =
@@ -442,6 +465,13 @@ function LocalAgentModeView({
     remotePaneKey: remoteSurface?.paneKey ?? (resolvingRemoteThread ? selectedThreadId : null),
   });
   const { layout, openSurface, toggleMaximized, toggleRail, toggleRightPanel } = surface;
+  const { restore: responsivePanelRestore, toggle: toggleResponsivePanel } =
+    useResponsivePanelToggle({
+      rightPanelMaximized: layout.rightPanelMaximized,
+      toggleMaximized,
+      toggleRail,
+      toggleRightPanel,
+    });
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scriptsTarget = useMemo(
     () =>
@@ -457,53 +487,27 @@ function LocalAgentModeView({
     onBeforeRun: onShowTerminalPanel,
   });
   const headerScripts = useAgentThreadScriptPresentation(scripts);
-  const [recordedDiff, setRecordedDiff] = useState<AgentRecordedTurnSelection | null>(null);
   const selectedRecordedThreadId = sessionThread?.thread.threadId ?? null;
-  const recordedRevision =
-    selectedRecordedThreadId === null
-      ? undefined
-      : (agents.getTurnChangesRevision?.(selectedRecordedThreadId) ?? agents.turnChangesRevision);
-  const visibleRecordedDiff = useMemo(() => {
-    if (!recordedDiff || recordedDiff.threadId !== selectedRecordedThreadId) return null;
-    if (recordedDiff.revision === recordedRevision) return recordedDiff;
-    return {
-      ...recordedDiff,
-      summary: {
-        turnId: recordedDiff.summary.turnId,
-        state: "unavailable" as const,
-        files: [],
-        truncated: false,
-        reason:
-          "Recorded changes are unavailable after the project connection changed. Reopen the turn to retry.",
-      },
-    };
-  }, [recordedDiff, recordedRevision, selectedRecordedThreadId]);
-  useEffect(() => {
-    setRecordedDiff(null);
-  }, [selectedRecordedThreadId]);
-  const openRecordedDiff = useAgentLatestCallback(
-    (threadId: string, summary: AgentTurnChangeSummary, relativePath?: string) => {
-      if (threadId !== selectedRecordedThreadId || !agents.getTurnFileDiff) return;
-      setRecordedDiff({
-        threadId,
-        summary,
-        relativePath,
-        revision: recordedRevision,
-        getTurnFileDiff: agents.getTurnFileDiff,
-      });
-      openSurface("diff");
-    },
-  );
+  const openDiffSurface = useCallback(() => openSurface("diff"), [openSurface]);
+  const diffScopes = useAgentDiffScopeSelection({
+    threadId: selectedRecordedThreadId,
+    turns: sessionThread?.thread.turns ?? NO_DIFF_TURNS,
+    diffActive: layout.rightPanel === "open" && layout.activeSurface === "diff",
+    remote: isRemoteAgentSurfaceThread(sessionThread ?? null),
+    turnDiffAvailable: agents.getTurnChanges !== undefined && agents.getTurnFileDiff !== undefined,
+    openDiff: openDiffSurface,
+  });
+  const openRecordedDiff = diffScopes.openTurnDiff;
   const showChanges = agents.showChanges;
   const trustProject = useAgentLatestCallback(onTrustProject);
   const releaseProject = useAgentLatestCallback(onReleaseProject);
+  const reviewWorkingTree = diffScopes.reviewWorkingTree;
   const reviewInDiff = useCallback(
     (threadId: string) => {
-      setRecordedDiff(null);
       void showChanges(threadId);
-      openSurface("diff");
+      reviewWorkingTree(threadId);
     },
-    [openSurface, showChanges],
+    [reviewWorkingTree, showChanges],
   );
 
   const terminalSessionsPalette = navigation.terminalSessions;
@@ -608,20 +612,58 @@ function LocalAgentModeView({
       onSelectProjectEnvironment(target.projectRootKey);
     composer.clearSelection();
   });
+  const sectionRef = useRef<HTMLElement | null>(null);
+  useSidebarFocusHandoff(layout.rail, sectionRef);
+  const { attention, attentionExplanation, capacity, live } = useMemo(
+    () =>
+      agentThreadActivitySummary(
+        agents.threads,
+        agents.liveTaskCount,
+        agents.maxConcurrentAgentTasks,
+      ),
+    [agents.liveTaskCount, agents.maxConcurrentAgentTasks, agents.threads],
+  );
+  const threadActivitySummary = useMemo(
+    () => ({ attention, attentionExplanation, capacity, live }),
+    [attention, attentionExplanation, capacity, live],
+  );
+  const attentionVisible = chrome.threadActivity?.attentionVisible ?? true;
+  const changeAttentionVisible = chrome.threadActivity?.onChangeAttentionVisible ?? null;
+  const footerActivity = useMemo(
+    () => (
+      <AgentThreadActivity
+        attentionVisible={attentionVisible}
+        onChangeAttentionVisible={changeAttentionVisible}
+        ownerKey={workspaceRoot}
+        summary={threadActivitySummary}
+      />
+    ),
+    [attentionVisible, changeAttentionVisible, threadActivitySummary, workspaceRoot],
+  );
+  const sidebarRevealDetail = agentThreadActivityDetail(threadActivitySummary, attentionVisible);
+  const sidebarReveal = useMemo(
+    () => (
+      <AgentSidebarReveal
+        detail={sidebarRevealDetail}
+        onExpand={toggleRail}
+        onNewThread={newProjectThread}
+        shortcuts={chrome.shortcuts}
+      />
+    ),
+    [chrome.shortcuts, newProjectThread, sidebarRevealDetail, toggleRail],
+  );
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
   const closeSurfaceTab = useAgentLatestCallback((kind: AgentSurfaceKind) => {
-    if (kind === "diff") setRecordedDiff(null);
+    if (kind === "diff") diffScopes.resetScope();
     surface.closeSurfaceTab(kind);
   });
-  const closeRecordedDiff = useCallback(() => {
-    setRecordedDiff(null);
-    closeSurfaceTab("diff");
-  }, [closeSurfaceTab]);
   const openSurfaceCommand = useAgentLatestCallback((kind: AgentSurfaceKind) => {
-    if (kind === "diff") setRecordedDiff(null);
+    if (kind === "diff") diffScopes.resetScope();
     openSurface(kind);
   });
   const toggleRightPanelCommand = useAgentLatestCallback(toggleRightPanel);
+  const openAgentsSurface = useAgentLatestCallback(() => surface.openSurface("agents"));
+  const toggleAgentsSurface = useAgentLatestCallback(() => surface.toggleSurface("agents"));
   const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), [setLocalNotice]);
   const revealAgentAttachment = agents.revealAttachment;
   const revealAttachment = useCallback(
@@ -643,17 +685,36 @@ function LocalAgentModeView({
       },
       openCommitMenu: () => {
         if (selectedThreadId === null) return;
-        setCommitMenuOpenSignal((current) => current + 1);
+        openSurfaceCommand("git");
       },
       goToTurn: () => {
         if (selectedThreadId === null) return;
         setGoToTurnSignal((current) => current + 1);
       },
+      toggleMaximizedPanel: toggleResponsivePanel,
       surfaceBlocked,
     }),
-    [navigationCommands, scripts, selectedThreadId, newProjectThread, surfaceBlocked],
+    [
+      navigationCommands,
+      scripts,
+      selectedThreadId,
+      newProjectThread,
+      openSurfaceCommand,
+      surfaceBlocked,
+      toggleResponsivePanel,
+    ],
   );
   useAgentViewCommands(viewCommands, commandHandlers);
+  useAgentCommandPaletteProvider({
+    threads: presentationThreads,
+    projects,
+    selectedThreadId,
+    activeProjectKey: navigation.railScope?.projectRootKey ?? null,
+    scripts,
+    selectThread: navigation.selectThread,
+    setProjectScope: navigation.setProjectScope,
+    newThread: newProjectThread,
+  });
 
   const notice = localNotice ?? agents.notice;
   const dismissNotice = useCallback(() => {
@@ -734,53 +795,17 @@ function LocalAgentModeView({
     if (target === null || target.projectRootKey.startsWith("remote:")) return null;
     return () => openTerminalSessions(target.projectRootKey, target.repositoryRoot);
   }, [headerTerminalSessionsTarget, openTerminalSessions]);
-  const responsivePanelRestore = useWorkbenchFrameResponsiveRestore();
-  const toggleResponsivePanel = useCallback(() => {
-    switch (responsivePanelRestore) {
-      case "none":
-        toggleMaximized();
-        return;
-      case "collapseRail":
-        if (layout.rightPanelMaximized) toggleMaximized();
-        toggleRail();
-        return;
-      case "closePanel":
-        if (layout.rightPanelMaximized) toggleMaximized();
-        toggleRightPanel();
-        return;
-      default:
-        responsivePanelRestore satisfies never;
-    }
-  }, [
-    layout.rightPanelMaximized,
-    responsivePanelRestore,
-    toggleMaximized,
-    toggleRail,
-    toggleRightPanel,
-  ]);
   const layoutControls = useMemo(
     () => (
-      <AgentPanelLayoutControls
-        bottomPanelOpen={chrome.bottomPanelVisible}
+      <AgentPanelWindowControls
         maximize={{
           maximized: layout.rightPanelMaximized || responsivePanelRestore !== "none",
           onToggle: toggleResponsivePanel,
         }}
-        onToggleBottomPanel={chrome.onToggleBottomPanel}
-        onToggleRightPanel={toggleRightPanel}
-        rightPanelOpen
-        shortcuts={chrome.shortcuts}
+        onClose={toggleRightPanel}
       />
     ),
-    [
-      chrome.bottomPanelVisible,
-      chrome.onToggleBottomPanel,
-      chrome.shortcuts,
-      layout.rightPanelMaximized,
-      responsivePanelRestore,
-      toggleResponsivePanel,
-      toggleRightPanel,
-    ],
+    [layout.rightPanelMaximized, responsivePanelRestore, toggleResponsivePanel, toggleRightPanel],
   );
   const surfaceAgents = useMemo(
     () => ({
@@ -789,40 +814,42 @@ function LocalAgentModeView({
       hideFileDiff: agents.hideFileDiff,
       openChangedFile: agents.openChangedFile,
       openChangedFileDiff: agents.openChangedFileDiff,
+      getTurnChanges: agents.getTurnChanges,
+      getTurnFileDiff: agents.getTurnFileDiff,
+      turnChangesRevision: agents.turnChangesRevision,
+      getTurnChangesRevision: agents.getTurnChangesRevision,
     }),
     [
+      agents.getTurnChanges,
+      agents.getTurnChangesRevision,
+      agents.getTurnFileDiff,
       agents.hideFileDiff,
       agents.openChangedFile,
       agents.openChangedFileDiff,
       agents.showChanges,
       agents.showFileDiff,
+      agents.turnChangesRevision,
     ],
   );
   return (
-    <>
+    <AgentAgentsPanelProvider
+      isOpen={surface.isSurfaceOpen("agents")}
+      onOpen={openAgentsSurface}
+      onToggle={toggleAgentsSurface}
+    >
       <section
         aria-label="Agent mode"
         className={["agent-mode", surfaceEnterClass].filter(Boolean).join(" ")}
         data-slot="agent"
+        ref={sectionRef}
       >
         <AgentClockProvider nowTickMs={nowTickMs}>
           <div className="agent-mode__grid">
-            {layout.rail === "collapsed" ? (
-              <div className="agent-rail__chrome" data-tauri-drag-region="">
-                <button
-                  aria-expanded="false"
-                  aria-label="Expand sidebar"
-                  className="agent-iconbutton"
-                  onClick={toggleRail}
-                  title="Expand sidebar"
-                  type="button"
-                >
-                  <PanelLeftOpen aria-hidden="true" size={16} />
-                </button>
-              </div>
-            ) : (
+            {layout.rail === "collapsed" ? null : (
               <AgentThreadsSidebar
                 catalog={agents.catalog}
+                collapseShortcut={chrome.shortcuts?.sidebar ?? null}
+                footerActivity={footerActivity}
                 addProjectAvailable={chrome.addProject !== null}
                 accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
                 evidenceOf={turnEvidenceOf}
@@ -838,13 +865,14 @@ function LocalAgentModeView({
                 onOpenProviderSettings={agents.configureAgentCli}
                 onOpenSourceControl={onOpenSourceControl}
                 onProjectCommand={projectMenuCommand}
-                onReleaseProject={releaseProject}
+                onChangeFilter={navigation.setRailFilter}
                 onSelectThread={navigation.selectThread}
                 onThreadBulkCommand={threadBulkCommand}
                 onThreadMenuCommand={threadMenuCommand}
                 onTogglePin={togglePin}
-                onTrustProject={trustProject}
                 overflowRootPaths={overflowRootPaths}
+                pendingInteractions={pendingInteractions}
+                railFilter={navigation.railFilter}
                 providerEnabled={effectiveProviderEnabled}
                 providerManagement={agents.providerManagement}
                 scope={railScope}
@@ -862,11 +890,18 @@ function LocalAgentModeView({
               />
             )}
 
-            <div className="agent-mode__center" ref={navigation.centerRef}>
+            <div
+              className="agent-mode__center"
+              inert={layout.rightPanelMaximized || undefined}
+              ref={navigation.centerRef}
+            >
               <AgentThreadHeader
                 bottomPanelOpen={chrome.bottomPanelVisible}
-                commitMenuOpenSignal={commitMenuOpenSignal}
+                gitSurfaceActive={layout.rightPanel === "open" && layout.activeSurface === "git"}
                 layout={layout}
+                leading={
+                  layout.rail === "collapsed" && !layout.rightPanelMaximized ? sidebarReveal : null
+                }
                 onNewThread={newThread}
                 onOpenScriptsView={chrome.onOpenScriptsView}
                 onOpenSurface={openSurfaceCommand}
@@ -879,10 +914,11 @@ function LocalAgentModeView({
                 onToggleRightPanel={toggleRightPanelCommand}
                 project={headerProject}
                 scripts={headerScripts}
-                shipActions={shipActions}
                 shortcuts={chrome.shortcuts}
                 thread={selectedThread}
+                trailingExtras={AGENTS_TOGGLE_BUTTON}
               />
+              <AgentThreadErrorBanner agents={agents} view={sessionThread} />
               {creation.visible && creation.pending !== null && creation.pendingClone !== null ? (
                 <AgentCloneComposer
                   creation={creation}
@@ -943,6 +979,12 @@ function LocalAgentModeView({
                 />
               ) : (
                 <AgentThreadSession
+                  activeDiffTurnId={diffScopes.activeDiffTurnId}
+                  awaiting={
+                    sessionThread === null
+                      ? null
+                      : (pendingInteractions.get(sessionThread.thread.threadId) ?? null)
+                  }
                   history={sessionThread?.execution?.kind === "remote" ? undefined : agents.history}
                   importedHistory={
                     sessionThread === null
@@ -1058,7 +1100,6 @@ function LocalAgentModeView({
               )}
               {!creation.visible && (
                 <>
-                  <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
                   <AgentComposerController
                     followUpBehavior={followUpBehavior}
                     executionServerId={
@@ -1081,6 +1122,7 @@ function LocalAgentModeView({
                     providerEnabled={effectiveProviderEnabled}
                     submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
                     submit={submitComposer}
+                    interactions={{ gateway: questionGateway, thread: sessionThread }}
                   />
                 </>
               )}
@@ -1153,15 +1195,22 @@ function LocalAgentModeView({
       {surface.surfaceHost.mounted && (
         <AgentSurfaceHost
           agents={surfaceAgents}
-          recordedDiff={visibleRecordedDiff}
-          onCloseRecordedDiff={closeRecordedDiff}
+          agentsPanel={AGENTS_PANEL_SURFACE}
+          diffScope={diffScopes.scope}
+          onDiffScopeChange={diffScopes.setScope}
           remoteDraft={surfaceThread === null && selectedServerId !== null}
           remoteSurface={remoteSurface}
+          shipActions={shipActions}
+          scripts={scripts}
           chooserAutoFocus={surface.chooserRequested}
           chrome={chrome}
           hidden={surface.surfaceHost.hidden}
           layout={layout}
           layoutControls={layoutControls}
+          leadingControls={
+            layout.rail === "collapsed" && layout.rightPanelMaximized ? sidebarReveal : null
+          }
+          onResizeWidth={surface.resizeRightPanel}
           onActivateSurface={activateSurface}
           onCloseSurfaceTab={closeSurfaceTab}
           onOpenSurface={openSurfaceCommand}
@@ -1174,7 +1223,7 @@ function LocalAgentModeView({
           workspaceRoot={workspaceRoot}
         />
       )}
-    </>
+    </AgentAgentsPanelProvider>
   );
 }
 

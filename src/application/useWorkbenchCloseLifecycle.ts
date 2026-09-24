@@ -52,6 +52,7 @@ import {
   RegisteredWorkspaceCloseCoordinator,
   type RegisteredWorkspaceCloseResult,
 } from "./registeredWorkspaceCloseCoordinator";
+import { createCancellableWorkspaceRetryScheduler } from "./workspaceReleaseRetry";
 import {
   useWorkbenchWorkspaceTabCloseCoordinator,
   type WorkspaceTabDisposalResult,
@@ -91,7 +92,9 @@ export interface WorkspaceCloseOwnership {
   isCurrent: () => boolean;
 }
 
-export type WorkspaceIdentityReleaseOutcome = "deferred" | "released";
+export type WorkspaceIdentityReleaseOutcome = "deferred" | "released" | "retained" | "stale";
+
+export type WorkspaceIdentityReleaseDeferral = "retryLater" | "abandonWhenDeferred";
 
 export interface WorkbenchCloseLifecycleDependencies {
   workspaceRoot: string | null;
@@ -136,7 +139,10 @@ export interface WorkbenchCloseLifecycleDependencies {
   ) => Promise<ProjectRuntimeStopResult>;
   forgetLanguageServerRuntimeStatuses: (rootPath: string) => void;
   forgetLatencyTrackerForRoot: (rootPath: string) => void;
-  unregisterWorkspace: (workspaceId: string) => Promise<WorkspaceIdentityReleaseOutcome | void>;
+  unregisterWorkspace: (
+    workspaceId: string,
+    deferral: WorkspaceIdentityReleaseDeferral,
+  ) => Promise<WorkspaceIdentityReleaseOutcome | void>;
   disposeRegisteredWorkspace: (
     target: RegisteredWorkspaceRuntimeDisposalTarget,
   ) => Promise<RegisteredWorkspaceRuntimeDisposalResult>;
@@ -341,9 +347,14 @@ export function useWorkbenchCloseLifecycle(
     reportError,
   } = dependencies;
   const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
+  const releaseRetryScheduler = useMemo(() => createCancellableWorkspaceRetryScheduler(), []);
+  useEffect(() => {
+    releaseRetryScheduler.activate();
+    return () => releaseRetryScheduler.cancelAll();
+  }, [releaseRetryScheduler]);
   const registeredWorkspaceCloseCoordinator = useMemo(
-    () => new RegisteredWorkspaceCloseCoordinator(closeCoordinator),
-    [closeCoordinator],
+    () => new RegisteredWorkspaceCloseCoordinator(closeCoordinator, releaseRetryScheduler.delay),
+    [closeCoordinator, releaseRetryScheduler],
   );
   const closeLifecycleActiveRef = useRef(true);
   const nativeCloseInFlightRef = useRef(false);
@@ -666,6 +677,7 @@ export function useWorkbenchCloseLifecycle(
       };
 
       let registeredRuntimeClosed = false;
+      let runtimeRetainedByOtherOwners = false;
       let identitySettlement: BackendClosedWorkspaceIdentitySettlement | null = null;
       let agentSettlement: AgentWorkspaceProjectCloseSettlement | null = null;
       if (identityDescriptor?.admissionToken !== undefined) {
@@ -718,6 +730,7 @@ export function useWorkbenchCloseLifecycle(
                 return exhaustive;
               }
             }
+            await identitySettlement.flushCompensations();
             if (!exactCloseIsCurrent()) {
               await agentSettlement.complete("backend-not-closed");
               return "stale";
@@ -739,15 +752,22 @@ export function useWorkbenchCloseLifecycle(
               reportError("Runtime cleanup", error);
               return "runtime-stop-incomplete";
             }
-            if (result.status === "stale") {
-              await agentSettlement.complete("backend-not-closed");
-              return "stale";
-            }
-            if (result.status === "incomplete") {
-              await agentSettlement.complete("backend-not-closed");
-              if (!exactCloseIsCurrent()) return "stale";
-              reportError("Runtime cleanup", new Error(result.errors.join("\n")));
-              return "runtime-stop-incomplete";
+            switch (result.status) {
+              case "stale":
+                await agentSettlement.complete("backend-not-closed");
+                return "stale";
+              case "incomplete":
+                await agentSettlement.complete("backend-not-closed");
+                if (!exactCloseIsCurrent()) return "stale";
+                reportError("Runtime cleanup", new Error(result.errors.join("\n")));
+                return "runtime-stop-incomplete";
+              case "closed":
+              case "retainedByOtherOwners":
+                break;
+              default: {
+                const exhaustive: never = result;
+                return exhaustive;
+              }
             }
             await agentSettlement.complete("backend-closed");
             registeredRuntimeClosed = true;
@@ -770,10 +790,18 @@ export function useWorkbenchCloseLifecycle(
 
       if (identityDescriptor && !registeredRuntimeClosed) {
         try {
-          const releaseOutcome = await unregisterWorkspace(identityDescriptor.workspaceId);
+          const releaseOutcome = await unregisterWorkspace(
+            identityDescriptor.workspaceId,
+            "abandonWhenDeferred",
+          );
           if (releaseOutcome === "deferred") {
             return "identity-release-deferred";
           }
+          if (releaseOutcome === "stale") {
+            reportError("Workspace", new Error("Workspace identity release owner is stale."));
+            return "identity-release-failed";
+          }
+          runtimeRetainedByOtherOwners = releaseOutcome === "retained";
         } catch (error) {
           reportError("Workspace", error);
           return "identity-release-failed";
@@ -787,7 +815,7 @@ export function useWorkbenchCloseLifecycle(
       const runtimeStop = {
         result: "stopped" as ProjectRuntimeStopResult,
       };
-      if (!registeredRuntimeClosed) {
+      if (!registeredRuntimeClosed && !runtimeRetainedByOtherOwners) {
         await closeCoordinator.close({
           closeDocuments: [
             () =>

@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
+import { AgentHistoryPager } from "./AgentHistoryPager";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import { logTurn } from "../../test/agentTurnLogStoreHarness";
@@ -63,7 +64,7 @@ it("shows an isolated old page and returns to the unchanged newest turn", async 
   await act(async () => root.unmount());
 });
 
-it("does not present an old compaction page as live execution", async () => {
+it("offers the latest activity again while a running turn shows saved activity", async () => {
   const host = document.createElement("div");
   const root = createRoot(host);
   const original = surfaceThreadView();
@@ -74,6 +75,17 @@ it("does not present an old compaction page as live execution", async () => {
     eventsTruncated: true,
   });
   const view = { ...original, thread: { ...original.thread, turns: [turn] } };
+  const readPage = vi.fn().mockResolvedValue({
+    entries: [
+      { seq: 1, event: { kind: "contextCompactionStatus", status: "compacting", message: null } },
+    ],
+    firstSeq: 1,
+    lastSeq: 1,
+    hasEarlier: false,
+    hasLater: false,
+    clipped: false,
+    loss: { kind: "none" },
+  });
   const history: AgentThreadHistorySurface = {
     page: null,
     older: vi.fn(),
@@ -87,46 +99,116 @@ it("does not present an old compaction page as live execution", async () => {
       },
       generation: 1,
       leaseToken: null,
-      readPage: async () => ({
-        entries: [
-          {
-            seq: 1,
-            event: { kind: "contextCompactionStatus", status: "compacting", message: null },
-          },
-        ],
-        firstSeq: 1,
-        lastSeq: 1,
-        hasEarlier: false,
-        hasLater: true,
-        clipped: false,
-        loss: { kind: "none" },
-      }),
+      readPage,
     }),
   };
-  await act(async () =>
-    root.render(
-      <AgentThreadSession
-        thread={view}
-        history={history}
-        composerRepositoryLabel="app"
-        onReviewInDiff={vi.fn()}
-      />,
-    ),
-  );
-  const work = host.querySelector<HTMLDetailsElement>(".agent-work")!;
-  await act(async () => {
-    work.open = false;
-    work.querySelector("summary")!.click();
-  });
-  expect(host.textContent).toContain("Current live output");
-  expect(host.textContent).toContain("Viewing a page of saved activity");
-  expect(host.textContent).not.toContain("Compacting context…");
-  expect(host.querySelectorAll(".agent-tool-row--working")).toHaveLength(1);
-  expect(turn.status.kind).toBe("running");
-  await act(async () => root.unmount());
+  try {
+    await act(async () =>
+      root.render(
+        <AgentThreadSession
+          thread={view}
+          history={history}
+          composerRepositoryLabel="app"
+          onReviewInDiff={vi.fn()}
+        />,
+      ),
+    );
+    expect(readPage).not.toHaveBeenCalled();
+    await act(async () => host.querySelector<HTMLButtonElement>("button.cv-load-earlier")?.click());
+    expect(readPage).toHaveBeenCalledOnce();
+    expect(host.textContent).not.toContain("Compacting context…");
+    expect(host.querySelectorAll(".agent-tool-row--working")).toHaveLength(1);
+    const latest = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Show latest activity",
+    );
+    expect(latest).toBeDefined();
+    await act(async () => latest?.click());
+    expect(host.textContent).toContain("Current live output");
+    expect(turn.status.kind).toBe("running");
+  } finally {
+    act(() => root.unmount());
+  }
 });
 
-it("loads missing work only on expansion, keeps final prose, and retains page-ending updates and raw diagnostics", async () => {
+it("keeps the latest activity reachable when a window opened during a run settles", async () => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const original = surfaceThreadView();
+  const running = logTurn({
+    turnId: "live",
+    status: { kind: "running" },
+    events: [{ kind: "assistantText", text: "Current live output" }],
+    eventsTruncated: true,
+  });
+  const settled = logTurn({
+    ...running,
+    status: { kind: "exited", exitCode: 0 },
+    events: [
+      { kind: "assistantText", text: "Current live output" },
+      { kind: "assistantText", text: "Settled final answer" },
+    ],
+  });
+  const viewOf = (turn: typeof running) => ({
+    ...original,
+    thread: { ...original.thread, turns: [turn] },
+  });
+  const readPage = vi.fn().mockResolvedValue({
+    entries: [{ seq: 1, event: { kind: "assistantText", text: "Saved window entry" } }],
+    firstSeq: 1,
+    lastSeq: 1,
+    hasEarlier: false,
+    hasLater: false,
+    clipped: false,
+    loss: { kind: "none" },
+  });
+  const history: AgentThreadHistorySurface = {
+    page: null,
+    older: vi.fn(),
+    latest: vi.fn(),
+    activitySource: () => ({
+      scope: {
+        rootKey: original.thread.owner.rootKey,
+        ownerId: original.thread.owner.ownerId,
+        threadId: original.thread.threadId,
+        turnId: running.turnId,
+      },
+      generation: 1,
+      leaseToken: null,
+      readPage,
+    }),
+  };
+  const render = (turn: typeof running) =>
+    act(async () =>
+      root.render(
+        <AgentThreadSession
+          thread={viewOf(turn)}
+          history={history}
+          composerRepositoryLabel="app"
+          onReviewInDiff={vi.fn()}
+        />,
+      ),
+    );
+  const latestButton = () =>
+    [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Show latest activity",
+    );
+  try {
+    await render(running);
+    await act(async () => host.querySelector<HTMLButtonElement>("button.cv-load-earlier")?.click());
+    expect(host.textContent).toContain("Saved window entry");
+
+    await render(settled);
+
+    expect(latestButton()).toBeDefined();
+    await act(async () => latestButton()?.click());
+    expect(host.textContent).not.toContain("Saved window entry");
+    expect(host.textContent).toContain("Settled final answer");
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it("loads earlier work only on request, keeps final prose once, and keeps page-ending updates and raw diagnostics", async () => {
   const host = document.createElement("div");
   const root = createRoot(host);
   const original = surfaceThreadView();
@@ -134,11 +216,10 @@ it("loads missing work only on expansion, keeps final prose, and retains page-en
     turnId: "saved",
     prompt: "Preserved prompt",
     eventsTruncated: true,
-    firstEventOffset: 9,
     status: { kind: "exited", exitCode: 0 },
     events: [{ kind: "assistantText", text: "Final answer stays visible" }],
   });
-  const readPage = vi.fn().mockResolvedValue({
+  const readPage = vi.fn().mockResolvedValueOnce({
     entries: [
       { seq: 1, event: { kind: "reasoning", text: "Earlier reasoning" } },
       { seq: 2, event: { kind: "error", message: "An earlier failure" } },
@@ -188,16 +269,15 @@ it("loads missing work only on expansion, keeps final prose, and retains page-en
       ),
     );
     expect(readPage).not.toHaveBeenCalled();
-    expect(host.textContent).not.toContain("Saved activity");
-    const work = host.querySelector<HTMLDetailsElement>(".agent-work")!;
-    await act(async () => work.querySelector("summary")!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>("button.cv-load-earlier")?.click());
     expect(readPage).toHaveBeenCalledOnce();
-    expect(work.textContent).toContain("Intermediate page-ending update");
-    expect(work.textContent).toContain("Historical diagnostic");
-    expect(host.querySelectorAll(".agent-prompt")).toHaveLength(1);
+    const work = host.querySelector<HTMLDetailsElement>(".agent-work");
+    expect(work?.open).toBe(true);
+    expect(work?.textContent).toContain("Intermediate page-ending update");
+    expect(work?.textContent).toContain("Historical diagnostic");
     expect(host.textContent).toContain("Preserved prompt");
     expect(host.textContent?.match(/Final answer stays visible/g)).toHaveLength(1);
-    readPage.mockResolvedValue({
+    readPage.mockResolvedValueOnce({
       entries: [{ seq: 10, event: turn.events[0] }],
       firstSeq: 10,
       lastSeq: 10,
@@ -207,18 +287,19 @@ it("loads missing work only on expansion, keeps final prose, and retains page-en
       loss: { kind: "none" },
     });
     await act(async () =>
-      Array.from(work.querySelectorAll("button"))
-        .find((b) => b.textContent === "Newer activity")!
-        .click(),
+      [...host.querySelectorAll("button")]
+        .find((button) => button.textContent === "Show later activity")
+        ?.click(),
     );
     expect(host.textContent?.match(/Final answer stays visible/g)).toHaveLength(1);
-    expect(work.open).toBe(true);
+    expect(host.textContent).toContain("Some activity is missing from the saved history.");
+    expect(host.querySelector<HTMLDetailsElement>(".agent-work")?.open).toBe(true);
   } finally {
     act(() => root.unmount());
   }
 });
 
-it("does not add an empty disclosure or request history merely because a reader exists", async () => {
+it("does not add a control or request history merely because a reader exists", async () => {
   const host = document.createElement("div");
   const root = createRoot(host);
   const original = surfaceThreadView();
@@ -251,9 +332,40 @@ it("does not add an empty disclosure or request history merely because a reader 
       ),
     );
     expect(host.querySelector(".agent-work")).toBeNull();
+    expect(host.querySelector("button.cv-load-earlier")).toBeNull();
     expect(readPage).not.toHaveBeenCalled();
-    expect(host.textContent).not.toContain("Saved activity");
   } finally {
     act(() => root.unmount());
   }
+});
+
+it("offers earlier turns as one quiet button whose label is the loading state", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const onEarlier = vi.fn();
+  act(() =>
+    root.render(
+      <AgentHistoryPager hasEarlier onEarlier={onEarlier} onLatest={() => undefined} page={null} />,
+    ),
+  );
+  const button = host.querySelector<HTMLButtonElement>("button.cv-load-earlier");
+  expect(button?.textContent).toBe("Load earlier turns");
+  act(() => button?.click());
+  expect(onEarlier).toHaveBeenCalledTimes(1);
+
+  act(() =>
+    root.render(
+      <AgentHistoryPager
+        hasEarlier
+        onEarlier={onEarlier}
+        onLatest={() => undefined}
+        page={{ threadId: "t", turns: [], hasEarlier: true, loading: true, error: null }}
+      />,
+    ),
+  );
+  expect(host.querySelector("button.cv-load-earlier")?.textContent).toBe("Loading earlier turns…");
+  expect(host.querySelector<HTMLButtonElement>("button.cv-load-earlier")?.disabled).toBe(true);
+  act(() => root.unmount());
+  host.remove();
 });

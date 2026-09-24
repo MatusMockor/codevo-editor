@@ -87,10 +87,15 @@ function rule(selector: string, source = appCss): string {
 
 describe("agent mode responsive layout contract", () => {
   it("keeps the composer in a real non-overlapping center layout row", () => {
-    expect(rule(".agent-mode__center")).toContain("grid-template-rows: auto minmax(0, 1fr) auto");
-    expect(rule(".agent-composer")).not.toMatch(/position:\s*absolute/);
-    expect(rule(".agent-composer")).toContain(
-      "max-height: min(60vh, calc(560px * var(--codevo-fs-scale)))",
+    expect(rule(".agent-mode__center")).toContain("display: flex");
+    expect(rule(".agent-mode__center")).toContain("flex-direction: column");
+    const composerCss = readStyleSheet(
+      "components/agentMode/composer/agentComposerFrame.css",
+    ).source;
+    expect(rule(".cv-composer-dock", composerCss)).not.toMatch(/position:\s*absolute/);
+    expect(rule(".cv-composer-dock", composerCss)).toContain("flex: none");
+    expect(rule(".agent-composer__textarea", composerCss)).toContain(
+      "max-height: min(40vh, calc(420px * var(--codevo-fs-scale, 1)))",
     );
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });
@@ -100,16 +105,18 @@ describe("agent mode responsive layout contract", () => {
     expect(center).toContain("container-name: agent-center");
     expect(center).toContain("container-type: inline-size");
 
-    expect(rule('.agent-composer__row[data-presentation="compact"]')).toContain(
-      "flex-wrap: nowrap",
-    );
+    const composerCss = readStyleSheet(
+      "components/agentMode/composer/agentComposerFrame.css",
+    ).source;
+    expect(rule(".cv-composer__foot", composerCss)).not.toContain("flex-wrap: wrap");
+    expect(rule(".cv-composer__controls", composerCss)).toContain("min-width: 0");
     expect(rule('.agent-composer__launch[data-presentation="compact"]')).toContain(
       "flex: 0 1 auto",
     );
     expect(COMPACT_COMPOSER_QUERY).toBe(`(max-width: ${COMPACT_COMPOSER_MAX_INLINE_SIZE}px)`);
     expect(COMPACT_COMPOSER_MAX_INLINE_SIZE).toBeLessThan(620);
 
-    expect(rule(".agent-composer__box")).toContain("max-width: 768px");
+    expect(rule(".cv-composer__slab", composerCss)).not.toContain("max-width");
     expect(appCss).not.toContain("@container agent-composer");
     for (const boxQuery of ["@container agent-center (max-width: 900px)"]) {
       expect(block(appCss, boxQuery)).not.toContain(".agent-composer__launch");
@@ -122,31 +129,43 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-mode__grid", stacked)).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-mode__center", stacked)).toContain("grid-column: 1");
     expect(rule(".agent-mode__center", stacked)).toContain("grid-row: 2");
-    expect(
-      rule(".agent-mode__grid > .agent-rail,\n  .agent-mode__grid > .agent-rail__chrome", stacked),
-    ).toContain("grid-row: 1");
+    expect(rule(".agent-mode__grid > .agent-rail", stacked)).toContain("grid-row: 1");
   });
 
   it("reflows thread content inside the docked center column", () => {
+    const conversationCss = readStyleSheet(
+      "components/agentMode/conversation/conversation.css",
+    ).source;
     expect(rule(".agent-session")).toContain("min-width: 0");
-    expect(rule(".agent-session__scroll")).toContain("min-width: 0");
-    expect(rule(".agent-session__scroll")).toContain("overflow-x: hidden");
-    expect(rule(".agent-session__body")).toContain("grid-template-columns: minmax(0, 1fr)");
-    expect(rule(".agent-session__body")).toContain("min-width: 0");
-    expect(rule(".agent-turn")).toContain("min-width: 0");
-    expect(rule(".agent-answer")).toContain("grid-template-columns: minmax(0, 1fr)");
-    expect(rule(".agent-answer")).toContain("min-width: 0");
-    expect(rule(".agent-turn__events")).toContain("grid-template-columns: minmax(0, 1fr)");
-    expect(rule(".agent-turn__events")).toContain("min-width: 0");
-    expect(rule(".agent-raw__lines")).toContain("overflow: auto");
+    expect(rule(".agent-session__scroll", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-session__scroll", conversationCss)).toContain("overflow-x: hidden");
+    expect(rule(".agent-session__body", conversationCss)).toContain(
+      "grid-template-columns: minmax(0, 1fr)",
+    );
+    expect(rule(".agent-session__body", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-turn", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-answer", conversationCss)).toContain(
+      "grid-template-columns: minmax(0, 1fr)",
+    );
+    expect(rule(".agent-answer", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-turn__events", conversationCss)).toContain(
+      "grid-template-columns: minmax(0, 1fr)",
+    );
+    expect(rule(".agent-turn__events", conversationCss)).toContain("min-width: 0");
+    expect(
+      rule(
+        ".agent-raw__lines",
+        readStyleSheet("components/agentMode/conversation/agentProse.css").source,
+      ),
+    ).toContain("overflow: auto");
 
-    expect(rule(".agent-prompt")).toContain("min-width: 0");
-    expect(rule(".agent-prompt__body")).toContain("min-width: 0");
-    expect(rule(".agent-prompt__bubble")).toContain("min-width: 0");
-    expect(rule(".agent-prompt__bubble")).toContain("max-width: 85%");
-    expect(rule(".agent-prompt__body")).toContain("word-break: break-word");
-    expect(rule(".agent-turn__head")).toContain("min-width: 0");
-    expect(rule(".agent-turn__agent")).toContain("text-overflow: ellipsis");
+    expect(rule(".agent-prompt", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-prompt__body", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-prompt__bubble", conversationCss)).toContain("min-width: 0");
+    expect(rule(".agent-prompt__bubble", conversationCss)).toContain("max-width: 80%");
+    expect(rule(".agent-prompt__body", conversationCss)).toContain("word-break: break-word");
+    expect(rule(".cv-turn-meta", conversationCss)).toContain("min-width: 0");
+    expect(rule(".cv-turn-meta__agent", conversationCss)).toContain("text-overflow: ellipsis");
   });
 
   it("keeps the frame bounded and gives the thread column a real minimum track", () => {
@@ -169,6 +188,19 @@ describe("agent mode responsive layout contract", () => {
     expect(shell).toContain("min-width: 100%");
     expect(shell).toContain("min-height: 100%");
     expect(shell).toContain("background: var(--color-app)");
+  });
+
+  it("keeps narrow and short media rules off the composer slab form", () => {
+    const narrow = withoutComments(block(appCss, "@media (max-width: 720px)"));
+    const short = withoutComments(block(appCss, "@media (max-width: 460px), (max-height: 540px)"));
+
+    for (const media of [narrow, short]) {
+      expect(media).not.toMatch(/\.agent-composer\s*[,{]/);
+      expect(media).not.toMatch(/\.cv-composer__slab\b/);
+      expect(media).not.toContain(".agent-composer__row");
+      expect(media).not.toContain(".agent-composer__spacer");
+      expect(media).not.toContain(".agent-composer__footer");
+    }
   });
 
   it("narrows the thread rail before adapting thread navigation", () => {
@@ -194,9 +226,9 @@ describe("agent mode responsive layout contract", () => {
   });
 
   it("pins the rail and its resize handle to the first frame track", () => {
-    const rail = rule(".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome");
+    const rail = rule(".agent-mode__grid > .agent-rail");
     const placement = rule(
-      ".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome {",
+      ".agent-mode__grid > .agent-rail {",
       readStyleSheet("components/agentMode/agentRail.css").source,
     );
     const handle = rule(".agent-rail-resize {");
@@ -208,14 +240,11 @@ describe("agent mode responsive layout contract", () => {
     expect(handle).toContain("justify-self: end");
   });
 
-  it("drops the rail handle and the header inset once the rail stacks above the thread", () => {
+  it("drops the rail handle once the rail stacks above the thread", () => {
     const railCss = readStyleSheet("components/agentMode/agentRail.css").source;
-    const threadCss = readStyleSheet("components/agentMode/agentThread.css").source;
     const narrowRail = block(railCss, "@media (max-width: 720px)");
-    const narrowThread = block(threadCss, "@media (max-width: 720px)");
 
     expect(rule(".agent-rail-resize", narrowRail)).toContain("display: none");
-    expect(rule(".agent-thread-head", narrowThread)).toContain("padding-left: 8px");
   });
 
   it("keeps the workbench row alive when the macOS agent chrome row is zero height", () => {
@@ -223,7 +252,7 @@ describe("agent mode responsive layout contract", () => {
     const macAgent = rule(".app-shell--agent-mode.app-shell--mac {", rootCss);
     const hiddenChrome = rule(".app-shell--agent-mode.app-shell--mac > .window-chrome", rootCss);
 
-    expect(shell).toContain("grid-template-rows: var(--window-chrome-height) minmax(0, 1fr) 28px");
+    expect(shell).toContain("grid-template-rows: var(--window-chrome-height) minmax(0, 1fr);");
     expect(macAgent).toContain("--window-chrome-height: 0px");
     expect(hiddenChrome).not.toContain("display: none");
     expect(hiddenChrome).toContain("visibility: hidden");
@@ -240,14 +269,12 @@ describe("agent mode responsive layout contract", () => {
   it("collapses header action labels from the center column before wrapping the header", () => {
     const center = rule(".agent-mode__center");
     const compactActions = block(appCss, "@container agent-center (max-width: 900px)");
-    const narrowHeader = block(appCss, "@container agent-center (max-width: 600px)");
 
     expect(center).toContain("container-name: agent-center");
     expect(center).toContain("container-type: inline-size");
     expect(rule(".agent-split__label", compactActions)).toContain("display: none");
-    expect(rule(".agent-thread-head", narrowHeader)).toContain("padding-inline: 8px");
-    expect(rule(".agent-thread-head__actions", narrowHeader)).not.toContain("flex-wrap");
-    expect(rule(".agent-crumbs__heading")).toContain("text-overflow: ellipsis");
+    const narrowCrumb = block(appCss, "@container agent-center (max-width: 420px)");
+    expect(rule(".cv-crumb__label,\n  .cv-crumb__sep", narrowCrumb)).toContain("display: none");
   });
 
   it("adapts the surface chooser and header from the surface inline size", () => {
@@ -259,19 +286,9 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-surface-empty__cards")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-surface-empty__inner")).toContain("max-width: 320px");
     expect(rule(".agent-surface-empty", narrow)).toContain("padding: 16px");
-    expect(rule(".agent-surface__tab > span", narrow)).not.toContain("clip-path");
-    expect(rule(".agent-surface__tab > span", narrow)).not.toContain("width: 1px");
-    expect(rule(".agent-surface__tab > span", narrow)).toContain("min-width: 3ch");
-    expect(rule(".agent-surface__tabitem", narrow)).toContain("flex: 0 1 auto");
-    expect(rule(".agent-surface__tabitem--active", narrow)).toContain("flex: 0 0 auto");
-    expect(rule(".agent-surface__tabs", narrow)).toContain("overflow-x: auto");
-    expect(rule(".agent-surface__tabs", narrow)).toContain(
-      "padding: var(--agent-surface-focus-gutter)",
+    expect(rule(".agent-surface__head .cv-topbar__title > .agent-iconbutton")).toContain(
+      "flex: none",
     );
-    expect(rule(".agent-surface__tabs", narrow)).toContain("scroll-padding-inline");
-    expect(rule(".agent-surface__tabs")).toContain("overflow: hidden");
-    expect(rule(".agent-surface__layout-controls")).toContain("flex: none");
-    expect(rule(".agent-surface__head > .agent-iconbutton")).toContain("flex: none");
   });
 
   it("reserves the largest variant focus-ring spread inside the surface scrollport", () => {
@@ -313,9 +330,7 @@ describe("agent mode responsive layout contract", () => {
     expect(agentGrid).toContain(
       "grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height)",
     );
-    expect(
-      rule(".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome", appCss),
-    ).toContain("grid-row: 1 / -1");
+    expect(rule(".agent-mode__grid > .agent-rail", appCss)).toContain("grid-row: 1 / -1");
     expect(rule(".agent-mode__center {", appCss)).toContain("grid-row: 1");
 
     const bottom = rule('.workbench-frame[data-layout="agent"] > [data-slot="bottom"]', shellCss);
@@ -368,8 +383,9 @@ describe("agent mode responsive layout contract", () => {
     expect(editor).toContain("padding-top: var(--agent-surface-header-height)");
     expect(editor).toContain("padding-left: var(--agent-surface-tree-width)");
     expect(editor).toContain("grid-row: 1 / -1");
-    expect(rule(".agent-surface__head")).toContain("height: var(--agent-surface-header-height)");
-    expect(rule(".app-shell {", shellCss)).toContain("--agent-surface-header-height: 40px");
+    expect(rule(".app-shell {", shellCss)).toContain(
+      "--agent-surface-header-height: var(--cv-topbar-h)",
+    );
     expect(allStyles().match(/--agent-surface-header-height:/g)).toHaveLength(1);
   });
 
@@ -409,19 +425,22 @@ describe("agent mode responsive layout contract", () => {
     ).toContain("--agent-rail-track: var(--agent-rail-collapsed-width)");
     expect(
       rule('.workbench-frame[data-right-panel="maximized"] .agent-mode__grid', shellCss),
-    ).toContain("grid-template-columns: var(--agent-rail-track)");
+    ).toContain("grid-template-columns: var(--agent-rail-track) 0px");
     expect(
       rule('.workbench-frame[data-right-panel="maximized"] .agent-mode__center', shellCss),
-    ).toContain("display: none");
+    ).toContain("visibility: hidden");
+    expect(
+      rule('.workbench-frame[data-right-panel="maximized"] .agent-mode__center', shellCss),
+    ).toContain("content-visibility: hidden");
+    expect(rule(".agent-mode__center {")).not.toContain("content-visibility");
   });
 
-  it("keeps the ship panel bounded inside the session column", () => {
-    expect(rule(".agent-popover--ship")).toContain("max-width: calc(100% - 16px)");
-    expect(rule(".agent-popover--ship")).not.toContain("100vw");
-    expect(rule(".agent-ship__message")).toContain(
-      "max-height: calc(120px * var(--codevo-fs-scale))",
-    );
-    expect(rule(".agent-ship__conflicts")).toContain("overflow-y: auto");
+  it("keeps the Git surface readable inside the narrow right panel", () => {
+    const gitCss = readStyleSheet("components/agentMode/rightPanel/git/agentGit.css").source;
+    expect(rule(".cv-git__body", gitCss)).toContain("overflow: auto");
+    expect(rule(".cv-git-row__path", gitCss)).toContain("overflow-wrap: anywhere");
+    expect(rule(".cv-git-row__path", gitCss)).toContain("min-width: 0");
+    expect(rule(".cv-git-banner__files", gitCss)).toContain("overflow-wrap: anywhere");
     expect(rule(".agent-files__row")).toContain("flex-wrap: wrap");
   });
 
@@ -432,5 +451,18 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".workbench-mode-switch", narrow)).toContain("position: sticky");
     expect(rule(".workbench-mode-switch", narrow)).toContain("left: 0");
     expect(rule(".toolbar-status", narrow)).toContain("display: none");
+  });
+
+  it("collapses the sidebar to a zero track and never leaves an empty stacked row", () => {
+    expect(rule('.workbench-frame[data-layout="agent"] {', shellCss)).toContain(
+      "--agent-rail-collapsed-width: 0px",
+    );
+    const stacked = block(appCss, "@media (max-width: 720px)");
+    expect(rule('.workbench-frame[data-rail="collapsed"] .agent-mode__grid', stacked)).toContain(
+      "grid-template-rows: minmax(0, 1fr)",
+    );
+    expect(rule('.workbench-frame[data-rail="collapsed"] .agent-mode__center', stacked)).toContain(
+      "grid-row: 1",
+    );
   });
 });

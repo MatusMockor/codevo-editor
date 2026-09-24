@@ -5,12 +5,10 @@ import {
   AGENT_IMPORTED_IMAGE_LABEL,
   agentAttachmentImageIsResolvable,
   agentAttachmentLightboxFit,
-  agentAttachmentPlaceholderSize,
   agentLightboxNeighborIndex,
   agentImportedAttachmentViews,
   agentTurnAttachmentViews,
   formatAgentAttachmentBytes,
-  type AgentTurnAttachmentView,
 } from "./agentTurnAttachmentPresentation";
 
 const IMAGE_ID = "a".repeat(32);
@@ -145,36 +143,7 @@ describe("agentImportedAttachmentViews", () => {
   });
 });
 
-describe("agentAttachmentPlaceholderSize", () => {
-  const bare: Extract<AgentTurnAttachmentView, { readonly kind: "image" }> = {
-    kind: "image",
-    key: IMAGE_ID,
-    name: "shot.png",
-    attachmentId: IMAGE_ID,
-    mime: "image/png",
-  };
-  const withDimensions = (width: number, height: number) =>
-    agentAttachmentPlaceholderSize({ ...bare, width, height });
-
-  it("fits a live image's dimensions inside the 320 x 240 box without upscaling", () => {
-    const [live] = agentTurnAttachmentViews([IMAGE]);
-    expect(live?.kind === "image" ? agentAttachmentPlaceholderSize(live) : null).toEqual({
-      width: 320,
-      height: 240,
-    });
-    expect(withDimensions(1_000, 300)).toEqual({ width: 320, height: 96 });
-    expect(withDimensions(300, 1_000)).toEqual({ width: 72, height: 240 });
-    expect(withDimensions(100, 50)).toEqual({ width: 100, height: 50 });
-    expect(withDimensions(1, 16_384)).toEqual({ width: 1, height: 240 });
-  });
-
-  it("has no size for a view without dimensions or with unusable ones", () => {
-    expect(agentAttachmentPlaceholderSize(bare)).toBeNull();
-    expect(withDimensions(0, 600)).toBeNull();
-    expect(withDimensions(800, Number.NaN)).toBeNull();
-    expect(withDimensions(-1, 600)).toBeNull();
-  });
-
+describe("imported attachment dimensions", () => {
   it("gives imported images no dimensions because they render as chips", () => {
     const [imported] = agentImportedAttachmentViews(
       parseExternalSessionExchange({

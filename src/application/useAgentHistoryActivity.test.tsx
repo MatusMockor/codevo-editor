@@ -1,123 +1,229 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentTurnLogPage } from "../domain/agentTurnLog";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentTurnEventUtf8Bytes } from "../domain/agentThread";
+import type {
+  AgentTurnLogEntry,
+  AgentTurnLogPage,
+  ReadAgentTurnLogPageRequest,
+} from "../domain/agentTurnLog";
 import {
-  useAgentHistoryActivity,
+  agentTurnActivityWindowOf,
+  useAgentTurnEarlierActivity,
   type AgentHistoryActivitySource,
+  type AgentTurnEarlierActivity,
 } from "./useAgentHistoryActivity";
 
-const page = (firstSeq: number): AgentTurnLogPage => ({
-  entries: [{ seq: firstSeq, event: { kind: "assistantText", text: `event-${firstSeq}` } }],
-  firstSeq,
-  lastSeq: firstSeq,
-  hasEarlier: firstSeq > 1,
-  hasLater: firstSeq < 500,
-  loss: { kind: "none" },
-  clipped: false,
-});
-let root: Root;
-let host: HTMLDivElement;
-let value: ReturnType<typeof useAgentHistoryActivity>;
-function setup() {
-  host = document.createElement("div");
-  root = createRoot(host);
-  const readPage = vi.fn<AgentHistoryActivitySource["readPage"]>().mockResolvedValue(page(500));
-  const source: AgentHistoryActivitySource = {
-    scope: { rootKey: "/workspace", ownerId: "owner", threadId: "thread", turnId: "turn" },
+function tool(seq: number): AgentTurnLogEntry {
+  return { seq, event: { kind: "toolCall", toolId: `t${seq}`, name: "Bash", inputSummary: "ls" } };
+}
+
+function fakeLog(total: number) {
+  return vi.fn(async (request: ReadAgentTurnLogPageRequest): Promise<AgentTurnLogPage> => {
+    const { anchor, maxEvents } = request;
+    const end = anchor.at === "tail" ? total : anchor.at === "before" ? anchor.seq - 1 : total;
+    const start = anchor.at === "after" ? anchor.seq + 1 : Math.max(1, end - maxEvents + 1);
+    const last = anchor.at === "after" ? Math.min(total, start + maxEvents - 1) : end;
+    const entries = Array.from({ length: Math.max(0, last - start + 1) }, (_, index) =>
+      tool(start + index),
+    );
+    return {
+      entries,
+      firstSeq: entries[0]?.seq ?? 0,
+      lastSeq: entries[entries.length - 1]?.seq ?? 0,
+      hasEarlier: start > 1,
+      hasLater: last < total,
+      loss: { kind: "none" },
+      clipped: false,
+    };
+  });
+}
+
+function source(
+  readPage: AgentHistoryActivitySource["readPage"],
+  turnId = "turn",
+): AgentHistoryActivitySource {
+  return {
+    scope: { rootKey: "/root", ownerId: "owner", threadId: "thread", turnId },
     generation: 1,
-    leaseToken: 1,
+    leaseToken: 7,
     readPage,
   };
-  function Harness({ source }: { source: AgentHistoryActivitySource | null }) {
-    value = useAgentHistoryActivity(source);
-    return null;
-  }
-  const render = (source: AgentHistoryActivitySource | null) =>
-    act(() => root.render(<Harness source={source} />));
-  render(source);
-  return { source, readPage, render };
 }
+
+let host: HTMLDivElement;
+let root: Root;
+let latest: AgentTurnEarlierActivity | null = null;
+
+function Probe({ value }: { readonly value: AgentHistoryActivitySource | null }) {
+  latest = useAgentTurnEarlierActivity(value);
+  return null;
+}
+
+function render(value: AgentHistoryActivitySource | null): void {
+  act(() => root.render(<Probe value={value} />));
+}
+
+function current(): AgentTurnEarlierActivity {
+  expect(latest).not.toBeNull();
+  return latest as AgentTurnEarlierActivity;
+}
+
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  latest = null;
+});
+
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
 });
-describe("saved activity page ownership", () => {
-  it("replaces bounded pages using stable sequence cursors", async () => {
-    const { readPage } = setup();
-    await act(() => value.read({ at: "tail" }));
-    readPage.mockResolvedValue(page(299));
-    await act(() => value.read({ at: "before", seq: 500 }));
-    expect(value.state).toEqual({ kind: "ready", page: page(299) });
-    expect(readPage.mock.calls[1]?.[0]).toMatchObject({
-      anchor: { at: "before", seq: 500 },
-      maxEvents: 200,
-      maxBytes: 524288,
-    });
-    act(() => value.latest());
-    expect(value.state.kind).toBe("latest");
+
+const ENTRY_BYTES = agentTurnEventUtf8Bytes(tool(1).event);
+
+describe("useAgentTurnEarlierActivity", () => {
+  it("reads back past the retained window plus one page on first activation", async () => {
+    const readPage = fakeLog(1000);
+    render(source(readPage));
+
+    await act(() => current().loadEarlier(ENTRY_BYTES * 300));
+
+    const window = agentTurnActivityWindowOf(current().state);
+    expect(readPage).toHaveBeenCalledTimes(3);
+    expect(readPage.mock.calls.map(([request]) => request.anchor)).toEqual([
+      { at: "tail" },
+      { at: "before", seq: 801 },
+      { at: "before", seq: 601 },
+    ]);
+    expect(window?.entries[0]?.seq).toBe(401);
+    expect(window?.entries[window.entries.length - 1]?.seq).toBe(1000);
+    expect(window?.hasEarlier).toBe(true);
   });
-  it("rejects delayed A to B to A responses and cancellation", async () => {
-    const { source, readPage, render } = setup();
-    let resolve!: (value: AgentTurnLogPage) => void;
-    readPage.mockReturnValue(
-      new Promise((done) => {
-        resolve = done;
-      }),
+
+  it("prepends one page per request and stays within the window caps", async () => {
+    const readPage = fakeLog(5000);
+    render(source(readPage));
+    await act(() => current().loadEarlier(0));
+    for (let step = 0; step < 6; step += 1) {
+      await act(() => current().loadEarlier(0));
+    }
+
+    const window = agentTurnActivityWindowOf(current().state);
+    expect(window?.entries).toHaveLength(1000);
+    expect(window?.entries[0]?.seq).toBe(3401);
+    expect(window?.hasLater).toBe(true);
+  });
+
+  it("ignores a second load while one is in flight", async () => {
+    let release: () => void = () => undefined;
+    const readPage = vi.fn(
+      (request: ReadAgentTurnLogPageRequest) =>
+        new Promise<AgentTurnLogPage>((resolve) => {
+          release = () => void fakeLog(10)(request).then(resolve);
+        }),
     );
-    let pending!: Promise<void>;
+    render(source(readPage));
+
     act(() => {
-      pending = value.read({ at: "tail" });
-    });
-    render({ ...source, generation: 2 });
-    render(source);
-    await act(async () => {
-      resolve(page(500));
-      await pending;
-    });
-    expect(value.state.kind).toBe("latest");
-    act(() => {
-      pending = value.read({ at: "tail" });
-      value.latest();
-    });
-    await act(async () => {
-      await pending;
-    });
-    expect(value.state.kind).toBe("latest");
-  });
-  it("retains a recoverable page on failure and rejects nonadvancing results", async () => {
-    const { readPage } = setup();
-    await act(() => value.read({ at: "tail" }));
-    await act(() => value.read({ at: "before", seq: 500 }));
-    expect(value.state).toMatchObject({
-      kind: "failed",
-      page: page(500),
-      anchor: { at: "before", seq: 500 },
-    });
-    readPage.mockResolvedValue(page(100));
-    await act(() => value.read({ at: "before", seq: 500 }));
-    expect(value.state).toEqual({ kind: "ready", page: page(100) });
-  });
-  it("coalesces duplicate reads and ignores settlement after unmount", async () => {
-    const { readPage } = setup();
-    let resolve!: (value: AgentTurnLogPage) => void;
-    readPage.mockReturnValue(
-      new Promise((done) => {
-        resolve = done;
-      }),
-    );
-    let pending!: Promise<void>;
-    act(() => {
-      pending = value.read({ at: "tail" });
-      void value.read({ at: "tail" });
+      void current().loadEarlier(0);
+      void current().loadEarlier(0);
     });
     expect(readPage).toHaveBeenCalledTimes(1);
-    act(() => root.unmount());
-    await act(async () => {
-      resolve(page(500));
-      await pending;
+    expect(current().state.kind).toBe("loading");
+    await act(async () => release());
+  });
+
+  it("keeps the previous window when a page fails and retries the same direction", async () => {
+    const log = fakeLog(2000);
+    const readPage = vi.fn(log);
+    render(source(readPage));
+    await act(() => current().loadEarlier(0));
+    const before = agentTurnActivityWindowOf(current().state);
+
+    readPage.mockRejectedValueOnce(new Error("busy"));
+    await act(() => current().loadEarlier(0));
+    expect(current().state).toMatchObject({ kind: "failed", direction: "earlier" });
+    expect(agentTurnActivityWindowOf(current().state)).toBe(before);
+
+    await act(() => current().loadEarlier(0));
+    expect(agentTurnActivityWindowOf(current().state)?.entries[0]?.seq).toBe(1401);
+  });
+
+  it("fails closed on a page that does not advance", async () => {
+    const readPage = vi.fn(fakeLog(1000));
+    render(source(readPage));
+    await act(() => current().loadEarlier(0));
+    readPage.mockResolvedValueOnce({
+      entries: [tool(900)],
+      firstSeq: 900,
+      lastSeq: 900,
+      hasEarlier: true,
+      hasLater: true,
+      loss: { kind: "none" },
+      clipped: false,
     });
+
+    await act(() => current().loadEarlier(0));
+    expect(current().state.kind).toBe("failed");
+  });
+
+  it("drops a page that resolves after the source changed", async () => {
+    let release: () => void = () => undefined;
+    const readPage = vi.fn(
+      (request: ReadAgentTurnLogPageRequest) =>
+        new Promise<AgentTurnLogPage>((resolve) => {
+          release = () => void fakeLog(10)(request).then(resolve);
+        }),
+    );
+    render(source(readPage, "turn-a"));
+    act(() => {
+      void current().loadEarlier(0);
+    });
+
+    render(source(readPage, "turn-b"));
+    expect(current().state.kind).toBe("latest");
+    await act(async () => release());
+    expect(current().state.kind).toBe("latest");
+  });
+
+  it("drops a page that resolves after unmount", async () => {
+    let release: () => void = () => undefined;
+    const readPage = vi.fn(
+      (request: ReadAgentTurnLogPageRequest) =>
+        new Promise<AgentTurnLogPage>((resolve) => {
+          release = () => void fakeLog(10)(request).then(resolve);
+        }),
+    );
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(source(readPage));
+    act(() => {
+      void current().loadEarlier(0);
+    });
+    act(() => root.unmount());
+    await act(async () => release());
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
     root = createRoot(host);
+  });
+
+  it("slides forward with loadLater and returns to the live window with latest", async () => {
+    const readPage = fakeLog(3000);
+    render(source(readPage));
+    await act(() => current().loadEarlier(0));
+    for (let step = 0; step < 5; step += 1) {
+      await act(() => current().loadEarlier(0));
+    }
+    expect(agentTurnActivityWindowOf(current().state)?.hasLater).toBe(true);
+
+    await act(() => current().loadLater());
+    const window = agentTurnActivityWindowOf(current().state);
+    expect(window?.entries[window.entries.length - 1]?.seq).toBe(2800);
+
+    act(() => current().latest());
+    expect(current().state.kind).toBe("latest");
   });
 });

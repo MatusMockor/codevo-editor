@@ -4,7 +4,7 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  background: var(--agent-ambient), var(--agent-canvas);
+  background: var(--cv-canvas);
 }
 
 .agent-mode.workbench-surface--enter,
@@ -33,19 +33,18 @@
   min-height: 0;
 }
 
-.agent-mode__grid > .agent-rail,
-.agent-mode__grid > .agent-rail__chrome {
+.agent-mode__grid > .agent-rail {
   grid-row: 1 / -1;
 }
 
 .agent-mode__center {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
   min-height: 0;
-  background: var(--agent-thread-canvas);
+  background: var(--cv-canvas);
   container-name: agent-center;
   container-type: inline-size;
 }
@@ -248,8 +247,7 @@
 
   /* Stacked track: the rail keeps the first row and the centre column moves under it, so the
      thread and composer own the single column instead of an implicit zero-width one. */
-  .agent-mode__grid > .agent-rail,
-  .agent-mode__grid > .agent-rail__chrome {
+  .agent-mode__grid > .agent-rail {
     grid-column: 1;
     grid-row: 1;
   }
@@ -271,18 +269,8 @@
     padding-inline: 16px;
   }
 
-  .agent-session__body,
-  .agent-composer {
+  .agent-session__body {
     padding-inline: 16px;
-  }
-
-  .agent-composer__row,
-  .agent-composer__footer {
-    flex-wrap: wrap;
-  }
-
-  .agent-composer__spacer {
-    display: none;
   }
 
   .workbench-toolbar {
@@ -317,6 +305,14 @@
     width: 100%;
     max-width: none;
   }
+
+  .workbench-frame[data-rail="collapsed"] .agent-mode__grid {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .workbench-frame[data-rail="collapsed"] .agent-mode__center {
+    grid-row: 1;
+  }
 }
 
 @media (max-width: 460px) {
@@ -334,11 +330,6 @@
   .agent-session__body {
     gap: 14px;
     padding-block: 16px;
-  }
-
-  .agent-composer {
-    max-height: min(60vh, calc(560px * var(--codevo-fs-scale)));
-    padding-block: 10px 12px;
   }
 
   .agent-composer__textarea {
@@ -420,7 +411,7 @@
 }
 
 .agent-add-project .palette-search:focus-within {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-hair-strong);
 }
 
 .agent-add-project__results {
@@ -700,4 +691,57 @@
   margin: 0 auto;
   border-radius: var(--agent-radius-lg);
   overflow-wrap: anywhere;
+}
+
+.cv-crumb .agent-row__rename {
+  flex: 1;
+  min-width: 120px;
+  max-width: 420px;
+}
+
+@container agent-center (max-width: 420px) {
+  .cv-crumb__label,
+  .cv-crumb__sep {
+    display: none;
+  }
+}
+
+.agent-thread-activity {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--cv-space-4);
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 var(--cv-space-2);
+  border-radius: var(--cv-r-sm);
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-thread-activity:focus-visible {
+  outline: 2px solid var(--cv-focus);
+  outline-offset: 2px;
+}
+
+.agent-thread-activity__running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cv-space-3);
+  white-space: nowrap;
+}
+
+.agent-thread-activity__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cv-ok);
+}
+
+.agent-thread-activity__attention {
+  color: var(--cv-warn);
+  white-space: nowrap;
 }

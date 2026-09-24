@@ -1,4 +1,3 @@
-import { Square } from "lucide-react";
 import { memo, useMemo } from "react";
 import type { AgentTurn } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
@@ -9,7 +8,7 @@ import {
 } from "./agentBackgroundIndicatorPresentation";
 import { agentTurnRuntimeSubagents } from "./agentRuntimeSubagentPresentation";
 import { useAgentBackgroundActivity } from "./useAgentBackgroundActivity";
-import "./agentBackgroundWorkBanner.css";
+import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
 
 const NO_EVENTS: AgentTurn["events"] = [];
 
@@ -43,21 +42,23 @@ export const AgentBackgroundWorkBanner = memo(function AgentBackgroundWorkBanner
   if (status === null) return null;
   return (
     <div className="agent-background-banner">
-      <span className="agent-background-banner__status" role="status" aria-live="polite">
-        <span aria-hidden="true" className="agent-background-banner__pulse" />
-        {status}
-      </span>
-      {onStop !== undefined && (
-        <button
-          aria-label="Stop agent and background work"
-          className="agent-background-banner__stop"
-          onClick={onStop}
-          type="button"
-        >
-          <Square aria-hidden="true" size={11} strokeWidth={2.5} />
-          Stop
-        </button>
-      )}
+      <ComposerBanner
+        actions={
+          onStop === undefined ? undefined : (
+            <button
+              aria-label="Stop agent and background work"
+              className="agent-background-banner__stop cv-banner-action"
+              onClick={onStop}
+              type="button"
+            >
+              Stop
+            </button>
+          )
+        }
+        tone="working"
+      >
+        <span className="cv-banner-strong">{status}</span>
+      </ComposerBanner>
     </div>
   );
 });

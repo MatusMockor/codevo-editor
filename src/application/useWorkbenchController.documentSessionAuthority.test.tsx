@@ -179,7 +179,9 @@ function identityGateway(): WorkbenchWorkspaceGateways["identity"] &
       descriptors.set(resolved.workspaceId, resolved);
       return resolved;
     }),
-    unregister: vi.fn(async () => undefined),
+    unregister: vi.fn(async () => ({ status: "released" as const })),
+    adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+    rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
   };
 }
 

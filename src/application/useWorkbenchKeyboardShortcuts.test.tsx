@@ -505,11 +505,6 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       event: { altKey: true, key: "t", metaKey: true, shiftKey: true },
       shortcut: "Cmd+Alt+Shift+T",
     },
-    {
-      commandId: "editor.splitDown",
-      event: { altKey: true, key: "2", metaKey: true },
-      shortcut: "Cmd+Alt+2",
-    },
   ] as const)(
     "dispatches registered keymap command $commandId without an allowlist entry",
     ({ commandId, event: eventInit, shortcut }) => {
@@ -542,6 +537,40 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       harness.unmount();
     },
   );
+
+  it("dispatches a rebound editor-text scoped command only from Monaco text focus", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "editor.splitDown",
+      isEnabled: () => true,
+      run,
+      title: "editor.splitDown",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: { ...appSettings.keymap, "editor.splitDown": "Cmd+Alt+2" },
+      },
+      commandRegistry: registry,
+    });
+    const monaco = createMonacoTextInput();
+
+    expect(dispatchKeyboardEvent({ altKey: true, key: "2", metaKey: true }).defaultPrevented).toBe(
+      false,
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(
+      dispatchKeyboardEventFrom(monaco.input, { altKey: true, key: "2", metaKey: true })
+        .defaultPrevented,
+    ).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+
+    monaco.editor.remove();
+    harness.unmount();
+  });
 
   it("dispatches registry shortcuts through the command registry", () => {
     const run = vi.fn();
@@ -651,12 +680,19 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       commandRegistry: registry,
     });
 
-    const event = dispatchKeyboardEvent({ key: "b", metaKey: true });
+    const { editor, input } = createMonacoTextInput();
+
+    const outside = dispatchKeyboardEvent({ key: "b", metaKey: true });
+    expect(outside.defaultPrevented).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+
+    const event = dispatchKeyboardEventFrom(input, { key: "b", metaKey: true });
 
     expect(event.defaultPrevented).toBe(true);
     expect(run).toHaveBeenCalledTimes(1);
     expect(actions.goToDefinition).not.toHaveBeenCalled();
 
+    editor.remove();
     harness.unmount();
   });
 
