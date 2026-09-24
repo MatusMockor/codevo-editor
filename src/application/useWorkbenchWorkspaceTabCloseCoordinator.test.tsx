@@ -261,13 +261,13 @@ describe("useWorkbenchWorkspaceTabCloseCoordinator", () => {
     await vi.waitFor(() => expect(harness.persistAppSettings).toHaveBeenCalledOnce());
     harness.appSettingsRef.current = {
       ...harness.appSettingsRef.current,
-      agentAppearanceVariant: "paper",
+      agentThreadFontSize: 18,
       workspaceTabs: [WORKSPACE_B, "/workspace-c"],
     };
     disposal.resolve("runtime-stop-incomplete");
     await act(async () => closing);
 
-    expect(harness.appSettingsRef.current.agentAppearanceVariant).toBe("paper");
+    expect(harness.appSettingsRef.current.agentThreadFontSize).toBe(18);
     expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
       WORKSPACE_A,
       WORKSPACE_B,

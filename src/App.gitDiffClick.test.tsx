@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { DEFAULT_APPEARANCE } from "./domain/appearance";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAgentWorkbenchLayout } from "./domain/agentWorkbenchLayout";
@@ -349,7 +350,7 @@ function createWorkbench(overrides: Record<string, unknown>) {
         editorFontLigatures: false,
         editorFontSize: 13,
         keymap: "default",
-        theme: "calm-dark",
+        appearance: DEFAULT_APPEARANCE,
         userSnippets: [],
       },
       bookmarks: [],

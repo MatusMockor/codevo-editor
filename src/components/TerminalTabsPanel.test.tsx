@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_TERMINAL_TABS } from "../domain/terminalTabSet";
 import type { TerminalGateway } from "../domain/terminal";
-import { terminalThemeForAppTheme } from "../domain/settings";
+import { classicTerminalTheme } from "../domain/editorColorThemes";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 
 interface CapturedTerminal {
@@ -443,7 +443,7 @@ describe("TerminalTabsPanel", () => {
         rootPath="/workspace"
         shellIntegrationEnabled={false}
         terminalGateway={{} as TerminalGateway}
-        terminalTheme={terminalThemeForAppTheme("dark")}
+        terminalTheme={classicTerminalTheme("classicDark")}
         providerSignIn={providerSignIn}
       />
     );

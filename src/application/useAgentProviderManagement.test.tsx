@@ -15,6 +15,7 @@ import type {
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import type { AgentCliDiscoveryGateway, AgentCliDiscoveryResult } from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
+import { DEFAULT_APPEARANCE } from "../domain/appearance";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
 import { AgentProviderCard } from "../components/settings/AgentProviderCard";
@@ -39,6 +40,7 @@ import {
 } from "./agentProviderUpdateRun";
 import { appSettingsSaveCoordinatorFor } from "./appSettingsSaveCoordinator";
 
+const LIGHT_APPEARANCE = { ...DEFAULT_APPEARANCE, colorScheme: "light" } as const;
 const PATH_A = "/usr/local/bin/claude";
 const PATH_B = "/opt/homebrew/bin/claude";
 
@@ -980,7 +982,7 @@ describe("useAgentProviderManagement", () => {
     vi.mocked(harness.dependencies.settingsGateway.saveAppSettings)
       .mockImplementationOnce(() => firstSave.promise)
       .mockImplementationOnce(() => secondSave.promise);
-    const initialTheme = harness.settings().theme;
+    const initialTheme = harness.settings().appearance.colorScheme;
     const firstPreference = {
       ...defaultAgentProviderPreferences().claudeCode,
       healthCheckIntervalSeconds: 0,
@@ -998,7 +1000,10 @@ describe("useAgentProviderManagement", () => {
         preference: firstPreference,
         cliPath: PATH_B,
       });
-      harness.dependencies.applyAppSettings({ ...harness.settings(), theme: "light" });
+      harness.dependencies.applyAppSettings({
+        ...harness.settings(),
+        appearance: LIGHT_APPEARANCE,
+      });
       secondResult = harness.hook().save({ provider: "codex", preference: secondPreference });
     });
 
@@ -1009,7 +1014,7 @@ describe("useAgentProviderManagement", () => {
       vi.mocked(harness.dependencies.settingsGateway.saveAppSettings).mock.calls[0]?.[0]
         .agentProviderPreferences?.codex.enabled,
     ).toBe(true);
-    expect(harness.settings().theme).toBe("light");
+    expect(harness.settings().appearance.colorScheme).toBe("light");
 
     await act(async () => firstSave.reject(new Error("disk full")));
     await expect(firstResult).resolves.toBe(false);
@@ -1018,11 +1023,11 @@ describe("useAgentProviderManagement", () => {
     );
     expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_A);
     expect(harness.settings().agentProviderPreferences?.codex.enabled).toBe(false);
-    expect(harness.settings().theme).toBe("light");
+    expect(harness.settings().appearance.colorScheme).toBe("light");
 
     await act(async () => secondSave.resolve());
     await expect(secondResult).resolves.toBe(true);
-    expect(harness.settings().theme).not.toBe(initialTheme);
+    expect(harness.settings().appearance.colorScheme).not.toBe(initialTheme);
     expect(harness.errors[0]?.source).toBe("Agent provider settings");
     harness.unmount();
   });
@@ -1204,13 +1209,13 @@ describe("useAgentProviderManagement", () => {
     harness.replaceDependencies({
       settingsGateway: { saveAppSettings: vi.fn(async () => undefined) },
     });
-    harness.dependencies.applyAppSettings({ ...harness.settings(), theme: "light" });
+    harness.dependencies.applyAppSettings({ ...harness.settings(), appearance: LIGHT_APPEARANCE });
     await act(async () => staleSave.reject(new Error("retired gateway")));
     await expect(save).resolves.toBe(false);
 
     expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_A);
     expect(harness.settings().agentCliKind).toBe("claudeCode");
-    expect(harness.settings().theme).toBe("light");
+    expect(harness.settings().appearance.colorScheme).toBe("light");
     expect(harness.errors).toHaveLength(0);
     harness.unmount();
   });

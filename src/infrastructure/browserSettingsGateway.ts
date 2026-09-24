@@ -1,3 +1,4 @@
+import { DEFAULT_APPEARANCE, type AppearanceSettings } from "../domain/appearance";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -8,6 +9,11 @@ import {
   type WorkspaceSettings,
   type WorkspaceSettingsIdentity,
 } from "../domain/settings";
+import {
+  persistedAppearanceIsReadable,
+  readPersistedAppearance,
+  STARTUP_APP_SETTINGS_KEY,
+} from "../domain/startupTheme";
 
 export interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -15,7 +21,7 @@ export interface KeyValueStorage {
   setItem(key: string, value: string): void;
 }
 
-export const APP_SETTINGS_KEY = "editor.settings.app";
+export const APP_SETTINGS_KEY = STARTUP_APP_SETTINGS_KEY;
 const CANONICAL_WORKSPACE_SETTINGS_PREFIX = "editor.settings.workspace:canonical:";
 const LEGACY_WORKSPACE_SETTINGS_PREFIX = "editor.settings.workspace:";
 
@@ -23,9 +29,14 @@ export class BrowserSettingsGateway implements SettingsGateway {
   constructor(private readonly storage: KeyValueStorage = localStorage) {}
 
   loadAppSettings(): Promise<AppSettings> {
-    return Promise.resolve(
-      readJson(this.storage.getItem(APP_SETTINGS_KEY), defaultAppSettings()),
-    ).then(normalizeAppSettings);
+    const rawSettings = this.storage.getItem(APP_SETTINGS_KEY);
+    return Promise.resolve(readJson(rawSettings, defaultAppSettings()))
+      .then(normalizeAppSettings)
+      .then((settings) => withReadableAppearance(settings, rawSettings));
+  }
+
+  readInitialAppearance(): AppearanceSettings {
+    return readPersistedAppearance(readRawAppSettings(this.storage));
   }
 
   saveAppSettings(settings: AppSettings): Promise<void> {
@@ -89,6 +100,19 @@ export class BrowserSettingsGateway implements SettingsGateway {
       this.storage.removeItem(legacyKey);
     }
   }
+}
+
+function readRawAppSettings(storage: KeyValueStorage): string | null {
+  try {
+    return storage.getItem(APP_SETTINGS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function withReadableAppearance(settings: AppSettings, rawSettings: string | null): AppSettings {
+  if (rawSettings === null || persistedAppearanceIsReadable(rawSettings)) return settings;
+  return { ...settings, appearance: DEFAULT_APPEARANCE };
 }
 
 function trySetItem(

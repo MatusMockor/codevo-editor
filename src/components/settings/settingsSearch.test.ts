@@ -19,7 +19,7 @@ function row(
 
 const rows: ReadonlyArray<SettingsRowDescriptor> = [
   row("general.autoSave", "Zebra crossing", "Formats the file on save.", []),
-  row("appearance.theme", "Alpha", null, ["prettier"]),
+  row("appearance.palette", "Alpha", null, ["prettier"]),
   row("general.formatOnPaste", "Reformat on save", null, []),
   row("general.formatOnSave", "Format on save", "Runs the formatter.", ["save"]),
   row("php.inlayHints", "Format on paste", null, [], "workspace"),
@@ -45,7 +45,7 @@ describe("searchSettingsRows", () => {
   it("matches keywords when the title and description do not", () => {
     const hits = searchSettingsRows("prettier", rows, true);
 
-    expect(hits.map((hit) => hit.row.id)).toEqual(["appearance.theme"]);
+    expect(hits.map((hit) => hit.row.id)).toEqual(["appearance.palette"]);
     expect(hits[0]?.matchedIn).toBe("keywords");
   });
 

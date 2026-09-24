@@ -681,7 +681,7 @@
 
 .agent-find__hit {
   border-radius: 2px;
-  background: color-mix(in srgb, var(--agent-warm) 32%, transparent);
+  background: var(--cv-match);
   color: inherit;
 }
 

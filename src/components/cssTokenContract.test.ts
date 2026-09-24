@@ -20,7 +20,6 @@ import {
 
 const TOKEN_SHEET = "components/agentMode/agentModeTokens.css";
 const APP_SHEET = "App.css";
-const VARIANTS_SHEET = "components/agentMode/agentModeVariants.css";
 const REMAP_PREFIXES = ["--agent-", "--settings-", "--toast-"] as const;
 const APP_THEME_SELECTORS = [
   ":root",
@@ -497,7 +496,6 @@ describe("codevo token contract", () => {
   it("keeps the agent, settings and toast remaps free of literal colours, shadows, radii and fonts", () => {
     const problems = customPropertyDeclarations(parsed.rules, "--")
       .filter((entry) => REMAP_PREFIXES.some((prefix) => entry.property.startsWith(prefix)))
-      .filter((entry) => entry.rule.sheet !== VARIANTS_SHEET)
       .filter((entry) => !isPending(entry.rule.sheet, PENDING_LITERAL_REMAP_SHEETS))
       .map((entry) => ({ entry, problem: literalProblem(entry.property, entry.value) }))
       .filter((candidate) => candidate.problem !== null)

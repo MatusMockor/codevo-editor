@@ -7,7 +7,7 @@ import type { WorkbenchNotice } from "../application/workbenchNotice";
 import type { GitHistoryGateway } from "../domain/git";
 import { initialIndexProgress } from "../domain/indexProgress";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
-import { terminalThemeForAppTheme } from "../domain/settings";
+import { classicTerminalTheme } from "../domain/editorColorThemes";
 import type { TerminalGateway } from "../domain/terminal";
 import type {
   BoundedWorkspaceSourceRead,
@@ -1297,7 +1297,7 @@ function ProductionProblemsPanel({
         runtimeObservabilityGateway={{} as RuntimeObservabilityGateway}
         terminalGateway={terminalGateway()}
         terminalShellIntegrationEnabled={false}
-        terminalTheme={terminalThemeForAppTheme("dark")}
+        terminalTheme={classicTerminalTheme("classicDark")}
         workspacePackageDiscovery={packageDiscovery}
         workspaceRoot="/workspace"
         workspaceTrusted
@@ -1382,7 +1382,7 @@ async function renderPanel(
         runtimeObservabilityGateway={{} as RuntimeObservabilityGateway}
         terminalGateway={terminalGateway()}
         terminalShellIntegrationEnabled={false}
-        terminalTheme={terminalThemeForAppTheme("dark")}
+        terminalTheme={classicTerminalTheme("classicDark")}
         workspaceRoot={workspaceRoot}
         workspaceTrusted
         {...overrides}

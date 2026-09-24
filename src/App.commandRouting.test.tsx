@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, useEffect, useRef, useState } from "react";
+import { DEFAULT_APPEARANCE } from "./domain/appearance";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1295,7 +1296,7 @@ function createWorkbench() {
         editorFontLigatures: false,
         editorFontSize: 13,
         keymap: "default",
-        theme: "calm-dark",
+        appearance: DEFAULT_APPEARANCE,
         userSnippets: [],
         wordWrapEnabled: false,
       },

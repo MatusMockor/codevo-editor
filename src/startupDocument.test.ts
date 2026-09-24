@@ -11,28 +11,32 @@ import {
   parseCssRules,
   selectorParts,
   parseAllStyleSheets,
-  SYSTEM_LIGHT_CONTEXT,
-  SYSTEM_THEME_SELECTOR,
   type CssRule,
 } from "./components/cssContractTestSupport";
 import { DEFAULT_AGENT_RAIL_WIDTH } from "./domain/agentWorkbenchLayout";
-import { STARTUP_THEME_IDS } from "./domain/startupTheme";
+import {
+  PALETTE_IDS,
+  RESOLVED_COLOR_SCHEMES,
+  type PaletteId,
+  type ResolvedColorScheme,
+} from "./domain/appearance";
+import { paletteTokens, surfaceColor } from "./domain/appearancePalettes";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
 const STARTUP_SHEET = "public/startup.css";
 const STARTUP_SKELETON_SELECTOR = "[data-startup-skeleton]";
 const HEX_TONE = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-const APP_TOKEN_FOR_TONE = {
-  "--startup-side": "--color-sidebar",
-  "--startup-canvas": "--color-app",
-  "--startup-well": "--color-control",
-  "--startup-accent": "--color-accent",
-  "--startup-text": "--color-text-strong",
-  "--startup-text-muted": "--color-text-muted",
-  "--startup-danger": "--color-error",
-} as const;
-const TONE_KEYS = Object.keys(APP_TOKEN_FOR_TONE) as ReadonlyArray<keyof typeof APP_TOKEN_FOR_TONE>;
-const SURFACE_TONE_KEYS = ["--startup-side", "--startup-canvas", "--startup-well"] as const;
+const TONE_KEYS = [
+  "--startup-side",
+  "--startup-canvas",
+  "--startup-well",
+  "--startup-accent",
+  "--startup-text",
+  "--startup-text-muted",
+  "--startup-danger",
+] as const;
+type StartupTone = (typeof TONE_KEYS)[number];
+const SURFACE_TONE_KEYS = ["--startup-side", "--startup-canvas"] as const;
 const AIRY_RADII = new Set(["8px", "10px", "12px", "14px"]);
 
 function hexChannels(value: string): readonly number[] | null {
@@ -135,10 +139,13 @@ function startupDeclaration(selector: string, property: string): string | undefi
   return lastOf(buildTokenTable(startupRules(selector), "").get(property));
 }
 
-function startupTone(theme: string, tone: string): string | undefined {
-  const themed = lastOf(
-    buildTokenTable(startupRules(`:root[data-startup-theme="${theme}"]`)).get(tone),
-  );
+function startupTone(
+  palette: PaletteId,
+  scheme: ResolvedColorScheme,
+  tone: StartupTone,
+): string | undefined {
+  const selector = `:root[data-cv-palette="${palette}"][data-cv-scheme="${scheme}"]`;
+  const themed = lastOf(buildTokenTable(startupRules(selector)).get(tone));
   if (themed !== undefined) {
     return themed;
   }
@@ -146,20 +153,28 @@ function startupTone(theme: string, tone: string): string | undefined {
   return lastOf(buildTokenTable(startupRules(":root")).get(tone));
 }
 
-function appTone(theme: string, token: string): string | undefined {
-  const selector = theme === "dark" ? ":root" : `.app-shell[data-theme="${theme}"]`;
-  const themed = lastOf(
-    buildTokenTable(
-      appCss.filter(
-        (rule) => rule.context.length === 0 && selectorParts(rule.selector).includes(selector),
-      ),
-    ).get(token),
-  );
-  if (themed !== undefined) {
-    return themed;
+function expectedStartupTone(
+  palette: PaletteId,
+  scheme: ResolvedColorScheme,
+  tone: StartupTone,
+): string {
+  const tokens = paletteTokens(palette, scheme);
+  switch (tone) {
+    case "--startup-side":
+      return surfaceColor(palette, scheme, "side");
+    case "--startup-canvas":
+      return surfaceColor(palette, scheme, "canvas");
+    case "--startup-well":
+      return surfaceColor(palette, scheme, "raised");
+    case "--startup-accent":
+      return tokens.accent;
+    case "--startup-text":
+      return tokens.fgStrong;
+    case "--startup-text-muted":
+      return tokens.fgMuted;
+    case "--startup-danger":
+      return tokens.danger;
   }
-
-  return lastOf(buildTokenTable(appCss.filter((rule) => rule.selector === ":root")).get(token));
 }
 
 function appShellDeclaration(property: string): string | undefined {
@@ -294,24 +309,26 @@ describe("startup skeleton", () => {
     );
   });
 
-  it("tones every theme from the same values the real theme declares", () => {
-    for (const theme of STARTUP_THEME_IDS) {
-      if (theme === "system") continue;
-      for (const tone of TONE_KEYS) {
-        const startup = startupTone(theme, tone);
-        expect(startup, `${theme} ${tone}`).toBeDefined();
-        expect(startup, `${theme} ${tone}`).toBe(appTone(theme, APP_TOKEN_FOR_TONE[tone]));
+  it("tones every palette from the same values the real palette declares", () => {
+    for (const palette of PALETTE_IDS) {
+      for (const scheme of RESOLVED_COLOR_SCHEMES) {
+        for (const tone of TONE_KEYS) {
+          expect(startupTone(palette, scheme, tone), `${palette} ${scheme} ${tone}`).toBe(
+            expectedStartupTone(palette, scheme, tone),
+          );
+        }
       }
     }
   });
 
-  it("never paints a white surface in any theme", () => {
-    for (const theme of STARTUP_THEME_IDS) {
-      if (theme === "system") continue;
-      for (const tone of SURFACE_TONE_KEYS) {
-        const value = startupTone(theme, tone) ?? "";
-        expect(value, `${theme} ${tone}`).toMatch(HEX_TONE);
-        expect(isPureWhite(value), `${theme} ${tone}`).toBe(false);
+  it("never paints a white side or canvas in any palette", () => {
+    for (const palette of PALETTE_IDS) {
+      for (const scheme of RESOLVED_COLOR_SCHEMES) {
+        for (const tone of SURFACE_TONE_KEYS) {
+          const value = startupTone(palette, scheme, tone) ?? "";
+          expect(value, `${palette} ${scheme} ${tone}`).toMatch(HEX_TONE);
+          expect(isPureWhite(value), `${palette} ${scheme} ${tone}`).toBe(false);
+        }
       }
     }
   });
@@ -333,22 +350,6 @@ describe("startup skeleton", () => {
     }
     for (const notWhite of ["#fbfcfd", "#fefefe", "#eff1f5", "rgb(254 255 255)", "hsl(0 0% 99%)"]) {
       expect(isPureWhite(notWhite), notWhite).toBe(false);
-    }
-  });
-
-  it("keeps the resolved system theme in step with the light theme block", () => {
-    const systemLight = buildTokenTable(
-      appCss.filter(
-        (rule) =>
-          rule.context.length === 1 &&
-          rule.context[0] === SYSTEM_LIGHT_CONTEXT &&
-          rule.selector === SYSTEM_THEME_SELECTOR,
-      ),
-    );
-    for (const tone of TONE_KEYS) {
-      const appToken = APP_TOKEN_FOR_TONE[tone];
-      expect(lastOf(systemLight.get(appToken)), appToken).toBeDefined();
-      expect(lastOf(systemLight.get(appToken)), appToken).toBe(startupTone("light", tone));
     }
   });
 
@@ -433,7 +434,7 @@ describe("startup error screen", () => {
 
 describe("native window background", () => {
   it("uses the dark side tone in both window configurations", () => {
-    const darkSide = startupTone("dark", "--startup-side");
+    const darkSide = startupTone("graphite-teal", "dark", "--startup-side");
     for (const file of ["tauri.conf.json", "tauri.macos.conf.json"]) {
       const config: unknown = JSON.parse(
         readFileSync(resolve(REPOSITORY_ROOT, "src-tauri", file), "utf8"),

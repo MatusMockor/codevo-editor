@@ -8,6 +8,7 @@ import {
   defaultWorkspaceSettings,
   type AppSettings,
 } from "../../domain/settings";
+import { DEFAULT_APPEARANCE } from "../../domain/appearance";
 import { createWorkspaceSettingsByRootSnapshot } from "../workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "../workspaceSettingsSaveCoordinator";
 import { useWorkbenchSettingsPersistence } from "./useWorkbenchSettingsPersistence";
@@ -61,7 +62,10 @@ describe("useWorkbenchSettingsPersistence app settings owner", () => {
         appSettings,
         ...persistence,
         persistTheme: () =>
-          persistence.persistAppSettings({ ...appSettingsRef.current, theme: "light" }),
+          persistence.persistAppSettings({
+            ...appSettingsRef.current,
+            appearance: { ...DEFAULT_APPEARANCE, colorScheme: "light" },
+          }),
       };
       return null;
     }
@@ -78,7 +82,7 @@ describe("useWorkbenchSettingsPersistence app settings owner", () => {
     expect(saveAppSettings).toHaveBeenCalledTimes(1);
     expect(readSurface(surface).appSettings).toMatchObject({
       appUpdaterSkippedVersion: "0.2.0",
-      theme: "light",
+      appearance: { colorScheme: "light" },
     });
 
     await act(async () => {
@@ -88,7 +92,7 @@ describe("useWorkbenchSettingsPersistence app settings owner", () => {
     expect(saveAppSettings).toHaveBeenCalledTimes(2);
     expect(saveAppSettings.mock.calls[1]?.[0]).toMatchObject({
       appUpdaterSkippedVersion: "0.2.0",
-      theme: "light",
+      appearance: { colorScheme: "light" },
     });
     act(() => root.unmount());
   });

@@ -1,29 +1,26 @@
 import { useMemo } from "react";
+import type { AppearanceSettings, ResolvedColorScheme } from "../domain/appearance";
 import {
-  monacoThemeForAppTheme,
-  terminalThemeForAppTheme,
-  type AppTheme,
+  resolveEditorColorThemes,
   type MonacoAppTheme,
   type TerminalTheme,
-} from "../domain/settings";
-import { useDocumentStartupTheme } from "./useDocumentStartupTheme";
+} from "../domain/editorColorThemes";
+import { useDocumentAppearance } from "./useDocumentAppearance";
 
 export interface AppWorkbenchThemes {
+  readonly colorScheme: ResolvedColorScheme;
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
 }
 
 export function useAppWorkbenchThemes(
-  theme: AppTheme,
+  appearance: AppearanceSettings,
   prefersLightTheme: boolean,
 ): AppWorkbenchThemes {
-  useDocumentStartupTheme(theme, prefersLightTheme);
-
-  return useMemo(
-    () => ({
-      monacoTheme: monacoThemeForAppTheme(theme, prefersLightTheme),
-      terminalTheme: terminalThemeForAppTheme(theme, prefersLightTheme),
-    }),
-    [prefersLightTheme, theme],
+  const themes = useMemo(
+    () => resolveEditorColorThemes(appearance, prefersLightTheme),
+    [appearance, prefersLightTheme],
   );
+  useDocumentAppearance(appearance.palette, themes.colorScheme);
+  return themes;
 }

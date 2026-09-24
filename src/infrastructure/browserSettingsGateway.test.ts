@@ -6,6 +6,7 @@ import {
   LARGE_SMART_DOCUMENT_LINE_LIMIT,
 } from "../domain/largeDocumentPolicy";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
+import { DEFAULT_APPEARANCE } from "../domain/appearance";
 
 describe("BrowserSettingsGateway", () => {
   it("persists follow-up delivery preference and migrates missing or invalid values to queue", async () => {
@@ -512,7 +513,6 @@ describe("BrowserSettingsGateway", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -528,7 +528,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "dark",
+      appearance: DEFAULT_APPEARANCE,
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
@@ -617,7 +617,6 @@ describe("BrowserSettingsGateway", () => {
     await gateway.saveAppSettings({
       appUpdaterSkippedVersion: null,
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -637,7 +636,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
-      theme: "ayuMirage",
+      appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
       wordWrapEnabled: true,
       userSnippets: [
         {
@@ -733,7 +732,6 @@ describe("BrowserSettingsGateway", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -752,7 +750,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
-      theme: "ayuMirage",
+      appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
       wordWrapEnabled: true,
       userSnippets: [
         {
@@ -860,6 +858,32 @@ describe("BrowserSettingsGateway", () => {
     expect(reloaded.statusBar.message).toBe(true);
   });
 
+  it("reads the initial appearance synchronously with the same normaliser the loader uses", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    expect(gateway.readInitialAppearance()).toEqual(DEFAULT_APPEARANCE);
+
+    storage.setItem("editor.settings.app", JSON.stringify({ theme: "oneLight" }));
+
+    expect(gateway.readInitialAppearance()).toEqual((await gateway.loadAppSettings()).appearance);
+    expect(gateway.readInitialAppearance()).toEqual({
+      palette: "graphite-teal",
+      colorScheme: "light",
+      syntaxTheme: "oneLight",
+    });
+  });
+
+  it("falls back to the default initial appearance when storage cannot be read", () => {
+    const gateway = new BrowserSettingsGateway({
+      ...memoryStorage(),
+      getItem: () => {
+        throw new DOMException("denied", "SecurityError");
+      },
+    });
+
+    expect(gateway.readInitialAppearance()).toEqual(DEFAULT_APPEARANCE);
+  });
+
   it("falls back when persisted JSON is invalid", async () => {
     const storage = memoryStorage();
     storage.setItem("editor.settings.app", "{");
@@ -870,7 +894,6 @@ describe("BrowserSettingsGateway", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -886,7 +909,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "dark",
+      appearance: DEFAULT_APPEARANCE,
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],

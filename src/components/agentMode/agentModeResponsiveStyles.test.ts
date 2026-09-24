@@ -276,7 +276,7 @@ describe("agent mode responsive layout contract", () => {
 
   it("reserves the largest variant focus-ring spread inside the surface scrollport", () => {
     expect(rule(".workbench-frame {")).toContain("--agent-surface-focus-gutter: 4px");
-    expect(rule('.workbench-frame[data-agent-variant="studio"]')).toContain("0 0 0 4px");
+    expect(rule(".app-shell {")).toContain("0 0 0 4px var(--codevo-primary)");
   });
 
   it("collapses the file tree column when the surface reports no tree", () => {

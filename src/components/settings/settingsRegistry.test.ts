@@ -68,6 +68,6 @@ describe("settings registry", () => {
 
   it("marks workspace-scoped rows as workspace availability", () => {
     expect(settingsRowDescriptor("general.formatOnSave").availability).toBe("workspace");
-    expect(settingsRowDescriptor("appearance.theme").availability).toBe("always");
+    expect(settingsRowDescriptor("appearance.palette").availability).toBe("always");
   });
 });

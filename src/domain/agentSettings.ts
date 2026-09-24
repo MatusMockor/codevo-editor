@@ -20,9 +20,6 @@ export const DEFAULT_AGENT_CLI_KIND: AgentCliKind = "claudeCode";
 export const DEFAULT_AGENT_ISOLATION_POLICY: AgentIsolationPolicy = "auto";
 export const DEFAULT_MAX_CONCURRENT_AGENT_TASKS = 64;
 export const MAX_AGENT_CLI_PATH_BYTES = 4_096;
-export const AGENT_APPEARANCE_VARIANTS = ["current", "graphite", "paper", "studio"] as const;
-export type AgentAppearanceVariant = (typeof AGENT_APPEARANCE_VARIANTS)[number];
-export const DEFAULT_AGENT_APPEARANCE_VARIANT: AgentAppearanceVariant = "current";
 export const MAX_AGENT_MODEL_FAVORITES = 32;
 export const DEFAULT_AGENT_THREAD_FONT_SIZE = 15;
 export const MIN_AGENT_THREAD_FONT_SIZE = 12;
@@ -74,7 +71,6 @@ export interface AgentAppSettings {
   readonly agentCliPaths: AgentCliPaths;
   readonly agentCliKind: AgentCliKind;
   readonly agentFollowUpBehavior: AgentFollowUpBehavior;
-  readonly agentAppearanceVariant: AgentAppearanceVariant;
   readonly agentThreadFontSize: number;
   readonly agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   readonly agentModelFavoritesRevision: number;
@@ -94,7 +90,6 @@ export function defaultAgentAppSettings(): AgentAppSettings {
     agentCliPaths: { claudeCode: null, codex: null },
     agentCliKind: DEFAULT_AGENT_CLI_KIND,
     agentFollowUpBehavior: DEFAULT_AGENT_FOLLOW_UP_BEHAVIOR,
-    agentAppearanceVariant: DEFAULT_AGENT_APPEARANCE_VARIANT,
     agentThreadFontSize: DEFAULT_AGENT_THREAD_FONT_SIZE,
     agentModelFavoriteKeys: [],
     agentModelFavoritesRevision: 0,
@@ -152,13 +147,6 @@ export function normalizeAgentCliKind(value: unknown): AgentCliKind {
   if (value === "codex") return "codex";
 
   return DEFAULT_AGENT_CLI_KIND;
-}
-
-export function normalizeAgentAppearanceVariant(value: unknown): AgentAppearanceVariant {
-  if (AGENT_APPEARANCE_VARIANTS.some((variant) => variant === value)) {
-    return value as AgentAppearanceVariant;
-  }
-  return DEFAULT_AGENT_APPEARANCE_VARIANT;
 }
 
 export function normalizeAgentThreadFontSize(value: unknown): number {

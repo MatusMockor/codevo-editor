@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { terminalThemeForAppTheme, type TerminalTheme } from "./settings";
+import { CLASSIC_SYNTAX_THEME_IDS } from "./appearance";
+import { classicTerminalTheme, type TerminalTheme } from "./editorColorThemes";
 import { contrastRatio } from "./themeContrast";
 
 const minimumTextContrast = 4.5;
@@ -190,17 +191,9 @@ describe("contrastRatio", () => {
   });
 
   it("keeps terminal text colors readable in app themes", () => {
-    expectTerminalThemeContrast(terminalThemeForAppTheme("dark"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("light"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("ayuMirage"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("materialDeepOcean"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("oneDarkPro"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("dracula"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("catppuccinMocha"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("catppuccinLatte"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("oneLight"));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("system", true));
-    expectTerminalThemeContrast(terminalThemeForAppTheme("system", false));
+    for (const theme of CLASSIC_SYNTAX_THEME_IDS.filter((id) => id !== "darkPlus")) {
+      expectTerminalThemeContrast(classicTerminalTheme(theme));
+    }
   });
 });
 

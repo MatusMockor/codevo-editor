@@ -216,27 +216,10 @@ describe("WorkbenchShellFrame", () => {
     expect(host.querySelector('.editor-workbench > [data-slot="chrome"] > #chrome')).not.toBeNull();
   });
 
-  it("stamps a closed agent appearance variant and defaults to current", () => {
+  it("does not stamp an agent appearance variant", () => {
     render(placement("agent", "files"));
-    expect(host.querySelector(".workbench-frame")?.getAttribute("data-agent-variant")).toBe(
-      "current",
-    );
 
-    act(() =>
-      root.render(
-        <WorkbenchShellFrame
-          agent={<div data-slot="agent">agent</div>}
-          agentVariant="paper"
-          bottom={<span>bottom</span>}
-          chrome={<div id="chrome" />}
-          editor={<div id="editor-content" />}
-          placement={placement("agent", "files")}
-        />,
-      ),
-    );
-    expect(host.querySelector(".workbench-frame")?.getAttribute("data-agent-variant")).toBe(
-      "paper",
-    );
+    expect(host.querySelector(".workbench-frame")?.hasAttribute("data-agent-variant")).toBe(false);
   });
 
   it("keeps the tree column collapsed while the Files surface reports no tree", () => {

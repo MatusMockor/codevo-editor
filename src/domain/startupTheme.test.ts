@@ -1,77 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { appThemeOptions } from "./settings";
+import { DEFAULT_APPEARANCE } from "./appearance";
 import {
-  FALLBACK_STARTUP_THEME,
   MAX_STARTUP_SETTINGS_LENGTH,
-  readPersistedStartupTheme,
-  resolveStartupTheme,
-  STARTUP_THEME_IDS,
+  readPersistedAppearance,
+  resolveStartupAppearance,
 } from "./startupTheme";
 
-function persisted(theme: unknown): string {
-  return JSON.stringify({ editorFontSize: 13, theme });
-}
+describe("resolveStartupAppearance", () => {
+  function raw(value: unknown): string {
+    return JSON.stringify({ editorFontSize: 13, ...(value as object) });
+  }
 
-describe("startup theme ids", () => {
-  it("stays in step with the persisted app theme union", () => {
-    expect([...STARTUP_THEME_IDS].sort()).toEqual(
-      appThemeOptions.map((option) => option.id).sort(),
+  it("stamps the persisted palette and resolves the chrome scheme", () => {
+    const settings = raw({
+      appearance: { palette: "zinc-orange", colorScheme: "system", syntaxTheme: "dracula" },
+    });
+
+    expect(resolveStartupAppearance(settings, true)).toEqual({
+      palette: "zinc-orange",
+      colorScheme: "light",
+    });
+    expect(resolveStartupAppearance(settings, false)).toEqual({
+      palette: "zinc-orange",
+      colorScheme: "dark",
+    });
+  });
+
+  it("migrates a legacy light theme before the app has saved an appearance", () => {
+    expect(resolveStartupAppearance(raw({ theme: "catppuccinLatte" }), false)).toEqual({
+      palette: "graphite-teal",
+      colorScheme: "light",
+    });
+  });
+
+  it("falls closed to the default appearance for missing, oversized and malformed settings", () => {
+    expect(readPersistedAppearance(null)).toEqual(DEFAULT_APPEARANCE);
+    expect(readPersistedAppearance("{")).toEqual(DEFAULT_APPEARANCE);
+    expect(readPersistedAppearance("[]")).toEqual(DEFAULT_APPEARANCE);
+    expect(readPersistedAppearance(`"${"x".repeat(MAX_STARTUP_SETTINGS_LENGTH)}"`)).toEqual(
+      DEFAULT_APPEARANCE,
     );
-  });
-
-  it("falls closed to the persisted default theme", () => {
-    expect(FALLBACK_STARTUP_THEME).toBe("dark");
-  });
-});
-
-describe("resolveStartupTheme", () => {
-  it("keeps every known concrete theme", () => {
-    for (const id of STARTUP_THEME_IDS) {
-      if (id === "system") continue;
-      expect(resolveStartupTheme(persisted(id), false), id).toBe(id);
-      expect(resolveStartupTheme(persisted(id), true), id).toBe(id);
-    }
-  });
-
-  it("resolves system against the reported colour scheme", () => {
-    expect(resolveStartupTheme(persisted("system"), true)).toBe("light");
-    expect(resolveStartupTheme(persisted("system"), false)).toBe("dark");
-  });
-
-  it("falls closed to dark when nothing is persisted", () => {
-    expect(resolveStartupTheme(null, false)).toBe("dark");
-    expect(resolveStartupTheme(null, true)).toBe("dark");
-  });
-
-  it("falls closed to dark on malformed json", () => {
-    expect(resolveStartupTheme("{", true)).toBe("dark");
-    expect(resolveStartupTheme("", true)).toBe("dark");
-    expect(resolveStartupTheme("null", true)).toBe("dark");
-    expect(resolveStartupTheme('"dark"', true)).toBe("dark");
-    expect(resolveStartupTheme('["light"]', true)).toBe("dark");
-  });
-
-  it("falls closed to dark on an unknown or absent theme", () => {
-    expect(resolveStartupTheme(persisted("solarized"), true)).toBe("dark");
-    expect(resolveStartupTheme(persisted(7), true)).toBe("dark");
-    expect(resolveStartupTheme(persisted(null), true)).toBe("dark");
-    expect(resolveStartupTheme("{}", true)).toBe("dark");
-    expect(resolveStartupTheme('{"theme":{"id":"light"}}', true)).toBe("dark");
-  });
-
-  it("never resolves to a value the startup stylesheet cannot tone", () => {
-    const cases = [null, "{", "{}", persisted("light"), persisted("system"), persisted("nope")];
-    for (const raw of cases) {
-      const resolved = resolveStartupTheme(raw, true);
-      expect(STARTUP_THEME_IDS).toContain(resolved);
-      expect(resolved).not.toBe("system");
-    }
-  });
-
-  it("rejects an oversized payload before parsing it", () => {
-    const oversized = `${" ".repeat(MAX_STARTUP_SETTINGS_LENGTH)}${persisted("light")}`;
-    expect(oversized.length).toBeGreaterThan(MAX_STARTUP_SETTINGS_LENGTH);
-    expect(resolveStartupTheme(oversized, false)).toBe("dark");
-    expect(readPersistedStartupTheme(oversized)).toBeNull();
+    expect(resolveStartupAppearance(null, true)).toEqual({
+      palette: "graphite-teal",
+      colorScheme: "light",
+    });
+    expect(resolveStartupAppearance(null, false)).toEqual({
+      palette: "graphite-teal",
+      colorScheme: "dark",
+    });
   });
 });

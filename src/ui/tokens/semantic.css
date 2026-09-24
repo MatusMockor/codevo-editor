@@ -1,0 +1,115 @@
+:root {
+  --cv-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --cv-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --cv-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --cv-t-2xs: 11px;
+  --cv-t-xs: 12px;
+  --cv-t-code: 12.5px;
+  --cv-t-md: 13px;
+  --cv-t-sm: 14px;
+  --cv-t-lg: 15px;
+  --cv-t-title: 20px;
+  --cv-lh-xs: 16px;
+  --cv-lh-sm: 20px;
+  --cv-lh-prose: 1.625;
+  --cv-sidebar-w: 256px;
+  --cv-topbar-h: 52px;
+  --cv-column: 768px;
+  --cv-panel-w: 540px;
+  --cv-r-xs: 4px;
+  --cv-r-sm: 6px;
+  --cv-r-control: 8px;
+  --cv-r-card: 10px;
+  --cv-r-group: 12px;
+  --cv-r-dialog: 16px;
+  --cv-r-bubble: 18px;
+  --cv-r-composer: 22px;
+  --cv-r-pill: 999px;
+  --cv-space-1: 2px;
+  --cv-space-2: 4px;
+  --cv-space-3: 6px;
+  --cv-space-4: 8px;
+  --cv-space-5: 12px;
+  --cv-space-6: 16px;
+  --cv-space-7: 24px;
+  --cv-space-8: 32px;
+  --cv-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cv-motion-fast: 120ms;
+  --cv-motion-base: 150ms;
+  --cv-motion-slow: 250ms;
+  --cv-motion-spin: 900ms;
+  --cv-z-dialog: 40;
+  --cv-z-popover: 50;
+  --cv-z-toast: 60;
+  --cv-ring-hair: inset 0 0 0 1px var(--cv-hair);
+  --cv-ring-hair-strong: inset 0 0 0 1px var(--cv-hair-strong);
+  --cv-ring-focus: inset 0 0 0 1px var(--cv-focus), 0 0 0 3px var(--cv-accent-soft);
+  --cv-ring-danger: inset 0 0 0 1px var(--cv-danger);
+  --cv-ring-canvas: 0 0 0 1.5px var(--cv-canvas);
+  --cv-edge-top-hair: inset 0 1px 0 var(--cv-hair);
+  --cv-edge-bottom-hair: inset 0 -1px 0 var(--cv-hair);
+  --cv-shadow-knob: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --cv-fg-disabled: color-mix(in srgb, var(--cv-fg-subtle) 55%, transparent);
+  --cv-switch-knob: #ffffff;
+}
+
+:root,
+:root[data-cv-scheme="dark"] {
+  --cv-canvas: var(--cv-s0);
+  --cv-side: var(--cv-s1);
+  --cv-raised: var(--cv-s2);
+  --cv-popover: var(--cv-pop-bg);
+  --cv-tint-1: rgba(255, 255, 255, 0.03);
+  --cv-tint-2: rgba(255, 255, 255, 0.05);
+  --cv-tint-3: rgba(255, 255, 255, 0.09);
+  --cv-row-hover: var(--cv-tint-2);
+  --cv-row-active: var(--cv-tint-3);
+  --cv-edge-top: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --cv-lift: 0 0 0 transparent;
+  --cv-fill-edge: 0 0 0 transparent;
+  --cv-switch-edge: 0 0 0 transparent;
+  --cv-switch-track: var(--cv-s4);
+  --cv-scrim: rgba(0, 0, 0, 0.75);
+  --cv-overlay: color-mix(in srgb, var(--cv-canvas) 62%, transparent);
+  --cv-shadow-pop: 0 0 0 1px var(--cv-hair-strong), 0 18px 40px -14px rgba(0, 0, 0, 0.55);
+  --cv-shadow-dialog: 0 0 0 1px var(--cv-hair-strong), 0 28px 70px -24px rgba(0, 0, 0, 0.65);
+  --cv-shadow-toast: 0 0 0 1px var(--cv-hair-strong), 0 12px 32px -16px rgba(0, 0, 0, 0.5);
+  --cv-git-mod: #6aa8f7;
+  --cv-breakpoint: #e5534b;
+  --cv-match: rgba(237, 187, 78, 0.16);
+  --cv-match-current: rgba(237, 187, 78, 0.38);
+}
+
+:root[data-cv-scheme="light"] {
+  --cv-canvas: var(--cv-s1);
+  --cv-side: var(--cv-s0);
+  --cv-raised: var(--cv-s2);
+  --cv-popover: var(--cv-pop-bg);
+  --cv-tint-1: rgba(20, 24, 30, 0.035);
+  --cv-tint-2: rgba(20, 24, 30, 0.055);
+  --cv-tint-3: rgba(20, 24, 30, 0.09);
+  --cv-row-hover: var(--cv-canvas);
+  --cv-row-active: var(--cv-raised);
+  --cv-edge-top: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --cv-lift: 0 12px 28px -18px rgba(20, 24, 30, 0.4);
+  --cv-fill-edge: inset 0 0 0 1px rgba(20, 24, 30, 0.1);
+  --cv-switch-edge: inset 0 0 0 1px var(--cv-hair);
+  --cv-switch-track: var(--cv-s4);
+  --cv-scrim: rgba(0, 0, 0, 0.75);
+  --cv-overlay: color-mix(in srgb, var(--cv-canvas) 62%, transparent);
+  --cv-shadow-pop: 0 0 0 1px var(--cv-hair-strong), 0 16px 40px -18px rgba(20, 24, 30, 0.45);
+  --cv-shadow-dialog: 0 0 0 1px var(--cv-hair-strong), 0 28px 70px -28px rgba(20, 24, 30, 0.35);
+  --cv-shadow-toast: 0 0 0 1px var(--cv-hair-strong), 0 12px 32px -16px rgba(20, 24, 30, 0.3);
+  --cv-git-mod: #2f6bd1;
+  --cv-breakpoint: #d1242f;
+  --cv-match: rgba(180, 120, 0, 0.14);
+  --cv-match-current: rgba(180, 120, 0, 0.32);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --cv-motion-fast: 0ms;
+    --cv-motion-base: 0ms;
+    --cv-motion-slow: 0ms;
+  }
+}

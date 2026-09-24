@@ -20,6 +20,7 @@ export {
   withWorkspaceIdentityLease,
 } from "./workbenchController/workspaceIdentityPolicy";
 import { workspaceRuntimeOwnerFor } from "./workbenchController/workspaceRuntimePolicy";
+import { initialAppSettingsFrom } from "./workbenchController/initialAppSettings";
 import {
   isLanguageServerActiveForWorkspace,
   isRunningLanguageServerForWorkspace,
@@ -172,7 +173,6 @@ import type { PhpTreeGateway } from "../domain/phpTree";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import {
-  defaultAppSettings,
   defaultWorkspaceSettings,
   type AppSettings,
   type SettingsGateway,
@@ -425,7 +425,7 @@ export function useWorkbenchController(
     useState<PhpstanDiagnosticsByRoot>({});
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
   noticesRef.current = notices;
-  const [appSettings, setAppSettings] = useState<AppSettings>(defaultAppSettings);
+  const [appSettings, setAppSettings] = useState(initialAppSettingsFrom(settingsGateway));
   const phpstanWorkspaceTabsRef = useRef<string[]>([]);
   const eslintWorkspaceTabsRef = useRef<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -440,7 +440,7 @@ export function useWorkbenchController(
   const [phpLanguageServerAutostartRetryVersion, setPhpLanguageServerAutostartRetryVersion] =
     useState(0);
   const hasRestoredRef = useRef(false);
-  const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
+  const appSettingsRef = useRef(appSettings);
   // Runtime latency instrumentation for the key interactive operations
   // (quick open, search everywhere, go-to-definition, completion, folder
   // expand). Trackers are keyed by workspace root so the runtime cockpit for

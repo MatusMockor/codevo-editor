@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { STARTUP_APP_SETTINGS_KEY, STARTUP_THEME_ATTRIBUTE } from "./domain/startupTheme";
+import { COLOR_SCHEME_ATTRIBUTE, PALETTE_ATTRIBUTE } from "./domain/appearance";
+import { STARTUP_APP_SETTINGS_KEY } from "./domain/startupTheme";
 import { APP_SETTINGS_KEY } from "./infrastructure/browserSettingsGateway";
 import { applyStartupTheme, type StartupThemeEnvironment } from "./startupTheme";
 
@@ -17,7 +18,7 @@ function apply(environment: Partial<StartupThemeEnvironment>): Applied {
       requestedKeys.push(key);
       return null;
     },
-    setThemeAttribute: (name, value) => {
+    setDocumentAttribute: (name, value) => {
       attributes[name] = value;
     },
     ...environment,
@@ -25,37 +26,68 @@ function apply(environment: Partial<StartupThemeEnvironment>): Applied {
   return { attributes, requestedKeys };
 }
 
+const DEFAULT_ATTRIBUTES = {
+  [PALETTE_ATTRIBUTE]: "graphite-teal",
+  [COLOR_SCHEME_ATTRIBUTE]: "dark",
+};
+
 describe("applyStartupTheme", () => {
   it("reads the same storage key the settings gateway persists", () => {
     expect(STARTUP_APP_SETTINGS_KEY).toBe(APP_SETTINGS_KEY);
     expect(apply({}).requestedKeys).toEqual([STARTUP_APP_SETTINGS_KEY]);
   });
 
-  it("stamps the persisted theme on the document element", () => {
-    const applied = apply({ readSetting: () => JSON.stringify({ theme: "dracula" }) });
+  it("stamps the persisted palette and scheme on the document element", () => {
+    const applied = apply({
+      readSetting: () =>
+        JSON.stringify({
+          appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "matchPalette" },
+        }),
+    });
 
-    expect(applied.attributes[STARTUP_THEME_ATTRIBUTE]).toBe("dracula");
+    expect(applied.attributes).toEqual({
+      [PALETTE_ATTRIBUTE]: "ink-mint",
+      [COLOR_SCHEME_ATTRIBUTE]: "light",
+    });
   });
 
-  it("resolves the system theme through the reported colour scheme", () => {
-    const raw = JSON.stringify({ theme: "system" });
+  it("resolves the system scheme through the reported colour scheme", () => {
+    const raw = JSON.stringify({
+      appearance: { palette: "slate-blue", colorScheme: "system", syntaxTheme: "matchPalette" },
+    });
 
     expect(apply({ prefersLight: () => true, readSetting: () => raw }).attributes).toEqual({
-      [STARTUP_THEME_ATTRIBUTE]: "light",
+      [PALETTE_ATTRIBUTE]: "slate-blue",
+      [COLOR_SCHEME_ATTRIBUTE]: "light",
     });
     expect(apply({ prefersLight: () => false, readSetting: () => raw }).attributes).toEqual({
-      [STARTUP_THEME_ATTRIBUTE]: "dark",
+      [PALETTE_ATTRIBUTE]: "slate-blue",
+      [COLOR_SCHEME_ATTRIBUTE]: "dark",
     });
   });
 
-  it("falls closed to dark when storage throws", () => {
+  it("falls closed to Graphite · Teal dark when storage throws", () => {
     const applied = apply({
       readSetting: () => {
         throw new Error("storage disabled");
       },
     });
 
-    expect(applied.attributes[STARTUP_THEME_ATTRIBUTE]).toBe("dark");
+    expect(applied.attributes).toEqual(DEFAULT_ATTRIBUTES);
+  });
+
+  it("follows the platform scheme for the system default when storage throws", () => {
+    const applied = apply({
+      prefersLight: () => true,
+      readSetting: () => {
+        throw new Error("storage disabled");
+      },
+    });
+
+    expect(applied.attributes).toEqual({
+      [PALETTE_ATTRIBUTE]: "graphite-teal",
+      [COLOR_SCHEME_ATTRIBUTE]: "light",
+    });
   });
 
   it("falls closed to dark when the colour-scheme query throws", () => {
@@ -66,12 +98,12 @@ describe("applyStartupTheme", () => {
       readSetting: () => JSON.stringify({ theme: "system" }),
     });
 
-    expect(applied.attributes[STARTUP_THEME_ATTRIBUTE]).toBe("dark");
+    expect(applied.attributes).toEqual(DEFAULT_ATTRIBUTES);
   });
 
-  it("falls closed to dark when storage returns a non-string", () => {
+  it("falls closed when storage returns a non-string", () => {
     const applied = apply({ readSetting: () => ({}) as unknown as string });
 
-    expect(applied.attributes[STARTUP_THEME_ATTRIBUTE]).toBe("dark");
+    expect(applied.attributes).toEqual(DEFAULT_ATTRIBUTES);
   });
 });

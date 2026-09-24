@@ -1,8 +1,4 @@
 import { useCallback, useState, type CSSProperties, type ReactNode, type Ref } from "react";
-import {
-  DEFAULT_AGENT_APPEARANCE_VARIANT,
-  type AgentAppearanceVariant,
-} from "../domain/agentSettings";
 import { WorkbenchFrameBootContext, useWorkbenchFrameBooted } from "./workbenchFrameBootContext";
 import { WorkbenchFramePortalContext } from "./workbenchFramePortal";
 import { WorkbenchFrameTreeContext } from "./workbenchFrameTreeReport";
@@ -33,7 +29,6 @@ export type WorkbenchShellSurface = "workbench" | "settings";
 
 export interface WorkbenchShellFrameProps {
   readonly placement: WorkbenchShellPlacement;
-  readonly agentVariant?: AgentAppearanceVariant;
   readonly chrome: ReactNode;
   readonly agent: ReactNode;
   readonly editor: ReactNode;
@@ -45,7 +40,6 @@ export interface WorkbenchShellFrameProps {
 
 export function WorkbenchShellFrame({
   agent,
-  agentVariant = DEFAULT_AGENT_APPEARANCE_VARIANT,
   bottom,
   chrome,
   editor,
@@ -93,7 +87,6 @@ export function WorkbenchShellFrame({
       <div
         className="workbench-frame"
         style={{ "--agent-bottom-panel-limit": `${frameHeight * 0.75}px` } as CSSProperties}
-        data-agent-variant={agentVariant}
         data-editor={editorState}
         data-layout={responsivePlacement.layout}
         data-rail={responsivePlacement.rail}

@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AGENT_APPEARANCE_VARIANTS,
+  COLOR_SCHEME_LABELS,
+  COLOR_SCHEME_PREFERENCES,
+  SYNTAX_THEME_IDS,
+  SYNTAX_THEME_LABELS,
+  isColorSchemePreference,
+  isSyntaxThemeId,
+  resolveColorScheme,
+  type AppearanceSettings,
+} from "../../../domain/appearance";
+import {
   MAX_AGENT_THREAD_FONT_SIZE,
   MIN_AGENT_THREAD_FONT_SIZE,
   normalizeAgentThreadFontSize,
-  type AgentAppearanceVariant,
 } from "../../../domain/agentSettings";
 import {
-  appThemeOptions,
   maxEditorFontSize,
   minEditorFontSize,
   normalizeEditorFontFamily,
   normalizeEditorFontSize,
-  type AppTheme,
 } from "../../../domain/settings";
 import type { SystemFontGateway } from "../../../domain/systemFonts";
 import { SettingsButton } from "../primitives/SettingsButton";
@@ -23,57 +29,64 @@ import { SettingsSegmented } from "../primitives/SettingsSegmented";
 import { SettingsSelect } from "../primitives/SettingsSelect";
 import { SettingsSwitch } from "../primitives/SettingsSwitch";
 import { uniqueSortedStrings } from "../../settingsDialogValues";
+import { usePrefersLightTheme } from "../../../application/usePrefersLightTheme";
 import type { SettingsPageProps } from "../settingsPageProps";
-import { ThemeSwatches } from "./ThemeSwatches";
+import { AppearancePaletteSwatches } from "./AppearancePaletteSwatches";
 
-const AGENT_APPEARANCE_LABELS: Readonly<Record<AgentAppearanceVariant, string>> = {
-  current: "Current",
-  graphite: "Graphite",
-  paper: "Paper",
-  studio: "Studio",
-};
-
-const AGENT_APPEARANCE_OPTIONS = AGENT_APPEARANCE_VARIANTS.map((variant) => ({
-  value: variant,
-  label: AGENT_APPEARANCE_LABELS[variant],
+const COLOR_SCHEME_OPTIONS = COLOR_SCHEME_PREFERENCES.map((value) => ({
+  value,
+  label: COLOR_SCHEME_LABELS[value],
 }));
 
-const THEME_OPTIONS = appThemeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
+const SYNTAX_THEME_OPTIONS = SYNTAX_THEME_IDS.map((value) => ({
+  value,
+  label: SYNTAX_THEME_LABELS[value],
+}));
 
 export function AppearanceSettingsPage({ actions, draft, env }: SettingsPageProps) {
   const appSettings = draft.appSettings;
   const fonts = useMonospaceFontFamilies(env.systemFontGateway, appSettings.editorFontFamily);
-  const changeTheme = (theme: AppTheme): void =>
-    actions.updateAppSettings({ ...appSettings, theme });
+  const prefersLight = usePrefersLightTheme();
+  const previewScheme = resolveColorScheme(appSettings.appearance.colorScheme, prefersLight);
+  const updateAppearance = (patch: Partial<AppearanceSettings>): void =>
+    actions.updateAppSettings({
+      ...appSettings,
+      appearance: { ...appSettings.appearance, ...patch },
+    });
 
   return (
     <>
       <SettingsSectionHeading title="Appearance">
-        <SettingsRow layout="stacked" rowId="appearance.theme">
-          <div className="settings-theme">
-            <SettingsSelect
-              onChange={(value) => {
-                if (!isAppTheme(value)) return;
-
-                changeTheme(value);
-              }}
-              options={THEME_OPTIONS}
-              value={appSettings.theme}
-              width="md"
-            />
-            <ThemeSwatches onChange={changeTheme} value={appSettings.theme} />
-          </div>
+        <SettingsRow layout="stacked" rowId="appearance.palette">
+          <AppearancePaletteSwatches
+            onChange={(palette) => updateAppearance({ palette })}
+            scheme={previewScheme}
+            value={appSettings.appearance.palette}
+          />
         </SettingsRow>
 
-        <SettingsRow rowId="appearance.agentAppearance">
+        <SettingsRow rowId="appearance.colorScheme">
           <SettingsSegmented
             onChange={(value) => {
-              if (!isAgentAppearanceVariant(value)) return;
+              if (!isColorSchemePreference(value)) return;
 
-              actions.updateAppSettings({ ...appSettings, agentAppearanceVariant: value });
+              updateAppearance({ colorScheme: value });
             }}
-            options={AGENT_APPEARANCE_OPTIONS}
-            value={appSettings.agentAppearanceVariant}
+            options={COLOR_SCHEME_OPTIONS}
+            value={appSettings.appearance.colorScheme}
+          />
+        </SettingsRow>
+
+        <SettingsRow rowId="appearance.syntaxTheme">
+          <SettingsSelect
+            onChange={(value) => {
+              if (!isSyntaxThemeId(value)) return;
+
+              updateAppearance({ syntaxTheme: value });
+            }}
+            options={SYNTAX_THEME_OPTIONS}
+            value={appSettings.appearance.syntaxTheme}
+            width="md"
           />
         </SettingsRow>
 
@@ -197,12 +210,4 @@ function useMonospaceFontFamilies(
   }, [load]);
 
   return { options, refresh: () => void load() };
-}
-
-function isAppTheme(value: string): value is AppTheme {
-  return appThemeOptions.some((theme) => theme.id === value);
-}
-
-function isAgentAppearanceVariant(value: string): value is AgentAppearanceVariant {
-  return AGENT_APPEARANCE_VARIANTS.some((variant) => variant === value);
 }

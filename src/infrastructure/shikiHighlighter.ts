@@ -7,6 +7,7 @@ import {
   materialDeepOcean,
   type ThemePalette,
 } from "../components/themePalettes";
+import { PALETTE_SYNTAX_THEMES } from "./paletteSyntaxThemes";
 
 export interface ShikiThemeRegistration {
   name: string;
@@ -331,6 +332,7 @@ export const APP_SHIKI_THEMES = [
   "dark-plus",
   "ayu-mirage",
   ...customPalettes.map((palette) => palette.name),
+  ...PALETTE_SYNTAX_THEMES.map((palette) => palette.name),
 ] as const;
 
 const MONACO_FALLBACK_SHIKI_THEMES: ShikiThemeRegistration[] = [
@@ -393,6 +395,7 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       import("shiki/themes/ayu-mirage.mjs"),
       materialDeepOceanTheme(),
       ...customPalettes.map((palette) => buildShikiTheme(palette)),
+      ...PALETTE_SYNTAX_THEMES.map((palette) => buildShikiTheme(palette)),
       ...MONACO_FALLBACK_SHIKI_THEMES,
     ],
     langs: [
@@ -678,6 +681,7 @@ const LIGHT_APP_THEMES = new Set([
   "calm-light",
   "one-light",
   "catppuccin-latte",
+  ...PALETTE_SYNTAX_THEMES.filter((palette) => palette.base === "vs").map((palette) => palette.name),
 ]);
 
 interface MonacoThemeHost {

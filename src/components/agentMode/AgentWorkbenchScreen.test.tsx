@@ -39,9 +39,9 @@ import {
 import {
   defaultAppSettings,
   normalizeWorkspaceSettings,
-  terminalThemeForAppTheme,
   WORKSPACE_SESSION_VERSION,
 } from "../../domain/settings";
+import { classicTerminalTheme } from "../../domain/editorColorThemes";
 import type {
   RevealPathGateway,
   RevealPathRequest,
@@ -1061,7 +1061,7 @@ function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScre
       subscribeOutput: async () => () => undefined,
       writeInput: async () => undefined,
     },
-    terminalTheme: terminalThemeForAppTheme("dark"),
+    terminalTheme: classicTerminalTheme("classicDark"),
     workbench,
   };
 }

@@ -3,7 +3,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { terminalThemeForAppTheme, type TerminalTheme } from "../domain/settings";
+import type { TerminalTheme } from "../domain/settings";
+import { classicTerminalTheme } from "../domain/editorColorThemes";
 import type { TerminalGateway } from "../domain/terminal";
 import { TERMINAL_SCROLLBACK_LINES, TerminalPanel } from "./TerminalPanel";
 
@@ -160,7 +161,7 @@ describe("TerminalPanel", () => {
           rootPath="/workspace"
           shellIntegrationEnabled={false}
           terminalGateway={terminalGateway()}
-          terminalTheme={terminalThemeForAppTheme("dark")}
+          terminalTheme={classicTerminalTheme("classicDark")}
         />,
       );
     });
@@ -170,8 +171,8 @@ describe("TerminalPanel", () => {
 
   it("updates the xterm theme without restarting the terminal session", () => {
     const gateway = terminalGateway();
-    const darkTheme = terminalThemeForAppTheme("dark");
-    const lightTheme = terminalThemeForAppTheme("light");
+    const darkTheme = classicTerminalTheme("classicDark");
+    const lightTheme = classicTerminalTheme("classicLight");
 
     act(() => {
       root.render(
@@ -227,7 +228,7 @@ describe("TerminalPanel", () => {
       rootPath: "/workspace",
       shellIntegrationEnabled: false,
       terminalGateway: terminalGateway(),
-      terminalTheme: terminalThemeForAppTheme("dark"),
+      terminalTheme: classicTerminalTheme("classicDark"),
     };
     act(() => root.render(<TerminalPanel {...props} />));
     expect(host.querySelector<HTMLElement>(".terminal-panel")?.hidden).toBe(false);
@@ -248,7 +249,7 @@ describe("TerminalPanel", () => {
       rootPath: "/workspace",
       shellIntegrationEnabled: false,
       terminalGateway: terminalGateway(),
-      terminalTheme: terminalThemeForAppTheme("dark"),
+      terminalTheme: classicTerminalTheme("classicDark"),
     };
     act(() => root.render(<TerminalPanel {...props} />));
     const session = terminalPanelMocks.sessions[0];
@@ -275,7 +276,7 @@ describe("TerminalPanel", () => {
           rootPath="/workspace"
           shellIntegrationEnabled={false}
           terminalGateway={gateway}
-          terminalTheme={terminalThemeForAppTheme("dark")}
+          terminalTheme={classicTerminalTheme("classicDark")}
         />,
       ),
     );
@@ -293,7 +294,7 @@ describe("TerminalPanel", () => {
     const start = vi.fn(async () => ({ kind: "starting" as const, sessionId: 71 }));
     const settle = vi.fn(async () => undefined);
     const gateway = terminalGateway();
-    const theme = terminalThemeForAppTheme("dark");
+    const theme = classicTerminalTheme("classicDark");
 
     act(() => {
       root.render(
@@ -371,7 +372,7 @@ describe("TerminalPanel", () => {
           rootPath="/workspace/project"
           shellIntegrationEnabled={false}
           terminalGateway={terminalGateway()}
-          terminalTheme={terminalThemeForAppTheme("dark")}
+          terminalTheme={classicTerminalTheme("classicDark")}
         />,
       );
     });
@@ -393,7 +394,7 @@ describe("TerminalPanel", () => {
   it("drops activations from a session mounted for a stale workspace", () => {
     const onOpenLink = vi.fn(async () => undefined);
     const gateway = terminalGateway();
-    const theme = terminalThemeForAppTheme("dark");
+    const theme = classicTerminalTheme("classicDark");
 
     act(() => {
       root.render(
@@ -437,7 +438,7 @@ describe("TerminalPanel", () => {
     const onOpenLink = vi.fn();
     const onSessionReady = vi.fn();
     const gateway = terminalGateway();
-    const theme = terminalThemeForAppTheme("dark");
+    const theme = classicTerminalTheme("classicDark");
     const render = (profileId: string) => {
       act(() => {
         root.render(
@@ -485,7 +486,7 @@ describe("TerminalPanel", () => {
           rootPath="/workspace"
           shellIntegrationEnabled
           terminalGateway={terminalGateway()}
-          terminalTheme={terminalThemeForAppTheme("dark")}
+          terminalTheme={classicTerminalTheme("classicDark")}
         />,
       );
     });

@@ -634,8 +634,8 @@ function App() {
       workbench.workspaceRoot,
     ],
   );
-  const { monacoTheme, terminalTheme } = useAppWorkbenchThemes(
-    workbench.appSettings.theme,
+  const { colorScheme, monacoTheme, terminalTheme } = useAppWorkbenchThemes(
+    workbench.appSettings.appearance,
     prefersLightTheme,
   );
   const agentLayout = workbench.agentWorkbench;
@@ -1037,7 +1037,7 @@ function App() {
   return (
     <main
       className={appShellClassName(workbench.agentModeActive, workbench.settingsOpen)}
-      data-theme={workbench.appSettings.theme}
+      data-theme={colorScheme}
       style={appShellStyle}
     >
       <WindowChrome
@@ -1062,7 +1062,6 @@ function App() {
       />
 
       <WorkbenchShellFrame
-        agentVariant={workbench.appSettings.agentAppearanceVariant}
         agent={
           <LazyAgentWorkbenchHost
             active={workbench.agentModeActive}

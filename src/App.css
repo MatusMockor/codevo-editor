@@ -1,5 +1,5 @@
+@import "./ui/tokens/tokens.css";
 @import "./components/agentMode/agentModeTokens.css";
-@import "./components/agentMode/agentModeVariants.css";
 @import "./components/agentMode/agentMode.css";
 @import "./components/agentMode/agentRail.css";
 @import "./components/agentMode/agentThread.css";

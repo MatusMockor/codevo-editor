@@ -1,0 +1,232 @@
+.cv-tabs {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cv-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.cv-tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  max-width: 144px;
+  height: 28px;
+  padding: 0 10px 0 4px;
+  border-radius: var(--cv-r-control);
+  color: var(--cv-fg-subtle);
+  font: var(--cv-t-xs) / 1 var(--cv-font-ui);
+  cursor: pointer;
+}
+
+.cv-tab:hover {
+  background: var(--cv-tint-1);
+  color: var(--cv-fg-strong);
+}
+
+.cv-tab[aria-selected="true"] {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+  font-weight: 500;
+}
+
+.cv-tab:focus-visible,
+.cv-tree-row:focus-visible {
+  outline: 2px solid var(--cv-focus);
+  outline-offset: -2px;
+}
+
+.cv-tab__icon {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--cv-r-sm);
+}
+
+.cv-tab__glyph {
+  display: grid;
+  place-items: center;
+}
+
+.cv-tab__close {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cv-tab--closable:hover .cv-tab__glyph,
+.cv-tab--closable:focus-within .cv-tab__glyph {
+  visibility: hidden;
+}
+
+.cv-tab--closable:hover .cv-tab__close,
+.cv-tab--closable:focus-within .cv-tab__close {
+  display: grid;
+}
+
+.cv-tab__close:hover {
+  background: var(--cv-tint-2);
+}
+
+.cv-tab__dirty {
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: var(--cv-ring-canvas);
+}
+
+.cv-tab__live {
+  position: absolute;
+  right: 2px;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cv-ok);
+}
+
+.cv-tab:hover .cv-tab__dirty,
+.cv-tab:hover .cv-tab__live {
+  display: none;
+}
+
+.cv-tab__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-tab--preview .cv-tab__title {
+  font-style: italic;
+}
+
+.cv-tree-row {
+  --cv-tree-depth: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px 0 calc(6px + var(--cv-tree-depth) * 12px);
+  border-radius: var(--cv-r-sm);
+  color: var(--cv-fg);
+  font: var(--cv-t-xs) / 1 var(--cv-font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cv-tree-row:hover {
+  background: var(--cv-tint-1);
+  color: var(--cv-fg-strong);
+}
+
+.cv-tree-row[aria-selected="true"],
+.cv-tree-row[aria-current="true"] {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.cv-tree-row__chevron {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  color: var(--cv-fg-subtle);
+  transition: transform var(--cv-motion-base);
+}
+
+.cv-tree-row[aria-expanded="true"] .cv-tree-row__chevron {
+  transform: rotate(90deg);
+}
+
+.cv-tree-row__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  color: var(--cv-fg-subtle);
+}
+
+.cv-tree-row__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-tree-row__description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cv-fg-subtle);
+  text-overflow: ellipsis;
+}
+
+.cv-tree-row__trailing {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.cv-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cv-resize--start {
+  left: -3px;
+}
+
+.cv-resize--end {
+  right: -3px;
+}
+
+.cv-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background-color var(--cv-motion-base);
+}
+
+.cv-resize:hover::after,
+.cv-resize:focus-visible::after,
+.cv-resize--active::after {
+  background: var(--cv-accent);
+}
+
+.cv-resize:focus-visible {
+  outline: none;
+}

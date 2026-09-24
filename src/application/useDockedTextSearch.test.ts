@@ -8,7 +8,7 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import type { GitHistoryGateway } from "../domain/git";
 import { initialIndexProgress } from "../domain/indexProgress";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
-import { terminalThemeForAppTheme } from "../domain/settings";
+import { classicTerminalTheme } from "../domain/editorColorThemes";
 import type { TerminalGateway } from "../domain/terminal";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { useDockedTextSearchOpen } from "./useDockedTextSearch";
@@ -248,7 +248,7 @@ function DockedTextSearchHarness({
             : null,
           terminalGateway: terminalGateway(),
           terminalShellIntegrationEnabled: false,
-          terminalTheme: terminalThemeForAppTheme("dark"),
+          terminalTheme: classicTerminalTheme("classicDark"),
           workspaceRoot: workspaceKey,
           workspaceTrusted: true,
         })

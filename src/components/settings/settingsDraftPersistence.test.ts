@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_APPEARANCE } from "../../domain/appearance";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../../domain/settings";
 import type { AppSettings, WorkspaceSettings } from "../../domain/settings";
 import { settingsDraftPersistence } from "./settingsDraftPersistence";
@@ -8,13 +9,18 @@ describe("settingsDraftPersistence", () => {
   it("publishes and saves every draft change", () => {
     const harness = draftHarness(true);
 
-    harness.actions.updateAppSettings({ ...defaultAppSettings(), theme: "light" });
+    harness.actions.updateAppSettings({
+      ...defaultAppSettings(),
+      appearance: { ...DEFAULT_APPEARANCE, colorScheme: "light" },
+    });
     harness.actions.updateWorkspaceSettings({ ...defaultWorkspaceSettings(), autoSave: true });
     harness.actions.updateTrusted(true);
 
-    expect(harness.published.appSettings.map((settings) => settings.theme)).toEqual(["light"]);
+    expect(
+      harness.published.appSettings.map((settings) => settings.appearance.colorScheme),
+    ).toEqual(["light"]);
     expect(harness.saved).toHaveLength(3);
-    expect(harness.saved[0]?.appSettings.theme).toBe("light");
+    expect(harness.saved[0]?.appSettings.appearance.colorScheme).toBe("light");
     expect(harness.saved[1]?.workspaceSettings.autoSave).toBe(true);
     expect(harness.saved[2]?.trusted).toBe(true);
   });

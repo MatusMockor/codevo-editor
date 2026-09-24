@@ -188,6 +188,21 @@ export const SHADOW_TOKEN_ROOTS = [
   "--codevo-shadow-window",
   "--codevo-focus-ring",
   "--codevo-separator-inset",
+  "--cv-ring-hair",
+  "--cv-ring-hair-strong",
+  "--cv-ring-focus",
+  "--cv-ring-danger",
+  "--cv-ring-canvas",
+  "--cv-edge-top",
+  "--cv-edge-top-hair",
+  "--cv-edge-bottom-hair",
+  "--cv-lift",
+  "--cv-fill-edge",
+  "--cv-switch-edge",
+  "--cv-shadow-knob",
+  "--cv-shadow-pop",
+  "--cv-shadow-dialog",
+  "--cv-shadow-toast",
 ] as const;
 
 const BORDER_PROPERTY =

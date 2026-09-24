@@ -14,7 +14,6 @@ import {
   agentCliPathValidation,
   defaultAgentAppSettings,
   defaultAgentCliDiscoveryResult,
-  normalizeAgentAppearanceVariant,
   normalizeAgentCliKind,
   normalizeAgentCliPaths,
   normalizeAgentCliPath,
@@ -33,7 +32,6 @@ describe("defaultAgentAppSettings", () => {
     expect(defaultAgentAppSettings()).toEqual({
       agentCliPaths: { claudeCode: null, codex: null },
       agentCliKind: "claudeCode",
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -250,13 +248,6 @@ describe("agent CLI executable presentation", () => {
 });
 
 describe("agent preferences", () => {
-  it("normalizes the closed appearance variants", () => {
-    expect(normalizeAgentAppearanceVariant("graphite")).toBe("graphite");
-    expect(normalizeAgentAppearanceVariant("paper")).toBe("paper");
-    expect(normalizeAgentAppearanceVariant("studio")).toBe("studio");
-    expect(normalizeAgentAppearanceVariant("signal")).toBe("current");
-  });
-
   it("keeps only a bounded, unique, closed favorite model list", () => {
     expect(normalizeAgentModelFavoriteKeys(["claudeCode/opus", "codex/gpt-5.5"])).toEqual([
       "claudeCode/opus",

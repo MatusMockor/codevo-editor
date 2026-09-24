@@ -9,11 +9,11 @@ import type {
   RemoteRunnerSurfacesGateway,
   RemoteSurfaceScope,
 } from "../../domain/remoteRunnerSurfaces";
-import { terminalThemeForAppTheme, type TerminalTheme } from "../../domain/settings";
+import { classicTerminalTheme, type TerminalTheme } from "../../domain/editorColorThemes";
 import "@xterm/xterm/css/xterm.css";
 import "./remoteTerminalPanel.css";
 
-const DEFAULT_THEME = terminalThemeForAppTheme("dark");
+const DEFAULT_THEME = classicTerminalTheme("classicDark");
 
 interface Props {
   readonly scope: RemoteSurfaceScope;

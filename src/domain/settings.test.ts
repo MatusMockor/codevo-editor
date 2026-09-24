@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  appThemeOptions,
   defaultAppSettings,
   defaultEditorFontSize,
   defaultWorkspaceSessionState,
@@ -8,7 +7,6 @@ import {
   MAX_RECENT_WORKSPACE_PATHS,
   maxEditorFontSize,
   minEditorFontSize,
-  monacoThemeForAppTheme,
   monacoFontLigaturesForEditorSetting,
   normalizeAppSettings,
   normalizeEditorFontSize,
@@ -16,12 +14,11 @@ import {
   normalizeWorkspaceSession,
   normalizeWorkspaceSettings,
   pushRecentWorkspacePath,
-  resolveAppTheme,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
-  terminalThemeForAppTheme,
   WORKSPACE_SESSION_VERSION,
 } from "./settings";
+import { DEFAULT_APPEARANCE } from "./appearance";
 import { initialAgentWorkbenchLayout, serializeAgentWorkbenchLayout } from "./agentWorkbenchLayout";
 import {
   DEFAULT_AGENT_THREAD_FONT_SIZE,
@@ -44,7 +41,6 @@ describe("settings defaults", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -60,7 +56,7 @@ describe("settings defaults", () => {
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "dark",
+      appearance: DEFAULT_APPEARANCE,
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
@@ -301,7 +297,6 @@ describe("normalizeAppSettings", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -317,7 +312,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "dark",
+      appearance: DEFAULT_APPEARANCE,
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: ["/project"],
@@ -339,7 +334,6 @@ describe("normalizeAppSettings", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -358,7 +352,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePaths: [],
       runtimePolicy: "suspendOnBackground",
       terminalShellIntegrationEnabled: false,
-      theme: "light",
+      appearance: { palette: "graphite-teal", colorScheme: "light", syntaxTheme: "matchPalette" },
       wordWrapEnabled: true,
       userSnippets: [],
       workspaceTabs: ["/project-a", "/project-b"],
@@ -372,7 +366,6 @@ describe("normalizeAppSettings", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -388,11 +381,27 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "ayuMirage",
+      appearance: { palette: "graphite-teal", colorScheme: "dark", syntaxTheme: "ayuMirage" },
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
     });
+  });
+
+  it("normalizes a persisted appearance and drops the retired fields", () => {
+    const settings = normalizeAppSettings({
+      agentAppearanceVariant: "paper",
+      appearance: { palette: "black-violet", colorScheme: "system", syntaxTheme: "oneLight" },
+      theme: "dracula",
+    });
+
+    expect(settings.appearance).toEqual({
+      palette: "black-violet",
+      colorScheme: "system",
+      syntaxTheme: "oneLight",
+    });
+    expect(settings).not.toHaveProperty("agentAppearanceVariant");
+    expect(settings).not.toHaveProperty("theme");
   });
 
   it("clamps and falls back persisted editor font size", () => {
@@ -435,7 +444,6 @@ describe("normalizeAppSettings", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -451,7 +459,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "dark",
+      appearance: DEFAULT_APPEARANCE,
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
@@ -494,7 +502,6 @@ describe("normalizeAppSettings", () => {
       appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
-      agentAppearanceVariant: "current",
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
       agentModelFavoriteKeys: [],
@@ -510,7 +517,7 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePaths: ["/project/api"],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
-      theme: "dark",
+      appearance: DEFAULT_APPEARANCE,
       wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: ["/project/api/", "/project/web"],
@@ -1573,60 +1580,5 @@ describe("normalizeEditorFontSize", () => {
     expect(normalizeEditorFontSize(null)).toBe(defaultEditorFontSize);
     expect(normalizeEditorFontSize(Number.NaN)).toBe(defaultEditorFontSize);
     expect(normalizeEditorFontSize(Number.POSITIVE_INFINITY)).toBe(defaultEditorFontSize);
-  });
-});
-
-describe("monacoThemeForAppTheme", () => {
-  it("maps light theme to Monaco light and keeps dark themes dark", () => {
-    expect(monacoThemeForAppTheme("light")).toBe("calm-light");
-    expect(monacoThemeForAppTheme("dark")).toBe("calm-dark");
-    expect(monacoThemeForAppTheme("system")).toBe("calm-dark");
-    expect(monacoThemeForAppTheme("system", true)).toBe("calm-light");
-    expect(monacoThemeForAppTheme("ayuMirage")).toBe("ayu-mirage");
-    expect(monacoThemeForAppTheme("materialDeepOcean")).toBe("material-deep-ocean");
-    expect(monacoThemeForAppTheme("oneDarkPro")).toBe("one-dark-pro");
-    expect(monacoThemeForAppTheme("dracula")).toBe("dracula");
-    expect(monacoThemeForAppTheme("catppuccinMocha")).toBe("catppuccin-mocha");
-    expect(monacoThemeForAppTheme("catppuccinLatte")).toBe("catppuccin-latte");
-    expect(monacoThemeForAppTheme("oneLight")).toBe("one-light");
-    expect(monacoThemeForAppTheme("darkPlus")).toBe("dark-plus");
-  });
-});
-
-describe("appThemeOptions", () => {
-  it("offers the VS Code Dark Plus theme", () => {
-    const option = appThemeOptions.find((entry) => entry.id === "darkPlus");
-    expect(option).toEqual({ id: "darkPlus", label: "Dark Plus (VS Code)" });
-  });
-
-  it("offers the Ayu Mirage theme", () => {
-    const option = appThemeOptions.find((entry) => entry.id === "ayuMirage");
-    expect(option).toEqual({ id: "ayuMirage", label: "Ayu Mirage" });
-  });
-
-  it("maps Ayu Mirage to the bundled official Shiki theme", () => {
-    expect(monacoThemeForAppTheme("ayuMirage")).toBe("ayu-mirage");
-  });
-});
-
-describe("resolveAppTheme", () => {
-  it("resolves system from the current platform preference", () => {
-    expect(resolveAppTheme("light", false)).toBe("light");
-    expect(resolveAppTheme("dark", true)).toBe("dark");
-    expect(resolveAppTheme("system", true)).toBe("light");
-    expect(resolveAppTheme("system", false)).toBe("dark");
-  });
-});
-
-describe("terminalThemeForAppTheme", () => {
-  it("maps app themes to terminal palettes", () => {
-    expect(terminalThemeForAppTheme("dark").background).toBe("#111418");
-    expect(terminalThemeForAppTheme("light").background).toBe("#f4f6f8");
-    expect(terminalThemeForAppTheme("ayuMirage").background).toBe("#1f2430");
-    expect(terminalThemeForAppTheme("materialDeepOcean").background).toBe("#0f111a");
-    expect(terminalThemeForAppTheme("system", true).foreground).toBe("#263240");
-    expect(terminalThemeForAppTheme("system", false).foreground).toBe("#d8dee9");
-    expect(terminalThemeForAppTheme("darkPlus").background).toBe("#1e1e1e");
-    expect(terminalThemeForAppTheme("darkPlus").foreground).toBe("#cccccc");
   });
 });

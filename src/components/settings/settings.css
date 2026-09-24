@@ -498,13 +498,6 @@ code.settings-readout,
   white-space: nowrap;
 }
 
-.settings-theme {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
 .settings-fontfamily {
   display: inline-flex;
   min-width: 0;

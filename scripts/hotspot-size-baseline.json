@@ -53,7 +53,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1454, "structuralTokens": 7199 },
+    "src/App.tsx": { "rawLines": 1453, "structuralTokens": 7188 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300
@@ -64,7 +64,7 @@
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 2848,
-      "structuralTokens": 9875
+      "structuralTokens": 9874
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2499,

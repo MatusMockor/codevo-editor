@@ -11,6 +11,9 @@ import {
   setupShikiTokenization,
 } from "./shikiHighlighter";
 import { calmDark } from "../components/themePalettes";
+import { textmateThemeToMonacoTheme } from "@shikijs/monaco";
+import { contrastRatio } from "../domain/themeContrast";
+import { PALETTE_SYNTAX_THEMES } from "./paletteSyntaxThemes";
 
 /**
  * Minimal fake of the subset of the Monaco standalone API that
@@ -238,6 +241,19 @@ describe("applyImmediateFallbackTheme", () => {
       expect(setTheme).toHaveBeenCalledWith("vs");
     }
   });
+
+  it("follows the darkness of every palette theme", () => {
+    for (const [theme, fallback] of [
+      ["cv-graphite-teal-dark", "vs-dark"],
+      ["cv-slate-blue-light", "vs"],
+      ["cv-carbon-lime-light", "vs"],
+      ["cv-zinc-orange-dark", "vs-dark"],
+    ] as const) {
+      const setTheme = vi.fn();
+      applyImmediateFallbackTheme({ editor: { setTheme } }, theme);
+      expect(setTheme).toHaveBeenCalledWith(fallback);
+    }
+  });
 });
 
 describe("APP_SHIKI_THEMES", () => {
@@ -247,6 +263,12 @@ describe("APP_SHIKI_THEMES", () => {
 
   it("includes the bundled official Ayu Mirage theme", () => {
     expect(APP_SHIKI_THEMES).toContain("ayu-mirage");
+  });
+
+  it("includes a Match palette theme for every palette and scheme", () => {
+    expect(APP_SHIKI_THEMES).toContain("cv-graphite-teal-dark");
+    expect(APP_SHIKI_THEMES).toContain("cv-carbon-lime-light");
+    expect(APP_SHIKI_THEMES.filter((theme) => theme.startsWith("cv-"))).toHaveLength(12);
   });
 });
 
@@ -258,6 +280,35 @@ describe("createAppHighlighter", () => {
     }
     for (const lang of SHIKI_LANGS) {
       expect(highlighter.getLoadedLanguages()).toContain(lang);
+    }
+  });
+
+  it("paints every Match palette theme with readable Monaco colours and tokens", async () => {
+    const highlighter = await createAppHighlighter();
+    const grammar = highlighter.getLanguage("typescript");
+    for (const palette of PALETTE_SYNTAX_THEMES) {
+      const { colorMap } = highlighter.setTheme(palette.name);
+      const monacoTheme = textmateThemeToMonacoTheme(highlighter.getTheme(palette.name)) as {
+        base: string;
+        colors: Record<string, string>;
+        rules: Array<{ foreground?: string }>;
+      };
+      const background = monacoTheme.colors["editor.background"] ?? "";
+      expect(monacoTheme.base, palette.name).toBe(palette.base);
+      expect(background, palette.name).toMatch(/^#[0-9a-f]{6}$/);
+      expect(monacoTheme.rules.length, palette.name).toBeGreaterThan(0);
+      const { tokens } = grammar.tokenizeLine2(
+        'export function sum(a: number): string { return `${a}` + "x"; } // total',
+        INITIAL,
+      );
+      for (let index = 1; index < tokens.length; index += 2) {
+        const color = colorMap[EncodedTokenMetadata.getForeground(tokens[index] ?? 0)];
+        expect(color, palette.name).toMatch(/^#[0-9A-F]{6}$/i);
+        expect(
+          contrastRatio(color ?? "", background),
+          `${palette.name} ${color}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
     }
   });
 

@@ -14,6 +14,8 @@ import {
   MAX_AGENT_THREAD_FONT_SIZE,
   MIN_AGENT_THREAD_FONT_SIZE,
 } from "../../../domain/agentSettings";
+import { DEFAULT_APPEARANCE, type ColorSchemePreference } from "../../../domain/appearance";
+import { surfaceColor } from "../../../domain/appearancePalettes";
 import type { SystemFontGateway } from "../../../domain/systemFonts";
 import type {
   SettingsDraftActions,
@@ -37,6 +39,7 @@ describe("AppearanceSettingsPage", () => {
     act(() => root.unmount());
     host.remove();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("loads monospace font families from the system font gateway", async () => {
@@ -45,7 +48,7 @@ describe("AppearanceSettingsPage", () => {
     };
     await render({ systemFontGateway });
 
-    expect(queryIn<HTMLSelectElement>("appearance.theme", "select")).not.toBeNull();
+    expect(queryIn<HTMLSelectElement>("appearance.syntaxTheme", "select")).not.toBeNull();
     expect(systemFontGateway.listMonospaceFontFamilies).toHaveBeenCalled();
     expectFontFamilyOptions(["Fira Code", "Iosevka", defaultAppSettings().editorFontFamily]);
     expect(queryIn<HTMLInputElement>("appearance.editorFontSize", "input").type).toBe("number");
@@ -161,7 +164,7 @@ describe("AppearanceSettingsPage", () => {
     });
   });
 
-  it("persists theme changes while preserving workspace settings and trust", async () => {
+  it("persists syntax theme changes while preserving workspace settings and trust", async () => {
     const workspaceSettings: WorkspaceSettings = {
       ...defaultWorkspaceSettings(),
       defaultTabSize: 2,
@@ -169,72 +172,77 @@ describe("AppearanceSettingsPage", () => {
       statusBar: { ...defaultWorkspaceSettings().statusBar, message: false },
     };
     const onSave = await render({ trusted: false, workspaceSettings });
-    const theme = () => queryIn<HTMLSelectElement>("appearance.theme", "select");
+    const syntax = () => queryIn<HTMLSelectElement>("appearance.syntaxTheme", "select");
+
+    expect(syntax().value).toBe("matchPalette");
 
     act(() => {
-      theme().value = "oneDarkPro";
-      theme().dispatchEvent(new Event("change", { bubbles: true }));
+      syntax().value = "oneDarkPro";
+      syntax().dispatchEvent(new Event("change", { bubbles: true }));
     });
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), theme: "oneDarkPro" },
+      appSettings: {
+        ...defaultAppSettings(),
+        appearance: { ...DEFAULT_APPEARANCE, syntaxTheme: "oneDarkPro" },
+      },
       trusted: false,
       workspaceSettings,
     });
   });
 
-  it("selects a theme from the swatches", async () => {
+  it("selects a palette from the swatches", async () => {
     const onSave = await render({});
     const swatch = [
-      ...rowElement("appearance.theme").querySelectorAll<HTMLButtonElement>('[role="radio"]'),
-    ].find((candidate) => candidate.getAttribute("aria-label") === "Dracula");
+      ...rowElement("appearance.palette").querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    ].find((candidate) => candidate.getAttribute("aria-label") === "Ink · Mint");
 
     expect(swatch).toBeDefined();
     act(() => (swatch as HTMLButtonElement).click());
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), theme: "dracula" },
+      appSettings: {
+        ...defaultAppSettings(),
+        appearance: { ...DEFAULT_APPEARANCE, palette: "ink-mint" },
+      },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
   });
 
-  it("moves the theme swatch selection with the arrow, Home and End keys", async () => {
+  it("moves the palette selection with the arrow, Home and End keys", async () => {
     const onSave = await render({});
     const swatches = () => [
-      ...rowElement("appearance.theme").querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+      ...rowElement("appearance.palette").querySelectorAll<HTMLButtonElement>('[role="radio"]'),
     ];
     const press = (key: string): void => {
       act(() => {
         swatches()[0]?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key }));
       });
     };
-    const savedTheme = (): string => {
+    const savedPalette = (): string => {
       const calls = onSave.mock.calls;
-      const last = calls[calls.length - 1]?.[0] as { appSettings: { theme: string } };
+      const last = calls[calls.length - 1]?.[0] as {
+        appSettings: { appearance: { palette: string } };
+      };
 
-      return last.appSettings.theme;
+      return last.appSettings.appearance.palette;
     };
 
     press("ArrowRight");
-
-    expect(savedTheme()).toBe("light");
+    expect(savedPalette()).toBe("slate-blue");
 
     press("End");
-
-    expect(savedTheme()).toBe("darkPlus");
+    expect(savedPalette()).toBe("carbon-lime");
 
     press("ArrowRight");
-
-    expect(savedTheme()).toBe("dark");
+    expect(savedPalette()).toBe("graphite-teal");
 
     press("ArrowLeft");
-
-    expect(savedTheme()).toBe("darkPlus");
+    expect(savedPalette()).toBe("carbon-lime");
 
     press("Home");
-
-    expect(savedTheme()).toBe("dark");
+    expect(savedPalette()).toBe("graphite-teal");
   });
 
   it("persists the agent thread text size and clamps it to the supported range", async () => {
@@ -263,11 +271,11 @@ describe("AppearanceSettingsPage", () => {
     });
   });
 
-  it("persists the agent appearance variant from the segmented control", async () => {
+  it("persists the colour scheme from the segmented control", async () => {
     const onSave = await render({});
     const option = (label: string): HTMLButtonElement => {
       const match = [
-        ...rowElement("appearance.agentAppearance").querySelectorAll<HTMLButtonElement>(
+        ...rowElement("appearance.colorScheme").querySelectorAll<HTMLButtonElement>(
           '[role="radio"]',
         ),
       ].find((candidate) => candidate.textContent === label);
@@ -276,16 +284,65 @@ describe("AppearanceSettingsPage", () => {
       return match as HTMLButtonElement;
     };
 
-    expect(option("Current").getAttribute("aria-checked")).toBe("true");
+    expect(option("System").getAttribute("aria-checked")).toBe("true");
 
-    act(() => option("Paper").click());
+    act(() => option("Dark").click());
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), agentAppearanceVariant: "paper" },
+      appSettings: {
+        ...defaultAppSettings(),
+        appearance: { ...DEFAULT_APPEARANCE, colorScheme: "dark" },
+      },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
   });
+
+  it.each([
+    { preference: "light", prefersLight: false, resolved: "light" },
+    { preference: "dark", prefersLight: true, resolved: "dark" },
+    { preference: "system", prefersLight: true, resolved: "light" },
+    { preference: "system", prefersLight: false, resolved: "dark" },
+  ] as const)(
+    "previews the palettes in the $resolved scheme for $preference on a light OS: $prefersLight",
+    async ({ preference, prefersLight, resolved }) => {
+      stubSystemScheme(prefersLight);
+      await render({ appSettings: appearanceSettings(preference) });
+
+      expect(firstSwatchBackground()).toBe(
+        cssBackground(surfaceColor("graphite-teal", resolved, "canvas")),
+      );
+    },
+  );
+
+  function appearanceSettings(colorScheme: ColorSchemePreference): AppSettings {
+    return { ...defaultAppSettings(), appearance: { ...DEFAULT_APPEARANCE, colorScheme } };
+  }
+
+  function stubSystemScheme(prefersLight: boolean): void {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        addEventListener: vi.fn(),
+        matches: prefersLight && query === "(prefers-color-scheme: light)",
+        media: query,
+        removeEventListener: vi.fn(),
+      })),
+    );
+  }
+
+  function firstSwatchBackground(): string {
+    return (
+      rowElement("appearance.palette").querySelector<HTMLButtonElement>('[role="radio"]')?.style
+        .background ?? ""
+    );
+  }
+
+  function cssBackground(color: string): string {
+    const probe = document.createElement("span");
+    probe.style.background = color;
+    return probe.style.background;
+  }
 
   interface RenderOptions {
     readonly appSettings?: AppSettings;
