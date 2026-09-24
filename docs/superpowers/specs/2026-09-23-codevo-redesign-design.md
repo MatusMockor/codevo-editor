@@ -98,6 +98,7 @@ Success means:
 | B4 | Diff in the narrow right panel is cramped and clips file names/content | Resolved by the redesigned resizable panel and diff layout (§3.1.8) |
 | B5 | Queued-message edit shows image attachments as icons | Thumbnails as in t3code |
 | B6 | Usage panel sums Codex app-server `contextTokens` (last request total) as input, not a per-turn sum | Per-turn deltas from thread-cumulative totals; no double counting across old and new events |
+| B7 | Long turns show "Earlier activity of this turn is saved but not shown here yet." with no way to see it | A quiet "Load earlier activity" control (t3code "Load earlier turns" pattern) pages older events from the turn log; bounded memory, no scroll jump |
 
 ### 3.3 New features approved in this session
 
@@ -141,8 +142,8 @@ all gates, is verified in a separately built QA app, and is committed to `main`.
 |---|---|---|
 | P0 | Bugs B1, B2, B5, B6 (independent, small) | - |
 | P1 | Tokens, palettes, appearance setting, base components | - |
-| P2 | App shell: window chrome, top bar, sidebar frame, right panel frame | P1 |
-| P3 | Conversation, composer, attachments, states | P2 |
+| P2 | App shell: window chrome, top bar, sidebar frame, right panel frame; P1 carry-overs (hover/active tint contrast, light-palette native window flash, faint light-scheme panel borders) | P1 |
+| P3 | Conversation, composer, attachments, states, B7 | P2 |
 | P4 | Sidebar and thread management, F1, F2, Agents panel, B3 | P2 |
 | P5 | Command palette, F10 | P2 |
 | P6 | Right panel: diff, files, terminal, git, PR, scripts, F9, B4 | P2 |
