@@ -3,6 +3,8 @@ import {
   projectAgentBackgroundState,
   resolveAgentBackgroundActivity,
   type AgentBackgroundActivity,
+  type AgentBackgroundState,
+  type AgentInferredIdleResolution,
 } from "../../domain/agentBackgroundActivity";
 import type { AgentTurnEvent } from "../../domain/agentThread";
 
@@ -18,15 +20,19 @@ export function useAgentBackgroundActivity(
     () => projectAgentBackgroundState(events, processAlive, eventsTruncated),
     [events, processAlive, eventsTruncated],
   );
+  const inferredIdle = useAgentForegroundQuiescence(owner, state);
+  return useMemo(() => resolveAgentBackgroundActivity(state, inferredIdle), [state, inferredIdle]);
+}
+
+export function useAgentForegroundQuiescence(
+  owner: string,
+  state: AgentBackgroundState,
+): AgentInferredIdleResolution {
   const anchor =
     state.foreground.kind === "inferredIdle"
       ? JSON.stringify([owner, state.foreground.anchor])
       : null;
-  const quiescent = useQuiescentAnchor(anchor);
-  return useMemo(
-    () => resolveAgentBackgroundActivity(state, quiescent ? "settled" : "pending"),
-    [state, quiescent],
-  );
+  return useQuiescentAnchor(anchor) ? "settled" : "pending";
 }
 
 function useQuiescentAnchor(anchor: string | null): boolean {

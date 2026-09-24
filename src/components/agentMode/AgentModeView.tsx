@@ -91,6 +91,10 @@ import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
+import {
+  queuedEditImageOwner,
+  useAgentQueuedEditImagePreviews,
+} from "./useAgentQueuedEditImagePreviews";
 import { useAgentShipActions } from "./useAgentShipActions";
 import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
@@ -375,10 +379,15 @@ function LocalAgentModeView({
     );
   }, [projects, selectedServerId, selectedThread]);
   const queuedEdit = useAgentQueuedFollowUpEdit(agents, selectedThreadId);
+  const previewedQueuedEdit = useAgentQueuedEditImagePreviews(
+    queuedEdit.edit,
+    agents.attachmentImages,
+    queuedEditImageOwner(selectedThread),
+  );
   const composer = useAgentComposerControllerState({
     agents,
     groups: executionGroups,
-    queuedEdit: queuedEdit.edit,
+    queuedEdit: previewedQueuedEdit,
     projects: composerProjects,
     providerEnabled: effectiveProviderEnabled,
     railScope: composerScope,

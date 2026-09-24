@@ -5,9 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentThread } from "../../domain/agentThread";
+import type { AgentTurnEvent } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { AgentClockProvider } from "./agentClock";
 import { AgentThreadRow } from "./AgentThreadRow";
+import { AGENT_FOREGROUND_QUIESCENCE_MS } from "./useAgentBackgroundActivity";
 
 const ROOT = "/workspace/app";
 const NOW = 1_700_000_600_000;
@@ -169,6 +171,72 @@ describe("AgentThreadRow", () => {
     const line3 = host.querySelector<HTMLElement>(".agent-row__line3");
     expect(line3?.firstElementChild?.classList.contains("agent-row__branch")).toBe(true);
     expect(line3?.querySelector('[aria-label="Claude Code"]')).not.toBeNull();
+  });
+
+  const spawn: AgentTurnEvent = {
+    kind: "backgroundTask",
+    taskId: "agent-1",
+    taskType: "agent",
+    status: "starting",
+  };
+  const answer: AgentTurnEvent = {
+    kind: "assistantText",
+    text: "The reviewer runs in the background.",
+  };
+  const runningWith = (
+    events: ReadonlyArray<AgentTurnEvent>,
+    turnId = "agt-1-t1",
+    provider: AgentThread["provider"]["kind"] = "claudeCode",
+  ): AgentThreadView => {
+    const base = pinnedDone();
+    const turn = base.thread.turns[0]!;
+    return {
+      ...base,
+      thread: {
+        ...base.thread,
+        provider: { kind: provider, sessionId: null },
+        turns: [
+          {
+            ...turn,
+            turnId,
+            status: { kind: "running" },
+            endedAtEpochMs: null,
+            events: [...events],
+          },
+        ],
+      },
+    };
+  };
+  const statusLabel = (): string | null | undefined =>
+    host.querySelector(".agent-row__status-label")?.textContent;
+
+  it("shows background work only after the shared quiescence window", () => {
+    render(runningWith([spawn, answer]));
+    expect(statusLabel()).toBe("Working");
+    act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS - 1));
+    expect(statusLabel()).toBe("Working");
+    act(() => vi.advanceTimersByTime(1));
+    expect(statusLabel()).toBe("Working in background");
+    render(runningWith([spawn, answer, { kind: "assistantText", text: "Still checking." }]));
+    expect(statusLabel()).toBe("Working");
+    act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS));
+    expect(statusLabel()).toBe("Working in background");
+  });
+
+  it("restarts the quiescence window when a new turn produces the same anchor", () => {
+    render(runningWith([spawn, answer]));
+    act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS));
+    expect(statusLabel()).toBe("Working in background");
+    render(runningWith([spawn, answer], "agt-1-t2"));
+    expect(statusLabel()).toBe("Working");
+    act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS));
+    expect(statusLabel()).toBe("Working in background");
+  });
+
+  it("never schedules background resolution for a Codex row", () => {
+    render(runningWith([spawn, answer], "agt-1-t1", "codex"));
+    act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS * 2));
+    expect(statusLabel()).toBe("Working");
   });
 });
 

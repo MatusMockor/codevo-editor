@@ -75,6 +75,23 @@ describe("agentArtifactFailure", () => {
     expect(classifyAgentArtifactFailure(null, fallback)).toBe("previewFailed");
   });
 
+  it("reports an unavailable conversation, turn or repository honestly without a retry", () => {
+    const unavailable: ReadonlyArray<readonly [string, AgentArtifactFailureReason]> = [
+      ["Artifact thread is unavailable.", "threadUnavailable"],
+      ["Artifact turn is unavailable.", "turnUnavailable"],
+      ["Artifact repository does not match its registered owner.", "repositoryMismatch"],
+    ];
+    const readFailed = agentArtifactFailureMessage("readFailed");
+    for (const [backend, reason] of unavailable) {
+      expect(classifyAgentArtifactFailure(new Error(backend))).toBe(reason);
+      expect(agentArtifactFailureRetryable(reason)).toBe(false);
+      expect(agentArtifactFailureMessage(reason)).not.toBe(readFailed);
+    }
+    expect(classifyAgentArtifactFailure(new Error("Permission denied (os error 13)"))).toBe(
+      "readFailed",
+    );
+  });
+
   it("bounds the message it inspects", () => {
     const padded = `${"x".repeat(4096)}This older turn has no saved artifact snapshot.`;
     expect(classifyAgentArtifactFailure(new Error(padded))).toBe("readFailed");

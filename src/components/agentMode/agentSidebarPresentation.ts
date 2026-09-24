@@ -1,6 +1,9 @@
 import type { AgentThreadDropSection } from "../../domain/agentThreadOrganization";
 import { compareAgentThreadOrder } from "../../domain/agentThreadOrganization";
-import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
+import {
+  projectAgentBackgroundActivity,
+  type AgentBackgroundActivity,
+} from "../../domain/agentBackgroundActivity";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
   agentTurnContentLost,
@@ -26,6 +29,7 @@ import {
   runningTurn,
   type AgentThread,
   type AgentThreadExternalOrigin,
+  type AgentTurn,
   type AgentTurnStatus,
 } from "../../domain/agentThread";
 import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSession";
@@ -265,21 +269,19 @@ function menuItem(
 export function agentRowStatus(
   view: AgentThreadView,
   evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
+  background?: AgentBackgroundActivity | null,
 ): AgentRowStatus {
   const running = runningTurn(view.thread);
   if (running !== null) {
-    const lost = agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
-    const background =
-      view.thread.provider.kind === "claudeCode"
-        ? projectAgentBackgroundActivity(running.events, true, lost)
-        : null;
+    const activity =
+      background === undefined ? immediateRowBackground(view, running, evidenceOf) : background;
     return {
       kind: "working",
       startedAtEpochMs: running.startedAtEpochMs,
-      ...(background?.foregroundSettled && background.phase !== "inactive"
+      ...(activity?.foregroundSettled && activity.phase !== "inactive"
         ? {
             activity:
-              background.phase === "monitoring" ? ("monitoring" as const) : ("background" as const),
+              activity.phase === "monitoring" ? ("monitoring" as const) : ("background" as const),
           }
         : {}),
     };
@@ -289,6 +291,16 @@ export function agentRowStatus(
   if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };
   if (view.unread && !view.thread.archived) return { kind: "done" };
   return { kind: "none" };
+}
+
+function immediateRowBackground(
+  view: AgentThreadView,
+  running: AgentTurn,
+  evidenceOf: AgentTurnLogEvidenceLookup,
+): AgentBackgroundActivity | null {
+  if (view.thread.provider.kind !== "claudeCode") return null;
+  const lost = agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
+  return projectAgentBackgroundActivity(running.events, true, lost);
 }
 
 export function agentRowRecedes(view: AgentThreadView, on: boolean): boolean {
@@ -743,8 +755,9 @@ export function agentThreadRowModel(
   on: boolean,
   projectLabel: string = view.repositoryLabel,
   evidenceOf: AgentTurnLogEvidenceLookup = NO_AGENT_TURN_LOG_EVIDENCE,
+  background?: AgentBackgroundActivity | null,
 ): AgentThreadRowModel {
-  const status = agentRowStatus(view, evidenceOf);
+  const status = agentRowStatus(view, evidenceOf, background);
   const thread = view.thread;
   return {
     project: projectLabel,

@@ -4,6 +4,9 @@ export type AgentArtifactFailureReason =
   | "changedOnDisk"
   | "unverifiable"
   | "conversationAdvanced"
+  | "threadUnavailable"
+  | "turnUnavailable"
+  | "repositoryMismatch"
   | "notPreviewable"
   | "storageBusy"
   | "tooLarge"
@@ -16,6 +19,9 @@ export const AGENT_ARTIFACT_FAILURE_REASONS: readonly AgentArtifactFailureReason
   "changedOnDisk",
   "unverifiable",
   "conversationAdvanced",
+  "threadUnavailable",
+  "turnUnavailable",
+  "repositoryMismatch",
   "notPreviewable",
   "storageBusy",
   "tooLarge",
@@ -29,6 +35,11 @@ const MESSAGES: Readonly<Record<AgentArtifactFailureReason, string>> = {
   changedOnDisk: "The file changed on disk after this turn finished.",
   unverifiable: "This turn has no recorded end time, so its files cannot be verified.",
   conversationAdvanced: "This turn's files are no longer available.",
+  threadUnavailable:
+    "This conversation is not saved in this workspace, so its files cannot be shown.",
+  turnUnavailable: "This turn is not in the saved conversation, so its files cannot be shown.",
+  repositoryMismatch:
+    "This conversation belongs to a different repository, so its files cannot be shown.",
   notPreviewable: "This file is not a regular file of a supported type, so it cannot be previewed.",
   storageBusy: "The file store is busy. Try again.",
   tooLarge: "The file is too large to preview here.",
@@ -42,6 +53,9 @@ const RETRYABLE: Readonly<Record<AgentArtifactFailureReason, boolean>> = {
   changedOnDisk: false,
   unverifiable: false,
   conversationAdvanced: false,
+  threadUnavailable: false,
+  turnUnavailable: false,
+  repositoryMismatch: false,
   notPreviewable: false,
   storageBusy: true,
   tooLarge: false,
@@ -58,6 +72,9 @@ export const agentArtifactBackendMessages: Readonly<
   changedOnDisk: ["Artifact changed while reading.", "Artifact changed after this turn ended."],
   unverifiable: ["This turn has no recorded end time, so its files cannot be verified."],
   conversationAdvanced: ["The conversation advanced before its artifact was saved."],
+  threadUnavailable: ["Artifact thread is unavailable."],
+  turnUnavailable: ["Artifact turn is unavailable."],
+  repositoryMismatch: ["Artifact repository does not match its registered owner."],
   notPreviewable: [
     "Artifact must be a bounded regular file without hard links.",
     "Artifact must be a regular file.",

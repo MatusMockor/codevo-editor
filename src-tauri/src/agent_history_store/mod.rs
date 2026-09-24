@@ -1,4 +1,5 @@
 pub(crate) use super::super::agent_thread_store_commands::agent_thread_store as legacy;
+pub(crate) mod artifact_turns;
 mod catalog;
 pub(crate) mod connection;
 mod migration;
@@ -182,6 +183,21 @@ impl AgentHistoryStore {
             }
             Ok(page)
         })
+    }
+    pub(crate) fn artifact_thread_facts(
+        &self,
+        root: &str,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<artifact_turns::ArtifactThreadFacts>, artifact_turns::ArtifactFactsError>
+    {
+        crate::git_worktree::safe_agent_task_id(thread_id)?;
+        crate::git_worktree::safe_agent_task_id(turn_id)?;
+        let Some(mut connection) = connection::open_read_only(&self.base_dir, root)? else {
+            return Ok(None);
+        };
+        let transaction = sql(connection.transaction())?;
+        artifact_turns::read(&transaction, root, thread_id, turn_id)
     }
     pub(crate) fn delete(&self, root: &str, owner: &str, id: &str) -> Result<(), String> {
         crate::git_worktree::safe_agent_task_id(id)?;

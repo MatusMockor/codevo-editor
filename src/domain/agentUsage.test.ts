@@ -120,7 +120,7 @@ describe("aggregateAgentUsage", () => {
     expect(afterSpringTransition - start).toBe(elapsedWithoutOffsetChange + offsetChangeMs);
   });
 
-  it("omits wall time ending in the future and usage from non-exited turns", () => {
+  it("omits wall time ending in the future and usage from active turns but counts usage reported by failed turns", () => {
     const result = aggregateAgentUsage(
       [
         thread("claudeCode", "project-a", [
@@ -145,10 +145,10 @@ describe("aggregateAgentUsage", () => {
       eligibleTurns: 2,
     });
     expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
-      inputTokens: 2,
-      outputTokens: 3,
-      measuredTurns: 1,
-      eligibleTurns: 1,
+      inputTokens: 13,
+      outputTokens: 16,
+      measuredTurns: 2,
+      eligibleTurns: 2,
     });
   });
 
@@ -390,6 +390,295 @@ describe("aggregateAgentUsage", () => {
 
     expect(result.providers.claudeCode.projects).toEqual([]);
   });
+
+  it("counts thread-cumulative Codex app-server totals as per-turn deltas", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("one", NOW - 30_000, EXITED, NOW - 29_000, appServerUsage(100_000, 1_000)),
+          turn("two", NOW - 20_000, EXITED, NOW - 19_000, appServerUsage(250_000, 3_000)),
+          turn("three", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(400_000, 4_000)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 400_000,
+      outputTokens: 4_000,
+      measuredTurns: 3,
+      eligibleTurns: 3,
+      incomplete: false,
+    });
+  });
+
+  it("measures only the in-period delta when the baseline turn is older than the period", () => {
+    const yesterday = NOW - 24 * 60 * 60 * 1_000;
+    const threads = [
+      thread("codex", "project-a", [
+        turn("old", yesterday, EXITED, yesterday + 1_000, appServerUsage(100_000, 1_000)),
+        turn("new", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(250_000, 3_000)),
+      ]),
+    ];
+
+    expect(aggregateAgentUsage(threads, "today", NOW).providers.codex.total.cliUsage).toMatchObject(
+      { inputTokens: 150_000, outputTokens: 2_000, measuredTurns: 1, incomplete: false },
+    );
+    expect(aggregateAgentUsage(threads, "7days", NOW).providers.codex.total.cliUsage).toMatchObject(
+      { inputTokens: 250_000, outputTokens: 3_000, measuredTurns: 2 },
+    );
+  });
+
+  it("marks the first loaded turn of a truncated thread as unmeasured instead of counting the cumulative total", () => {
+    const truncated: AgentThread = {
+      ...thread("codex", "project-a", [
+        turn("first-loaded", NOW - 20_000, EXITED, NOW - 19_000, appServerUsage(900_000, 9_000)),
+        turn("second", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(950_000, 9_500)),
+      ]),
+      turnsTruncated: true,
+    };
+
+    expect(
+      aggregateAgentUsage([truncated], "today", NOW).providers.codex.total.cliUsage,
+    ).toMatchObject({
+      inputTokens: 50_000,
+      outputTokens: 500,
+      measuredTurns: 1,
+      eligibleTurns: 2,
+      incomplete: true,
+    });
+  });
+
+  it("restarts the baseline after a counter reset without double counting", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("before", NOW - 30_000, EXITED, NOW - 29_000, appServerUsage(400_000, 4_000)),
+          turn("reset", NOW - 20_000, EXITED, NOW - 19_000, appServerUsage(50_000, 1_000)),
+          turn("after", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(80_000, 2_000)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 430_000,
+      outputTokens: 5_000,
+      measuredTurns: 2,
+      eligibleTurns: 3,
+      incomplete: true,
+    });
+  });
+
+  it("attributes the tokens of a turn without a result to the next measured turn", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("one", NOW - 30_000, EXITED, NOW - 29_000, appServerUsage(100_000, 1_000)),
+          turn("stopped", NOW - 20_000, { kind: "stopped" }, NOW - 19_000),
+          turn("three", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(300_000, 3_000)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 300_000,
+      outputTokens: 3_000,
+      measuredTurns: 2,
+      eligibleTurns: 2,
+      incomplete: false,
+    });
+  });
+
+  it("never counts a cumulative total that may include older per-turn usage", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("legacy", NOW - 20_000, EXITED, NOW - 19_000, usage(11, 13)),
+          turn("app-server", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(500_000, 5_000)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 11,
+      outputTokens: 13,
+      measuredTurns: 1,
+      eligibleTurns: 2,
+      incomplete: true,
+    });
+  });
+
+  it("does not attribute tokens of a resultless turn from before the period to a turn inside it", () => {
+    const yesterday = NOW - 24 * 60 * 60 * 1_000;
+    const threads = [
+      thread("codex", "project-a", [
+        turn("one", yesterday, EXITED, yesterday + 1_000, appServerUsage(100_000, 1_000)),
+        turn("stopped", yesterday + 2_000, { kind: "stopped" }, yesterday + 3_000),
+        turn("today", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(300_000, 3_000)),
+      ]),
+    ];
+
+    expect(aggregateAgentUsage(threads, "today", NOW).providers.codex.total.cliUsage).toMatchObject(
+      { inputTokens: 0, outputTokens: 0, measuredTurns: 0, eligibleTurns: 1, incomplete: true },
+    );
+    expect(aggregateAgentUsage(threads, "7days", NOW).providers.codex.total.cliUsage).toMatchObject(
+      { inputTokens: 300_000, outputTokens: 3_000, measuredTurns: 2, incomplete: false },
+    );
+  });
+
+  it("does not attribute tokens of a first resultless turn from before the period to a turn inside it", () => {
+    const yesterday = NOW - 24 * 60 * 60 * 1_000;
+    const threads = [
+      thread("codex", "project-a", [
+        turn("stopped", yesterday, { kind: "stopped" }, yesterday + 1_000),
+        turn("today", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(300_000, 3_000)),
+      ]),
+    ];
+
+    expect(aggregateAgentUsage(threads, "today", NOW).providers.codex.total.cliUsage).toMatchObject(
+      { inputTokens: 0, measuredTurns: 0, eligibleTurns: 1, incomplete: true },
+    );
+  });
+
+  it("uses the last thread-cumulative total of a steered turn as the next baseline", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("one", NOW - 30_000, EXITED, NOW - 29_000, appServerUsage(100_000, 1_000)),
+          turn("steered", NOW - 20_000, EXITED, NOW - 19_000, [
+            appServerUsage(150_000, 1_500),
+            appServerUsage(200_000, 2_000),
+          ]),
+          turn("three", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(260_000, 2_600)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 260_000,
+      outputTokens: 2_600,
+      measuredTurns: 3,
+      eligibleTurns: 3,
+      incomplete: false,
+    });
+  });
+
+  it("keeps a turn with mixed cumulative and per-turn results ambiguous", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("one", NOW - 30_000, EXITED, NOW - 29_000, appServerUsage(100_000, 1_000)),
+          turn("mixed", NOW - 20_000, EXITED, NOW - 19_000, [
+            appServerUsage(150_000, 1_500),
+            usage(7, 9),
+          ]),
+          turn("three", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(260_000, 2_600)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 100_000,
+      outputTokens: 1_000,
+      measuredTurns: 1,
+      eligibleTurns: 3,
+      incomplete: true,
+    });
+  });
+
+  it("counts the cumulative delta reported by failed and stopped Codex turns", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("codex", "project-a", [
+          turn("one", NOW - 40_000, EXITED, NOW - 39_000, appServerUsage(100_000, 1_000)),
+          turn(
+            "failed",
+            NOW - 30_000,
+            { kind: "failed", message: "boom" },
+            NOW - 29_000,
+            appServerUsage(180_000, 1_800),
+          ),
+          turn(
+            "stopped",
+            NOW - 20_000,
+            { kind: "stopped" },
+            NOW - 19_000,
+            appServerUsage(220_000, 2_200),
+          ),
+          turn("four", NOW - 10_000, EXITED, NOW - 9_000, appServerUsage(300_000, 3_000)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.codex.total.cliUsage).toMatchObject({
+      inputTokens: 300_000,
+      outputTokens: 3_000,
+      measuredTurns: 4,
+      eligibleTurns: 4,
+      incomplete: false,
+    });
+  });
+
+  it("counts per-turn usage reported by a stopped Claude turn", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("claudeCode", "project-a", [
+          turn("stopped", NOW - 20_000, { kind: "stopped" }, NOW - 19_000, usage(5, 7)),
+          turn("exited", NOW - 10_000, EXITED, NOW - 9_000, usage(11, 13)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
+      inputTokens: 16,
+      outputTokens: 20,
+      measuredTurns: 2,
+      eligibleTurns: 2,
+      incomplete: false,
+    });
+  });
+
+  it("keeps Claude usage per turn even when older turns outside the period were ambiguous", () => {
+    const yesterday = NOW - 24 * 60 * 60 * 1_000;
+    const result = aggregateAgentUsage(
+      [
+        thread("claudeCode", "project-a", [
+          turn("old", yesterday, EXITED, yesterday + 1_000, [usage(1, 2), usage(3, 4)]),
+          turn("today", NOW - 10_000, EXITED, NOW - 9_000, usage(11, 13)),
+        ]),
+        thread("codex", "project-b", [
+          turn("old", yesterday, EXITED, yesterday + 1_000, appServerUsage(500_000, 5_000)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
+      inputTokens: 11,
+      outputTokens: 13,
+      measuredTurns: 1,
+      eligibleTurns: 1,
+      incomplete: false,
+    });
+    expect(result.providers.codex.total.turnsStarted).toBe(0);
+    expect(result.providers.codex.projects).toEqual([]);
+  });
 });
 
 function thread(
@@ -443,5 +732,36 @@ function usage(inputTokens: number, outputTokens: number): AgentTurnEvent {
     text: "",
     isError: false,
     usage: { inputTokens, outputTokens, contextTokens: inputTokens },
+  };
+}
+
+const EXITED: AgentTurnStatus = { kind: "exited", exitCode: 0 };
+
+function appServerUsage(totalInput: number, totalOutput: number): AgentTurnEvent {
+  const breakdown = (inputTokens: number, outputTokens: number) => ({
+    inputTokens,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens,
+    reasoningOutputTokens: 0,
+    totalTokens: inputTokens + outputTokens,
+  });
+  return {
+    kind: "result",
+    text: "",
+    isError: false,
+    usage: {
+      scope: "thread",
+      appServerUsage: {
+        last: breakdown(990, 10),
+        total: breakdown(totalInput, totalOutput),
+        contextWindow: 258_400,
+      },
+      inputTokens: totalInput,
+      outputTokens: totalOutput,
+      cachedInputTokens: 0,
+      reasoningOutputTokens: 0,
+      contextTokens: 1_000,
+    },
   };
 }

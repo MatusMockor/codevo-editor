@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThread, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
+import {
+  projectAgentBackgroundState,
+  resolveAgentBackgroundActivity,
+} from "../../domain/agentBackgroundActivity";
+import { NO_AGENT_TURN_LOG_EVIDENCE } from "../../domain/agentTurnContentLoss";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import {
   ARCHIVED_PAGE_COUNT,
@@ -51,6 +56,44 @@ const NOW = 1_700_000_600_000;
 const ROOT_SCOPE = { projectRootKey: ROOT, repositoryRoot: ROOT } as const;
 
 describe("agent row status", () => {
+  it("uses the quiescence verdict the row hands it instead of re-deciding inferred idle", () => {
+    const spawn: AgentTurnEvent = {
+      kind: "backgroundTask",
+      taskId: "agent-1",
+      taskType: "agent",
+      status: "starting",
+    };
+    const answer: AgentTurnEvent = {
+      kind: "assistantText",
+      text: "A reviewer runs in the background.",
+    };
+    const running = view({ events: [spawn, answer] });
+    const state = projectAgentBackgroundState([spawn, answer], true);
+
+    expect(agentRowStatusLabel(agentRowStatus(running))).toBe("Working");
+    expect(
+      agentRowStatusLabel(
+        agentRowStatus(
+          running,
+          NO_AGENT_TURN_LOG_EVIDENCE,
+          resolveAgentBackgroundActivity(state, "pending"),
+        ),
+      ),
+    ).toBe("Working");
+    expect(
+      agentRowStatusLabel(
+        agentRowStatus(
+          running,
+          NO_AGENT_TURN_LOG_EVIDENCE,
+          resolveAgentBackgroundActivity(state, "settled"),
+        ),
+      ),
+    ).toBe("Working in background");
+    expect(agentRowStatusLabel(agentRowStatus(running, NO_AGENT_TURN_LOG_EVIDENCE, null))).toBe(
+      "Working",
+    );
+  });
+
   it("maps a running turn to working with its start time", () => {
     expect(agentRowStatus(view({ status: { kind: "running" } }))).toEqual({
       kind: "working",

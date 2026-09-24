@@ -1,8 +1,10 @@
 use super::{
     agent_attachment_commands::resolve_agent_attachment_owner,
-    agent_thread_store_commands::agent_thread_store::{
-        AgentThread, AgentThreadStore, AgentTurn, AgentTurnStatus,
+    agent_history_commands::agent_history_store::{
+        artifact_turns::{ArtifactFactsError, ArtifactThreadFacts, ArtifactTurnFact},
+        AgentHistoryStore,
     },
+    agent_thread_store_commands::agent_thread_store::AgentTurnStatus,
 };
 use crate::{
     agent_task_supervisor::AgentTaskIsolation,
@@ -52,7 +54,7 @@ fn load_thread(
     workspace_id: &WorkspaceId,
     thread_id: &str,
     turn_id: &str,
-) -> Result<(AgentThread, PathBuf), String> {
+) -> Result<(ArtifactThreadFacts, PathBuf), String> {
     crate::git_worktree::safe_agent_task_id(thread_id)?;
     crate::git_worktree::safe_agent_task_id(turn_id)?;
     let resolved = resolve_agent_attachment_owner(app, workspace_id)?;
@@ -60,34 +62,46 @@ fn load_thread(
         .state::<WorkspaceRegistry>()
         .descriptor(&resolved.workspace_id)
         .map_err(|e| e.to_string())?;
-    let threads = app.state::<Arc<AgentThreadStore>>();
+    let history = app.state::<Arc<AgentHistoryStore>>();
     for key in resolved.root_keys {
-        if let Some(thread) = threads
-            .load(&key)?
-            .threads
-            .into_iter()
-            .find(|t| t.thread_id == thread_id)
-        {
-            let turn = thread
-                .turns
-                .iter()
-                .find(|t| t.turn_id == turn_id)
-                .ok_or("Artifact turn is unavailable.")?;
-            if !turn.status.is_terminal() {
-                return Err("Artifacts are available after the turn finishes.".into());
-            }
-            let repository = PathBuf::from(&thread.owner.repository_root)
-                .canonicalize()
-                .map_err(|e| e.to_string())?;
-            if repository != descriptor.canonical_root_path {
-                return Err("Artifact repository does not match its registered owner.".into());
-            }
-            return Ok((thread, repository));
-        }
+        let Some(thread) = history
+            .artifact_thread_facts(&key, thread_id, turn_id)
+            .map_err(facts_error)?
+        else {
+            continue;
+        };
+        return owned_turn(thread, turn_id, &descriptor.canonical_root_path);
     }
-    Err("Artifact thread is unavailable.".into())
+    Err(errors::THREAD_UNAVAILABLE.into())
 }
-fn root(thread: &AgentThread, repository: PathBuf) -> Result<PathBuf, String> {
+fn facts_error(error: ArtifactFactsError) -> String {
+    match error {
+        ArtifactFactsError::MalformedTurn => errors::TURN_UNAVAILABLE.into(),
+        ArtifactFactsError::Storage(message) => message,
+    }
+}
+fn owned_turn(
+    thread: ArtifactThreadFacts,
+    turn_id: &str,
+    registered_root: &Path,
+) -> Result<(ArtifactThreadFacts, PathBuf), String> {
+    let turn = thread
+        .turns
+        .first()
+        .filter(|turn| turn.turn_id == turn_id)
+        .ok_or(errors::TURN_UNAVAILABLE)?;
+    if !turn.status.is_terminal() {
+        return Err("Artifacts are available after the turn finishes.".into());
+    }
+    let repository = PathBuf::from(&thread.owner.repository_root)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if repository != registered_root {
+        return Err(errors::REPOSITORY_MISMATCH.into());
+    }
+    Ok((thread, repository))
+}
+fn root(thread: &ArtifactThreadFacts, repository: PathBuf) -> Result<PathBuf, String> {
     match thread.target.isolation {
         AgentTaskIsolation::InPlace if thread.target.worktree_path.is_none() => Ok(repository),
         AgentTaskIsolation::Worktree => {
@@ -115,7 +129,7 @@ fn root(thread: &AgentThread, repository: PathBuf) -> Result<PathBuf, String> {
         _ => Err("Invalid artifact workspace.".into()),
     }
 }
-fn is_newest_terminal_turn(turns: &[AgentTurn], turn_id: &str) -> bool {
+fn is_newest_terminal_turn(turns: &[ArtifactTurnFact], turn_id: &str) -> bool {
     let Some(index) = turns.iter().position(|turn| turn.turn_id == turn_id) else {
         return false;
     };
@@ -129,7 +143,7 @@ enum SourceMtimeBound {
     AtMostEpochMs(u64),
     Unverifiable,
 }
-fn source_mtime_bound(turns: &[AgentTurn], turn_id: &str) -> SourceMtimeBound {
+fn source_mtime_bound(turns: &[ArtifactTurnFact], turn_id: &str) -> SourceMtimeBound {
     let Some(index) = turns.iter().position(|turn| turn.turn_id == turn_id) else {
         return SourceMtimeBound::Unverifiable;
     };
@@ -148,7 +162,7 @@ fn source_mtime_bound(turns: &[AgentTurn], turn_id: &str) -> SourceMtimeBound {
     }
     SourceMtimeBound::AtMostEpochMs(skewed.min(successor.started_at_epoch_ms))
 }
-fn source_mtime_limit(turns: &[AgentTurn], turn_id: &str) -> Result<Option<u64>, String> {
+fn source_mtime_limit(turns: &[ArtifactTurnFact], turn_id: &str) -> Result<Option<u64>, String> {
     match source_mtime_bound(turns, turn_id) {
         SourceMtimeBound::Unverifiable => Err(errors::TURN_END_UNRECORDED.into()),
         SourceMtimeBound::Unconstrained => Ok(None),
@@ -248,7 +262,7 @@ pub(super) fn resolve_saved_output_artifact(
         )?;
         return Ok(metadata);
     }
-    if !is_newest_terminal_turn(&thread.turns, &request.turn_id) {
+    if thread.successors_truncated || !is_newest_terminal_turn(&thread.turns, &request.turn_id) {
         return Err(errors::SNAPSHOT_MISSING.into());
     }
     let max_source_mtime_ms = source_mtime_limit(&thread.turns, &request.turn_id)?;
@@ -257,20 +271,15 @@ pub(super) fn resolve_saved_output_artifact(
     let root_descriptor =
         open_root_descriptor(&registry, &resolved.workspace_id, &root, &repository)?;
     let revalidate = || {
-        validate_still_owned(
+        let latest = validate_still_owned(
             app,
             &request.workspace_id,
             &initial_registration,
             &thread,
             &request.turn_id,
         )?;
-        let (latest, _) = load_thread(
-            app,
-            &request.workspace_id,
-            &request.thread_id,
-            &request.turn_id,
-        )?;
-        if !is_newest_terminal_turn(&latest.turns, &request.turn_id) {
+        if latest.successors_truncated || !is_newest_terminal_turn(&latest.turns, &request.turn_id)
+        {
             return Err(errors::CONVERSATION_ADVANCED.into());
         }
         let current_owner = resolve_agent_attachment_owner(app, &request.workspace_id)?;
@@ -406,9 +415,9 @@ fn validate_still_owned(
     app: &AppHandle,
     owner: &WorkspaceId,
     registration: &WorkspaceId,
-    expected: &AgentThread,
+    expected: &ArtifactThreadFacts,
     turn_id: &str,
-) -> Result<(), String> {
+) -> Result<ArtifactThreadFacts, String> {
     if resolve_agent_attachment_owner(app, owner)?.workspace_id != *registration {
         return Err("Artifact owner changed.".into());
     }
@@ -416,16 +425,16 @@ fn validate_still_owned(
     if current.owner != expected.owner || current.target != expected.target {
         return Err("Artifact thread owner changed.".into());
     }
-    Ok(())
+    Ok(current)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        super::agent_thread_store_commands::agent_thread_store::{AgentTurn, AgentTurnStatus},
-        errors, is_newest_terminal_turn, locate_contained, reveal_located_artifact_file,
-        source_mtime_bound, source_mtime_limit, OutputArtifactStore, RevealArtifactFile,
-        SourceMtimeBound, TURN_END_MTIME_SKEW_MS,
+        errors, facts_error, is_newest_terminal_turn, locate_contained, owned_turn,
+        reveal_located_artifact_file, source_mtime_bound, source_mtime_limit, AgentTurnStatus,
+        ArtifactFactsError, ArtifactThreadFacts, ArtifactTurnFact, OutputArtifactStore,
+        RevealArtifactFile, SourceMtimeBound, TURN_END_MTIME_SKEW_MS,
     };
     use std::{
         cell::RefCell,
@@ -434,38 +443,46 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    fn ended(turn_id: &str, ended_at_epoch_ms: Option<u64>) -> AgentTurn {
-        AgentTurn {
+    fn ended(turn_id: &str, ended_at_epoch_ms: Option<u64>) -> ArtifactTurnFact {
+        ArtifactTurnFact {
             ended_at_epoch_ms,
             ..turn(turn_id, AgentTurnStatus::Exited { exit_code: 0 })
         }
     }
 
-    fn started(turn_id: &str, status: AgentTurnStatus, started_at_epoch_ms: u64) -> AgentTurn {
-        AgentTurn {
+    fn started(
+        turn_id: &str,
+        status: AgentTurnStatus,
+        started_at_epoch_ms: u64,
+    ) -> ArtifactTurnFact {
+        ArtifactTurnFact {
             started_at_epoch_ms,
             ..turn(turn_id, status)
         }
     }
 
-    fn turn(turn_id: &str, status: AgentTurnStatus) -> AgentTurn {
-        AgentTurn {
-            codex_transport: None,
+    fn turn(turn_id: &str, status: AgentTurnStatus) -> ArtifactTurnFact {
+        ArtifactTurnFact {
             turn_id: turn_id.into(),
-            prompt: String::new(),
             status,
             started_at_epoch_ms: 0,
             ended_at_epoch_ms: None,
-            events: Vec::new(),
-            events_truncated: false,
-            subagent_lifecycle: None,
-            last_status_sequence: 0,
-            last_output_sequence: 0,
-            stream_metrics: None,
-            launch: None,
-            cli_version: None,
-            attachments: Vec::new(),
         }
+    }
+
+    #[test]
+    fn artifact_ownership_is_read_from_durable_history_not_the_retired_thread_files() {
+        const SOURCE: &str = include_str!("agent_output_artifact_commands.rs");
+        assert!(SOURCE.contains(concat!("artifact_thread", "_facts(")));
+        assert!(!SOURCE.contains(concat!("AgentThread", "Store")));
+    }
+
+    #[test]
+    fn unavailable_owners_are_reported_with_classified_messages() {
+        const SOURCE: &str = include_str!("agent_output_artifact_commands.rs");
+        assert!(SOURCE.contains(concat!("errors::THREAD", "_UNAVAILABLE")));
+        assert!(SOURCE.contains(concat!("errors::TURN", "_UNAVAILABLE")));
+        assert!(SOURCE.contains(concat!("errors::REPOSITORY", "_MISMATCH")));
     }
 
     #[test]
@@ -739,6 +756,77 @@ mod tests {
             .map_err(|error| error.to_string()))
             .unwrap_err(),
             "Artifact workspace changed."
+        );
+    }
+
+    fn owned_facts(repository: &Path, turns: Vec<ArtifactTurnFact>) -> ArtifactThreadFacts {
+        ArtifactThreadFacts {
+            thread_id: "agt-thread-0001".into(),
+            owner: serde_json::from_value(serde_json::json!({
+                "rootKey": "/workspace/app",
+                "ownerId": "owner",
+                "repositoryRoot": repository,
+            }))
+            .expect("decode the thread owner"),
+            target: serde_json::from_value(serde_json::json!({
+                "isolation": "in-place",
+                "worktreePath": null,
+            }))
+            .expect("decode the thread target"),
+            turns,
+            successors_truncated: false,
+        }
+    }
+
+    #[test]
+    fn a_thread_owned_by_another_repository_is_reported_as_a_repository_mismatch() {
+        let temp = Temp::new("repository-mismatch");
+        let registered = temp.0.join("registered");
+        let foreign = temp.0.join("foreign");
+        fs::create_dir_all(&registered).expect("create the registered root");
+        fs::create_dir_all(&foreign).expect("create the foreign root");
+        let turns = vec![turn("turn-one", AgentTurnStatus::Exited { exit_code: 0 })];
+
+        assert_eq!(
+            owned_turn(
+                owned_facts(&foreign, turns.clone()),
+                "turn-one",
+                &registered
+            )
+            .unwrap_err(),
+            errors::REPOSITORY_MISMATCH
+        );
+        let (thread, repository) =
+            owned_turn(owned_facts(&registered, turns), "turn-one", &registered)
+                .expect("the registered repository owns the thread");
+        assert_eq!(repository, registered);
+        assert_eq!(thread.turns[0].turn_id, "turn-one");
+    }
+
+    #[test]
+    fn a_thread_without_the_requested_turn_is_reported_as_turn_unavailable() {
+        let temp = Temp::new("turn-unavailable");
+        let turns = vec![turn("turn-two", AgentTurnStatus::Exited { exit_code: 0 })];
+
+        assert_eq!(
+            owned_turn(owned_facts(&temp.0, turns), "turn-one", &temp.0).unwrap_err(),
+            errors::TURN_UNAVAILABLE
+        );
+        assert_eq!(
+            owned_turn(owned_facts(&temp.0, Vec::new()), "turn-one", &temp.0).unwrap_err(),
+            errors::TURN_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn a_malformed_saved_turn_is_reported_as_turn_unavailable() {
+        assert_eq!(
+            facts_error(ArtifactFactsError::MalformedTurn),
+            errors::TURN_UNAVAILABLE
+        );
+        assert_eq!(
+            facts_error(ArtifactFactsError::Storage("database is locked".into())),
+            "database is locked"
         );
     }
 }

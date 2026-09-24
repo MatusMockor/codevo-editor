@@ -16,6 +16,10 @@ pub(crate) const MEDIA_TYPE_MISMATCH: &str =
 pub(crate) const UNSUPPORTED_MEDIA_TYPE: &str =
     "Only HTML, PNG, JPEG and WebP artifacts are supported.";
 pub(crate) const STORAGE_BUSY: &str = "Artifact storage is busy. Try again.";
+pub(crate) const THREAD_UNAVAILABLE: &str = "Artifact thread is unavailable.";
+pub(crate) const TURN_UNAVAILABLE: &str = "Artifact turn is unavailable.";
+pub(crate) const REPOSITORY_MISMATCH: &str =
+    "Artifact repository does not match its registered owner.";
 
 #[cfg(test)]
 pub(crate) const NEWEST_TERMINAL_TURN_RULE: &str =
@@ -33,6 +37,9 @@ pub(crate) const CLASSIFIED: &[&str] = &[
     MEDIA_TYPE_MISMATCH,
     UNSUPPORTED_MEDIA_TYPE,
     STORAGE_BUSY,
+    THREAD_UNAVAILABLE,
+    TURN_UNAVAILABLE,
+    REPOSITORY_MISMATCH,
 ];
 
 #[cfg(test)]
@@ -40,7 +47,10 @@ pub(crate) const MANIFEST: &str = include_str!("../../contracts/agent-artifact-e
 
 #[cfg(test)]
 mod tests {
-    use super::{CLASSIFIED, MANIFEST, NEWEST_TERMINAL_TURN_RULE};
+    use super::{
+        CLASSIFIED, MANIFEST, NEWEST_TERMINAL_TURN_RULE, REPOSITORY_MISMATCH, THREAD_UNAVAILABLE,
+        TURN_UNAVAILABLE,
+    };
     use std::collections::BTreeSet;
 
     #[test]
@@ -103,5 +113,38 @@ mod tests {
                 .and_then(|rule| rule.as_str()),
             Some(NEWEST_TERMINAL_TURN_RULE)
         );
+    }
+
+    #[test]
+    fn unavailable_owners_are_contracted_as_honest_non_retryable_reasons() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(MANIFEST).expect("parse the artifact error contract");
+        let retryable: BTreeSet<&str> = manifest
+            .get("retryable")
+            .and_then(serde_json::Value::as_array)
+            .expect("retryable array")
+            .iter()
+            .map(|reason| reason.as_str().expect("retryable reason string"))
+            .collect();
+        let messages = manifest
+            .get("backendMessages")
+            .and_then(serde_json::Value::as_object)
+            .expect("backendMessages object");
+        let expected = [
+            ("threadUnavailable", THREAD_UNAVAILABLE),
+            ("turnUnavailable", TURN_UNAVAILABLE),
+            ("repositoryMismatch", REPOSITORY_MISMATCH),
+        ];
+        for (reason, message) in expected {
+            let contracted = messages
+                .get(reason)
+                .and_then(serde_json::Value::as_array)
+                .expect("contracted reason");
+            assert_eq!(contracted, &[serde_json::Value::from(message)]);
+            assert!(
+                !retryable.contains(reason),
+                "{reason} must not offer a retry"
+            );
+        }
     }
 }

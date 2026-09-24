@@ -18,6 +18,7 @@ import {
   agentViewCanMarkUnread,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
+import { useAgentRowBackgroundActivity } from "./useAgentRowBackgroundActivity";
 
 export interface AgentThreadRowProps {
   readonly view: AgentThreadView;
@@ -55,7 +56,8 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   } = props;
   const thread = view.thread;
   const threadId = thread.threadId;
-  const model = agentThreadRowModel(view, on, projectLabel, evidenceOf);
+  const background = useAgentRowBackgroundActivity(view, evidenceOf);
+  const model = agentThreadRowModel(view, on, projectLabel, evidenceOf, background);
   const status = model.status;
   const importedLabel = agentThreadImportedBadgeLabel(thread.externalOrigin);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);

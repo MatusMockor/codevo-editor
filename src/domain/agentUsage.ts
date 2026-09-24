@@ -13,6 +13,7 @@ import {
   agentTurnContentLost,
   type AgentTurnLogEvidenceLookup,
 } from "./agentTurnContentLoss";
+import { agentTurnTokenMeasurer, type AgentTurnTokenMeasurement } from "./agentTurnTokenUsage";
 
 export type AgentUsagePeriod = "today" | "7days" | "30days";
 
@@ -146,11 +147,20 @@ export function aggregateAgentUsage(
     if (thread.turnsTruncated) savedHistoryIncomplete = true;
     const provider = providers[thread.provider.kind];
     if (thread.turns.length > MAX_AGENT_TURNS_PER_THREAD) savedHistoryIncomplete = true;
-    for (const turn of thread.turns.slice(0, MAX_AGENT_TURNS_PER_THREAD)) {
+    const turns = thread.turns.slice(0, MAX_AGENT_TURNS_PER_THREAD);
+    if (!turns.some((turn) => turnFallsWithin(turn, startEpochMs, endEpochMs))) continue;
+    const measure = agentTurnTokenMeasurer(
+      thread.provider.kind,
+      turns,
+      thread.turnsTruncated,
+      startEpochMs,
+    );
+    for (const [index, turn] of turns.entries()) {
       if (!turnFallsWithin(turn, startEpochMs, endEpochMs)) continue;
+      const measurement = measure(turn, index);
       const lost = agentTurnContentLost(turn.eventsTruncated, evidenceOf(turn.turnId));
-      addTurn(provider.total, turn, endEpochMs, lost);
-      addTurn(projectMetrics(provider, thread.owner.rootKey), turn, endEpochMs, lost);
+      addTurn(provider.total, turn, endEpochMs, lost, measurement);
+      addTurn(projectMetrics(provider, thread.owner.rootKey), turn, endEpochMs, lost, measurement);
     }
   }
 
@@ -229,11 +239,12 @@ function addTurn(
   turn: AgentTurn,
   windowEndEpochMs: number,
   contentLost: boolean,
+  measurement: AgentTurnTokenMeasurement,
 ): void {
   metrics.turnsStarted += 1;
   classifyStatus(metrics, turn.status);
   addWallTime(metrics.wallTime, turn, windowEndEpochMs);
-  addCliUsage(metrics.cliUsage, turn, contentLost);
+  addCliUsage(metrics.cliUsage, turn, contentLost, measurement);
   addStreamOutput(metrics.streamOutput, turn);
 }
 
@@ -275,41 +286,39 @@ function addWallTime(wallTime: MutableWallTime, turn: AgentTurn, windowEndEpochM
   wallTime.measuredTurns += 1;
 }
 
-function addCliUsage(cliUsage: MutableCliTokens, turn: AgentTurn, contentLost: boolean): void {
-  if (turn.status.kind !== "exited") return;
+function addCliUsage(
+  cliUsage: MutableCliTokens,
+  turn: AgentTurn,
+  contentLost: boolean,
+  measurement: AgentTurnTokenMeasurement,
+): void {
+  if (!cliUsageEligible(turn.status, measurement)) return;
   cliUsage.eligibleTurns += 1;
   if (contentLost) cliUsage.incomplete = true;
-  let capturedUsage: {
-    readonly inputTokens: number;
-    readonly outputTokens: number;
-    readonly contextTokens?: number | null;
-    readonly costUsd?: number | null;
-  } | null = null;
-  for (const event of turn.events) {
-    if (event.kind !== "result" || event.usage === null) continue;
-    if (capturedUsage !== null) {
-      cliUsage.incomplete = true;
-      return;
-    }
-    capturedUsage = event.usage;
+  if (measurement.kind === "unreported") return;
+  if (measurement.kind !== "measured") {
+    cliUsage.incomplete = true;
+    return;
   }
-  if (capturedUsage === null) return;
+  const tokens = measurement.tokens;
   cliUsage.measuredTurns += 1;
-  // Claude reports cache creation/read tokens separately from input_tokens. The parser's
-  // contextTokens total includes that processed input, while Codex input_tokens already includes
-  // cached input. Prefer it so the Usage headline does not dramatically under-report real work.
-  cliUsage.inputTokens = safeSum(
-    cliUsage.inputTokens,
-    capturedUsage.contextTokens ?? capturedUsage.inputTokens,
-  );
-  cliUsage.outputTokens = safeSum(cliUsage.outputTokens, capturedUsage.outputTokens);
-  if (capturedUsage.costUsd !== undefined && capturedUsage.costUsd !== null) {
-    cliUsage.costUsd = safeFiniteSum(cliUsage.costUsd, capturedUsage.costUsd);
+  cliUsage.inputTokens = safeSum(cliUsage.inputTokens, tokens.inputTokens);
+  cliUsage.outputTokens = safeSum(cliUsage.outputTokens, tokens.outputTokens);
+  if (tokens.costUsd !== null) {
+    cliUsage.costUsd = safeFiniteSum(cliUsage.costUsd, tokens.costUsd);
     cliUsage.costMeasuredTurns += 1;
   }
   if (cliUsage.inputTokens === null || cliUsage.outputTokens === null) {
     cliUsage.incomplete = true;
   }
+}
+
+function cliUsageEligible(
+  status: AgentTurnStatus,
+  measurement: AgentTurnTokenMeasurement,
+): boolean {
+  if (status.kind === "exited") return true;
+  return isTerminalAgentTurnStatus(status) && measurement.kind !== "unreported";
 }
 
 function safeFiniteSum(current: number | null, increment: number): number | null {

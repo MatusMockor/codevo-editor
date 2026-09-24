@@ -152,10 +152,18 @@ fn validate_owner(connection: &Connection, root: &str, owner: &str) -> Result<()
     }
     Ok(())
 }
-pub(crate) fn ownership_status(base: &Path, root: &str, id: &str) -> Result<Option<bool>, String> {
+const READ_ONLY_BUSY_TIMEOUT: Duration = Duration::from_millis(750);
+fn open_existing_read_only(base: &Path, root: &str) -> Result<Option<Connection>, String> {
     let path = database_path(base, root);
     if !path.try_exists().map_err(|e| e.to_string())? {
         return Ok(None);
+    }
+    if !fs::symlink_metadata(&path)
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_file()
+    {
+        return Err("The saved history database must be a regular file.".into());
     }
     for directory in [
         base.join("agent-history"),
@@ -173,12 +181,33 @@ pub(crate) fn ownership_status(base: &Path, root: &str, id: &str) -> Result<Opti
     let resolved = fs::canonicalize(path.parent().ok_or("Invalid history database path.")?)
         .map_err(|e| e.to_string())?
         .join("history.sqlite3");
-    let connection = sql(Connection::open_with_flags(
+    sql(Connection::open_with_flags(
         resolved,
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ))?;
+    ))
+    .map(Some)
+}
+pub(super) fn open_read_only(base: &Path, root: &str) -> Result<Option<Connection>, String> {
+    if root.is_empty() || root.len() > legacy::MAX_AGENT_ROOT_KEY_BYTES {
+        return Err(legacy::AGENT_THREAD_OWNER_MISMATCH_ERROR.into());
+    }
+    let Some(connection) = open_existing_read_only(base, root)? else {
+        return Ok(None);
+    };
+    sql(connection.busy_timeout(READ_ONLY_BUSY_TIMEOUT))?;
+    let version: i64 = sql(connection.pragma_query_value(None, "user_version", |r| r.get(0)))?;
+    if version != 2 {
+        return Err("The saved history database has an unsupported version.".into());
+    }
+    validate_owner(&connection, root, &legacy::agent_root_owner_id(root))?;
+    Ok(Some(connection))
+}
+pub(crate) fn ownership_status(base: &Path, root: &str, id: &str) -> Result<Option<bool>, String> {
+    let Some(connection) = open_existing_read_only(base, root)? else {
+        return Ok(None);
+    };
     validate_owner(&connection, root, &legacy::agent_root_owner_id(root))?;
     let authority:Option<i64>=sql(connection.query_row("SELECT CASE WHEN EXISTS(SELECT 1 FROM tombstones WHERE thread_id=?1) THEN 0 WHEN EXISTS(SELECT 1 FROM threads WHERE thread_id=?1) THEN 1 ELSE NULL END",[id],|row|row.get(0)))?;
     Ok(authority.map(|value| value == 1))
