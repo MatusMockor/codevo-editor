@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codevo - v2.2 Warm</title>
+<style>
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --radius: 10px;
+  --radius-control: 8px;
+  --radius-bubble: 16px;
+  --radius-composer: 24px;
+  --sidebar-w: 256px;
+  --topbar-h: 52px;
+  --content-w: 768px;
+  --panel-w: 560px;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --t-fast: 140ms;
+  --t-soft: 220ms;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0e0d0c;
+  --bg: #141311;
+  --sidebar: #191715;
+  --surface: #1c1a17;
+  --message: #262320;
+  --code: #1f1d1a;
+  --hover: rgb(255 240 220 / 4.5%);
+  --selected: rgb(255 240 220 / 7%);
+  --border: rgb(255 238 215 / 7.5%);
+  --input: rgb(255 238 215 / 12%);
+  --fg: #ece6dd;
+  --fg-prose: #e2dbd1;
+  --muted: #a1988c;
+  --icon: #8a8176;
+  --accent: #d9905f;
+  --accent-hover: #e39c6c;
+  --on-accent: #1d130c;
+  --ring: rgb(217 144 95 / 75%);
+  --add: #9cc594;
+  --del: #e5937f;
+  --add-bg: rgb(120 180 110 / 10%);
+  --del-bg: rgb(220 120 100 / 10%);
+  --tok-str: #d7b98f;
+  --tok-kw: #c9a4c7;
+  --tok-com: #8f877c;
+  --shadow: 0 30px 80px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 240 220 / 8%);
+}
+html[data-theme="light"] {
+  color-scheme: light;
+  --page: #e9e4dc;
+  --bg: #fbf9f5;
+  --sidebar: #f4f0ea;
+  --surface: #fffdf9;
+  --message: #efeae2;
+  --code: #f4f0e9;
+  --hover: rgb(70 50 30 / 4.5%);
+  --selected: rgb(70 50 30 / 7.5%);
+  --border: #e7e1d7;
+  --input: #dcd4c8;
+  --fg: #2a2521;
+  --fg-prose: #2f2a25;
+  --muted: #6c645a;
+  --icon: #8c8377;
+  --accent: #a4532b;
+  --accent-hover: #954a25;
+  --on-accent: #ffffff;
+  --ring: rgb(164 83 43 / 65%);
+  --add: #3a7535;
+  --del: #b13c2c;
+  --add-bg: rgb(80 150 70 / 10%);
+  --del-bg: rgb(200 80 60 / 9%);
+  --tok-str: #8a5a1c;
+  --tok-kw: #7b3f7a;
+  --tok-com: #736b60;
+  --shadow: 0 30px 80px rgb(60 40 20 / 18%), 0 0 0 1px rgb(60 40 20 / 10%);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--page);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px 32px 72px;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-control); }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+svg.i.s14 { width: 14px; height: 14px; }
+code, .mono { font-family: var(--font-mono); }
+
+/* window */
+.window {
+  width: 1440px; height: 900px;
+  border-radius: 12px; overflow: hidden;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr auto;
+  position: relative;
+}
+
+/* sidebar */
+.sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.sb-top { height: var(--topbar-h); display: flex; align-items: center; padding: 0 12px 0 18px; gap: 8px; }
+.lights { display: flex; gap: 8px; }
+.lights span { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.lights span:nth-child(2) { background: #febc2e; }
+.lights span:nth-child(3) { background: #28c840; }
+.sb-top .icon-btn { margin-left: auto; }
+.sb-body { padding: 0 8px; display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; }
+.row {
+  height: 28px; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; border-radius: var(--radius-control);
+  color: var(--fg); font-size: 13px; width: 100%; text-align: left;
+  transition: background-color var(--t-fast) var(--ease);
+}
+.row:hover { background: var(--hover); }
+.row svg { color: var(--icon); }
+.row .hint { margin-left: auto; font-size: 11px; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+.row:hover .hint { opacity: 1; }
+.sb-label {
+  font-size: 11px; color: var(--muted); padding: 16px 10px 6px; font-weight: 500;
+}
+.thread { padding-left: 28px; position: relative; }
+.thread .title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.thread .time { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.thread[aria-current="true"] { background: var(--selected); }
+.live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+.thread .live-dot { position: absolute; left: 15px; top: 11px; }
+.chev { transition: transform var(--t-fast) var(--ease); }
+.collapsed .chev { transform: rotate(-90deg); }
+.sb-foot { padding: 8px; }
+
+/* main */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.topbar {
+  height: var(--topbar-h); flex: none;
+  display: flex; align-items: center; gap: 10px; padding: 0 12px 0 20px;
+}
+.topbar h1 { margin: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .proj { font-size: 12px; color: var(--muted); }
+.topbar .spacer { flex: 1; }
+.icon-btn {
+  width: 28px; height: 28px; display: inline-grid; place-items: center;
+  border-radius: var(--radius-control); color: var(--icon);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.icon-btn:hover { background: var(--hover); color: var(--fg); }
+.icon-btn[aria-pressed="true"] { background: var(--selected); color: var(--fg); }
+
+.scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 20px 24px; }
+.timeline { max-width: var(--content-w); margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+.user { display: flex; flex-direction: column; align-items: flex-end; }
+.user:not(:first-child) { margin-top: 10px; }
+.user-row { display: flex; justify-content: flex-end; align-items: flex-end; gap: 10px; width: 100%; }
+.user-row .bubble { max-width: 80%; }
+.bubble {
+  max-width: 80%; background: var(--message); border-radius: var(--radius-bubble);
+  padding: 10px 14px; line-height: 1.625; color: var(--fg);
+}
+.meta {
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; gap: 6px; height: 20px;
+  opacity: 0; transition: opacity var(--t-soft) var(--ease);
+}
+.user:hover .meta, .user:focus-within .meta,
+.assistant:hover .meta, .assistant:focus-within .meta { opacity: 1; }
+.meta .icon-btn { width: 22px; height: 22px; }
+.meta .dot { opacity: .6; }
+
+.work { display: flex; flex-direction: column; }
+.work-row {
+  min-height: 24px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 4px; margin-left: -4px; border-radius: 6px;
+  color: var(--muted); font-size: 14px; line-height: 1.625; align-self: flex-start;
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.work-row:hover { color: var(--fg); background: var(--hover); }
+.work-row .chev { transform: rotate(-90deg); }
+.work-row[aria-expanded="true"] .chev { transform: none; }
+.work-row .dur { font-size: 12px; opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+.work-row:hover .dur { opacity: 1; }
+.work-list {
+  margin: 4px 0 2px 22px; display: grid; gap: 2px;
+  font-family: var(--font-mono); font-size: 12px; color: var(--muted);
+}
+.work-list div { display: flex; gap: 8px; align-items: center; min-height: 22px; }
+.work-list .ok { color: var(--muted); margin-left: auto; font-family: var(--font-sans); font-size: 11px; }
+[hidden] { display: none !important; }
+
+.assistant { display: flex; flex-direction: column; gap: 4px; }
+.a-foot { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.a-foot .changes { margin-top: 0; }
+.prose { color: var(--fg-prose); line-height: 1.7; }
+.prose p { margin: 0 0 10px; }
+.prose p:last-child { margin-bottom: 0; }
+.prose code.inline {
+  font-size: 12.5px; background: var(--code); border: 1px solid var(--border);
+  padding: 1px 5px; border-radius: 5px;
+}
+.file-link {
+  color: var(--fg); text-decoration: underline; text-decoration-color: var(--input);
+  text-underline-offset: 3px; font-family: var(--font-mono); font-size: 12.5px;
+  border-radius: 4px;
+}
+.file-link:hover { text-decoration-color: var(--fg); }
+pre {
+  margin: 10px 0; background: var(--code); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px; overflow-x: auto;
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; color: var(--fg);
+}
+.k { color: var(--tok-kw); } .s { color: var(--tok-str); } .c { color: var(--tok-com); }
+
+.changes {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 10px;
+  height: 34px; padding: 0 10px 0 12px; margin-top: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px; color: var(--fg);
+  transition: background-color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.changes:hover { background: var(--hover); border-color: var(--input); }
+.changes svg { color: var(--icon); }
+.add { color: var(--add); font-variant-numeric: tabular-nums; }
+.del { color: var(--del); font-variant-numeric: tabular-nums; }
+.changes .nums { display: inline-flex; gap: 6px; font-size: 12px; font-family: var(--font-mono); }
+
+.live {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 24px;
+  color: var(--muted); font-size: 14px;
+}
+.live .live-dot { animation: breathe 1.8s var(--ease) infinite; }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.agents { display: flex; flex-direction: column; gap: 2px; }
+.agent-list { margin: 2px 0 0 22px; display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
+.agent-list div { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+.agent-list .name { color: var(--fg); }
+
+.queued .bubble { background: transparent; border: 1px dashed var(--input); color: var(--fg); }
+.attach {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  height: 24px; padding: 0 8px; border-radius: 6px; background: var(--hover);
+  font-size: 12px; color: var(--muted);
+}
+.queued-foot { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.queued-foot span, .queued-foot button { display: inline-flex; align-items: center; gap: 4px; height: 22px; }
+.queued-foot button { padding: 0 6px; margin-left: -6px; border-radius: 6px; }
+.queued-foot button:hover { color: var(--fg); background: var(--hover); }
+
+.empty { flex: 1; display: grid; place-items: center; padding-bottom: 40px; }
+.empty p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* composer */
+.composer-wrap { flex: none; padding: 0 20px 16px; }
+.composer {
+  max-width: var(--content-w); margin: 0 auto;
+  background: var(--surface); border: 1px solid var(--input);
+  border-radius: var(--radius-composer);
+  transition: border-color var(--t-soft) var(--ease);
+}
+.composer:focus-within { border-color: var(--ring); }
+.banner {
+  display: flex; align-items: center; gap: 8px;
+  margin: 6px 6px 0; padding: 0 10px; height: 32px;
+  border-radius: 18px; background: var(--hover);
+  font-size: 12px; color: var(--muted);
+}
+.banner b { color: var(--fg); font-weight: 500; }
+.banner .link { margin-left: auto; color: var(--fg); padding: 0 6px; border-radius: 6px; height: 22px; }
+.banner .link:hover { background: var(--hover); }
+textarea {
+  display: block; width: 100%; resize: none; border: 0; background: transparent;
+  font: inherit; font-size: 14px; line-height: 1.625; color: var(--fg);
+  padding: 14px 18px 4px; min-height: 58px;
+}
+textarea::placeholder { color: var(--muted); }
+textarea:focus-visible { outline: none; }
+.c-foot { display: flex; align-items: center; gap: 4px; padding: 6px 10px 10px 12px; }
+.chip {
+  height: 28px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 8px; border-radius: 14px; font-size: 13px; color: var(--muted);
+  transition: background-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.chip:hover { background: var(--hover); color: var(--fg); }
+.chip.icon { width: 28px; padding: 0; justify-content: center; }
+.c-foot .spacer { flex: 1; }
+.send {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent); color: var(--on-accent);
+  transition: background-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.send:hover { background: var(--accent-hover); }
+.send:active { transform: scale(.96); }
+.send svg { stroke-width: 2; }
+.send .stop-sq { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+
+.approval { padding: 14px 16px 12px 18px; }
+.approval .q { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.approval .q b { color: var(--fg); font-weight: 500; }
+.approval pre { margin: 0 0 12px; padding: 9px 12px; }
+.approval .acts { display: flex; gap: 6px; justify-content: flex-end; }
+.btn {
+  height: 30px; padding: 0 12px; border-radius: 15px; font-size: 13px;
+  color: var(--fg); border: 1px solid var(--input);
+  transition: background-color var(--t-fast) var(--ease);
+}
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 500; }
+.btn.primary:hover { background: var(--accent-hover); }
+
+/* diff panel */
+.panel {
+  width: 0; overflow: hidden; border-left: 1px solid transparent;
+  background: var(--bg); display: flex; flex-direction: column;
+  transition: width var(--t-soft) var(--ease), border-color var(--t-soft) var(--ease);
+}
+.window.panel-open .panel { width: var(--panel-w); border-left-color: var(--border); }
+.panel-inner { width: var(--panel-w); display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.p-head { height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; font-size: 13px; }
+.p-head .nums { display: inline-flex; gap: 6px; font-size: 12px; font-family: var(--font-mono); }
+.p-head .spacer { flex: 1; }
+.p-body { flex: 1; overflow-y: auto; padding: 0 12px 16px; display: grid; gap: 10px; align-content: start; }
+.file { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.file-h {
+  height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+  font-size: 12px; font-family: var(--font-mono); color: var(--fg); width: 100%; text-align: left;
+  background: var(--sidebar);
+}
+.file-h .path { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.file-h .dir { color: var(--muted); }
+.file-h .nums { display: inline-flex; gap: 6px; }
+.file-h .chev { color: var(--icon); }
+.file.collapsed .diff { display: none; }
+.diff { font-family: var(--font-mono); font-size: 12px; line-height: 20px; overflow-x: auto; border-top: 1px solid var(--border); }
+.dl { display: grid; grid-template-columns: 36px 16px 1fr; white-space: pre; color: var(--fg); }
+.dl .n { color: var(--muted); text-align: right; padding-right: 8px; opacity: .8; }
+.dl .m { color: var(--muted); text-align: center; }
+.dl.a { background: var(--add-bg); } .dl.a .m { color: var(--add); }
+.dl.d { background: var(--del-bg); } .dl.d .m { color: var(--del); }
+.dl.h { color: var(--muted); background: var(--hover); }
+
+/* state reveal */
+.reveal { animation: reveal var(--t-soft) var(--ease); }
+@keyframes reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* mockup controls (outside the app window) */
+.mock {
+  position: fixed; right: 16px; bottom: 16px; z-index: 10;
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-sans); font-size: 12px;
+}
+.seg {
+  display: flex; gap: 2px; padding: 3px; border-radius: 10px;
+  background: var(--sidebar); border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+}
+.seg button { height: 26px; padding: 0 10px; border-radius: 7px; color: var(--muted); white-space: nowrap; }
+.seg button:hover { color: var(--fg); }
+.seg button[aria-pressed="true"] { background: var(--selected); color: var(--fg); }
+.seg .lbl { align-self: center; padding: 0 8px 0 6px; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chevron-r" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.4 3.6a2 2 0 0 1 2.9 2.9L7 18.8 3 20l1.2-4Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-diff" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M13 6h3a2 2 0 0 1 2 2v7.5"/><path d="M11 18H8a2 2 0 0 1-2-2V8.5"/></symbol>
+  <symbol id="i-file-diff" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6"/><path d="M9 14h6M12 11v6"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16V5a2 2 0 0 1 2-2h11"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l8-8"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 14h.01M15 14h.01"/></symbol>
+</svg>
+
+<div class="window" id="win">
+  <aside class="sidebar" aria-label="Projects and threads">
+    <div class="sb-top">
+      <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+      <button class="icon-btn" aria-label="Hide sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button>
+    </div>
+    <nav class="sb-body">
+      <button class="row" data-new-thread><svg class="i"><use href="#i-edit"/></svg>New thread<span class="hint">⌘N</span></button>
+      <button class="row"><svg class="i"><use href="#i-search"/></svg>Search<span class="hint">⌘K</span></button>
+
+      <div class="sb-label">Projects</div>
+      <button class="row" aria-expanded="true"><svg class="i s14 chev"><use href="#i-chevron"/></svg>orders-api</button>
+      <button class="row thread" data-states="empty"><span class="title">New thread</span></button>
+      <button class="row thread" data-main-thread aria-current="true"><span class="live-dot" data-states="running agents queued" hidden></span><span class="title">Idempotency keys for orders</span><span class="time">2m</span></button>
+      <button class="row thread"><span class="title">Pagination cursor off by one</span><span class="time">1h</span></button>
+      <button class="row thread"><span class="title">Move auth middleware to jose</span><span class="time">3h</span></button>
+      <button class="row thread"><span class="title">Rate limit Stripe webhooks</span><span class="time">2d</span></button>
+      <button class="row collapsed" aria-expanded="false"><svg class="i s14 chev"><use href="#i-chevron"/></svg>billing-worker</button>
+      <button class="row collapsed" aria-expanded="false"><svg class="i s14 chev"><use href="#i-chevron"/></svg>web-dashboard</button>
+    </nav>
+    <div class="sb-foot">
+      <button class="row"><svg class="i"><use href="#i-settings"/></svg>Settings</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="threadTitle">Idempotency keys for orders</h1>
+      <span class="proj">orders-api</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="diffToggle" aria-pressed="false" aria-label="Toggle diff panel" data-hide-in="empty"><svg class="i"><use href="#i-diff"/></svg></button>
+    </header>
+
+    <div class="scroll" data-hide-in="empty">
+      <div class="timeline">
+
+        <div class="user">
+          <div class="user-row"><div class="meta">10:42</div><div class="bubble">POST /orders sometimes creates duplicate orders when the mobile client retries after a timeout. Add idempotency key support.</div></div>
+        </div>
+
+        <div class="work">
+          <button class="work-row" aria-expanded="false" data-work><svg class="i s14 chev"><use href="#i-chevron"/></svg>Ran 3 commands<span class="dur">12s</span></button>
+          <div class="work-list" hidden>
+            <div>rg "router.post\('/orders'" src</div>
+            <div>cat src/routes/orders.js</div>
+            <div>npm test -- orders<span class="ok">14 passed</span></div>
+          </div>
+        </div>
+
+        <div class="assistant">
+          <div class="prose">
+            <p>Added an <code class="inline">idempotency</code> middleware in <a class="file-link" href="#" data-open-diff>src/middleware/idempotency.js</a>. It reads the <code class="inline">Idempotency-Key</code> header, stores the first response per key and replays it for any retry:</p>
+<pre><span class="k">const</span> cached = <span class="k">await</span> store.get(key);
+<span class="k">if</span> (cached) <span class="k">return</span> res.status(cached.status).json(cached.body);</pre>
+            <p>The route now uses it before <code class="inline">createOrder</code>. A request that reuses a key with a different body gets <code class="inline">422</code>.</p>
+          </div>
+          <div class="a-foot"><button class="changes" data-open-diff><svg class="i s14"><use href="#i-file-diff"/></svg>3 files changed<span class="nums"><span class="add">+42</span><span class="del">-7</span></span><svg class="i s14"><use href="#i-chevron-r"/></svg></button><div class="meta">Opus 4.1<span class="dot">·</span>38s<span class="dot">·</span>10:43<button class="icon-btn" aria-label="Copy answer"><svg class="i s14"><use href="#i-copy"/></svg></button></div></div>
+        </div>
+
+        <div class="user">
+          <div class="user-row"><div class="meta">10:46</div><div class="bubble">Keys should expire after 24 hours.</div></div>
+        </div>
+
+        <div class="work" data-states="default diff approval">
+          <button class="work-row" aria-expanded="false" data-work><svg class="i s14 chev"><use href="#i-chevron"/></svg>Ran 1 command<span class="dur">4s</span></button>
+          <div class="work-list" hidden>
+            <div>npm test -- idempotency<span class="ok">6 passed</span></div>
+          </div>
+        </div>
+
+        <div class="assistant" data-states="default diff">
+          <div class="prose">
+            <p>Keys now expire after 24 hours through a TTL on the store entry, so no cleanup job is needed.</p>
+          </div>
+          <div class="a-foot"><button class="changes" data-open-diff><svg class="i s14"><use href="#i-file-diff"/></svg>1 file changed<span class="nums"><span class="add">+4</span><span class="del">-1</span></span><svg class="i s14"><use href="#i-chevron-r"/></svg></button><div class="meta">Opus 4.1<span class="dot">·</span>9s<span class="dot">·</span>10:46<button class="icon-btn" aria-label="Copy answer"><svg class="i s14"><use href="#i-copy"/></svg></button></div></div>
+        </div>
+
+        <div class="live reveal" data-states="running queued" role="status"><span class="live-dot"></span>Thinking</div>
+
+        <div class="agents reveal" data-states="agents">
+          <button class="work-row" aria-expanded="true" data-work><svg class="i s14 chev"><use href="#i-chevron"/></svg>Waiting for 2 agents</button>
+          <div class="agent-list">
+            <div><span class="live-dot"></span><span class="name">test-writer</span>Adding retry race tests</div>
+            <div><span class="live-dot"></span><span class="name">docs</span>Updating API.md</div>
+          </div>
+        </div>
+
+        <div class="user queued reveal" data-states="queued">
+          <div class="bubble">Also add a test for two concurrent retries with the same key.
+            <div><span class="attach"><svg class="i s14"><use href="#i-paperclip"/></svg>retry-trace.log</span></div>
+            <div class="queued-foot"><span><svg class="i s14"><use href="#i-clock"/></svg>Queued</span><button><svg class="i s14"><use href="#i-edit"/></svg>Edit</button></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="empty reveal" data-states="empty"><p>Send a message to start the conversation.</p></div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="approval reveal" data-states="approval" role="group" aria-label="Approval request">
+          <div class="q"><b>Run command?</b> The agent wants to install a dependency.</div>
+          <pre>npm install ioredis</pre>
+          <div class="acts">
+            <button class="btn">Deny</button>
+            <button class="btn">Always allow</button>
+            <button class="btn primary">Allow</button>
+          </div>
+        </div>
+        <div data-hide-in="approval">
+          <div class="banner reveal" data-states="agents"><svg class="i s14"><use href="#i-bot"/></svg><span><b>2 background agents</b> running. Your message will go to the main thread.</span><button class="link">View</button></div>
+          <textarea rows="2" aria-label="Message" placeholder="Ask anything, @ to mention files"></textarea>
+          <div class="c-foot">
+            <button class="chip icon" aria-label="Attach"><svg class="i"><use href="#i-plus"/></svg></button>
+            <button class="chip">Opus 4.1<svg class="i s14"><use href="#i-chevron"/></svg></button>
+            <span class="spacer"></span>
+            <button class="send" data-hide-in="running agents queued" aria-label="Send"><svg class="i"><use href="#i-arrow-up"/></svg></button>
+            <button class="send" data-states="running agents queued" aria-label="Stop"><span class="stop-sq"></span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="panel" aria-label="Diff" id="panel">
+    <div class="panel-inner">
+      <div class="p-head">
+        <span>3 files changed</span><span class="nums"><span class="add">+42</span><span class="del">-7</span></span>
+        <span class="spacer"></span>
+        <button class="icon-btn" aria-label="Close diff" data-close-diff><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="p-body">
+        <div class="file">
+          <button class="file-h" data-file><svg class="i s14 chev"><use href="#i-chevron"/></svg><span class="path"><span class="dir">src/middleware/</span>idempotency.js</span><span class="nums"><span class="add">+31</span></span></button>
+          <div class="diff">
+<div class="dl h"><span class="n"></span><span class="m"></span>@@ -0,0 +1,31 @@</div>
+<div class="dl a"><span class="n">1</span><span class="m">+</span>const store = require('../lib/store');</div>
+<div class="dl a"><span class="n">2</span><span class="m">+</span></div>
+<div class="dl a"><span class="n">3</span><span class="m">+</span>module.exports = ({ ttlSeconds }) =&gt; async (req, res, next) =&gt; {</div>
+<div class="dl a"><span class="n">4</span><span class="m">+</span>  const key = req.get('Idempotency-Key');</div>
+<div class="dl a"><span class="n">5</span><span class="m">+</span>  if (!key) return next();</div>
+<div class="dl a"><span class="n">6</span><span class="m">+</span></div>
+<div class="dl a"><span class="n">7</span><span class="m">+</span>  const cached = await store.get(key);</div>
+<div class="dl a"><span class="n">8</span><span class="m">+</span>  if (cached) return res.status(cached.status).json(cached.body);</div>
+<div class="dl a"><span class="n">9</span><span class="m">+</span></div>
+<div class="dl a"><span class="n">10</span><span class="m">+</span>  const json = res.json.bind(res);</div>
+<div class="dl a"><span class="n">11</span><span class="m">+</span>  res.json = (body) =&gt; {</div>
+<div class="dl a"><span class="n">12</span><span class="m">+</span>    store.set(key, { status: res.statusCode, body }, ttlSeconds);</div>
+<div class="dl a"><span class="n">13</span><span class="m">+</span>    return json(body);</div>
+<div class="dl a"><span class="n">14</span><span class="m">+</span>  };</div>
+          </div>
+        </div>
+        <div class="file">
+          <button class="file-h" data-file><svg class="i s14 chev"><use href="#i-chevron"/></svg><span class="path"><span class="dir">src/routes/</span>orders.js</span><span class="nums"><span class="add">+6</span><span class="del">-7</span></span></button>
+          <div class="diff">
+<div class="dl h"><span class="n"></span><span class="m"></span>@@ -12,9 +12,8 @@</div>
+<div class="dl"><span class="n">12</span><span class="m"></span>const router = express.Router();</div>
+<div class="dl d"><span class="n">13</span><span class="m">-</span>router.post('/orders', createOrder);</div>
+<div class="dl a"><span class="n">13</span><span class="m">+</span>router.post('/orders', idempotency(opts), createOrder);</div>
+<div class="dl"><span class="n">14</span><span class="m"></span>router.get('/orders/:id', getOrder);</div>
+          </div>
+        </div>
+        <div class="file collapsed">
+          <button class="file-h" data-file><svg class="i s14 chev"><use href="#i-chevron"/></svg><span class="path"><span class="dir">test/</span>idempotency.test.js</span><span class="nums"><span class="add">+5</span></span></button>
+          <div class="diff">
+<div class="dl h"><span class="n"></span><span class="m"></span>@@ -0,0 +1,5 @@</div>
+<div class="dl a"><span class="n">1</span><span class="m">+</span>test('replays the first response for a reused key', async () =&gt; {</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="mock" aria-label="Mockup controls">
+  <div class="seg" role="group" aria-label="States" id="states">
+    <span class="lbl">States</span>
+    <button data-state="default" aria-pressed="true">Default</button>
+    <button data-state="running">Running</button>
+    <button data-state="approval">Approval</button>
+    <button data-state="agents">Agents</button>
+    <button data-state="queued">Queued</button>
+    <button data-state="diff">Diff</button>
+    <button data-state="empty">Empty</button>
+  </div>
+  <div class="seg" role="group" aria-label="Theme">
+    <button data-theme-btn="dark" aria-pressed="true">Dark</button>
+    <button data-theme-btn="light">Light</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const win = document.getElementById('win');
+  const toggle = document.getElementById('diffToggle');
+  const title = document.getElementById('threadTitle');
+  const mainThread = document.querySelector('[data-main-thread]');
+  let state = 'default';
+
+  const setPanel = (open) => {
+    win.classList.toggle('panel-open', open);
+    toggle.setAttribute('aria-pressed', String(open));
+  };
+
+  const apply = (next) => {
+    state = next;
+    document.querySelectorAll('[data-states]').forEach((el) => {
+      el.hidden = !el.dataset.states.split(' ').includes(state);
+    });
+    document.querySelectorAll('[data-hide-in]').forEach((el) => {
+      el.hidden = el.dataset.hideIn.split(' ').includes(state);
+    });
+    document.querySelectorAll('#states [data-state]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.state === state));
+    });
+    setPanel(state === 'diff');
+    const empty = state === 'empty';
+    title.textContent = empty ? 'New thread' : 'Idempotency keys for orders';
+    mainThread.setAttribute('aria-current', String(!empty));
+    document.querySelector('.thread[data-states="empty"]').setAttribute('aria-current', String(empty));
+  };
+
+  document.querySelectorAll('#states [data-state]').forEach((b) => {
+    b.addEventListener('click', () => apply(b.dataset.state));
+  });
+  document.querySelectorAll('[data-theme-btn]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.documentElement.dataset.theme = b.dataset.themeBtn;
+      document.querySelectorAll('[data-theme-btn]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    });
+  });
+  document.querySelectorAll('[data-work]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const list = b.nextElementSibling;
+      const open = b.getAttribute('aria-expanded') !== 'true';
+      b.setAttribute('aria-expanded', String(open));
+      if (list) list.hidden = !open;
+    });
+  });
+  document.querySelectorAll('[data-open-diff]').forEach((el) => {
+    el.addEventListener('click', (e) => { e.preventDefault(); apply('diff'); });
+  });
+  document.querySelector('[data-close-diff]').addEventListener('click', () => apply('default'));
+  toggle.addEventListener('click', () => apply(state === 'diff' ? 'default' : 'diff'));
+  document.querySelectorAll('[data-file]').forEach((b) => {
+    b.addEventListener('click', () => b.parentElement.classList.toggle('collapsed'));
+  });
+  document.querySelector('[data-new-thread]').addEventListener('click', () => apply('empty'));
+
+  apply('default');
+})();
+</script>
+</body>
+</html>

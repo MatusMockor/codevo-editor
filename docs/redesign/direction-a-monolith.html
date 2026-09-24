@@ -1,0 +1,1624 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codevo redesign - Direction A: Monolith</title>
+<style>
+/* ============================================================
+   TOKENS
+   ============================================================ */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Helvetica Neue", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --t-micro: 10.5px;
+  --t-meta: 11.5px;
+  --t-ui: 13px;
+  --t-code: 12.5px;
+  --t-prose: 15.5px;
+  --t-title: 20px;
+  --t-display: 30px;
+  --lh-prose: 1.62;
+  --lh-ui: 1.4;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-pulse: 2600ms;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+
+  --column: 720px;
+  --rail-w: 264px;
+  --panel-w: 480px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #080807;
+  --s0: #0F0E0D;
+  --s1: #151412;
+  --s2: #1C1B19;
+  --s3: #252321;
+  --s4: #2F2C29;
+  --hair: rgba(255, 240, 220, .065);
+  --hair-strong: rgba(255, 240, 220, .11);
+  --fg-strong: #F3EFE8;
+  --fg: #DCD6CC;
+  --fg-muted: #A8A196;
+  --fg-subtle: #8C857A;
+  --ember: #EF9B50;
+  --ember-strong: #FFB26E;
+  --ember-fill: #EF9B50;
+  --ember-ink: #1B1108;
+  --ember-soft: rgba(239, 155, 80, .12);
+  --ember-glow: rgba(239, 155, 80, .45);
+  --ok: #9CC592;
+  --danger: #EC8C78;
+  --add-bg: rgba(156, 197, 146, .085);
+  --add-gutter: rgba(156, 197, 146, .16);
+  --del-bg: rgba(236, 140, 120, .085);
+  --del-gutter: rgba(236, 140, 120, .16);
+  --syn-kw: #C9B8E0;
+  --syn-str: #B7CC9C;
+  --syn-num: #9EC6CB;
+  --syn-com: #7F786E;
+  --shadow-slab: inset 0 1px 0 rgba(255, 245, 230, .055), 0 30px 60px -24px rgba(0, 0, 0, .75), 0 2px 6px rgba(0, 0, 0, .35);
+  --shadow-float: 0 18px 50px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 245, 230, .05);
+  --shadow-window: 0 40px 120px rgba(0, 0, 0, .7), 0 0 0 1px rgba(255, 240, 220, .07);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #D6D0C6;
+  --s0: #ECE8E1;
+  --s1: #F6F3EE;
+  --s2: #FFFDF9;
+  --s3: #E9E4DC;
+  --s4: #DED8CE;
+  --hair: rgba(70, 45, 20, .085);
+  --hair-strong: rgba(70, 45, 20, .14);
+  --fg-strong: #1A1814;
+  --fg: #2E2A25;
+  --fg-muted: #5A534A;
+  --fg-subtle: #675F55;
+  --ember: #A7500F;
+  --ember-strong: #8E420A;
+  --ember-fill: #B0561A;
+  --ember-ink: #FFF8EF;
+  --ember-soft: rgba(176, 86, 26, .1);
+  --ember-glow: rgba(214, 118, 44, .5);
+  --ok: #3E7639;
+  --danger: #A93F2C;
+  --add-bg: rgba(62, 118, 57, .08);
+  --add-gutter: rgba(62, 118, 57, .16);
+  --del-bg: rgba(169, 63, 44, .075);
+  --del-gutter: rgba(169, 63, 44, .15);
+  --syn-kw: #6A4B9C;
+  --syn-str: #4B6A2B;
+  --syn-num: #2C6770;
+  --syn-com: #857D71;
+  --shadow-slab: inset 0 1px 0 rgba(255, 255, 255, .9), 0 22px 44px -22px rgba(80, 55, 30, .32), 0 1px 3px rgba(80, 55, 30, .12);
+  --shadow-float: 0 18px 44px rgba(80, 55, 30, .2), 0 2px 6px rgba(80, 55, 30, .1);
+  --shadow-window: 0 40px 100px rgba(80, 55, 30, .28), 0 0 0 1px rgba(70, 45, 20, .1);
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg-page);
+  color: var(--fg);
+  font: var(--t-ui)/var(--lh-ui) var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--dur-2) var(--ease);
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+input, textarea { font: inherit; color: inherit; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+svg.i.sm { width: 14px; height: 14px; }
+svg.i.xs { width: 12px; height: 12px; }
+code, kbd, .mono { font-family: var(--font-mono); }
+:focus { outline: none; }
+:focus-visible { box-shadow: 0 0 0 2px var(--s1), 0 0 0 3.5px var(--ember); border-radius: var(--r-xs); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ============================================================
+   PAGE CHROME (outside the app window)
+   ============================================================ */
+.page-head {
+  display: flex; align-items: center; gap: var(--sp-4);
+  max-width: 1440px; margin: 0 auto; padding: 22px 0 18px;
+}
+.page-head h1 { font: 600 14px/1 var(--font-display); letter-spacing: -.01em; margin: 0; color: var(--fg-strong); }
+.page-head .sub { color: var(--fg-subtle); font-size: var(--t-meta); font-family: var(--font-mono); }
+.page-head .spacer { flex: 1; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--r-pill); background: var(--s2); box-shadow: inset 0 0 0 1px var(--hair); }
+.seg button { padding: 5px 12px; border-radius: var(--r-pill); color: var(--fg-muted); font-size: 12px; transition: color var(--dur-1), background var(--dur-1); display: inline-flex; gap: 6px; align-items: center; }
+.seg button:hover { color: var(--fg); }
+.seg button[aria-pressed="true"], .seg button[aria-selected="true"] { background: var(--s4); color: var(--fg-strong); }
+
+.stage { max-width: 1440px; margin: 0 auto 40px; }
+.stage-scaler { width: 1440px; height: 900px; transform-origin: top left; }
+
+/* ============================================================
+   WINDOW
+   ============================================================ */
+.win {
+  width: 1440px; height: 900px; border-radius: 12px; overflow: hidden;
+  background: var(--s0); box-shadow: var(--shadow-window);
+  display: grid; grid-template-rows: 48px 1fr 26px;
+}
+.win-body {
+  display: grid; min-height: 0;
+  grid-template-columns: var(--rail-w) 1fr var(--panel-w);
+  transition: grid-template-columns var(--dur-2) var(--ease);
+}
+.win.no-rail .win-body { grid-template-columns: 0 1fr var(--panel-w); }
+.win.no-panel .win-body { grid-template-columns: var(--rail-w) 1fr 0; }
+.win.no-rail.no-panel .win-body { grid-template-columns: 0 1fr 0; }
+
+/* ---------- Title / top bar ---------- */
+.topbar { display: grid; grid-template-columns: var(--rail-w) 1fr auto; align-items: center; position: relative; transition: grid-template-columns var(--dur-2) var(--ease); }
+.win.no-rail .topbar { grid-template-columns: 96px 1fr auto; }
+.lights { display: flex; gap: 8px; padding-left: 18px; }
+.lights span { width: 12px; height: 12px; border-radius: 50%; background: #FF5F57; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.25); }
+.lights span:nth-child(2) { background: #FEBC2E; }
+.lights span:nth-child(3) { background: #28C840; }
+.crumb { display: flex; align-items: center; gap: 10px; min-width: 0; padding-left: 28px; }
+.crumb .proj { color: var(--fg-subtle); font-size: var(--t-ui); }
+.crumb .slash { color: var(--s4); }
+.crumb .title { color: var(--fg-strong); font-weight: 560; font-size: var(--t-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumb .branch { font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); display: inline-flex; gap: 5px; align-items: center; padding: 4px 8px; border-radius: var(--r-pill); }
+.crumb .branch:hover { background: var(--s2); color: var(--fg-muted); }
+.actions { display: flex; align-items: center; gap: 2px; padding-right: 12px; }
+.ghost {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border-radius: var(--r-sm); color: var(--fg-muted); font-size: 12.5px;
+  transition: background var(--dur-1), color var(--dur-1);
+}
+.ghost:hover { background: var(--s2); color: var(--fg-strong); }
+.ghost.icon { width: 28px; padding: 0; justify-content: center; }
+.ghost[aria-pressed="true"] { color: var(--fg-strong); }
+.ghost .kbd { font: 10.5px/1 var(--font-mono); color: var(--fg-subtle); }
+.act-gap { width: 10px; }
+.run-btn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-subtle); }
+
+/* Ember pulse line - the signature live-activity motif */
+.pulse {
+  position: relative; height: 1px; overflow: hidden;
+  background: linear-gradient(90deg, transparent, var(--hair-strong) 20%, var(--hair-strong) 80%, transparent);
+}
+.pulse::after {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 34%;
+  background: linear-gradient(90deg, transparent, var(--ember) 45%, var(--ember-strong) 50%, var(--ember) 55%, transparent);
+  box-shadow: 0 0 8px var(--ember-glow);
+  animation: pulse-travel var(--dur-pulse) cubic-bezier(.45, 0, .2, 1) infinite;
+}
+.pulse.idle::after { animation: none; opacity: 0; }
+@keyframes pulse-travel { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
+.topbar > .pulse { position: absolute; left: 0; right: 0; bottom: 0; }
+
+.ember-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 0 0 var(--ember-glow); animation: breathe 2.2s ease-in-out infinite; flex: none; }
+@keyframes breathe { 0%, 100% { box-shadow: 0 0 0 0 var(--ember-glow); } 50% { box-shadow: 0 0 0 4px transparent; opacity: .75; } }
+
+/* ---------- Rail ---------- */
+.rail { background: var(--s0); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.rail-inner { width: var(--rail-w); display: flex; flex-direction: column; height: 100%; padding: 6px 10px 10px; }
+.rail-top { display: flex; gap: 6px; margin-bottom: 14px; }
+.search {
+  flex: 1; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  border-radius: var(--r-sm); background: var(--s2); color: var(--fg-subtle);
+}
+.search input { flex: 1; min-width: 0; background: none; border: 0; outline: none; font-size: 12.5px; color: var(--fg); }
+.search input::placeholder { color: var(--fg-subtle); }
+.search:focus-within { box-shadow: 0 0 0 1.5px var(--ember); }
+.search kbd { font-size: 10.5px; color: var(--fg-subtle); }
+.new-btn { flex: none; width: 32px; height: 32px; border-radius: var(--r-sm); display: grid; place-items: center; color: var(--fg-muted); background: var(--s2); transition: background var(--dur-1), color var(--dur-1); }
+.new-btn:hover { background: var(--s3); color: var(--fg-strong); }
+.rail-scroll { flex: 1; overflow: auto; margin: 0 -10px; padding: 0 10px; scrollbar-width: none; }
+.group-label {
+  display: flex; align-items: center; justify-content: space-between;
+  font: 500 var(--t-micro)/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--fg-subtle); padding: 14px 8px 8px;
+}
+.thread {
+  position: relative; display: grid; grid-template-columns: 14px 1fr auto; column-gap: 10px; align-items: start;
+  width: 100%; text-align: left; padding: 9px 8px 9px 8px; border-radius: var(--r-md);
+  transition: background var(--dur-1);
+}
+.thread:hover { background: var(--s2); }
+.thread[aria-current="true"] { background: var(--s3); }
+.thread .st { height: 18px; display: grid; place-items: center; }
+.thread .t-title { font-size: var(--t-ui); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 18px; }
+.thread[aria-current="true"] .t-title, .thread.unread .t-title { color: var(--fg-strong); font-weight: 560; }
+.thread .t-meta { grid-column: 2 / 4; font-size: var(--t-meta); color: var(--fg-subtle); display: flex; gap: 6px; margin-top: 2px; white-space: nowrap; }
+.thread .t-meta .hot { color: var(--ember); }
+.thread .t-time { font: 10.5px/18px var(--font-mono); color: var(--fg-subtle); }
+.thread .t-acts { display: none; gap: 2px; margin: -3px -4px 0 0; }
+.thread:hover .t-time, .thread:focus-within .t-time { display: none; }
+.thread:hover .t-acts, .thread:focus-within .t-acts { display: flex; }
+.t-acts span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--r-xs); color: var(--fg-subtle); }
+.t-acts span:hover { background: var(--s4); color: var(--fg-strong); }
+.st-done { color: var(--fg-subtle); }
+.st-unread { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-strong); }
+.st-wait { display: flex; gap: 3px; }
+.st-wait i { width: 4px; height: 4px; border-radius: 50%; background: var(--fg-muted); }
+.st-wait i:first-child { background: var(--ember); animation: breathe 2.2s ease-in-out infinite; }
+.st-approve { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ember); display: grid; place-items: center; }
+.st-approve::after { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--ember); }
+.projects { padding-top: 8px; }
+.proj-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--r-sm); color: var(--fg-muted); width: 100%; text-align: left; font-size: 12.5px; }
+.proj-row:hover { background: var(--s2); color: var(--fg); }
+.proj-row .mark { width: 16px; height: 16px; border-radius: 5px; background: var(--s3); display: grid; place-items: center; font: 600 9px/1 var(--font-mono); color: var(--fg-muted); }
+.proj-row .n { margin-left: auto; font: 10.5px/1 var(--font-mono); color: var(--fg-subtle); }
+.proj-row.add { color: var(--fg-subtle); }
+
+/* ---------- Center / conversation ---------- */
+.center { background: var(--s1); border-radius: 12px 12px 0 0; min-width: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.win.no-rail .center { border-top-left-radius: 0; }
+.transcript { flex: 1; overflow: auto; scroll-behavior: smooth; padding: 40px 32px 32px; scrollbar-width: thin; scrollbar-color: var(--s4) transparent; }
+.col { max-width: var(--column); margin: 0 auto; }
+
+.prompt {
+  position: relative; background: var(--s2); border-radius: var(--r-lg);
+  padding: 16px 20px 16px; color: var(--fg-strong);
+  font-size: var(--t-prose); line-height: var(--lh-prose); margin: 0 0 28px 64px;
+}
+.prompt p { margin: 0; }
+.prompt .chips { display: flex; gap: 6px; margin-top: 12px; }
+.prompt-acts { position: absolute; left: -64px; top: 12px; width: 56px; display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity var(--dur-1); }
+.prompt:hover .prompt-acts, .prompt:focus-within .prompt-acts { opacity: 1; }
+.prompt-time { position: absolute; right: 16px; top: -20px; font: 10.5px/1 var(--font-mono); color: var(--fg-subtle); opacity: 0; transition: opacity var(--dur-1); }
+.prompt:hover .prompt-time { opacity: 1; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px 0 4px;
+  border-radius: var(--r-pill); background: var(--s3); color: var(--fg); font-size: 12px;
+  transition: background var(--dur-1);
+}
+.chip:hover { background: var(--s4); }
+.chip .thumb {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #8c6a4c, #3b2c22 70%);
+}
+.chip .size { color: var(--fg-subtle); font: 10.5px/1 var(--font-mono); }
+
+.turn-head { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+.prov { width: 22px; height: 22px; border-radius: 7px; background: var(--s3); display: grid; place-items: center; color: var(--fg-strong); }
+.prov svg { width: 12px; height: 12px; }
+.turn-head .who { color: var(--fg-strong); font-weight: 560; font-size: var(--t-ui); }
+.turn-head .meta { font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); display: flex; gap: 8px; }
+.turn-head .meta b { font-weight: 400; color: var(--fg-muted); }
+.turn-head .when { margin-left: auto; font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); }
+
+/* Work group */
+.work { margin: 0 0 22px; }
+.disc {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 8px 10px; margin-left: -10px; width: calc(100% + 20px); border-radius: var(--r-md);
+  color: var(--fg-muted); transition: background var(--dur-1), color var(--dur-1);
+}
+.disc:hover { background: var(--s2); color: var(--fg); }
+.disc .chev { transition: transform var(--dur-2) var(--ease); color: var(--fg-subtle); }
+.disc[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.disc .lbl { font-size: 13.5px; color: var(--fg); }
+.disc .sum { font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); }
+.disc .end { margin-left: auto; font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); display: flex; align-items: center; gap: 8px; }
+.collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-2) var(--ease); }
+.collapse.open { grid-template-rows: 1fr; }
+.collapse > .ci { overflow: hidden; min-height: 0; }
+
+.steps { position: relative; padding: 6px 0 4px 0; margin-left: 7px; }
+.steps::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 14px; width: 1px; background: var(--hair-strong); }
+.step {
+  position: relative; display: grid; grid-template-columns: 16px 1fr auto; gap: 12px; align-items: center;
+  padding: 6px 10px 6px 18px; border-radius: var(--r-sm); font-size: var(--t-code); color: var(--fg-muted);
+  width: 100%; text-align: left;
+}
+.step::before { content: ""; position: absolute; left: -2px; top: 50%; width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%; background: var(--s1); box-shadow: inset 0 0 0 1px var(--fg-subtle); }
+.step:hover { background: var(--s2); }
+.step .ic { color: var(--fg-subtle); }
+.step .body { min-width: 0; display: flex; gap: 8px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+.step .verb { font-family: var(--font-ui); font-size: 12.5px; color: var(--fg-subtle); }
+.step code { font-size: var(--t-code); color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
+.step .res { font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); display: flex; gap: 10px; align-items: center; }
+.step .res .dur { opacity: 0; transition: opacity var(--dur-1); }
+.step:hover .res .dur, .step:focus-visible .res .dur { opacity: 1; }
+.plus { color: var(--ok); font-family: var(--font-mono); }
+.minus { color: var(--danger); font-family: var(--font-mono); }
+.okc { color: var(--ok); }
+.step.thought { color: var(--fg-muted); }
+.step.thought .preview { font-family: var(--font-ui); font-style: italic; color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.step.thought .chev { transition: transform var(--dur-2) var(--ease); color: var(--fg-subtle); }
+.step.thought[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.thought-full { padding: 2px 10px 10px 46px; color: var(--fg-muted); font-size: 13.5px; line-height: 1.6; }
+.thought-full p { margin: 0 0 6px; }
+.out {
+  margin: 2px 10px 8px 46px; padding: 10px 14px; border-radius: var(--r-md); background: var(--s0);
+  font: 11.5px/1.65 var(--font-mono); color: var(--fg-muted); white-space: pre;
+}
+.out .pass { color: var(--ok); }
+
+/* Subagent batch */
+.batch { margin: 0 0 26px; }
+.members { padding: 8px 0 2px; display: grid; gap: 6px; }
+.member {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 12px 14px; border-radius: var(--r-md); background: var(--s2);
+  transition: background var(--dur-1);
+}
+.member:hover { background: var(--s3); }
+.role { font: 500 10.5px/1 var(--font-mono); letter-spacing: .02em; padding: 5px 8px; border-radius: var(--r-pill); background: var(--s4); color: var(--fg); }
+.member .task { color: var(--fg-strong); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.member .mstat { font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); display: flex; align-items: center; gap: 8px; }
+.member .mstat .run { color: var(--ember); display: inline-flex; align-items: center; gap: 6px; }
+.member .activity { grid-column: 2 / 4; font: 11.5px/1.4 var(--font-mono); color: var(--fg-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.member .activity::before { content: "\2192  "; color: var(--fg-subtle); }
+.member .mpulse { grid-column: 1 / 4; margin: 6px -14px -12px; }
+.member.stopped .run { color: var(--fg-subtle); }
+.member.stopped .mpulse { display: none; }
+
+/* Markdown answer */
+.answer { font-size: var(--t-prose); line-height: var(--lh-prose); color: var(--fg); margin: 0 0 22px; position: relative; }
+.answer p { margin: 0 0 14px; }
+.answer strong { color: var(--fg-strong); font-weight: 600; }
+.answer ul { margin: 0 0 16px; padding-left: 20px; }
+.answer li { margin: 0 0 6px; padding-left: 4px; }
+.answer li::marker { color: var(--fg-subtle); }
+.answer :not(pre) > code {
+  font-size: .86em; padding: 2px 6px; border-radius: 6px; background: var(--s3); color: var(--fg-strong);
+}
+.flink {
+  font: .86em var(--font-mono); color: var(--fg-strong); text-decoration: none; padding: 2px 6px 2px 5px; border-radius: 6px;
+  background: var(--s3); display: inline-flex; gap: 5px; align-items: center; vertical-align: 1px;
+  box-shadow: inset 0 -1px 0 var(--hair-strong); transition: background var(--dur-1), box-shadow var(--dur-1);
+}
+.flink:hover { background: var(--s4); box-shadow: inset 0 -1.5px 0 var(--ember); }
+.flink .ln { color: var(--fg-subtle); }
+.code {
+  margin: 4px 0 18px; border-radius: var(--r-lg); background: var(--s0); overflow: hidden; position: relative;
+}
+.code-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 0 16px; font: 10.5px/1 var(--font-mono); color: var(--fg-subtle); letter-spacing: .04em; }
+.code-head .ghost { height: 24px; font-size: 11.5px; opacity: 0; }
+.code:hover .code-head .ghost, .code-head .ghost:focus-visible { opacity: 1; }
+.code pre { margin: 0; padding: 10px 16px 16px; font: 12.5px/1.7 var(--font-mono); color: var(--fg); overflow: auto; }
+.k { color: var(--syn-kw); } .s { color: var(--syn-str); } .n { color: var(--syn-num); } .c { color: var(--syn-com); font-style: italic; }
+.msg-acts { display: flex; gap: 2px; margin-top: -6px; opacity: 0; transition: opacity var(--dur-1); }
+.answer:hover .msg-acts, .answer:focus-within .msg-acts { opacity: 1; }
+
+/* Turn changes card */
+.changes { border-radius: var(--r-lg); background: var(--s2); margin: 0 0 22px; overflow: hidden; }
+.changes-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+.changes-head .ttl { color: var(--fg-strong); font-weight: 560; }
+.changes-head .tot { font: var(--t-meta)/1 var(--font-mono); display: flex; gap: 6px; }
+.changes-head .spacer { flex: 1; }
+.changes-head .ghost { height: 26px; font-size: 12px; }
+.frow {
+  display: grid; grid-template-columns: 18px 1fr auto 16px; gap: 10px; align-items: center; width: 100%; text-align: left;
+  padding: 8px 16px; font-size: 12.5px; transition: background var(--dur-1);
+}
+.frow:last-child { padding-bottom: 12px; }
+.frow:hover { background: var(--s3); }
+.frow .kind { font: 600 10px/1 var(--font-mono); color: var(--fg-subtle); text-align: center; }
+.frow .kind.a { color: var(--ok); }
+.frow .path { font-family: var(--font-mono); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frow .path .dir { color: var(--fg-subtle); }
+.frow .cnt { font: var(--t-meta)/1 var(--font-mono); display: flex; gap: 8px; }
+.frow .go { color: var(--fg-subtle); opacity: 0; transition: opacity var(--dur-1); }
+.frow:hover .go, .frow:focus-visible .go { opacity: 1; }
+
+/* Waiting state */
+.waiting { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; margin: 6px 0 44px; }
+.waiting .label { display: inline-flex; gap: 8px; align-items: center; font: var(--t-meta)/1 var(--font-mono); color: var(--fg-muted); }
+.waiting .label b { color: var(--fg-strong); font-weight: 500; }
+.waiting.done .pulse::after { animation: none; opacity: 0; }
+.waiting.done .ember-dot { background: var(--fg-subtle); animation: none; }
+
+/* Approval card */
+.approval {
+  border-radius: var(--r-lg); background: var(--s2); padding: 16px 18px 16px; margin: 0 0 24px;
+  box-shadow: inset 2px 0 0 var(--ember);
+}
+.approval .a-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.approval .a-kicker { font: 500 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ember); display: inline-flex; align-items: center; gap: 7px; }
+.approval .a-cwd { margin-left: auto; font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); }
+.approval .cmd { font: 13px/1.5 var(--font-mono); color: var(--fg-strong); background: var(--s0); border-radius: var(--r-md); padding: 11px 14px; }
+.approval .cmd .p { color: var(--fg-subtle); user-select: none; }
+.approval .why { color: var(--fg-muted); font-size: 13px; margin: 10px 0 14px; line-height: 1.55; }
+.approval .a-row { display: flex; align-items: center; gap: 8px; }
+.approval .a-row .spacer { flex: 1; }
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted); cursor: pointer; }
+.check input { appearance: none; width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--fg-subtle); margin: 0; display: grid; place-items: center; cursor: pointer; }
+.check input:checked { background: var(--ember-fill); box-shadow: none; }
+.check input:checked::after { content: ""; width: 6px; height: 3px; border: solid var(--ember-ink); border-width: 0 0 1.5px 1.5px; transform: rotate(-45deg) translate(1px, -1px); }
+.check input:focus-visible { box-shadow: 0 0 0 2px var(--s2), 0 0 0 3.5px var(--ember); }
+.btn {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; border-radius: var(--r-md);
+  font-size: 13px; font-weight: 520; transition: background var(--dur-1), color var(--dur-1), transform var(--dur-1);
+}
+.btn.quiet { background: var(--s3); color: var(--fg); }
+.btn.quiet:hover { background: var(--s4); color: var(--fg-strong); }
+.btn.primary { background: var(--ember-fill); color: var(--ember-ink); }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn:active { transform: translateY(.5px); }
+.btn kbd { font-size: 10.5px; opacity: .7; }
+.approval.resolved { box-shadow: none; padding: 12px 18px; }
+.approval .resolved-line { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--fg-muted); }
+.approval .resolved-line code { color: var(--fg); font-size: 12.5px; white-space: nowrap; }
+.approval .resolved-line span { white-space: nowrap; }
+
+/* ---------- Composer: the monolith slab ---------- */
+.dock { padding: 0 32px 22px; position: relative; }
+.dock::before { content: ""; position: absolute; left: 0; right: 0; top: -40px; height: 40px; background: linear-gradient(transparent, var(--s1)); pointer-events: none; }
+.dock .col { position: relative; }
+.stratum {
+  margin: 0 18px; border-radius: 12px 12px 0 0; background: var(--s0);
+  display: flex; align-items: center; gap: 10px; padding: 9px 14px; font-size: 12.5px;
+}
+.stratum + .stratum { margin: 0 9px; }
+.stratum.banner { position: relative; overflow: hidden; color: var(--fg-muted); }
+.stratum.banner .pulse { position: absolute; left: 0; right: 0; top: 0; }
+.stratum.banner b { color: var(--fg-strong); font-weight: 560; }
+.stratum.banner .who { font: var(--t-meta)/1 var(--font-mono); color: var(--fg-subtle); }
+.stratum .spacer { flex: 1; }
+.stratum .ghost { height: 24px; font-size: 12px; padding: 0 8px; }
+.stratum.queued { background: var(--s3); color: var(--fg); }
+.stratum.queued .qk { font: 500 10.5px/1 var(--font-mono); color: var(--fg-muted); letter-spacing: .04em; white-space: nowrap; }
+.stratum.queued .qt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--fg); }
+.stratum.queued .qa { display: flex; gap: 2px; opacity: .0; transition: opacity var(--dur-1); }
+.stratum.queued:hover .qa, .stratum.queued:focus-within .qa { opacity: 1; }
+.stratum.queued .ghost { padding: 0 6px; }
+.slab {
+  position: relative; background: var(--s2); border-radius: var(--r-lg); box-shadow: var(--shadow-slab);
+  padding: 14px 14px 10px 18px; transition: box-shadow var(--dur-2) var(--ease);
+}
+.slab:focus-within { box-shadow: var(--shadow-slab), 0 0 0 1px var(--ember-soft), 0 0 0 4px var(--ember-soft); }
+.slab .att { display: flex; gap: 6px; margin-bottom: 8px; }
+.slab textarea {
+  display: block; width: 100%; resize: none; border: 0; outline: none; background: none;
+  font-size: var(--t-prose); line-height: 1.55; color: var(--fg-strong); min-height: 52px; max-height: 200px; padding: 2px 0;
+}
+.slab textarea::placeholder { color: var(--fg-subtle); }
+.slab-row { display: flex; align-items: center; gap: 4px; margin: 10px -4px 0 -8px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--r-pill);
+  font-size: 12px; color: var(--fg-muted); transition: background var(--dur-1), color var(--dur-1); white-space: nowrap;
+}
+.pill:hover, .pill[aria-expanded="true"] { background: var(--s3); color: var(--fg-strong); }
+.pill .dim { color: var(--fg-subtle); }
+.pill.warn svg { color: var(--ember); }
+.slab-row .spacer { flex: 1; }
+.slab-row .hint { font: 10.5px/1 var(--font-mono); color: var(--fg-subtle); margin-right: 8px; white-space: nowrap; }
+.send { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px 0 14px; border-radius: var(--r-md); background: var(--ember-fill); color: var(--ember-ink); font-weight: 560; font-size: 13px; transition: filter var(--dur-1); }
+.send:hover { filter: brightness(1.07); }
+.send kbd { font-size: 11px; opacity: .72; }
+.send-now { width: 34px; height: 34px; border-radius: var(--r-md); display: grid; place-items: center; color: var(--fg-muted); margin-right: 4px; }
+.send-now:hover { background: var(--s3); color: var(--fg-strong); }
+
+.pop {
+  position: absolute; bottom: 52px; left: 10px; width: 280px; border-radius: var(--r-lg); background: var(--s2);
+  box-shadow: var(--shadow-float); padding: 6px; z-index: 5; display: none;
+}
+[data-theme="dark"] .pop { background: #22201E; }
+.pop.open { display: block; }
+.pop .ph { font: 500 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-subtle); padding: 10px 10px 6px; }
+.opt { display: grid; grid-template-columns: 1fr auto; align-items: center; width: 100%; text-align: left; padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; color: var(--fg); }
+.opt small { display: block; color: var(--fg-subtle); font-size: 11.5px; margin-top: 1px; }
+.opt:hover { background: var(--s3); }
+.opt[aria-checked="true"] .tick { color: var(--ember); }
+.opt .tick { color: transparent; }
+.effort { display: flex; gap: 2px; padding: 4px 6px 8px; }
+.effort button { flex: 1; padding: 6px 0; border-radius: var(--r-sm); font-size: 12px; color: var(--fg-muted); background: var(--s3); }
+.effort button:hover { color: var(--fg-strong); }
+.effort button[aria-checked="true"] { background: var(--fg-strong); color: var(--s1); }
+
+/* ---------- Right panel ---------- */
+.panel { background: var(--s0); min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.panel-inner { width: var(--panel-w); height: 100%; display: flex; flex-direction: column; }
+.ptabs { display: flex; align-items: center; gap: 2px; padding: 4px 14px 10px 14px; }
+.ptab { position: relative; padding: 6px 10px; font-size: 12.5px; color: var(--fg-subtle); border-radius: var(--r-sm); transition: color var(--dur-1), background var(--dur-1); display: inline-flex; gap: 6px; align-items: center; }
+.ptab:hover { color: var(--fg); background: var(--s2); }
+.ptab[aria-selected="true"] { color: var(--fg-strong); background: var(--s2); }
+.ptab .badge { font: 10px/1 var(--font-mono); color: var(--fg-subtle); }
+.ptabs .spacer { flex: 1; }
+.pview { flex: 1; min-height: 0; display: none; flex-direction: column; }
+.pview.on { display: flex; }
+.diff-files { display: flex; gap: 4px; padding: 0 14px 10px; overflow: auto; scrollbar-width: none; }
+.dfile { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: var(--r-pill); font: 11.5px/1 var(--font-mono); color: var(--fg-subtle); transition: background var(--dur-1), color var(--dur-1); }
+.dfile:hover { color: var(--fg); background: var(--s2); }
+.dfile[aria-selected="true"] { background: var(--s3); color: var(--fg-strong); }
+.diff-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px 10px; margin: 0 10px; background: var(--s1); border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.diff-head .path { font: 12px/1 var(--font-mono); color: var(--fg-strong); }
+.diff-head .cnt { font: var(--t-meta)/1 var(--font-mono); display: flex; gap: 6px; }
+.diff-head .spacer { flex: 1; }
+.diff-head .seg { background: var(--s0); box-shadow: none; }
+.diff-head .seg button { padding: 4px 9px; font-size: 11px; }
+.diff-body { flex: 1; overflow: auto; margin: 0 10px 10px; background: var(--s1); border-radius: 0 0 var(--r-lg) var(--r-lg); padding-bottom: 12px; scrollbar-width: thin; scrollbar-color: var(--s4) transparent; }
+.dl { display: grid; grid-template-columns: 36px 36px 1fr; font: 11.5px/20px var(--font-mono); color: var(--fg); }
+.dl .no { color: var(--fg-subtle); text-align: right; padding-right: 8px; user-select: none; opacity: .8; }
+.dl .tx { white-space: pre; padding: 0 12px 0 10px; position: relative; }
+.dl.add { background: var(--add-bg); }
+.dl.add .no { background: var(--add-gutter); color: var(--fg-muted); }
+.dl.add .tx::before { content: "+"; position: absolute; left: 0; color: var(--ok); }
+.dl.del { background: var(--del-bg); }
+.dl.del .no { background: var(--del-gutter); color: var(--fg-muted); }
+.dl.del .tx::before { content: "-"; position: absolute; left: 0; color: var(--danger); }
+.dl.hunk { display: block; color: var(--fg-subtle); padding: 8px 12px 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl.flash { animation: flash 1.6s var(--ease); }
+@keyframes flash { 0%, 30% { box-shadow: inset 2px 0 0 var(--ember), inset 0 0 0 999px var(--ember-soft); } 100% { box-shadow: inset 2px 0 0 transparent; } }
+.split { display: grid; grid-template-columns: 1fr 1fr; }
+.split .dl { grid-template-columns: 30px 1fr; min-width: 0; }
+.split .dl .tx { overflow: hidden; text-overflow: ellipsis; }
+.split .dl.empty { background: repeating-linear-gradient(135deg, transparent 0 5px, var(--hair) 5px 6px); }
+.split .dl.hunk { grid-column: 1 / 3; display: block; }
+.split .dl + .dl:nth-child(even) { box-shadow: inset 1px 0 0 var(--hair); }
+
+.tree { padding: 0 10px; overflow: auto; }
+.node { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--fg-muted); width: 100%; text-align: left; }
+.node:hover { background: var(--s2); color: var(--fg); }
+.node .m { margin-left: auto; font: 600 10px/1 var(--font-mono); }
+.node .m.mod { color: var(--ember); }
+.node .m.new { color: var(--ok); }
+.term { flex: 1; margin: 0 10px 10px; border-radius: var(--r-lg); background: var(--s1); padding: 14px 16px; font: 11.5px/1.7 var(--font-mono); color: var(--fg-muted); white-space: pre; overflow: auto; }
+.term .pr { color: var(--fg-strong); }
+.term .ok { color: var(--ok); }
+.term .dim { color: var(--fg-subtle); }
+.term .cursor { display: inline-block; width: 7px; height: 14px; background: var(--ember); vertical-align: -2px; animation: blink 1.1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.gitv { padding: 0 20px; display: flex; flex-direction: column; gap: 14px; }
+.gitv .br { display: flex; align-items: center; gap: 8px; font: 12px/1 var(--font-mono); color: var(--fg-strong); }
+.gitv .br span { color: var(--fg-subtle); }
+.gitv textarea { width: 100%; min-height: 84px; resize: none; background: var(--s1); border: 0; border-radius: var(--r-md); padding: 12px 14px; font-size: 13px; color: var(--fg-strong); outline: none; }
+.gitv textarea:focus-visible { box-shadow: 0 0 0 1.5px var(--ember); }
+.gitv .row { display: flex; gap: 8px; }
+.gitv .lbl { font: 500 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-subtle); }
+
+/* ---------- Status bar ---------- */
+.status { display: flex; align-items: center; gap: 16px; padding: 0 14px; font: 11px/1 var(--font-mono); color: var(--fg-subtle); }
+.status span { display: inline-flex; gap: 6px; align-items: center; }
+.status .spacer { flex: 1; }
+.status .ember-dot { width: 6px; height: 6px; }
+.status button { color: var(--fg-subtle); display: inline-flex; gap: 6px; align-items: center; padding: 3px 6px; border-radius: var(--r-xs); }
+.status button:hover { color: var(--fg); background: var(--s2); }
+
+/* ============================================================
+   TOKENS VIEW
+   ============================================================ */
+.tokens { max-width: 1440px; margin: 0 auto 60px; display: none; }
+.tokens.on { display: block; }
+.stage.off { display: none; }
+.tk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.tk-card { border-radius: 16px; background: var(--s1); color: var(--fg); padding: 26px 28px; box-shadow: var(--shadow-window); }
+.tk-card h2 { margin: 0 0 4px; font: 600 var(--t-title)/1.2 var(--font-display); color: var(--fg-strong); letter-spacing: -.015em; }
+.tk-card h3 { margin: 26px 0 12px; font: 500 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-subtle); }
+.tk-card .lead { color: var(--fg-muted); margin: 0; font-size: 13px; line-height: 1.55; max-width: 60ch; }
+.sw { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.sw div { border-radius: var(--r-md); height: 64px; padding: 8px 9px; display: flex; flex-direction: column; justify-content: flex-end; font: 10px/1.35 var(--font-mono); color: var(--fg-muted); box-shadow: inset 0 0 0 1px var(--hair); }
+.sw div b { font-weight: 500; color: var(--fg-strong); }
+.txt-sw { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.txt-sw div { font: 11px/1.5 var(--font-mono); }
+.txt-sw div span { display: block; font: 600 22px/1.2 var(--font-display); }
+.scale { display: grid; gap: 10px; }
+.scale div { display: grid; grid-template-columns: 110px 1fr; align-items: baseline; gap: 16px; }
+.scale small { font: 10.5px/1 var(--font-mono); color: var(--fg-subtle); }
+.spc { display: flex; align-items: flex-end; gap: 14px; }
+.spc div { text-align: center; font: 10px/1 var(--font-mono); color: var(--fg-subtle); }
+.spc div i { display: block; background: var(--ember-soft); box-shadow: inset 0 0 0 1px var(--ember); margin-bottom: 6px; height: 18px; }
+.rad { display: flex; gap: 14px; }
+.rad div { width: 64px; height: 44px; background: var(--s3); display: grid; place-items: end center; padding-bottom: 6px; font: 10px/1 var(--font-mono); color: var(--fg-muted); }
+.motion { display: grid; gap: 14px; }
+.motion .mrow { display: grid; grid-template-columns: 150px 1fr; gap: 16px; align-items: center; font-size: 12.5px; color: var(--fg-muted); }
+.motion .mrow code { color: var(--fg-strong); font-size: 11.5px; }
+.principles { margin: 0; padding-left: 18px; color: var(--fg-muted); line-height: 1.7; font-size: 13px; }
+.principles b { color: var(--fg-strong); font-weight: 560; }
+.tk-wide { grid-column: 1 / 3; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+  .pulse::after { animation: none !important; transform: none; left: 0; width: 100%; opacity: .55; box-shadow: none; }
+  .ember-dot, .st-wait i:first-child { animation: none !important; }
+  .term .cursor { animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="i-compose" viewBox="0 0 16 16"><path d="M13.5 8.5v4a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12.5V4.5A1.5 1.5 0 0 1 4 3h4"/><path d="m11.5 2.5 2 2L8 10l-2.5.5L6 8z"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></symbol>
+    <symbol id="i-chevd" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 16 16"><path d="M6 2.5a2 2 0 0 0-2 2 2 2 0 0 0-1.5 3.3A2.2 2.2 0 0 0 4 11.5 2 2 0 0 0 6 13.5a1.5 1.5 0 0 0 2-1V3.5a1.5 1.5 0 0 0-2-1Z"/><path d="M10 2.5a2 2 0 0 1 2 2 2 2 0 0 1 1.5 3.3 2.2 2.2 0 0 1-1.5 3.7 2 2 0 0 1-2 2 1.5 1.5 0 0 1-2-1"/></symbol>
+    <symbol id="i-term" viewBox="0 0 16 16"><path d="m3.5 5 3 3-3 3M8.5 11.5h4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6Z"/><path d="M9 2v4h4"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 16 16"><path d="m10.5 3 2.5 2.5L6 12.5 3 13l.5-3z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5v9l7.5-4.5z"/></symbol>
+    <symbol id="i-commit" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.5"/><path d="M1.5 8h4M10.5 8h4"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 2-7 4.5"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M9.5 3v10"/></symbol>
+    <symbol id="i-attach" viewBox="0 0 16 16"><path d="m13 7.5-5 5a3.2 3.2 0 0 1-4.5-4.5l5.5-5.5a2.1 2.1 0 0 1 3 3L6.5 11a1 1 0 0 1-1.5-1.5L10 4.5"/></symbol>
+    <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 13V3M4 7l4-4 4 4"/></symbol>
+    <symbol id="i-upr" viewBox="0 0 16 16"><path d="M5 11 11 5M6 5h5v5"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4.5" y="4.5" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></symbol>
+    <symbol id="i-open" viewBox="0 0 16 16"><path d="M9 3h4v4M13 3 7.5 8.5M11.5 9.5v2.5a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V6A1.5 1.5 0 0 1 4 4.5h2.5"/></symbol>
+    <symbol id="i-agents" viewBox="0 0 16 16"><circle cx="5.5" cy="5.5" r="2"/><circle cx="11" cy="6.5" r="1.5"/><path d="M2 13c.4-2.2 1.8-3.5 3.5-3.5S8.6 10.8 9 13M9.5 10.5c.5-.6 1-.9 1.5-.9 1.3 0 2.3 1 2.6 2.9"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 2 3 4v4c0 3 2.2 5.2 5 6 2.8-.8 5-3 5-6V4Z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 5A1.5 1.5 0 0 1 3.5 3.5h3L8 5h4.5A1.5 1.5 0 0 1 14 6.5v5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5Z"/></symbol>
+    <symbol id="i-laptop" viewBox="0 0 16 16"><rect x="3" y="3.5" width="10" height="7" rx="1"/><path d="M1.5 12.5h13"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 16 16"><path d="M9.5 2.5 13.5 6.5 11 7.5 8.5 10l-.5 3L3 8l3-.5L8.5 5Z"/><path d="m5.5 10.5-3 3"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="3" rx="1"/><path d="M3 6v6.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6M6.5 9h3"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.5 8.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-8.5"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 16 16"><path d="M5.5 4 2.5 7l3 3"/><path d="M2.5 7h7a4 4 0 0 1 0 8H7"/></symbol>
+    <symbol id="i-diff" viewBox="0 0 16 16"><path d="M5 2.5v6M2 5.5h6M2.5 12.5h6M11 3v10"/></symbol>
+    <symbol id="i-image" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1"/><path d="m3 12 3.5-3.5L9 11l2-2 2.5 2.5"/></symbol>
+    <symbol id="i-claude" viewBox="0 0 16 16"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2" stroke-width="1.8"/></symbol>
+  </defs>
+</svg>
+
+<header class="page-head">
+  <h1>Codevo &middot; Direction A &middot; Monolith</h1>
+  <span class="sub">exploration mockup &middot; 1440 x 900</span>
+  <span class="spacer"></span>
+  <div class="seg" role="tablist" aria-label="Mockup view">
+    <button role="tab" aria-selected="true" data-view="screen">Screen</button>
+    <button role="tab" aria-selected="false" data-view="tokens">Design tokens</button>
+  </div>
+  <div class="seg" aria-label="Theme">
+    <button aria-pressed="true" data-theme-set="dark"><svg class="i xs"><use href="#i-moon"/></svg>Dark</button>
+    <button aria-pressed="false" data-theme-set="light"><svg class="i xs"><use href="#i-sun"/></svg>Light</button>
+  </div>
+</header>
+
+<!-- ============================================================ SCREEN -->
+<section class="stage" id="stage">
+<div class="stage-scaler" id="scaler">
+<div class="win" id="win">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="crumb">
+      <span class="proj">orders-api</span>
+      <span class="slash">/</span>
+      <span class="title">Idempotency keys for POST /orders</span>
+      <button class="branch" title="Switch branch"><svg class="i xs"><use href="#i-branch"/></svg>feat/idempotency-keys</button>
+    </div>
+    <div class="actions">
+      <button class="ghost run-btn" title="Run script (dev)"><svg class="i sm"><use href="#i-play"/></svg>dev<svg class="i xs"><use href="#i-chevd"/></svg></button>
+      <button class="ghost" title="Open in"><svg class="i sm"><use href="#i-open"/></svg>Open</button>
+      <button class="ghost" title="Commit changes" data-open-tab="git"><svg class="i sm"><use href="#i-commit"/></svg>Commit</button>
+      <span class="act-gap"></span>
+      <button class="ghost icon" aria-pressed="true" id="toggleRail" title="Toggle sidebar (Cmd B)"><svg class="i sm"><use href="#i-sidebar"/></svg></button>
+      <button class="ghost icon" aria-pressed="true" id="togglePanel" title="Toggle panel (Cmd J)"><svg class="i sm"><use href="#i-panel"/></svg></button>
+    </div>
+    <div class="pulse live-pulse" aria-hidden="true"></div>
+  </div>
+
+  <div class="win-body">
+
+    <!-- Rail -->
+    <nav class="rail" aria-label="Threads">
+      <div class="rail-inner">
+        <div class="rail-top">
+          <label class="search"><svg class="i sm"><use href="#i-search"/></svg><input placeholder="Search threads" aria-label="Search threads"><kbd>&#8984;K</kbd></label>
+          <button class="new-btn" title="New thread (Cmd N)" aria-label="New thread"><svg class="i sm"><use href="#i-compose"/></svg></button>
+        </div>
+        <div class="rail-scroll" id="threadList">
+          <div class="group-label">Pinned</div>
+          <button class="thread" aria-current="true">
+            <span class="st"><span class="st-approve" title="Needs approval"></span></span>
+            <span class="t-title">Idempotency keys for POST /orders</span>
+            <span class="t-time">1m</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">orders-api &middot; <span class="hot">Needs approval</span></span>
+          </button>
+          <button class="thread">
+            <span class="st st-done"><svg class="i xs"><use href="#i-check"/></svg></span>
+            <span class="t-title">Release checklist for v2.4</span>
+            <span class="t-time">2d</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">orders-api &middot; Done</span>
+          </button>
+
+          <div class="group-label">Active <span>3</span></div>
+          <button class="thread">
+            <span class="st"><span class="ember-dot" title="Running"></span></span>
+            <span class="t-title">Flaky Jest timeout in payments.spec</span>
+            <span class="t-time">12s</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">billing-worker &middot; Running</span>
+          </button>
+          <button class="thread">
+            <span class="st"><span class="st-wait" title="Waiting for 2 agents"><i></i><i></i></span></span>
+            <span class="t-title">Migrate auth to express-jwt v8</span>
+            <span class="t-time">4m</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">orders-api &middot; Waiting for 2 agents</span>
+          </button>
+          <button class="thread unread">
+            <span class="st"><span class="st-unread" title="Unread"></span></span>
+            <span class="t-title">Rate-limit /webhooks per tenant</span>
+            <span class="t-time">18m</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">orders-api &middot; New reply</span>
+          </button>
+
+          <div class="group-label">Settled</div>
+          <button class="thread">
+            <span class="st st-done"><svg class="i xs"><use href="#i-check"/></svg></span>
+            <span class="t-title">Vitest coverage thresholds</span>
+            <span class="t-time">3h</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">web-dashboard &middot; Done</span>
+          </button>
+          <button class="thread">
+            <span class="st st-done"><svg class="i xs"><use href="#i-check"/></svg></span>
+            <span class="t-title">Fix CORS preflight on /v1</span>
+            <span class="t-time">Tue</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">orders-api &middot; Done</span>
+          </button>
+          <button class="thread">
+            <span class="st st-done"><svg class="i xs"><use href="#i-check"/></svg></span>
+            <span class="t-title">Split OpenAPI spec per router</span>
+            <span class="t-time">Mon</span>
+            <span class="t-acts" aria-hidden="true"><span><svg class="i xs"><use href="#i-pin"/></svg></span><span><svg class="i xs"><use href="#i-archive"/></svg></span></span>
+            <span class="t-meta">orders-api &middot; Done</span>
+          </button>
+        </div>
+        <div class="projects">
+          <div class="group-label">Projects</div>
+          <button class="proj-row"><span class="mark">OA</span>orders-api<span class="n">6</span></button>
+          <button class="proj-row"><span class="mark">BW</span>billing-worker<span class="n">1</span></button>
+          <button class="proj-row"><span class="mark">WD</span>web-dashboard<span class="n">1</span></button>
+          <button class="proj-row add"><span class="mark"><svg class="i xs"><use href="#i-plus"/></svg></span>Add project</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Center -->
+    <main class="center">
+      <div class="transcript" id="transcript">
+        <div class="col">
+
+          <!-- Turn 1 -->
+          <div class="prompt">
+            <span class="prompt-time">10:40</span>
+            <div class="prompt-acts">
+              <button class="ghost icon" title="Copy" aria-label="Copy prompt"><svg class="i sm"><use href="#i-copy"/></svg></button>
+              <button class="ghost icon" title="Edit and resend" aria-label="Edit prompt"><svg class="i sm"><use href="#i-pen"/></svg></button>
+            </div>
+            <p>POST /orders creates duplicate orders when the mobile client retries after a timeout (trace attached). Add Idempotency-Key support so retries replay the first response. Keep it in middleware, and cover it with tests.</p>
+            <div class="chips">
+              <button class="chip"><span class="thumb"></span>retry-trace.png <span class="size">184 KB</span></button>
+            </div>
+          </div>
+
+          <div class="turn-head">
+            <span class="prov"><svg class="i"><use href="#i-claude"/></svg></span>
+            <span class="who">Claude Code</span>
+            <span class="meta"><b>opus-5.5</b><span>&middot;</span><span>high effort</span><span>&middot;</span><span>2m 14s</span></span>
+            <span class="when">10:40</span>
+          </div>
+
+          <div class="work">
+            <button class="disc" aria-expanded="true" aria-controls="wg1">
+              <svg class="i sm chev"><use href="#i-chev"/></svg>
+              <span class="lbl">Ran 4 commands</span>
+              <span class="sum">read 2 &middot; edited 2 &middot; thought 1</span>
+              <span class="end">1m 38s</span>
+            </button>
+            <div class="collapse open" id="wg1"><div class="ci">
+              <div class="steps">
+                <button class="step thought" aria-expanded="false" aria-controls="th1">
+                  <svg class="i sm ic"><use href="#i-brain"/></svg>
+                  <span class="body"><span class="verb">Thought</span><span class="preview">The client times out at 5s but the handler commits later, so each retry inserts a fresh row. A key scoped per tenant avoids cross-tenant replay.</span></span>
+                  <span class="res"><span class="dur">6s</span><svg class="i xs chev"><use href="#i-chev"/></svg></span>
+                </button>
+                <div class="collapse" id="th1"><div class="ci">
+                  <div class="thought-full">
+                    <p>The client times out at 5s but the handler commits after the payment hold (p95 about 6.8s), so each retry inserts a fresh row.</p>
+                    <p>A key scoped per tenant avoids cross-tenant replay. Store the fingerprint of the body too, so a reused key with a different payload is rejected instead of silently replayed. Only cache non-5xx responses.</p>
+                  </div>
+                </div></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>rg -n "router.post\(" src/routes</code></span><span class="res"><span class="dur">0.2s</span>3 matches</span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-file"/></svg><span class="body"><span class="verb">Read</span><code>src/routes/orders.ts</code></span><span class="res">L1-120</span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-file"/></svg><span class="body"><span class="verb">Read</span><code>prisma/schema.prisma</code></span><span class="res">L1-88</span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>npm ls express zod</code></span><span class="res"><span class="dur">0.9s</span>ok</span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-pen"/></svg><span class="body"><span class="verb">Created</span><code>src/middleware/idempotency.ts</code></span><span class="res"><span class="plus" data-count="mw-add"></span></span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-pen"/></svg><span class="body"><span class="verb">Edited</span><code>src/routes/orders.ts</code></span><span class="res"><span class="plus" data-count="or-add"></span><span class="minus" data-count="or-del"></span></span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>npx tsc --noEmit</code></span><span class="res"><span class="dur">3.1s</span><span class="okc">ok</span></span></div>
+                <button class="step" aria-expanded="false" aria-controls="out1"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>npm test -- orders</code></span><span class="res"><span class="dur">6.4s</span><span class="okc">14 passed</span><svg class="i xs"><use href="#i-chevd"/></svg></span></button>
+                <div class="collapse" id="out1"><div class="ci">
+<div class="out"> <span class="pass">&#10003;</span> test/orders.test.ts (8)
+ <span class="pass">&#10003;</span> test/orders.idempotency.test.ts (6)
+
+ Test Files  <span class="pass">2 passed</span> (2)
+      Tests  <span class="pass">14 passed</span> (14)
+   Duration  6.41s</div>
+                </div></div>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="batch">
+            <button class="disc" aria-expanded="true" aria-controls="sb1">
+              <svg class="i sm chev"><use href="#i-chev"/></svg>
+              <svg class="i sm" style="color:var(--fg-subtle)"><use href="#i-agents"/></svg>
+              <span class="lbl">Kicked off 2 subagents</span>
+              <span class="sum">explorer, reviewer</span>
+              <span class="end batch-state"><span class="ember-dot"></span>running</span>
+            </button>
+            <div class="collapse open" id="sb1"><div class="ci">
+              <div class="members">
+                <div class="member" tabindex="0">
+                  <span class="role">explorer</span>
+                  <span class="task">Trace every client path that retries POST /orders</span>
+                  <span class="mstat"><span class="run"><span class="ember-dot"></span>running</span>1m 12s &middot; 18.4k tok</span>
+                  <span class="activity">Reading src/clients/checkoutClient.ts</span>
+                  <div class="pulse mpulse" aria-hidden="true"></div>
+                </div>
+                <div class="member" tabindex="0">
+                  <span class="role">reviewer</span>
+                  <span class="task">Review idempotency middleware for race conditions</span>
+                  <span class="mstat"><span class="run"><span class="ember-dot"></span>running</span>52s &middot; 11.9k tok</span>
+                  <span class="activity">Checking concurrent inserts in idempotencyKey.upsert()</span>
+                  <div class="pulse mpulse" aria-hidden="true"></div>
+                </div>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="answer">
+            <p>POST /orders now honors an <code>Idempotency-Key</code> header. The first request with a key runs normally and its response is stored; retries with the same key replay that response instead of creating a second order.</p>
+            <ul>
+              <li>New <code>idempotency()</code> middleware keys on tenant + header and keeps the response for <strong>24 hours</strong>.</li>
+              <li>The route at <a href="#" class="flink" data-open-file="orders" data-line="42"><svg class="i xs"><use href="#i-file"/></svg>src/routes/orders.ts<span class="ln">:42</span></a> mounts it before the handler.</li>
+              <li>Reusing a key with a different body returns <code>422</code> with <code>idempotency_key_reused</code>.</li>
+            </ul>
+            <div class="code">
+              <div class="code-head"><span>TYPESCRIPT</span><button class="ghost" data-copy><svg class="i xs"><use href="#i-copy"/></svg>Copy</button></div>
+<pre>router.post(
+  <span class="s">"/orders"</span>,
+  requireAuth,
+  idempotency({ ttlSeconds: <span class="n">86_400</span> }),
+  createOrder,
+);</pre>
+            </div>
+            <p>Typecheck and <code>npm test -- orders</code> pass (14 tests). The explorer and reviewer are still checking client retry paths and insert races; I will fold in their findings when they report.</p>
+            <div class="msg-acts">
+              <button class="ghost icon" title="Copy answer" aria-label="Copy answer"><svg class="i sm"><use href="#i-copy"/></svg></button>
+              <button class="ghost icon" title="Open changes" aria-label="Open changes" data-open-file="orders"><svg class="i sm"><use href="#i-diff"/></svg></button>
+            </div>
+          </div>
+
+          <div class="changes">
+            <div class="changes-head">
+              <span class="ttl">3 files changed</span>
+              <span class="tot"><span class="plus" data-count="tot-add"></span><span class="minus" data-count="tot-del"></span></span>
+              <span class="spacer"></span>
+              <button class="ghost"><svg class="i xs"><use href="#i-undo"/></svg>Undo</button>
+              <button class="ghost" data-open-file="orders"><svg class="i xs"><use href="#i-diff"/></svg>Review</button>
+            </div>
+            <button class="frow" data-open-file="mw"><span class="kind a">A</span><span class="path"><span class="dir">src/middleware/</span>idempotency.ts</span><span class="cnt"><span class="plus" data-count="mw-add"></span></span><svg class="i xs go"><use href="#i-chev"/></svg></button>
+            <button class="frow" data-open-file="orders"><span class="kind">M</span><span class="path"><span class="dir">src/routes/</span>orders.ts</span><span class="cnt"><span class="plus" data-count="or-add"></span><span class="minus" data-count="or-del"></span></span><svg class="i xs go"><use href="#i-chev"/></svg></button>
+            <button class="frow" data-open-file="test"><span class="kind a">A</span><span class="path"><span class="dir">test/</span>orders.idempotency.test.ts</span><span class="cnt"><span class="plus" data-count="te-add"></span></span><svg class="i xs go"><use href="#i-chev"/></svg></button>
+          </div>
+
+          <div class="waiting" id="waiting">
+            <div class="pulse" aria-hidden="true"></div>
+            <span class="label"><span class="ember-dot"></span><b>Waiting for 2 agents</b>&middot; explorer, reviewer</span>
+            <div class="pulse" aria-hidden="true" style="transform:scaleX(-1)"></div>
+          </div>
+
+          <!-- Turn 2 -->
+          <div class="prompt">
+            <span class="prompt-time">10:44</span>
+            <div class="prompt-acts">
+              <button class="ghost icon" title="Copy" aria-label="Copy prompt"><svg class="i sm"><use href="#i-copy"/></svg></button>
+              <button class="ghost icon" title="Edit and resend" aria-label="Edit prompt"><svg class="i sm"><use href="#i-pen"/></svg></button>
+            </div>
+            <p>Also add the Prisma model and migration for the idempotency_keys table.</p>
+          </div>
+
+          <div class="turn-head">
+            <span class="prov"><svg class="i"><use href="#i-claude"/></svg></span>
+            <span class="who">Claude Code</span>
+            <span class="meta"><b>opus-5.5</b><span>&middot;</span><span>high effort</span><span>&middot;</span><span id="t2dur">22s</span></span>
+            <span class="when">10:44</span>
+          </div>
+
+          <div class="work">
+            <button class="disc" aria-expanded="false" aria-controls="wg2">
+              <svg class="i sm chev"><use href="#i-chev"/></svg>
+              <span class="lbl">Ran 4 commands</span>
+              <span class="sum">edited 1</span>
+              <span class="end">22s</span>
+            </button>
+            <div class="collapse" id="wg2"><div class="ci">
+              <div class="steps">
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>npx prisma --version</code></span><span class="res"><span class="dur">1.2s</span>6.4.1</span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-pen"/></svg><span class="body"><span class="verb">Edited</span><code>prisma/schema.prisma</code></span><span class="res"><span class="plus">+11</span></span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>npx prisma format</code></span><span class="res"><span class="dur">0.8s</span><span class="okc">ok</span></span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>npx prisma validate</code></span><span class="res"><span class="dur">0.9s</span><span class="okc">valid</span></span></div>
+                <div class="step"><svg class="i sm ic"><use href="#i-term"/></svg><span class="body"><code>git status --short</code></span><span class="res"><span class="dur">0.1s</span>4 changed</span></div>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="approval" id="approval">
+            <div class="a-top">
+              <span class="a-kicker"><svg class="i xs"><use href="#i-shield"/></svg>Needs approval</span>
+              <span class="a-cwd">~/code/orders-api</span>
+            </div>
+            <div class="cmd"><span class="p">$ </span>npx prisma migrate dev --name idempotency_keys</div>
+            <p class="why">Creates a new migration and applies it to the local database from <code class="mono">DATABASE_URL</code> in .env. Writes to prisma/migrations/.</p>
+            <div class="a-row">
+              <label class="check"><input type="checkbox"> Always allow <code class="mono">prisma migrate</code> in this thread</label>
+              <span class="spacer"></span>
+              <button class="btn quiet" data-approve="deny">Deny <kbd>Esc</kbd></button>
+              <button class="btn primary" data-approve="approve">Approve <kbd>&#8984;&#8629;</kbd></button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Composer -->
+      <div class="dock">
+        <div class="col">
+          <div class="stratum banner" id="banner">
+            <div class="pulse" aria-hidden="true"></div>
+            <span class="ember-dot"></span>
+            <span><b>2 agents working</b></span>
+            <span class="who">explorer 1m 12s &middot; reviewer 52s</span>
+            <span class="spacer"></span>
+            <button class="ghost" id="stopAgents"><svg class="i xs"><use href="#i-stop"/></svg>Stop</button>
+          </div>
+          <div class="stratum queued" id="queued">
+            <span class="qk">QUEUED &middot; 1 ATTACHMENT</span>
+            <span class="qt" id="queuedText">Then regenerate openapi.yaml and update docs/orders.md with the new header.</span>
+            <span class="spacer"></span>
+            <span class="qa">
+              <button class="ghost" id="qEdit" title="Edit"><svg class="i xs"><use href="#i-pen"/></svg>Edit</button>
+              <button class="ghost" id="qNow" title="Send now"><svg class="i xs"><use href="#i-upr"/></svg>Send now</button>
+              <button class="ghost icon" id="qRemove" title="Remove" aria-label="Remove queued message"><svg class="i xs"><use href="#i-x"/></svg></button>
+            </span>
+          </div>
+          <div class="slab">
+            <div class="att" id="att">
+              <span class="chip"><span class="thumb" style="background:radial-gradient(circle at 30% 30%,#6e7c86,#2a3036 70%)"></span>orders-latency.png<span class="size">92 KB</span></span>
+            </div>
+            <textarea id="input" rows="2" placeholder="Ask for a change, a review, or run something" aria-label="Message"></textarea>
+            <div class="slab-row">
+              <button class="pill" title="Attach files" aria-label="Attach"><svg class="i sm"><use href="#i-attach"/></svg></button>
+              <button class="pill" id="modelBtn" aria-haspopup="menu" aria-expanded="false"><span id="modelLbl">Claude Opus 5.5</span><span class="dim" id="effortLbl">High</span><svg class="i xs"><use href="#i-chevd"/></svg></button>
+              <button class="pill" id="accessBtn" title="Access mode"><svg class="i xs"><use href="#i-lock"/></svg><span>Full access</span></button>
+              <button class="pill" id="envBtn" title="Environment"><svg class="i xs"><use href="#i-laptop"/></svg><span>Local checkout</span></button>
+              <span class="spacer"></span>
+              <span class="hint">&#8679;&#8629; newline</span>
+              <button class="send-now" title="Send now, interrupting (Cmd Enter)" aria-label="Send now"><svg class="i sm"><use href="#i-upr"/></svg></button>
+              <button class="send" id="sendBtn"><span id="sendLbl">Queue</span><kbd>&#8629;</kbd></button>
+            </div>
+            <div class="pop" id="modelPop" role="menu">
+              <div class="ph">Model</div>
+              <button class="opt" role="menuitemradio" aria-checked="true" data-model="Claude Opus 5.5"><span>Claude Opus 5.5<small>Claude Code &middot; best for multi-file work</small></span><svg class="i sm tick"><use href="#i-check"/></svg></button>
+              <button class="opt" role="menuitemradio" aria-checked="false" data-model="Claude Sonnet 5"><span>Claude Sonnet 5<small>Claude Code &middot; faster</small></span><svg class="i sm tick"><use href="#i-check"/></svg></button>
+              <button class="opt" role="menuitemradio" aria-checked="false" data-model="GPT-6 Astra"><span>GPT-6 Astra<small>Codex CLI</small></span><svg class="i sm tick"><use href="#i-check"/></svg></button>
+              <div class="ph">Effort</div>
+              <div class="effort" role="radiogroup" aria-label="Effort">
+                <button role="radio" aria-checked="false">Low</button>
+                <button role="radio" aria-checked="false">Medium</button>
+                <button role="radio" aria-checked="true">High</button>
+                <button role="radio" aria-checked="false">Max</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Right panel -->
+    <aside class="panel" aria-label="Workspace panel">
+      <div class="panel-inner">
+        <div class="ptabs" role="tablist">
+          <button class="ptab" role="tab" aria-selected="false" data-tab="files">Files</button>
+          <button class="ptab" role="tab" aria-selected="true" data-tab="diff">Diff <span class="badge">3</span></button>
+          <button class="ptab" role="tab" aria-selected="false" data-tab="terminal">Terminal</button>
+          <button class="ptab" role="tab" aria-selected="false" data-tab="git">Git <span class="badge">4</span></button>
+          <span class="spacer"></span>
+          <button class="ghost icon" title="Open in editor" aria-label="Open in editor"><svg class="i sm"><use href="#i-open"/></svg></button>
+        </div>
+
+        <div class="pview" data-view-panel="files">
+          <div class="tree">
+            <div class="node"><svg class="i sm"><use href="#i-folder"/></svg>prisma</div>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-file"/></svg>schema.prisma<span class="m mod">M</span></div>
+            <div class="node"><svg class="i sm"><use href="#i-folder"/></svg>src</div>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-folder"/></svg>clients</div>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-folder"/></svg>db</div>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-folder"/></svg>middleware</div>
+            <div class="node" style="padding-left:52px"><svg class="i sm"><use href="#i-file"/></svg>auth.ts</div>
+            <button class="node" style="padding-left:52px" data-open-file="mw"><svg class="i sm"><use href="#i-file"/></svg>idempotency.ts<span class="m new">A</span></button>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-folder"/></svg>routes</div>
+            <button class="node" style="padding-left:52px" data-open-file="orders"><svg class="i sm"><use href="#i-file"/></svg>orders.ts<span class="m mod">M</span></button>
+            <div class="node" style="padding-left:52px"><svg class="i sm"><use href="#i-file"/></svg>webhooks.ts</div>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-file"/></svg>app.ts</div>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-file"/></svg>server.ts</div>
+            <div class="node"><svg class="i sm"><use href="#i-folder"/></svg>test</div>
+            <button class="node" style="padding-left:30px" data-open-file="test"><svg class="i sm"><use href="#i-file"/></svg>orders.idempotency.test.ts<span class="m new">A</span></button>
+            <div class="node" style="padding-left:30px"><svg class="i sm"><use href="#i-file"/></svg>orders.test.ts</div>
+            <div class="node"><svg class="i sm"><use href="#i-file"/></svg>package.json</div>
+            <div class="node"><svg class="i sm"><use href="#i-file"/></svg>tsconfig.json</div>
+            <div class="node"><svg class="i sm"><use href="#i-file"/></svg>vitest.config.ts</div>
+          </div>
+        </div>
+
+        <div class="pview on" data-view-panel="diff">
+          <div class="diff-files" role="tablist" aria-label="Changed files">
+            <button class="dfile" data-file="mw" aria-selected="false">idempotency.ts</button>
+            <button class="dfile" data-file="orders" aria-selected="true">orders.ts</button>
+            <button class="dfile" data-file="test" aria-selected="false">orders.idempotency.test.ts</button>
+          </div>
+          <div class="diff-head">
+            <span class="path" id="diffPath">src/routes/orders.ts</span>
+            <span class="cnt" id="diffCnt"></span>
+            <span class="spacer"></span>
+            <div class="seg" aria-label="Diff layout">
+              <button aria-pressed="true" data-diffmode="unified">Unified</button>
+              <button aria-pressed="false" data-diffmode="split">Split</button>
+            </div>
+          </div>
+          <div class="diff-body" id="diffBody"></div>
+        </div>
+
+        <div class="pview" data-view-panel="terminal">
+<div class="term"><span class="dim">~/code/orders-api</span> <span class="pr">npm run dev</span>
+
+&gt; orders-api@2.4.0 dev
+&gt; tsx watch src/server.ts
+
+<span class="ok">ready</span>  listening on localhost:3000
+<span class="dim">[10:41:07]</span> POST /orders 201  48ms  key=k-7f3a
+<span class="dim">[10:41:12]</span> POST /orders 201   3ms  key=k-7f3a <span class="ok">(replayed)</span>
+<span class="dim">[10:41:30]</span> POST /orders 422   2ms  key=k-7f3a <span class="dim">body mismatch</span>
+<span class="dim">[10:42:02]</span> GET  /orders/ord_91c2 200  6ms
+<span class="cursor"></span></div>
+        </div>
+
+        <div class="pview" data-view-panel="git">
+          <div class="gitv">
+            <div class="br"><svg class="i sm"><use href="#i-branch"/></svg>feat/idempotency-keys <span>&#8593;2 &middot; from main</span></div>
+            <div class="lbl">Changes &middot; 4</div>
+            <div>
+              <button class="node" data-open-file="mw"><svg class="i sm"><use href="#i-file"/></svg>src/middleware/idempotency.ts<span class="m new">A</span></button>
+              <button class="node" data-open-file="orders"><svg class="i sm"><use href="#i-file"/></svg>src/routes/orders.ts<span class="m mod">M</span></button>
+              <button class="node" data-open-file="test"><svg class="i sm"><use href="#i-file"/></svg>test/orders.idempotency.test.ts<span class="m new">A</span></button>
+              <div class="node"><svg class="i sm"><use href="#i-file"/></svg>prisma/schema.prisma<span class="m mod">M</span></div>
+            </div>
+            <div class="lbl">Message</div>
+            <textarea aria-label="Commit message">feat(orders): replay responses for retried Idempotency-Key requests</textarea>
+            <div class="row"><button class="btn primary"><svg class="i sm"><use href="#i-commit"/></svg>Commit 4 files</button><button class="btn quiet">Commit and push</button></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Status bar -->
+  <footer class="status">
+    <span><svg class="i xs"><use href="#i-branch"/></svg>feat/idempotency-keys &#8593;2</span>
+    <span class="running-count"><span class="ember-dot"></span>2 threads running</span>
+    <span class="spacer"></span>
+    <span>Claude Opus 5.5 &middot; high</span>
+    <span>claude-code 2.1.4</span>
+    <button id="themeMini" title="Toggle theme" aria-label="Toggle theme"><svg class="i xs"><use href="#i-sun"/></svg></button>
+  </footer>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ TOKENS -->
+<section class="tokens" id="tokens">
+  <div class="tk-grid">
+    <div class="tk-card" data-theme="dark">
+      <h2>Monolith &middot; Graphite</h2>
+      <p class="lead">Warm near-black surfaces separated by tone, not lines. One ember accent, used only for live activity, the primary action and focus.</p>
+      <h3>Surfaces</h3>
+      <div class="sw">
+        <div style="background:#0F0E0D"><b>s0</b>#0F0E0D rail, bars</div>
+        <div style="background:#151412"><b>s1</b>#151412 canvas</div>
+        <div style="background:#1C1B19"><b>s2</b>#1C1B19 raised, slab</div>
+        <div style="background:#252321"><b>s3</b>#252321 well, hover</div>
+        <div style="background:#2F2C29"><b>s4</b>#2F2C29 active</div>
+      </div>
+      <h3>Text &amp; signal</h3>
+      <div class="txt-sw">
+        <div style="color:#F3EFE8"><span>Aa</span>fg-strong #F3EFE8</div>
+        <div style="color:#DCD6CC"><span>Aa</span>fg #DCD6CC</div>
+        <div style="color:#A8A196"><span>Aa</span>muted #A8A196</div>
+        <div style="color:#8C857A"><span>Aa</span>subtle #8C857A &middot; 4.7:1</div>
+        <div style="color:#EF9B50"><span>&#9679;</span>ember #EF9B50</div>
+        <div style="color:#FFB26E"><span>&#9679;</span>ember-strong #FFB26E</div>
+        <div style="color:#9CC592"><span>+</span>ok #9CC592</div>
+        <div style="color:#EC8C78"><span>&minus;</span>danger #EC8C78</div>
+      </div>
+    </div>
+    <div class="tk-card" data-theme="light">
+      <h2>Monolith &middot; Stone paper</h2>
+      <p class="lead">Warm stone paper with ink text. The ember darkens to burnt sienna so it passes AA as text; surfaces step up toward white instead of down toward black.</p>
+      <h3>Surfaces</h3>
+      <div class="sw">
+        <div style="background:#ECE8E1"><b>s0</b>#ECE8E1 rail, bars</div>
+        <div style="background:#F6F3EE"><b>s1</b>#F6F3EE canvas</div>
+        <div style="background:#FFFDF9"><b>s2</b>#FFFDF9 raised, slab</div>
+        <div style="background:#E9E4DC"><b>s3</b>#E9E4DC well, hover</div>
+        <div style="background:#DED8CE"><b>s4</b>#DED8CE active</div>
+      </div>
+      <h3>Text &amp; signal</h3>
+      <div class="txt-sw">
+        <div style="color:#1A1814"><span>Aa</span>fg-strong #1A1814</div>
+        <div style="color:#2E2A25"><span>Aa</span>fg #2E2A25</div>
+        <div style="color:#5A534A"><span>Aa</span>muted #5A534A</div>
+        <div style="color:#675F55"><span>Aa</span>subtle #675F55 &middot; 5.0:1</div>
+        <div style="color:#A7500F"><span>&#9679;</span>ember #A7500F</div>
+        <div style="color:#B0561A"><span>&#9679;</span>ember-fill #B0561A</div>
+        <div style="color:#3E7639"><span>+</span>ok #3E7639</div>
+        <div style="color:#A93F2C"><span>&minus;</span>danger #A93F2C</div>
+      </div>
+    </div>
+
+    <div class="tk-card">
+      <h2>Type</h2>
+      <p class="lead">SF Pro for conversation and UI, SF Mono for code and every piece of metadata (times, counts, tokens, paths). Mono metadata is the second voice of the system.</p>
+      <h3>Scale</h3>
+      <div class="scale">
+        <div><small>display 30 / 600</small><span style="font:600 30px/1.1 var(--font-display);letter-spacing:-.02em;color:var(--fg-strong)">Quiet, then precise</span></div>
+        <div><small>title 20 / 600</small><span style="font:600 20px/1.2 var(--font-display);color:var(--fg-strong)">Idempotency keys for POST /orders</span></div>
+        <div><small>prose 15.5 / 1.62</small><span style="font-size:15.5px;line-height:1.62">Retries with the same key replay the stored response.</span></div>
+        <div><small>ui 13 / 1.4</small><span style="font-size:13px">Ran 4 commands</span></div>
+        <div><small>code 12.5 mono</small><code style="font-size:12.5px">npm test -- orders</code></div>
+        <div><small>meta 11.5 mono</small><code style="font-size:11.5px;color:var(--fg-subtle)">1m 12s &middot; 18.4k tok</code></div>
+        <div><small>micro 10.5 caps</small><code style="font-size:10.5px;letter-spacing:.08em;color:var(--fg-subtle)">PINNED &middot; NEEDS APPROVAL</code></div>
+      </div>
+    </div>
+
+    <div class="tk-card">
+      <h2>Space, shape, motion</h2>
+      <p class="lead">4px base grid. Content column 720px. Cards 14px, rows 10px, controls 8px, chips are pills. Motion is short and only confirms state.</p>
+      <h3>Spacing</h3>
+      <div class="spc">
+        <div><i style="width:4px"></i>4</div><div><i style="width:8px"></i>8</div><div><i style="width:12px"></i>12</div><div><i style="width:16px"></i>16</div><div><i style="width:24px"></i>24</div><div><i style="width:32px"></i>32</div><div><i style="width:48px"></i>48</div>
+      </div>
+      <h3>Radius</h3>
+      <div class="rad">
+        <div style="border-radius:6px">6 xs</div><div style="border-radius:8px">8 sm</div><div style="border-radius:10px">10 md</div><div style="border-radius:14px">14 lg</div><div style="border-radius:999px">pill</div>
+      </div>
+      <h3>Motion</h3>
+      <div class="motion">
+        <div class="mrow"><code>120ms ease-out</code>hover, reveal of row actions</div>
+        <div class="mrow"><code>220ms (.2,.8,.2,1)</code>expand / collapse, panel slide</div>
+        <div class="mrow"><code>2600ms pulse</code><div class="pulse"></div></div>
+        <div class="mrow"><code>reduced motion</code>pulse becomes a static ember hairline</div>
+      </div>
+    </div>
+
+    <div class="tk-card tk-wide">
+      <h2>Signatures</h2>
+      <ul class="principles">
+        <li><b>Ember pulse line.</b> A 1px hairline with a travelling ember glint means "something is alive": under the title bar while the thread runs, on each running subagent, across the "Waiting for 2 agents" divider and along the top edge of the agent banner. When work stops the glint disappears and the hairline stays.</li>
+        <li><b>Monolithic slab composer.</b> One heavy block with an inner top highlight and a deep soft shadow. Pending state stacks behind it as strata: the queued message and the background-agents banner are progressively narrower layers of the same stone.</li>
+        <li><b>Tone over lines.</b> Five surface steps replace borders. The only drawn lines are the step spine in work groups, diff gutters and the ember approval edge.</li>
+        <li><b>Mono as the second voice.</b> Anything measured (time, tokens, counts, paths) is SF Mono in the subtle tone, so prose stays calm and data stays scannable.</li>
+        <li><b>Chrome on demand.</b> Timestamps, copy/edit, pin/archive, durations and card actions appear on hover or focus only.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var root = document.documentElement;
+  var win = $("#win");
+
+  function setTheme(t) {
+    root.dataset.theme = t;
+    $$("[data-theme-set]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.themeSet === t)); });
+    $("#themeMini use").setAttribute("href", t === "dark" ? "#i-sun" : "#i-moon");
+  }
+  $$("[data-theme-set]").forEach(function (b) { b.addEventListener("click", function () { setTheme(b.dataset.themeSet); }); });
+  $("#themeMini").addEventListener("click", function () { setTheme(root.dataset.theme === "dark" ? "light" : "dark"); });
+
+  $$("[data-view]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var v = b.dataset.view;
+      $$("[data-view]").forEach(function (x) { x.setAttribute("aria-selected", String(x === b)); });
+      $("#stage").classList.toggle("off", v !== "screen");
+      $("#tokens").classList.toggle("on", v === "tokens");
+    });
+  });
+
+  function fit() {
+    var avail = Math.min(window.innerWidth - 48, 1440);
+    var s = Math.min(1, avail / 1440);
+    var sc = $("#scaler");
+    sc.style.transform = "scale(" + s + ")";
+    $("#stage").style.height = (900 * s) + "px";
+    $(".page-head").style.maxWidth = (1440 * s) + "px";
+  }
+  window.addEventListener("resize", fit);
+  fit();
+
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[aria-controls]");
+    if (!t) return;
+    var region = document.getElementById(t.getAttribute("aria-controls"));
+    if (!region) return;
+    var open = t.getAttribute("aria-expanded") !== "true";
+    t.setAttribute("aria-expanded", String(open));
+    region.classList.toggle("open", open);
+  });
+
+  function toggleSide(cls, btn) {
+    var hidden = win.classList.toggle(cls);
+    btn.setAttribute("aria-pressed", String(!hidden));
+  }
+  $("#toggleRail").addEventListener("click", function () { toggleSide("no-rail", this); });
+  $("#togglePanel").addEventListener("click", function () { toggleSide("no-panel", this); });
+  document.addEventListener("keydown", function (e) {
+    if (!e.metaKey) return;
+    if (e.key === "b") { e.preventDefault(); toggleSide("no-rail", $("#toggleRail")); }
+    if (e.key === "j") { e.preventDefault(); toggleSide("no-panel", $("#togglePanel")); }
+  });
+
+  function selectTab(name) {
+    $$(".ptab").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.tab === name)); });
+    $$("[data-view-panel]").forEach(function (p) { p.classList.toggle("on", p.dataset.viewPanel === name); });
+    if (win.classList.contains("no-panel")) toggleSide("no-panel", $("#togglePanel"));
+  }
+  $$(".ptab").forEach(function (b) { b.addEventListener("click", function () { selectTab(b.dataset.tab); }); });
+  $$("[data-open-tab]").forEach(function (b) { b.addEventListener("click", function () { selectTab(b.dataset.openTab); }); });
+
+  $$(".thread").forEach(function (b) {
+    b.addEventListener("click", function () {
+      $$(".thread").forEach(function (x) { x.removeAttribute("aria-current"); });
+      b.setAttribute("aria-current", "true");
+      b.classList.remove("unread");
+      var dot = $(".st-unread", b);
+      if (dot) dot.remove();
+    });
+  });
+
+  /* ---------- Diff data ---------- */
+  var FILES = {
+    orders: { path: "src/routes/orders.ts", rows: [
+      ["hunk", "@@ -1,7 +1,8 @@"],
+      ["ctx", 1, 1, 'import { Router, type Request, type Response } from "express";'],
+      ["ctx", 2, 2, 'import { z } from "zod";'],
+      ["ctx", 3, 3, 'import { db } from "../db";'],
+      ["ctx", 4, 4, 'import { requireAuth } from "../middleware/auth";'],
+      ["add", null, 5, 'import { idempotency } from "../middleware/idempotency";'],
+      ["ctx", 5, 6, ""],
+      ["ctx", 6, 7, "export const router = Router();"],
+      ["hunk", "@@ -36,12 +37,22 @@ router.get(\"/orders/:id\", requireAuth, getOrder);"],
+      ["ctx", 36, 37, "const CreateOrder = z.object({"],
+      ["ctx", 37, 38, "  items: z.array(LineItem).min(1),"],
+      ["ctx", 38, 39, '  currency: z.enum(["EUR", "USD"]),'],
+      ["ctx", 39, 40, "});"],
+      ["ctx", 40, 41, ""],
+      ["del", 41, null, 'router.post("/orders", requireAuth, async (req, res) => {'],
+      ["add", null, 42, "router.post("],
+      ["add", null, 43, '  "/orders",'],
+      ["add", null, 44, "  requireAuth,"],
+      ["add", null, 45, "  idempotency({ ttlSeconds: 86_400 }),"],
+      ["add", null, 46, "  createOrder,"],
+      ["add", null, 47, ");"],
+      ["add", null, 48, ""],
+      ["add", null, 49, "async function createOrder(req: Request, res: Response) {"],
+      ["ctx", 42, 50, "  const body = CreateOrder.parse(req.body);"],
+      ["del", 43, null, "  const order = await db.order.create({ data: toOrder(body) });"],
+      ["del", 44, null, "  res.status(201).json(order);"],
+      ["del", 45, null, "});"],
+      ["add", null, 51, "  const order = await db.order.create({"],
+      ["add", null, 52, "    data: toOrder(body, req.tenantId),"],
+      ["add", null, 53, "  });"],
+      ["add", null, 54, "  res.locals.idempotentBody = order;"],
+      ["add", null, 55, "  res.status(201).json(order);"],
+      ["add", null, 56, "}"],
+      ["ctx", 46, 57, ""],
+      ["ctx", 47, 58, 'router.patch("/orders/:id/cancel", requireAuth, cancelOrder);']
+    ]},
+    mw: { path: "src/middleware/idempotency.ts", added: [
+      'import type { NextFunction, Request, Response } from "express";',
+      'import { createHash } from "node:crypto";',
+      'import { db } from "../db";',
+      "",
+      "type Options = { ttlSeconds: number };",
+      "",
+      "export function idempotency({ ttlSeconds }: Options) {",
+      "  return async (req: Request, res: Response, next: NextFunction) => {",
+      '    const key = req.header("Idempotency-Key");',
+      "    if (!key) return next();",
+      "",
+      "    const scope = `${req.tenantId}:${key}`;",
+      "    const fingerprint = hash(req.body);",
+      "    const stored = await db.idempotencyKey.findUnique({ where: { scope } });",
+      "",
+      "    if (stored && stored.fingerprint !== fingerprint) {",
+      '      return res.status(422).json({ error: "idempotency_key_reused" });',
+      "    }",
+      "    if (stored) return res.status(stored.status).json(stored.body);",
+      "",
+      '    res.on("finish", () => {',
+      "      if (res.statusCode >= 500) return;",
+      "      void db.idempotencyKey.create({",
+      "        data: {",
+      "          scope,",
+      "          fingerprint,",
+      "          status: res.statusCode,",
+      "          body: res.locals.idempotentBody,",
+      "          expiresAt: new Date(Date.now() + ttlSeconds * 1000),",
+      "        },",
+      "      });",
+      "    });",
+      "    next();",
+      "  };",
+      "}",
+      "",
+      "// Stable hash of the request body; key order is normalised upstream.",
+      "const hash = (value: unknown) =>",
+      '  createHash("sha256").update(JSON.stringify(value)).digest("hex");'
+    ]},
+    test: { path: "test/orders.idempotency.test.ts", added: [
+      'import request from "supertest";',
+      'import { describe, expect, it } from "vitest";',
+      'import { app } from "../src/app";',
+      'import { anOrder, asTenant } from "./fixtures";',
+      "",
+      'describe("POST /orders idempotency", () => {',
+      '  it("replays the first response for a retried key", async () => {',
+      "    const send = () =>",
+      '      asTenant(request(app).post("/orders"), "t-1")',
+      '        .set("Idempotency-Key", "k-123")',
+      "        .send(anOrder());",
+      "    const first = await send();",
+      "    const retry = await send();",
+      "    expect(retry.status).toBe(201);",
+      "    expect(retry.body.id).toBe(first.body.id);",
+      "  });",
+      "});"
+    ]}
+  };
+  ["mw", "test"].forEach(function (k) {
+    FILES[k].rows = [["hunk", "@@ -0,0 +1," + FILES[k].added.length + " @@  new file"]].concat(
+      FILES[k].added.map(function (t, i) { return ["add", null, i + 1, t]; })
+    );
+  });
+  function counts(f) {
+    var a = 0, d = 0;
+    f.rows.forEach(function (r) { if (r[0] === "add") a++; if (r[0] === "del") d++; });
+    return { a: a, d: d };
+  }
+  var C = { or: counts(FILES.orders), mw: counts(FILES.mw), te: counts(FILES.test) };
+  var fill = {
+    "or-add": "+" + C.or.a, "or-del": "−" + C.or.d,
+    "mw-add": "+" + C.mw.a, "te-add": "+" + C.te.a,
+    "tot-add": "+" + (C.or.a + C.mw.a + C.te.a), "tot-del": "−" + C.or.d
+  };
+  $$("[data-count]").forEach(function (el) { el.textContent = fill[el.dataset.count]; });
+
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  var TOK = /(\/\/.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|\b(import|from|export|const|let|async|await|return|if|new|function|type|void|describe|it|expect)\b|\b(\d[\d_]*)\b/g;
+  function hl(src) {
+    var out = "", last = 0, m;
+    TOK.lastIndex = 0;
+    while ((m = TOK.exec(src))) {
+      out += esc(src.slice(last, m.index));
+      var cls = m[1] ? "c" : m[2] ? "s" : m[3] ? "k" : "n";
+      out += '<span class="' + cls + '">' + esc(m[0]) + "</span>";
+      last = TOK.lastIndex;
+    }
+    return out + esc(src.slice(last));
+  }
+
+  var diffState = { file: "orders", mode: "unified" };
+  function lineUnified(r) {
+    if (r[0] === "hunk") return '<div class="dl hunk">' + esc(r[1]) + "</div>";
+    return '<div class="dl ' + r[0] + '" data-new="' + (r[2] || "") + '"><span class="no">' + (r[1] || "") +
+      '</span><span class="no">' + (r[2] || "") + '</span><span class="tx">' + hl(r[3]) + "</span></div>";
+  }
+  function half(kind, no, text) {
+    if (kind === "empty") return '<div class="dl empty"><span class="no"></span><span class="tx"></span></div>';
+    return '<div class="dl ' + kind + '"' + (kind !== "del" ? ' data-new="' + no + '"' : "") + '><span class="no">' + no + '</span><span class="tx">' + hl(text) + "</span></div>";
+  }
+  function renderSplit(rows) {
+    var html = "", i = 0;
+    while (i < rows.length) {
+      var r = rows[i];
+      if (r[0] === "hunk") { html += '<div class="dl hunk">' + esc(r[1]) + "</div>"; i++; continue; }
+      if (r[0] === "ctx") { html += half("ctx", r[1], r[3]) + half("ctx", r[2], r[3]); i++; continue; }
+      var dels = [], adds = [];
+      while (i < rows.length && rows[i][0] === "del") dels.push(rows[i++]);
+      while (i < rows.length && rows[i][0] === "add") adds.push(rows[i++]);
+      for (var j = 0; j < Math.max(dels.length, adds.length); j++) {
+        html += dels[j] ? half("del", dels[j][1], dels[j][3]) : half("empty");
+        html += adds[j] ? half("add", adds[j][2], adds[j][3]) : half("empty");
+      }
+    }
+    return '<div class="split">' + html + "</div>";
+  }
+  function renderDiff() {
+    var f = FILES[diffState.file];
+    var c = counts(f);
+    $("#diffPath").textContent = f.path;
+    $("#diffCnt").innerHTML = '<span class="plus">+' + c.a + "</span>" + (c.d ? '<span class="minus">−' + c.d + "</span>" : "");
+    $("#diffBody").innerHTML = diffState.mode === "unified" ? f.rows.map(lineUnified).join("") : renderSplit(f.rows);
+    $$(".dfile").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.file === diffState.file)); });
+    $$("[data-diffmode]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.diffmode === diffState.mode)); });
+  }
+  $$(".dfile").forEach(function (b) { b.addEventListener("click", function () { diffState.file = b.dataset.file; renderDiff(); }); });
+  $$("[data-diffmode]").forEach(function (b) { b.addEventListener("click", function () { diffState.mode = b.dataset.diffmode; renderDiff(); }); });
+  renderDiff();
+
+  function openFile(key, line) {
+    diffState.file = key;
+    renderDiff();
+    selectTab("diff");
+    if (!line) return;
+    var el = $('#diffBody .dl[data-new="' + line + '"]');
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+  }
+  $$("[data-open-file]").forEach(function (b) {
+    b.addEventListener("click", function (e) { e.preventDefault(); openFile(b.dataset.openFile, b.dataset.line); });
+  });
+
+  $$("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var lbl = b.lastChild;
+      lbl.textContent = "Copied";
+      setTimeout(function () { lbl.textContent = "Copy"; }, 1200);
+    });
+  });
+
+  /* ---------- Approval ---------- */
+  $$("[data-approve]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var ok = b.dataset.approve === "approve";
+      var card = $("#approval");
+      card.classList.add("resolved");
+      card.innerHTML = '<div class="resolved-line">' +
+        '<svg class="i sm" style="color:' + (ok ? "var(--ok)" : "var(--danger)") + '"><use href="#' + (ok ? "i-check" : "i-x") + '"/></svg>' +
+        (ok ? "Approved" : "Denied") + ' <code class="mono">npx prisma migrate dev --name idempotency_keys</code>' +
+        '<span style="margin-left:auto;font:11.5px var(--font-mono);color:var(--fg-subtle)">' + (ok ? "applied 20260923_idempotency_keys" : "agent notified") + "</span></div>";
+      var row = $('.thread[aria-current="true"]');
+      if (row) {
+        $(".st", row).innerHTML = '<span class="ember-dot"></span>';
+        $(".t-meta", row).innerHTML = "orders-api &middot; <span class=\"hot\">Running</span>";
+      }
+    });
+  });
+
+  /* ---------- Agents ---------- */
+  function stopAgents() {
+    var banner = $("#banner");
+    if (banner) banner.remove();
+    $$(".member").forEach(function (m) {
+      m.classList.add("stopped");
+      var run = $(".run", m);
+      run.innerHTML = '<svg class="i xs"><use href="#i-stop"/></svg>stopped';
+    });
+    $(".batch-state").innerHTML = "stopped";
+    var w = $("#waiting");
+    w.classList.add("done");
+    $(".label", w).innerHTML = '<span class="ember-dot"></span><b>Agents stopped</b>&middot; lead answer kept';
+    $(".running-count").innerHTML = '<span class="ember-dot"></span>1 thread running';
+    setSendLabel();
+  }
+  $("#stopAgents").addEventListener("click", stopAgents);
+
+  /* ---------- Composer ---------- */
+  var input = $("#input");
+  function busy() { return !!$("#banner"); }
+  function setSendLabel() { $("#sendLbl").textContent = busy() ? "Queue" : "Send"; }
+  input.addEventListener("input", function () {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 200) + "px";
+  });
+  function submit() {
+    var text = input.value.trim();
+    if (!text) return;
+    if (busy() && !$("#queued")) {
+      var q = document.createElement("div");
+      q.className = "stratum queued"; q.id = "queued";
+      q.innerHTML = '<span class="qk">QUEUED</span><span class="qt" id="queuedText"></span><span class="spacer"></span>' +
+        '<span class="qa"><button class="ghost" id="qRemove2" title="Remove"><svg class="i xs"><use href="#i-x"/></svg>Remove</button></span>';
+      $("#banner").after(q);
+      $("#queuedText").textContent = text;
+      $("#qRemove2").addEventListener("click", function () { q.remove(); });
+    } else if (busy()) {
+      $("#queuedText").textContent = text;
+    }
+    input.value = "";
+    input.style.height = "auto";
+  }
+  $("#sendBtn").addEventListener("click", submit);
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+  $("#qRemove").addEventListener("click", function () { $("#queued").remove(); });
+  $("#qNow").addEventListener("click", function () { $("#queued").remove(); });
+  $("#qEdit").addEventListener("click", function () {
+    input.value = $("#queuedText").textContent;
+    $("#queued").remove();
+    input.focus();
+    input.dispatchEvent(new Event("input"));
+  });
+
+  var modelBtn = $("#modelBtn"), pop = $("#modelPop");
+  function setPop(open) { pop.classList.toggle("open", open); modelBtn.setAttribute("aria-expanded", String(open)); }
+  modelBtn.addEventListener("click", function (e) { e.stopPropagation(); setPop(!pop.classList.contains("open")); });
+  pop.addEventListener("click", function (e) { e.stopPropagation(); });
+  document.addEventListener("click", function () { setPop(false); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") setPop(false); });
+  $$(".opt", pop).forEach(function (o) {
+    o.addEventListener("click", function () {
+      $$(".opt", pop).forEach(function (x) { x.setAttribute("aria-checked", String(x === o)); });
+      $("#modelLbl").textContent = o.dataset.model;
+      setPop(false);
+    });
+  });
+  $$(".effort button", pop).forEach(function (o) {
+    o.addEventListener("click", function () {
+      $$(".effort button", pop).forEach(function (x) { x.setAttribute("aria-checked", String(x === o)); });
+      $("#effortLbl").textContent = o.textContent;
+    });
+  });
+  function cycler(btn, states) {
+    var i = 0;
+    btn.addEventListener("click", function () {
+      i = (i + 1) % states.length;
+      $("span", btn).textContent = states[i][0];
+      $("use", btn).setAttribute("href", states[i][1]);
+      btn.classList.toggle("warn", !!states[i][2]);
+    });
+  }
+  cycler($("#accessBtn"), [["Full access", "#i-lock"], ["Ask before running", "#i-shield", true]]);
+  cycler($("#envBtn"), [["Local checkout", "#i-laptop"], ["New worktree", "#i-branch"]]);
+
+  setTheme("dark");
+})();
+</script>
+</body>
+</html>

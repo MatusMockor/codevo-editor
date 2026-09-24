@@ -1,0 +1,1759 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-palette="1">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codevo v3 - Right panel surfaces</title>
+
+<style id="codevo-base">
+/* =====================================================================
+   CODEVO BASE - shared tokens + components for every v3 mockup screen.
+   Copy this whole <style id="codevo-base"> block (and the
+   <script id="codevo-base-js"> block) into new screens unchanged.
+   Theme/palette: <html data-theme="dark|light" data-palette="1..6">.
+   ===================================================================== */
+
+/* ---- 1. Palettes (from direction-a-monolith-palettes.html) ---- */
+/* Graphite · Teal - dark */
+html[data-theme="dark"], html[data-palette="1"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #060607;
+  --s0: #0E0F10;
+  --s1: #151616;
+  --s2: #1C1C1D;
+  --s3: #242425;
+  --s4: #2E2E2F;
+  --pop-bg: #212122;
+  --hair: rgba(255, 255, 255, 0.07);
+  --hair-strong: rgba(255, 255, 255, 0.12);
+  --fg-strong: #F3F3F5;
+  --fg: #D8D9DA;
+  --fg-muted: #B0B1B2;
+  --fg-subtle: #999A9B;
+  --accent: #4FCDB3;
+  --accent-strong: #9BEBD9;
+  --accent-fill: #4FCDB3;
+  --on-accent: #03241D;
+  --accent-soft: rgba(79, 205, 179, 0.13);
+  --focus: #4FCDB3;
+  --selection: rgba(79, 205, 179, 0.3);
+  --ok: #8FD383;
+  --danger: #F48A80;
+  --warn: #EDBB4E;
+  --warn-soft: rgba(237, 187, 78, 0.12);
+  --add-bg: rgba(143, 211, 131, 0.09);
+  --add-gutter: rgba(143, 211, 131, 0.17);
+  --del-bg: rgba(244, 138, 128, 0.09);
+  --del-gutter: rgba(244, 138, 128, 0.17);
+  --syn-kw: #B9A1FF;
+  --syn-str: #E7C17C;
+  --syn-num: #7EC8FF;
+  --syn-com: #8A8F98;
+}
+/* Graphite · Teal - light */
+html[data-theme="light"], html[data-palette="1"][data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #D8D9DB;
+  --s0: #EDEEEF;
+  --s1: #F6F7F8;
+  --s2: #FEFEFF;
+  --s3: #E9EAEB;
+  --s4: #DEDFE1;
+  --pop-bg: #FEFEFF;
+  --hair: rgba(22, 26, 32, 0.085);
+  --hair-strong: rgba(22, 26, 32, 0.14);
+  --fg-strong: #151617;
+  --fg: #292A2B;
+  --fg-muted: #4C4D4E;
+  --fg-subtle: #5A5B5C;
+  --accent: #0A7461;
+  --accent-strong: #12A087;
+  --accent-fill: #0B7A66;
+  --on-accent: #FFFFFF;
+  --accent-soft: rgba(11, 122, 102, 0.11);
+  --focus: #0A7461;
+  --selection: rgba(11, 122, 102, 0.22);
+  --ok: #26702F;
+  --danger: #BC3328;
+  --warn: #8A5F00;
+  --warn-soft: rgba(138, 95, 0, 0.1);
+  --add-bg: rgba(38, 112, 47, 0.08);
+  --add-gutter: rgba(38, 112, 47, 0.16);
+  --del-bg: rgba(188, 51, 40, 0.08);
+  --del-gutter: rgba(188, 51, 40, 0.16);
+  --syn-kw: #6A3EC9;
+  --syn-str: #875600;
+  --syn-num: #0A62A6;
+  --syn-com: #666B73;
+}
+/* Slate · Blue - dark */
+html[data-palette="2"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #03070E;
+  --s0: #090F18;
+  --s1: #10161F;
+  --s2: #161D26;
+  --s3: #1E252E;
+  --s4: #282F38;
+  --pop-bg: #1B222B;
+  --hair: rgba(220, 230, 255, 0.07);
+  --hair-strong: rgba(220, 230, 255, 0.12);
+  --fg-strong: #EEF4FC;
+  --fg: #D4DAE1;
+  --fg-muted: #ACB1B9;
+  --fg-subtle: #959AA1;
+  --accent: #62A6FF;
+  --accent-strong: #A9CDFF;
+  --accent-fill: #2563EB;
+  --on-accent: #FFFFFF;
+  --accent-soft: rgba(37, 99, 235, 0.13);
+  --focus: #62A6FF;
+  --selection: rgba(37, 99, 235, 0.3);
+  --ok: #72D69B;
+  --danger: #FF8A8F;
+  --warn: #F2C04F;
+  --warn-soft: rgba(242, 192, 79, 0.12);
+  --add-bg: rgba(114, 214, 155, 0.09);
+  --add-gutter: rgba(114, 214, 155, 0.17);
+  --del-bg: rgba(255, 138, 143, 0.09);
+  --del-gutter: rgba(255, 138, 143, 0.17);
+  --syn-kw: #C9A2FF;
+  --syn-str: #9FD88C;
+  --syn-num: #FFB27D;
+  --syn-com: #8290A8;
+}
+/* Slate · Blue - light */
+html[data-palette="2"][data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #D5DAE1;
+  --s0: #E9EEF5;
+  --s1: #F2F7FE;
+  --s2: #FDFFFF;
+  --s3: #E5EAF1;
+  --s4: #DBE0E7;
+  --pop-bg: #FDFFFF;
+  --hair: rgba(15, 26, 46, 0.085);
+  --hair-strong: rgba(15, 26, 46, 0.14);
+  --fg-strong: #10161F;
+  --fg: #242B34;
+  --fg-muted: #464E58;
+  --fg-subtle: #545B66;
+  --accent: #1D5ED4;
+  --accent-strong: #3B82F6;
+  --accent-fill: #2563EB;
+  --on-accent: #FFFFFF;
+  --accent-soft: rgba(37, 99, 235, 0.11);
+  --focus: #1D5ED4;
+  --selection: rgba(37, 99, 235, 0.22);
+  --ok: #18703F;
+  --danger: #BA2A38;
+  --warn: #8A6000;
+  --warn-soft: rgba(138, 96, 0, 0.1);
+  --add-bg: rgba(24, 112, 63, 0.08);
+  --add-gutter: rgba(24, 112, 63, 0.16);
+  --del-bg: rgba(186, 42, 56, 0.08);
+  --del-gutter: rgba(186, 42, 56, 0.16);
+  --syn-kw: #7A36C2;
+  --syn-str: #3A7626;
+  --syn-num: #A34A00;
+  --syn-com: #5E6A80;
+}
+/* Black · Violet - dark */
+html[data-palette="3"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #020202;
+  --s0: #060606;
+  --s1: #0C0C0C;
+  --s2: #141414;
+  --s3: #1C1C1C;
+  --s4: #262626;
+  --pop-bg: #181818;
+  --hair: rgba(255, 255, 255, 0.07);
+  --hair-strong: rgba(255, 255, 255, 0.12);
+  --fg-strong: #F5F5F5;
+  --fg: #D9D9D9;
+  --fg-muted: #AFAFAF;
+  --fg-subtle: #989898;
+  --accent: #A98BFF;
+  --accent-strong: #D2C3FF;
+  --accent-fill: #7C3AED;
+  --on-accent: #FFFFFF;
+  --accent-soft: rgba(124, 58, 237, 0.13);
+  --focus: #A98BFF;
+  --selection: rgba(124, 58, 237, 0.3);
+  --ok: #6EE3A2;
+  --danger: #FF7A8E;
+  --warn: #F9CB3E;
+  --warn-soft: rgba(249, 203, 62, 0.12);
+  --add-bg: rgba(110, 227, 162, 0.09);
+  --add-gutter: rgba(110, 227, 162, 0.17);
+  --del-bg: rgba(255, 122, 142, 0.09);
+  --del-gutter: rgba(255, 122, 142, 0.17);
+  --syn-kw: #F48BD4;
+  --syn-str: #9DE0A2;
+  --syn-num: #7DD3FC;
+  --syn-com: #8A8A8A;
+}
+/* Black · Violet - light */
+html[data-palette="3"][data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #DEDEDE;
+  --s0: #F0F0F0;
+  --s1: #F8F8F8;
+  --s2: #FFFFFF;
+  --s3: #EBEBEB;
+  --s4: #DFDFDF;
+  --pop-bg: #FFFFFF;
+  --hair: rgba(0, 0, 0, 0.085);
+  --hair-strong: rgba(0, 0, 0, 0.14);
+  --fg-strong: #121212;
+  --fg: #262626;
+  --fg-muted: #4D4D4D;
+  --fg-subtle: #5D5D5D;
+  --accent: #6D28D9;
+  --accent-strong: #8B5CF6;
+  --accent-fill: #7C3AED;
+  --on-accent: #FFFFFF;
+  --accent-soft: rgba(124, 58, 237, 0.11);
+  --focus: #6D28D9;
+  --selection: rgba(124, 58, 237, 0.22);
+  --ok: #137236;
+  --danger: #BE123C;
+  --warn: #8A5A00;
+  --warn-soft: rgba(138, 90, 0, 0.1);
+  --add-bg: rgba(19, 114, 54, 0.08);
+  --add-gutter: rgba(19, 114, 54, 0.16);
+  --del-bg: rgba(190, 18, 60, 0.08);
+  --del-gutter: rgba(190, 18, 60, 0.16);
+  --syn-kw: #A3197A;
+  --syn-str: #2A7230;
+  --syn-num: #0369A1;
+  --syn-com: #696969;
+}
+/* Ink · Mint - dark */
+html[data-palette="4"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #030615;
+  --s0: #090F1E;
+  --s1: #0F1526;
+  --s2: #161D2E;
+  --s3: #1F2537;
+  --s4: #282F41;
+  --pop-bg: #1B2233;
+  --hair: rgba(214, 222, 255, 0.07);
+  --hair-strong: rgba(214, 222, 255, 0.12);
+  --fg-strong: #EFF3FD;
+  --fg: #D5D9E3;
+  --fg-muted: #ADB1BA;
+  --fg-subtle: #969AA3;
+  --accent: #5EEAAE;
+  --accent-strong: #B0F7D6;
+  --accent-fill: #5EEAAE;
+  --on-accent: #03281A;
+  --accent-soft: rgba(94, 234, 174, 0.13);
+  --focus: #5EEAAE;
+  --selection: rgba(94, 234, 174, 0.3);
+  --ok: #8BDB85;
+  --danger: #FF8E96;
+  --warn: #F6C453;
+  --warn-soft: rgba(246, 196, 83, 0.12);
+  --add-bg: rgba(139, 219, 133, 0.09);
+  --add-gutter: rgba(139, 219, 133, 0.17);
+  --del-bg: rgba(255, 142, 150, 0.09);
+  --del-gutter: rgba(255, 142, 150, 0.17);
+  --syn-kw: #9FB4FF;
+  --syn-str: #F2C98A;
+  --syn-num: #FF9EC0;
+  --syn-com: #7C87A6;
+}
+/* Ink · Mint - light */
+html[data-palette="4"][data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #D5DAE2;
+  --s0: #E9EEF6;
+  --s1: #F2F7FF;
+  --s2: #FDFEFF;
+  --s3: #E5EAF2;
+  --s4: #DBDFE8;
+  --pop-bg: #FDFEFF;
+  --hair: rgba(14, 20, 48, 0.085);
+  --hair-strong: rgba(14, 20, 48, 0.14);
+  --fg-strong: #0E1624;
+  --fg: #222A39;
+  --fg-muted: #444D5E;
+  --fg-subtle: #525B6C;
+  --accent: #066F48;
+  --accent-strong: #12A56B;
+  --accent-fill: #3DDC97;
+  --on-accent: #03291B;
+  --accent-soft: rgba(61, 220, 151, 0.11);
+  --focus: #066F48;
+  --selection: rgba(61, 220, 151, 0.22);
+  --ok: #1D7437;
+  --danger: #B92C3B;
+  --warn: #8A6000;
+  --warn-soft: rgba(138, 96, 0, 0.1);
+  --add-bg: rgba(29, 116, 55, 0.08);
+  --add-gutter: rgba(29, 116, 55, 0.16);
+  --del-bg: rgba(185, 44, 59, 0.08);
+  --del-gutter: rgba(185, 44, 59, 0.16);
+  --syn-kw: #3B55C9;
+  --syn-str: #8A5A00;
+  --syn-num: #B4235A;
+  --syn-com: #5E6886;
+}
+/* Zinc · Orange - dark */
+html[data-palette="5"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #060608;
+  --s0: #0F0F12;
+  --s1: #151518;
+  --s2: #1C1C1F;
+  --s3: #242427;
+  --s4: #2E2E31;
+  --pop-bg: #212124;
+  --hair: rgba(255, 255, 255, 0.07);
+  --hair-strong: rgba(255, 255, 255, 0.12);
+  --fg-strong: #F3F3F7;
+  --fg: #D9D9DC;
+  --fg-muted: #B1B1B4;
+  --fg-subtle: #99999D;
+  --accent: #FF8A3D;
+  --accent-strong: #FFB889;
+  --accent-fill: #FF7A1F;
+  --on-accent: #1F0A00;
+  --accent-soft: rgba(255, 122, 31, 0.13);
+  --focus: #FF8A3D;
+  --selection: rgba(255, 122, 31, 0.3);
+  --ok: #6FD696;
+  --danger: #FF6F8A;
+  --warn: #F2D049;
+  --warn-soft: rgba(242, 208, 73, 0.12);
+  --add-bg: rgba(111, 214, 150, 0.09);
+  --add-gutter: rgba(111, 214, 150, 0.17);
+  --del-bg: rgba(255, 111, 138, 0.09);
+  --del-gutter: rgba(255, 111, 138, 0.17);
+  --syn-kw: #83B4FF;
+  --syn-str: #A8DB88;
+  --syn-num: #E2A6FF;
+  --syn-com: #8A8A94;
+}
+/* Zinc · Orange - light */
+html[data-palette="5"][data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #D9D9DD;
+  --s0: #EDEDF1;
+  --s1: #F6F6FA;
+  --s2: #FEFEFF;
+  --s3: #E9E9ED;
+  --s4: #DFDFE2;
+  --pop-bg: #FEFEFF;
+  --hair: rgba(24, 24, 27, 0.085);
+  --hair-strong: rgba(24, 24, 27, 0.14);
+  --fg-strong: #161619;
+  --fg: #2A2A2D;
+  --fg-muted: #4D4D50;
+  --fg-subtle: #5A5A5E;
+  --accent: #B73E00;
+  --accent-strong: #F26A1B;
+  --accent-fill: #F26A1B;
+  --on-accent: #1F0A00;
+  --accent-soft: rgba(242, 106, 27, 0.11);
+  --focus: #B73E00;
+  --selection: rgba(242, 106, 27, 0.22);
+  --ok: #18703F;
+  --danger: #C41E4E;
+  --warn: #8A5F00;
+  --warn-soft: rgba(138, 95, 0, 0.1);
+  --add-bg: rgba(24, 112, 63, 0.08);
+  --add-gutter: rgba(24, 112, 63, 0.16);
+  --del-bg: rgba(196, 30, 78, 0.08);
+  --del-gutter: rgba(196, 30, 78, 0.16);
+  --syn-kw: #2456C4;
+  --syn-str: #3C781E;
+  --syn-num: #8A3CB8;
+  --syn-com: #6A6A73;
+}
+/* Carbon · Lime - dark */
+html[data-palette="6"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #030405;
+  --s0: #090B0C;
+  --s1: #0F1112;
+  --s2: #161819;
+  --s3: #1E2022;
+  --s4: #282A2C;
+  --pop-bg: #1B1D1E;
+  --hair: rgba(255, 255, 255, 0.07);
+  --hair-strong: rgba(255, 255, 255, 0.12);
+  --fg-strong: #F2F4F5;
+  --fg: #D8D9DB;
+  --fg-muted: #B0B1B3;
+  --fg-subtle: #989A9C;
+  --accent: #C6F13F;
+  --accent-strong: #E4FF8F;
+  --accent-fill: #C6F13F;
+  --on-accent: #162200;
+  --accent-soft: rgba(198, 241, 63, 0.13);
+  --focus: #C6F13F;
+  --selection: rgba(198, 241, 63, 0.3);
+  --ok: #43D68E;
+  --danger: #FF7B7B;
+  --warn: #FFB547;
+  --warn-soft: rgba(255, 181, 71, 0.12);
+  --add-bg: rgba(67, 214, 142, 0.09);
+  --add-gutter: rgba(67, 214, 142, 0.17);
+  --del-bg: rgba(255, 123, 123, 0.09);
+  --del-gutter: rgba(255, 123, 123, 0.17);
+  --syn-kw: #8DB5FF;
+  --syn-str: #F0C674;
+  --syn-num: #FF9FA8;
+  --syn-com: #848A92;
+}
+/* Carbon · Lime - light */
+html[data-palette="6"][data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #D7DADC;
+  --s0: #ECEEF0;
+  --s1: #F5F7F9;
+  --s2: #FEFEFF;
+  --s3: #E8EAEC;
+  --s4: #DDDFE2;
+  --pop-bg: #FEFEFF;
+  --hair: rgba(21, 24, 28, 0.085);
+  --hair-strong: rgba(21, 24, 28, 0.14);
+  --fg-strong: #151618;
+  --fg: #292A2C;
+  --fg-muted: #4B4D4F;
+  --fg-subtle: #595B5D;
+  --accent: #436E00;
+  --accent-strong: #7FB800;
+  --accent-fill: #BEEB2E;
+  --on-accent: #162200;
+  --accent-soft: rgba(190, 235, 46, 0.11);
+  --focus: #436E00;
+  --selection: rgba(190, 235, 46, 0.22);
+  --ok: #0A6E41;
+  --danger: #C42B2B;
+  --warn: #8A5F00;
+  --warn-soft: rgba(138, 95, 0, 0.1);
+  --add-bg: rgba(10, 110, 65, 0.08);
+  --add-gutter: rgba(10, 110, 65, 0.16);
+  --del-bg: rgba(196, 43, 43, 0.08);
+  --del-gutter: rgba(196, 43, 43, 0.16);
+  --syn-kw: #2F5BC7;
+  --syn-str: #8A5A00;
+  --syn-num: #B83242;
+  --syn-com: #666B73;
+}
+
+/* ---- 2. Semantic surfaces (t3code roles mapped onto palette steps) ---- */
+html[data-theme="dark"] {
+  --canvas: var(--s0);
+  --side: var(--s1);
+  --raised: var(--s2);
+  --popover: var(--pop-bg);
+  --tint-1: rgba(255, 255, 255, 0.03);
+  --tint-2: rgba(255, 255, 255, 0.05);
+  --tint-3: rgba(255, 255, 255, 0.09);
+  --edge-top: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --lift: none;
+  --row-hover: var(--tint-2);
+  --row-active: var(--tint-3);
+  --fill-edge: none;
+  --window-shadow: 0 32px 90px -24px rgba(0, 0, 0, 0.7);
+  --scrim: rgba(0, 0, 0, 0.75);
+}
+html[data-theme="light"] {
+  --canvas: var(--s1);
+  --side: var(--s0);
+  --raised: var(--s2);
+  --popover: var(--pop-bg);
+  --tint-1: rgba(20, 24, 30, 0.035);
+  --tint-2: rgba(20, 24, 30, 0.055);
+  --tint-3: rgba(20, 24, 30, 0.09);
+  --edge-top: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --lift: 0 12px 28px -18px rgba(20, 24, 30, 0.4);
+  --row-hover: var(--canvas);
+  --row-active: var(--raised);
+  --fill-edge: inset 0 0 0 1px rgba(20, 24, 30, 0.1);
+  --window-shadow: 0 32px 90px -32px rgba(20, 24, 30, 0.3);
+  --scrim: rgba(0, 0, 0, 0.75);
+}
+
+/* ---- 3. Scale (t3code measurements) ---- */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --t-2xs: 11px;
+  --t-xs: 12px;
+  --t-sm: 14px;
+  --t-code: 12.5px;
+  --lh-sm: 20px;
+  --lh-prose: 1.625;
+  --sidebar-w: 256px;
+  --topbar-h: 52px;
+  --column: 768px;
+  --panel-w: 540px;
+  --r-sm: 6px;
+  --r-control: 8px;
+  --r-card: 10px;
+  --r-bubble: 18px;
+  --r-composer: 22px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* ---- 4. Base ---- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg-page); color: var(--fg);
+  font-family: var(--font-ui); font-size: var(--t-sm); line-height: var(--lh-sm);
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+}
+::selection { background: var(--selection); }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
+[hidden] { display: none !important; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+svg.i.sm { width: 14px; height: 14px; }
+svg.i.xs { width: 12px; height: 12px; }
+.muted { color: var(--fg-subtle); }
+.add-n { color: var(--ok); font-family: var(--font-mono); font-size: var(--t-xs); }
+.del-n { color: var(--danger); font-family: var(--font-mono); font-size: var(--t-xs); }
+
+/* ---- 5. Mockup page frame (outside the app) ---- */
+.stage { position: fixed; inset: 24px 24px 72px; display: grid; place-items: center; }
+.scaler { width: 1440px; height: 900px; flex: none; transform-origin: center center; }
+.mk {
+  position: fixed; right: 20px; bottom: 16px; z-index: 100;
+  display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 12px;
+  background: var(--s1); box-shadow: 0 0 0 1px var(--hair-strong), 0 10px 30px -12px rgba(0, 0, 0, .45);
+  font-size: var(--t-xs); color: var(--fg-muted);
+}
+.mk .lbl { padding-left: 6px; color: var(--fg-subtle); }
+.mk .seg { display: flex; gap: 2px; }
+.mk .seg button { height: 26px; padding: 0 9px; border-radius: 7px; color: var(--fg-muted); }
+.mk .seg button:hover { color: var(--fg-strong); background: var(--tint-2); }
+.mk .seg button[aria-pressed="true"] { background: var(--tint-3); color: var(--fg-strong); }
+.mk .dots { display: flex; gap: 2px; }
+.mk .dots button { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; }
+.mk .dots button i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.mk .dots button[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--fg-subtle); }
+.mk .div { width: 1px; height: 18px; background: var(--hair-strong); }
+.mk-name { position: fixed; left: 24px; bottom: 26px; font-size: var(--t-xs); color: var(--fg-subtle); }
+
+/* ---- 6. Window + chrome ---- */
+.win {
+  width: 1440px; height: 900px; position: relative; display: flex; overflow: hidden;
+  border-radius: 12px; background: var(--canvas);
+  box-shadow: 0 0 0 1px var(--hair-strong), var(--window-shadow);
+}
+.lights { display: flex; gap: 8px; }
+.lights span { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+.lights span:nth-child(1) { background: #FF5F57; }
+.lights span:nth-child(2) { background: #FEBC2E; }
+.lights span:nth-child(3) { background: #28C840; }
+.topbar { height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 20px; }
+.crumb { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--t-sm); }
+.crumb .proj { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-subtle); }
+.crumb .sep { color: var(--fg-subtle); }
+.crumb .here { color: var(--fg-strong); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .end { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+
+/* ---- 7. Controls ---- */
+.ibtn {
+  width: 28px; height: 28px; border-radius: var(--r-control); flex: none;
+  display: inline-grid; place-items: center; color: var(--fg-subtle);
+  transition: background-color .12s, color .12s;
+}
+.ibtn:hover, .ibtn[aria-pressed="true"] { background: var(--tint-2); color: var(--fg-strong); }
+.ibtn.xs { width: 24px; height: 24px; border-radius: var(--r-sm); }
+.ibtn.round32 { width: 32px; height: 32px; border-radius: 50%; }
+.btn {
+  height: 28px; padding: 0 10px; border-radius: var(--r-control);
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: var(--t-xs); font-weight: 500; color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--hair-strong); background: var(--tint-1);
+}
+.btn:hover { background: var(--tint-2); color: var(--fg-strong); }
+.btn.primary { background: var(--accent-fill); color: var(--on-accent); box-shadow: var(--fill-edge); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn .i { color: var(--fg-subtle); }
+.btn.primary .i { color: inherit; }
+.ctl {
+  height: 30px; padding: 0 8px; border-radius: var(--r-control);
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: var(--t-sm); color: var(--fg-muted);
+}
+.ctl:hover { background: var(--tint-2); color: var(--fg-strong); }
+.ctl .chev { color: var(--fg-subtle); }
+.tbtn { height: 24px; padding: 0 8px; border-radius: var(--r-sm); display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-xs); color: var(--fg-muted); }
+.tbtn:hover { background: var(--tint-2); color: var(--fg-strong); }
+.vsep { width: 1px; height: 16px; background: var(--hair-strong); margin: 0 6px; flex: none; }
+.round {
+  width: 32px; height: 32px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: var(--accent-fill); color: var(--on-accent); box-shadow: var(--fill-edge);
+  transition: transform .15s var(--ease), opacity .15s;
+}
+.round:hover:not(:disabled) { transform: scale(1.05); }
+.round:disabled { opacity: .3; cursor: default; }
+.round.stop { background: var(--fg-strong); color: var(--canvas); }
+.spin { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 1.5px solid color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor; animation: cv-spin .9s linear infinite; }
+@keyframes cv-spin { to { transform: rotate(360deg); } }
+@keyframes cv-pulse { 0%, 40% { opacity: 1; } 50%, 90% { opacity: .5; } 100% { opacity: 1; } }
+.favicon {
+  width: 16px; height: 16px; flex: none; border-radius: 4px; display: inline-grid; place-items: center;
+  background: var(--tint-3); color: var(--fg-strong); font-size: 10px; line-height: 1; font-weight: 600;
+}
+
+/* ---- 8. Sidebar (t3code: 256px, card rows 78px, 8px inset) ---- */
+.sidebar { width: var(--sidebar-w); flex: none; display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--hair); }
+.sidebar .topbar { padding: 0 12px 0 20px; }
+.sb-search { display: flex; align-items: center; gap: 2px; padding: 0 8px 8px; }
+.sb-search .field { flex: 1; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: var(--r-control); color: var(--fg-subtle); font-size: var(--t-sm); font-weight: 500; }
+.sb-search .field:hover { background: var(--tint-1); }
+.sb-list { flex: 1; overflow: auto; padding: 0 8px; list-style: none; margin: 0; }
+.sb-list li { padding: 2px 0; }
+.card-row { width: 100%; display: block; height: 78px; padding: 8px 10px; border-radius: var(--r-control); }
+.card-row:hover { background: var(--row-hover); }
+.card-row[aria-current="page"] { background: var(--row-active); }
+.card-row .l1, .card-row .l3 { height: 20px; display: flex; align-items: center; gap: 6px; font-size: var(--t-xs); color: var(--fg-subtle); }
+.card-row .l1 .p { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
+.card-row .l2 { display: block; margin-top: 2px; font-size: var(--t-sm); font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-row[aria-current="page"] .l2 { color: var(--fg-strong); }
+.card-row .l3 .b { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.card-row .when { font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; }
+.card-row .when.work { color: var(--accent); font-weight: 500; }
+.card-row .when.warn { color: var(--warn); font-weight: 500; }
+.sb-settled { margin: 0 8px; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: var(--r-control); font-size: var(--t-xs); color: var(--fg-subtle); width: calc(100% - 16px); }
+.sb-settled .rule { flex: 1; height: 1px; background: var(--hair); }
+.sb-settled:hover { color: var(--fg-strong); }
+.sb-foot { display: flex; gap: 4px; padding: 6px 10px 12px; }
+
+/* ---- 9. Conversation (t3code timeline) ---- */
+.col { max-width: var(--column); margin: 0 auto; width: 100%; }
+.u { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; padding-bottom: 16px; }
+.bubble { max-width: 80%; padding: 12px; border-radius: var(--r-bubble); background: var(--tint-2); color: var(--fg-strong); font-size: var(--t-sm); line-height: var(--lh-prose); }
+.bubble .imgs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-width: 210px; margin-bottom: 8px; }
+.thumb {
+  display: block; position: relative; overflow: hidden; padding: 0;
+  border-radius: var(--r-card); border: 1px solid var(--hair-strong); background: var(--canvas); cursor: zoom-in;
+}
+.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bubble .thumb { aspect-ratio: 4 / 3; }
+.meta { height: 20px; display: flex; align-items: center; gap: 8px; font-size: var(--t-xs); color: var(--fg-subtle); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .2s; }
+.u:hover .meta, .u:focus-within .meta, .a:hover .meta, .a:focus-within .meta, .fold:hover .meta { opacity: 1; }
+.fold { display: flex; align-items: center; gap: 4px; padding: 4px 2px 8px; margin-bottom: 8px; border-bottom: 1px solid var(--hair); }
+.fold > button { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; border-radius: var(--r-sm); font-size: var(--t-sm); line-height: var(--lh-prose); color: var(--fg-subtle); }
+.fold > button:hover { color: var(--fg-strong); }
+.fold .meta { margin-left: auto; }
+.a { padding: 2px 4px 16px; }
+.prose { font-size: var(--t-sm); line-height: var(--lh-prose); color: var(--fg); }
+.prose p { margin: 0 0 10px; }
+.prose > :last-child { margin-bottom: 0; }
+.prose code { white-space: nowrap; font-family: var(--font-mono); font-size: var(--t-xs); padding: 1.5px 5px; border-radius: var(--r-sm); border: 1px solid var(--hair); background: var(--tint-1); color: var(--fg-strong); }
+.flink { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; vertical-align: 1px; border-radius: var(--r-sm); font-size: var(--t-xs); font-weight: 500; color: var(--accent); background: var(--accent-soft); text-decoration: none; }
+.flink:hover { text-decoration: underline; text-underline-offset: 2px; }
+.code { position: relative; margin: 10px 0; border-radius: var(--r-card); background: var(--tint-1); }
+.code pre { margin: 0; padding: 12.8px 14.4px; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--fg); overflow-x: auto; }
+.code .copy { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s; }
+.code:hover .copy, .code .copy:focus-visible { opacity: 1; }
+.kw { color: var(--syn-kw); } .str { color: var(--syn-str); } .num { color: var(--syn-num); } .com { color: var(--syn-com); }
+.changes { margin-top: 16px; width: 100%; height: 36px; display: flex; align-items: center; gap: 12px; padding: 0 6px 0 12px; border-radius: var(--r-card); background: var(--tint-1); font-size: var(--t-xs); font-weight: 500; color: var(--fg-strong); }
+.changes .stat { display: inline-flex; gap: 4px; font-weight: 400; }
+.changes .end { margin-left: auto; }
+.changes[data-active="true"] { background: var(--tint-2); }
+.a .meta { margin-top: 6px; }
+.live { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 2px 8px; font-size: var(--t-sm); color: var(--fg-subtle); }
+.live .ico { width: 24px; height: 24px; display: grid; place-items: center; }
+.live.pulse .label { animation: cv-pulse 2s steps(6) infinite; }
+.live.warn { color: var(--fg-muted); }
+.live.warn .ico { color: var(--warn); }
+
+/* ---- 10. Composer (t3code: 22px radius, 16px insets, 70px editor, 32px round submit) ---- */
+.composer { position: relative; }
+.composer .banner {
+  position: relative; z-index: 0; margin: 0 22px -16px; padding: 6px 8px 22px 12px;
+  border: 1px solid var(--hair); border-radius: 16px 16px 0 0; background: var(--raised);
+  display: flex; align-items: center; gap: 8px; font-size: var(--t-xs); line-height: 16px; color: var(--fg-muted);
+}
+.composer .banner .strong { color: var(--fg-strong); font-weight: 500; }
+.composer .banner .end { margin-left: auto; display: flex; gap: 2px; }
+.composer .banner .spin { color: var(--accent); }
+.slab {
+  position: relative; z-index: 1; margin: 0;
+  background: var(--raised); border: 1px solid var(--hair); border-radius: var(--r-composer);
+  box-shadow: var(--edge-top), var(--lift);
+}
+.slab:focus-within { border-color: var(--hair-strong); }
+.editor { min-height: 86px; padding: 16px 16px 10px; font-size: var(--t-sm); line-height: var(--lh-prose); color: var(--fg-strong); }
+.editor .ph { color: var(--fg-subtle); }
+.attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.attachments .thumb { width: 64px; height: 64px; }
+.thumb-wrap { position: relative; }
+.media-x {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, .65); box-shadow: 0 0 0 1px rgba(255, 255, 255, .2);
+}
+.media-x:hover { background: rgba(0, 0, 0, .8); }
+.composer .foot { display: flex; align-items: center; gap: 8px; padding: 0 16px 16px 12px; height: 48px; }
+.composer .ctrls { display: flex; align-items: center; min-width: 0; }
+.composer .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.drawer {
+  margin: -1px 22px 0; height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 6px;
+  border: 1px solid var(--hair); border-top: 0; border-radius: 0 0 14px 14px; background: var(--side);
+  font-size: var(--t-xs); color: var(--fg-subtle);
+}
+.drawer .tbtn { color: var(--fg-subtle); padding: 0 4px; margin-left: -4px; }
+.drawer .end { margin-left: auto; margin-right: -4px; }
+.approval { padding: 14px 16px 6px; }
+.approval .k { display: flex; align-items: center; gap: 8px; font-size: var(--t-2xs); color: var(--fg-subtle); }
+.approval .k b { color: var(--warn); font-weight: 500; }
+.approval pre { margin: 6px 0 0; font-family: var(--font-mono); font-size: var(--t-xs); line-height: 18px; color: var(--fg-strong); white-space: pre-wrap; }
+.approval p { margin: 6px 0 0; font-size: var(--t-xs); color: var(--fg-muted); }
+
+/* ---- 11. Side panel + diff ---- */
+.panel { width: var(--panel-w); flex: none; display: flex; flex-direction: column; background: var(--canvas); border-left: 1px solid var(--hair); }
+.panel .topbar { padding: 0 12px 0 16px; }
+.panel .tab { height: 28px; padding: 0 10px; border-radius: var(--r-control); display: inline-flex; align-items: center; gap: 6px; background: var(--tint-2); color: var(--fg-strong); font-size: var(--t-xs); font-weight: 500; }
+.panel .sub { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 10px; }
+.panel .sub .ctl { font-size: var(--t-xs); font-weight: 500; color: var(--fg-strong); height: 28px; }
+.panel .sub .stat { margin-left: auto; display: inline-flex; gap: 4px; }
+.files { flex: 1; overflow: auto; padding: 4px 8px 12px; }
+.frow { width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--r-control); font-size: var(--t-xs); color: var(--fg-strong); }
+.frow:hover { background: var(--tint-1); }
+.frow .chev { color: var(--fg-subtle); transition: transform .15s; }
+.frow[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.frow .dir { color: var(--fg-subtle); }
+.frow .n { margin-left: auto; display: flex; gap: 8px; }
+.hunk { margin: 2px 0 8px; border: 1px solid var(--hair); border-radius: var(--r-card); overflow: hidden; font-family: var(--font-mono); font-size: var(--t-xs); line-height: 20px; }
+.hl { display: grid; grid-template-columns: 32px 32px 16px 1fr; white-space: pre; color: var(--fg); }
+.hl .ln { text-align: right; padding-right: 8px; color: var(--fg-subtle); user-select: none; }
+.hl .sg { color: var(--fg-subtle); user-select: none; }
+.hl.add { background: var(--add-bg); } .hl.add .sg { color: var(--ok); }
+.hl.del { background: var(--del-bg); } .hl.del .sg { color: var(--danger); }
+.hl.hh { color: var(--fg-subtle); background: var(--tint-1); }
+
+/* ---- 12. Media preview (t3code ExpandedImageDialog) ---- */
+.lightbox { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: var(--scrim); }
+.lightbox figure { position: relative; margin: 0; max-width: calc(92% - 96px); }
+.lightbox img { display: block; max-width: 100%; max-height: 700px; border-radius: var(--r-card); }
+.lightbox .media-x { top: -40px; right: 0; width: 28px; height: 28px; }
+.lightbox figcaption { margin-top: 8px; text-align: center; font-size: var(--t-xs); color: rgba(255, 255, 255, .8); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+<style id="screen-right-panel">
+/* ---- main column (same as screen-chat) ---- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.scroll { flex: 1; overflow: auto; padding: 24px 20px 12px; }
+.turn-gap { height: 4px; }
+.dock { flex: none; padding: 0 20px 16px; }
+.main.narrow .ctrls .opt { display: none; }
+.main.narrow .drawer .ws { display: none; }
+.main.narrow .crumb .proj, .main.narrow .crumb .sep, .main.narrow #commitTop .lbl { display: none; }
+.main.narrow #commitTop { padding: 0 8px; }
+
+/* ---- right panel shell (t3code RightPanelTabs + PreviewPanelShell) ---- */
+.rp { position: relative; min-width: 360px; transition: width .2s var(--ease); }
+.rp.wide { width: 820px; }
+.rp-bar { gap: 4px; padding: 0 8px 0 8px !important; }
+.ptabs { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.ptabs::-webkit-scrollbar { display: none; }
+.ptabs.fade-l { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
+.ptab {
+  height: 28px; max-width: 144px; flex: none; display: inline-flex; align-items: center; gap: 2px;
+  padding: 0 10px 0 4px; border-radius: var(--r-control); font-size: var(--t-xs); color: var(--fg-subtle);
+}
+.ptab:hover { background: var(--tint-1); color: var(--fg-strong); }
+.ptab[aria-selected="true"] { background: var(--tint-2); color: var(--fg-strong); font-weight: 500; }
+.ptab .ico { position: relative; width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: var(--r-sm); }
+.ptab .ico .x { display: none; }
+.ptab:hover .ico .g, .ptab:focus-within .ico .g { display: none; }
+.ptab:hover .ico .x, .ptab:focus-within .ico .x { display: block; }
+.ptab .ico:hover { background: var(--tint-2); }
+.ptab .t { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ptab .live-dot { position: absolute; right: 2px; bottom: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
+.ptab:hover .live-dot { display: none; }
+.rp-bar .end { gap: 2px; }
+
+/* resize handle (t3code RightPanelResizeHandle) */
+.rs { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; z-index: 5; cursor: col-resize; }
+.rs::after { content: ""; position: absolute; left: 2px; top: 0; bottom: 0; width: 2px; background: transparent; transition: background-color .15s; }
+.rs:hover::after, .rs.on::after { background: var(--accent); }
+
+.surface { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.panel .sub { border-bottom: 1px solid var(--hair); flex: none; }
+.sub .grow { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.sub .tools { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.sub .stat { margin: 0 4px 0 0 !important; }
+.ibtn.xs[aria-pressed="true"] { background: var(--tint-3); color: var(--fg-strong); }
+.segm { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-control); background: var(--tint-1); box-shadow: inset 0 0 0 1px var(--hair); margin: 0 2px; }
+.segm .ibtn.xs { width: 22px; height: 22px; }
+.cmp { display: inline-flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--t-xs); color: var(--fg-subtle); white-space: nowrap; }
+.cmp > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sub .grow { overflow: hidden; }
+.cmp .ctl { color: var(--fg-muted) !important; font-weight: 400 !important; padding: 0 6px; }
+
+/* popover / menu (shared-candidate) */
+.pop {
+  position: absolute; z-index: 20; background: var(--popover); border-radius: var(--r-card);
+  box-shadow: 0 0 0 1px var(--hair-strong), 0 16px 36px -12px rgba(0, 0, 0, .55); overflow: hidden;
+}
+.menu { padding: 4px; min-width: 200px; }
+.mi { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--r-sm); font-size: var(--t-xs); color: var(--fg); }
+.mi:hover, .mi.hi { background: var(--tint-2); color: var(--fg-strong); }
+.mi .ck { width: 14px; flex: none; color: var(--fg-strong); }
+.mi .end { margin-left: auto; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+.msep { height: 1px; background: var(--hair); margin: 4px -4px; }
+
+/* ---- diff (t3code DiffPanel) ---- */
+.dbody { flex: 1; min-height: 0; display: flex; }
+.dbody .files { padding: 4px 8px 16px; }
+.frow .fi { color: var(--fg-subtle); }
+.frow .fi.fa { color: var(--ok); }
+.frow .path { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hl .cd { overflow: hidden; }
+.wrap .hl .cd { white-space: pre-wrap; word-break: break-word; }
+.hs { display: grid; grid-template-columns: 28px 14px minmax(0, 1fr) 28px 14px minmax(0, 1fr); white-space: pre; color: var(--fg); }
+.hs > span { min-height: 20px; }
+.hs .ln { text-align: right; padding-right: 6px; color: var(--fg-subtle); user-select: none; }
+.hs .sg { color: var(--fg-subtle); user-select: none; }
+.hs .cd { overflow: hidden; padding-right: 8px; }
+.hs .r0 { border-left: 1px solid var(--hair); }
+.hs .sd { background: var(--del-bg); } .hs .sd.sg { color: var(--danger); }
+.hs .sa { background: var(--add-bg); } .hs .sa.sg { color: var(--ok); }
+.hs .e { background: var(--tint-1); }
+.hs.hh > span { background: var(--tint-1); color: var(--fg-subtle); }
+.ftree { width: min(16rem, 40%); min-width: 160px; flex: none; border-left: 1px solid var(--hair); overflow: auto; padding: 6px; }
+.trow { width: 100%; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--t-xs); color: var(--fg); white-space: nowrap; }
+.trow:hover { background: var(--tint-1); color: var(--fg-strong); }
+.trow[aria-current="true"] { background: var(--tint-2); color: var(--fg-strong); }
+.trow .i { color: var(--fg-subtle); }
+.trow .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.trow .n { margin-left: auto; display: flex; gap: 6px; }
+.trow .gs { margin-left: auto; font-family: var(--font-mono); font-size: var(--t-2xs); color: var(--fg-subtle); }
+.trow .gs.md { color: var(--warn); } .trow .gs.ad { color: var(--ok); }
+
+/* ---- files (t3code FileBrowserPanel + FilePreviewPanel) ---- */
+.search {
+  flex: 1; min-width: 0; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  border-radius: var(--r-control); color: var(--fg-subtle); font-size: var(--t-xs);
+}
+.search:hover, .search:focus-within { background: var(--tint-1); }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; color: var(--fg-strong); }
+.search input::placeholder { color: var(--fg-subtle); }
+.fsplit { flex: 1; min-height: 0; display: flex; }
+.fsplit .tree { width: 212px; flex: none; overflow: auto; padding: 6px; border-right: 1px solid var(--hair); }
+.preview { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.crumbs { height: 36px; flex: none; overflow: hidden; display: flex; align-items: center; gap: 2px; padding: 0 8px 0 12px; font-size: var(--t-xs); color: var(--fg-subtle); white-space: nowrap; }
+.crumbs .c { padding: 0 2px; border-radius: 4px; }
+.crumbs .c:hover { background: var(--tint-2); color: var(--fg-strong); }
+.crumbs .c.here { color: var(--fg-strong); font-weight: 500; }
+.crumbs .end { margin-left: auto; display: flex; gap: 2px; flex: none; padding-left: 8px; }
+.src { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 16px; font-family: var(--font-mono); font-size: var(--t-xs); line-height: 20px; }
+.src .l { display: grid; grid-template-columns: 40px 1fr; white-space: pre; color: var(--fg); }
+.src .l .ln { text-align: right; padding-right: 14px; color: var(--fg-subtle); user-select: none; }
+.src .l.cur { background: var(--tint-1); }
+
+/* ---- terminal (t3code ThreadTerminalDrawer) ---- */
+.term { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; font-family: var(--font-mono); font-size: var(--t-xs); line-height: 18px; color: var(--fg); white-space: pre; }
+.term .p { color: var(--accent); } .term .dim { color: var(--fg-subtle); } .term .ok { color: var(--ok); } .term .wn { color: var(--warn); } .term .er { color: var(--danger); }
+.term .lnk { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.term .cur { display: inline-block; width: 7px; height: 14px; vertical-align: -2px; background: var(--fg-strong); animation: cv-blink 1.1s steps(1) infinite; }
+@keyframes cv-blink { 50% { opacity: 0; } }
+.tbar { position: absolute; top: 8px; right: 10px; z-index: 3; display: inline-flex; align-items: center; border-radius: var(--r-sm); background: var(--canvas); box-shadow: 0 0 0 1px var(--hair-strong); overflow: hidden; }
+.tbar button { height: 24px; min-width: 24px; padding: 0 6px; display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-2xs); color: var(--fg-muted); }
+.tbar button:hover { background: var(--tint-2); color: var(--fg-strong); }
+.tbar .s { width: 1px; height: 14px; background: var(--hair-strong); }
+
+/* ---- git (t3code GitActionsControl commit dialog, as a surface) ---- */
+.gbody { flex: 1; min-height: 0; overflow: auto; padding: 8px 8px 12px; }
+.ghead { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; font-size: var(--t-xs); color: var(--fg-muted); }
+.ghead b { color: var(--fg-strong); font-weight: 500; }
+.ghead .end { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.grow-f { width: 100%; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--r-control); font-size: var(--t-xs); color: var(--fg-strong); }
+.grow-f:hover { background: var(--tint-1); }
+.grow-f .st { width: 12px; flex: none; text-align: center; font-family: var(--font-mono); font-size: var(--t-2xs); font-weight: 600; }
+.grow-f .st.m { color: var(--warn); } .grow-f .st.ad { color: var(--ok); }
+.grow-f .path { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.grow-f .n { margin-left: auto; display: flex; gap: 8px; }
+.grow-f.off .path, .grow-f.off .st { color: var(--fg-subtle); }
+.chk { width: 14px; height: 14px; flex: none; border-radius: 4px; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--hair-strong); color: var(--on-accent); }
+.chk[aria-checked="true"] { background: var(--accent-fill); box-shadow: var(--fill-edge); }
+.chk[aria-checked="mixed"] { background: var(--accent-fill); box-shadow: var(--fill-edge); }
+.chk svg { width: 10px; height: 10px; stroke-width: 2.5; }
+.chk[aria-checked="false"] svg { display: none; }
+.gfoot { flex: none; padding: 0 12px 12px; }
+.cbox { background: var(--raised); border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--edge-top), var(--lift); }
+.cbox:focus-within { border-color: var(--hair-strong); }
+.cbox textarea {
+  display: block; width: 100%; resize: none; border: 0; outline: 0; background: none; padding: 12px 14px 4px;
+  font: inherit; font-size: var(--t-sm); line-height: var(--lh-prose); color: var(--fg-strong); min-height: 76px;
+}
+.cbox textarea::placeholder { color: var(--fg-subtle); }
+.cbox .foot { display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px 8px; }
+.cbox .foot .end { margin-left: auto; display: flex; gap: 6px; }
+.hint { font-size: var(--t-xs); color: var(--fg-subtle); padding: 8px 4px 0; display: flex; align-items: center; gap: 6px; }
+.hint .i { color: var(--fg-subtle); }
+.hist { margin-top: 8px; }
+.crow { width: 100%; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--r-control); font-size: var(--t-xs); color: var(--fg); }
+.crow:hover { background: var(--tint-1); }
+.crow .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1.5px var(--fg-subtle); }
+.crow .msg { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.crow .sha { font-family: var(--font-mono); font-size: var(--t-2xs); color: var(--fg-subtle); }
+.crow .ago { width: 28px; text-align: right; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+.crow .up { color: var(--accent); }
+
+/* branch picker (t3code BranchToolbarBranchSelector) */
+.bpick { top: 88px; left: 10px; width: 320px; display: flex; flex-direction: column; }
+.bpick .q { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--hair); color: var(--fg-subtle); font-size: var(--t-xs); }
+.bpick .q input { flex: 1; border: 0; outline: 0; background: none; font: inherit; color: var(--fg-strong); }
+.bpick .q input::placeholder { color: var(--fg-subtle); }
+.bpick .list { padding: 6px 4px 4px; max-height: 224px; overflow: auto; }
+.bpick .mi .b { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bpick .mi .bd { font-size: 10px; color: var(--fg-subtle); }
+.bpick .mk-cur { color: var(--fg-strong); font-weight: 500; }
+.bnew { border-top: 1px solid var(--hair); padding: 8px 8px 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+.bnew .r { display: flex; align-items: center; gap: 8px; }
+.infield {
+  flex: 1; min-width: 0; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  border-radius: var(--r-control); background: var(--tint-1); box-shadow: inset 0 0 0 1px var(--hair-strong);
+  font-size: var(--t-xs); color: var(--fg-subtle);
+}
+.infield:focus-within { box-shadow: inset 0 0 0 1px var(--focus); }
+.infield input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-family: var(--font-mono); color: var(--fg-strong); }
+.bnew .from { font-size: var(--t-xs); color: var(--fg-subtle); }
+.bnew .from b { color: var(--fg-muted); font-weight: 500; }
+.sw { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--t-xs); color: var(--fg-muted); }
+.switch { width: 26px; height: 16px; border-radius: 8px; flex: none; position: relative; background: var(--tint-3); box-shadow: inset 0 0 0 1px var(--hair-strong); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--fg-muted); transition: transform .15s var(--ease); }
+.switch[aria-checked="true"] { background: var(--accent-fill); box-shadow: var(--fill-edge); }
+.switch[aria-checked="true"]::after { transform: translateX(10px); background: var(--on-accent); }
+
+/* pull request form */
+.form { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.lab { display: block; margin-bottom: 6px; font-size: var(--t-xs); font-weight: 500; color: var(--fg-muted); }
+.inp, .ta {
+  display: block; width: 100%; border: 0; outline: 0; border-radius: var(--r-control); background: var(--tint-1);
+  box-shadow: inset 0 0 0 1px var(--hair-strong); font: inherit; font-size: var(--t-sm); color: var(--fg-strong);
+}
+.inp { height: 34px; padding: 0 10px; }
+.ta { flex: 1; min-height: 160px; resize: none; padding: 10px; line-height: var(--lh-prose); font-size: 13px; }
+.inp:focus, .ta:focus { box-shadow: inset 0 0 0 1px var(--focus); }
+.tafield { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.prmeta { display: flex; align-items: center; gap: 12px; font-size: var(--t-xs); color: var(--fg-subtle); }
+.prmeta .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-subtle); }
+.pfoot { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--hair); }
+.pfoot .end { margin-left: auto; display: flex; gap: 6px; }
+.pfoot .note { font-size: var(--t-xs); color: var(--fg-subtle); }
+
+/* ---- scripts (t3code ProjectScriptsControl, as a surface) ---- */
+.slist { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px 12px; }
+.sgl { height: 28px; display: flex; align-items: center; padding: 0 8px; margin-top: 6px; font-size: var(--t-xs); color: var(--fg-subtle); }
+.srow { position: relative; width: 100%; height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 4px; border-radius: var(--r-control); }
+.srow:hover { background: var(--tint-1); }
+.srow.run { background: var(--tint-1); }
+.srow .go { width: 28px; height: 28px; border-radius: var(--r-sm); flex: none; display: grid; place-items: center; color: var(--fg-subtle); }
+.srow .go:hover { background: var(--tint-2); color: var(--fg-strong); }
+.srow.run .go { color: var(--fg-strong); }
+.srow .nm { flex: none; font-size: var(--t-xs); font-weight: 500; color: var(--fg-strong); }
+.srow .cmd { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--t-2xs); color: var(--fg-subtle); }
+.srow .st { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-xs); color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+.srow .st .pd { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.srow .st.run { color: var(--fg-muted); }
+.srow .st.fail { color: var(--danger); }
+.srow .st a { color: var(--accent); text-decoration: none; font-family: var(--font-mono); font-size: var(--t-2xs); }
+.srow .st a:hover { text-decoration: underline; }
+.srow .more { opacity: 0; }
+.srow:hover .more, .srow .more:focus-visible { opacity: 1; }
+.addrow { width: 100%; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 10px; border-radius: var(--r-control); font-size: var(--t-xs); color: var(--fg-subtle); }
+.addrow:hover { background: var(--tint-1); color: var(--fg-strong); }
+kbd { font-family: var(--font-ui); font-size: var(--t-2xs); color: var(--fg-subtle); }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-new" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a1.4 1.4 0 0 1 3 3l-9 9a2 2 0 0 1-.85.5l-2.87.85a.5.5 0 0 1-.62-.62l.84-2.88a2 2 0 0 1 .5-.85z"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></symbol>
+    <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+    <symbol id="i-panel-bottom" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m16 6-8.4 8.6a2 2 0 0 0 2.8 2.8l8.4-8.6a4 4 0 1 0-5.6-5.6l-8.4 8.5a6 6 0 1 0 8.5 8.5l8.4-8.5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/></symbol>
+    <symbol id="i-diff" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M9 10h6M12 7v6M9 17h6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="6" cy="6" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10a6 6 0 0 1-6 6H8"/></symbol>
+    <symbol id="i-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-6 .13 4 4 0 0 0-2.52 5.77 4 4 0 0 0 .55 6.59A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 6 .13 4 4 0 0 1 2.52 5.77 4 4 0 0 1-.55 6.59A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+    <symbol id="i-updown" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></symbol>
+    <symbol id="i-files" viewBox="0 0 24 24"><path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m7 11 2-2-2-2M11 13h4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4.8v14.4a1 1 0 0 0 1.5.86l12-7.2a1 1 0 0 0 0-1.72l-12-7.2A1 1 0 0 0 6 4.8Z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-max" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-rows" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18"/></symbol>
+    <symbol id="i-cols" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/></symbol>
+    <symbol id="i-wrap" viewBox="0 0 24 24"><path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-4"/><path d="m16 16-2 2 2 2M3 18h7"/></symbol>
+    <symbol id="i-pilcrow" viewBox="0 0 24 24"><path d="M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13"/></symbol>
+    <symbol id="i-ftree" viewBox="0 0 24 24"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3M3 3v13a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-pr" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/></symbol>
+    <symbol id="i-branch-plus" viewBox="0 0 24 24"><path d="M6 3v12M18 6a3 3 0 1 0 0-.01M6 21a3 3 0 1 0 0-.01"/><path d="M15 6a9 9 0 0 0-9 9M18 15v6M21 18h-6"/></symbol>
+    <symbol id="i-arrow-r" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><path d="M8 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3M16 5h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3M12 4v16"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
+    <symbol id="i-collapse" viewBox="0 0 24 24"><path d="m7 20 5-5 5 5M7 4l5 5 5-5"/></symbol>
+    <symbol id="i-file-plus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></symbol>
+    <symbol id="i-file-dot" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="1.5"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/></symbol>
+    <symbol id="i-cloud-up" viewBox="0 0 24 24"><path d="M12 13v8M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.24"/><path d="m8 17 4-4 4 4"/></symbol>
+    <symbol id="i-json" viewBox="0 0 24 24"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></symbol>
+  </defs>
+</svg>
+
+<div class="stage">
+  <div class="scaler" id="scaler">
+    <div class="win" id="win">
+
+      <!-- ================= sidebar (base) ================= -->
+      <aside class="sidebar" aria-label="Threads">
+        <div class="topbar">
+          <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="end"><button class="ibtn" aria-label="Toggle sidebar" title="Toggle sidebar"><svg class="i"><use href="#i-sidebar"/></svg></button></div>
+        </div>
+        <div class="sb-search">
+          <button class="field" aria-label="Search threads"><svg class="i"><use href="#i-search"/></svg>Search</button>
+          <button class="ibtn" aria-label="Add project" title="Add project"><svg class="i"><use href="#i-folder-plus"/></svg></button>
+          <button class="ibtn" aria-label="New thread" title="New thread"><svg class="i"><use href="#i-new"/></svg></button>
+        </div>
+        <ul class="sb-list">
+          <li>
+            <button class="card-row" aria-current="page">
+              <span class="l1"><span class="favicon">O</span><span class="p">orders-api</span><span class="when">4m</span></span>
+              <span class="l2">Idempotency keys for POST /orders</span>
+              <span class="l3"><span class="b">feat/idempotency-keys</span><span><span class="add-n">+42</span> <span class="del-n">−7</span></span></span>
+            </button>
+          </li>
+          <li>
+            <button class="card-row">
+              <span class="l1"><span class="favicon">O</span><span class="p">orders-api</span><span class="when">2h</span></span>
+              <span class="l2">Flaky Jest timeout in payments</span>
+              <span class="l3"><span class="b">fix/payments-timeout</span></span>
+            </button>
+          </li>
+          <li>
+            <button class="card-row">
+              <span class="l1"><span class="favicon">W</span><span class="p">web-dashboard</span><span class="when">1d</span></span>
+              <span class="l2">Orders table: server-side paging</span>
+              <span class="l3"><span class="b">feat/orders-paging</span></span>
+            </button>
+          </li>
+          <li>
+            <button class="card-row">
+              <span class="l1"><span class="favicon">W</span><span class="p">web-dashboard</span><span class="when">3d</span></span>
+              <span class="l2">Vitest coverage thresholds</span>
+              <span class="l3"><span class="b">chore/coverage</span></span>
+            </button>
+          </li>
+        </ul>
+        <button class="sb-settled">Settled (6)<span class="rule"></span><svg class="i sm"><use href="#i-chev-d"/></svg></button>
+        <div class="sb-foot">
+          <button class="ibtn" aria-label="Settings" title="Settings"><svg class="i"><use href="#i-gear"/></svg></button>
+        </div>
+      </aside>
+
+      <!-- ================= main (conversation stays visible) ================= -->
+      <main class="main" id="main">
+        <header class="topbar">
+          <div class="crumb">
+            <span class="proj"><span class="favicon">O</span>orders-api</span><span class="sep">/</span>
+            <span class="here">Idempotency keys for POST /orders</span>
+          </div>
+          <div class="end">
+            <button class="btn" id="commitTop" type="button"><svg class="i sm"><use href="#i-commit"/></svg><span class="lbl">Commit</span></button>
+            <span class="vsep"></span>
+            <button class="ibtn" id="termToggle" aria-label="Toggle terminal" title="Terminal"><svg class="i"><use href="#i-panel-bottom"/></svg></button>
+            <button class="ibtn" aria-label="Toggle right panel" title="Right panel" aria-pressed="true"><svg class="i"><use href="#i-panel-right"/></svg></button>
+          </div>
+        </header>
+
+        <div class="scroll">
+          <div class="col">
+            <div class="u">
+              <div class="bubble">Retries of POST /orders from the mobile app create duplicate orders. Why?</div>
+              <div class="meta">10:31<button class="ibtn xs" aria-label="Copy message" title="Copy"><svg class="i sm"><use href="#i-copy"/></svg></button></div>
+            </div>
+            <div class="a">
+              <div class="prose"><p>The app times out after 5 s, but <code>createOrder</code> still commits, so every retry inserts a new row.</p></div>
+              <div class="meta"><button class="ibtn xs" aria-label="Copy answer" title="Copy"><svg class="i sm"><use href="#i-copy"/></svg></button>10:32 · Opus 5.5 · 41s</div>
+            </div>
+            <div class="turn-gap"></div>
+            <div class="u">
+              <div class="bubble">Add Idempotency-Key support as middleware and cover it with tests.</div>
+              <div class="meta">10:40<button class="ibtn xs" aria-label="Copy message" title="Copy"><svg class="i sm"><use href="#i-copy"/></svg></button></div>
+            </div>
+            <div class="fold">
+              <button aria-expanded="false">Ran 3 commands<svg class="i sm"><use href="#i-chev-r"/></svg></button>
+              <span class="meta">1m 12s</span>
+            </div>
+            <div class="a">
+              <div class="prose">
+                <p>Added an <code>idempotency</code> middleware that stores the first response for each <code>Idempotency-Key</code> for 24 hours and replays it on retry. It is mounted only on the create route in <a class="flink" href="#orders" data-open-file><svg class="i xs"><use href="#i-file"/></svg>orders.ts</a>:</p>
+                <div class="code">
+<pre>router.post(<span class="str">"/orders"</span>, requireAuth,
+  idempotency({ ttlSeconds: <span class="num">86_400</span> }), createOrder);</pre>
+                  <button class="ibtn xs copy" aria-label="Copy code" title="Copy"><svg class="i sm"><use href="#i-copy"/></svg></button>
+                </div>
+                <p>Reusing a key with a different body now returns <code>422</code>. All 14 tests in <code>orders.test.ts</code> pass.</p>
+              </div>
+              <button class="changes" id="changesRow" aria-controls="panel">
+                <span>3 changed files</span>
+                <span class="stat"><span class="add-n">+42</span><span class="del-n">−7</span></span>
+                <span class="end tbtn"><svg class="i xs"><use href="#i-diff"/></svg>Open diff</span>
+              </button>
+              <div class="meta"><button class="ibtn xs" aria-label="Copy answer" title="Copy"><svg class="i sm"><use href="#i-copy"/></svg></button>10:42 · Opus 5.5 · 1m 38s</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dock">
+          <div class="col composer">
+            <form class="slab" onsubmit="return false">
+              <div class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" data-ph><span class="ph">Ask anything, @ files, or / for commands</span></div>
+              <div class="foot">
+                <div class="ctrls">
+                  <button class="ctl" type="button">Opus 5.5<svg class="i sm chev"><use href="#i-chev-d"/></svg></button>
+                  <span class="vsep opt"></span>
+                  <button class="ctl opt" type="button">High<svg class="i sm chev"><use href="#i-chev-d"/></svg></button>
+                  <span class="vsep"></span>
+                  <button class="ctl" type="button" aria-label="Full access"><svg class="i"><use href="#i-lock"/></svg><span class="opt">Full access</span><svg class="i sm chev opt"><use href="#i-chev-d"/></svg></button>
+                </div>
+                <div class="right">
+                  <button class="ibtn round32" type="button" aria-label="Attach files" title="Attach files"><svg class="i"><use href="#i-clip"/></svg></button>
+                  <button class="round" type="submit" disabled aria-label="Send message" title="Send"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3L8 13M8 3L4 7M8 3L12 7"/></svg></button>
+                </div>
+              </div>
+            </form>
+            <div class="drawer">
+              <button class="tbtn ws" type="button"><svg class="i xs"><use href="#i-folder"/></svg>Local checkout<svg class="i xs"><use href="#i-chev-d"/></svg></button>
+              <span class="end"><button class="tbtn" type="button" data-go="branches"><svg class="i xs"><use href="#i-branch"/></svg>feat/idempotency-keys<svg class="i xs"><use href="#i-chev-d"/></svg></button></span>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- ================= right panel ================= -->
+      <aside class="panel rp" id="panel" aria-label="Right panel">
+        <div class="rs" id="resize" role="separator" aria-orientation="vertical" aria-label="Resize right panel" tabindex="0"></div>
+
+        <div class="topbar rp-bar">
+          <div class="ptabs" role="tablist" aria-label="Panel surfaces">
+            <div class="ptab" role="tab" data-tab="diff"><button class="ico" aria-label="Close Diff"><svg class="i xs g"><use href="#i-diff"/></svg><svg class="i xs x"><use href="#i-x"/></svg></button><button class="t" data-go="diff">Diff</button></div>
+            <div class="ptab" role="tab" data-tab="files"><button class="ico" aria-label="Close Files"><svg class="i xs g"><use href="#i-files"/></svg><svg class="i xs x"><use href="#i-x"/></svg></button><button class="t" data-go="files">Files</button></div>
+            <div class="ptab" role="tab" data-tab="terminal"><button class="ico" aria-label="Close dev"><svg class="i xs g"><use href="#i-term"/></svg><svg class="i xs x"><use href="#i-x"/></svg><span class="live-dot" title="Running"></span></button><button class="t" data-go="terminal">dev</button></div>
+            <div class="ptab" role="tab" data-tab="zsh"><button class="ico" aria-label="Close zsh"><svg class="i xs g"><use href="#i-term"/></svg><svg class="i xs x"><use href="#i-x"/></svg></button><button class="t" data-go="terminal">zsh</button></div>
+            <div class="ptab" role="tab" data-tab="git"><button class="ico" aria-label="Close Git"><svg class="i xs g"><use href="#i-branch"/></svg><svg class="i xs x"><use href="#i-x"/></svg></button><button class="t" data-go="git">Git</button></div>
+            <div class="ptab" role="tab" data-tab="scripts"><button class="ico" aria-label="Close Scripts"><svg class="i xs g"><use href="#i-play"/></svg><svg class="i xs x"><use href="#i-x"/></svg></button><button class="t" data-go="scripts">Scripts</button></div>
+            <div class="ptab" role="tab" data-tab="pr" data-when="pr"><button class="ico" aria-label="Close New pull request"><svg class="i xs g"><use href="#i-pr"/></svg><svg class="i xs x"><use href="#i-x"/></svg></button><button class="t" data-go="pr">New pull request</button></div>
+            <button class="ibtn xs" id="addSurface" aria-label="Add panel surface" title="Add surface" aria-haspopup="menu"><svg class="i sm"><use href="#i-plus"/></svg></button>
+          </div>
+          <div class="end">
+            <button class="ibtn" id="maxBtn" aria-label="Maximize panel" title="Maximize" aria-pressed="false"><svg class="i sm"><use href="#i-max"/></svg></button>
+            <button class="ibtn" aria-label="Close panel" title="Close"><svg class="i"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+
+        <!-- add surface menu (t3code RightPanelTabs add menu) -->
+        <div class="pop menu" id="addMenu" role="menu" style="top:44px;left:340px;width:200px" hidden>
+          <button class="mi" role="menuitem" data-go="terminal"><svg class="i sm"><use href="#i-term"/></svg>Terminal<span class="end"><kbd>T</kbd></span></button>
+          <button class="mi" role="menuitem" data-go="files"><svg class="i sm"><use href="#i-files"/></svg>Files<span class="end"><kbd>F</kbd></span></button>
+          <button class="mi" role="menuitem" data-go="diff"><svg class="i sm"><use href="#i-diff"/></svg>Diff<span class="end"><kbd>D</kbd></span></button>
+          <button class="mi" role="menuitem" data-go="git"><svg class="i sm"><use href="#i-branch"/></svg>Git<span class="end"><kbd>G</kbd></span></button>
+          <button class="mi" role="menuitem" data-go="scripts"><svg class="i sm"><use href="#i-play"/></svg>Scripts<span class="end"><kbd>S</kbd></span></button>
+          <button class="mi" role="menuitem" data-go="pr"><svg class="i sm"><use href="#i-pr"/></svg>Pull request<span class="end"><kbd>P</kbd></span></button>
+        </div>
+
+        <!-- ===== Diff ===== -->
+        <section class="surface" data-when="diff split wide" aria-label="Diff">
+          <div class="sub">
+            <div class="grow">
+              <button class="ctl" id="scopeBtn" type="button" aria-haspopup="menu" data-when="diff wide">Latest turn<svg class="i xs chev"><use href="#i-chev-d"/></svg></button>
+              <button class="ctl" type="button" aria-haspopup="menu" data-when="split" data-scope-open>Branch changes<svg class="i xs chev"><use href="#i-chev-d"/></svg></button>
+              <span class="cmp" data-when="split" aria-label="Comparing feat/idempotency-keys against main"><span>feat/idempotency-keys</span><svg class="i xs"><use href="#i-arrow-r"/></svg><button class="ctl" type="button">main<svg class="i xs chev"><use href="#i-chev-d"/></svg></button></span>
+            </div>
+            <div class="tools">
+              <span class="stat" data-when="diff wide"><span class="add-n">+42</span><span class="del-n">−7</span></span>
+              <span class="stat" data-when="split"><span class="add-n">+44</span><span class="del-n">−8</span></span>
+              <button class="ibtn xs" aria-label="Refresh diff" title="Refresh diff"><svg class="i sm"><use href="#i-refresh"/></svg></button>
+              <button class="ibtn xs" aria-label="Collapse all files" title="Collapse all files"><svg class="i sm"><use href="#i-collapse"/></svg></button>
+              <span class="segm" role="group" aria-label="Diff layout">
+                <button class="ibtn xs" id="lyStacked" aria-label="Stacked diff view" title="Stacked" aria-pressed="true"><svg class="i sm"><use href="#i-rows"/></svg></button>
+                <button class="ibtn xs" id="lySplit" aria-label="Split diff view" title="Split" aria-pressed="false"><svg class="i sm"><use href="#i-cols"/></svg></button>
+              </span>
+              <button class="ibtn xs" id="wrapBtn" aria-label="Enable diff line wrapping" title="Line wrapping" aria-pressed="false"><svg class="i sm"><use href="#i-wrap"/></svg></button>
+              <button class="ibtn xs" aria-label="Hide whitespace changes" title="Whitespace" aria-pressed="false"><svg class="i sm"><use href="#i-pilcrow"/></svg></button>
+              <button class="ibtn xs" id="treeBtn" aria-label="Show file tree" title="File tree" aria-pressed="false"><svg class="i sm"><use href="#i-ftree"/></svg></button>
+            </div>
+          </div>
+          <div class="pop menu" id="scopeMenu" role="menu" style="top:92px;left:10px;width:216px" hidden>
+            <button class="mi" role="menuitemradio" aria-checked="false"><span class="ck"></span>Working tree</button>
+            <button class="mi" role="menuitemradio" aria-checked="false" data-go="split"><span class="ck"></span>Branch changes</button>
+            <button class="mi hi" role="menuitemradio" aria-checked="true" data-go="diff"><span class="ck"><svg class="i xs"><use href="#i-check"/></svg></span>Latest turn</button>
+            <div class="msep"></div>
+            <button class="mi" role="menuitemradio" aria-checked="false"><span class="ck"></span>Turn 2<span class="end">10:42</span></button>
+            <button class="mi" role="menuitemradio" aria-checked="false"><span class="ck"></span>Turn 1<span class="end">10:32</span></button>
+          </div>
+          <div class="dbody">
+            <div class="files" id="diffFiles"></div>
+            <aside class="ftree" id="diffTree" aria-label="Changed files" hidden></aside>
+          </div>
+        </section>
+
+        <!-- ===== Files ===== -->
+        <section class="surface" data-when="files" aria-label="Files">
+          <div class="sub">
+            <label class="search"><svg class="i sm"><use href="#i-search"/></svg><input type="text" placeholder="Search files" aria-label="Search files"><kbd>⌘P</kbd></label>
+            <div class="tools">
+              <button class="ibtn xs" aria-label="Refresh workspace files" title="Refresh"><svg class="i sm"><use href="#i-refresh"/></svg></button>
+              <button class="ibtn xs" aria-label="Collapse all folders" title="Collapse all"><svg class="i sm"><use href="#i-collapse"/></svg></button>
+            </div>
+          </div>
+          <div class="fsplit">
+            <nav class="tree" id="fileTree" aria-label="Workspace files"></nav>
+            <div class="preview">
+              <div class="crumbs">
+                                <button class="c">src</button><svg class="i xs"><use href="#i-chev-r"/></svg>
+                <button class="c">middleware</button><svg class="i xs"><use href="#i-chev-r"/></svg>
+                <span class="c here">idempotency.ts</span>
+                <span class="end">
+                  <button class="ibtn xs" aria-label="Copy path" title="Copy path"><svg class="i sm"><use href="#i-copy"/></svg></button>
+                  <button class="ibtn xs" aria-label="Open in editor" title="Open in editor"><svg class="i sm"><use href="#i-ext"/></svg></button>
+                </span>
+              </div>
+              <div class="src" id="filePreview" aria-label="idempotency.ts preview"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== Terminal ===== -->
+        <section class="surface" data-when="terminal" aria-label="Terminal dev">
+          <div class="term" id="term" tabindex="0">
+            <div class="tbar" role="toolbar" aria-label="Terminal actions">
+              <button aria-label="Stop npm run dev" title="Stop"><svg class="i xs"><use href="#i-stop"/></svg>Stop</button>
+              <button aria-label="Restart npm run dev" title="Restart"><svg class="i xs"><use href="#i-rotate"/></svg></button>
+              <span class="s"></span>
+              <button aria-label="Split terminal" title="Split"><svg class="i xs"><use href="#i-split"/></svg></button>
+              <span class="s"></span>
+              <button aria-label="New terminal" title="New terminal"><svg class="i xs"><use href="#i-plus"/></svg></button>
+            </div>
+<span class="dim">~/dev/orders-api</span> <span class="p">feat/idempotency-keys</span>
+<span class="p">❯</span> npm run dev
+
+&gt; orders-api@1.4.0 dev
+&gt; tsx watch --clear-screen=false src/server.ts
+
+<span class="dim">10:44:02</span> <span class="ok">INFO</span>  db connected  orders_dev@localhost:5432
+<span class="dim">10:44:02</span> <span class="ok">INFO</span>  listening on <span class="lnk">http://localhost:3000</span>
+<span class="dim">10:44:31</span> <span class="ok">INFO</span>  POST /v1/orders          201  41.8 ms
+<span class="dim">10:44:31</span> <span class="ok">INFO</span>  POST /v1/orders          201   2.1 ms  <span class="dim">replayed</span>
+<span class="dim">10:44:36</span> <span class="wn">WARN</span>  POST /v1/orders          422   1.9 ms  <span class="dim">key_reused</span>
+<span class="dim">[tsx] change in ./src/middleware/idempotency.ts, restarting…</span>
+<span class="dim">10:45:11</span> <span class="ok">INFO</span>  db connected  orders_dev@localhost:5432
+<span class="dim">10:45:11</span> <span class="ok">INFO</span>  listening on <span class="lnk">http://localhost:3000</span>
+<span class="dim">10:45:14</span> <span class="ok">INFO</span>  GET  /v1/orders/ord_9f2c  200   6.3 ms
+<span class="dim">10:45:20</span> <span class="er">ERROR</span> POST /v1/orders          500  12.4 ms
+      <span class="er">RedisError: connect ECONNREFUSED 127.0.0.1:6379</span>
+<span class="dim">          at idempotency (src/middleware/idempotency.ts:14:32)</span>
+<span class="dim">10:45:26</span> <span class="ok">INFO</span>  redis reconnected
+<span class="dim">10:45:31</span> <span class="ok">INFO</span>  POST /v1/orders          201  38.0 ms
+<span class="cur" aria-hidden="true"></span></div>
+        </section>
+
+        <!-- ===== Git ===== -->
+        <section class="surface" data-when="git branches" aria-label="Git">
+          <div class="sub">
+            <div class="grow">
+              <button class="ctl" type="button" id="branchBtn" aria-haspopup="dialog" aria-expanded="false"><svg class="i sm"><use href="#i-branch"/></svg>feat/idempotency-keys<svg class="i xs chev"><use href="#i-chev-d"/></svg></button>
+            </div>
+            <div class="tools">
+              <span class="cmp" title="2 commits ahead of origin/feat/idempotency-keys">↑2 ↓0</span>
+              <button class="ibtn xs" aria-label="Fetch" title="Fetch"><svg class="i sm"><use href="#i-refresh"/></svg></button>
+              <button class="ibtn xs" aria-label="More Git actions" title="More"><svg class="i sm"><use href="#i-more"/></svg></button>
+            </div>
+          </div>
+
+          <div class="pop bpick" id="branchPick" role="dialog" aria-label="Switch branch" data-when="branches">
+            <label class="q"><svg class="i sm"><use href="#i-search"/></svg><input type="text" placeholder="Search refs..." aria-label="Search refs"></label>
+            <div class="list" role="listbox" aria-label="Branches">
+              <button class="mi hi" role="option" aria-selected="true"><span class="b mk-cur">feat/idempotency-keys</span><span class="bd">current</span></button>
+              <button class="mi" role="option"><span class="b">main</span><span class="bd">default</span></button>
+              <button class="mi" role="option"><span class="b">fix/payments-timeout</span><span class="bd">worktree</span></button>
+              <button class="mi" role="option"><span class="b">feat/order-webhooks</span></button>
+              <button class="mi" role="option"><span class="b">chore/deps-2026-09</span></button>
+              <button class="mi" role="option"><span class="b">origin/feat/rate-limit</span><span class="bd">remote</span></button>
+              <button class="mi" role="option"><span class="b">origin/release/1.4</span><span class="bd">remote</span></button>
+            </div>
+            <div class="bnew">
+              <div class="r">
+                <label class="infield"><svg class="i sm"><use href="#i-branch-plus"/></svg><input type="text" value="feat/idempotency-ttl" aria-label="New branch name"></label>
+                <button class="btn primary" type="button">Create</button>
+              </div>
+              <div class="r from">from&nbsp;<b>feat/idempotency-keys</b></div>
+              <div class="sw"><span>Check out in a new worktree</span><button class="switch" role="switch" aria-checked="true" aria-label="Check out in a new worktree"></button></div>
+            </div>
+          </div>
+
+          <div class="gbody">
+            <div class="ghead">
+              <button class="chk" role="checkbox" aria-checked="mixed" aria-label="Include all files"><svg class="i"><use href="#i-minus"/></svg></button>
+              <span><b>3 of 4</b> files</span>
+              <span class="end"><span class="add-n">+42</span><span class="del-n">−7</span></span>
+            </div>
+            <div class="grow-f"><button class="chk" role="checkbox" aria-checked="true" aria-label="Include file"><svg class="i"><use href="#i-check"/></svg></button><span class="st ad">A</span><span class="path"><span class="muted">src/middleware/</span>idempotency.ts</span><span class="n"><span class="add-n">+29</span><span class="del-n">−0</span></span></div>
+            <div class="grow-f"><button class="chk" role="checkbox" aria-checked="true" aria-label="Include file"><svg class="i"><use href="#i-check"/></svg></button><span class="st m">M</span><span class="path"><span class="muted">src/routes/</span>orders.ts</span><span class="n"><span class="add-n">+4</span><span class="del-n">−1</span></span></div>
+            <div class="grow-f"><button class="chk" role="checkbox" aria-checked="true" aria-label="Include file"><svg class="i"><use href="#i-check"/></svg></button><span class="st m">M</span><span class="path"><span class="muted">test/</span>orders.test.ts</span><span class="n"><span class="add-n">+9</span><span class="del-n">−6</span></span></div>
+            <div class="grow-f off"><button class="chk" role="checkbox" aria-checked="false" aria-label="Include file"><svg class="i"><use href="#i-check"/></svg></button><span class="st m">M</span><span class="path">.env.example</span><span class="n"><span class="muted">Excluded</span></span></div>
+
+            <div class="hist">
+              <div class="ghead"><span>Unpushed</span></div>
+              <button class="crow"><span class="dot"></span><span class="msg">test(orders): cover retry with same key</span><span class="sha">a41c9e2</span><span class="ago">6m</span></button>
+              <button class="crow"><span class="dot"></span><span class="msg">refactor(orders): extract createOrder handler</span><span class="sha">7d02b1f</span><span class="ago">31m</span></button>
+            </div>
+          </div>
+
+          <div class="gfoot">
+            <div class="cbox">
+              <textarea aria-label="Commit message" rows="3" placeholder="Leave empty to auto-generate">feat(orders): replay responses for repeated Idempotency-Key</textarea>
+              <div class="foot">
+                <button class="tbtn" type="button" title="Generate message"><svg class="i xs"><use href="#i-sparkle"/></svg>Generate</button>
+                <span class="end">
+                  <button class="btn" type="button">Commit</button>
+                  <button class="btn primary" type="button"><svg class="i sm"><use href="#i-cloud-up"/></svg>Commit &amp; push</button>
+                </span>
+              </div>
+            </div>
+            <div class="hint"><span>Next: </span><button class="tbtn" type="button" data-go="pr" style="margin-left:-6px"><svg class="i xs"><use href="#i-pr"/></svg>Create pull request</button></div>
+          </div>
+        </section>
+
+        <!-- ===== Pull request ===== -->
+        <section class="surface" data-when="pr" aria-label="New pull request">
+          <div class="sub">
+            <div class="grow">
+              <span class="cmp" style="padding-left:8px"><svg class="i xs"><use href="#i-branch"/></svg><span style="color:var(--fg-strong);font-weight:500">feat/idempotency-keys</span><svg class="i xs"><use href="#i-arrow-r"/></svg><button class="ctl" type="button">main<svg class="i xs chev"><use href="#i-chev-d"/></svg></button></span>
+            </div>
+            <div class="tools"><span class="cmp">3 commits · 3 files</span></div>
+          </div>
+          <form class="form" onsubmit="return false">
+            <div>
+              <label class="lab" for="prTitle">Title</label>
+              <input class="inp" id="prTitle" value="Replay responses for repeated Idempotency-Key on POST /orders">
+            </div>
+            <div class="tafield">
+              <label class="lab" for="prBody">Description</label>
+              <textarea class="ta" id="prBody">## Why
+Mobile retries after the 5 s client timeout created duplicate orders.
+
+## What
+- `idempotency` middleware stores the first response per key for 24 h
+- Repeated key with the same body replays the stored response
+- Repeated key with a different body returns `422 key_reused`
+
+## Tests
+`npm test -- orders` - 14 passed</textarea>
+            </div>
+            <div class="sw" style="max-width:none"><span>Create as draft</span><button class="switch" type="button" role="switch" aria-checked="false" aria-label="Create as draft"></button></div>
+          </form>
+          <div class="pfoot">
+            <span class="note">Pushes 2 commits to origin first</span>
+            <span class="end">
+              <button class="btn" type="button" data-go="git">Cancel</button>
+              <button class="btn primary" type="button"><svg class="i sm"><use href="#i-pr"/></svg>Create pull request</button>
+            </span>
+          </div>
+        </section>
+
+        <!-- ===== Scripts ===== -->
+        <section class="surface" data-when="scripts" aria-label="Scripts">
+          <div class="sub">
+            <div class="grow">
+              <button class="ctl" type="button"><svg class="i sm"><use href="#i-json"/></svg>package.json<svg class="i xs chev"><use href="#i-chev-d"/></svg></button>
+            </div>
+            <div class="tools"><button class="ibtn xs" aria-label="Reload scripts" title="Reload"><svg class="i sm"><use href="#i-refresh"/></svg></button></div>
+          </div>
+          <div class="slist" id="scriptList"></div>
+        </section>
+      </aside>
+
+    </div>
+  </div>
+</div>
+
+<div class="mk-name">Codevo v3 · Right panel surfaces</div>
+<div class="mk" role="toolbar" aria-label="Mockup controls (not part of the app)">
+  <div class="dots" id="paletteDots" role="group" aria-label="Palette"></div>
+  <span class="div"></span>
+  <div class="seg" role="group" aria-label="Theme">
+    <button data-theme-set="dark">Dark</button>
+    <button data-theme-set="light">Light</button>
+  </div>
+  <span class="div"></span>
+  <span class="lbl">State</span>
+  <div class="seg" id="stateSeg" role="group" aria-label="State"></div>
+</div>
+
+<script id="codevo-base-js">
+window.Codevo = (function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var root = document.documentElement;
+  var PALETTES = [
+    { id: "1", name: "Graphite · Teal", dot: "#4FCDB3" },
+    { id: "2", name: "Slate · Blue", dot: "#62A6FF" },
+    { id: "3", name: "Black · Violet", dot: "#A98BFF" },
+    { id: "4", name: "Ink · Mint", dot: "#5EEAAE" },
+    { id: "5", name: "Zinc · Orange", dot: "#FF8A3D" },
+    { id: "6", name: "Carbon · Lime", dot: "#C6F13F" }
+  ];
+  var q = new URLSearchParams(location.search);
+  var cfg = {
+    palette: /^[1-6]$/.test(q.get("palette") || "") ? q.get("palette") : "1",
+    theme: q.get("theme") === "light" ? "light" : "dark",
+    state: q.get("state") || ""
+  };
+  var states = [];
+  var onState = function () {};
+
+  function syncUrl() {
+    var p = new URLSearchParams(location.search);
+    p.set("palette", cfg.palette); p.set("theme", cfg.theme);
+    if (states.length) p.set("state", cfg.state);
+    try { history.replaceState(null, "", location.pathname + "?" + p.toString()); } catch (e) { return; }
+  }
+  function pressed(sel, attr, value) {
+    $$(sel).forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset[attr] === value)); });
+  }
+  function applyState() {
+    $$("[data-when]").forEach(function (el) { el.hidden = el.dataset.when.split(" ").indexOf(cfg.state) < 0; });
+    $$("[data-when-not]").forEach(function (el) { el.hidden = el.dataset.whenNot.split(" ").indexOf(cfg.state) >= 0; });
+    pressed("[data-state-set]", "stateSet", cfg.state);
+    onState(cfg.state);
+  }
+  function setPalette(p) { cfg.palette = p; root.dataset.palette = p; pressed("[data-palette-set]", "paletteSet", p); syncUrl(); }
+  function setTheme(t) { cfg.theme = t; root.dataset.theme = t; pressed("[data-theme-set]", "themeSet", t); syncUrl(); }
+  function setState(s) { cfg.state = s; applyState(); syncUrl(); }
+  function fit() {
+    var stage = $(".stage"), sc = $("#scaler");
+    if (!stage || !sc) return;
+    var r = stage.getBoundingClientRect();
+    sc.style.transform = "scale(" + Math.min(1, r.width / 1440, r.height / 900) + ")";
+  }
+  function init(opts) {
+    opts = opts || {};
+    states = opts.states || [];
+    onState = opts.onState || onState;
+    var ids = states.map(function (s) { return s.id; });
+    if (ids.length && ids.indexOf(cfg.state) < 0) cfg.state = ids[0];
+    var dots = $("#paletteDots");
+    PALETTES.forEach(function (p) {
+      var b = document.createElement("button");
+      b.dataset.paletteSet = p.id; b.title = p.name; b.setAttribute("aria-label", p.name);
+      var i = document.createElement("i"); i.style.background = p.dot; b.appendChild(i);
+      b.addEventListener("click", function () { setPalette(p.id); });
+      dots.appendChild(b);
+    });
+    $$("[data-theme-set]").forEach(function (b) { b.addEventListener("click", function () { setTheme(b.dataset.themeSet); }); });
+    var seg = $("#stateSeg");
+    states.forEach(function (s) {
+      var b = document.createElement("button");
+      b.dataset.stateSet = s.id; b.textContent = s.label;
+      b.addEventListener("click", function () { setState(s.id); });
+      seg.appendChild(b);
+    });
+    window.addEventListener("resize", fit);
+    setPalette(cfg.palette); setTheme(cfg.theme);
+    if (ids.length) applyState();
+    fit(); syncUrl();
+  }
+  return { init: init, setState: setState, get state() { return cfg.state; }, $: $, $$: $$ };
+})();
+</script>
+
+<script id="screen-right-panel-js">
+(function () {
+  "use strict";
+  var C = window.Codevo, $ = C.$, $$ = C.$$;
+
+  var KW = /\b(import|from|export|const|let|return|async|await|if|type|function|new|describe|it|expect|as)\b/g;
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function hi(src) {
+    var out = "", re = /("(?:[^"\\]|\\.)*"|`[^`]*`|'[^']*')|(\/\/.*$)|(\b\d[\d_]*\b)/g, last = 0, m;
+    while ((m = re.exec(src))) {
+      out += esc(src.slice(last, m.index)).replace(KW, '<span class="kw">$1</span>');
+      var cls = m[1] ? "str" : m[2] ? "com" : "num";
+      out += '<span class="' + cls + '">' + esc(m[0]) + "</span>";
+      last = re.lastIndex;
+    }
+    return out + esc(src.slice(last)).replace(KW, '<span class="kw">$1</span>');
+  }
+
+  var ORDERS = [
+    ["h", "@@ -1,6 +1,7 @@"],
+    [" ", 'import { Router } from "express";', 1, 1],
+    [" ", 'import { requireAuth } from "../middleware/auth";', 2, 2],
+    ["+", 'import { idempotency } from "../middleware/idempotency";', 0, 3],
+    [" ", 'import { createOrder, getOrder } from "../handlers/orders";', 3, 4],
+    [" ", "", 4, 5],
+    [" ", "export const router = Router();", 5, 6],
+    ["h", "@@ -14,3 +15,6 @@"],
+    ["-", 'router.post("/orders", requireAuth, createOrder);', 14, 0],
+    ["+", 'router.post("/orders", requireAuth,', 0, 15],
+    ["+", "  idempotency({ ttlSeconds: 86_400 }),", 0, 16],
+    ["+", "  createOrder);", 0, 17],
+    [" ", 'router.get("/orders/:id", requireAuth, getOrder);', 15, 18]
+  ];
+  var TEST = [
+    ["h", "@@ -41,9 +41,12 @@"],
+    [" ", '  it("creates an order", async () => {', 41, 41],
+    ["-", '    const res = await request(app).post("/orders").send(cart);', 42, 0],
+    ["+", "    const res = await request(app)", 0, 42],
+    ["+", '      .post("/orders")', 0, 43],
+    ["+", '      .set("Idempotency-Key", "k-1")', 0, 44],
+    ["+", "      .send(cart);", 0, 45],
+    [" ", "    expect(res.status).toBe(201);", 43, 46],
+    [" ", "  });", 44, 47]
+  ];
+  var IDEM_SRC = [
+    'import type { RequestHandler } from "express";',
+    'import { createHash } from "node:crypto";',
+    'import { redis } from "../lib/redis";',
+    "",
+    "type Options = { ttlSeconds: number };",
+    "",
+    "export function idempotency({ ttlSeconds }: Options): RequestHandler {",
+    "  return async (req, res, next) => {",
+    '    const key = req.header("Idempotency-Key");',
+    "    if (!key) return next();",
+    "",
+    '    const bodyHash = createHash("sha256")',
+    '      .update(JSON.stringify(req.body)).digest("hex");',
+    "    const cached = await redis.get(`idem:${key}`);",
+    "    if (cached) {",
+    "      const hit = JSON.parse(cached);",
+    "      if (hit.bodyHash !== bodyHash) {",
+    '        return res.status(422).json({ error: "key_reused" });',
+    "      }",
+    "      return res.status(hit.status).json(hit.body);",
+    "    }",
+    "",
+    "    const json = res.json.bind(res);",
+    "    res.json = (body) => {",
+    "      const entry = { bodyHash, status: res.statusCode, body };",
+    '      void redis.set(`idem:${key}`, JSON.stringify(entry), "EX", ttlSeconds);',
+    "      return json(body);",
+    "    };",
+    "    next();",
+    "  };",
+    "}"
+  ];
+  var IDEM = [["h", "@@ -0,0 +1,29 @@"]].concat(IDEM_SRC.slice(0, 29).map(function (l, i) { return ["+", l, 0, i + 1]; }));
+
+  var FILES = {
+    turn: [
+      { dir: "src/routes/", name: "orders.ts", a: 4, d: 1, rows: ORDERS, open: true },
+      { dir: "src/middleware/", name: "idempotency.ts", a: 29, d: 0, rows: IDEM, added: true },
+      { dir: "test/", name: "orders.test.ts", a: 9, d: 6, rows: TEST }
+    ],
+    branch: [
+      { dir: "src/routes/", name: "orders.ts", a: 4, d: 1, rows: ORDERS, open: true },
+      { dir: "test/", name: "orders.test.ts", a: 9, d: 6, rows: TEST, open: true },
+      { dir: "src/middleware/", name: "idempotency.ts", a: 29, d: 0, rows: IDEM, added: true },
+      { dir: "", name: "package.json", a: 2, d: 1, rows: [] }
+    ]
+  };
+
+  function unified(rows) {
+    return rows.map(function (r) {
+      if (r[0] === "h") return '<div class="hl hh"><span class="ln"></span><span class="ln"></span><span class="sg"></span><span class="cd">' + r[1] + "</span></div>";
+      var k = r[0] === "+" ? " add" : r[0] === "-" ? " del" : "";
+      return '<div class="hl' + k + '"><span class="ln">' + (r[2] || "") + '</span><span class="ln">' + (r[3] || "") + '</span><span class="sg">' + (r[0] === "-" ? "−" : r[0] === "+" ? "+" : "") + '</span><span class="cd">' + (hi(r[1]) || " ") + "</span></div>";
+    }).join("");
+  }
+  function split(rows) {
+    var out = [], i = 0;
+    function side(r, t) {
+      if (!r) return '<span class="ln e' + t + '"></span><span class="sg e"></span><span class="cd e"></span>';
+      var c = r[0] === "-" ? " sd" : r[0] === "+" ? " sa" : "";
+      var n = r[0] === "-" || (r[0] === " " && t === "") ? r[2] : r[3];
+      return '<span class="ln' + c + t + '">' + (n || "") + '</span><span class="sg' + c + '">' + (r[0] === "-" ? "−" : r[0] === "+" ? "+" : "") + '</span><span class="cd' + c + '">' + (hi(r[1]) || " ") + "</span>";
+    }
+    while (i < rows.length) {
+      var r = rows[i];
+      if (r[0] === "h") { out.push('<div class="hs hh"><span></span><span></span><span class="cd">' + r[1] + '</span><span class="r0"></span><span></span><span></span></div>'); i++; continue; }
+      if (r[0] === " ") { out.push('<div class="hs">' + side(r, "") + side(r, " r0") + "</div>"); i++; continue; }
+      var dels = [], adds = [];
+      while (i < rows.length && rows[i][0] === "-") dels.push(rows[i++]);
+      while (i < rows.length && rows[i][0] === "+") adds.push(rows[i++]);
+      for (var k = 0; k < Math.max(dels.length, adds.length); k++) out.push('<div class="hs">' + side(dels[k], "") + side(adds[k], " r0") + "</div>");
+    }
+    return out.join("");
+  }
+  function renderDiff(set, mode) {
+    $("#diffFiles").innerHTML = FILES[set].map(function (f) {
+      var ico = f.added ? '<svg class="i sm fi fa"><use href="#i-file-plus"/></svg>' : '<svg class="i sm fi"><use href="#i-file-dot"/></svg>';
+      var head = '<button class="frow" aria-expanded="' + !!f.open + '"><svg class="i xs chev"><use href="#i-chev-r"/></svg>' + ico + '<span class="path"><span class="dir">' + f.dir + "</span>" + f.name + '</span><span class="n"><span class="add-n">+' + f.a + '</span><span class="del-n">−' + f.d + "</span></span></button>";
+      var body = f.rows.length ? '<div class="hunk"' + (f.open ? "" : " hidden") + ' aria-label="' + f.dir + f.name + ' diff">' + (mode === "split" ? split(f.rows) : unified(f.rows)) + "</div>" : "";
+      return head + body;
+    }).join("");
+    $$("#diffFiles .frow").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var open = b.getAttribute("aria-expanded") !== "true";
+        b.setAttribute("aria-expanded", String(open));
+        var n = b.nextElementSibling;
+        if (n && n.classList.contains("hunk")) n.hidden = !open;
+      });
+    });
+  }
+
+  function trow(depth, kind, name, extra, cur) {
+    var ico = kind === "dir" ? "#i-folder" : "#i-file";
+    var chev = kind === "dir" ? '<svg class="i xs"><use href="#i-chev-' + (extra === "open" ? "d" : "r") + '"/></svg>' : '<span style="width:12px;flex:none"></span>';
+    var right = kind === "file" && extra ? extra : "";
+    return '<button class="trow"' + (cur ? ' aria-current="true"' : "") + ' style="padding-left:' + (6 + depth * 14) + 'px">' + chev + '<svg class="i sm"><use href="' + ico + '"/></svg><span class="nm">' + name + "</span>" + right + "</button>";
+  }
+  var addN = function (a, d) { return '<span class="n"><span class="add-n">+' + a + '</span><span class="del-n">−' + d + "</span></span>"; };
+  $("#diffTree").innerHTML =
+    trow(0, "dir", "src", "open") + trow(1, "dir", "middleware", "open") + trow(2, "file", "idempotency.ts", addN(29, 0)) +
+    trow(1, "dir", "routes", "open") + trow(2, "file", "orders.ts", addN(4, 1), true) +
+    trow(0, "dir", "test", "open") + trow(1, "file", "orders.test.ts", addN(9, 6));
+  var gs = function (s) { return '<span class="gs ' + (s === "A" ? "ad" : "md") + '">' + s + "</span>"; };
+  $("#fileTree").innerHTML =
+    trow(0, "dir", ".github") + trow(0, "dir", "prisma") +
+    trow(0, "dir", "src", "open") + trow(1, "dir", "handlers") + trow(1, "dir", "lib") +
+    trow(1, "dir", "middleware", "open") + trow(2, "file", "auth.ts") + trow(2, "file", "idempotency.ts", gs("A"), true) + trow(2, "file", "rateLimit.ts") +
+    trow(1, "dir", "routes", "open") + trow(2, "file", "health.ts") + trow(2, "file", "orders.ts", gs("M")) +
+    trow(1, "file", "app.ts") + trow(1, "file", "server.ts") +
+    trow(0, "dir", "test") + trow(0, "file", ".env.example") + trow(0, "file", "package.json") + trow(0, "file", "README.md") + trow(0, "file", "tsconfig.json");
+  $("#filePreview").innerHTML = IDEM_SRC.map(function (l, i) {
+    return '<div class="l' + (i === 13 ? " cur" : "") + '"><span class="ln">' + (i + 1) + "</span><span>" + (hi(l) || " ") + "</span></div>";
+  }).join("");
+
+  var SCRIPTS = [
+    { n: "dev", c: "tsx watch src/server.ts", run: true },
+    { n: "build", c: "tsc -p tsconfig.build.json" },
+    { n: "start", c: "node dist/server.js" },
+    { n: "test", c: "vitest run" },
+    { n: "test:watch", c: "vitest" },
+    { n: "lint", c: "eslint . --max-warnings 0", fail: "Exit 1" },
+    { n: "typecheck", c: "tsc --noEmit" },
+    { n: "db:migrate", c: "prisma migrate deploy" },
+    { n: "db:seed", c: "tsx prisma/seed.ts" }
+  ];
+  function srow(s) {
+    var go = s.run
+      ? '<button class="go" aria-label="Stop ' + s.n + '" title="Stop"><svg class="i sm"><use href="#i-stop"/></svg></button>'
+      : '<button class="go" aria-label="Run ' + s.n + '" title="Run"><svg class="i sm"><use href="#i-play"/></svg></button>';
+    var st = s.run ? '<span class="st run"><span class="pd"></span>Running<a href="#terminal" data-go="terminal">:3000</a></span>'
+      : s.fail ? '<span class="st fail">' + s.fail + "</span>" : "";
+    return '<div class="srow' + (s.run ? " run" : "") + '">' + go + '<span class="nm">' + s.n + '</span><span class="cmd">' + s.c + "</span>" + st +
+      '<button class="ibtn xs more" aria-label="More for ' + s.n + '" title="More"><svg class="i sm"><use href="#i-more"/></svg></button></div>';
+  }
+  $("#scriptList").innerHTML = SCRIPTS.map(srow).join("") +
+    '<div class="sgl">Project actions</div>' +
+    srow({ n: "Reset dev database", c: "npm run db:migrate && npm run db:seed" }) +
+    '<button class="addrow" type="button"><svg class="i sm"><use href="#i-plus"/></svg>Add action</button>';
+
+  var TAB = { diff: "diff", split: "diff", wide: "diff", files: "files", terminal: "terminal", git: "git", branches: "git", pr: "pr", scripts: "scripts" };
+  function closePops() { ["#addMenu", "#scopeMenu"].forEach(function (s) { $(s).hidden = true; }); }
+
+  C.init({
+    states: [
+      { id: "diff", label: "Diff" },
+      { id: "split", label: "Split" },
+      { id: "files", label: "Files" },
+      { id: "terminal", label: "Terminal" },
+      { id: "git", label: "Commit" },
+      { id: "branches", label: "Branches" },
+      { id: "pr", label: "Pull request" },
+      { id: "scripts", label: "Scripts" },
+      { id: "wide", label: "Wide" }
+    ],
+    onState: function (s) {
+      closePops();
+      $$(".ptab").forEach(function (t) { t.setAttribute("aria-selected", String(t.dataset.tab === TAB[s])); });
+      var wide = s === "wide";
+      $("#panel").classList.toggle("wide", wide);
+      $("#resize").classList.toggle("on", wide);
+      $("#main").classList.toggle("narrow", wide);
+      $("#maxBtn").setAttribute("aria-pressed", "false");
+      $("#changesRow").dataset.active = String(TAB[s] === "diff");
+      $("#commitTop").setAttribute("aria-pressed", String(TAB[s] === "git"));
+      $("#branchBtn").setAttribute("aria-expanded", String(s === "branches"));
+      var sp = s === "split";
+      $("#lyStacked").setAttribute("aria-pressed", String(!sp));
+      $("#lySplit").setAttribute("aria-pressed", String(sp));
+            $("#treeBtn").setAttribute("aria-pressed", String(wide));
+      $("#diffTree").hidden = !wide;
+      renderDiff(sp ? "branch" : "turn", sp ? "split" : "unified");
+      var act = $('.ptab[aria-selected="true"]'), tl = $(".ptabs");
+      tl.scrollLeft = 0;
+      if (act && act.offsetLeft + act.offsetWidth > tl.clientWidth) tl.scrollLeft = act.offsetLeft + act.offsetWidth - tl.clientWidth + 36;
+      tl.classList.toggle("fade-l", tl.scrollLeft > 0);
+      if (wide) $$("#diffFiles .frow")[1].click();
+    }
+  });
+
+  $$(".scroll").forEach(function (el) { el.scrollTop = el.scrollHeight; });
+  $("#term").scrollTop = $("#term").scrollHeight;
+  document.addEventListener("click", function (e) {
+    var go = e.target.closest("[data-go]");
+    if (go) { e.preventDefault(); C.setState(go.dataset.go); return; }
+    if (e.target.closest("#addSurface")) { var m = $("#addMenu"); var h = m.hidden; closePops(); m.hidden = !h; return; }
+    if (e.target.closest("#scopeBtn, [data-scope-open]")) { var sm = $("#scopeMenu"); var hh = sm.hidden; closePops(); sm.hidden = !hh; return; }
+    if (e.target.closest("#branchBtn")) { C.setState(C.state === "branches" ? "git" : "branches"); return; }
+    if (e.target.closest("#changesRow")) { C.setState("diff"); return; }
+    if (e.target.closest("#commitTop")) { C.setState("git"); return; }
+    if (e.target.closest("#lySplit")) { C.setState("split"); return; }
+    if (e.target.closest("#lyStacked")) { C.setState("diff"); return; }
+    if (e.target.closest("#treeBtn, #maxBtn")) { C.setState(C.state === "wide" ? "diff" : "wide"); return; }
+    if (e.target.closest(".chk")) { var c = e.target.closest(".chk"); c.setAttribute("aria-checked", String(c.getAttribute("aria-checked") !== "true")); return; }
+    if (e.target.closest(".switch")) { var w = e.target.closest(".switch"); w.setAttribute("aria-checked", String(w.getAttribute("aria-checked") !== "true")); return; }
+    if (!e.target.closest(".pop")) closePops();
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closePops(); if (C.state === "branches") C.setState("git"); } });
+  $$(".fold > button").forEach(function (b) {
+    b.addEventListener("click", function () { b.setAttribute("aria-expanded", String(b.getAttribute("aria-expanded") !== "true")); });
+  });
+  $$(".editor[data-ph]").forEach(function (ed) {
+    ed.addEventListener("focus", function () { $$(".ph", ed).forEach(function (p) { p.style.display = "none"; }); });
+    ed.addEventListener("blur", function () { if (!ed.textContent.trim()) $$(".ph", ed).forEach(function (p) { p.style.display = ""; }); });
+  });
+})();
+</script>
+</body>
+</html>
