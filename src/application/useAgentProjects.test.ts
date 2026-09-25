@@ -985,7 +985,190 @@ describe("useAgentProjects lifecycle", () => {
   });
 });
 
+describe("useAgentProjects loaded state", () => {
+  it("reports projects loaded only once hydrated settings were admitted", async () => {
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT], settingsHydrated: false });
+    harness.rerender();
+    expect(harness.hook().projectsLoaded).toBe(false);
+    harness.environment.settingsHydrated = true;
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projectsLoaded).toBe(true));
+    expect(harness.hook().projects.some((p) => p.rootKey === BACKGROUND_ROOT)).toBe(true);
+    harness.unmount();
+  });
+
+  it("reports an empty hydrated project list as loaded", async () => {
+    const harness = renderAgentProjects({ tabs: [], settingsHydrated: true });
+    await waitForReact(() => expect(harness.hook().projectsLoaded).toBe(true));
+    harness.unmount();
+  });
+});
+
 describe("useAgentProjects trust actions", () => {
+  it("keeps a deferred cloned project untrusted until the dialog confirms", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 21 };
+    const confirmGrant = vi.fn(async () => true);
+    const harness = renderAgentProjects({
+      tabs: [],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    Object.assign(harness.trust, { confirmGrant });
+    act(() => harness.hook().deferOpenedProjectTrust?.(BACKGROUND_ROOT));
+    harness.setTabs([BACKGROUND_ROOT]);
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    expect(harness.trust.grantOpenedProject).not.toHaveBeenCalled();
+    await act(async () =>
+      harness.hook().grantProjectTrust?.(BACKGROUND_ROOT, {
+        kind: "clone",
+        host: "github.com",
+        path: "acme/background",
+      }),
+    );
+    expect(confirmGrant).toHaveBeenCalledWith({
+      rootPath: BACKGROUND_ROOT,
+      label: "api",
+      origin: { kind: "clone", host: "github.com", path: "acme/background" },
+    });
+    expect(harness.trust.setTrust).toHaveBeenCalledExactlyOnceWith(BACKGROUND_ROOT, true);
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "trusted",
+      ),
+    );
+    harness.unmount();
+  });
+
+  it("keeps a durably revoked clone untrusted without an error across close and reopen", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 31 };
+    const harness = renderAgentProjects({
+      tabs: [],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    harness.trust.grantOpenedProject.mockImplementation(async () =>
+      Promise.reject("workspace trust was revoked"),
+    );
+    harness.setTabs([BACKGROUND_ROOT]);
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    harness.setTabs([]);
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)).toBeUndefined(),
+    );
+    harness.environment.descriptorsByRoot.set(BACKGROUND_ROOT, {
+      ...descriptor,
+      admissionToken: 32,
+    });
+    harness.setTabs([BACKGROUND_ROOT]);
+    await waitForReact(() => expect(harness.trust.grantOpenedProject).toHaveBeenCalledTimes(2));
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("reports a refused grant truthfully", async () => {
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    Object.assign(harness.trust, { confirmGrant: vi.fn(async () => true) });
+    harness.trust.setTrust.mockImplementationOnce(async (rootPath: string) => ({
+      rootPath,
+      trusted: false,
+    }));
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    await act(async () => harness.hook().grantProjectTrust?.(BACKGROUND_ROOT, null));
+    expect(harness.reportError).toHaveBeenCalledExactlyOnceWith(
+      "Agents",
+      new Error("Trust was refused."),
+    );
+    expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+      "untrusted",
+    );
+    harness.unmount();
+  });
+
+  it("drops a canceled deferral so the opened project is admitted", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 33 };
+    const harness = renderAgentProjects({
+      tabs: [],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    act(() => harness.hook().deferOpenedProjectTrust?.(BACKGROUND_ROOT)());
+    harness.setTabs([BACKGROUND_ROOT]);
+    await waitForReact(() =>
+      expect(harness.trust.grantOpenedProject).toHaveBeenCalledExactlyOnceWith(descriptor),
+    );
+    harness.unmount();
+  });
+
+  it("does not grant remote or declined projects", async () => {
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    Object.assign(harness.trust, { confirmGrant: vi.fn(async () => false) });
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    await act(async () => harness.hook().grantProjectTrust?.(BACKGROUND_ROOT, null));
+    await act(async () => harness.hook().grantProjectTrust?.("remote:srv:/x", null));
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not grant when the project generation changed during the prompt", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 22 };
+    const harness = renderAgentProjects({
+      tabs: [],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    const decision = createDeferred<boolean>();
+    Object.assign(harness.trust, { confirmGrant: vi.fn(() => decision.promise) });
+    act(() => harness.hook().deferOpenedProjectTrust?.(BACKGROUND_ROOT));
+    harness.setTabs([BACKGROUND_ROOT]);
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    let pending: Promise<void> | undefined;
+    act(() => {
+      pending = harness.hook().grantProjectTrust?.(BACKGROUND_ROOT, null);
+    });
+    harness.environment.descriptorsByRoot.set(BACKGROUND_ROOT, {
+      ...descriptor,
+      admissionToken: 23,
+    });
+    await act(async () => {
+      decision.resolve(true);
+      await pending;
+    });
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("admits an explicitly opened background project without a second confirmation", async () => {
     const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 7 };
     const harness = renderAgentProjects({
@@ -1238,6 +1421,7 @@ describe("useAgentProjects trust actions", () => {
 });
 
 interface Environment {
+  settingsHydrated: boolean | undefined;
   trustRevision: number;
   autoAdmitOpenedProjects: boolean;
   enabled: boolean;
@@ -1260,6 +1444,7 @@ interface Environment {
 }
 
 interface HarnessOptions {
+  settingsHydrated?: boolean;
   untrustedRoots?: ReadonlyArray<string>;
   autoAdmitOpenedProjects?: boolean;
   enabled?: boolean;
@@ -1273,6 +1458,7 @@ interface HarnessOptions {
 
 function renderAgentProjects(options: HarnessOptions = {}) {
   const environment: Environment = {
+    settingsHydrated: options.settingsHydrated,
     trustRevision: 0,
     autoAdmitOpenedProjects: options.autoAdmitOpenedProjects ?? true,
     enabled: options.enabled ?? true,
@@ -1397,6 +1583,9 @@ function renderAgentProjects(options: HarnessOptions = {}) {
   });
 
   const dependencies: AgentProjectsDependencies = {
+    get settingsHydrated() {
+      return environment.settingsHydrated;
+    },
     get autoAdmitOpenedProjects() {
       return environment.autoAdmitOpenedProjects;
     },
@@ -1467,6 +1656,10 @@ function renderAgentProjects(options: HarnessOptions = {}) {
       return current as AgentProjectsSurface;
     },
     rerender() {
+      act(() => root.render(createElement(Harness)));
+    },
+    setTabs(tabs: ReadonlyArray<string>) {
+      environment.tabs = tabs;
       act(() => root.render(createElement(Harness)));
     },
     unmount() {

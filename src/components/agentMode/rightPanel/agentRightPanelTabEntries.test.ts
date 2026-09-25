@@ -57,35 +57,97 @@ describe("agentRightPanelTabEntries", () => {
     ]);
   });
 
-  it("places editor documents first and marks only the active one", () => {
+  it("represents the editor kind by its document entries at the kind's position", () => {
+    const entries = agentRightPanelTabEntries({
+      openSurfaces: ["files", "editor", "diff"],
+      activeSurface: "editor",
+      terminal: null,
+      editorDocuments: {
+        documents: [
+          {
+            documentId: "/w/a.ts",
+            title: "a.ts",
+            path: "/w/a.ts",
+            dirty: true,
+            preview: false,
+            gitStatus: "modified",
+          },
+          {
+            documentId: "/w/b.ts",
+            title: "b.ts",
+            path: "/w/b.ts",
+            dirty: false,
+            preview: true,
+            gitStatus: null,
+          },
+        ],
+        activeDocumentId: "/w/b.ts",
+        surfaceActive: true,
+        onActivate: () => undefined,
+        onClose: () => undefined,
+        onOpenFile: () => undefined,
+        onPin: () => undefined,
+      },
+    });
+
+    expect(
+      entries.map((entry) =>
+        entry.kind === "editorDocument" ? `doc:${entry.label}:${entry.active}` : entry.id,
+      ),
+    ).toEqual(["surface:files", "doc:a.ts:false", "doc:b.ts:true", "surface:diff"]);
+    expect(selectedAgentRightPanelTabId(entries)).toBe("editor:/w/b.ts");
+    expect(entries[1]).toMatchObject({
+      dirty: true,
+      preview: false,
+      gitStatus: "modified",
+      panelId: "agent-surface-panel-editor",
+    });
+  });
+
+  it("emits nothing for the editor kind without documents and no documents without the kind", () => {
     const editorDocuments: AgentRightPanelEditorDocuments = {
       documents: [
         {
           documentId: "a",
           title: "orders.ts",
-          path: "/r/src/orders.ts",
+          path: "/r/orders.ts",
           dirty: false,
           preview: false,
+          gitStatus: null,
         },
-        { documentId: "b", title: "app.ts", path: "/r/src/app.ts", dirty: true, preview: true },
       ],
-      activeDocumentId: "b",
-      surfaceActive: true,
+      activeDocumentId: "a",
+      surfaceActive: false,
       onActivate: () => undefined,
       onClose: () => undefined,
       onOpenFile: () => undefined,
+      onPin: () => undefined,
     };
 
-    const entries = agentRightPanelTabEntries({
-      openSurfaces: ["diff"],
-      activeSurface: null,
-      terminal: null,
-      editorDocuments,
-    });
-
-    expect(entries.map((entry) => entry.id)).toEqual(["editor:a", "editor:b", "surface:diff"]);
-    expect(selectedAgentRightPanelTabId(entries)).toBe("editor:b");
-    expect(entries[1]).toMatchObject({ dirty: true, preview: true });
+    expect(
+      agentRightPanelTabEntries({
+        openSurfaces: ["editor", "diff"],
+        activeSurface: "diff",
+        terminal: null,
+        editorDocuments: noEditor,
+      }).map((entry) => entry.id),
+    ).toEqual(["surface:diff"]);
+    expect(
+      agentRightPanelTabEntries({
+        openSurfaces: ["editor"],
+        activeSurface: "editor",
+        terminal: null,
+        editorDocuments: { ...editorDocuments, documents: [] },
+      }),
+    ).toEqual([]);
+    expect(
+      agentRightPanelTabEntries({
+        openSurfaces: ["diff"],
+        activeSurface: "diff",
+        terminal: null,
+        editorDocuments,
+      }).map((entry) => entry.id),
+    ).toEqual(["surface:diff"]);
   });
 
   it("uses the tab label for the pull request surface", () => {

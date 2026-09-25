@@ -2,7 +2,7 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { agentRailSections } from "./agentSidebarPresentation";
 
 export function orderedRailThreadIds(views: ReadonlyArray<AgentThreadView>): ReadonlyArray<string> {
-  const sections = agentRailSections(views, false, 0);
+  const sections = agentRailSections(views);
   return [...sections.pinned, ...sections.active].map((view) => view.thread.threadId);
 }
 

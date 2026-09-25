@@ -11,6 +11,7 @@ use std::{
 
 const MAX_TRUST_LAUNCHES_GLOBAL: usize = 128;
 const MAX_TRUST_LAUNCHES_PER_ROOT: usize = 16;
+pub(crate) const WORKSPACE_TRUST_REVOKED_REFUSAL: &str = "workspace trust was revoked";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,6 +206,10 @@ impl WorkspaceTrustService {
         })
     }
 
+    pub(crate) fn revoke_canonical_root(&mut self, root: &str) -> io::Result<WorkspaceTrustState> {
+        self.set_canonical(root.to_owned(), false)
+    }
+
     pub(crate) fn grant_opened_canonical_root(
         &mut self,
         root: &str,
@@ -212,7 +217,7 @@ impl WorkspaceTrustService {
         if self.revoked_roots.contains(root) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "workspace trust was revoked",
+                WORKSPACE_TRUST_REVOKED_REFUSAL,
             ));
         }
         if self.trusted_roots.contains(root) {
@@ -384,7 +389,7 @@ fn normalize_path_string(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::WorkspaceTrustService;
+    use super::{WorkspaceTrustService, WORKSPACE_TRUST_REVOKED_REFUSAL};
     use std::{
         fs,
         panic::{catch_unwind, AssertUnwindSafe},
@@ -406,6 +411,39 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
         // A canonical trust lookup retains the exact persisted key without filesystem resolution.
         assert!(service.snapshot_canonical(&path).trusted);
+    }
+
+    #[test]
+    fn revoked_canonical_root_survives_reload_until_explicitly_granted() {
+        let root = create_temp_dir("trust-canonical-revoke");
+        let storage = root.join("trust.json");
+        let path = root.canonicalize().unwrap().join("clone");
+        fs::create_dir(&path).unwrap();
+        let path = path.to_str().unwrap().to_owned();
+        let mut service = WorkspaceTrustService::load(storage.clone()).unwrap();
+        service.set(&path, true).unwrap();
+        let before = service.snapshot_canonical(&path);
+
+        assert!(!service.revoke_canonical_root(&path).unwrap().trusted);
+        assert!(!service.get(&path).trusted);
+        assert_ne!(service.snapshot_canonical(&path), before);
+        drop(service);
+
+        let mut reloaded = WorkspaceTrustService::load(storage).unwrap();
+        assert!(!reloaded.get(&path).trusted);
+        let refusal = reloaded.grant_opened_canonical_root(&path).unwrap_err();
+        assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(refusal.to_string(), WORKSPACE_TRUST_REVOKED_REFUSAL);
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../../contracts/workspace-trust-errors.json"))
+                .unwrap();
+        assert_eq!(
+            contract["revokedRefusal"].as_str(),
+            Some(WORKSPACE_TRUST_REVOKED_REFUSAL)
+        );
+        assert!(reloaded.set(&path, true).unwrap().trusted);
+        assert!(reloaded.grant_opened_canonical_root(&path).unwrap().trusted);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

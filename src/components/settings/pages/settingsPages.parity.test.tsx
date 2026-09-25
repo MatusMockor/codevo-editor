@@ -44,6 +44,8 @@ const env: SettingsEnvironment = {
   onRestartJavaScriptTypeScriptService: async () => undefined,
 };
 
+const ROWS_RENDERED_BY_LATER_TASKS: ReadonlySet<string> = new Set<string>([]);
+
 describe("settings page parity", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -72,8 +74,12 @@ describe("settings page parity", () => {
         element.getAttribute("data-settings-row"),
       );
 
-      expect(rendered).toEqual(settingsRowsForSection(section.id).map((row) => row.id));
-      expect(host.querySelectorAll("h2").length).toBeGreaterThan(0);
+      const expected = settingsRowsForSection(section.id)
+        .map((row) => row.id)
+        .filter((id) => !ROWS_RENDERED_BY_LATER_TASKS.has(id));
+
+      expect(rendered).toEqual(expected);
+      expect(host.querySelectorAll("h2").length > 0).toBe(expected.length > 0);
     });
   }
 });

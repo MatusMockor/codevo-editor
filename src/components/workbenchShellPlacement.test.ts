@@ -32,18 +32,6 @@ describe("agentSurfaceHostPlacement", () => {
       ),
     ).toEqual({ mounted: true, hidden: false });
   });
-
-  it("never mounts the surfaces in the expanded editor even with retained tabs", () => {
-    expect(
-      agentSurfaceHostPlacement(
-        layoutOf({
-          layout: "editor-expanded",
-          openSurfaces: ["terminal"],
-          activeSurface: "terminal",
-        }),
-      ),
-    ).toEqual({ mounted: false, hidden: true });
-  });
 });
 
 describe("workbenchShellPlacement", () => {
@@ -125,14 +113,14 @@ describe("workbenchShellPlacement", () => {
     ).toMatchObject({ rail: "collapsed", bottomPanelHeight: 280 });
   });
 
-  it("places the editor in the files surface while the panel is open", () => {
+  it("places the editor in the editor surface while the panel is open", () => {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: true,
       effectiveLayout: "agent",
       layout: layoutOf({
         rightPanel: "open",
-        openSurfaces: ["files", "diff"],
-        activeSurface: "files",
+        openSurfaces: ["editor", "diff"],
+        activeSurface: "editor",
         rightPanelMaximized: true,
         rail: "collapsed",
         rightPanelWidth: 620,
@@ -156,26 +144,41 @@ describe("workbenchShellPlacement", () => {
     });
   });
 
-  it("gives the expanded editor the whole frame and mounts no surface", () => {
+  it("places the editor across the whole frame when the agent layout is unavailable", () => {
+    const placement = workbenchShellPlacement({
+      bottomPanelVisible: false,
+      effectiveLayout: "editor-only",
+      layout: initialAgentWorkbenchLayout,
+    });
+
+    expect(placement).toMatchObject({
+      layout: "editor-only",
+      editorHidden: false,
+      rightPanelHidden: true,
+      rightPanelMaximized: true,
+    });
+  });
+
+  it("mounts no surface in the editor-only fallback even with retained tabs", () => {
     expect(
       workbenchShellPlacement({
         bottomPanelVisible: true,
-        effectiveLayout: "editor-expanded",
+        effectiveLayout: "editor-only",
         layout: layoutOf({ openSurfaces: ["terminal"], activeSurface: "terminal" }),
       }),
     ).toEqual({
-      layout: "editor-expanded",
+      layout: "editor-only",
       editorHidden: false,
       rightPanelHidden: true,
       surfacesMounted: false,
-      rightPanelMaximized: false,
+      rightPanelMaximized: true,
       responsiveMaximized: false,
       rightPanelOverlay: false,
       responsiveRestore: "none",
-      rail: "expanded",
+      rail: "collapsed",
       railWidth: 256,
       rightPanelWidth: 0,
-      bottomPanelHeight: 0,
+      bottomPanelHeight: initialAgentWorkbenchLayout.bottomPanelHeight,
     });
   });
 });

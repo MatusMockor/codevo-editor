@@ -39,8 +39,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(160);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(158);
+    expect(keymapCommands).toHaveLength(162);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(160);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -308,6 +308,31 @@ describe("keymap", () => {
 
       expect(findKeymapConflicts(keymap, "app.quit", platform)).toEqual([]);
     }
+  });
+
+  it("binds Show Problems to Cmd+Shift+M without colliding", () => {
+    const entry = keymapCommands.find((command) => command.id === "panel.showProblems");
+
+    expect(entry?.defaultShortcut).toBe("Cmd+Shift+M");
+    expect(
+      keymapCommands.filter((command) => command.defaultShortcut === "Cmd+Shift+M"),
+    ).toHaveLength(1);
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      expect(
+        findKeymapConflicts(defaultKeymapSettings(platform), "panel.showProblems", platform),
+      ).toEqual([]);
+    }
+  });
+
+  it("registers Add Project as an unbound rebindable workbench command", () => {
+    const entry = keymapCommands.find((command) => command.id === "project.add");
+
+    expect(entry).toMatchObject({
+      category: "Workbench",
+      defaultShortcut: "",
+      label: "Add Project…",
+    });
+    expect(defaultKeymapSettings("mac")).toHaveProperty("project.add", "");
   });
 
   it("defaults Markdown preview to Cmd+Shift+V", () => {

@@ -1,0 +1,317 @@
+.settings-nav-column {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--cv-side);
+  box-shadow: var(--cv-edge-end-divider);
+}
+
+.settings-nav-column__body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cv-space-1);
+  overflow: auto;
+  padding: 0 var(--cv-space-4);
+}
+
+.settings-nav-column__foot {
+  padding: var(--cv-space-3) var(--cv-space-4) var(--cv-space-5);
+}
+
+.settings-search {
+  display: flex;
+  height: 32px;
+  flex: none;
+  align-items: center;
+  margin-bottom: var(--cv-space-3);
+  padding: 0 var(--cv-space-4);
+  border-radius: var(--cv-r-sm);
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-sm);
+  font-weight: 500;
+  gap: var(--cv-space-4);
+}
+
+.settings-search:hover,
+.settings-search:focus-within {
+  background: var(--cv-tint-1);
+}
+
+.settings-search:focus-within {
+  box-shadow: var(--cv-ring-hair-strong);
+}
+
+.settings-search__input {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cv-fg-strong);
+  font: inherit;
+}
+
+.settings-search__input::placeholder {
+  color: var(--cv-fg-subtle);
+}
+
+.settings-search__input:focus-visible {
+  outline: none;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cv-space-1);
+}
+
+.settings-nav__item {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  padding: 0 var(--cv-space-4);
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: none;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-sm);
+  font-weight: 500;
+  gap: var(--cv-space-4);
+  text-align: left;
+}
+
+.settings-nav__item > svg {
+  color: var(--cv-fg-subtle);
+}
+
+.settings-nav__item:hover {
+  background: var(--cv-row-hover);
+  color: var(--cv-fg-strong);
+}
+
+.settings-nav__item[aria-selected="true"] {
+  background: var(--cv-row-active);
+  color: var(--cv-fg-strong);
+}
+
+.settings-nav__item[aria-selected="true"] > svg {
+  color: var(--cv-fg-strong);
+}
+
+.settings-nav__item:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-focus);
+}
+
+.settings-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.settings-crumb {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  margin: 0;
+  color: var(--cv-fg-strong);
+  font-size: var(--cv-t-sm);
+  font-weight: 500;
+  gap: var(--cv-space-4);
+}
+
+.settings-crumb:focus-visible {
+  outline: none;
+}
+
+.settings-crumb__parent,
+.settings-crumb__sep {
+  color: var(--cv-fg-subtle);
+}
+
+.settings-screen__page {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.settings-screen__inner {
+  display: flex;
+  max-width: var(--settings-page-max);
+  flex-direction: column;
+  margin: 0 auto;
+  padding: var(--cv-space-7) var(--cv-space-7) 48px;
+  gap: var(--cv-space-8);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section__head {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--cv-space-6);
+  gap: var(--cv-space-6);
+}
+
+.settings-section__title {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-sm);
+  font-weight: 400;
+  gap: var(--cv-space-4);
+  letter-spacing: -0.005em;
+}
+
+.settings-section__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cv-space-3);
+}
+
+.settings-section__note {
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
+.settings-group {
+  box-shadow: var(--cv-ring-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-tint-1);
+}
+
+:root[data-cv-scheme="light"] .settings-group {
+  background: var(--cv-raised);
+}
+
+.settings-group > * + * {
+  box-shadow: var(--cv-edge-top-hair);
+}
+
+.settings-row {
+  display: grid;
+  align-items: center;
+  padding: var(--cv-space-5) var(--cv-space-6);
+  gap: var(--cv-space-8);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-row[data-layout="stacked"] {
+  display: block;
+}
+
+.settings-row[data-layout="stacked"] > .settings-row__control {
+  justify-content: flex-start;
+  margin-top: var(--cv-space-5);
+}
+
+.settings-row:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-focus);
+}
+
+.settings-row[data-target] {
+  animation: settings-target-pulse var(--cv-motion-slow) var(--cv-ease) 2;
+}
+
+@keyframes settings-target-pulse {
+  50% {
+    background: var(--cv-accent-soft);
+  }
+}
+
+.settings-row__head {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: var(--cv-space-3);
+}
+
+.settings-row__title {
+  margin: 0;
+  color: var(--cv-fg-strong);
+  font-size: var(--cv-t-sm);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.settings-row__meta {
+  color: var(--cv-fg-subtle);
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+}
+
+.settings-row__description {
+  max-width: 576px;
+  margin: var(--cv-space-2) 0 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-md);
+  line-height: 1.45;
+}
+
+.settings-row__description code {
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+}
+
+.settings-row__control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--cv-space-4);
+}
+
+.settings-switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-switch-track);
+  box-shadow: var(--cv-switch-edge);
+  transition: background-color var(--cv-motion-base);
+}
+
+.settings-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--cv-switch-knob);
+  box-shadow: var(--cv-shadow-knob);
+  transition: transform var(--cv-motion-base) var(--cv-ease);
+}
+
+.settings-switch[data-state="on"] {
+  background: var(--cv-accent-fill);
+}
+
+.settings-switch[data-state="on"] .settings-switch__thumb {
+  transform: translateX(12px);
+}
+
+.settings-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-focus);
+}
+
+.settings-switch:disabled {
+  opacity: 0.5;
+}

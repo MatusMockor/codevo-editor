@@ -39,6 +39,7 @@ import {
 } from "./debugCopyValueSurface";
 import type { DebugSetVariableSurface } from "./debugSetVariableSurface";
 import { debugWatchValueContextMenuItems } from "./debugWatchValueContextMenuItems";
+import "./debug/debug.css";
 
 export interface DebugWatchesPanelProps {
   readonly debugAdapterKind: ActiveDebugAdapterKind;
@@ -94,23 +95,20 @@ const styles: Record<string, CSSProperties> = {
   },
   editor: {
     background: "transparent",
-    border: "1px solid var(--border-subtle)",
     borderRadius: 3,
     color: "inherit",
     flex: 1,
     minWidth: 0,
     padding: "2px 4px",
   },
-  error: { color: "var(--status-error, #ef4444)", fontSize: 11 },
+  error: { fontSize: 11 },
   header: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
     display: "flex",
     justifyContent: "space-between",
     padding: "4px 8px",
   },
-  message: { color: "var(--text-muted)", padding: 8 },
-  muted: { color: "var(--text-muted)" },
+  message: { padding: 8 },
   nestedTree: {
     display: "flex",
     flexDirection: "column",
@@ -119,7 +117,6 @@ const styles: Record<string, CSSProperties> = {
   },
   row: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
     display: "grid",
     gap: 5,
     gridTemplateColumns: "auto minmax(0, 1fr) auto auto",
@@ -128,8 +125,7 @@ const styles: Record<string, CSSProperties> = {
   rowBody: { minWidth: 0, overflow: "hidden" },
   expression: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   value: {
-    color: "var(--text-muted)",
-    fontFamily: "var(--font-mono, monospace)",
+    fontFamily: "var(--cv-font-mono)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -476,7 +472,7 @@ export function DebugWatchesPanel({
 
   return (
     <section aria-label="Watch expressions">
-      <div style={styles.header}>
+      <div className="cv-debug__rule-bottom" style={styles.header}>
         <strong>Watch</strong>
         <span>
           <button
@@ -514,7 +510,7 @@ export function DebugWatchesPanel({
         </span>
       </div>
       {contextMessage ? (
-        <div data-testid="debug-watch-context" style={styles.message}>
+        <div className="cv-debug__muted" data-testid="debug-watch-context" style={styles.message}>
           {contextMessage}
         </div>
       ) : null}
@@ -531,7 +527,9 @@ export function DebugWatchesPanel({
         />
       ) : null}
       {definitions.length === 0 && editor === null ? (
-        <div style={styles.message}>No watch expressions</div>
+        <div className="cv-debug__muted" style={styles.message}>
+          No watch expressions
+        </div>
       ) : (
         <div
           aria-label="Watch expressions"
@@ -625,6 +623,7 @@ export function DebugWatchesPanel({
                     else rowRefs.current.delete(definition.id);
                   }}
                   role="treeitem"
+                  className="cv-debug__rule-bottom"
                   style={styles.row}
                   tabIndex={definition.id === resolvedActiveRowId ? 0 : -1}
                 >
@@ -701,7 +700,7 @@ export function DebugWatchesPanel({
                             />
                           </div>
                         ) : (
-                          <span role="status" style={styles.muted}>
+                          <span className="cv-debug__muted" role="status">
                             Variable display limit reached
                           </span>
                         )
@@ -729,7 +728,7 @@ export function DebugWatchesPanel({
               );
             })}
             {definitions.length > visibleDefinitions.length ? (
-              <div role="status" style={styles.message}>
+              <div className="cv-debug__muted" role="status" style={styles.message}>
                 Watch display limit reached
               </div>
             ) : null}
@@ -908,11 +907,12 @@ function WatchValueEditor({
         }}
         readOnly={editing.pending}
         ref={inputRef}
+        className="cv-debug__inline-editor"
         style={styles.editor}
         value={editing.draft}
       />
       {editing.error ? (
-        <div role="alert" style={styles.error}>
+        <div className="cv-debug__stderr" role="alert" style={styles.error}>
           {editing.error}
         </div>
       ) : null}
@@ -1012,6 +1012,7 @@ function WatchEditor({
           }
         }}
         ref={inputRef}
+        className="cv-debug__inline-editor"
         style={styles.editor}
         value={draft}
       />
@@ -1028,7 +1029,7 @@ function WatchEditor({
         <X aria-hidden="true" size={12} />
       </button>
       {error ? (
-        <div id={errorId} role="alert" style={styles.error}>
+        <div className="cv-debug__stderr" id={errorId} role="alert" style={styles.error}>
           {error}
         </div>
       ) : null}
@@ -1047,29 +1048,33 @@ function WatchValue({
   readonly pending: boolean;
   readonly sessionState: DebugWatchesPanelProps["sessionState"];
 }) {
-  if (!enabled) return <div style={styles.muted}>Disabled</div>;
+  if (!enabled) return <div className="cv-debug__muted">Disabled</div>;
   if (pending)
     return (
-      <div aria-live="polite" style={styles.muted}>
+      <div aria-live="polite" className="cv-debug__muted">
         Loading…
       </div>
     );
   if (evaluation?.result.status === "error") {
     return (
-      <div role="status" style={styles.error}>
+      <div className="cv-debug__stderr" role="status" style={styles.error}>
         {evaluation.result.message}
       </div>
     );
   }
   if (evaluation?.result.status === "ok") {
     return (
-      <div style={styles.value} title={evaluation.result.value}>
+      <div className="cv-debug__muted" style={styles.value} title={evaluation.result.value}>
         {evaluation.result.value}
         {evaluation.result.type ? ` (${evaluation.result.type})` : ""}
       </div>
     );
   }
-  return <div style={styles.muted}>{sessionState === "running" ? "Running" : "Not available"}</div>;
+  return (
+    <div className="cv-debug__muted">
+      {sessionState === "running" ? "Running" : "Not available"}
+    </div>
+  );
 }
 
 function watchContextMessage({

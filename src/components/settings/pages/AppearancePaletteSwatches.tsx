@@ -1,4 +1,5 @@
-import { useRef, type KeyboardEvent } from "react";
+import { Check } from "lucide-react";
+import { useRef, type CSSProperties, type KeyboardEvent } from "react";
 import {
   PALETTE_IDS,
   PALETTE_LABELS,
@@ -40,41 +41,59 @@ export function AppearancePaletteSwatches({
   return (
     <div
       aria-label="Palette"
-      className="settings-swatches"
+      className="settings-palettes"
       onKeyDown={move}
       ref={groupRef}
       role="radiogroup"
     >
       {PALETTE_IDS.map((palette) => {
+        const selected = palette === value;
         return (
           <button
-            aria-checked={palette === value}
-            aria-label={PALETTE_LABELS[palette]}
-            className="settings-swatch"
+            aria-checked={selected}
+            aria-label={`${PALETTE_LABELS[palette]} palette`}
+            className="settings-palette-card"
             data-value={palette}
             key={palette}
             onClick={() => onChange(palette)}
             role="radio"
-            style={{ background: surfaceColor(palette, scheme, "canvas") }}
-            tabIndex={palette === value ? 0 : -1}
-            title={PALETTE_LABELS[palette]}
+            style={paletteCardStyle(palette, scheme)}
+            tabIndex={selected ? 0 : -1}
             type="button"
           >
-            <span
-              aria-hidden="true"
-              className="settings-swatch__sidebar"
-              style={{ background: surfaceColor(palette, scheme, "side") }}
-            />
-            <span
-              aria-hidden="true"
-              className="settings-swatch__accent"
-              style={{ background: paletteTokens(palette, scheme).accentFill }}
-            />
+            <span aria-hidden="true" className="settings-palette-card__wire">
+              <span className="settings-palette-card__side">
+                <i data-strong="true" />
+                <i />
+                <i />
+              </span>
+              <span className="settings-palette-card__main">
+                <i data-bubble="true" />
+                <i />
+                <span className="settings-palette-card__composer" />
+              </span>
+            </span>
+            <span className="settings-palette-card__name">
+              <span aria-hidden="true" className="settings-palette-card__dot" />
+              {PALETTE_LABELS[palette]}
+              {selected ? (
+                <Check aria-hidden="true" className="settings-palette-card__check" size={14} />
+              ) : null}
+            </span>
           </button>
         );
       })}
     </div>
   );
+}
+
+function paletteCardStyle(palette: PaletteId, scheme: ResolvedColorScheme): CSSProperties {
+  return {
+    "--settings-wire-canvas": surfaceColor(palette, scheme, "canvas"),
+    "--settings-wire-side": surfaceColor(palette, scheme, "side"),
+    "--settings-wire-raised": surfaceColor(palette, scheme, "raised"),
+    "--settings-wire-accent": paletteTokens(palette, scheme).accentFill,
+  } as CSSProperties;
 }
 
 function nextPalette(key: string, value: PaletteId): PaletteId | null {

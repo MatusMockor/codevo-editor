@@ -5,6 +5,7 @@ import {
   type LocalProjectCloneRequest,
   type LocalProjectCloneSnapshot,
 } from "../domain/localProjectClone";
+import { parseRepositoryCloneUrl, type RepositoryIdentity } from "../domain/repositoryCloneUrl";
 
 export type LocalProjectCloneInput = Omit<LocalProjectCloneRequest, "idempotencyKey">;
 type LocalCloneSessionSnapshot = Readonly<{
@@ -59,6 +60,7 @@ export function useLocalProjectClone(options: Options) {
   const setJob = (value: LocalProjectCloneSnapshot | null) =>
     setOwnedJob(value ? { lease, value } : null);
   const [name, setName] = useState("");
+  const [source, setSource] = useState<RepositoryIdentity | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pollRevision, setPollRevision] = useState(0);
@@ -89,6 +91,7 @@ export function useLocalProjectClone(options: Options) {
     request.current = restored?.request ?? null;
     setOwnedJob(restored?.job ? { lease, value: restored.job } : null);
     setName(restored?.name ?? "");
+    setSource(restored ? parseRepositoryCloneUrl(restored.request.url) : null);
     setError(restored?.error ?? null);
     setPending(restored?.job ? false : (restored?.pending ?? false));
     if (restored?.job)
@@ -217,6 +220,7 @@ export function useLocalProjectClone(options: Options) {
     setPending(true);
     setError(null);
     setName(input.name);
+    setSource(parseRepositoryCloneUrl(nextRequest.url));
     setJob(null);
     try {
       const next = await gateway.start(nextRequest);
@@ -271,8 +275,14 @@ export function useLocalProjectClone(options: Options) {
       return;
     }
     if (request.current) {
-      const { url, name: folderName, parentPath, branch } = request.current;
-      void start({ url, name: folderName, parentPath, ...(branch ? { branch } : {}) });
+      const { url, name: folderName, parentPath, branch, ensureParent } = request.current;
+      void start({
+        url,
+        name: folderName,
+        parentPath,
+        ...(branch ? { branch } : {}),
+        ...(ensureParent ? { ensureParent } : {}),
+      });
     }
   }
   function dismiss() {
@@ -282,7 +292,19 @@ export function useLocalProjectClone(options: Options) {
     if (session) session.current = null;
     setJob(null);
     setName("");
+    setSource(null);
     setError(null);
   }
-  return { job, name, busy: pending || running, pending, error, start, cancel, retry, dismiss };
+  return {
+    job,
+    name,
+    source,
+    busy: pending || running,
+    pending,
+    error,
+    start,
+    cancel,
+    retry,
+    dismiss,
+  };
 }

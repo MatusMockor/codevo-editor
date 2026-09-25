@@ -19,7 +19,6 @@
     "opener:default",
     "opener:allow-reveal-item-in-dir",
     "process:allow-restart",
-    "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install"
   ]

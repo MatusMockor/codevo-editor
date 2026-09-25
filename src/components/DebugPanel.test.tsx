@@ -12,6 +12,7 @@ import {
 } from "../domain/debugConsoleState";
 import type { UseDebugConsoleResult } from "../application/useDebugConsole";
 import { DebugPanel, type DebugPanelProps } from "./DebugPanel";
+import { debugPanelTestProps } from "./debug/debugPanelTestProps";
 
 const FRAME_A: StackFrame = {
   frameId: 1,
@@ -58,57 +59,7 @@ function stoppedSnapshot(): DebuggerSessionSnapshot {
 }
 
 function defaultProps(): DebugPanelProps {
-  return {
-    breakpointBulkMutationPending: false,
-    breakpointCounts: { disabled: 0, enabled: 0 },
-    breakpoints: [],
-    console: consoleResult(),
-    debugAdapterKind: null,
-    exceptionPauseError: null,
-    exceptionPauseMode: "none",
-    exceptionPausePending: false,
-    exceptionTypeFilter: [],
-    hasJavaScriptTypeScriptWorkspace: true,
-    lastStartError: null,
-    onLoadVariables: vi.fn(),
-    onDisableAllBreakpoints: vi.fn(),
-    onDisconnect: vi.fn(),
-    onEnableAllBreakpoints: vi.fn(),
-    onNavigateToBreakpoint: vi.fn(),
-    onNavigateToFrame: vi.fn(),
-    onPause: vi.fn(),
-    onRemoveBreakpoint: vi.fn(),
-    onRemoveAllBreakpoints: vi.fn(),
-    onAddFunctionBreakpoint: vi.fn(),
-    onRemoveFunctionBreakpoint: vi.fn(),
-    onSelectFrame: vi.fn(),
-    onSetBreakpointCondition: vi.fn(),
-    onSetBreakpointHitCondition: vi.fn(),
-    onSetBreakpointLogMessage: vi.fn(),
-    onSetBreakpointEnabled: vi.fn(),
-    onSetFunctionBreakpointEnabled: vi.fn(),
-    onSetExceptionPauseMode: vi.fn(),
-    onSetExceptionTypeFilter: vi.fn(),
-    onStep: vi.fn(),
-    onStop: vi.fn(),
-    rootPath: "/workspace",
-    scopeLoadState: { frameId: FRAME_A.frameId, kind: "ready" },
-    scopes: [],
-    selectedFrameId: null,
-    snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
-    variablesByReference: {},
-    watches: {
-      definitions: [],
-      evaluations: {},
-      pendingIds: [],
-      onAdd: vi.fn(),
-      onClear: vi.fn(),
-      onRemove: vi.fn(),
-      onSetEnabled: vi.fn(),
-      onUpdate: vi.fn(),
-    },
-    workspaceTrusted: true,
-  };
+  return debugPanelTestProps({ console: consoleResult(), onClearConsole: undefined });
 }
 
 function consoleResult(
@@ -175,6 +126,12 @@ describe("DebugPanel", () => {
     return props;
   }
 
+  function exceptionRow(label: string): HTMLElement {
+    const element = host.querySelector<HTMLElement>(`[role="checkbox"][aria-label="${label}"]`);
+    expect(element).not.toBeNull();
+    return element as HTMLElement;
+  }
+
   function button(label: string): HTMLButtonElement {
     const element =
       host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ??
@@ -189,7 +146,6 @@ describe("DebugPanel", () => {
 
     for (const label of [
       "Continue",
-      "Pause",
       "Restart debugging",
       "Step over",
       "Step into",
@@ -198,6 +154,7 @@ describe("DebugPanel", () => {
     ]) {
       expect(button(label).disabled).toBe(true);
     }
+    expect(host.querySelector('button[aria-label="Pause"]')).toBeNull();
     expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Inactive");
   });
 
@@ -220,16 +177,10 @@ describe("DebugPanel", () => {
 
     expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Starting");
     expect(button("Stop debugging").disabled).toBe(false);
-    for (const label of [
-      "Continue",
-      "Pause",
-      "Restart debugging",
-      "Step over",
-      "Step into",
-      "Step out",
-    ]) {
+    for (const label of ["Continue", "Restart debugging", "Step over", "Step into", "Step out"]) {
       expect(button(label).disabled).toBe(true);
     }
+    expect(host.querySelector('button[aria-label="Pause"]')).toBeNull();
     expect(button("Start selected Node launch configuration").disabled).toBe(true);
 
     act(() => button("Stop debugging").click());
@@ -630,7 +581,7 @@ describe("DebugPanel", () => {
 
     expect(button("Pause").disabled).toBe(false);
     expect(button("Stop debugging").disabled).toBe(false);
-    expect(button("Continue").disabled).toBe(true);
+    expect(host.querySelector('button[aria-label="Continue"]')).toBeNull();
     expect(button("Step over").disabled).toBe(true);
     expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Running");
   });
@@ -645,7 +596,7 @@ describe("DebugPanel", () => {
 
     const disconnect = button("Disconnect debugging");
     expect(disconnect.disabled).toBe(false);
-    expect(disconnect.title).toBe("Disconnect debugging");
+    expect(disconnect.title).toBe("Disconnect ⇧F5");
     expect(disconnect.querySelector(".lucide-unplug")).not.toBeNull();
     act(() => disconnect.click());
     expect(onDisconnect).toHaveBeenCalledOnce();
@@ -776,7 +727,6 @@ describe("DebugPanel", () => {
 
     for (const label of [
       "Continue",
-      "Pause",
       "Restart debugging",
       "Step over",
       "Step into",
@@ -785,6 +735,7 @@ describe("DebugPanel", () => {
     ]) {
       expect(button(label).disabled, label).toBe(true);
     }
+    expect(host.querySelector('button[aria-label="Pause"]')).toBeNull();
     expect(button("Stop debugging").getAttribute("aria-busy")).toBe("true");
     expect(button("Stop debugging").title).toBe("Stopping debugging");
   });
@@ -800,7 +751,6 @@ describe("DebugPanel", () => {
 
     for (const label of [
       "Continue",
-      "Pause",
       "Restart debugging",
       "Step over",
       "Step into",
@@ -809,6 +759,7 @@ describe("DebugPanel", () => {
     ]) {
       expect(button(label).disabled, label).toBe(true);
     }
+    expect(host.querySelector('button[aria-label="Pause"]')).toBeNull();
     expect(button("Restart debugging").getAttribute("aria-busy")).toBe("true");
   });
 
@@ -836,15 +787,9 @@ describe("DebugPanel", () => {
 
   it("configures exception pausing before the first Node run", () => {
     const props = render({});
-    const select = host.querySelector<HTMLSelectElement>(
-      'select[aria-label="Pause on exceptions"]',
-    );
-    expect(select?.disabled).toBe(false);
-    act(() => {
-      if (!select) return;
-      select.value = "all";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const allExceptions = exceptionRow("All exceptions");
+    expect(allExceptions.getAttribute("aria-disabled")).toBeNull();
+    act(() => allExceptions.click());
     expect(props.onSetExceptionPauseMode).toHaveBeenCalledWith("all");
   });
 
@@ -856,28 +801,23 @@ describe("DebugPanel", () => {
       exceptionPausePending: true,
       snapshot: { state: { kind: "running", sessionId: 7 }, lastSeq: 1 },
     });
-    const select = host.querySelector<HTMLSelectElement>(
-      'select[aria-label="Pause on exceptions"]',
-    );
-    expect(select?.value).toBe("uncaught");
-    expect(select?.disabled).toBe(true);
-    expect(select?.closest("label")?.getAttribute("aria-busy")).toBe("true");
+    const uncaught = exceptionRow("Uncaught exceptions");
+    expect(uncaught.getAttribute("aria-checked")).toBe("true");
+    expect(exceptionRow("All exceptions").getAttribute("aria-checked")).toBe("false");
+    expect(uncaught.getAttribute("aria-disabled")).toBe("true");
+    expect(uncaught.closest('[role="group"]')?.getAttribute("aria-busy")).toBe("true");
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("CDP rejected");
 
     render({
       debugAdapterKind: "node",
       snapshot: { state: { kind: "running", sessionId: 7 }, lastSeq: 1 },
     });
-    expect(
-      host.querySelector<HTMLSelectElement>('select[aria-label="Pause on exceptions"]')?.disabled,
-    ).toBe(false);
+    expect(exceptionRow("Uncaught exceptions").getAttribute("aria-disabled")).toBeNull();
   });
 
   it("disables exception pausing without a JS workspace and during PHP sessions", () => {
     render({ hasJavaScriptTypeScriptWorkspace: false });
-    expect(
-      host.querySelector<HTMLSelectElement>('select[aria-label="Pause on exceptions"]')?.disabled,
-    ).toBe(true);
+    expect(exceptionRow("Uncaught exceptions").getAttribute("aria-disabled")).toBe("true");
     render({
       debugAdapterKind: "php",
       hasJavaScriptTypeScriptWorkspace: true,
@@ -886,9 +826,7 @@ describe("DebugPanel", () => {
         lastSeq: 1,
       },
     });
-    expect(
-      host.querySelector<HTMLSelectElement>('select[aria-label="Pause on exceptions"]')?.disabled,
-    ).toBe(true);
+    expect(exceptionRow("Uncaught exceptions").getAttribute("aria-disabled")).toBe("true");
   });
 
   it("shows a truthful call-stack receipt when retained frames were truncated", () => {
@@ -1019,7 +957,7 @@ describe("DebugPanel", () => {
   it("enables stepping while stopped and reports the pause reason", () => {
     const props = render({ snapshot: stoppedSnapshot() });
 
-    expect(button("Pause").disabled).toBe(true);
+    expect(host.querySelector('button[aria-label="Pause"]')).toBeNull();
     expect(button("Stop debugging").disabled).toBe(false);
 
     for (const [label, kind] of [
@@ -1063,7 +1001,7 @@ describe("DebugPanel", () => {
 
     expect(button("Stop debugging").disabled).toBe(false);
     expect(button("Continue").disabled).toBe(true);
-    expect(button("Pause").disabled).toBe(true);
+    expect(host.querySelector('button[aria-label="Pause"]')).toBeNull();
     expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Starting");
 
     act(() => button("Stop debugging").click());
@@ -1436,9 +1374,8 @@ describe("DebugPanel", () => {
     const tree = variablesSection.querySelector<HTMLElement>('[role="tree"]')!;
     const scope = variablesSection.querySelector<HTMLElement>('[data-testid="debug-scope"]')!;
 
-    expect(variablesSection.style.display).toBe("flex");
-    expect(variablesSection.style.flexDirection).toBe("column");
-    expect(variablesSection.style.overflow).toBe("hidden");
+    expect(variablesSection.classList.contains("cv-dside__sec")).toBe(true);
+    expect(variablesSection.hasAttribute("style")).toBe(false);
     expect(tree.style.flexGrow).toBe("1");
     expect(tree.style.overflow).toBe("auto");
 

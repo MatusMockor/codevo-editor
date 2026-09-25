@@ -29,6 +29,7 @@ vi.mock("../../application/useLocalProjectClone", () => ({
     return {
       job: state.localJob,
       error: state.localError,
+      source: state.localJob === null ? null : { host: "github.com", path: "team/repo" },
       busy: false,
       dismiss: state.dismiss,
       retry: state.retry,
@@ -110,6 +111,43 @@ afterEach(() => {
   host.remove();
 });
 describe("clone draft coordination", () => {
+  it("exposes local clone progress, failure and source only for the pending local clone", () => {
+    expect(current.localCloneDetail).toBeNull();
+    const progress = {
+      phase: "receiving" as const,
+      percent: 40,
+      receivedBytes: 1024,
+      bytesPerSecond: 512,
+    };
+    state.localJob = {
+      cloneId: "local",
+      status: "running",
+      path: "/clone",
+      error: null,
+      progress,
+      failure: null,
+    };
+    act(() => state.local.onStarted("local", "Repo", { select: true }));
+    expect(current.localCloneDetail).toEqual({
+      progress,
+      failure: null,
+      source: { host: "github.com", path: "team/repo" },
+    });
+    state.localJob = {
+      cloneId: "local",
+      status: "failed",
+      path: null,
+      error: "Cloning failed.",
+      progress: null,
+      failure: "notFound",
+    };
+    render();
+    expect(current.localCloneDetail).toMatchObject({ progress: null, failure: "notFound" });
+    state.localJob = { ...state.localJob, cloneId: "other" };
+    render();
+    expect(current.localCloneDetail).toMatchObject({ progress: null, failure: null });
+  });
+
   it("preserves pending draft across navigation and merges exact destination once", () => {
     start();
     act(() => current.changeDraft("new request"));
@@ -168,12 +206,26 @@ describe("clone draft coordination", () => {
   });
   it("does not carry a status retry draft into a subsequent unrelated clone", () => {
     act(() => state.local.onStarted("local", "Repo", { select: true }));
-    state.localJob = { cloneId: "local", status: "running", path: "/clone", error: null };
+    state.localJob = {
+      cloneId: "local",
+      status: "running",
+      path: "/clone",
+      error: null,
+      progress: null,
+      failure: null,
+    };
     state.localError = "offline";
     render();
     act(() => current.changeDraft("first request"));
     act(() => current.retry());
-    state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+    state.localJob = {
+      cloneId: "local",
+      status: "completed",
+      path: "/clone",
+      error: null,
+      progress: null,
+      failure: null,
+    };
     render();
     act(() => state.local.onReady("local", "/clone"));
     act(() => current.continueDraft());
@@ -184,18 +236,32 @@ describe("clone draft coordination", () => {
   });
   it("abandons stale local receipt before an ordinary folder open", () => {
     act(() => state.local.onStarted("local", "Repo", { select: true }));
-    state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+    state.localJob = {
+      cloneId: "local",
+      status: "completed",
+      path: "/clone",
+      error: null,
+      progress: null,
+      failure: null,
+    };
     render();
     act(() => state.local.onReady("local", "/clone"));
     act(() => current.continueDraft());
-    expect(state.addProject).toHaveBeenCalledWith("/clone");
+    expect(state.addProject).toHaveBeenCalledWith("/clone", "prompt");
     act(() => current.choose(null, "existing"));
     act(() => state.add.onProjectAdded(project));
     expect(onAdded).toHaveBeenCalledWith(project);
   });
   it("stages a completed native clone draft before opening and never appends twice after refusal", () => {
     act(() => state.local.onStarted("local", "Repo", { select: true }));
-    state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+    state.localJob = {
+      cloneId: "local",
+      status: "completed",
+      path: "/clone",
+      error: null,
+      progress: null,
+      failure: null,
+    };
     render();
     act(() => state.local.onReady("local", "/clone"));
     agentComposerDraftStore.writeDraft("new:/clone", "existing");
@@ -213,7 +279,14 @@ describe("clone draft coordination", () => {
     act(() => state.local.onReady("local", "/clone"));
     act(() => current.continueDraft());
     expect(state.addProject).not.toHaveBeenCalled();
-    state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+    state.localJob = {
+      cloneId: "local",
+      status: "completed",
+      path: "/clone",
+      error: null,
+      progress: null,
+      failure: null,
+    };
     render();
     act(() => current.changeDraft("é".repeat(20000)));
     act(() => current.continueDraft());
@@ -261,7 +334,14 @@ describe("clone draft coordination", () => {
     };
     render();
     act(() => state.local.onStarted("local", "Repo", { select: true }));
-    state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+    state.localJob = {
+      cloneId: "local",
+      status: "completed",
+      path: "/clone",
+      error: null,
+      progress: null,
+      failure: null,
+    };
     render();
     act(() => state.local.onReady("local", "/clone"));
     act(() => current.changeDraft("keep"));
@@ -313,13 +393,20 @@ it("registers completed local clone while retaining composer until send and reje
   };
   render();
   act(() => state.local.onStarted("local", "Repo", { select: true }));
-  state.localJob = { cloneId: "local", status: "completed", path: "/clone", error: null };
+  state.localJob = {
+    cloneId: "local",
+    status: "completed",
+    path: "/clone",
+    error: null,
+    progress: null,
+    failure: null,
+  };
   render();
   act(() => state.local.onReady("local", "/clone"));
   act(() => current.changeDraft("keep pending"));
   act(() => current.changeIsolation("worktree"));
   act(() => current.activateCompleted());
-  expect(state.addProject).toHaveBeenCalledWith("/clone");
+  expect(state.addProject).toHaveBeenCalledWith("/clone", "prompt");
   expect(session.current?.activationReceipt?.path).toBe("/clone");
   act(() => root.unmount());
   root = createRoot(host);

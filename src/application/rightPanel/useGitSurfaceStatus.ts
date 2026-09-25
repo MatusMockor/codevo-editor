@@ -25,6 +25,7 @@ export interface UseGitSurfaceStatusOptions {
   readonly gateway: GitSurfaceStatusGateway | null;
   readonly target: GitSurfaceTarget | null;
   readonly enabled: boolean;
+  readonly revision?: unknown;
 }
 
 interface KeyedLoad {
@@ -62,6 +63,7 @@ function previousValue(previous: KeyedLoad, key: string): GitSurfaceStatus | nul
 export function useGitSurfaceStatus({
   enabled,
   gateway,
+  revision,
   target,
 }: UseGitSurfaceStatusOptions): GitSurfaceStatusSnapshot {
   const targetKey =
@@ -106,7 +108,7 @@ export function useGitSurfaceStatus({
         }));
       },
     );
-  }, [enabled, gatewayRef, nonce, targetKey, targetRef]);
+  }, [enabled, gatewayRef, nonce, revision, targetKey, targetRef]);
 
   useEffect(
     () => () => {

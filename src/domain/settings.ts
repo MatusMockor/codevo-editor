@@ -3,6 +3,11 @@ import {
   type AgentFollowUpBehavior,
 } from "./agentFollowUpBehavior";
 import type { IntelligenceMode } from "./workspace";
+import {
+  DEFAULT_APP_UPDATE_CHANNEL,
+  normalizeAppUpdateChannel,
+  type AppUpdateChannel,
+} from "./appUpdateChannel";
 import { defaultKeymapSettings, normalizeKeymapSettings, type KeymapSettings } from "./keymap";
 import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
@@ -52,6 +57,10 @@ import {
   type RecentLocation,
 } from "./recentLocations";
 import { DEFAULT_APPEARANCE, normalizeAppearance, type AppearanceSettings } from "./appearance";
+import {
+  normalizeLastCloneParentPath,
+  normalizeRecentWorkspaceOpenedAt,
+} from "./projectOnboardingSettings";
 
 export type { MonacoAppTheme, TerminalTheme } from "./editorColorThemes";
 
@@ -75,7 +84,9 @@ export type SettingsSection =
   | "snippets"
   | "appearance"
   | "agents"
-  | "environments";
+  | "environments"
+  | "usage"
+  | "archive";
 
 export const defaultEditorFontFamily =
   "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
@@ -123,6 +134,7 @@ const genericEditorFontFamilies = new Set([
 
 export interface AppSettings {
   appUpdaterSkippedVersion: string | null;
+  appUpdateChannel: AppUpdateChannel;
   agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
   agentFollowUpBehavior: AgentFollowUpBehavior;
@@ -138,6 +150,8 @@ export interface AppSettings {
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
   recentWorkspacePaths?: string[];
+  recentWorkspaceOpenedAt?: Readonly<Record<string, number>>;
+  lastCloneParentPath?: string | null;
   runtimePolicy: BackgroundRuntimePolicy;
   terminalShellIntegrationEnabled: boolean;
   appearance: AppearanceSettings;
@@ -287,6 +301,7 @@ export function defaultAppSettings(): AppSettings {
   return {
     ...defaultAgentAppSettings(),
     appUpdaterSkippedVersion: null,
+    appUpdateChannel: DEFAULT_APP_UPDATE_CHANNEL,
     editorFontFamily: defaultEditorFontFamily,
     editorFontLigatures: defaultEditorFontLigatures,
     editorFontSize: defaultEditorFontSize,
@@ -294,6 +309,8 @@ export function defaultAppSettings(): AppSettings {
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
     recentWorkspacePaths: [],
+    recentWorkspaceOpenedAt: {},
+    lastCloneParentPath: null,
     runtimePolicy: "keepAlive",
     terminalShellIntegrationEnabled: false,
     appearance: DEFAULT_APPEARANCE,
@@ -483,6 +500,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 
   return {
     appUpdaterSkippedVersion: normalizeAppUpdaterSkippedVersion(value.appUpdaterSkippedVersion),
+    appUpdateChannel: normalizeAppUpdateChannel(value.appUpdateChannel),
     agentCliPaths,
     agentCliKind,
     agentFollowUpBehavior: normalizeAgentFollowUpBehavior(value.agentFollowUpBehavior),
@@ -501,6 +519,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     minimapEnabled,
     recentWorkspacePath,
     recentWorkspacePaths,
+    recentWorkspaceOpenedAt: normalizeRecentWorkspaceOpenedAt(value.recentWorkspaceOpenedAt),
+    lastCloneParentPath: normalizeLastCloneParentPath(value.lastCloneParentPath),
     runtimePolicy,
     terminalShellIntegrationEnabled,
     appearance: normalizeAppearance(value.appearance, value.theme),

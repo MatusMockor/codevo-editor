@@ -1,3 +1,4 @@
+import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
 import type {
   AgentThreadOrganizationPatch,
@@ -313,6 +314,7 @@ export interface AgentThreadStartRequest extends AgentTurnAttachmentRequest {
   readonly repositoryRoot: string;
   readonly prompt: string;
   readonly isolation: AgentTaskIsolation;
+  readonly worktreeBase?: AgentWorktreeBase;
   readonly unsafeInPlaceConfirmationKey: string | null;
   readonly launch: AgentLaunchOptions;
   readonly dangerousLaunchConfirmed?: boolean;

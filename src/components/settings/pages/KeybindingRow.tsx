@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsKbd } from "../primitives/SettingsKbd";
 import { SettingsPopover } from "../primitives/SettingsPopover";
-import type { KeybindingViewModel } from "./keybindingsPresentation";
+import { keybindingWhenLabel, type KeybindingViewModel } from "./keybindingsPresentation";
 import type { KeybindingRecorder } from "./useKeybindingRecorder";
 
 export interface KeybindingRowProps {
@@ -20,12 +20,81 @@ export function KeybindingRow({ binding, onReset, onUnbind, recorder }: Keybindi
   const identity = `${binding.label} (${binding.commandId})`;
 
   return (
-    <tr className="settings-kb__row" data-command={binding.commandId}>
-      <td className="settings-kb__cmd">
-        <span className="settings-kb__label">{binding.label}</span>
-        <span className="settings-kb__id">{binding.commandId}</span>
-      </td>
-      <td className="settings-kb__key">
+    <div
+      className="settings-kb__row"
+      data-command={binding.commandId}
+      data-editing={recording === null ? undefined : "true"}
+    >
+      <div className="settings-kb__text">
+        <h4 className="settings-kb__label">
+          {binding.label}
+          {binding.modified ? <span className="settings-badge">Modified</span> : null}
+        </h4>
+        <p className="settings-kb__when">
+          <span className="settings-kb__when-label">When</span>
+          <span className="settings-kb__when-value">{keybindingWhenLabel(binding)}</span>
+        </p>
+      </div>
+      <div className="settings-kb__controls">
+        {binding.conflictTitle === null ? null : (
+          <span
+            aria-label={`Shortcut conflict for ${identity}`}
+            className="settings-kb__warn"
+            role="img"
+            title={binding.conflictTitle}
+          >
+            <TriangleAlert aria-hidden="true" size={14} />
+          </span>
+        )}
+        {binding.rebindable && recording === null ? (
+          <>
+            <SettingsButton
+              expanded={menuOpen}
+              label={`More actions for ${identity}`}
+              onClick={() => setMenuOpen((open) => !open)}
+              ref={menuAnchorRef}
+              size="xsq"
+              variant="ghostMuted"
+            >
+              <Ellipsis aria-hidden="true" size={14} />
+            </SettingsButton>
+            <SettingsPopover
+              anchorRef={menuAnchorRef}
+              label={`Actions for ${identity}`}
+              onClose={(restoreFocus) => {
+                setMenuOpen(false);
+
+                if (restoreFocus) menuAnchorRef.current?.focus();
+              }}
+              open={menuOpen}
+            >
+              <SettingsButton
+                disabled={!binding.modified}
+                label={`Reset ${identity} to default`}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onReset();
+                }}
+                size="sm"
+                variant="ghost"
+              >
+                Reset to default
+              </SettingsButton>
+              <SettingsButton
+                disabled={binding.currentShortcut === ""}
+                label={`Unbind ${identity}`}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onUnbind();
+                }}
+                size="sm"
+                variant="ghost"
+              >
+                Unbind
+              </SettingsButton>
+            </SettingsPopover>
+          </>
+        ) : null}
         {recording === null ? (
           <button
             aria-label={`Edit shortcut for ${identity}`}
@@ -35,7 +104,6 @@ export function KeybindingRow({ binding, onReset, onUnbind, recorder }: Keybindi
             type="button"
           >
             <KeybindingChips binding={binding} />
-            <span className="settings-kb__editlabel">Edit</span>
           </button>
         ) : (
           <span className="settings-kb__recorder">
@@ -62,75 +130,8 @@ export function KeybindingRow({ binding, onReset, onUnbind, recorder }: Keybindi
             </SettingsButton>
           </span>
         )}
-      </td>
-      <td className="settings-kb__when" data-always={binding.rebindable ? "true" : undefined}>
-        {binding.rebindable ? "Always" : "Reserved"}
-      </td>
-      <td className="settings-kb__st">
-        {binding.conflictTitle === null ? null : (
-          <span
-            aria-label={`Shortcut conflict for ${identity}`}
-            className="settings-kb__warn"
-            role="img"
-            title={binding.conflictTitle}
-          >
-            <TriangleAlert aria-hidden="true" size={14} />
-          </span>
-        )}
-        {binding.modified ? (
-          <span className="settings-kb__modified" title="Modified from the default">
-            Modified
-          </span>
-        ) : null}
-        {binding.rebindable ? (
-          <SettingsButton
-            expanded={menuOpen}
-            label={`More actions for ${identity}`}
-            onClick={() => setMenuOpen((open) => !open)}
-            ref={menuAnchorRef}
-            size="xsq"
-            variant="ghostMuted"
-          >
-            <Ellipsis aria-hidden="true" size={14} />
-          </SettingsButton>
-        ) : null}
-        <SettingsPopover
-          anchorRef={menuAnchorRef}
-          label={`Actions for ${identity}`}
-          onClose={(restoreFocus) => {
-            setMenuOpen(false);
-
-            if (restoreFocus) menuAnchorRef.current?.focus();
-          }}
-          open={menuOpen}
-        >
-          <SettingsButton
-            disabled={!binding.modified}
-            label={`Reset ${identity} to default`}
-            onClick={() => {
-              setMenuOpen(false);
-              onReset();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            Reset to default
-          </SettingsButton>
-          <SettingsButton
-            disabled={binding.currentShortcut === ""}
-            label={`Unbind ${identity}`}
-            onClick={() => {
-              setMenuOpen(false);
-              onUnbind();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            Unbind
-          </SettingsButton>
-        </SettingsPopover>
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 }
 

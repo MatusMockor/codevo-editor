@@ -7,6 +7,9 @@ import type {
 } from "../../domain/repositoryLookup";
 import type { RepositoryLookupGateway } from "../../application/repositoryLookupPorts";
 import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
+import { WorkspaceTrustDialogHost } from "../projects/WorkspaceTrustDialogHost";
+import { WorkspaceTrustPromptCoordinator } from "../../application/workspaceTrustPrompt";
+import type { WorkspaceTrustOrigin } from "../../domain/trust";
 import { waitForReact } from "../../test/reactTestLifecycle";
 // @vitest-environment jsdom
 
@@ -64,6 +67,11 @@ import {
   type AgentWorkbenchScreenProps,
   type AgentWorkbenchScreenWorkbench,
 } from "./AgentWorkbenchScreen";
+
+const resolveTauriWorkspaceHome = vi.hoisted(() =>
+  vi.fn(async () => ({ path: "/Users/dev", pathCase: "insensitive" as const })),
+);
+vi.mock("../../infrastructure/tauriHomeDirectory", () => ({ resolveTauriWorkspaceHome }));
 
 const ROOT_A = "/workspace/app";
 const ROOT_B = "/workspace/api";
@@ -145,28 +153,38 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.querySelector('button[aria-label="Toggle terminal panel"]')).not.toBeNull();
   });
 
-  it("opens the real source control sidebar from the rail footer", () => {
+  it("opens the Git surface from the rail footer", () => {
     const workbench = createWorkbench(ROOT_A);
     render(workbench);
 
     click('button[aria-label="Open Source Control"]');
 
-    expect(workbench.agentWorkbench.actions).toEqual([{ kind: "openSurface", surface: "files" }]);
-    expect(workbench.setSidebarView).toHaveBeenCalledWith("git");
+    expect(workbench.agentWorkbench.actions).toEqual([{ kind: "openSurface", surface: "git" }]);
+    expect(workbench.setSidebarView).not.toHaveBeenCalled();
   });
 
   it("opens Environments settings from the execution picker", () => {
     const openSettingsSection = vi.fn();
     render(createWorkbench(ROOT_A, { openSettingsSection }));
 
-    click('button[aria-label="Run on: This computer"]');
-    const manage = [...host.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].find(
-      (button) => button.textContent === "Manage environments",
-    );
+    click('button[aria-label^="Workspace: This computer,"]');
+    const manage = [
+      ...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'),
+    ].find((button) => button.textContent === "Manage environments");
     expect(manage).toBeDefined();
     act(() => manage?.click());
 
     expect(openSettingsSection).toHaveBeenCalledWith("environments");
+  });
+
+  it("opens Settings > Usage from the rail footer", () => {
+    const openSettingsSection = vi.fn();
+    render(createWorkbench(ROOT_A, { openSettingsSection }));
+
+    click('button[aria-label="Open Usage"]');
+
+    expect(openSettingsSection).toHaveBeenCalledWith("usage");
+    expect(document.querySelector('[role="dialog"][aria-label="Usage details"]')).toBeNull();
   });
 
   it("keeps provider runtime UI on persisted authority until registration succeeds", () => {
@@ -477,7 +495,7 @@ describe("AgentWorkbenchScreen", () => {
     expect(searchFiles.mock.calls[0]?.[1]).toBe("users");
   });
 
-  it("opens the editor sidebar with scripts from the scripts menu", async () => {
+  it("opens the Scripts surface from the scripts menu", async () => {
     const layout = recordedLayoutState();
     const workbench = createWorkbench(ROOT_A, { agentWorkbench: layout });
     render(workbench);
@@ -487,8 +505,9 @@ describe("AgentWorkbenchScreen", () => {
     await act(async () => {});
     clickMenuItem("Open Scripts and Tasks");
 
-    expect(layout.actions).toContainEqual({ kind: "openSurface", surface: "files" });
-    expect(workbench.setSidebarView).toHaveBeenCalledWith("scripts");
+    expect(layout.actions).toContainEqual({ kind: "openSurface", surface: "scripts" });
+    expect(layout.actions).not.toContainEqual({ kind: "openSurface", surface: "files" });
+    expect(workbench.setSidebarView).not.toHaveBeenCalled();
   });
 
   it("reveals a worktree path through the injected gateway", async () => {
@@ -522,8 +541,8 @@ describe("AgentWorkbenchScreen", () => {
 
     click('button[aria-label="Add project"]');
     act(() => {
-      const source = [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === "Open existing folder",
+      const source = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) =>
+        option.textContent?.includes("Open folder"),
       );
       expect(source).toBeDefined();
       source!.click();
@@ -561,8 +580,8 @@ describe("AgentWorkbenchScreen", () => {
       click('[data-thread-id="agt-1"]');
       click('button[aria-label="Add project"]');
       act(() => {
-        const source = [...host.querySelectorAll("button")].find(
-          (button) => button.textContent === "Open existing folder",
+        const source = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+          (option) => option.textContent?.includes("Open folder"),
         );
         expect(source).toBeDefined();
         source!.click();
@@ -634,13 +653,6 @@ describe("AgentWorkbenchScreen", () => {
           ),
         );
       };
-      const clickText = (text: string) => {
-        const button = [...host.querySelectorAll("button")].find(
-          (item) => item.textContent === text,
-        );
-        expect(button, text).toBeDefined();
-        act(() => button!.click());
-      };
       const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
         act(() => {
           const prototype =
@@ -653,13 +665,17 @@ describe("AgentWorkbenchScreen", () => {
       };
       await show(ROOT_A);
       click('button[aria-label="Add project"]');
-      click('button[aria-label="Project environment"]');
-      const serverOption = [...host.querySelectorAll<HTMLElement>('[role="option"]')].find(
-        (option) => option.textContent?.includes("Linux server"),
+      const environment = document.querySelector<HTMLElement>(
+        'button[title="Where the project lives"]',
       );
+      expect(environment).not.toBeNull();
+      act(() => environment!.click());
+      const serverOption = [
+        ...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
+      ].find((option) => option.textContent?.includes("Linux server"));
       expect(serverOption).toBeDefined();
       act(() => serverOption!.click());
-      clickText("Clone repository");
+      chooseAddProjectSource("Clone repository");
       const gitUrl = () =>
         [...host.querySelectorAll<HTMLElement>('[role="option"]')].find((row) =>
           row.textContent?.includes("Git URL"),
@@ -683,7 +699,7 @@ describe("AgentWorkbenchScreen", () => {
       if (pendingAcknowledgement) {
         await show(ROOT_B);
         await act(async () => acknowledge(runningClone));
-        expect(host.querySelector(".agent-clone-draft")).toBeNull();
+        expect(host.querySelector(".agent-clone-composer")).toBeNull();
         await waitForReact(() =>
           expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull(),
         );
@@ -708,10 +724,14 @@ describe("AgentWorkbenchScreen", () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 1600));
       });
-      await waitForReact(() => expect(host.textContent?.includes("is ready")).toBe(true));
+      await waitForReact(() =>
+        expect(host.querySelector(".agent-clone-composer")?.textContent).not.toContain("Cloning"),
+      );
       await act(async () => {});
       expect(prompt().value).toBe("Remote clone draft");
-      expect(host.querySelector(".agent-clone-draft")?.textContent).toContain("storefront-api");
+      expect(host.querySelector('[aria-label="Repository clone"]')?.textContent).toContain(
+        "storefront-api",
+      );
       expect(opening).not.toHaveBeenCalled();
       expect(startThread).not.toHaveBeenCalled();
       expect(gateway.createTask).not.toHaveBeenCalled();
@@ -726,12 +746,33 @@ describe("AgentWorkbenchScreen", () => {
     const gateway: LocalProjectCloneGateway = {
       start: vi.fn<LocalProjectCloneGateway["start"]>(async (request) => {
         cloneId = request.idempotencyKey;
-        return { cloneId, status: "running", path: ROOT_B, error: null };
+        return {
+          cloneId,
+          status: "running",
+          path: ROOT_B,
+          error: null,
+          progress: null,
+          failure: null,
+        };
       }),
       get: vi.fn<LocalProjectCloneGateway["get"]>(async () =>
         finish
-          ? { cloneId, status: "completed", path: ROOT_B, error: null }
-          : { cloneId, status: "running", path: ROOT_B, error: null },
+          ? {
+              cloneId,
+              status: "completed",
+              path: ROOT_B,
+              error: null,
+              progress: null,
+              failure: null,
+            }
+          : {
+              cloneId,
+              status: "running",
+              path: ROOT_B,
+              error: null,
+              progress: null,
+              failure: null,
+            },
       ),
       cancel: vi.fn(async () => {
         throw new Error("Unexpected cancellation");
@@ -764,11 +805,6 @@ describe("AgentWorkbenchScreen", () => {
         ),
       );
     };
-    const clickText = (text: string) => {
-      const button = [...host.querySelectorAll("button")].find((item) => item.textContent === text);
-      expect(button, text).toBeDefined();
-      act(() => button!.click());
-    };
     const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
       act(() => {
         const prototype =
@@ -781,24 +817,8 @@ describe("AgentWorkbenchScreen", () => {
     };
     await show(ROOT_A);
     click('button[aria-label="Add project"]');
-    clickText("Clone repository");
-    type(
-      host.querySelector<HTMLInputElement>(
-        'input[placeholder="https://github.com/owner/repository.git"]',
-      )!,
-      "https://github.com/example/api.git",
-    );
-    clickText("Continue");
-    click('button[aria-label="Choose folder"]');
-    await act(async () => {});
-    await act(async () =>
-      host
-        .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')!
-        .dispatchEvent(
-          new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
-        ),
-    );
-    clickText("Clone repository");
+    chooseAddProjectSource("Git URL");
+    await submitLocalCloneForm("https://github.com/example/api.git");
     await waitForReact(() =>
       expect(host.querySelector(".agent-clone-composer textarea")).not.toBeNull(),
     );
@@ -847,6 +867,8 @@ describe("AgentWorkbenchScreen", () => {
         status: "completed",
         path: ROOT_B,
         error: null,
+        progress: null,
+        failure: null,
       }));
       const gateway: LocalProjectCloneGateway = {
         start: cloneStart,
@@ -879,13 +901,6 @@ describe("AgentWorkbenchScreen", () => {
           />,
         ),
       );
-      const clickText = (text: string) => {
-        const button = [...host.querySelectorAll("button")].find(
-          (item) => item.textContent === text,
-        );
-        expect(button, text).toBeDefined();
-        act(() => button!.click());
-      };
       const type = (element: HTMLInputElement | HTMLTextAreaElement, value: string) => {
         act(() => {
           const prototype =
@@ -897,24 +912,8 @@ describe("AgentWorkbenchScreen", () => {
         });
       };
       click('button[aria-label="Add project"]');
-      clickText("Clone repository");
-      type(
-        host.querySelector<HTMLInputElement>(
-          'input[placeholder="https://github.com/owner/repository.git"]',
-        )!,
-        "https://github.com/example/api.git",
-      );
-      clickText("Continue");
-      click('button[aria-label="Choose folder"]');
-      await act(async () => {});
-      await act(async () =>
-        host
-          .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')!
-          .dispatchEvent(
-            new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
-          ),
-      );
-      clickText("Clone repository");
+      chooseAddProjectSource("Git URL");
+      await submitLocalCloneForm("https://github.com/example/api.git");
       await waitForReact(() =>
         expect(host.querySelector(".agent-clone-composer textarea")).not.toBeNull(),
       );
@@ -927,7 +926,7 @@ describe("AgentWorkbenchScreen", () => {
       await act(async () => {});
       expect(opening).toHaveBeenCalledWith(ROOT_B);
       // The old AgentModeView has unmounted before the open receipt settles.
-      expect(host.querySelector(".agent-clone-draft")).not.toBeNull();
+      expect(host.querySelector(".agent-clone-composer")).not.toBeNull();
       await act(async () => resolveReceipt(receipt));
       await waitForReact(() => expect(prompt().value).toBe("Cloned project draft"));
       expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull();
@@ -940,6 +939,94 @@ describe("AgentWorkbenchScreen", () => {
     },
   );
 
+  it("shows the clone source in the trust dialog and resolves the clone home without a HOME listing", async () => {
+    agentComposerDraftStore.reset();
+    const listDirectoryEntries = vi.fn(directoryListingGateway.listDirectoryEntries);
+    directoryListingGateway = { ...directoryListingGateway, listDirectoryEntries };
+    resolveTauriWorkspaceHome.mockClear();
+    const prompt = new WorkspaceTrustPromptCoordinator();
+    const next = createWorkbench(ROOT_B);
+    const receipt = await next.openWorkspaceRootWithReceipt(ROOT_B);
+    const grantProjectTrust = vi.fn(
+      async (rootKey: string, origin: WorkspaceTrustOrigin | null): Promise<void> => {
+        await prompt.request({
+          rootPath: rootKey,
+          label: "api",
+          origin: origin ?? { kind: "local" },
+        });
+      },
+    );
+    const gateway: LocalProjectCloneGateway = {
+      start: vi.fn<LocalProjectCloneGateway["start"]>(async (request) => ({
+        cloneId: request.idempotencyKey,
+        status: "completed",
+        path: ROOT_B,
+        error: null,
+        progress: null,
+        failure: null,
+      })),
+      get: vi.fn(async () => {
+        throw new Error("Clone already completed");
+      }),
+      cancel: vi.fn(async () => {
+        throw new Error("Not canceled");
+      }),
+    };
+    const destination: AgentWorkbenchScreenWorkbench = {
+      ...next,
+      agents: {
+        ...next.agents,
+        agentProjects: {
+          ...next.agents.agentProjects,
+          projects: [{ ...project(ROOT_B), ownerId: "workspace-app", trust: "untrusted" }],
+          grantProjectTrust,
+        },
+      },
+    };
+    const screen = (workbench: AgentWorkbenchScreenWorkbench) => (
+      <>
+        <AgentWorkbenchScreen {...defaultProps(workbench)} localCloneGateway={gateway} />
+        <WorkspaceTrustDialogHost prompt={prompt} workspaceScope={null} />
+      </>
+    );
+    const opening = vi.fn(async () => {
+      root.render(screen({ ...destination, openWorkspaceRootWithReceipt: opening }));
+      return receipt;
+    });
+    await act(async () =>
+      root.render(screen(createWorkbench(ROOT_A, { openWorkspaceRootWithReceipt: opening }))),
+    );
+    click('button[aria-label="Add project"]');
+    chooseAddProjectSource("Git URL");
+    await submitLocalCloneForm("https://github.com/example/api.git");
+    await waitForReact(() => expect(opening).toHaveBeenCalledOnce());
+    await waitForReact(() =>
+      expect(
+        [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+          (button) => button.textContent === "Review",
+        ),
+      ).toBeDefined(),
+    );
+    act(() =>
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "Review")!
+        .click(),
+    );
+    await waitForReact(() =>
+      expect(document.querySelector(".cv-trust__origin")?.textContent).toBe(
+        "Cloned from github.com/example/api",
+      ),
+    );
+    expect(grantProjectTrust).toHaveBeenCalledExactlyOnceWith(ROOT_B, {
+      kind: "clone",
+      host: "github.com",
+      path: "example/api",
+    });
+    await waitForReact(() => expect(resolveTauriWorkspaceHome).toHaveBeenCalled());
+    expect(listDirectoryEntries).not.toHaveBeenCalledWith(expect.objectContaining({ path: null }));
+    agentComposerDraftStore.reset();
+  });
+
   it("reports the refusal when the workspace open flow declines the directory", async () => {
     const workbench = createWorkbench(ROOT_A, {
       openWorkspaceRootWithReceipt: vi.fn(async () => ({
@@ -951,8 +1038,8 @@ describe("AgentWorkbenchScreen", () => {
 
     click('button[aria-label="Add project"]');
     act(() => {
-      const source = [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === "Open existing folder",
+      const source = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) =>
+        option.textContent?.includes("Open folder"),
       );
       expect(source).toBeDefined();
       source!.click();
@@ -1002,7 +1089,11 @@ describe("AgentWorkbenchScreen", () => {
         activeSurface: "history",
       }),
     });
-    const mutation = { switchBranch: vi.fn(async () => undefined) };
+    const mutation = {
+      createBranch: vi.fn(async () => undefined),
+      getBranches: vi.fn(async () => ({ current: null, local: [], remotes: {} })),
+      switchBranch: vi.fn(async () => undefined),
+    };
     const show = async () => {
       await act(async () =>
         root.render(
@@ -1080,6 +1171,31 @@ describe("AgentWorkbenchScreen", () => {
     act(() => item?.click());
   }
 });
+
+const CLONE_SUBMIT = '.cv-clone-form button[type="submit"]';
+
+function chooseAddProjectSource(title: string): void {
+  const source = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) =>
+    option.textContent?.includes(title),
+  );
+  expect(source, title).toBeDefined();
+  act(() => source!.click());
+}
+
+async function submitLocalCloneForm(url: string): Promise<void> {
+  const input = document.querySelector<HTMLInputElement>(
+    'input[placeholder="Enter Git clone URL or owner/repo"]',
+  );
+  expect(input).not.toBeNull();
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, url);
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await waitForReact(() =>
+    expect(document.querySelector<HTMLButtonElement>(CLONE_SUBMIT)?.disabled).toBe(false),
+  );
+  act(() => document.querySelector<HTMLButtonElement>(CLONE_SUBMIT)!.click());
+}
 
 async function openAddProjectDeveloper(): Promise<void> {
   await waitForReact(() => {

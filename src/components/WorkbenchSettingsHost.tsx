@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
+import { workbenchAgentThreadOpener } from "../application/agentThreadOpener";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { SystemFontGateway } from "../domain/systemFonts";
@@ -41,7 +42,14 @@ export function WorkbenchSettingsHost({
     workspaceTrusted: workbench.workspaceTrust?.trusted === true,
   });
   const env = useMemo(
-    () => settingsEnvironment({ appUpdater, providerManagement, systemFontGateway, workbench }),
+    () =>
+      settingsEnvironment({
+        agentThreadOpener: workbenchAgentThreadOpener,
+        appUpdater,
+        providerManagement,
+        systemFontGateway,
+        workbench,
+      }),
     [appUpdater, providerManagement, systemFontGateway, workbench],
   );
   const { saveWorkbenchSettings, setSettingsOpen } = workbench;

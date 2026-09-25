@@ -52,6 +52,38 @@ describe("FileTree", () => {
     return props;
   }
 
+  it("opens a file pinned on Enter and still toggles a directory on Enter", () => {
+    const onOpenFile = vi.fn();
+    const onPreviewFile = vi.fn();
+    const onToggleDirectory = vi.fn();
+    renderTree({ onOpenFile, onPreviewFile, onToggleDirectory });
+
+    const fileEnter = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+    });
+    act(() => {
+      rowByLabel("User.php").dispatchEvent(fileEnter);
+    });
+    expect(onOpenFile).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/workspace/User.php" }),
+    );
+    expect(fileEnter.defaultPrevented).toBe(true);
+    expect(onPreviewFile).not.toHaveBeenCalled();
+
+    const directoryEnter = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+    });
+    act(() => {
+      rowByLabel("src").dispatchEvent(directoryEnter);
+    });
+    expect(directoryEnter.defaultPrevented).toBe(false);
+    expect(onOpenFile).toHaveBeenCalledTimes(1);
+  });
+
   it("prefetches a file when the pointer enters its row", () => {
     const onPrefetchFile = vi.fn();
     renderTree({ onPrefetchFile });

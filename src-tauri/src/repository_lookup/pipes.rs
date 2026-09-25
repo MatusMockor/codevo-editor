@@ -24,6 +24,16 @@ pub(crate) fn read_streams<O: Read + AsRawFd, E: Read + AsRawFd>(
     limits: StreamLimits,
     deadline: Instant,
 ) -> StreamsResult {
+    read_streams_observed(stdout, stderr, limits, deadline, &mut |_| {})
+}
+
+pub(crate) fn read_streams_observed<O: Read + AsRawFd, E: Read + AsRawFd>(
+    stdout: O,
+    stderr: E,
+    limits: StreamLimits,
+    deadline: Instant,
+    observe_stderr: &mut dyn FnMut(&[u8]),
+) -> StreamsResult {
     if !set_non_blocking(stdout.as_raw_fd()) || !set_non_blocking(stderr.as_raw_fd()) {
         return StreamsResult::Failed;
     }
@@ -49,11 +59,11 @@ pub(crate) fn read_streams<O: Read + AsRawFd, E: Read + AsRawFd>(
         if ready == 0 {
             continue;
         }
-        if descriptors[0].revents != 0 && out.drain() {
+        if descriptors[0].revents != 0 && out.drain(&mut |_| {}) {
             return StreamsResult::TooLarge;
         }
         if descriptors[1].revents != 0 {
-            err.drain();
+            err.drain(observe_stderr);
         }
     }
 }
@@ -93,13 +103,16 @@ impl<R: Read + AsRawFd> BoundedStream<R> {
         }
     }
 
-    fn drain(&mut self) -> bool {
+    fn drain(&mut self, observe: &mut dyn FnMut(&[u8])) -> bool {
         match self.reader.read(&mut self.chunk) {
             Ok(0) => {
                 self.finished = true;
                 false
             }
-            Ok(count) => self.push(count),
+            Ok(count) => {
+                observe(&self.chunk[..count]);
+                self.push(count)
+            }
             Err(error) if error.kind() == ErrorKind::WouldBlock => false,
             Err(error) if error.kind() == ErrorKind::Interrupted => false,
             Err(_) => {

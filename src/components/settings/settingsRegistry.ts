@@ -1,10 +1,11 @@
 import {
+  Archive,
   Bot,
   Braces,
   Code2,
+  Gauge,
   Keyboard,
   Layers,
-  Palette,
   Monitor,
   SlidersHorizontal,
   type LucideIcon,
@@ -13,7 +14,15 @@ import type { SettingsSection } from "../../domain/settings";
 import { SETTINGS_ROW_TABLE } from "./settingsRegistryRows";
 
 export type SettingsSectionId =
-  "general" | "appearance" | "agents" | "environments" | "keymap" | "index" | "php" | "snippets";
+  | "general"
+  | "agents"
+  | "environments"
+  | "keymap"
+  | "index"
+  | "snippets"
+  | "usage"
+  | "archive"
+  | "php";
 
 export type SettingsRowAvailability = "always" | "workspace";
 
@@ -47,19 +56,13 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
     id: "general",
     label: "General",
     icon: SlidersHorizontal,
-    description: "Updates, workspace mode, trust, editing, and the status bar.",
-  },
-  {
-    id: "appearance",
-    label: "Appearance",
-    icon: Palette,
-    description: "Theme, agent appearance, and editor typography.",
+    description: "Theme, text, updates, workspace, and editing.",
   },
   {
     id: "agents",
-    label: "Agents",
+    label: "Providers",
     icon: Bot,
-    description: "Provider CLIs and the defaults used by new agent threads.",
+    description: "Claude Code and Codex, models, and defaults for new threads.",
   },
   {
     id: "environments",
@@ -80,16 +83,28 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
     description: "Indexing limits, JavaScript and TypeScript, linters, and git mappings.",
   },
   {
-    id: "php",
-    label: "PHP",
-    icon: Code2,
-    description: "PHP engine, language level, tool paths, and analysis.",
-  },
-  {
     id: "snippets",
     label: "Snippets",
     icon: Braces,
     description: "User live templates shared across every project.",
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    icon: Gauge,
+    description: "Subscription limits and local activity.",
+  },
+  {
+    id: "archive",
+    label: "Archive",
+    icon: Archive,
+    description: "Archived threads from every project.",
+  },
+  {
+    id: "php",
+    label: "PHP",
+    icon: Code2,
+    description: "PHP engine, language level, tool paths, and analysis.",
   },
 ];
 
@@ -127,21 +142,17 @@ export function settingsSectionDescriptor(id: SettingsSectionId): SettingsSectio
 export function resolveSettingsRoute(section: SettingsSection): SettingsRoute {
   switch (section) {
     case "general":
-      return { section: "general", row: null };
-    case "appearance":
-      return { section: "appearance", row: null };
     case "agents":
-      return { section: "agents", row: null };
     case "environments":
-      return { section: "environments", row: null };
     case "keymap":
-      return { section: "keymap", row: null };
     case "index":
-      return { section: "index", row: null };
     case "php":
-      return { section: "php", row: null };
     case "snippets":
-      return { section: "snippets", row: null };
+    case "usage":
+    case "archive":
+      return { section, row: null };
+    case "appearance":
+      return { section: "general", row: "appearance.palette" };
     case "git":
       return { section: "index", row: "index.gitDirectoryMappings" };
     default:

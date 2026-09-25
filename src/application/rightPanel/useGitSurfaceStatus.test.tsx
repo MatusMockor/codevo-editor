@@ -81,6 +81,7 @@ function Probe(props: {
   readonly gateway: GitSurfaceStatusGateway | null;
   readonly target: GitSurfaceTarget | null;
   readonly enabled: boolean;
+  readonly revision?: unknown;
 }) {
   box.current = useGitSurfaceStatus(props);
   return null;
@@ -90,9 +91,10 @@ function render(
   gateway: GitSurfaceStatusGateway | null,
   target: GitSurfaceTarget | null,
   enabled = true,
+  revision: unknown = 0,
 ): void {
   ui = ui ?? mountUi();
-  ui.render(<Probe enabled={enabled} gateway={gateway} target={target} />);
+  ui.render(<Probe enabled={enabled} gateway={gateway} revision={revision} target={target} />);
 }
 
 const repoA: GitSurfaceTarget = { repositoryRoot: "/a", worktreePath: null };
@@ -154,6 +156,19 @@ describe("useGitSurfaceStatus", () => {
     await waitForReact(() =>
       expect(box.current?.load).toEqual({ kind: "ready", status: status("feat/a2") }),
     );
+  });
+
+  it("reloads when the status revision changes and keeps the previous value meanwhile", async () => {
+    const gateway = scriptedGateway();
+    render(gateway, repoA, true, 1);
+    await act(async () => gateway.pending[0]?.resolve(status("feat/a")));
+    render(gateway, repoA, true, 1);
+    expect(gateway.calls).toHaveLength(1);
+
+    render(gateway, repoA, true, 2);
+
+    expect(gateway.calls).toHaveLength(2);
+    expect(gitSurfaceStatusValue(box.current?.load ?? { kind: "idle" })).toEqual(status("feat/a"));
   });
 
   it("reports a rejected load as failed with its message", async () => {

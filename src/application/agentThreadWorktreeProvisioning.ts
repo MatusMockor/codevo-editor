@@ -1,3 +1,4 @@
+import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
 import {
   MAX_WORKTREES_PER_REPOSITORY,
   type AgentWorktreeReceipt,
@@ -50,12 +51,13 @@ export async function createThreadWorktree(
   authority: AgentTaskLaunchAuthority,
   repositoryRoot: string,
   threadId: string,
+  base: AgentWorktreeBase,
 ): Promise<CreatedAgentWorktree | null> {
   const deps = dependenciesRef.current;
   if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
     return null;
   const gateway = deps.gitWorktreeGateway;
-  const receipt = await attempt(() => gateway.addAgentWorktree(repositoryRoot, threadId));
+  const receipt = await attempt(() => gateway.addAgentWorktree(repositoryRoot, threadId, base));
   if (!receipt.ok) {
     if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
       return null;

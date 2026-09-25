@@ -341,6 +341,7 @@ describe("GitDiffPreview", () => {
       await act(async () => {
         root.render(
           <EditorArea
+            activeTabsInStrip={false}
             documents={[document]}
             editorSessionOwnerKey={editorSessionOwnerKey}
             onActivateGroup={vi.fn()}

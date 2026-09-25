@@ -218,6 +218,44 @@ describe("AgentGitBranchPicker", () => {
     expect(next.onSwitch).toHaveBeenCalledWith({ name: "main", kind: "local", badge: "default" });
   });
 
+  it("scrolls the keyboard-active option into view", () => {
+    const scrolled: Array<{ readonly text: string | null; readonly options: unknown }> = [];
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value(this: Element, options?: unknown) {
+        scrolled.push({ text: this.textContent, options });
+      },
+    });
+    try {
+      const host = render(props());
+      click(trigger(host));
+      scrolled.length = 0;
+      const search = input("Search refs");
+      press(search, "ArrowDown");
+      press(search, "ArrowDown");
+      expect(scrolled[scrolled.length - 1]).toEqual({
+        text: "chore/deps-2026-09",
+        options: { block: "nearest" },
+      });
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      if (original !== undefined)
+        Object.defineProperty(Element.prototype, "scrollIntoView", original);
+    }
+  });
+
+  it("keeps keyboard navigation working where scrollIntoView is unavailable", () => {
+    expect("scrollIntoView" in Element.prototype).toBe(false);
+    const next = props();
+    const host = render(next);
+    click(trigger(host));
+    const search = input("Search refs");
+    press(search, "ArrowDown");
+    press(search, "Enter");
+    expect(next.onSwitch).toHaveBeenCalledWith({ name: "main", kind: "local", badge: "default" });
+  });
+
   it("selects the first match with Enter and closes on Escape returning focus", () => {
     const next = props();
     const host = render(next);

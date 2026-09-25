@@ -166,8 +166,8 @@ function createWorkbench() {
       activeDocument: gitDiffBoundaryMockState.activeDocument,
       agentModeActive: false,
       agentWorkbench: {
-        layout: { ...initialAgentWorkbenchLayout, layout: "editor-expanded" },
-        effectiveLayout: "editor-expanded",
+        layout: initialAgentWorkbenchLayout,
+        effectiveLayout: "editor-only",
         dispatch: noop,
       },
       agents: {
@@ -196,6 +196,7 @@ function createWorkbench() {
         debugRestartPending: false,
         debugStopPending: false,
         isDebugStartBlocked: () => false,
+        snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
         restartDebug: vi.fn(async () => undefined),
         watches: createEmptyDebugWatches(),
       },
@@ -263,7 +264,6 @@ function createWorkbench() {
       searchEverywhereOpen: false,
       selectedGitChange: diff.change,
       settingsOpen: false,
-      sidebarView: "git",
       textSearchOpen: false,
       todoPanelOpen: false,
       typeHierarchyView: null,

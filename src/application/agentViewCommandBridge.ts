@@ -14,6 +14,7 @@ export type AgentViewCommandId =
   | "agent.runPreferredScript"
   | "agent.openCommitMenu"
   | "panel.toggleMaximized"
+  | "project.add"
   | `agent.jumpToThread.${AgentJumpSlot}`;
 
 export interface AgentViewCommandHandlers {
@@ -30,6 +31,7 @@ export interface AgentViewCommandHandlers {
   runPreferredScript?(): void;
   openCommitMenu?(): void;
   toggleMaximizedPanel?(): void;
+  addProject?(): void;
   threadSelected(): boolean;
 }
 
@@ -40,6 +42,7 @@ export interface AgentViewCommandBridge {
   threadFindFocused(): boolean;
   editorTextFocused(): boolean;
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
+  addProjectAvailable(): boolean;
   run(commandId: AgentViewCommandId): void;
 }
 
@@ -63,6 +66,7 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
     threadFindFocused: () => current?.threadFindFocused?.() ?? false,
     editorTextFocused: () => current?.editorTextFocused?.() ?? false,
     surfaceBlocked: (surface) => current?.surfaceBlocked(surface) ?? true,
+    addProjectAvailable: () => current?.addProject !== undefined,
     run(commandId) {
       const handlers = current;
       if (handlers === null) return;
@@ -101,6 +105,9 @@ function dispatch(handlers: AgentViewCommandHandlers, commandId: AgentViewComman
       return;
     case "panel.toggleMaximized":
       handlers.toggleMaximizedPanel?.();
+      return;
+    case "project.add":
+      handlers.addProject?.();
       return;
     default:
       handlers.jumpToThread(jumpSlotOf(commandId));

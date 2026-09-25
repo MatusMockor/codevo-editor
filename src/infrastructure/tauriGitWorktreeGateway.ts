@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
 import type {
   AgentWorktreeReceipt,
   BranchWorktreeReceipt,
@@ -36,11 +37,15 @@ export class TauriGitWorktreeGateway implements GitWorktreeGateway {
     return result.worktrees;
   }
 
-  async addAgentWorktree(repositoryRoot: string, taskId: string): Promise<AgentWorktreeReceipt> {
+  async addAgentWorktree(
+    repositoryRoot: string,
+    taskId: string,
+    base: AgentWorktreeBase,
+  ): Promise<AgentWorktreeReceipt> {
     if (!this.isRuntimeAvailable()) {
       throw new Error("Git unavailable.");
     }
-    return invokeAddGitWorktreeIpc(this.invokeCommand, repositoryRoot, taskId);
+    return invokeAddGitWorktreeIpc(this.invokeCommand, repositoryRoot, taskId, base);
   }
 
   async addBranchWorktree(request: BranchWorktreeRequest): Promise<BranchWorktreeReceipt> {

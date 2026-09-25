@@ -12,9 +12,17 @@ describe("composer command discovery", () => {
       "permissions",
       "new",
       "settings",
+      "usage",
     ]);
     expect(agentComposerCommands("claudeCode", false).map(({ id }) => id)).not.toContain("compact");
     expect(agentComposerCommands("claudeCode", true).map(({ id }) => id)).toContain("compact");
+  });
+
+  it("offers /usage for both providers", () => {
+    expect(agentComposerCommands("codex", false).map((command) => command.id)).toContain("usage");
+    expect(agentComposerCommands("claudeCode", true).map((command) => command.id)).toContain(
+      "usage",
+    );
   });
 
   it.each([

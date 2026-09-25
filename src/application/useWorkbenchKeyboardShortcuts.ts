@@ -163,6 +163,7 @@ export function useWorkbenchKeyboardShortcuts({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (handledByModalSurface(event)) return;
       if (event.key === "Escape") {
         doubleShiftDetectorRef.current.reset();
         resetChord("escape");
@@ -309,6 +310,13 @@ export function useWorkbenchKeyboardShortcuts({
     keymap,
     runCommand,
   ]);
+}
+
+function handledByModalSurface(event: KeyboardEvent): boolean {
+  if (!event.defaultPrevented) return false;
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  return target.closest('[role="dialog"][aria-modal="true"]') !== null;
 }
 
 function definitionUsesDefaultShortcut(keymap: KeymapSettings): boolean {

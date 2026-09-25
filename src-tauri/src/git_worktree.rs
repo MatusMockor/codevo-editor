@@ -17,6 +17,13 @@ mod git_worktree_exclude;
 #[path = "git_branch_worktree.rs"]
 pub(crate) mod git_branch_worktree;
 
+#[path = "git_worktree_start_point.rs"]
+pub(crate) mod git_worktree_start_point;
+
+pub(crate) use git_branch_worktree::resolve_worktree_start_point;
+use git_worktree_start_point::starting_commit;
+pub(crate) use git_worktree_start_point::WorktreeStartPoint;
+
 use git_worktree_exclude::ensure_agent_worktree_excluded;
 #[cfg(test)]
 use git_worktree_exclude::{
@@ -115,6 +122,14 @@ pub trait GitWorktreeGateway: Send + Sync {
         &self,
         repository_root: &Path,
         task_id: &str,
+    ) -> Result<CreatedAgentWorktree, String> {
+        self.add_agent_worktree_from(repository_root, task_id, &WorktreeStartPoint::Head)
+    }
+    fn add_agent_worktree_from(
+        &self,
+        repository_root: &Path,
+        task_id: &str,
+        start: &WorktreeStartPoint,
     ) -> Result<CreatedAgentWorktree, String>;
     fn remove_worktree(
         &self,
@@ -293,10 +308,11 @@ impl GitWorktreeGateway for CommandGitWorktreeGateway {
         parse_worktree_list(&output)
     }
 
-    fn add_agent_worktree(
+    fn add_agent_worktree_from(
         &self,
         repository_root: &Path,
         task_id: &str,
+        start: &WorktreeStartPoint,
     ) -> Result<CreatedAgentWorktree, String> {
         let task_id = safe_agent_task_id(task_id)?;
         let root = canonical_repository_root(repository_root)?;
@@ -308,7 +324,7 @@ impl GitWorktreeGateway for CommandGitWorktreeGateway {
         ensure_path_bounds(&target)?;
         let _add_guard = AgentWorktreeCreationLock::acquire(&base, &task_id)?;
         let existing = self.list_worktrees(&root)?;
-        let starting_head = repository_head(&root)?;
+        let starting_head = starting_commit(&root, start)?;
 
         if existing.len() >= MAX_WORKTREES_PER_REPOSITORY {
             return Err(format!(

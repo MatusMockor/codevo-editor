@@ -10,7 +10,7 @@ import { DEFAULT_WORKSPACE_PATH_POLICY } from "../domain/workspacePath";
 
 const mocks = vi.hoisted(() => ({
   problemSnapshot: null as JsTestProblemsSnapshot | null,
-  useDebugPanelProps: vi.fn(() => ({})),
+  useDebugPanelProps: vi.fn(() => ({ snapshot: { state: { kind: "inactive" }, lastSeq: 0 } })),
   useJsTestExplorerPanelController: vi.fn(() => ({
     problemSnapshot: mocks.problemSnapshot,
   })),

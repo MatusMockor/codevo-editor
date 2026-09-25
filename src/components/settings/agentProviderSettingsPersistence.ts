@@ -7,7 +7,12 @@ import {
   type CodexTransportSettings,
   parseCodexTransportSettings,
 } from "../../domain/agentProviderSettings";
-import { nextAgentModelFavoritesRevision, type AgentCliKind } from "../../domain/agentSettings";
+import {
+  MAX_AGENT_MODEL_FAVORITES,
+  nextAgentModelFavoritesRevision,
+  type AgentCliKind,
+  type AgentModelFavoriteKey,
+} from "../../domain/agentSettings";
 import type { AppSettings } from "../../domain/settings";
 
 export const AGENT_PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
@@ -237,6 +242,33 @@ export function withClearedModelFavorites(settings: AppSettings): AppSettings | 
   if (revision === null) return null;
 
   return { ...settings, agentModelFavoriteKeys: [], agentModelFavoritesRevision: revision };
+}
+
+export function withToggledModelFavorite(
+  settings: AppSettings,
+  key: AgentModelFavoriteKey,
+): AppSettings | null {
+  const revision = nextAgentModelFavoritesRevision(settings.agentModelFavoritesRevision);
+
+  if (revision === null) return null;
+
+  const current = settings.agentModelFavoriteKeys;
+
+  if (current.includes(key)) {
+    return {
+      ...settings,
+      agentModelFavoriteKeys: current.filter((candidate) => candidate !== key),
+      agentModelFavoritesRevision: revision,
+    };
+  }
+
+  if (current.length >= MAX_AGENT_MODEL_FAVORITES) return null;
+
+  return {
+    ...settings,
+    agentModelFavoriteKeys: [...current, key],
+    agentModelFavoritesRevision: revision,
+  };
 }
 
 function otherProvider(provider: AgentCliKind): AgentCliKind {

@@ -1,3 +1,4 @@
+import type { AgentWorktreeBase } from "./agentWorktreeBase";
 import { validateGitBaseRef } from "./gitBranchDiff";
 
 export const MAX_WORKTREES_PER_REPOSITORY = 128;
@@ -34,7 +35,11 @@ export interface BranchWorktreeReceipt {
 
 export interface GitWorktreeGateway {
   listWorktrees(repositoryRoot: string): Promise<ReadonlyArray<GitWorktreeDescriptor>>;
-  addAgentWorktree(repositoryRoot: string, taskId: string): Promise<AgentWorktreeReceipt>;
+  addAgentWorktree(
+    repositoryRoot: string,
+    taskId: string,
+    base: AgentWorktreeBase,
+  ): Promise<AgentWorktreeReceipt>;
   addBranchWorktree?(request: BranchWorktreeRequest): Promise<BranchWorktreeReceipt>;
   removeWorktree(repositoryRoot: string, worktreePath: string, force: boolean): Promise<void>;
   pruneWorktrees(repositoryRoot: string): Promise<ReadonlyArray<string>>;

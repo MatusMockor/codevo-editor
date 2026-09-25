@@ -545,7 +545,10 @@ describe("AgentProviderCard", () => {
       preference: { ...defaultAgentProviderPreferences().claudeCode, enabled },
     });
 
-    expect(host.querySelector(".settings-provider__glyph")?.getAttribute("data-tone")).toBe(tone);
+    const dot = host.querySelector(".settings-provider__desc .settings-provider__dot");
+
+    expect(dot?.getAttribute("data-tone")).toBe(tone);
+    expect(host.querySelector(".settings-provider__glyph .settings-provider__dot")).toBeNull();
   });
 
   it("explains an unchecked sign-in instead of warning about authentication", () => {
@@ -568,6 +571,39 @@ describe("AgentProviderCard", () => {
     expect(host.querySelector('[aria-label="Sign in"]')).toBeNull();
   });
 
+  it("lists the provider models with favorite stars in the expanded details", () => {
+    const onToggleFavorite = vi.fn();
+
+    render(management(), {
+      favoriteKeys: new Set(["claudeCode/claude-opus-5-5"]),
+      onToggleFavorite,
+    });
+
+    expect(host.querySelector(".settings-models")).toBeNull();
+
+    expand();
+
+    expect(host.querySelector('[aria-label="Claude Code models"]')).not.toBeNull();
+    expect(byLabel("Favorite Claude Opus 5.5").getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).toContain("Starred models appear first in the composer.");
+
+    act(() => byLabel("Favorite Claude Opus 5").click());
+
+    expect(onToggleFavorite).toHaveBeenCalledWith("claudeCode/claude-opus-5");
+  });
+
+  it("places sign in, the enable switch and the details chevron in mockup order", () => {
+    render(management({ health: signedOutHealth() }), {
+      signIn: { blockedReason: null, state: { kind: "idle" }, onSignIn: () => undefined },
+    });
+
+    const labels = [...host.querySelectorAll(".settings-provider__side button")].map(
+      (button) => button.getAttribute("aria-label") ?? button.textContent?.trim(),
+    );
+
+    expect(labels).toEqual(["Sign in", "Enable Claude Code", "Show Claude Code details"]);
+  });
+
   function render(
     surface: AgentProviderManagementSurface,
     overrides: Partial<AgentProviderCardProps> = {},
@@ -583,6 +619,8 @@ describe("AgentProviderCard", () => {
           onResetProvider={() => undefined}
           path="/usr/local/bin/claude"
           preference={defaultAgentProviderPreferences().claudeCode}
+          favoriteKeys={new Set()}
+          onToggleFavorite={() => undefined}
           provider="claudeCode"
           rowId="agents.providerClaudeCode"
           signIn={null}

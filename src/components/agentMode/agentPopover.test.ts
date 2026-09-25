@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import {
   AGENT_POPOVER_METRICS,
+  useAgentPopover,
+  type AgentPopoverMetrics,
   agentPopoverContainingBlock,
   agentPopoverPosition,
   agentPopoverStyle,
@@ -191,5 +195,41 @@ describe("samePopoverPosition", () => {
     const anchor = rect({ top: 100, left: 200 });
     expect(samePopoverPosition(place(anchor), place(anchor))).toBe(true);
     expect(samePopoverPosition(place(anchor), place(rect({ top: 101, left: 200 })))).toBe(false);
+  });
+});
+
+describe("useAgentPopover metrics", () => {
+  function Harness({ metrics }: { readonly metrics?: AgentPopoverMetrics }) {
+    const popover = useAgentPopover("start", false, metrics);
+    return createElement(
+      "div",
+      { ref: popover.rootRef },
+      createElement("button", { onClick: popover.toggle, ref: popover.triggerRef, type: "button" }),
+      popover.open
+        ? createElement("div", {
+            "data-testid": "surface",
+            ref: popover.popoverRef,
+            style: popover.style,
+          })
+        : null,
+    );
+  }
+
+  function openHeight(metrics?: AgentPopoverMetrics): string | undefined {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => root.render(createElement(Harness, { metrics })));
+    act(() => host.querySelector("button")?.click());
+    const height = host.querySelector<HTMLElement>('[data-testid="surface"]')?.style.maxHeight;
+    act(() => root.unmount());
+    host.remove();
+    return height;
+  }
+
+  it("caps the height at the shared default unless the caller passes its own metrics", () => {
+    expect(openHeight()).toBe(`${AGENT_POPOVER_METRICS.maxHeight}px`);
+    expect(openHeight({ ...AGENT_POPOVER_METRICS, maxWidth: 360, maxHeight: 346 })).toBe("346px");
   });
 });

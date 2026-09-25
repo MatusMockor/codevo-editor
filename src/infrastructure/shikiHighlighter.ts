@@ -7,6 +7,12 @@ import {
   materialDeepOcean,
   type ThemePalette,
 } from "../components/themePalettes";
+import {
+  OVERVIEW_RULER_ADDED,
+  OVERVIEW_RULER_DELETED,
+  OVERVIEW_RULER_MODIFIED,
+  withOverviewRulerChangeColors,
+} from "./editorOverviewRulerColors";
 import { PALETTE_SYNTAX_THEMES } from "./paletteSyntaxThemes";
 
 export interface ShikiThemeRegistration {
@@ -98,6 +104,10 @@ function buildSymbolIconColors(p: ThemePalette): Record<string, string> {
   };
 }
 
+function optionalColor(key: string, value: string | undefined): Record<string, string> {
+  return value === undefined ? {} : { [key]: value };
+}
+
 export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
   const tok = (scope: string[], foreground: string, italic = false) => ({
     scope,
@@ -162,6 +172,15 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
       // --symbol-* CSS uses keeps the autocomplete icons and the structure
       // palette telling the same color story (method = func, class = type, ...).
       ...buildSymbolIconColors(p),
+      ...optionalColor("editor.findMatchBackground", p.findMatch),
+      ...optionalColor("editor.findMatchHighlightBackground", p.findMatchHighlight),
+      ...optionalColor("peekViewEditor.background", p.peekBackground),
+      ...optionalColor("peekViewResult.background", p.peekBackground),
+      ...optionalColor("peekViewTitle.background", p.peekBackground),
+      ...optionalColor("peekView.border", p.peekBorder),
+      ...optionalColor(OVERVIEW_RULER_ADDED, p.overviewAdded),
+      ...optionalColor(OVERVIEW_RULER_MODIFIED, p.overviewModified),
+      ...optionalColor(OVERVIEW_RULER_DELETED, p.overviewDeleted),
     },
     tokenColors: [
       tok(
@@ -823,12 +842,17 @@ function installShikiThemes(
   initialTheme: string,
 ): void {
   for (const themeId of highlighter.getLoadedThemes()) {
-    monaco.editor.defineTheme(
-      themeId,
-      textmateThemeToMonacoTheme(
-        highlighter.getTheme(themeId),
-      ) as unknown as MonacoStandaloneTheme,
-    );
+    const shikiTheme = highlighter.getTheme(themeId);
+    const monacoTheme = textmateThemeToMonacoTheme(
+      shikiTheme,
+    ) as unknown as MonacoStandaloneTheme;
+    monaco.editor.defineTheme(themeId, {
+      ...monacoTheme,
+      colors: withOverviewRulerChangeColors(
+        monacoTheme.colors,
+        shikiTheme.type === "light" ? "light" : "dark",
+      ),
+    });
   }
 
   const applyShikiColorMap = (themeName: string): void => {

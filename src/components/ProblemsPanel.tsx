@@ -1,10 +1,12 @@
-import { memo, useId, useMemo, useState } from "react";
+import { memo, useContext, useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { KeyboardEvent } from "react";
 import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
   Copy,
+  FileText,
   Info,
   ListFilter,
   TriangleAlert,
@@ -27,11 +29,12 @@ import {
 } from "../domain/problemsPackageAttribution";
 import type { WorkspacePackageManifestInput } from "../domain/workspacePackageGraph";
 import type { WorkspacePackageAuthority } from "../application/useWorkspacePackageGraph";
+import { EditorDrawerExtrasContext } from "./editorPanel/EditorDrawerExtrasContext";
 
-const ERROR_ICON = <AlertCircle aria-hidden="true" size={15} />;
-const WARNING_ICON = <TriangleAlert aria-hidden="true" size={15} />;
-const INFO_ICON = <Info aria-hidden="true" size={15} />;
-const OVERFLOW_ICON = <ListFilter aria-hidden="true" size={15} />;
+const ERROR_ICON = <AlertCircle aria-hidden="true" size={14} />;
+const WARNING_ICON = <TriangleAlert aria-hidden="true" size={14} />;
+const INFO_ICON = <Info aria-hidden="true" size={14} />;
+const OVERFLOW_ICON = <ListFilter aria-hidden="true" size={14} />;
 export const MAX_RENDERED_PROBLEM_ROWS = 200;
 const EMPTY_PACKAGE_MANIFESTS: readonly WorkspacePackageManifestInput[] = [];
 const EMPTY_INCOMPLETE_DIRECTORIES: readonly string[] = [];
@@ -65,6 +68,7 @@ function ProblemsPanelWorkspace({
   workspacePackageUnscopedAuthorityUncertain = false,
   workspaceRoot,
 }: ProblemsPanelProps) {
+  const toolbarHost = useContext(EditorDrawerExtrasContext);
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   const [collapsedPackages, setCollapsedPackages] = useState<Set<string>>(new Set());
   const [filterText, setFilterText] = useState("");
@@ -222,97 +226,101 @@ function ProblemsPanelWorkspace({
     });
   };
 
-  return (
-    <div aria-label="Problems" className="problems-list" hidden={!isActive} role="tabpanel">
-      <div className="problems-toolbar">
-        <div aria-label="Problem severities" className="problems-severity-toggles" role="group">
-          <button
-            aria-label={`Errors (${view.totals.errors})`}
-            aria-pressed={visibility.errors}
-            className="problems-severity-toggle error"
-            onClick={() => toggleSeverity("errors")}
-            type="button"
-          >
-            {ERROR_ICON}
-            <span>{view.totals.errors}</span>
-          </button>
-          <button
-            aria-label={`Warnings (${view.totals.warnings})`}
-            aria-pressed={visibility.warnings}
-            className="problems-severity-toggle warning"
-            onClick={() => toggleSeverity("warnings")}
-            type="button"
-          >
-            {WARNING_ICON}
-            <span>{view.totals.warnings}</span>
-          </button>
-        </div>
-        <div aria-label="Problem grouping" role="group">
-          <button
-            aria-label="Group by file"
-            aria-pressed={grouping === "file"}
-            onClick={() => setGrouping("file")}
-            type="button"
-          >
-            File
-          </button>
-          <button
-            aria-label="Group by package"
-            aria-pressed={grouping === "package"}
-            data-degraded={workspacePackageAuthority === "bounded" ? "true" : undefined}
-            onClick={() => setGrouping("package")}
-            title={
-              workspacePackageAuthority === "bounded"
-                ? "Package grouping degraded because the workspace scan was bounded"
-                : undefined
-            }
-            type="button"
-          >
-            {workspacePackageAuthority === "bounded" ? "Package (degraded)" : "Package"}
-          </button>
-        </div>
-        <label>
-          <span>Package</span>
-          <select
-            aria-label="Filter by package"
-            data-degraded={workspacePackageAuthority === "bounded" ? "true" : undefined}
-            onChange={(event) => setPackageFilterKey(event.target.value)}
-            title={
-              workspacePackageAuthority === "bounded"
-                ? "Package filter degraded because the workspace scan was bounded"
-                : undefined
-            }
-            value={effectivePackageFilterKey}
-          >
-            <option value="">All packages</option>
-            {packageOptions.map((identity) => (
-              <option key={identity.key} value={identity.key}>
-                {identity.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="problems-filter">
-          <input
-            aria-label="Filter problems"
-            onChange={(event) => setFilterText(event.target.value)}
-            placeholder="Filter problems"
-            type="text"
-            value={filterText}
-          />
-          {filterText ? (
-            <button aria-label="Clear filter" onClick={() => setFilterText("")} type="button">
-              <X aria-hidden="true" size={13} />
-            </button>
-          ) : null}
-        </div>
+  const toolbar = (
+    <div className="cv-problems__toolbar">
+      <div aria-label="Problem severities" className="cv-problems__severities" role="group">
+        <button
+          aria-label={`Errors (${view.totals.errors})`}
+          aria-pressed={visibility.errors}
+          className="cv-problems__severity cv-problems__severity--error"
+          onClick={() => toggleSeverity("errors")}
+          type="button"
+        >
+          {ERROR_ICON}
+          <span>{view.totals.errors}</span>
+        </button>
+        <button
+          aria-label={`Warnings (${view.totals.warnings})`}
+          aria-pressed={visibility.warnings}
+          className="cv-problems__severity cv-problems__severity--warning"
+          onClick={() => toggleSeverity("warnings")}
+          type="button"
+        >
+          {WARNING_ICON}
+          <span>{view.totals.warnings}</span>
+        </button>
       </div>
+      <div aria-label="Problem grouping" role="group">
+        <button
+          aria-label="Group by file"
+          aria-pressed={grouping === "file"}
+          onClick={() => setGrouping("file")}
+          type="button"
+        >
+          File
+        </button>
+        <button
+          aria-label="Group by package"
+          aria-pressed={grouping === "package"}
+          data-degraded={workspacePackageAuthority === "bounded" ? "true" : undefined}
+          onClick={() => setGrouping("package")}
+          title={
+            workspacePackageAuthority === "bounded"
+              ? "Package grouping degraded because the workspace scan was bounded"
+              : undefined
+          }
+          type="button"
+        >
+          {workspacePackageAuthority === "bounded" ? "Package (degraded)" : "Package"}
+        </button>
+      </div>
+      <label>
+        <span>Package</span>
+        <select
+          aria-label="Filter by package"
+          data-degraded={workspacePackageAuthority === "bounded" ? "true" : undefined}
+          onChange={(event) => setPackageFilterKey(event.target.value)}
+          title={
+            workspacePackageAuthority === "bounded"
+              ? "Package filter degraded because the workspace scan was bounded"
+              : undefined
+          }
+          value={effectivePackageFilterKey}
+        >
+          <option value="">All packages</option>
+          {packageOptions.map((identity) => (
+            <option key={identity.key} value={identity.key}>
+              {identity.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="cv-problems__filter">
+        <input
+          aria-label="Filter problems"
+          onChange={(event) => setFilterText(event.target.value)}
+          placeholder="Filter problems"
+          type="text"
+          value={filterText}
+        />
+        {filterText ? (
+          <button aria-label="Clear filter" onClick={() => setFilterText("")} type="button">
+            <X aria-hidden="true" size={13} />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  return (
+    <div aria-label="Problems" className="cv-problems" hidden={!isActive} role="tabpanel">
+      {toolbarHost === null ? toolbar : createPortal(toolbar, toolbarHost)}
       {notices.length === 0 ? <p>No problems</p> : null}
       {notices.length > 0 && !hasVisibleRows ? <p>No problems match the current filters</p> : null}
       {hasVisibleRows ? (
-        <div aria-label="Problem list" className="problems-list-rows">
+        <div aria-label="Problem list" className="cv-problems__rows">
           {renderedGeneral.length > 0 ? (
-            <section aria-label="General problems" className="problems-general">
+            <section aria-label="General problems" className="cv-problems__general">
               {renderedGeneral.map((notice) => (
                 <ProblemRow
                   isSelected={notice.id === selectedNoticeId}
@@ -409,10 +417,11 @@ function ProblemFileGroup({
   const headerId = useId();
 
   return (
-    <section aria-labelledby={headerId} className="problems-file-group">
+    <section aria-labelledby={headerId} className="cv-problems__group">
       <button
         aria-expanded={!collapsed}
-        className="problems-file-header"
+        aria-label={`${file.relativePath}, ${severityCountLabel(file.errorCount, "error")}, ${severityCountLabel(file.warningCount, "warning")}`}
+        className="cv-problems__file"
         id={headerId}
         onClick={onToggle}
         tabIndex={-1}
@@ -424,11 +433,16 @@ function ProblemFileGroup({
         ) : (
           <ChevronDown aria-hidden="true" size={14} />
         )}
-        <span>{file.relativePath}</span>
-        <small>
-          {severityCountLabel(file.errorCount, "error")}
-          {" · "}
-          {severityCountLabel(file.warningCount, "warning")}
+        <FileText aria-hidden="true" className="cv-problems__file-icon" size={13} />
+        <span className="cv-problems__name">
+          {fileName(file.relativePath)}
+          <span className="cv-problems__dir">{fileDirectory(file.relativePath)}</span>
+        </span>
+        <small
+          className="cv-problems__count"
+          title={`${severityCountLabel(file.errorCount, "error")} · ${severityCountLabel(file.warningCount, "warning")}`}
+        >
+          {file.errorCount + file.warningCount}
         </small>
       </button>
       {collapsed
@@ -487,11 +501,11 @@ function ProblemPackageGroup({
   const hiddenCount = packageView.count.value - renderedCount;
 
   return (
-    <section aria-labelledby={headerId} className="problems-package-group">
+    <section aria-labelledby={headerId} className="cv-problems__package-group">
       <button
         aria-expanded={!collapsed}
         aria-label={`${packageView.identity.label}, ${countLabel}`}
-        className="problems-package-header problems-file-header"
+        className="cv-problems__package cv-problems__file"
         id={headerId}
         onClick={onToggle}
         onKeyDown={handleKeyDown}
@@ -502,8 +516,8 @@ function ProblemPackageGroup({
         ) : (
           <ChevronDown aria-hidden="true" size={14} />
         )}
-        <span>{packageView.identity.label}</span>
-        <small>{countLabel}</small>
+        <span className="cv-problems__name">{packageView.identity.label}</span>
+        <small className="cv-problems__count">{countLabel}</small>
       </button>
       {collapsed
         ? null
@@ -551,7 +565,7 @@ function ProblemRowComponent({
   packageKey,
 }: ProblemRowProps) {
   const overflow = isOverflowNotice(notice);
-  const className = `problem-row ${overflow ? "overflow" : notice.severity}`;
+  const className = `cv-problems__item cv-problems__item--${overflow ? "overflow" : notice.severity}`;
 
   const copyMessage = () => {
     const write = navigator.clipboard?.writeText(notice.message);
@@ -560,13 +574,13 @@ function ProblemRowComponent({
 
   if (overflow) {
     return (
-      <div className="problem-row-container" data-package-key={packageKey}>
+      <div className="cv-problems__row" data-package-key={packageKey}>
         <div className={className} data-testid="diagnostics-overflow">
           <ProblemRowContent notice={notice} />
         </div>
         <button
           aria-label="Copy message"
-          className="problem-row-copy"
+          className="cv-problems__copy"
           onClick={copyMessage}
           tabIndex={-1}
           title="Copy message"
@@ -601,7 +615,7 @@ function ProblemRowComponent({
   };
 
   return (
-    <div className="problem-row-container" data-package-key={packageKey}>
+    <div className="cv-problems__row" data-package-key={packageKey}>
       {notice.navigationTarget ? (
         <button {...rowProps} onClick={() => onOpen(notice)} type="button">
           <ProblemRowContent notice={notice} />
@@ -613,7 +627,7 @@ function ProblemRowComponent({
       )}
       <button
         aria-label="Copy message"
-        className="problem-row-copy"
+        className="cv-problems__copy"
         onClick={copyMessage}
         tabIndex={-1}
         title="Copy message"
@@ -630,8 +644,8 @@ const ProblemRow = memo(ProblemRowComponent);
 function focusProblemItem(event: KeyboardEvent<HTMLElement>) {
   const items = Array.from(
     event.currentTarget
-      .closest(".problems-list-rows")
-      ?.querySelectorAll<HTMLElement>(".problems-package-header, .problem-row[tabindex]") ?? [],
+      .closest(".cv-problems__rows")
+      ?.querySelectorAll<HTMLElement>(".cv-problems__package, .cv-problems__item[tabindex]") ?? [],
   );
   const currentIndex = items.indexOf(event.currentTarget);
   if (currentIndex < 0) return;
@@ -646,15 +660,31 @@ function focusProblemItem(event: KeyboardEvent<HTMLElement>) {
 }
 
 function ProblemRowContent({ notice }: { notice: WorkbenchNotice }) {
+  const start = notice.navigationTarget?.range.start;
   return (
     <>
-      {isOverflowNotice(notice) ? OVERFLOW_ICON : getNoticeIcon(notice.severity)}
-      <span>
-        <strong>{notice.source}</strong>
-        <small>{notice.message}</small>
+      <span className="cv-problems__icon">
+        {isOverflowNotice(notice) ? OVERFLOW_ICON : getNoticeIcon(notice.severity)}
       </span>
+      <span className="cv-problems__msg">{notice.message}</span>
+      <span className="cv-problems__src">{notice.source}</span>
+      {start === undefined ? null : (
+        <span className="cv-problems__at">
+          {start.lineNumber}:{start.column}
+        </span>
+      )}
     </>
   );
+}
+
+function fileName(relativePath: string): string {
+  const index = relativePath.lastIndexOf("/");
+  return index < 0 ? relativePath : relativePath.slice(index + 1);
+}
+
+function fileDirectory(relativePath: string): string {
+  const index = relativePath.lastIndexOf("/");
+  return index < 0 ? "" : relativePath.slice(0, index);
 }
 
 function getNoticeIcon(severity: WorkbenchNotice["severity"]) {

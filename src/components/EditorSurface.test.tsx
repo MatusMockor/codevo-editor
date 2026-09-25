@@ -9166,7 +9166,7 @@ class Foo
     const changeDecorationCalls = () =>
       editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
         (decorations as any[]).some((decoration) =>
-          decoration.options?.glyphMarginClassName?.startsWith("editor-change-glyph"),
+          decoration.options?.linesDecorationsClassName?.startsWith("editor-change-line"),
         ),
       );
 
@@ -9872,7 +9872,7 @@ class Foo
     });
 
     const reopenedLabels = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+      host.querySelectorAll<HTMLElement>(".cv-esub__crumb--current, .breadcrumb-segment"),
     ).map((segment) => segment.textContent);
     // The breadcrumb bar is rendered (filename segment present) but the stale
     // "Closing" symbol segment is gone, proving the cache entry was pruned on
@@ -13832,17 +13832,14 @@ class Foo
     const changeDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
       decorations.some(
         (decoration: any) =>
-          decoration.options.glyphMarginClassName ===
-          "editor-change-glyph editor-change-glyph-modified",
+          decoration.options.linesDecorationsClassName ===
+          "editor-change-line editor-change-line-modified",
       ),
     );
     expect(changeDecorationCall?.[1]).toEqual([
       expect.objectContaining({
         options: expect.objectContaining({
-          glyphMargin: {
-            position: monaco.editor.GlyphMarginLane.Left,
-          },
-          glyphMarginClassName: "editor-change-glyph editor-change-glyph-modified",
+          linesDecorationsTooltip: "Modified lines. Click to preview or revert.",
           linesDecorationsClassName: "editor-change-line editor-change-line-modified",
         }),
         range: expect.objectContaining({
@@ -13867,6 +13864,25 @@ class Foo
             lineNumber: 2,
           },
           type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    expect(host.querySelector(".editor-change-popover")).toBeNull();
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          element: changeBarElement(),
+          position: {
+            column: 1,
+            lineNumber: 2,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
         },
       });
     });
@@ -13956,14 +13972,12 @@ class Foo
           stopPropagation: vi.fn(),
         },
         target: {
-          detail: {
-            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
-          },
+          element: changeBarElement(),
           position: {
             column: 1,
             lineNumber: changeHunks[0].startLineNumber,
           },
-          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
         },
       });
     });
@@ -14081,23 +14095,20 @@ class Foo
       ([, decorations]) =>
         decorations.some(
           (decoration: any) =>
-            decoration.options.glyphMarginClassName ===
-            "editor-change-glyph editor-change-glyph-added",
+            decoration.options.linesDecorationsClassName ===
+            "editor-change-line editor-change-line-added",
         ) &&
         decorations.some(
           (decoration: any) =>
-            decoration.options.glyphMarginClassName ===
-            "editor-change-glyph editor-change-glyph-deleted",
+            decoration.options.linesDecorationsClassName ===
+            "editor-change-line editor-change-line-deleted",
         ),
     );
     expect(changeDecorationCall?.[1]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           options: expect.objectContaining({
-            glyphMargin: {
-              position: monaco.editor.GlyphMarginLane.Left,
-            },
-            glyphMarginClassName: "editor-change-glyph editor-change-glyph-added",
+            linesDecorationsTooltip: "Added lines. Click to preview or revert.",
             linesDecorationsClassName: "editor-change-line editor-change-line-added",
           }),
           range: expect.objectContaining({
@@ -14107,10 +14118,7 @@ class Foo
         }),
         expect.objectContaining({
           options: expect.objectContaining({
-            glyphMargin: {
-              position: monaco.editor.GlyphMarginLane.Left,
-            },
-            glyphMarginClassName: "editor-change-glyph editor-change-glyph-deleted",
+            linesDecorationsTooltip: "Deleted lines. Click to preview or revert.",
             linesDecorationsClassName: "editor-change-line editor-change-line-deleted",
           }),
           range: expect.objectContaining({
@@ -14128,14 +14136,12 @@ class Foo
           stopPropagation: vi.fn(),
         },
         target: {
-          detail: {
-            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
-          },
+          element: changeBarElement(),
           position: {
             column: 1,
             lineNumber: addedHunk.startLineNumber,
           },
-          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
         },
       });
     });
@@ -14159,14 +14165,12 @@ class Foo
           stopPropagation: vi.fn(),
         },
         target: {
-          detail: {
-            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
-          },
+          element: changeBarElement(),
           position: {
             column: 1,
             lineNumber: deletedHunk.startLineNumber,
           },
-          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
         },
       });
     });
@@ -14248,14 +14252,12 @@ class Foo
           stopPropagation: vi.fn(),
         },
         target: {
-          detail: {
-            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
-          },
+          element: changeBarElement(),
           position: {
             column: 1,
             lineNumber: 3,
           },
-          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
         },
       });
     });
@@ -14363,7 +14365,10 @@ class Foo
     const labels = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
       (segment) => segment.textContent,
     );
-    expect(labels).toEqual(["App.tsx", "MyComponent"]);
+    expect(labels).toEqual(["MyComponent"]);
+    expect(queryRequired<HTMLElement>(host, ".cv-esub__crumb--current").textContent).toBe(
+      "App.tsx",
+    );
 
     const symbolSegment = queryRequired<HTMLButtonElement>(host, ".breadcrumb-symbol");
 
@@ -14371,7 +14376,10 @@ class Foo
       symbolSegment.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    const menuItem = queryRequired<HTMLButtonElement>(document.body, ".breadcrumb-menu-item");
+    const menuItem = queryRequired<HTMLButtonElement>(
+      document.body,
+      '.cv-esub-symbol-menu [role="menuitem"]',
+    );
 
     act(() => {
       menuItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -14427,9 +14435,9 @@ class Foo
 
     expect(documentSymbolsMock).toHaveBeenCalledTimes(1);
     expect(
-      Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
-        (segment) => segment.textContent,
-      ),
+      Array.from(
+        host.querySelectorAll<HTMLElement>(".cv-esub__crumb--current, .breadcrumb-segment"),
+      ).map((segment) => segment.textContent),
     ).toEqual(["App.tsx"]);
   });
 
@@ -16073,6 +16081,68 @@ class Foo
     }
   });
 
+  it("adds Rename to an open references peek and closes the peek before renaming", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "peek.ts",
+      path: "/workspace/src/peek.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const domNode = document.createElement("div");
+    const renameRun = vi.fn(async () => undefined);
+    const getAction = vi.fn((id: string) =>
+      id === "editor.action.rename" ? { run: renameRun } : null,
+    );
+    Object.assign(editor, { getAction });
+    editor.getDomNode.mockReturnValue(domNode);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    const peek = document.createElement("div");
+    peek.className = "peekview-widget reference-zone-widget";
+    const actions = document.createElement("div");
+    actions.className = "peekview-actions";
+    peek.append(actions);
+
+    await act(async () => {
+      domNode.append(peek);
+      await Promise.resolve();
+    });
+
+    const button = actions.querySelector<HTMLButtonElement>(".cv-peek-rename");
+    expect(button?.textContent).toBe("RenameF2");
+
+    act(() => {
+      button?.click();
+    });
+
+    expect(editor.focus).toHaveBeenCalled();
+    expect(editor.trigger).toHaveBeenCalledWith("peek", "closeReferenceSearch", null);
+    expect(renameRun).toHaveBeenCalledTimes(1);
+    const triggerOrder = editor.trigger.mock.invocationCallOrder;
+    expect(triggerOrder[triggerOrder.length - 1] ?? 0).toBeLessThan(
+      renameRun.mock.invocationCallOrder[0] ?? 0,
+    );
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+
+    expect(domNode.querySelector(".cv-peek-rename")).toBeNull();
+  });
+
   it("keeps the Monaco options, onChange, beforeMount and loading props referentially stable across a cursor move", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\nconst other = 2;\n",
@@ -16538,9 +16608,9 @@ class Foo
       await new Promise((resolve) => setTimeout(resolve, 200));
     });
 
-    const labelsBefore = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
-      (segment) => segment.textContent,
-    );
+    const labelsBefore = Array.from(
+      host.querySelectorAll<HTMLElement>(".cv-esub__crumb--current, .breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
     expect(labelsBefore).toEqual(["App.tsx", "MyComponent"]);
 
     const optionsBefore = editorSurfaceMocks.props?.options;
@@ -16559,9 +16629,9 @@ class Foo
     expect(editorSurfaceMocks.renderCount).toBe(renderCountBefore);
     expect(editorSurfaceMocks.props?.options).toBe(optionsBefore);
 
-    const labelsAfter = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
-      (segment) => segment.textContent,
-    );
+    const labelsAfter = Array.from(
+      host.querySelectorAll<HTMLElement>(".cv-esub__crumb--current, .breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
     expect(labelsAfter).toEqual(["App.tsx", "MyComponent"]);
   });
 
@@ -17347,6 +17417,12 @@ describe("EditorSurface .editorconfig application", () => {
     expect(replacementModel.tokenization?.forceTokenization).toHaveBeenCalled();
   });
 });
+
+function changeBarElement(): HTMLElement {
+  const element = document.createElement("div");
+  element.className = "cldr editor-change-line editor-change-line-modified";
+  return element;
+}
 
 function jsTestProblemDecorationCalls(editor: FakeEditor) {
   return editor.deltaDecorations.mock.calls.filter(([, decorations]) =>

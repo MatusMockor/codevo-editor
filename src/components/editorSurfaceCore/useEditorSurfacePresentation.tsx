@@ -2,6 +2,7 @@ import type { OnMount } from "@monaco-editor/react";
 import { ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
 import {
   useCallback,
+  useEffect,
   useMemo,
   Suspense,
   type Dispatch,
@@ -26,6 +27,7 @@ import {
 } from "../../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "../Breadcrumbs";
 import { CursorAwareBreadcrumbs } from "../CursorAwareBreadcrumbs";
+import { EditorSubheader } from "../editorPanel/EditorSubheader";
 import {
   EditorBreakpointGutterMenu,
   type EditorBreakpointGutterActions,
@@ -57,6 +59,10 @@ import { getTabId, getTabPanelId } from "../tabIds";
 import type { LargeSmartDocumentPresentationMode } from "./useLargeSmartDocumentMetricsLifecycle";
 import { initializeMonacoRuntime } from "../monacoRuntimeLoader";
 import { retryableLazy } from "../retryableLazy";
+import { installReferencesPeekRename } from "../editorPanel/referencesPeekRename";
+import "../editorPanel/editorSurface.css";
+import "../editorPanel/editorGutter.css";
+import "../editorPanel/editorWidgets.css";
 
 const LazyMonacoEditor = retryableLazy<
   import("react").ComponentProps<typeof import("@monaco-editor/react").default>
@@ -267,6 +273,10 @@ export function useEditorSurfacePresentation({
     [editor],
   );
 
+  const openFindWidget = useCallback(() => {
+    void editor?.getAction("actions.find")?.run();
+  }, [editor]);
+
   const changePreviewStyle =
     activeDocument && changePreview && editor
       ? editorChangePopoverStyle(editor, changePreview.hunk, changePreview.anchorLineNumber)
@@ -319,16 +329,21 @@ export function useEditorSurfacePresentation({
       glyphMargin: true,
       insertSpaces: true,
       largeFileOptimizations: true,
+      lineDecorationsWidth: 12,
       lineHeight: 0,
+      lineNumbersMinChars: 3,
       maxTokenizationLineLength: 2000,
       wordWrap: wordWrapEnabled ? "on" : "off",
       multiCursorModifier: "alt",
       padding: { top: 14, bottom: 14 },
       quickSuggestionsDelay: 10,
       readOnly: isReadOnly,
+      renderLineHighlight: "all",
       scrollBeyondLastLine: false,
+      showFoldingControls: "mouseover",
       smoothScrolling: false,
       stopRenderingLineAfter: 10000,
+      suggestLineHeight: 24,
       tabSize: 2,
     }),
     [
@@ -342,6 +357,15 @@ export function useEditorSurfacePresentation({
       wordWrapEnabled,
     ],
   );
+  useEffect(() => {
+    const node = editor?.getDomNode();
+    if (!editor || !node) return;
+    return installReferencesPeekRename(node, () => {
+      editor.focus();
+      editor.trigger("peek", "closeReferenceSearch", null);
+      void editor.getAction("editor.action.rename")?.run();
+    });
+  }, [editor]);
   const overlay = activeDocument ? null : isOpeningFile ? (
     <div className="editor-empty-overlay" data-testid="editor-opening">
       <p>Opening file…</p>
@@ -372,30 +396,40 @@ export function useEditorSurfacePresentation({
       role={embeddedInGroupPanel ? undefined : "tabpanel"}
     >
       {activeDocument ? (
-        cursorStore && editorSessionOwnerKey && runtimeMembershipGroupId !== undefined ? (
-          <CursorAwareBreadcrumbs
-            documentPath={activeDocument.path}
-            fileName={activeDocument.name}
-            groupId={runtimeMembershipGroupId}
-            onNavigate={navigateToBreadcrumbSymbol}
-            ownerKey={editorSessionOwnerKey}
-            store={cursorStore}
-            symbols={breadcrumbSymbols}
-            trackingActive={cursorTrackingActive}
-          />
-        ) : (
-          <Breadcrumbs
-            fileName={activeDocument.name}
-            onNavigate={navigateToBreadcrumbSymbol}
-            path={cursorStore === undefined ? breadcrumbPath : EMPTY_BREADCRUMB_PATH}
-            symbols={breadcrumbSymbols}
-          />
-        )
+        <EditorSubheader
+          documentPath={activeDocument.path}
+          groupId={groupId}
+          onFind={openFindWidget}
+          rootPath={workspaceRoot}
+          symbols={
+            cursorStore && editorSessionOwnerKey && runtimeMembershipGroupId !== undefined ? (
+              <CursorAwareBreadcrumbs
+                documentPath={activeDocument.path}
+                fileName={activeDocument.name}
+                groupId={runtimeMembershipGroupId}
+                onNavigate={navigateToBreadcrumbSymbol}
+                ownerKey={editorSessionOwnerKey}
+                showFileName={false}
+                store={cursorStore}
+                symbols={breadcrumbSymbols}
+                trackingActive={cursorTrackingActive}
+              />
+            ) : (
+              <Breadcrumbs
+                fileName={activeDocument.name}
+                onNavigate={navigateToBreadcrumbSymbol}
+                path={cursorStore === undefined ? breadcrumbPath : EMPTY_BREADCRUMB_PATH}
+                showFileName={false}
+                symbols={breadcrumbSymbols}
+              />
+            )
+          }
+        />
       ) : null}
       {activeDocument && activeDocumentIsLargeSmart ? (
         <div
           aria-live="polite"
-          className="breadcrumbs editor-large-file-notice"
+          className="cv-esub-notice editor-large-file-notice"
           data-testid="editor-large-file-notice"
           role="status"
           title={largeDocumentNotice}

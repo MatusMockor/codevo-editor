@@ -8,7 +8,7 @@ import type { AgentProviderManagementSurface } from "../../application/useAgentP
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import { readAgentModeStyles } from "./agentModeCssTestSupport";
+import { readStyleSheet } from "../cssContractTestSupport";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { agentModelRows, type AgentModelChoice } from "./agentLaunchPresentation";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
@@ -73,7 +73,18 @@ describe("AgentModelPicker", () => {
       [...host.querySelectorAll(".agent-model-picker__kbd")].map((el) => el.textContent),
     ).toEqual([1, 2, 3, 4].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
     expect(legacyToggle().textContent).toContain("Legacy models");
-    expect(legacyToggle().textContent).toContain("7 models");
+    expect(legacyToggle().textContent).toContain("Fable 5, Opus 4.8 and 5 more");
+  });
+
+  it("shows the NEW badge only on new models", () => {
+    render(CLAUDE);
+    open();
+
+    const badged = [...host.querySelectorAll('[role="option"]')]
+      .filter((node) => node.querySelector(".agent-model-picker__new") !== null)
+      .map((node) => node.getAttribute("data-value"));
+    expect(badged).toEqual(["claude-fable-5-1"]);
+    expect(host.querySelector(".agent-model-picker__new")?.textContent).toBe("NEW");
   });
 
   it("marks the current provider active and disables the other one with a truthful reason", () => {
@@ -555,40 +566,34 @@ function management(
   };
 }
 
-describe("AgentModelPicker search styling contract", () => {
-  const css = readAgentModeStyles();
+describe("AgentModelPicker styling contract", () => {
+  const css = readStyleSheet("components/agentMode/pickers/agentPickers.css").source;
 
-  it("keeps the search field borderless on the well tone with a neutral focus tone", () => {
-    const search = cssRule(css, ".agent-model-picker__search {");
-    expect(search).toContain("background: var(--agent-well)");
-    expect(search).toContain("border-radius: var(--agent-radius-sm)");
-    expect(search).not.toMatch(/border-bottom/);
-    expect(cssRule(css, ".agent-model-picker__search:focus-within {")).toContain(
-      "box-shadow: var(--cv-ring-hair-strong)",
-    );
+  it("sizes the dialog at 360 x 346 with a 44px rail", () => {
+    const dialog = cssRule(css, "\n.agent-model-picker__dialog {");
+    expect(dialog).toContain("width: 360px");
+    expect(dialog).toContain("height: 346px");
+    expect(cssRule(css, "\n.agent-model-picker__rail {")).toContain("width: 44px");
   });
 
-  it("suppresses the global focus ring on the search input", () => {
-    const input = cssRule(css, ".agent-model-picker__input {");
+  it("keeps the search field borderless with an edge hairline under it", () => {
+    const search = cssRule(css, "\n.agent-model-picker__search {");
+    expect(search).toContain("box-shadow: var(--cv-edge-bottom-hair)");
+    expect(search).not.toContain("border");
+    const input = cssRule(css, "\n.agent-model-picker__input {");
     expect(input).toContain("border: none");
     expect(input).toContain("outline: none");
-    const focus = cssRule(css, ".agent-model-picker__input:focus-visible {");
-    expect(focus).toContain("box-shadow: none");
+    expect(cssRule(css, "\n.agent-model-picker__input:focus,")).toContain("box-shadow: none");
   });
 
-  it("uses readable typography for model names and descriptions", () => {
-    expect(css).toMatch(/\n\.agent-model-picker__label \{[^}]*font-size: 14px/s);
-    expect(css).toMatch(
-      /\n\.agent-model-picker__description \{[^}]*font-size: var\(--agent-fs-sm\)/s,
-    );
+  it("uses the token type steps for model names and descriptions", () => {
+    expect(css).toMatch(/\n\.agent-model-picker__label \{[^}]*font-size: var\(--cv-t-xs\)/s);
+    expect(css).toMatch(/\n\.agent-model-picker__description \{[^}]*color: var\(--cv-fg-subtle\)/s);
   });
 
-  it("uses a full-row T3-style hover and a visible selected state", () => {
-    expect(cssRule(css, ".agent-model-picker__row--selected {")).toContain(
-      "var(--agent-text-strong) 8%",
-    );
-    expect(cssRule(css, ".agent-model-picker__row:hover,")).toContain(
-      "background: var(--agent-fill)",
+  it("uses a full-row hover tint for rows and the legacy toggle", () => {
+    expect(cssRule(css, "\n.agent-model-picker__row:hover,")).toContain(
+      "background: var(--cv-tint-2)",
     );
   });
 });

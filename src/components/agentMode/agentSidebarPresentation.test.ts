@@ -9,7 +9,6 @@ import {
 import { NO_AGENT_TURN_LOG_EVIDENCE } from "../../domain/agentTurnContentLoss";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import {
-  ARCHIVED_PAGE_COUNT,
   agentCompactTimeLabel,
   agentJumpSlots,
   agentRailEmptyState,
@@ -335,44 +334,38 @@ describe("agent rail sections", () => {
       decorate("first", { sortOrder: 1, updatedAtEpochMs: NOW - 10000 }),
       decorate("second", { sortOrder: 2, updatedAtEpochMs: NOW }),
     ];
-    const sections = agentRailSections(views, true, 20, NOW);
+    const sections = agentRailSections(views, NOW);
     expect(ids(sections.snoozed ?? [])).toEqual(["snoozed"]);
     expect(ids(sections.settled ?? [])).toEqual(["settled"]);
-    expect(ids(sections.archived)).toEqual(["archived"]);
     expect(ids(sections.active)).toEqual(["first", "second"]);
     expect(sections.pinned).toEqual([]);
-    expect(ids(agentRailSections(views, true, 20, NOW + 1000).pinned)).toEqual(["snoozed"]);
+    expect(ids(agentRailSections(views, NOW + 1000).pinned)).toEqual(["snoozed"]);
   });
 
-  it("orders pinned, active and archived by recency and pages the archive", () => {
+  it("orders pinned and active by recency and leaves archived threads out of every section", () => {
     const views = [
       view({ threadId: "old", updatedAtEpochMs: NOW - 5000 }),
       view({ threadId: "pin", pinned: true, updatedAtEpochMs: NOW - 9000 }),
       view({ threadId: "new", updatedAtEpochMs: NOW - 1000 }),
-      ...Array.from({ length: ARCHIVED_PAGE_COUNT + 3 }, (_, index) =>
+      ...Array.from({ length: 23 }, (_, index) =>
         view({ threadId: `arc-${index}`, archived: true, updatedAtEpochMs: NOW - index }),
       ),
     ];
 
-    const collapsed = agentRailSections(views, false, ARCHIVED_PAGE_COUNT);
-    expect(ids(collapsed.pinned)).toEqual(["pin"]);
-    expect(ids(collapsed.active)).toEqual(["new", "old"]);
-    expect(collapsed.archived).toEqual([]);
-    expect(collapsed.hiddenArchivedCount).toBe(ARCHIVED_PAGE_COUNT + 3);
-
-    const expanded = agentRailSections(views, true, ARCHIVED_PAGE_COUNT);
-    expect(expanded.archived).toHaveLength(ARCHIVED_PAGE_COUNT);
-    expect(expanded.archived[0]?.thread.threadId).toBe("arc-0");
-    expect(expanded.hiddenArchivedCount).toBe(3);
+    const sections = agentRailSections(views);
+    expect(ids(sections.pinned)).toEqual(["pin"]);
+    expect(ids(sections.active)).toEqual(["new", "old"]);
+    expect(sections.snoozed).toEqual([]);
+    expect(sections.settled).toEqual([]);
   });
 
   it("assigns jump slots to the first nine visible cards only when more than one exists", () => {
     const many = Array.from({ length: 12 }, (_, index) => view({ threadId: `t-${index}` }));
-    const slots = agentJumpSlots(agentRailSections(many, false, 0));
+    const slots = agentJumpSlots(agentRailSections(many));
 
     expect(slots.size).toBe(9);
     expect(slots.get("t-0")).toBe(1);
-    expect(agentJumpSlots(agentRailSections([view({})], false, 0)).size).toBe(0);
+    expect(agentJumpSlots(agentRailSections([view({})])).size).toBe(0);
   });
 
   it("flattens groups and labels projects only when several exist", () => {
@@ -423,7 +416,7 @@ describe("agent rail sections", () => {
   it("describes the empty states truthfully", () => {
     const groups = [group(ROOT, "app", [])];
     const entries = agentRailScopeEntries(groups);
-    const sections = agentRailSections([], false, 0);
+    const sections = agentRailSections([]);
 
     expect(agentRailEmptyState([], sections, null)).toEqual({ kind: "noProjects" });
     expect(agentRailEmptyState(groups, sections, null)).toEqual({

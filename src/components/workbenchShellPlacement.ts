@@ -61,22 +61,10 @@ export interface AgentSurfaceHostPlacement {
 }
 
 export function agentSurfaceHostPlacement(
-  layout: Pick<AgentWorkbenchLayout, "layout" | "rightPanel" | "openSurfaces">,
+  layout: Pick<AgentWorkbenchLayout, "rightPanel" | "openSurfaces">,
 ): AgentSurfaceHostPlacement {
-  if (layout.layout !== "agent") return { mounted: false, hidden: true };
   const hidden = layout.rightPanel !== "open";
   return { mounted: !hidden || layout.openSurfaces.length > 0, hidden };
-}
-
-export type WorkbenchFrameTreeState = "visible" | "hidden";
-
-export function workbenchFrameTreeState(
-  placement: Pick<WorkbenchShellPlacement, "layout" | "editorHidden">,
-  treeReportedVisible: boolean,
-): WorkbenchFrameTreeState {
-  if (placement.layout !== "agent") return "hidden";
-  if (placement.editorHidden) return "hidden";
-  return treeReportedVisible ? "visible" : "hidden";
 }
 
 export function workbenchShellPlacement({
@@ -85,24 +73,24 @@ export function workbenchShellPlacement({
   layout,
   viewportWidth = Number.POSITIVE_INFINITY,
 }: WorkbenchShellPlacementInput): WorkbenchShellPlacement {
-  if (effectiveLayout === "editor-expanded") {
+  if (effectiveLayout === "editor-only") {
     return {
       layout: effectiveLayout,
       editorHidden: false,
       rightPanelHidden: true,
       surfacesMounted: false,
-      rightPanelMaximized: false,
+      rightPanelMaximized: true,
       responsiveMaximized: false,
       rightPanelOverlay: false,
       responsiveRestore: "none",
-      rail: "expanded",
+      rail: "collapsed",
       railWidth: DEFAULT_AGENT_RAIL_WIDTH,
       rightPanelWidth: 0,
-      bottomPanelHeight: 0,
+      bottomPanelHeight: bottomPanelVisible ? layout.bottomPanelHeight : 0,
     };
   }
 
-  const host = agentSurfaceHostPlacement({ ...layout, layout: effectiveLayout });
+  const host = agentSurfaceHostPlacement(layout);
   const rightPanelHidden = host.hidden;
   const placement: WorkbenchShellPlacement = {
     layout: effectiveLayout,

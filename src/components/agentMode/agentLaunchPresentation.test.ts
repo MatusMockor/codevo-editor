@@ -14,6 +14,7 @@ import {
 import {
   MAX_AGENT_MODEL_QUERY_LENGTH,
   agentLaunchAccess,
+  agentLegacyModelsSummary,
   agentModelFavoriteKey,
   agentModelRows,
   boundAgentModelQuery,
@@ -30,6 +31,7 @@ import {
   agentLaunchMetaLabel,
   agentLaunchSummaryLabel,
   agentLaunchModeChoices,
+  agentLaunchModeGroups,
   agentLaunchModeHint,
   agentLaunchModeLabel,
   agentLaunchModelChoices,
@@ -126,6 +128,8 @@ describe("agentLaunchPresentation", () => {
       "acceptEdits",
       "auto",
       "bypassPermissions",
+      "plan",
+      "default",
     ]);
     expect(agentLaunchModelChoices("codex").map((choice) => choice.value)).toEqual([
       ...CODEX_MODEL_CHOICES.filter((model) => model !== "default"),
@@ -135,6 +139,7 @@ describe("agentLaunchPresentation", () => {
       "workspaceWrite",
       "auto",
       "dangerFullAccess",
+      "default",
     ]);
   });
 
@@ -254,12 +259,15 @@ describe("agentLaunchPresentation", () => {
       "Auto-accept edits",
       "Auto",
       "Full access",
+      "Plan mode",
+      "Use Claude CLI settings",
     ]);
     expect(agentLaunchModeChoices("codex").map((choice) => choice.label)).toEqual([
       "Read-only",
       "Workspace write",
       "Auto",
       "Full access",
+      "Use Codex CLI settings",
     ]);
   });
 
@@ -704,6 +712,71 @@ describe("remote Claude model presentation", () => {
     expect(agentLaunchWithModel(launch, "claude-unlisted-99", null, catalog)).toBe(launch);
     expect(agentLaunchModelLabel({ ...launch, model: "claude-unlisted-99" }, null, catalog)).toBe(
       "claude-unlisted-99",
+    );
+  });
+});
+
+describe("agent model row badges", () => {
+  it("marks new and default models and summarizes legacy models", () => {
+    const claude = agentModelRows("claudeCode");
+    expect(claude.filter((row) => row.isNew).map((row) => row.value)).toEqual(["claude-fable-5-1"]);
+    expect(claude.filter((row) => row.isDefault).map((row) => row.value)).toEqual([
+      "claude-sonnet-5",
+    ]);
+    const codex = agentModelRows("codex");
+    expect(codex.filter((row) => row.isNew).map((row) => row.value)).toEqual(["gpt-6-astra"]);
+    expect(codex.filter((row) => row.isDefault).map((row) => row.value)).toEqual(["gpt-5.6-sol"]);
+    const legacy = claude.filter((row) => row.isLegacy === true);
+    expect(agentLegacyModelsSummary(legacy)).toMatch(/^Fable 5, Opus 4\.8 and \d+ more$/u);
+    expect(agentLegacyModelsSummary(legacy.slice(0, 2))).toBe("Fable 5, Opus 4.8");
+    expect(agentLegacyModelsSummary([])).toBe("");
+  });
+});
+
+describe("agent launch mode groups", () => {
+  it("offers plan mode and the CLI default next to the access modes", () => {
+    const claude = agentLaunchModeGroups("claudeCode", "local");
+    expect(claude.access.map((choice) => choice.value)).toEqual([
+      "supervised",
+      "acceptEdits",
+      "auto",
+      "bypassPermissions",
+    ]);
+    expect(claude.other.map((choice) => [choice.value, choice.label])).toEqual([
+      ["plan", "Plan mode"],
+      ["default", "Use Claude CLI settings"],
+    ]);
+    expect(claude.other[0]?.tone).toBe("plan");
+    const codex = agentLaunchModeGroups("codex", "local");
+    expect(codex.access.map((choice) => choice.value)).toEqual([
+      "readOnly",
+      "workspaceWrite",
+      "auto",
+      "dangerFullAccess",
+    ]);
+    expect(codex.other.map((choice) => [choice.value, choice.label])).toEqual([
+      ["default", "Use Codex CLI settings"],
+    ]);
+  });
+
+  it("keeps the short CLI settings label for summaries", () => {
+    expect(
+      agentLaunchModeLabel({
+        provider: "claudeCode",
+        model: "default",
+        mode: "default",
+        effort: "default",
+      }),
+    ).toBe("Claude CLI settings");
+    expect(agentLaunchModeLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
+      "Codex config",
+    );
+  });
+
+  it("uses remote hints for a server target", () => {
+    const remote = agentLaunchModeGroups("claudeCode", "server");
+    expect(remote.other.find((choice) => choice.value === "plan")?.hint).toContain(
+      "remote runners",
     );
   });
 });

@@ -11,6 +11,10 @@ import type { IntelligenceMode, WorkspaceDescriptor } from "../../domain/workspa
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import type { WorkspaceTrustIntentCoordinator } from "../workspaceTrustIntentCoordinator";
 import {
+  confirmWorkspaceTrustGrant,
+  workspaceTrustChangeMessage,
+} from "../workspaceTrustGrantConfirmation";
+import {
   beginWorkbenchSmartModeIntent,
   type WorkbenchSmartModeIntentState,
 } from "./useWorkbenchLanguageRuntimeCoordinator";
@@ -176,6 +180,22 @@ export function useWorkbenchSettingsCommands({
     const trustIntentCoordinator = workspaceTrustIntentCoordinatorRef.current;
     const desiredTrust = trustIntentCoordinator.desiredTrust(requestedOwner, requestedRoot);
     const trusted = !(desiredTrust ?? workspaceTrust?.trusted ?? false);
+    if (trusted) {
+      const promptRevision = openWorkspaceRequestTokenRef.current;
+      const confirmed = await confirmWorkspaceTrustGrant(
+        workspaceTrustGateway,
+        requestedRoot,
+        () => {
+          const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
+          return (
+            openWorkspaceRequestTokenRef.current === promptRevision &&
+            currentOwner?.ownerKey === requestedOwner.ownerKey &&
+            workspaceRootKeysEqual(currentOwner.executionRoot, requestedOwner.executionRoot)
+          );
+        },
+      );
+      if (!confirmed) return;
+    }
     const trustIntent = trustIntentCoordinator.request(requestedOwner, requestedRoot, trusted);
     const requestedRevision = openWorkspaceRequestTokenRef.current;
     workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] = trustIntent.revision;
@@ -209,7 +229,7 @@ export function useWorkbenchSettingsCommands({
 
       const trust = result.trust;
       setWorkspaceTrust(trust);
-      setMessage(trust.trusted ? "Workspace trusted." : "Workspace trust revoked.");
+      setMessage(workspaceTrustChangeMessage(trusted, trust));
 
       if (!trust.trusted) {
         await stopProjectLanguageServersAfterTrustRevocation(requestedOwner);

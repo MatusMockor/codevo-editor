@@ -5,17 +5,25 @@ import { SettingsRowLabelContext } from "./settingsRowLabel";
 
 export interface SettingsRowProps {
   readonly children: ReactNode;
+  readonly description?: ReactNode;
   readonly layout?: "inline" | "stacked";
   readonly meta?: ReactNode;
   readonly rowId: SettingsRowId;
 }
 
-export function SettingsRow({ children, layout = "inline", meta, rowId }: SettingsRowProps) {
+export function SettingsRow({
+  children,
+  description,
+  layout = "inline",
+  meta,
+  rowId,
+}: SettingsRowProps) {
   const descriptor = settingsRowDescriptor(rowId);
   const elementRef = useSettingsRowTarget(rowId);
   const baseId = useId();
   const titleId = `${baseId}-title`;
-  const descriptionId = descriptor.description === null ? null : `${baseId}-description`;
+  const descriptionText = description ?? descriptor.description;
+  const descriptionId = descriptionText === null ? null : `${baseId}-description`;
 
   return (
     <div
@@ -34,7 +42,7 @@ export function SettingsRow({ children, layout = "inline", meta, rowId }: Settin
         </div>
         {descriptionId === null ? null : (
           <p className="settings-row__description" id={descriptionId}>
-            {descriptor.description}
+            {descriptionText}
           </p>
         )}
       </div>

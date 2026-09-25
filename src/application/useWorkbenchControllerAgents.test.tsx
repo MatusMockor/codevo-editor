@@ -185,7 +185,6 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]?.rootPath).toBe(ROOT_A);
     expect(saved[0]?.settings.session.agentWorkbench).toEqual({
-      layout: "agent",
       rightPanel: "open",
       openSurfaces: ["terminal"],
       activeSurface: "terminal",
@@ -209,6 +208,29 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]?.rootPath).toBe(ROOT_A);
     expect(saved[0]?.settings.session.agentWorkbench?.bottomPanel).toBe(true);
+    harness.unmount();
+  });
+
+  it("persists only a shown terminal, never a drawer view, as the bottom panel", async () => {
+    const harness = renderAgents({ bottomPanelView: "problems", bottomPanelVisible: false });
+
+    harness.rerender({ bottomPanelVisible: true });
+    await harness.settle();
+    expect(harness.persisted()).toEqual([]);
+
+    harness.rerender({ bottomPanelView: "terminal" });
+    await harness.settle();
+    expect(
+      harness.persisted()[harness.persisted().length - 1]?.settings.session.agentWorkbench
+        ?.bottomPanel,
+    ).toBe(true);
+
+    harness.rerender({ bottomPanelView: "debug" });
+    await harness.settle();
+    expect(
+      harness.persisted()[harness.persisted().length - 1]?.settings.session.agentWorkbench
+        ?.bottomPanel,
+    ).toBe(false);
     harness.unmount();
   });
 
@@ -312,6 +334,7 @@ interface HarnessOverrides {
   initialTrust?: boolean;
   openedAdmission?: boolean;
   readonly bottomPanelVisible?: boolean;
+  readonly bottomPanelView?: WorkbenchControllerAgentsOptions["bottomPanelView"];
   readonly workspaceRoot?: string | null;
   readonly editorSessionOwnerKey?: string | null;
   readonly withLeaseGateway?: boolean;
@@ -395,6 +418,7 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     },
     agentThreadStoreGateway: threadStore,
     appSettingsRef,
+    bottomPanelView: overrides.bottomPanelView ?? "terminal",
     bottomPanelVisible: overrides.bottomPanelVisible ?? false,
     setBottomPanelView: vi.fn(),
     setBottomPanelVisible: vi.fn(),

@@ -1,0 +1,261 @@
+.app-shell .monaco-editor,
+.app-shell .action-widget,
+.app-shell .monaco-menu,
+.app-shell .monaco-hover,
+.app-shell .context-view {
+  --vscode-editorSuggestWidget-background: var(--cv-popover);
+  --vscode-editorSuggestWidget-border: transparent;
+  --vscode-editorSuggestWidget-foreground: var(--cv-fg);
+  --vscode-editorSuggestWidget-selectedBackground: var(--cv-tint-3);
+  --vscode-editorSuggestWidget-selectedForeground: var(--cv-fg-strong);
+  --vscode-editorSuggestWidget-highlightForeground: var(--cv-accent);
+  --vscode-editorSuggestWidget-focusHighlightForeground: var(--cv-accent);
+  --vscode-editorHoverWidget-background: var(--cv-popover);
+  --vscode-editorHoverWidget-border: transparent;
+  --vscode-editorHoverWidget-foreground: var(--cv-fg);
+  --vscode-editorHoverWidget-statusBarBackground: transparent;
+  --vscode-editorWidget-background: var(--cv-popover);
+  --vscode-editorWidget-border: transparent;
+  --vscode-editorWidget-foreground: var(--cv-fg);
+  --vscode-widget-border: transparent;
+  --vscode-widget-shadow: transparent;
+  --vscode-menu-background: var(--cv-popover);
+  --vscode-menu-foreground: var(--cv-fg);
+  --vscode-menu-selectionBackground: var(--cv-tint-3);
+  --vscode-menu-selectionForeground: var(--cv-fg-strong);
+  --vscode-menu-separatorBackground: var(--cv-hair);
+  --vscode-menu-border: transparent;
+  --vscode-editorActionList-background: var(--cv-popover);
+  --vscode-editorActionList-foreground: var(--cv-fg);
+  --vscode-editorActionList-focusBackground: var(--cv-tint-3);
+  --vscode-editorActionList-focusForeground: var(--cv-fg-strong);
+}
+
+.app-shell .monaco-editor .monaco-hover,
+.app-shell .monaco-hover,
+.app-shell .monaco-editor .suggest-widget,
+.app-shell .monaco-editor .suggest-details,
+.app-shell .monaco-editor .find-widget,
+.app-shell .monaco-editor .rename-box,
+.app-shell .action-widget {
+  border: 0;
+  border-radius: var(--cv-r-card);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
+  color: var(--cv-fg);
+}
+
+.app-shell .monaco-hover .monaco-hover-content {
+  padding: 6px 10px;
+  font: var(--cv-t-xs) / 18px var(--cv-font-ui);
+}
+
+.app-shell .monaco-hover .hover-row.status-bar {
+  box-shadow: var(--cv-edge-top-hair);
+  background: transparent;
+}
+
+.app-shell .monaco-hover .hover-row.status-bar .action-container .action {
+  color: var(--cv-fg-muted);
+}
+
+.app-shell .monaco-hover .hover-row.status-bar .action-container .action:hover {
+  color: var(--cv-fg-strong);
+}
+
+.app-shell .monaco-editor .suggest-widget {
+  overflow: hidden;
+}
+
+.app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row {
+  border-radius: var(--cv-r-sm);
+}
+
+.app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+.app-shell .monaco-editor .suggest-widget .monaco-highlighted-label .highlight {
+  color: var(--cv-accent);
+  font-weight: 600;
+}
+
+.app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row .label-description,
+.app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row .details-label {
+  color: var(--cv-fg-muted);
+}
+
+.app-shell .monaco-editor .suggest-details {
+  color: var(--cv-fg-muted);
+}
+
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-method::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-constructor::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-function::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-keyword::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-event::before {
+  color: var(--cv-syn-kw);
+}
+
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-property::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-field::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-constant::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-enum-member::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-value::before {
+  color: var(--cv-syn-num);
+}
+
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-class::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-struct::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-interface::before,
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-enum::before {
+  color: var(--cv-accent);
+}
+
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-file::before {
+  color: var(--cv-syn-str);
+}
+
+.app-shell .monaco-editor .suggest-widget .codicon-symbol-variable::before {
+  color: var(--cv-fg-muted);
+}
+
+.app-shell .monaco-editor .find-widget {
+  --vscode-input-background: transparent;
+  --vscode-input-border: transparent;
+  --vscode-focusBorder: transparent;
+  --vscode-inputOption-activeBackground: var(--cv-accent-soft);
+  --vscode-inputOption-activeForeground: var(--cv-accent);
+  --vscode-inputOption-activeBorder: transparent;
+  top: 6px;
+  padding: 0 4px 0 2px;
+}
+
+.app-shell .monaco-editor .find-widget:not(.replaceToggled) {
+  height: 36px;
+}
+
+.app-shell .monaco-editor .find-widget > .find-part,
+.app-shell .monaco-editor .find-widget > .replace-part {
+  margin-top: 5px;
+}
+
+.app-shell .monaco-editor .find-widget .monaco-inputbox {
+  border-radius: var(--cv-r-sm);
+  background: var(--cv-tint-1);
+  box-shadow: var(--cv-ring-hair);
+}
+
+.app-shell .monaco-editor .find-widget .monaco-inputbox.synthetic-focus {
+  box-shadow: var(--cv-ring-hair-strong);
+}
+
+.app-shell .monaco-editor .find-widget .monaco-custom-toggle {
+  border-radius: var(--cv-r-xs);
+}
+
+.app-shell .monaco-editor .find-widget .matchesCount {
+  min-width: 52px;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .monaco-editor .peekview-widget .head {
+  box-shadow: var(--cv-edge-bottom-hair);
+  background: var(--cv-raised);
+}
+
+.app-shell .monaco-editor .peekview-widget .head .peekview-title .filename {
+  color: var(--cv-fg-strong);
+  font: 500 var(--cv-t-xs) / 1 var(--cv-font-mono);
+}
+
+.app-shell .monaco-editor .peekview-widget .head .peekview-title .dirname,
+.app-shell .monaco-editor .peekview-widget .head .peekview-title .meta {
+  color: var(--cv-fg-subtle);
+}
+
+.app-shell .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row {
+  border-radius: var(--cv-r-sm);
+}
+
+.app-shell .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row.focused {
+  background: var(--cv-tint-3);
+}
+
+.app-shell .monaco-menu .monaco-action-bar.vertical {
+  padding: 4px;
+}
+
+.app-shell .monaco-menu .monaco-action-bar.vertical .action-item .action-menu-item {
+  border-radius: var(--cv-r-sm);
+}
+
+.app-shell .monaco-menu .monaco-action-bar.vertical .action-item.focused .action-menu-item {
+  background: var(--cv-tint-3);
+}
+
+.app-shell .action-widget {
+  padding: 4px;
+}
+
+.app-shell .action-widget .monaco-list-row.group-header {
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-shell .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) {
+  border-radius: var(--cv-r-sm);
+  background-color: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+.app-shell .action-widget .monaco-list .monaco-list-row .codicon::before {
+  color: var(--cv-fg-muted);
+}
+
+.app-shell
+  .action-widget
+  .monaco-list
+  .monaco-list-row.action.focused:not(.option-disabled)
+  .codicon::before {
+  color: var(--cv-fg-strong);
+}
+
+.cv-peek-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-right: 2px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: transparent;
+  color: var(--cv-fg-muted);
+  font: var(--cv-t-xs) / 1 var(--cv-font-ui);
+  cursor: pointer;
+  transition:
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease);
+}
+
+.cv-peek-rename:hover {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.cv-peek-rename:focus-visible {
+  box-shadow: var(--cv-ring-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-peek-rename {
+    transition: none;
+  }
+}

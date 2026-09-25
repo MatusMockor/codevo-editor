@@ -5,9 +5,9 @@ export const AGENT_MODE_STYLE_SHEETS = [
   "agentMode.css",
   "agentRail.css",
   "agentThread.css",
-  "agentComposer.css",
   "agentSurface.css",
   "agentUsage.css",
+  "pickers/agentPickers.css",
 ] as const;
 
 export function agentModeSheetPath(sheet: (typeof AGENT_MODE_STYLE_SHEETS)[number]): string {

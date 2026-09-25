@@ -14,6 +14,7 @@ const appGitDiffClickMocks = vi.hoisted(() => ({
   diffEditorProps: [] as Array<Record<string, unknown>>,
   diffErrorMessage: null as string | null,
   loadGitFileHunks: vi.fn(),
+  previewGitChange: null as ((change: GitChangedFile) => Promise<void>) | null,
   monacoRuntimeReady: Promise.resolve(),
 }));
 
@@ -179,7 +180,7 @@ vi.mock("./application/useWorkbenchController", async () => {
           rootPath: "/workspace",
         },
         loadGitFileHunks: appGitDiffClickMocks.loadGitFileHunks,
-        previewGitChange,
+        previewGitChange: (appGitDiffClickMocks.previewGitChange = previewGitChange),
       });
     },
   };
@@ -229,6 +230,7 @@ describe("App Git diff click path", () => {
     appGitDiffClickMocks.diffEditorProps.length = 0;
     appGitDiffClickMocks.diffErrorMessage = null;
     appGitDiffClickMocks.loadGitFileHunks.mockReset();
+    appGitDiffClickMocks.previewGitChange = null;
     vi.restoreAllMocks();
   });
 
@@ -254,7 +256,7 @@ describe("App Git diff click path", () => {
       stagedArgument: null,
     },
   ])(
-    "clicks a $change.status Git row and renders a nonblank diff",
+    "previews a $change.status Git change and renders a nonblank diff",
     async ({ change, expectedSurface, expectedText, stagedArgument }) => {
       appGitDiffClickMocks.changes = [change];
 
@@ -265,11 +267,8 @@ describe("App Git diff click path", () => {
       await settleLazySurfaces();
       expect(host.textContent).not.toContain("Loading editor runtime");
 
-      const changeButton = changeRowButton(host, change.relativePath);
-      expect(changeButton).toBeDefined();
-
       await act(async () => {
-        changeButton?.click();
+        await previewChange(change);
       });
       await settleLazySurfaces();
       expect(host.textContent).toContain(expectedText);
@@ -310,11 +309,8 @@ describe("App Git diff click path", () => {
     await settleLazySurfaces();
     expect(host.textContent).not.toContain("Loading editor runtime");
 
-    const readmeButton = changeRowButton(host, "README.md");
-    expect(readmeButton).toBeDefined();
-
     await act(async () => {
-      readmeButton?.click();
+      await previewChange(change);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -336,8 +332,8 @@ function createWorkbench(overrides: Record<string, unknown>) {
       activeDocumentGitBaseline: null,
       agentModeActive: false,
       agentWorkbench: {
-        layout: { ...initialAgentWorkbenchLayout, layout: "editor-expanded" },
-        effectiveLayout: "editor-expanded",
+        layout: initialAgentWorkbenchLayout,
+        effectiveLayout: "editor-only",
         dispatch: noop,
       },
       agents: {
@@ -365,6 +361,7 @@ function createWorkbench(overrides: Record<string, unknown>) {
         debugRestartPending: false,
         debugStopPending: false,
         isDebugStartBlocked: () => false,
+        snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
         restartDebug: vi.fn(async () => undefined),
         watches: createEmptyDebugWatches(),
       },
@@ -403,7 +400,6 @@ function createWorkbench(overrides: Record<string, unknown>) {
       searchEverywhereModel: { sections: [] },
       searchEverywhereOpen: false,
       settingsOpen: false,
-      sidebarView: "git",
       textSearchOpen: false,
       todoPanelOpen: false,
       typeHierarchyView: null,
@@ -482,13 +478,10 @@ function gitDiff(change: GitChangedFile): GitFileDiff {
   };
 }
 
-function changeRowButton(
-  container: ParentNode,
-  relativePath: string,
-): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>(".git-change-row")).find(
-    (button) => button.textContent?.includes(fileName(relativePath)),
-  );
+async function previewChange(change: GitChangedFile): Promise<void> {
+  const preview = appGitDiffClickMocks.previewGitChange;
+  expect(preview).not.toBeNull();
+  await preview?.(change);
 }
 
 function fileName(relativePath: string): string {

@@ -191,6 +191,7 @@ export const SHADOW_TOKEN_ROOTS = [
   "--cv-ring-hair",
   "--cv-ring-hair-strong",
   "--cv-ring-focus",
+  "--cv-ring-selected",
   "--cv-ring-danger",
   "--cv-ring-canvas",
   "--cv-edge-top",

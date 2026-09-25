@@ -16,7 +16,6 @@ import type { AgentThreadSearchSurface } from "../../application/agentThreadPort
 import type { RemoteAddProjectPendingClone } from "../../application/useRemoteAddProject";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
-import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import {
   agentThreadBulkOwnerKey,
   type AgentThreadBulkAction,
@@ -38,8 +37,6 @@ import {
 import { AgentRailCloneRow } from "./remoteAddProject/AgentRailCloneRow";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
-import { AgentRailUsagePopover } from "./AgentRailUsagePopover";
-import { focusUsageSuccessor } from "./agentRailUsageFocus";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
@@ -67,7 +64,6 @@ import {
 } from "./AgentThreadSearchResults";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import {
-  ARCHIVED_PAGE_COUNT,
   agentRailEmptyState,
   agentRailProjectLabels,
   agentRowProjectLabel,
@@ -95,7 +91,6 @@ const MAX_AGENT_RAIL_FACTS_REQUESTS = 8;
 export interface AgentThreadsSidebarProps {
   readonly catalog?: AgentHistoryCatalogSurface;
   readonly addProjectAvailable: boolean;
-  readonly accountUsage: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly search: AgentThreadSearchSurface;
   readonly scope: AgentRailScope | null;
@@ -113,6 +108,7 @@ export interface AgentThreadsSidebarProps {
   onDismissPendingClone?(id?: string): void;
   onOpenProviderSettings(): void;
   onOpenSourceControl(): void;
+  onOpenUsage?(): void;
   onCollapseSidebar?(): void;
   readonly collapseShortcut?: string | null;
   readonly footerActivity?: ReactNode;
@@ -132,7 +128,6 @@ export interface AgentThreadsSidebarProps {
 export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   catalog,
   addProjectAvailable,
-  accountUsage,
   evidenceOf,
   groups,
   onAddProject,
@@ -152,6 +147,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   providerManagement,
   onOpenProviderSettings,
   onOpenSourceControl,
+  onOpenUsage,
   onSelectThread,
   onThreadBulkCommand,
   onThreadMenuCommand,
@@ -165,29 +161,19 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   selectedThreadId,
   turnLog = null,
 }: AgentThreadsSidebarProps) {
-  const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [settledExpanded, setSettledExpanded] = useState(false);
   const [snoozedExpanded, setSnoozedExpanded] = useState(false);
-  const [archivedShown, setArchivedShown] = useState(ARCHIVED_PAGE_COUNT);
   const [focusRequest, setFocusRequest] = useState<string | null>(null);
-  const [usageOpen, setUsageOpen] = useState(false);
   const jumpHints = useJumpHints();
   const railRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const usageButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  const closeUsage = useCallback(() => {
-    setUsageOpen(false);
-    usageButtonRef.current?.focus();
-  }, []);
 
   useLayoutEffect(() => {
     const rail = railRef.current;
-    const trigger = usageButtonRef.current;
     return () => {
       if (rail?.contains(document.activeElement) !== true) return;
-      queueMicrotask(() => focusUsageSuccessor(trigger));
+      queueMicrotask(focusExpandSidebar);
     };
   }, []);
 
@@ -197,11 +183,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   const views = useMemo(() => agentRailViews(groups), [groups]);
   const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
-  const usageThreads = useMemo(() => views.map((view) => view.thread), [views]);
-  const usageProjectLabels = useMemo(
-    () => new Map(groups.map((group) => [group.projectRootKey, group.label])),
-    [groups],
-  );
 
   const [organizationNow, setOrganizationNow] = useState(() => Date.now());
   useEffect(() => {
@@ -225,14 +206,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     [railFilter, scopeEntries, views],
   );
   const sections = useMemo(
-    () =>
-      agentRailSections(
-        filteredViews,
-        archivedExpanded,
-        archivedShown,
-        Math.max(organizationNow, Date.now()),
-      ),
-    [archivedExpanded, archivedShown, filteredViews, organizationNow],
+    () => agentRailSections(filteredViews, Math.max(organizationNow, Date.now())),
+    [filteredViews, organizationNow],
   );
   useEffect(() => {
     if (turnLog === null) return;
@@ -241,7 +216,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       ...sections.active,
       ...(snoozedExpanded ? (sections.snoozed ?? []) : []),
       ...(settledExpanded ? (sections.settled ?? []) : []),
-      ...sections.archived,
     ];
     for (const view of visible.slice(0, MAX_AGENT_RAIL_FACTS_REQUESTS)) {
       void turnLog.ensureThreadFacts(
@@ -270,7 +244,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         ...sections.active,
         ...(snoozedExpanded ? (sections.snoozed ?? []) : []),
         ...(settledExpanded ? (sections.settled ?? []) : []),
-        ...sections.archived,
       ].map((view) => view.thread.threadId),
     [sections, settledExpanded, snoozedExpanded],
   );
@@ -325,26 +298,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     [bulkCommand, selection],
   );
 
-  const archivedIds = useMemo(
-    () => new Set(sections.archived.map((view) => view.thread.threadId)),
-    [sections.archived],
-  );
-  const selectedArchivedCount = useMemo(
-    () => selection.orderedIds.filter((threadId) => archivedIds.has(threadId)).length,
-    [archivedIds, selection.orderedIds],
-  );
-
-  const toggleArchived = useCallback(() => {
-    setArchivedExpanded((current) => !current);
-    setArchivedShown(ARCHIVED_PAGE_COUNT);
-  }, []);
-
   const toggleSettled = useCallback(() => setSettledExpanded((current) => !current), []);
   const toggleSnoozed = useCallback(() => setSnoozedExpanded((current) => !current), []);
-
-  const showMoreArchived = useCallback(() => {
-    setArchivedShown((current) => current + ARCHIVED_PAGE_COUNT);
-  }, []);
 
   const handleListKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -500,7 +455,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       ))}
       {!search.active && selection.count > 1 && (
         <AgentThreadSelectionBar
-          archivedCount={selectedArchivedCount}
           onAction={runBulkAction}
           onClear={selection.clear}
           owner={selection.owner}
@@ -529,7 +483,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
           />
         ) : (
           <AgentThreadList
-            archivedExpanded={archivedExpanded}
             settledExpanded={settledExpanded}
             snoozedExpanded={snoozedExpanded}
             onToggleSettled={toggleSettled}
@@ -540,9 +493,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             jumpLabels={jumpLabels}
             markedThreadIds={selection.selectedIds}
             onSelectThread={rowSelect}
-            onShowMoreArchived={showMoreArchived}
             onThreadMenuCommand={menuCommand}
-            onToggleArchived={toggleArchived}
             pendingInteractions={pendingInteractions}
             projectLabels={projectLabels}
             sections={sections}
@@ -555,22 +506,18 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         management={providerManagement}
         onOpenSourceControl={onOpenSourceControl}
         onOpenSettings={onOpenProviderSettings}
-        onOpenUsage={() => (usageOpen ? closeUsage() : setUsageOpen(true))}
+        onOpenUsage={onOpenUsage}
         providerEnabled={providerEnabled}
-        usageButtonRef={usageButtonRef}
-        usageOpen={usageOpen}
-      />
-      <AgentRailUsagePopover
-        accountUsage={accountUsage}
-        evidenceOf={evidenceOf}
-        onClose={closeUsage}
-        open={usageOpen}
-        projectLabels={usageProjectLabels}
-        railRef={railRef}
-        threads={usageThreads}
-        triggerRef={usageButtonRef}
-        turnLog={turnLog}
       />
     </aside>
   );
 });
+
+function focusExpandSidebar(): void {
+  const expand = document.querySelector<HTMLButtonElement>('button[aria-label="Expand sidebar"]');
+  if (expand === null || !expand.isConnected || expand.disabled || expand.hidden) return;
+  if (expand.closest('[hidden], [aria-hidden="true"]') !== null) return;
+  const style = getComputedStyle(expand);
+  if (style.display === "none" || style.visibility === "hidden") return;
+  expand.focus();
+}

@@ -28,7 +28,7 @@ export interface AgentEditorBridgePort {
   openSurface(surface: AgentSurfaceKind): void;
 }
 
-export const EDITOR_BRIDGE_SURFACE: AgentSurfaceKind = "files";
+export const EDITOR_BRIDGE_SURFACE: AgentSurfaceKind = "editor";
 
 export interface AgentEditorBridgeDependencies {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;

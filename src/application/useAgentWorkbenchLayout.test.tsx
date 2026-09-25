@@ -25,7 +25,6 @@ afterEach(() => {
 });
 
 const diffLayout: AgentWorkbenchLayout = {
-  layout: "agent",
   rightPanel: "open",
   openSurfaces: ["diff"],
   activeSurface: "diff",
@@ -37,7 +36,6 @@ const diffLayout: AgentWorkbenchLayout = {
 };
 
 const terminalLayout: AgentWorkbenchLayout = {
-  layout: "agent",
   rightPanel: "open",
   openSurfaces: ["terminal"],
   activeSurface: "terminal",
@@ -66,7 +64,7 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
-  it("forces the expanded editor while the agent layout is unavailable", () => {
+  it("derives the editor-only fallback while the agent layout is unavailable", () => {
     const harness = renderLayout({
       workspaceOwnerKey: "workspace-a",
       hasWorkspace: true,
@@ -74,7 +72,7 @@ describe("useAgentWorkbenchLayout", () => {
     });
 
     expect(harness.result().agentModeActive).toBe(false);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-expanded");
+    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-only");
     harness.unmount();
   });
 
@@ -84,7 +82,6 @@ describe("useAgentWorkbenchLayout", () => {
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
 
     expect(harness.result().agentWorkbench.layout).toMatchObject({
-      layout: "agent",
       rightPanel: "open",
       activeSurface: "diff",
     });
@@ -118,7 +115,7 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
-  it("migrates a persisted expanded editor back to the agent startup layout", async () => {
+  it("ignores a legacy persisted expanded editor mode", async () => {
     const harness = renderLayout({
       workspaceOwnerKey: "workspace-a",
       hasWorkspace: true,
@@ -131,10 +128,7 @@ describe("useAgentWorkbenchLayout", () => {
     await harness.settle();
 
     expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.layout).toMatchObject({
-      layout: "agent",
-      activeSurface: "diff",
-    });
+    expect(harness.result().agentWorkbench.layout).toEqual(diffLayout);
     harness.unmount();
   });
 
@@ -331,7 +325,6 @@ describe("useAgentWorkbenchLayout", () => {
       {
         ownerKey: "workspace-a",
         layout: {
-          layout: "agent",
           rightPanel: "open",
           openSurfaces: ["diff"],
           activeSurface: "diff",
@@ -362,7 +355,7 @@ describe("useAgentWorkbenchLayout", () => {
     expect(persistence.writes).toHaveLength(1);
     expect(persistence.writes[0]).toMatchObject({
       ownerKey: "workspace-a",
-      layout: { bottomPanel: true, layout: "agent" },
+      layout: { bottomPanel: true },
     });
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));

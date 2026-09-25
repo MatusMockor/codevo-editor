@@ -6,12 +6,10 @@ import { useProjectRepositoryIdentities } from "../../application/useProjectRepo
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
 import { TauriRemoteRepositoryIdentityGateway } from "../../infrastructure/tauriRemoteRepositoryIdentityGateway";
 import { useAgentProjectCreation } from "./useAgentProjectCreation";
-import {
-  AgentProjectSourceDialog,
-  AgentExistingServerProjectDialog,
-} from "./AgentProjectSourceDialog";
-import { AgentLocalCloneDialog } from "./AgentLocalCloneDialog";
 import { AgentCloneComposer } from "./AgentCloneComposer";
+import { NoProjectsHero } from "../projects/NoProjectsHero";
+import { ProjectOnboardingLayer } from "../projects/ProjectOnboardingLayer";
+import type { WorkspaceTrustOrigin } from "../../domain/trust";
 import { AgentRemoteDraftProjectChooser } from "./AgentRemoteDraftProjectChooser";
 import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
@@ -66,8 +64,6 @@ import { AgentComposerController } from "./AgentComposerController";
 import { AgentPanelWindowControls } from "./AgentPanelLayoutControls";
 import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
-import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
-import { AgentRemoteAddProjectDialog } from "./remoteAddProject/AgentRemoteAddProjectDialog";
 import { remoteAddProjectCloneActive } from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
@@ -104,6 +100,7 @@ import { useScopedAgentNotice } from "./useScopedAgentNotice";
 import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
+import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
 import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
 import {
   queuedEditImageOwner,
@@ -142,6 +139,7 @@ export interface AgentModeViewProps {
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly workspaceRoot: string | null;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+  readonly projectsLoaded?: boolean;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly nowTickMs?: number;
@@ -150,17 +148,14 @@ export interface AgentModeViewProps {
   readonly textClipboard?: TextClipboardGateway | null;
   onOpenSourceControl?(): void;
   onOpenEnvironmentSettings?(): void;
-  onTrustProject(projectRootKey: string): void;
+  onOpenUsageSettings?(): void;
+  onTrustProject(projectRootKey: string, origin?: WorkspaceTrustOrigin): void;
   onCloseProject?(rootPath: string): void;
   onReleaseProject(projectRootKey: string): void;
 }
 
 const DEFAULT_NOW_TICK_MS = 30_000;
 const NO_DIFF_TURNS: ReadonlyArray<AgentDiffTurn> = [];
-const IDLE_ACCOUNT_USAGE = {
-  claudeCode: { kind: "idle" },
-  codex: { kind: "idle" },
-} as const;
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const PROJECT_IDENTITY_GATEWAY = new TauriRepositoryIdentityGateway();
 const REMOTE_PROJECT_IDENTITY_GATEWAY = new TauriRemoteRepositoryIdentityGateway();
@@ -232,12 +227,14 @@ function LocalAgentModeView({
   nowTickMs = DEFAULT_NOW_TICK_MS,
   onOpenSourceControl = NOOP_OPEN_SOURCE_CONTROL,
   onOpenEnvironmentSettings,
+  onOpenUsageSettings,
   onCloseProject = NOOP_CLOSE_PROJECT,
   onReleaseProject,
   onTrustProject,
   overflowRootPaths,
   providerEnabled,
   projects,
+  projectsLoaded = true,
   questionGateway = null,
   artifactLoader = null,
   artifactPreview = null,
@@ -675,6 +672,7 @@ function LocalAgentModeView({
 
   const navigationCommands = navigation.commands;
   const surfaceBlocked = surface.surfaceBlocked;
+  const openAddProjectRef = useRef<() => void>(() => undefined);
   const commandHandlers = useMemo<AgentViewCommandHandlers>(
     () => ({
       ...navigationCommands,
@@ -692,6 +690,7 @@ function LocalAgentModeView({
         setGoToTurnSignal((current) => current + 1);
       },
       toggleMaximizedPanel: toggleResponsivePanel,
+      addProject: () => openAddProjectRef.current(),
       surfaceBlocked,
     }),
     [
@@ -756,6 +755,9 @@ function LocalAgentModeView({
   const cancelPendingClone = useAgentLatestCallback(creation.cancel);
   const dismissPendingClone = useAgentLatestCallback(creation.dismiss);
   const openAddProject = useAgentLatestCallback(creation.open);
+  useLayoutEffect(() => {
+    openAddProjectRef.current = openAddProject;
+  }, [openAddProject]);
   const openPendingClone = useAgentLatestCallback(creation.showPending);
   const remoteAddCloneRunning =
     remoteAdd.pendingClone !== null && remoteAddProjectCloneActive(remoteAdd.pendingClone.status);
@@ -831,6 +833,7 @@ function LocalAgentModeView({
       agents.turnChangesRevision,
     ],
   );
+  const composerExtras = useAgentComposerDrawerExtras(chrome.branchCheckout, agents.accountUsage);
   return (
     <AgentAgentsPanelProvider
       isOpen={surface.isSurfaceOpen("agents")}
@@ -851,7 +854,6 @@ function LocalAgentModeView({
                 collapseShortcut={chrome.shortcuts?.sidebar ?? null}
                 footerActivity={footerActivity}
                 addProjectAvailable={chrome.addProject !== null}
-                accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
                 evidenceOf={turnEvidenceOf}
                 groups={groups}
                 onAddProject={openAddProject}
@@ -864,6 +866,7 @@ function LocalAgentModeView({
                 onNewThread={newProjectThread}
                 onOpenProviderSettings={agents.configureAgentCli}
                 onOpenSourceControl={onOpenSourceControl}
+                onOpenUsage={onOpenUsageSettings}
                 onProjectCommand={projectMenuCommand}
                 onChangeFilter={navigation.setRailFilter}
                 onSelectThread={navigation.selectThread}
@@ -919,7 +922,16 @@ function LocalAgentModeView({
                 trailingExtras={AGENTS_TOGGLE_BUTTON}
               />
               <AgentThreadErrorBanner agents={agents} view={sessionThread} />
-              {creation.visible && creation.pending !== null && creation.pendingClone !== null ? (
+              {projects.length === 0 &&
+              creation.pendingClones.length === 0 &&
+              selectedServerId === null &&
+              selectedThreadId === null ? (
+                projectsLoaded ? (
+                  <NoProjectsHero onAddProject={openAddProject} />
+                ) : null
+              ) : creation.visible &&
+                creation.pending !== null &&
+                creation.pendingClone !== null ? (
                 <AgentCloneComposer
                   creation={creation}
                   agents={{
@@ -940,6 +952,7 @@ function LocalAgentModeView({
                   onThreadStarted={navigation.selectStartedThread}
                   onOpenProviderSettings={agents.configureAgentCli}
                   onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+                  onTrustProject={trustProject}
                 />
               ) : selectedThreadId === null &&
                 selectedServerId !== null &&
@@ -1123,50 +1136,22 @@ function LocalAgentModeView({
                     submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
                     submit={submitComposer}
                     interactions={{ gateway: questionGateway, thread: sessionThread }}
+                    banners={composerExtras.banners}
+                    onShowUsageLimits={composerExtras.onShowUsageLimits}
+                    renderDrawerEnd={composerExtras.renderDrawerEnd}
                   />
                 </>
               )}
             </div>
           </div>
         </AgentClockProvider>
-        {creation.entryOpen && (
-          <AgentProjectSourceDialog
-            selectedServerId={selectedServerId}
-            servers={remoteContext?.servers ?? NO_REMOTE_SERVERS}
-            localCloneAvailable={chrome.addProject?.cloneGateway != null}
-            cloneBlocked={creation.pendingClones.length >= 4}
-            onClose={creation.closeEntry}
-            onChoose={creation.choose}
-          />
-        )}
-        {creation.existingServerProjects !== null && (
-          <AgentExistingServerProjectDialog
-            projects={creation.existingServerProjects}
-            onClose={creation.closeExisting}
-            onSelect={creation.selectExisting}
-          />
-        )}
-        {creation.localDialogOpen && chrome.addProject !== null && (
-          <AgentLocalCloneDialog
-            gateway={chrome.addProject.gateway}
-            lookupGateway={remoteContext?.repositoryLookup ?? null}
-            onClose={creation.closeLocal}
-            onClone={creation.local.start}
-            busy={creation.local.busy}
-            error={creation.local.error}
-          />
-        )}
-        <AgentRemoteAddProjectDialog controller={remoteAdd} onClose={remoteAdd.close} />
-        {addProject.open && chrome.addProject !== null && (
-          <AgentAddProjectDialog
-            gateway={chrome.addProject.gateway}
-            onAdd={addProject.addProject}
-            onClose={addProject.closeDialog}
-            onNotice={addProject.reportNotice}
-            onOpenExisting={addProject.addProject}
-            projectRootPaths={addProject.projectRootPaths}
-          />
-        )}
+        <ProjectOnboardingLayer
+          chrome={chrome.addProject}
+          creation={creation}
+          lookupGateway={remoteContext?.repositoryLookup ?? null}
+          selectedServerId={selectedServerId}
+          servers={remoteContext?.servers ?? NO_REMOTE_SERVERS}
+        />
         <AgentThreadSearchPalette
           archivedThreadIds={navigation.palette.archivedThreadIds}
           isOpen={navigation.palette.open}

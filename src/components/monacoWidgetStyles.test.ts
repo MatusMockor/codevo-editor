@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
  * so the chrome is theme-aware through our CSS variables rather than hardcoded.
  */
 const appCss = readFileSync("src/App.css", "utf8");
+const widgetCss = readFileSync("src/components/editorPanel/editorWidgets.css", "utf8");
+const MONACO_DEFAULT_BLUES = /#(?:007acc|04395e|062f4a|094771|0e639c|264f78|006ab1)\b/i;
 
 /** Returns the body of the FIRST CSS rule whose selector text matches. */
 function ruleBody(css: string, selectorNeedle: string): string {
@@ -26,8 +28,7 @@ function ruleBody(css: string, selectorNeedle: string): string {
 
 function themeBlocks(css: string): Array<{ selector: string; body: string }> {
   const blocks: Array<{ selector: string; body: string }> = [];
-  const themeSelector =
-    /(^|\n)(\s*(?::root|\.app-shell\[data-theme="[^"]+"\])\s*)\{/g;
+  const themeSelector = /(^|\n)(\s*(?::root|\.app-shell\[data-theme="[^"]+"\])\s*)\{/g;
   let match: RegExpExecArray | null;
   while ((match = themeSelector.exec(css)) !== null) {
     const selector = match[2].trim();
@@ -55,76 +56,61 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function expectDeclarationUsesVar(
-  body: string,
-  property: string,
-  variable: string,
-): void {
+function expectDeclarationUsesVar(body: string, property: string, variable: string): void {
   expect(body).toMatch(
     new RegExp(`${escapeRegExp(property)}:\\s*var\\(${escapeRegExp(variable)}\\)`),
   );
 }
 
-describe("Monaco widget chrome (JetBrains classic)", () => {
-  it("rounds and shadows the suggest widget with shared design tokens", () => {
-    const body = ruleBody(appCss, ".monaco-editor .suggest-widget,");
-    expect(body).toContain("border-radius");
-    expect(body).toContain("box-shadow");
+describe("Monaco widget chrome", () => {
+  const popupChrome = ruleBody(widgetCss, ".app-shell .monaco-editor .monaco-hover,");
+
+  it.each([
+    ".app-shell .monaco-editor .suggest-widget,",
+    ".app-shell .monaco-editor .suggest-details,",
+    ".app-shell .monaco-editor .find-widget,",
+    ".app-shell .monaco-editor .rename-box,",
+    ".app-shell .action-widget {",
+  ])("rounds and shadows %s with the shared popover chrome", (selector) => {
+    expect(ruleBody(widgetCss, selector)).toBe(popupChrome);
+    expectDeclarationUsesVar(popupChrome, "border-radius", "--cv-r-card");
+    expectDeclarationUsesVar(popupChrome, "background", "--cv-popover");
+    expectDeclarationUsesVar(popupChrome, "box-shadow", "--cv-shadow-pop");
+    expect(popupChrome).toMatch(/border:\s*0;/);
   });
 
-  it("rounds the hover widget so it matches the suggest popup", () => {
-    const body = ruleBody(appCss, ".monaco-editor .monaco-hover,");
-    expect(body).toContain("border-radius");
-  });
-
-  it("rounds the context / code-action menu so it matches the popups", () => {
-    const body = ruleBody(appCss, ".monaco-menu .monaco-action-bar");
-    expect(body).toContain("border-radius");
-  });
-
-  it("rounds and shadows the code-action widget (Cmd+.) like the popups", () => {
-    // The lightbulb / Cmd+. list is Monaco's newer `.action-widget`, a DIFFERENT
-    // DOM from `.monaco-menu` (it ships its own actionWidget.css with a 5px radius
-    // and a blue --vscode-editorActionList-focusBackground selection). Without an
-    // override it falls back to Monaco's default chrome, so pin our JetBrains look.
-    const body = ruleBody(appCss, ".monaco-editor .action-widget,");
-    expect(body).toContain("border-radius");
-    expect(body).toContain("box-shadow");
-    expect(body).toContain("var(--color-modal)");
-    expect(body).toContain("var(--color-border-strong)");
+  it("rounds the context menu items inside Monaco's menu bar", () => {
+    const body = ruleBody(
+      widgetCss,
+      ".app-shell .monaco-menu .monaco-action-bar.vertical .action-item .action-menu-item {",
+    );
+    expectDeclarationUsesVar(body, "border-radius", "--cv-r-sm");
   });
 
   it("reads the code-action group headers as quiet uppercase section labels", () => {
-    // Quick Fix... / Refactor... group rows separate the action categories; give
-    // them the same quiet uppercase section-label treatment the other JetBrains
-    // chrome uses so the categories read at a glance above the prioritised rows.
-    const body = ruleBody(
-      appCss,
-      ".monaco-editor .action-widget .monaco-list-row.group-header,",
-    );
-    expect(body).toContain("var(--color-text-muted)");
+    const body = ruleBody(widgetCss, ".app-shell .action-widget .monaco-list-row.group-header {");
+    expectDeclarationUsesVar(body, "color", "--cv-fg-muted");
     expect(body).toContain("text-transform: uppercase");
     expect(body).toContain("letter-spacing");
   });
 
-  it("tints the focused code-action row with accent-soft, not Monaco blue", () => {
-    // Monaco focuses the row via `.monaco-list-row.action.focused` using its blue
-    // --vscode-editorActionList-focusBackground; recolor it to our soft accent so
-    // the selected Quick Fix / Extract row matches the suggest rows on every theme.
+  it("tints the focused code-action row with the tint token, not Monaco blue", () => {
     const body = ruleBody(
-      appCss,
-      ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused",
+      widgetCss,
+      ".app-shell .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) {",
     );
-    expect(body).toContain("var(--color-accent-soft)");
-    expect(body).toContain("var(--color-text-strong)");
+    expectDeclarationUsesVar(body, "background-color", "--cv-tint-3");
+    expectDeclarationUsesVar(body, "color", "--cv-fg-strong");
+    expect(body).not.toMatch(MONACO_DEFAULT_BLUES);
   });
 
-  it("tints the selected suggest row with the shared accent-soft token", () => {
+  it("tints the selected suggest row with the shared tint token", () => {
     const body = ruleBody(
-      appCss,
-      ".monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
+      widgetCss,
+      ".app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {",
     );
-    expect(body).toContain("var(--color-accent-soft)");
+    expectDeclarationUsesVar(body, "background", "--cv-tint-3");
+    expectDeclarationUsesVar(body, "color", "--cv-fg-strong");
   });
 
   it("gives the FileStructure active row a rounded, inset accent fill", () => {
@@ -140,142 +126,103 @@ describe("Monaco widget chrome (JetBrains classic)", () => {
     expect(body).toMatch(/margin(-inline|-left|-right|-inline-start)?:/);
   });
 
-  it("pins Monaco widget surface variables to theme-aware chrome tokens", () => {
-    // Monaco reads these --vscode-* variables for the popup surfaces. Bundled
-    // Shiki themes ship none of the matching theme tokens, so pinning them here
-    // (to our --color-* tokens) keeps every theme's popups consistent.
-    const body = ruleBody(appCss, ".app-shell .monaco-editor,");
+  it("pins Monaco widget surface variables to palette chrome tokens", () => {
+    const body = ruleBody(widgetCss, ".app-shell .monaco-editor,");
     const surfaceBindings: Array<[string, string]> = [
-      ["--vscode-editorSuggestWidget-background", "--color-modal"],
-      ["--vscode-editorSuggestWidget-border", "--color-border-strong"],
-      ["--vscode-editorHoverWidget-background", "--color-modal"],
-      ["--vscode-menu-background", "--color-modal"],
-      ["--vscode-menu-selectionBackground", "--color-accent-soft"],
+      ["--vscode-editorSuggestWidget-background", "--cv-popover"],
+      ["--vscode-editorSuggestWidget-selectedBackground", "--cv-tint-3"],
+      ["--vscode-editorSuggestWidget-selectedForeground", "--cv-fg-strong"],
+      ["--vscode-editorHoverWidget-background", "--cv-popover"],
+      ["--vscode-editorWidget-background", "--cv-popover"],
+      ["--vscode-menu-background", "--cv-popover"],
+      ["--vscode-menu-selectionBackground", "--cv-tint-3"],
+      ["--vscode-editorActionList-background", "--cv-popover"],
+      ["--vscode-editorActionList-focusBackground", "--cv-tint-3"],
+      ["--vscode-editorActionList-focusForeground", "--cv-fg-strong"],
     ];
-    for (const [vscodeVar, token] of surfaceBindings) {
-      expect(body, `${vscodeVar} should bind to ${token}`).toContain(
-        `${vscodeVar}: var(${token})`,
+    for (const [property, variable] of surfaceBindings) {
+      expectDeclarationUsesVar(body, property, variable);
+    }
+    for (const border of [
+      "--vscode-editorSuggestWidget-border",
+      "--vscode-editorHoverWidget-border",
+      "--vscode-editorWidget-border",
+      "--vscode-menu-border",
+    ]) {
+      expect(body, `${border} is drawn by the shadow ring instead`).toMatch(
+        new RegExp(`${escapeRegExp(border)}:\\s*transparent;`),
       );
     }
+    expect(body).not.toMatch(MONACO_DEFAULT_BLUES);
   });
 
-  it("keeps focused widget states and popup surfaces on theme variables", () => {
-    const surfaceBody = ruleBody(appCss, ".app-shell .monaco-editor,");
-    const themeAwareBindings: Array<[string, string]> = [
-      ["--vscode-editorSuggestWidget-selectedBackground", "--color-accent-soft"],
-      ["--vscode-editorHoverWidget-background", "--color-modal"],
-      ["--vscode-editorHoverWidget-border", "--color-border-strong"],
-      ["--vscode-menu-selectionBackground", "--color-accent-soft"],
-      ["--vscode-editorActionList-focusBackground", "--color-accent-soft"],
-    ];
-    for (const [property, variable] of themeAwareBindings) {
-      expectDeclarationUsesVar(surfaceBody, property, variable);
-    }
-
-    const focusedSelectors: Array<[string, Array<[string, string]>]> = [
-      [
-        ".monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
-        [["background", "--color-accent-soft"]],
-      ],
-      [
-        [
-          ".monaco-menu",
-          ".monaco-action-bar.vertical",
-          ".action-item.focused",
-          ".action-menu-item",
-        ].join(" "),
-        [["background", "--color-accent-soft"]],
-      ],
-      [
-        ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused",
-        [
-          ["background-color", "--color-accent-soft"],
-          ["color", "--color-text-strong"],
-        ],
-      ],
-    ];
-
-    for (const [selector, declarations] of focusedSelectors) {
-      const body = ruleBody(appCss, selector);
-      for (const [property, variable] of declarations) {
-        expectDeclarationUsesVar(body, property, variable);
-      }
-      expect(body, `${selector} should not hardcode Monaco default colors`).not
-        .toMatch(/#(?:007acc|04395e|062f4a|094771|0e639c|264f78|006ab1)\b/i);
-    }
+  it("keeps the focused context-menu row on the tint token", () => {
+    const body = ruleBody(
+      widgetCss,
+      ".app-shell .monaco-menu .monaco-action-bar.vertical .action-item.focused .action-menu-item {",
+    );
+    expectDeclarationUsesVar(body, "background", "--cv-tint-3");
+    expect(body).not.toMatch(MONACO_DEFAULT_BLUES);
   });
 });
 
 describe("Monaco suggest-widget kind icon recolor", () => {
-  // Monaco renders completion kinds as codicons inside the suggest widget; its
-  // own rule colors them via `.monaco-editor .codicon.codicon-symbol-method`.
-  // We override the same icons under `.suggest-widget` so they read with the
-  // exact FileStructure --symbol-* roles for every theme at once.
-  const kindToSymbolVar: Array<[string, string]> = [
-    ["symbol-method", "--symbol-method"],
-    ["symbol-function", "--symbol-function"],
-    ["symbol-property", "--symbol-property"],
-    ["symbol-field", "--symbol-property"],
-    ["symbol-constant", "--symbol-const"],
-    ["symbol-enum-member", "--symbol-const"],
-    ["symbol-class", "--symbol-class"],
-    ["symbol-interface", "--symbol-interface"],
-    ["symbol-enum", "--symbol-enum"],
-    ["symbol-variable", "--symbol-variable"],
-    ["symbol-keyword", "--symbol-keyword"],
-    // Laravel "magic" completion categories ride distinct Monaco kinds so the
-    // suggest list reads as PhpStorm-style groups: relations use Field (already
-    // mapped to --symbol-property above), magic query scopes use Function, and
-    // dynamic where<Attribute>() magic uses Event. Recolor the Laravel value /
-    // view glyphs (Value/File kinds) and the Event glyph so every category is
-    // told apart by colour, not only by sortText order.
-    ["symbol-event", "--symbol-enum"],
-    ["symbol-value", "--symbol-const"],
-    ["symbol-file", "--symbol-interface"],
+  const kindToSyntaxVar: Array<[string, string]> = [
+    ["symbol-method", "--cv-syn-kw"],
+    ["symbol-constructor", "--cv-syn-kw"],
+    ["symbol-function", "--cv-syn-kw"],
+    ["symbol-keyword", "--cv-syn-kw"],
+    ["symbol-event", "--cv-syn-kw"],
+    ["symbol-property", "--cv-syn-num"],
+    ["symbol-field", "--cv-syn-num"],
+    ["symbol-constant", "--cv-syn-num"],
+    ["symbol-enum-member", "--cv-syn-num"],
+    ["symbol-value", "--cv-syn-num"],
+    ["symbol-class", "--cv-accent"],
+    ["symbol-struct", "--cv-accent"],
+    ["symbol-interface", "--cv-accent"],
+    ["symbol-enum", "--cv-accent"],
+    ["symbol-file", "--cv-syn-str"],
+    ["symbol-variable", "--cv-fg-muted"],
   ];
 
-  it("recolors each suggest kind icon from the matching --symbol-* variable", () => {
-    for (const [codicon, symbolVar] of kindToSymbolVar) {
-      // Anchor on `::before {` so `symbol-enum` does not also match the longer
-      // `symbol-enum-member` rule (which intentionally uses --symbol-const).
-      const selector = `.monaco-editor .suggest-widget .codicon-${codicon}::before`;
-      const index = appCss.indexOf(selector);
-      expect(index, `missing suggest recolor for ${codicon}`).toBeGreaterThan(
-        -1,
-      );
-      // The color must come from the theme-aware symbol variable, not a literal.
-      const body = appCss.slice(index, appCss.indexOf("}", index));
-      expect(body, `${codicon} should use ${symbolVar}`).toContain(
-        `var(${symbolVar})`,
-      );
+  it("recolors each suggest kind icon from the matching palette syntax token", () => {
+    for (const [codicon, variable] of kindToSyntaxVar) {
+      const selector = `.app-shell .monaco-editor .suggest-widget .codicon-${codicon}::before`;
+      const index =
+        widgetCss.indexOf(`${selector},`) >= 0
+          ? widgetCss.indexOf(`${selector},`)
+          : widgetCss.indexOf(`${selector} {`);
+      expect(index, `missing suggest recolor for ${codicon}`).toBeGreaterThan(-1);
+      const body = widgetCss.slice(widgetCss.indexOf("{", index), widgetCss.indexOf("}", index));
+      expect(body, `${codicon} should use ${variable}`).toContain(`color: var(${variable})`);
     }
   });
 
   it("keeps the completion category qualifier readable beside each row", () => {
-    // PhpStorm-style grouping leans on the per-row category text our provider
-    // packs into `label.description` ("relation - ...", "scope - ...", "magic
-    // where - ..."). Monaco renders it as the right-aligned `.label-description`
-    // inside the suggest row; pin it to a theme-aware muted token so the category
-    // reads as a quiet qualifier on every theme instead of inheriting Monaco's
-    // baked-in detail colour.
-    const selector =
-      ".monaco-editor .suggest-widget .monaco-list .monaco-list-row .label-description";
-    const index = appCss.indexOf(selector);
-    expect(index, "missing suggest label-description rule").toBeGreaterThan(-1);
-    const body = appCss.slice(index, appCss.indexOf("}", index));
-    expect(body).toContain("var(--color-text-muted)");
+    const body = ruleBody(
+      widgetCss,
+      ".app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row .label-description,",
+    );
+    expectDeclarationUsesVar(body, "color", "--cv-fg-muted");
   });
 
   it("colours the code-action widget icons (quickfix / refactor) consistently", () => {
-    // The Cmd+. list shows a lightbulb (quickfix) / wrench (refactor) codicon per
-    // row. Tie those glyphs to a theme-aware token so they read consistently on
-    // every theme rather than inheriting Monaco's default action-list colour.
-    const selector =
-      ".monaco-editor .action-widget .monaco-list .monaco-list-row .codicon::before";
-    const index = appCss.indexOf(selector);
-    expect(index, "missing action-widget codicon rule").toBeGreaterThan(-1);
-    const body = appCss.slice(index, appCss.indexOf("}", index));
-    expect(body).toMatch(/color:\s*var\(--color-/);
+    const body = ruleBody(
+      widgetCss,
+      ".app-shell .action-widget .monaco-list .monaco-list-row .codicon::before {",
+    );
+    expectDeclarationUsesVar(body, "color", "--cv-fg-muted");
+    const focused = ruleBody(
+      widgetCss,
+      ".monaco-list-row.action.focused:not(.option-disabled)\n  .codicon::before {",
+    );
+    expectDeclarationUsesVar(focused, "color", "--cv-fg-strong");
+  });
+
+  it("keeps the Monaco widget sheet free of colour literals", () => {
+    expect(widgetCss).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(widgetCss).not.toMatch(/\b(rgb|rgba|hsl|hsla)\(/);
   });
 
   it("declares required widget and symbol variables in every theme block", () => {
@@ -312,9 +259,7 @@ describe("Monaco suggest-widget kind icon recolor", () => {
 
     for (const { selector, body } of blocks) {
       for (const variable of requiredThemeVariables) {
-        expect(body, `${selector} missing ${variable}`).toContain(
-          `${variable}:`,
-        );
+        expect(body, `${selector} missing ${variable}`).toContain(`${variable}:`);
       }
     }
   });
@@ -331,10 +276,7 @@ describe("Gutter rollback popover + Git Local Changes polish", () => {
     // The Previous/Next/Close + Revert buttons only recolored their border on
     // hover, which reads flat. Add a soft accent fill so hover matches the git
     // toolbar buttons and feels clickable across every theme.
-    const body = ruleBody(
-      appCss,
-      ".editor-change-popover-icon-button:hover,",
-    );
+    const body = ruleBody(appCss, ".editor-change-popover-icon-button:hover,");
     expect(body).toContain("background");
     expect(body).toMatch(/var\(--change-popover-soft\)|var\(--color-hover\)/);
   });

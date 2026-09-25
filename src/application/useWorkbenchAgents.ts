@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { AgentAccountUsageRefreshOutcome } from "./agentAccountUsageRefresh";
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type {
   AgentAccountUsageGateway,
@@ -134,6 +135,9 @@ export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
   readonly agentProjects: AgentProjectsSurface;
   readonly providerManagement: AgentProviderManagementSurface;
   readonly providerSignIn: AgentProviderSignInSurface;
+  readonly refreshAccountUsage?: (
+    provider: "claudeCode" | "codex",
+  ) => Promise<AgentAccountUsageRefreshOutcome>;
 }
 
 const unwiredGatewayError = (): Error =>
@@ -310,6 +314,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     onActiveWorkspaceTrustChanged: options.onActiveWorkspaceTrustChanged,
     prompter: options.prompter,
     reportError: options.reportError,
+    settingsHydrated: options.settingsHydrated,
   });
 
   const readProviderAuthority = useCallback((provider: "claudeCode" | "codex") => {
@@ -401,37 +406,47 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     [options.agentProviderGateway],
   );
 
-  const refreshProviderUsageAfterTurn = useCallback(
-    (provider: "claudeCode" | "codex"): void => {
+  const refreshAccountUsage = useCallback(
+    async (provider: "claudeCode" | "codex"): Promise<AgentAccountUsageRefreshOutcome> => {
       const readUsage = options.agentProviderGateway.readAgentProviderUsage;
       const management = providerManagementRef.current;
-      if (readUsage === undefined || management === null) return;
+      if (readUsage === undefined || management === null) return { kind: "unavailable" };
       const authority = management.admissionAuthority(provider);
-      if (authority.disposition.kind !== "ready" || !("providerGeneration" in authority)) return;
+      if (authority.disposition.kind !== "ready" || !("providerGeneration" in authority)) {
+        return { kind: "unavailable" };
+      }
       const providerGeneration = authority.providerGeneration;
-      void readUsage
+      const workspaceGeneration = providerWorkspaceOwnerRef.current.generation;
+      const isCurrent = (): boolean => {
+        if (providerWorkspaceOwnerRef.current.generation !== workspaceGeneration) return false;
+        const current = providerManagementRef.current?.admissionAuthority(provider);
+        return (
+          current !== undefined &&
+          current.disposition.kind === "ready" &&
+          "providerGeneration" in current &&
+          current.providerGeneration === providerGeneration
+        );
+      };
+      const snapshot = await readUsage
         .call(options.agentProviderGateway, { provider, providerGeneration })
-        .then((snapshot) => {
-          const current = providerManagementRef.current;
-          if (current === null) return;
-          const currentAuthority = current.admissionAuthority(provider);
-          if (
-            currentAuthority.disposition.kind !== "ready" ||
-            !("providerGeneration" in currentAuthority) ||
-            currentAuthority.providerGeneration !== providerGeneration
-          ) {
-            return;
-          }
-          publishAccountUsageSnapshot(
-            snapshot,
-            accountUsageRef,
-            setAccountUsage,
-            options.agentProviderGateway,
-          );
-        })
-        .catch(() => undefined);
+        .catch(() => null);
+      if (!isCurrent()) return { kind: "superseded" };
+      if (snapshot === null || snapshot.provider !== provider) return { kind: "failed" };
+      publishAccountUsageSnapshot(
+        snapshot,
+        accountUsageRef,
+        setAccountUsage,
+        options.agentProviderGateway,
+      );
+      return { kind: "refreshed" };
     },
     [options.agentProviderGateway],
+  );
+  const refreshProviderUsageAfterTurn = useCallback(
+    (provider: "claudeCode" | "codex"): void => {
+      void refreshAccountUsage(provider);
+    },
+    [refreshAccountUsage],
   );
 
   const agentThreadStoreGateway = useMemo(
@@ -540,12 +555,14 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       agentProjects,
       providerManagement,
       providerSignIn,
+      refreshAccountUsage,
     }),
     [
       accountUsage,
       agentProjects,
       providerManagement,
       providerSignIn,
+      refreshAccountUsage,
       threadsWithRepositoryPreflight,
     ],
   );

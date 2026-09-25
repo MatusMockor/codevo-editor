@@ -2,6 +2,7 @@ import type { StatusBarItemVisibility } from "../../../domain/settings";
 import { SettingsChipGroup } from "../primitives/SettingsChipGroup";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
+import { SettingsSwitch } from "../primitives/SettingsSwitch";
 import type { SettingsPageProps } from "../settingsPageProps";
 
 const STATUS_BAR_CHIPS: ReadonlyArray<{
@@ -29,7 +30,7 @@ export function GeneralStatusBarRows({ actions, draft, env }: SettingsPageProps)
   );
 
   return (
-    <SettingsSectionHeading title="Status bar">
+    <SettingsSectionHeading title="Editor header items">
       <SettingsRow layout="stacked" rowId="general.statusBar">
         <SettingsChipGroup
           chips={STATUS_BAR_CHIPS}
@@ -43,6 +44,18 @@ export function GeneralStatusBarRows({ actions, draft, env }: SettingsPageProps)
             });
           }}
           selected={selected}
+        />
+      </SettingsRow>
+      <SettingsRow rowId="general.threadAttention">
+        <SettingsSwitch
+          checked={workspaceSettings.statusBar.agentAttention}
+          disabled={!env.hasWorkspace}
+          onChange={(agentAttention) =>
+            actions.updateWorkspaceSettings({
+              ...workspaceSettings,
+              statusBar: { ...workspaceSettings.statusBar, agentAttention },
+            })
+          }
         />
       </SettingsRow>
     </SettingsSectionHeading>

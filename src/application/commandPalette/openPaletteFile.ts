@@ -15,5 +15,5 @@ export async function openPaletteFile(
   if (!opened) return;
   const settled = current();
   if (!settled.agentModeActive || settled.agentWorkbench.effectiveLayout !== "agent") return;
-  settled.agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
+  settled.agentWorkbench.dispatch({ kind: "openSurface", surface: "editor" });
 }

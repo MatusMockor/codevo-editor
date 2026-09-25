@@ -3,10 +3,11 @@ use crate::agent_task_supervisor::AgentTaskRegistry;
 use crate::debug_adapter::DebugSessionRegistry;
 use crate::eslint::EslintProcessRegistry;
 use crate::git_worktree::git_branch_worktree::add_branch_worktree;
+use crate::git_worktree::git_worktree_start_point::WorktreeStartPointWire;
 use crate::git_worktree::{
     ensure_worktree_path_in_base, prunable_worktree_path_in_base,
     remove_agent_worktree_with_disposal, AgentWorktreeReceipt, CommandGitWorktreeGateway,
-    GitWorktreeDescriptor, GitWorktreeGateway, WorktreeRemovalHooks,
+    GitWorktreeDescriptor, GitWorktreeGateway, WorktreeRemovalHooks, WorktreeStartPoint,
 };
 use crate::job_scheduler::WorkspaceIndexLifecycle;
 use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
@@ -45,9 +46,10 @@ fn add_agent_worktree_receipt(
     gateway: &dyn GitWorktreeGateway,
     repository_root: &Path,
     task_id: &str,
+    start: &WorktreeStartPoint,
     set_trust: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<AgentWorktreeReceipt, String> {
-    let created = gateway.add_agent_worktree(repository_root, task_id)?;
+    let created = gateway.add_agent_worktree_from(repository_root, task_id, start)?;
     let worktree_path = created.worktree_path.to_string_lossy().into_owned();
     let trusted = set_trust(&worktree_path).is_ok();
 
@@ -198,9 +200,11 @@ pub(crate) async fn list_git_worktrees(
 pub(crate) async fn add_git_worktree(
     repository_root: String,
     task_id: String,
+    base: WorktreeStartPointWire,
     trust: GitTrustState<'_>,
     app: AppHandle,
 ) -> Result<AgentWorktreeReceipt, String> {
+    let start = WorktreeStartPoint::try_from(base)?;
     ensure_worktree_repository_trusted(trusted_for(&trust, &repository_root)?)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&repository_root)?;
@@ -208,6 +212,7 @@ pub(crate) async fn add_git_worktree(
             &CommandGitWorktreeGateway::new(),
             &root,
             &task_id,
+            &start,
             |worktree_path| set_worktree_trust(&app, worktree_path, true),
         )
     })
@@ -462,6 +467,7 @@ mod tests {
             &CommandGitWorktreeGateway::new(),
             &repository.root,
             "agt-alpha-0001",
+            &WorktreeStartPoint::Head,
             |worktree_path| {
                 granted
                     .lock()
@@ -528,6 +534,7 @@ mod tests {
             &CommandGitWorktreeGateway::new(),
             &repository.root,
             "agt-beta-0001",
+            &WorktreeStartPoint::Head,
             |_worktree_path| Err("persist failed".to_string()),
         )
         .expect("worktree creation must survive a trust persist failure");
@@ -544,6 +551,7 @@ mod tests {
             &CommandGitWorktreeGateway::new(),
             &repository.root,
             "Bad--Id",
+            &WorktreeStartPoint::Head,
             |_worktree_path| Ok(()),
         )
         .expect_err("invalid task id must be rejected");
@@ -581,6 +589,7 @@ mod tests {
             &gateway,
             &repository.root,
             "agt-gamma-0001",
+            &WorktreeStartPoint::Head,
             |_path| Ok(()),
         )
         .expect("add agent worktree");
@@ -611,10 +620,11 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn add_agent_worktree(
+        fn add_agent_worktree_from(
             &self,
             _repository_root: &Path,
             _task_id: &str,
+            _start: &WorktreeStartPoint,
         ) -> Result<crate::git_worktree::CreatedAgentWorktree, String> {
             Err("unused".to_string())
         }
@@ -681,6 +691,7 @@ mod tests {
             &gateway,
             &repository.root,
             "agt-delta-0001",
+            &WorktreeStartPoint::Head,
             |_path| Ok(()),
         )
         .expect("add agent worktree");

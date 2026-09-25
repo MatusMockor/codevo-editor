@@ -198,12 +198,16 @@ export function useAgentPopoverPlacement(
   return { placement: position?.placement ?? "down", style: agentPopoverStyle(position, align) };
 }
 
-export function useAgentPopover(align: AgentPopoverAlign, disabled = false): AgentPopoverHandle {
+export function useAgentPopover(
+  align: AgentPopoverAlign,
+  disabled = false,
+  metrics: AgentPopoverMetrics = AGENT_POPOVER_METRICS,
+): AgentPopoverHandle {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const placement = useAgentPopoverPlacement(open, triggerRef, popoverRef, align);
+  const placement = useAgentPopoverPlacement(open, triggerRef, popoverRef, align, metrics);
 
   const hide = useCallback((restoreFocus: boolean) => {
     setOpen(false);

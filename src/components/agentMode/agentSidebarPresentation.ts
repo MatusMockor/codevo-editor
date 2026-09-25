@@ -41,7 +41,6 @@ import {
   type AgentRowStatus,
 } from "./agentThreadRowStatus";
 
-export const ARCHIVED_PAGE_COUNT = 20;
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 export const MAX_AGENT_THREAD_JUMP_SLOTS = 9;
 export const NO_PROJECT_SCOPE_LABEL = "No project";
@@ -69,8 +68,6 @@ export interface AgentRailScopeEntry {
 export interface AgentRailSections {
   readonly pinned: ReadonlyArray<AgentThreadView>;
   readonly active: ReadonlyArray<AgentThreadView>;
-  readonly archived: ReadonlyArray<AgentThreadView>;
-  readonly hiddenArchivedCount: number;
   readonly snoozed?: ReadonlyArray<AgentThreadView>;
   readonly settled?: ReadonlyArray<AgentThreadView>;
 }
@@ -132,8 +129,6 @@ export function agentRowVariant(view: AgentThreadView): AgentRowVariant {
 
 export function agentRailSections(
   views: ReadonlyArray<AgentThreadView>,
-  archivedExpanded: boolean,
-  archivedShown: number,
   now: number = Date.now(),
 ): AgentRailSections {
   const settled = views.filter((view) => !view.thread.archived && view.thread.settledAt != null);
@@ -151,26 +146,11 @@ export function agentRailSections(
   );
   const pinned = available.filter((view) => view.thread.pinned);
   const active = available.filter((view) => !view.thread.pinned);
-  const archived = views.filter((view) => view.thread.archived);
   pinned.sort(compareManualOrder);
   active.sort(compareManualOrder);
   snoozed.sort(compareManualOrder);
   settled.sort(compareManualOrder);
-  archived.sort(compareByRecency);
-
-  if (!archivedExpanded) {
-    return { pinned, active, snoozed, settled, archived: [], hiddenArchivedCount: archived.length };
-  }
-
-  const shown = Math.min(Math.max(archivedShown, 0), archived.length);
-  return {
-    pinned,
-    active,
-    snoozed,
-    settled,
-    archived: archived.slice(0, shown),
-    hiddenArchivedCount: archived.length - shown,
-  };
+  return { pinned, active, snoozed, settled };
 }
 
 export function agentRailScopeEntries(
@@ -277,15 +257,6 @@ function compareManualOrder(left: AgentThreadView, right: AgentThreadView): numb
   return compareAgentThreadOrder(left.thread, right.thread);
 }
 
-function compareByRecency(left: AgentThreadView, right: AgentThreadView): number {
-  if (left.thread.updatedAtEpochMs !== right.thread.updatedAtEpochMs) {
-    return right.thread.updatedAtEpochMs - left.thread.updatedAtEpochMs;
-  }
-  if (left.thread.threadId < right.thread.threadId) return -1;
-  if (left.thread.threadId > right.thread.threadId) return 1;
-  return 0;
-}
-
 export type AgentRailEmptyState =
   | { readonly kind: "noProjects" }
   | { readonly kind: "noThreads"; readonly scopeLabel: string | null }
@@ -325,8 +296,6 @@ export function agentRailEmptyState(
   const total =
     sections.pinned.length +
     sections.active.length +
-    sections.archived.length +
-    sections.hiddenArchivedCount +
     (sections.snoozed?.length ?? 0) +
     (sections.settled?.length ?? 0);
   if (total > 0) return null;

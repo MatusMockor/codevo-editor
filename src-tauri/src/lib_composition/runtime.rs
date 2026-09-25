@@ -441,6 +441,7 @@ pub fn run() {
             switch_git_branch,
             quit_application,
             crate::application_commands::app_update_install_mode,
+            app_update_channel_commands::app_update_check,
             set_native_close_listener_ready,
             confirm_native_shutdown,
             read_directory,

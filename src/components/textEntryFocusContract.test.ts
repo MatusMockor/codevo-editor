@@ -8,16 +8,17 @@ const NON_TEXT_INPUT =
   /input\[type="(checkbox|radio|range|button|submit|reset|color|file|image)"\]/;
 const TEXT_ENTRY_FOCUS = /(^|[\s>+~(])(input|textarea)(?![\w-])[^\s,>+~]*:focus(-visible)?$/;
 
+const FOCUS_WITHIN_NON_TEXT_CONTAINERS: ReadonlySet<string> = new Set([
+  ".settings-screen .settings-select:focus-within",
+  ".cv-esub__acts:focus-within",
+]);
+
 const TEXT_ENTRY_CONTAINERS = [
   ".cv-composer__slab:focus-within",
-  ".cv-bpick__field:focus-within",
+  ".cv-bpick__field",
   ".cv-sb-search__field:focus-within",
   ".cv-files__search:focus-within",
   ".cv-git-box:focus-within",
-  ".agent-model-picker__search:focus-within",
-  ".agent-add-project .palette-search:focus-within",
-  ".settings-screen .settings-search:focus-within",
-  ".agent-checkout-search:focus-within",
 ] as const;
 
 const TEXT_ENTRY_FIELDS = [
@@ -40,6 +41,15 @@ function ringValues(selector: string): readonly string[] {
       .filter((declaration) => RING_PROPERTIES.has(declaration.property))
       .map((declaration) => declaration.value),
   );
+}
+
+function focusWithinTextContainers(): readonly string[] {
+  const found = rules.flatMap((rule) =>
+    selectorParts(rule.selector).filter(
+      (part) => part.endsWith(":focus-within") && !FOCUS_WITHIN_NON_TEXT_CONTAINERS.has(part),
+    ),
+  );
+  return [...new Set(found)].sort();
 }
 
 function declarationValue(sheet: string, selector: string, property: string): string | undefined {
@@ -102,6 +112,34 @@ describe("text-entry focus contract", () => {
       }
     },
   );
+
+  it("finds the text-field containers that react to :focus-within", () => {
+    expect(focusWithinTextContainers()).toEqual(
+      expect.arrayContaining([
+        ".cv-composer__slab:focus-within",
+        ".cv-sb-search__field:focus-within",
+        ".cv-files__search:focus-within",
+        ".cv-git-box:focus-within",
+      ]),
+    );
+  });
+
+  it.each(focusWithinTextContainers())(
+    "shows a neutral focus indicator on %s, not only a tint",
+    (selector) => {
+      const indicators = ringValues(selector).filter(
+        (value) => !/^(none|0|transparent)$/.test(value) && !ACCENT_RING.test(value),
+      );
+      expect(indicators, selector).not.toEqual([]);
+    },
+  );
+
+  it.each([
+    ["components/agentMode/rightPanel/files/agentFiles.css", ".cv-files__search:focus-within"],
+    ["components/agentMode/agentSidebar.css", ".cv-sb-search__field:focus-within"],
+  ])("rings %s %s with the neutral hairline", (sheet, selector) => {
+    expect(declarationValue(sheet, selector, "box-shadow")).toBe("var(--cv-ring-hair-strong)");
+  });
 
   it("renders the composer as one surface without an inner framed box", () => {
     expect(

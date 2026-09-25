@@ -4,6 +4,7 @@ import {
   type PaletteId,
   type ResolvedColorScheme,
 } from "../domain/appearance";
+import { EDITOR_EXTRA_COLORS } from "../domain/appearanceEditorColors";
 import { paletteTokens, surfaceColor } from "../domain/appearancePalettes";
 import { cssColorToHex } from "../domain/cssColor";
 import { paletteMonacoTheme } from "../domain/editorColorThemes";
@@ -46,6 +47,13 @@ export function paletteSyntaxTheme(palette: PaletteId, scheme: ResolvedColorSche
     namespace: tokens.fgMuted,
     regexp: tokens.synStr,
     decorator: tokens.synKw,
+    findMatch: cssColorToHex(EDITOR_EXTRA_COLORS[scheme].matchCurrent),
+    findMatchHighlight: cssColorToHex(EDITOR_EXTRA_COLORS[scheme].match),
+    peekBackground: surfaceColor(palette, scheme, "raised"),
+    peekBorder: cssColorToHex(tokens.hairStrong),
+    overviewAdded: cssColorToHex(tokens.ok),
+    overviewModified: cssColorToHex(EDITOR_EXTRA_COLORS[scheme].gitModified),
+    overviewDeleted: cssColorToHex(tokens.danger),
   };
 }
 

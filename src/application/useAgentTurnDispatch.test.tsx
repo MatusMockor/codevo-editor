@@ -670,6 +670,25 @@ describe("useAgentTurnDispatch startThread", () => {
     harness.unmount();
   });
 
+  it("creates the worktree from the start request's selected branch", async () => {
+    const harness = renderDispatch();
+
+    const result = await act(() =>
+      harness
+        .hook()
+        .startThread(
+          startRequest({ worktreeBase: { kind: "ref", ref: "refs/remotes/origin/release" } }),
+        ),
+    );
+
+    expect(result).not.toBeNull();
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(ROOT_A, result?.threadId, {
+      kind: "ref",
+      ref: "refs/remotes/origin/release",
+    });
+    harness.unmount();
+  });
+
   it("creates a worktree named by the thread id and starts the first turn without resume", async () => {
     const harness = renderDispatch();
 
@@ -677,7 +696,9 @@ describe("useAgentTurnDispatch startThread", () => {
 
     expect(result).not.toBeNull();
     const threadId = result?.threadId ?? "";
-    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(ROOT_A, threadId);
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(ROOT_A, threadId, {
+      kind: "head",
+    });
     expect(harness.onWorktreeCreated).toHaveBeenCalledWith(
       ROOT_A,
       `${ROOT_A}/.worktrees/${threadId}`,

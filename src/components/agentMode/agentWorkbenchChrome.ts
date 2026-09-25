@@ -8,7 +8,7 @@ import type {
   WorkspaceFileChangeGateway,
   WorkspaceFileChangeEvent,
 } from "../../domain/workspaceFileChange";
-import type { AgentBranchCheckoutGateway } from "../../application/useAgentBranchCheckout";
+import type { ComposerBranchGateway } from "../../application/useComposerBranchPicker";
 import type { AgentGitHistoryTarget } from "../../application/useAgentGitHistory";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import type { PointerEvent } from "react";
@@ -23,6 +23,7 @@ import type { GitChangeStatus } from "../../domain/git";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
 import type { FileEntry } from "../../domain/workspace";
+import type { RecentFolderEntry } from "../../domain/recentFolders";
 import type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import type { AgentThreadHeaderProject } from "./AgentThreadHeader";
 import type { AgentProjectGroup } from "./agentModePresentation";
@@ -95,6 +96,13 @@ export interface AgentAddedProjectReceipt {
   isCurrent(): boolean;
 }
 
+export type AgentAddProjectTrustMode = "auto" | "prompt";
+
+export interface AgentCloneDestinationPreference {
+  readonly lastParentPath: string | null;
+  remember(parentPath: string): void;
+}
+
 export interface AgentWorkbenchAddProjectChrome {
   readonly gateway: DirectoryListingGateway;
   readonly cloneGateway?: LocalProjectCloneGateway | null;
@@ -104,7 +112,12 @@ export interface AgentWorkbenchAddProjectChrome {
   readonly receipt?: AgentAddedProjectReceipt | null;
   cancelSelection?(): void;
   consumeSelection?(receipt: AgentAddedProjectReceipt): void;
-  addProject(path: string): Promise<AgentAddedProjectReceipt>;
+  readonly cloneDestination?: AgentCloneDestinationPreference;
+  readonly recentFolders?: readonly RecentFolderEntry[];
+  addProject(
+    path: string,
+    options?: Readonly<{ trust: AgentAddProjectTrustMode }>,
+  ): Promise<AgentAddedProjectReceipt>;
 }
 
 export interface AgentWorkbenchThreadActivityChrome {
@@ -127,7 +140,7 @@ export interface AgentWorkbenchChrome {
   readonly terminal: AgentWorkbenchTerminalChrome | null;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
   readonly branchCheckout?: {
-    readonly gateway: AgentBranchCheckoutGateway;
+    readonly gateway: ComposerBranchGateway;
     readonly guard: (target: AgentGitHistoryTarget) => string | null;
   } | null;
   readonly worktreeSync?: {

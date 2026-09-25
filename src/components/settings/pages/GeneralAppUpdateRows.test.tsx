@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdaterSurface } from "../../../application/useAppUpdater";
+import type { AppUpdateChannel } from "../../../domain/appUpdateChannel";
 import { GeneralAppUpdateRows } from "./GeneralAppUpdateRows";
 
 describe("GeneralAppUpdateRows", () => {
@@ -23,18 +24,54 @@ describe("GeneralAppUpdateRows", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the current version without an implicit check", () => {
+  it("renders the version row and the update track without an implicit check", () => {
     const updater = updaterSurface({ kind: "idle", currentVersion: "0.2.0-beta.1" });
     render(updater);
 
-    expect(host.textContent).toContain("Application updates");
-    expect(host.textContent).toContain("Current version");
-    expect(host.textContent).toContain("0.2.0-beta.1");
+    expect(host.querySelector(".settings-section__title")?.textContent).toBe("Updates");
+    expect(rowPart("general.appUpdates", ".settings-row__title")?.textContent).toBe("Codevo");
+    expect(rowPart("general.appUpdates", ".settings-row__meta")?.textContent).toBe("0.2.0-beta.1");
+    expect(channelOption("Beta").getAttribute("aria-checked")).toBe("true");
+    expect(channelOption("Stable").getAttribute("aria-checked")).toBe("false");
     expect(updater.check).not.toHaveBeenCalled();
 
     act(() => button("Check for updates").click());
 
     expect(updater.check).toHaveBeenCalledOnce();
+  });
+
+  it("switches the update track through the Stable/Beta segmented control", () => {
+    const onChangeChannel = vi.fn();
+    render(updaterSurface({ kind: "idle", currentVersion: "0.2.0" }), { onChangeChannel });
+
+    act(() => channelOption("Stable").click());
+
+    expect(onChangeChannel).toHaveBeenCalledWith("stable");
+  });
+
+  it("says there is no stable release yet as a neutral status with a check action", () => {
+    const updater = updaterSurface({
+      kind: "noRelease",
+      currentVersion: "0.2.0-beta.1",
+      channel: "stable",
+    });
+    render(updater, { channel: "stable" });
+
+    expect(rowPart("general.appUpdates", ".settings-row__description")?.textContent).toBe(
+      "No stable release yet",
+    );
+    expect(host.querySelector(".settings-update__status--neutral")).not.toBeNull();
+    expect(host.querySelector(".settings-update__status--success")).toBeNull();
+    expect(host.querySelector(".settings-update__status--danger")).toBeNull();
+    expect(host.textContent).not.toContain("up to date");
+    expect(host.textContent).not.toContain("Skip this version");
+    expect(host.querySelector(".settings-update__notes")).toBeNull();
+    expect(button("Check for updates").disabled).toBe(false);
+
+    act(() => button("Check for updates").click());
+
+    expect(updater.check).toHaveBeenCalledOnce();
+    expect(updater.download).not.toHaveBeenCalled();
   });
 
   it("checks without downloading and requires separate download and install clicks", () => {
@@ -48,8 +85,9 @@ describe("GeneralAppUpdateRows", () => {
     const updater = updaterSurface(available);
     render(updater);
 
-    expect(host.textContent).toContain("Available version");
-    expect(host.textContent).toContain("0.2.0");
+    expect(rowPart("general.appUpdates", ".settings-row__description")?.textContent).toBe(
+      "Codevo 0.2.0 is available.",
+    );
     expect(host.querySelector(".settings-update__notes")?.textContent).toBe("Beta update");
 
     act(() => button("Update").click());
@@ -178,7 +216,9 @@ describe("GeneralAppUpdateRows", () => {
   });
 
   it("keeps the registry row and reports that updates are unavailable without a surface", () => {
-    act(() => root.render(<GeneralAppUpdateRows updater={null} />));
+    act(() =>
+      root.render(<GeneralAppUpdateRows channel="beta" onChangeChannel={vi.fn()} updater={null} />),
+    );
 
     const row = host.querySelector('[data-settings-row="general.appUpdates"]');
 
@@ -186,8 +226,37 @@ describe("GeneralAppUpdateRows", () => {
     expect(row?.textContent).toContain("Updates unavailable");
   });
 
-  function render(updater: AppUpdaterSurface): void {
-    act(() => root.render(<GeneralAppUpdateRows updater={updater} />));
+  function render(
+    updater: AppUpdaterSurface,
+    options: {
+      readonly channel?: AppUpdateChannel;
+      readonly onChangeChannel?: (channel: AppUpdateChannel) => void;
+    } = {},
+  ): void {
+    act(() =>
+      root.render(
+        <GeneralAppUpdateRows
+          channel={options.channel ?? "beta"}
+          onChangeChannel={options.onChangeChannel ?? vi.fn()}
+          updater={updater}
+        />,
+      ),
+    );
+  }
+
+  function rowPart(rowId: string, selector: string): Element | null {
+    return host.querySelector(`[data-settings-row="${rowId}"] ${selector}`);
+  }
+
+  function channelOption(label: string): HTMLButtonElement {
+    const match = [
+      ...host.querySelectorAll<HTMLButtonElement>(
+        '[data-settings-row="general.updateChannel"] [role="radio"]',
+      ),
+    ].find((candidate) => candidate.textContent === label);
+
+    expect(match).toBeDefined();
+    return match as HTMLButtonElement;
   }
 
   function button(label: string): HTMLButtonElement {

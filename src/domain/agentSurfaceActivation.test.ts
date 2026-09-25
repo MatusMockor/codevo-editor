@@ -7,9 +7,10 @@ import {
   isAgentRemoteSurfaceKind,
   remoteSurfaceCapabilityOpen,
   servedAgentSurfaces,
+  withoutEmptyEditorSurface,
   type AgentSurfaceActivation,
 } from "./agentSurfaceActivation";
-import { AGENT_SURFACE_KINDS } from "./agentWorkbenchLayout";
+import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "./agentWorkbenchLayout";
 
 const REMOTE_NO_PROJECT: AgentSurfaceActivation = {
   remote: true,
@@ -72,21 +73,21 @@ describe("servedAgentSurfaces", () => {
 });
 
 describe("agentSurfaceEditorSlot", () => {
-  it("opens the slot only for a visible, available, local Files surface", () => {
-    expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, "files")).toBe("open");
+  it("opens the slot only for a visible, available, local Editor surface", () => {
+    expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, "editor")).toBe("open");
     expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, "diff")).toBe("none");
     expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, null)).toBe("none");
     expect(
-      agentSurfaceEditorSlot({ ...LOCAL_AGENT_SURFACE_ACTIVATION, hidden: true }, "files"),
+      agentSurfaceEditorSlot({ ...LOCAL_AGENT_SURFACE_ACTIVATION, hidden: true }, "editor"),
     ).toBe("none");
     expect(
-      agentSurfaceEditorSlot({ ...LOCAL_AGENT_SURFACE_ACTIVATION, unavailable: true }, "files"),
+      agentSurfaceEditorSlot({ ...LOCAL_AGENT_SURFACE_ACTIVATION, unavailable: true }, "editor"),
     ).toBe("none");
   });
 
   it("never opens the slot for a remote pane, with or without a server project", () => {
-    expect(agentSurfaceEditorSlot(REMOTE_NO_PROJECT, "files")).toBe("none");
-    expect(agentSurfaceEditorSlot(REMOTE_WITH_PROJECT, "files")).toBe("none");
+    expect(agentSurfaceEditorSlot(REMOTE_NO_PROJECT, "editor")).toBe("none");
+    expect(agentSurfaceEditorSlot(REMOTE_WITH_PROJECT, "editor")).toBe("none");
   });
 });
 
@@ -124,5 +125,58 @@ describe("redesigned surfaces on remote threads", () => {
     expect(isAgentRemoteSurfaceKind("history")).toBe(true);
     expect(isAgentRemoteSurfaceKind("git")).toBe(false);
     expect(isAgentRemoteSurfaceKind(null)).toBe(false);
+  });
+});
+
+describe("editor surface activation", () => {
+  const remoteWithEverything: AgentSurfaceActivation = {
+    remote: true,
+    threadPresent: true,
+    remoteCapabilities: { files: true, history: true, terminal: true },
+    unavailable: false,
+    hidden: false,
+  };
+
+  it("serves the editor only for local threads", () => {
+    expect(agentSurfaceServes(LOCAL_AGENT_SURFACE_ACTIVATION, "editor")).toBe(true);
+    expect(agentSurfaceServes(remoteWithEverything, "editor")).toBe(false);
+  });
+
+  it("opens the editor slot only for the editor kind", () => {
+    expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, "editor")).toBe("open");
+    expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, "files")).toBe("none");
+    expect(agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, null)).toBe("none");
+    expect(agentSurfaceEditorSlot(remoteWithEverything, "editor")).toBe("none");
+  });
+});
+
+describe("withoutEmptyEditorSurface", () => {
+  it("keeps the surfaces untouched while the editor has documents or is not open", () => {
+    const open: ReadonlyArray<AgentSurfaceKind> = ["files", "editor", "diff"];
+    const kept = withoutEmptyEditorSurface(open, "editor", true);
+    const noEditor = withoutEmptyEditorSurface(["files"], "files", false);
+
+    expect(kept.openSurfaces).toBe(open);
+    expect(kept.activeSurface).toBe("editor");
+    expect(noEditor).toEqual({ openSurfaces: ["files"], activeSurface: "files" });
+  });
+
+  it("drops an empty editor and falls back to the next surface, then the previous one", () => {
+    expect(withoutEmptyEditorSurface(["files", "editor", "diff"], "editor", false)).toEqual({
+      openSurfaces: ["files", "diff"],
+      activeSurface: "diff",
+    });
+    expect(withoutEmptyEditorSurface(["files", "editor"], "editor", false)).toEqual({
+      openSurfaces: ["files"],
+      activeSurface: "files",
+    });
+    expect(withoutEmptyEditorSurface(["editor"], "editor", false)).toEqual({
+      openSurfaces: [],
+      activeSurface: null,
+    });
+    expect(withoutEmptyEditorSurface(["editor", "git"], "git", false)).toEqual({
+      openSurfaces: ["git"],
+      activeSurface: "git",
+    });
   });
 });

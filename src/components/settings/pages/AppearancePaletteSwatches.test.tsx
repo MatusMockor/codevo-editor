@@ -32,32 +32,26 @@ describe("AppearancePaletteSwatches", () => {
     );
   }
 
-  function cssBackground(color: string): string {
-    const probe = document.createElement("span");
-    probe.style.background = color;
-    return probe.style.background;
-  }
-
   function previewedTones(): readonly (readonly string[])[] {
     return swatches().map((swatch) => [
-      swatch.style.background,
-      swatch.querySelector<HTMLElement>(".settings-swatch__sidebar")?.style.background ?? "",
-      swatch.querySelector<HTMLElement>(".settings-swatch__accent")?.style.background ?? "",
+      swatch.style.getPropertyValue("--settings-wire-canvas"),
+      swatch.style.getPropertyValue("--settings-wire-side"),
+      swatch.style.getPropertyValue("--settings-wire-raised"),
+      swatch.style.getPropertyValue("--settings-wire-accent"),
     ]);
   }
 
   function expectedTones(scheme: ResolvedColorScheme): readonly (readonly string[])[] {
-    return PALETTE_IDS.map((palette) =>
-      [
-        surfaceColor(palette, scheme, "canvas"),
-        surfaceColor(palette, scheme, "side"),
-        paletteTokens(palette, scheme).accentFill,
-      ].map(cssBackground),
-    );
+    return PALETTE_IDS.map((palette) => [
+      surfaceColor(palette, scheme, "canvas"),
+      surfaceColor(palette, scheme, "side"),
+      surfaceColor(palette, scheme, "raised"),
+      paletteTokens(palette, scheme).accentFill,
+    ]);
   }
 
   function swatches(): HTMLButtonElement[] {
-    return [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    return [...host.querySelectorAll<HTMLButtonElement>('.settings-palette-card[role="radio"]')];
   }
 
   it("offers the six palettes as a labelled radiogroup with one tab stop", () => {
@@ -65,12 +59,12 @@ describe("AppearancePaletteSwatches", () => {
 
     expect(host.querySelector('[role="radiogroup"]')?.getAttribute("aria-label")).toBe("Palette");
     expect(swatches().map((swatch) => swatch.getAttribute("aria-label"))).toEqual([
-      "Graphite · Teal",
-      "Slate · Blue",
-      "Black · Violet",
-      "Ink · Mint",
-      "Zinc · Orange",
-      "Carbon · Lime",
+      "Graphite · Teal palette",
+      "Slate · Blue palette",
+      "Black · Violet palette",
+      "Ink · Mint palette",
+      "Zinc · Orange palette",
+      "Carbon · Lime palette",
     ]);
     expect(swatches().map((swatch) => swatch.getAttribute("aria-checked"))).toEqual([
       "false",
@@ -81,6 +75,16 @@ describe("AppearancePaletteSwatches", () => {
       "false",
     ]);
     expect(swatches().filter((swatch) => swatch.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it("shows each palette name with a check on the selected card", () => {
+    render("graphite-teal", () => undefined);
+
+    const selected = host.querySelector('.settings-palette-card[aria-checked="true"]');
+
+    expect(selected?.textContent).toContain("Graphite · Teal");
+    expect(selected?.querySelector(".settings-palette-card__check")).not.toBeNull();
+    expect(host.querySelectorAll(".settings-palette-card__check")).toHaveLength(1);
   });
 
   it("selects a palette by click", () => {

@@ -8,11 +8,14 @@ import {
 } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { WorkspaceTrustOrigin } from "../../domain/trust";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import { AgentComposer, type AgentComposerSubmission } from "./AgentComposer";
-import { AgentCloneDraftPanel } from "./AgentCloneDraftPanel";
+import { CloneProgressBanner } from "../projects/CloneProgressBanner";
+import { ProjectTrustBanner } from "../projects/ProjectTrustBanner";
+import { cloneBannerModel, clonePlaceholder } from "../projects/cloneBannerModel";
 import { agentProjectGroups } from "./agentModePresentation";
 import {
   agentComposerPromptBytes,
@@ -41,6 +44,7 @@ interface Props {
     | "retry"
     | "canRetry"
     | "error"
+    | "localCloneDetail"
   >;
   readonly agents: AgentComposerSurface;
   readonly projects: readonly AgentProjectDescriptor[];
@@ -50,6 +54,7 @@ interface Props {
   onThreadStarted(threadId: string): void;
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
+  onTrustProject(projectRootKey: string, origin?: WorkspaceTrustOrigin): void;
 }
 const NOOP = () => undefined;
 
@@ -64,6 +69,7 @@ export function AgentCloneComposer({
   onThreadStarted,
   onOpenProviderSettings,
   onOpenEnvironmentSettings,
+  onTrustProject,
 }: Props) {
   const [dispatching, setDispatching] = useState(false);
   const inFlight = useRef(false);
@@ -92,6 +98,24 @@ export function AgentCloneComposer({
   const stableProject = useRef<AgentProjectDescriptor | null>(null);
   if (!sameCloneProject(stableProject.current, candidate)) stableProject.current = candidate;
   const project = stableProject.current;
+  const bannerModel = cloneBannerModel({
+    status: clone.status,
+    name: pending.name,
+    error: creation.error ?? clone.error,
+    environment: pending.environment === null ? "local" : "remote",
+    projectReady: project !== null,
+    canRetry: creation.canRetry,
+    detail: creation.localCloneDetail,
+  });
+  const source = creation.localCloneDetail?.source ?? null;
+  const awaitingTrust = project !== null && project.trust !== "trusted";
+  const reviewTrust = () => {
+    if (project === null) return;
+    onTrustProject(
+      project.rootKey,
+      source === null ? { kind: "local" } : { kind: "clone", host: source.host, path: source.path },
+    );
+  };
   const authority = useRef({ key, project, attachments: agents.attachments });
   authority.current = { key, project, attachments: agents.attachments };
   useLayoutEffect(() => {
@@ -154,6 +178,8 @@ export function AgentCloneComposer({
     if (pending.target !== null && creation.completedProject === null) creation.activateCompleted();
   }, [creation, pending.target]);
   const promptBytes = agentComposerPromptBytes(creation.draft, attachments);
+  const draftEmpty =
+    creation.draft.trim() === "" && attachments.drafts.every((draft) => draft.state !== "ready");
   const blocked =
     dispatching ||
     project === null ||
@@ -161,8 +187,12 @@ export function AgentCloneComposer({
     attachments.blocked ||
     state.isolation !== isolation ||
     promptBytes > MAX_AGENT_TASK_PROMPT_BYTES ||
-    (creation.draft.trim() === "" && attachments.drafts.every((draft) => draft.state !== "ready"));
+    draftEmpty;
   const submit = (submission: AgentComposerSubmission) => {
+    if (awaitingTrust) {
+      if (!draftEmpty) reviewTrust();
+      return;
+    }
     if (blocked || inFlight.current) return;
     inFlight.current = true;
     setDispatching(true);
@@ -173,17 +203,22 @@ export function AgentCloneComposer({
   };
   return (
     <div className="agent-clone-composer">
-      <div className="agent-clone-draft__spacer" />
-      <AgentCloneDraftPanel
-        clone={{ ...clone, id: pending.id, error: creation.error ?? clone.error }}
-        preparing={project === null}
-        onCancel={creation.cancel}
-        onRetry={creation.canRetry ? creation.retry : undefined}
-        onRemove={creation.dismiss}
-        onClose={creation.hidePending}
-      />
       <AgentComposer
         {...state}
+        banners={
+          awaitingTrust ? (
+            <ProjectTrustBanner onReview={reviewTrust} />
+          ) : (
+            <CloneProgressBanner
+              model={bannerModel}
+              onCancel={creation.cancel}
+              onHide={creation.hidePending}
+              onRemove={creation.dismiss}
+              onRetry={creation.retry}
+            />
+          )
+        }
+        placeholder={clonePlaceholder(bannerModel)}
         mode={{ kind: "new" }}
         executionServerId={pending.environment}
         target={
@@ -208,7 +243,7 @@ export function AgentCloneComposer({
         onSelectRepository={NOOP}
         onNewThread={creation.hidePending}
         dispatching={state.dispatching || dispatching}
-        submitBlocked={blocked}
+        submitBlocked={awaitingTrust ? draftEmpty : blocked}
         onSubmit={submit}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}

@@ -177,3 +177,16 @@ describe("Claude model manifest", () => {
     ).toThrow(TypeError);
   });
 });
+
+describe("Claude model manifest schema", () => {
+  it("rejects an unknown isNew key so NEW stays a client-side flag", () => {
+    const [first, ...rest] = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode;
+    expect(first).toBeDefined();
+    expect(() =>
+      parseClaudeModelManifest({
+        ...BUNDLED_CLAUDE_MODEL_MANIFEST,
+        claudeCode: [{ ...first, isNew: true }, ...rest],
+      }),
+    ).toThrow();
+  });
+});

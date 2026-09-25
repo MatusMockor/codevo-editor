@@ -28,6 +28,7 @@ import { cachedLanguageServerRuntimeStatusForOwner } from "../../domain/language
 import type { PackageScript } from "../../domain/packageScripts";
 import type { PhpFileStructureScope } from "../../domain/phpFileOutline";
 import type { ProjectSymbolSearchResult } from "../../domain/projectSymbols";
+import { recordRecentWorkspaceOpenedAt } from "../../domain/projectOnboardingSettings";
 import type { RecentFileEntry } from "../../domain/recentFiles";
 import type { RecentLocation } from "../../domain/recentLocations";
 import type { ReferencesView } from "../../domain/referencesView";
@@ -1507,6 +1508,12 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
           ...appSettingsRef.current,
           recentWorkspacePath: recentWorkspacePaths[0] ?? null,
           recentWorkspacePaths,
+          recentWorkspaceOpenedAt: recordRecentWorkspaceOpenedAt(
+            appSettingsRef.current.recentWorkspaceOpenedAt,
+            recentWorkspacePaths,
+            path,
+            Date.now(),
+          ),
           workspaceTabs: nextWorkspaceTabs,
         });
       } catch (error) {

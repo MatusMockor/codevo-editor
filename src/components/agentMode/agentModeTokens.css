@@ -231,7 +231,6 @@
 }
 
 .agent-mode,
-.agent-surface-host,
-.agent-usage-layer {
+.agent-surface-host {
   font-family: var(--codevo-sans);
 }

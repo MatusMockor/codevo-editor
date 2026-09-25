@@ -16,9 +16,6 @@ import {
   agentOverlayPanelMaxWidth,
 } from "../domain/agentWorkbenchResponsiveLayout";
 
-export const MIN_SIDEBAR_WIDTH = 180;
-export const MAX_SIDEBAR_WIDTH = 520;
-export const DEFAULT_SIDEBAR_WIDTH = 300;
 export const MIN_BOTTOM_PANEL_HEIGHT = 96;
 export const MAX_BOTTOM_PANEL_HEIGHT = 520;
 export const DEFAULT_BOTTOM_PANEL_HEIGHT = 152;
@@ -39,10 +36,8 @@ export interface AgentPanelResizeCommit {
 }
 
 export interface WorkbenchResizeHandles {
-  readonly sidebarWidth: number;
   readonly bottomPanelHeight: number;
   readonly shellStyle: CSSProperties;
-  startSidebarResize(event: PointerEvent<HTMLElement>): void;
   startBottomPanelResize(event: PointerEvent<HTMLElement>): void;
   startAgentRightPanelResize(event: PointerEvent<HTMLElement>): void;
   startAgentBottomPanelResize(event: PointerEvent<HTMLElement>): void;
@@ -106,29 +101,14 @@ export function maxAgentBottomPanelHeight(viewportHeight: number): number {
 export function useWorkbenchResizeHandles(
   agentPanels: AgentPanelResizeCommit,
 ): WorkbenchResizeHandles {
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(DEFAULT_BOTTOM_PANEL_HEIGHT);
 
   const shellStyle = useMemo(
     () =>
       ({
         "--bottom-panel-height": `${bottomPanelHeight}px`,
-        "--sidebar-width": `${sidebarWidth}px`,
       }) as CSSProperties,
-    [bottomPanelHeight, sidebarWidth],
-  );
-
-  const startSidebarResize = useCallback(
-    (event: PointerEvent<HTMLElement>) => {
-      const startX = event.clientX;
-      const startWidth = sidebarWidth;
-      startPointerDrag(event, (moveEvent) => {
-        setSidebarWidth(
-          clamp(startWidth + moveEvent.clientX - startX, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH),
-        );
-      });
-    },
-    [sidebarWidth],
+    [bottomPanelHeight],
   );
 
   const startBottomPanelResize = useCallback(
@@ -218,11 +198,9 @@ export function useWorkbenchResizeHandles(
   return {
     bottomPanelHeight,
     shellStyle,
-    sidebarWidth,
     startAgentBottomPanelResize,
     startAgentRightPanelResize,
     startBottomPanelResize,
-    startSidebarResize,
   };
 }
 

@@ -1,6 +1,6 @@
 /*
   Workbench shell frame — the single place the agent workbench layout is expressed.
-  WorkbenchShellFrame stamps data-layout, data-rail, data-right-panel, data-tree and data-editor
+  WorkbenchShellFrame stamps data-layout, data-rail, data-right-panel and data-editor
   on .workbench-frame, and every track, slot placement and layout token below derives from
   those attributes. agentMode.css owns agent visuals and never restates placement.
 */
@@ -32,22 +32,12 @@
 }
 
 /*
-  Right panel: the Files surface leaves an empty editor slot and the frame places the single
-  editor host over it using these variables. The tree is 210 px docked, 300 px maximized and
-  0 px while the surface reports no tree.
+  Right panel: the Editor surface leaves an empty editor slot and the frame places the single
+  editor host over it using these variables.
 */
 .app-shell {
   --agent-surface-header-height: var(--cv-topbar-h);
-  --agent-surface-tree-width: 210px;
   --agent-surface-editor-gutter: 8px;
-}
-
-.workbench-frame[data-right-panel="maximized"] {
-  --agent-surface-tree-width: 300px;
-}
-
-.workbench-frame[data-tree="hidden"] {
-  --agent-surface-tree-width: 0px;
 }
 
 /*
@@ -105,10 +95,9 @@
 .workbench-frame[data-layout="agent"] > [data-slot="editor"] {
   z-index: 1;
   padding-top: var(--agent-surface-header-height);
-  padding-left: var(--agent-surface-tree-width);
   background: var(--codevo-canvas);
   background-clip: content-box;
-  clip-path: inset(var(--agent-surface-header-height) 0 0 var(--agent-surface-tree-width));
+  clip-path: inset(var(--agent-surface-header-height) 0 0 0);
   grid-column: 3;
   grid-row: 1 / -1;
   pointer-events: none;
@@ -118,16 +107,9 @@
   pointer-events: auto;
 }
 
-/* Tree-only Files surface: no document is open and a tree is showing, so the editor overlay
-   yields to the tree. Without a tree the overlay keeps its empty-editor placeholder. */
-.workbench-frame[data-layout="agent"][data-editor="empty"][data-tree="visible"]
-  > [data-slot="editor"] {
-  display: none;
-}
-
 /* The right panel reports whether it hosts the editor slot (data-editor-slot, derived from the
    shared agentSurfaceActivation helper). A remote pane, an unavailable scope, a hidden panel or
-   any non-Files surface hosts nothing, so the canvas overlay must not paint over the side tone. */
+   any non-Editor surface hosts nothing, so the canvas overlay must not paint over the side tone. */
 .workbench-frame[data-layout="agent"]:has(
     > [data-slot="surface"] .agent-surface[data-editor-slot="none"]
   )
@@ -173,15 +155,12 @@
 }
 
 /*
-  Maximized: the editing shell. The surface takes the thread column plus a tree column on the
-  shared rail tone; the editor overlay sits in the centre column on a canvas block, the bottom panel
-  sits under the editor only, and the rail never changes.
+  Maximized: the editing shell. The surface takes the thread column; the editor overlay sits in
+  it on a canvas block, the bottom panel sits under the editor, and the rail never changes.
 */
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] {
   background: var(--codevo-canvas);
-  grid-template-columns:
-    var(--agent-rail-track) minmax(0, 1fr)
-    var(--agent-surface-tree-width);
+  grid-template-columns: var(--agent-rail-track) minmax(0, 1fr);
 }
 
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"] {
@@ -190,7 +169,7 @@
 }
 
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="surface"] {
-  grid-column: 2 / 4;
+  grid-column: 2;
   grid-row: 1;
 }
 
@@ -210,24 +189,8 @@
   margin-left: var(--agent-surface-editor-gutter);
   border-radius: var(--codevo-r-lg) var(--codevo-r-lg) 0 0;
   background: var(--codevo-canvas);
-  grid-column: 2 / 4;
-  grid-row: 2;
-}
-
-/* A docked tree beside an open document runs the full height; the bottom panel stays under the
-   editor column only. */
-.workbench-frame[data-layout="agent"][data-right-panel="maximized"][data-tree="visible"]:not(
-    [data-editor="empty"]
-  )
-  > [data-slot="surface"] {
-  grid-row: 1 / -1;
-}
-
-.workbench-frame[data-layout="agent"][data-right-panel="maximized"][data-tree="visible"]:not(
-    [data-editor="empty"]
-  )
-  > [data-slot="bottom"] {
   grid-column: 2;
+  grid-row: 2;
 }
 
 .workbench-frame[data-right-panel="maximized"] .agent-mode__grid {
@@ -240,8 +203,8 @@
   content-visibility: hidden;
 }
 
-.workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
-.workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"] {
+.workbench-frame[data-layout="editor-only"] > [data-slot="agent"],
+.workbench-frame[data-layout="editor-only"] > [data-slot="surface"] {
   display: none;
 }
 
@@ -269,12 +232,6 @@
 @media (max-width: 1180px) {
   .workbench-frame[data-layout="agent"][data-rail="expanded"] {
     --agent-rail-track: min(var(--agent-rail-width), 248px);
-  }
-}
-
-@media (max-width: 900px) {
-  .workbench-frame[data-layout="agent"][data-right-panel="maximized"]:not([data-tree="hidden"]) {
-    --agent-surface-tree-width: 210px;
   }
 }
 

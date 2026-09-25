@@ -50,6 +50,17 @@ describe("useAgentViewCommands", () => {
     expect(handlers.openCommitMenu).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards project.add to the bound view", () => {
+    const bridge = createAgentViewCommandBridge();
+    const handlers = { ...spyHandlers(), addProject: vi.fn() };
+    render(bridge, handlers);
+
+    expect(bridge.addProjectAvailable()).toBe(true);
+    act(() => bridge.run("project.add"));
+
+    expect(handlers.addProject).toHaveBeenCalledTimes(1);
+  });
+
   it("projects the thread selection and the blocked surfaces of the bound view", () => {
     const bridge = createAgentViewCommandBridge();
     const handlers = spyHandlers();

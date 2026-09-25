@@ -1,14 +1,14 @@
-import type { ComponentProps, PointerEvent, ReactNode } from "react";
+import type { PointerEvent, ReactNode } from "react";
 import type { useArtisanRoutes } from "../application/useArtisanRoutes";
 import type { useAppFrameworkBottomPanels } from "../application/useAppFrameworkBottomPanels";
 import type { useWorkbenchController } from "../application/useWorkbenchController";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { TerminalTheme } from "../domain/settings";
-import type { BottomPanel } from "./BottomPanel";
 import type { phpTestBottomPanelProps } from "./phpTestBottomPanelProps";
 import type { useAppTestDebugPanels } from "./useAppTestDebugPanels";
+import type { WorkbenchPanelProps } from "./workbenchPanelViews";
 
-export type BottomPanelHostProps = ComponentProps<typeof BottomPanel>;
+export type BottomPanelHostProps = WorkbenchPanelProps;
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
 type TestDebugPanels = ReturnType<typeof useAppTestDebugPanels>;
@@ -78,7 +78,7 @@ export function workbenchBottomPanelHostProps(input: BottomPanelHostInput): Bott
     artisanRoutesQuery: artisanRoutes.query,
     artisanRoutesTotal: artisanRoutes.total,
     artisanRoutesUnavailable: artisanRoutes.unavailable,
-    debug: input.debugPanel,
+    debug: input.debugPanel.regions.console,
     expressRoutesPanel: input.expressRoutesPanel,
     getLatencySnapshot: workbench.getLatencySnapshot,
     gitHistoryGateway: gateways.gitHistoryGateway,

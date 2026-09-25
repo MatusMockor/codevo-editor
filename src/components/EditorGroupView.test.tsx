@@ -5,10 +5,6 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorDocument } from "../domain/workspace";
 import { EditorGroupView } from "./EditorGroupView";
-import {
-  WorkbenchEditorTabsPortalProvider,
-  WorkbenchEditorTabsPortalTarget,
-} from "./workbenchEditorTabsPortal";
 import { WorkbenchFrameEditorContext } from "./workbenchFrameEditorReport";
 
 describe("EditorGroupView", () => {
@@ -33,6 +29,7 @@ describe("EditorGroupView", () => {
           renderContent={(surface) =>
             surface.kind === "document" ? surface.document.name : "empty"
           }
+          tabsPlacement="inline"
         />,
       ),
     );
@@ -69,6 +66,7 @@ describe("EditorGroupView", () => {
           onReorderTab={vi.fn()}
           projectId="project"
           renderContent={() => null}
+          tabsPlacement="inline"
         />,
       ),
     );
@@ -82,75 +80,45 @@ describe("EditorGroupView", () => {
     act(() => root.unmount());
   });
 
-  it("presents the active group's existing tabs in the Files header without remounting content", () => {
+  it("renders no tab row for the active group when tabs live in the panel strip", () => {
     const host = document.createElement("div");
-    document.body.append(host);
     const root = createRoot(host);
-    const onActivateTab = vi.fn();
-    const onCloseTab = vi.fn();
-
-    const render = (filesHeaderVisible: boolean, panelHidden = false) => {
+    const render = (active: boolean, tabsPlacement: "inline" | "strip") =>
       act(() =>
         root.render(
-          <WorkbenchEditorTabsPortalProvider>
-            <header hidden={panelHidden} id="files-header">
-              {filesHeaderVisible && !panelHidden && <WorkbenchEditorTabsPortalTarget />}
-            </header>
-            <EditorGroupView
-              active
-              documents={[doc("/one.ts"), doc("/two.ts")]}
-              group={{
-                activePath: "/one.ts",
-                openPaths: ["/one.ts", "/two.ts"],
-                previewPath: null,
-              }}
-              groupId="group/a"
-              onActivateGroup={vi.fn()}
-              onActivateTab={onActivateTab}
-              onCloseTab={onCloseTab}
-              onMoveTab={vi.fn()}
-              onPinTab={vi.fn()}
-              onReorderTab={vi.fn()}
-              projectId="project"
-              renderContent={() => <MonacoMount />}
-            />
-          </WorkbenchEditorTabsPortalProvider>,
+          <EditorGroupView
+            active={active}
+            documents={[doc("/orders.ts")]}
+            group={{ activePath: "/orders.ts", openPaths: ["/orders.ts"], previewPath: null }}
+            groupId="group/a"
+            onActivateGroup={vi.fn()}
+            onActivateTab={vi.fn()}
+            onCloseTab={vi.fn()}
+            onMoveTab={vi.fn()}
+            onPinTab={vi.fn()}
+            onReorderTab={vi.fn()}
+            projectId="project"
+            renderContent={() => <MonacoMount />}
+            tabsPlacement={tabsPlacement}
+          />,
         ),
       );
-    };
 
-    render(true);
+    render(true, "strip");
     const monaco = host.querySelector(".monaco-editor");
-    expect(host.querySelectorAll(".editor-tabs")).toHaveLength(1);
-    expect(host.querySelector("#files-header .editor-tabs")).not.toBeNull();
-    expect(host.querySelector(".editor-group > .editor-tabs")).toBeNull();
-    expect(host.querySelectorAll(".monaco-editor")).toHaveLength(1);
+    expect(host.querySelector('[role="tablist"]')).toBeNull();
+    expect(host.querySelector(".editor-panel")?.getAttribute("aria-label")).toBe("orders.ts");
+    expect(host.querySelector(".editor-panel")?.hasAttribute("aria-labelledby")).toBe(false);
 
-    click(host.querySelector<HTMLButtonElement>("[title='/two.ts']"));
-    click(host.querySelector<HTMLButtonElement>("[aria-label='Close two.ts']"));
-    expect(onActivateTab).toHaveBeenCalledWith("group/a", "/two.ts");
-    expect(onCloseTab).toHaveBeenCalledWith("group/a", "/two.ts");
-
-    render(true, true);
-    expect(host.querySelector("#files-header .editor-tabs")).toBeNull();
-    expect(host.querySelector(".editor-group > .editor-tabs")).not.toBeNull();
+    render(false, "strip");
+    expect(host.querySelector('[role="tablist"]')).not.toBeNull();
+    expect(host.querySelector(".editor-panel")?.hasAttribute("aria-label")).toBe(false);
     expect(host.querySelector(".monaco-editor")).toBe(monaco);
-    expect(host.querySelectorAll(".monaco-editor")).toHaveLength(1);
 
-    render(true);
-    expect(host.querySelector("#files-header .editor-tabs")).not.toBeNull();
-    expect(host.querySelector(".editor-group > .editor-tabs")).toBeNull();
+    render(true, "inline");
+    expect(host.querySelector('[role="tablist"]')).not.toBeNull();
     expect(host.querySelector(".monaco-editor")).toBe(monaco);
-    expect(host.querySelectorAll(".monaco-editor")).toHaveLength(1);
-
-    render(false);
-    expect(host.querySelector("#files-header .editor-tabs")).toBeNull();
-    expect(host.querySelector(".editor-group > .editor-tabs")).not.toBeNull();
-    expect(host.querySelector(".monaco-editor")).toBe(monaco);
-    expect(host.querySelectorAll(".monaco-editor")).toHaveLength(1);
-
     act(() => root.unmount());
-    host.remove();
   });
 
   it("reports whether any document is open to the workbench frame", () => {
@@ -179,6 +147,7 @@ describe("EditorGroupView", () => {
               onReorderTab={vi.fn()}
               projectId="project"
               renderContent={() => null}
+              tabsPlacement="inline"
             />
           </WorkbenchFrameEditorContext.Provider>,
         ),
@@ -212,6 +181,7 @@ describe("EditorGroupView", () => {
       onPinTab: vi.fn(),
       onReorderTab: vi.fn(),
       renderContent: () => null,
+      tabsPlacement: "inline" as const,
     };
     const render = (documents: EditorDocument[]) => {
       act(() =>
@@ -241,80 +211,7 @@ describe("EditorGroupView", () => {
     act(() => root.unmount());
   });
 
-  it("keeps inactive group tabs with their group when the active group uses the Files header", () => {
-    const host = document.createElement("div");
-    const root = createRoot(host);
-
-    act(() =>
-      root.render(
-        <WorkbenchEditorTabsPortalProvider>
-          <header id="files-header">
-            <WorkbenchEditorTabsPortalTarget />
-          </header>
-          <EditorGroupView
-            active={false}
-            documents={[doc("/one.ts")]}
-            group={{ activePath: "/one.ts", openPaths: ["/one.ts"], previewPath: null }}
-            groupId="group/inactive"
-            onActivateGroup={vi.fn()}
-            onActivateTab={vi.fn()}
-            onCloseTab={vi.fn()}
-            onMoveTab={vi.fn()}
-            onPinTab={vi.fn()}
-            onReorderTab={vi.fn()}
-            projectId="project"
-            renderContent={() => null}
-          />
-        </WorkbenchEditorTabsPortalProvider>,
-      ),
-    );
-
-    expect(host.querySelector("#files-header .editor-tabs")).toBeNull();
-    expect(host.querySelector(".editor-group > .editor-tabs")).not.toBeNull();
-    act(() => root.unmount());
-  });
-
-  it("keeps a newer portal claim when an older target releases", () => {
-    const host = document.createElement("div");
-    const root = createRoot(host);
-
-    const render = (first: boolean, second: boolean) => {
-      act(() =>
-        root.render(
-          <WorkbenchEditorTabsPortalProvider>
-            <header id="first-target">{first && <WorkbenchEditorTabsPortalTarget />}</header>
-            <header id="second-target">{second && <WorkbenchEditorTabsPortalTarget />}</header>
-            <EditorGroupView
-              active
-              documents={[doc("/one.ts")]}
-              group={{ activePath: "/one.ts", openPaths: ["/one.ts"], previewPath: null }}
-              groupId="group/a"
-              onActivateGroup={vi.fn()}
-              onActivateTab={vi.fn()}
-              onCloseTab={vi.fn()}
-              onMoveTab={vi.fn()}
-              onPinTab={vi.fn()}
-              onReorderTab={vi.fn()}
-              projectId="project"
-              renderContent={() => null}
-            />
-          </WorkbenchEditorTabsPortalProvider>,
-        ),
-      );
-    };
-
-    render(true, false);
-    expect(host.querySelector("#first-target .editor-tabs")).not.toBeNull();
-    render(true, true);
-    expect(host.querySelector("#second-target .editor-tabs")).not.toBeNull();
-    render(false, true);
-    expect(host.querySelector("#second-target .editor-tabs")).not.toBeNull();
-    expect(host.querySelectorAll(".editor-tabs")).toHaveLength(1);
-
-    act(() => root.unmount());
-  });
-
-  it("keeps portaled MRU cycling bound to the exact active group", async () => {
+  it("keeps MRU cycling bound to the exact active group when its tabs live in the strip", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -328,61 +225,58 @@ describe("EditorGroupView", () => {
       const [secondPath, setSecondPath] = useState("/second-a.ts");
       replaceActiveGroup = setFirstActive;
       return (
-        <WorkbenchEditorTabsPortalProvider>
-          <header id="files-header">
-            <WorkbenchEditorTabsPortalTarget />
-          </header>
-          <div className="editor-area">
-            <EditorGroupView
-              active={firstActive}
-              documents={[doc("/first-a.ts"), doc("/first-b.ts")]}
-              group={{
-                activePath: firstPath,
-                openPaths: ["/first-a.ts", "/first-b.ts"],
-                previewPath: null,
-              }}
-              groupId="group/first"
-              onActivateGroup={() => setFirstActive(true)}
-              onActivateTab={(_groupId, path) => {
-                firstActivations.push(path);
-                setFirstPath(path);
-              }}
-              onCloseTab={vi.fn()}
-              onMoveTab={vi.fn()}
-              onPinTab={vi.fn()}
-              onReorderTab={vi.fn()}
-              projectId="project"
-              renderContent={(surface) =>
-                surface.kind === "document" && surface.path === "/first-a.ts" ? (
-                  <textarea aria-label="First editor" className="inputarea" />
-                ) : (
-                  <section aria-label="First preview" />
-                )
-              }
-            />
-            <EditorGroupView
-              active={!firstActive}
-              documents={[doc("/second-a.ts"), doc("/second-b.ts")]}
-              group={{
-                activePath: secondPath,
-                openPaths: ["/second-a.ts", "/second-b.ts"],
-                previewPath: null,
-              }}
-              groupId="group/second"
-              onActivateGroup={() => setFirstActive(false)}
-              onActivateTab={(_groupId, path) => {
-                secondActivations.push(path);
-                setSecondPath(path);
-              }}
-              onCloseTab={vi.fn()}
-              onMoveTab={vi.fn()}
-              onPinTab={vi.fn()}
-              onReorderTab={vi.fn()}
-              projectId="project"
-              renderContent={() => <textarea aria-label="Second editor" className="inputarea" />}
-            />
-          </div>
-        </WorkbenchEditorTabsPortalProvider>
+        <div className="editor-area">
+          <EditorGroupView
+            active={firstActive}
+            documents={[doc("/first-a.ts"), doc("/first-b.ts")]}
+            group={{
+              activePath: firstPath,
+              openPaths: ["/first-a.ts", "/first-b.ts"],
+              previewPath: null,
+            }}
+            groupId="group/first"
+            onActivateGroup={() => setFirstActive(true)}
+            onActivateTab={(_groupId, path) => {
+              firstActivations.push(path);
+              setFirstPath(path);
+            }}
+            onCloseTab={vi.fn()}
+            onMoveTab={vi.fn()}
+            onPinTab={vi.fn()}
+            onReorderTab={vi.fn()}
+            projectId="project"
+            renderContent={(surface) =>
+              surface.kind === "document" && surface.path === "/first-a.ts" ? (
+                <textarea aria-label="First editor" className="inputarea" />
+              ) : (
+                <section aria-label="First preview" />
+              )
+            }
+            tabsPlacement="strip"
+          />
+          <EditorGroupView
+            active={!firstActive}
+            documents={[doc("/second-a.ts"), doc("/second-b.ts")]}
+            group={{
+              activePath: secondPath,
+              openPaths: ["/second-a.ts", "/second-b.ts"],
+              previewPath: null,
+            }}
+            groupId="group/second"
+            onActivateGroup={() => setFirstActive(false)}
+            onActivateTab={(_groupId, path) => {
+              secondActivations.push(path);
+              setSecondPath(path);
+            }}
+            onCloseTab={vi.fn()}
+            onMoveTab={vi.fn()}
+            onPinTab={vi.fn()}
+            onReorderTab={vi.fn()}
+            projectId="project"
+            renderContent={() => <textarea aria-label="Second editor" className="inputarea" />}
+            tabsPlacement="strip"
+          />
+        </div>
       );
     }
 
@@ -416,7 +310,8 @@ describe("EditorGroupView", () => {
       await Promise.resolve();
     });
     expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
-    expect(host.querySelectorAll("#files-header .editor-tabs")).toHaveLength(1);
+    expect(host.querySelectorAll(".editor-tabs")).toHaveLength(1);
+    expect(host.querySelector("[data-editor-group-id='group/first'] .editor-tabs")).not.toBeNull();
     act(() => {
       pressWindowKey("keyup", "Control");
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
@@ -432,11 +327,6 @@ describe("EditorGroupView", () => {
 
 function MonacoMount(): ReactNode {
   return <div className="monaco-editor" />;
-}
-
-function click(element: HTMLButtonElement | null): void {
-  expect(element).not.toBeNull();
-  act(() => element?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
 function pressWindowKey(

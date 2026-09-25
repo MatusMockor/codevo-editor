@@ -51,8 +51,6 @@ describe("project display across environments", () => {
       agentThreadsInFilter(views, { kind: "project", projectRootKey: entry.projectRootKey }, [
         entry,
       ]),
-      false,
-      0,
     );
     expect(sections.active.map((view) => view.thread.threadId)).toEqual(
       expect.arrayContaining(views.map((view) => view.thread.threadId)),

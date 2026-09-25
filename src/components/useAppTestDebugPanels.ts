@@ -18,7 +18,8 @@ import { jsTestProblemSnapshotToNotices } from "../domain/jsTestProblems";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import type { PhpTestGateway } from "../domain/phpTestResults";
 import { useDebugPanelProps } from "./useDebugPanelProps";
-import { usePrivateDebugPanelElement } from "./usePrivateDebugPanelElement";
+import { debugSessionActive, debugSessionIdOf } from "./debug/debugPanelStatus";
+import { usePrivateDebugRegions, type WorkbenchDebugPanels } from "./debug/usePrivateDebugRegions";
 import { useDebugCopyValueComposition } from "../application/useDebugCopyValueComposition";
 import type { DebugCopyValueCommandBridge } from "../application/debugCopyValueCommandBridge";
 import type { DebugSetVariableSurface } from "./debugSetVariableSurface";
@@ -211,7 +212,7 @@ export function useAppTestDebugPanels({
     workspaceRoot: workbench.workspaceRoot,
     workspaceTrusted,
   });
-  const debugPanel = usePrivateDebugPanelElement(
+  const regions = usePrivateDebugRegions(
     debugPanelProps,
     {
       console: debugCopyValue.console,
@@ -221,6 +222,13 @@ export function useAppTestDebugPanels({
     debugSetVariableFocus,
     debugAddToWatch.surface,
   );
+  const sessionActive = debugSessionActive(debugPanelProps);
+  const debugPanel: WorkbenchDebugPanels = {
+    regions,
+    sessionActive,
+    sessionId: debugSessionIdOf(debugPanelProps.snapshot),
+    toolbar: sessionActive ? regions.toolbar : null,
+  };
   return { debugPanel, jsTestExplorerPanel, phpCloverCoverage, phpTestResults };
 }
 

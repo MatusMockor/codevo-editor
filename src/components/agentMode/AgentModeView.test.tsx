@@ -18,6 +18,7 @@ import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangedFile } from "../../domain/git";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentTurnEvent } from "../../domain/agentThread";
+import { workbenchAgentThreadOpener } from "../../application/agentThreadOpener";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
 import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
@@ -335,6 +336,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: "dirty-preview-key",
+      worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
@@ -368,6 +370,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: "dirty-preview-key",
+      worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
@@ -377,11 +380,9 @@ describe("AgentModeView", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }) });
 
-    expect(host.querySelector("#agent-repository")).toBeNull();
-    pickOption("agent-checkout", `root:${NESTED}`);
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
-      "packages/api",
-    );
+    expect(host.querySelector("#agent-repository")).not.toBeNull();
+    pickOption("agent-repository", `root:${NESTED}`);
+    expect(pickerTrigger("agent-repository").textContent).toContain("packages/api");
     typePrompt("Update the router");
     submitForm();
 
@@ -391,6 +392,7 @@ describe("AgentModeView", () => {
       prompt: "Update the router",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
@@ -409,28 +411,22 @@ describe("AgentModeView", () => {
         },
       ],
     });
-    pickOption("agent-checkout", `root:${NESTED}`);
+    pickOption("agent-repository", `root:${NESTED}`);
     chooseScope(OTHER_ROOT);
-    pickOption("agent-checkout", `root:${otherNested}`);
+    pickOption("agent-repository", `root:${otherNested}`);
     chooseScope(ROOT);
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
-      "packages/api",
-    );
+    expect(pickerTrigger("agent-repository").textContent).toContain("packages/api");
     click('button[aria-label="New thread"]');
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
-      "packages/api",
-    );
+    expect(pickerTrigger("agent-repository").textContent).toContain("packages/api");
     act(() => bridge.run("agent.newThread"));
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
-      "packages/api",
-    );
+    expect(pickerTrigger("agent-repository").textContent).toContain("packages/api");
     chooseScope(OTHER_ROOT);
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain("service");
+    expect(pickerTrigger("agent-repository").textContent).toContain("service");
     chooseScope(ROOT);
-    pickOption("agent-checkout", `root:${ROOT}`);
+    pickOption("agent-repository", `root:${ROOT}`);
     chooseScope(OTHER_ROOT);
     chooseScope(ROOT);
-    click("button#agent-checkout");
+    click("button#agent-repository");
     expect(
       host
         .querySelector(`[role="option"][data-value="root:${ROOT}"]`)
@@ -1424,7 +1420,7 @@ describe("AgentModeView", () => {
     const forcedEditor = recordedLayoutState(
       { rightPanel: "open", openSurfaces: ["diff"], activeSurface: "diff" },
       false,
-      "editor-expanded",
+      "editor-only",
     );
     render({
       agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
@@ -1789,7 +1785,8 @@ describe("AgentModeView", () => {
     expect(threadOrder()).toEqual(["agt-2", "agt-1", "agt-3"]);
   });
 
-  it("hides archived threads behind the collapsed Archived shelf", () => {
+  it("keeps archived threads out of the rail and opens Settings > Usage from its footer", () => {
+    const onOpenUsageSettings = vi.fn();
     render({
       agents: surface({
         threads: [
@@ -1797,16 +1794,15 @@ describe("AgentModeView", () => {
           threadView({ threadId: "agt-2", archived: true, title: "Archived work" }),
         ],
       }),
+      onOpenUsageSettings,
     });
 
     expect(host.textContent).not.toContain("Archived work");
-    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')?.textContent).toContain(
-      "Archived (1)",
-    );
+    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')).toBeNull();
 
-    click('.cv-sb-shelf[data-shelf="archived"]');
+    click('button[aria-label="Open Usage"]');
 
-    expect(host.textContent).toContain("Archived work");
+    expect(onOpenUsageSettings).toHaveBeenCalledTimes(1);
   });
 
   it("lists every registered root in the scope picker with the active tab first", () => {
@@ -1854,8 +1850,12 @@ describe("AgentModeView", () => {
 
     expect(pickerTrigger("agent-checkout").disabled).toBe(false);
     click("button#agent-checkout");
-    expect(host.querySelector('[role="option"][data-value="in-place"]')).toBeNull();
-    expect(host.querySelector('[role="option"][data-value="worktree"]')).not.toBeNull();
+    const checkoutRow = (label: string) =>
+      [...document.querySelectorAll('[role="menu"] [role="menuitemradio"]')].find(
+        (row) => row.querySelector(".cv-menu__text")?.firstChild?.textContent === label,
+      );
+    expect(checkoutRow("Local checkout")?.getAttribute("aria-disabled")).toBe("true");
+    expect(checkoutRow("New worktree")).toBeDefined();
     click("button#agent-checkout");
     expect(host.textContent).toContain("not the active tab");
 
@@ -1868,6 +1868,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
@@ -1911,6 +1912,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
@@ -2080,6 +2082,13 @@ describe("AgentModeView", () => {
     ).toBe(true);
   });
 
+  it("does not flash the no-projects hero before projects are loaded", () => {
+    render({ projects: [], projectsLoaded: false });
+    expect(host.querySelector('[aria-label="No projects"]')).toBeNull();
+    render({ projects: [], projectsLoaded: true });
+    expect(host.querySelector('[aria-label="No projects"]')).not.toBeNull();
+  });
+
   it("reports the roots beyond the project limit truthfully", () => {
     render({ overflowRootPaths: ["/workspace/nine"] });
 
@@ -2164,6 +2173,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
@@ -2915,6 +2925,26 @@ describe("AgentModeView", () => {
     expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
   });
 
+  it("opens an archived thread through the published thread opener without unarchiving it", () => {
+    const unarchive = vi.fn();
+    render({
+      agents: surface({
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2", archived: true, title: "Archived work" }),
+        ],
+        unarchive,
+      }),
+    });
+
+    act(() => {
+      expect(workbenchAgentThreadOpener.current()?.openThread("agt-2")).toBe(true);
+    });
+
+    expect(selectedSessionId()).toBe("agt-2");
+    expect(unarchive).not.toHaveBeenCalled();
+  });
+
   it("runs the preferred script of the selected thread from the view command", () => {
     const bridge = createAgentViewCommandBridge();
     const run = vi.fn(() => true);
@@ -3118,8 +3148,8 @@ describe("AgentModeView", () => {
     agentComposerDraftStore.writeDraft(`new:${OTHER_ROOT}`, "Draft for the second checkout");
     click('button[aria-label="Add project"]');
     act(() => {
-      Array.from(host.querySelectorAll("button"))
-        .find((button) => button.textContent === "Open existing folder")
+      Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+        .find((option) => option.textContent?.includes("Open folder"))
         ?.click();
     });
     await waitForReact(() => expect(host.querySelector(".agent-add-project")).not.toBeNull());
@@ -3173,8 +3203,8 @@ describe("AgentModeView", () => {
       expect(selectedSessionId()).toBe("agt-1");
       click('button[aria-label="Add project"]');
       act(() => {
-        Array.from(host.querySelectorAll("button"))
-          .find((button) => button.textContent === "Open existing folder")
+        Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'))
+          .find((option) => option.textContent?.includes("Open folder"))
           ?.click();
       });
       await waitForReact(() => {
@@ -3196,7 +3226,7 @@ describe("AgentModeView", () => {
         chooseScope(OTHER_ROOT);
         chooseScope(ROOT);
       }
-      expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_DEVELOPER);
+      expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_DEVELOPER, { trust: "auto" });
       expect(host.querySelector(".agent-add-project")).toBeNull();
       await act(async () => {});
       render({
@@ -3230,7 +3260,7 @@ describe("AgentModeView", () => {
           new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
         );
     });
-    pickOption("agent-checkout", `root:${NESTED}`);
+    pickOption("agent-repository", `root:${NESTED}`);
     await act(async () => {});
     render({
       chrome,
@@ -3241,9 +3271,7 @@ describe("AgentModeView", () => {
       workspaceRoot: OTHER_ROOT,
     });
     expect(activeProjectLabel()).toContain("app");
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
-      "packages/api",
-    );
+    expect(pickerTrigger("agent-repository").textContent).toContain("packages/api");
   });
 
   it("keeps the rail add-project button disabled without add-project chrome", () => {

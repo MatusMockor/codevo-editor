@@ -167,7 +167,7 @@ describe("usePerfScenarioBridgeInstall", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("reveals the editor for autorun and again after a fixture workspace owner changes", () => {
+  it("opens the editor surface maximized once per agent workbench under perf autorun", () => {
     vi.spyOn(autorunGate, "perfAutorunEnabled").mockReturnValue(true);
     window.__codevoPerfAutorunStartedAt = "owned-by-test";
     const firstDispatch = vi.fn();
@@ -175,20 +175,39 @@ describe("usePerfScenarioBridgeInstall", () => {
       ...silentHost(),
       agentWorkbench: { effectiveLayout: "agent", dispatch: firstDispatch },
     });
-    expect(firstDispatch).toHaveBeenCalledExactlyOnceWith({ kind: "expandEditor" });
+
+    expect(firstDispatch.mock.calls.map(([action]) => action)).toEqual([
+      { kind: "openSurface", surface: "editor" },
+      { kind: "maximizeRightPanel" },
+    ]);
 
     render({
       ...silentHost(),
-      agentWorkbench: { effectiveLayout: "editor-expanded", dispatch: firstDispatch },
+      agentWorkbench: { effectiveLayout: "agent", dispatch: firstDispatch },
     });
-    expect(firstDispatch).toHaveBeenCalledTimes(1);
+    expect(firstDispatch).toHaveBeenCalledTimes(2);
 
     const nextDispatch = vi.fn();
     render({
       ...silentHost(),
       agentWorkbench: { effectiveLayout: "agent", dispatch: nextDispatch },
     });
-    expect(nextDispatch).toHaveBeenCalledExactlyOnceWith({ kind: "expandEditor" });
+    expect(nextDispatch.mock.calls.map(([action]) => action)).toEqual([
+      { kind: "openSurface", surface: "editor" },
+      { kind: "maximizeRightPanel" },
+    ]);
+  });
+
+  it("dispatches nothing in the editor-only fallback", () => {
+    vi.spyOn(autorunGate, "perfAutorunEnabled").mockReturnValue(true);
+    window.__codevoPerfAutorunStartedAt = "owned-by-test";
+    const dispatch = vi.fn();
+    mountHostProbe({
+      ...silentHost(),
+      agentWorkbench: { effectiveLayout: "editor-only", dispatch },
+    });
+
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("installs nothing and loads no editor api while the flag is unset", () => {

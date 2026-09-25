@@ -458,3 +458,12 @@ describe("git, scripts and pull request surfaces", () => {
     );
   });
 });
+
+describe("editor surface blocked reason", () => {
+  it("never blocks the local editor, even without a thread, project scope or trust", () => {
+    expect(agentSurfaceBlockedReason("editor", null, false, null)).toBeNull();
+    expect(
+      agentSurfaceBlockedReason("editor", surfaceThreadView(), false, "/workspace/other"),
+    ).toBeNull();
+  });
+});

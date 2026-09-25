@@ -12,6 +12,7 @@ import {
   type AgentCliDiscoveryGateway,
 } from "../domain/agentSettings";
 import type { BottomPanelView } from "../domain/bottomPanel";
+import { workbenchPanelPlacement } from "../domain/editorDrawer";
 import type {
   AgentProviderHealthGateway,
   AgentProviderPolicyGateway,
@@ -112,6 +113,7 @@ export interface WorkbenchControllerAgentsOptions {
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly applyAppSettings: (settings: AppSettings) => void;
+  readonly bottomPanelView: BottomPanelView;
   readonly bottomPanelVisible: boolean;
   readonly setBottomPanelView: Dispatch<SetStateAction<BottomPanelView>>;
   readonly setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
@@ -162,6 +164,7 @@ export interface WorkbenchControllerAgentsOptions {
 
 export interface WorkbenchControllerAgentsSurface
   extends WorkbenchAgentsSurface, AgentWorkbenchLayoutSurface {
+  readonly appSettingsHydrated: boolean;
   markAppSettingsHydrated(hydrated: true): void;
 }
 
@@ -194,7 +197,8 @@ export function useWorkbenchControllerAgents(
     hasWorkspace: options.workspaceRoot !== null,
     agentLayoutAvailable:
       options.agentLayoutAvailable ?? options.options.agentRootLeaseGateway !== undefined,
-    bottomPanelVisible: options.bottomPanelVisible,
+    bottomPanelVisible: workbenchPanelPlacement(options.bottomPanelView, options.bottomPanelVisible)
+      .terminal,
     hydration:
       options.persistedAgentWorkbenchLayout ??
       agentWorkbenchHydration(options.editorSessionOwnerKey, options.workspaceSettingsRef.current),
@@ -308,9 +312,10 @@ export function useWorkbenchControllerAgents(
       ...agents,
       agentModeActive,
       agentWorkbench,
+      appSettingsHydrated,
       markAppSettingsHydrated: setAppSettingsHydrated,
     }),
-    [agentModeActive, agentWorkbench, agents, setAppSettingsHydrated],
+    [agentModeActive, agentWorkbench, agents, appSettingsHydrated, setAppSettingsHydrated],
   );
 }
 

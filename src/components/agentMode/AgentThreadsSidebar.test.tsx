@@ -25,11 +25,7 @@ import { AgentClockProvider } from "./agentClock";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
-import {
-  ARCHIVED_PAGE_COUNT,
-  THREAD_JUMP_HINT_SHOW_DELAY_MS,
-  agentRailScopeEntries,
-} from "./agentSidebarPresentation";
+import { THREAD_JUMP_HINT_SHOW_DELAY_MS, agentRailScopeEntries } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
@@ -298,17 +294,6 @@ describe("AgentThreadsSidebar", () => {
     expect(scroll?.nextElementSibling).toBe(host.querySelector(".agent-provider-footer"));
   });
 
-  it("opens Usage as a viewport-bound workspace page beside the rail", () => {
-    expect(cssRule(".workbench-frame > .agent-usage-layer")).toContain("position: fixed");
-    expect(cssRule(".workbench-frame > .agent-usage-layer")).toContain(
-      "left: var(--agent-rail-track)",
-    );
-    expect(cssRule(".agent-usage-popover")).toContain("inset: 0");
-    expect(cssRule(".agent-usage-popover")).toContain("overflow: hidden");
-    expect(cssRule(".agent-usage-popover:focus-visible")).toContain("box-shadow: none");
-    expect(AGENT_MODE_CSS).toContain("@media (max-width: 560px)");
-  });
-
   it("pins the rail frame and the scaled 78px cards", () => {
     expect(cssRule("\n.agent-rail {")).toContain("background: var(--cv-side)");
     expect(cssRule("\n.agent-rail {")).toContain("padding: 0 6px 8px");
@@ -411,46 +396,27 @@ describe("AgentThreadsSidebar", () => {
     );
   });
 
-  it("routes source control and opens and closes the real usage panel", () => {
+  it("routes source control and opens Settings > Usage without a rail popover", () => {
     const onOpenSourceControl = vi.fn();
-    render({ onOpenSourceControl });
-    const usageButton = host.querySelector<HTMLButtonElement>('button[aria-label="Open Usage"]');
-    expect(usageButton?.hasAttribute("aria-controls")).toBe(false);
+    const onOpenUsage = vi.fn();
+    render({ onOpenSourceControl, onOpenUsage });
 
     click('button[aria-label="Open Source Control"]');
     click('button[aria-label="Open Usage"]');
 
     expect(onOpenSourceControl).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('section[aria-label="Usage"]')).not.toBeNull();
-    expect(usageButton?.getAttribute("aria-expanded")).toBe("true");
-    expect(usageButton?.getAttribute("aria-controls")).toBe("agent-usage-panel-dialog");
-    expect(document.activeElement).toBe(
-      document.querySelector('[role="dialog"][aria-label="Usage details"]'),
-    );
-
-    act(() => {
-      document
-        .querySelector('[role="dialog"][aria-label="Usage details"]')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
-    });
-    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
-    expect(document.activeElement).toBe(usageButton);
-    expect(usageButton?.hasAttribute("aria-controls")).toBe(false);
-
-    click('button[aria-label="Open Usage"]');
-    act(() =>
-      document.querySelector<HTMLButtonElement>('button[aria-label="Close Usage"]')?.click(),
-    );
-    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
-    expect(document.activeElement).toBe(usageButton);
-
-    click('button[aria-label="Open Usage"]');
-    act(() => document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
-    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
-    expect(document.activeElement).toBe(usageButton);
+    expect(onOpenUsage).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector(".agent-usage-layer")).toBeNull();
   });
 
-  it("moves focus to Expand after outside-mousedown closes Usage before Collapse clicks", async () => {
+  it("hides the usage button when Settings > Usage is not wired", () => {
+    render();
+
+    expect(host.querySelector('button[aria-label="Open Usage"]')).toBeNull();
+  });
+
+  it("moves focus to Expand when the rail collapses with focus inside it", async () => {
     render({
       onCollapseSidebar: () =>
         root.render(
@@ -459,23 +425,16 @@ describe("AgentThreadsSidebar", () => {
           </button>,
         ),
     });
-    click('button[aria-label="Open Usage"]');
-    expect(document.activeElement).toBe(
-      document.querySelector('[role="dialog"][aria-label="Usage details"]'),
-    );
     const collapse = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse sidebar"]');
     expect(collapse).not.toBeNull();
 
     await act(async () => {
-      collapse?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       collapse?.focus();
-      collapse?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-      collapse?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      collapse?.click();
       await Promise.resolve();
     });
     await Promise.resolve();
 
-    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
     expect(document.activeElement).toBe(host.querySelector('button[aria-label="Expand sidebar"]'));
   });
 
@@ -634,8 +593,8 @@ describe("AgentThreadsSidebar", () => {
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-s", { kind: "settle" });
   });
 
-  it("collapses archived threads into a slim shelf paginated by twenty", () => {
-    const archived = Array.from({ length: ARCHIVED_PAGE_COUNT + 5 }, (_, index) =>
+  it("keeps archived threads out of the rail; they live in Settings > Archive", () => {
+    const archived = Array.from({ length: 25 }, (_, index) =>
       settled(`arc-${index}`, `Archived ${index}`, {
         archived: true,
         updatedAtEpochMs: NOW - 86_400_000 * 4 - index,
@@ -643,28 +602,26 @@ describe("AgentThreadsSidebar", () => {
     );
     render({ groups: [group(ROOT, "app", [settled("agt-1", "Live"), ...archived])] });
 
-    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')?.textContent).toBe(
-      `Archived (${ARCHIVED_PAGE_COUNT + 5})`,
-    );
-    expect(host.querySelector(".agent-row--slim")).toBeNull();
-
-    click('.cv-sb-shelf[data-shelf="archived"][aria-expanded="false"]');
-
-    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')?.textContent).toBe(
-      `Archived (${ARCHIVED_PAGE_COUNT + 5})`,
-    );
-    expect(host.querySelectorAll(".agent-row--slim[data-thread-id]")).toHaveLength(
-      ARCHIVED_PAGE_COUNT,
-    );
-    expect(row("arc-0").querySelector(".agent-row__time")?.textContent).toBe("4d");
-    expect(host.querySelector(".agent-row--more")?.textContent).toContain("Show 5 more");
-
-    click(".agent-row--more");
-
-    expect(host.querySelectorAll(".agent-row--slim[data-thread-id]")).toHaveLength(
-      ARCHIVED_PAGE_COUNT + 5,
-    );
+    expect(host.querySelector('.cv-sb-shelf[data-shelf="archived"]')).toBeNull();
+    expect(host.querySelector('[data-thread-id^="arc-"]')).toBeNull();
     expect(host.querySelector(".agent-row--more")).toBeNull();
+    expect(row("agt-1")).not.toBeNull();
+    act(() => row("agt-1").focus());
+    key(row("agt-1"), "End");
+    expect(document.activeElement).toBe(row("agt-1"));
+  });
+
+  it("shows the empty state when a project holds only archived threads", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("arc-1", "Old", { archived: true, updatedAtEpochMs: NOW - 86_400_000 }),
+        ]),
+      ],
+    });
+
+    expect(host.querySelector('[data-thread-id="arc-1"]')).toBeNull();
+    expect(host.querySelector(".cv-sb-empty")).not.toBeNull();
   });
 
   it("opens the thread context menu in the mockup order and dispatches commands", () => {
@@ -942,31 +899,30 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".cv-card-row__jump")).toBeNull();
   });
 
-  it("lets Enter on the archived shelf expand it instead of selecting the focused thread", () => {
+  it("lets Enter on the settled shelf expand it instead of selecting the focused thread", () => {
     const onSelectThread = vi.fn();
     const onTogglePin = vi.fn();
     render({
       groups: [
         group(ROOT, "app", [
           settled("agt-1", "Live"),
-          settled("arc-1", "Old", { archived: true, updatedAtEpochMs: NOW - 86_400_000 }),
+          settled("arc-1", "Old", { settledAt: NOW - 86_400_000 }),
         ]),
       ],
       onSelectThread,
       onTogglePin,
     });
 
-    const shelf = host.querySelector<HTMLButtonElement>('.cv-sb-shelf[data-shelf="archived"]');
-    expect(shelf?.getAttribute("aria-controls")).toBeNull();
+    const shelf = host.querySelector<HTMLButtonElement>('.cv-sb-shelf[data-shelf="settled"]');
+    expect(shelf).not.toBeNull();
     act(() => shelf?.focus());
     key(shelf as HTMLElement, "Enter");
     expect(onSelectThread).not.toHaveBeenCalled();
     expect(onTogglePin).not.toHaveBeenCalled();
 
-    click('.cv-sb-shelf[data-shelf="archived"]');
+    click('.cv-sb-shelf[data-shelf="settled"]');
     expect(shelf?.getAttribute("aria-expanded")).toBe("true");
-    expect(shelf?.getAttribute("aria-controls")).toBe("agent-rail-archived");
-    expect(host.querySelector("#agent-rail-archived")).not.toBeNull();
+    expect(host.querySelector('[data-thread-id="arc-1"]')).not.toBeNull();
 
     key(shelf as HTMLElement, "p");
     expect(onTogglePin).not.toHaveBeenCalled();
@@ -979,42 +935,6 @@ describe("AgentThreadsSidebar", () => {
 
     key(row("agt-1"), "Enter");
     expect(onSelectThread).toHaveBeenCalledWith("agt-1");
-  });
-
-  it("offers Unarchive from the archived shelf and keeps the archived thread openable", () => {
-    const onThreadMenuCommand = vi.fn();
-    const onSelectThread = vi.fn();
-    render({
-      groups: [
-        group(ROOT, "app", [
-          settled("agt-1", "Live"),
-          settled("arc-1", "Old", { archived: true, updatedAtEpochMs: NOW - 86_400_000 }),
-        ]),
-      ],
-      onSelectThread,
-      onThreadMenuCommand,
-    });
-
-    click('.cv-sb-shelf[data-shelf="archived"]');
-    act(() => {
-      row("arc-1").dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
-      );
-    });
-    const labels = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map(
-      (item) => item.textContent,
-    );
-    expect(labels).toContain("Unarchive thread");
-    expect(labels).not.toContain("Archive thread");
-    expect(labels).not.toContain("Snooze");
-    const unarchive = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-      (item) => item.textContent === "Unarchive thread",
-    );
-    act(() => unarchive?.click());
-    expect(onThreadMenuCommand).toHaveBeenCalledWith("arc-1", { kind: "unarchive" });
-
-    clickRow("arc-1");
-    expect(onSelectThread).toHaveBeenCalledWith("arc-1");
   });
 
   it("returns focus to the row that opened the context menu once it closes", () => {
@@ -1314,7 +1234,7 @@ describe("AgentThreadsSidebar", () => {
     expect(markedIds()).toEqual(["agt-p", "agt-1", "agt-2"]);
   });
 
-  it("keeps a shift range inside the rows the archived shelf actually renders", () => {
+  it("keeps a shift range away from archived threads the rail never renders", () => {
     render({
       groups: [
         group(ROOT, "app", [
@@ -1328,10 +1248,8 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-1");
     clickRow("agt-3", { shiftKey: true });
     expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
-
-    click('.cv-sb-shelf[data-shelf="archived"]');
-    clickRow("agt-old", { shiftKey: true });
-    expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3", "agt-old"]);
+    keyWith(row("agt-3"), "ArrowDown", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
   });
 
   it("clears the selection on Escape before handing focus back to the search box", () => {
@@ -1516,12 +1434,12 @@ describe("AgentThreadsSidebar", () => {
     expect(markedIds()).toEqual(["agt-4", "agt-5"]);
   });
 
-  it("leaves the selection alone when an arrow starts from the archived shelf", () => {
+  it("leaves the selection alone when an arrow starts from the settled shelf", () => {
     render({
       groups: [
         group(ROOT, "app", [
           ...threeThreads(),
-          settled("agt-old", "Archived", { archived: true, updatedAtEpochMs: NOW - 9000 }),
+          settled("agt-old", "Settled", { settledAt: NOW - 9000 }),
         ]),
       ],
     });
@@ -1530,7 +1448,7 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-3", { shiftKey: true });
     expect(markedIds()).toEqual(["agt-2", "agt-3"]);
 
-    const shelf = host.querySelector<HTMLElement>('.cv-sb-shelf[data-shelf="archived"]');
+    const shelf = host.querySelector<HTMLElement>('.cv-sb-shelf[data-shelf="settled"]');
     expect(shelf).not.toBeNull();
     act(() => shelf?.focus());
     keyWith(shelf as HTMLElement, "ArrowDown", { shiftKey: true });
@@ -1680,7 +1598,6 @@ describe("AgentThreadsSidebar", () => {
     const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
     const props: AgentThreadsSidebarProps = {
       addProjectAvailable: true,
-      accountUsage: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
       groups,
       search: searchSurface(""),
       scope: { projectRootKey: ROOT, repositoryRoot: ROOT },
@@ -1951,6 +1868,7 @@ interface ThreadViewOptions {
   readonly status?: AgentTurnStatus;
   readonly pinned?: boolean;
   readonly archived?: boolean;
+  readonly settledAt?: number | null;
   readonly updatedAtEpochMs?: number;
   readonly endedAtEpochMs?: number | null;
   readonly viewedAtEpochMs?: number | null;
@@ -1969,6 +1887,7 @@ function threadView(threadId: string, title: string, options: ThreadViewOptions)
     pinned = false,
     provider = "claudeCode",
     repositoryRoot = ROOT,
+    settledAt = null,
     status = { kind: "running" },
     updatedAtEpochMs = NOW - 2 * 60_000,
     viewedAtEpochMs = null,
@@ -1982,6 +1901,7 @@ function threadView(threadId: string, title: string, options: ThreadViewOptions)
     title,
     pinned,
     archived,
+    settledAt,
     createdAtEpochMs: NOW - 10 * 60_000,
     updatedAtEpochMs,
     turns: [

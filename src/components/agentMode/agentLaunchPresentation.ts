@@ -4,6 +4,8 @@ import {
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
   CODEX_MODEL_CHOICES,
+  CODEX_NEW_MODEL_CHOICES,
+  CLAUDE_NEW_MODEL_IDS,
   agentLaunchIsDangerous,
   type AgentExecutionTarget,
   type AgentLaunchOptions,
@@ -33,6 +35,8 @@ export interface AgentModelRow {
   readonly favoriteKey: string;
   readonly legacyFavoriteKey?: string;
   readonly isLegacy?: boolean;
+  readonly isNew: boolean;
+  readonly isDefault: boolean;
 }
 
 export type AgentModelFilter = "all" | "favorites";
@@ -255,16 +259,25 @@ export function agentModelRows(
         providerName,
         favoriteKey: agentModelFavoriteKey(provider, entry.choice),
         isLegacy: entry.status === "legacy",
+        isNew: CLAUDE_NEW_MODEL_IDS.has(entry.choice),
+        isDefault: entry.isDefault === true,
       }));
   }
+  const manifestDefault =
+    (modelManifest.codex as ReadonlyArray<ManifestModel>).find((entry) => entry.isDefault) ?? null;
   return modelRows(
     provider,
     CODEX_MODEL_CHOICES,
     CODEX_MODEL_TEXT,
-    configured ??
-      (modelManifest.codex as ReadonlyArray<ManifestModel>).find((entry) => entry.isDefault) ??
-      null,
+    configured ?? manifestDefault,
+    manifestDefault?.choice ?? null,
   );
+}
+
+export function agentLegacyModelsSummary(rows: ReadonlyArray<AgentModelRow>): string {
+  const names = rows.map((row) => row.label.replace(/^Claude /u, ""));
+  if (names.length <= 2) return names.join(", ");
+  return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
 }
 
 export function agentModelFavoriteKey(provider: AgentCliKind, model: AgentModelChoice): string {
@@ -309,22 +322,59 @@ export function agentModelRowIsFavorite(row: AgentModelRow, keys: ReadonlySet<st
   );
 }
 
+export interface AgentLaunchModeGroups {
+  readonly access: ReadonlyArray<AgentLaunchChoice>;
+  readonly other: ReadonlyArray<AgentLaunchChoice>;
+}
+
 export function agentLaunchModeChoices(
   provider: AgentCliKind,
   target: AgentExecutionTarget = "local",
 ): ReadonlyArray<AgentLaunchChoice> {
+  const groups = agentLaunchModeGroups(provider, target);
+  return [...groups.access, ...groups.other];
+}
+
+export function agentLaunchModeGroups(
+  provider: AgentCliKind,
+  target: AgentExecutionTarget = "local",
+): AgentLaunchModeGroups {
   if (provider === "claudeCode") {
-    return choices(
-      ["supervised", "acceptEdits", "auto", "bypassPermissions"] as const,
+    const text = cliSettingsRowText(
       targetModeText(CLAUDE_MODE_TEXT, REMOTE_CLAUDE_MODE_HINT, target),
-      (mode) => agentLaunchTone({ provider, model: "default", mode, effort: "default" }),
+      "Use Claude CLI settings",
     );
+    const tone = (mode: ClaudePermissionMode) =>
+      agentLaunchTone({ provider, model: "default", mode, effort: "default" });
+    return {
+      access: choices(
+        ["supervised", "acceptEdits", "auto", "bypassPermissions"] as const,
+        text,
+        tone,
+      ),
+      other: choices(["plan", "default"] as const, text, tone),
+    };
   }
-  return choices(
-    ["readOnly", "workspaceWrite", "auto", "dangerFullAccess"] as const,
+  const text = cliSettingsRowText(
     targetModeText(CODEX_MODE_TEXT, REMOTE_CODEX_MODE_HINT, target),
-    (mode) => agentLaunchTone({ provider, model: "default", mode }),
+    "Use Codex CLI settings",
   );
+  const tone = (mode: CodexExecutionMode) => agentLaunchTone({ provider, model: "default", mode });
+  return {
+    access: choices(
+      ["readOnly", "workspaceWrite", "auto", "dangerFullAccess"] as const,
+      text,
+      tone,
+    ),
+    other: choices(["default"] as const, text, tone),
+  };
+}
+
+function cliSettingsRowText<Mode extends string>(
+  text: Record<Mode | "default", LaunchText>,
+  label: string,
+): Record<Mode | "default", LaunchText> {
+  return { ...text, default: { ...text.default, label } };
 }
 
 function targetModeText<Mode extends string>(
@@ -713,6 +763,7 @@ function modelRows<Value extends AgentModelChoice>(
   values: ReadonlyArray<Value>,
   text: Record<Value, LaunchText>,
   configured: ManifestModel | null,
+  defaultChoice: AgentModelChoice | null,
 ): ReadonlyArray<AgentModelRow> {
   const providerName = agentModelProviderName(provider);
   return values
@@ -727,6 +778,8 @@ function modelRows<Value extends AgentModelChoice>(
       provider,
       providerName,
       favoriteKey: agentModelFavoriteKey(provider, value),
+      isNew: isNewCodexChoice(value),
+      isDefault: value === defaultChoice,
       ...(value === configured?.choice
         ? { legacyFavoriteKey: agentModelFavoriteKey(provider, "default") }
         : {}),
@@ -828,4 +881,8 @@ function choices<Value extends string>(
 function pick<Value extends string>(values: ReadonlyArray<Value>, value: string): Value | null {
   const match = values.find((candidate) => candidate === value);
   return match ?? null;
+}
+
+function isNewCodexChoice(value: AgentModelChoice): boolean {
+  return (CODEX_NEW_MODEL_CHOICES as ReadonlySet<string>).has(value);
 }

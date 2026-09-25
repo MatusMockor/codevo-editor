@@ -54,6 +54,7 @@ import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agen
 import { AgentComposerCommands } from "./AgentComposerCommands";
 import { useAgentComposerCommands } from "./useAgentComposerCommands";
 import type { AgentComposerCommandId } from "../../domain/agentComposerCommand";
+import { HEAD_WORKTREE_BASE, type AgentWorktreeBase } from "../../domain/agentWorktreeBase";
 import { AgentLaunchControls, type AgentLaunchControlRequest } from "./AgentLaunchControls";
 import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
@@ -76,6 +77,7 @@ import {
 } from "./composer/AgentComposerFrame";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
+const ignoreWorktreeBase = (): void => undefined;
 const NO_SERVER_TARGET_REASON =
   "Choose a project on this server to add attachments and start a thread.";
 
@@ -129,11 +131,14 @@ export interface AgentComposerProps {
   onSelectRepository(repositoryRoot: string): void;
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
+  readonly worktreeBase?: AgentWorktreeBase;
+  onWorktreeBaseChange?(base: AgentWorktreeBase): void;
   onRefreshIsolation?(): void;
   onLaunchChange(launch: AgentLaunchOptions): void;
   onNewThread(): void;
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
+  onShowUsageLimits?(): void;
   onStop?(): void;
   onRecoverDraft?(): "started" | "unavailable" | "draftTooLarge";
   onSubmit(submission: AgentComposerSubmission): void;
@@ -166,11 +171,14 @@ export function AgentComposer({
   modelFavoritesPersistence = null,
   mode,
   onIsolationChange,
+  worktreeBase = HEAD_WORKTREE_BASE,
+  onWorktreeBaseChange = ignoreWorktreeBase,
   onRefreshIsolation,
   onLaunchChange,
   onNewThread,
   onOpenProviderSettings,
   onOpenEnvironmentSettings,
+  onShowUsageLimits,
   onPromptChange,
   onSelectRepository,
   onStop,
@@ -427,8 +435,20 @@ export function AgentComposer({
       isolation,
       locked: followUp,
       disabled: dispatching || allProvidersDisabled,
+      remote: executionServerId !== null,
+      worktreeBase,
+      onWorktreeBaseChange,
     }),
-    [target, isolation, followUp, dispatching, allProvidersDisabled],
+    [
+      target,
+      isolation,
+      followUp,
+      dispatching,
+      allProvidersDisabled,
+      executionServerId,
+      worktreeBase,
+      onWorktreeBaseChange,
+    ],
   );
   const chooseCommand = (command: AgentComposerCommandId, submitCommand: boolean): void => {
     if (command === "compact") {
@@ -455,6 +475,11 @@ export function AgentComposer({
     if (command === "settings") {
       changePrompt("");
       onOpenProviderSettings();
+      return;
+    }
+    if (command === "usage") {
+      changePrompt("");
+      onShowUsageLimits?.();
       return;
     }
     if (dispatching) return;
@@ -487,6 +512,7 @@ export function AgentComposer({
 
   const localCommandAvailable =
     commands.exactCommand === "settings" ||
+    commands.exactCommand === "usage" ||
     (!dispatching &&
       commands.exactCommand !== null &&
       commands.exactCommand !== "compact" &&

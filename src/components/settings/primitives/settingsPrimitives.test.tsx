@@ -79,6 +79,46 @@ describe("settings primitives", () => {
     expect(section?.querySelector('[data-settings-row="general.autoSave"]')).not.toBeNull();
   });
 
+  it("renders a section as a heading plus one rounded group of rows", () => {
+    render(
+      <SettingsSectionHeading title="Editing">
+        <SettingsRow rowId="general.autoSave">
+          <span>control</span>
+        </SettingsRow>
+      </SettingsSectionHeading>,
+    );
+
+    const section = host.querySelector("section.settings-section");
+
+    expect(section?.querySelector(".settings-section__head h2")?.textContent).toBe("Editing");
+    expect(section?.querySelector(".settings-group > .settings-row")).not.toBeNull();
+    expect(section?.querySelector(".settings-section__actions")).toBeNull();
+  });
+
+  it("renders a bare section without the rounded group", () => {
+    render(
+      <SettingsSectionHeading bare title="Theme">
+        <div className="palette-cards">cards</div>
+      </SettingsSectionHeading>,
+    );
+
+    expect(host.querySelector(".settings-group")).toBeNull();
+    expect(host.querySelector("section.settings-section > .palette-cards")).not.toBeNull();
+  });
+
+  it("lets a row override its registry description", () => {
+    render(
+      <SettingsRow description="Checked 4m ago." rowId="general.appUpdates">
+        <SettingsSwitch checked={false} onChange={() => undefined} />
+      </SettingsRow>,
+    );
+
+    const describedById = host.querySelector('[role="switch"]')?.getAttribute("aria-describedby");
+
+    expect(host.querySelector(".settings-row__description")?.textContent).toBe("Checked 4m ago.");
+    expect(host.querySelector(`#${describedById}`)?.textContent).toBe("Checked 4m ago.");
+  });
+
   it("clamps the number stepper at both bounds and commits typing on blur", () => {
     const onChange = vi.fn();
     render(<SettingsNumberField label="Tasks" max={8} min={1} onChange={onChange} value={8} />);

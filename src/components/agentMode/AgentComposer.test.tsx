@@ -18,7 +18,7 @@ import {
   type AgentComposerRepositoryOption,
   type AgentComposerTarget,
 } from "./AgentComposer";
-import { readAgentModeStyles } from "./agentModeCssTestSupport";
+import { readStyleSheet } from "../cssContractTestSupport";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 
 import { ClaudeModelCatalogContext } from "./useAgentClaudeModelCatalog";
@@ -53,36 +53,34 @@ describe("AgentComposer", () => {
     expect(host.querySelector("textarea#agent-prompt")).not.toBeNull();
   });
 
-  it("keeps the nested repositories inside the checkout menu instead of a Repo picker", () => {
+  it("splits the workspace menu from the repository picker for nested repositories", () => {
     render();
 
-    expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(host.querySelector(".cv-composer__foot .agent-picker__prefix")).toBeNull();
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual([
+    expect(workspaceRowLabels()).toEqual([
+      "This computer",
+      "Remote server",
       "Local checkout",
-      "Isolated worktree",
-      "app",
-      "packages/api",
+      "New worktree",
     ]);
-    expect(pickerGroupHeadings(CHECKOUT_ID)).toEqual(["Run in repository"]);
-    const selectedOptions = pickerOptions(CHECKOUT_ID).filter(
+    expect(pickerOptionLabels(REPOSITORY_ID)).toEqual(["app", "packages/api"]);
+    expect(pickerGroupHeadings(REPOSITORY_ID)).toEqual(["Run in repository"]);
+    const selectedOptions = pickerOptions(REPOSITORY_ID).filter(
       (option) => option.getAttribute("aria-selected") === "true",
     );
-    expect(selectedOptions).toHaveLength(2);
-    expect(selectedOptions[0]?.textContent).toContain("Local checkout");
-    expect(selectedOptions[1]?.textContent).toBe("appProject folder");
-    expect(pickerOptionDescriptions(CHECKOUT_ID)).toEqual([
-      "Runs in app.",
-      "Runs in a new git worktree of app.",
-      "Project folder",
-      "",
-    ]);
-    expect(host.querySelector("[data-agent-composer-target]")).toBeNull();
+    expect(selectedOptions.map((option) => option.textContent)).toEqual(["appProject folder"]);
+    expect(pickerOptionDescriptions(REPOSITORY_ID)).toEqual(["Project folder", ""]);
+    expect(trigger(REPOSITORY_ID).textContent).toContain("app");
 
     render({ target: { ...target(), repositoryOptions: [] } });
 
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "Isolated worktree"]);
-    expect(pickerGroupHeadings(CHECKOUT_ID)).toEqual([]);
+    expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
+    expect(workspaceRowLabels()).toEqual([
+      "This computer",
+      "Remote server",
+      "Local checkout",
+      "New worktree",
+    ]);
   });
 
   it("offers both server checkout modes and labels the server checkout truthfully", () => {
@@ -92,8 +90,8 @@ describe("AgentComposer", () => {
       target: { ...target(), repositoryOptions: [] },
       onIsolationChange,
     });
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Server checkout", "Isolated worktree"]);
-    pickOption(CHECKOUT_ID, "worktree");
+    expect(workspaceRowLabels().slice(-2)).toEqual(["Server checkout", "New worktree"]);
+    pickWorkspaceRow("New worktree");
     expect(onIsolationChange).toHaveBeenCalledWith("worktree");
     render({
       executionServerId: "srv-1",
@@ -103,12 +101,12 @@ describe("AgentComposer", () => {
     expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Server checkout");
   });
 
-  it("changes the repository of the next thread from the checkout menu and names it", () => {
+  it("changes the repository of the next thread from the repository picker and names it", () => {
     const onSelectRepository = vi.fn();
     const onIsolationChange = vi.fn();
     render({ onIsolationChange, onSelectRepository });
 
-    pickOption(CHECKOUT_ID, "root:/workspace/app/packages/api");
+    pickOption(REPOSITORY_ID, "root:/workspace/app/packages/api");
 
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/packages/api");
     expect(onIsolationChange).not.toHaveBeenCalled();
@@ -117,47 +115,37 @@ describe("AgentComposer", () => {
       target: { ...target(), selectedRepositoryRoot: "/workspace/app/packages/api" },
     });
 
-    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toBe(
-      "Repository:in packages/api",
-    );
-    expect(pickerOptionDescriptions(CHECKOUT_ID)[0]).toBe("Runs in packages/api.");
-    openPicker(CHECKOUT_ID);
-    const menu = host.querySelector('[role="listbox"][aria-label="Checkout for this thread"]');
+    expect(trigger(REPOSITORY_ID).textContent).toContain("packages/api");
+    openPicker(REPOSITORY_ID);
+    const menu = host.querySelector('[role="listbox"][aria-label="Repository for this thread"]');
     expect(menu?.getAttribute("aria-multiselectable")).toBe("true");
     const selected = [...(menu?.querySelectorAll('[role="option"][aria-selected="true"]') ?? [])];
-    expect(selected).toHaveLength(2);
-    expect(selected[0]?.textContent).toContain("Local checkout");
-    expect(selected[1]?.textContent).toBe("packages/api");
+    expect(selected.map((option) => option.textContent)).toEqual(["packages/api"]);
     expect(
       menu?.querySelector('[data-value="root:/workspace/app"]')?.getAttribute("aria-selected"),
     ).toBe("false");
-    act(() => trigger(CHECKOUT_ID).click());
+    act(() => trigger(REPOSITORY_ID).click());
   });
 
   it("offers only the local checkout when the target is not a Git repository", () => {
     const onIsolationChange = vi.fn();
     render({ onIsolationChange, worktreeAvailable: false });
 
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "app", "packages/api"]);
+    expect(workspaceRowLabels()).toEqual(["This computer", "Remote server", "Local checkout"]);
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
-    expect(
-      host.querySelector(`#${CHECKOUT_ID}-list [role="option"][data-value="worktree"]`),
-    ).toBeNull();
 
     render({ onIsolationChange, prompt: "Fix it", worktreeAvailable: false });
     expect(submitButton().disabled).toBe(false);
   });
 
-  it("refreshes repository status when the checkout menu opens with mouse or keyboard", () => {
+  it("refreshes repository status when the workspace menu opens with mouse or keyboard", () => {
     const onRefreshIsolation = vi.fn();
     render({ onRefreshIsolation, worktreeAvailable: false });
     openPicker(CHECKOUT_ID);
     expect(onRefreshIsolation).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[role="option"][data-value="worktree"]')).toBeNull();
+    expect(workspaceRow("New worktree")).toBeUndefined();
     render({ onRefreshIsolation, worktreeAvailable: true });
-    expect(host.querySelector('[role="option"][data-value="worktree"]')?.textContent).toContain(
-      "Isolated worktree",
-    );
+    expect(workspaceRow("New worktree")).toBeDefined();
     act(() => trigger(CHECKOUT_ID).click());
     act(() => {
       trigger(CHECKOUT_ID).dispatchEvent(
@@ -166,7 +154,7 @@ describe("AgentComposer", () => {
     });
     expect(onRefreshIsolation).toHaveBeenCalledTimes(2);
     render({ onRefreshIsolation, worktreeAvailable: false });
-    expect(host.querySelector('[role="option"][data-value="worktree"]')).toBeNull();
+    expect(workspaceRow("New worktree")).toBeUndefined();
   });
 
   it("keeps status refresh reachable for a background plain folder without nested repositories", () => {
@@ -269,7 +257,7 @@ describe("AgentComposer", () => {
       "Not a Git repository · runs in place",
     );
     expect(host.textContent).not.toContain("uncommitted");
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout"]);
+    expect(workspaceRowLabels().slice(2)).toEqual(["Local checkout"]);
   });
 
   it("picks the checkout in the context strip below the prompt box", () => {
@@ -280,38 +268,36 @@ describe("AgentComposer", () => {
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
     expect(box?.closest(".cv-composer__slab")?.nextElementSibling).toBe(footer);
-    expect(footer?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
+    expect(footer?.querySelector(`#${REPOSITORY_ID}`)).not.toBeNull();
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
-    expect(trigger(CHECKOUT_ID).textContent).toContain("Local checkout");
-    expect(pickerOptionLabels(CHECKOUT_ID).slice(0, 2)).toEqual([
-      "Local checkout",
-      "Isolated worktree",
-    ]);
+    expect(trigger(CHECKOUT_ID).textContent).toBe("Local checkout");
 
-    pickOption(CHECKOUT_ID, "worktree");
+    pickWorkspaceRow("New worktree");
 
     expect(onIsolationChange).toHaveBeenCalledWith("worktree");
   });
 
-  it("keeps the local environment before checkout in compact mode and opens its settings", () => {
+  it("keeps the workspace menu first in compact mode and opens environment settings", () => {
     stubMatchMedia(true);
     const onOpenEnvironmentSettings = vi.fn();
     const onSubmit = vi.fn();
     render({ onOpenEnvironmentSettings, onSubmit, prompt: "Keep my draft" });
 
     const footer = host.querySelector(".agent-composer__footer");
-    const environment = footer?.querySelector<HTMLButtonElement>(
-      '[aria-label="Run on: This computer"]',
+    const environment = footer?.querySelector<HTMLButtonElement>(`#${CHECKOUT_ID}`);
+    expect(environment?.getAttribute("aria-label")).toBe(
+      "Workspace: This computer, Local checkout",
     );
     expect(footer?.firstElementChild?.contains(environment ?? null)).toBe(true);
-    expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
     act(() => environment?.click());
-    const remote = host.querySelector<HTMLButtonElement>('[role="menuitemradio"]:disabled');
-    expect(remote?.textContent).toContain("Remote server");
+    const remote = workspaceRow("Remote server");
+    expect(remote?.getAttribute("aria-disabled")).toBe("true");
     act(() => remote?.click());
-    expect(environment?.textContent).toContain("This computer");
+    expect(environment?.getAttribute("aria-label")).toContain("This computer");
     expect(onSubmit).not.toHaveBeenCalled();
-    act(() => host.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click());
+    act(() =>
+      document.querySelector<HTMLButtonElement>('[role="menu"] [role="menuitem"]')?.click(),
+    );
     expect(onOpenEnvironmentSettings).toHaveBeenCalledTimes(1);
     expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep my draft");
   });
@@ -321,8 +307,10 @@ describe("AgentComposer", () => {
       mode: { kind: "followUp", blockedReason: null },
       onOpenEnvironmentSettings: vi.fn(),
     });
-    expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("This computer");
-    expect(host.querySelector('[aria-label="Run on: This computer"]')).toBeNull();
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toBe(
+      "Checkout:Local checkout",
+    );
+    expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
   });
 
   it("pre-sets the checkout and shows the reason behind the default", () => {
@@ -332,7 +320,7 @@ describe("AgentComposer", () => {
     });
 
     expect(pickerValue(CHECKOUT_ID)).toBe("worktree");
-    expect(trigger(CHECKOUT_ID).textContent).toContain("Isolated worktree");
+    expect(trigger(CHECKOUT_ID).textContent).toContain("New worktree");
     const reason = host.querySelector(".agent-composer__reason");
     expect(reason?.textContent).toBe("The working tree has uncommitted changes.");
     expect(reason?.closest(".cv-composer__slab")?.nextElementSibling).toBe(
@@ -341,9 +329,11 @@ describe("AgentComposer", () => {
   });
 
   it("locks a background project to an isolated worktree and says why", () => {
+    const onIsolationChange = vi.fn();
     render({
       isolation: "worktree",
       isolationReason: "The working tree is clean.",
+      onIsolationChange,
       worktreeOnly: true,
       worktreeOnlyReason:
         "This project is not the active tab, so the agent only runs in an isolated worktree.",
@@ -351,19 +341,15 @@ describe("AgentComposer", () => {
 
     expect(trigger(CHECKOUT_ID).disabled).toBe(false);
     expect(pickerValue(CHECKOUT_ID)).toBe("worktree");
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Isolated worktree", "app", "packages/api"]);
+    openPicker(CHECKOUT_ID);
+    expect(workspaceRow("Local checkout")?.getAttribute("aria-disabled")).toBe("true");
+    expect(workspaceRow("New worktree")?.getAttribute("aria-checked")).toBe("true");
+    act(() => workspaceRow("Local checkout")?.click());
+    expect(onIsolationChange).not.toHaveBeenCalled();
+    act(() => trigger(CHECKOUT_ID).click());
+    expect(pickerOptionLabels(REPOSITORY_ID)).toEqual(["app", "packages/api"]);
     expect(host.textContent).toContain("only runs in an isolated worktree");
     expect(host.textContent).not.toContain("The working tree is clean.");
-
-    render({
-      isolation: "worktree",
-      target: { ...target(), repositoryOptions: [] },
-      worktreeOnly: true,
-      worktreeOnlyReason:
-        "This project is not the active tab, so the agent only runs in an isolated worktree.",
-    });
-
-    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
   });
 
   it("shows the thread's checkout as a locked chip in follow-up mode", () => {
@@ -375,7 +361,7 @@ describe("AgentComposer", () => {
     expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
     expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     const lock = host.querySelector(".agent-composer__lock");
-    expect(lock?.textContent).toContain("Isolated worktree");
+    expect(lock?.textContent).toContain("New worktree");
     expect(lock?.querySelector("button")).toBeNull();
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.contains(lock)).toBe(true);
@@ -436,10 +422,10 @@ describe("AgentComposer", () => {
     act(() =>
       host.querySelector<HTMLButtonElement>('button[aria-label="More composer controls"]')?.click(),
     );
-    pickOption("agent-launch-mode", "supervised");
+    pickMenuRow("agent-launch-mode", "Supervised");
     expect(onLaunchChange).toHaveBeenCalledWith(expect.objectContaining({ mode: "supervised" }));
     expect(host.querySelector('[aria-label="Composer controls"]')).not.toBeNull();
-    pickOption(CHECKOUT_ID, "root:/workspace/app/packages/api");
+    pickOption(REPOSITORY_ID, "root:/workspace/app/packages/api");
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/packages/api");
   });
 
@@ -485,7 +471,7 @@ describe("AgentComposer", () => {
       mode: { kind: "followUp", blockedReason: null },
     });
 
-    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Isolated worktree");
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("New worktree");
     expect(host.querySelector("#agent-launch-model")).not.toBeNull();
   });
 
@@ -671,11 +657,12 @@ describe("AgentComposer", () => {
       prompt: "Fix it",
     });
 
-    expect(pickerOptionValues("agent-launch-mode")).toEqual([
-      "readOnly",
-      "workspaceWrite",
-      "auto",
-      "dangerFullAccess",
+    expect(menuRowLabels("agent-launch-mode")).toEqual([
+      "Read-only",
+      "Workspace write",
+      "Auto",
+      "Full access",
+      "Use Codex CLI settings",
     ]);
     expect(host.querySelector(".agent-composer__danger")).toBeNull();
     expect(submitButton().disabled).toBe(false);
@@ -1092,6 +1079,25 @@ describe("AgentComposer", () => {
 
     expect(pressEnter().defaultPrevented).toBe(true);
     expect(onCompactContext).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("shows usage limits for /usage and clears the prompt, even while a turn dispatches", () => {
+    const onShowUsageLimits = vi.fn();
+    const onPromptChange = vi.fn();
+    const onSubmit = vi.fn();
+    render({
+      dispatching: true,
+      prompt: "/usage",
+      submitBlocked: true,
+      onPromptChange,
+      onShowUsageLimits,
+      onSubmit,
+    });
+
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(onShowUsageLimits).toHaveBeenCalledTimes(1);
+    expect(onPromptChange).toHaveBeenLastCalledWith("");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -1558,10 +1564,6 @@ describe("AgentComposer", () => {
     return options;
   }
 
-  function pickerOptionValues(id: string): ReadonlyArray<string> {
-    return pickerOptions(id).map((option) => option.dataset.value ?? "");
-  }
-
   function pickerOptionLabels(id: string): ReadonlyArray<string> {
     return pickerOptions(id).map(
       (option) => option.querySelector(".agent-picker__label")?.textContent ?? "",
@@ -1590,6 +1592,60 @@ describe("AgentComposer", () => {
     act(() => option?.click());
   }
 
+  function workspaceRows(): ReadonlyArray<HTMLButtonElement> {
+    openPicker(CHECKOUT_ID);
+    const rows = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Workspace"] [role="menuitemradio"]',
+      ),
+    ];
+    act(() => trigger(CHECKOUT_ID).click());
+    return rows;
+  }
+
+  function workspaceRowLabels(): ReadonlyArray<string> {
+    return workspaceRows().map(menuRowLabel);
+  }
+
+  function workspaceRow(label: string): HTMLButtonElement | undefined {
+    return [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Workspace"] [role="menuitemradio"]',
+      ),
+    ].find((row) => menuRowLabel(row) === label);
+  }
+
+  function pickWorkspaceRow(label: string): void {
+    openPicker(CHECKOUT_ID);
+    const row = workspaceRow(label);
+    expect(row).toBeDefined();
+    act(() => row?.click());
+  }
+
+  function menuRows(): ReadonlyArray<HTMLButtonElement> {
+    return [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemradio"]'),
+    ];
+  }
+
+  function menuRowLabel(row: HTMLElement): string {
+    return row.querySelector(".cv-menu__text")?.firstChild?.textContent ?? "";
+  }
+
+  function menuRowLabels(id: string): ReadonlyArray<string> {
+    openPicker(id);
+    const labels = menuRows().map(menuRowLabel);
+    act(() => trigger(id).click());
+    return labels;
+  }
+
+  function pickMenuRow(id: string, label: string): void {
+    openPicker(id);
+    const row = menuRows().find((candidate) => menuRowLabel(candidate) === label);
+    expect(row).toBeDefined();
+    act(() => row?.click());
+  }
+
   function submitForm(): void {
     const form = host.querySelector("form");
     expect(form).not.toBeNull();
@@ -1614,58 +1670,79 @@ describe("AgentComposer", () => {
   }
 });
 
-describe("AgentComposer Airy styling contract", () => {
-  const css = readAgentModeStyles();
+describe("AgentComposer picker styling contract", () => {
+  const css = readStyleSheet("components/agentMode/pickers/agentPickers.css").source;
 
-  it("scales ghost pickers from the 28px step on radius 8 with the hover tone and a tone divider", () => {
+  it("sizes ghost pickers on the 28px control step with a hover tint and a hairline divider", () => {
     const ghost = cssRule(css, "\n.agent-picker__trigger--ghost {");
-    expect(ghost).toContain("height: calc(28px * var(--codevo-fs-scale))");
-    expect(ghost).toContain("font-size: 13px");
-    expect(ghost).toContain("border-radius: var(--agent-radius-sm)");
-    expect(cssRule(css, "\n.agent-picker__trigger--ghost:hover:not(:disabled) {")).toContain(
-      "background: var(--agent-hover)",
+    expect(ghost).toContain("background: none");
+    expect(ghost).toContain("color: var(--cv-fg-muted)");
+    expect(cssRule(css, "\n.agent-picker__trigger:hover:not(:disabled) {")).toContain(
+      "background: var(--cv-tint-2)",
     );
     const footerGhost = cssRule(
       css,
       "\n.agent-composer__footer .agent-picker__trigger--ghost,\n.agent-composer__lock {",
     );
-    expect(footerGhost).toContain("height: calc(28px * var(--codevo-fs-scale))");
-    expect(footerGhost).toContain("border-radius: var(--agent-radius-sm)");
+    expect(footerGhost).toContain("height: 28px");
+    expect(footerGhost).toContain("border-radius: var(--cv-r-control)");
     expect(footerGhost).not.toContain("border:");
-    expect(css).toMatch(/\n\.agent-composer__lock \{[^}]*background: var\(--agent-well\)/);
+    expect(footerGhost).not.toContain("color:");
+    expect(css).toMatch(/\n\.agent-composer__lock \{[^}]*background: var\(--cv-tint-1\)/);
     const divider = cssRule(css, "\n.agent-composer__divider {");
+    expect(divider).toContain("width: 1px");
     expect(divider).toContain("height: 16px");
-    expect(divider).toContain("background: var(--agent-hover)");
-    expect(divider).toContain("opacity: 0.7");
+    expect(divider).toContain("background: var(--cv-hair-strong)");
   });
 
-  it("floats picker menus and the compact panel on the float shadow without rings", () => {
+  it("floats picker menus and the compact panel on the popover shadow without rings", () => {
     for (const selector of [
       "\n.agent-picker__menu {",
       "\n.agent-composer__compact-panel {",
       "\n.agent-model-picker__dialog {",
     ]) {
       const rule = cssRule(css, selector);
-      expect(rule, selector).toContain("box-shadow: var(--codevo-shadow-float)");
+      expect(rule, selector).toContain("background: var(--cv-popover)");
+      expect(rule, selector).toContain("box-shadow: var(--cv-shadow-pop)");
+      expect(rule, selector).toContain("z-index: var(--cv-z-popover)");
       expect(rule, selector).not.toContain("0 0 0 1px");
     }
     const trigger = cssRule(css, "\n.agent-picker__trigger {");
-    expect(trigger).toContain("background: var(--agent-well)");
-    expect(trigger).toContain("border-radius: var(--agent-radius-sm)");
-    expect(trigger).not.toContain("border:");
+    expect(trigger).toContain("background: var(--cv-tint-1)");
+    expect(trigger).toContain("border-radius: var(--cv-r-control)");
+    expect(trigger).toContain("border: 0");
   });
 
-  it("rings a picker trigger on focus-visible only and marks an open menu with a fill", () => {
+  it("rings a picker trigger on focus-visible only and marks an open menu with a tint", () => {
     expect(cssRule(css, "\n.agent-picker__trigger:focus-visible {")).toContain(
-      "box-shadow: var(--agent-focus-ring)",
+      "box-shadow: var(--cv-ring-focus)",
     );
-    expect(css).not.toContain(".agent-picker--open .agent-picker__trigger,");
     const open = cssRule(css, "\n.agent-picker--open .agent-picker__trigger {");
-    expect(open).toContain("background: var(--agent-fill)");
-    expect(open).toContain("color: var(--agent-text-strong)");
+    expect(open).toContain("background: var(--cv-tint-2)");
+    expect(open).toContain("color: var(--cv-fg-strong)");
     expect(open).not.toContain("box-shadow");
     expect(open).not.toContain("outline");
-    expect(css).not.toContain(".agent-picker--open .agent-picker__trigger--ghost");
+  });
+
+  it("keeps the plan and danger tones on hover, open and inside the footer", () => {
+    expect(
+      cssRule(
+        css,
+        "\n.agent-picker__trigger--plan:hover:not(:disabled),\n.agent-picker--open .agent-picker__trigger--plan {",
+      ),
+    ).toContain("color: var(--cv-accent)");
+    expect(
+      cssRule(
+        css,
+        "\n.agent-picker__trigger--danger:hover:not(:disabled),\n.agent-picker--open .agent-picker__trigger--danger {",
+      ),
+    ).toContain("color: var(--cv-warn)");
+  });
+
+  it("styles pickers only with declared cv tokens", () => {
+    expect(css).not.toMatch(/var\(--(agent|codevo)-/);
+    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    expect(css).toMatch(/var\(--cv-/);
   });
 });
 

@@ -57,6 +57,10 @@ const LAYOUT_COMMAND_IDS = [
 
 const SHELL_COMMAND_IDS = ["agent.toggleSidebar", "panel.toggleMaximized"] as const;
 
+const PROJECT_COMMAND_IDS = ["project.add"] as const;
+
+const AGENT_COMMAND_IDS = [...VIEW_COMMAND_IDS, ...LAYOUT_COMMAND_IDS, ...SHELL_COMMAND_IDS];
+
 function handlers(
   threadSelected = true,
   blockedSurfaces: ReadonlyArray<AgentSurfaceKind> = [],
@@ -93,15 +97,15 @@ describe("workbenchAgentCommands", () => {
     });
 
     expect(commands.map((command) => command.id)).toEqual([
-      ...VIEW_COMMAND_IDS,
-      ...LAYOUT_COMMAND_IDS,
-      ...SHELL_COMMAND_IDS,
+      ...AGENT_COMMAND_IDS,
+      ...PROJECT_COMMAND_IDS,
     ]);
-    expect(commands.map((command) => command.category)).toEqual(commands.map(() => "Agents"));
+    expect(commands.map((command) => command.category)).toEqual([
+      ...AGENT_COMMAND_IDS.map(() => "Agents"),
+      "Workbench",
+    ]);
     expect(commands.map((command) => command.shortcut)).toEqual(
-      [...VIEW_COMMAND_IDS, ...LAYOUT_COMMAND_IDS, ...SHELL_COMMAND_IDS].map(
-        (id) => `shortcut:${id}`,
-      ),
+      [...AGENT_COMMAND_IDS, ...PROJECT_COMMAND_IDS].map((id) => `shortcut:${id}`),
     );
     expect(commands.find((command) => command.id === "agent.jumpToThread.4")?.title).toBe(
       "Jump to Thread 4",
@@ -132,9 +136,10 @@ describe("workbenchAgentCommands", () => {
       ...VIEW_COMMAND_IDS.map(() => false),
       ...LAYOUT_COMMAND_IDS.map(() => true),
       ...SHELL_COMMAND_IDS.map(() => false),
+      false,
     ]);
 
-    const unbind = bridge.bind(handlers());
+    const unbind = bridge.bind({ ...handlers(), addProject: vi.fn() });
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual(
       commands.map(() => true),
@@ -146,7 +151,22 @@ describe("workbenchAgentCommands", () => {
       ...VIEW_COMMAND_IDS.map(() => false),
       ...LAYOUT_COMMAND_IDS.map(() => true),
       ...SHELL_COMMAND_IDS.map(() => false),
+      false,
     ]);
+  });
+
+  it("registers project.add without requiring an open workspace", async () => {
+    const viewCommands = createAgentViewCommandBridge();
+    const command = workbenchAgentCommands({ viewCommands }).find(
+      (entry) => entry.id === "project.add",
+    );
+    expect(command).toMatchObject({ title: "Add Project…", category: "Workbench" });
+    expect(command?.isEnabled(disabledContext)).toBe(false);
+    const addProject = vi.fn();
+    viewCommands.bind({ ...handlers(), addProject });
+    expect(command?.isEnabled(disabledContext)).toBe(true);
+    await command?.run();
+    expect(addProject).toHaveBeenCalledTimes(1);
   });
 
   it("enables the thread-scoped commands only while a thread is selected", () => {
@@ -240,16 +260,11 @@ describe("workbenchAgentCommands", () => {
       openSurfaces: ["diff"],
       activeSurface: "diff",
     };
-    const expanded: AgentWorkbenchLayout = {
-      ...initialAgentWorkbenchLayout,
-      layout: "editor-expanded",
-    };
 
     expect(await toggleRightPanel(initialAgentWorkbenchLayout, [])).toEqual([
       { kind: "toggleRightPanel" },
     ]);
     expect(await toggleRightPanel(openDiff, ["diff"])).toEqual([{ kind: "toggleRightPanel" }]);
-    expect(await toggleRightPanel(expanded, ["terminal"])).toEqual([{ kind: "toggleRightPanel" }]);
   });
 
   it("toggles the panel while no agent view answers for the surfaces", async () => {
@@ -346,6 +361,7 @@ describe("workbenchAgentCommands", () => {
       ...VIEW_COMMAND_IDS.map(() => false),
       ...LAYOUT_COMMAND_IDS.map(() => true),
       ...SHELL_COMMAND_IDS.map(() => false),
+      false,
     ]);
   });
 

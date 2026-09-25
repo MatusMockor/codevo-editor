@@ -3,7 +3,7 @@ import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { agentHistoryRepositories } from "./agentHistoryRepositories";
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useContext, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { isAgentRemoteSurfaceKind } from "../../domain/agentSurfaceActivation";
@@ -28,6 +28,7 @@ import {
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
+import { EditorPanelDocumentsContext } from "../editorPanel/EditorPanelDocumentsContext";
 
 export type AgentSurfaceHostAgents = Pick<
   AgentThreadsSurface,
@@ -115,6 +116,15 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         thread.execution.latestTaskId === remoteSurface.scope.taskId)
       ? remoteSurface
       : null;
+  const editorDocumentsValue = useContext(EditorPanelDocumentsContext);
+  const editorSurfaceActive = layout.activeSurface === "editor";
+  const editorDocuments = useMemo(
+    () =>
+      editorDocumentsValue === null || remote
+        ? null
+        : { ...editorDocumentsValue, surfaceActive: editorSurfaceActive },
+    [editorDocumentsValue, editorSurfaceActive, remote],
+  );
   const remoteActiveAvailable =
     layout.activeSurface !== null &&
     isAgentRemoteSurfaceKind(layout.activeSurface) &&
@@ -308,6 +318,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             ...chrome.diff,
           }}
           chooserAutoFocus={chooserAutoFocus}
+          editorDocuments={editorDocuments}
           remoteMonacoTheme={chrome.diff.monacoTheme}
           hidden={hidden}
           fileTree={fileTree}

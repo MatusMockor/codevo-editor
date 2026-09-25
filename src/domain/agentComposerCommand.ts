@@ -1,7 +1,7 @@
 import type { AgentCliKind } from "./agentTask";
 
 export type AgentComposerCommandId =
-  "model" | "permissions" | "reasoning" | "plan" | "new" | "settings" | "compact";
+  "model" | "permissions" | "reasoning" | "plan" | "new" | "settings" | "usage" | "compact";
 
 export interface AgentComposerCommand {
   readonly id: AgentComposerCommandId;
@@ -20,6 +20,11 @@ const COMMANDS: ReadonlyArray<AgentComposerCommand> = [
   { id: "plan", label: "Plan mode", description: "Plan changes before making edits." },
   { id: "new", label: "New thread", description: "Start a fresh conversation in this project." },
   { id: "settings", label: "Provider settings", description: "Manage your agent providers." },
+  {
+    id: "usage",
+    label: "Usage limits",
+    description: "Show plan limits for Claude Code and Codex.",
+  },
   {
     id: "compact",
     label: "Compact context",
@@ -42,6 +47,7 @@ export function agentComposerCommands(
       case "permissions":
       case "new":
       case "settings":
+      case "usage":
         return true;
     }
   });

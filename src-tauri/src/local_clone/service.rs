@@ -1,11 +1,17 @@
 use super::{
     directory::Destination,
+    failure::CloneFailure,
+    progress::CloneProgress,
+    trust_revocation::CloneTrustRevocation,
     wire::{valid_id, CloneRequest, Snapshot, Status},
 };
 #[cfg(unix)]
 use super::{
-    process::{plan_command, run_bounded, ProcessLimits},
+    failure::classify_failure,
+    git_environment::{GitEnvironment, SshTransport},
+    process::{run_bounded, ProcessError, ProcessLimits},
     process_guard::ProcessKillSwitch,
+    progress::CloneOutputReader,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -25,6 +31,7 @@ struct Registry {
 struct Job {
     request: CloneRequest,
     snapshot: Mutex<Snapshot>,
+    failure: Mutex<Option<CloneFailure>>,
     active: AtomicBool,
     cancelled: AtomicBool,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -55,6 +62,15 @@ impl Job {
     }
     fn snapshot(&self) -> Snapshot {
         lock(&self.snapshot).clone()
+    }
+    pub(super) fn publish_progress(&self, progress: CloneProgress) {
+        let mut state = lock(&self.snapshot);
+        if state.status == Status::Running && state.progress != Some(progress) {
+            state.progress = Some(progress);
+        }
+    }
+    pub(super) fn record_failure(&self, failure: CloneFailure) {
+        *lock(&self.failure) = Some(failure);
     }
 }
 impl LocalCloneState {
@@ -111,10 +127,19 @@ impl LocalCloneState {
         }
     }
 
-    pub(crate) fn start(&self, request: CloneRequest) -> Result<Snapshot, String> {
-        self.start_with(request, execute)
+    pub(crate) fn start(
+        &self,
+        trust: &dyn CloneTrustRevocation,
+        request: CloneRequest,
+    ) -> Result<Snapshot, String> {
+        self.start_with(trust, request, execute)
     }
-    fn start_with<F>(&self, request: CloneRequest, execute: F) -> Result<Snapshot, String>
+    fn start_with<F>(
+        &self,
+        trust: &dyn CloneTrustRevocation,
+        request: CloneRequest,
+        execute: F,
+    ) -> Result<Snapshot, String>
     where
         F: FnOnce(&Job, &Destination) -> Result<(), String> + Send + 'static,
     {
@@ -175,14 +200,21 @@ impl LocalCloneState {
                 let _ = worker.join();
             }
         }
-        let destination = Arc::new(Destination::reserve(&request.parent_path, &request.name)?);
+        let destination = Arc::new(Destination::reserve(
+            &request.parent_path,
+            &request.name,
+            request.ensure_parent,
+        )?);
         let job = Arc::new(Job {
             snapshot: Mutex::new(Snapshot {
                 clone_id: request.idempotency_key.clone(),
                 status: Status::Running,
                 path: Some(destination.path.clone()),
                 error: None,
+                progress: None,
+                failure: None,
             }),
+            failure: Mutex::new(None),
             request,
             active: AtomicBool::new(true),
             cancelled: AtomicBool::new(false),
@@ -191,6 +223,12 @@ impl LocalCloneState {
             kill: ProcessKillSwitch::default(),
         });
         lock(&self.0.jobs).push(Arc::clone(&job));
+        if let Err(error) = trust.revoke_clone_root(&destination.path) {
+            job.record_failure(CloneFailure::Destination);
+            settle(&job, &destination, Err(error));
+            job.active.store(false, Ordering::SeqCst);
+            return Ok(job.snapshot());
+        }
         let worker = Arc::clone(&job);
         let worker_destination = Arc::clone(&destination);
         let handle = std::thread::Builder::new()
@@ -218,21 +256,26 @@ fn settle(job: &Job, destination: &Destination, result: Result<(), String>) {
     // registry. IPC snapshots run on the blocking pool while cleanup settles.
     let mut state = lock(&job.snapshot);
     let cancelled = job.cancelled.load(Ordering::SeqCst);
+    state.progress = None;
     if (result.is_err() || cancelled) && destination.cleanup().is_err() {
         state.status = Status::Failed;
         state.path = None;
+        state.failure = Some(CloneFailure::Destination);
         state.error = Some("Cloning stopped. The partial folder could not be removed; choose a different folder name before retrying.".into());
-    } else if cancelled {
+        return;
+    }
+    if cancelled {
         state.status = Status::Cancelled;
         state.path = None;
-    } else {
-        match result {
-            Ok(()) => state.status = Status::Completed,
-            Err(error) => {
-                state.status = Status::Failed;
-                state.path = None;
-                state.error = Some(error);
-            }
+        return;
+    }
+    match result {
+        Ok(()) => state.status = Status::Completed,
+        Err(error) => {
+            state.status = Status::Failed;
+            state.path = None;
+            state.failure = Some(lock(&job.failure).take().unwrap_or(CloneFailure::Other));
+            state.error = Some(error);
         }
     }
 }
@@ -242,8 +285,25 @@ fn execute(job: &Job, destination: &Destination) -> Result<(), String> {
         return Ok(());
     }
     destination.verify()?;
-    let home = std::env::var_os("HOME").ok_or("The home folder is unavailable.")?;
-    let search_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into());
+    let environment = GitEnvironment::from_process()?;
+    let transport = SshTransport::select(
+        |key| std::env::var_os(key),
+        || environment.user_configures_ssh_command(destination, &job.kill),
+    );
+    if job.cancelled.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    let mut command = clone_command(&job.request, &environment, &transport);
+    destination.anchor(&mut command);
+    run_clone(job, destination, command)
+}
+
+#[cfg(unix)]
+fn clone_command(
+    request: &CloneRequest,
+    environment: &GitEnvironment,
+    transport: &SshTransport,
+) -> std::process::Command {
     let mut argv = vec![
         "-c".into(),
         "core.hooksPath=/dev/null".into(),
@@ -252,52 +312,72 @@ fn execute(job: &Job, destination: &Destination) -> Result<(), String> {
         "-c".into(),
         "protocol.ext.allow=never".into(),
         "clone".into(),
-        "--quiet".into(),
+        "--progress".into(),
         "--no-recurse-submodules".into(),
     ];
-    if let Some(branch) = &job.request.branch {
+    if let Some(branch) = &request.branch {
         argv.extend(["--branch".into(), branch.clone()]);
     }
-    argv.extend(["--".into(), job.request.url.clone(), ".".into()]);
-    let mut command = plan_command(
-        std::path::Path::new("git"),
-        &argv,
-        std::path::Path::new(&home),
-        &search_path,
-    );
+    argv.extend(["--".into(), request.url.clone(), ".".into()]);
+    let mut command = environment.command(&argv);
     command
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never")
-        .env(
-            "GIT_SSH_COMMAND",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes",
-        );
-    for key in [
-        "SSH_AUTH_SOCK",
-        "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_SYSTEM",
-        "GIT_EXEC_PATH",
-    ] {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
-        }
-    }
-    destination.anchor(&mut command);
+        .env("GCM_INTERACTIVE", "never");
+    transport.apply(&mut command);
+    command
+}
+
+#[cfg(unix)]
+fn run_clone(
+    job: &Job,
+    destination: &Destination,
+    command: std::process::Command,
+) -> Result<(), String> {
+    run_clone_with_timeout(
+        job,
+        destination,
+        command,
+        std::time::Duration::from_secs(1800),
+    )
+}
+
+#[cfg(unix)]
+fn run_clone_with_timeout(
+    job: &Job,
+    destination: &Destination,
+    command: std::process::Command,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let mut reader = CloneOutputReader::default();
     let output = run_bounded(
         command,
         ProcessLimits {
-            timeout: std::time::Duration::from_secs(1800),
+            timeout,
             stdout_bytes: 64 * 1024,
             stderr_bytes: 64 * 1024,
         },
         &job.kill,
+        &mut |chunk| {
+            if let Some(progress) = reader.push(chunk) {
+                job.publish_progress(progress);
+            }
+        },
     );
+    if let Some(progress) = reader.finish() {
+        job.publish_progress(progress);
+    }
     match output {
-        Ok(output) if output.success => destination.verify(),
-        _ => Err(
-            "Cloning failed or timed out. Check the repository address and local Git access. "
-                .into(),
-        ),
+        Ok(output) if output.success => destination.verify().inspect_err(|_| {
+            job.record_failure(CloneFailure::Destination);
+        }),
+        Err(ProcessError::TimedOut) => {
+            job.record_failure(CloneFailure::Timeout);
+            Err("Cloning timed out.".into())
+        }
+        _ => {
+            job.record_failure(classify_failure(reader.diagnostics()));
+            Err("Cloning failed. Check the repository address and local Git access.".into())
+        }
     }
 }
 #[cfg(not(unix))]

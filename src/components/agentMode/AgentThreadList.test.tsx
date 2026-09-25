@@ -53,20 +53,17 @@ describe("AgentThreadList empty state", () => {
 
 function defaults(): AgentThreadListProps {
   return {
-    sections: { pinned: [], active: [], archived: [], hiddenArchivedCount: 0 },
+    sections: { pinned: [], active: [] },
     projectLabels: new Map(),
     selectedThreadId: null,
     markedThreadIds: new Set<string>(),
     focusedThreadId: null,
     jumpLabels: new Map(),
-    archivedExpanded: false,
     settledExpanded: false,
     snoozedExpanded: false,
     empty: { kind: "noThreads", scopeLabel: "app" },
-    onToggleArchived: () => undefined,
     onToggleSettled: () => undefined,
     onToggleSnoozed: () => undefined,
-    onShowMoreArchived: () => undefined,
     onSelectThread: () => undefined,
     onThreadMenuCommand: () => undefined,
   };

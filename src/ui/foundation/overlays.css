@@ -57,6 +57,20 @@
   color: var(--cv-danger);
 }
 
+.cv-menu__item--tall {
+  align-items: flex-start;
+  padding-top: var(--cv-space-3);
+  padding-bottom: var(--cv-space-3);
+}
+
+.cv-menu__description {
+  display: block;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  line-height: var(--cv-lh-xs);
+  white-space: normal;
+}
+
 .cv-menu__icon {
   display: inline-grid;
   place-items: center;

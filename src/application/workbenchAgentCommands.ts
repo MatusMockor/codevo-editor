@@ -105,5 +105,13 @@ export function workbenchAgentCommands({
     ),
     sidebarCommand,
     viewCommand("panel.toggleMaximized", "Toggle Maximized Panel"),
+    {
+      id: "project.add",
+      title: "Add Project…",
+      category: "Workbench",
+      shortcut: shortcut?.("project.add"),
+      isEnabled: () => viewCommands.addProjectAvailable(),
+      run: () => viewCommands.run("project.add"),
+    },
   ];
 }

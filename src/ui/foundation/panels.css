@@ -124,6 +124,28 @@
   font-style: italic;
 }
 
+.cv-tab__badge {
+  flex: none;
+  margin-left: 4px;
+  font-size: var(--cv-t-2xs);
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.cv-tab__badge--ok {
+  color: var(--cv-ok);
+}
+
+.cv-tab__badge--warn {
+  color: var(--cv-warn);
+}
+
+.cv-tab__badge--danger {
+  color: var(--cv-danger);
+}
+
 .cv-tree-row {
   --cv-tree-depth: 0;
   display: flex;
@@ -229,4 +251,23 @@
 
 .cv-resize:focus-visible {
   outline: none;
+}
+
+.cv-resize--y {
+  top: -3px;
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: auto;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.cv-resize--y::after {
+  top: 2px;
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: auto;
+  height: 2px;
 }

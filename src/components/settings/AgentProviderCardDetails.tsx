@@ -20,6 +20,7 @@ export interface AgentProviderCardDetailsProps {
   readonly enabled: boolean;
   readonly intervalSeconds: number;
   readonly invalidPath: boolean;
+  readonly models?: ReactNode;
   readonly nowEpochMs: number;
   readonly pathDraft: string;
   readonly provider: AgentCliKind;
@@ -35,6 +36,7 @@ export function AgentProviderCardDetails({
   enabled,
   intervalSeconds,
   invalidPath,
+  models,
   nowEpochMs,
   onChangePathDraft,
   onCommitPath,
@@ -73,6 +75,16 @@ export function AgentProviderCardDetails({
             : `Leave empty to run ${providerExecutableName(provider)} from PATH.`}
         </small>
       </label>
+
+      {models === undefined ? null : (
+        <div className="settings-provider__field">
+          <span className="settings-provider__field-label">Models</span>
+          <span className="settings-provider__hint">
+            Starred models appear first in the composer.
+          </span>
+          {models}
+        </div>
+      )}
 
       {codexControls}
 

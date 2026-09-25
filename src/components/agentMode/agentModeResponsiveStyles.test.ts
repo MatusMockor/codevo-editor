@@ -296,22 +296,13 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".app-shell {")).toContain("0 0 0 4px var(--codevo-primary)");
   });
 
-  it("collapses the file tree column when the surface reports no tree", () => {
-    expect(rule('.workbench-frame[data-tree="hidden"]', shellCss)).toContain(
-      "--agent-surface-tree-width: 0px",
-    );
-    expect(rule(".agent-surface-tree")).toContain("width: var(--agent-surface-tree-width)");
-    expect(rule(".agent-surface__editor-slot")).toContain("flex: 1 1 auto");
-    expect(
-      rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
-    ).toContain("padding-left: var(--agent-surface-tree-width)");
-    expect(
-      rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss).replace(
-        /\s+/g,
-        " ",
-      ),
-    ).toContain(
-      "clip-path: inset(var(--agent-surface-header-height) 0 0 var(--agent-surface-tree-width))",
+  it("lets the Files tree fill its surface and never offsets the editor overlay by a tree", () => {
+    expect(shellCss).not.toContain("--agent-surface-tree-width");
+    expect(rule(".agent-surface-tree")).toContain("flex: 1 1 auto");
+    const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
+    expect(editor).not.toContain("padding-left");
+    expect(editor.replace(/\s+/g, " ")).toContain(
+      "clip-path: inset(var(--agent-surface-header-height) 0 0 0)",
     );
   });
 
@@ -367,7 +358,7 @@ describe("agent mode responsive layout contract", () => {
       ),
     ).toContain("grid-column: 2");
     expect(
-      rule('.workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"]', shellCss),
+      rule('.workbench-frame[data-layout="editor-only"] > [data-slot="surface"]', shellCss),
     ).toContain("display: none");
 
     expect(rule('.workbench-frame[data-surface="settings"] {', shellCss)).toContain(
@@ -381,7 +372,7 @@ describe("agent mode responsive layout contract", () => {
   it("offsets the editor overlay by the same header token that sizes the surface head", () => {
     const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
     expect(editor).toContain("padding-top: var(--agent-surface-header-height)");
-    expect(editor).toContain("padding-left: var(--agent-surface-tree-width)");
+    expect(editor).not.toContain("padding-left");
     expect(editor).toContain("grid-row: 1 / -1");
     expect(rule(".app-shell {", shellCss)).toContain(
       "--agent-surface-header-height: var(--cv-topbar-h)",
@@ -396,7 +387,7 @@ describe("agent mode responsive layout contract", () => {
     );
     expect(maximizedFrame).not.toContain("grid-template-columns: auto");
     expect(maximizedFrame.replace(/\s+/g, " ")).toContain(
-      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr) var(--agent-surface-tree-width)",
+      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr);",
     );
 
     const maximizedAgent = rule(
@@ -410,7 +401,7 @@ describe("agent mode responsive layout contract", () => {
         '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"]',
         shellCss,
       ),
-    ).toContain("grid-column: 2 / 4");
+    ).toContain("grid-column: 2;");
   });
 
   it("composes the collapsed rail with the maximized panel through the frame-owned rail track", () => {

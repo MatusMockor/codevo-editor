@@ -1,8 +1,9 @@
 import { memo } from "react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
-import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
-import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
-import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
+import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+import type { AgentComposerTarget } from "./agentComposerCheckout";
+import { AgentComposerLockedCheckout, AgentRepositoryPicker } from "./AgentComposerControls";
+import { AgentEnvironmentCheckoutPicker } from "./AgentEnvironmentCheckoutPicker";
 
 export interface AgentComposerDrawerStartProps {
   readonly followUp: boolean;
@@ -22,7 +23,6 @@ export interface AgentComposerDrawerStartProps {
 
 export const AgentComposerDrawerStart = memo(function AgentComposerDrawerStart({
   checkoutDisabled,
-  dispatching,
   executionServerId,
   followUp,
   isolation,
@@ -35,40 +35,38 @@ export const AgentComposerDrawerStart = memo(function AgentComposerDrawerStart({
   worktreeAvailable,
   worktreeOnly,
 }: AgentComposerDrawerStartProps) {
-  const nestedTargetLabel = agentComposerNestedTargetLabel(target);
+  const runner = useRemoteRunnerContext();
+  if (followUp) {
+    return (
+      <AgentComposerLockedCheckout
+        executionServerName={
+          executionServerId === null
+            ? null
+            : (runner?.servers.find((server) => server.id === executionServerId)?.name ?? "Server")
+        }
+        isolation={isolation}
+        remote={remote}
+      />
+    );
+  }
   return (
     <>
-      {onOpenEnvironmentSettings !== undefined && (
-        <>
-          <AgentExecutionEnvironmentPicker
-            disabled={dispatching}
-            locked={followUp}
-            executionServerId={executionServerId}
-            onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-          />
-          <span aria-hidden="true" className="agent-composer__divider" />
-        </>
-      )}
-      {followUp && <AgentComposerLockedCheckout isolation={isolation} remote={remote} />}
-      {!followUp && (
-        <AgentComposerCheckout
-          remote={remote}
-          disabled={checkoutDisabled}
-          isolation={isolation}
-          onIsolationChange={onIsolationChange}
-          onRefreshIsolation={onRefreshIsolation}
-          onSelectRepository={onSelectRepository}
-          target={target}
-          worktreeAvailable={worktreeAvailable && !worktreeOnly}
-          worktreeOnly={worktreeOnly}
-        />
-      )}
-      {!followUp && nestedTargetLabel !== null && (
-        <span className="agent-composer__target" data-agent-composer-target>
-          <span className="agent-visually-hidden">Repository:</span>
-          in {nestedTargetLabel}
-        </span>
-      )}
+      <AgentEnvironmentCheckoutPicker
+        disabled={checkoutDisabled}
+        isolation={isolation}
+        onIsolationChange={onIsolationChange}
+        onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+        onRefreshIsolation={onRefreshIsolation}
+        remote={remote}
+        worktreeAvailable={worktreeAvailable}
+        worktreeOnly={worktreeOnly}
+      />
+      <AgentRepositoryPicker
+        disabled={checkoutDisabled}
+        onRefreshIsolation={onRefreshIsolation}
+        onSelectRepository={onSelectRepository}
+        target={target}
+      />
     </>
   );
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultKeymapSettings, type KeymapPlatform } from "../../../domain/keymap";
-import { keybindingCategories } from "./keybindingsPresentation";
+import { keybindingCategories, keybindingWhenLabel } from "./keybindingsPresentation";
 
 const PRE_EXISTING_CONTEXT_RESOLVED_PAIRS: Readonly<Record<KeymapPlatform, readonly string[]>> = {
   mac: [
@@ -56,5 +56,25 @@ describe("keybindingCategories", () => {
       .find((candidate) => candidate.commandId === "palette.shortcuts");
 
     expect(binding?.conflicts.map((conflict) => conflict.id)).toContain("palette.open");
+  });
+});
+
+describe("keybindingWhenLabel", () => {
+  function bindingFor(commandId: string) {
+    return keybindingCategories(defaultKeymapSettings("mac"), "mac", "")
+      .flatMap((category) => category.bindings)
+      .find((candidate) => candidate.commandId === commandId);
+  }
+
+  it.each([
+    ["editor.splitDown", "Editor text focused"],
+    ["agent.toggleSidebar", "Outside editor text"],
+    ["editor.splitRight", "Always"],
+    ["editor.nextRecentlyUsedEditor", "Reserved"],
+  ] as const)("labels %s as %s", (commandId, label) => {
+    const binding = bindingFor(commandId);
+
+    expect(binding).toBeDefined();
+    expect(binding === undefined ? null : keybindingWhenLabel(binding)).toBe(label);
   });
 });

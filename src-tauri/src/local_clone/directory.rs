@@ -1,4 +1,10 @@
 #[cfg(unix)]
+use crate::workspace::protected_paths::{
+    HomeDirectorySource, ProcessHomeDirectory, ProtectedPathPolicy,
+};
+#[cfg(unix)]
+use std::path::{Component, Path};
+#[cfg(unix)]
 use std::{
     ffi::CString,
     os::{
@@ -11,6 +17,11 @@ use std::{
 };
 use std::{fs::File, path::PathBuf, process::Command};
 
+#[cfg(unix)]
+const DESTINATION_UNAVAILABLE: &str = "The destination folder is unavailable.";
+#[cfg(unix)]
+const ENSURED_PARENT_NAME: &str = "code";
+
 pub(super) struct Destination {
     pub path: String,
     directory: File,
@@ -19,17 +30,35 @@ pub(super) struct Destination {
 }
 impl Destination {
     #[cfg(unix)]
-    pub fn reserve(parent: &str, name: &str) -> Result<Self, String> {
-        let parent_path =
-            std::fs::canonicalize(parent).map_err(|_| "The destination folder is unavailable.")?;
-        let parent = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-            .open(&parent_path)
-            .map_err(|_| "The destination folder is unavailable.")?;
+    pub fn reserve(parent: &str, name: &str, ensure_parent: bool) -> Result<Self, String> {
+        let home = ProcessHomeDirectory.home_directory();
+        Self::reserve_under(parent, name, ensure_parent, home.as_deref())
+    }
+    #[cfg(unix)]
+    pub(super) fn reserve_under(
+        parent: &str,
+        name: &str,
+        ensure_parent: bool,
+        home: Option<&Path>,
+    ) -> Result<Self, String> {
         if name.is_empty() || name == "." || name == ".." || name.contains('/') {
             return Err("Invalid folder name.".into());
         }
+        Self::reserve_in(prepare_parent(parent, ensure_parent, home)?, name, home)
+    }
+    #[cfg(unix)]
+    pub(super) fn reserve_in(
+        prepared: PreparedParent,
+        name: &str,
+        home: Option<&Path>,
+    ) -> Result<Self, String> {
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+            return Err("Invalid folder name.".into());
+        }
+        let PreparedParent {
+            path: parent_path,
+            directory: parent,
+        } = prepared;
         let path = parent_path
             .join(name)
             .into_os_string()
@@ -38,6 +67,9 @@ impl Destination {
         if path.len() > 4096 {
             return Err("The destination path is too long.".into());
         }
+        ProtectedPathPolicy::for_home(home)
+            .check_workspace_root(Path::new(&path))
+            .map_err(|refusal| refusal.to_string())?;
         let name_c = CString::new(name).map_err(|_| "Invalid folder name.")?;
         let staging_name = reservation::staging_name()?;
         let staging = reservation::reserve_staging(&parent, &staging_name)?;
@@ -53,11 +85,26 @@ impl Destination {
             parent,
             parent_path,
         };
-        result.verify()?;
+        if let Err(error) = result.verify() {
+            result.discard_unverified_reservation(&name_c);
+            return Err(error);
+        }
         Ok(result)
     }
+    #[cfg(unix)]
+    fn discard_unverified_reservation(&self, name: &CString) {
+        let (Ok(entry), Ok(held)) = (
+            entry_stat(self.parent.as_raw_fd(), name),
+            self.directory.metadata(),
+        ) else {
+            return;
+        };
+        if entry.st_dev as u64 == held.dev() && entry.st_ino == held.ino() {
+            let _ = unlink_entry(self.parent.as_raw_fd(), name, libc::AT_REMOVEDIR);
+        }
+    }
     #[cfg(not(unix))]
-    pub fn reserve(_parent: &str, _name: &str) -> Result<Self, String> {
+    pub fn reserve(_parent: &str, _name: &str, _ensure_parent: bool) -> Result<Self, String> {
         Err("Local cloning is not supported on this platform.".into())
     }
     #[cfg(unix)]
@@ -125,6 +172,82 @@ impl Destination {
     pub fn cleanup(&self) -> Result<(), String> {
         Err("Local clone cleanup is unsupported on this platform.".into())
     }
+}
+
+#[cfg(unix)]
+pub(super) struct PreparedParent {
+    pub path: PathBuf,
+    pub directory: File,
+}
+
+#[cfg(unix)]
+fn open_directory_nofollow(path: &Path) -> Result<File, String> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| DESTINATION_UNAVAILABLE.into())
+}
+
+#[cfg(unix)]
+pub(super) fn prepare_parent(
+    parent: &str,
+    ensure_parent: bool,
+    home: Option<&Path>,
+) -> Result<PreparedParent, String> {
+    match std::fs::canonicalize(parent) {
+        Ok(path) => {
+            let directory = open_directory_nofollow(&path)?;
+            return Ok(PreparedParent { path, directory });
+        }
+        Err(error) if !ensure_parent || error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(DESTINATION_UNAVAILABLE.into())
+        }
+        Err(_) => {}
+    }
+    let home = home.ok_or(DESTINATION_UNAVAILABLE)?;
+    let canonical_home = std::fs::canonicalize(home).map_err(|_| DESTINATION_UNAVAILABLE)?;
+    let requested = Path::new(parent);
+    let mut components = requested.components();
+    if components.next_back() != Some(Component::Normal(ENSURED_PARENT_NAME.as_ref())) {
+        return Err(DESTINATION_UNAVAILABLE.into());
+    }
+    let grandparent = components.as_path();
+    let plain = grandparent
+        .components()
+        .all(|component| matches!(component, Component::RootDir | Component::Normal(_)));
+    if !requested.is_absolute() || !plain || (grandparent != home && grandparent != canonical_home)
+    {
+        return Err(DESTINATION_UNAVAILABLE.into());
+    }
+    if std::fs::canonicalize(grandparent).map_err(|_| DESTINATION_UNAVAILABLE)? != canonical_home {
+        return Err(DESTINATION_UNAVAILABLE.into());
+    }
+    let home_directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(&canonical_home)
+        .map_err(|_| DESTINATION_UNAVAILABLE)?;
+    let name = CString::new(ENSURED_PARENT_NAME).map_err(|_| DESTINATION_UNAVAILABLE)?;
+    let created = unsafe { libc::mkdirat(home_directory.as_raw_fd(), name.as_ptr(), 0o755) };
+    if created != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST) {
+        return Err(DESTINATION_UNAVAILABLE.into());
+    }
+    let fd = unsafe {
+        libc::openat(
+            home_directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(DESTINATION_UNAVAILABLE.into());
+    }
+    let directory = unsafe { File::from_raw_fd(fd) };
+    Ok(PreparedParent {
+        path: canonical_home.join(ENSURED_PARENT_NAME),
+        directory,
+    })
 }
 
 #[cfg(unix)]

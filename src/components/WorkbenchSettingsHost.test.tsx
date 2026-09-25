@@ -96,7 +96,7 @@ describe("WorkbenchSettingsHost", () => {
     trigger.focus();
 
     await render(settingsModel(), missingConfigurationGateway());
-    expect(document.activeElement?.textContent).toBe("Settings");
+    expect(document.activeElement?.textContent).toBe("Settings/General");
 
     await render({ ...settingsModel(), settingsOpen: false }, missingConfigurationGateway());
     expect(document.activeElement).toBe(trigger);
@@ -173,11 +173,13 @@ function ControlledSettingsHost({
     saveSkippedVersion: async () => undefined,
   }))[0];
   const appUpdater = useAppUpdater({
+    channel: "beta",
     currentVersion: "0.2.0-beta.1",
     gateway: appUpdaterGateway,
     preferencesGateway: preferencesGatewayRef,
     persistSkippedVersion: vi.fn(async () => undefined),
     scheduleAfterUiInteractive: neverSchedule,
+    settingsHydrated: true,
   });
   return (
     <WorkbenchSettingsHost

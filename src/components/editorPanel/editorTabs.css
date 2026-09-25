@@ -1,0 +1,166 @@
+.editor-tabs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  box-shadow: var(--cv-edge-bottom-hair);
+}
+
+.editor-tabs.empty {
+  overflow: hidden;
+}
+
+.editor-tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 24px;
+  max-width: 144px;
+  border-radius: var(--cv-r-sm);
+  color: var(--cv-fg-subtle);
+  font: var(--cv-t-xs) / 1 var(--cv-font-ui);
+  transition:
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease);
+}
+
+.editor-tab:hover {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.editor-tab.active {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+.editor-tab.drop-before::before,
+.editor-tab.drop-after::before {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--cv-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.editor-tab.drop-before::before {
+  left: -3px;
+}
+
+.editor-tab.drop-after::before {
+  right: -3px;
+}
+
+.tab-main {
+  display: inline-flex;
+  min-width: 0;
+  height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px 0 8px;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-tab.preview .tab-name {
+  font-style: italic;
+}
+
+.dirty-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: var(--cv-ring-canvas);
+  fill: currentColor;
+}
+
+.editor-tab-status {
+  flex: none;
+  min-width: 10px;
+  font-size: var(--cv-t-2xs);
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.editor-tab-status-added,
+.editor-tab-status-untracked,
+.editor-tab-status-renamed {
+  color: var(--cv-ok);
+}
+
+.editor-tab-status-modified {
+  color: var(--cv-warn);
+}
+
+.editor-tab-status-deleted,
+.editor-tab-status-conflicted {
+  color: var(--cv-danger);
+}
+
+.tab-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-xs);
+  background: transparent;
+  color: var(--cv-fg-subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--cv-motion-fast) var(--cv-ease),
+    background-color var(--cv-motion-fast) var(--cv-ease);
+}
+
+.tab-close svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+.editor-tab:hover .tab-close,
+.editor-tab.active .tab-close,
+.tab-close:focus-visible {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-tab,
+  .tab-close {
+    transition: none;
+  }
+}

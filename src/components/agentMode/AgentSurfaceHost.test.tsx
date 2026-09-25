@@ -28,6 +28,10 @@ import {
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
 import { rightPanelTestContext } from "./rightPanel/agentRightPanelTestSupport";
+import {
+  EditorPanelDocumentsContext,
+  type EditorPanelDocumentsValue,
+} from "../editorPanel/EditorPanelDocumentsContext";
 
 vi.mock("@xterm/xterm", async () =>
   (await import("./agentSurfaceTerminalTestSupport")).xtermMockModule(),
@@ -414,7 +418,7 @@ describe("AgentSurfaceHost", () => {
     },
   );
 
-  it("keeps the tree and the editor slot after a restore without re-maximizing", async () => {
+  it("keeps the tree after a restore without re-maximizing", async () => {
     const maximized = recordedLayoutState({
       rightPanel: "open",
       openSurfaces: ["files"],
@@ -434,7 +438,7 @@ describe("AgentSurfaceHost", () => {
     render({ chrome: filesChrome(restored), layout: FILES_LAYOUT });
 
     expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
-    expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
+    expect(host.querySelector(".cv-editor-slot")).toBeNull();
     const restoredRow = await treeRow("users.ts");
     act(() => restoredRow.click());
     expect(restored.actions).toEqual([]);
@@ -812,6 +816,49 @@ describe("AgentSurfaceHost", () => {
     });
     return row!;
   }
+
+  it("feeds the editor documents from context into the strip, only for a local pane", () => {
+    const onActivate = vi.fn();
+    const documents: EditorPanelDocumentsValue = {
+      documents: [
+        {
+          documentId: "/w/a.ts",
+          title: "a.ts",
+          path: "/w/a.ts",
+          dirty: true,
+          preview: false,
+          gitStatus: null,
+        },
+      ],
+      activeDocumentId: "/w/a.ts",
+      onActivate,
+      onClose: vi.fn(),
+      onOpenFile: vi.fn(),
+      onPin: vi.fn(),
+    };
+    const renderWith = (overrides: Partial<AgentSurfaceHostProps>) =>
+      act(() =>
+        root.render(
+          <EditorPanelDocumentsContext.Provider value={documents}>
+            <AgentSurfaceHost {...defaultProps()} {...overrides} />
+          </EditorPanelDocumentsContext.Provider>,
+        ),
+      );
+
+    renderWith({ layout: { openSurfaces: ["editor"], activeSurface: "editor" } });
+    const tab = host.querySelector<HTMLElement>('[role="tab"][title="a.ts"]');
+    expect(tab?.getAttribute("aria-selected")).toBe("true");
+    act(() => tab?.click());
+    expect(onActivate).toHaveBeenCalledWith("/w/a.ts");
+
+    renderWith({
+      thread: null,
+      remoteDraft: true,
+      layout: { openSurfaces: ["editor"], activeSurface: "editor" },
+    });
+    expect(host.querySelector('[role="tab"][title="a.ts"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Open file"]')).toBeNull();
+  });
 
   function render(overrides: Partial<AgentSurfaceHostProps> = {}): void {
     act(() => root.render(<AgentSurfaceHost {...defaultProps()} {...overrides} />));

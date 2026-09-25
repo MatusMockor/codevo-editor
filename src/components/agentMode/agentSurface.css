@@ -46,45 +46,6 @@
   outline: none;
 }
 
-.agent-surface__editor-tabs {
-  overflow: hidden;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-self: center;
-}
-
-.agent-surface__editor-tabs .editor-tabs {
-  height: 30px;
-  min-height: 0;
-  max-height: none;
-  align-items: center;
-  padding: 0 4px;
-  border-bottom: 0;
-  background: transparent;
-  gap: 2px;
-}
-
-.agent-surface__editor-tabs .editor-tab {
-  height: 28px;
-  min-width: 96px;
-  max-width: 180px;
-  border-radius: var(--agent-radius-sm);
-}
-
-.agent-surface__editor-tabs .editor-tab.active {
-  background: var(--codevo-raised);
-  box-shadow: var(--codevo-shadow-card);
-}
-
-.agent-surface__editor-tabs .tab-main,
-.agent-surface__editor-tabs .tab-close {
-  height: 28px;
-}
-
-.agent-surface__editor-tabs .tab-main {
-  padding-left: 8px;
-}
-
 .agent-surface__tabpanel {
   display: flex;
   min-height: 0;
@@ -264,64 +225,32 @@
     min-width: 0;
   }
 
-  .agent-surface__editor-tabs {
-    max-width: 100%;
-  }
-
   .agent-surface-empty {
     padding: 16px;
   }
 }
 
-/* Files: the tree on the shared rail tone and the editor well on the canvas tone. Docked, the tree sits
-   left; maximized, the row reverses so the tree docks right of the editor. With no document open
-   and a tree showing (data-editor="empty" + data-tree="visible") the editor well collapses and
-   the tree fills the body; without a tree the editor placeholder stays. */
+/* Files: the tree fills the surface body on the shared rail tone. */
 .agent-surface__files {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
 }
 
-.workbench-frame[data-right-panel="maximized"] .agent-surface__files {
-  flex-direction: row-reverse;
-}
-
 .agent-surface-tree {
   display: flex;
-  width: var(--agent-surface-tree-width);
   min-width: 0;
   min-height: 0;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   flex-direction: column;
   background: var(--codevo-canvas);
   font-size: var(--agent-fs-sm);
-}
-
-.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface-tree {
-  width: auto;
-  flex: 1 1 auto;
 }
 
 .agent-surface-tree__viewport {
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-}
-
-.agent-surface__editor-slot {
-  min-width: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  background: var(--codevo-canvas);
-}
-
-.workbench-frame[data-right-panel="maximized"] .agent-surface__editor-slot {
-  background: transparent;
-}
-
-.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface__editor-slot {
-  display: none;
 }
 
 /* Diff: change list on the shared rail tone, one Monaco diff editor on a canvas block. */

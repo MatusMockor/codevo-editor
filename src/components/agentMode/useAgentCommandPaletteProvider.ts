@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { workbenchAgentThreadOpener } from "../../application/agentThreadOpener";
 import {
   workbenchAgentPaletteProvider,
   type AgentPaletteProvider,
@@ -49,6 +50,18 @@ export function useAgentCommandPaletteProvider(options: AgentCommandPaletteProvi
   );
 
   useEffect(() => workbenchAgentPaletteProvider.publish(snapshot), [snapshot]);
+  useEffect(
+    () =>
+      workbenchAgentThreadOpener.publish({
+        openThread(threadId) {
+          const known = latest.current.threads.some((view) => view.thread.threadId === threadId);
+          if (!known) return false;
+          latest.current.selectThread(threadId);
+          return true;
+        },
+      }),
+    [],
+  );
 }
 
 function paletteSnapshot(

@@ -6,7 +6,6 @@ import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLo
 import type { ListSelectionModifiers } from "../../domain/listSelection";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentThreadDropSection } from "../../domain/agentThreadOrganization";
-import { AgentThreadArchivedShelf } from "./AgentThreadArchivedShelf";
 import { AgentThreadRow } from "./AgentThreadRow";
 import {
   agentRowProjectLabel,
@@ -24,31 +23,25 @@ export interface AgentThreadListProps {
   readonly markedThreadIds: ReadonlySet<string>;
   readonly focusedThreadId: string | null;
   readonly jumpLabels: ReadonlyMap<string, string>;
-  readonly archivedExpanded: boolean;
   readonly settledExpanded: boolean;
   readonly snoozedExpanded: boolean;
   readonly empty: AgentRailEmptyState;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly pendingInteractions?: ReadonlyMap<string, AgentPendingInteraction>;
-  onToggleArchived(): void;
   onToggleSettled(): void;
   onToggleSnoozed(): void;
-  onShowMoreArchived(): void;
   onSelectThread(threadId: string, modifiers: ListSelectionModifiers): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
 }
 
 export const AgentThreadList = memo(function AgentThreadList({
-  archivedExpanded,
   empty,
   evidenceOf,
   focusedThreadId,
   jumpLabels,
   markedThreadIds,
   onSelectThread,
-  onShowMoreArchived,
   onThreadMenuCommand,
-  onToggleArchived,
   onToggleSettled,
   onToggleSnoozed,
   pendingInteractions = NO_PENDING_INTERACTIONS,
@@ -66,9 +59,9 @@ export const AgentThreadList = memo(function AgentThreadList({
       const adjacent = neighbors.get(threadId);
       return (
         <AgentThreadRow
-          moveUpId={view.thread.archived ? undefined : adjacent?.before}
-          moveDownId={view.thread.archived ? undefined : adjacent?.after}
-          reorderable={!view.thread.archived}
+          moveUpId={adjacent?.before}
+          moveDownId={adjacent?.after}
+          reorderable
           evidenceOf={evidenceOf}
           focused={focusedThreadId === threadId}
           jumpLabel={jumpLabels.get(threadId) ?? null}
@@ -116,13 +109,6 @@ export const AgentThreadList = memo(function AgentThreadList({
         onToggle={onToggleSettled}
       />
       {settledExpanded && renderRows(sections.settled ?? [])}
-      <AgentThreadArchivedShelf
-        expanded={archivedExpanded}
-        onShowMore={onShowMoreArchived}
-        onToggle={onToggleArchived}
-        renderRows={renderRows}
-        sections={sections}
-      />
     </ul>
   );
 });

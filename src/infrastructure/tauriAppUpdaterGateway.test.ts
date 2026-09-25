@@ -33,7 +33,7 @@ describe("TauriAppUpdaterGateway", () => {
       "0.1.0",
     );
 
-    await expect(gateway.check()).resolves.toEqual({
+    await expect(gateway.check("beta")).resolves.toEqual({
       kind: "available",
       candidate: {
         candidateRevision: 1,
@@ -68,7 +68,7 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.1.0",
     );
-    const result = await gateway.check();
+    const result = await gateway.check("beta");
     if (result.kind !== "available") throw new Error("Expected an update candidate.");
 
     await gateway.download(result.candidate.candidateRevision);
@@ -83,10 +83,65 @@ describe("TauriAppUpdaterGateway", () => {
       { check: async () => null, relaunch: async () => undefined },
       "0.2.0-beta.1",
     );
-    await expect(gateway.check()).resolves.toEqual({
+    await expect(gateway.check("beta")).resolves.toEqual({
       kind: "upToDate",
       currentVersion: "0.2.0-beta.1",
     });
+  });
+
+  it("uses the requested channel for both the check and the superseding probe", async () => {
+    const update = bridgeUpdate("0.1.0", "0.2.0", { version: "0.2.0" });
+    const probe = bridgeUpdate("0.1.0", "0.3.0", { version: "0.3.0" });
+    const bridge = {
+      getInstallMode: async () => "prepareBeforeRestart",
+      check: vi.fn().mockResolvedValueOnce(update).mockResolvedValue(probe),
+      relaunch: vi.fn(async () => undefined),
+    };
+    const gateway = new TauriAppUpdaterGateway(bridge, "0.1.0");
+    const first = await gateway.check("stable");
+    if (first.kind !== "available") return expect(first.kind).toBe("available");
+    await gateway.download(first.candidate.candidateRevision);
+    await gateway.check("stable");
+    expect(bridge.check.mock.calls).toEqual([["stable"], ["stable"]]);
+  });
+
+  it("reports a channel without any release as a distinct no-release result", async () => {
+    const check = vi.fn(async () => ({ kind: "noRelease", channel: "stable" }));
+    const gateway = new TauriAppUpdaterGateway({ check, relaunch: async () => undefined }, "0.1.0");
+    await expect(gateway.check("stable")).resolves.toEqual({
+      kind: "noRelease",
+      currentVersion: "0.1.0",
+      channel: "stable",
+    });
+    expect(check).toHaveBeenCalledWith("stable");
+  });
+
+  it("rejects a no-release result for a channel other than the requested one", async () => {
+    const gateway = new TauriAppUpdaterGateway(
+      {
+        check: async () => ({ kind: "noRelease", channel: "beta" }),
+        relaunch: async () => undefined,
+      },
+      "0.1.0",
+    );
+    await expect(gateway.check("stable")).rejects.toThrow("channel");
+  });
+
+  it("treats a missing release on the superseding probe as no newer release", async () => {
+    const update = bridgeUpdate("0.1.0", "0.2.0", { version: "0.2.0" });
+    const bridge = {
+      getInstallMode: async () => "prepareBeforeRestart",
+      check: vi
+        .fn()
+        .mockResolvedValueOnce(update)
+        .mockResolvedValue({ kind: "noRelease", channel: "stable" }),
+      relaunch: vi.fn(async () => undefined),
+    };
+    const gateway = new TauriAppUpdaterGateway(bridge, "0.1.0");
+    const first = await gateway.check("stable");
+    if (first.kind !== "available") return expect(first.kind).toBe("available");
+    await gateway.download(first.candidate.candidateRevision);
+    await expect(gateway.check("stable")).resolves.toMatchObject({ kind: "readyToRestart" });
   });
 
   it("rejects stale candidate work after a concurrent check replaces authority", async () => {
@@ -112,10 +167,10 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.1.0",
     );
-    const result = await gateway.check();
+    const result = await gateway.check("beta");
     if (result.kind !== "available") throw new Error("Expected an update candidate.");
     const pending = gateway.download(result.candidate.candidateRevision);
-    await gateway.check();
+    await gateway.check("beta");
     settleDownload();
 
     await expect(pending).rejects.toThrow("no longer current");
@@ -148,7 +203,7 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.1.0",
     );
-    await expect(gateway.check()).rejects.toThrow("version");
+    await expect(gateway.check("beta")).rejects.toThrow("version");
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -170,8 +225,8 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.1.0",
     );
-    await gateway.check();
-    await gateway.check();
+    await gateway.check("beta");
+    await gateway.check("beta");
     expect(first.close).toHaveBeenCalledOnce();
     await gateway.dispose();
     expect(second.close).toHaveBeenCalledOnce();
@@ -181,7 +236,7 @@ describe("TauriAppUpdaterGateway", () => {
       { check: async () => mismatch, relaunch: async () => undefined },
       "0.1.0",
     );
-    await expect(mismatchGateway.check()).rejects.toThrow("does not match");
+    await expect(mismatchGateway.check("beta")).rejects.toThrow("does not match");
     expect(mismatch.close).toHaveBeenCalledOnce();
   });
 
@@ -200,7 +255,7 @@ describe("TauriAppUpdaterGateway", () => {
       { check: async () => update, relaunch: async () => undefined },
       "0.1.0",
     );
-    await gateway.check();
+    await gateway.check("beta");
 
     await expect(gateway.dispose()).rejects.toThrow("close failed");
     await expect(gateway.dispose()).resolves.toBeUndefined();
@@ -229,8 +284,8 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.1.0",
     );
-    const staleCheck = gateway.check();
-    await expect(gateway.check()).resolves.toEqual({
+    const staleCheck = gateway.check("beta");
+    await expect(gateway.check("beta")).resolves.toEqual({
       kind: "upToDate",
       currentVersion: "0.1.0",
     });
@@ -250,7 +305,7 @@ describe("TauriAppUpdaterGateway", () => {
       { check: async () => update, relaunch: async () => undefined },
       "0.1.0",
     );
-    const result = await gateway.check();
+    const result = await gateway.check("beta");
     if (result.kind !== "available") throw new Error("Expected an update candidate.");
     const pendingDownload = gateway.download(result.candidate.candidateRevision);
     await gateway.dispose();
@@ -269,7 +324,7 @@ describe("TauriAppUpdaterGateway", () => {
       () => new Promise<void>((resolve) => (settleInstall = resolve)),
     );
     const gateway = new TauriAppUpdaterGateway({ check: async () => update, relaunch }, "0.1.0");
-    const result = await gateway.check();
+    const result = await gateway.check("beta");
     if (result.kind !== "available") throw new Error("Expected an update candidate.");
     await gateway.download(result.candidate.candidateRevision);
     const pendingInstall = gateway.installAndRestart(result.candidate.candidateRevision);
@@ -298,7 +353,7 @@ describe("TauriAppUpdaterGateway", () => {
       "0.2.0-beta.20",
     );
 
-    const result = await gateway.check();
+    const result = await gateway.check("beta");
 
     expect(check).toHaveBeenCalledOnce();
     expect(result).toEqual({
@@ -332,15 +387,15 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.2.0-beta.20",
     );
-    const first = await gateway.check();
+    const first = await gateway.check("beta");
     expect(first.kind).toBe("available");
-    expect(first.kind === "upToDate" ? null : first.candidate.candidateRevision).toBe(1);
+    expect("candidate" in first ? first.candidate.candidateRevision : null).toBe(1);
     await expect(gateway.download(1)).resolves.toBe("readyToRestart");
 
-    const second = await gateway.check();
+    const second = await gateway.check("beta");
 
     expect(second.kind).toBe("readyToRestartOutdated");
-    expect(second.kind === "upToDate" ? null : second.candidate.version).toBe("0.2.0-beta.28");
+    expect("candidate" in second ? second.candidate.version : null).toBe("0.2.0-beta.28");
     expect(second.kind === "readyToRestartOutdated" ? second.supersededBy : null).toEqual({
       version: "0.2.0-beta.29",
       date: "2026-09-01T00:00:00Z",
@@ -365,13 +420,13 @@ describe("TauriAppUpdaterGateway", () => {
         },
         "0.2.0-beta.20",
       );
-      await gateway.check();
+      await gateway.check("beta");
       await gateway.download(1);
 
-      const settled = await gateway.check();
+      const settled = await gateway.check("beta");
 
       expect(settled.kind).toBe("readyToRestart");
-      expect(settled.kind === "upToDate" ? null : settled.candidate.version).toBe("0.2.0-beta.28");
+      expect("candidate" in settled ? settled.candidate.version : null).toBe("0.2.0-beta.28");
     }
   });
 
@@ -389,10 +444,10 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.2.0-beta.20",
     );
-    await gateway.check();
+    await gateway.check("beta");
     await gateway.download(1);
 
-    await expect(gateway.check()).resolves.toEqual({
+    await expect(gateway.check("beta")).resolves.toEqual({
       kind: "readyToRestart",
       candidate: {
         candidateRevision: 2,
@@ -427,10 +482,10 @@ describe("TauriAppUpdaterGateway", () => {
         },
         "0.2.0-beta.20",
       );
-      await gateway.check();
+      await gateway.check("beta");
       await gateway.download(1);
 
-      const settling = gateway.check();
+      const settling = gateway.check("beta");
       await vi.advanceTimersByTimeAsync(APP_UPDATE_SUPERSEDING_PROBE_TIMEOUT_MS);
 
       await expect(settling).resolves.toMatchObject({
@@ -469,12 +524,12 @@ describe("TauriAppUpdaterGateway", () => {
       },
       "0.2.0-beta.20",
     );
-    await gateway.check();
+    await gateway.check("beta");
     await gateway.download(1);
     expect(prepared.close).toHaveBeenCalledOnce();
 
-    const stale = gateway.check();
-    const latest = gateway.check();
+    const stale = gateway.check("beta");
+    const latest = gateway.check("beta");
 
     await expect(stale).rejects.toThrow("stale");
     await expect(latest).resolves.toMatchObject({ kind: "readyToRestartOutdated" });
@@ -501,10 +556,10 @@ describe("TauriAppUpdaterGateway", () => {
       { check, getInstallMode: async () => "prepareBeforeRestart", relaunch },
       "0.2.0-beta.20",
     );
-    await gateway.check();
+    await gateway.check("beta");
     await gateway.download(1);
 
-    const settling = gateway.check();
+    const settling = gateway.check("beta");
     await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2));
     await expect(gateway.installAndRestart(1)).rejects.toThrow("stale");
     expect(relaunch).not.toHaveBeenCalled();
@@ -514,7 +569,7 @@ describe("TauriAppUpdaterGateway", () => {
 
     expect(settled.kind).toBe("readyToRestart");
     expect(probe.close).toHaveBeenCalledOnce();
-    expect(settled.kind === "upToDate" ? null : settled.candidate.candidateRevision).toBe(2);
+    expect("candidate" in settled ? settled.candidate.candidateRevision : null).toBe(2);
     await gateway.installAndRestart(2);
     expect(relaunch).toHaveBeenCalledOnce();
   });
@@ -529,7 +584,7 @@ describe("TauriAppUpdaterGateway", () => {
       { check: async () => update, relaunch: async () => undefined },
       " 0.1.0 ",
     );
-    const result = await gateway.check();
+    const result = await gateway.check("beta");
     expect(result.kind === "available" ? result.candidate.currentVersion : null).toBe("0.1.0");
   });
 });

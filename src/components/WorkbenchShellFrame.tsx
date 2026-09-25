@@ -1,7 +1,6 @@
 import { useCallback, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { WorkbenchFrameBootContext, useWorkbenchFrameBooted } from "./workbenchFrameBootContext";
 import { WorkbenchFramePortalContext } from "./workbenchFramePortal";
-import { WorkbenchFrameTreeContext } from "./workbenchFrameTreeReport";
 import {
   EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS,
   WorkbenchFrameEditorContext,
@@ -11,14 +10,12 @@ import {
   type WorkbenchFrameEditorReporter,
   type WorkbenchFrameEditorReports,
 } from "./workbenchFrameEditorReport";
-import { WorkbenchEditorTabsPortalProvider } from "./workbenchEditorTabsPortal";
 import { WorkbenchFrameResponsiveContext } from "./workbenchFrameResponsiveContext";
 import {
   WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE,
   WORKBENCH_FRAME_RAIL_VARIABLE,
   WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE,
   responsiveWorkbenchShellPlacement,
-  workbenchFrameTreeState,
   type WorkbenchShellPlacement,
 } from "./workbenchShellPlacement";
 import { useViewportWidth } from "./useViewportWidth";
@@ -53,7 +50,6 @@ export function WorkbenchShellFrame({
   const [workbenchElement, setWorkbenchElement] = useState<HTMLElement | null>(null);
   const viewportWidth = useViewportWidth(workbenchElement);
   const responsivePlacement = responsiveWorkbenchShellPlacement(placement, viewportWidth);
-  const [treeReportedVisible, setTreeReportedVisible] = useState(false);
   const [editorReports, setEditorReports] = useState<WorkbenchFrameEditorReports>(
     EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS,
   );
@@ -98,42 +94,37 @@ export function WorkbenchShellFrame({
               : "docked"
         }
         data-surface={settingsSurface ? "settings" : undefined}
-        data-tree={workbenchFrameTreeState(responsivePlacement, treeReportedVisible)}
         ref={setFrameElement}
       >
-        <WorkbenchEditorTabsPortalProvider>
-          <WorkbenchFrameBootContext.Provider value={frameBooted}>
-            <WorkbenchFrameEditorContext.Provider value={reportEditor}>
-              <WorkbenchFramePortalContext.Provider value={frameElement}>
-                <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
-                  <WorkbenchFrameEditorStateContext.Provider value={editorState}>
-                    <WorkbenchFrameResponsiveContext.Provider
-                      value={responsivePlacement.responsiveRestore}
-                    >
-                      {agent}
-                    </WorkbenchFrameResponsiveContext.Provider>
-                  </WorkbenchFrameEditorStateContext.Provider>
-                </WorkbenchFrameTreeContext.Provider>
-              </WorkbenchFramePortalContext.Provider>
-              {settingsSurface ? (
-                <div className="workbench-frame__settings" data-slot="settings" ref={settingsRef}>
-                  {settings}
-                </div>
-              ) : null}
-              <div
-                aria-hidden={editorHidden || undefined}
-                className="editor-mode-surface"
-                data-slot="editor"
-                hidden={editorHidden}
-              >
-                {editor}
+        <WorkbenchFrameBootContext.Provider value={frameBooted}>
+          <WorkbenchFrameEditorContext.Provider value={reportEditor}>
+            <WorkbenchFramePortalContext.Provider value={frameElement}>
+              <WorkbenchFrameEditorStateContext.Provider value={editorState}>
+                <WorkbenchFrameResponsiveContext.Provider
+                  value={responsivePlacement.responsiveRestore}
+                >
+                  {agent}
+                </WorkbenchFrameResponsiveContext.Provider>
+              </WorkbenchFrameEditorStateContext.Provider>
+            </WorkbenchFramePortalContext.Provider>
+            {settingsSurface ? (
+              <div className="workbench-frame__settings" data-slot="settings" ref={settingsRef}>
+                {settings}
               </div>
-              <div className="workbench-frame__bottom" data-slot="bottom" hidden={settingsSurface}>
-                {bottom}
-              </div>
-            </WorkbenchFrameEditorContext.Provider>
-          </WorkbenchFrameBootContext.Provider>
-        </WorkbenchEditorTabsPortalProvider>
+            ) : null}
+            <div
+              aria-hidden={editorHidden || undefined}
+              className="editor-mode-surface"
+              data-slot="editor"
+              hidden={editorHidden}
+            >
+              {editor}
+            </div>
+            <div className="workbench-frame__bottom" data-slot="bottom" hidden={settingsSurface}>
+              {bottom}
+            </div>
+          </WorkbenchFrameEditorContext.Provider>
+        </WorkbenchFrameBootContext.Provider>
       </div>
     </section>
   );

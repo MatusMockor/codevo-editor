@@ -486,6 +486,14 @@ const TreeRow = memo(function TreeRow({
           onPrefetchFile?.(entry);
         }}
         onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || isDirectory) {
+            return;
+          }
+
+          event.preventDefault();
+          onOpenFile(entry);
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           onOpenContextMenu(entry, { x: event.clientX, y: event.clientY });

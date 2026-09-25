@@ -38,6 +38,9 @@ vi.mock("./AgentComposer", () => ({
           isolation: "in-place",
           locked: true,
           disabled: false,
+          remote: false,
+          worktreeBase: { kind: "head" },
+          onWorktreeBaseChange: () => undefined,
         })}
       </div>
       <button onClick={() => onCompactContext(submission)}>Compact</button>

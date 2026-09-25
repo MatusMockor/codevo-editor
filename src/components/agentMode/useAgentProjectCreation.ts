@@ -8,6 +8,7 @@ import {
   type AgentProjectCloneLaneSession,
   MAX_PENDING_PROJECT_CLONES,
 } from "./agentProjectCreationSession";
+import type { AgentAddProjectTrustMode } from "./agentWorkbenchChrome";
 
 function newSession(): AgentProjectCloneLaneSession {
   return { creation: { current: null }, local: { current: null }, remote: { current: null } };
@@ -42,10 +43,10 @@ export function useAgentProjectCreation(options: AgentProjectCreationOptions) {
         ? null
         : {
             ...options.chrome,
-            addProject(path: string) {
+            addProject(path: string, openOptions?: Readonly<{ trust: AgentAddProjectTrustMode }>) {
               receiptLane.current = index;
               if (session) session.receiptLane = index;
-              return options.chrome!.addProject(path);
+              return options.chrome!.addProject(path, openOptions);
             },
             // A global workspace-opening receipt has exactly one consumer.
             ...(index !== (receiptLane.current ?? selected) ? { receipt: null } : {}),

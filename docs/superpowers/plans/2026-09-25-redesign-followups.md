@@ -37,3 +37,25 @@ Items that were reviewed and knowingly deferred. Handle in P10 or a dedicated sl
 - A Codex subagent's live timer undercounts if the thread is opened mid-run (no start time on the wire).
 - The selected thread is marked read even when agent mode isn't the visible screen.
 - The inline find bar still lifts with a shadow and has an accent magnifier on focus.
+
+## Git ship flow
+- `integrate` and `removeWorktree` in useAgentShipFlow.ts still report authorityLost after their side effect has already succeeded, when the owner changed mid-flight. Commit and push were fixed; decide the same truthful-success policy for these two.
+- Settings: the selected palette card now uses the same ring as keyboard focus, so a selected card looks focused. It needs a distinct selected style.
+
+## Settings / archive
+- Settings > Archive lists only local threads; remote threads (useUnifiedAgentThreads) are not included.
+- Bulk "Unarchive" in the rail selection bar is unreachable now that archived threads aren't in the rail. Add bulk unarchive to Settings > Archive, or remove the dead code.
+- The slim archived row variant in agentSidebarPresentation.ts / AgentThreadRow is dead code in the rail.
+
+## Clone
+- Server-sent `remote:` lines can steer the clone failure classifier, causing wrong advice text only. Classify on git's own `fatal:`/`error:` lines, ignore `remote:` apart from known host messages, and make the `ssl` pattern specific.
+- The clone trust revoke doesn't stop runtimes the way set_workspace_trust does. That's fine for a freshly created folder, but note it.
+- If the core.sshCommand lookup fails or times out, the app's batch SSH command overrides the user's.
+- The persisted `revoked_roots` in trust.rs grows by one entry per clone and has no cap. Add bounded eviction, e.g. drop entries whose folder no longer exists, or cap it with deterministic eviction.
+- The trust revoked refusal is matched by an exact string pinned in contracts/workspace-trust-errors.json. A typed error code would be sturdier, but it needs the command error shape to change.
+
+## Editor chrome (after P7 Task 13)
+- `workspaceSettings.statusBar` visibility keys other than cursorPosition/index/languageServer no longer control anything. Remove the settings rows or map them to the new editor sub-header items. Toggles that do nothing are untruthful.
+- `sidebarView` / `setSidebarView` still live in the controller and session cache. Remove them in a separate controller slice.
+- AgentSurfacePanel still sets `data-tree`, which has no CSS consumer (only P6 tests read it).
+- The Git amend action (and stage/unstage/revert from the old sidebar Git view) is no longer reachable anywhere after P7 removed the legacy chrome. Decide whether the P6 Git surface needs amend.

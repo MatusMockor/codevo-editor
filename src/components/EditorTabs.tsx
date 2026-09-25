@@ -16,6 +16,7 @@ import {
 import { useOpenEditorsMru } from "../application/useOpenEditorsMru";
 import { OpenEditorsSwitcher } from "./OpenEditorsSwitcher";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
+import "./editorPanel/editorTabs.css";
 
 export interface EditorTabsProps {
   documents: Array<EditorDocument | ImageTab | MarkdownPreviewTab>;

@@ -1,6 +1,10 @@
 import { Suspense, type ComponentProps, type ReactNode } from "react";
 import { AgentFrameFallback } from "./AgentFrameFallback";
 import { DeferredSurfaceHost } from "./DeferredSurfaceHost";
+import {
+  EditorPanelDocumentsContext,
+  type EditorPanelDocumentsValue,
+} from "./editorPanel/EditorPanelDocumentsContext";
 import { SurfacePlaceholder } from "./SurfacePlaceholder";
 import { initializeMonacoRuntime } from "./monacoRuntimeLoader";
 import { retryableLazy } from "./retryableLazy";
@@ -128,16 +132,22 @@ export const LazyWorkbenchSettingsHost = retryableLazy<
 
 export function LazyAgentWorkbenchHost({
   active,
+  editorPanelDocuments,
   ...props
-}: ComponentProps<typeof LazyAgentWorkbenchScreen> & { readonly active: boolean }) {
+}: ComponentProps<typeof LazyAgentWorkbenchScreen> & {
+  readonly active: boolean;
+  readonly editorPanelDocuments: EditorPanelDocumentsValue | null;
+}) {
   return (
-    <StickyLazySurfaceHost
-      active={active}
-      fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
-      label={AGENT_WORKSPACE_LABEL}
-    >
-      <LazyAgentWorkbenchScreen {...props} />
-    </StickyLazySurfaceHost>
+    <EditorPanelDocumentsContext.Provider value={editorPanelDocuments}>
+      <StickyLazySurfaceHost
+        active={active}
+        fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
+        label={AGENT_WORKSPACE_LABEL}
+      >
+        <LazyAgentWorkbenchScreen {...props} />
+      </StickyLazySurfaceHost>
+    </EditorPanelDocumentsContext.Provider>
   );
 }
 

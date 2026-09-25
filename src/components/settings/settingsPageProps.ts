@@ -1,3 +1,7 @@
+import type { AgentAccountUsageRefreshOutcome } from "../../application/agentAccountUsageRefresh";
+import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
+import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AppUpdaterSurface } from "../../application/useAppUpdater";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
@@ -25,7 +29,19 @@ export interface SettingsDraftActions {
   updateWorkspaceSettings(settings: WorkspaceSettings): void;
 }
 
+export type SettingsUsageProvider = "claudeCode" | "codex";
+
+export interface SettingsAgentActivity {
+  readonly threads: ReadonlyArray<AgentThreadView>;
+  readonly accountUsage: Readonly<Record<SettingsUsageProvider, AgentAccountUsageLoadState>>;
+  readonly turnLog: AgentTurnLogFactsSource | null;
+  refreshAccountUsage(provider: SettingsUsageProvider): Promise<AgentAccountUsageRefreshOutcome>;
+  unarchive(threadId: string): void;
+  openThread?(threadId: string): void;
+}
+
 export interface SettingsEnvironment {
+  readonly agentActivity?: SettingsAgentActivity | null;
   readonly agentProjects?: readonly AgentProjectDescriptor[];
   readonly appUpdater: AppUpdaterSurface | null;
   readonly gitDetectedRepositoryMappings: ReadonlyArray<string>;

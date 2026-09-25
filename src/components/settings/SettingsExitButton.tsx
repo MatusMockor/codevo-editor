@@ -6,8 +6,8 @@ export interface SettingsExitButtonProps {
 
 export function SettingsExitButton({ onExit }: SettingsExitButtonProps) {
   return (
-    <button className="settings-back" onClick={onExit} type="button">
-      <ArrowLeft aria-hidden="true" size={14} />
+    <button className="settings-nav__item" onClick={onExit} type="button">
+      <ArrowLeft aria-hidden="true" size={16} />
       Back
     </button>
   );

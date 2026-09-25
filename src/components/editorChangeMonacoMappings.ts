@@ -38,15 +38,9 @@ export function toEditorChangeDecoration(
 ): Monaco.editor.IModelDeltaDecoration {
   return {
     options: {
-      glyphMargin: {
-        position: monaco.editor.GlyphMarginLane.Left,
-      },
-      glyphMarginClassName: `editor-change-glyph editor-change-glyph-${hunk.kind}`,
-      glyphMarginHoverMessage: {
-        value: `${editorChangeKindLabel(hunk.kind)}. Click to preview or revert.`,
-      },
       isWholeLine: true,
       linesDecorationsClassName: `editor-change-line editor-change-line-${hunk.kind}`,
+      linesDecorationsTooltip: `${editorChangeKindLabel(hunk.kind)}. Click to preview or revert.`,
       overviewRuler: {
         color: editorChangeColor(hunk.kind),
         position: monaco.editor.OverviewRulerLane.Left,
@@ -224,10 +218,10 @@ function breakpointGlyphStateClassName(breakpoint: Breakpoint): string {
   return "breakpoint-glyph-verified";
 }
 
-function editorChangeColor(kind: EditorChangeKind): string {
-  if (kind === "added") return "#7ddc9f";
-  if (kind === "deleted") return "#ef7373";
-  return "#e7c66c";
+function editorChangeColor(kind: EditorChangeKind): Monaco.editor.ThemeColor {
+  if (kind === "added") return { id: "editorOverviewRuler.addedForeground" };
+  if (kind === "deleted") return { id: "editorOverviewRuler.deletedForeground" };
+  return { id: "editorOverviewRuler.modifiedForeground" };
 }
 
 function navigableChangeHunk(

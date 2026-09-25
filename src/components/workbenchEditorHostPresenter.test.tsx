@@ -72,6 +72,7 @@ describe("workbench editor host presenter", () => {
       );
       return (
         <WorkbenchEditorHost
+          activeTabsInStrip={false}
           {...hostActions}
           activeGroupId={state.activeGroupId}
           attachEditorGroupLiveDocument={() => null}
@@ -191,6 +192,7 @@ describe("workbench editor host presenter", () => {
     const onGroupFocusRunnerChange = vi.fn();
     const props = workbenchEditorHostProps({
       activeGroupId: state.activeGroupId,
+      activeTabsInStrip: true,
       contentRevisionForGroup: () => Object.freeze({}),
       documents: [],
       editorHost: latestPresenter,
@@ -203,6 +205,7 @@ describe("workbench editor host presenter", () => {
     });
 
     expect(props.activeGroupId).toBe(state.activeGroupId);
+    expect(props.activeTabsInStrip).toBe(true);
     expect(props.attachEditorGroupLiveDocument).toBe(stableAttach);
     expect(props.documentSessionAuthorityRevision).toBe(TEST_DOCUMENT_SESSION_AUTHORITY_REVISION);
     expect(props.liveDocumentRuntime).toBe(TEST_LIVE_DOCUMENT_RUNTIME);

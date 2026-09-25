@@ -33,6 +33,13 @@ export interface ThemePalette {
   namespace: string;
   regexp: string;
   decorator: string;
+  readonly findMatch?: string;
+  readonly findMatchHighlight?: string;
+  readonly peekBackground?: string;
+  readonly peekBorder?: string;
+  readonly overviewAdded?: string;
+  readonly overviewModified?: string;
+  readonly overviewDeleted?: string;
 }
 
 export const calmDark: ThemePalette = {

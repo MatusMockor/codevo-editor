@@ -1,6 +1,5 @@
 import type { AgentSurfaceHistoryProps } from "./AgentSurfaceHistory";
-import { PanelLeft } from "lucide-react";
-import { Suspense, lazy, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { Suspense, lazy, useRef, type PointerEvent, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
@@ -38,12 +37,10 @@ import {
   agentSurfaceServes,
   effectiveAgentSurface,
   servedAgentSurfaces,
+  withoutEmptyEditorSurface,
   type AgentSurfaceActivation,
 } from "../../domain/agentSurfaceActivation";
-import { useWorkbenchFrameEditorState } from "../workbenchFrameEditorReport";
-import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
 import { remoteSurfaceCapabilities, type AgentRemoteSurface } from "./agentRemoteSurface";
-import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
 
 const RemoteFilesPanel = lazy(() =>
   import("../remoteRunner/RemoteFilesPanel").then((module) => ({
@@ -61,7 +58,6 @@ const RemoteTerminalPanel = lazy(() =>
   })),
 );
 
-export { AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE } from "./rightPanel/AgentRightPanelSurfaceBody";
 export type { AgentSurfaceTerminalPanelProps } from "./rightPanel/AgentRightPanelSurfaceBody";
 
 export type AgentSurfaceDiffPanelProps = Omit<AgentSurfaceDiffProps, "thread">;
@@ -147,15 +143,16 @@ export function AgentSurfacePanel({
     unavailable: unavailable !== null,
     hidden,
   };
-  const openSurfaces = servedAgentSurfaces(activation, layout.openSurfaces);
-  const activeSurface = effectiveAgentSurface(activation, layout.activeSurface);
-  const editorSlot = agentSurfaceEditorSlot(activation, layout.activeSurface);
-  const [treeVisible, setTreeVisible] = useState(true);
-  const documentOpen = useWorkbenchFrameEditorState() === "documents";
-  const filesActive = editorSlot === "open" && fileTree !== null;
-  const treeShown = filesActive && (treeVisible || !documentOpen);
-  const treeToggleShown = filesActive && documentOpen;
-  useWorkbenchFrameTreeReport(treeShown);
+  const selection = withoutEmptyEditorSurface(
+    layout.openSurfaces,
+    layout.activeSurface,
+    editorDocuments !== null && editorDocuments.documents.length > 0,
+  );
+  const openSurfaces = servedAgentSurfaces(activation, selection.openSurfaces);
+  const activeSurface = effectiveAgentSurface(activation, selection.activeSurface);
+  const editorSlot = agentSurfaceEditorSlot(activation, selection.activeSurface);
+  const treeShown =
+    !server && !hidden && unavailable === null && activeSurface === "files" && fileTree !== null;
   const chooserShown = activeSurface === null;
   const terminalLayoutRevision = agentSurfaceLayoutRevision(openSurfaces, hidden);
 
@@ -214,19 +211,7 @@ export function AgentSurfacePanel({
           onTerminalSessionCommand={onTerminalSessionCommand}
           tabPanelsRendered={unavailable === null}
         />
-        {editorSlot === "open" && <WorkbenchEditorTabsPortalTarget />}
-        {activeSurface !== "files" && <span className="agent-session__spacer" />}
-        {treeToggleShown && (
-          <button
-            aria-label="Toggle file tree"
-            aria-pressed={treeVisible}
-            className="agent-iconbutton"
-            onClick={() => setTreeVisible((current) => !current)}
-            type="button"
-          >
-            <PanelLeft aria-hidden="true" size={14} />
-          </button>
-        )}
+        <span className="agent-session__spacer" />
       </TopBar>
       <div className="agent-surface__body" data-agent-surface-body>
         {unavailable}
@@ -318,6 +303,8 @@ function agentSurfaceMask(surface: AgentSurfaceKind): number {
       return 64;
     case "agents":
       return 128;
+    case "editor":
+      return 512;
   }
 }
 

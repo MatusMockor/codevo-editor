@@ -35,6 +35,7 @@ import {
 } from "./debugConsoleRenderItems";
 import { segmentDebugConsoleRenderedRows } from "./debugConsoleRenderedSegments";
 import { useWindowedRows } from "./useWindowedRows";
+import "./debug/debug.css";
 
 const MAX_VISIBLE_COMPLETION_ITEMS = 100;
 const CONSOLE_LINE_HEIGHT = 18;
@@ -66,7 +67,7 @@ export interface DebugConsoleCompletionReplacement {
 const styles: Record<string, CSSProperties> = {
   body: {
     flex: 1,
-    fontFamily: "var(--font-mono, monospace)",
+    fontFamily: "var(--cv-font-mono)",
     fontSize: 12,
     overflow: "auto",
     padding: "4px 8px",
@@ -79,14 +80,12 @@ const styles: Record<string, CSSProperties> = {
     font: "inherit",
     padding: "0 3px 0 0",
   },
-  error: { color: "var(--status-error, #ef4444)" },
   input: {
     background: "transparent",
     border: 0,
-    borderTop: "1px solid var(--border-subtle)",
     boxSizing: "border-box",
     color: "inherit",
-    fontFamily: "var(--font-mono, monospace)",
+    fontFamily: "var(--cv-font-mono)",
     fontSize: 12,
     maxHeight: 100,
     minHeight: 28,
@@ -96,7 +95,6 @@ const styles: Record<string, CSSProperties> = {
     resize: "none",
     width: "100%",
   },
-  muted: { color: "var(--text-muted)" },
   variableRow: {
     alignItems: "baseline",
     cursor: "default",
@@ -110,7 +108,6 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
   },
   completionDetail: {
-    color: "var(--text-muted)",
     marginLeft: 12,
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -124,8 +121,6 @@ const styles: Record<string, CSSProperties> = {
     padding: "2px 8px",
   },
   completionPopup: {
-    background: "var(--panel-bg, #18181b)",
-    border: "1px solid var(--border-subtle)",
     bottom: "100%",
     boxSizing: "border-box",
     left: 8,
@@ -136,13 +131,12 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 2,
   },
   completionStatus: {
-    color: "var(--text-muted)",
     padding: "5px 8px",
   },
   inputSurface: {
     position: "relative",
   },
-  warning: { color: "var(--text-muted)", fontSize: 11, padding: "3px 8px" },
+  warning: { fontSize: 11, padding: "3px 8px" },
 };
 
 export function DebugConsolePanel({
@@ -1018,11 +1012,10 @@ export function DebugConsolePanel({
         }}
         ref={(element) => measureWindowedRow(item.id, element)}
         role={copyable || item.expandable ? "group" : undefined}
-        style={
-          entry.kind === "stderr" || entry.kind === "error"
-            ? { ...styles.entry, ...styles.error }
-            : styles.entry
+        className={
+          entry.kind === "stderr" || entry.kind === "error" ? "cv-debug__stderr" : undefined
         }
+        style={styles.entry}
         tabIndex={copyable || item.expandable ? 0 : undefined}
       >
         {item.expandable ? (
@@ -1072,7 +1065,8 @@ export function DebugConsolePanel({
             else resultTreeItemElementsRef.current.delete(item.id);
           }}
           role="treeitem"
-          style={{ ...styles.variableRow, ...styles.muted, paddingLeft: 8 + item.depth * 12 }}
+          className="cv-debug__muted"
+          style={{ ...styles.variableRow, paddingLeft: 8 + item.depth * 12 }}
           tabIndex={effectiveResultTreeItemIds.get(item.entryId) === item.id ? 0 : -1}
         >
           {item.label}
@@ -1271,7 +1265,7 @@ export function DebugConsolePanel({
   };
   return (
     <>
-      <div id="debug-console-warning" style={styles.warning}>
+      <div className="cv-debug__muted" id="debug-console-warning" style={styles.warning}>
         Warning: REPL expressions may execute code in the debugged process.
       </div>
       <div
@@ -1291,7 +1285,7 @@ export function DebugConsolePanel({
         style={styles.body}
       >
         {console.state.entries.length === 0 ? (
-          <span data-testid="debug-output-empty" style={styles.muted}>
+          <span className="cv-debug__muted" data-testid="debug-output-empty">
             No output
           </span>
         ) : (
@@ -1377,7 +1371,12 @@ export function DebugConsolePanel({
       ) : null}
       <div style={styles.inputSurface}>
         {completionVisible ? (
-          <div id={completionListId} role="listbox" style={styles.completionPopup}>
+          <div
+            id={completionListId}
+            role="listbox"
+            className="cv-debug-console__completion-popup"
+            style={styles.completionPopup}
+          >
             {visibleCompletionItems.map((item, index) => (
               <div
                 aria-selected={index === activeCompletionIndex}
@@ -1386,22 +1385,26 @@ export function DebugConsolePanel({
                 onClick={() => acceptCompletion(item)}
                 onMouseDown={(event) => event.preventDefault()}
                 role="option"
-                style={{
-                  ...styles.completionItem,
-                  background:
-                    index === activeCompletionIndex
-                      ? "var(--selection-bg, rgba(59, 130, 246, 0.25))"
-                      : undefined,
-                }}
+                className="cv-debug-console__completion-item"
+                style={styles.completionItem}
               >
                 <span>{item.label}</span>
-                {item.detail ? <span style={styles.completionDetail}>{item.detail}</span> : null}
+                {item.detail ? (
+                  <span className="cv-debug__muted" style={styles.completionDetail}>
+                    {item.detail}
+                  </span>
+                ) : null}
               </div>
             ))}
           </div>
         ) : null}
         {completionStatus ? (
-          <div id={completionStatusId} role="status" style={styles.completionStatus}>
+          <div
+            id={completionStatusId}
+            role="status"
+            className="cv-debug__muted"
+            style={styles.completionStatus}
+          >
             {completionStatus}
           </div>
         ) : null}
@@ -1440,6 +1443,7 @@ export function DebugConsolePanel({
           ref={inputRef}
           rows={1}
           role="combobox"
+          className="cv-debug-console__input"
           style={styles.input}
           value={value}
         />

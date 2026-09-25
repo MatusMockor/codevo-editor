@@ -106,12 +106,10 @@ describe("composer command integration", () => {
     });
     mount("/permissions");
     key("Enter", { metaKey: true });
+    expect(document.querySelector('[role="menu"][aria-label="Access"]')).not.toBeNull();
     expect(
-      host.querySelector('[role="listbox"][aria-label="Agent permission mode"]'),
-    ).not.toBeNull();
-    expect(
-      host
-        .querySelector('[role="listbox"][aria-label="Agent permission mode"]')
+      document
+        .querySelector('[role="menu"][aria-label="Access"]')
         ?.contains(document.activeElement),
     ).toBe(true);
     expect(props.onSubmit).not.toHaveBeenCalled();

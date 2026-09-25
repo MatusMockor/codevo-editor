@@ -3,8 +3,8 @@ use crate::{
     debug_node_launch::{build_run_plan, NodeLaunchPlan, NodeLaunchProgram},
     managed_javascript_typescript::node_executable_path,
     node_package_tasks::task_validation::{validate_run_id, validate_workspace_id},
-    terminal::{TerminalEventSink, TerminalOutputEvent},
-    terminal_line_endings::TerminalLineEndingTranslator,
+    terminal::TerminalEventSink,
+    terminal_line_endings::{emit_terminal_text, TerminalLineEndingTranslator, TerminalRead},
     terminal_session::TerminalSupervisor,
     terminal_task_admission::{TerminalTaskAdmission, TerminalTaskAdmissionRegistry},
     terminal_task_process::TerminalTaskOwnership,
@@ -616,16 +616,19 @@ fn spawn_output_reader<R: Read + Send + 'static>(
         let mut buffer = [0_u8; 8192];
         let mut line_endings = TerminalLineEndingTranslator::default();
         loop {
-            let count = reader
-                .read(&mut buffer)
-                .map_err(|error| format!("Failed to read Node run {stream}: {error}"))?;
-            if count == 0 {
-                return Ok(());
+            match line_endings.read_terminal_text(&mut reader, &mut buffer) {
+                TerminalRead::Chunk { text, .. } => {
+                    emit_terminal_text(sink.as_ref(), text, session_id);
+                }
+                TerminalRead::End { text } => {
+                    emit_terminal_text(sink.as_ref(), text, session_id);
+                    return Ok(());
+                }
+                TerminalRead::Failed { text, error } => {
+                    emit_terminal_text(sink.as_ref(), text, session_id);
+                    return Err(format!("Failed to read Node run {stream}: {error}"));
+                }
             }
-            sink.emit_output(TerminalOutputEvent {
-                data: line_endings.translate_to_terminal_text(&buffer[..count]),
-                session_id,
-            });
         }
     })
 }
@@ -673,6 +676,7 @@ fn finish_node_run(terminals: &TerminalSupervisor, mut run: SpawnedNodeRun) -> N
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::TerminalOutputEvent;
 
     fn workspace(value: &str) -> WorkspaceId {
         serde_json::from_value(serde_json::Value::String(value.to_string())).unwrap()
@@ -718,6 +722,40 @@ mod tests {
         assert_eq!(
             sink.0.lock().expect("terminal output").concat(),
             "first\r\nsecond\r\nčau\r\n"
+        );
+    }
+
+    struct FailingAfterReader(Vec<Vec<u8>>);
+
+    impl std::io::Read for FailingAfterReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Err(std::io::Error::other("pipe broke"));
+            }
+            let chunk = self.0.remove(0);
+            buffer[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    #[test]
+    fn pending_multibyte_tail_is_flushed_before_a_read_error_propagates() {
+        let sink = Arc::new(RecordingSink::default());
+
+        let error = spawn_output_reader(
+            FailingAfterReader(vec![vec![b'x', 0xE2, 0x9C]]),
+            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+            5,
+            "stdout",
+        )
+        .join()
+        .expect("reader thread")
+        .expect_err("read error propagates");
+
+        assert!(error.contains("pipe broke"), "{error}");
+        assert_eq!(
+            sink.0.lock().expect("terminal output").concat(),
+            "x\u{FFFD}"
         );
     }
 

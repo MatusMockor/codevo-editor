@@ -20,7 +20,6 @@ import {
 const SHELL_SHEET = "components/workbenchShellFrame.css";
 const SURFACE_SHEET = "components/agentMode/agentSurface.css";
 const MAXIMIZED = '.workbench-frame[data-layout="agent"][data-right-panel="maximized"]';
-const DOCKED_TREE_BESIDE_DOCUMENT = `${MAXIMIZED}[data-tree="visible"]:not([data-editor="empty"])`;
 
 const parsed = parseAllStyleSheets();
 const shell = parsed.rules.filter((rule) => rule.sheet === SHELL_SHEET);
@@ -50,11 +49,6 @@ function declarations(rules: readonly CssRule[], selector: string): ReadonlyMap<
   return values;
 }
 
-function ruleIndex(rules: readonly CssRule[], selector: string): number {
-  const wanted = compact(selector);
-  return rules.findIndex((rule) => rule.context.length === 0 && compact(rule.selector) === wanted);
-}
-
 describe("expanded editing shell layout contract", () => {
   it("caps restored terminal height at three quarters of the window in every agent placement", () => {
     expect(
@@ -76,31 +70,21 @@ describe("expanded editing shell layout contract", () => {
     expect(surface.length).toBeGreaterThan(0);
   });
 
-  it("sizes the tree 210 px docked, 300 px maximized and 0 px when hidden, in that order", () => {
+  it("declares the surface header height and editor gutter without a tree column token", () => {
     const tokens = declarations(shell, ".app-shell");
     expect(tokens.get("--agent-surface-header-height")).toBe("var(--cv-topbar-h)");
-    expect(tokens.get("--agent-surface-tree-width")).toBe("210px");
     expect(tokens.get("--agent-surface-editor-gutter")).toBe("8px");
-    expect(
-      declarations(shell, '.workbench-frame[data-right-panel="maximized"]').get(
-        "--agent-surface-tree-width",
-      ),
-    ).toBe("300px");
-    expect(
-      declarations(shell, '.workbench-frame[data-tree="hidden"]').get("--agent-surface-tree-width"),
-    ).toBe("0px");
-    expect(ruleIndex(shell, '.workbench-frame[data-tree="hidden"]')).toBeGreaterThan(
-      ruleIndex(shell, '.workbench-frame[data-right-panel="maximized"]'),
-    );
+    expect(tokens.has("--agent-surface-tree-width")).toBe(false);
+    expect(parsed.rules.some((rule) => rule.selector.includes("data-tree"))).toBe(false);
   });
 
-  it("builds the maximized grid as rail, centre and a docked tree column", () => {
+  it("builds the maximized grid as rail and centre", () => {
     expect(declarations(shell, MAXIMIZED).get("grid-template-columns")).toBe(
-      compact("var(--agent-rail-track) minmax(0, 1fr) var(--agent-surface-tree-width)"),
+      compact("var(--agent-rail-track) minmax(0, 1fr)"),
     );
 
     const surfaceSlot = declarations(shell, `${MAXIMIZED} > [data-slot="surface"]`);
-    expect(surfaceSlot.get("grid-column")).toBe("2/4");
+    expect(surfaceSlot.get("grid-column")).toBe("2");
     expect(surfaceSlot.get("grid-row")).toBe("1");
 
     const editorSlot = declarations(shell, `${MAXIMIZED} > [data-slot="editor"]`);
@@ -118,7 +102,7 @@ describe("expanded editing shell layout contract", () => {
     );
 
     const bottomSlot = declarations(shell, `${MAXIMIZED} > [data-slot="bottom"]`);
-    expect(bottomSlot.get("grid-column")).toBe("2/4");
+    expect(bottomSlot.get("grid-column")).toBe("2");
     expect(bottomSlot.get("grid-row")).toBe("2");
     expect(bottomSlot.get("background")).toBe("var(--codevo-canvas)");
     expect(bottomSlot.get("border-radius")).toBe(
@@ -127,60 +111,40 @@ describe("expanded editing shell layout contract", () => {
     expect(bottomSlot.get("margin-left")).toBe("var(--agent-surface-editor-gutter)");
   });
 
-  it("runs the docked tree full height beside an open document with the bottom panel under the editor only", () => {
-    expect(
-      declarations(shell, `${DOCKED_TREE_BESIDE_DOCUMENT} > [data-slot="surface"]`).get("grid-row"),
-    ).toBe("1/-1");
-    expect(
-      declarations(shell, `${DOCKED_TREE_BESIDE_DOCUMENT} > [data-slot="bottom"]`).get(
-        "grid-column",
-      ),
-    ).toBe("2");
-  });
-
-  it("keeps the docked editor overlay padded by the tree and painted on the canvas tone", () => {
+  it("keeps the docked editor overlay below the panel header and painted on the canvas tone", () => {
     const editorSlot = declarations(
       shell,
       '.workbench-frame[data-layout="agent"] > [data-slot="editor"]',
     );
     expect(editorSlot.get("padding-top")).toBe("var(--agent-surface-header-height)");
-    expect(editorSlot.get("padding-left")).toBe("var(--agent-surface-tree-width)");
+    expect(editorSlot.has("padding-left")).toBe(false);
     expect(editorSlot.get("background")).toBe("var(--codevo-canvas)");
     expect(editorSlot.get("background-clip")).toBe("content-box");
     expect(editorSlot.get("clip-path")).toBe(
-      compact("inset(var(--agent-surface-header-height) 0 0 var(--agent-surface-tree-width))"),
+      compact("inset(var(--agent-surface-header-height) 0 0 0)"),
     );
   });
 
-  it("hides the editor overlay only while no document is open and a tree is showing", () => {
-    const treeOnly =
-      '.workbench-frame[data-layout="agent"][data-editor="empty"][data-tree="visible"] > [data-slot="editor"]';
-    expect(declarations(shell, treeOnly).get("display")).toBe("none");
+  it("keeps the editor overlay for an empty editor and lets the Files tree fill its surface", () => {
     expect(
       rulesFor(
         shell,
-        '.workbench-frame[data-layout="agent"][data-editor="empty"] > [data-slot="editor"]',
+        '.workbench-frame[data-layout="agent"][data-editor="empty"][data-tree="visible"] > [data-slot="editor"]',
       ),
     ).toEqual([]);
     expect(rulesFor(shell, '.workbench-frame[data-editor="empty"] > [data-slot="editor"]')).toEqual(
       [],
     );
-
-    const tree = declarations(
-      surface,
-      '.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface-tree',
-    );
+    const tree = declarations(surface, ".agent-surface-tree");
     expect(tree.get("flex")).toBe("11auto");
-    expect(tree.get("width")).toBe("auto");
+    expect(tree.has("width")).toBe(false);
     expect(
-      declarations(
+      rulesFor(
         surface,
-        '.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface__editor-slot',
-      ).get("display"),
-    ).toBe("none");
-    expect(
-      rulesFor(surface, '.workbench-frame[data-editor="empty"] .agent-surface__editor-slot'),
+        '.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface-tree',
+      ),
     ).toEqual([]);
+    expect(rulesFor(surface, ".agent-surface__editor-slot")).toEqual([]);
   });
 
   it("yields the editor overlay whenever the surface panel hosts no editor slot", () => {
@@ -194,17 +158,11 @@ describe("expanded editing shell layout contract", () => {
     );
   });
 
-  it("docks the tree right only in the maximized state", () => {
+  it("never reverses the Files surface when maximized", () => {
     expect(declarations(surface, ".agent-surface__files").has("flex-direction")).toBe(false);
     expect(
-      declarations(
-        surface,
-        '.workbench-frame[data-right-panel="maximized"] .agent-surface__files',
-      ).get("flex-direction"),
-    ).toBe("row-reverse");
-    expect(declarations(surface, ".agent-surface-tree").get("width")).toBe(
-      "var(--agent-surface-tree-width)",
-    );
+      rulesFor(surface, '.workbench-frame[data-right-panel="maximized"] .agent-surface__files'),
+    ).toEqual([]);
   });
 
   it("paints the surfaces with tone steps only", () => {
@@ -212,9 +170,6 @@ describe("expanded editing shell layout contract", () => {
     expect(collectBorderViolations(owned, tokenTable)).toEqual([]);
     expect(declarations(surface, ".agent-surface").get("background")).toBe("var(--cv-canvas)");
     expect(declarations(surface, ".agent-surface-tree").get("background")).toBe(
-      "var(--codevo-canvas)",
-    );
-    expect(declarations(surface, ".agent-surface__editor-slot").get("background")).toBe(
       "var(--codevo-canvas)",
     );
   });
@@ -292,22 +247,7 @@ describe("workbenchFrameEditorReport", () => {
     expect(declarations(shell, `${overlay} > [data-slot="editor"]`).get("z-index")).toBe("3");
   });
 
-  it("narrows the docked tree and drops the rail track before the editor column collapses", () => {
-    const compactRules = parsed.rules.filter(
-      (rule) =>
-        rule.sheet === SHELL_SHEET &&
-        rule.context.length === 1 &&
-        rule.context[0] === "@media (max-width: 900px)",
-    );
-    const compact = compactRules.find(
-      (rule) =>
-        rule.selector ===
-        '.workbench-frame[data-layout="agent"][data-right-panel="maximized"]:not([data-tree="hidden"])',
-    );
-    expect(compact?.declarations).toEqual([
-      { property: "--agent-surface-tree-width", value: "210px" },
-    ]);
-
+  it("drops the rail track before the editor column collapses", () => {
     const narrowRules = parsed.rules.filter(
       (rule) =>
         rule.sheet === SHELL_SHEET &&

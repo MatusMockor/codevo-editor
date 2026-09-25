@@ -107,6 +107,29 @@ describe("AgentGitSurfaceContainer", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("reloads the change list when the shared status revision changes", async () => {
+    const changes = [change("greet.ts")];
+    const memory = memoryGit(changes);
+    const base = rightPanelTestContext({}, { git: memory.git });
+    const withRevision = (statusRevision: number) =>
+      base.chrome === null ? base : { ...base, chrome: { ...base.chrome, statusRevision } };
+    ui = mountUi();
+    const mounted = ui;
+    const renderAt = (statusRevision: number) =>
+      mounted.render(
+        <WithRightPanelContext value={withRevision(statusRevision)}>
+          <AgentGitSurfaceContainer />
+        </WithRightPanelContext>,
+      );
+    renderAt(0);
+    await waitForReact(() => expect(mounted.host.querySelectorAll(".cv-git-row")).toHaveLength(1));
+
+    changes.push(change("retest.ts"));
+    renderAt(1);
+
+    await waitForReact(() => expect(mounted.host.querySelectorAll(".cv-git-row")).toHaveLength(2));
+  });
+
   it("routes a thread commit through the ship actions with the exact selection", async () => {
     const memory = memoryGit([change("a.ts"), change("b.ts")]);
     const actions = shipActions();

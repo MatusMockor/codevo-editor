@@ -10,6 +10,7 @@ import {
 import { EditorSplit } from "./EditorSplit";
 
 export interface EditorAreaProps {
+  activeTabsInStrip: boolean;
   contentRevisionForGroup?(groupId: EditorGroupId): unknown;
   documents: readonly EditorGroupDocument[];
   editorSessionOwnerKey: EditorSessionOwnerKey | null;
@@ -60,6 +61,7 @@ export function EditorArea(props: EditorAreaProps) {
           onReorderTab={props.onReorderTab}
           projectId={props.projectId}
           renderContent={props.renderContent}
+          tabsPlacement={props.activeTabsInStrip ? "strip" : "inline"}
         />
       );
     }

@@ -1,14 +1,14 @@
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
-import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import { ChevronDown } from "lucide-react";
-import { useLayoutEffect, type ReactNode } from "react";
-import { focusFirstInPopover, trapPopoverTab } from "./agentPopoverFocus";
 import type {
   AgentExecutionTarget,
   AgentLaunchOptions,
   ClaudeContextChoice,
   ClaudeEffortChoice,
 } from "../../domain/agentLaunch";
+import { MenuLabel, MenuSeparator } from "../../ui/foundation/MenuItem";
+import { MenuRadioItem } from "../../ui/foundation/MenuRadioItem";
+import { MenuSwitchItem } from "../../ui/foundation/MenuSwitchItem";
 import {
   agentClaudeLaunchTraits,
   agentLaunchContextLabel,
@@ -19,7 +19,7 @@ import {
   agentLaunchWithFastMode,
   agentLaunchWithThinkingMode,
 } from "./agentLaunchPresentation";
-import { useAgentPopover } from "./agentPopover";
+import { ComposerMenuPicker } from "./pickers/ComposerMenuPicker";
 
 interface AgentTraitsPickerProps {
   readonly launch: AgentLaunchOptions & { readonly provider: "claudeCode" };
@@ -31,20 +31,32 @@ interface AgentTraitsPickerProps {
   onChange(next: AgentLaunchOptions): void;
 }
 
-const EFFORT_LABELS: Readonly<Record<Exclude<ClaudeEffortChoice, "default">, string>> = {
+type EffortLevel = Exclude<ClaudeEffortChoice, "default">;
+type EffortMode = Extract<EffortLevel, "ultracode" | "ultrathink">;
+
+const EFFORT_LABELS: Readonly<Record<EffortLevel, string>> = {
   low: "Low",
   medium: "Medium",
   high: "High",
-  xhigh: "Extra High",
+  xhigh: "Extra high",
   max: "Max",
   ultracode: "Ultracode",
   ultrathink: "Ultrathink",
+};
+
+const EFFORT_MODE_DESCRIPTIONS: Readonly<Record<EffortMode, string>> = {
+  ultracode: "Extra high plus multi-agent orchestration.",
+  ultrathink: "Prefixes prompts with Ultrathink.",
 };
 
 const CONTEXT_LABELS: Readonly<Record<ClaudeContextChoice, string>> = {
   "200k": "200k",
   "1m": "1M",
 };
+
+function isEffortMode(choice: EffortLevel): choice is EffortMode {
+  return choice === "ultracode" || choice === "ultrathink";
+}
 
 export function AgentTraitsPicker({
   configuredModel,
@@ -56,13 +68,6 @@ export function AgentTraitsPicker({
   onChange,
 }: AgentTraitsPickerProps) {
   const catalog = useAgentClaudeModelCatalog();
-  const popover = useAgentPopover("start", disabled);
-  useAgentControlOpenRequest(openRequest, () => popover.show(), onOpenRequestHandled);
-
-  const { open, popoverRef } = popover;
-  useLayoutEffect(() => {
-    if (open) focusFirstInPopover(popoverRef.current);
-  }, [open, popoverRef]);
   const traits = agentClaudeLaunchTraits(launch, configuredModel, executionTarget, catalog);
   const effort =
     launch.effort !== "default" && traits.efforts.includes(launch.effort)
@@ -80,179 +85,106 @@ export function AgentTraitsPicker({
     ...(traits.thinkingMode ? [`Thinking ${launch.thinkingMode === true ? "On" : "Off"}`] : []),
     ...(traits.chrome && launch.chrome === false ? ["Chrome Off"] : []),
   ].join(" · ");
+  const levels = traits.efforts.filter((choice) => !isEffortMode(choice));
+  const modes = traits.efforts.filter(isEffortMode);
+  const showContext = traits.contextWindows.length > 0 && context !== null;
+  const showSwitches = traits.fastMode || traits.thinkingMode || traits.chrome;
+  const pickEffort = (choice: EffortLevel): void =>
+    onChange(agentLaunchWithEffort(launch, choice, configuredModel, catalog));
+
   return (
-    <div
-      className={`agent-picker${popover.open ? " agent-picker--open" : ""}`}
-      data-placement={popover.open ? popover.placement : undefined}
-      onBlur={popover.onBlur}
-      ref={popover.rootRef}
-    >
-      <button
-        aria-expanded={popover.open}
-        aria-haspopup="dialog"
-        aria-label="Model capabilities"
-        className="agent-picker__trigger agent-picker__trigger--ghost"
-        data-value={launch.effort}
-        disabled={disabled}
-        id="agent-launch-effort"
-        onClick={popover.toggle}
-        ref={popover.triggerRef}
-        type="button"
-      >
-        <span className="agent-picker__value">{summary}</span>
-        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
-      </button>
-      {popover.open && (
-        <div
+    <ComposerMenuPicker
+      disabled={disabled}
+      label="Effort and options"
+      onOpenRequestHandled={onOpenRequestHandled}
+      openRequest={openRequest}
+      renderTrigger={(trigger) => (
+        <button
+          aria-expanded={trigger.open}
+          aria-haspopup="menu"
           aria-label="Model capabilities"
-          className="agent-picker__menu agent-traits-picker__menu"
-          onKeyDown={(event) => {
-            trapPopoverTab(event);
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            popover.hide(true);
-          }}
-          ref={popover.popoverRef}
-          role="dialog"
-          style={popover.style}
+          className="agent-picker__trigger agent-picker__trigger--ghost"
+          data-value={launch.effort}
+          disabled={disabled}
+          id="agent-launch-effort"
+          onClick={trigger.toggle}
+          ref={trigger.ref}
+          type="button"
         >
-          {traits.efforts.length > 0 && (
-            <TraitGroup label="Reasoning">
-              {traits.efforts.map((choice) => (
-                <TraitOption
-                  checked={effort === choice}
-                  description={
-                    choice === "ultracode"
-                      ? "xhigh effort plus multi-agent workflow orchestration"
-                      : null
-                  }
-                  isDefault={traits.defaultEffort === choice}
-                  key={choice}
-                  label={EFFORT_LABELS[choice]}
-                  onSelect={() =>
-                    onChange(agentLaunchWithEffort(launch, choice, configuredModel, catalog))
-                  }
-                />
-              ))}
-            </TraitGroup>
-          )}
-          {traits.contextWindows.length > 0 && context !== null && (
-            <TraitGroup label="Context Window">
-              {traits.contextWindows.map((choice) => (
-                <TraitOption
-                  checked={context === choice}
-                  isDefault={traits.defaultContext === choice}
-                  key={choice}
-                  label={CONTEXT_LABELS[choice]}
-                  onSelect={() =>
-                    onChange(agentLaunchWithContext(launch, choice, configuredModel, catalog))
-                  }
-                />
-              ))}
-            </TraitGroup>
-          )}
-          {traits.fastMode && (
-            <TraitGroup label="Fast Mode">
-              <TraitOption
-                checked={launch.fastMode === true}
-                isDefault={false}
-                label="On"
-                onSelect={() =>
-                  onChange(agentLaunchWithFastMode(launch, true, configuredModel, catalog))
-                }
-              />
-              <TraitOption
-                checked={launch.fastMode !== true}
-                label="Off"
-                onSelect={() =>
-                  onChange(agentLaunchWithFastMode(launch, false, configuredModel, catalog))
-                }
-              />
-            </TraitGroup>
-          )}
-          {traits.thinkingMode && (
-            <TraitGroup label="Thinking">
-              <TraitOption
-                checked={launch.thinkingMode === true}
-                label="On"
-                onSelect={() =>
-                  onChange(agentLaunchWithThinkingMode(launch, true, configuredModel, catalog))
-                }
-              />
-              <TraitOption
-                checked={launch.thinkingMode !== true}
-                label="Off"
-                onSelect={() =>
-                  onChange(agentLaunchWithThinkingMode(launch, false, configuredModel, catalog))
-                }
-              />
-            </TraitGroup>
-          )}
-          {traits.chrome && (
-            <TraitGroup label="Browser">
-              <TraitOption
-                checked={launch.chrome !== false}
-                description="Exposes the Claude in Chrome browser tools"
-                isDefault
-                label="Chrome"
-                onSelect={() =>
-                  onChange(agentLaunchWithChrome(launch, true, configuredModel, catalog))
-                }
-              />
-              <TraitOption
-                checked={launch.chrome === false}
-                label="Off"
-                onSelect={() =>
-                  onChange(agentLaunchWithChrome(launch, false, configuredModel, catalog))
-                }
-              />
-            </TraitGroup>
-          )}
-        </div>
+          <span className="agent-picker__value">{summary}</span>
+          <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
+        </button>
       )}
-    </div>
-  );
-}
-
-function TraitGroup({ children, label }: { readonly children: ReactNode; readonly label: string }) {
-  return (
-    <div aria-label={label} className="agent-traits-picker__group" role="group">
-      <div className="agent-traits-picker__heading">{label}</div>
-      {children}
-    </div>
-  );
-}
-
-function TraitOption({
-  checked,
-  description = null,
-  isDefault = false,
-  label,
-  onSelect,
-}: {
-  readonly checked: boolean;
-  readonly description?: string | null;
-  readonly isDefault?: boolean;
-  readonly label: string;
-  onSelect(): void;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      className="agent-picker__option agent-traits-picker__option"
-      onClick={onSelect}
-      role="radio"
-      type="button"
     >
-      <span className="agent-traits-picker__copy">
-        <span className="agent-picker__label">
-          {label}
-          {isDefault && <span className="agent-traits-picker__default">Default</span>}
-        </span>
-        {description !== null && (
-          <span className="agent-traits-picker__description">{description}</span>
-        )}
-      </span>
-    </button>
+      {levels.length > 0 ? <MenuLabel>Effort</MenuLabel> : null}
+      {levels.map((choice) => (
+        <MenuRadioItem
+          checked={effort === choice}
+          description={traits.defaultEffort === choice ? "Default" : undefined}
+          key={choice}
+          onSelect={() => pickEffort(choice)}
+        >
+          {EFFORT_LABELS[choice]}
+        </MenuRadioItem>
+      ))}
+      {modes.length > 0 ? <MenuSeparator /> : null}
+      {modes.map((choice) => (
+        <MenuRadioItem
+          checked={effort === choice}
+          description={EFFORT_MODE_DESCRIPTIONS[choice]}
+          key={choice}
+          onSelect={() => pickEffort(choice)}
+        >
+          {EFFORT_LABELS[choice]}
+        </MenuRadioItem>
+      ))}
+      {showContext ? <MenuSeparator /> : null}
+      {showContext ? <MenuLabel>Context window</MenuLabel> : null}
+      {showContext
+        ? traits.contextWindows.map((choice) => (
+            <MenuRadioItem
+              checked={context === choice}
+              description={traits.defaultContext === choice ? "Default" : undefined}
+              key={choice}
+              onSelect={() =>
+                onChange(agentLaunchWithContext(launch, choice, configuredModel, catalog))
+              }
+            >
+              {CONTEXT_LABELS[choice]}
+            </MenuRadioItem>
+          ))
+        : null}
+      {showSwitches ? <MenuSeparator /> : null}
+      {traits.fastMode ? (
+        <MenuSwitchItem
+          checked={launch.fastMode === true}
+          onToggle={(next) =>
+            onChange(agentLaunchWithFastMode(launch, next, configuredModel, catalog))
+          }
+        >
+          Fast mode
+        </MenuSwitchItem>
+      ) : null}
+      {traits.thinkingMode ? (
+        <MenuSwitchItem
+          checked={launch.thinkingMode === true}
+          onToggle={(next) =>
+            onChange(agentLaunchWithThinkingMode(launch, next, configuredModel, catalog))
+          }
+        >
+          Thinking
+        </MenuSwitchItem>
+      ) : null}
+      {traits.chrome ? (
+        <MenuSwitchItem
+          checked={launch.chrome !== false}
+          onToggle={(next) =>
+            onChange(agentLaunchWithChrome(launch, next, configuredModel, catalog))
+          }
+        >
+          Chrome browser tools
+        </MenuSwitchItem>
+      ) : null}
+    </ComposerMenuPicker>
   );
 }

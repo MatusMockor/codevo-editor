@@ -16,12 +16,17 @@ import {
   type ResolvedGitRepository,
 } from "../domain/gitRepositoryMapping";
 import type { AppSettings, SettingsGateway } from "../domain/settings";
-import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
+import type {
+  WorkspaceTrustGateway,
+  WorkspaceTrustOrigin,
+  WorkspaceTrustState,
+} from "../domain/trust";
 import { normalizedWorkspaceRootKey, workspaceDisplayName } from "../domain/workspaceRootKey";
 import { workspaceSettingsIdentity } from "./workbenchController/workspaceIdentityPolicy";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { AgentOpenedProjectAdmission } from "./agentOpenedProjectAdmission";
+import { confirmAndGrantAgentProjectTrust } from "./agentProjectTrustGrant";
 import type { AgentProjectAuthority, AgentProjectLaunchIdentity } from "./agentProjectAuthority";
 
 export const MAX_CONCURRENT_AGENT_PROJECT_LOADS = 2;
@@ -60,13 +65,17 @@ export interface AgentProjectsDependencies {
   ) => void;
   readonly prompter: WorkbenchPrompter;
   readonly reportError: (source: string, error: unknown) => void;
+  readonly settingsHydrated?: boolean;
 }
 
 export interface AgentProjectsSurface {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+  readonly projectsLoaded?: boolean;
   readonly overflowRootPaths: ReadonlyArray<string>;
   refreshProject(rootKey: string): Promise<void>;
   trustProject(rootKey: string): Promise<void>;
+  deferOpenedProjectTrust?(rootPath: string): () => void;
+  grantProjectTrust?(rootKey: string, origin: WorkspaceTrustOrigin | null): Promise<void>;
   releaseProject(rootKey: string): Promise<void>;
   closeWorkspaceProject?(
     descriptor: WorkspaceIdentityDescriptor,
@@ -168,6 +177,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   const loadQueueRef = useRef<Array<() => void>>([]);
   const mountedRef = useRef(true);
   const [version, publish] = useReducer((current: number) => current + 1, 0);
+  const projectsLoadedRef = useRef(false);
 
   const launchIdentityForProject = useCallback(
     (rootKey: string): AgentProjectLaunchIdentity | null => {
@@ -541,6 +551,10 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     const next = new Map<string, AgentProjectEntry>();
     const scheduled: Array<{ rootKey: string; generation: number }> = [];
     let changed = false;
+    if (deps.settingsHydrated !== false && !projectsLoadedRef.current) {
+      projectsLoadedRef.current = true;
+      changed = true;
+    }
 
     for (const candidate of admission.admitted) {
       const closeAuthority = closeAuthoritiesRef.current.get(candidate.rootKey);
@@ -757,6 +771,55 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   );
 
   const trustProject = refreshProject;
+
+  const deferOpenedProjectTrust = useCallback(
+    (rootPath: string): (() => void) => openedAdmissionRef.current.deferTrust(rootPath),
+    [],
+  );
+
+  const grantProjectTrust = useCallback(
+    async (rootKey: string, origin: WorkspaceTrustOrigin | null): Promise<void> => {
+      if (rootKey.startsWith("remote:")) return;
+      const entry = entriesRef.current.get(rootKey);
+      if (entry === undefined || entry.releasing || entry.trust === "trusted") return;
+      const generation = entry.generation;
+      const admission = dependenciesRef.current.descriptorForRoot(entry.rootPath)?.admissionToken;
+      const isCurrent = () => {
+        const current = entryFor(rootKey, generation);
+        return (
+          current !== null &&
+          !current.releasing &&
+          current.workspaceId === entry.workspaceId &&
+          dependenciesRef.current.descriptorForRoot(entry.rootPath)?.admissionToken === admission
+        );
+      };
+      const result = await attempt(() =>
+        confirmAndGrantAgentProjectTrust({
+          rootPath: entry.rootPath,
+          label: workspaceDisplayName(entry.rootPath),
+          origin: origin ?? { kind: "local" },
+          gateway: dependenciesRef.current.trustGateway,
+          isCurrent,
+        }),
+      );
+      if (!result.ok) {
+        dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, result.error);
+        return;
+      }
+      if (result.value === "refused") {
+        dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, new Error("Trust was refused."));
+        return;
+      }
+      if (result.value !== "granted") return;
+      const deps = dependenciesRef.current;
+      if (entry.workspaceId !== null && deps.activeWorkspaceId === entry.workspaceId) {
+        deps.onActiveWorkspaceTrustChanged(entry.rootPath, entry.workspaceId, true);
+        return;
+      }
+      await runProjectLoad(rootKey, generation);
+    },
+    [entryFor, runProjectLoad],
+  );
 
   const releaseProject = useCallback(
     async (rootKey: string): Promise<void> => {
@@ -1077,13 +1140,17 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   );
 
   const overflowRootPaths = useMemo(() => overflowSnapshot(version, overflowRef), [version]);
+  const projectsLoaded = useMemo(() => loadedSnapshot(version, projectsLoadedRef), [version]);
 
   return useMemo(
     () => ({
       projects,
+      projectsLoaded,
       overflowRootPaths,
       refreshProject,
       trustProject,
+      deferOpenedProjectTrust,
+      grantProjectTrust,
       releaseProject,
       closeWorkspaceProject,
       ensureProjectLease,
@@ -1100,10 +1167,13 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       noteDispatchTrustRejected,
       overflowRootPaths,
       projects,
+      projectsLoaded,
       refreshProject,
       releaseProject,
       closeWorkspaceProject,
       trustProject,
+      deferOpenedProjectTrust,
+      grantProjectTrust,
     ],
   );
 }
@@ -1212,6 +1282,10 @@ function resolveProjectRepositories(
     repositoryRoot: repositoryRootForMapping(mapping, rootPath),
     repositoryRelativePath: "",
   }));
+}
+
+function loadedSnapshot(_revision: number, loadedRef: { readonly current: boolean }): boolean {
+  return loadedRef.current;
 }
 
 function overflowSnapshot(

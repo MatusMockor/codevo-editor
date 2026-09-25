@@ -52,6 +52,7 @@ import {
   type TreeRow,
 } from "./debugVariableTreeRows";
 import { useWindowedRows, type WindowedRow } from "./useWindowedRows";
+import "./debug/debug.css";
 
 export const MAX_DEBUG_VARIABLE_TREE_ROWS = 500;
 export const DEBUG_VARIABLE_TREE_ROW_HEIGHT = 22;
@@ -111,11 +112,7 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
     width: "100%",
   },
-  muted: { color: "var(--text-muted)" },
-  error: { color: "var(--status-error, #ef4444)" },
   editor: {
-    background: "var(--surface-raised, #1f2937)",
-    border: "1px solid var(--accent, #60a5fa)",
     color: "inherit",
     flex: 1,
     font: "inherit",
@@ -649,7 +646,9 @@ export function DebugVariableTree({
                 tabIndex={row.id === resolvedActiveId ? 0 : -1}
               >
                 <span aria-hidden="true">{row.expandable ? (row.expanded ? "▾" : "▸") : ""}</span>
-                <span style={row.kind === "status" ? styles.muted : undefined}>{row.label}</span>
+                <span className={row.kind === "status" ? "cv-debug__muted" : undefined}>
+                  {row.label}
+                </span>
                 {editing?.rowId === row.id ? (
                   <span style={{ display: "inline-flex", flex: 1, flexDirection: "column" }}>
                     <input
@@ -683,23 +682,24 @@ export function DebugVariableTree({
                       }}
                       ref={editorRef}
                       readOnly={editing.pending}
+                      className="cv-debug__inline-editor"
                       style={styles.editor}
                       value={editing.draft}
                     />
                     {editing.error ? (
-                      <span role="alert" style={styles.error}>
+                      <span className="cv-debug__stderr" role="alert">
                         {editing.error}
                       </span>
                     ) : null}
                   </span>
                 ) : row.value !== undefined ? (
-                  <span data-debug-variable-value="true" style={styles.muted}>
+                  <span className="cv-debug__muted" data-debug-variable-value="true">
                     {" = "}
                     {row.value}
                     {row.type ? ` (${row.type})` : ""}
                   </span>
                 ) : null}
-                {row.terminal ? <span style={styles.muted}> — {row.terminal}</span> : null}
+                {row.terminal ? <span className="cv-debug__muted"> — {row.terminal}</span> : null}
               </div>
             );
           })}

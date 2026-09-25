@@ -14,11 +14,13 @@ import {
 import { createPortal } from "react-dom";
 import { breadcrumbSiblingsAt } from "../domain/breadcrumbs";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
+import "../ui/foundation/overlays.css";
 
 interface BreadcrumbsProps {
   fileName: string;
   path: LanguageServerDocumentSymbol[];
   symbols: LanguageServerDocumentSymbol[];
+  readonly showFileName?: boolean;
   onNavigate(symbol: LanguageServerDocumentSymbol): void;
 }
 
@@ -29,7 +31,13 @@ interface MenuPosition {
 
 const VIEWPORT_PADDING = 8;
 
-function BreadcrumbsComponent({ fileName, path, symbols, onNavigate }: BreadcrumbsProps) {
+function BreadcrumbsComponent({
+  fileName,
+  path,
+  showFileName = true,
+  symbols,
+  onNavigate,
+}: BreadcrumbsProps) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [menuPosition, setMenuPosition] = useState<MenuPosition>({
     left: 0,
@@ -156,9 +164,16 @@ function BreadcrumbsComponent({ fileName, path, symbols, onNavigate }: Breadcrum
     top: menuPosition.top,
   };
 
+  const Container = showFileName ? "nav" : "span";
+
   return (
-    <nav aria-label="Breadcrumbs" className="breadcrumbs" ref={navRef}>
-      <span className="breadcrumb-segment breadcrumb-file">{fileName}</span>
+    <Container
+      aria-label={showFileName ? "Breadcrumbs" : "Symbols"}
+      className="breadcrumbs"
+      ref={navRef}
+      role={showFileName ? undefined : "group"}
+    >
+      {showFileName ? <span className="breadcrumb-segment breadcrumb-file">{fileName}</span> : null}
       {path.map((symbol, index) => (
         <Fragment key={`${index}:${symbol.name}`}>
           <ChevronRight aria-hidden="true" className="breadcrumb-separator" size={12} />
@@ -187,7 +202,7 @@ function BreadcrumbsComponent({ fileName, path, symbols, onNavigate }: Breadcrum
         ? null
         : createPortal(
             <div
-              className="breadcrumb-menu"
+              className="cv-menu cv-esub-symbol-menu"
               onKeyDown={handleMenuKeyDown}
               ref={menuRef}
               role="menu"
@@ -196,7 +211,7 @@ function BreadcrumbsComponent({ fileName, path, symbols, onNavigate }: Breadcrum
               {siblings.map((symbol, index) => (
                 <button
                   aria-current={symbol === path[openIndex] ? "true" : undefined}
-                  className="breadcrumb-menu-item"
+                  className="cv-menu__item"
                   key={`${index}:${symbol.name}`}
                   onClick={() => selectSymbol(symbol)}
                   ref={(element) => {
@@ -212,7 +227,7 @@ function BreadcrumbsComponent({ fileName, path, symbols, onNavigate }: Breadcrum
             </div>,
             document.body,
           )}
-    </nav>
+    </Container>
   );
 }
 

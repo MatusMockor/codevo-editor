@@ -1,8 +1,8 @@
 use super::NodePackageTaskOutputObserver;
 use crate::{
     node_package_problem_matcher::NodePackageTaskOutputStream,
-    terminal::{TerminalEventSink, TerminalOutputEvent},
-    terminal_line_endings::TerminalLineEndingTranslator,
+    terminal::TerminalEventSink,
+    terminal_line_endings::{emit_terminal_text, TerminalLineEndingTranslator, TerminalRead},
 };
 use std::{io::Read, sync::Arc, thread};
 
@@ -18,20 +18,23 @@ pub(super) fn spawn_output_reader<R: Read + Send + 'static>(
             let mut buffer = [0_u8; 8192];
             let mut line_endings = TerminalLineEndingTranslator::default();
             loop {
-                let count = reader.read(&mut buffer).map_err(|error| {
-                    format!(
-                        "Failed to read package script {}: {error}",
-                        stream_name(stream)
-                    )
-                })?;
-                if count == 0 {
-                    return Ok(());
+                match line_endings.read_terminal_text(&mut reader, &mut buffer) {
+                    TerminalRead::Chunk { text, len } => {
+                        emit_terminal_text(sink.as_ref(), text, session_id);
+                        observer.observe(stream, &buffer[..len]);
+                    }
+                    TerminalRead::End { text } => {
+                        emit_terminal_text(sink.as_ref(), text, session_id);
+                        return Ok(());
+                    }
+                    TerminalRead::Failed { text, error } => {
+                        emit_terminal_text(sink.as_ref(), text, session_id);
+                        return Err(format!(
+                            "Failed to read package script {}: {error}",
+                            stream_name(stream)
+                        ));
+                    }
                 }
-                sink.emit_output(TerminalOutputEvent {
-                    data: line_endings.translate_to_terminal_text(&buffer[..count]),
-                    session_id,
-                });
-                observer.observe(stream, &buffer[..count]);
             }
         })();
         observer.finish(stream);
@@ -60,7 +63,7 @@ pub(super) fn join_output_reader(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::TerminalRuntimeStatus;
+    use crate::terminal::{TerminalOutputEvent, TerminalRuntimeStatus};
     use std::{fs::File, io::Cursor, path::Path, sync::Mutex};
 
     #[derive(Default)]
@@ -101,6 +104,95 @@ mod tests {
         fn finish(&self, _stream: NodePackageTaskOutputStream) {}
 
         fn finish_task(&self, _preserve_problems: bool) {}
+    }
+
+    struct ChunkedReader(Vec<Vec<u8>>);
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            let chunk = self.0.remove(0);
+            buffer[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    #[test]
+    fn multibyte_character_split_between_reads_reaches_terminal_intact() {
+        let raw = "ok 🚀 kôň\n".as_bytes();
+        let chunks = vec![raw[..4].to_vec(), raw[4..11].to_vec(), raw[11..].to_vec()];
+        let sink = Arc::new(RecordingSink::default());
+        let observer = Arc::new(RecordingObserver::default());
+
+        let reader = spawn_output_reader(
+            ChunkedReader(chunks),
+            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+            Arc::clone(&observer) as Arc<dyn NodePackageTaskOutputObserver>,
+            3,
+            NodePackageTaskOutputStream::Stdout,
+        );
+        join_output_reader(Some(reader)).expect("reader finishes");
+
+        assert_eq!(
+            *sink.0.lock().expect("terminal bytes"),
+            "ok 🚀 kôň\r\n".as_bytes()
+        );
+    }
+
+    struct FailingAfterReader(Vec<Vec<u8>>);
+
+    impl Read for FailingAfterReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Err(std::io::Error::other("pipe broke"));
+            }
+            let chunk = self.0.remove(0);
+            buffer[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    #[test]
+    fn pending_multibyte_tail_is_flushed_before_a_read_error_propagates() {
+        let sink = Arc::new(RecordingSink::default());
+        let observer = Arc::new(RecordingObserver::default());
+
+        let reader = spawn_output_reader(
+            FailingAfterReader(vec![vec![b'x', 0xE2, 0x9C]]),
+            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+            Arc::clone(&observer) as Arc<dyn NodePackageTaskOutputObserver>,
+            3,
+            NodePackageTaskOutputStream::Stdout,
+        );
+        let error = join_output_reader(Some(reader)).expect_err("read error propagates");
+
+        assert!(error.contains("pipe broke"), "{error}");
+        assert_eq!(
+            *sink.0.lock().expect("terminal bytes"),
+            "x\u{FFFD}".as_bytes()
+        );
+    }
+
+    #[test]
+    fn truncated_multibyte_character_is_flushed_at_end_of_stream() {
+        let sink = Arc::new(RecordingSink::default());
+        let observer = Arc::new(RecordingObserver::default());
+
+        let reader = spawn_output_reader(
+            ChunkedReader(vec![vec![b'x', 0xE2, 0x9C]]),
+            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+            Arc::clone(&observer) as Arc<dyn NodePackageTaskOutputObserver>,
+            3,
+            NodePackageTaskOutputStream::Stdout,
+        );
+        join_output_reader(Some(reader)).expect("reader finishes");
+
+        assert_eq!(
+            *sink.0.lock().expect("terminal bytes"),
+            "x\u{FFFD}".as_bytes()
+        );
     }
 
     #[test]

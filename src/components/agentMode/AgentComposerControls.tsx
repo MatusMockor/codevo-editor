@@ -1,34 +1,25 @@
 import { memo, useMemo, type ReactNode } from "react";
-import { Folder, FolderGit2 } from "lucide-react";
+import { Folder, FolderGit2, Server } from "lucide-react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
 import {
   agentComposerCheckoutChoice,
-  agentComposerCheckoutOptions,
+  agentComposerRepositoryOptions,
+  agentComposerRepositoryValue,
   type AgentComposerTarget,
 } from "./agentComposerCheckout";
 import { AgentPickerMenu } from "./AgentPickerMenu";
-import type { AgentPickerOption } from "./agentPickerOption";
+import "./pickers/agentPickers.css";
 
-const CHECKOUT_ID = "agent-checkout";
+const REPOSITORY_ID = "agent-repository";
 
-export const AgentComposerCheckout = memo(function AgentComposerCheckout({
+export const AgentRepositoryPicker = memo(function AgentRepositoryPicker({
   disabled,
-  remote = false,
-  isolation,
-  onIsolationChange,
   onRefreshIsolation,
   onSelectRepository,
   target,
-  worktreeAvailable,
-  worktreeOnly,
 }: {
-  readonly remote?: boolean;
-  readonly isolation: AgentTaskIsolation;
   readonly disabled: boolean;
   readonly target: AgentComposerTarget | null;
-  readonly worktreeAvailable: boolean;
-  readonly worktreeOnly: boolean;
-  onIsolationChange(isolation: AgentTaskIsolation): void;
   onRefreshIsolation?(): void;
   onSelectRepository(repositoryRoot: string): void;
 }) {
@@ -49,33 +40,31 @@ export const AgentComposerCheckout = memo(function AgentComposerCheckout({
     [projectLabel, projectRoot, selectedRepositoryRoot, repositoryOptions],
   );
   const options = useMemo(
-    () =>
-      worktreeOnly
-        ? lockedWorktreeOptions(searchIdentity.target)
-        : agentComposerCheckoutOptions(searchIdentity.target, worktreeAvailable, remote),
-    [searchIdentity, worktreeOnly, worktreeAvailable, remote],
+    () => agentComposerRepositoryOptions(searchIdentity.target),
+    [searchIdentity],
   );
-  const lockedWithoutChoice =
-    worktreeOnly && options.length < 2 && onRefreshIsolation === undefined;
+  if (searchIdentity.target === null || options.length === 0) return null;
+  const selectedRoot = searchIdentity.target.selectedRepositoryRoot;
   const choose = (value: string): void => {
     const choice = agentComposerCheckoutChoice(value);
-    if (choice === null) return;
-    if (choice.kind === "root") {
-      onSelectRepository(choice.repositoryRoot);
-      return;
-    }
-    if (worktreeOnly) return;
-    onIsolationChange(choice.isolation);
+    if (choice === null || choice.kind !== "root") return;
+    onSelectRepository(choice.repositoryRoot);
   };
   return (
     <AgentPickerMenu
       align="start"
       confirmation={null}
       describedBy={null}
-      disabled={disabled || lockedWithoutChoice}
-      icon={isolationGlyph(isolation)}
-      id={CHECKOUT_ID}
-      label="Checkout for this thread"
+      disabled={disabled}
+      icon={
+        selectedRoot === searchIdentity.target.projectRoot ? (
+          <Folder size={12} />
+        ) : (
+          <FolderGit2 size={12} />
+        )
+      }
+      id={REPOSITORY_ID}
+      label="Repository for this thread"
       menuLayout="checkout"
       searchIdentity={searchIdentity}
       onChange={choose}
@@ -83,27 +72,33 @@ export const AgentComposerCheckout = memo(function AgentComposerCheckout({
       options={options}
       prefix={null}
       tone={null}
-      value={isolation}
+      value={agentComposerRepositoryValue(selectedRoot)}
       variant="ghost"
     />
   );
 });
 
-function lockedWorktreeOptions(
-  target: AgentComposerTarget | null,
-): ReadonlyArray<AgentPickerOption> {
-  return agentComposerCheckoutOptions(target, true).filter((option) => option.value !== "in-place");
-}
-
 export function AgentComposerLockedCheckout({
+  executionServerName = null,
   isolation,
   remote = false,
 }: {
+  readonly executionServerName?: string | null;
   readonly isolation: AgentTaskIsolation;
   readonly remote?: boolean;
 }) {
   return (
     <span className="agent-composer__lock">
+      {executionServerName === null ? null : (
+        <>
+          <span aria-hidden="true" className="agent-composer__lock-glyph">
+            <Server size={12} />
+          </span>
+          <span className="agent-visually-hidden">Runs on:</span>
+          {executionServerName}
+          <span aria-hidden="true">·</span>
+        </>
+      )}
       <span aria-hidden="true" className="agent-composer__lock-glyph">
         {isolationGlyph(isolation)}
       </span>
@@ -119,6 +114,6 @@ function isolationGlyph(isolation: AgentTaskIsolation): ReactNode {
 }
 
 function isolationLabel(isolation: AgentTaskIsolation, remote: boolean): string {
-  if (isolation === "worktree") return "Isolated worktree";
+  if (isolation === "worktree") return "New worktree";
   return remote ? "Server checkout" : "Local checkout";
 }

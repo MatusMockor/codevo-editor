@@ -15,17 +15,52 @@ describe("settings registry", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("names the nav sections in the approved order", () => {
-    expect(SETTINGS_SECTIONS.map((section) => section.id)).toEqual([
-      "general",
-      "appearance",
-      "agents",
-      "environments",
-      "keymap",
-      "index",
-      "php",
-      "snippets",
+  it("lists the redesigned sections in mockup order with PHP kept last", () => {
+    expect(SETTINGS_SECTIONS.map((section) => [section.id, section.label])).toEqual([
+      ["general", "General"],
+      ["agents", "Providers"],
+      ["environments", "Environments"],
+      ["keymap", "Keybindings"],
+      ["index", "Index & languages"],
+      ["snippets", "Snippets"],
+      ["usage", "Usage"],
+      ["archive", "Archive"],
+      ["php", "PHP"],
     ]);
+  });
+
+  it("routes the legacy appearance section to the General palette row", () => {
+    expect(resolveSettingsRoute("appearance")).toEqual({
+      section: "general",
+      row: "appearance.palette",
+    });
+    expect(resolveSettingsRoute("usage")).toEqual({ section: "usage", row: null });
+    expect(resolveSettingsRoute("archive")).toEqual({ section: "archive", row: null });
+  });
+
+  it("files every appearance row and the new update channel row under General", () => {
+    const general = settingsRowsForSection("general").map((row) => row.id);
+    expect(general).toEqual(
+      expect.arrayContaining([
+        "appearance.palette",
+        "appearance.colorScheme",
+        "appearance.syntaxTheme",
+        "appearance.agentThreadFontSize",
+        "appearance.editorFontFamily",
+        "appearance.editorFontSize",
+        "general.appUpdates",
+        "general.updateChannel",
+        "general.statusBar",
+        "general.threadAttention",
+      ]),
+    );
+    expect(settingsRowDescriptor("general.updateChannel").title).toBe("Update track");
+    expect(settingsRowDescriptor("general.statusBar").title).toBe("Editor header items");
+    expect(settingsRowsForSection("usage").map((row) => row.id)).toEqual([
+      "usage.limits",
+      "usage.localActivity",
+    ]);
+    expect(settingsRowsForSection("archive").map((row) => row.id)).toEqual(["archive.threads"]);
   });
 
   it("gives every section at least one row and only rows of that section", () => {
@@ -43,9 +78,10 @@ describe("settings registry", () => {
     expect(SETTINGS_ROWS.every((row) => sectionIds.has(row.section))).toBe(true);
   });
 
-  it("prefixes every row id with its own section id", () => {
+  it("prefixes every row id with its own section id, keeping appearance ids under General", () => {
     for (const row of SETTINGS_ROWS) {
-      expect(row.id.startsWith(`${row.section}.`)).toBe(true);
+      const prefix = row.id.startsWith("appearance.") ? "general" : row.id.split(".")[0];
+      expect(row.section).toBe(prefix);
     }
   });
 

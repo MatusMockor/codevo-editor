@@ -64,11 +64,8 @@ describe("editor change Monaco mappings", () => {
   it("maps change and breakpoint state to stable Monaco decorations", () => {
     expect(toEditorChangeDecoration(monaco, hunks[1])).toMatchObject({
       options: {
-        glyphMarginClassName: "editor-change-glyph editor-change-glyph-added",
-        glyphMarginHoverMessage: {
-          value: "Added lines. Click to preview or revert.",
-        },
         linesDecorationsClassName: "editor-change-line editor-change-line-added",
+        linesDecorationsTooltip: "Added lines. Click to preview or revert.",
       },
       range: new FakeRange(3, 1, 4, 1),
     });
@@ -186,6 +183,22 @@ describe("editor change Monaco mappings", () => {
         hoverMessage: { value: "Logpoint — Log message: value={value}" },
       },
       range: new FakeRange(18, 11, 18, 11),
+    });
+  });
+
+  it("draws change hunks as a line-decorations bar, leaving the glyph margin to breakpoints", () => {
+    const decoration = toEditorChangeDecoration(monaco, hunks[0]);
+
+    expect(decoration.options.glyphMarginClassName).toBeUndefined();
+    expect(decoration.options.glyphMargin).toBeUndefined();
+    expect(decoration.options.linesDecorationsClassName).toBe(
+      "editor-change-line editor-change-line-modified",
+    );
+    expect(decoration.options.overviewRuler?.color).toEqual({
+      id: "editorOverviewRuler.modifiedForeground",
+    });
+    expect(toEditorChangeDecoration(monaco, hunks[1]).options.overviewRuler?.color).toEqual({
+      id: "editorOverviewRuler.addedForeground",
     });
   });
 

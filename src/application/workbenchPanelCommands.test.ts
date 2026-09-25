@@ -48,7 +48,7 @@ describe("workbenchPanelCommands", () => {
         id: "panel.showProblems",
         title: "Show Problems",
         category: "Workbench",
-        shortcut: undefined,
+        shortcut: "shortcut:panel.showProblems",
       },
       {
         id: "panel.showIndex",
@@ -122,9 +122,10 @@ describe("workbenchPanelCommands", () => {
       refreshWorkspaceTodos: vi.fn(),
     });
 
-    expect(shortcut).toHaveBeenCalledTimes(5);
+    expect(shortcut).toHaveBeenCalledTimes(6);
     expect(shortcut.mock.calls.map(([commandId]) => commandId)).toEqual([
       "commands.show",
+      "panel.showProblems",
       "panel.toggle",
       "panel.toggleTodo",
       "terminal.show",

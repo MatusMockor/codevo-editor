@@ -175,9 +175,9 @@ describe("original agent workbench with remote execution", () => {
         click(host.querySelector('[role="dialog"] button[data-provider="claudeCode"]')!);
         click(host.querySelector('[role="option"][data-value="claude-opus-5"]')!);
       }
-      click(host.querySelector('[aria-label="Run on: This computer"]')!);
+      click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
       click(
-        [...host.querySelectorAll('[role="menuitemradio"]')].find((entry) =>
+        [...document.querySelectorAll('[role="menuitemradio"]')].find((entry) =>
           entry.textContent?.includes("Linux server"),
         )!,
       );
@@ -260,13 +260,13 @@ describe("original agent workbench with remote execution", () => {
     };
     chooseProject("Server app");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull(),
+      expect(host.querySelector('[aria-label^="Workspace: Linux server,"]')).not.toBeNull(),
     );
     click(host.querySelector(`[data-thread-id="${remoteThreadId}"]`)!);
     await waitForReact(() => expect(host.textContent).toContain("First remote prompt"));
     chooseProject("app");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull(),
+      expect(host.querySelector('[aria-label^="Workspace: This computer,"]')).not.toBeNull(),
     );
     expect(railScopeTitle(host)).toContain("app");
     expect(railScopeTitle(host)).not.toContain("Server app");
@@ -340,12 +340,14 @@ describe("original agent workbench with remote execution", () => {
     const originalComposer = host.querySelector(".agent-composer");
     expect(originalSidebar).not.toBeNull();
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
-    click(host.querySelector('[aria-label="Run on: This computer"]')!);
+    click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
     await waitForReact(() =>
-      expect(host.querySelector('[role="menuitemradio"]')?.textContent).toContain("This computer"),
+      expect(document.querySelector('[role="menuitemradio"]')?.textContent).toContain(
+        "This computer",
+      ),
     );
     click(
-      Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
+      Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
         entry.textContent?.includes("Linux server"),
       )!,
     );
@@ -401,7 +403,7 @@ describe("original agent workbench with remote execution", () => {
     );
     expect(host.querySelector('[aria-label="Runs on server"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Local instruction source"]')).toBeNull();
-    expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Linux server");
     await pasteImage();
     const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
     act(() => {
@@ -445,9 +447,9 @@ describe("original agent workbench with remote execution", () => {
       ),
     ).toBe(true);
     click(host.querySelector('[aria-label="New thread in app"]')!);
-    click(host.querySelector('[aria-label="Run on: Linux server"]')!);
+    click(host.querySelector('[aria-label^="Workspace: Linux server,"]')!);
     click(
-      Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
+      Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
         entry.textContent?.includes("This computer"),
       )!,
     );
@@ -535,9 +537,9 @@ describe("original agent workbench with remote execution", () => {
           "claude-opus-5",
         );
       }
-      click(host.querySelector('[aria-label="Run on: This computer"]')!);
+      click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
       click(
-        Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
+        Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
           entry.textContent?.includes("Linux server"),
         )!,
       );
@@ -581,7 +583,7 @@ describe("original agent workbench with remote execution", () => {
       expect(host.querySelectorAll(`[data-thread-id="${newThreadId}"]`)).toHaveLength(1);
       expect(host.querySelector('aside[aria-label="Agent threads"]')).toBe(sidebar);
       expect(host.querySelector(".agent-composer")).toBe(composer);
-      expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
+      expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Linux server");
       expect(startThread).not.toHaveBeenCalled();
       expect(sendFollowUp).not.toHaveBeenCalled();
       expect(revealPath).not.toHaveBeenCalled();
@@ -612,7 +614,7 @@ describe("original agent workbench with remote execution", () => {
       ),
     );
     await waitForReact(() => expect(gateway.listProjects).toHaveBeenCalled());
-    expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label^="Workspace: This computer,"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="New thread in Server app"]')).toBeNull();
     expect(host.querySelector(".agent-composer")?.textContent).not.toContain(
       "Server threads run in an isolated worktree.",
@@ -630,16 +632,16 @@ describe("original agent workbench with remote execution", () => {
     ).toBe(true);
     expect(gateway.createTask).not.toHaveBeenCalled();
     expect(startThread).not.toHaveBeenCalled();
-    click(host.querySelector('[aria-label="Run on: This computer"]')!);
+    click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
     click(
-      Array.from(host.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
+      Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
         entry.textContent?.includes("Linux server"),
       )!,
     );
     await waitForReact(() =>
       expect(host.querySelector('[aria-label="New thread in Server app"]')).not.toBeNull(),
     );
-    expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label^="Workspace: Linux server,"]')).not.toBeNull();
     expect(
       host.querySelector<HTMLButtonElement>('.agent-composer button[type="submit"]')?.disabled,
     ).toBe(false);

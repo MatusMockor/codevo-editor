@@ -4,6 +4,7 @@ import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
 import type { AgentSurfaceHistoryProps } from "../AgentSurfaceHistory";
 import type { AgentSurfaceFileTreeProps } from "../AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "../AgentSurfaceTerminal";
+import { EditorSurfaceSlot } from "../../editorPanel/EditorSurfaceSlot";
 import { agentSurfaceBlockedReason, type AgentSurfaceScope } from "../agentSurfacePolicy";
 import { AgentDiffSurfaceContainer } from "./diff/AgentDiffSurfaceContainer";
 import { AgentFilesSurface } from "./files/AgentFilesSurface";
@@ -11,11 +12,6 @@ import { AgentGitSurfaceContainer } from "./git/AgentGitSurfaceContainer";
 import { AgentPullRequestSurfaceContainer } from "./pullRequest/AgentPullRequestSurfaceContainer";
 import { AgentScriptsSurfaceContainer } from "./scripts/AgentScriptsSurfaceContainer";
 
-export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
-
-const EDITOR_SLOT = (
-  <div className="agent-surface__editor-slot" {...{ [AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE]: "" }} />
-);
 const FilesSurface = memo(AgentFilesSurface);
 const DiffSurface = memo(AgentDiffSurfaceContainer);
 const GitSurface = memo(AgentGitSurfaceContainer);
@@ -52,13 +48,7 @@ export interface AgentRightPanelSurfaceBodyProps {
 export function AgentRightPanelSurfaceBody(props: AgentRightPanelSurfaceBodyProps) {
   switch (props.kind) {
     case "files":
-      return (
-        <FilesSurface
-          editorSlot={EDITOR_SLOT}
-          fileTree={props.fileTree}
-          treeShown={props.treeShown}
-        />
-      );
+      return <FilesSurface fileTree={props.fileTree} treeShown={props.treeShown} />;
     case "history":
       if (!props.active) return null;
       if (props.history === null) return <p className="cv-rp-note">Git history is unavailable.</p>;
@@ -91,6 +81,8 @@ export function AgentRightPanelSurfaceBody(props: AgentRightPanelSurfaceBodyProp
       return blockedOr(props, <ScriptsSurface />);
     case "pullRequest":
       return blockedOr(props, <PullRequestSurface />);
+    case "editor":
+      return <EditorSurfaceSlot />;
   }
 }
 

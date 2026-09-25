@@ -4,65 +4,87 @@ import {
   singleAppUpdateNotesSpan,
   type AppUpdateNotesSpan,
 } from "../../../domain/appUpdateNotes";
-import type { AppUpdaterState } from "../../../domain/appUpdater";
+import {
+  APP_UPDATE_CHANNELS,
+  APP_UPDATE_CHANNEL_LABELS,
+  type AppUpdateChannel,
+} from "../../../domain/appUpdateChannel";
+import { appUpdaterNoReleaseStatus, type AppUpdaterState } from "../../../domain/appUpdater";
+import { SegmentedControl } from "../../../ui/foundation/SegmentedControl";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 
 export interface GeneralAppUpdateRowsProps {
+  readonly channel: AppUpdateChannel;
   readonly updater: AppUpdaterSurface | null;
+  onChangeChannel(channel: AppUpdateChannel): void;
 }
 
-export function GeneralAppUpdateRows({ updater }: GeneralAppUpdateRowsProps) {
+const CHANNEL_OPTIONS = APP_UPDATE_CHANNELS.map((value) => ({
+  value,
+  label: APP_UPDATE_CHANNEL_LABELS[value],
+}));
+
+export function GeneralAppUpdateRows({
+  channel,
+  onChangeChannel,
+  updater,
+}: GeneralAppUpdateRowsProps) {
   return (
-    <SettingsSectionHeading title="Application updates">
-      <SettingsRow layout="stacked" rowId="general.appUpdates">
-        {updater === null ? (
-          <span className="settings-readout">Updates unavailable</span>
-        ) : (
-          <AppUpdateControl updater={updater} />
-        )}
+    <SettingsSectionHeading title="Updates">
+      {updater === null ? (
+        <SettingsRow description="Updates unavailable in this build." rowId="general.appUpdates">
+          {null}
+        </SettingsRow>
+      ) : (
+        <AppUpdateRow updater={updater} />
+      )}
+      <SettingsRow rowId="general.updateChannel">
+        <SegmentedControl
+          label="Update track"
+          onChange={onChangeChannel}
+          options={CHANNEL_OPTIONS}
+          value={channel}
+        />
       </SettingsRow>
     </SettingsSectionHeading>
   );
 }
 
-function AppUpdateControl({ updater }: { readonly updater: AppUpdaterSurface }) {
+function AppUpdateRow({ updater }: { readonly updater: AppUpdaterSurface }) {
   const presentation = appUpdaterPresentation(updater.state);
 
   return (
-    <div className="settings-update">
-      <dl className="settings-update__versions">
-        <div className="settings-update__version">
-          <dt>Current version</dt>
-          <dd className="settings-readout">{updater.state.currentVersion}</dd>
-        </div>
-        {presentation.version === null ? null : (
-          <div className="settings-update__version">
-            <dt>Available version</dt>
-            <dd className="settings-readout">{presentation.version}</dd>
-          </div>
-        )}
-      </dl>
-      <AppUpdateNotes span={presentation.notesSpan} />
-      {presentation.status === null ? null : (
-        <p
-          aria-live="polite"
-          className={`settings-update__status settings-update__status--${presentation.statusTone}`}
-        >
-          {presentation.status}
-        </p>
-      )}
-      <div className="settings-update__actions">
-        <AppUpdateAction presentation={presentation} updater={updater} />
+    <>
+      <SettingsRow
+        description={
+          <span
+            aria-live="polite"
+            className={`settings-update__status settings-update__status--${presentation.statusTone}`}
+          >
+            {appUpdateDescription(presentation)}
+          </span>
+        }
+        meta={<code className="settings-row__meta">{updater.state.currentVersion}</code>}
+        rowId="general.appUpdates"
+      >
         {presentation.skippable ? (
           <SettingsButton onClick={() => void updater.skipVersion()} variant="ghostMuted">
             Skip this version
           </SettingsButton>
         ) : null}
-      </div>
-    </div>
+        <AppUpdateAction presentation={presentation} updater={updater} />
+      </SettingsRow>
+      <AppUpdateNotes span={presentation.notesSpan} />
+    </>
   );
+}
+
+function appUpdateDescription(presentation: AppUpdaterPresentation): string {
+  if (presentation.status !== null) return presentation.status;
+  if (presentation.version === null) return "Check for a new Codevo release.";
+  return `Codevo ${presentation.version} is available.`;
 }
 
 function AppUpdateAction({
@@ -130,6 +152,14 @@ function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation 
         singleAppUpdateNotesSpan(null),
         "Codevo is up to date.",
         "success",
+      );
+    case "noRelease":
+      return presentation(
+        { action: "check" },
+        null,
+        singleAppUpdateNotesSpan(null),
+        appUpdaterNoReleaseStatus(state.channel),
+        "neutral",
       );
     case "available":
       return presentation({ action: "download" }, state.version, state.notesSpan);

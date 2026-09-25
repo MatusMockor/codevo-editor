@@ -17,11 +17,6 @@
   overflow: hidden;
 }
 
-.bottom-panel[data-active-view="terminal"] .bottom-panel-tabs {
-  flex-shrink: 1;
-  min-width: 0;
-}
-
 .bottom-panel-terminal-title {
   display: flex;
   align-items: center;

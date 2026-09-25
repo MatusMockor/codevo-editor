@@ -1,5 +1,5 @@
 import { ChevronDown, GitBranch, GitBranchPlus, Search } from "lucide-react";
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   gitBranchPickerItems,
   validateNewBranchName,
@@ -73,6 +73,12 @@ function BranchPickerBody(props: AgentGitBranchPickerProps & { onDone(): void })
   const switchBlocked = worktreeOnly || props.busy;
   const activeIndex = Math.min(active, Math.max(0, items.length - 1));
   const activeItem = items[activeIndex];
+  const activeKey = activeItem === undefined ? null : `${activeItem.kind}:${activeItem.name}`;
+  const activeOptionRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (activeKey === null) return;
+    activeOptionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, activeKey]);
   const validation = name.trim().length === 0 ? null : validateNewBranchName(name);
   const canCreate = validation?.kind === "ok" && !props.busy;
   const switchTo = (item: GitBranchPickerItem): void => {
@@ -141,6 +147,7 @@ function BranchPickerBody(props: AgentGitBranchPickerProps & { onDone(): void })
             key={`${item.kind}:${item.name}`}
             onClick={() => switchTo(item)}
             onMouseMove={() => setActive(index)}
+            ref={index === activeIndex ? activeOptionRef : undefined}
             role="option"
             title={props.switchDisabledReason ?? item.name}
           >

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppSettings, SettingsSection, WorkspaceSettings } from "../../domain/settings";
+import { TopBar } from "../../ui/shell/TopBar";
+import { SettingsPageActions } from "./SettingsPageActions";
 import { SettingsSearchInput } from "./SettingsSearchInput";
 import { SettingsSearchResults } from "./SettingsSearchResults";
 import { SettingsSectionSidebar } from "./SettingsSectionSidebar";
@@ -7,6 +9,7 @@ import { SettingsPageHost } from "./settingsPages";
 import type { SettingsEnvironment, SettingsSaveInput } from "./settingsPageProps";
 import {
   resolveSettingsRoute,
+  settingsSectionDescriptor,
   type SettingsRowId,
   type SettingsSectionId,
 } from "./settingsRegistry";
@@ -129,22 +132,36 @@ export function WorkbenchSettingsScreen({
         }
         searching={search.searching}
       />
-      <div
-        aria-labelledby={settingsSectionTabId(section)}
-        className="settings-screen__page"
-        data-settings-page-scroll=""
-        id={SETTINGS_PANEL_ID}
-        role="tabpanel"
-      >
-        <div className="settings-screen__inner">
-          <h1 className="settings-screen__title" ref={headingRef} tabIndex={-1}>
-            Settings
+      <main className="settings-main">
+        <TopBar
+          label="Settings"
+          region="main"
+          trailing={
+            <SettingsPageActions actions={actions} draft={draft} env={env} section={section} />
+          }
+        >
+          <h1 className="settings-crumb" ref={headingRef} tabIndex={-1}>
+            <span className="settings-crumb__parent">Settings</span>
+            <span aria-hidden="true" className="settings-crumb__sep">
+              /
+            </span>
+            <span className="settings-crumb__here">{settingsSectionDescriptor(section).label}</span>
           </h1>
-          <SettingsTargetContext.Provider value={target}>
-            <SettingsPageHost actions={actions} draft={draft} env={env} section={section} />
-          </SettingsTargetContext.Provider>
+        </TopBar>
+        <div
+          aria-labelledby={settingsSectionTabId(section)}
+          className="settings-screen__page"
+          data-settings-page-scroll=""
+          id={SETTINGS_PANEL_ID}
+          role="tabpanel"
+        >
+          <div className="settings-screen__inner">
+            <SettingsTargetContext.Provider value={target}>
+              <SettingsPageHost actions={actions} draft={draft} env={env} section={section} />
+            </SettingsTargetContext.Provider>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

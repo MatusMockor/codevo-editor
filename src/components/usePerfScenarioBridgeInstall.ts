@@ -45,14 +45,14 @@ export function usePerfScenarioBridgeInstall(
 
   usePerfAutorunInstall();
 
-  const agentWorkbench = host.agentWorkbench;
+  const agentLayoutMode = host.agentWorkbench?.effectiveLayout ?? null;
+  const agentLayoutDispatch = host.agentWorkbench?.dispatch ?? null;
   useEffect(() => {
-    // The QA bridge belongs to EditorSurface. A fresh agent-only profile has
-    // never mounted it, so autorun cannot open its first fixture through it.
-    if (perfAutorunEnabled() && agentWorkbench?.effectiveLayout === "agent") {
-      agentWorkbench.dispatch({ kind: "expandEditor" });
+    if (perfAutorunEnabled() && agentLayoutMode === "agent" && agentLayoutDispatch !== null) {
+      agentLayoutDispatch({ kind: "openSurface", surface: "editor" });
+      agentLayoutDispatch({ kind: "maximizeRightPanel" });
     }
-  }, [agentWorkbench]);
+  }, [agentLayoutDispatch, agentLayoutMode]);
 
   useEffect(() => {
     hostRef.current = host;

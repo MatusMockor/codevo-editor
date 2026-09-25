@@ -19,22 +19,36 @@ import {
   workbenchComposition,
 } from "./workbenchComposition";
 
-const updaterBridge = vi.hoisted(() => ({
-  invoke: vi.fn(),
-  check: vi.fn(),
-  relaunch: vi.fn(),
-}));
+const updaterBridge = vi.hoisted(() => {
+  const construct = vi.fn();
+  return {
+    invoke: vi.fn(),
+    construct,
+    Update: vi.fn(function (metadata: unknown) {
+      return construct(metadata);
+    }),
+    relaunch: vi.fn(),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
   invoke: updaterBridge.invoke,
 }));
-vi.mock("@tauri-apps/plugin-updater", () => ({ check: updaterBridge.check }));
+vi.mock("@tauri-apps/plugin-updater", () => ({ Update: updaterBridge.Update }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: updaterBridge.relaunch }));
 
 describe("workbench live-document runtime composition", () => {
-  it("uses the native install mode to prepare an update without restarting", async () => {
-    updaterBridge.invoke.mockResolvedValueOnce("prepareBeforeRestart");
+  it("checks the selected channel through Rust and prepares an update without restarting", async () => {
+    updaterBridge.invoke.mockResolvedValueOnce("prepareBeforeRestart").mockResolvedValueOnce({
+      kind: "available",
+      rid: 4,
+      currentVersion: packageMetadata.version,
+      version: "9.0.0",
+      date: null,
+      body: null,
+      rawJson: { version: "9.0.0" },
+    });
     const update = {
       currentVersion: packageMetadata.version,
       version: "9.0.0",
@@ -42,10 +56,20 @@ describe("workbench live-document runtime composition", () => {
       install: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
     };
-    updaterBridge.check.mockResolvedValueOnce(update);
+    updaterBridge.construct.mockReturnValueOnce(update);
     const gateway = createWorkbenchComposition().appUpdater.appUpdaterGateway;
-    const result = await gateway.check();
-    if (result.kind !== "available") throw new Error("Expected update");
+    const result = await gateway.check("stable");
+    expect(result.kind).toBe("available");
+    if (result.kind !== "available") return;
+    expect(updaterBridge.invoke).toHaveBeenCalledWith("app_update_check", {
+      request: { channel: "stable" },
+    });
+    expect(updaterBridge.construct).toHaveBeenCalledWith({
+      rid: 4,
+      currentVersion: packageMetadata.version,
+      version: "9.0.0",
+      rawJson: { version: "9.0.0" },
+    });
     await expect(gateway.download(result.candidate.candidateRevision)).resolves.toBe(
       "readyToRestart",
     );

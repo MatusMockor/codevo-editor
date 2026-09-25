@@ -39,6 +39,7 @@ describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -54,6 +55,8 @@ describe("settings defaults", () => {
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
@@ -157,6 +160,13 @@ describe("settings defaults", () => {
     expect(
       normalizeAppSettings({ appUpdaterSkippedVersion: "x".repeat(65) }).appUpdaterSkippedVersion,
     ).toBeNull();
+  });
+
+  it("persists the update channel and repairs an unknown value", () => {
+    expect(defaultAppSettings().appUpdateChannel).toBe("beta");
+    expect(normalizeAppSettings({ appUpdateChannel: "stable" }).appUpdateChannel).toBe("stable");
+    expect(normalizeAppSettings({ appUpdateChannel: "nightly" }).appUpdateChannel).toBe("beta");
+    expect(normalizeAppSettings({}).appUpdateChannel).toBe("beta");
   });
 });
 
@@ -295,6 +305,7 @@ describe("normalizeAppSettings", () => {
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -310,6 +321,8 @@ describe("normalizeAppSettings", () => {
       minimapEnabled: false,
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
@@ -332,6 +345,7 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -350,6 +364,8 @@ describe("normalizeAppSettings", () => {
       minimapEnabled: true,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "suspendOnBackground",
       terminalShellIntegrationEnabled: false,
       appearance: { palette: "graphite-teal", colorScheme: "light", syntaxTheme: "matchPalette" },
@@ -364,6 +380,7 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -379,6 +396,8 @@ describe("normalizeAppSettings", () => {
       minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: { palette: "graphite-teal", colorScheme: "dark", syntaxTheme: "ayuMirage" },
@@ -442,6 +461,7 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -457,6 +477,8 @@ describe("normalizeAppSettings", () => {
       minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
@@ -500,6 +522,7 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -515,6 +538,8 @@ describe("normalizeAppSettings", () => {
       minimapEnabled: false,
       recentWorkspacePath: "/project/api",
       recentWorkspacePaths: ["/project/api"],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
@@ -528,6 +553,21 @@ describe("normalizeAppSettings", () => {
     expect(
       normalizeAppSettings({ recentWorkspacePath: "/legacy/project" }).recentWorkspacePaths,
     ).toEqual(["/legacy/project"]);
+  });
+
+  it("normalizes the last clone parent and recent workspace opened-at records", () => {
+    const normalized = normalizeAppSettings({
+      lastCloneParentPath: "/Users/dev/src/",
+      recentWorkspaceOpenedAt: { "/project": 42, relative: 7, "/negative": -1 },
+    });
+    expect(normalized.lastCloneParentPath).toBe("/Users/dev/src");
+    expect(normalized.recentWorkspaceOpenedAt).toEqual({ "/project": 42 });
+    const repaired = normalizeAppSettings({
+      lastCloneParentPath: "relative",
+      recentWorkspaceOpenedAt: "x",
+    });
+    expect(repaired.lastCloneParentPath).toBeNull();
+    expect(repaired.recentWorkspaceOpenedAt).toEqual({});
   });
 
   it("defensively normalizes malformed recent workspace paths", () => {
@@ -1345,7 +1385,6 @@ describe("normalizeWorkspaceSession", () => {
 
     expect(normalized.version).toBe(WORKSPACE_SESSION_VERSION);
     expect(normalized.agentWorkbench).toEqual({
-      layout: "agent",
       rightPanel: "open",
       openSurfaces: ["diff"],
       activeSurface: "diff",
@@ -1401,7 +1440,6 @@ describe("normalizeWorkspaceSession", () => {
     });
 
     expect(normalized.agentWorkbench).toEqual({
-      layout: "agent",
       rightPanel: "open",
       openSurfaces: ["files", "terminal"],
       activeSurface: "terminal",
@@ -1462,7 +1500,6 @@ describe("normalizeWorkspaceSession", () => {
     });
 
     expect(normalized.agentWorkbench).toEqual({
-      layout: "agent",
       rightPanel: "closed",
       openSurfaces: ["files", "terminal"],
       activeSurface: "terminal",

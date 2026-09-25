@@ -1061,7 +1061,7 @@ describe("useAgentThreads ship and editor wiring", () => {
     if (changed === undefined) return;
     await act(() => harness.hook().openChangedFile(stored.threadId, changed));
     expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
-    expect(harness.editor.openSurface).toHaveBeenCalledWith("files");
+    expect(harness.editor.openSurface).toHaveBeenCalledWith("editor");
     harness.unmount();
   });
 });

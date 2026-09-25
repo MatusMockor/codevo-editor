@@ -1,6 +1,10 @@
 import { useMemo } from "react";
 import { projectGitCommitPort } from "../../../../application/rightPanel/projectGitCommitPort";
 import { useAgentGitSurface } from "../../../../application/rightPanel/useAgentGitSurface";
+import {
+  STATUS_REVISION_COALESCE_MS,
+  useCoalescedValue,
+} from "../../../../application/rightPanel/useCoalescedValue";
 import { gitSurfaceStatusValue } from "../../../../application/rightPanel/useGitSurfaceStatus";
 import type { GitLineStat, GitUnpushedCommit } from "../../../../domain/gitSurfaceStatus";
 import { useNowMs } from "../../../../ui/foundation/useNowMs";
@@ -25,6 +29,10 @@ export function AgentGitSurfaceContainer() {
   const git = chrome?.gateways.git ?? null;
   const hasTarget = target !== null;
   const nowMs = useNowMs();
+  const statusRevision = useCoalescedValue(
+    chrome?.statusRevision ?? 0,
+    STATUS_REVISION_COALESCE_MS,
+  );
   const port = useMemo(() => {
     if (git === null || !hasTarget) return null;
     if (threadId === null) {
@@ -41,6 +49,7 @@ export function AgentGitSurfaceContainer() {
     lineStats: status?.lineStats ?? NO_LINE_STATS,
     port,
     threadTitle: thread === null ? null : agentThreadDisplayTitle(thread.thread),
+    revision: statusRevision,
     onCommitted: gitStatus.refresh,
   });
   const refreshAll = (): void => {

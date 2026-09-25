@@ -53,6 +53,10 @@ export const CODEX_MODEL_CHOICES = [
 ] as const;
 export type CodexModelChoice = (typeof CODEX_MODEL_CHOICES)[number];
 
+export const CODEX_NEW_MODEL_CHOICES: ReadonlySet<CodexModelChoice> = new Set(["gpt-6-astra"]);
+
+export const CLAUDE_NEW_MODEL_IDS: ReadonlySet<string> = new Set(["claude-fable-5-1"]);
+
 export const CODEX_EXECUTION_MODES = [
   "default",
   "readOnly",

@@ -37,7 +37,7 @@ describe("workbench Copy Value composition", () => {
       "utf8",
     );
     const debugPanel = readFileSync(
-      new URL("../components/DebugPanel.tsx", import.meta.url),
+      new URL("../components/debug/DebugSectionsRegion.tsx", import.meta.url),
       "utf8",
     );
     const bridge = readFileSync(
@@ -85,7 +85,7 @@ describe("workbench Copy Value composition", () => {
     expect(controller).not.toContain("DebugCopyValueCommandBridge");
     expect(controller).not.toContain("debugCopyValueBind");
     expect(app).not.toContain("DebugCopyValueCandidate");
-    expect(appPanels).toContain("const debugPanel = usePrivateDebugPanelElement(");
+    expect(appPanels).toContain("const regions = usePrivateDebugRegions(");
     expect(appPanels).toContain("debugPanelProps,");
     expect(orchestration.match(/clipboard: debugTextClipboard,/gu)).toHaveLength(1);
     expect(orchestration).not.toContain("useDebugCopyValueComposition({");

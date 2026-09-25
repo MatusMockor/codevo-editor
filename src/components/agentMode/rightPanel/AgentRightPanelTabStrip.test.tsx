@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { useState } from "react";
+import { act, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
 import {
@@ -13,7 +13,10 @@ import {
   AgentRightPanelTabStrip,
   type AgentRightPanelTabStripProps,
 } from "./AgentRightPanelTabStrip";
-import { agentRightPanelTabEntries } from "./agentRightPanelTabEntries";
+import {
+  agentRightPanelTabEntries,
+  type AgentRightPanelEditorDocuments,
+} from "./agentRightPanelTabEntries";
 
 let ui: MountedUi | null = null;
 
@@ -233,19 +236,27 @@ describe("AgentRightPanelTabStrip", () => {
   it("links tabs to rendered surface panels only", () => {
     const editorDocuments = {
       documents: [
-        { documentId: "doc-1", title: "app.ts", path: "/w/app.ts", dirty: false, preview: false },
+        {
+          documentId: "doc-1",
+          title: "app.ts",
+          path: "/w/app.ts",
+          dirty: false,
+          preview: false,
+          gitStatus: null,
+        },
       ],
       activeDocumentId: "doc-1",
       surfaceActive: true,
       onActivate: vi.fn(),
       onClose: vi.fn(),
       onOpenFile: vi.fn(),
+      onPin: vi.fn(),
     };
     const withPanels = mount(
       props({
         editorDocuments,
         entries: agentRightPanelTabEntries({
-          openSurfaces: ["diff"],
+          openSurfaces: ["diff", "editor"],
           activeSurface: "diff",
           terminal: null,
           editorDocuments,
@@ -255,7 +266,9 @@ describe("AgentRightPanelTabStrip", () => {
     expect(tabTitled(withPanels, "Diff")?.getAttribute("aria-controls")).toBe(
       "agent-surface-panel-diff",
     );
-    expect(tabTitled(withPanels, "app.ts")?.hasAttribute("aria-controls")).toBe(false);
+    expect(tabTitled(withPanels, "app.ts")?.getAttribute("aria-controls")).toBe(
+      "agent-surface-panel-editor",
+    );
     ui?.unmount();
 
     const withoutPanels = mount(props({ tabPanelsRendered: false }));
@@ -294,10 +307,78 @@ describe("AgentRightPanelTabStrip", () => {
           onActivate: vi.fn(),
           onClose: vi.fn(),
           onOpenFile,
+          onPin: vi.fn(),
         },
       }),
     );
     click(host.querySelector('[aria-label="Open file"]') as Element);
     expect(onOpenFile).toHaveBeenCalledOnce();
+  });
+
+  it("shows editor tab git badges and pins a preview tab on double click", () => {
+    const onPin = vi.fn();
+    const editorDocuments: AgentRightPanelEditorDocuments = {
+      documents: [
+        {
+          documentId: "/w/a.ts",
+          title: "a.ts",
+          path: "/w/a.ts",
+          dirty: false,
+          preview: false,
+          gitStatus: "untracked",
+        },
+        {
+          documentId: "/w/b.ts",
+          title: "b.ts",
+          path: "/w/b.ts",
+          dirty: false,
+          preview: true,
+          gitStatus: "deleted",
+        },
+        {
+          documentId: "/w/c.ts",
+          title: "c.ts",
+          path: "/w/c.ts",
+          dirty: false,
+          preview: false,
+          gitStatus: null,
+        },
+      ],
+      activeDocumentId: "/w/a.ts",
+      surfaceActive: true,
+      onActivate: vi.fn(),
+      onClose: vi.fn(),
+      onOpenFile: vi.fn(),
+      onPin,
+    };
+    const host = mount(
+      props({
+        editorDocuments,
+        entries: agentRightPanelTabEntries({
+          openSurfaces: ["diff", "editor"],
+          activeSurface: "editor",
+          terminal: null,
+          editorDocuments,
+        }),
+      }),
+    );
+
+    const untracked = tabTitled(host, "a.ts")?.querySelector(".cv-tab__badge");
+    expect(untracked?.textContent).toBe("U");
+    expect(untracked?.getAttribute("aria-label")).toBe("Untracked");
+    expect(untracked?.classList.contains("cv-tab__badge--ok")).toBe(true);
+    expect(
+      tabTitled(host, "b.ts")
+        ?.querySelector(".cv-tab__badge")
+        ?.classList.contains("cv-tab__badge--danger"),
+    ).toBe(true);
+    expect(tabTitled(host, "c.ts")?.querySelector(".cv-tab__badge")).toBeNull();
+
+    act(() => {
+      tabTitled(host, "b.ts")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      tabTitled(host, "Diff")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(onPin).toHaveBeenCalledTimes(1);
+    expect(onPin).toHaveBeenCalledWith("/w/b.ts");
   });
 });

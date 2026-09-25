@@ -1,7 +1,9 @@
 import "./agentRemoteDraftProjectChooser.css";
+import "../projects/projectBanners.css";
 import { Plus } from "lucide-react";
 import { useId } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { Button } from "../../ui/foundation/Button";
 
 export function AgentRemoteDraftProjectChooser({
   projects,
@@ -22,11 +24,11 @@ export function AgentRemoteDraftProjectChooser({
   );
   return (
     <section
-      className="agent-session__body agent-session__body--empty agent-remote-project-choice"
+      className="agent-session__body agent-session__body--empty cv-no-projects agent-remote-project-choice"
       aria-label="Choose server project"
     >
-      <h2 className="agent-empty__title">Choose a project on this server</h2>
-      <p className="agent-empty__text">
+      <h2 className="cv-no-projects__title">Choose a project on this server</h2>
+      <p className="cv-no-projects__text">
         Choose where this thread should run. Then add your images and send your message.
       </p>
       {available.length > 0 ? (
@@ -54,23 +56,27 @@ export function AgentRemoteDraftProjectChooser({
           </select>
         </>
       ) : (
-        <p className="agent-empty__text">No available projects were found on this server.</p>
+        <p className="cv-no-projects__text">No available projects were found on this server.</p>
       )}
       {onAddProject !== undefined && (
-        <button className="agent-remote-project-choice__add" onClick={onAddProject} type="button">
-          <Plus aria-hidden="true" size={15} />
+        <Button
+          className="agent-remote-project-choice__add"
+          icon={<Plus size={14} />}
+          onClick={onAddProject}
+          variant="primary"
+        >
           Add project or clone repository
-        </button>
+        </Button>
       )}
       {cloneRunning && (
-        <p className="agent-empty__text" role="status">
+        <p className="cv-no-projects__text" role="status">
           Clone running. Thread unlocks when ready.
         </p>
       )}
       {onOpenSettings !== undefined && (
-        <button type="button" className="agent-linkbutton" onClick={onOpenSettings}>
+        <Button onClick={onOpenSettings} size="sm" variant="ghost">
           Manage server projects
-        </button>
+        </Button>
       )}
     </section>
   );

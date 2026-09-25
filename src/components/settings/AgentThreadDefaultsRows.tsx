@@ -64,7 +64,7 @@ export function AgentThreadDefaultsRows({
   ];
 
   return (
-    <SettingsSectionHeading title="Defaults for new threads">
+    <SettingsSectionHeading title="New threads">
       <SettingsRow rowId="agents.defaultProvider">
         <SettingsSelect
           disabled={enabledProviders.length === 0}

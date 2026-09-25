@@ -142,8 +142,7 @@ export function useAgentWorkbenchLayout(
       return;
     }
 
-    const restoredLayout = parseAgentWorkbenchLayout(hydration.layout);
-    const layout: AgentWorkbenchLayout = { ...restoredLayout, layout: "agent" };
+    const layout: AgentWorkbenchLayout = parseAgentWorkbenchLayout(hydration.layout);
     const persistedBottomPanel = parsePersistedAgentBottomPanel(hydration.layout);
     setOwned((current) => {
       if (current.ownerKey !== owned.ownerKey || current.generation !== owned.generation) {
@@ -158,9 +157,7 @@ export function useAgentWorkbenchLayout(
     });
   }, [hydration, owned]);
 
-  const effectiveLayout: AgentWorkbenchLayoutMode = agentLayoutAvailable
-    ? owned.layout.layout
-    : "editor-expanded";
+  const effectiveLayout: AgentWorkbenchLayoutMode = agentLayoutAvailable ? "agent" : "editor-only";
   const agentLayoutActive = effectiveLayout === "agent";
 
   useEffect(() => {

@@ -3,14 +3,13 @@ import {
   type EditorHtmlPreviewEnvironment,
 } from "./EditorGroupHtmlPreview";
 import { memo, useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import type { EditorGroup, EditorGroupId } from "../domain/editorGroups";
 import { visibleEditorPaths, type EditorDocument, type ImageTab } from "../domain/workspace";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { TabDropPosition } from "../domain/tabOrdering";
 import { EditorTabs } from "./EditorTabs";
 import { getTabId, getTabPanelId } from "./tabIds";
-import { useWorkbenchEditorTabsPortalTarget } from "./workbenchEditorTabsPortalContext";
+import { EditorGroupOpenEditorsSwitcher } from "./editorPanel/EditorGroupOpenEditorsSwitcher";
 import { useWorkbenchFrameEditorReport } from "./workbenchFrameEditorReport";
 
 export type EditorGroupDocument = EditorDocument | ImageTab | MarkdownPreviewTab;
@@ -38,6 +37,7 @@ export interface EditorGroupViewProps {
     position: TabDropPosition,
   ): void;
   renderContent(surface: EditorGroupSurface, groupId: EditorGroupId): ReactNode;
+  tabsPlacement: "inline" | "strip";
 }
 
 export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupViewProps) {
@@ -55,6 +55,7 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
     onPinTab,
     onReorderTab,
     renderContent,
+    tabsPlacement,
   } = props;
   const byPath = new Map(documents.map((document) => [document.path, document]));
   const groupDocuments = visibleEditorPaths(group.openPaths, group.previewPath).flatMap((path) => {
@@ -63,7 +64,9 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
   });
   const activeDocument = group.activePath ? byPath.get(group.activePath) : undefined;
   const groupElementRef = useRef<HTMLElement | null>(null);
-  const editorTabsPortalTarget = useWorkbenchEditorTabsPortalTarget();
+  const tabsInline = tabsPlacement === "inline" || !active;
+  const activeTabId =
+    activeDocument && group.activePath ? getTabId(group.activePath, groupId) : undefined;
   useWorkbenchFrameEditorReport(documents.length === 0);
   const surface: EditorGroupSurface =
     activeDocument && group.activePath
@@ -109,13 +112,21 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
         minWidth: 0,
       }}
     >
-      {active && editorTabsPortalTarget !== null
-        ? createPortal(tabs, editorTabsPortalTarget)
-        : tabs}
+      {tabsInline ? (
+        tabs
+      ) : (
+        <EditorGroupOpenEditorsSwitcher
+          activePath={group.activePath}
+          documents={groupDocuments}
+          groupElementRef={groupElementRef}
+          groupId={groupId}
+          onActivate={(path) => onActivateTab(groupId, path)}
+          projectId={projectId}
+        />
+      )}
       <div
-        aria-labelledby={
-          activeDocument && group.activePath ? getTabId(group.activePath, groupId) : undefined
-        }
+        aria-label={tabsInline ? undefined : activeDocument?.name}
+        aria-labelledby={tabsInline ? activeTabId : undefined}
         className="editor-panel"
         id={
           activeDocument && group.activePath ? getTabPanelId(group.activePath, groupId) : undefined
@@ -150,6 +161,7 @@ function editorGroupViewPropsEqual(
 ): boolean {
   if (
     previous.active !== next.active ||
+    previous.tabsPlacement !== next.tabsPlacement ||
     previous.htmlPreview !== next.htmlPreview ||
     (previous.documents.length === 0) !== (next.documents.length === 0) ||
     previous.contentRevision !== next.contentRevision ||

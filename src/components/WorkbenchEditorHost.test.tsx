@@ -66,6 +66,7 @@ describe("WorkbenchEditorHost", () => {
     act(() => {
       root.render(
         <WorkbenchEditorHost
+          activeTabsInStrip={false}
           {...stableProps}
           contentRevisionForGroup={(groupId) =>
             groupId === "active" ? initialActiveRevision : inactiveRevision
@@ -82,6 +83,7 @@ describe("WorkbenchEditorHost", () => {
     act(() => {
       root.render(
         <WorkbenchEditorHost
+          activeTabsInStrip={false}
           {...stableProps}
           contentRevisionForGroup={(groupId) =>
             groupId === "active" ? nextActiveRevision : inactiveRevision
@@ -103,6 +105,7 @@ describe("WorkbenchEditorHost", () => {
     act(() => {
       root.render(
         <WorkbenchEditorHost
+          activeTabsInStrip={false}
           {...props}
           documentSessionAuthorityRevision={revision}
           onActiveLiveDocumentBindingChange={onBinding}
@@ -152,6 +155,7 @@ describe("WorkbenchEditorHost", () => {
     act(() => {
       root.render(
         <WorkbenchEditorHost
+          activeTabsInStrip={false}
           {...stableProps}
           contentRevisionForGroup={(groupId) =>
             groupId === "active" ? activeRevision : initialInactiveRevision
@@ -168,6 +172,7 @@ describe("WorkbenchEditorHost", () => {
     act(() => {
       root.render(
         <WorkbenchEditorHost
+          activeTabsInStrip={false}
           {...stableProps}
           contentRevisionForGroup={(groupId) =>
             groupId === "active" ? activeRevision : nextInactiveRevision
@@ -201,6 +206,7 @@ describe("WorkbenchEditorHost", () => {
       act(() => {
         root.render(
           <WorkbenchEditorHost
+            activeTabsInStrip={false}
             {...stableProps}
             documents={documents}
             renderContent={renderContent}
@@ -254,6 +260,7 @@ describe("WorkbenchEditorHost", () => {
       act(() => {
         root.render(
           <WorkbenchEditorHost
+            activeTabsInStrip={false}
             {...stableProps}
             documents={documents}
             renderContent={renderContent}
@@ -315,6 +322,7 @@ describe("WorkbenchEditorHost", () => {
       act(() => {
         root.render(
           <WorkbenchEditorHost
+            activeTabsInStrip={false}
             {...stableProps}
             documents={[document]}
             editorSessionOwnerKey={createEditorSessionOwnerKey(workspaceId, "/workspace")}

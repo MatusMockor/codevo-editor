@@ -9,11 +9,13 @@ import { useLocalProjectClone, type LocalProjectCloneSession } from "./useLocalP
 const input = { url: "https://github.com/team/repo.git", name: "repo", parentPath: "/projects" };
 const running = (
   cloneId: string,
-): Extract<LocalProjectCloneSnapshot, { status: "running" | "completed" }> => ({
+): Extract<LocalProjectCloneSnapshot, { status: "running" }> & { progress: null } => ({
   cloneId,
   status: "running",
   path: "/projects/repo",
   error: null,
+  progress: null,
+  failure: null,
 });
 function setup(start?: LocalProjectCloneGateway["start"], session?: LocalProjectCloneSession) {
   const gateway: LocalProjectCloneGateway = {
@@ -158,6 +160,8 @@ describe("local clone ownership", () => {
         status: "failed",
         path: null,
         error: "clone failed",
+        progress: null,
+        failure: "other",
       };
     });
     await act(async () => {
@@ -208,6 +212,8 @@ describe("local clone ownership", () => {
       status: "cancelled",
       path: null,
       error: null,
+      progress: null,
+      failure: null,
     }));
     await act(async () => {
       await s.result.current.start(input);
@@ -225,6 +231,43 @@ describe("local clone ownership", () => {
     expect(s.result.current.job?.status).toBe("cancelled");
     expect(s.onReady).not.toHaveBeenCalled();
   });
+  it("retry resends ensureParent and branch and exposes the repository source", async () => {
+    const s = setup(async (request) => ({
+      cloneId: request.idempotencyKey,
+      status: "failed",
+      path: null,
+      error: "Cloning failed.",
+      progress: null,
+      failure: "network",
+    }));
+    await act(async () => {
+      await s.result.current.start({ ...input, branch: "dev", ensureParent: true });
+    });
+    expect(s.result.current.source).toEqual({ host: "github.com", path: "team/repo" });
+    await act(async () => {
+      s.result.current.retry();
+    });
+    const calls = vi.mocked(s.gateway.start).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1][0]).toMatchObject({ branch: "dev", ensureParent: true, url: input.url });
+    expect(calls[1][0].idempotencyKey).not.toBe(calls[0][0].idempotencyKey);
+    expect(s.result.current.source).toEqual({ host: "github.com", path: "team/repo" });
+    await act(async () => {
+      s.result.current.dismiss();
+    });
+    expect(s.result.current.source).toBeNull();
+  });
+
+  it("restores the repository source with a retained session", async () => {
+    const session: LocalProjectCloneSession = { current: null };
+    const s = setup(undefined, session);
+    await act(async () => {
+      await s.result.current.start(input);
+    });
+    s.rerender({ identity: "a", mountKey: "remount" });
+    expect(s.result.current.source).toEqual({ host: "github.com", path: "team/repo" });
+  });
+
   it("does not notify after unmount and rejects unsafe inputs before invoking gateway", async () => {
     const s = setup();
     await act(async () => {

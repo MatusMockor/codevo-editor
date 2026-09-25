@@ -188,7 +188,6 @@ describe("agent mode token contract", () => {
       "--agent-rail-track",
       "--agent-rail-width",
       "--agent-rail-collapsed-width",
-      "--agent-surface-tree-width",
       "--agent-surface-header-height",
     ]) {
       expect(frameDefined.has(token), token).toBe(true);
@@ -445,15 +444,11 @@ describe("agent mode token contract", () => {
 
   it("stamps the agent surfaces with the codevo sans stack", () => {
     const stamp = tokenRules.find((rule) =>
-      selectorParts(rule.selector).includes(".agent-usage-layer"),
+      selectorParts(rule.selector).includes(".agent-surface-host"),
     );
     const fontFamily = stamp?.declarations.find((entry) => entry.property === "font-family");
 
-    expect(selectorParts(stamp?.selector ?? "")).toEqual([
-      ".agent-mode",
-      ".agent-surface-host",
-      ".agent-usage-layer",
-    ]);
+    expect(selectorParts(stamp?.selector ?? "")).toEqual([".agent-mode", ".agent-surface-host"]);
     expect(fontFamily?.value).toBe("var(--codevo-sans)");
   });
 });

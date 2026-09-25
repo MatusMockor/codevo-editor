@@ -3,6 +3,7 @@ import { cx } from "./classNames";
 import "./panels.css";
 
 export type ResizeEdge = "start" | "end";
+export type ResizeAxis = "x" | "y";
 
 export interface ResizeHandleProps {
   readonly label: string;
@@ -10,13 +11,14 @@ export interface ResizeHandleProps {
   readonly min: number;
   readonly max: number;
   readonly edge: ResizeEdge;
+  readonly axis?: ResizeAxis;
   readonly step?: number;
   onChange(value: number): void;
   onCommit?(value: number): void;
 }
 
 interface DragState {
-  readonly originX: number;
+  readonly origin: number;
   readonly originValue: number;
   last: number;
 }
@@ -24,6 +26,7 @@ interface DragState {
 const DIRECTION: Readonly<Record<ResizeEdge, number>> = { start: -1, end: 1 };
 
 export function ResizeHandle({
+  axis = "x",
   edge,
   label,
   max,
@@ -47,13 +50,15 @@ export function ResizeHandle({
     event.preventDefault();
     const target = event.currentTarget;
     if (typeof target.setPointerCapture === "function") target.setPointerCapture(event.pointerId);
-    dragRef.current = { originX: event.clientX, originValue: value, last: value };
+    dragRef.current = { origin: pointerCoordinate(axis, event), originValue: value, last: value };
     setDragging(true);
   };
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
     const drag = dragRef.current;
     if (drag === null) return;
-    drag.last = apply(drag.originValue + (event.clientX - drag.originX) * direction);
+    drag.last = apply(
+      drag.originValue + (pointerCoordinate(axis, event) - drag.origin) * direction,
+    );
   };
   const finishDrag = (): void => {
     const drag = dragRef.current;
@@ -63,20 +68,26 @@ export function ResizeHandle({
     onCommit?.(drag.last);
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const next = keyboardValue(event.key, value, min, max, step * direction * -1);
+    const next = keyboardValue(axisKey(axis, event.key), value, min, max, step * direction * -1);
     if (next === null) return;
     event.preventDefault();
-    onCommit?.(apply(next));
+    const committed = apply(next);
+    onCommit?.(committed);
   };
 
   return (
     <div
       aria-label={label}
-      aria-orientation="vertical"
+      aria-orientation={axis === "y" ? "horizontal" : "vertical"}
       aria-valuemax={max}
       aria-valuemin={min}
       aria-valuenow={value}
-      className={cx("cv-resize", `cv-resize--${edge}`, dragging && "cv-resize--active")}
+      className={cx(
+        "cv-resize",
+        `cv-resize--${edge}`,
+        axis === "y" && "cv-resize--y",
+        dragging && "cv-resize--active",
+      )}
       onKeyDown={handleKeyDown}
       onPointerCancel={finishDrag}
       onPointerDown={handlePointerDown}
@@ -86,6 +97,18 @@ export function ResizeHandle({
       tabIndex={0}
     />
   );
+}
+
+function pointerCoordinate(axis: ResizeAxis, event: PointerEvent<HTMLDivElement>): number {
+  return axis === "y" ? event.clientY : event.clientX;
+}
+
+function axisKey(axis: ResizeAxis, key: string): string {
+  if (axis === "x") return key;
+  if (key === "ArrowUp") return "ArrowLeft";
+  if (key === "ArrowDown") return "ArrowRight";
+  if (key === "ArrowLeft" || key === "ArrowRight") return "";
+  return key;
 }
 
 function keyboardValue(

@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { CHECKOUT_REPOSITORY_PAGE_SIZE, CHECKOUT_SEARCH_QUERY_LIMIT } from "./agentCheckoutSearch";
-import "./agentCheckoutSearch.css";
 
 interface SearchInputProps {
   readonly subject?: "repositories" | "branches";

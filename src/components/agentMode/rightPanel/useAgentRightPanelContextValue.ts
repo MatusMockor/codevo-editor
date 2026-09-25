@@ -1,6 +1,10 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentThreadView } from "../../../application/agentThreadPorts";
 import type { AgentThreadScripts } from "../../../application/useAgentThreadScripts";
+import {
+  STATUS_REVISION_COALESCE_MS,
+  useCoalescedValue,
+} from "../../../application/rightPanel/useCoalescedValue";
 import { useGitSurfaceStatus } from "../../../application/rightPanel/useGitSurfaceStatus";
 import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
 import {
@@ -56,9 +60,14 @@ export function useAgentRightPanelContextValue(
     if (scope.kind !== "repository") return null;
     return { repositoryRoot: scope.repositoryRoot, worktreePath: null };
   }, [available, scope, thread]);
+  const statusRevision = useCoalescedValue(
+    chrome.rightPanel?.statusRevision ?? 0,
+    STATUS_REVISION_COALESCE_MS,
+  );
   const gitStatus = useGitSurfaceStatus({
     gateway: chrome.rightPanel?.gateways.surfaceStatus ?? null,
     target,
+    revision: statusRevision,
     enabled:
       !input.hidden &&
       chrome.workspaceTrusted &&

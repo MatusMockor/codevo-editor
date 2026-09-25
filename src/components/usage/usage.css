@@ -1,0 +1,212 @@
+.cv-usage-limits {
+  display: grid;
+  align-items: center;
+  margin-top: 10px;
+  column-gap: var(--cv-space-6);
+  grid-template-columns: minmax(0, 176px) minmax(48px, 1fr) auto;
+  row-gap: var(--cv-space-2);
+}
+
+.cv-usage-limits[data-compact="true"] {
+  margin-top: var(--cv-space-1);
+  column-gap: var(--cv-space-5);
+  row-gap: 0;
+}
+
+.cv-usage-limits__label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  font-size: var(--cv-t-xs);
+  gap: var(--cv-space-4);
+}
+
+.cv-usage-limits__name {
+  overflow: hidden;
+  color: var(--cv-fg-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-usage-limits__value {
+  margin-left: auto;
+  color: var(--cv-fg-strong);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cv-usage-bar {
+  position: relative;
+  height: 24px;
+  border-radius: var(--cv-r-pill);
+}
+
+.cv-usage-bar::before {
+  position: absolute;
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-s4);
+  content: "";
+  inset: 9px 0;
+}
+
+.cv-usage-bar:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-focus);
+}
+
+.cv-usage-bar__fill {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  max-width: 100%;
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-accent-fill);
+}
+
+.cv-usage-bar__fill[data-hot="true"] {
+  background: var(--cv-danger);
+}
+
+.cv-usage-bar__pace {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: var(--cv-fg-muted);
+  transform: translateX(-50%);
+}
+
+.cv-usage-limits__reset {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  font-variant-numeric: tabular-nums;
+  gap: var(--cv-space-3);
+  white-space: nowrap;
+}
+
+.cv-usage-limits__more {
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  grid-column: 1 / -1;
+}
+
+.cv-usage-totals {
+  display: grid;
+  gap: var(--cv-space-7);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cv-usage-totals__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cv-space-1);
+}
+
+.cv-usage-totals__key {
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
+.cv-usage-totals__value {
+  color: var(--cv-fg-strong);
+  font-size: var(--cv-t-title);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 28px;
+}
+
+.cv-usage-provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-usage-provider-row > * {
+  width: 96px;
+  text-align: right;
+}
+
+.cv-usage-provider-row > strong {
+  width: 72px;
+  color: var(--cv-fg-strong);
+  font-size: var(--cv-t-md);
+  font-weight: 500;
+}
+
+.settings-usage-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-page-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cv-space-3);
+}
+
+.settings-empty {
+  margin: 0;
+  padding: var(--cv-space-5) var(--cv-space-6);
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-md);
+}
+
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cv-space-8);
+}
+
+.settings-stack:focus-visible {
+  outline: none;
+}
+
+.agent-usage-notice {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--cv-space-2);
+}
+
+.agent-usage-notice__title {
+  display: flex;
+  align-items: center;
+  color: var(--cv-fg-strong);
+  font-weight: 500;
+  gap: var(--cv-space-4);
+}
+
+.agent-usage-notice__summary {
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  font-weight: 400;
+}
+
+.agent-usage-notice__provider {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cv-space-2);
+}
+
+.cv-usage-projects > * + * {
+  box-shadow: var(--cv-edge-top-hair);
+}
+
+.cv-usage-projects__more {
+  padding: var(--cv-space-3) var(--cv-space-6);
+}
+
+.cv-usage-refresh-error {
+  color: var(--cv-danger);
+}

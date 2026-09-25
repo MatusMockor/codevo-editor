@@ -57,6 +57,7 @@ export interface UseAgentGitSurfaceOptions {
   readonly lineStats: ReadonlyArray<GitLineStat>;
   readonly port: AgentGitCommitPort | null;
   readonly threadTitle: string | null;
+  readonly revision?: unknown;
   onCommitted(): void;
 }
 
@@ -73,7 +74,7 @@ interface KeyedChanges {
 const STATUS_FAILURE = "Git status is unavailable.";
 
 export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGitSurfaceState {
-  const { lineStats, ownerKey, rootPath, threadTitle } = options;
+  const { lineStats, ownerKey, revision, rootPath, threadTitle } = options;
   const [changes, setChanges] = useState<KeyedChanges>({ key: null, files: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,7 +126,7 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
         setLoading(false);
       },
     );
-  }, [gitRef, nonce, rootPath, statusKey]);
+  }, [gitRef, nonce, revision, rootPath, statusKey]);
 
   useEffect(
     () => () => {

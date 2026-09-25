@@ -22,7 +22,7 @@ export function recordedLayoutState(
   return {
     actions,
     layout: state,
-    effectiveLayout: effectiveLayout ?? state.layout,
+    effectiveLayout: effectiveLayout ?? "agent",
     persistedBottomPanel,
     dispatch: (action) => {
       actions.push(action);

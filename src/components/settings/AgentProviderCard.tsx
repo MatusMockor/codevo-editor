@@ -6,8 +6,19 @@ import type {
   CodexTransportSettings,
   AgentProviderPreference,
 } from "../../domain/agentProviderSettings";
-import { normalizeAgentCliPath, type AgentCliKind } from "../../domain/agentSettings";
+import {
+  normalizeAgentCliPath,
+  type AgentCliKind,
+  type AgentModelFavoriteKey,
+} from "../../domain/agentSettings";
+import { useAgentClaudeModelCatalog } from "../agentMode/useAgentClaudeModelCatalog";
+import { agentModelRows } from "../agentMode/agentLaunchPresentation";
+import {
+  configuredProviderModel,
+  configuredProviderVersion,
+} from "../agentMode/agentModelProviderState";
 import { AgentProviderGlyph } from "../agentMode/AgentProviderGlyph";
+import { AgentProviderModelsList } from "./AgentProviderModelsList";
 import { CodexTransportControls } from "./CodexTransportControls";
 import { AgentProviderCardDetails } from "./AgentProviderCardDetails";
 import { AgentProviderUpdatePopover } from "./AgentProviderUpdatePopover";
@@ -40,6 +51,7 @@ export interface AgentProviderSignInCardControl {
 }
 
 export interface AgentProviderCardProps {
+  readonly favoriteKeys: ReadonlySet<string>;
   readonly management: AgentProviderManagementSurface;
   readonly nowEpochMs: number;
   readonly path: string | null;
@@ -52,9 +64,11 @@ export interface AgentProviderCardProps {
   onChangePath(value: string | null): void;
   onCopyInstallCommand(command: string): void;
   onResetProvider(): void;
+  onToggleFavorite(key: AgentModelFavoriteKey): void;
 }
 
 export function AgentProviderCard({
+  favoriteKeys,
   management,
   nowEpochMs,
   onSaveCodexTransport,
@@ -62,6 +76,7 @@ export function AgentProviderCard({
   onChangePath,
   onCopyInstallCommand,
   onResetProvider,
+  onToggleFavorite,
   path,
   preference,
   provider,
@@ -73,6 +88,7 @@ export function AgentProviderCard({
   const [updateOpen, setUpdateOpen] = useState(false);
   const updateAnchorRef = useRef<HTMLButtonElement | null>(null);
   const elementRef = useSettingsRowTarget(rowId);
+  const catalog = useAgentClaudeModelCatalog();
 
   const label = providerLabel(provider);
   const view = management.providers[provider];
@@ -102,6 +118,7 @@ export function AgentProviderCard({
     available?.installer ?? null,
   );
   const version = providerVersionLabel(view.health);
+  const tone = providerStatusTone(enabled, view);
   const invalidPath = pathDraft.trim() !== "" && normalizeAgentCliPath(pathDraft) === null;
 
   useEffect(() => setPathDraft(path ?? ""), [path]);
@@ -131,20 +148,8 @@ export function AgentProviderCard({
       <div className="settings-provider__head">
         <div className="settings-provider__body">
           <div className="settings-provider__line">
-            <span
-              className="settings-provider__glyph"
-              data-tone={providerStatusTone(enabled, view)}
-            >
+            <span className="settings-provider__glyph" data-tone={tone}>
               <AgentProviderGlyph decorative kind={provider} />
-              {providerStatusTone(enabled, view) === "checking" ? (
-                <LoaderCircle
-                  aria-hidden="true"
-                  className="settings-provider__dot settings-spin"
-                  size={9}
-                />
-              ) : (
-                <i aria-hidden="true" className="settings-provider__dot" />
-              )}
             </span>
             <h3 className="settings-provider__name">{label}</h3>
             {version === null ? null : (
@@ -182,6 +187,16 @@ export function AgentProviderCard({
             className="settings-provider__desc"
             title={headlineTitle ?? undefined}
           >
+            {tone === "checking" ? (
+              <LoaderCircle
+                aria-hidden="true"
+                className="settings-provider__dot settings-spin"
+                data-tone={tone}
+                size={10}
+              />
+            ) : (
+              <span aria-hidden="true" className="settings-provider__dot" data-tone={tone} />
+            )}
             {providerHeadline(view, enabled)}
           </p>
           {headlineTitle === null ? null : (
@@ -230,6 +245,7 @@ export function AgentProviderCard({
               {signingIn ? "Signing in…" : "Sign in"}
             </button>
           )}
+          <SettingsSwitch checked={enabled} label={`Enable ${label}`} onChange={onChangeEnabled} />
           <span className="settings-provider__chevron">
             <SettingsButton
               expanded={expanded}
@@ -241,7 +257,6 @@ export function AgentProviderCard({
               <ChevronDown aria-hidden="true" size={14} />
             </SettingsButton>
           </span>
-          <SettingsSwitch checked={enabled} label={`Enable ${label}`} onChange={onChangeEnabled} />
         </div>
       </div>
 
@@ -262,6 +277,18 @@ export function AgentProviderCard({
           enabled={enabled}
           intervalSeconds={preference.healthCheckIntervalSeconds}
           invalidPath={invalidPath}
+          models={
+            <AgentProviderModelsList
+              favoriteKeys={favoriteKeys}
+              onToggleFavorite={onToggleFavorite}
+              rows={agentModelRows(
+                provider,
+                configuredProviderModel(management, provider),
+                configuredProviderVersion(management, provider),
+                catalog,
+              )}
+            />
+          }
           nowEpochMs={nowEpochMs}
           onChangePathDraft={setPathDraft}
           onCommitPath={commitPath}

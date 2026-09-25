@@ -24,12 +24,21 @@ const start = vi.fn(async (request: { idempotencyKey: string; name: string }) =>
     status: completeImmediately ? ("completed" as const) : ("running" as const),
     path: `/work/${request.name}`,
     error: null,
+    progress: null,
+    failure: null,
   };
   jobs.set(snapshot.cloneId, snapshot);
   return snapshot;
 });
 const cancel = vi.fn(async ({ cloneId }: { cloneId: string }) => {
-  const snapshot = { cloneId, status: "cancelled" as const, path: null, error: null };
+  const snapshot = {
+    cloneId,
+    status: "cancelled" as const,
+    path: null,
+    error: null,
+    progress: null,
+    failure: null,
+  };
   jobs.set(cloneId, snapshot);
   return snapshot;
 });
@@ -244,5 +253,5 @@ it("does not carry an opening failure into a new clone reusing the same lane", a
     current.activateCompleted();
   });
   expect(addProject).toHaveBeenCalledTimes(2);
-  expect(addProject).toHaveBeenLastCalledWith("/work/two");
+  expect(addProject).toHaveBeenLastCalledWith("/work/two", { trust: "prompt" });
 });

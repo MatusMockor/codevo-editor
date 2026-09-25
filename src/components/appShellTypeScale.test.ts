@@ -31,11 +31,11 @@ describe("appShellTypeScaleStyle", () => {
 
   it("preserves the layout variables it is composed onto", () => {
     const style = appShellTypeScaleStyle(20, {
-      "--sidebar-width": "300px",
+      "--bottom-panel-height": "300px",
     } as Record<string, string>);
 
     expect(style).toEqual({
-      "--sidebar-width": "300px",
+      "--bottom-panel-height": "300px",
       "--codevo-fs-scale": "1.333",
     });
   });

@@ -111,6 +111,21 @@ describe("AgentProviderRailFooter", () => {
     expect(openUsage).toHaveBeenCalledTimes(1);
   });
 
+  it("opens Settings > Usage from the usage button instead of a popover", () => {
+    render(management());
+
+    const usage = button("Open Usage");
+    expect(usage.title).toBe("Settings > Usage");
+    expect(usage.hasAttribute("aria-expanded")).toBe(false);
+    expect(usage.hasAttribute("aria-controls")).toBe(false);
+  });
+
+  it("hides the usage button when no usage destination is wired", () => {
+    render(management(), vi.fn(), vi.fn(), null);
+
+    expect(host.querySelector('button[aria-label="Open Usage"]')).toBeNull();
+  });
+
   it("offers an available update and blocks it while a provider turn is live", () => {
     const surface = management();
     render(surface);
@@ -504,7 +519,7 @@ describe("AgentProviderRailFooter", () => {
     surface: AgentProviderManagementSurface,
     onOpenSettings = vi.fn(),
     onOpenSourceControl = vi.fn(),
-    onOpenUsage = vi.fn(),
+    onOpenUsage: (() => void) | null = vi.fn(),
   ): void {
     act(() =>
       root.render(
@@ -512,12 +527,11 @@ describe("AgentProviderRailFooter", () => {
           management={surface}
           onOpenSourceControl={onOpenSourceControl}
           onOpenSettings={onOpenSettings}
-          onOpenUsage={onOpenUsage}
+          onOpenUsage={onOpenUsage ?? undefined}
           providerEnabled={{
             claudeCode: true,
             codex: surface.authority("codex")?.preference.enabled ?? false,
           }}
-          usageOpen={false}
         />,
       ),
     );

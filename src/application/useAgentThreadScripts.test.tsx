@@ -256,6 +256,55 @@ describe("useAgentThreadScripts", () => {
     expect(surface().outcomes.get("hello")).toEqual({ kind: "exited", exitCode: 0 });
   });
 
+  it("records the exit of a run that started and settled within one render", () => {
+    const idle = runnerWith([script("hello", "hello", "")]);
+    const current = target({ isolation: "in-place" });
+    render({ runner: idle, target: current });
+    act(() => {
+      surface().runScript("hello");
+    });
+
+    render({
+      runner: settled(idle, "hello", "run-fast", { kind: "exited", exitCode: 2 }),
+      target: current,
+    });
+
+    expect(surface().outcomes.get("hello")).toEqual({ kind: "exited", exitCode: 2 });
+    expect(surface().run).toEqual({ kind: "idle" });
+  });
+
+  it("does not claim the previous run's exit as the outcome of a new run", () => {
+    const idle = runnerWith([script("hello", "hello", "")]);
+    const current = target({ isolation: "in-place" });
+    const before = settled(idle, "hello", "run-old", { kind: "exited", exitCode: 7 });
+    render({ runner: before, target: current });
+    act(() => {
+      surface().runScript("hello");
+    });
+    render({ runner: before, target: current });
+
+    expect(surface().outcomes.has("hello")).toBe(false);
+  });
+
+  it("drops the run intent once its run ends without an outcome", () => {
+    const idle = runnerWith([script("hello", "hello", "")]);
+    const current = target({ isolation: "in-place" });
+    render({ runner: idle, target: current });
+    act(() => {
+      surface().runScript("hello");
+    });
+    const running = runnerWith(idle.scripts, {
+      active: { runId: "run-1", scriptName: "hello", manifestRelativePath: "package.json" },
+      run: idle.run,
+      stop: idle.stop,
+    });
+    render({ runner: running, target: current });
+    render({ runner: idle, target: current });
+    render({ runner: settled(idle, "hello", "run-1"), target: current });
+
+    expect(surface().outcomes.has("hello")).toBe(false);
+  });
+
   it("ignores the exit of a script started elsewhere", () => {
     const foreign = runnerWith([script("hello", "hello", "")], {
       active: { runId: "run-9", scriptName: "hello", manifestRelativePath: "package.json" },

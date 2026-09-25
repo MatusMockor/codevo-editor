@@ -44,6 +44,7 @@
   --cv-ring-hair: inset 0 0 0 1px var(--cv-hair);
   --cv-ring-hair-strong: inset 0 0 0 1px var(--cv-hair-strong);
   --cv-ring-focus: inset 0 0 0 1px var(--cv-focus), 0 0 0 3px var(--cv-accent-soft);
+  --cv-ring-selected: inset 0 0 0 1.5px var(--cv-accent);
   --cv-ring-danger: inset 0 0 0 1px var(--cv-danger);
   --cv-ring-canvas: 0 0 0 1.5px var(--cv-canvas);
   --cv-edge-top-hair: inset 0 1px 0 var(--cv-hair);

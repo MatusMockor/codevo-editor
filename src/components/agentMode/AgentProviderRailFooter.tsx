@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AgentProviderManagementSurface,
   AgentProviderManagementView,
@@ -32,12 +32,10 @@ export const AGENT_PROVIDER_UPDATED_PILL_MS = 6000;
 export interface AgentProviderRailFooterProps {
   readonly management: AgentProviderManagementSurface;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
-  readonly usageButtonRef?: Ref<HTMLButtonElement>;
-  readonly usageOpen: boolean;
   readonly activity?: ReactNode;
   onOpenSourceControl(): void;
   onOpenSettings(): void;
-  onOpenUsage(): void;
+  onOpenUsage?(): void;
 }
 
 const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
@@ -49,8 +47,6 @@ export function AgentProviderRailFooter({
   onOpenSettings,
   onOpenUsage,
   providerEnabled,
-  usageButtonRef,
-  usageOpen,
 }: AgentProviderRailFooterProps) {
   const enabled = PROVIDERS.filter((provider) => providerEnabled[provider]);
   const [refreshing, setRefreshing] = useState(false);
@@ -106,18 +102,17 @@ export function AgentProviderRailFooter({
         >
           <GitBranch aria-hidden="true" size={16} />
         </button>
-        <button
-          aria-controls={usageOpen ? "agent-usage-panel-dialog" : undefined}
-          aria-expanded={usageOpen}
-          aria-label="Open Usage"
-          className="agent-iconbutton"
-          onClick={onOpenUsage}
-          ref={usageButtonRef}
-          title="Usage"
-          type="button"
-        >
-          <BarChart3 aria-hidden="true" size={16} />
-        </button>
+        {onOpenUsage === undefined ? null : (
+          <button
+            aria-label="Open Usage"
+            className="agent-iconbutton"
+            onClick={onOpenUsage}
+            title="Settings > Usage"
+            type="button"
+          >
+            <BarChart3 aria-hidden="true" size={16} />
+          </button>
+        )}
         <button
           aria-busy={refreshing}
           aria-label="Check CLI updates"

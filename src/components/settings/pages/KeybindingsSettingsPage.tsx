@@ -6,10 +6,10 @@ import {
   type KeymapCommandId,
   type KeymapPlatform,
 } from "../../../domain/keymap";
-import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 import type { SettingsPageProps } from "../settingsPageProps";
-import { KeybindingsTable } from "./KeybindingsTable";
+import { useSettingsRowTarget } from "../settingsTargetContext";
+import { KeybindingsList } from "./KeybindingsList";
 import { keybindingCategories, keybindingCountLabel } from "./keybindingsPresentation";
 
 export interface KeybindingsSettingsPageProps extends SettingsPageProps {
@@ -25,6 +25,7 @@ export function KeybindingsSettingsPage({
   const [detectedPlatform] = useState(() => platform ?? detectKeymapPlatform());
   const resolvedPlatform = platform ?? detectedPlatform;
   const keymap = draft.appSettings.keymap;
+  const bindingsRef = useSettingsRowTarget("keymap.bindings");
 
   const categories = useMemo(
     () => keybindingCategories(keymap, resolvedPlatform, filter),
@@ -56,11 +57,12 @@ export function KeybindingsSettingsPage({
           </span>
         </>
       }
+      bare
       title="Keybindings"
     >
-      <SettingsRow layout="stacked" rowId="keymap.bindings">
-        <KeybindingsTable categories={categories} onChangeShortcut={changeShortcut} />
-      </SettingsRow>
+      <div data-settings-row="keymap.bindings" ref={bindingsRef} tabIndex={-1}>
+        <KeybindingsList categories={categories} onChangeShortcut={changeShortcut} />
+      </div>
     </SettingsSectionHeading>
   );
 }

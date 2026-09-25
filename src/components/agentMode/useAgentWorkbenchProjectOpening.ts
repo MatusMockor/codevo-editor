@@ -5,8 +5,11 @@ import type { LocalProjectCloneGateway } from "../../application/ports/localProj
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
+import type { RecentFolderEntry } from "../../domain/recentFolders";
 import type {
   AgentAddedProjectReceipt,
+  AgentAddProjectTrustMode,
+  AgentCloneDestinationPreference,
   AgentWorkbenchAddProjectChrome,
 } from "./agentWorkbenchChrome";
 import type { AgentWorkbenchScreenWorkbench } from "./AgentWorkbenchScreen";
@@ -27,6 +30,9 @@ export function useAgentWorkbenchProjectOpening({
   openWorkspaceRootWithReceipt,
   navigationSession,
   addProjectPending,
+  deferOpenedProjectTrust,
+  cloneDestination,
+  recentFolders,
 }: {
   readonly directoryListingGateway: DirectoryListingGateway;
   readonly cloneGateway?: LocalProjectCloneGateway | null;
@@ -36,6 +42,9 @@ export function useAgentWorkbenchProjectOpening({
   readonly openWorkspaceRootWithReceipt: AgentWorkbenchScreenWorkbench["openWorkspaceRootWithReceipt"];
   readonly navigationSession: AgentNavigationSession;
   readonly addProjectPending: RefObject<AgentPendingProjectOpen | null>;
+  readonly deferOpenedProjectTrust?: (rootPath: string) => () => void;
+  readonly cloneDestination?: AgentCloneDestinationPreference;
+  readonly recentFolders?: readonly RecentFolderEntry[];
 }): AgentWorkbenchAddProjectChrome {
   const [addedProjectReceipt, setAddedProjectReceipt] = useState<AgentAddedProjectReceipt | null>(
     null,
@@ -78,7 +87,11 @@ export function useAgentWorkbenchProjectOpening({
       receipt: addedProjectReceipt,
       cancelSelection: cancelAddSelection,
       consumeSelection: consumeAddSelection,
-      addProject: async (path: string) => {
+      cloneDestination,
+      recentFolders,
+      addProject: async (path: string, options?: Readonly<{ trust: AgentAddProjectTrustMode }>) => {
+        const cancelDeferral =
+          options?.trust === "prompt" ? deferOpenedProjectTrust?.(path) : undefined;
         const epoch = ++addSelectionEpoch.current;
         addProjectPending.current = { epoch, rootPath: path };
         navigationSession.current = {
@@ -90,18 +103,22 @@ export function useAgentWorkbenchProjectOpening({
         const clearPending = () => {
           if (addProjectPending.current?.epoch === epoch) addProjectPending.current = null;
         };
+        const abandon = () => {
+          cancelDeferral?.();
+          clearPending();
+        };
         const { outcome, isCurrent } = await openWorkspaceRootWithReceipt(path).catch(
           (error: unknown) => {
-            clearPending();
+            abandon();
             throw error;
           },
         );
         if (outcome.kind !== "opened") {
-          clearPending();
+          abandon();
           throw new Error(ADD_PROJECT_REFUSED_REASON);
         }
         if (outcome.receipt.kind !== "registeredWorkspaceOpenReceipt") {
-          clearPending();
+          abandon();
           throw new Error(ADD_PROJECT_REFUSED_REASON);
         }
         const receipt = {
@@ -134,6 +151,9 @@ export function useAgentWorkbenchProjectOpening({
       remoteCloneSession,
       creationSession,
       openWorkspaceRootWithReceipt,
+      deferOpenedProjectTrust,
+      cloneDestination,
+      recentFolders,
     ],
   );
 }

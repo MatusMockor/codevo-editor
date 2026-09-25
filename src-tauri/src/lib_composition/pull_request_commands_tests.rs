@@ -410,12 +410,17 @@ fn environment_value(command: &Command, key: &str) -> Option<String> {
 }
 
 #[test]
-fn passes_only_allowlisted_forge_credentials_to_the_forge_cli() {
+fn passes_each_forge_cli_only_its_own_credentials() {
     let root = scratch("forge-env");
     let environment: ForgeEnvironment = Arc::new(|key| match key {
         "GH_TOKEN" => Some("gh-secret".into()),
+        "GITHUB_TOKEN" => Some("github-secret".into()),
+        "GH_HOST" => Some("github.example.com".into()),
+        "GH_ENTERPRISE_TOKEN" => Some("ghe-secret".into()),
         "GITLAB_TOKEN" => Some("glab-secret".into()),
         "GLAB_HOST" => Some("gitlab.example.com".into()),
+        "GITLAB_HOST" => Some("gitlab.internal.example.com".into()),
+        "GITLAB_ACCESS_TOKEN" => Some("gitlab-access-secret".into()),
         "AWS_SECRET_ACCESS_KEY" => Some("aws-secret".into()),
         _ => None,
     });
@@ -432,21 +437,36 @@ fn passes_only_allowlisted_forge_credentials_to_the_forge_cli() {
         .forge_command(ForgeKind::Gitlab, &["auth".to_string()], &root)
         .expect("forge command");
 
+    let github_expected = [
+        ("GH_TOKEN", "gh-secret"),
+        ("GITHUB_TOKEN", "github-secret"),
+        ("GH_HOST", "github.example.com"),
+        ("GH_ENTERPRISE_TOKEN", "ghe-secret"),
+    ];
+    let gitlab_expected = [
+        ("GITLAB_TOKEN", "glab-secret"),
+        ("GLAB_HOST", "gitlab.example.com"),
+        ("GITLAB_HOST", "gitlab.internal.example.com"),
+        ("GITLAB_ACCESS_TOKEN", "gitlab-access-secret"),
+    ];
+    for (key, value) in github_expected {
+        assert_eq!(
+            environment_value(&github, key).as_deref(),
+            Some(value),
+            "{key}"
+        );
+        assert_eq!(environment_value(&gitlab, key), None, "{key}");
+    }
+    for (key, value) in gitlab_expected {
+        assert_eq!(
+            environment_value(&gitlab, key).as_deref(),
+            Some(value),
+            "{key}"
+        );
+        assert_eq!(environment_value(&github, key), None, "{key}");
+    }
     for command in [&github, &gitlab] {
-        assert_eq!(
-            environment_value(command, "GH_TOKEN").as_deref(),
-            Some("gh-secret")
-        );
-        assert_eq!(
-            environment_value(command, "GITLAB_TOKEN").as_deref(),
-            Some("glab-secret")
-        );
-        assert_eq!(
-            environment_value(command, "GLAB_HOST").as_deref(),
-            Some("gitlab.example.com")
-        );
         assert_eq!(environment_value(command, "AWS_SECRET_ACCESS_KEY"), None);
-        assert_eq!(environment_value(command, "GITHUB_TOKEN"), None);
     }
     let _ = fs::remove_dir_all(&root);
 }
@@ -460,7 +480,10 @@ fn keeps_forge_credentials_out_of_the_shared_process_plan() {
         "/usr/bin:/bin",
     );
 
-    for key in FORGE_CREDENTIAL_ENVIRONMENT {
+    for key in forge_credential_environment(ForgeKind::Github)
+        .iter()
+        .chain(forge_credential_environment(ForgeKind::Gitlab))
+    {
         assert_eq!(environment_value(&command, key), None, "{key}");
     }
 }

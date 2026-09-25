@@ -565,6 +565,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "time",
  "tokio",
  "tree-sitter",
  "tree-sitter-php",

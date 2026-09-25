@@ -1,3 +1,4 @@
+import { parseAgentWorktreeBase, type AgentWorktreeBase } from "../domain/agentWorktreeBase";
 import {
   parseAgentWorktreeReceipt,
   parseBranchWorktreeReceipt,
@@ -39,13 +40,17 @@ export async function invokeAddGitWorktreeIpc(
   invokeCommand: InvokeGitWorktreeCommand,
   repositoryRoot: string,
   taskId: string,
+  base: AgentWorktreeBase,
 ): Promise<AgentWorktreeReceipt> {
   const validatedRepositoryRoot = validateGitWorktreeRepositoryRoot(repositoryRoot);
   const validatedTaskId = validateAgentWorktreeTaskId(taskId);
+  const validatedBase = parseAgentWorktreeBase(base);
+  if (validatedBase === null) throw new TypeError("Invalid Git worktree base.");
   return parseAgentWorktreeReceipt(
     await invokeCommand(ADD_GIT_WORKTREE_IPC_COMMAND, {
       repositoryRoot: validatedRepositoryRoot,
       taskId: validatedTaskId,
+      base: validatedBase,
     }),
   );
 }

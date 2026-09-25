@@ -7,6 +7,7 @@ export const AGENT_SURFACE_KINDS = [
   "scripts",
   "pullRequest",
   "agents",
+  "editor",
 ] as const;
 export type AgentSurfaceKind = (typeof AGENT_SURFACE_KINDS)[number];
 
@@ -21,7 +22,7 @@ export function isAgentTransientSurfaceKind(kind: AgentSurfaceKind): boolean {
 
 export const MAX_AGENT_OPEN_SURFACES = AGENT_SURFACE_KINDS.length;
 
-export const AGENT_WORKBENCH_LAYOUT_MODES = ["agent", "editor-expanded"] as const;
+export const AGENT_WORKBENCH_LAYOUT_MODES = ["agent", "editor-only"] as const;
 export type AgentWorkbenchLayoutMode = (typeof AGENT_WORKBENCH_LAYOUT_MODES)[number];
 
 export const MIN_AGENT_RIGHT_PANEL_WIDTH = 360;
@@ -43,7 +44,6 @@ export const AGENT_RAIL_STATES = ["expanded", "collapsed"] as const;
 export type AgentRailState = (typeof AGENT_RAIL_STATES)[number];
 
 export interface AgentWorkbenchLayout {
-  readonly layout: AgentWorkbenchLayoutMode;
   readonly rightPanel: AgentRightPanelState;
   readonly openSurfaces: ReadonlyArray<AgentSurfaceKind>;
   readonly activeSurface: AgentSurfaceKind | null;
@@ -67,9 +67,6 @@ export type AgentWorkbenchLayoutAction =
   | { readonly kind: "toggleMaximized" }
   | { readonly kind: "maximizeRightPanel" }
   | { readonly kind: "toggleRail" }
-  | { readonly kind: "expandEditor" }
-  | { readonly kind: "collapseEditor" }
-  | { readonly kind: "toggleEditorExpanded" }
   | { readonly kind: "resizeRail"; readonly width: number }
   | { readonly kind: "resizeRightPanel"; readonly width: number }
   | { readonly kind: "resizeBottomPanel"; readonly height: number };
@@ -82,7 +79,6 @@ const CLOSED_RIGHT_PANEL = {
 } as const satisfies Partial<AgentWorkbenchLayout>;
 
 export const initialAgentWorkbenchLayout: AgentWorkbenchLayout = {
-  layout: "agent",
   ...CLOSED_RIGHT_PANEL,
   openSurfaces: NO_SURFACES,
   activeSurface: null,
@@ -102,10 +98,6 @@ export function isAgentRightPanelState(value: unknown): value is AgentRightPanel
 
 export function isAgentRailState(value: unknown): value is AgentRailState {
   return (AGENT_RAIL_STATES as ReadonlyArray<string>).includes(value as string);
-}
-
-export function isAgentWorkbenchLayoutMode(value: unknown): value is AgentWorkbenchLayoutMode {
-  return (AGENT_WORKBENCH_LAYOUT_MODES as ReadonlyArray<string>).includes(value as string);
 }
 
 export function clampAgentRightPanelWidth(width: number): number {
@@ -151,12 +143,6 @@ export function agentWorkbenchLayoutReducer(
       return maximizeRightPanel(state);
     case "toggleRail":
       return { ...state, rail: state.rail === "expanded" ? "collapsed" : "expanded" };
-    case "expandEditor":
-      return expandEditor(state);
-    case "collapseEditor":
-      return collapseEditor(state);
-    case "toggleEditorExpanded":
-      return state.layout === "editor-expanded" ? collapseEditor(state) : expandEditor(state);
     case "resizeRail":
       return resizeRail(state, action.width);
     case "resizeRightPanel":
@@ -173,17 +159,12 @@ export function parseAgentWorkbenchLayout(value: unknown): AgentWorkbenchLayout 
     return initialAgentWorkbenchLayout;
   }
 
-  const layout = isAgentWorkbenchLayoutMode(value.layout)
-    ? value.layout
-    : initialAgentWorkbenchLayout.layout;
   const openSurfaces = parseOpenSurfaces(value);
   const activeSurface = parseActiveSurface(value, openSurfaces);
-  const rightPanel =
-    layout === "editor-expanded" ? "closed" : parseRightPanel(value.rightPanel, openSurfaces);
+  const rightPanel = parseRightPanel(value.rightPanel, openSurfaces);
   const rightPanelMaximized = value.rightPanelMaximized === true && rightPanel === "open";
 
   return {
-    layout,
     rightPanel,
     openSurfaces,
     activeSurface,
@@ -203,7 +184,6 @@ export function serializeAgentWorkbenchLayout(
   const openSurfaces = state.openSurfaces.filter((kind) => !isAgentTransientSurfaceKind(kind));
   const activeSurface = persistedActiveSurface(state.activeSurface, openSurfaces);
   return {
-    layout: state.layout,
     rightPanel: state.rightPanel,
     openSurfaces,
     activeSurface,
@@ -230,7 +210,6 @@ export function agentWorkbenchLayoutsEqual(
   right: AgentWorkbenchLayout,
 ): boolean {
   return (
-    left.layout === right.layout &&
     left.rightPanel === right.rightPanel &&
     surfacesEqual(left.openSurfaces, right.openSurfaces) &&
     left.activeSurface === right.activeSurface &&
@@ -251,13 +230,12 @@ export function agentWorkbenchLayoutSnapshotsEqual(
 
 function openSurface(state: AgentWorkbenchLayout, surface: AgentSurfaceKind): AgentWorkbenchLayout {
   const alreadyOpen = state.openSurfaces.includes(surface);
-  if (state.layout === "agent" && state.rightPanel === "open" && alreadyOpen) {
+  if (state.rightPanel === "open" && alreadyOpen) {
     return state.activeSurface === surface ? state : { ...state, activeSurface: surface };
   }
 
   return {
     ...state,
-    layout: "agent",
     rightPanel: "open",
     openSurfaces: alreadyOpen ? state.openSurfaces : [...state.openSurfaces, surface],
     activeSurface: surface,
@@ -289,13 +267,11 @@ function closeSurfaceTab(
 }
 
 function showSurfaceChooser(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
-  const shown =
-    state.layout === "agent" && state.rightPanel === "open" && state.activeSurface === null;
+  const shown = state.rightPanel === "open" && state.activeSurface === null;
   if (shown && !state.rightPanelMaximized) return state;
 
   return {
     ...state,
-    layout: "agent",
     rightPanel: "open",
     activeSurface: null,
     rightPanelMaximized: false,
@@ -303,20 +279,19 @@ function showSurfaceChooser(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
 }
 
 function openRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
-  if (state.layout === "agent" && state.rightPanel === "open") return state;
+  if (state.rightPanel === "open") return state;
   const activeSurface = state.activeSurface ?? state.openSurfaces[0] ?? null;
-  return { ...state, layout: "agent", rightPanel: "open", activeSurface };
+  return { ...state, rightPanel: "open", activeSurface };
 }
 
 function toggleRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
-  if (state.layout === "editor-expanded") return collapseEditor(state);
   if (state.rightPanel === "open") return { ...state, ...CLOSED_RIGHT_PANEL };
   return openRightPanel(state);
 }
 
 function toggleMaximized(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
   const opened = openRightPanel(state);
-  if (state.layout === "agent" && state.rightPanel === "open") {
+  if (state.rightPanel === "open") {
     return { ...opened, rightPanelMaximized: !state.rightPanelMaximized };
   }
 
@@ -327,16 +302,6 @@ function maximizeRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
   const opened = openRightPanel(state);
   if (opened === state && state.rightPanelMaximized) return state;
   return { ...opened, rightPanelMaximized: true };
-}
-
-function expandEditor(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
-  if (state.layout === "editor-expanded") return state;
-  return { ...state, layout: "editor-expanded", ...CLOSED_RIGHT_PANEL };
-}
-
-function collapseEditor(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
-  if (state.layout === "agent") return state;
-  return openRightPanel(state);
 }
 
 function resizeRail(state: AgentWorkbenchLayout, width: number): AgentWorkbenchLayout {

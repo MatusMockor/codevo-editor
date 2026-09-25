@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appUpdaterNoReleaseStatus,
   appUpdateToastGroupKey,
   appUpdateToastTitle,
   isSkippedAppUpdateVersion,
@@ -114,6 +115,31 @@ describe("app updater reducer", () => {
     expect(normalizeAppUpdaterSkippedVersion("0.2.0\nignored")).toBeNull();
     expect(isSkippedAppUpdateVersion(candidate, "0.2.0")).toBe(true);
     expect(isSkippedAppUpdateVersion(candidate, "0.3.0")).toBe(false);
+  });
+});
+
+describe("missing channel release", () => {
+  it("settles into a distinct no-release state that is neither up to date nor a failure", () => {
+    const checking = reduceAppUpdaterState(initialAppUpdaterState("0.1.0"), {
+      kind: "checkStarted",
+      generation: 5,
+    });
+    const settled = reduceAppUpdaterState(checking, {
+      kind: "checkSettled",
+      generation: 5,
+      result: { kind: "noRelease", currentVersion: "0.1.0", channel: "stable" },
+    });
+
+    expect(settled).toEqual({ kind: "noRelease", currentVersion: "0.1.0", channel: "stable" });
+    expect(presentAppUpdateToast(settled)).toBeNull();
+    expect(reduceAppUpdaterState(settled, { kind: "checkStarted", generation: 6 }).kind).toBe(
+      "checking",
+    );
+  });
+
+  it("labels the missing release by channel", () => {
+    expect(appUpdaterNoReleaseStatus("stable")).toBe("No stable release yet");
+    expect(appUpdaterNoReleaseStatus("beta")).toBe("No beta release yet");
   });
 });
 

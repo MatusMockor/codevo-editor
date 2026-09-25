@@ -711,6 +711,12 @@ export const keymapCommands = [
     label: "Toggle TODO Panel",
   },
   {
+    category: "Workbench",
+    defaultShortcut: "Cmd+Shift+M",
+    id: "panel.showProblems",
+    label: "Show Problems",
+  },
+  {
     category: "Bookmarks",
     defaultShortcut: "Alt+F11",
     id: "bookmark.toggle",
@@ -1010,6 +1016,12 @@ export const keymapCommands = [
     defaultShortcut: "",
     id: "agent.openCommitMenu",
     label: "Commit Thread Changes",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "",
+    id: "project.add",
+    label: "Add Project…",
   },
   {
     category: "Workbench",

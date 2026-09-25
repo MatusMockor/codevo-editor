@@ -24,6 +24,8 @@ mod agent_task_commands;
 mod agent_thread_store_commands;
 #[path = "agent_turn_log_commands.rs"]
 mod agent_turn_log_commands;
+#[path = "app_update_channel_commands.rs"]
+mod app_update_channel_commands;
 #[path = "directory_listing_commands.rs"]
 mod directory_listing_commands;
 #[path = "git_integration_commands.rs"]

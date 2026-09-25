@@ -170,7 +170,7 @@ describe("useAgentEditorBridge", () => {
     expect(harness.editor.openSurface).not.toHaveBeenCalled();
     harness.unmount();
   });
-  it("opens a changed file pinned in the editor and shows the Files surface", async () => {
+  it("opens a changed file pinned in the editor and shows the Editor surface", async () => {
     const harness = renderBridge();
     expect(harness.hook().canOpenInEditor(THREAD_ID)).toEqual({ kind: "available" });
 
@@ -181,7 +181,7 @@ describe("useAgentEditorBridge", () => {
       { pin: true, recordNavigation: true },
     );
     expect(harness.editor.openSurface).toHaveBeenCalledTimes(1);
-    expect(harness.editor.openSurface).toHaveBeenCalledWith("files");
+    expect(harness.editor.openSurface).toHaveBeenCalledWith("editor");
     harness.unmount();
   });
 

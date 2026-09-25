@@ -16,6 +16,8 @@ import { agentSurfaceBlockedReason } from "./agentSurfacePolicy";
 import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 
+const UNAVAILABLE_SURFACE_HOST = { mounted: false, hidden: true } as const;
+
 export interface AgentSurfaceLayoutOptions {
   readonly chrome: Pick<AgentWorkbenchChrome, "layout" | "workspaceTrusted">;
   readonly selectedThread: AgentThreadView | null;
@@ -172,10 +174,10 @@ export function useAgentSurfaceLayout({
     [dispatchLayout],
   );
 
-  const surfaceHost = agentSurfaceHostPlacement({
-    ...layout,
-    layout: chrome.layout.effectiveLayout,
-  });
+  const surfaceHost =
+    chrome.layout.effectiveLayout === "agent"
+      ? agentSurfaceHostPlacement(layout)
+      : UNAVAILABLE_SURFACE_HOST;
 
   return {
     layout,

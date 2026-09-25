@@ -102,15 +102,115 @@ describe("KeybindingsSettingsPage", () => {
     const categories = new Set(keymapCommands.map((command) => command.category));
 
     expect(host.querySelectorAll(".settings-kb__row")).toHaveLength(keymapCommands.length);
-    expect(host.querySelectorAll(".settings-kb__cat")).toHaveLength(categories.size);
-    expect(host.textContent).toContain("editor.save");
-    expect(host.textContent).toContain("editor.nextRecentlyUsedEditor");
+    expect(host.querySelectorAll(".settings-kb__group")).toHaveLength(categories.size);
+    expect(
+      [...host.querySelectorAll(".settings-kb__category")].map((heading) => heading.textContent),
+    ).toEqual([...categories]);
+    expect(rowFor("editor.save")).toBeTruthy();
+    expect(rowFor("editor.nextRecentlyUsedEditor")).toBeTruthy();
 
     expect(whenCell("editor.nextRecentlyUsedEditor")).toBe("Reserved");
     expect(editButton("editor.nextRecentlyUsedEditor").disabled).toBe(true);
     expect(editButton("editor.previousRecentlyUsedEditor").disabled).toBe(true);
     expect(whenCell("editor.save")).toBe("Always");
     expect(editButton("editor.save").disabled).toBe(false);
+  });
+
+  it("renders one group per category with rows instead of a table", async () => {
+    await render({ keymap: defaultKeymapSettings("mac") }, "mac");
+
+    expect(host.querySelector("table")).toBeNull();
+    const groups = host.querySelectorAll(".settings-kb__group");
+    expect(groups.length).toBeGreaterThan(0);
+    const firstRow = groups[0]?.querySelector(".settings-kb__row");
+    expect(firstRow?.querySelector(".settings-kb__label")?.textContent).not.toBe("");
+    expect(firstRow?.querySelector(".settings-kb__when")?.textContent).toMatch(
+      /^When(Always|Reserved)$/u,
+    );
+    expect(host.querySelector(".settings-kb__id")).toBeNull();
+    expect(host.querySelector('[data-settings-row="keymap.bindings"]')).not.toBeNull();
+  });
+
+  it("records a new shortcut inline, focuses the recorder and marks the row modified", async () => {
+    const onSave = vi.fn();
+
+    await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
+
+    expect(labelOf("editor.closeTab")?.querySelector(".settings-badge")).toBeNull();
+
+    await click(editButton("editor.closeTab"));
+
+    expect(rowFor("editor.closeTab").dataset.editing).toBe("true");
+    expect(document.activeElement).toBe(recordingInput("editor.closeTab"));
+
+    await press("editor.closeTab", { key: "j", metaKey: true });
+    await click(saveButton("editor.closeTab"));
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(rowFor("editor.closeTab").dataset.editing).toBeUndefined();
+    expect(labelOf("editor.closeTab")?.querySelector(".settings-badge")?.textContent).toBe(
+      "Modified",
+    );
+  });
+
+  it("does not start recording while typing in the search field", async () => {
+    await render({ keymap: defaultKeymapSettings("mac") }, "mac");
+
+    const search = filterInput();
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(keyboardEvent({ key: "k", metaKey: true }));
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('input[aria-label^="Recording shortcut"]')).toBeNull();
+    expect(host.querySelector('.settings-kb__row[data-editing="true"]')).toBeNull();
+  });
+
+  it("never records keystrokes typed into the search field during a recording", async () => {
+    const onSave = vi.fn();
+
+    await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
+
+    await click(editButton("editor.save"));
+
+    const search = filterInput();
+    const typed = keyboardEvent({ key: "j", metaKey: true });
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(typed);
+      await Promise.resolve();
+    });
+    await type(search, "save");
+
+    expect(typed.defaultPrevented).toBe(false);
+    expect(search.value).toBe("save");
+    expect(recordingInput("editor.save").value).toBe("");
+
+    await press("editor.save", { key: "Escape" });
+
+    expect(host.querySelector(".settings-kb__recorder")).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("does not report palette Cmd+K as conflicting with the editor Cmd+K chords", async () => {
+    await render({ keymap: defaultKeymapSettings("mac") }, "mac");
+
+    const editorChords = [
+      "editor.splitDown",
+      "editor.focusNextGroup",
+      "editor.focusPreviousGroup",
+      "editor.moveTabToNextGroup",
+      "editor.moveTabToPreviousGroup",
+      "editor.closeGroup",
+    ];
+
+    expect(chipsFor("palette.open")).toEqual(["⌘", "K"]);
+    expect(conflictWarning("palette.open")).toBeNull();
+    for (const commandId of editorChords) {
+      expect(chipsFor(commandId).slice(0, 2)).toEqual(["⌘", "K"]);
+      expect(conflictWarning(commandId)).toBeNull();
+    }
   });
 
   it("reports the visible binding count", async () => {
@@ -451,8 +551,8 @@ describe("KeybindingsSettingsPage", () => {
       "mac",
     );
 
-    expect(statusCell("editor.save")?.textContent).toContain("Modified");
-    expect(statusCell("editor.closeTab")?.textContent).not.toContain("Modified");
+    expect(labelOf("editor.save")?.textContent).toContain("Modified");
+    expect(labelOf("editor.closeTab")?.textContent).not.toContain("Modified");
   });
 
   async function render(
@@ -481,15 +581,15 @@ describe("KeybindingsSettingsPage", () => {
   }
 
   function keyCell(commandId: string): HTMLElement | null {
-    return rowFor(commandId).querySelector<HTMLElement>(".settings-kb__key");
+    return rowFor(commandId).querySelector<HTMLElement>(".settings-kb__controls");
   }
 
-  function statusCell(commandId: string): HTMLElement | null {
-    return rowFor(commandId).querySelector<HTMLElement>(".settings-kb__st");
+  function labelOf(commandId: string): HTMLElement | null {
+    return rowFor(commandId).querySelector<HTMLElement>(".settings-kb__label");
   }
 
   function whenCell(commandId: string): string {
-    return rowFor(commandId).querySelector(".settings-kb__when")?.textContent ?? "";
+    return rowFor(commandId).querySelector(".settings-kb__when-value")?.textContent ?? "";
   }
 
   function chipsFor(commandId: string): string[] {

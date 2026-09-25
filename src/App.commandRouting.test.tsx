@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useEffect, useRef, useState } from "react";
+import { act, useEffect, useRef, useState, type ComponentProps } from "react";
 import { DEFAULT_APPEARANCE } from "./domain/appearance";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +9,6 @@ import {
   type AgentWorkbenchLayout,
   type AgentWorkbenchLayoutMode,
 } from "./domain/agentWorkbenchLayout";
-import { workbenchAgentViewCommandBridge } from "./application/agentViewCommandBridge";
 import type { AgentProviderManagementSurface } from "./application/useAgentProviderManagement";
 import { initialIndexProgress } from "./domain/indexProgress";
 import type { EditorDocument } from "./domain/workspace";
@@ -26,11 +25,13 @@ vi.mock("./components/monacoRuntimeLoader", () => ({
 const mocks = vi.hoisted(() => ({
   artisanClear: vi.fn(),
   bottomPanelProps: null as Record<string, unknown> | null,
+  terminalPanelMounts: 0,
+  terminalPanelUnmounts: 0,
+  terminalPanelHidden: [] as Array<boolean | undefined>,
   commandPaletteMounts: 0,
   commandPaletteUnmounts: 0,
   agentLayoutDispatch: vi.fn(),
   hideBottomPanel: vi.fn(),
-  ideProgress: { busy: true, state: "active", text: "Working" },
   jsExplorerRefresh: vi.fn(async () => undefined),
   jsExplorerRun: vi.fn(async () => undefined),
   jsCoverageClear: vi.fn(),
@@ -203,75 +204,120 @@ vi.mock("./application/usePackageDependenciesPanelController", () => ({
   },
 }));
 
-vi.mock("./domain/ideProgress", () => ({
-  ideProgressIndicator: () => mocks.ideProgress,
-}));
+vi.mock("./components/BottomPanel", async () => {
+  const React = await import("react");
+  return {
+    BottomPanel: (props: {
+      expressRoutesPanel?: { hasJavaScriptTypeScriptWorkspace?: boolean };
+      hidden?: boolean;
+      inDrawer?: boolean;
+      hasExpressRoutes?: boolean;
+      hasJsWorkspace?: boolean;
+      onSelectView(view: string): void;
+      onTrustWorkspace(): void;
+    }) => {
+      React.useEffect(() => {
+        if (props.inDrawer) return undefined;
+        mocks.terminalPanelMounts += 1;
+        return () => {
+          mocks.terminalPanelUnmounts += 1;
+        };
+      }, [props.inDrawer]);
+      if (!props.inDrawer) mocks.terminalPanelHidden.push(props.hidden);
+      const hasJsWorkspace =
+        props.hasJsWorkspace ?? props.expressRoutesPanel?.hasJavaScriptTypeScriptWorkspace;
+      mocks.bottomPanelProps = {
+        ...props,
+        hasExpressRoutes: props.hasExpressRoutes ?? hasJsWorkspace,
+        hasJsWorkspace,
+      } as unknown as Record<string, unknown>;
+      return (
+        <div data-testid="bottom-panel">
+          {["problems", "index", "runtime", "history", "routes", "testResults", "terminal"].map(
+            (view) => (
+              <button key={view} onClick={() => props.onSelectView(view)} type="button">
+                panel-{view}
+              </button>
+            ),
+          )}
+          <button onClick={props.onTrustWorkspace} type="button">
+            panel-trust
+          </button>
+        </div>
+      );
+    },
+  };
+});
 
-vi.mock("./components/BottomPanel", () => ({
-  BottomPanel: (props: {
-    expressRoutesPanel?: { hasJavaScriptTypeScriptWorkspace?: boolean };
-    hasExpressRoutes?: boolean;
-    hasJsWorkspace?: boolean;
-    onSelectView(view: string): void;
-    onTrustWorkspace(): void;
-  }) => {
-    const hasJsWorkspace =
-      props.hasJsWorkspace ?? props.expressRoutesPanel?.hasJavaScriptTypeScriptWorkspace;
-    mocks.bottomPanelProps = {
-      ...props,
-      hasExpressRoutes: props.hasExpressRoutes ?? hasJsWorkspace,
-      hasJsWorkspace,
-    } as unknown as Record<string, unknown>;
+vi.mock("./components/editorPanel/WorkbenchEditorDrawer", async () => {
+  const bottomPanel = await import("./components/BottomPanel");
+  return {
+    WorkbenchEditorDrawer: (props: { panel: ComponentProps<typeof bottomPanel.BottomPanel> }) => (
+      <bottomPanel.BottomPanel {...props.panel} {...{ inDrawer: true }} />
+    ),
+  };
+});
+
+vi.mock("./components/EditorArea", async () => {
+  const { useEditorChrome } = await import("./components/editorPanel/EditorChromeContext");
+  function EditorChromeProbe() {
+    const chrome = useEditorChrome();
+    if (chrome === null) return null;
     return (
-      <div data-testid="bottom-panel">
-        {["problems", "index", "runtime", "history", "routes", "testResults", "terminal"].map(
-          (view) => (
-            <button key={view} onClick={() => props.onSelectView(view)} type="button">
-              panel-{view}
-            </button>
-          ),
-        )}
-        <button onClick={props.onTrustWorkspace} type="button">
-          panel-trust
+      <div data-testid="editor-chrome-probe">
+        <button onClick={chrome.toggleProblems} type="button">
+          chrome-problems
+        </button>
+        <button onClick={chrome.openRuntimeView} type="button">
+          chrome-runtime
+        </button>
+        <button onClick={chrome.openBranches} type="button">
+          chrome-branches
+        </button>
+        <button onClick={chrome.toggleIdeMode} type="button">
+          chrome-ide-mode
+        </button>
+        <button onClick={chrome.trustWorkspace} type="button">
+          chrome-trust
         </button>
       </div>
     );
-  },
-}));
-
-vi.mock("./components/EditorArea", () => ({
-  EditorArea: (props: {
-    documents: readonly { path: string }[];
-    renderContent(
-      surface: { kind: "empty" } | { kind: "document"; document: { path: string }; path: string },
-      groupId: string,
-    ): React.ReactNode;
-    state: {
-      groups: Record<
-        string,
-        { activePath: string | null; openPaths: string[]; previewPath: string | null }
-      >;
-    };
-  }) => (
-    <div data-testid="editor-area">
-      {mocks.renderEditorAreaContent
-        ? Object.entries(props.state.groups).map(([groupId, group]) => {
-            const document = props.documents.find(({ path }) => path === group.activePath);
-            return (
-              <div data-testid={`editor-group-${groupId}`} key={groupId}>
-                {document && group.activePath
-                  ? props.renderContent(
-                      { document, kind: "document", path: group.activePath },
-                      groupId,
-                    )
-                  : props.renderContent({ kind: "empty" }, groupId)}
-              </div>
-            );
-          })
-        : null}
-    </div>
-  ),
-}));
+  }
+  return {
+    EditorArea: (props: {
+      documents: readonly { path: string }[];
+      renderContent(
+        surface: { kind: "empty" } | { kind: "document"; document: { path: string }; path: string },
+        groupId: string,
+      ): React.ReactNode;
+      state: {
+        groups: Record<
+          string,
+          { activePath: string | null; openPaths: string[]; previewPath: string | null }
+        >;
+      };
+    }) => (
+      <div data-testid="editor-area">
+        <EditorChromeProbe />
+        {mocks.renderEditorAreaContent
+          ? Object.entries(props.state.groups).map(([groupId, group]) => {
+              const document = props.documents.find(({ path }) => path === group.activePath);
+              return (
+                <div data-testid={`editor-group-${groupId}`} key={groupId}>
+                  {document && group.activePath
+                    ? props.renderContent(
+                        { document, kind: "document", path: group.activePath },
+                        groupId,
+                      )
+                    : props.renderContent({ kind: "empty" }, groupId)}
+                </div>
+              );
+            })
+          : null}
+      </div>
+    ),
+  };
+});
 
 vi.mock("./components/EditorRuntimeHost", () => ({
   EditorRuntimeHost: ({ children }: { children: React.ReactNode }) => {
@@ -346,34 +392,6 @@ vi.mock("./components/FileTree", () => ({
   FileTree: () => <div data-testid="file-tree" />,
 }));
 
-vi.mock("./components/ProjectTabs", () => ({
-  ProjectTabs: () => <div data-testid="project-tabs" />,
-}));
-
-vi.mock("./components/StatusBar", () => ({
-  StatusBar: ({
-    onOpenRuntimePanel,
-    onShowGitBranches,
-    onShowProblems,
-  }: {
-    onOpenRuntimePanel(): void;
-    onShowGitBranches(): void;
-    onShowProblems(): void;
-  }) => (
-    <div data-testid="status-bar">
-      <button onClick={onOpenRuntimePanel} type="button">
-        status-runtime
-      </button>
-      <button onClick={onShowProblems} type="button">
-        status-problems
-      </button>
-      <button onClick={onShowGitBranches} type="button">
-        status-branches
-      </button>
-    </div>
-  ),
-}));
-
 vi.mock("./components/WindowChrome", () => ({
   WindowChrome: () => <div data-testid="window-chrome" />,
 }));
@@ -402,7 +420,6 @@ describe("App command routing", () => {
     mocks.commandPaletteMounts = 0;
     mocks.commandPaletteUnmounts = 0;
     mocks.hideBottomPanel.mockReset();
-    mocks.ideProgress = { busy: true, state: "active", text: "Working" };
     mocks.jsExplorerRefresh.mockReset();
     mocks.jsExplorerRun.mockReset();
     mocks.jsExplorerState.error = null;
@@ -431,6 +448,9 @@ describe("App command routing", () => {
     mocks.openDebugLocation.mockReset();
     mocks.openGitBranchPanel.mockReset();
     mocks.bottomPanelProps = null;
+    mocks.terminalPanelMounts = 0;
+    mocks.terminalPanelUnmounts = 0;
+    mocks.terminalPanelHidden = [];
     mocks.workbenchOverrides = {};
     mocks.runCommand.mockReset();
     mocks.phpClear.mockReset();
@@ -504,8 +524,7 @@ describe("App command routing", () => {
   it("swaps the workbench chrome for the settings surface while the route is open", async () => {
     expect(host.querySelector("main")?.className).not.toContain("app-shell--settings");
     expect(host.querySelector("main")?.className).not.toContain("app-shell--agent-mode");
-    expect(host.querySelector(".sidebar")).not.toBeNull();
-    expect(buttonByTitle("Settings")?.getAttribute("aria-pressed")).toBe("false");
+    expect(host.querySelector('[data-slot="settings"]')).toBeNull();
 
     mocks.workbenchOverrides = { settingsOpen: true };
     await act(async () => {
@@ -514,8 +533,6 @@ describe("App command routing", () => {
     });
 
     expect(host.querySelector("main")?.className).toContain("app-shell--settings");
-    expect(host.querySelector(".sidebar")).toBeNull();
-    expect(buttonByTitle("Settings")?.getAttribute("aria-pressed")).toBe("true");
     expect(host.querySelector('[data-slot="settings"]')).not.toBeNull();
     expect(host.querySelector('[data-slot="chrome"]')?.hasAttribute("hidden")).toBe(true);
     expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
@@ -523,30 +540,16 @@ describe("App command routing", () => {
   });
 
   it("routes visible exact actions through runCommand", () => {
-    click(buttonByTitle("Open workspace"));
-    click(buttonByText("Open"));
-    click(buttonByTitle("Settings"));
-    click(buttonByText("Git"));
-    click(buttonByText("IDE Mode"));
-    click(host.querySelector<HTMLButtonElement>(".toolbar-action"));
-    click(buttonByTitle("Working"));
-    click(buttonByText("status-problems"));
-    click(buttonByText("status-runtime"));
+    click(buttonByText("chrome-ide-mode"));
+    click(buttonByText("chrome-trust"));
     click(buttonByText("panel-problems"));
     click(buttonByText("panel-index"));
     click(buttonByText("panel-runtime"));
     click(buttonByText("panel-trust"));
 
     expect(mocks.runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
-      "workspace.open",
-      "workspace.open",
-      "workbench.openSettings",
-      "git.show",
       "smart.toggle",
       "workspace.trust",
-      "panel.showIndex",
-      "panel.showProblems",
-      "runtime.show",
       "panel.showProblems",
       "panel.showIndex",
       "runtime.show",
@@ -554,14 +557,22 @@ describe("App command routing", () => {
     ]);
   });
 
-  it("routes the Commands activity through the registry without a direct state fallback", () => {
-    mocks.runCommand.mockReturnValue("disabled");
+  it("routes the editor sub-header readouts to their panel views and the branch picker", async () => {
+    mocks.workbenchOverrides = { bottomPanelVisible: false };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    click(buttonByText("chrome-problems"));
+    click(buttonByText("chrome-runtime"));
+    click(buttonByText("chrome-branches"));
 
-    click(buttonByTitle("Commands"));
-
-    expect(mocks.runCommand).toHaveBeenCalledOnce();
-    expect(mocks.runCommand).toHaveBeenCalledWith("commands.show");
-    expect(mocks.setPaletteOpen).not.toHaveBeenCalled();
+    expect(mocks.showBottomPanelView.mock.calls.map(([view]) => view)).toEqual([
+      "problems",
+      "runtime",
+    ]);
+    expect(mocks.openGitBranchPanel).toHaveBeenCalledOnce();
+    expect(mocks.runCommand).not.toHaveBeenCalled();
   });
 
   it("wires workspace Express routes with active and inactive dirty document overlays", async () => {
@@ -988,23 +999,14 @@ describe("App command routing", () => {
     },
   );
 
-  it("routes problem progress while preserving unrelated direct callbacks", async () => {
-    mocks.ideProgress = { busy: false, state: "problem", text: "Indexing failed" };
-
-    await act(async () => {
-      root.render(<App />);
-      await Promise.resolve();
-    });
-
-    click(buttonByTitle("Indexing failed"));
+  it("routes direct panel views without going through the command registry", () => {
     click(buttonByText("panel-history"));
     click(buttonByText("panel-routes"));
     click(buttonByText("panel-testResults"));
     click(buttonByText("panel-terminal"));
-    click(buttonByText("status-branches"));
+    click(buttonByText("chrome-branches"));
 
-    expect(mocks.runCommand).toHaveBeenCalledOnce();
-    expect(mocks.runCommand).toHaveBeenCalledWith("panel.showProblems");
+    expect(mocks.runCommand).not.toHaveBeenCalled();
     expect(mocks.showBottomPanelView.mock.calls.map(([view]) => view)).toEqual([
       "history",
       "routes",
@@ -1014,13 +1016,32 @@ describe("App command routing", () => {
     expect(mocks.openGitBranchPanel).toHaveBeenCalledOnce();
   });
 
-  it("gives the agent layout the full window and restores the IDE chrome when expanded", async () => {
-    expect(host.querySelector(".activity-bar")).not.toBeNull();
-    expect(host.querySelector(".sidebar")).not.toBeNull();
-    expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
-    expect(host.querySelector('.workbench-toolbar [data-testid="status-bar"]')).not.toBeNull();
+  it("keeps the terminal host mounted across Terminal -> Problems -> Terminal", async () => {
+    const renderView = async (bottomPanelView: string) => {
+      mocks.workbenchOverrides = { bottomPanelView, bottomPanelVisible: true };
+      await act(async () => {
+        root.render(<App />);
+        await Promise.resolve();
+      });
+    };
+    await renderView("terminal");
+    const mountsAfterOpen = mocks.terminalPanelMounts;
+    const unmountsAfterOpen = mocks.terminalPanelUnmounts;
+
+    await renderView("problems");
+    expect(mocks.terminalPanelHidden[mocks.terminalPanelHidden.length - 1]).toBe(true);
+    expect(host.querySelector('[data-slot="editor"] [data-testid="bottom-panel"]')).not.toBeNull();
+    await renderView("terminal");
+
+    expect(mocks.terminalPanelHidden[mocks.terminalPanelHidden.length - 1]).toBe(false);
+    expect(mocks.terminalPanelMounts).toBe(mountsAfterOpen);
+    expect(mocks.terminalPanelUnmounts).toBe(unmountsAfterOpen);
+  });
+
+  it("gives the agent layout the full window and falls back to the editor-only frame", async () => {
+    expectNoLegacyChrome();
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe(
-      "editor-expanded",
+      "editor-only",
     );
     expect(host.querySelector(".workbench-mode-switch")).toBeNull();
     expect(document.title).toBe("workspace");
@@ -1046,13 +1067,7 @@ describe("App command routing", () => {
     });
 
     expect(host.querySelector('[data-testid="agent-mode-view"]')).not.toBeNull();
-    expect(host.querySelector(".activity-bar")).toBeNull();
-    expect(host.querySelector(".sidebar")).toBeNull();
-    expect(host.querySelector('[data-testid="project-tabs"]')).toBeNull();
-    expect(host.querySelector('[data-testid="status-bar"]')).toBeNull();
-    expect(host.querySelector(".status-bar--agent")).toBeNull();
-    expect(host.querySelector(".workbench-toolbar")).toBeNull();
-    expect(host.querySelector(".smart-mode-switch")).toBeNull();
+    expectNoLegacyChrome();
     expect(host.querySelector(".workbench-mode-switch")).toBeNull();
     expect(host.querySelector(".app-shell")?.className).toContain("app-shell--agent-mode");
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
@@ -1064,15 +1079,10 @@ describe("App command routing", () => {
       await Promise.resolve();
     });
 
-    expect(host.querySelector(".activity-bar")).not.toBeNull();
-    expect(host.querySelector(".sidebar")).not.toBeNull();
-    expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
-    expect(host.querySelector('.workbench-toolbar [data-testid="status-bar"]')).not.toBeNull();
-    expect(host.querySelector(".status-bar--agent")).toBeNull();
-    expect(host.querySelector(".sidebar-tab.active")?.textContent).toBe("Files");
+    expectNoLegacyChrome();
     expect(host.querySelector(".app-shell")?.className).not.toContain("app-shell--agent-mode");
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe(
-      "editor-expanded",
+      "editor-only",
     );
     expect(document.title).toBe("workspace");
   });
@@ -1099,20 +1109,7 @@ describe("App command routing", () => {
     expect(document.title).toBe("Agents");
   });
 
-  it("collapses the expanded editor back to the threads from the toolbar", () => {
-    const unbind = bindSurfacePolicy(false);
-    click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));
-
-    expect(mocks.agentLayoutDispatch).toHaveBeenCalledWith({ kind: "collapseEditor" });
-
-    unbind();
-    bindSurfacePolicy(true);
-    click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));
-
-    expect(mocks.agentLayoutDispatch).toHaveBeenLastCalledWith({ kind: "collapseEditor" });
-  });
-
-  it("keeps one editor runtime mounted across agent, files surface, expanded and collapsed", async () => {
+  it("keeps one editor runtime mounted across agent, editor surface, other surfaces and the editor-only fallback", async () => {
     const initialRuntime = requiredElement<HTMLElement>(
       host,
       '[data-testid="editor-runtime-host"]',
@@ -1130,10 +1127,18 @@ describe("App command routing", () => {
       {
         layout: agentLayoutState("agent", {
           rightPanel: "open",
-          openSurfaces: ["files"],
-          activeSurface: "files",
+          openSurfaces: ["files", "editor"],
+          activeSurface: "editor",
         }),
         hidden: false,
+      },
+      {
+        layout: agentLayoutState("agent", {
+          rightPanel: "open",
+          openSurfaces: ["files", "editor"],
+          activeSurface: "files",
+        }),
+        hidden: true,
       },
       {
         layout: agentLayoutState("agent", {
@@ -1143,12 +1148,12 @@ describe("App command routing", () => {
         }),
         hidden: true,
       },
-      { layout: agentLayoutState("editor-expanded"), hidden: false },
+      { layout: agentLayoutState("editor-only"), hidden: false },
       {
         layout: agentLayoutState("agent", {
           rightPanel: "open",
-          openSurfaces: ["files"],
-          activeSurface: "files",
+          openSurfaces: ["files", "editor"],
+          activeSurface: "editor",
         }),
         hidden: false,
       },
@@ -1226,8 +1231,18 @@ describe("App command routing", () => {
     );
   }
 
-  function buttonByTitle(title: string): HTMLButtonElement | null {
-    return host.querySelector<HTMLButtonElement>(`button[title="${title}"]`);
+  function expectNoLegacyChrome(): void {
+    for (const selector of [
+      ".activity-bar",
+      ".sidebar",
+      ".project-tabs",
+      ".workbench-toolbar",
+      ".smart-mode-switch",
+      ".editor-status",
+      "footer",
+    ]) {
+      expect(host.querySelector(selector), selector).toBeNull();
+    }
   }
 });
 
@@ -1242,25 +1257,12 @@ function requiredElement<T extends Element>(host: ParentNode, selector: string):
   return element as T;
 }
 
-function bindSurfacePolicy(blocked: boolean): () => void {
-  return workbenchAgentViewCommandBridge.bind({
-    newThread: () => undefined,
-    previousThread: () => undefined,
-    nextThread: () => undefined,
-    jumpToThread: () => undefined,
-    searchThreads: () => undefined,
-    findInThread: () => undefined,
-    threadSelected: () => false,
-    surfaceBlocked: () => blocked,
-  });
-}
-
 function agentLayoutState(
   mode: AgentWorkbenchLayoutMode,
   overrides: Partial<AgentWorkbenchLayout> = {},
 ) {
   return {
-    layout: { ...initialAgentWorkbenchLayout, ...overrides, layout: mode },
+    layout: { ...initialAgentWorkbenchLayout, ...overrides },
     effectiveLayout: mode,
     dispatch: mocks.agentLayoutDispatch,
   };
@@ -1274,7 +1276,7 @@ function createWorkbench() {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
       agentModeActive: false,
-      agentWorkbench: agentLayoutState("editor-expanded"),
+      agentWorkbench: agentLayoutState("editor-only"),
       agents: {
         liveTaskCount: 0,
         maxConcurrentAgentTasks: 4,
@@ -1309,6 +1311,7 @@ function createWorkbench() {
         debugRestartPending: false,
         debugStopPending: false,
         isDebugStartBlocked: () => false,
+        snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
         restartDebug: vi.fn(async () => undefined),
         startDebug: vi.fn(async () => undefined),
         watches: createEmptyDebugWatches(),

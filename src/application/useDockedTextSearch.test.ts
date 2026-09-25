@@ -3,7 +3,8 @@
 import { act, createElement, useLayoutEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BottomPanel } from "../components/BottomPanel";
+import { WorkbenchEditorDrawer } from "../components/editorPanel/WorkbenchEditorDrawer";
+import type { WorkbenchBottomPanelView } from "../domain/artisanRoutes";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { GitHistoryGateway } from "../domain/git";
 import { initialIndexProgress } from "../domain/indexProgress";
@@ -35,12 +36,12 @@ describe("useDockedTextSearchOpen", () => {
     expect(selectedPanelView(host)).toBe("Search");
     expect(host.querySelector('[aria-label="Docked search content"]')).not.toBeNull();
 
-    act(() => clickButton(host, "Hide panel"));
-    expect(host.querySelector('section[aria-label="Panel"]')).toBeNull();
+    act(() => clickButton(host, "Close panel views"));
+    expect(host.querySelector('section[aria-label="Panel views"]')).toBeNull();
 
     act(() => clickButton(host, "Run panel.toggle"));
 
-    expect(host.querySelector('section[aria-label="Panel"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Panel views"]')).not.toBeNull();
     expect(selectedPanelView(host)).toBe("Problems");
     expect(host.querySelector('[aria-label="Problems"]')).not.toBeNull();
   });
@@ -56,9 +57,9 @@ describe("useDockedTextSearchOpen", () => {
     );
 
     act(() => clickButton(host, "Open docked search"));
-    act(() => clickButton(host, "Hide panel"));
+    act(() => clickButton(host, "Close panel views"));
 
-    expect(host.querySelector('section[aria-label="Panel"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Panel views"]')).not.toBeNull();
     expect(selectedPanelView(host)).toBe("Index");
   });
 
@@ -75,11 +76,11 @@ describe("useDockedTextSearchOpen", () => {
     act(() => clickButton(host, "Open docked search"));
     act(() => clickButton(host, "Switch to workspace B"));
     act(() => clickButton(host, "Open docked search"));
-    act(() => clickButton(host, "Hide panel"));
+    act(() => clickButton(host, "Close panel views"));
     act(() => clickButton(host, "Return to workspace A search"));
-    act(() => clickButton(host, "Hide panel"));
+    act(() => clickButton(host, "Close panel views"));
 
-    expect(host.querySelector('section[aria-label="Panel"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Panel views"]')).not.toBeNull();
     expect(selectedPanelView(host)).toBe("Index");
   });
 
@@ -95,7 +96,7 @@ describe("useDockedTextSearchOpen", () => {
 
     act(() => clickButton(host, "Open and close docked search"));
 
-    expect(host.querySelector('section[aria-label="Panel"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Panel views"]')).not.toBeNull();
     expect(selectedPanelView(host)).toBe("Index");
     expect(host.querySelector('[aria-label="Docked search content"]')).toBeNull();
   });
@@ -112,7 +113,7 @@ describe("useDockedTextSearchOpen", () => {
 
     act(() => clickButton(host, "Open docked search"));
     act(() => clickButton(host, "Replace owner at same root"));
-    act(() => clickButton(host, "Hide panel"));
+    act(() => clickButton(host, "Close panel views"));
     act(() => clickButton(host, "Run panel.toggle"));
 
     expect(selectedPanelView(host)).toBe("Problems");
@@ -220,45 +221,56 @@ function DockedTextSearchHarness({
       "Run panel.toggle",
     ),
     bottomPanelVisible
-      ? createElement(BottomPanel, {
-          activeView: bottomPanelView,
-          gitHistoryGateway: {} as GitHistoryGateway,
-          indexHealthLogs: [],
-          indexProgress: initialIndexProgress(),
-          notices: [],
-          onClearProblems: vi.fn(),
-          onClose: () => setDockedTextSearchOpen(false),
-          onHardReindex: vi.fn(),
-          onOpenCommitFileDiff: vi.fn(),
-          onOpenProblem: vi.fn(async () => true),
-          onPhpReindex: vi.fn(),
-          onResizeStart: vi.fn(),
-          onSelectView: (view) => {
-            if (view === "routes" || view === "testResults") {
-              return;
-            }
+      ? createElement(WorkbenchEditorDrawer, {
+          consoleHeader: null,
+          frame: DRAWER_FRAME,
+          phpTree: null,
+          view: bottomPanelView === "terminal" ? "problems" : bottomPanelView,
+          panel: {
+            activeView: bottomPanelView,
+            gitHistoryGateway: {} as GitHistoryGateway,
+            indexHealthLogs: [],
+            indexProgress: initialIndexProgress(),
+            notices: [],
+            onClearProblems: vi.fn(),
+            onClose: () => setDockedTextSearchOpen(false),
+            onHardReindex: vi.fn(),
+            onOpenCommitFileDiff: vi.fn(),
+            onOpenProblem: vi.fn(async () => true),
+            onPhpReindex: vi.fn(),
+            onResizeStart: vi.fn(),
+            onSelectView: (view: WorkbenchBottomPanelView) => {
+              if (view === "routes" || view === "testResults" || view === "phpTree") {
+                return;
+              }
 
-            setBottomPanelView(view);
+              setBottomPanelView(view);
+            },
+            onSoftReindex: vi.fn(),
+            onTrustWorkspace: vi.fn(),
+            runtimeObservabilityGateway: {} as RuntimeObservabilityGateway,
+            search: textSearchOpen
+              ? createElement("div", { "aria-label": "Docked search content" })
+              : null,
+            terminalGateway: terminalGateway(),
+            terminalShellIntegrationEnabled: false,
+            terminalTheme: classicTerminalTheme("classicDark"),
+            workspaceRoot: workspaceKey,
+            workspaceTrusted: true,
           },
-          onSoftReindex: vi.fn(),
-          onTrustWorkspace: vi.fn(),
-          runtimeObservabilityGateway: {} as RuntimeObservabilityGateway,
-          search: textSearchOpen
-            ? createElement("div", { "aria-label": "Docked search content" })
-            : null,
-          terminalGateway: terminalGateway(),
-          terminalShellIntegrationEnabled: false,
-          terminalTheme: classicTerminalTheme("classicDark"),
-          workspaceRoot: workspaceKey,
-          workspaceTrusted: true,
         })
       : null,
   );
 }
 
+const DRAWER_FRAME = { height: 224, onResize: () => undefined };
+
 function clickButton(host: HTMLElement, label: string): void {
   const button = [...host.querySelectorAll("button")].find(
-    (candidate) => candidate.textContent === label || candidate.title === label,
+    (candidate) =>
+      candidate.textContent === label ||
+      candidate.title === label ||
+      candidate.getAttribute("aria-label") === label,
   );
 
   if (!button) {

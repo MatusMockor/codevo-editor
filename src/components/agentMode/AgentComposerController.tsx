@@ -37,6 +37,7 @@ export interface AgentComposerControllerProps {
   readonly submit: AgentComposerPromptController["submit"];
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
+  onShowUsageLimits?(): void;
   readonly banners?: ReactNode;
   readonly renderDrawerEnd?: (context: AgentComposerDrawerContext) => ReactNode;
   readonly interactions?: AgentComposerInteractionsInput;
@@ -50,6 +51,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   modelFavoritesPersistence = null,
   onOpenProviderSettings,
   onOpenEnvironmentSettings,
+  onShowUsageLimits,
   providerManagement,
   providerEnabled,
   submissionBlocked,
@@ -89,6 +91,7 @@ export const AgentComposerController = memo(function AgentComposerController({
         modelFavoritesPersistence={modelFavoritesPersistence}
         onOpenProviderSettings={onOpenProviderSettings}
         onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+        onShowUsageLimits={onShowUsageLimits}
         onCompactContext={compactContext}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
@@ -115,6 +118,7 @@ function agentComposerControllerPropsEqual(
     left.modelFavoritesPersistence === right.modelFavoritesPersistence &&
     left.onOpenProviderSettings === right.onOpenProviderSettings &&
     left.onOpenEnvironmentSettings === right.onOpenEnvironmentSettings &&
+    left.onShowUsageLimits === right.onShowUsageLimits &&
     left.providerManagement === right.providerManagement &&
     left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&
@@ -137,6 +141,8 @@ function agentComposerControllerPropsEqual(
     leftProps.worktreeOnly === rightProps.worktreeOnly &&
     leftProps.worktreeOnlyReason === rightProps.worktreeOnlyReason &&
     leftProps.onIsolationChange === rightProps.onIsolationChange &&
+    leftProps.onWorktreeBaseChange === rightProps.onWorktreeBaseChange &&
+    sameWorktreeBase(leftProps.worktreeBase, rightProps.worktreeBase) &&
     leftProps.onRefreshIsolation === rightProps.onRefreshIsolation &&
     leftProps.onLaunchChange === rightProps.onLaunchChange &&
     leftProps.onNewThread === rightProps.onNewThread &&
@@ -197,6 +203,15 @@ function sameComposerTarget(
       option.label === candidate.label
     );
   });
+}
+
+function sameWorktreeBase(
+  left: AgentComposerPresentation["worktreeBase"],
+  right: AgentComposerPresentation["worktreeBase"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if (left.kind === "ref" && right.kind === "ref") return left.ref === right.ref;
+  return left.kind === right.kind;
 }
 
 function sameGuard(

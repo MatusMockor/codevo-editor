@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("VS Code process-task workbench composition", () => {
-  it("keeps gateway construction, controller authority, and sidebar presentation separated", () => {
+  it("keeps gateway construction, controller authority, and scripts surface presentation separated", () => {
     const app = source("../App.tsx");
     const composition = source("../workbenchComposition.ts");
     const controller = source("./workbenchController/useWorkbenchTaskDebugCoordinator.ts");
@@ -11,7 +11,7 @@ describe("VS Code process-task workbench composition", () => {
     );
     const controllerContracts = source("./workbenchControllerContracts.ts");
     const taskComposition = source("./useWorkbenchVscodeProcessTasks.ts");
-    const sidebar = source("../components/WorkbenchSidebar.tsx");
+    const agentWorkbenchScreen = source("../components/agentMode/AgentWorkbenchScreen.tsx");
     const rootController = source("./useWorkbenchController.ts");
     const commandEffects = source("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts");
     const rootBindingEnd = editorNavigationCoordinator.indexOf(
@@ -49,7 +49,9 @@ describe("VS Code process-task workbench composition", () => {
     expect(taskComposition).toContain(
       "useNodePackageTaskProblemNoticeComposition(state.problemNotices, setNotices);",
     );
-    expect(sidebar).toContain("vscodeProcessTasks={workbench.vscodeProcessTasks}");
+    expect(agentWorkbenchScreen).toContain(
+      "const vscodeProcessTasks = workbench.vscodeProcessTasks ?? null;",
+    );
     expect(controller).not.toContain("VscodeProcessTasksPanel");
     expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
     expect(rootController).toContain("publicSurface: editorNavigationSurface,");

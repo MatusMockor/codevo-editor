@@ -435,6 +435,7 @@ type EditorHostProps = ComponentProps<typeof WorkbenchEditorHost>;
 type EditorHostWiring = Pick<
   EditorHostProps,
   | "activeGroupId"
+  | "activeTabsInStrip"
   | "contentRevisionForGroup"
   | "documents"
   | "editorSessionOwnerKey"

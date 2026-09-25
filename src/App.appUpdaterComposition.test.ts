@@ -24,5 +24,10 @@ describe("application updater composition", () => {
     expect(host.search(/<NoticeToastHost\b/u)).toBeLessThan(host.search(/<LazySurfaceHost\b/u));
     expect(host).toContain("presentAppUpdateToast(updater.state)");
     expect(host).toContain("appUpdater={updater}");
+    expect(host).toContain("workbench.appSettings.appUpdateChannel");
+    expect(host).toContain("workbench.agents.appSettingsHydrated");
+    const composition = readFileSync(new URL("./workbenchComposition.ts", import.meta.url), "utf8");
+    expect(composition).toContain("createChannelUpdateCheck(");
+    expect(composition).not.toContain('from "@tauri-apps/plugin-updater"');
   });
 });

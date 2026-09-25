@@ -120,3 +120,54 @@ describe("palette shortcuts respect editor text focus", () => {
     expect(cheatsheet).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("shortcuts inside an open command surface", () => {
+  function mountDialog(registry: CommandRegistry) {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const appSettings = defaultAppSettings();
+    act(() => root?.render(<Harness appSettings={appSettings} registry={registry} />));
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const field = document.createElement("input");
+    dialog.append(field);
+    host.append(dialog);
+    return { dialog, field };
+  }
+
+  it("ignores a shortcut the open command surface already handled", () => {
+    const quickOpenClass = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register(command("class.quickOpen", quickOpenClass));
+    const { dialog, field } = mountDialog(registry);
+    const handle = (event: Event) => event.preventDefault();
+    dialog.addEventListener("keydown", handle);
+    keydown(field, "o");
+    dialog.removeEventListener("keydown", handle);
+    expect(quickOpenClass).not.toHaveBeenCalled();
+  });
+
+  it("still runs a shortcut the open command surface left unhandled", () => {
+    const quickOpenClass = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register(command("class.quickOpen", quickOpenClass));
+    const { field } = mountDialog(registry);
+    keydown(field, "o");
+    expect(quickOpenClass).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps running shortcuts the editor already prevented outside a command surface", () => {
+    const quickOpenClass = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register(command("class.quickOpen", quickOpenClass));
+    mountDialog(registry);
+    const composer = document.querySelector('[aria-label="composer"]') as Element;
+    const handle = (event: Event) => event.preventDefault();
+    composer.addEventListener("keydown", handle);
+    keydown(composer, "o");
+    composer.removeEventListener("keydown", handle);
+    expect(quickOpenClass).toHaveBeenCalledTimes(1);
+  });
+});

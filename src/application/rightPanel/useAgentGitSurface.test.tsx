@@ -148,6 +148,22 @@ const STATS: GitLineStat[] = [
 ];
 
 describe("useAgentGitSurface", () => {
+  it("reloads the change list when the status revision changes", async () => {
+    const memory = memoryGit([change("a.ts")]);
+    render(options({ git: memory.git, revision: 1 }));
+    await waitForReact(() => expect(surface().rows).toHaveLength(1));
+
+    memory.appear(change("b.ts"));
+    render(options({ git: memory.git, revision: 1 }));
+    await act(async () => undefined);
+    expect(surface().rows).toHaveLength(1);
+
+    render(options({ git: memory.git, revision: 2 }));
+    await waitForReact(() =>
+      expect(surface().rows.map((row) => row.relativePath)).toEqual(["a.ts", "b.ts"]),
+    );
+  });
+
   it("merges the status rows with line stats", async () => {
     const memory = memoryGit([change("src/orders/a.ts"), change("src/orders/b.ts", "added")]);
     render(options({ git: memory.git, lineStats: STATS }));

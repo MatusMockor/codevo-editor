@@ -170,6 +170,7 @@ describe("EditorArea", () => {
       EditorAreaProps,
       "contentRevisionForGroup" | "documents" | "renderContent"
     > = {
+      activeTabsInStrip: false,
       editorSessionOwnerKey: createEditorSessionOwnerKey("project", "/project"),
       onActivateGroup: vi.fn(),
       onActivateTab: vi.fn(),
@@ -219,6 +220,7 @@ describe("EditorArea", () => {
 
   function render(overrides: Partial<EditorAreaProps>) {
     const props: EditorAreaProps = {
+      activeTabsInStrip: false,
       documents: [doc("/shared.ts"), doc("/bottom.ts")],
       editorSessionOwnerKey: createEditorSessionOwnerKey("project", "/project"),
       projectId: "project",

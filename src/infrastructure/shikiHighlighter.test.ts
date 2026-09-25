@@ -215,6 +215,26 @@ describe("buildShikiTheme", () => {
     expect(colors["symbolIcon.variableForeground"]).toBe(calmDark.variable);
     expect(colors["symbolIcon.keywordForeground"]).toBe(calmDark.keyword);
   });
+
+  it("maps the optional editor extras into Monaco colours and omits them for classic themes", () => {
+    const withExtras = buildShikiTheme({
+      ...calmDark,
+      findMatch: "#edbb4e61",
+      findMatchHighlight: "#edbb4e29",
+      peekBackground: "#151616",
+      peekBorder: "#ffffff1f",
+    });
+    const classic = buildShikiTheme(calmDark);
+
+    expect(withExtras.colors["editor.findMatchBackground"]).toBe("#edbb4e61");
+    expect(withExtras.colors["editor.findMatchHighlightBackground"]).toBe("#edbb4e29");
+    expect(withExtras.colors["peekViewEditor.background"]).toBe("#151616");
+    expect(withExtras.colors["peekViewResult.background"]).toBe("#151616");
+    expect(withExtras.colors["peekViewTitle.background"]).toBe("#151616");
+    expect(withExtras.colors["peekView.border"]).toBe("#ffffff1f");
+    expect(classic.colors["editor.findMatchBackground"]).toBeUndefined();
+    expect(classic.colors["peekView.border"]).toBeUndefined();
+  });
 });
 
 describe("applyImmediateFallbackTheme", () => {
@@ -336,6 +356,32 @@ describe("createAppHighlighter", () => {
     expect(highlighter.getLoadedLanguages()).toContain("dotenv");
     expect(monaco.languages.register).toHaveBeenCalledWith({ id: "dotenv" });
     expect(providers.get("dotenv")).toBeDefined();
+  });
+
+  it("defines the overview-ruler change colours on every theme handed to Monaco", async () => {
+    const { monaco } = createMonacoStub();
+    const themes = new Map<string, { colors: Record<string, string> }>();
+    monaco.editor.defineTheme.mockImplementation(
+      (name: string, theme?: { colors: Record<string, string> }) => {
+        if (theme) themes.set(name, theme);
+      },
+    );
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    expect(themes.size).toBeGreaterThan(0);
+    for (const [name, theme] of themes) {
+      for (const key of [
+        "editorOverviewRuler.addedForeground",
+        "editorOverviewRuler.modifiedForeground",
+        "editorOverviewRuler.deletedForeground",
+      ]) {
+        expect(theme.colors[key], `${name} ${key}`).toMatch(/^#[0-9a-f]{6}([0-9a-f]{2})?$/i);
+      }
+    }
   });
 
   it("loads the bundled official Ayu Mirage theme", async () => {

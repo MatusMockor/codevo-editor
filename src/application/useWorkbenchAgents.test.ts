@@ -132,6 +132,155 @@ describe("useWorkbenchAgents composition", () => {
     }
   });
 
+  it("refreshes a provider's subscription limits on request", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+
+    let outcome: unknown = null;
+    await act(async () => {
+      outcome = await harness.hook().refreshAccountUsage?.("codex");
+    });
+    expect(outcome).toEqual({ kind: "refreshed" });
+
+    await waitForReact(() => {
+      expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledWith({
+        provider: "codex",
+        providerGeneration: 1,
+      });
+      expect(harness.hook().accountUsage.codex).toMatchObject({
+        kind: "ready",
+        snapshot: { provider: "codex", windows: [{ id: "primary", usedPercent: 17 }] },
+      });
+    });
+    harness.unmount();
+  });
+
+  it("reports a failed usage refresh without publishing a snapshot", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(async () =>
+      Promise.reject(new Error("usage endpoint unavailable")),
+    );
+
+    let outcome: unknown = null;
+    await act(async () => {
+      outcome = await harness.hook().refreshAccountUsage?.("codex");
+    });
+
+    expect(outcome).toEqual({ kind: "failed" });
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "idle" });
+    harness.unmount();
+  });
+
+  it("reports a provider that is not ready instead of silently skipping the refresh", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+
+    let outcome: unknown = null;
+    await act(async () => {
+      outcome = await harness.hook().refreshAccountUsage?.("claudeCode");
+    });
+
+    expect(outcome).toEqual({ kind: "unavailable" });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("marks a late usage failure after A -> B -> A as superseded", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+    const pending = createDeferred<{
+      provider: "claudeCode" | "codex";
+      fetchedAtEpochMs: number;
+      windows: [];
+    }>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => pending.promise,
+    );
+
+    let refresh: Promise<unknown> | undefined;
+    await act(async () => {
+      refresh = harness.hook().refreshAccountUsage?.("codex");
+    });
+
+    harness.setWorkspaceId("workspace-other");
+    harness.rerender();
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+
+    let outcome: unknown = null;
+    await act(async () => {
+      pending.reject(new Error("late failure"));
+      outcome = await refresh;
+    });
+
+    expect(outcome).toEqual({ kind: "superseded" });
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "idle" });
+    harness.unmount();
+  });
+
+  it("drops a late usage refresh after the workspace changed A -> B -> A", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+    const pending = createDeferred<{
+      provider: "claudeCode" | "codex";
+      fetchedAtEpochMs: number;
+      windows: [];
+    }>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => pending.promise,
+    );
+
+    await act(async () => {
+      harness.hook().refreshAccountUsage?.("codex");
+    });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledTimes(1);
+
+    harness.setWorkspaceId("workspace-other");
+    harness.rerender();
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex")).toMatchObject({
+        disposition: { kind: "ready" },
+        providerGeneration: 1,
+      }),
+    );
+
+    await act(async () => {
+      pending.resolve({ provider: "codex", fetchedAtEpochMs: 1_700_000_000_000, windows: [] });
+      await pending.promise;
+    });
+
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "idle" });
+    harness.unmount();
+  });
+
   it("does not publish an aggregate non-Git project root as an agent repository", async () => {
     const nestedRoot = `${ACTIVE_ROOT}/ebox-crm`;
     const harness = renderWorkbenchAgents({
@@ -171,7 +320,9 @@ describe("useWorkbenchAgents composition", () => {
       ).not.toBeNull();
     });
 
-    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(nestedRoot, expect.any(String));
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(nestedRoot, expect.any(String), {
+      kind: "head",
+    });
     expect(harness.startedRequests[0]?.repositoryRoot).toBe(nestedRoot);
     harness.unmount();
   });

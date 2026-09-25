@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentTaskIsolation } from "../domain/agentTask";
 import type { NodePackageScript, NodePackageTaskLaunchTarget } from "../domain/nodePackageScripts";
 import type { NodePackageTaskState } from "./nodePackageTaskLifecycle";
@@ -93,8 +93,16 @@ interface AgentThreadScriptStarter {
   readonly workspaceRoot: string;
 }
 
-interface AgentThreadScriptOwner extends AgentThreadScriptStarter {
-  readonly runId: string;
+interface AgentThreadScriptIdentity {
+  readonly scriptName: string;
+  readonly manifestRelativePath: string;
+}
+
+interface AgentThreadScriptRunIntent {
+  readonly starter: AgentThreadScriptStarter;
+  readonly script: AgentThreadScriptIdentity;
+  readonly previousOutcomeRunId: string | null;
+  readonly runId: string | null;
 }
 
 export interface UseAgentThreadScriptsOptions {
@@ -114,45 +122,40 @@ export function useAgentThreadScripts({
   const [preferredByRepository, setPreferredByRepository] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
   );
-  const [owner, setOwner] = useState<AgentThreadScriptOwner | null>(null);
+  const [intent, setIntent] = useState<AgentThreadScriptRunIntent | null>(null);
   const [recorded, setRecorded] = useState<ReadonlyMap<string, AgentThreadScriptOutcome>>(
     () => new Map(),
   );
-  const startedByRef = useRef<AgentThreadScriptStarter | null>(null);
   const repositoryRoot = target?.repositoryRoot ?? null;
   const threadId = target?.threadId ?? null;
   const activeRunId = runner.active?.runId ?? null;
-
-  useEffect(() => {
-    if (activeRunId === null) {
-      startedByRef.current = null;
-      return;
-    }
-    const startedBy = startedByRef.current;
-    startedByRef.current = null;
-    setOwner((current) => {
-      if (current !== null && current.runId === activeRunId) return current;
-      if (startedBy === null) return null;
-      return { ...startedBy, runId: activeRunId };
-    });
-  }, [activeRunId]);
-
   const runnerOutcome = runner.lastOutcome ?? null;
   const runnerScripts = runner.scripts;
+  const ownedRunId = intent === null ? null : intendedRunId(intent, activeRunId, runnerOutcome);
+
   useEffect(() => {
-    if (runnerOutcome === null || owner === null) return;
-    if (runnerOutcome.runId !== owner.runId) return;
-    const key = scriptKey(runnerScripts, runnerOutcome);
-    setOwner(null);
-    if (key === null) return;
-    setRecorded((current) => withOutcome(current, outcomeKey(owner, key), runnerOutcome.outcome));
-  }, [owner, runnerOutcome, runnerScripts]);
+    if (intent === null || ownedRunId === null) return;
+    if (runnerOutcome !== null && runnerOutcome.runId === ownedRunId) {
+      setIntent(null);
+      const key = scriptKey(runnerScripts, runnerOutcome);
+      if (key === null) return;
+      setRecorded((current) =>
+        withOutcome(current, outcomeKey(intent.starter, key), runnerOutcome.outcome),
+      );
+      return;
+    }
+    if (activeRunId !== ownedRunId) {
+      setIntent(null);
+      return;
+    }
+    if (intent.runId !== ownedRunId) setIntent({ ...intent, runId: ownedRunId });
+  }, [activeRunId, intent, ownedRunId, runnerOutcome, runnerScripts]);
 
   const ownedByThread =
-    owner !== null &&
+    intent !== null &&
     activeRunId !== null &&
-    owner.runId === activeRunId &&
-    owner.threadId === threadId;
+    ownedRunId === activeRunId &&
+    intent.starter.threadId === threadId;
   const foreignRun = activeRunId !== null && !ownedByThread;
 
   const scoped = useMemo(
@@ -207,12 +210,17 @@ export function useAgentThreadScripts({
       }
       onBeforeRun();
       const starter = { threadId, workspaceRoot };
-      startedByRef.current = starter;
       const started = runner.run(script, launchTarget(target), target.repositoryRoot);
-      if (!started) {
-        startedByRef.current = null;
-        return false;
-      }
+      if (!started) return false;
+      setIntent({
+        starter,
+        script: {
+          scriptName: script.scriptName,
+          manifestRelativePath: script.manifestRelativePath,
+        },
+        previousOutcomeRunId: runner.lastOutcome?.runId ?? null,
+        runId: null,
+      });
       setRecorded((current) => withoutOutcome(current, outcomeKey(starter, key)));
       return true;
     },
@@ -272,6 +280,19 @@ function settledOutcome(task: NodePackageTaskState): AgentThreadScriptOutcome | 
       return exhaustive;
     }
   }
+}
+
+function intendedRunId(
+  intent: AgentThreadScriptRunIntent,
+  activeRunId: string | null,
+  outcome: AgentThreadScriptRunnerOutcome | null,
+): string | null {
+  if (intent.runId !== null) return intent.runId;
+  if (activeRunId !== null) return activeRunId;
+  if (outcome === null || outcome.runId === intent.previousOutcomeRunId) return null;
+  if (outcome.scriptName !== intent.script.scriptName) return null;
+  if (outcome.manifestRelativePath !== intent.script.manifestRelativePath) return null;
+  return outcome.runId;
 }
 
 function outcomeKey(starter: AgentThreadScriptStarter, key: string): string {

@@ -1,4 +1,4 @@
-import { Folder, FolderGit2, GitBranch, Monitor } from "lucide-react";
+import { Folder, FolderGit2 } from "lucide-react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 
@@ -21,40 +21,13 @@ export type AgentComposerCheckoutChoice =
   | { readonly kind: "isolation"; readonly isolation: AgentTaskIsolation }
   | { readonly kind: "root"; readonly repositoryRoot: string };
 
-export function agentComposerCheckoutOptions(
+export function agentComposerRepositoryOptions(
   target: AgentComposerTarget | null,
-  worktreeAvailable: boolean,
-  remote = false,
 ): ReadonlyArray<AgentPickerOption> {
-  const selectedLabel = agentComposerSelectedLabel(target);
-  const options: AgentPickerOption[] = [
-    agentPickerOption(
-      "in-place",
-      remote ? "Server checkout" : "Local checkout",
-      selectedLabel === null ? "Runs in the project's own checkout." : `Runs in ${selectedLabel}.`,
-      null,
-      null,
-      <Monitor size={15} />,
-    ),
-  ];
-  if (worktreeAvailable) {
-    options.push(
-      agentPickerOption(
-        "worktree",
-        "Isolated worktree",
-        selectedLabel === null
-          ? "Runs in a new git worktree."
-          : `Runs in a new git worktree of ${selectedLabel}.`,
-        null,
-        null,
-        <GitBranch size={15} />,
-      ),
-    );
-  }
-  if (target === null || target.repositoryOptions.length === 0) return options;
+  if (target === null || target.repositoryOptions.length === 0) return [];
   const rootOption = (repositoryRoot: string, label: string, description: string | null) =>
     agentPickerOption(
-      `${RUN_IN_ROOT_PREFIX}${repositoryRoot}`,
+      agentComposerRepositoryValue(repositoryRoot),
       label,
       description,
       null,
@@ -63,11 +36,16 @@ export function agentComposerCheckoutOptions(
       RUN_IN_REPOSITORY_GROUP,
       repositoryRoot === target.selectedRepositoryRoot,
     );
-  options.push(rootOption(target.projectRoot, target.projectLabel, "Project folder"));
-  for (const repository of target.repositoryOptions) {
-    options.push(rootOption(repository.repositoryRoot, repository.label, null));
-  }
-  return options;
+  return [
+    rootOption(target.projectRoot, target.projectLabel, "Project folder"),
+    ...target.repositoryOptions.map((repository) =>
+      rootOption(repository.repositoryRoot, repository.label, null),
+    ),
+  ];
+}
+
+export function agentComposerRepositoryValue(repositoryRoot: string): string {
+  return `${RUN_IN_ROOT_PREFIX}${repositoryRoot}`;
 }
 
 export function agentComposerCheckoutChoice(value: string): AgentComposerCheckoutChoice | null {
@@ -76,20 +54,4 @@ export function agentComposerCheckoutChoice(value: string): AgentComposerCheckou
   const repositoryRoot = value.slice(RUN_IN_ROOT_PREFIX.length);
   if (repositoryRoot === "") return null;
   return { kind: "root", repositoryRoot };
-}
-
-export function agentComposerSelectedLabel(target: AgentComposerTarget | null): string | null {
-  if (target === null) return null;
-  if (target.selectedRepositoryRoot === target.projectRoot) return target.projectLabel;
-  return (
-    target.repositoryOptions.find(
-      (option) => option.repositoryRoot === target.selectedRepositoryRoot,
-    )?.label ?? null
-  );
-}
-
-export function agentComposerNestedTargetLabel(target: AgentComposerTarget | null): string | null {
-  if (target === null) return null;
-  if (target.selectedRepositoryRoot === target.projectRoot) return null;
-  return agentComposerSelectedLabel(target);
 }

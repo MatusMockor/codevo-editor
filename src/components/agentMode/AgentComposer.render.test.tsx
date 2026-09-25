@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentComposer, type AgentComposerProps } from "./AgentComposer";
 import { AgentLaunchControls } from "./AgentLaunchControls";
-import { agentComposerCheckoutOptions } from "./agentComposerCheckout";
+import { agentComposerRepositoryOptions } from "./agentComposerCheckout";
 import { useAgentComposerState } from "./useAgentComposerState";
 import { agentProjectGroups } from "./agentModePresentation";
 import {
@@ -21,7 +21,10 @@ vi.mock("./AgentLaunchControls", async (importOriginal) => {
 
 vi.mock("./agentComposerCheckout", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./agentComposerCheckout")>();
-  return { ...actual, agentComposerCheckoutOptions: vi.fn(actual.agentComposerCheckoutOptions) };
+  return {
+    ...actual,
+    agentComposerRepositoryOptions: vi.fn(actual.agentComposerRepositoryOptions),
+  };
 });
 
 describe("AgentComposer render boundaries", () => {
@@ -44,9 +47,9 @@ describe("AgentComposer render boundaries", () => {
   it.each([6, 128, 512])("keeps unchanged controls out of %i-repository prompt edits", (count) => {
     const props = fixture(count);
     render(props);
-    click("#agent-checkout");
+    click("#agent-repository");
     vi.mocked(AgentLaunchControls).mockClear();
-    vi.mocked(agentComposerCheckoutOptions).mockClear();
+    vi.mocked(agentComposerRepositoryOptions).mockClear();
 
     for (let index = 1; index <= 20; index += 1) {
       render({ ...props, prompt: `Prompt ${index}`, promptBytes: 9 });
@@ -55,7 +58,7 @@ describe("AgentComposer render boundaries", () => {
     expect(host.querySelector("textarea")?.value).toBe("Prompt 20");
     expect(host.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
     expect(AgentLaunchControls).not.toHaveBeenCalled();
-    expect(agentComposerCheckoutOptions).not.toHaveBeenCalled();
+    expect(agentComposerRepositoryOptions).not.toHaveBeenCalled();
   });
 
   it("updates control authority and callbacks immediately after prompt edits", () => {
@@ -79,6 +82,8 @@ describe("AgentComposer render boundaries", () => {
     expect(latestLaunch?.onLaunchChange).toBe(onLaunchChange);
     click("#agent-checkout");
     expect(onRefreshIsolation).toHaveBeenCalledOnce();
+    click("#agent-checkout");
+    click("#agent-repository");
     click('[data-value="root:/workspace/app/repo-1"]');
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/repo-1");
 
@@ -103,12 +108,16 @@ describe("AgentComposer render boundaries", () => {
       repositoryOptions: [{ repositoryRoot: "/workspace/other/api", label: "api" }],
     };
     render({ ...props, target, onIsolationChange, onSelectRepository, prompt: "Latest" });
-    click("#agent-checkout");
+    click("#agent-repository");
     expect(host.querySelector('[data-value="root:/workspace/app/repo-1"]')).toBeNull();
     click('[data-value="root:/workspace/other/api"]');
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/other/api");
     click("#agent-checkout");
-    click('[data-value="worktree"]');
+    const worktree = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+      (row) => row.textContent?.includes("New worktree"),
+    );
+    expect(worktree).toBeDefined();
+    act(() => worktree?.click());
     expect(onIsolationChange).toHaveBeenCalledWith("worktree");
     expect(props.onSelectRepository).not.toHaveBeenCalled();
     expect(props.onIsolationChange).not.toHaveBeenCalled();
@@ -169,7 +178,7 @@ describe("AgentComposer render boundaries", () => {
         );
       }
       act(() => root.render(<RefreshingComposer />));
-      click("#agent-checkout");
+      click("#agent-repository");
       const search = host.querySelector<HTMLInputElement>('input[type="search"]');
       if (search === null) throw new Error("Expected search");
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;

@@ -80,4 +80,9 @@ describe("searchSettingsRows", () => {
     expect(ids("font size")).toContain("appearance.agentThreadFontSize");
     expect(ids("zoom")).toContain("appearance.agentThreadFontSize");
   });
+
+  it("finds the update track by channel words", () => {
+    const hits = searchSettingsRows("beta", SETTINGS_ROWS, false);
+    expect(hits.map((hit) => hit.row.id)).toContain("general.updateChannel");
+  });
 });

@@ -1,4 +1,5 @@
 import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
+import type { GitChangeStatus } from "../../../domain/git";
 import { AGENT_RIGHT_PANEL_SURFACE_CATALOG } from "./agentRightPanelSurfaceCatalog";
 
 export const MAX_AGENT_RIGHT_PANEL_EDITOR_TABS = 32;
@@ -27,6 +28,7 @@ export interface AgentRightPanelEditorDocument {
   readonly path: string;
   readonly dirty: boolean;
   readonly preview: boolean;
+  readonly gitStatus: GitChangeStatus | null;
 }
 
 export interface AgentRightPanelEditorDocuments {
@@ -36,6 +38,7 @@ export interface AgentRightPanelEditorDocuments {
   onActivate(documentId: string): void;
   onClose(documentId: string): void;
   onOpenFile(): void;
+  onPin(documentId: string): void;
 }
 
 export type AgentRightPanelTabEntry =
@@ -65,6 +68,7 @@ export type AgentRightPanelTabEntry =
       readonly path: string;
       readonly dirty: boolean;
       readonly preview: boolean;
+      readonly gitStatus: GitChangeStatus | null;
       readonly active: boolean;
       readonly panelId: string;
     };
@@ -83,10 +87,7 @@ export function agentSurfacePanelId(kind: AgentSurfaceKind): string {
 export function agentRightPanelTabEntries(
   input: AgentRightPanelTabEntriesInput,
 ): ReadonlyArray<AgentRightPanelTabEntry> {
-  return [
-    ...editorEntries(input.editorDocuments),
-    ...input.openSurfaces.flatMap((surface) => surfaceEntries(surface, input)),
-  ];
+  return input.openSurfaces.flatMap((surface) => surfaceEntries(surface, input));
 }
 
 export function selectedAgentRightPanelTabId(
@@ -107,6 +108,7 @@ function editorEntries(
     path: document.path,
     dirty: document.dirty,
     preview: document.preview,
+    gitStatus: document.gitStatus,
     active: documents.surfaceActive && documents.activeDocumentId === document.documentId,
     panelId: AGENT_EDITOR_DOCUMENT_PANEL_ID,
   }));
@@ -116,6 +118,7 @@ function surfaceEntries(
   surface: AgentSurfaceKind,
   input: AgentRightPanelTabEntriesInput,
 ): ReadonlyArray<AgentRightPanelTabEntry> {
+  if (surface === "editor") return editorEntries(input.editorDocuments);
   const active = input.activeSurface === surface;
   const terminal = input.terminal;
   if (surface === "terminal" && terminal !== null && terminal.sessions.length > 0) {

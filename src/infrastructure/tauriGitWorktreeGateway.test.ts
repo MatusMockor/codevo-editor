@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { HEAD_WORKTREE_BASE } from "../domain/agentWorktreeBase";
 import { MAX_WORKTREES_PER_REPOSITORY } from "../domain/gitWorktree";
 import { TauriGitWorktreeGateway } from "./tauriGitWorktreeGateway";
 import type { InvokeGitWorktreeCommand } from "./tauriGitWorktreeIpcContract";
@@ -28,9 +29,17 @@ describe("TauriGitWorktreeGateway", () => {
       .mockResolvedValueOnce([descriptor.worktreePath]);
     const gateway = new TauriGitWorktreeGateway(invoke, () => true);
     await expect(gateway.listWorktrees(repositoryRoot)).resolves.toEqual([descriptor]);
-    await expect(gateway.addAgentWorktree(repositoryRoot, "agt-123-1a2b")).resolves.toEqual(
-      receipt,
-    );
+    await expect(
+      gateway.addAgentWorktree(repositoryRoot, "agt-123-1a2b", {
+        kind: "ref",
+        ref: "refs/heads/feature",
+      }),
+    ).resolves.toEqual(receipt);
+    expect(invoke).toHaveBeenNthCalledWith(2, "add_git_worktree", {
+      repositoryRoot,
+      taskId: "agt-123-1a2b",
+      base: { kind: "ref", ref: "refs/heads/feature" },
+    });
     await expect(
       gateway.removeWorktree(repositoryRoot, descriptor.worktreePath, false),
     ).resolves.toBeUndefined();
@@ -71,9 +80,9 @@ describe("TauriGitWorktreeGateway", () => {
   it("rejects receipt-producing add outside Tauri", async () => {
     const invoke = vi.fn<InvokeGitWorktreeCommand>();
     const gateway = new TauriGitWorktreeGateway(invoke, () => false);
-    await expect(gateway.addAgentWorktree(repositoryRoot, "agt-123-1a2b")).rejects.toThrow(
-      "Git unavailable.",
-    );
+    await expect(
+      gateway.addAgentWorktree(repositoryRoot, "agt-123-1a2b", HEAD_WORKTREE_BASE),
+    ).rejects.toThrow("Git unavailable.");
     expect(invoke).not.toHaveBeenCalled();
   });
 });

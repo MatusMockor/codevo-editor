@@ -1,3 +1,4 @@
+import { HEAD_WORKTREE_BASE } from "../domain/agentWorktreeBase";
 import { createAgentOutputAcknowledgement } from "./agentOutputAcknowledgement";
 import type { CodexTransport } from "../domain/agentProviderSettings";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -516,6 +517,7 @@ export function useAgentTurnDispatch(
                 authority,
                 repositoryRoot,
                 threadId,
+                request.worktreeBase ?? HEAD_WORKTREE_BASE,
               )
             : null;
         if (request.isolation === "worktree" && createdWorktree === null) {

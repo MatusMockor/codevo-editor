@@ -16,32 +16,28 @@ import {
   useWorkbenchFrameEditorReport,
   useWorkbenchFrameEditorState,
 } from "./workbenchFrameEditorReport";
-import { useWorkbenchFrameTreeReport } from "./workbenchFrameTreeReport";
-import {
-  workbenchFrameTreeState,
-  workbenchShellPlacement,
-  type WorkbenchShellPlacement,
-} from "./workbenchShellPlacement";
+import { workbenchShellPlacement, type WorkbenchShellPlacement } from "./workbenchShellPlacement";
 
 const CLAMPED_RIGHT_PANEL_WIDTH_AT_1280 = 464;
 
 describe("workbenchShellPlacement", () => {
-  it("hides the editor in the agent layout unless the Files surface is open", () => {
+  it("hides the editor in the agent layout unless the Editor surface is open", () => {
     expect(placement("agent", null).editorHidden).toBe(true);
     expect(placement("agent", "diff").editorHidden).toBe(true);
     expect(placement("agent", "terminal").editorHidden).toBe(true);
-    expect(placement("agent", "files").editorHidden).toBe(false);
-    expect(placement("editor-expanded", null).editorHidden).toBe(false);
+    expect(placement("agent", "files").editorHidden).toBe(true);
+    expect(placement("agent", "editor").editorHidden).toBe(false);
+    expect(placement("editor-only", null).editorHidden).toBe(false);
     expect(emptyOpenPanelPlacement().editorHidden).toBe(true);
   });
 
   it("collapses the right and bottom panel tracks when they are closed", () => {
     expect(placement("agent", null)).toMatchObject({ rightPanelWidth: 0, bottomPanelHeight: 0 });
-    expect(placement("agent", "files")).toMatchObject({ rightPanelWidth: 540 });
-    expect(placement("agent", "files", true)).toMatchObject({ bottomPanelHeight: 280 });
-    expect(placement("editor-expanded", "files", true)).toMatchObject({
+    expect(placement("agent", "editor")).toMatchObject({ rightPanelWidth: 540 });
+    expect(placement("agent", "editor", true)).toMatchObject({ bottomPanelHeight: 280 });
+    expect(placement("editor-only", "editor", true)).toMatchObject({
       rightPanelWidth: 0,
-      bottomPanelHeight: 0,
+      bottomPanelHeight: 280,
     });
     expect(emptyOpenPanelPlacement()).toMatchObject({
       rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
@@ -51,11 +47,11 @@ describe("workbenchShellPlacement", () => {
 });
 
 describe("workbenchShellPlacement maximized", () => {
-  it("reports the maximized panel only for an open panel in the agent layout", () => {
-    expect(placement("agent", "files", false, true).rightPanelMaximized).toBe(true);
-    expect(placement("agent", "files", false, false).rightPanelMaximized).toBe(false);
+  it("reports the maximized panel for an open agent panel and for the editor-only fallback", () => {
+    expect(placement("agent", "editor", false, true).rightPanelMaximized).toBe(true);
+    expect(placement("agent", "editor", false, false).rightPanelMaximized).toBe(false);
     expect(placement("agent", null, false, true).rightPanelMaximized).toBe(false);
-    expect(placement("editor-expanded", null, false, true).rightPanelMaximized).toBe(false);
+    expect(placement("editor-only", null).rightPanelMaximized).toBe(true);
     expect(
       workbenchShellPlacement({
         bottomPanelVisible: false,
@@ -65,24 +61,14 @@ describe("workbenchShellPlacement maximized", () => {
     ).toMatchObject({ rightPanelMaximized: true, editorHidden: true });
   });
 
-  it("keeps the editor over the Files area while maximized", () => {
-    expect(placement("agent", "files", true, true)).toMatchObject({
+  it("keeps the editor over the Editor surface while maximized", () => {
+    expect(placement("agent", "editor", true, true)).toMatchObject({
       editorHidden: false,
       rightPanelMaximized: true,
       rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
       bottomPanelHeight: 280,
     });
     expect(placement("agent", "diff", false, true).editorHidden).toBe(true);
-  });
-});
-
-describe("workbenchFrameTreeState", () => {
-  it("shows the tree only in the agent layout with the editor visible and a tree reported", () => {
-    expect(workbenchFrameTreeState(placement("agent", "files"), true)).toBe("visible");
-    expect(workbenchFrameTreeState(placement("agent", "files"), false)).toBe("hidden");
-    expect(workbenchFrameTreeState(placement("agent", "diff"), true)).toBe("hidden");
-    expect(workbenchFrameTreeState(placement("editor-expanded", "files"), true)).toBe("hidden");
-    expect(workbenchFrameTreeState(emptyOpenPanelPlacement(), true)).toBe("hidden");
   });
 });
 
@@ -111,18 +97,16 @@ describe("WorkbenchShellFrame", () => {
     expect(editor?.getAttribute("aria-hidden")).toBe("true");
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
 
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
     expect(host.querySelector('[data-slot="editor"]')).toBe(editor);
     expect(host.querySelector("#editor-content")).toBe(editorChild);
     expect(editor?.hasAttribute("hidden")).toBe(false);
     expect(editor?.hasAttribute("aria-hidden")).toBe(false);
 
-    render(placement("editor-expanded", null));
+    render(placement("editor-only", null));
     expect(host.querySelector('[data-slot="editor"]')).toBe(editor);
     expect(host.querySelector("#editor-content")).toBe(editorChild);
-    expect(host.querySelector(".workbench-frame")?.getAttribute("data-layout")).toBe(
-      "editor-expanded",
-    );
+    expect(host.querySelector(".workbench-frame")?.getAttribute("data-layout")).toBe("editor-only");
 
     render(placement("agent", null));
     expect(host.querySelector("#editor-content")).toBe(editorChild);
@@ -130,7 +114,7 @@ describe("WorkbenchShellFrame", () => {
   });
 
   it("stamps the maximized panel on the frame and restores the docked panel", () => {
-    render(placement("agent", "files", false, true));
+    render(placement("agent", "editor", false, true));
     const frame = host.querySelector(".workbench-frame");
     expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
     expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(false);
@@ -139,15 +123,15 @@ describe("WorkbenchShellFrame", () => {
     expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
     expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
 
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
     expect(frame?.getAttribute("data-right-panel")).toBe("docked");
 
-    render(placement("editor-expanded", null, false, true));
-    expect(frame?.getAttribute("data-right-panel")).toBe("docked");
+    render(placement("editor-only", null));
+    expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
   });
 
   it("overlays the panel on narrow windows without remounting the editor or setting maximize", () => {
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
     const frame = host.querySelector(".workbench-frame");
     const editor = host.querySelector("#editor-content");
     for (const width of [1000, 900, 720]) {
@@ -159,9 +143,9 @@ describe("WorkbenchShellFrame", () => {
       expect(host.querySelector("#editor-content")).toBe(editor);
       expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(false);
     }
-    render(placement("agent", "files", false, true));
+    render(placement("agent", "editor", false, true));
     expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
     expect(frame?.getAttribute("data-right-panel")).toBe("overlay");
     act(() => {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
@@ -180,8 +164,8 @@ describe("WorkbenchShellFrame", () => {
     expect(frame?.getAttribute("data-rail")).toBe("collapsed");
     expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
 
-    render(placement("editor-expanded", null, true));
-    expect(frame?.getAttribute("data-rail")).toBe("expanded");
+    render(placement("editor-only", null, true));
+    expect(frame?.getAttribute("data-rail")).toBe("collapsed");
   });
 
   it("publishes the persisted rail width the rail handle writes to", () => {
@@ -203,7 +187,6 @@ describe("WorkbenchShellFrame", () => {
     );
     expect(CLAMPED_RIGHT_PANEL_WIDTH_AT_1280).toBeLessThan(DEFAULT_AGENT_RIGHT_PANEL_WIDTH);
     expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
-    expect(host.querySelector(".workbench-frame")?.getAttribute("data-tree")).toBe("hidden");
   });
 
   it("publishes the committed panel sizes on the workbench the drag handles write to", () => {
@@ -218,56 +201,28 @@ describe("WorkbenchShellFrame", () => {
   });
 
   it("does not stamp an agent appearance variant", () => {
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
 
     expect(host.querySelector(".workbench-frame")?.hasAttribute("data-agent-variant")).toBe(false);
   });
 
-  it("keeps the tree column collapsed while the Files surface reports no tree", () => {
-    render(placement("agent", "files"), <TreeReporter visible={false} />);
-
-    expect(host.querySelector(".workbench-frame")?.getAttribute("data-tree")).toBe("hidden");
-    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(false);
-  });
-
-  it("stamps data-tree from the reporting surface and clears it when the surface unmounts", () => {
-    render(placement("agent", "files"));
-    const frame = () => host.querySelector(".workbench-frame")?.getAttribute("data-tree");
-    expect(frame()).toBe("hidden");
-
-    render(placement("agent", "files"), <TreeReporter visible />);
-    expect(frame()).toBe("visible");
-
-    render(placement("agent", "files"), <TreeReporter visible={false} />);
-    expect(frame()).toBe("hidden");
-
-    render(placement("agent", "files"), <TreeReporter visible />);
-    render(placement("agent", "diff"), <TreeReporter visible />);
-    expect(frame()).toBe("hidden");
-
-    render(placement("agent", "files"), <TreeReporter visible />);
-    expect(frame()).toBe("visible");
-    render(placement("agent", "files"));
-    expect(frame()).toBe("hidden");
-  });
-
   it("stamps data-editor from the editor host report and keeps the editor mounted while empty", () => {
     const frame = () => host.querySelector(".workbench-frame")?.getAttribute("data-editor");
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
     expect(frame()).toBe("empty");
 
-    renderEditor(placement("agent", "files"), <EditorReporter empty />);
+    renderEditor(placement("agent", "editor"), <EditorReporter empty />);
     const editorSlot = host.querySelector('[data-slot="editor"]');
     expect(frame()).toBe("empty");
     expect(editorSlot?.hasAttribute("hidden")).toBe(false);
     expect(host.querySelector("#editor-reporter")).not.toBeNull();
 
-    renderEditor(placement("agent", "files"), <EditorReporter empty={false} />);
+    renderEditor(placement("agent", "editor"), <EditorReporter empty={false} />);
     expect(frame()).toBe("documents");
     expect(host.querySelector('[data-slot="editor"]')).toBe(editorSlot);
 
     renderEditor(
-      placement("agent", "files"),
+      placement("agent", "editor"),
       <>
         <EditorReporter empty />
         <EditorReporter empty={false} />
@@ -275,10 +230,10 @@ describe("WorkbenchShellFrame", () => {
     );
     expect(frame()).toBe("documents");
 
-    renderEditor(placement("agent", "files"), <EditorReporter empty />);
+    renderEditor(placement("agent", "editor"), <EditorReporter empty />);
     expect(frame()).toBe("empty");
 
-    render(placement("agent", "files"));
+    render(placement("agent", "editor"));
     expect(frame()).toBe("empty");
   });
 
@@ -291,7 +246,7 @@ describe("WorkbenchShellFrame", () => {
           bottom={<span>bottom</span>}
           chrome={<div id="chrome" />}
           editor={<div id="editor-content" />}
-          placement={placement("agent", "files")}
+          placement={placement("agent", "editor")}
         />,
       ),
     );
@@ -304,7 +259,7 @@ describe("WorkbenchShellFrame", () => {
           bottom={<span>bottom</span>}
           chrome={<div id="chrome" />}
           editor={<EditorReporter empty={false} />}
-          placement={placement("agent", "files")}
+          placement={placement("agent", "editor")}
         />,
       ),
     );
@@ -312,7 +267,7 @@ describe("WorkbenchShellFrame", () => {
   });
 
   it("keeps every slot the agent renders a direct child of the frame grid", () => {
-    render(placement("agent", "files"), <AgentSlots />);
+    render(placement("agent", "editor"), <AgentSlots />);
     const frame = host.querySelector(".workbench-frame");
 
     expect(frame).not.toBeNull();
@@ -498,7 +453,7 @@ describe("WorkbenchShellFrame settings surface", () => {
           bottom={<span>bottom</span>}
           chrome={<div id="chrome" />}
           editor={<div id="editor-content" />}
-          placement={placement("editor-expanded", null)}
+          placement={placement("editor-only", null)}
           settings={<div>settings page</div>}
           settingsRef={(element) => {
             settingsSlots.push(element);
@@ -543,11 +498,6 @@ function RowMenuHost() {
   );
 }
 
-function TreeReporter({ visible }: { readonly visible: boolean }) {
-  useWorkbenchFrameTreeReport(visible);
-  return <div data-slot="agent">agent</div>;
-}
-
 function EditorReporter({ empty }: { readonly empty: boolean }) {
   useWorkbenchFrameEditorReport(empty);
   return <div id="editor-reporter" />;
@@ -571,8 +521,8 @@ function emptyOpenPanelPlacement(bottomPanelVisible = false): WorkbenchShellPlac
 }
 
 function placement(
-  effectiveLayout: "agent" | "editor-expanded",
-  rightSurface: "files" | "diff" | "terminal" | null,
+  effectiveLayout: "agent" | "editor-only",
+  rightSurface: "files" | "diff" | "terminal" | "editor" | null,
   bottomPanelVisible = false,
   maximized = false,
 ): WorkbenchShellPlacement {

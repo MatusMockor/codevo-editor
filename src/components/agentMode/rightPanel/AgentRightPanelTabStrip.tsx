@@ -1,9 +1,10 @@
 import { FilePlus, FileText, Plus, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
+import { gitStatusLabel, gitStatusTitle, type GitChangeStatus } from "../../../domain/git";
 import { Menu } from "../../../ui/foundation/Menu";
 import { MenuItem } from "../../../ui/foundation/MenuItem";
-import { PanelTabs, type PanelTabItem } from "../../../ui/foundation/PanelTabs";
+import { PanelTabs, type PanelTabBadge, type PanelTabItem } from "../../../ui/foundation/PanelTabs";
 import { AGENT_RIGHT_PANEL_SURFACE_CATALOG } from "./agentRightPanelSurfaceCatalog";
 import {
   selectedAgentRightPanelTabId,
@@ -61,6 +62,11 @@ export function AgentRightPanelTabStrip(props: AgentRightPanelTabStripProps) {
     if (typeof tab?.scrollIntoView !== "function") return;
     tab.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selectedId]);
+  const pin = (id: string): void => {
+    const entry = byId.get(id);
+    if (entry === undefined || entry.kind !== "editorDocument") return;
+    props.editorDocuments?.onPin(entry.documentId);
+  };
   const add = (kind: AgentSurfaceKind): void => {
     setMenuOpen(false);
     props.onAddSurface(kind);
@@ -72,6 +78,7 @@ export function AgentRightPanelTabStrip(props: AgentRightPanelTabStripProps) {
         <PanelTabs
           label="Panel surfaces"
           onClose={close}
+          onPin={pin}
           onSelect={select}
           selectedId={selectedId}
           tabs={props.entries.map((entry) => panelTab(entry, props.tabPanelsRendered))}
@@ -178,8 +185,10 @@ function panelTab(entry: AgentRightPanelTabEntry, tabPanelsRendered: boolean): P
         id: entry.id,
         title: entry.label,
         icon: <FileText size={14} />,
+        panelId,
         dirty: entry.dirty,
         preview: entry.preview,
+        badge: entry.gitStatus === null ? undefined : gitStatusBadge(entry.gitStatus),
       };
   }
 }
@@ -210,5 +219,27 @@ function closeEntry(entry: AgentRightPanelTabEntry, props: AgentRightPanelTabStr
     case "editorDocument":
       props.editorDocuments?.onClose(entry.documentId);
       return;
+  }
+}
+
+function gitStatusBadge(status: GitChangeStatus): PanelTabBadge {
+  return {
+    label: gitStatusLabel(status),
+    title: gitStatusTitle(status),
+    tone: gitStatusTone(status),
+  };
+}
+
+function gitStatusTone(status: GitChangeStatus): PanelTabBadge["tone"] {
+  switch (status) {
+    case "added":
+    case "renamed":
+    case "untracked":
+      return "ok";
+    case "modified":
+      return "warn";
+    case "deleted":
+    case "conflicted":
+      return "danger";
   }
 }

@@ -32,7 +32,6 @@ const ACTIONS: ReadonlyArray<AgentWorkbenchLayoutAction> = [
   { kind: "toggleRightPanel" },
   { kind: "toggleMaximized" },
   { kind: "maximizeRightPanel" },
-  { kind: "collapseEditor" },
   { kind: "resizeRail", width: 320 },
   { kind: "resizeRightPanel", width: 700 },
   { kind: "resizeBottomPanel", height: 400 },
@@ -49,8 +48,6 @@ function open(
 ): AgentWorkbenchLayout {
   return layoutOf({ rightPanel: "open", openSurfaces, activeSurface, ...overrides });
 }
-
-const EXPANDED = layoutOf({ layout: "editor-expanded" });
 
 const EXPLORED_SURFACE_KINDS: ReadonlyArray<AgentSurfaceKind> = [
   "files",
@@ -77,7 +74,6 @@ function everyReachableState(): ReadonlyArray<AgentWorkbenchLayout> {
   const states: AgentWorkbenchLayout[] = [];
   for (const openSurfaces of orderedSubsets()) {
     for (const activeSurface of [null, ...openSurfaces]) {
-      states.push(layoutOf({ layout: "editor-expanded", openSurfaces, activeSurface }));
       states.push(layoutOf({ rightPanel: "closed", openSurfaces, activeSurface }));
       for (const rightPanelMaximized of [false, true]) {
         states.push(open(openSurfaces, activeSurface, { rightPanelMaximized }));
@@ -95,9 +91,6 @@ function expectConsistent(state: AgentWorkbenchLayout): void {
   }
   if (state.rightPanelMaximized) {
     expect(state.rightPanel).toBe("open");
-  }
-  if (state.layout === "editor-expanded") {
-    expect(state.rightPanel).toBe("closed");
   }
   if (state.rightPanel === "closed") {
     expect(state.rightPanelMaximized).toBe(false);
@@ -147,7 +140,6 @@ describe("agentWorkbenchLayoutReducer", () => {
     expect(
       agentWorkbenchLayoutReducer(filesOnly, { kind: "closeSurfaceTab", surface: "diff" }),
     ).toBe(filesOnly);
-    expect(agentWorkbenchLayoutReducer(filesOnly, { kind: "collapseEditor" })).toBe(filesOnly);
     const chooser = open([], null);
     expect(agentWorkbenchLayoutReducer(chooser, { kind: "showSurfaceChooser" })).toBe(chooser);
   });
@@ -186,12 +178,6 @@ describe("agentWorkbenchLayoutReducer", () => {
       expect(
         agentWorkbenchLayoutReducer(chooser, { kind: "openSurface", surface: "terminal" }),
       ).toEqual(open(["files", "terminal"], "terminal"));
-    });
-
-    it("returns to the agent layout from the expanded editor", () => {
-      expect(
-        agentWorkbenchLayoutReducer(EXPANDED, { kind: "openSurface", surface: "files" }),
-      ).toEqual(open(["files"], "files"));
     });
 
     it("keeps the maximized panel maximized", () => {
@@ -293,13 +279,10 @@ describe("agentWorkbenchLayoutReducer", () => {
       ).toEqual(open(["files"], null));
     });
 
-    it("opens an empty panel from the closed panel and from the expanded editor", () => {
+    it("opens an empty panel from the closed panel", () => {
       expect(
         agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "showSurfaceChooser" }),
       ).toEqual(open([], null));
-      expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "showSurfaceChooser" })).toEqual(
-        open([], null),
-      );
     });
   });
 
@@ -340,12 +323,6 @@ describe("agentWorkbenchLayoutReducer", () => {
         open(["files", "diff"], "files"),
       );
     });
-
-    it("collapses the expanded editor onto the chooser", () => {
-      expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "toggleRightPanel" })).toEqual(
-        open([], null),
-      );
-    });
   });
 
   describe("toggleMaximized", () => {
@@ -367,8 +344,8 @@ describe("agentWorkbenchLayoutReducer", () => {
       }
     });
 
-    it("opens and maximizes an empty panel from closed and expanded layouts", () => {
-      for (const state of [initialAgentWorkbenchLayout, EXPANDED]) {
+    it("opens and maximizes an empty panel from the closed layout", () => {
+      for (const state of [initialAgentWorkbenchLayout]) {
         expect(agentWorkbenchLayoutReducer(state, { kind: "toggleMaximized" })).toEqual(
           open([], null, { rightPanelMaximized: true }),
         );
@@ -415,8 +392,8 @@ describe("agentWorkbenchLayoutReducer", () => {
       }
     });
 
-    it("opens and maximizes an empty panel from closed and expanded layouts", () => {
-      for (const state of [initialAgentWorkbenchLayout, EXPANDED]) {
+    it("opens and maximizes an empty panel from the closed layout", () => {
+      for (const state of [initialAgentWorkbenchLayout]) {
         expect(agentWorkbenchLayoutReducer(state, maximize)).toEqual(
           open([], null, { rightPanelMaximized: true }),
         );
@@ -431,16 +408,34 @@ describe("agentWorkbenchLayoutReducer", () => {
     });
   });
 
-  describe("legacy editor expansion", () => {
-    it("collapses persisted expanded layouts back onto their tabs", () => {
-      const expanded = layoutOf({
+  describe("layout without an editor-expanded mode", () => {
+    it("has no layout field and ignores a legacy persisted editor-expanded snapshot", () => {
+      const restored = parseAgentWorkbenchLayout({
         layout: "editor-expanded",
-        openSurfaces: ["diff"],
-        activeSurface: "diff",
+        rightPanel: "closed",
+        openSurfaces: ["editor"],
+        activeSurface: "editor",
       });
-      expect(agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" })).toEqual(
-        open(["diff"], "diff"),
+
+      expect("layout" in restored).toBe(false);
+      expect(restored.rightPanel).toBe("closed");
+      expect(restored.openSurfaces).toEqual(["editor"]);
+    });
+
+    it("does not serialize a layout field", () => {
+      expect("layout" in serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, false)).toBe(
+        false,
       );
+    });
+
+    it("toggling the right panel only opens and closes it", () => {
+      const opened = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+        kind: "toggleRightPanel",
+      });
+      const closed = agentWorkbenchLayoutReducer(opened, { kind: "toggleRightPanel" });
+
+      expect(opened.rightPanel).toBe("open");
+      expect(closed.rightPanel).toBe("closed");
     });
   });
 
@@ -620,26 +615,6 @@ describe("parseAgentWorkbenchLayout", () => {
     }
   });
 
-  it("closes the panel persisted alongside the expanded layout but keeps its tabs", () => {
-    expect(
-      parseAgentWorkbenchLayout({
-        layout: "editor-expanded",
-        rightPanel: "open",
-        openSurfaces: ["files"],
-        activeSurface: "files",
-        rightPanelMaximized: true,
-        rightPanelWidth: 700,
-      }),
-    ).toEqual(
-      layoutOf({
-        layout: "editor-expanded",
-        openSurfaces: ["files"],
-        activeSurface: "files",
-        rightPanelWidth: 700,
-      }),
-    );
-  });
-
   it("clamps out-of-bounds persisted sizes", () => {
     expect(
       parseAgentWorkbenchLayout({ layout: "agent", rightPanelWidth: 1, bottomPanelHeight: 9999 }),
@@ -750,7 +725,6 @@ describe("serializeAgentWorkbenchLayout", () => {
   it("persists exactly the layout fields", () => {
     const state = open(["files", "terminal"], "terminal", { rightPanelMaximized: true });
     expect(serializeAgentWorkbenchLayout(state, true)).toEqual({
-      layout: "agent",
       rightPanel: "open",
       openSurfaces: ["files", "terminal"],
       activeSurface: "terminal",
@@ -828,8 +802,9 @@ describe("right panel surface kinds", () => {
       "scripts",
       "pullRequest",
       "agents",
+      "editor",
     ]);
-    expect(MAX_AGENT_OPEN_SURFACES).toBe(8);
+    expect(MAX_AGENT_OPEN_SURFACES).toBe(9);
   });
 
   it("never serializes the pull request or agents surfaces", () => {
@@ -866,5 +841,48 @@ describe("right panel surface kinds", () => {
     expect(legacy.openSurfaces).toEqual([]);
     expect(isAgentTransientSurfaceKind("agents")).toBe(true);
     expect(isAgentTransientSurfaceKind("git")).toBe(false);
+  });
+});
+
+describe("editor surface kind", () => {
+  it("opens the editor surface in the right panel and makes it active", () => {
+    const next = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+      kind: "openSurface",
+      surface: "editor",
+    });
+
+    expect(next.rightPanel).toBe("open");
+    expect(next.activeSurface).toBe("editor");
+    expect(next.openSurfaces).toContain("editor");
+  });
+
+  it("persists and restores the editor surface", () => {
+    const opened = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+      kind: "openSurface",
+      surface: "editor",
+    });
+    const restored = parseAgentWorkbenchLayout(
+      JSON.parse(JSON.stringify(serializeAgentWorkbenchLayout(opened, false))),
+    );
+
+    expect(restored.openSurfaces).toContain("editor");
+    expect(restored.activeSurface).toBe("editor");
+  });
+
+  it("closing the editor tab keeps a neighbour active and drops maximize when nothing is left", () => {
+    const maximized = agentWorkbenchLayoutReducer(
+      agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+        kind: "openSurface",
+        surface: "editor",
+      }),
+      { kind: "maximizeRightPanel" },
+    );
+    const closed = agentWorkbenchLayoutReducer(maximized, {
+      kind: "closeSurfaceTab",
+      surface: "editor",
+    });
+
+    expect(closed.openSurfaces).not.toContain("editor");
+    expect(closed.rightPanelMaximized).toBe(false);
   });
 });

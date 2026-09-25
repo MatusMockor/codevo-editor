@@ -17,6 +17,7 @@ import { EditorRuntimeHost } from "./EditorRuntimeHost";
 
 interface WorkbenchEditorHostProps {
   activeGroupId: EditorGroupId;
+  activeTabsInStrip: boolean;
   attachEditorGroupLiveDocument: AttachEditorGroupLiveDocument;
   contentRevisionForGroup?(groupId: EditorGroupId): unknown;
   debugHover?: DebugHoverEvaluationPort | null;
@@ -57,6 +58,7 @@ interface WorkbenchEditorHostProps {
 
 export const WorkbenchEditorHost = memo(function WorkbenchEditorHost({
   activeGroupId,
+  activeTabsInStrip,
   attachEditorGroupLiveDocument,
   debugHover,
   contentRevisionForGroup,
@@ -133,6 +135,7 @@ export const WorkbenchEditorHost = memo(function WorkbenchEditorHost({
       resolveEditorGroupDocumentSessionAuthority={resolveEditorGroupDocumentSessionAuthority}
     >
       <EditorArea
+        activeTabsInStrip={activeTabsInStrip}
         contentRevisionForGroup={contentRevisionForGroup}
         documents={documents}
         htmlPreview={htmlPreview}

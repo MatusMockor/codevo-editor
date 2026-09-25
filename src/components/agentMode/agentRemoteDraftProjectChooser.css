@@ -1,40 +1,27 @@
 .agent-remote-project-choice {
   gap: 12px;
 }
+
 .agent-remote-project-choice label {
-  color: var(--agent-text-muted);
-  font-size: 12px;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  font-weight: 500;
 }
+
 .agent-remote-project-choice select {
-  color-scheme: inherit;
-  width: min(100%, 360px);
-  padding: 10px 12px;
+  width: min(360px, 100%);
+  height: 34px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 8px;
-  background: var(--agent-composer-surface);
-  color: var(--agent-text-strong);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-canvas);
+  box-shadow: var(--cv-ring-hair-strong);
+  color: var(--cv-fg-strong);
   font: inherit;
+  font-size: var(--cv-t-sm);
 }
+
 .agent-remote-project-choice select:focus-visible {
-  outline: 2px solid var(--agent-accent);
-  outline-offset: 2px;
-}
-.agent-remote-project-choice__add {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: fit-content;
-  border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-primary);
-  color: var(--codevo-primary-fg);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--codevo-fs-meta);
-  font-weight: 600;
-  padding: 8px 14px;
-}
-.agent-remote-project-choice__add:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }

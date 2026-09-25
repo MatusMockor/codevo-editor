@@ -925,6 +925,69 @@ describe("useAgentShipFlow authority and concurrency", () => {
     expect(harness.reportError).not.toHaveBeenCalled();
   });
 
+  it("reports a created commit as succeeded when the owner is lost after the commit", async () => {
+    const committed = deferred<GitStatus>();
+    const harness = renderFlow();
+    harness.gitGateway.commit.mockReturnValueOnce(committed.promise);
+
+    const pending = harness.hook().commit(THREAD_ID, "Fix");
+    await waitForReact(() => expect(harness.gitGateway.commit).toHaveBeenCalledTimes(1));
+    harness.set({ projects: [project({ generation: 2 })] });
+    let result: AgentShipStepResult | undefined;
+    await act(async () => {
+      committed.resolve(gitStatus(0));
+      result = await pending;
+    });
+
+    expect(result).toEqual({ kind: "succeeded" });
+    expect(harness.state()).toBeUndefined();
+    expect(receipts(harness.actions)).toEqual([]);
+    expect(harness.onShipStepCompleted).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("reports a completed push as succeeded when the owner is lost after the push", async () => {
+    const pushed = deferred<GitPushReceipt>();
+    const harness = renderFlow();
+    harness.gitIntegrationGateway.pushBranchUpstream.mockReturnValueOnce(pushed.promise);
+
+    const pending = harness.hook().push(THREAD_ID);
+    await waitForReact(() =>
+      expect(harness.gitIntegrationGateway.pushBranchUpstream).toHaveBeenCalledTimes(1),
+    );
+    harness.set({ projects: [project({ ownerId: "agent-root:other" })] });
+    let result: AgentShipStepResult | undefined;
+    await act(async () => {
+      pushed.resolve({ remote: "origin", branch: BRANCH, compareUrl: null });
+      result = await pending;
+    });
+
+    expect(result).toEqual({ kind: "succeeded" });
+    expect(harness.state()).toBeUndefined();
+    expect(receipts(harness.actions)).toEqual([]);
+    harness.unmount();
+  });
+
+  it("still reports authority loss when a push failed after the owner changed", async () => {
+    const pushed = deferred<GitPushReceipt>();
+    const harness = renderFlow();
+    harness.gitIntegrationGateway.pushBranchUpstream.mockReturnValueOnce(pushed.promise);
+
+    const pending = harness.hook().push(THREAD_ID);
+    await waitForReact(() =>
+      expect(harness.gitIntegrationGateway.pushBranchUpstream).toHaveBeenCalledTimes(1),
+    );
+    harness.set({ projects: [project({ generation: 2 })] });
+    let result: AgentShipStepResult | undefined;
+    await act(async () => {
+      pushed.reject(new Error("rejected"));
+      result = await pending;
+    });
+
+    expect(result).toMatchObject({ kind: "failed", failure: { reason: "authorityLost" } });
+    harness.unmount();
+  });
+
   it("clears a thread's ship state", async () => {
     const harness = renderFlow();
     await act(() => harness.hook().refreshShipStatus(THREAD_ID));

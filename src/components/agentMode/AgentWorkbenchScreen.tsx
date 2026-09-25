@@ -18,6 +18,9 @@ import {
   useAgentWorkbenchProjectOpening,
   type AgentPendingProjectOpen,
 } from "./useAgentWorkbenchProjectOpening";
+import { useAgentCloneDestinationPreference } from "./useAgentCloneDestinationPreference";
+import { resolveTauriWorkspaceHome } from "../../infrastructure/tauriHomeDirectory";
+import { recentFolderEntries } from "../../domain/recentFolders";
 import {
   UNAVAILABLE_AGENT_FILE_SEARCH,
   createDefaultAgentRightPanelGateways,
@@ -33,8 +36,8 @@ import { useAgentCheckoutDirtyRevision } from "../../application/useAgentCheckou
 import { getEditorDocumentDirtySnapshot } from "../../application/editorSessionDirtyProjection";
 import type { WorkspaceFileChangeGateway } from "../../domain/workspaceFileChange";
 import { runningTurn } from "../../domain/agentThread";
-import type { AgentBranchCheckoutGateway } from "../../application/useAgentBranchCheckout";
-import { agentBranchCheckoutBlockedReason } from "../../application/agentBranchCheckoutPolicy";
+import type { ComposerBranchGateway } from "../../application/useComposerBranchPicker";
+import { agentBranchCheckoutGuardReason } from "../../application/agentBranchCheckoutGuard";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import {
   useCallback,
@@ -93,6 +96,8 @@ import {
 } from "./agentWorkbenchChrome";
 import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 import { openThenRevealFiles } from "./openThenRevealFiles";
+import { revealingFileOpeners } from "../editorPanel/revealingFileOpeners";
+import { useEditorSurfaceReveal } from "../editorPanel/useEditorSurfaceReveal";
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
 
@@ -112,7 +117,6 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "previewFile"
   | "runCommand"
   | "saveWorkbenchSettings"
-  | "setSidebarView"
   | "showBottomPanelView"
   | "workspaceIdentityDescriptor"
   | "workspaceRoot"
@@ -152,7 +156,7 @@ export interface AgentWorkbenchScreenProps {
   readonly fileChanges: AgentSurfaceFileTreeDependencies["fileChanges"];
   readonly terminalGateway: TerminalGateway;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
-  readonly gitBranchGateway?: AgentBranchCheckoutGateway | null;
+  readonly gitBranchGateway?: ComposerBranchGateway | null;
   readonly worktreeFileChanges?: WorkspaceFileChangeGateway | null;
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
@@ -239,11 +243,14 @@ export function AgentWorkbenchScreen({
     }),
     [persistedProviderProjection.selectedProvider, workbench.agents],
   );
-  const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
+  const { openPinnedFile, openProblemNotice, previewFile } = workbench;
   const { openWorkspaceRootWithReceipt } = workbench;
   const { openSettingsSection } = workbench;
   const openEnvironmentSettings = useCallback(() => {
     openSettingsSection?.("environments");
+  }, [openSettingsSection]);
+  const openUsageSettings = useCallback(() => {
+    openSettingsSection?.("usage");
   }, [openSettingsSection]);
   const activateProjectWorkspace = useCallback(
     async (rootPath: string) => {
@@ -338,19 +345,19 @@ export function AgentWorkbenchScreen({
   );
 
   const { dispatch: dispatchAgentWorkbench } = agentWorkbench;
-  const revealFilesSurface = useCallback(() => {
-    dispatchAgentWorkbench({ kind: "openSurface", surface: "files" });
-  }, [dispatchAgentWorkbench]);
+  const revealEditorSurface = useEditorSurfaceReveal(dispatchAgentWorkbench);
+  const treeFileOpeners = useMemo(
+    () => revealingFileOpeners({ openPinnedFile, previewFile }, revealEditorSurface),
+    [openPinnedFile, previewFile, revealEditorSurface],
+  );
 
   const openScriptsView = useCallback(() => {
-    agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
-    setSidebarView("scripts");
-  }, [agentWorkbench, setSidebarView]);
+    agentWorkbench.dispatch({ kind: "openSurface", surface: "scripts" });
+  }, [agentWorkbench]);
 
   const openSourceControl = useCallback(() => {
-    agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
-    setSidebarView("git");
-  }, [agentWorkbench, setSidebarView]);
+    agentWorkbench.dispatch({ kind: "openSurface", surface: "git" });
+  }, [agentWorkbench]);
 
   const showTerminalPanel = useCallback(() => {
     showBottomPanelView("terminal");
@@ -426,7 +433,7 @@ export function AgentWorkbenchScreen({
                   },
                   shouldCommit,
                 ),
-              revealFilesSurface,
+              revealEditorSurface,
             );
             if (!opened) throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
           },
@@ -435,7 +442,7 @@ export function AgentWorkbenchScreen({
       ),
       reportError: reportAgentArtifactFailure,
     }),
-    [openPinnedFile, revealFilesSurface],
+    [openPinnedFile, revealEditorSurface],
   );
 
   const openTerminalLink = useCallback(
@@ -450,10 +457,10 @@ export function AgentWorkbenchScreen({
             severity: "info",
             source: "Terminal",
           }),
-        revealFilesSurface,
+        revealEditorSurface,
       );
     },
-    [openProblemNotice, revealFilesSurface],
+    [openProblemNotice, revealEditorSurface],
   );
 
   const openFileLocation = useCallback<AgentFileLocationOpener>(
@@ -468,15 +475,40 @@ export function AgentWorkbenchScreen({
             severity: "info",
             source: "Agent",
           }),
-        revealFilesSurface,
+        revealEditorSurface,
       );
     },
-    [openProblemNotice, revealFilesSurface],
+    [openProblemNotice, revealEditorSurface],
   );
 
   const localCloneSession = useRef<LocalProjectCloneSession["current"]>(null);
   const remoteCloneSession = useRef<RemoteAddProjectSession["current"]>(null);
   const creationSession = useRef<AgentProjectCreationSession["current"]>(null);
+  const saveCloneParent = useCallback(
+    async (lastCloneParentPath: string): Promise<void> => {
+      await saveWorkbenchSettings(
+        { ...appSettingsRef.current, lastCloneParentPath },
+        workspaceSettingsRef.current,
+        workspaceTrustRef.current?.trusted ?? null,
+        "reportAndReject",
+      );
+    },
+    [saveWorkbenchSettings],
+  );
+  const cloneDestination = useAgentCloneDestinationPreference({
+    lastParentPath: appSettings.lastCloneParentPath ?? null,
+    save: saveCloneParent,
+    resolveHome: resolveTauriWorkspaceHome,
+  });
+  const recentFolders = useMemo(
+    () =>
+      recentFolderEntries({
+        recentPaths: appSettings.recentWorkspacePaths ?? [],
+        openedAt: appSettings.recentWorkspaceOpenedAt ?? {},
+        excludeRoots: projects.projects.map((project) => project.rootPath),
+      }),
+    [appSettings.recentWorkspaceOpenedAt, appSettings.recentWorkspacePaths, projects.projects],
+  );
   const addProject = useAgentWorkbenchProjectOpening({
     localCloneSession,
     remoteCloneSession,
@@ -486,6 +518,9 @@ export function AgentWorkbenchScreen({
     openWorkspaceRootWithReceipt,
     navigationSession,
     addProjectPending,
+    deferOpenedProjectTrust: projects.deferOpenedProjectTrust,
+    cloneDestination,
+    recentFolders,
   });
 
   const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);
@@ -501,23 +536,24 @@ export function AgentWorkbenchScreen({
       dirtyRevision: checkoutDirtyRevision,
       guard: (target: { readonly rootPath: string; readonly ownerKey: string }) => {
         const current = workbench;
-        if (!current.workspaceTrust?.trusted)
-          return "This project is not available for branch switching.";
-        return agentBranchCheckoutBlockedReason(
-          target.rootPath,
-          current.openDocuments,
-          current.agents.threads.map(({ thread }) => ({
+        return agentBranchCheckoutGuardReason(target.rootPath, {
+          workspaceRoot: current.workspaceRoot,
+          workspaceTrusted: !!current.workspaceTrust?.trusted,
+          projects: current.agents.agentProjects.projects,
+          threads: current.agents.threads.map(({ thread }) => ({
+            projectRootKey: thread.owner.rootKey,
             rootPath: thread.target.worktreePath ?? thread.owner.repositoryRoot,
             running: runningTurn(thread) !== null,
           })),
-          current.agents.dispatching,
-          (path) => {
+          documents: current.openDocuments,
+          dispatching: current.agents.dispatching,
+          isLiveDocumentDirty: (path) => {
             const projection = current.resolveDocumentSessionDirtyProjection?.(path) ?? null;
             if (projection === null) return false;
             const snapshot = getEditorDocumentDirtySnapshot(projection);
             return snapshot.status === "unavailable" || snapshot.dirty;
           },
-        );
+        });
       },
     };
   }, [checkoutDirtyRevision, gitBranchGateway, workbench]);
@@ -577,8 +613,8 @@ export function AgentWorkbenchScreen({
         revealActivePathSignal: activeFileRevealSignal,
         fileStatusesByPath,
         searchFilesShortcut,
-        onOpenFile: openPinnedFile,
-        onPreviewFile: previewFile,
+        onOpenFile: treeFileOpeners.onOpenFile,
+        onPreviewFile: treeFileOpeners.onPreviewFile,
       },
       diff: {
         monacoTheme,
@@ -625,11 +661,9 @@ export function AgentWorkbenchScreen({
       onResizeRightPanelStart,
       onToggleBottomPanel,
       onTrustWorkspace,
-      openPinnedFile,
       openFileLocation,
       openScriptsView,
       openTerminalLink,
-      previewFile,
       revealPath,
       scripts,
       scriptsSurface,
@@ -639,6 +673,7 @@ export function AgentWorkbenchScreen({
       terminalGateway,
       terminalTheme,
       threadActivity,
+      treeFileOpeners,
       workbench.activePath,
       bottomPanelVisible,
       workspaceId,
@@ -664,12 +699,16 @@ export function AgentWorkbenchScreen({
         onOpenEnvironmentSettings={
           openSettingsSection === undefined ? undefined : openEnvironmentSettings
         }
+        onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
         onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
         onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
-        onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
+        onTrustProject={(projectRootKey, origin) =>
+          void (projects.grantProjectTrust ?? projects.trustProject)(projectRootKey, origin ?? null)
+        }
         overflowRootPaths={projects.overflowRootPaths}
         providerEnabled={providerEnabled}
         projects={projects.projects}
+        projectsLoaded={projects.projectsLoaded}
         textClipboard={textClipboard}
         viewCommands={workbenchAgentViewCommandBridge}
         workspaceRoot={workspaceRoot}

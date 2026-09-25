@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::pipes::{read_streams, StreamLimits, StreamsResult};
+use super::pipes::{read_streams_observed, StreamLimits, StreamsResult};
 use super::process_guard::{await_exit_without_reaping, ChildGuard, ProcessKillSwitch, Watchdog};
 
 const INHERITED_ENVIRONMENT: [&str; 13] = [
@@ -90,6 +90,7 @@ pub(crate) fn run_bounded(
     command: Command,
     limits: ProcessLimits,
     kill: &ProcessKillSwitch,
+    observe_stderr: &mut dyn FnMut(&[u8]),
 ) -> Result<ProcessOutput, ProcessError> {
     let mut guard = ChildGuard::spawn(command).map_err(|_| ProcessError::Io)?;
     let deadline = Instant::now() + limits.timeout;
@@ -107,7 +108,7 @@ pub(crate) fn run_bounded(
         return Err(ProcessError::Io);
     };
 
-    let streams = read_streams(
+    let streams = read_streams_observed(
         stdout,
         stderr,
         StreamLimits {
@@ -115,6 +116,7 @@ pub(crate) fn run_bounded(
             stderr_bytes: limits.stderr_bytes,
         },
         deadline,
+        observe_stderr,
     );
     if !matches!(streams, StreamsResult::Complete { .. }) {
         guard.kill();

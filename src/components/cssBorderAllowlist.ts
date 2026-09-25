@@ -3,13 +3,7 @@ export type BorderRuleEntry = {
   readonly selector: string;
 };
 
-export const SEPARATOR_INSET_CONSUMERS: readonly BorderRuleEntry[] = [
-  { sheet: "components/settings/settings.css", selector: ".settings-row + .settings-row" },
-  {
-    sheet: "components/settings/settings.css",
-    selector: ".settings-provider + .settings-provider",
-  },
-];
+export const SEPARATOR_INSET_CONSUMERS: readonly BorderRuleEntry[] = [];
 
 export const LEGACY_BORDER_RATCHET: readonly BorderRuleEntry[] = [
   { sheet: "App.css", selector: "::-webkit-scrollbar-thumb" },
@@ -84,34 +78,6 @@ export const LEGACY_BORDER_RATCHET: readonly BorderRuleEntry[] = [
   { sheet: "App.css", selector: ".markdown-preview-content blockquote" },
   { sheet: "App.css", selector: ".markdown-preview-content h1, .markdown-preview-content h2" },
   { sheet: "App.css", selector: ".markdown-preview-content th, .markdown-preview-content td" },
-  { sheet: "App.css", selector: ".monaco-editor .action-widget, .action-widget" },
-  { sheet: "App.css", selector: ".monaco-editor .bookmark-gutter-glyph::before" },
-  { sheet: "App.css", selector: ".monaco-editor .breakpoint-glyph-unverified::before" },
-  { sheet: "App.css", selector: ".monaco-editor .breakpoint-glyph-verified::before" },
-  { sheet: "App.css", selector: ".monaco-editor .editor-change-glyph-added::before" },
-  { sheet: "App.css", selector: ".monaco-editor .editor-change-glyph-deleted::before" },
-  { sheet: "App.css", selector: ".monaco-editor .editor-change-glyph-modified::before" },
-  { sheet: "App.css", selector: ".monaco-editor .editor-change-line-added" },
-  {
-    sheet: "App.css",
-    selector:
-      ".monaco-editor .editor-change-line-added, .monaco-editor .editor-change-line-modified, .monaco-editor .editor-change-line-deleted",
-  },
-  { sheet: "App.css", selector: ".monaco-editor .editor-change-line-deleted" },
-  { sheet: "App.css", selector: ".monaco-editor .editor-change-line-modified" },
-  { sheet: "App.css", selector: ".monaco-editor .git-blame-annotation" },
-  { sheet: "App.css", selector: ".monaco-editor .implementation-gutter-glyph::after" },
-  { sheet: "App.css", selector: ".monaco-editor .implementation-gutter-glyph::before" },
-  { sheet: "App.css", selector: ".monaco-editor .implementation-gutter-glyph:hover::before" },
-  { sheet: "App.css", selector: ".monaco-editor .monaco-hover, .monaco-hover" },
-  { sheet: "App.css", selector: ".monaco-editor .suggest-widget .suggest-details" },
-  { sheet: "App.css", selector: ".monaco-editor .suggest-widget, .monaco-editor.rename-box" },
-  { sheet: "App.css", selector: ".monaco-editor .test-run-gutter-glyph::before" },
-  { sheet: "App.css", selector: ".monaco-editor .test-run-gutter-glyph:hover::before" },
-  { sheet: "App.css", selector: ".project-tab" },
-  { sheet: "App.css", selector: ".project-tab + .project-tab" },
-  { sheet: "App.css", selector: ".project-tab.active" },
-  { sheet: "App.css", selector: ".project-tabs" },
   { sheet: "App.css", selector: ".references-panel" },
   { sheet: "App.css", selector: ".references-panel-group + .references-panel-group" },
   { sheet: "App.css", selector: ".references-panel-header" },
@@ -132,25 +98,14 @@ export const LEGACY_BORDER_RATCHET: readonly BorderRuleEntry[] = [
   },
   { sheet: "App.css", selector: ".runtime-observability-row" },
   { sheet: "App.css", selector: ".runtime-observability-stderr-tail" },
-  { sheet: "App.css", selector: ".sidebar" },
-  { sheet: "App.css", selector: ".sidebar-header" },
-  { sheet: "App.css", selector: ".sidebar-header button" },
-  { sheet: "App.css", selector: ".sidebar-header button:hover:not(:disabled)" },
   { sheet: "App.css", selector: ".sidebar-tab" },
   { sheet: "App.css", selector: ".sidebar-tab.active" },
-  { sheet: "App.css", selector: ".smart-mode-switch" },
-  { sheet: "App.css", selector: ".switch-thumb" },
   { sheet: "App.css", selector: '.symbol-icon[data-static="true"]' },
   { sheet: "App.css", selector: ".todo-panel" },
   { sheet: "App.css", selector: ".todo-panel-action" },
   { sheet: "App.css", selector: ".todo-panel-action:hover:not(:disabled)" },
   { sheet: "App.css", selector: ".todo-panel-group + .todo-panel-group" },
   { sheet: "App.css", selector: ".todo-panel-header" },
-  { sheet: "App.css", selector: ".toolbar-progress" },
-  { sheet: "App.css", selector: ".toolbar-progress:hover" },
-  { sheet: "App.css", selector: ".toolbar-progress.problem" },
-  { sheet: "App.css", selector: ".toolbar-progress.scanning" },
-  { sheet: "App.css", selector: ".workbench-toolbar" },
   {
     sheet: "components/DirtyCloseDecisionDialogHost.css",
     selector: ".dirty-close-decision-content .dirty-close-decision-save",

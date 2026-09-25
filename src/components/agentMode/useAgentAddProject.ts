@@ -1,7 +1,10 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTasksNotice } from "../../application/agentThreadPorts";
-import type { AgentWorkbenchAddProjectChrome } from "./agentWorkbenchChrome";
+import type {
+  AgentAddProjectTrustMode,
+  AgentWorkbenchAddProjectChrome,
+} from "./agentWorkbenchChrome";
 
 export interface AgentAddProjectOptions {
   readonly chrome: AgentWorkbenchAddProjectChrome | null;
@@ -18,7 +21,7 @@ export interface AgentAddProjectState {
   readonly projectRootPaths: ReadonlyArray<string>;
   openDialog(): void;
   closeDialog(): void;
-  addProject(path: string): void;
+  addProject(path: string, trust?: AgentAddProjectTrustMode): void;
   reportNotice(message: string): void;
 }
 
@@ -94,13 +97,13 @@ export function useAgentAddProject({
   );
 
   const addProject = useCallback(
-    (path: string) => {
+    (path: string, trust: AgentAddProjectTrustMode = "auto") => {
       if (chrome === null) return;
       setOpen(false);
       const generation = ++authority.current.generation;
       setReceipt(null);
       void chrome
-        .addProject(path)
+        .addProject(path, { trust })
         .then((opened) => {
           if (!authority.current.mounted || authority.current.generation !== generation) return;
           if (!opened.isCurrent()) {

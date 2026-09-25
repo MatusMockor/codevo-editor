@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   agentDiffRevisionKey,
   turnDiffSource,
@@ -9,6 +9,10 @@ import {
 } from "../../../../application/rightPanel/agentDiffSources";
 import type { AgentDiffRevealRequest } from "../../../../application/rightPanel/useAgentDiffSurface";
 import { branchDiffSource } from "../../../../application/rightPanel/agentBranchDiffSource";
+import {
+  STATUS_REVISION_COALESCE_MS,
+  useCoalescedValue,
+} from "../../../../application/rightPanel/useCoalescedValue";
 import { gitSurfaceStatusValue } from "../../../../application/rightPanel/useGitSurfaceStatus";
 import {
   agentDiffScopeLabel,
@@ -27,7 +31,7 @@ import type { AgentDiffScopeChoices } from "./AgentDiffSurface";
 const NO_TURNS: ReadonlyArray<AgentDiffTurn> = [];
 const MAX_BASE_CHOICES = 50;
 const MAX_CACHED_LINE_STATS = 32;
-export const WORKING_TREE_RELOAD_DELAY_MS = 400;
+export const WORKING_TREE_RELOAD_DELAY_MS = STATUS_REVISION_COALESCE_MS;
 export const UNREADABLE_REPOSITORIES_WARNING = "Some repositories could not be read.";
 export const TURN_CHANGES_UNAVAILABLE_REASON =
   "Recorded turn changes are unavailable here. Switch to Working tree to see current changes.";
@@ -176,16 +180,6 @@ function emptyReason(
     return "No finished turns yet. Switch to Working tree to see current changes.";
   if (resolved === "turn" && source === null) return TURN_CHANGES_UNAVAILABLE_REASON;
   return null;
-}
-
-function useCoalescedValue<T>(value: T, delayMs: number): T {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    if (Object.is(value, settled)) return;
-    const timer = setTimeout(() => setSettled(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [delayMs, settled, value]);
-  return settled;
 }
 
 function cachedLineStats(

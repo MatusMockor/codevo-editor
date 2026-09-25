@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     node_package_problem_matcher::NodePackageProblemMatcher,
-    terminal::{TerminalEventSink, TerminalOutputEvent},
-    terminal_line_endings::TerminalLineEndingTranslator,
+    terminal::TerminalEventSink,
+    terminal_line_endings::{emit_terminal_text, TerminalLineEndingTranslator, TerminalRead},
     terminal_task_process::TerminalTaskOwnership,
     vscode_process_task_events::{
         VscodeProcessTaskEventSink, VscodeProcessTaskOutputStream, VscodeProcessTaskOwner,
@@ -533,19 +533,26 @@ fn spawn_output_reader(
             let mut buffer = [0_u8; READER_BUFFER_BYTES];
             let mut line_endings = TerminalLineEndingTranslator::default();
             loop {
-                let count = reader
-                    .read(&mut buffer)
-                    .map_err(|_| "Unable to read process task output.".to_string())?;
-                if count == 0 {
-                    break;
+                match line_endings.read_terminal_text(&mut reader, &mut buffer) {
+                    TerminalRead::Chunk { text, len } => {
+                        emit_terminal_text(terminal_sink.as_ref(), text, owner.session_id);
+                        registry.record_output(
+                            &owner,
+                            stream,
+                            &buffer[..len],
+                            event_sink.as_ref(),
+                        )?;
+                    }
+                    TerminalRead::End { text } => {
+                        emit_terminal_text(terminal_sink.as_ref(), text, owner.session_id);
+                        return Ok(());
+                    }
+                    TerminalRead::Failed { text, .. } => {
+                        emit_terminal_text(terminal_sink.as_ref(), text, owner.session_id);
+                        return Err("Unable to read process task output.".to_string());
+                    }
                 }
-                terminal_sink.emit_output(TerminalOutputEvent {
-                    data: line_endings.translate_to_terminal_text(&buffer[..count]),
-                    session_id: owner.session_id,
-                });
-                registry.record_output(&owner, stream, &buffer[..count], event_sink.as_ref())?;
             }
-            Ok(())
         })();
         let finish = registry.finish_output(&owner, stream, event_sink.as_ref());
         result.and(finish)

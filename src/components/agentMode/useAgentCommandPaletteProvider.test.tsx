@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { workbenchAgentThreadOpener } from "../../application/agentThreadOpener";
 import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 import { mountUi, type MountedUi } from "../../ui/foundation/foundationTestSupport";
 import {
@@ -110,5 +111,20 @@ describe("useAgentCommandPaletteProvider", () => {
     const provider = workbenchAgentPaletteProvider.current();
     expect(provider?.openThread("t1")).toBe(false);
     expect(provider?.openThread("t9")).toBe(true);
+  });
+
+  it("publishes a thread opener that selects archived threads without unarchiving them", () => {
+    const selectThread = vi.fn();
+    ui = mountUi();
+    ui.render(<Harness {...options({ selectThread })} />);
+
+    expect(workbenchAgentThreadOpener.current()?.openThread("t2")).toBe(true);
+    expect(selectThread).toHaveBeenCalledWith("t2");
+    expect(workbenchAgentThreadOpener.current()?.openThread("missing")).toBe(false);
+    expect(selectThread).toHaveBeenCalledTimes(1);
+
+    ui.unmount();
+    ui = null;
+    expect(workbenchAgentThreadOpener.current()).toBeNull();
   });
 });

@@ -134,10 +134,10 @@ describe("Escape in an actual server conversation composer", () => {
       ),
     );
     act(() =>
-      host.querySelector<HTMLButtonElement>('[aria-label="Run on: This computer"]')!.click(),
+      host.querySelector<HTMLButtonElement>('[aria-label^="Workspace: This computer,"]')!.click(),
     );
     const serverOption = Array.from(
-      host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
     ).find((entry) => entry.textContent?.includes("Linux server"))!;
     act(() => serverOption.click());
     await waitForReact(() =>
@@ -167,7 +167,7 @@ describe("Escape in an actual server conversation composer", () => {
     );
     await waitForReact(() => expect(host.querySelector(".agent-composer__stop")).toBeNull());
     expect(host.querySelector(`[data-thread-id="${remoteThreadId}"]`)).not.toBeNull();
-    expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Linux server");
     expect(host.textContent).toContain("First remote prompt");
     expect(local.stop).not.toHaveBeenCalled();
     expect(local.sendFollowUp).not.toHaveBeenCalled();

@@ -38,12 +38,23 @@ describe("window chrome styles", () => {
     expect(hiddenChrome).not.toContain("display: none;");
   });
 
-  it("reserves the traffic-light space in the settings sidebar", () => {
-    const settingsCss = readFileSync(resolve(import.meta.dirname, "settings/settings.css"), "utf8");
-
-    expect(cssRule(settingsCss, ".app-shell--agent-mode .settings-screen__sidebar")).toContain(
-      "padding-top: calc(14px + var(--window-native-controls-row, 0px));",
+  it("keeps the traffic lights inside the settings nav top bar", () => {
+    const appCss = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
+    const semanticCss = readFileSync(
+      resolve(import.meta.dirname, "../ui/tokens/semantic.css"),
+      "utf8",
     );
+    const sidebar = readFileSync(
+      resolve(import.meta.dirname, "settings/SettingsSectionSidebar.tsx"),
+      "utf8",
+    );
+    const nativeRow = /--window-native-controls-row: (\d+)px;/.exec(
+      cssRule(appCss, ".app-shell--agent-mode.app-shell--mac"),
+    );
+    const topBarHeight = /--cv-topbar-h: (\d+)px;/.exec(semanticCss);
+
+    expect(sidebar).toMatch(/className="settings-nav-column">\s*<TopBar [^>]*region="sidebar"/);
+    expect(Number(topBarHeight?.[1])).toBeGreaterThanOrEqual(Number(nativeRow?.[1]));
   });
 
   it("stamps the platform on the shell so the macOS rules need no :has() probe", () => {

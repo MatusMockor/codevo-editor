@@ -1,0 +1,293 @@
+.monaco-editor .editor-change-line {
+  width: 3px !important;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.monaco-editor .editor-change-line-added {
+  background: var(--cv-ok);
+}
+
+.monaco-editor .editor-change-line-modified {
+  background: var(--cv-git-mod);
+}
+
+.monaco-editor .editor-change-line-deleted {
+  width: 5px !important;
+  height: 8px !important;
+  margin-top: 16px;
+  background: var(--cv-danger);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+.monaco-editor .conflict-marker-current {
+  background: color-mix(in srgb, var(--cv-accent) 13%, transparent);
+}
+
+.monaco-editor .conflict-marker-incoming {
+  background: color-mix(in srgb, var(--cv-ok) 13%, transparent);
+}
+
+.monaco-editor .conflict-marker-base {
+  background: color-mix(in srgb, var(--cv-warn) 8%, transparent);
+}
+
+.monaco-editor .conflict-marker-line {
+  background: color-mix(in srgb, var(--cv-warn) 16%, transparent);
+  font-weight: 600;
+}
+
+.monaco-editor .conflict-marker-line.conflict-marker-current {
+  background: color-mix(in srgb, var(--cv-accent) 20%, transparent);
+}
+
+.monaco-editor .conflict-marker-line.conflict-marker-incoming {
+  background: color-mix(in srgb, var(--cv-ok) 20%, transparent);
+}
+
+.monaco-editor .implementation-gutter-glyph {
+  position: relative;
+  width: 18px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .implementation-gutter-glyph::before {
+  position: absolute;
+  top: 4px;
+  left: 3px;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--cv-r-pill);
+  background: color-mix(in srgb, var(--cv-ok) 24%, transparent);
+  content: "";
+  transition: background-color var(--cv-motion-fast) var(--cv-ease);
+}
+
+.monaco-editor .implementation-gutter-glyph::after {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 4px;
+  height: 5px;
+  background: var(--cv-ok);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  content: "";
+}
+
+.monaco-editor .implementation-gutter-glyph:hover::before {
+  background: color-mix(in srgb, var(--cv-ok) 40%, transparent);
+}
+
+.monaco-editor .test-run-gutter-glyph {
+  position: relative;
+  width: 18px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .test-run-gutter-glyph::before {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 8px;
+  height: 10px;
+  background: var(--cv-ok);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  content: "";
+  transition: opacity var(--cv-motion-fast) var(--cv-ease);
+}
+
+.monaco-editor .test-run-gutter-glyph:hover::before {
+  opacity: 0.75;
+}
+
+.monaco-editor .bookmark-gutter-glyph {
+  position: relative;
+  cursor: pointer;
+}
+
+.monaco-editor .bookmark-gutter-glyph::before {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--cv-warn);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.monaco-editor .bookmark-gutter-glyph:hover::before {
+  opacity: 0.75;
+}
+
+.monaco-editor .js-test-coverage-gutter,
+.monaco-editor .coverage-gutter {
+  width: 3px !important;
+  margin-left: 4px;
+}
+
+.monaco-editor .js-test-coverage-covered-gutter,
+.monaco-editor .coverage-covered-gutter {
+  background: var(--cv-ok);
+}
+
+.monaco-editor .js-test-coverage-uncovered-gutter,
+.monaco-editor .coverage-uncovered-gutter {
+  background: var(--cv-danger);
+}
+
+.monaco-editor .js-test-coverage-covered-line,
+.monaco-editor .coverage-covered-line {
+  background: color-mix(in srgb, var(--cv-ok) 5%, transparent);
+}
+
+.monaco-editor .js-test-coverage-uncovered-line,
+.monaco-editor .coverage-uncovered-line {
+  background: color-mix(in srgb, var(--cv-danger) 9%, transparent);
+}
+
+.monaco-editor .js-test-coverage-hit-count {
+  margin-left: 1.25ch;
+  color: var(--cv-fg-subtle);
+  font-style: italic;
+  pointer-events: none;
+}
+
+.monaco-editor .breakpoint-glyph {
+  position: relative;
+  width: 18px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .breakpoint-glyph::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.monaco-editor .breakpoint-glyph-verified::before {
+  background: var(--cv-breakpoint);
+}
+
+.monaco-editor .breakpoint-glyph-unverified::before {
+  background: radial-gradient(
+    circle closest-side,
+    transparent calc(100% - 1.5px),
+    var(--cv-fg-subtle) calc(100% - 1.5px)
+  );
+}
+
+.monaco-editor .breakpoint-glyph-disabled::before {
+  width: 7px;
+  height: 7px;
+  background: var(--cv-fg-subtle);
+  opacity: 0.7;
+}
+
+.monaco-editor .breakpoint-glyph-conditional::before {
+  border-radius: 2px;
+  transform: translate(-50%, -50%) rotate(45deg) scale(0.85);
+}
+
+.monaco-editor .breakpoint-glyph-logpoint::before {
+  border-radius: 2px;
+  background: var(--cv-accent);
+  transform: translate(-50%, -50%) rotate(45deg) scale(0.85);
+}
+
+.monaco-editor .breakpoint-glyph-logpoint::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: var(--cv-canvas);
+  content: ">";
+  font-size: 8px;
+  font-weight: 700;
+  transform: translate(-50%, -55%);
+}
+
+.monaco-editor .breakpoint-glyph-disabled.breakpoint-glyph-logpoint::before {
+  background: var(--cv-fg-subtle);
+  opacity: 0.7;
+}
+
+.monaco-editor .inline-breakpoint-marker {
+  margin-left: 1px;
+  color: var(--cv-breakpoint);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
+.monaco-editor .inline-breakpoint-marker-conditional {
+  color: var(--cv-warn);
+}
+
+.monaco-editor .inline-breakpoint-marker-logpoint {
+  color: var(--cv-accent);
+}
+
+.monaco-editor .inline-breakpoint-marker.breakpoint-glyph-unverified {
+  color: var(--cv-fg-subtle);
+  -webkit-text-stroke: 1px var(--cv-fg-subtle);
+  -webkit-text-fill-color: transparent;
+}
+
+.monaco-editor .inline-breakpoint-marker.breakpoint-glyph-disabled {
+  color: var(--cv-fg-subtle);
+  opacity: 0.7;
+}
+
+.monaco-editor .debug-stopped-line {
+  background: var(--cv-warn-soft);
+}
+
+.monaco-editor .debug-inline-value {
+  color: var(--cv-fg-subtle);
+  font-style: italic;
+  pointer-events: none;
+}
+
+.monaco-editor .js-test-problem-line {
+  background: color-mix(in srgb, var(--cv-danger) 8%, transparent);
+}
+
+.monaco-editor .js-test-problem-inline-message {
+  margin-left: 1.25ch;
+  color: var(--cv-danger);
+}
+
+.monaco-editor .git-blame-annotation {
+  margin-right: 1.25ch;
+  padding-right: 0.75ch;
+  box-shadow: var(--cv-edge-end-divider);
+  color: var(--cv-fg-subtle);
+  font-style: italic;
+  white-space: pre;
+}
+
+.monaco-editor .margin-view-overlays .cldr.codicon-folding-expanded,
+.monaco-editor .margin-view-overlays .cldr.codicon-folding-collapsed {
+  color: var(--cv-fg-subtle);
+}
+
+.monaco-editor .lightBulbWidget {
+  color: var(--cv-warn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monaco-editor .implementation-gutter-glyph::before,
+  .monaco-editor .test-run-gutter-glyph::before {
+    transition: none;
+  }
+}

@@ -11,7 +11,14 @@ const request = {
   name: "repo",
   parentPath: "/Users/dev",
 };
-const snapshot = { cloneId, status: "running", path: "/Users/dev/repo", error: null };
+const snapshot = {
+  cloneId,
+  status: "running",
+  path: "/Users/dev/repo",
+  error: null,
+  progress: null,
+  failure: null,
+};
 
 describe("TauriLocalProjectCloneGateway", () => {
   it("uses semantic commands and the exact closed request wrapper", async () => {

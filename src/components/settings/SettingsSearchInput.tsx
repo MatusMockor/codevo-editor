@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
 import type { KeyboardEvent, RefObject } from "react";
-import { SettingsKbd } from "./primitives/SettingsKbd";
+import { Kbd } from "../../ui/foundation/Kbd";
 
 export interface SettingsSearchInputProps {
   readonly activeOptionId: string | null;
@@ -41,7 +41,7 @@ export function SettingsSearchInput({
         type="text"
         value={query}
       />
-      <SettingsKbd>/</SettingsKbd>
+      <Kbd>/</Kbd>
     </div>
   );
 }

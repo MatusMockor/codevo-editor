@@ -1,3 +1,10 @@
+import type { AgentAccountUsageRefreshOutcome } from "../../application/agentAccountUsageRefresh";
+import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
+import type {
+  AgentThreadMutationResult,
+  AgentThreadView,
+} from "../../application/agentThreadPorts";
+import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentProviderSignInSurface } from "../../application/useAgentProviderSignIn";
 import type { AppSettings, SettingsSection, WorkspaceSettings } from "../../domain/settings";
@@ -29,5 +36,12 @@ export interface WorkbenchSettingsModel {
   readonly agents?: {
     readonly providerSignIn: AgentProviderSignInSurface;
     readonly agentProjects?: { readonly projects: readonly AgentProjectDescriptor[] };
+    readonly threads?: ReadonlyArray<AgentThreadView>;
+    readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
+    readonly turnLog?: AgentTurnLogFactsSource | null;
+    readonly refreshAccountUsage?: (
+      provider: "claudeCode" | "codex",
+    ) => Promise<AgentAccountUsageRefreshOutcome>;
+    readonly unarchive?: (threadId: string) => AgentThreadMutationResult | void;
   };
 }

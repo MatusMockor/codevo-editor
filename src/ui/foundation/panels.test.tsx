@@ -6,6 +6,7 @@ import { click, mountUi, pointer, press, type MountedUi } from "./foundationTest
 import { PanelTabs, type PanelTabItem } from "./PanelTabs";
 import { ResizeHandle } from "./ResizeHandle";
 import { TreeRow } from "./TreeRow";
+import { parseCssRules, readStyleSheet } from "../../components/cssContractTestSupport";
 
 let ui: MountedUi | null = null;
 
@@ -283,5 +284,148 @@ describe("ResizeHandle", () => {
     });
     expect(primary.defaultPrevented).toBe(true);
     expect(handle.className).toContain("cv-resize--active");
+  });
+});
+
+describe("ResizeHandle on the y axis", () => {
+  it("grows a bottom drawer when dragged up and with ArrowUp", () => {
+    const onChange = vi.fn();
+    const onCommit = vi.fn();
+    const { host } = mount(
+      <ResizeHandle
+        axis="y"
+        edge="start"
+        label="Resize"
+        max={640}
+        min={120}
+        onChange={onChange}
+        onCommit={onCommit}
+        value={224}
+      />,
+    );
+    const handle = host.querySelector('[role="separator"]') as HTMLElement;
+
+    expect(handle.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(handle.className).toContain("cv-resize--y");
+    pointer(handle, "pointerdown", { button: 0, clientX: 0, clientY: 500, pointerId: 1 });
+    pointer(handle, "pointermove", { clientX: 0, clientY: 460, pointerId: 1 });
+    expect(onChange).toHaveBeenLastCalledWith(264);
+    press(handle, "ArrowUp");
+    expect(onCommit).toHaveBeenLastCalledWith(240);
+    press(handle, "ArrowLeft");
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ResizeHandle without onCommit", () => {
+  it("still resizes from the keyboard", () => {
+    const onChange = vi.fn();
+    const { host } = mount(
+      <ResizeHandle
+        edge="start"
+        label="Resize"
+        max={900}
+        min={320}
+        onChange={onChange}
+        value={540}
+      />,
+    );
+    press(host.querySelector('[role="separator"]') as HTMLElement, "ArrowLeft");
+
+    expect(onChange).toHaveBeenLastCalledWith(556);
+  });
+});
+
+describe("PanelTabs badges and pinning", () => {
+  const BADGED: readonly PanelTabItem[] = [
+    {
+      id: "a.ts",
+      title: "a.ts",
+      icon: <svg />,
+      badge: { label: "M", title: "Modified", tone: "warn" },
+    },
+    { id: "b.ts", title: "b.ts", icon: <svg />, preview: true },
+  ];
+
+  it("renders a toned status badge after the title", () => {
+    const { host } = mount(
+      <PanelTabs label="Right panel" onSelect={() => undefined} selectedId="a.ts" tabs={BADGED} />,
+    );
+
+    const badge = host.querySelector('[role="tab"][title="a.ts"] .cv-tab__badge');
+    expect(badge?.textContent).toBe("M");
+    expect(badge?.getAttribute("aria-label")).toBe("Modified");
+    expect(badge?.classList.contains("cv-tab__badge--warn")).toBe(true);
+    expect(badge?.previousElementSibling?.className).toBe("cv-tab__title");
+    expect(host.querySelector('[role="tab"][title="b.ts"] .cv-tab__badge')).toBeNull();
+  });
+
+  it("pins a tab on double click only when pinning is offered", () => {
+    const onPin = vi.fn();
+    const { host } = mount(
+      <PanelTabs
+        label="Right panel"
+        onPin={onPin}
+        onSelect={() => undefined}
+        selectedId="a.ts"
+        tabs={BADGED}
+      />,
+    );
+
+    act(() => {
+      host
+        .querySelector('[role="tab"][title="b.ts"]')
+        ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(onPin).toHaveBeenCalledWith("b.ts");
+  });
+
+  it("pins the selected preview tab with Enter from the keyboard", () => {
+    const onPin = vi.fn();
+    const { host } = mount(
+      <PanelTabs
+        label="Right panel"
+        onPin={onPin}
+        onSelect={() => undefined}
+        selectedId="b.ts"
+        tabs={BADGED}
+      />,
+    );
+    const preview = host.querySelector('[role="tab"][title="b.ts"]') as Element;
+
+    expect(preview.getAttribute("aria-keyshortcuts")).toContain("Enter");
+    press(preview, "Enter");
+    expect(onPin).toHaveBeenCalledExactlyOnceWith("b.ts");
+  });
+
+  it("ignores Enter on a pinned tab and when pinning is not offered", () => {
+    const onPin = vi.fn();
+    const { host } = mount(
+      <PanelTabs
+        label="Right panel"
+        onPin={onPin}
+        onSelect={() => undefined}
+        selectedId="a.ts"
+        tabs={BADGED}
+      />,
+    );
+    const pinned = host.querySelector('[role="tab"][title="a.ts"]') as Element;
+    press(pinned, "Enter");
+
+    expect(onPin).not.toHaveBeenCalled();
+    expect(pinned.getAttribute("aria-keyshortcuts")).toBeNull();
+  });
+
+  it("colours badges like the Files tree", () => {
+    const sheet = "ui/foundation/panels.css";
+    const rules = parseCssRules(readStyleSheet(sheet).source, sheet).rules;
+    const color = (selector: string) =>
+      rules
+        .find((rule) => rule.selector === selector)
+        ?.declarations.find((declaration) => declaration.property === "color")?.value;
+
+    expect(color(".cv-tab__badge--ok")).toBe("var(--cv-ok)");
+    expect(color(".cv-tab__badge--warn")).toBe("var(--cv-warn)");
+    expect(color(".cv-tab__badge--danger")).toBe("var(--cv-danger)");
   });
 });

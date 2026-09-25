@@ -11,9 +11,6 @@ import {
 } from "../domain/agentWorkbenchLayout";
 import {
   DEFAULT_BOTTOM_PANEL_HEIGHT,
-  DEFAULT_SIDEBAR_WIDTH,
-  MAX_SIDEBAR_WIDTH,
-  MIN_SIDEBAR_WIDTH,
   maxAgentBottomPanelHeight,
   maxAgentRightPanelWidth,
   useWorkbenchResizeHandles,
@@ -35,28 +32,10 @@ describe("useWorkbenchResizeHandles", () => {
   it("exposes the shell CSS variables for the current sizes", () => {
     const harness = renderHandles();
 
-    expect(harness.result().sidebarWidth).toBe(DEFAULT_SIDEBAR_WIDTH);
     expect(harness.result().bottomPanelHeight).toBe(DEFAULT_BOTTOM_PANEL_HEIGHT);
     expect(harness.result().shellStyle).toEqual({
       "--bottom-panel-height": `${DEFAULT_BOTTOM_PANEL_HEIGHT}px`,
-      "--sidebar-width": `${DEFAULT_SIDEBAR_WIDTH}px`,
     });
-    harness.unmount();
-  });
-
-  it("clamps the sidebar drag to its bounds", () => {
-    const harness = renderHandles();
-
-    act(() => harness.result().startSidebarResize(pointerEvent(harness.handle(), 0, 0)));
-    act(() => dispatchPointerMove(-5_000, 0));
-    expect(harness.result().sidebarWidth).toBe(MIN_SIDEBAR_WIDTH);
-
-    act(() => dispatchPointerMove(5_000, 0));
-    expect(harness.result().sidebarWidth).toBe(MAX_SIDEBAR_WIDTH);
-
-    act(() => dispatchPointerUp());
-    act(() => dispatchPointerMove(-5_000, 0));
-    expect(harness.result().sidebarWidth).toBe(MAX_SIDEBAR_WIDTH);
     harness.unmount();
   });
 

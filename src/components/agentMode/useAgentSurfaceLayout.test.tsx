@@ -97,7 +97,7 @@ it("toggles a surface closed when it is the active tab and open otherwise", () =
       chrome: {
         layout: {
           layout: state,
-          effectiveLayout: state.layout,
+          effectiveLayout: "agent",
           persistedBottomPanel: false,
           dispatch,
         },

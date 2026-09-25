@@ -172,6 +172,18 @@ export function useEditorMouseInteractions({
         return;
       }
 
+      const changeHunk = findChangeHunkAtLine(changeHunksRef.current, lineNumber);
+
+      if (isLineDecorations && changeHunk && isChangeBarTarget(event.target.element)) {
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        setChangePreview({
+          anchorLineNumber: lineNumber,
+          hunk: changeHunk,
+        });
+        return;
+      }
+
       if (isLineDecorations) {
         if (!onToggleBookmarkAtLine) {
           return;
@@ -184,7 +196,6 @@ export function useEditorMouseInteractions({
       }
 
       const lane = glyphMarginLaneFromMouseEvent(event);
-      const changeHunk = findChangeHunkAtLine(changeHunksRef.current, lineNumber);
       const testTarget = testGutterTargetsRef.current.get(lineNumber);
 
       if (testTarget && onRunTestAt && lane === monaco.editor.GlyphMarginLane.Right) {
@@ -203,16 +214,6 @@ export function useEditorMouseInteractions({
         runRegisteredCommand(commandExecutionRunnerRef, "editor.goToImplementation", () =>
           editorActionCommandPortRef.current.goToImplementationAt(target),
         );
-        return;
-      }
-
-      if (changeHunk) {
-        event.event.preventDefault();
-        event.event.stopPropagation();
-        setChangePreview({
-          anchorLineNumber: lineNumber,
-          hunk: changeHunk,
-        });
       }
     });
 
@@ -237,4 +238,8 @@ export function useEditorMouseInteractions({
     testGutterTargetsRef,
     toggleBreakpointAction,
   ]);
+}
+
+function isChangeBarTarget(element: Element | null | undefined): boolean {
+  return element?.closest(".editor-change-line") != null;
 }

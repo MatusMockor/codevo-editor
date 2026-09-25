@@ -40,6 +40,7 @@ export function workbenchPanelCommands({
       id: "panel.showProblems",
       title: "Show Problems",
       category: "Workbench",
+      shortcut: shortcut("panel.showProblems"),
       isEnabled: () => true,
       run: () => showBottomPanelView("problems"),
     },

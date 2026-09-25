@@ -3,19 +3,23 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mountUi, type MountedUi } from "../ui/foundation/foundationTestSupport";
-import { initialIndexProgress } from "../domain/indexProgress";
+import { click, mountUi, type MountedUi } from "../ui/foundation/foundationTestSupport";
 import { defaultStatusBarItemVisibility, type StatusBarItemVisibility } from "../domain/settings";
 import { AgentSidebarReveal } from "./agentMode/AgentSidebarReveal";
 import { AgentThreadActivity } from "./agentMode/AgentThreadActivity";
 import { agentThreadActivityDetail } from "./agentMode/agentThreadActivityPresentation";
-import { StatusBar } from "./StatusBar";
-import { WorkbenchToolbar } from "./WorkbenchToolbar";
+import { EditorChromeContext } from "./editorPanel/EditorChromeContext";
+import { chromeFixture } from "./editorPanel/editorChromeTestSupport";
+import { EditorSubheader } from "./editorPanel/EditorSubheader";
+import { editorStatusRows } from "./editorPanel/editorStatusRows";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 type StatusItemHome =
-  | "editorToolbarStatus"
+  | "editorSubheader"
+  | "editorMoreMenu"
+  | "composerBranch"
+  | "editorToast"
   | "sidebarThreadActivity"
   | "expandSidebarTooltip"
   | "threadActivityMenu"
@@ -60,68 +64,68 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
     homes: ["providerSettingsTooltip", "settingsProviders"],
   },
   { item: "workspace name", source: "agent", visibilityKeys: [], homes: ["topBarBreadcrumb"] },
-  { item: "problems", source: "editor", visibilityKeys: [], homes: ["editorToolbarStatus"] },
+  { item: "problems", source: "editor", visibilityKeys: [], homes: ["editorSubheader"] },
   {
     item: "git branch",
     source: "editor",
     visibilityKeys: ["gitBranch"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorMoreMenu", "composerBranch"],
   },
   {
     item: "active path",
     source: "editor",
     visibilityKeys: ["activePath"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorSubheader"],
   },
   {
     item: "workspace info",
     source: "editor",
     visibilityKeys: ["workspaceInfo"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorMoreMenu"],
   },
   {
     item: "ide activity",
     source: "editor",
     visibilityKeys: ["index", "languageServer"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorSubheader"],
   },
-  { item: "node run", source: "editor", visibilityKeys: [], homes: ["editorToolbarStatus"] },
+  { item: "node run", source: "editor", visibilityKeys: [], homes: ["editorSubheader"] },
   {
     item: "trust",
     source: "editor",
     visibilityKeys: ["workspaceTrust"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorMoreMenu"],
   },
-  { item: "mode", source: "editor", visibilityKeys: ["mode"], homes: ["editorToolbarStatus"] },
+  { item: "mode", source: "editor", visibilityKeys: ["mode"], homes: ["editorMoreMenu"] },
   {
     item: "large file",
     source: "editor",
     visibilityKeys: ["largeFileMode"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorMoreMenu"],
   },
   {
     item: "cursor",
     source: "editor",
     visibilityKeys: ["cursorPosition"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorSubheader"],
   },
   {
     item: "language",
     source: "editor",
     visibilityKeys: ["language"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorMoreMenu"],
   },
   {
     item: "unsaved",
     source: "editor",
     visibilityKeys: ["dirtyCount"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorMoreMenu"],
   },
   {
     item: "messages",
     source: "editor",
     visibilityKeys: ["message"],
-    homes: ["editorToolbarStatus"],
+    homes: ["editorToast"],
   },
   { item: "update notices", source: "agent", visibilityKeys: [], homes: ["toasts"] },
 ];
@@ -145,68 +149,56 @@ describe("status bar removal inventory", () => {
     expect(new Set(INVENTORY.map((entry) => entry.item)).size).toBe(INVENTORY.length);
   });
 
-  it("renders every editor item inside the editor toolbar status group", () => {
+  it("renders every editor item in the editor sub-header or its More menu", () => {
+    const chrome = chromeFixture({
+      diagnostics: { errors: 1, warnings: 4 },
+      activity: { label: "Indexing 40%", state: "scanning", detail: null },
+      nodeRun: { canStop: true, label: "Running dev", phase: "running", stopLabel: "Stop dev" },
+      statusRows: editorStatusRows({
+        activeLanguage: "TypeScript",
+        workspaceLabel: "orders-api · TS 5.8",
+        gitBranch: "main",
+        branchRepositoryLabel: null,
+        workspaceTrustLabel: "Trusted",
+        intelligenceMode: "fullSmart",
+        largeDocumentStatus: { label: "Large file", title: "Large file mode" },
+        dirtyCount: 2,
+      }),
+    });
     mounted = mountUi();
     mounted.render(
-      <WorkbenchToolbar
-        collapseAvailable
-        ideProgress={{ busy: false, state: "idle", text: null }}
-        indexProgress={initialIndexProgress()}
-        intelligenceMode="fullSmart"
-        languageServerPlan={null}
-        languageServerRuntimeStatus={null}
-        layout="editor-expanded"
-        onCollapseEditor={vi.fn()}
-        onShowProgressPanel={vi.fn()}
-        onToggleSmartMode={vi.fn()}
-        onTrustWorkspace={vi.fn()}
-        status={
-          <StatusBar
-            activeLanguage="TypeScript"
-            activePath="/w/src/app.ts"
-            cursorPosition={{ lineNumber: 3, column: 7 }}
-            dirtyCount={2}
-            errorCount={1}
-            gitBranch="main"
-            ideActivityDetail="PHPactor: Off"
-            ideActivityLabel="Indexing 40%"
-            ideActivityState="scanning"
-            intelligenceMode="fullSmart"
-            largeDocumentStatus={{ label: "Large file", title: "Large file mode" }}
-            message="Saved app.ts"
-            onChangeVisibility={vi.fn()}
-            statusBar={defaultStatusBarItemVisibility()}
-            warningCount={4}
-            workspaceInfoLabel="orders-api · TS 5.8"
-            workspaceRoot="/w"
-            workspaceTrustLabel="Trusted"
-          />
-        }
-        workspaceRoot="/w"
-        workspaceTrusted
-      />,
+      <EditorChromeContext.Provider value={chrome}>
+        <EditorSubheader
+          documentPath="/w/src/app.ts"
+          groupId="editor-main"
+          onFind={vi.fn()}
+          rootPath="/w"
+          symbols={null}
+        />
+      </EditorChromeContext.Provider>,
     );
+    const subheader = mounted.host.querySelector(".cv-esub");
 
-    const group = mounted.host.querySelector(
-      '.workbench-toolbar .editor-status[role="group"][aria-label="Editor status"]',
-    );
-    const text = group?.textContent ?? "";
+    expect(subheader?.textContent).toContain("src");
+    expect(subheader?.textContent).toContain("app.ts");
+    expect(subheader?.textContent).toContain("Running dev");
+    expect(
+      subheader?.querySelector('button[aria-label="1 error, 4 warnings. Show problems"]'),
+    ).not.toBeNull();
+    expect(subheader?.querySelector('button[aria-label="Indexing 40%"]')).not.toBeNull();
+    click(subheader?.querySelector('button[aria-label="More editor actions"]') as Element);
+    const menu = document.body.querySelector('[role="menu"][aria-label="More editor actions"]');
     for (const expected of [
-      "main",
-      "src/app.ts",
+      "TypeScript",
       "orders-api · TS 5.8",
-      "Indexing 40%",
+      "main",
       "Trusted",
       "IDE Mode",
       "Large file",
-      "Ln 3, Col 7",
-      "TypeScript",
-      "2 unsaved",
-      "Saved app.ts",
+      "2 files",
     ]) {
-      expect(text, expected).toContain(expected);
+      expect(menu?.textContent, expected).toContain(expected);
     }
-    expect(group?.querySelector('button[aria-label="1 error, 4 warnings"]')).not.toBeNull();
     expect(mounted.host.querySelector("footer")).toBeNull();
   });
 
@@ -259,5 +251,18 @@ describe("status bar removal inventory", () => {
     expect(appCss).not.toMatch(/\.status-bar\s*\{/);
     expect(appCss).not.toContain("status-bar--agent");
     expect(skeleton).not.toContain("startup-skeleton__status");
+    for (const removed of [
+      "src/components/StatusBar.tsx",
+      "src/components/WorkbenchToolbar.tsx",
+      "src/components/WorkbenchNavigationChrome.tsx",
+      "src/components/WorkbenchActivityBar.tsx",
+      "src/components/WorkbenchSidebar.tsx",
+      "src/application/useAgentEditorCollapse.ts",
+    ]) {
+      expect(existsSync(resolve(root, removed)), removed).toBe(false);
+    }
+    expect(appCss).not.toContain(".editor-status");
+    expect(appCss).not.toContain(".activity-bar");
+    expect(appCss).not.toContain(".workbench-toolbar");
   });
 });

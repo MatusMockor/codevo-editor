@@ -131,7 +131,7 @@ describe("semantic token stylesheet", () => {
     );
     const roots = SHADOW_TOKEN_ROOTS.filter((name) => name.startsWith("--cv-"));
 
-    expect(roots).toHaveLength(22);
+    expect(roots).toHaveLength(23);
     expect(roots.filter((name) => !declared.has(name))).toEqual([]);
   });
 

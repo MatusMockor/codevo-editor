@@ -511,6 +511,7 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -526,6 +527,8 @@ describe("BrowserSettingsGateway", () => {
       minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
@@ -616,6 +619,7 @@ describe("BrowserSettingsGateway", () => {
 
     await gateway.saveAppSettings({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
@@ -730,6 +734,7 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -748,6 +753,8 @@ describe("BrowserSettingsGateway", () => {
       minimapEnabled: false,
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
       appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
@@ -892,6 +899,7 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
+      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -907,6 +915,8 @@ describe("BrowserSettingsGateway", () => {
       minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
+      recentWorkspaceOpenedAt: {},
+      lastCloneParentPath: null,
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,

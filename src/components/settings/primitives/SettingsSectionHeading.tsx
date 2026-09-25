@@ -2,11 +2,17 @@ import { useId, type ReactNode } from "react";
 
 export interface SettingsSectionHeadingProps {
   readonly actions?: ReactNode;
+  readonly bare?: boolean;
   readonly children: ReactNode;
   readonly title: string;
 }
 
-export function SettingsSectionHeading({ actions, children, title }: SettingsSectionHeadingProps) {
+export function SettingsSectionHeading({
+  actions,
+  bare = false,
+  children,
+  title,
+}: SettingsSectionHeadingProps) {
   const headingId = `${useId()}-heading`;
 
   return (
@@ -15,9 +21,9 @@ export function SettingsSectionHeading({ actions, children, title }: SettingsSec
         <h2 className="settings-section__title" id={headingId}>
           {title}
         </h2>
-        <div className="settings-section__actions">{actions}</div>
+        {actions === undefined ? null : <div className="settings-section__actions">{actions}</div>}
       </header>
-      <div className="settings-section__rows">{children}</div>
+      {bare ? children : <div className="settings-group">{children}</div>}
     </section>
   );
 }

@@ -9,6 +9,7 @@ import {
   type WorkbenchNotice,
   type WorkbenchNoticeNavigationTarget,
 } from "../application/workbenchNotice";
+import { EditorDrawerExtrasContext } from "./editorPanel/EditorDrawerExtrasContext";
 import { ProblemsPanel } from "./ProblemsPanel";
 import type { WorkspacePackageManifestInput } from "../domain/workspacePackageGraph";
 import type { WorkspacePackageAuthority } from "../application/useWorkspacePackageGraph";
@@ -135,9 +136,7 @@ describe("ProblemsPanel", () => {
           workspacePackageAuthority={workspacePackageAuthority}
           workspacePackageIncompleteDirectories={workspacePackageIncompleteDirectories}
           workspacePackageManifests={workspacePackageManifests}
-          workspacePackageUnscopedAuthorityUncertain={
-            workspacePackageUnscopedAuthorityUncertain
-          }
+          workspacePackageUnscopedAuthorityUncertain={workspacePackageUnscopedAuthorityUncertain}
           workspaceRoot={workspaceRoot}
         />,
       );
@@ -158,15 +157,15 @@ describe("ProblemsPanel", () => {
     act(() => {
       host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
     });
-    const headers = Array.from(
-      host.querySelectorAll<HTMLButtonElement>(".problems-package-header"),
-    );
+    const headers = Array.from(host.querySelectorAll<HTMLButtonElement>(".cv-problems__package"));
     headers[0].focus();
 
     act(() => {
       headers[0].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
-    const apiRow = host.querySelector<HTMLElement>('[data-package-key="@repo/api"] .problem-row');
+    const apiRow = host.querySelector<HTMLElement>(
+      '[data-package-key="@repo/api"] .cv-problems__item',
+    );
     expect(document.activeElement).toBe(apiRow);
 
     act(() => {
@@ -192,7 +191,7 @@ describe("ProblemsPanel", () => {
       host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
     });
     act(() => {
-      host.querySelector<HTMLButtonElement>(".problems-package-header")?.click();
+      host.querySelector<HTMLButtonElement>(".cv-problems__package")?.click();
     });
 
     expect(packageAttributionBuilds).toHaveBeenCalledTimes(1);
@@ -302,7 +301,7 @@ describe("ProblemsPanel", () => {
 
     act(() => grouping?.click());
 
-    expect(host.querySelector(".problems-package-header")?.textContent).toContain(
+    expect(host.querySelector(".cv-problems__package")?.textContent).toContain(
       "Package unknown (workspace scan bounded)",
     );
     expect(host.textContent).not.toContain("No package");
@@ -342,7 +341,7 @@ describe("ProblemsPanel", () => {
       host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
     });
     const headers = Array.from(
-      host.querySelectorAll(".problems-package-header"),
+      host.querySelectorAll(".cv-problems__package"),
       (header) => header.textContent,
     );
 
@@ -375,7 +374,7 @@ describe("ProblemsPanel", () => {
       ),
     );
 
-    expect(host.querySelectorAll(".problem-row")).toHaveLength(200);
+    expect(host.querySelectorAll(".cv-problems__item")).toHaveLength(200);
     expect(host.textContent).toContain("Showing 200 of 250 problem rows");
     expect(host.querySelector('[role="status"]')).toBeNull();
     expect(host.querySelector("button")?.textContent).not.toBe("Show more");
@@ -385,7 +384,7 @@ describe("ProblemsPanel", () => {
 
     act(() => showMore?.click());
 
-    expect(host.querySelectorAll(".problem-row")).toHaveLength(250);
+    expect(host.querySelectorAll(".cv-problems__item")).toHaveLength(250);
   });
 
   it("names fully hidden packages before Show more reveals them", () => {
@@ -416,9 +415,9 @@ describe("ProblemsPanel", () => {
 
     expect(host.textContent).toContain("Fully hidden packages: @repo/web.");
     expect(
-      Array.from(host.querySelectorAll(".problems-package-header"), (header) => header.textContent),
+      Array.from(host.querySelectorAll(".cv-problems__package"), (header) => header.textContent),
     ).toEqual([expect.stringContaining("@repo/api"), expect.stringContaining("@repo/web")]);
-    expect(host.querySelector('[data-package-key="@repo/web"] .problem-row')).toBeNull();
+    expect(host.querySelector('[data-package-key="@repo/web"] .cv-problems__item')).toBeNull();
   });
 
   it("renders an empty state when there are no notices", () => {
@@ -430,7 +429,7 @@ describe("ProblemsPanel", () => {
   it("renders ordinary notices without the overflow treatment", () => {
     render([createWorkbenchNotice("error", "phpactor", "boom")]);
 
-    expect(host.querySelector(".problem-row.overflow")).toBeNull();
+    expect(host.querySelector(".cv-problems__item--overflow")).toBeNull();
     expect(host.querySelector('[data-testid="diagnostics-overflow"]')).toBeNull();
   });
 
@@ -451,13 +450,15 @@ describe("ProblemsPanel", () => {
     const overflowRow = host.querySelector('[data-testid="diagnostics-overflow"]');
 
     expect(overflowRow).not.toBeNull();
-    expect(overflowRow?.classList.contains("overflow")).toBe(true);
-    expect(host.querySelectorAll(".problems-file-header")).toHaveLength(1);
-    expect(host.querySelector(".problems-file-header")?.textContent).toContain("src/User.php");
-    expect(host.querySelectorAll(".problems-file-group .problem-row")).toHaveLength(2);
+    expect(overflowRow?.classList.contains("cv-problems__item--overflow")).toBe(true);
+    expect(host.querySelectorAll(".cv-problems__file")).toHaveLength(1);
+    expect(host.querySelector(".cv-problems__file")?.getAttribute("aria-label")).toContain(
+      "src/User.php",
+    );
+    expect(host.querySelectorAll(".cv-problems__group .cv-problems__item")).toHaveLength(2);
     expect(overflowRow?.hasAttribute("role")).toBe(false);
     expect(overflowRow?.hasAttribute("tabindex")).toBe(false);
-    expect(host.querySelectorAll(".problem-row[tabindex]")).toHaveLength(1);
+    expect(host.querySelectorAll(".cv-problems__item[tabindex]")).toHaveLength(1);
   });
 
   it("renders no-target crash and index notices as flat general rows", () => {
@@ -466,11 +467,11 @@ describe("ProblemsPanel", () => {
       createWorkbenchNotice("info", "Index", "Index is warming up"),
     ]);
 
-    const general = host.querySelector(".problems-general");
-    expect(general?.querySelectorAll(".problem-row")).toHaveLength(2);
+    const general = host.querySelector(".cv-problems__general");
+    expect(general?.querySelectorAll(".cv-problems__item")).toHaveLength(2);
     expect(general?.textContent).toContain("Language server stopped");
     expect(general?.textContent).toContain("Index is warming up");
-    expect(host.querySelector(".problems-file-header")).toBeNull();
+    expect(host.querySelector(".cv-problems__file")).toBeNull();
   });
 
   it("does not include the global overflow sentinel in the warning badge", () => {
@@ -495,7 +496,7 @@ describe("ProblemsPanel", () => {
     render([notice], onOpenNotice);
 
     act(() => {
-      host.querySelector<HTMLButtonElement>("button.problem-row")?.click();
+      host.querySelector<HTMLButtonElement>("button.cv-problems__item")?.click();
     });
 
     expect(onOpenNotice).toHaveBeenCalledWith(
@@ -543,14 +544,16 @@ describe("ProblemsPanel", () => {
     ]);
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Filter problems"]');
     act(() => setInputValue(input, "matching"));
-    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".problem-row[tabindex]"));
+    const rows = Array.from(
+      host.querySelectorAll<HTMLButtonElement>(".cv-problems__item[tabindex]"),
+    );
     rows[0].focus();
 
     act(() => {
       rows[0].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
     expect(document.activeElement).toBe(rows[1]);
-    expect(host.querySelectorAll(".problems-file-header")).toHaveLength(2);
+    expect(host.querySelectorAll(".cv-problems__file")).toHaveLength(2);
 
     act(() => {
       rows[1].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }));
@@ -565,27 +568,29 @@ describe("ProblemsPanel", () => {
       problemNotice("second", "/workspace/src/B.php", 1, "warning", "second"),
     ]);
 
-    const list = host.querySelector<HTMLElement>(".problems-list-rows");
-    const options = Array.from(list?.querySelectorAll<HTMLElement>(".problem-row[tabindex]") ?? []);
+    const list = host.querySelector<HTMLElement>(".cv-problems__rows");
+    const options = Array.from(
+      list?.querySelectorAll<HTMLElement>(".cv-problems__item[tabindex]") ?? [],
+    );
     const tabStops = Array.from(list?.querySelectorAll<HTMLElement>('[tabindex="0"]') ?? []);
-    const groups = Array.from(list?.querySelectorAll<HTMLElement>(".problems-file-group") ?? []);
+    const groups = Array.from(list?.querySelectorAll<HTMLElement>(".cv-problems__group") ?? []);
 
     expect(host.querySelector('[role="listbox"]')).toBeNull();
     expect(options).toHaveLength(2);
     expect(tabStops).toEqual([options[0]]);
     expect(
-      Array.from(list?.querySelectorAll(".problems-file-header") ?? []).every(
+      Array.from(list?.querySelectorAll(".cv-problems__file") ?? []).every(
         (header) => header.getAttribute("tabindex") === "-1",
       ),
     ).toBe(true);
     expect(
-      Array.from(list?.querySelectorAll(".problem-row-copy") ?? []).every(
+      Array.from(list?.querySelectorAll(".cv-problems__copy") ?? []).every(
         (copy) => copy.getAttribute("tabindex") === "-1",
       ),
     ).toBe(true);
     expect(groups).toHaveLength(2);
     groups.forEach((group) => {
-      const header = group.querySelector<HTMLElement>(".problems-file-header");
+      const header = group.querySelector<HTMLElement>(".cv-problems__file");
       expect(group.getAttribute("aria-labelledby")).toBe(header?.id);
     });
   });
@@ -602,7 +607,9 @@ describe("ProblemsPanel", () => {
     const second = problemNotice("second", "/workspace/src/B.php", 1, "error", "second");
     const onOpenNotice = vi.fn();
     render([first, second], onOpenNotice);
-    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".problem-row[tabindex]"));
+    const rows = Array.from(
+      host.querySelectorAll<HTMLButtonElement>(".cv-problems__item[tabindex]"),
+    );
 
     act(() => {
       rows[0].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
@@ -632,7 +639,9 @@ describe("ProblemsPanel", () => {
       problemNotice("second", "/workspace/src/A.php", 2, "error", "second"),
       problemNotice("third", "/workspace/src/B.php", 1, "error", "third"),
     ]);
-    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".problem-row[tabindex]"));
+    const rows = Array.from(
+      host.querySelectorAll<HTMLButtonElement>(".cv-problems__item[tabindex]"),
+    );
     rows[0].focus();
 
     act(() => {
@@ -653,25 +662,28 @@ describe("ProblemsPanel", () => {
       problemNotice("other", "/workspace/tests/UserTest.php", 1, "error", "fail"),
     ]);
 
-    const headers = Array.from(host.querySelectorAll(".problems-file-header"));
+    const headers = Array.from(host.querySelectorAll(".cv-problems__file"));
     expect(headers).toHaveLength(2);
-    expect(headers[0].textContent).toContain("src/User.php");
-    expect(headers[0].textContent).toContain("1 error");
-    expect(headers[0].textContent).toContain("1 warning");
-    expect(headers[1].textContent).toContain("tests/UserTest.php");
+    expect(headers[0].querySelector(".cv-problems__name")?.firstChild?.textContent).toBe(
+      "User.php",
+    );
+    expect(headers[0].querySelector(".cv-problems__dir")?.textContent).toBe("src");
+    expect(headers[0].querySelector(".cv-problems__count")?.textContent).toBe("2");
+    expect(headers[0].getAttribute("aria-label")).toBe("src/User.php, 1 error, 1 warning");
+    expect(headers[1].getAttribute("aria-label")).toContain("tests/UserTest.php");
   });
 
   it("collapses and expands a file group", () => {
     render([problemNotice("error", "/workspace/src/User.php", 2, "error", "boom")]);
 
-    const header = host.querySelector<HTMLButtonElement>(".problems-file-header");
+    const header = host.querySelector<HTMLButtonElement>(".cv-problems__file");
     expect(header?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.querySelector(".problem-row")).not.toBeNull();
+    expect(host.querySelector(".cv-problems__item")).not.toBeNull();
 
     act(() => header?.click());
 
     expect(header?.getAttribute("aria-expanded")).toBe("false");
-    expect(host.querySelector(".problem-row")).toBeNull();
+    expect(host.querySelector(".cv-problems__item")).toBeNull();
   });
 
   it("filters with severity toggles and case-insensitive text search", () => {
@@ -724,36 +736,59 @@ describe("ProblemsPanel", () => {
     expect(group?.getAttribute("aria-label")).toBe("Problem severities");
   });
 
-  it("defines distinct theme-aware focus outlines for toggles and file headers", () => {
-    const css = readFileSync("src/App.css", "utf8");
+  it("defines distinct token-based focus outlines for toggles and file headers", () => {
+    const css = readFileSync("src/components/editorPanel/editorDrawer.css", "utf8");
 
     expect(css).toMatch(
-      /\.problems-severity-toggle:focus-visible\s*\{[^}]*outline:\s*\d+px solid var\(--color-accent\)/s,
+      /\.cv-problems__severity:focus-visible[^{]*\{[^}]*outline:\s*\d+px solid var\(--cv-focus\)/s,
     );
     expect(css).toMatch(
-      /\.problems-file-header:focus-visible\s*\{[^}]*outline:\s*\d+px solid var\(--color-accent\)/s,
+      /\.cv-problems__file:focus-visible[^{]*\{[^}]*outline:\s*\d+px solid var\(--cv-focus\)/s,
     );
   });
 
   it("uses problems-panel classes for row layout, selection, and copy visibility", () => {
-    const css = readFileSync("src/App.css", "utf8");
+    const css = readFileSync("src/components/editorPanel/editorDrawer.css", "utf8");
     render([navigableNotice("boom")]);
 
-    expect(host.querySelector(".problem-row-container")).not.toBeNull();
-    expect(host.querySelector(".problem-row-copy")).not.toBeNull();
+    expect(host.querySelector(".cv-problems__row")).not.toBeNull();
+    expect(host.querySelector(".cv-problems__copy")).not.toBeNull();
     expect(host.querySelector(".git-branch-row-action")).toBeNull();
-    expect(host.querySelector(".problem-row-container")?.hasAttribute("style")).toBe(false);
-    expect(host.querySelector(".problem-row")?.hasAttribute("style")).toBe(false);
-    expect(host.querySelector(".problem-row-copy")?.hasAttribute("style")).toBe(false);
-    expect(css).toMatch(/\.problem-row\[aria-selected="true"\]/);
-    expect(css).toMatch(/\.problem-row-container:hover \.problem-row-copy/);
+    expect(host.querySelector(".cv-problems__row")?.hasAttribute("style")).toBe(false);
+    expect(host.querySelector(".cv-problems__item")?.hasAttribute("style")).toBe(false);
+    expect(host.querySelector(".cv-problems__copy")?.hasAttribute("style")).toBe(false);
+    expect(css).toMatch(/\.cv-problems__item\[aria-current="true"\]/);
+    expect(css).toMatch(/\.cv-problems__row:hover \.cv-problems__copy/);
+  });
+
+  it("portals its filter into the drawer header when a host is provided", () => {
+    const extras = document.createElement("div");
+    document.body.append(extras);
+    act(() => {
+      root.render(
+        <EditorDrawerExtrasContext.Provider value={extras}>
+          <ProblemsPanel
+            isActive
+            notices={[navigableNotice("boom")]}
+            onOpenNotice={vi.fn()}
+            workspaceRoot="/workspace"
+          />
+        </EditorDrawerExtrasContext.Provider>,
+      );
+    });
+
+    expect(extras.querySelector('input[aria-label="Filter problems"]')).not.toBeNull();
+    expect(host.querySelector('input[aria-label="Filter problems"]')).toBeNull();
+    expect(host.querySelector(".cv-problems__item")).not.toBeNull();
+    act(() => root.render(null));
+    extras.remove();
   });
 
   it("resets filter, severity, and collapse state when the workspace root changes", () => {
     const first = problemNotice("first", "/workspace/src/User.php", 2, "error", "first");
     render([first]);
 
-    act(() => host.querySelector<HTMLButtonElement>(".problems-file-header")?.click());
+    act(() => host.querySelector<HTMLButtonElement>(".cv-problems__file")?.click());
     act(() => host.querySelector<HTMLButtonElement>('button[aria-label="Errors (1)"]')?.click());
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Filter problems"]');
     act(() => {
@@ -772,7 +807,7 @@ describe("ProblemsPanel", () => {
         ?.getAttribute("aria-pressed"),
     ).toBe("true");
     expect(
-      host.querySelector<HTMLButtonElement>(".problems-file-header")?.getAttribute("aria-expanded"),
+      host.querySelector<HTMLButtonElement>(".cv-problems__file")?.getAttribute("aria-expanded"),
     ).toBe("true");
     expect(host.textContent).toContain("visible");
   });

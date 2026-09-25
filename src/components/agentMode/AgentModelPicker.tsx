@@ -16,6 +16,7 @@ import type { AgentProviderManagementSurface } from "../../application/useAgentP
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
+  agentLegacyModelsSummary,
   agentLaunchModelHint,
   agentLaunchModelLabel,
   agentLaunchEffectiveModel,
@@ -29,7 +30,7 @@ import {
   type AgentModelFilter,
   type AgentModelRow,
 } from "./agentLaunchPresentation";
-import { useAgentPopover } from "./agentPopover";
+import { AGENT_POPOVER_METRICS, useAgentPopover, type AgentPopoverMetrics } from "./agentPopover";
 import { trapPopoverTab } from "./agentPopoverFocus";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
 import {
@@ -39,6 +40,7 @@ import {
   providerIsEnabled,
 } from "./agentModelProviderState";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
+import "./pickers/agentPickers.css";
 
 export interface AgentModelPickerProps {
   readonly id: string;
@@ -57,6 +59,11 @@ export interface AgentModelPickerProps {
 
 const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 const MAX_SHORTCUT_ROWS = 9;
+const MODEL_PICKER_POPOVER_METRICS: AgentPopoverMetrics = {
+  ...AGENT_POPOVER_METRICS,
+  maxWidth: 360,
+  maxHeight: 346,
+};
 
 export function AgentModelPicker({
   describedBy,
@@ -80,7 +87,7 @@ export function AgentModelPicker({
     selectedProviderEnabled,
   );
   const pickerDisabled = disabled || providerUnavailableReason !== null;
-  const popover = useAgentPopover("start", pickerDisabled);
+  const popover = useAgentPopover("start", pickerDisabled, MODEL_PICKER_POPOVER_METRICS);
   const { hide, open, popoverRef, show } = popover;
   const [filter, setFilter] = useState<AgentModelFilter>("all");
   const [displayProvider, setDisplayProvider] = useState<AgentCliKind>(launch.provider);
@@ -343,8 +350,8 @@ export function AgentModelPicker({
                 <Fragment key={row.favoriteKey}>
                   {legacySectionVisible && legacyExpanded && index === currentRows.length && (
                     <LegacyModelsToggle
-                      count={legacyRows.length}
                       expanded
+                      rows={legacyRows}
                       onToggle={() => setLegacyExpanded(false)}
                     />
                   )}
@@ -366,7 +373,10 @@ export function AgentModelPicker({
                         <AgentProviderGlyph kind={row.provider} />
                       </span>
                       <span className="agent-model-picker__text">
-                        <span className="agent-model-picker__label">{row.label}</span>
+                        <span className="agent-model-picker__label">
+                          {row.label}
+                          {row.isNew ? <span className="agent-model-picker__new">NEW</span> : null}
+                        </span>
                         <span className="agent-model-picker__description">{row.hint}</span>
                       </span>
                       {index < MAX_SHORTCUT_ROWS && (
@@ -398,8 +408,8 @@ export function AgentModelPicker({
               ))}
               {legacySectionVisible && !legacyExpanded && (
                 <LegacyModelsToggle
-                  count={legacyRows.length}
                   expanded={false}
+                  rows={legacyRows}
                   onToggle={() => setLegacyExpanded(true)}
                 />
               )}
@@ -460,11 +470,11 @@ function AgentProviderRailItem({
 }
 
 function LegacyModelsToggle({
-  count,
   expanded,
   onToggle,
+  rows,
 }: {
-  readonly count: number;
+  readonly rows: ReadonlyArray<AgentModelRow>;
   readonly expanded: boolean;
   onToggle(): void;
 }) {
@@ -477,7 +487,7 @@ function LegacyModelsToggle({
     >
       <span>
         <strong>Legacy models</strong>
-        <small>{count} models</small>
+        <small>{agentLegacyModelsSummary(rows)}</small>
       </span>
       <ChevronRight
         aria-hidden="true"

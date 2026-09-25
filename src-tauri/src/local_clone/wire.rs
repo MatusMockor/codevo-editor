@@ -1,3 +1,5 @@
+use super::failure::CloneFailure;
+use super::progress::CloneProgress;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -9,6 +11,8 @@ pub(crate) struct CloneRequest {
     pub parent_path: String,
     #[serde(default, deserialize_with = "optional_branch")]
     pub branch: Option<String>,
+    #[serde(default)]
+    pub ensure_parent: bool,
 }
 fn optional_branch<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     String::deserialize(d).map(Some)
@@ -25,6 +29,8 @@ pub(crate) struct Snapshot {
     pub status: Status,
     pub path: Option<String>,
     pub error: Option<String>,
+    pub progress: Option<CloneProgress>,
+    pub failure: Option<CloneFailure>,
 }
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

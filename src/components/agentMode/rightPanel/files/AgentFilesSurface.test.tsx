@@ -3,11 +3,12 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSurfaceFileTreeSurface } from "../../../../application/useAgentSurfaceFileTree";
+import { MAX_CHECKOUT_FILE_STATUSES } from "../../../../application/rightPanel/useCheckoutFileStatuses";
 import {
   FILES_SEARCH_DEBOUNCE_MS,
   MAX_FILES_SEARCH_RESULTS,
 } from "../../../../application/rightPanel/useAgentFilesSearch";
-import type { GitChangeStatus, GitStatus } from "../../../../domain/git";
+import type { GitChangeStatus, GitChangedFile, GitStatus } from "../../../../domain/git";
 import type { FileEntry, FileSearchGateway, FileSearchResult } from "../../../../domain/workspace";
 import { mountUi, press, type MountedUi } from "../../../../ui/foundation/foundationTestSupport";
 import type { AgentSurfaceFileTreeProps } from "../../AgentSurfaceFileTree";
@@ -19,7 +20,11 @@ import {
   rightPanelTestContext,
   unusedGit,
 } from "../agentRightPanelTestSupport";
-import { AgentFilesSurface } from "./AgentFilesSurface";
+import {
+  AgentFilesSurface,
+  CHECKOUT_STATUS_FAILED_NOTE,
+  CHECKOUT_STATUS_TRUNCATED_NOTE,
+} from "./AgentFilesSurface";
 
 const ROOT = "/repo";
 
@@ -77,6 +82,18 @@ function fileTree(overrides: Partial<AgentSurfaceFileTreeProps> = {}): AgentSurf
   };
 }
 
+function untrackedNotes(): GitChangedFile {
+  return {
+    isStaged: false,
+    isUnversioned: true,
+    oldPath: null,
+    oldRelativePath: null,
+    path: `${ROOT}/src/new.ts`,
+    relativePath: "src/new.ts",
+    status: "untracked",
+  };
+}
+
 function result(relativePath: string): FileSearchResult {
   return {
     name: relativePath.slice(relativePath.lastIndexOf("/") + 1),
@@ -107,7 +124,6 @@ function render(
   ui.render(
     <WithRightPanelContext value={context}>
       <AgentFilesSurface
-        editorSlot={<div data-testid="editor-slot" />}
         fileTree={props.fileTree === undefined ? fileTree() : props.fileTree}
         treeShown={props.treeShown ?? true}
       />
@@ -143,7 +159,6 @@ describe("AgentFilesSurface", () => {
     expect(host.querySelector(".cv-files__search .cv-kbd")?.textContent).toBe("⌘P");
     expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
     expect(host.querySelector('[role="listbox"]')).toBeNull();
-    expect(host.querySelector('[data-testid="editor-slot"]')).not.toBeNull();
   });
 
   it("refreshes the tree from the surface header", () => {
@@ -203,6 +218,125 @@ describe("AgentFilesSurface", () => {
     await act(async () => undefined);
     expect(getStatus).toHaveBeenCalledTimes(2);
     expect(marker()?.textContent).toBe("A");
+  });
+
+  it("says so when the worktree status cannot be read instead of showing a clean tree", async () => {
+    const getStatus = vi.fn(async (): Promise<GitStatus> => {
+      throw new Error("not a git repository");
+    });
+    const git = { ...unusedGit(), getStatus };
+    const context = rightPanelTestContext({ thread: surfaceThreadView() }, { git });
+    const host = render({}, context);
+    await act(async () => undefined);
+
+    expect(host.querySelector(".cv-files__note")?.textContent).toBe(CHECKOUT_STATUS_FAILED_NOTE);
+    expect(
+      host.querySelector(`.cv-files [title^="${ROOT}/src/app.ts"] .tree-row-status`),
+    ).toBeNull();
+  });
+
+  it("marks partial worktree status as partial", async () => {
+    const changes = Array.from({ length: MAX_CHECKOUT_FILE_STATUSES + 1 }, (_unused, index) => ({
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: `${ROOT}/gen/f${index}.ts`,
+      relativePath: `gen/f${index}.ts`,
+      status: "modified" as const,
+    }));
+    const getStatus = vi.fn(async (rootPath: string): Promise<GitStatus> => ({
+      branch: "agent/greet",
+      isRepository: true,
+      rootPath,
+      changes,
+    }));
+    const git = { ...unusedGit(), getStatus };
+    const context = rightPanelTestContext({ thread: surfaceThreadView() }, { git });
+    const host = render({}, context);
+    await act(async () => undefined);
+
+    expect(host.querySelector(".cv-files__note")?.textContent).toBe(CHECKOUT_STATUS_TRUNCATED_NOTE);
+  });
+
+  it("shows no status note while the worktree status is complete", async () => {
+    const getStatus = vi.fn(async (rootPath: string): Promise<GitStatus> => ({
+      branch: "agent/greet",
+      isRepository: true,
+      rootPath,
+      changes: [],
+    }));
+    const git = { ...unusedGit(), getStatus };
+    const host = render({}, rightPanelTestContext({ thread: surfaceThreadView() }, { git }));
+    await act(async () => undefined);
+
+    expect(host.querySelector(".cv-files__note")).toBeNull();
+  });
+
+  it("clears an in-place checkout's marker after a commit refreshes the git status", async () => {
+    const pending: GitChangedFile[][] = [[untrackedNotes()], []];
+    const getStatus = vi.fn(async (rootPath: string): Promise<GitStatus> => ({
+      branch: "main",
+      isRepository: true,
+      rootPath,
+      changes: pending.shift() ?? [],
+    }));
+    const context = rightPanelTestContext({}, { git: { ...unusedGit(), getStatus } });
+    const stale = fileTree({ fileStatusesByPath: { [`${ROOT}/src/new.ts`]: "untracked" } });
+    const host = render({ fileTree: stale }, context);
+    const marker = () =>
+      host.querySelector(`.cv-files [title^="${ROOT}/src/new.ts"] .tree-row-status`);
+    await act(async () => undefined);
+    expect(getStatus).toHaveBeenCalledWith(ROOT);
+    expect(marker()?.textContent).toBe("U");
+
+    render(
+      { fileTree: stale },
+      {
+        ...context,
+        gitStatus: { load: { kind: "loading", previous: null }, refresh: () => undefined },
+      },
+    );
+    await act(async () => undefined);
+
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(marker()).toBeNull();
+  });
+
+  it("re-reads the git status when the files are refreshed", async () => {
+    const pending: GitChangedFile[][] = [[untrackedNotes()], []];
+    const getStatus = vi.fn(async (rootPath: string): Promise<GitStatus> => ({
+      branch: "main",
+      isRepository: true,
+      rootPath,
+      changes: pending.shift() ?? [],
+    }));
+    const refresh = vi.fn();
+    const treeRefresh = vi.fn();
+    const context = rightPanelTestContext(
+      { gitStatus: { load: { kind: "idle" }, refresh } },
+      { git: { ...unusedGit(), getStatus } },
+    );
+    const host = render(
+      { fileTree: fileTree({ tree: { ...tree(), refresh: treeRefresh } }) },
+      context,
+    );
+    const marker = () =>
+      host.querySelector(`.cv-files [title^="${ROOT}/src/new.ts"] .tree-row-status`);
+    await act(async () => undefined);
+    expect(marker()?.textContent).toBe("U");
+
+    const button = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Refresh workspace files"]',
+    );
+    expect(button).not.toBeNull();
+    act(() => button?.click());
+    await act(async () => undefined);
+
+    expect(treeRefresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(marker()).toBeNull();
   });
 
   it("follows refreshed git status without keeping stale markers", () => {
@@ -389,42 +523,20 @@ describe("AgentFilesSurface", () => {
     );
   });
 
-  it("shows crumbs for the active file with Copy path and Open in editor", async () => {
-    const copyText = vi.fn(async () => undefined);
-    const onOpenFile = vi.fn();
-    const activePath = `${ROOT}/src/middleware/idempotency.ts`;
-    const host = render(
-      { fileTree: fileTree({ activePath, onOpenFile }) },
-      rightPanelTestContext({ copyText }),
-    );
+  it("fills the surface with the tree and hosts no editor slot or crumbs", () => {
+    const host = render({});
 
-    const crumbs = host.querySelector(".cv-files__crumbs");
-    expect(crumbs?.getAttribute("title")).toBe(activePath);
-    expect(
-      [...(crumbs?.querySelectorAll(".cv-files__crumb") ?? [])].map((crumb) => crumb.textContent),
-    ).toEqual(["src", "middleware", "idempotency.ts"]);
-    expect(crumbs?.querySelector(".cv-files__crumb--here")?.textContent).toBe("idempotency.ts");
-    expect(crumbs?.nextElementSibling?.getAttribute("data-testid")).toBe("editor-slot");
-
-    await act(async () =>
-      host.querySelector<HTMLButtonElement>('[aria-label="Copy path"]')?.click(),
-    );
-    expect(copyText).toHaveBeenCalledWith(activePath);
-    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open in editor"]')?.click());
-    expect(onOpenFile).toHaveBeenCalledWith(entry(activePath));
-  });
-
-  it("hides the crumbs without an active file under the checkout", () => {
-    const host = render({ fileTree: fileTree({ activePath: null }) });
+    expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
     expect(host.querySelector(".cv-files__crumbs")).toBeNull();
-    expect(host.querySelector('[data-testid="editor-slot"]')).not.toBeNull();
+    expect(host.querySelector(".cv-files__preview")).toBeNull();
+    expect(host.querySelector('[aria-label="Open in editor"]')).toBeNull();
+    expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
   });
 
   it("drops the search and tree column while the tree is hidden", () => {
     const host = render({ treeShown: false });
     expect(searchField(host)).toBeNull();
     expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
-    expect(host.querySelector('[data-testid="editor-slot"]')).not.toBeNull();
   });
 
   it("disables search while the tree is unavailable and never calls the gateway", async () => {
@@ -441,9 +553,9 @@ describe("AgentFilesSurface", () => {
     expect(gateway.calls).toEqual([]);
   });
 
-  it("renders only the editor slot without a file tree", () => {
+  it("renders no search or tree without a file tree", () => {
     const host = render({ fileTree: null });
     expect(searchField(host)).toBeNull();
-    expect(host.querySelector('[data-testid="editor-slot"]')).not.toBeNull();
+    expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
   });
 });

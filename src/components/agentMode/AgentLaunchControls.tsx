@@ -1,32 +1,24 @@
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import type { ReactNode } from "react";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
-import { Lock, LockOpen, PenLine, Sparkles } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
-  agentLaunchAccess,
-  agentLaunchModeChoices,
-  agentLaunchModeHint,
   agentLaunchModelHint,
-  agentLaunchTone,
   agentLaunchWithMode,
   agentLaunchWithModel,
-  type AgentLaunchAccess,
-  type AgentLaunchChoice,
   type AgentModelChoice,
 } from "./agentLaunchPresentation";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
-import { AgentPickerMenu } from "./AgentPickerMenu";
+import { AgentAccessMenu } from "./AgentAccessMenu";
 import { AgentTraitsPicker } from "./AgentTraitsPicker";
 import { useComposerPaletteBinding } from "./useComposerPaletteBinding";
-import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
+import "./pickers/agentPickers.css";
 
 const MODEL_ID = "agent-launch-model";
-const MODE_ID = "agent-launch-mode";
 
 export interface AgentLaunchControlRequest {
   readonly kind: "model" | "reasoning" | "permissions";
@@ -62,7 +54,6 @@ export function AgentLaunchControls({
 }: AgentLaunchControlsProps) {
   const catalog = useAgentClaudeModelCatalog();
   const effectiveLaunch = normalizeAgentComposerLaunch(launch);
-  const modeChoices = agentLaunchModeChoices(effectiveLaunch.provider, executionTarget);
   const configuredModelFor = (provider: AgentCliKind): string | null => {
     const discovered = providerManagement?.cliDiscovery[provider];
     return discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
@@ -109,26 +100,14 @@ export function AgentLaunchControls({
       )}
 
       <AgentLaunchDivider />
-      <AgentPickerMenu
+      <AgentAccessMenu
+        disabled={disabled}
+        launch={effectiveLaunch}
+        onChange={(value) => onLaunchChange(agentLaunchWithMode(effectiveLaunch, value))}
         onOpenRequestHandled={onOpenRequestHandled}
         openRequest={openRequest?.kind === "permissions" ? openRequest : null}
-        align="start"
-        confirmation={null}
-        describedBy={`${MODE_ID}-hint`}
-        disabled={disabled}
-        icon={accessIcon(agentLaunchAccess(effectiveLaunch))}
-        id={MODE_ID}
-        label="Agent permission mode"
-        onChange={(value) => onLaunchChange(agentLaunchWithMode(effectiveLaunch, value))}
-        options={modeChoices.map(toOption)}
-        prefix={null}
-        tone={agentLaunchTone(effectiveLaunch)}
-        value={effectiveLaunch.mode}
-        variant="ghost"
+        target={executionTarget}
       />
-      <span className="agent-visually-hidden" id={`${MODE_ID}-hint`}>
-        {agentLaunchModeHint(effectiveLaunch, executionTarget)}
-      </span>
     </>
   );
   return (
@@ -168,27 +147,4 @@ export function AgentLaunchControls({
 
 function AgentLaunchDivider() {
   return <span aria-hidden="true" className="agent-composer__divider" />;
-}
-
-function accessIcon(access: AgentLaunchAccess) {
-  if (access === "open") return <LockOpen size={14} />;
-  return <Lock size={14} />;
-}
-
-function toOption(choice: AgentLaunchChoice): AgentPickerOption {
-  return agentPickerOption(
-    choice.value,
-    choice.label,
-    choice.hint,
-    choice.tone,
-    null,
-    modeOptionIcon(choice.value),
-  );
-}
-
-function modeOptionIcon(value: string) {
-  if (value === "supervised" || value === "readOnly") return <Lock size={14} />;
-  if (value === "acceptEdits" || value === "workspaceWrite") return <PenLine size={14} />;
-  if (value === "auto") return <Sparkles size={14} />;
-  return <LockOpen size={14} />;
 }

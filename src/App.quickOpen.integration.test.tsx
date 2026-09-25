@@ -7,7 +7,6 @@ import { __resetKeymapPlatformCacheForTests } from "./domain/keymap";
 import { defaultAppSettings, defaultWorkspaceSettings } from "./domain/settings";
 import type { EditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import type { EditorCursorStorePort } from "./application/editorCursorStore";
-import { useActiveEditorCursorSnapshot } from "./application/useEditorCursorSnapshot";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
@@ -87,32 +86,6 @@ vi.mock("./components/ScopedEditorSurface", () => ({
   },
 }));
 
-vi.mock("./components/StatusBar", () => ({
-  StatusBar: ({
-    cursorStore,
-    largeDocumentStatus,
-    message,
-  }: {
-    cursorStore: EditorCursorStorePort;
-    largeDocumentStatus: { label: string; title: string } | null;
-    message: string | null;
-  }) => {
-    const snapshot = useActiveEditorCursorSnapshot(cursorStore);
-    const position = snapshot.status === "available" ? snapshot.position : null;
-    return (
-      <>
-        <div data-testid="cursor-position">
-          {position ? `${position.lineNumber}:${position.column}` : "no-position"}
-        </div>
-        <div data-testid="status-message">{message}</div>
-        <div data-testid="large-document-status" title={largeDocumentStatus?.title}>
-          {largeDocumentStatus?.label}
-        </div>
-      </>
-    );
-  },
-}));
-
 vi.mock("./components/WorkbenchOverlayHosts", () => ({
   WorkbenchOverlayHosts: ({
     workbench,
@@ -163,7 +136,7 @@ describe("App Quick Open integration", () => {
     );
     localStorage.setItem(
       "editor.settings.workspace:canonical:%2Fworkspace",
-      JSON.stringify(expandedEditorWorkspaceSettings()),
+      JSON.stringify(editorSurfaceWorkspaceSettings()),
     );
     mocks.invoke.mockImplementation((command, args) => {
       if (command === "register_workspace_path") {
@@ -239,7 +212,7 @@ describe("App Quick Open integration", () => {
     localStorage.setItem(
       "editor.settings.workspace:canonical:%2Fworkspace",
       JSON.stringify({
-        ...expandedEditorWorkspaceSettings(),
+        ...editorSurfaceWorkspaceSettings(),
         largeFileMode: { characterLimit: 10 * 1024 * 1024, lineLimit: 200_000 },
       }),
     );
@@ -250,7 +223,7 @@ describe("App Quick Open integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
-    await openEditorSidebarForIntegration(host);
+    await waitForEditorSurface(host);
 
     act(() => {
       window.dispatchEvent(
@@ -444,7 +417,7 @@ describe("App Quick Open integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
-    await openEditorSidebarForIntegration(host);
+    await waitForEditorSurface(host);
     await waitFor(() => expect(mocks.onCursorPositionChange.current).not.toBeNull());
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -481,7 +454,7 @@ describe("App Quick Open integration", () => {
           host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
         ).toBe("true");
       });
-      await openEditorSidebarForIntegration(host);
+      await waitForEditorSurface(host);
       act(() => {
         window.dispatchEvent(
           new KeyboardEvent("keydown", {
@@ -528,19 +501,7 @@ describe("App Quick Open integration", () => {
   );
 });
 
-async function openEditorSidebarForIntegration(host: ParentNode): Promise<void> {
-  act(() => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        altKey: true,
-        bubbles: true,
-        cancelable: true,
-        code: "KeyF",
-        key: "f",
-        metaKey: true,
-      }),
-    );
-  });
+async function waitForEditorSurface(host: ParentNode): Promise<void> {
   await waitFor(() => {
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
     expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
@@ -580,15 +541,16 @@ async function waitForElement<T extends Element>(
   return element;
 }
 
-function expandedEditorWorkspaceSettings() {
+function editorSurfaceWorkspaceSettings() {
   const settings = defaultWorkspaceSettings();
   return {
     ...settings,
     session: {
       ...settings.session,
       agentWorkbench: {
-        layout: "editor-expanded",
-        rightSurface: null,
+        rightPanel: "open",
+        openSurfaces: ["editor"],
+        activeSurface: "editor",
         bottomPanel: false,
         rightPanelWidth: 540,
         bottomPanelHeight: 280,

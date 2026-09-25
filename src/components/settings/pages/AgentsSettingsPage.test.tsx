@@ -116,7 +116,34 @@ describe("AgentsSettingsPage", () => {
     );
 
     expect(rendered).toEqual(settingsRowsForSection("agents").map((row) => row.id));
-    expect(host.querySelector("h2")?.textContent).toBe("Agents");
+    expect([...host.querySelectorAll("h2")].map((heading) => heading.textContent)).toEqual([
+      "Providers",
+      "New threads",
+      "CLI updates",
+    ]);
+  });
+
+  it("stars a model from the expanded provider card and unstars it again", () => {
+    const onUpdateAppSettings = vi.fn();
+
+    render({
+      appSettings: { ...defaultAppSettings(), agentModelFavoritesRevision: 3 },
+      onUpdateAppSettings,
+    });
+    expand("Claude Code");
+    act(() => byLabel("Favorite Claude Opus 5.5").click());
+
+    expect(lastCall(onUpdateAppSettings).agentModelFavoriteKeys).toEqual([
+      "claudeCode/claude-opus-5-5",
+    ]);
+    expect(lastCall(onUpdateAppSettings).agentModelFavoritesRevision).toBe(4);
+    expect(byLabel("Favorite Claude Opus 5.5").getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).toContain("1 pinned");
+
+    act(() => byLabel("Favorite Claude Opus 5.5").click());
+
+    expect(lastCall(onUpdateAppSettings).agentModelFavoriteKeys).toEqual([]);
+    expect(byLabel("Favorite Claude Opus 5.5").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("states that update checks are automatic instead of offering a dead toggle", () => {
@@ -157,17 +184,13 @@ describe("AgentsSettingsPage", () => {
     expect(onUpdateAppSettings).not.toHaveBeenCalled();
   });
 
-  it("reports the oldest provider check and refreshes both providers", () => {
+  it("reports the oldest provider check and leaves CLI diagnostics to the top bar", () => {
     const management = providerManagement();
 
     render({ management });
 
     expect(host.textContent).toContain("Checked");
-
-    act(() => byLabel("Run CLI diagnostics").click());
-
-    expect(management.refresh).toHaveBeenCalledWith("claudeCode");
-    expect(management.refresh).toHaveBeenCalledWith("codex");
+    expect(host.querySelector('[aria-label="Run CLI diagnostics"]')).toBeNull();
   });
 
   it("ages the relative timestamp on a bounded clock and cleans up the timer", () => {

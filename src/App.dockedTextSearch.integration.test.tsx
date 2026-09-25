@@ -41,12 +41,6 @@ vi.mock("./components/ScopedEditorSurface", () => ({
   },
 }));
 
-vi.mock("./components/StatusBar", () => ({
-  StatusBar: ({ activePath }: { activePath: string | null }) => (
-    <div aria-label="Active editor path">{activePath ?? ""}</div>
-  ),
-}));
-
 vi.mock("./components/WorkbenchOverlayHosts", () => ({
   WorkbenchOverlayHosts: ({
     workbench,
@@ -101,7 +95,7 @@ describe("App docked text search integration", () => {
     );
     localStorage.setItem(
       "editor.settings.workspace:canonical:%2Fworkspace",
-      JSON.stringify(expandedEditorWorkspaceSettings()),
+      JSON.stringify(editorSurfaceWorkspaceSettings()),
     );
     mocks.invoke.mockImplementation((command, args) => {
       if (command === "register_workspace_path") {
@@ -220,7 +214,7 @@ describe("App docked text search integration", () => {
     });
     expect(shortcutEvent.defaultPrevented).toBe(true);
 
-    const panel = await waitForElement<HTMLElement>(host, 'section[aria-label="Panel"]');
+    const panel = await waitForElement<HTMLElement>(host, 'section[aria-label="Panel views"]');
     const search = panel.querySelector<HTMLElement>('section[aria-label="Find in path"]');
     expect(search).not.toBeNull();
     const input = search?.querySelector<HTMLInputElement>('input[aria-label="Search text"]');
@@ -260,16 +254,25 @@ describe("App docked text search integration", () => {
     expect(panel.querySelector(".text-search-result.active")).toBe(selectedResult);
     expect(selectedResult.getAttribute("aria-selected")).toBe("true");
 
-    const terminalTab = Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
-      (tab) => tab.textContent === "Terminal",
-    );
-    expect(terminalTab).not.toBeUndefined();
-    await act(async () => {
-      terminalTab?.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(terminalTab?.getAttribute("aria-selected")).toBe("true");
+    const showTerminal = async () => {
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: true,
+            key: "`",
+          }),
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    const terminalPanel = () => host.querySelector<HTMLElement>('section[aria-label="Panel"]');
+    await showTerminal();
+    const terminal = terminalPanel();
+    expect(terminal?.hasAttribute("hidden")).toBe(false);
+    expect(host.querySelector('section[aria-label="Panel views"]')).toBeNull();
 
     const settingsEvent = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -279,20 +282,19 @@ describe("App docked text search integration", () => {
     });
     act(() => window.dispatchEvent(settingsEvent));
     expect(settingsEvent.defaultPrevented).toBe(true);
-    expect(panel.isConnected).toBe(true);
-    expect(terminalTab?.getAttribute("aria-selected")).toBe("true");
+    expect(terminal?.isConnected).toBe(true);
+    expect(terminal?.hasAttribute("hidden")).toBe(false);
 
     act(() => window.dispatchEvent(shortcutEvent));
-    const searchTab = Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
-      (tab) => tab.textContent === "Search",
-    );
-    expect(searchTab).toBeUndefined();
-    expect(terminalTab?.getAttribute("aria-selected")).toBe("true");
-    await act(async () => {
-      terminalTab?.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    expect(
+      host.querySelector('section[aria-label="Panel views"] [role="tab"][aria-selected="true"]')
+        ?.textContent,
+    ).toBe("Search");
+    expect(terminal?.isConnected).toBe(true);
+    expect(terminal?.hasAttribute("hidden")).toBe(true);
+    await showTerminal();
+    expect(terminalPanel()).toBe(terminal);
+    expect(terminal?.hasAttribute("hidden")).toBe(false);
 
     const workspaceSymbolsEvent = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -302,8 +304,8 @@ describe("App docked text search integration", () => {
     });
     act(() => window.dispatchEvent(workspaceSymbolsEvent));
     expect(workspaceSymbolsEvent.defaultPrevented).toBe(true);
-    expect(panel.isConnected).toBe(true);
-    expect(terminalTab?.getAttribute("aria-selected")).toBe("true");
+    expect(terminalPanel()).toBe(terminal);
+    expect(terminal?.hasAttribute("hidden")).toBe(false);
   }, 10_000);
 
   it("keeps the mounted editor surface out of twenty Text Search query commits", async () => {
@@ -316,7 +318,7 @@ describe("App docked text search integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
-    await openEditorSidebarForIntegration(host);
+    await waitForEditorSurface(host);
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -359,15 +361,14 @@ describe("App docked text search integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
-    await openEditorSidebarForIntegration(host);
+    await waitForEditorSurface(host);
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
           bubbles: true,
           cancelable: true,
-          key: "f",
-          metaKey: true,
-          shiftKey: true,
+          ctrlKey: true,
+          key: "`",
         }),
       );
     });
@@ -396,19 +397,7 @@ describe("App docked text search integration", () => {
   }, 10_000);
 });
 
-async function openEditorSidebarForIntegration(host: ParentNode): Promise<void> {
-  act(() => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        altKey: true,
-        bubbles: true,
-        cancelable: true,
-        code: "KeyF",
-        key: "f",
-        metaKey: true,
-      }),
-    );
-  });
+async function waitForEditorSurface(host: ParentNode): Promise<void> {
   await waitFor(() => {
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
     expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
@@ -456,15 +445,16 @@ async function waitForElement<T extends Element>(host: HTMLElement, selector: st
   return element;
 }
 
-function expandedEditorWorkspaceSettings() {
+function editorSurfaceWorkspaceSettings() {
   const settings = defaultWorkspaceSettings();
   return {
     ...settings,
     session: {
       ...settings.session,
       agentWorkbench: {
-        layout: "editor-expanded",
-        rightSurface: null,
+        rightPanel: "open",
+        openSurfaces: ["editor"],
+        activeSurface: "editor",
         bottomPanel: false,
         rightPanelWidth: 540,
         bottomPanelHeight: 280,

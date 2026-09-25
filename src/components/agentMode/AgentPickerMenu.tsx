@@ -15,6 +15,7 @@ import { AgentCheckoutSearchInput, AgentCheckoutSearchPages } from "./AgentCheck
 import { useCheckoutSearch } from "./useCheckoutSearch";
 import { AgentPickerRows } from "./AgentPickerRows";
 import { AGENT_POPOVER_METRICS, useAgentPopoverPlacement } from "./agentPopover";
+import "./pickers/agentPickers.css";
 
 export type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
 

@@ -98,6 +98,7 @@ describe("composer attachment submission", () => {
       prompt: "",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
     });

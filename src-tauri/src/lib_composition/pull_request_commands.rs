@@ -33,13 +33,13 @@ const PULL_REQUEST_STDOUT_BYTES: usize = 64 * 1024;
 const PULL_REQUEST_STDERR_BYTES: usize = 8 * 1024;
 const MAX_CONTEXT_SUBJECTS: usize = 50;
 const MAX_CONTEXT_SUBJECT_BYTES: usize = 200;
-const FORGE_CREDENTIAL_ENVIRONMENT: [&str; 6] = [
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_HOST",
-    "GH_ENTERPRISE_TOKEN",
+const GITHUB_CREDENTIAL_ENVIRONMENT: [&str; 4] =
+    ["GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN"];
+const GITLAB_CREDENTIAL_ENVIRONMENT: [&str; 4] = [
     "GITLAB_TOKEN",
+    "GITLAB_ACCESS_TOKEN",
     "GLAB_HOST",
+    "GITLAB_HOST",
 ];
 
 pub(crate) type ForgeEnvironment = Arc<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
@@ -121,7 +121,7 @@ impl PullRequestService {
             .ok_or(PullRequestFailure::CliMissing(forge))?;
         let mut command = plan_command(&executable.path, argv, &self.home, &executable.search_path);
         command.current_dir(cwd);
-        apply_forge_credentials(&mut command, self.environment.as_ref());
+        apply_forge_credentials(&mut command, forge, self.environment.as_ref());
         Ok(command)
     }
 
@@ -366,8 +366,19 @@ fn shortstat_files(output: &str) -> Option<usize> {
     trimmed.split_whitespace().next()?.parse().ok()
 }
 
-fn apply_forge_credentials(command: &mut Command, environment: &dyn Fn(&str) -> Option<OsString>) {
-    for key in FORGE_CREDENTIAL_ENVIRONMENT {
+fn forge_credential_environment(forge: ForgeKind) -> &'static [&'static str] {
+    match forge {
+        ForgeKind::Github => &GITHUB_CREDENTIAL_ENVIRONMENT,
+        ForgeKind::Gitlab => &GITLAB_CREDENTIAL_ENVIRONMENT,
+    }
+}
+
+fn apply_forge_credentials(
+    command: &mut Command,
+    forge: ForgeKind,
+    environment: &dyn Fn(&str) -> Option<OsString>,
+) {
+    for &key in forge_credential_environment(forge) {
         let Some(value) = environment(key) else {
             continue;
         };

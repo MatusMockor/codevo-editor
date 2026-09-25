@@ -35,7 +35,7 @@ function fixture() {
 }
 
 async function revision(gateway: TauriAppUpdaterGateway) {
-  const result = await gateway.check();
+  const result = await gateway.check("beta");
   if (result.kind !== "available" && result.kind !== "readyToRestart") throw new Error("No update");
   return result.candidate.candidateRevision;
 }
@@ -48,7 +48,7 @@ describe("prepared application updates", () => {
     expect(update.install).toHaveBeenCalledOnce();
     expect(bridge.relaunch).not.toHaveBeenCalled();
     await gateway.dispose();
-    const next = await gateway.check();
+    const next = await gateway.check("beta");
     expect(next.kind).toBe("readyToRestart");
     expect(bridge.check).toHaveBeenCalledTimes(2);
     if (next.kind !== "readyToRestart") throw new Error("No prepared update");
@@ -73,7 +73,10 @@ describe("prepared application updates", () => {
       },
       diskVersion,
     );
-    await expect(next.check()).resolves.toEqual({ kind: "upToDate", currentVersion: "2.0.0" });
+    await expect(next.check("beta")).resolves.toEqual({
+      kind: "upToDate",
+      currentVersion: "2.0.0",
+    });
   });
 
   it.each(["close", "relaunch"] as const)(
@@ -130,13 +133,13 @@ describe("prepared application updates", () => {
     update.install.mockImplementation(() => pending.promise);
     const download = gateway.download(await revision(gateway));
     await vi.waitFor(() => expect(update.install).toHaveBeenCalledOnce());
-    const check = gateway.check();
+    const check = gateway.check("beta");
     expect(bridge.check).toHaveBeenCalledOnce();
     await gateway.dispose();
     pending.resolve();
     await expect(download).rejects.toThrow("no longer current");
     await expect(check).rejects.toThrow("stale");
-    expect((await gateway.check()).kind).toBe("readyToRestart");
+    expect((await gateway.check("beta")).kind).toBe("readyToRestart");
     expect(bridge.check).toHaveBeenCalledTimes(2);
     expect(bridge.relaunch).not.toHaveBeenCalled();
   });
@@ -147,7 +150,7 @@ describe("prepared application updates", () => {
     update.install.mockImplementation(() => pending.promise);
     const download = gateway.download(await revision(gateway));
     await vi.waitFor(() => expect(update.install).toHaveBeenCalledOnce());
-    const check = gateway.check();
+    const check = gateway.check("beta");
     pending.resolve();
     await expect(download).rejects.toThrow("no longer current");
     expect((await check).kind).toBe("readyToRestart");
@@ -160,8 +163,8 @@ describe("prepared application updates", () => {
     update.install.mockImplementation(() => pending.promise);
     const download = gateway.download(await revision(gateway));
     await vi.waitFor(() => expect(update.install).toHaveBeenCalledOnce());
-    const firstCheck = gateway.check();
-    const latestCheck = gateway.check();
+    const firstCheck = gateway.check("beta");
+    const latestCheck = gateway.check("beta");
     pending.resolve();
     await expect(download).rejects.toThrow("no longer current");
     await expect(firstCheck).rejects.toThrow("stale");
@@ -173,7 +176,7 @@ describe("prepared application updates", () => {
     const { update, gateway } = fixture();
     update.install.mockRejectedValueOnce(new Error("install failed"));
     await expect(gateway.download(await revision(gateway))).rejects.toThrow("install failed");
-    expect((await gateway.check()).kind).toBe("available");
+    expect((await gateway.check("beta")).kind).toBe("available");
   });
 
   it("rejects duplicate downloads and restarts while native operations are active", async () => {
@@ -191,7 +194,7 @@ describe("prepared application updates", () => {
     const restart = gateway.installAndRestart(rev);
     await vi.waitFor(() => expect(bridge.relaunch).toHaveBeenCalledOnce());
     await expect(gateway.installAndRestart(rev)).rejects.toThrow("already active");
-    await expect(gateway.check()).rejects.toThrow("already active");
+    await expect(gateway.check("beta")).rejects.toThrow("already active");
     restarting.resolve();
     await restart;
   });
@@ -201,7 +204,9 @@ describe("prepared application updates", () => {
     async (mode) => {
       const { bridge, gateway } = fixture();
       bridge.getInstallMode.mockResolvedValue(mode);
-      await expect(gateway.check()).rejects.toThrow("Invalid application update install mode");
+      await expect(gateway.check("beta")).rejects.toThrow(
+        "Invalid application update install mode",
+      );
       expect(bridge.check).not.toHaveBeenCalled();
     },
   );

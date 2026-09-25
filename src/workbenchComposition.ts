@@ -3,6 +3,8 @@ import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionC
 import { EditorCursorStore } from "./application/editorCursorStore";
 import { LiveDocumentRuntime } from "./application/liveDocumentRuntime";
 import { QuickInputCoordinator } from "./application/quickInputCoordinator";
+import { WorkspaceTrustPromptCoordinator } from "./application/workspaceTrustPrompt";
+import { ConfirmingWorkspaceTrustGateway } from "./application/confirmingWorkspaceTrustGateway";
 import { WorkspaceNetteServicesGateway } from "./application/workspaceNetteServicesGateway";
 import { WorkspaceNettePresentersGateway } from "./application/workspaceNettePresentersGateway";
 import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesGateway";
@@ -85,7 +87,7 @@ import { TauriWorkspaceTestDiscoveryGateway } from "./infrastructure/tauriWorksp
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
-import { check } from "@tauri-apps/plugin-updater";
+import { createChannelUpdateCheck } from "./infrastructure/tauriAppUpdateChannelCheck";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import packageMetadata from "../package.json";
@@ -105,8 +107,13 @@ export function createWorkbenchComposition() {
   const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
   const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
   const quickInputCoordinator = new QuickInputCoordinator();
+  const workspaceTrustPrompt = new WorkspaceTrustPromptCoordinator();
   const appUpdaterGateway = new TauriAppUpdaterGateway(
-    { check, relaunch, getInstallMode: () => invoke("app_update_install_mode") },
+    {
+      check: createChannelUpdateCheck((command, args) => invoke(command, args)),
+      relaunch,
+      getInstallMode: () => invoke("app_update_install_mode"),
+    },
     CODEVO_APP_VERSION,
   );
   const settingsGateway = new BrowserSettingsGateway();
@@ -216,6 +223,7 @@ export function createWorkbenchComposition() {
     phpTreeGateway: new TauriPhpTreeGateway(),
     runtimeObservabilityGateway: new TauriRuntimeObservabilityGateway(),
     quickInputCoordinator,
+    workspaceTrustPrompt,
     serverReadyExternalUrlOpener: new TauriServerReadyExternalUrlOpener(),
     settingsGateway,
     smartModeGateway: new TauriSmartModeGateway(),
@@ -242,7 +250,10 @@ export function createWorkbenchComposition() {
       workspaceIdentityGateway,
     ),
     workspaceTestDiscoveryGateway: new TauriWorkspaceTestDiscoveryGateway(workspaceIdentityGateway),
-    workspaceTrustGateway: new TauriWorkspaceTrustGateway(),
+    workspaceTrustGateway: new ConfirmingWorkspaceTrustGateway(
+      new TauriWorkspaceTrustGateway(),
+      workspaceTrustPrompt,
+    ),
   };
 }
 

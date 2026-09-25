@@ -53,18 +53,21 @@ describe("AgentLaunchControls", () => {
     expect(selectedOption("agent-launch-model")?.dataset.value).toBe("claude-opus-5");
 
     open("agent-launch-mode");
-    expect(options("agent-launch-mode").map((option) => optionLabel(option))).toEqual([
+    expect(menuRadioLabels()).toEqual([
       "Supervised",
       "Auto-accept edits",
       "Auto",
       "Full access",
+      "Plan mode",
+      "Use Claude CLI settings",
     ]);
     expect(
-      options("agent-launch-mode").every(
-        (option) => (option.querySelector(".agent-picker__description")?.textContent ?? "") !== "",
+      menuRadios().map(
+        (row) => row.querySelector(".cv-menu__description")?.textContent !== undefined,
       ),
-    ).toBe(true);
-    expect(host.querySelectorAll('[role="listbox"]')).toHaveLength(1);
+    ).toEqual([true, true, true, true, true, false]);
+    expect(menuRadio("Auto-accept edits")?.getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelectorAll('[role="menu"]')).toHaveLength(1);
   });
 
   it("offers the reasoning effort for Claude only and reports the picked level", () => {
@@ -83,9 +86,7 @@ describe("AgentLaunchControls", () => {
     expect(trigger("agent-launch-effort").textContent).toBe("High · 200k");
     expect(trigger("agent-launch-effort").getAttribute("aria-label")).toBe("Model capabilities");
     act(() => trigger("agent-launch-effort").click());
-    const max = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
-      (option) => option.textContent === "Max",
-    );
+    const max = menuRadio("Max");
     expect(max).not.toBeUndefined();
     act(() => max?.click());
 
@@ -116,9 +117,7 @@ describe("AgentLaunchControls", () => {
     );
     expect(trigger("agent-launch-effort").textContent).toBe("High · 1M");
     act(() => trigger("agent-launch-effort").click());
-    const standard = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
-      (option) => option.textContent === "200k",
-    );
+    const standard = menuRadio("200k");
     act(() => standard?.click());
     expect(onLaunchChange).toHaveBeenCalledWith({
       provider: "claudeCode",
@@ -191,7 +190,7 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "GPT-6 Astra",
+      "GPT-6 AstraNEW",
       "GPT-5.6 Sol",
       "GPT-5.6 Terra",
       "GPT-5.6 Luna",
@@ -200,11 +199,12 @@ describe("AgentLaunchControls", () => {
     ]);
 
     open("agent-launch-mode");
-    expect(optionValues("agent-launch-mode")).toEqual([
-      "readOnly",
-      "workspaceWrite",
-      "auto",
-      "dangerFullAccess",
+    expect(menuRadioLabels()).toEqual([
+      "Read-only",
+      "Workspace write",
+      "Auto",
+      "Full access",
+      "Use Codex CLI settings",
     ]);
   });
 
@@ -232,8 +232,7 @@ describe("AgentLaunchControls", () => {
 
     expect(trigger("agent-launch-model").getAttribute("aria-label")).toBe("Agent model");
     expect(trigger("agent-launch-mode").getAttribute("aria-label")).toBe("Agent permission mode");
-    expect(trigger("agent-launch-mode").getAttribute("aria-haspopup")).toBe("listbox");
-    expect(trigger("agent-launch-mode").title).toContain("Asks before commands");
+    expect(trigger("agent-launch-mode").getAttribute("aria-haspopup")).toBe("menu");
 
     const modelHint = trigger("agent-launch-model").getAttribute("aria-describedby") ?? "";
     const modeHint = trigger("agent-launch-mode").getAttribute("aria-describedby") ?? "";
@@ -250,7 +249,8 @@ describe("AgentLaunchControls", () => {
     );
 
     pick("agent-launch-model", "claude-opus-5");
-    pick("agent-launch-mode", "bypassPermissions");
+    open("agent-launch-mode");
+    act(() => menuRadio("Full access")?.click());
 
     expect(onLaunchChange.mock.calls.map(([value]) => value)).toEqual([
       {
@@ -265,7 +265,7 @@ describe("AgentLaunchControls", () => {
     ]);
   });
 
-  it("renders the exact Opus capability groups from the model manifest", () => {
+  it("renders the exact Opus capability sections from the model manifest", () => {
     renderControls({
       provider: "claudeCode",
       model: "opus",
@@ -276,33 +276,32 @@ describe("AgentLaunchControls", () => {
     });
 
     open("agent-launch-effort");
-    const groups = [...host.querySelectorAll<HTMLElement>('[role="group"]')];
-    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-      "Reasoning",
-      "Context Window",
-      "Fast Mode",
-      "Browser",
+    expect(menuLabels()).toEqual(["Effort", "Context window"]);
+    expect(menuRadioLabels()).toEqual([
+      "Low",
+      "Medium",
+      "High",
+      "Extra high",
+      "Max",
+      "Ultracode",
+      "Ultrathink",
+      "200k",
+      "1M",
     ]);
-    expect(
-      [...groups[0]!.querySelectorAll<HTMLElement>('[role="radio"]')].map((option) =>
-        option.querySelector(".agent-picker__label")?.childNodes[0]?.textContent?.trim(),
-      ),
-    ).toEqual(["Low", "Medium", "High", "Extra High", "Max", "Ultracode", "Ultrathink"]);
-    expect(groups[0]!.textContent).not.toContain("CLI default");
-    expect(groups[0]!.textContent).toContain("HighDefault");
-    expect(groups[0]!.textContent).toContain(
-      "Ultracodexhigh effort plus multi-agent workflow orchestration",
+    expect(document.body.textContent).not.toContain("CLI default");
+    expect(menuRadio("High")?.textContent).toBe("HighDefault");
+    expect(menuRadio("Ultracode")?.textContent).toContain(
+      "Extra high plus multi-agent orchestration.",
     );
-    expect(groups[1]!.textContent).toContain("1MDefault");
-    expect(groups[2]!.textContent).toContain("OnOff");
-    expect(groups[2]!.textContent).not.toContain("Default");
-    expect(groups[3]!.textContent).toContain("ChromeDefault");
-    expect(groups[3]!.textContent).toContain("Exposes the Claude in Chrome browser tools");
-    expect(
-      [...groups[3]!.querySelectorAll<HTMLElement>('[role="radio"]')].map((option) =>
-        option.getAttribute("aria-checked"),
-      ),
-    ).toEqual(["true", "false"]);
+    expect(menuRadio("1M")?.textContent).toBe("1MDefault");
+    expect(menuSwitches().map((node) => node.textContent)).toEqual([
+      "Fast mode",
+      "Chrome browser tools",
+    ]);
+    expect(menuSwitches().map((node) => node.getAttribute("aria-checked"))).toEqual([
+      "false",
+      "true",
+    ]);
   });
 
   it("keeps browser integration on by default and reports turning it off", () => {
@@ -317,29 +316,19 @@ describe("AgentLaunchControls", () => {
     };
     renderControls(launch, onLaunchChange);
 
-    const browserOption = (label: string) =>
-      [
-        ...([...host.querySelectorAll<HTMLElement>('[role="group"]')]
-          .find((group) => group.getAttribute("aria-label") === "Browser")
-          ?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []),
-      ].find(
-        (candidate) =>
-          candidate.querySelector(".agent-picker__label")?.childNodes[0]?.textContent?.trim() ===
-          label,
-      );
+    const browser = () =>
+      menuSwitches().find((node) => node.textContent === "Chrome browser tools");
 
     expect(trigger("agent-launch-effort").textContent).not.toContain("Chrome");
     open("agent-launch-effort");
-    const off = browserOption("Off");
-    expect(off).not.toBeUndefined();
-    act(() => off?.click());
+    expect(browser()?.getAttribute("aria-checked")).toBe("true");
+    act(() => browser()?.click());
     expect(onLaunchChange).toHaveBeenNthCalledWith(1, { ...launch, chrome: false });
 
     renderControls({ ...launch, chrome: false }, onLaunchChange);
     expect(trigger("agent-launch-effort").textContent).toContain("Chrome Off");
-    const on = browserOption("Chrome");
-    expect(on).not.toBeUndefined();
-    act(() => on?.click());
+    expect(browser()?.getAttribute("aria-checked")).toBe("false");
+    act(() => browser()?.click());
     expect(onLaunchChange).toHaveBeenNthCalledWith(2, { ...launch, chrome: true });
   });
 
@@ -357,12 +346,9 @@ describe("AgentLaunchControls", () => {
 
     expect(trigger("agent-launch-effort").textContent).not.toContain("Chrome Off");
     open("agent-launch-effort");
-    expect(
-      [...host.querySelectorAll<HTMLElement>('[role="group"]')].map((group) =>
-        group.getAttribute("aria-label"),
-      ),
-    ).toEqual(["Reasoning", "Context Window", "Fast Mode"]);
-    expect(host.textContent).not.toContain("Exposes the Claude in Chrome browser tools");
+    expect(menuLabels()).toEqual(["Effort", "Context window"]);
+    expect(menuSwitches().map((node) => node.textContent)).toEqual(["Fast mode"]);
+    expect(document.body.textContent).not.toContain("Chrome browser tools");
   });
 
   it("persists Ultracode and Fast Mode as executable launch options", () => {
@@ -377,18 +363,15 @@ describe("AgentLaunchControls", () => {
     };
     renderControls(launch, onLaunchChange);
     open("agent-launch-effort");
-    const option = (label: string) =>
-      [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
-        (candidate) =>
-          candidate.querySelector(".agent-picker__label")?.childNodes[0]?.textContent?.trim() ===
-          label,
-      );
+    act(() =>
+      menuSwitches()
+        .find((node) => node.textContent === "Fast mode")
+        ?.click(),
+    );
+    act(() => menuRadio("Ultracode")?.click());
 
-    act(() => option("Ultracode")?.click());
-    act(() => option("On")?.click());
-
-    expect(onLaunchChange).toHaveBeenNthCalledWith(1, { ...launch, effort: "ultracode" });
-    expect(onLaunchChange).toHaveBeenNthCalledWith(2, { ...launch, fastMode: true });
+    expect(onLaunchChange).toHaveBeenNthCalledWith(1, { ...launch, fastMode: true });
+    expect(onLaunchChange).toHaveBeenNthCalledWith(2, { ...launch, effort: "ultracode" });
   });
 
   it("uses model-specific capabilities instead of showing unsupported controls", () => {
@@ -400,8 +383,8 @@ describe("AgentLaunchControls", () => {
       context: "1m",
     });
     open("agent-launch-effort");
-    expect(host.textContent).toContain("Ultracode");
-    expect(host.textContent).not.toContain("Fast Mode");
+    expect(menuRadioLabels()).toContain("Ultracode");
+    expect(document.body.textContent).not.toContain("Fast mode");
 
     renderControls({
       provider: "claudeCode",
@@ -410,8 +393,8 @@ describe("AgentLaunchControls", () => {
       effort: "high",
       context: "200k",
     });
-    expect(host.textContent).not.toContain("Ultracode");
-    expect(host.textContent).toContain("200kDefault");
+    expect(menuRadioLabels()).not.toContain("Ultracode");
+    expect(menuRadio("200k")?.textContent).toBe("200kDefault");
   });
 
   it("tones plan mode but presents full access as a normal access choice", () => {
@@ -426,10 +409,8 @@ describe("AgentLaunchControls", () => {
     );
 
     open("agent-launch-mode");
-    const danger = options("agent-launch-mode").filter((option) =>
-      option.classList.contains("agent-picker__option--danger"),
-    );
-    expect(danger).toHaveLength(0);
+    expect(menuRadios()).toHaveLength(5);
+    expect(document.querySelectorAll('[role="menu"] .cv-menu__item--danger')).toHaveLength(0);
   });
 
   it("disables both pickers while a turn is dispatching", () => {
@@ -511,6 +492,36 @@ describe("AgentLaunchControls", () => {
 
   function open(id: string): void {
     act(() => trigger(id).click());
+  }
+
+  function menuRadios(): ReadonlyArray<HTMLButtonElement> {
+    return [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemradio"]'),
+    ];
+  }
+
+  function menuRadioLabels(): ReadonlyArray<string> {
+    return menuRadios().map(
+      (node) => node.querySelector(".cv-menu__text")?.firstChild?.textContent ?? "",
+    );
+  }
+
+  function menuRadio(label: string): HTMLButtonElement | undefined {
+    return menuRadios().find(
+      (node) => node.querySelector(".cv-menu__text")?.firstChild?.textContent === label,
+    );
+  }
+
+  function menuSwitches(): ReadonlyArray<HTMLButtonElement> {
+    return [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitemcheckbox"]'),
+    ];
+  }
+
+  function menuLabels(): ReadonlyArray<string> {
+    return [...document.querySelectorAll('[role="menu"] .cv-menu__label')].map(
+      (node) => node.textContent ?? "",
+    );
   }
 
   function options(id: string): ReadonlyArray<HTMLElement> {

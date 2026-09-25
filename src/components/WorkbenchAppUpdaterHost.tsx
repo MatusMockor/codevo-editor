@@ -28,6 +28,9 @@ export interface WorkbenchAppUpdaterHostProps {
   readonly settingsContainer: HTMLElement | null;
   readonly systemFontGateway: SystemFontGateway;
   readonly workbench: WorkbenchSettingsModel & {
+    readonly agents: NonNullable<WorkbenchSettingsModel["agents"]> & {
+      readonly appSettingsHydrated: boolean;
+    };
     readonly installManagedPhpactor: () => Promise<void> | void;
     readonly installingManagedPhpactor: boolean;
     readonly intelligenceMode: IntelligenceMode;
@@ -53,6 +56,8 @@ export function WorkbenchAppUpdaterHost({
   const updater = useWorkbenchAppUpdaterComposition(
     composition,
     workbench.persistAppUpdaterSkippedVersion,
+    workbench.appSettings.appUpdateChannel,
+    workbench.agents.appSettingsHydrated,
   );
   const { authority, providers, toast } = providerManagement;
   const [updateRefusal, setUpdateRefusal] = useState<AgentProviderUpdateRefusalRecord | null>(null);

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PALETTE_IDS, RESOLVED_COLOR_SCHEMES } from "../domain/appearance";
-import { surfaceColor } from "../domain/appearancePalettes";
+import { paletteTokens, surfaceColor } from "../domain/appearancePalettes";
+import { EDITOR_EXTRA_COLORS } from "../domain/appearanceEditorColors";
+import { cssColorToHex } from "../domain/cssColor";
 import { paletteMonacoTheme } from "../domain/editorColorThemes";
 import { contrastRatio } from "../domain/themeContrast";
 import type { ThemePalette } from "../components/themePalettes";
 import { PALETTE_SYNTAX_THEMES, paletteSyntaxTheme } from "./paletteSyntaxThemes";
+import { buildShikiTheme } from "./shikiHighlighter";
 
 const READABLE_KEYS = [
   "fg",
@@ -60,5 +63,37 @@ describe("palette syntax themes", () => {
     );
 
     expect(failures).toEqual([]);
+  });
+
+  it("gives every palette theme the find-match and peek colours of its scheme", () => {
+    for (const palette of PALETTE_IDS) {
+      for (const scheme of RESOLVED_COLOR_SCHEMES) {
+        const theme = paletteSyntaxTheme(palette, scheme);
+
+        expect(theme.findMatch).toBe(cssColorToHex(EDITOR_EXTRA_COLORS[scheme].matchCurrent));
+        expect(theme.findMatchHighlight).toBe(cssColorToHex(EDITOR_EXTRA_COLORS[scheme].match));
+        expect(theme.peekBackground).toBe(surfaceColor(palette, scheme, "raised"));
+        expect(theme.peekBorder).toBe(cssColorToHex(paletteTokens(palette, scheme).hairStrong));
+      }
+    }
+  });
+
+  it("builds overview-ruler change colours from the palette for every palette and scheme", () => {
+    for (const palette of PALETTE_IDS) {
+      for (const scheme of RESOLVED_COLOR_SCHEMES) {
+        const tokens = paletteTokens(palette, scheme);
+        const colors = buildShikiTheme(paletteSyntaxTheme(palette, scheme)).colors;
+
+        expect(colors["editorOverviewRuler.addedForeground"], `${palette} ${scheme}`).toBe(
+          cssColorToHex(tokens.ok),
+        );
+        expect(colors["editorOverviewRuler.modifiedForeground"], `${palette} ${scheme}`).toBe(
+          cssColorToHex(EDITOR_EXTRA_COLORS[scheme].gitModified),
+        );
+        expect(colors["editorOverviewRuler.deletedForeground"], `${palette} ${scheme}`).toBe(
+          cssColorToHex(tokens.danger),
+        );
+      }
+    }
   });
 });

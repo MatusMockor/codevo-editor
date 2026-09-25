@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { TopBar } from "../../ui/shell/TopBar";
 import { SettingsExitButton } from "./SettingsExitButton";
 import { SETTINGS_SECTIONS, type SettingsSectionId } from "./settingsRegistry";
 import { settingsSectionTabId } from "./settingsScreenIds";
@@ -43,44 +44,49 @@ export function SettingsSectionSidebar({
   };
 
   return (
-    <div className="settings-screen__sidebar">
-      <SettingsExitButton onExit={onExit} />
-      {search}
-      {results}
-      <div
-        aria-label="Settings sections"
-        aria-orientation="vertical"
-        className="settings-nav"
-        hidden={searching}
-        role="tablist"
-      >
-        {SETTINGS_SECTIONS.map((section, index) => {
-          const Icon = section.icon;
-          const selected = section.id === activeSection;
+    <aside aria-label="Settings" className="settings-nav-column">
+      <TopBar label="Settings navigation" region="sidebar" />
+      <div className="settings-nav-column__body">
+        {search}
+        {results}
+        <div
+          aria-label="Settings sections"
+          aria-orientation="vertical"
+          className="settings-nav"
+          hidden={searching}
+          role="tablist"
+        >
+          {SETTINGS_SECTIONS.map((section, index) => {
+            const Icon = section.icon;
+            const selected = section.id === activeSection;
 
-          return (
-            <button
-              aria-controls={panelId}
-              aria-selected={selected}
-              className="settings-nav__item"
-              id={settingsSectionTabId(section.id)}
-              key={section.id}
-              onClick={() => onSelectSection(section.id)}
-              onKeyDown={(event) => handleKeyDown(event, index)}
-              ref={(element) => {
-                tabsRef.current[index] = element;
-              }}
-              role="tab"
-              tabIndex={selected ? 0 : -1}
-              type="button"
-            >
-              <Icon aria-hidden="true" size={16} />
-              {section.label}
-            </button>
-          );
-        })}
+            return (
+              <button
+                aria-controls={panelId}
+                aria-selected={selected}
+                className="settings-nav__item"
+                id={settingsSectionTabId(section.id)}
+                key={section.id}
+                onClick={() => onSelectSection(section.id)}
+                onKeyDown={(event) => handleKeyDown(event, index)}
+                ref={(element) => {
+                  tabsRef.current[index] = element;
+                }}
+                role="tab"
+                tabIndex={selected ? 0 : -1}
+                type="button"
+              >
+                <Icon aria-hidden="true" size={16} />
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
-    </div>
+      <div className="settings-nav-column__foot">
+        <SettingsExitButton onExit={onExit} />
+      </div>
+    </aside>
   );
 }
 

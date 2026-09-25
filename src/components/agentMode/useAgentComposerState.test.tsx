@@ -179,11 +179,35 @@ describe("useAgentComposerState", () => {
       prompt: "Refactor the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
     });
     expect(current().composer.composerProps.prompt).toBe("");
     expect(current().navigation.selectedThreadId).toBe("agt-new");
+  });
+
+  it("carries the chosen worktree base into the start and drops it when the repository changes", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render(threadsSurfaceFixture({ startThread }));
+    const feature = { kind: "ref", ref: "refs/heads/feature" } as const;
+
+    act(() => current().composer.composerProps.onWorktreeBaseChange?.(feature));
+    expect(current().composer.composerProps.worktreeBase).toEqual(feature);
+    act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
+    expect(current().composer.composerProps.worktreeBase).toEqual({ kind: "head" });
+    act(() => current().composer.composerProps.onSelectRepository(SURFACE_FIXTURE_ROOT));
+    expect(current().composer.composerProps.worktreeBase).toEqual({ kind: "head" });
+
+    act(() => current().composer.composerProps.onWorktreeBaseChange?.(feature));
+    act(() => current().composer.composerProps.onPromptChange("Branch off feature"));
+    const launch = defaultAgentLaunchOptions("claudeCode");
+    await act(async () => {
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false });
+    });
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryRoot: SURFACE_FIXTURE_ROOT, worktreeBase: feature }),
+    );
   });
 
   it("restores a deliberate nested selection after remount and lets root replace that memory", () => {
@@ -390,6 +414,7 @@ describe("useAgentComposerState", () => {
       prompt: "Wire the services",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
     });

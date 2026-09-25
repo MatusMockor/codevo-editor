@@ -254,10 +254,11 @@ impl GitWorktreeGateway for RecordingGateway {
         Err("list is not part of the removal sequence".to_string())
     }
 
-    fn add_agent_worktree(
+    fn add_agent_worktree_from(
         &self,
         _repository_root: &Path,
         _task_id: &str,
+        _start: &git_worktree::WorktreeStartPoint,
     ) -> Result<CreatedAgentWorktree, String> {
         Err("add is not part of the removal sequence".to_string())
     }

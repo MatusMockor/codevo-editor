@@ -30,6 +30,7 @@ describe("normal composer for a cloning project", () => {
       modelFavoritesPersistence: null,
       onThreadStarted: vi.fn(),
       onOpenProviderSettings: vi.fn(),
+      onTrustProject: vi.fn(),
       creation: {
         pending: {
           id: "clone-1",
@@ -60,6 +61,7 @@ describe("normal composer for a cloning project", () => {
         retry: vi.fn(),
         canRetry: true,
         error: null,
+        localCloneDetail: null,
       },
     };
   });
@@ -210,5 +212,110 @@ describe("normal composer for a cloning project", () => {
     expect(prepareTurn).toHaveBeenCalledOnce();
     expect(forDraft).toHaveBeenCalledWith("clone-ready:clone:stable");
     expect(host.textContent).toContain("notes.md");
+  });
+  it("shows the trust banner for an untrusted clone and opens the dialog instead of sending", async () => {
+    const untrusted = { ...project, trust: "untrusted" as const };
+    props = {
+      ...props,
+      projects: [untrusted],
+      creation: {
+        ...props.creation,
+        pending: {
+          ...props.creation.pending!,
+          target: { kind: "local", path: untrusted.rootPath },
+        },
+        pendingClone: { ...props.creation.pendingClone!, status: "succeeded" },
+        completedProject: untrusted,
+        localCloneDetail: {
+          progress: null,
+          failure: null,
+          source: { host: "github.com", path: "acme/app" },
+        },
+      },
+    };
+    await render();
+    expect(host.textContent).toContain("Not trusted yet");
+    expect(send().disabled).toBe(false);
+    await act(async () => send().click());
+    expect(props.onTrustProject).toHaveBeenCalledWith(untrusted.rootKey, {
+      kind: "clone",
+      host: "github.com",
+      path: "acme/app",
+    });
+    expect(props.agents.startThread).not.toHaveBeenCalled();
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((candidate) => candidate.textContent === "Review")
+        ?.click();
+    });
+    expect(props.onTrustProject).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps sending disabled for an untrusted clone with an empty draft", async () => {
+    const untrusted = { ...project, trust: "untrusted" as const };
+    props = {
+      ...props,
+      projects: [untrusted],
+      creation: {
+        ...props.creation,
+        draft: "",
+        pending: {
+          ...props.creation.pending!,
+          target: { kind: "local", path: untrusted.rootPath },
+        },
+        pendingClone: { ...props.creation.pendingClone!, status: "succeeded" },
+        completedProject: untrusted,
+      },
+    };
+    await render();
+    expect(host.textContent).toContain("Not trusted yet");
+    expect(send().disabled).toBe(true);
+    expect(props.onTrustProject).not.toHaveBeenCalled();
+  });
+
+  it("shows clone progress above the composer while cloning", async () => {
+    props = {
+      ...props,
+      creation: {
+        ...props.creation,
+        localCloneDetail: {
+          progress: { phase: "receiving", percent: 10, receivedBytes: null, bytesPerSecond: null },
+          failure: null,
+          source: { host: "github.com", path: "acme/app" },
+        },
+      },
+    };
+    await render();
+    expect(host.textContent).toContain("Cloning acme/app");
+    expect(host.textContent).toContain("Receiving objects · 10%");
+    expect(host.querySelector("textarea")?.placeholder).toBe(
+      "Write your first message. Sending unlocks when the clone finishes.",
+    );
+    expect(host.querySelector('[aria-label="Clone app"]')).toBeNull();
+  });
+
+  it("shows typed failure copy with Retry and Remove project", async () => {
+    props = {
+      ...props,
+      creation: {
+        ...props.creation,
+        pendingClone: { ...props.creation.pendingClone!, status: "failed" },
+        localCloneDetail: {
+          progress: null,
+          failure: "notFound",
+          source: { host: "github.com", path: "acme/app" },
+        },
+      },
+    };
+    await render();
+    expect(host.textContent).toContain("Could not clone acme/app");
+    expect(host.textContent).toContain("Repository not found or access denied on github.com");
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>("button")];
+    await act(async () => buttons.find((candidate) => candidate.textContent === "Retry")?.click());
+    await act(async () =>
+      buttons.find((candidate) => candidate.textContent === "Remove project")?.click(),
+    );
+    expect(props.creation.retry).toHaveBeenCalledOnce();
+    expect(props.creation.dismiss).toHaveBeenCalledOnce();
   });
 });

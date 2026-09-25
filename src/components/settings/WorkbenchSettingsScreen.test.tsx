@@ -30,45 +30,91 @@ describe("WorkbenchSettingsScreen", () => {
     host.remove();
   });
 
-  it("focuses the page heading and exposes the section list as a tablist", () => {
+  it("renders the settings nav column and a main column with a breadcrumb heading", () => {
     render();
 
-    expect(document.activeElement?.textContent).toBe("Settings");
+    expect(document.activeElement?.textContent).toBe("Settings/General");
     expect(tablist()?.getAttribute("aria-orientation")).toBe("vertical");
     expect(tabLabels()).toEqual([
       "General",
-      "Appearance",
-      "Agents",
+      "Providers",
       "Environments",
       "Keybindings",
       "Index & languages",
-      "PHP",
       "Snippets",
+      "Usage",
+      "Archive",
+      "PHP",
     ]);
-    expect(selectedTab()?.textContent).toBe("General");
+    expect(
+      host
+        .querySelector(".settings-nav-column .settings-search input")
+        ?.getAttribute("placeholder"),
+    ).toBe("Search");
+    expect(host.querySelector(".settings-nav-column__foot button")?.textContent).toBe("Back");
+    expect(host.querySelector(".settings-main .settings-crumb")).toBe(document.activeElement);
     expect(panel()?.getAttribute("aria-labelledby")).toBe(selectedTab()?.id);
   });
 
-  it("moves the selection with arrow keys and wraps at both ends", () => {
+  it("updates the breadcrumb when another section is selected", () => {
     render();
 
     keyDown(selectedTab(), "ArrowDown");
-    expect(selectedTab()?.textContent).toBe("Appearance");
-    expect(document.activeElement).toBe(selectedTab());
+
+    expect(host.querySelector(".settings-crumb__here")?.textContent).toBe("Providers");
+  });
+
+  it("opens the legacy appearance route on the General palette row", () => {
+    render("appearance");
+
+    expect(selectedTab()?.textContent).toBe("General");
+    expect(host.querySelector('[data-settings-row="appearance.palette"]')).not.toBeNull();
+  });
+
+  it("roves the section nav with Arrow, Home and End, wrapping at both ends", () => {
+    render();
+
+    keyDown(selectedTab(), "ArrowDown");
+    expectRovedTo("Providers");
 
     keyDown(selectedTab(), "ArrowUp");
     keyDown(selectedTab(), "ArrowUp");
-    expect(selectedTab()?.textContent).toBe("Snippets");
+    expectRovedTo("PHP");
+
+    keyDown(selectedTab(), "ArrowDown");
+    expectRovedTo("General");
+
+    keyDown(selectedTab(), "End");
+    expectRovedTo("PHP");
 
     keyDown(selectedTab(), "Home");
-    expect(selectedTab()?.textContent).toBe("General");
-    expect(tabs().every((tab) => tab.tabIndex === (tab === selectedTab() ? 0 : -1))).toBe(true);
+    expectRovedTo("General");
+
+    keyDown(selectedTab(), "ArrowRight");
+    expectRovedTo("Providers");
+
+    keyDown(selectedTab(), "ArrowLeft");
+    expectRovedTo("General");
+  });
+
+  it("leaves the nav selection alone for keys outside the roving set", () => {
+    render();
+    const general = selectedTab();
+
+    act(() => general?.focus());
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "a" });
+    act(() => {
+      general?.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expectRovedTo("General");
   });
 
   it("selects a section by click and labels the panel with it", () => {
     render();
 
-    click(tabs()[4]);
+    click(tabs()[3]);
 
     expect(selectedTab()?.textContent).toBe("Keybindings");
     expect(panel()?.getAttribute("aria-labelledby")).toBe(selectedTab()?.id);
@@ -84,7 +130,7 @@ describe("WorkbenchSettingsScreen", () => {
     expect(input.getAttribute("aria-expanded")).toBe("false");
     expect(input.placeholder).toBe("Search");
     expect(results()?.hasAttribute("hidden")).toBe(true);
-    expect(host.querySelector(".settings-kbd")?.textContent).toBe("/");
+    expect(host.querySelector(".settings-search .cv-kbd")?.textContent).toBe("/");
   });
 
   it("filters rows, moves the active option and activates the hit with Enter", () => {
@@ -147,10 +193,11 @@ describe("WorkbenchSettingsScreen", () => {
     expect(exit.disabled).toBe(false);
     expect(exit.tabIndex).toBe(0);
     expect(accessibleName(exit)).toBe("Back");
-    expect(document.activeElement).toBe(host.querySelector(".settings-screen__title"));
+    expect(document.activeElement).toBe(host.querySelector(".settings-crumb"));
     expect(document.activeElement).not.toBe(exit);
-    expect(tabbables()[0]).toBe(exit);
-    expect(tabbables()[1]).toBe(searchInput());
+    expect(tabbables()[0]).toBe(searchInput());
+    expect(tabbables()[1]).toBe(selectedTab());
+    expect(tabbables()[2]).toBe(exit);
   });
 
   it("closes the surface when the exit control is clicked", () => {
@@ -299,6 +346,16 @@ describe("WorkbenchSettingsScreen", () => {
 
   function panel(): HTMLElement | null {
     return host.querySelector('[role="tabpanel"]');
+  }
+
+  function expectRovedTo(label: string): void {
+    const selected = selectedTab();
+
+    expect(selected?.textContent).toBe(label);
+    expect(document.activeElement).toBe(selected);
+    expect(host.querySelector(".settings-crumb__here")?.textContent).toBe(label);
+    expect(panel()?.getAttribute("aria-labelledby")).toBe(selected?.id);
+    expect(tabs().every((tab) => tab.tabIndex === (tab === selected ? 0 : -1))).toBe(true);
   }
 });
 

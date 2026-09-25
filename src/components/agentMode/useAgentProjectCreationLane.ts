@@ -336,7 +336,7 @@ export function useAgentProjectCreationLane(options: AgentProjectCreationOptions
         localSession.current?.job?.cloneId === job.cloneId
       )
         localSession.current = null;
-      addProject.addProject(current.target.path);
+      addProject.addProject(current.target.path, "prompt");
       return;
     }
     const key = current.target.key;
@@ -368,6 +368,15 @@ export function useAgentProjectCreationLane(options: AgentProjectCreationOptions
       : pending !== null && remoteAdd.pendingClone?.id !== pending.id
         ? null
         : remoteAdd.pendingClone;
+  const localJob = pending !== null && local.job?.cloneId === pending.id ? local.job : null;
+  const localCloneDetail =
+    pending === null || pending.environment !== null
+      ? null
+      : {
+          progress: localJob?.status === "running" ? localJob.progress : null,
+          failure: localJob?.status === "failed" ? localJob.failure : null,
+          source: local.source,
+        };
   const remoteTarget = pending?.target?.kind === "remote" ? pending.target.key : null;
   const liveCompletedProject =
     remoteTarget !== null
@@ -404,6 +413,7 @@ export function useAgentProjectCreationLane(options: AgentProjectCreationOptions
     localDialogOpen,
     pending,
     pendingClone,
+    localCloneDetail,
     visible,
     draft,
     launch,
@@ -433,7 +443,7 @@ export function useAgentProjectCreationLane(options: AgentProjectCreationOptions
       // Persist before opening: registration can replace the keyed workspace view.
       if (session?.current)
         session.current = { ...session.current, activationReceipt: activationReceipt.current };
-      addProject.addProject(current.target.path);
+      addProject.addProject(current.target.path, "prompt");
     },
     error,
     canRetry: pending?.environment === null ? true : remoteAdd.canRetryPendingClone === true,

@@ -70,9 +70,9 @@ describe("Breadcrumbs", () => {
   }
 
   function trigger(name: string): HTMLButtonElement {
-    const button = Array.from(
-      host.querySelectorAll<HTMLButtonElement>(".breadcrumb-symbol"),
-    ).find((candidate) => candidate.textContent === name);
+    const button = Array.from(host.querySelectorAll<HTMLButtonElement>(".breadcrumb-symbol")).find(
+      (candidate) => candidate.textContent === name,
+    );
 
     expect(button).toBeTruthy();
     return button as HTMLButtonElement;
@@ -86,39 +86,51 @@ describe("Breadcrumbs", () => {
 
   function keydown(key: string) {
     act(() => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key }),
-      );
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key }));
     });
   }
 
   it("renders the file name as the first segment followed by the symbol path", () => {
     renderBreadcrumbs();
 
-    const labels = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
-    ).map((segment) => segment.textContent);
+    const labels = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
 
     expect(labels).toEqual(["App.tsx", "FirstClass", "secondMethod"]);
   });
 
   it("renders just the file name when there is no symbol path", () => {
     act(() => {
+      root.render(<Breadcrumbs fileName="App.tsx" onNavigate={vi.fn()} path={[]} symbols={[]} />);
+    });
+
+    const labels = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
+
+    expect(labels).toEqual(["App.tsx"]);
+  });
+
+  it("omits the file name segment when the sub-header already shows the path", () => {
+    act(() => {
       root.render(
         <Breadcrumbs
           fileName="App.tsx"
           onNavigate={vi.fn()}
-          path={[]}
-          symbols={[]}
+          path={[firstClass, secondMethod]}
+          showFileName={false}
+          symbols={symbols}
         />,
       );
     });
 
-    const labels = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
-    ).map((segment) => segment.textContent);
-
-    expect(labels).toEqual(["App.tsx"]);
+    const labels = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
+    expect(labels).toEqual(["FirstClass", "secondMethod"]);
+    expect(host.querySelector("nav")).toBeNull();
+    expect(host.querySelector('[role="group"][aria-label="Symbols"]')).not.toBeNull();
   });
 
   it("toggles a sibling menu without navigating directly", () => {
@@ -138,14 +150,9 @@ describe("Breadcrumbs", () => {
     renderBreadcrumbs();
     click(trigger("secondMethod"));
 
-    const items = Array.from(
-      document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    );
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
 
-    expect(items.map((item) => item.textContent)).toEqual([
-      "firstMethod",
-      "secondMethod",
-    ]);
+    expect(items.map((item) => item.textContent)).toEqual(["firstMethod", "secondMethod"]);
     expect(items[0]?.getAttribute("aria-current")).toBeNull();
     expect(items[1]?.getAttribute("aria-current")).toBe("true");
   });
@@ -209,19 +216,13 @@ describe("Breadcrumbs", () => {
   it("keeps only one segment menu open", () => {
     renderBreadcrumbs();
     click(trigger("secondMethod"));
-    expect(document.querySelector('[role="menu"]')?.textContent).toContain(
-      "firstMethod",
-    );
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("firstMethod");
 
     click(trigger("FirstClass"));
 
     expect(document.querySelectorAll('[role="menu"]')).toHaveLength(1);
-    expect(document.querySelector('[role="menu"]')?.textContent).toContain(
-      "SecondClass",
-    );
-    expect(document.querySelector('[role="menu"]')?.textContent).not.toContain(
-      "firstMethod",
-    );
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("SecondClass");
+    expect(document.querySelector('[role="menu"]')?.textContent).not.toContain("firstMethod");
   });
 
   it("exposes menu semantics, expanded state, and focus movement", () => {
@@ -281,12 +282,21 @@ describe("Breadcrumbs", () => {
 
 describe("Breadcrumbs bar chrome", () => {
   const appCss = readFileSync("src/App.css", "utf8");
+  const editorPanelCss = readFileSync("src/components/editorPanel/editorPanel.css", "utf8");
 
-  it("does not draw its own divider border", () => {
-    const index = appCss.indexOf(".breadcrumbs {");
-    expect(index, "missing .breadcrumbs rule").toBeGreaterThan(-1);
+  it("leaves no legacy breadcrumb rules in App.css", () => {
+    expect(appCss).not.toMatch(/\.breadcrumbs?\b|\.breadcrumb-/);
+  });
 
-    const body = appCss.slice(appCss.indexOf("{", index), appCss.indexOf("}", index));
-    expect(body).not.toMatch(/border(-bottom|-top)?:/);
+  it("styles the embedded symbol crumbs from the sub-header sheet without a divider", () => {
+    const index = editorPanelCss.indexOf(".cv-esub__crumbs .breadcrumb-segment {");
+    expect(index, "missing sub-header symbol rule").toBeGreaterThan(-1);
+
+    const body = editorPanelCss.slice(
+      editorPanelCss.indexOf("{", index),
+      editorPanelCss.indexOf("}", index),
+    );
+    expect(body).not.toMatch(/border-(bottom|top)\s*:|box-shadow\s*:/);
+    expect(body).toMatch(/border:\s*0;/);
   });
 });

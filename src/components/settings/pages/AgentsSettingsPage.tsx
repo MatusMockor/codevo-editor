@@ -1,4 +1,3 @@
-import { RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type {
   AgentProviderManagementSurface,
@@ -22,9 +21,9 @@ import {
   withProviderEnabled,
   withProviderPath,
   withProviderReset,
+  withToggledModelFavorite,
 } from "../agentProviderSettingsPersistence";
 import { AgentThreadDefaultsRows } from "../AgentThreadDefaultsRows";
-import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsNumberField } from "../primitives/SettingsNumberField";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
@@ -51,7 +50,6 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
     (oldest, health) => oldestEpoch(oldest, providerCheckedAt(health)),
     null,
   );
-  const checking = healths.some((health) => health.kind === "checking");
 
   useEffect(() => {
     appSettingsRef.current = draft.appSettings;
@@ -83,60 +81,21 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
 
   const providerConfigured = (provider: AgentCliKind): boolean =>
     management.admissionAuthority(provider).disposition.kind === "ready";
+  const favoriteKeys = new Set<string>(draft.appSettings.agentModelFavoriteKeys);
 
   return (
     <>
       <SettingsSectionHeading
         actions={
-          <>
-            <span className="settings-section__note">
-              {providerChecksSummaryLabel(healths, nowEpochMs)}
-            </span>
-            <SettingsButton
-              busy={checking}
-              label="Run CLI diagnostics"
-              onClick={() => {
-                for (const provider of AGENT_PROVIDERS) {
-                  void management.refresh(provider);
-                }
-              }}
-              size="micro"
-              title="Run CLI diagnostics"
-              variant="ghostMuted"
-            >
-              <RefreshCw aria-hidden="true" size={13} />
-            </SettingsButton>
-          </>
+          <span className="settings-section__note">
+            {providerChecksSummaryLabel(healths, nowEpochMs)}
+          </span>
         }
-        title="Agents"
+        title="Providers"
       >
-        <SettingsRow
-          meta={
-            claudeInterval === codexInterval ? undefined : (
-              <span className="settings-row__meta">
-                Codex still uses {codexInterval} seconds until the next change.
-              </span>
-            )
-          }
-          rowId="agents.healthCheckInterval"
-        >
-          <SettingsNumberField
-            max={MAX_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS}
-            min={MIN_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS}
-            onChange={(value) =>
-              writeAppSettings(withHealthCheckIntervalSeconds(appSettingsRef.current, value))
-            }
-            unit="seconds"
-            value={claudeInterval}
-          />
-        </SettingsRow>
-
-        <SettingsRow rowId="agents.checkCliUpdates">
-          <span className="settings-readout">Automatic for enabled providers</span>
-        </SettingsRow>
-
         {AGENT_PROVIDERS.map((provider) => (
           <AgentProviderCard
+            favoriteKeys={favoriteKeys}
             key={provider}
             management={management}
             nowEpochMs={nowEpochMs}
@@ -155,6 +114,13 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
             onResetProvider={() =>
               writeAppSettings(withProviderReset(appSettingsRef.current, provider))
             }
+            onToggleFavorite={(key) => {
+              const next = withToggledModelFavorite(appSettingsRef.current, key);
+
+              if (next === null) return;
+
+              writeAppSettings(next);
+            }}
             path={draft.appSettings.agentCliPaths[provider]}
             preference={preferences[provider]}
             provider={provider}
@@ -188,6 +154,33 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
         }}
         workspaceSettings={draft.workspaceSettings}
       />
+
+      <SettingsSectionHeading title="CLI updates">
+        <SettingsRow
+          meta={
+            claudeInterval === codexInterval ? undefined : (
+              <span className="settings-row__meta">
+                Codex still uses {codexInterval} seconds until the next change.
+              </span>
+            )
+          }
+          rowId="agents.healthCheckInterval"
+        >
+          <SettingsNumberField
+            max={MAX_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS}
+            min={MIN_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS}
+            onChange={(value) =>
+              writeAppSettings(withHealthCheckIntervalSeconds(appSettingsRef.current, value))
+            }
+            unit="seconds"
+            value={claudeInterval}
+          />
+        </SettingsRow>
+
+        <SettingsRow rowId="agents.checkCliUpdates">
+          <span className="settings-readout">Automatic for enabled providers</span>
+        </SettingsRow>
+      </SettingsSectionHeading>
     </>
   );
 }

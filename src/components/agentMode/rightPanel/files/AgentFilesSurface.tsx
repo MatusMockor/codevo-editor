@@ -1,7 +1,16 @@
-import { ChevronsDownUp, Copy, ExternalLink, RefreshCw, Search } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useCheckoutFileStatuses } from "../../../../application/rightPanel/useCheckoutFileStatuses";
+import { ChevronsDownUp, RefreshCw, Search } from "lucide-react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  MAX_CHECKOUT_FILE_STATUSES,
+  useCheckoutFileStatuses,
+  type CheckoutFileStatusesState,
+} from "../../../../application/rightPanel/useCheckoutFileStatuses";
 import { useAgentFilesSearch } from "../../../../application/rightPanel/useAgentFilesSearch";
+import {
+  STATUS_REVISION_COALESCE_MS,
+  useCoalescedValue,
+} from "../../../../application/rightPanel/useCoalescedValue";
+import type { GitChangeStatus } from "../../../../domain/git";
 import type { FileEntry, FileSearchResult } from "../../../../domain/workspace";
 import { IconButton } from "../../../../ui/foundation/IconButton";
 import { Kbd } from "../../../../ui/foundation/Kbd";
@@ -11,32 +20,45 @@ import { useAgentRightPanelContext } from "../agentRightPanelContext";
 import { AgentFilesSearchResults } from "./AgentFilesSearchResults";
 import "./agentFiles.css";
 
+export const CHECKOUT_STATUS_FAILED_NOTE =
+  "Git status could not be read, so change markers are hidden.";
+export const CHECKOUT_STATUS_TRUNCATED_NOTE = `Change markers cover only the first ${MAX_CHECKOUT_FILE_STATUSES.toLocaleString("en-US")} changed files.`;
+
 export interface AgentFilesSurfaceProps {
   readonly fileTree: AgentSurfaceFileTreeProps | null;
   readonly treeShown: boolean;
-  readonly editorSlot: ReactNode;
 }
 
-export function AgentFilesSurface({
-  editorSlot,
-  fileTree: sharedFileTree,
-  treeShown,
-}: AgentFilesSurfaceProps) {
+export function AgentFilesSurface({ fileTree: sharedFileTree, treeShown }: AgentFilesSurfaceProps) {
   const context = useAgentRightPanelContext();
-  const worktreePath = context.thread?.thread.target.worktreePath ?? null;
-  const worktreeCheckout = worktreePath === null ? null : context.checkoutRoot;
+  const worktree = (context.thread?.thread.target.worktreePath ?? null) !== null;
+  const statusRevision = useCoalescedValue(
+    context.chrome?.statusRevision ?? 0,
+    STATUS_REVISION_COALESCE_MS,
+  );
+  const [statusRefreshes, setStatusRefreshes] = useState(0);
+  const gitStatusLoad = context.gitStatus.load;
+  const revision = useMemo(
+    () => [gitStatusLoad, statusRevision, statusRefreshes] as const,
+    [gitStatusLoad, statusRevision, statusRefreshes],
+  );
   const checkoutStatuses = useCheckoutFileStatuses({
     git: context.workspaceTrusted ? (context.chrome?.gateways.git ?? null) : null,
-    root: treeShown && sharedFileTree !== null ? worktreeCheckout : null,
-    revision: context.gitStatus.load,
+    root: treeShown && sharedFileTree !== null ? context.checkoutRoot : null,
+    revision,
   });
-  const fileTree = useMemo(
-    () =>
-      sharedFileTree === null || checkoutStatuses === null
-        ? sharedFileTree
-        : { ...sharedFileTree, fileStatusesByPath: checkoutStatuses },
-    [checkoutStatuses, sharedFileTree],
-  );
+  const fileTree = useMemo(() => {
+    if (sharedFileTree === null) return null;
+    const statuses = treeStatuses(checkoutStatuses, worktree);
+    if (statuses === null) return sharedFileTree;
+    return { ...sharedFileTree, fileStatusesByPath: statuses };
+  }, [checkoutStatuses, sharedFileTree, worktree]);
+  const refreshFiles = (): void => {
+    fileTree?.tree.refresh();
+    context.gitStatus.refresh();
+    setStatusRefreshes((count) => count + 1);
+  };
+  const statusNote = checkoutStatusNote(checkoutStatuses);
   const [query, setQuery] = useState("");
   const listRef = useRef<HTMLUListElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -48,8 +70,6 @@ export function AgentFilesSurface({
     query,
   });
   const querying = searchable && query.trim() !== "";
-  const activePath = fileTree?.activePath ?? null;
-  const relativeActive = relativeTo(rootPath, activePath);
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape" && query !== "") {
@@ -95,7 +115,7 @@ export function AgentFilesSurface({
               disabled={fileTree.unavailable !== null || rootPath === null}
               icon={<RefreshCw size={14} />}
               label="Refresh workspace files"
-              onClick={fileTree.tree.refresh}
+              onClick={refreshFiles}
               size="xs"
             />
             <IconButton
@@ -108,6 +128,11 @@ export function AgentFilesSurface({
           </div>
         </div>
       )}
+      {treeShown && fileTree !== null && statusNote !== null && (
+        <p className="cv-files__note" role="status">
+          {statusNote}
+        </p>
+      )}
       <div className="cv-files__split agent-surface__files">
         {treeShown && fileTree !== null && querying && (
           <AgentFilesSearchResults
@@ -119,44 +144,37 @@ export function AgentFilesSurface({
           />
         )}
         {treeShown && fileTree !== null && !querying && <AgentSurfaceFileTree {...fileTree} />}
-        <div className="cv-files__preview">
-          {fileTree !== null && activePath !== null && relativeActive !== null && (
-            <div className="cv-files__crumbs" title={activePath}>
-              <span className="cv-files__crumb-path">
-                {relativeActive.split("/").map((segment, index, segments) => (
-                  <span
-                    className={
-                      index === segments.length - 1
-                        ? "cv-files__crumb cv-files__crumb--here"
-                        : "cv-files__crumb"
-                    }
-                    key={`${index}-${segment}`}
-                  >
-                    {segment}
-                  </span>
-                ))}
-              </span>
-              <span className="cv-files__crumb-tools">
-                <IconButton
-                  icon={<Copy size={14} />}
-                  label="Copy path"
-                  onClick={() => void context.copyText(activePath).catch(() => undefined)}
-                  size="xs"
-                />
-                <IconButton
-                  icon={<ExternalLink size={14} />}
-                  label="Open in editor"
-                  onClick={() => fileTree.onOpenFile(fileEntry(activePath))}
-                  size="xs"
-                />
-              </span>
-            </div>
-          )}
-          {editorSlot}
-        </div>
       </div>
     </section>
   );
+}
+
+function treeStatuses(
+  state: CheckoutFileStatusesState,
+  worktree: boolean,
+): Record<string, GitChangeStatus> | null {
+  switch (state.kind) {
+    case "unavailable":
+      return null;
+    case "loading":
+      return worktree ? {} : null;
+    case "failed":
+      return {};
+    case "loaded":
+      return { ...state.statuses };
+    default:
+      return unsupportedState(state);
+  }
+}
+
+function checkoutStatusNote(state: CheckoutFileStatusesState): string | null {
+  if (state.kind === "failed") return CHECKOUT_STATUS_FAILED_NOTE;
+  if (state.kind === "loaded" && state.truncated) return CHECKOUT_STATUS_TRUNCATED_NOTE;
+  return null;
+}
+
+function unsupportedState(state: never): never {
+  throw new TypeError(`Unsupported checkout status state: ${String(state)}.`);
 }
 
 function collapseAll(fileTree: AgentSurfaceFileTreeProps): void {
@@ -168,17 +186,6 @@ function shortcutGlyphs(fileTree: AgentSurfaceFileTreeProps): string {
   return agentShortcutGlyphs(fileTree.searchFiles.shortcut);
 }
 
-function relativeTo(root: string | null, path: string | null): string | null {
-  if (root === null || path === null) return null;
-  const prefix = root.endsWith("/") ? root : `${root}/`;
-  if (!path.startsWith(prefix) || path.length === prefix.length) return null;
-  return path.slice(prefix.length);
-}
-
 function resultEntry(result: FileSearchResult): FileEntry {
   return { name: result.name, path: result.path, kind: "file" };
-}
-
-function fileEntry(path: string): FileEntry {
-  return { name: path.slice(path.lastIndexOf("/") + 1), path, kind: "file" };
 }

@@ -60,17 +60,17 @@ function workbench(
 }
 
 describe("openPaletteFile", () => {
-  it("reveals the Files surface in agent mode when the right panel is closed", async () => {
+  it("reveals the Editor surface in agent mode when the right panel is closed", async () => {
     const bench = workbench({}, true);
 
     await openPaletteFile(bench.current, ORDERS);
 
     expect(bench.state.opened).toEqual([{ result: ORDERS, location: undefined }]);
     expect(bench.state.layout.rightPanel).toBe("open");
-    expect(bench.state.layout.activeSurface).toBe("files");
+    expect(bench.state.layout.activeSurface).toBe("editor");
   });
 
-  it("switches an open right panel from another surface to Files and keeps the location", async () => {
+  it("switches an open right panel from another surface to the Editor and keeps the location", async () => {
     const bench = workbench(
       {
         layout: {
@@ -87,8 +87,8 @@ describe("openPaletteFile", () => {
     await openPaletteFile(bench.current, ORDERS, location);
 
     expect(bench.state.opened).toEqual([{ result: ORDERS, location }]);
-    expect(bench.state.layout.openSurfaces).toEqual(["diff", "files"]);
-    expect(bench.state.layout.activeSurface).toBe("files");
+    expect(bench.state.layout.openSurfaces).toEqual(["diff", "editor"]);
+    expect(bench.state.layout.activeSurface).toBe("editor");
   });
 
   it("does not reveal anything when the open fails or goes stale", async () => {
@@ -100,12 +100,9 @@ describe("openPaletteFile", () => {
     expect(bench.state.layout.rightPanel).toBe("closed");
   });
 
-  it("leaves the layout alone in editor mode and in the expanded editor", async () => {
-    const editorMode = workbench(
-      { agentModeActive: false, effectiveLayout: "editor-expanded" },
-      true,
-    );
-    const expanded = workbench({ effectiveLayout: "editor-expanded" }, true);
+  it("leaves the layout alone in editor mode and in the editor-only fallback", async () => {
+    const editorMode = workbench({ agentModeActive: false, effectiveLayout: "editor-only" }, true);
+    const expanded = workbench({ effectiveLayout: "editor-only" }, true);
 
     await openPaletteFile(editorMode.current, ORDERS);
     await openPaletteFile(expanded.current, ORDERS);
@@ -118,7 +115,7 @@ describe("openPaletteFile", () => {
 
   it("reads the mode after the open settles, not before", async () => {
     const bench = workbench(
-      { agentModeActive: false, effectiveLayout: "editor-expanded" },
+      { agentModeActive: false, effectiveLayout: "editor-only" },
       true,
       (state) => {
         state.agentModeActive = true;
@@ -128,6 +125,6 @@ describe("openPaletteFile", () => {
 
     await openPaletteFile(bench.current, ORDERS);
 
-    expect(bench.state.layout.activeSurface).toBe("files");
+    expect(bench.state.layout.activeSurface).toBe("editor");
   });
 });

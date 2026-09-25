@@ -4,6 +4,12 @@ import { cx } from "./classNames";
 import { rovingIndex } from "./roving";
 import "./panels.css";
 
+export interface PanelTabBadge {
+  readonly label: string;
+  readonly title: string;
+  readonly tone: "ok" | "warn" | "danger";
+}
+
 export interface PanelTabItem {
   readonly id: string;
   readonly title: string;
@@ -13,6 +19,7 @@ export interface PanelTabItem {
   readonly preview?: boolean;
   readonly live?: boolean;
   readonly closable?: boolean;
+  readonly badge?: PanelTabBadge;
 }
 
 export interface PanelTabsProps {
@@ -21,9 +28,10 @@ export interface PanelTabsProps {
   readonly selectedId: string | null;
   onSelect(id: string): void;
   onClose?(id: string): void;
+  onPin?(id: string): void;
 }
 
-export function PanelTabs({ label, onClose, onSelect, selectedId, tabs }: PanelTabsProps) {
+export function PanelTabs({ label, onClose, onPin, onSelect, selectedId, tabs }: PanelTabsProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const selectedIndex = tabs.findIndex((tab) => tab.id === selectedId);
 
@@ -33,6 +41,13 @@ export function PanelTabs({ label, onClose, onSelect, selectedId, tabs }: PanelT
       if (selected === undefined || onClose === undefined || selected.closable === false) return;
       event.preventDefault();
       onClose(selected.id);
+      return;
+    }
+    if (event.key === "Enter") {
+      const selected = tabs[selectedIndex];
+      if (selected === undefined || onPin === undefined || selected.preview !== true) return;
+      event.preventDefault();
+      onPin(selected.id);
       return;
     }
     const next = rovingIndex(event.key, selectedIndex, tabs.length, "horizontal");
@@ -56,10 +71,11 @@ export function PanelTabs({ label, onClose, onSelect, selectedId, tabs }: PanelT
         const selected = tab.id === selectedId;
         const tabbable = selected || (selectedIndex < 0 && index === 0);
         const closable = onClose !== undefined && tab.closable !== false;
+        const pinnable = onPin !== undefined && tab.preview === true;
         return (
           <div
             aria-controls={tab.panelId}
-            aria-keyshortcuts={closable ? "Delete" : undefined}
+            aria-keyshortcuts={tabKeyShortcuts(closable, pinnable)}
             aria-selected={selected}
             className={cx(
               "cv-tab",
@@ -68,6 +84,7 @@ export function PanelTabs({ label, onClose, onSelect, selectedId, tabs }: PanelT
             )}
             key={tab.id}
             onClick={() => onSelect(tab.id)}
+            onDoubleClick={onPin === undefined ? undefined : () => onPin(tab.id)}
             role="tab"
             tabIndex={tabbable ? 0 : -1}
             title={tab.title}
@@ -97,9 +114,25 @@ export function PanelTabs({ label, onClose, onSelect, selectedId, tabs }: PanelT
               ) : null}
             </span>
             <span className="cv-tab__title">{tab.title}</span>
+            {tab.badge === undefined ? null : (
+              <span
+                aria-label={tab.badge.title}
+                className={`cv-tab__badge cv-tab__badge--${tab.badge.tone}`}
+                role="img"
+              >
+                {tab.badge.label}
+              </span>
+            )}
           </div>
         );
       })}
     </div>
   );
+}
+
+function tabKeyShortcuts(closable: boolean, pinnable: boolean): string | undefined {
+  const keys = [closable ? "Delete" : null, pinnable ? "Enter" : null].filter(
+    (key): key is string => key !== null,
+  );
+  return keys.length === 0 ? undefined : keys.join(" ");
 }

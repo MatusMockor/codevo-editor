@@ -136,12 +136,14 @@ describe("agent workbench remote clone adoption", () => {
       ),
     );
 
-    click(host.querySelector('[aria-label="Run on: This computer"]')!);
+    click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
     await waitForReact(() =>
-      expect(host.querySelector('[role="menuitemradio"]')?.textContent).toContain("This computer"),
+      expect(document.querySelector('[role="menuitemradio"]')?.textContent).toContain(
+        "This computer",
+      ),
     );
     click(
-      [...host.querySelectorAll('[role="menuitemradio"]')].find((entry) =>
+      [...document.querySelectorAll('[role="menuitemradio"]')].find((entry) =>
         entry.textContent?.includes("Linux server"),
       )!,
     );
@@ -151,10 +153,10 @@ describe("agent workbench remote clone adoption", () => {
 
     click(host.querySelector(".agent-remote-project-choice__add")!);
     await waitForReact(() =>
-      expect(host.querySelector(".agent-remote-add-project")).not.toBeNull(),
+      expect(document.querySelector('[role="dialog"][aria-label="Add project"]')).not.toBeNull(),
     );
-    const cloneSource = [...host.querySelectorAll<HTMLElement>("button")].find(
-      (row) => row.textContent === "Clone repository",
+    const cloneSource = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((row) =>
+      row.textContent?.includes("Clone repository"),
     );
     expect(cloneSource).toBeDefined();
     click(cloneSource!);

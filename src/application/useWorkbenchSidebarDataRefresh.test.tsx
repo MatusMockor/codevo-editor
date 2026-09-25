@@ -11,7 +11,7 @@ import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh
 describe("visible project Diff status demand", () => {
   let root: ReturnType<typeof createRoot>;
   let layout: typeof initialAgentWorkbenchLayout;
-  let mode: "agent" | "editor-expanded";
+  let mode: "agent" | "editor-only";
   let refresh: ReturnType<typeof vi.fn<() => void>>;
   let workspaceRoot: string;
   function Harness() {
@@ -58,7 +58,7 @@ describe("visible project Diff status demand", () => {
     if (hidden === "closed") layout = { ...layout, rightPanel: "closed" };
     if (hidden === "otherSurface")
       layout = { ...layout, activeSurface: "files", openSurfaces: ["diff", "files"] };
-    if (hidden === "editor") mode = "editor-expanded";
+    if (hidden === "editor") mode = "editor-only";
     render();
     expect(refresh).not.toHaveBeenCalled();
   });

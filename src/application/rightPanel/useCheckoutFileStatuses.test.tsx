@@ -5,14 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { GitChangedFile, GitStatus } from "../../domain/git";
 import { mountUi, type MountedUi } from "../../ui/foundation/foundationTestSupport";
 import {
+  MAX_CHECKOUT_FILE_STATUSES,
   checkoutFileStatuses,
   useCheckoutFileStatuses,
-  type CheckoutFileStatuses,
+  type CheckoutFileStatusesState,
   type UseCheckoutFileStatusesOptions,
 } from "./useCheckoutFileStatuses";
 
 let ui: MountedUi | null = null;
-const box: { current: CheckoutFileStatuses | null } = { current: null };
+const box: { current: CheckoutFileStatusesState | null } = { current: null };
 
 afterEach(() => {
   ui?.unmount();
@@ -47,13 +48,41 @@ async function render(props: UseCheckoutFileStatusesOptions): Promise<void> {
   await act(async () => mounted.render(<Probe {...props} />));
 }
 
+interface Pending {
+  readonly root: string;
+  resolve(status: GitStatus): void;
+  reject(error: unknown): void;
+}
+
+function manualGit() {
+  const pending: Pending[] = [];
+  return {
+    pending,
+    git: {
+      getStatus: (root: string) =>
+        new Promise<GitStatus>((resolve, reject) => {
+          pending.push({ root, resolve, reject });
+        }),
+    },
+  };
+}
+
 describe("checkoutFileStatuses", () => {
   it("keeps the first status per path", () => {
     expect(
       checkoutFileStatuses(
         gitStatus("/wt", [change("/wt/a.ts", "added"), change("/wt/a.ts", "modified")]),
       ),
-    ).toEqual({ "/wt/a.ts": "added" });
+    ).toEqual({ statuses: { "/wt/a.ts": "added" }, truncated: false });
+  });
+
+  it("reports a status list cut at the bound as truncated", () => {
+    const changes = Array.from({ length: MAX_CHECKOUT_FILE_STATUSES + 1 }, (_unused, index) =>
+      change(`/wt/f${index}.ts`, "modified"),
+    );
+    const result = checkoutFileStatuses(gitStatus("/wt", changes));
+    expect(result.truncated).toBe(true);
+    expect(Object.keys(result.statuses)).toHaveLength(MAX_CHECKOUT_FILE_STATUSES);
   });
 });
 
@@ -72,11 +101,54 @@ describe("useCheckoutFileStatuses", () => {
     await render({ git, root: "/wt-b", revision: 0 });
     await act(async () => resolveFirst(gitStatus("/wt-a", [change("/wt-a/a.ts", "added")])));
 
-    expect(box.current).toEqual({ "/wt-b/b.ts": "modified" });
+    expect(box.current).toEqual({
+      kind: "loaded",
+      statuses: { "/wt-b/b.ts": "modified" },
+      truncated: false,
+    });
   });
 
-  it("returns nothing without a checkout", async () => {
+  it("never shows the first checkout's statuses again after switching A to B to A", async () => {
+    const { git, pending } = manualGit();
+    await render({ git, root: "/wt-a", revision: 0 });
+    await act(async () => pending[0]?.resolve(gitStatus("/wt-a", [change("/wt-a/a.ts", "added")])));
+    expect(box.current).toMatchObject({ kind: "loaded", statuses: { "/wt-a/a.ts": "added" } });
+
+    await render({ git, root: "/wt-b", revision: 0 });
+    expect(box.current).toEqual({ kind: "loading" });
+    await render({ git, root: "/wt-a", revision: 0 });
+    expect(box.current).toEqual({ kind: "loading" });
+
+    await act(async () => pending[1]?.resolve(gitStatus("/wt-b", [change("/wt-b/b.ts", "added")])));
+    expect(box.current).toEqual({ kind: "loading" });
+    await act(async () => pending[2]?.resolve(gitStatus("/wt-a", [])));
+    expect(box.current).toEqual({ kind: "loaded", statuses: {}, truncated: false });
+  });
+
+  it("keeps the owned statuses while the same checkout refreshes", async () => {
+    const { git, pending } = manualGit();
+    await render({ git, root: "/wt-a", revision: 0 });
+    await act(async () => pending[0]?.resolve(gitStatus("/wt-a", [change("/wt-a/a.ts", "added")])));
+    await render({ git, root: "/wt-a", revision: 1 });
+
+    expect(pending).toHaveLength(2);
+    expect(box.current).toMatchObject({ kind: "loaded", statuses: { "/wt-a/a.ts": "added" } });
+    await act(async () =>
+      pending[1]?.resolve(gitStatus("/wt-a", [change("/wt-a/a.ts", "modified")])),
+    );
+    expect(box.current).toMatchObject({ kind: "loaded", statuses: { "/wt-a/a.ts": "modified" } });
+  });
+
+  it("reports a failed status read instead of an empty clean result", async () => {
+    const { git, pending } = manualGit();
+    await render({ git, root: "/wt-a", revision: 0 });
+    await act(async () => pending[0]?.reject(new Error("not a git repository")));
+
+    expect(box.current).toEqual({ kind: "failed" });
+  });
+
+  it("reports nothing to show without a checkout", async () => {
     await render({ git: null, root: null, revision: 0 });
-    expect(box.current).toBeNull();
+    expect(box.current).toEqual({ kind: "unavailable" });
   });
 });

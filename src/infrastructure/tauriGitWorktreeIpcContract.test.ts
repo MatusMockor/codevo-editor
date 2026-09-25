@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import wireContract from "../../contracts/git-surface-wire.json";
+import { HEAD_WORKTREE_BASE, type AgentWorktreeBase } from "../domain/agentWorktreeBase";
 import { MAX_WORKTREES_PER_REPOSITORY } from "../domain/gitWorktree";
 import {
   ADD_GIT_BRANCH_WORKTREE_IPC_COMMAND,
@@ -53,13 +54,58 @@ describe("Git worktree IPC contract", () => {
       trusted: false,
     };
     const invoke = vi.fn(async () => receipt);
-    await expect(invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-123-1a2b")).resolves.toEqual(
-      receipt,
-    );
+    await expect(
+      invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-123-1a2b", HEAD_WORKTREE_BASE),
+    ).resolves.toEqual(receipt);
     expect(invoke).toHaveBeenCalledWith("add_git_worktree", {
       repositoryRoot,
       taskId: "agt-123-1a2b",
+      base: { kind: "head" },
     });
+  });
+
+  it("sends the worktree base as a closed wire value", async () => {
+    const invoke = vi.fn(async () => ({
+      worktreePath: descriptor.worktreePath,
+      branch: "agent/agt-base-0001",
+      trusted: true,
+    }));
+    await invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-base-0001", {
+      kind: "ref",
+      ref: "refs/heads/feature",
+    });
+    expect(invoke).toHaveBeenCalledWith(ADD_GIT_WORKTREE_IPC_COMMAND, {
+      repositoryRoot,
+      taskId: "agt-base-0001",
+      base: { kind: "ref", ref: "refs/heads/feature" },
+    });
+  });
+
+  it.each([
+    "refs/heads/--upload-pack=x",
+    "refs/heads/-b",
+    "HEAD~1",
+    "refs/heads/a..b",
+    "refs/heads/@{-1}",
+    "refs/tags/v1",
+    "refs/heads/ma\u0007in",
+    `refs/heads/${"a".repeat(600)}`,
+  ])("rejects the hostile base ref %s before IPC", async (ref) => {
+    const invoke = vi.fn();
+    const base = { kind: "ref", ref } as unknown as AgentWorktreeBase;
+    await expect(
+      invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-base-0003", base),
+    ).rejects.toThrow(TypeError);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects a base with unknown fields before IPC", async () => {
+    const invoke = vi.fn();
+    const base = { kind: "head", ref: "refs/heads/main" } as unknown as AgentWorktreeBase;
+    await expect(
+      invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-base-0004", base),
+    ).rejects.toThrow(TypeError);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -134,7 +180,7 @@ function invokeInvalidOutboundCase(
   if (kind === "list") {
     return invokeListGitWorktreesIpc(invoke, root);
   }
-  return invokeAddGitWorktreeIpc(invoke, root, taskId);
+  return invokeAddGitWorktreeIpc(invoke, root, taskId, HEAD_WORKTREE_BASE);
 }
 
 function invokeMalformedInboundCase(
@@ -145,7 +191,7 @@ function invokeMalformedInboundCase(
     return invokeListGitWorktreesIpc(invoke, repositoryRoot);
   }
   if (kind === "add") {
-    return invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-123-1a2b");
+    return invokeAddGitWorktreeIpc(invoke, repositoryRoot, "agt-123-1a2b", HEAD_WORKTREE_BASE);
   }
   return invokePruneGitWorktreesIpc(invoke, repositoryRoot);
 }

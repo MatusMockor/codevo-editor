@@ -178,6 +178,8 @@ export function agentSurfaceBlockedReason(
   scope: AgentSurfaceScope = NO_AGENT_SURFACE_SCOPE,
 ): string | null {
   if (kind === "agents") return null;
+  if (kind === "editor")
+    return isRemoteAgentSurfaceThread(thread) ? SURFACE_REMOTE_UNAVAILABLE_REASON : null;
   if (isRemoteAgentSurfaceThread(thread))
     return kind === "diff" ? null : SURFACE_REMOTE_UNAVAILABLE_REASON;
   if (kind === "files" || kind === "history") return filesSurfaceBlockedReason(thread);

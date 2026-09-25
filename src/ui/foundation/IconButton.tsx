@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import { cx } from "./classNames";
 import "./buttons.css";
 
@@ -12,6 +12,7 @@ export interface IconButtonProps extends Omit<
   readonly icon: ReactNode;
   readonly size?: IconButtonSize;
   readonly pressed?: boolean;
+  readonly ref?: Ref<HTMLButtonElement>;
 }
 
 export function IconButton({

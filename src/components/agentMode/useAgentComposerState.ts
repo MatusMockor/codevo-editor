@@ -20,6 +20,7 @@ import {
   useAgentComposerRepositoryPreference,
   type ComposerRepositoryPreferenceStorage,
 } from "./useAgentComposerRepositoryPreference";
+import { HEAD_WORKTREE_BASE, type AgentWorktreeBase } from "../../domain/agentWorktreeBase";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
@@ -191,6 +192,10 @@ export function useAgentComposerControllerState({
     repositoryPreferenceStorage,
   );
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
+  const [worktreeBaseChoice, setWorktreeBaseChoice] = useState<{
+    readonly repositoryRoot: string;
+    readonly base: AgentWorktreeBase;
+  } | null>(null);
 
   const composerProjects = useMemo(
     () => composerProjectOptions(groups, projects),
@@ -221,6 +226,13 @@ export function useAgentComposerControllerState({
     preferences,
   );
   const composerRoot = target?.repositoryRoot ?? null;
+  useLayoutEffect(() => {
+    setWorktreeBaseChoice((current) => (current?.repositoryRoot === composerRoot ? current : null));
+  }, [composerRoot]);
+  const worktreeBase =
+    worktreeBaseChoice !== null && worktreeBaseChoice.repositoryRoot === composerRoot
+      ? worktreeBaseChoice.base
+      : HEAD_WORKTREE_BASE;
   const repositorySelectionAuthorityRef = useRef({ projects: composerProjects, target });
   repositorySelectionAuthorityRef.current = { projects: composerProjects, target };
   const composerProjectRootKey = target?.projectRootKey ?? null;
@@ -492,6 +504,7 @@ export function useAgentComposerControllerState({
             repositoryRoot: authority.repositoryRoot,
             prompt,
             isolation,
+            worktreeBase,
             unsafeInPlaceConfirmationKey,
             launch: submission.launch,
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
@@ -511,6 +524,7 @@ export function useAgentComposerControllerState({
       attachmentTargetKey,
       unsafeInPlaceConfirmationKey,
       isolation,
+      worktreeBase,
       onThreadStarted,
       sendFollowUp,
       startThread,
@@ -562,6 +576,14 @@ export function useAgentComposerControllerState({
     [composerRoot, worktreeAvailable],
   );
 
+  const changeWorktreeBase = useCallback(
+    (base: AgentWorktreeBase) => {
+      if (composerRoot === null) return;
+      setWorktreeBaseChoice({ repositoryRoot: composerRoot, base });
+    },
+    [composerRoot],
+  );
+
   const composerProps: AgentComposerControllerProps = {
     recovery,
     attachments,
@@ -587,6 +609,7 @@ export function useAgentComposerControllerState({
     launchProvider: agentCliKind,
     mode: composerMode,
     onIsolationChange: changeIsolation,
+    onWorktreeBaseChange: changeWorktreeBase,
     onRefreshIsolation: refreshIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,
@@ -597,6 +620,7 @@ export function useAgentComposerControllerState({
     worktreeAvailable,
     worktreeOnly,
     worktreeOnlyReason,
+    worktreeBase,
   };
 
   return {

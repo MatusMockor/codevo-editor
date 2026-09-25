@@ -306,6 +306,25 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
     [apply],
   );
 
+  const clear = useCallback((threadId: string): void => {
+    statusLoadedAtRef.current.delete(threadId);
+    refreshGenerationRef.current.delete(threadId);
+    receiptsRef.current.delete(threadId);
+    if (!statesRef.current.has(threadId)) return;
+    const next = new Map(statesRef.current);
+    next.delete(threadId);
+    statesRef.current = next;
+    if (mountedRef.current) setStates(next);
+  }, []);
+
+  const settledWithoutOwner = useCallback(
+    (threadId: string): AgentShipStepResult => {
+      clear(threadId);
+      return STEP_SUCCEEDED;
+    },
+    [clear],
+  );
+
   const stepFailed = useCallback(
     (threadId: string, failed: AgentShipFailure): AgentShipStepResult => {
       apply(threadId, { kind: "stepFailed", failure: failed });
@@ -383,9 +402,9 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         await dependenciesRef.current.gitGateway.stageFiles(target.targetPath, changes);
         if (!owns(target)) return authorityLost(threadId, "commit");
         await dependenciesRef.current.gitGateway.commit(target.targetPath, bounded, changes);
-        if (!owns(target)) return authorityLost(threadId, "commit");
+        if (!owns(target)) return settledWithoutOwner(threadId);
         const loaded = await attempt(() => loadStatus(target));
-        if (!owns(target)) return authorityLost(threadId, "commit");
+        if (!owns(target)) return settledWithoutOwner(threadId);
         dependenciesRef.current.onShipStepCompleted?.(threadId);
         if (!loaded.ok) {
           dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, loaded.error);
@@ -416,6 +435,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       persistReceipt,
       refreshShipStatus,
       runStep,
+      settledWithoutOwner,
       stepFailed,
     ],
   );
@@ -431,16 +451,17 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
             worktreePath: target.worktreePath,
           }),
         );
-        if (!owns(target)) return authorityLost(threadId, "push");
         if (!pushed.ok) {
+          if (!owns(target)) return authorityLost(threadId, "push");
           dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, pushed.error);
           return stepFailed(threadId, pushFailure(pushed.error));
         }
+        if (!owns(target)) return settledWithoutOwner(threadId);
         persistReceipt(threadId, {
           pushed: { remote: pushed.value.remote, branch: pushed.value.branch },
         });
         const status = await attempt(() => loadStatus(target));
-        if (!owns(target)) return authorityLost(threadId, "push");
+        if (!owns(target)) return settledWithoutOwner(threadId);
         const known = status.ok ? status.value : agentShipStatus(currentState(threadId));
         if (known === null) {
           apply(threadId, {
@@ -467,6 +488,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       owns,
       persistReceipt,
       runStep,
+      settledWithoutOwner,
       stepFailed,
     ],
   );
@@ -664,17 +686,6 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
     (threadId: string): void => apply(threadId, { kind: "reset" }),
     [apply],
   );
-
-  const clear = useCallback((threadId: string): void => {
-    statusLoadedAtRef.current.delete(threadId);
-    refreshGenerationRef.current.delete(threadId);
-    receiptsRef.current.delete(threadId);
-    if (!statesRef.current.has(threadId)) return;
-    const next = new Map(statesRef.current);
-    next.delete(threadId);
-    statesRef.current = next;
-    if (mountedRef.current) setStates(next);
-  }, []);
 
   return useMemo(
     () => ({

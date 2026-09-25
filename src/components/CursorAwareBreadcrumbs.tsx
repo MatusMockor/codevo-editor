@@ -18,6 +18,7 @@ interface CursorAwareBreadcrumbsProps {
   readonly groupId: EditorGroupId;
   readonly onNavigate: (symbol: LanguageServerDocumentSymbol) => void;
   readonly ownerKey: EditorSessionOwnerKey;
+  readonly showFileName?: boolean;
   readonly store: EditorCursorStorePort;
   readonly symbols: LanguageServerDocumentSymbol[];
   readonly trackingActive: boolean;
@@ -29,6 +30,7 @@ export const CursorAwareBreadcrumbs = memo(function CursorAwareBreadcrumbs({
   groupId,
   onNavigate,
   ownerKey,
+  showFileName = true,
   store,
   symbols,
   trackingActive,
@@ -70,5 +72,13 @@ export const CursorAwareBreadcrumbs = memo(function CursorAwareBreadcrumbs({
     [position, symbols],
   );
 
-  return <Breadcrumbs fileName={fileName} onNavigate={onNavigate} path={path} symbols={symbols} />;
+  return (
+    <Breadcrumbs
+      fileName={fileName}
+      onNavigate={onNavigate}
+      path={path}
+      showFileName={showFileName}
+      symbols={symbols}
+    />
+  );
 });

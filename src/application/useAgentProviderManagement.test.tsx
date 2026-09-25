@@ -2739,6 +2739,7 @@ function renderManagement(
     if (!options.renderCard) return null;
     const preference = preferencesForTest(settings).claudeCode;
     return createElement(AgentProviderCard, {
+      favoriteKeys: new Set<string>(),
       management: hook,
       nowEpochMs: 0,
       path: settings.agentCliPaths.claudeCode,
@@ -2750,6 +2751,7 @@ function renderManagement(
       onChangePath: () => undefined,
       onCopyInstallCommand: () => undefined,
       onResetProvider: () => undefined,
+      onToggleFavorite: () => undefined,
     });
   }
 

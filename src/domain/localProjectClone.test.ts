@@ -51,14 +51,28 @@ describe("local clone contracts", () => {
     },
   );
   it.each([
-    { cloneId: id, status: "running", path: "/repo", error: null },
-    { cloneId: id, status: "completed", path: "/repo", error: null },
-    { cloneId: id, status: "failed", path: null, error: "Clone failed." },
-    { cloneId: id, status: "cancelled", path: null, error: null },
+    { cloneId: id, status: "running", path: "/repo", error: null, progress: null, failure: null },
+    { cloneId: id, status: "completed", path: "/repo", error: null, progress: null, failure: null },
+    {
+      cloneId: id,
+      status: "failed",
+      path: null,
+      error: "Clone failed.",
+      progress: null,
+      failure: "other",
+    },
+    { cloneId: id, status: "cancelled", path: null, error: null, progress: null, failure: null },
   ])("accepts consistent snapshot $status", (value) => {
     expect(parseLocalProjectCloneSnapshot(value)).toEqual(value);
   });
-  const snapshot = { cloneId: id, status: "completed", path: "/repo", error: null };
+  const snapshot = {
+    cloneId: id,
+    status: "completed",
+    path: "/repo",
+    error: null,
+    progress: null,
+    failure: null,
+  };
   it.each([
     null,
     [],
@@ -68,10 +82,75 @@ describe("local clone contracts", () => {
     { ...snapshot, error: "failed" },
     { ...snapshot, status: "running", path: "repo" },
     { ...snapshot, status: "cancelled" },
-    { ...snapshot, status: "failed", path: null, error: "" },
-    { ...snapshot, status: "failed", path: null, error: "é".repeat(2049) },
+    { ...snapshot, status: "failed", path: null, error: "", failure: "other" },
+    { ...snapshot, status: "failed", path: null, error: "é".repeat(2049), failure: "other" },
     { ...snapshot, cloneId: "foreign" },
   ])("rejects inconsistent snapshot %#", (value) => {
     expect(() => parseLocalProjectCloneSnapshot(value)).toThrow();
+  });
+});
+
+describe("local clone progress and failure contract", () => {
+  const cloneId = "01234567-89ab-4cde-8fab-0123456789ab";
+  const running = {
+    cloneId,
+    status: "running",
+    path: "/Users/dev/code/repo",
+    error: null,
+    progress: { phase: "receiving", percent: 45, receivedBytes: 1024, bytesPerSecond: null },
+    failure: null,
+  };
+
+  it("accepts running progress and typed failures", () => {
+    expect(parseLocalProjectCloneSnapshot(running)).toEqual(running);
+    expect(
+      parseLocalProjectCloneSnapshot({
+        cloneId,
+        status: "failed",
+        path: null,
+        error: "Cloning failed.",
+        progress: null,
+        failure: "authentication",
+      }),
+    ).toMatchObject({ status: "failed", failure: "authentication" });
+  });
+
+  it.each([
+    ["progress on a completed clone", { ...running, status: "completed" }],
+    ["a failure on a running clone", { ...running, failure: "network" }],
+    ["an unknown phase", { ...running, progress: { ...running.progress, phase: "packing" } }],
+    ["a fractional percent", { ...running, progress: { ...running.progress, percent: 4.5 } }],
+    ["a percent above 100", { ...running, progress: { ...running.progress, percent: 101 } }],
+    ["negative bytes", { ...running, progress: { ...running.progress, receivedBytes: -1 } }],
+    ["unknown progress keys", { ...running, progress: { ...running.progress, raw: "x" } }],
+    [
+      "a missing failure key",
+      { cloneId, status: "running", path: "/a", error: null, progress: null },
+    ],
+    [
+      "an unknown failure",
+      { cloneId, status: "failed", path: null, error: "x", progress: null, failure: "disk" },
+    ],
+    [
+      "a failed clone without a failure kind",
+      { cloneId, status: "failed", path: null, error: "x", progress: null, failure: null },
+    ],
+  ])("rejects %s", (_label, value) => {
+    expect(() => parseLocalProjectCloneSnapshot(value)).toThrow("contract");
+  });
+
+  it("accepts ensureParent only as literal true", () => {
+    const base = {
+      idempotencyKey: cloneId,
+      url: "https://github.com/acme/repo.git",
+      name: "repo",
+      parentPath: "/Users/dev/code",
+    };
+    expect(parseLocalProjectCloneRequest({ ...base, ensureParent: true })).toEqual({
+      ...base,
+      ensureParent: true,
+    });
+    expect(() => parseLocalProjectCloneRequest({ ...base, ensureParent: false })).toThrow();
+    expect(() => parseLocalProjectCloneRequest({ ...base, ensureParent: "yes" })).toThrow();
   });
 });

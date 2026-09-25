@@ -317,14 +317,6 @@
   white-space: nowrap;
 }
 
-.agent-row--more {
-  color: color-mix(in srgb, var(--cv-fg-muted) 55%, transparent);
-}
-
-.agent-row--more:hover {
-  color: var(--cv-fg-strong);
-}
-
 .agent-provider-footer {
   display: flex;
   flex: 0 0 auto;
@@ -599,7 +591,6 @@ button.agent-provider-footer__pill:disabled {
 
 .app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])
   :is(
-    .agent-row--more,
     .agent-row--recede,
     .agent-row__time,
     .agent-row--slim .agent-row__title,
@@ -610,7 +601,6 @@ button.agent-provider-footer__pill:disabled {
 
 .app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])
   :is(
-    .agent-row--more:hover,
     .agent-row--recede:hover,
     .agent-row--recede:hover .agent-row__title,
     .agent-row--slim:hover .agent-row__title,
@@ -627,7 +617,6 @@ button.agent-provider-footer__pill:disabled {
 @media (prefers-color-scheme: light) {
   .app-shell[data-theme="system"]
     :is(
-      .agent-row--more,
       .agent-row--recede,
       .agent-row__time,
       .agent-row--slim .agent-row__title,
@@ -638,7 +627,6 @@ button.agent-provider-footer__pill:disabled {
 
   .app-shell[data-theme="system"]
     :is(
-      .agent-row--more:hover,
       .agent-row--recede:hover,
       .agent-row--recede:hover .agent-row__title,
       .agent-row--slim:hover .agent-row__title,

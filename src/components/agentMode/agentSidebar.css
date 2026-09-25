@@ -34,6 +34,10 @@
   color: var(--cv-fg-strong);
 }
 
+.cv-sb-search__field:focus-within {
+  box-shadow: var(--cv-ring-hair-strong);
+}
+
 .cv-sb-search__input {
   flex: 1;
   min-width: 0;
@@ -578,10 +582,6 @@
   padding: 10px 18px 0;
   color: var(--cv-fg-subtle);
   font-size: var(--cv-t-xs);
-}
-
-.cv-sb-shelf-body {
-  list-style: none;
 }
 
 .cv-sb-results__status {
