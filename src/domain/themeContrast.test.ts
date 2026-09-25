@@ -91,6 +91,40 @@ describe("contrastRatio", () => {
     }
   });
 
+  it("keeps selected settings chips readable in every palette and scheme", () => {
+    const settingsCss = readFileSync("src/components/settings/settings.css", "utf8");
+    const selected = cssBlock(settingsCss, '.settings-chip[data-state="on"]');
+
+    expect(cssDeclaration(selected, "background")).toBe("var(--cv-accent-soft)");
+    expect(cssDeclaration(selected, "color")).toBe("var(--cv-fg-strong)");
+    expect(cssDeclaration(selected, "box-shadow")).toBe("var(--cv-ring-selected)");
+    const selectedHover = cssBlock(
+      settingsCss,
+      '.settings-chip[data-state="on"]:hover:not(:disabled)',
+    );
+    expect(cssDeclaration(selectedHover, "background")).toBe("var(--cv-accent-soft)");
+    expect(cssDeclaration(selectedHover, "color")).toBe("var(--cv-fg-strong)");
+    const selectedFocus = cssBlock(
+      settingsCss,
+      '.settings-screen .settings-chip[data-state="on"]:focus-visible',
+    );
+    expect(cssDeclaration(selectedFocus, "box-shadow")).toBe(
+      "var(--cv-ring-selected), var(--cv-ring-focus)",
+    );
+    for (const palette of PALETTE_IDS) {
+      for (const scheme of RESOLVED_COLOR_SCHEMES) {
+        const tokens = paletteTokens(palette, scheme);
+        for (const role of ["canvas", "side", "raised"] as const) {
+          const fill = compositeRgba(tokens.accentSoft, surfaceColor(palette, scheme, role));
+          expect(
+            contrastRatio(tokens.fgStrong, fill),
+            `${palette}/${scheme}: selected chip text on accent-soft over ${role} ${fill}`,
+          ).toBeGreaterThanOrEqual(minimumTextContrast);
+        }
+      }
+    }
+  });
+
   it("keeps terminal text colors readable in app themes", () => {
     for (const theme of CLASSIC_SYNTAX_THEME_IDS.filter((id) => id !== "darkPlus")) {
       expectTerminalThemeContrast(classicTerminalTheme(theme));
@@ -248,6 +282,51 @@ describe("Monaco popup chrome", () => {
     expect(actionRow).toContain("color: var(--cv-fg-strong)");
   });
 
+  it("styles Monaco's fallback quick input with palette chrome inside the editor", () => {
+    const host = cssBlock(widgetCss, '.app-shell .monaco-editor [widgetid$="quickInputWidget"]');
+    expect(cssDeclaration(host, "left")).toBe("0 !important");
+    expect(cssDeclaration(host, "width")).toBe("100%");
+
+    const widget = cssBlock(widgetCss, ".app-shell .monaco-editor .quick-input-widget");
+    for (const [token, value] of [
+      ["--vscode-quickInput-background", "var(--cv-popover)"],
+      ["--vscode-quickInput-foreground", "var(--cv-fg)"],
+      ["--vscode-quickInputList-focusBackground", "var(--cv-tint-3)"],
+      ["--vscode-quickInputList-focusForeground", "var(--cv-fg-strong)"],
+      ["--vscode-list-highlightForeground", "var(--cv-accent)"],
+      ["--vscode-input-background", "var(--cv-tint-1)"],
+      ["--vscode-input-border", "transparent"],
+      ["--vscode-focusBorder", "transparent"],
+      ["border-radius", "var(--cv-r-card)"],
+      ["background", "var(--cv-popover)"],
+      ["color", "var(--cv-fg)"],
+    ] as const) {
+      expect(cssDeclaration(widget, token), token).toBe(value);
+    }
+
+    expect(
+      cssDeclaration(
+        cssBlock(widgetCss, ".app-shell .monaco-editor .quick-input-widget .monaco-inputbox"),
+        "box-shadow",
+      ),
+    ).toBe("var(--cv-ring-hair)");
+    expect(
+      cssDeclaration(
+        cssBlock(
+          widgetCss,
+          ".app-shell .monaco-editor .quick-input-widget .monaco-inputbox.synthetic-focus",
+        ),
+        "box-shadow",
+      ),
+    ).toBe("var(--cv-ring-hair-strong)");
+    const focusedRow = cssBlock(
+      widgetCss,
+      ".app-shell .monaco-editor .quick-input-widget .monaco-list .monaco-list-row.focused",
+    );
+    expect(cssDeclaration(focusedRow, "background")).toBe("var(--cv-tint-3)");
+    expect(cssDeclaration(focusedRow, "color")).toBe("var(--cv-fg-strong)");
+  });
+
   it("keeps popup labels readable on the palette popover surface in every palette and scheme", () => {
     for (const palette of PALETTE_IDS) {
       for (const scheme of RESOLVED_COLOR_SCHEMES) {
@@ -282,6 +361,7 @@ function schemeTint3(css: string, scheme: ResolvedColorScheme): string {
 
 function compositeRgba(rgba: string, background: string): string {
   const parts = /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)/.exec(rgba);
+  expect(parts, `rgba color ${rgba}`).not.toBeNull();
   const alpha = Number(parts?.[4] ?? "0");
   const foreground = `#${[parts?.[1], parts?.[2], parts?.[3]]
     .map((value) =>

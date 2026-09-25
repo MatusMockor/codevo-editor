@@ -21,6 +21,7 @@ interface WorkbenchEditorSurfaceCommandsOptions {
   saveActiveDocument: Command["run"];
   closeActiveSurface: Command["run"];
   reopenClosedDocument: Command["run"];
+  openGoToLine: Command["run"];
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
 }
 
@@ -35,6 +36,7 @@ export function workbenchEditorSurfaceCommands({
   saveActiveDocument,
   closeActiveSurface,
   reopenClosedDocument,
+  openGoToLine,
   editorSurfaceCommandRunner = null,
 }: WorkbenchEditorSurfaceCommandsOptions): Command[] {
   return [
@@ -61,6 +63,14 @@ export function workbenchEditorSurfaceCommands({
       shortcut: shortcut("editor.reopenClosedTab"),
       isEnabled: () => canReopenClosedDocument,
       run: reopenClosedDocument,
+    },
+    {
+      id: "editor.gotoLine",
+      title: "Go to Line/Column",
+      category: "Editor",
+      shortcut: shortcut("editor.gotoLine"),
+      isEnabled: (context) => context.hasActiveDocument,
+      run: openGoToLine,
     },
     ...editorSurfaceRunnerCommands.map(
       ({
@@ -131,11 +141,6 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
     id: "editor.rename",
     requiredJavaScriptTypeScriptFeature: "rename",
     title: "Rename Symbol",
-  },
-  {
-    category: "Editor",
-    id: "editor.gotoLine",
-    title: "Go to Line/Column",
   },
   {
     category: "Editor",

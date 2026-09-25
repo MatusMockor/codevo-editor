@@ -81,6 +81,10 @@ describe("QuickOpen", () => {
     return document.querySelector<HTMLInputElement>(".cv-command-field input");
   }
 
+  function liveRegion() {
+    return document.querySelector<HTMLElement>('[aria-live="polite"][role="status"]');
+  }
+
   it("marks the first result active by default", () => {
     render();
     const rows = document.querySelectorAll('[role="option"]');
@@ -284,6 +288,69 @@ describe("QuickOpen", () => {
       line: 42,
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("prompts for a line number instead of searching files in current-file line mode", () => {
+    const { onOpenCurrentFileLocation } = render({ query: ":", results: [] });
+
+    expect(liveRegion()?.textContent).toBe("Type a line number to go to.");
+    expect(document.body.textContent).not.toContain("No matching files.");
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(0);
+
+    act(() => {
+      input()?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+
+    expect(onOpenCurrentFileLocation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [":abc", "Type a line number, optionally followed by :column."],
+    [":0", "Line and column numbers start at 1."],
+  ])("explains why %s is not a line yet", (query, message) => {
+    render({ query, results: [] });
+
+    expect(liveRegion()?.textContent).toBe(message);
+    expect(document.querySelector(".cv-command-empty")?.textContent).toBe(message);
+  });
+
+  it("names the field and footer for line navigation in line mode only", () => {
+    render({ query: ":", results: [] });
+
+    expect(input()?.getAttribute("aria-label")).toBe("Go to line");
+    expect(input()?.getAttribute("placeholder")).toBe("Go to line");
+    expect(document.querySelector(".cv-command-footer")?.textContent).toContain("Go to line");
+    expect(document.querySelector(".cv-command-footer")?.textContent).not.toContain("Open file");
+
+    render({ query: "User" });
+
+    expect(input()?.getAttribute("aria-label")).toBe("Search files");
+    expect(document.querySelector(".cv-command-footer")?.textContent).toContain("Open file");
+  });
+
+  it("keeps one polite live region mounted across file and line modes", () => {
+    render({ query: "User" });
+    const region = liveRegion();
+    expect(region).not.toBeNull();
+
+    render({ query: ":", results: [] });
+
+    expect(liveRegion()).toBe(region);
+    expect(document.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
+  });
+
+  it("places the caret after a seeded line prefix", () => {
+    vi.useFakeTimers();
+    render({ query: ":", results: [] });
+    input()?.setSelectionRange(0, 0);
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(input()?.selectionStart).toBe(1);
+    expect(input()?.selectionEnd).toBe(1);
+    vi.useRealTimers();
   });
 
   it("keeps listing file results under the go-to-line row", () => {

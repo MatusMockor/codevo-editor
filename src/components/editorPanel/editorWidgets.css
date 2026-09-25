@@ -162,6 +162,50 @@
   font-variant-numeric: tabular-nums;
 }
 
+.app-shell .monaco-editor [widgetid$="quickInputWidget"] {
+  left: 0 !important;
+  width: 100%;
+}
+
+.app-shell .monaco-editor .quick-input-widget {
+  --vscode-quickInput-background: var(--cv-popover);
+  --vscode-quickInput-foreground: var(--cv-fg);
+  --vscode-quickInputList-focusBackground: var(--cv-tint-3);
+  --vscode-quickInputList-focusForeground: var(--cv-fg-strong);
+  --vscode-quickInputList-focusIconForeground: var(--cv-fg-strong);
+  --vscode-quickInputTitle-background: var(--cv-popover);
+  --vscode-list-activeSelectionBackground: var(--cv-tint-3);
+  --vscode-list-activeSelectionForeground: var(--cv-fg-strong);
+  --vscode-list-highlightForeground: var(--cv-accent);
+  --vscode-list-focusHighlightForeground: var(--cv-accent);
+  --vscode-list-focusOutline: transparent;
+  --vscode-pickerGroup-foreground: var(--cv-fg-muted);
+  --vscode-pickerGroup-border: var(--cv-hair);
+  --vscode-input-background: var(--cv-tint-1);
+  --vscode-input-foreground: var(--cv-fg);
+  --vscode-input-border: transparent;
+  --vscode-focusBorder: transparent;
+  --vscode-widget-shadow: transparent;
+  max-width: calc(100% - 16px);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-popover);
+  color: var(--cv-fg);
+}
+
+.app-shell .monaco-editor .quick-input-widget .monaco-inputbox {
+  border-radius: var(--cv-r-sm);
+  box-shadow: var(--cv-ring-hair);
+}
+
+.app-shell .monaco-editor .quick-input-widget .monaco-inputbox.synthetic-focus {
+  box-shadow: var(--cv-ring-hair-strong);
+}
+
+.app-shell .monaco-editor .quick-input-widget .monaco-list .monaco-list-row.focused {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
 .app-shell .monaco-editor .peekview-widget .head {
   box-shadow: var(--cv-edge-bottom-hair);
   background: var(--cv-raised);

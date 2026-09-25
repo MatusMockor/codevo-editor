@@ -15,6 +15,10 @@ export type QuickOpenQuery =
       readonly line: number;
     }
   | {
+      readonly kind: "currentFileLinePrompt";
+      readonly reason: QuickOpenLinePromptReason;
+    }
+  | {
       readonly kind: "currentFileSymbols";
       readonly query: string;
     }
@@ -26,6 +30,8 @@ export type QuickOpenQuery =
       readonly kind: "commands";
       readonly query: string;
     };
+
+export type QuickOpenLinePromptReason = "empty" | "invalid" | "zero";
 
 export interface QuickOpenLocation {
   readonly column: number | null;
@@ -41,6 +47,10 @@ export function parseQuickOpenQuery(input: string): QuickOpenQuery {
   }
 
   const location = parseLocation(input);
+  if (!location && input.startsWith(":")) {
+    return { kind: "currentFileLinePrompt", reason: linePromptReason(input.slice(1)) };
+  }
+
   if (!location) {
     return { kind: "files", query: input };
   }
@@ -86,7 +96,7 @@ function parseLocation(input: string): {
   readonly pathQuery: string;
 } | null {
   const lineAndColumnMatch = /^(.*):([1-9]\d*):([1-9]\d*)$/.exec(input);
-  const match = lineAndColumnMatch ?? /^(.*):([1-9]\d*)$/.exec(input);
+  const match = lineAndColumnMatch ?? /^(.*):([1-9]\d*):?$/.exec(input);
   if (!match) {
     return null;
   }
@@ -119,4 +129,10 @@ function parseLocationValue(value: string | undefined): number | null {
   }
 
   return parsed;
+}
+
+function linePromptReason(rest: string): QuickOpenLinePromptReason {
+  if (rest === "") return "empty";
+  if (/^\d+(?::\d*)?$/.test(rest) && /(?:^|:)0+(?::|$)/.test(rest)) return "zero";
+  return "invalid";
 }

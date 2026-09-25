@@ -5,6 +5,10 @@ import {
 } from "monaco-editor/esm/vs/base/common/keybindings.js";
 import type * as Monaco from "monaco-editor";
 import {
+  EditorExtensionsRegistry,
+  type EditorActionRegistration,
+} from "monaco-editor/esm/vs/editor/browser/editorExtensions.js";
+import {
   ContextKeyExpr,
   type ContextKeyExpression,
 } from "monaco-editor/esm/vs/platform/contextkey/common/contextkey.js";
@@ -17,6 +21,7 @@ export const CODEVO_OWNED_MONACO_CONTEXT_MENU_COMMAND_IDS: ReadonlySet<string> =
   "editor.action.goToReferences",
   "editor.action.goToTypeDefinition",
   "editor.action.quickCommand",
+  "editor.action.quickOutline",
   "editor.action.refactor",
   "editor.action.rename",
   "editor.action.revealDeclaration",
@@ -28,7 +33,15 @@ export const UNBOUND_MONACO_KEYBINDING_COMMAND_IDS: ReadonlySet<string> = new Se
   "editor.action.quickCommand",
 ]);
 
+export const CODEVO_ROUTED_MONACO_QUICK_INPUT_ACTIONS: ReadonlyMap<string, string> = new Map([
+  ["editor.action.gotoLine", "mockor.gotoLine"],
+  ["editor.action.quickCommand", "mockor.commandPalette"],
+  ["editor.action.quickOutline", "mockor.fileStructure"],
+]);
+
 export function applyMonacoWorkbenchPolicy(): void {
+  routeMonacoQuickInputActions();
+
   for (const item of MenuRegistry.getMenuItems(MenuId.EditorContext)) {
     if (!item.command || !CODEVO_OWNED_MONACO_CONTEXT_MENU_COMMAND_IDS.has(item.command.id)) {
       continue;
@@ -39,6 +52,25 @@ export function applyMonacoWorkbenchPolicy(): void {
   for (const item of KeybindingsRegistry.getDefaultKeybindings()) {
     if (!item.command || !UNBOUND_MONACO_KEYBINDING_COMMAND_IDS.has(item.command)) continue;
     item.when = ContextKeyExpr.false();
+  }
+}
+
+const monacoQuickInputRuns = new WeakMap<
+  EditorActionRegistration,
+  EditorActionRegistration["run"]
+>();
+
+function routeMonacoQuickInputActions(): void {
+  for (const action of EditorExtensionsRegistry.getEditorActions()) {
+    const codevoActionId = CODEVO_ROUTED_MONACO_QUICK_INPUT_ACTIONS.get(action.id);
+    if (!codevoActionId) continue;
+    const monacoRun = monacoQuickInputRuns.get(action) ?? action.run.bind(action);
+    monacoQuickInputRuns.set(action, monacoRun);
+    action.run = (accessor, editor, args) => {
+      const codevoAction = editor.getAction(codevoActionId);
+      if (codevoAction) return codevoAction.run();
+      return monacoRun(accessor, editor, args);
+    };
   }
 }
 

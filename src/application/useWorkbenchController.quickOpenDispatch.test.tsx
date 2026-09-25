@@ -86,7 +86,7 @@ describe("useWorkbenchController Quick Open dispatch", () => {
 
     act(() => {
       document
-        .querySelector<HTMLInputElement>('input[aria-label="Search files"]')
+        .querySelector<HTMLInputElement>('input[aria-label="Go to line"]')
         ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     });
     await flushAsyncTurns();
@@ -145,5 +145,108 @@ describe("useWorkbenchController Quick Open dispatch", () => {
     });
 
     expect(getWorkbench().commandPaletteInitialQuery).toBe("");
+  });
+
+  it("routes Go to Line into Quick Open's current-file line mode", async () => {
+    const path = "/workspace/src/foo.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile: vi.fn(async () => "first\nsecond\nthird\n"),
+      renderQuickOpenSurfaces: true,
+      searchFiles: vi.fn(async () => []),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile({ kind: "file", name: "foo.ts", path }, { pin: true });
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+
+    act(() => {
+      getWorkbench().setPaletteOpen(true);
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().runCommand("editor.gotoLine");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().paletteOpen).toBe(false);
+    expect(getWorkbench().quickOpenOpen).toBe(true);
+    expect(getWorkbench().quickOpenQuery).toBe(":");
+    expect(document.body.textContent).toContain("Type a line number to go to.");
+
+    act(() => {
+      getWorkbench().setQuickOpenQuery(":3");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      document
+        .querySelector<HTMLInputElement>('input[aria-label="Go to line"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path,
+      position: { column: 1, lineNumber: 3 },
+    });
+  });
+
+  it("keeps Quick Open in line mode when Go to Line runs from the command palette", async () => {
+    const path = "/workspace/src/foo.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile: vi.fn(async () => "first\nsecond\nthird\n"),
+      renderQuickOpenSurfaces: true,
+      searchFiles: vi.fn(async () => []),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile({ kind: "file", name: "foo.ts", path }, { pin: true });
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setPaletteOpen(true);
+    });
+    await flushAsyncTurns();
+    const paletteInput = document.querySelector<HTMLInputElement>(".cv-command-field input");
+    expect(paletteInput).not.toBeNull();
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(paletteInput, ">go to line");
+      paletteInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushAsyncTurns();
+    const titles = [...document.querySelectorAll('[role="option"]')].map(
+      (option) => option.textContent ?? "",
+    );
+    expect(titles.filter((title) => /go to line/i.test(title))).toHaveLength(1);
+
+    act(() => {
+      [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+        .find((option) => option.textContent?.startsWith("Go to line"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushAsyncTurns(10);
+
+    expect(getWorkbench().paletteOpen).toBe(false);
+    expect(getWorkbench().quickOpenOpen).toBe(true);
+    expect(getWorkbench().quickOpenQuery).toBe(":");
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Go to line"]')?.value).toBe(
+      ":",
+    );
   });
 });

@@ -15,8 +15,6 @@ export function editorActionForSurfaceCommand(commandId: EditorSurfaceCommandId)
       return "editor.action.formatDocument";
     case "editor.formatSelection":
       return "editor.action.formatSelection";
-    case "editor.gotoLine":
-      return "editor.action.gotoLine";
     case "editor.quickDefinition":
       return "editor.action.peekDefinition";
     case "editor.quickFix":

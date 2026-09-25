@@ -70,6 +70,7 @@ describe("configureMonacoEnvironment", () => {
       "editor.action.goToReferences",
       "editor.action.goToTypeDefinition",
       "editor.action.quickCommand",
+      "editor.action.quickOutline",
       "editor.action.refactor",
       "editor.action.rename",
       "editor.action.revealDeclaration",

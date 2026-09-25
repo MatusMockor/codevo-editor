@@ -280,10 +280,16 @@ export function CommandItem({
   );
 }
 
-export function CommandResultsStatus({ count }: { readonly count: number }) {
+export function CommandResultsStatus({
+  count,
+  message,
+}: {
+  readonly count: number;
+  readonly message?: string;
+}) {
   return (
     <div aria-live="polite" className="cv-command-live" role="status">
-      {resultsMessage(count)}
+      {message ?? resultsMessage(count)}
     </div>
   );
 }

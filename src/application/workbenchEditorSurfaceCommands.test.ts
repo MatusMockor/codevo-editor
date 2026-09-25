@@ -39,6 +39,12 @@ describe("workbenchEditorSurfaceCommands", () => {
         shortcut: "shortcut:editor.reopenClosedTab",
       },
       {
+        id: "editor.gotoLine",
+        title: "Go to Line/Column",
+        category: "Editor",
+        shortcut: "shortcut:editor.gotoLine",
+      },
+      {
         id: "editor.quickDefinition",
         title: "Quick Definition",
         category: "Editor",
@@ -49,12 +55,6 @@ describe("workbenchEditorSurfaceCommands", () => {
         title: "Rename Symbol",
         category: "Editor",
         shortcut: "shortcut:editor.rename",
-      },
-      {
-        id: "editor.gotoLine",
-        title: "Go to Line/Column",
-        category: "Editor",
-        shortcut: "shortcut:editor.gotoLine",
       },
       {
         id: "editor.formatDocument",
@@ -138,6 +138,23 @@ describe("workbenchEditorSurfaceCommands", () => {
     const registeredIds = new Set(createCommands().map(({ id }) => id));
 
     expect(editorSurfaceCommandIds.filter((id) => !registeredIds.has(id))).toEqual([]);
+  });
+
+  it("opens Codevo's line navigation for Go to Line instead of the editor surface runner", () => {
+    const openGoToLine = vi.fn();
+    const editorSurfaceCommandRunner = vi.fn() as EditorSurfaceCommandRunner;
+    const goToLine = commandById(
+      "editor.gotoLine",
+      createCommands({ editorSurfaceCommandRunner, openGoToLine }),
+    );
+
+    expect(goToLine.isEnabled(context({ hasActiveDocument: false }))).toBe(false);
+    expect(goToLine.isEnabled(context({ hasActiveDocument: true }))).toBe(true);
+
+    void goToLine.run(context({ hasActiveDocument: true }));
+
+    expect(openGoToLine).toHaveBeenCalledTimes(1);
+    expect(editorSurfaceCommandRunner).not.toHaveBeenCalled();
   });
 
   it("enables save only for dirty active documents", () => {
@@ -367,6 +384,7 @@ describe("workbenchEditorSurfaceCommands", () => {
       closeActiveSurface,
       canReopenClosedDocument: true,
       reopenClosedDocument,
+      openGoToLine: vi.fn(),
       editorSurfaceCommandRunner,
       javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
     });
@@ -392,6 +410,7 @@ function createCommands(
     closeActiveSurface: vi.fn(),
     canReopenClosedDocument: false,
     canRunJavaScriptTypeScriptImportActions: true,
+    openGoToLine: vi.fn(),
     canRunJavaScriptTypeScriptRefactors: true,
     javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
     javaScriptTypeScriptImportLanguage: "typescript",

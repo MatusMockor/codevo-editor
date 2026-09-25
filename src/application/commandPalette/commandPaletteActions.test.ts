@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { availablePaletteActions, type PaletteActionAvailability } from "./commandPaletteActions";
+import {
+  availablePaletteActions,
+  paletteActionCommandIds,
+  type PaletteActionAvailability,
+} from "./commandPaletteActions";
 
 function availability(
   overrides: Partial<PaletteActionAvailability> = {},
@@ -20,6 +24,7 @@ describe("availablePaletteActions", () => {
       "Add project…",
       "Switch project",
       "Go to file",
+      "Go to line",
       "Run script",
       "Switch branch",
       "Show diff panel",
@@ -57,5 +62,18 @@ describe("availablePaletteActions", () => {
     expect(terminal?.intent).toEqual({ kind: "command", commandId: "terminal.show" });
     expect(terminal?.disabled).toBe(true);
     expect(actions.some((action) => action.id === "addProject")).toBe(false);
+  });
+
+  it("opens Go to line as the files page in line mode and gates it on the editor command", () => {
+    const goToLine = (state: "enabled" | "disabled" | "missing") =>
+      availablePaletteActions(
+        availability({ commandState: (id) => (id === "editor.gotoLine" ? state : "enabled") }),
+      ).find((action) => action.id === "goToLine");
+
+    expect(goToLine("enabled")?.intent).toEqual({ kind: "page", page: "files", query: ":" });
+    expect(goToLine("enabled")?.disabled).toBe(false);
+    expect(goToLine("disabled")?.disabled).toBe(true);
+    expect(goToLine("missing")).toBeUndefined();
+    expect(paletteActionCommandIds().has("editor.gotoLine")).toBe(true);
   });
 });

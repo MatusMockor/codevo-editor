@@ -21,6 +21,7 @@ const VENDOR_CLASSES: ReadonlySet<string> = new Set([
   "label-description",
   "matchesCount",
   "peekview-title",
+  "quick-input-widget",
   "ref-tree",
   "replace-part",
   "replaceToggled",

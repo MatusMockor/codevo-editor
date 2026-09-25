@@ -10419,7 +10419,7 @@ class Foo
     expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.quickFix", {});
   });
 
-  it("registers Cmd+L go to line that opens Monaco's gotoLine quick access", async () => {
+  it("registers Cmd+L go to line without falling back to Monaco's gotoLine quick access", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\nconst other = 2;\n",
       language: "typescript",
@@ -10486,7 +10486,11 @@ class Foo
 
     gotoLineAction.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.gotoLine", {});
+    expect(editor.trigger).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "editor.action.gotoLine",
+      expect.anything(),
+    );
   });
 
   it("registers F2 rename that triggers Monaco's cross-file rename action", async () => {
@@ -12582,7 +12586,7 @@ class Foo
       expect(props.onGoToSuperMethod).not.toHaveBeenCalled();
       expect(props.onOpenClass).not.toHaveBeenCalled();
       expect(props.onOpenFile).not.toHaveBeenCalled();
-      expect(props.onOpenFileStructure).not.toHaveBeenCalled();
+      expect(props.onOpenFileStructure).toHaveBeenCalledTimes(outcome === "disabled" ? 1 : 0);
       expect(editor.trigger).not.toHaveBeenCalled();
       expect(editor.setPosition).not.toHaveBeenCalled();
     },

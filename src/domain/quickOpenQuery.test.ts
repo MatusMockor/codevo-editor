@@ -29,6 +29,31 @@ describe("parseQuickOpenQuery", () => {
   });
 
   it.each([
+    [":", "empty"],
+    [":abc", "invalid"],
+    [":4a", "invalid"],
+    [":0", "zero"],
+    [":00", "zero"],
+    [":42:0", "zero"],
+  ] as const)("keeps %s in current-file line mode with the %s reason", (input, reason) => {
+    expect(parseQuickOpenQuery(input)).toEqual({ kind: "currentFileLinePrompt", reason });
+  });
+
+  it("accepts a trailing colon after a line as that line", () => {
+    expect(parseQuickOpenQuery(":42:")).toEqual({
+      kind: "currentFileLocation",
+      column: null,
+      line: 42,
+    });
+    expect(parseQuickOpenQuery("src/foo.ts:42:")).toEqual({
+      kind: "fileLocation",
+      column: null,
+      line: 42,
+      pathQuery: "src/foo.ts",
+    });
+  });
+
+  it.each([
     ["@handler", "currentFileSymbols", "handler"],
     ["#handler", "workspaceSymbols", "handler"],
     [">format", "commands", "format"],

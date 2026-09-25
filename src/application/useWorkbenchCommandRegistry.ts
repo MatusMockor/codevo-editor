@@ -345,7 +345,7 @@ interface UseWorkbenchCommandRegistryOptions {
   setClassOpenOpen(open: boolean): void;
   setLanguageServerSetupOpen(open: boolean): void;
   setPaletteOpen(open: boolean): void;
-  setQuickOpenOpen(open: boolean): void;
+  setQuickOpenOpen(open: boolean, initialQuery?: string): void;
   setRecentFilesSwitcherOpen(open: boolean): void;
   setSidebarView(view: "git" | "php" | "scripts"): void;
   agents: { readonly agentWorkbench: AgentWorkbenchLayoutCommandPort };
@@ -772,16 +772,19 @@ export function useWorkbenchCommandRegistry(
       runInActiveTerminal,
     }).forEach((command) => registry.register(command));
 
+    const openQuickOpen = (initialQuery?: string) => {
+      setPaletteOpen(false);
+      setClassOpenOpen(false);
+      setWorkspaceSymbolsOpen(false);
+      setRecentFilesSwitcherOpen(false);
+      setQuickOpenOpen(true, initialQuery);
+      markFloatingSurfaceActivated();
+    };
+
     workbenchFloatingSurfaceCommands({
       shortcut,
       canSearchWorkspaceSymbols: canSearchClassOpenSymbols,
-      openQuickOpenFile: () => {
-        setClassOpenOpen(false);
-        setWorkspaceSymbolsOpen(false);
-        setRecentFilesSwitcherOpen(false);
-        setQuickOpenOpen(true);
-        markFloatingSurfaceActivated();
-      },
+      openQuickOpenFile: () => openQuickOpen(),
       openRecentFilesSwitcher,
       openRecentLocationsPanel,
       openClassOpen: () => {
@@ -822,6 +825,7 @@ export function useWorkbenchCommandRegistry(
       closeActiveSurface: closeActiveEditorGroupSurface,
       canReopenClosedDocument,
       reopenClosedDocument,
+      openGoToLine: () => openQuickOpen(":"),
       editorSurfaceCommandRunner,
       javaScriptTypeScriptFeatureAvailability: javaScriptTypeScriptCommandAvailability,
       canRunJavaScriptTypeScriptImportActions:

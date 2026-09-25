@@ -32,7 +32,7 @@ export interface FloatingSurfacesDependencies {
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
   quickOpenOpen: boolean;
-  setQuickOpenOpen: (open: boolean) => void;
+  setQuickOpenOpen: (open: boolean, initialQuery?: string) => void;
   classOpenOpen: boolean;
   setClassOpenOpen: (open: boolean) => void;
   workspaceSymbolsOpen: boolean;

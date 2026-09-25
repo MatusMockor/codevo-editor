@@ -47,7 +47,7 @@ export interface WorkbenchQuickOpen {
   quickOpenRequest: QuickOpenQuery;
   quickOpenResults: FileSearchResult[];
   quickOpenTruncated: boolean;
-  setQuickOpenOpen: (isOpen: boolean) => void;
+  setQuickOpenOpen: (isOpen: boolean, initialQuery?: string) => void;
   setQuickOpenQuery: Dispatch<SetStateAction<string>>;
 }
 
@@ -158,10 +158,11 @@ export function useWorkbenchQuickOpen(
     backendResultSet.response.truncated;
 
   const setQuickOpenOpen = useCallback(
-    (isOpen: boolean) => {
+    (isOpen: boolean, initialQuery = "") => {
+      const query = isOpen ? initialQuery : "";
       invalidateRequestOwner();
-      queryRef.current = "";
-      setQuickOpenQueryState("");
+      queryRef.current = query;
+      setQuickOpenQueryState(query);
       setBackendResultSet({
         generation: 0,
         query: "",

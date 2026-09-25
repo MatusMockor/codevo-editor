@@ -290,6 +290,7 @@ function CommandPaletteBody(
   const execute = (item: PaletteItem): void => {
     if (item.intent.kind === "page") {
       session.push(item.intent.page);
+      if (item.intent.query !== undefined) props.quickOpen?.onChangeQuery(item.intent.query);
       return;
     }
     if (item.intent.kind === "command" && openLocalPalettePage(item.intent.commandId)) return;

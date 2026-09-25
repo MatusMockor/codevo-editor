@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -63,5 +64,50 @@ describe("saved conversations UI", () => {
     act(() => root.unmount());
     await act(async () => resolve(true));
     expect(select).not.toHaveBeenCalled();
+  });
+  it("renders its controls with the palette-aware foundation Button", () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    act(() => root.render(<AgentHistoryCatalog catalog={surface()} onSelect={vi.fn()} />));
+    const button = (text: string) =>
+      Array.from(host.querySelectorAll("button")).find((item) => item.textContent === text);
+
+    for (const label of ["Saved conversations", "Older conversations", "Back to newest"]) {
+      expect(button(label)?.classList.contains("cv-button"), label).toBe(true);
+      expect(button(label)?.classList.contains("cv-button--ghost"), label).toBe(true);
+    }
+    act(() => root.unmount());
+  });
+
+  it("lets the foundation Button own its look and styles thread rows with palette tokens", () => {
+    const component = readFileSync("src/components/agentMode/AgentHistoryCatalog.tsx", "utf8");
+    expect(component).toContain('import "./agentHistoryCatalog.css";');
+    const style = document.createElement("style");
+    style.textContent = [
+      readFileSync("src/ui/foundation/buttons.css", "utf8"),
+      readFileSync("src/components/agentMode/agentHistory.css", "utf8"),
+      readFileSync("src/components/agentMode/agentHistoryCatalog.css", "utf8"),
+    ].join("\n");
+    document.head.append(style);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => root.render(<AgentHistoryCatalog catalog={surface()} onSelect={vi.fn()} />));
+    const button = (text: string) =>
+      Array.from(host.querySelectorAll("button")).find((item) => item.textContent === text)!;
+
+    for (const label of ["Saved conversations", "Older conversations", "Back to newest"]) {
+      const computed = getComputedStyle(button(label));
+      expect(computed.getPropertyValue("background"), label).toBe("transparent");
+      expect(computed.getPropertyValue("color"), label).toBe("var(--cv-fg-muted)");
+    }
+    const row = getComputedStyle(button(catalogThread().title));
+    expect(row.getPropertyValue("background")).toBe("transparent");
+    expect(row.getPropertyValue("color")).toBe("var(--cv-fg)");
+    expect(row.getPropertyValue("border-radius")).toBe("var(--cv-r-control)");
+
+    act(() => root.unmount());
+    host.remove();
+    style.remove();
   });
 });

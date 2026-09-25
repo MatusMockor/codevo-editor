@@ -11,7 +11,11 @@ import {
   type SetStateAction,
 } from "react";
 import type { FileSearchResult } from "../domain/workspace";
-import type { QuickOpenLocation, QuickOpenQuery } from "../domain/quickOpenQuery";
+import type {
+  QuickOpenLinePromptReason,
+  QuickOpenLocation,
+  QuickOpenQuery,
+} from "../domain/quickOpenQuery";
 import { HighlightedText } from "./HighlightedText";
 import {
   CommandEmpty,
@@ -26,6 +30,12 @@ import {
 } from "../ui/foundation/CommandList";
 import { commandItemId } from "../ui/foundation/commandItemId";
 import "./commandPalette/commandPalette.css";
+
+const LINE_PROMPT_MESSAGES: Readonly<Record<QuickOpenLinePromptReason, string>> = {
+  empty: "Type a line number to go to.",
+  invalid: "Type a line number, optionally followed by :column.",
+  zero: "Line and column numbers start at 1.",
+};
 
 interface QuickOpenProps {
   canGoBack: boolean;
@@ -70,7 +80,10 @@ export function QuickOpen({
     }
 
     const focusInput = () => {
-      inputRef.current?.focus({ preventScroll: true });
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(input.value.length, input.value.length);
     };
 
     focusInput();
@@ -222,6 +235,10 @@ export function QuickOpen({
   }
 
   const listboxId = "cv-quick-open-list";
+  const lineMode =
+    request.kind === "currentFileLinePrompt" || request.kind === "currentFileLocation";
+  const linePrompt =
+    request.kind === "currentFileLinePrompt" ? LINE_PROMPT_MESSAGES[request.reason] : undefined;
   const listVisible = currentFileLocation !== null || results.length > 0;
   const resultCount = results.length + (currentFileLocation === null ? 0 : 1);
   const activeId = activeOptionId(listboxId, currentFileLocation !== null, safeActiveIndex);
@@ -265,7 +282,7 @@ export function QuickOpen({
         activeDescendantId={activeId}
         expanded={listVisible}
         inputRef={inputRef}
-        label="Search files"
+        label={lineMode ? "Go to line" : "Search files"}
         lead={canGoBack ? "back" : "search"}
         listboxId={listboxId}
         onBack={onBack}
@@ -280,14 +297,23 @@ export function QuickOpen({
           composingRef.current = true;
         }}
         onKeyDown={handleInputKeyDown}
-        placeholder="Search files…"
+        placeholder={lineMode ? "Go to line" : "Search files…"}
         value={query}
       />
-      <CommandResultsStatus count={resultCount} />
+      <CommandResultsStatus count={resultCount} message={linePrompt} />
       <CommandPanel>
         {isLoading ? <div className="cv-palette-files-state">Searching…</div> : null}
         {isTruncated ? <div className="cv-palette-files-state">Results truncated</div> : null}
-        {!isLoading && !isTruncated && results.length === 0 && !currentFileLocation ? (
+        {linePrompt === undefined ? null : (
+          <div aria-hidden="true" className="cv-command-empty">
+            {linePrompt}
+          </div>
+        )}
+        {linePrompt === undefined &&
+        !isLoading &&
+        !isTruncated &&
+        results.length === 0 &&
+        !currentFileLocation ? (
           <CommandEmpty>No matching files.</CommandEmpty>
         ) : null}
         {listVisible ? (
@@ -352,7 +378,7 @@ export function QuickOpen({
         }
       >
         <CommandFooterHint keys={["↑", "↓"]} label="Navigate" />
-        <CommandFooterHint keys={["Enter"]} label="Open file" />
+        <CommandFooterHint keys={["Enter"]} label={lineMode ? "Go to line" : "Open file"} />
         {canGoBack ? <CommandFooterHint keys={["Backspace"]} label="Back" /> : null}
         <CommandFooterHint keys={["Esc"]} label="Close" />
       </CommandFooter>

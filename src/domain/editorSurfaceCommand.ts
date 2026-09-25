@@ -14,7 +14,6 @@ export const editorSurfaceCommandIds = [
   "javascript.sortImports",
   "typescript.removeUnusedImports",
   "javascript.removeUnusedImports",
-  "editor.gotoLine",
   "editor.nextChange",
   "editor.previousChange",
 ] as const satisfies readonly KeymapCommandId[];

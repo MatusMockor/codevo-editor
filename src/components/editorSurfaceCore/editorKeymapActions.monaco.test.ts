@@ -63,6 +63,7 @@ let ranEditorActions: string[] = [];
 let ranCommands: string[] = [];
 let windowKeys: string[] = [];
 let commandOutcome: (commandId: string) => CommandExecutionOutcome = () => "executed";
+let openFileStructure = vi.fn();
 
 function installBrowserShims(): void {
   Object.defineProperty(document, "queryCommandSupported", {
@@ -181,7 +182,7 @@ function registerActions(keymap: KeymapSettings): void {
         goToSuperMethod: vi.fn(),
         openClass: vi.fn(),
         openFile: vi.fn(),
-        openFileStructure: vi.fn(),
+        openFileStructure,
       },
     },
     hippieSessionRef: { current: null },
@@ -242,6 +243,9 @@ describe("editor keymap actions on a real Monaco editor", () => {
       provideImplementation: () => null,
     });
     monaco.languages.registerReferenceProvider(LANGUAGE_ID, { provideReferences: () => null });
+    monaco.languages.registerDocumentSymbolProvider(LANGUAGE_ID, {
+      provideDocumentSymbols: () => [],
+    });
     monaco.languages.registerRenameProvider(LANGUAGE_ID, { provideRenameEdits: () => null });
     monaco.languages.registerDocumentFormattingEditProvider(LANGUAGE_ID, {
       provideDocumentFormattingEdits: () => [],
@@ -273,6 +277,7 @@ describe("editor keymap actions on a real Monaco editor", () => {
     windowKeys = [];
     window.addEventListener("keydown", recordWindowKey);
     commandOutcome = () => "executed";
+    openFileStructure = vi.fn();
     registerActions(defaultKeymapSettings("mac"));
     editor.focus();
     resetChordState();
@@ -430,6 +435,121 @@ describe("editor keymap actions on a real Monaco editor", () => {
 
     expect(reachedWindow).toBe(true);
     expect(ranEditorActions).toEqual([]);
+  });
+
+  describe("Monaco's quick-input pickers", () => {
+    function visibleQuickInputWidgets(): Element[] {
+      return [...document.querySelectorAll<HTMLElement>(".quick-input-widget")].filter(
+        (widget) => widget.style.display !== "none",
+      );
+    }
+
+    it.each(["Ctrl+G", "Cmd+L"])(
+      "routes %s to Codevo's Go to Line palette instead of Monaco's widget",
+      async (shortcut) => {
+        press(shortcut);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(ranCommands).toEqual(["editor.gotoLine"]);
+        expect(visibleQuickInputWidgets()).toEqual([]);
+      },
+    );
+
+    it("routes a direct Monaco gotoLine trigger to Codevo's Go to Line palette", async () => {
+      editor.trigger("mockor.windowChrome", "editor.action.gotoLine", null);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual(["editor.gotoLine"]);
+      expect(visibleQuickInputWidgets()).toEqual([]);
+    });
+
+    it("never opens Monaco's Go to Line widget when the Codevo command is unavailable", async () => {
+      commandOutcome = () => "missing";
+
+      press("Ctrl+G");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual(["editor.gotoLine"]);
+      expect(visibleQuickInputWidgets()).toEqual([]);
+    });
+
+    it("routes the Cmd+Shift+O fallback to Codevo's file structure instead of Monaco's outline", async () => {
+      commandOutcome = (commandId) =>
+        commandId === "editor.fileStructure" ? "executed" : "disabled";
+
+      press("Cmd+Shift+O");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual(["agent.goToTurn", "editor.fileStructure"]);
+      expect(visibleQuickInputWidgets()).toEqual([]);
+    });
+
+    it("routes a programmatic Monaco command palette to Codevo's command palette", async () => {
+      await editor.getAction("editor.action.quickCommand")?.run();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual(["palette.open"]);
+      expect(visibleQuickInputWidgets()).toEqual([]);
+    });
+
+    it("explains an unavailable file structure instead of silently swallowing Cmd+Shift+O", async () => {
+      commandOutcome = () => "disabled";
+
+      press("Cmd+Shift+O");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual(["agent.goToTurn", "editor.fileStructure"]);
+      expect(openFileStructure).toHaveBeenCalledTimes(1);
+      expect(visibleQuickInputWidgets()).toEqual([]);
+    });
+
+    it("hides Monaco's Go to Symbol context menu entry", () => {
+      expect(visibleContextMenuCommandIds()).not.toContain("editor.action.quickOutline");
+    });
+
+    it.each(["editor.action.gotoLine", "editor.action.quickCommand"])(
+      "keeps Monaco's own %s picker in editors without Codevo actions",
+      async (actionId) => {
+        const plainHost = document.createElement("div");
+        document.body.append(plainHost);
+        const plain = monaco.editor.create(plainHost, {
+          minimap: { enabled: false },
+          model: monaco.editor.createModel("one\ntwo\n", LANGUAGE_ID),
+          occurrencesHighlight: "off",
+        });
+        try {
+          plain.focus();
+          await plain.getAction(actionId)?.run();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+
+          expect(ranCommands).toEqual([]);
+          expect(
+            [...plainHost.querySelectorAll<HTMLElement>(".quick-input-widget")].filter(
+              (widget) => widget.style.display !== "none",
+            ),
+          ).toHaveLength(1);
+        } finally {
+          plainHost
+            .querySelector(".quick-input-widget input")
+            ?.dispatchEvent(
+              new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
+            );
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const model = plain.getModel();
+          plain.dispose();
+          model?.dispose();
+          plainHost.remove();
+        }
+      },
+    );
+
+    it("routes the Go to Symbol context menu entry to Codevo's file structure", async () => {
+      await editor.getAction("editor.action.quickOutline")?.run();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual(["editor.fileStructure"]);
+      expect(visibleQuickInputWidgets()).toEqual([]);
+    });
   });
 
   it("builds the context menu from Codevo actions and hides Monaco's bypassing duplicates", () => {

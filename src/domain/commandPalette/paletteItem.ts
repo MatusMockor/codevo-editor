@@ -39,7 +39,7 @@ export interface PaletteText {
 }
 
 export type PaletteIntent =
-  | { readonly kind: "page"; readonly page: PalettePageId }
+  | { readonly kind: "page"; readonly page: PalettePageId; readonly query?: string }
   | { readonly kind: "command"; readonly commandId: string }
   | { readonly kind: "openThread"; readonly threadId: string }
   | { readonly kind: "newThreadIn"; readonly projectKey: string }

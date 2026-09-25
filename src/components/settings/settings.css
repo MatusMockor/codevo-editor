@@ -580,7 +580,17 @@ code.settings-readout,
 
 .settings-chip[data-state="on"] {
   background: var(--cv-accent-soft);
-  color: var(--cv-accent-fill);
+  box-shadow: var(--cv-ring-selected);
+  color: var(--cv-fg-strong);
+}
+
+.settings-chip[data-state="on"]:hover:not(:disabled) {
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
+}
+
+.settings-screen .settings-chip[data-state="on"]:focus-visible {
+  box-shadow: var(--cv-ring-selected), var(--cv-ring-focus);
 }
 
 .settings-chip:disabled {

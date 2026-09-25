@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { AgentHistoryCatalogSurface } from "../../application/useAgentHistoryCatalog";
+import { Button } from "../../ui/foundation/Button";
+import "./agentHistoryCatalog.css";
 
 export function AgentHistoryCatalog({
   catalog,
@@ -19,16 +21,17 @@ export function AgentHistoryCatalog({
   if (catalog.projects.length === 0) return null;
   return (
     <section aria-label="Saved conversations" className="agent-history-catalog">
-      <button
-        type="button"
+      <Button
         aria-expanded={page !== null}
         onClick={() => {
           if (page) catalog.close();
           else void catalog.choose(catalog.projects[0].rootKey);
         }}
+        size="sm"
+        variant="ghost"
       >
         Saved conversations
-      </button>
+      </Button>
       {page && (
         <>
           <label>
@@ -67,16 +70,22 @@ export function AgentHistoryCatalog({
           {!page.loading && !page.error && page.threads.length === 0 && (
             <p>No saved conversations.</p>
           )}
-          <button
-            type="button"
+          <Button
             disabled={page.loading || !page.hasEarlier}
             onClick={() => void catalog.older()}
+            size="sm"
+            variant="ghost"
           >
             Older conversations
-          </button>
-          <button type="button" disabled={page.loading} onClick={() => void catalog.latest()}>
+          </Button>
+          <Button
+            disabled={page.loading}
+            onClick={() => void catalog.latest()}
+            size="sm"
+            variant="ghost"
+          >
             Back to newest
-          </button>
+          </Button>
         </>
       )}
     </section>

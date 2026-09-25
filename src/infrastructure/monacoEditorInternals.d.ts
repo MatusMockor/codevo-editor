@@ -56,3 +56,17 @@ declare module "monaco-editor/esm/vs/base/common/uri.js" {
     parse(value: string): { toString(skipEncoding?: boolean): string };
   };
 }
+
+declare module "monaco-editor/esm/vs/editor/browser/editorExtensions.js" {
+  export interface EditorActionTarget {
+    getAction(id: string): { run(args?: unknown): Promise<void> } | null;
+  }
+  export interface EditorActionRegistration {
+    readonly id: string;
+    run(accessor: unknown, editor: EditorActionTarget, args?: unknown): void | Promise<void>;
+  }
+  export const EditorExtensionsRegistry: {
+    getEditorActions(): readonly EditorActionRegistration[];
+    getEditorContributions(): ReadonlyArray<{ readonly id: string }>;
+  };
+}

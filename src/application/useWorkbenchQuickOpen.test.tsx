@@ -273,6 +273,35 @@ describe("useWorkbenchQuickOpen", () => {
     harness.unmount();
   });
 
+  it("opens seeded in current-file line mode without searching files", async () => {
+    const deps = makeDeps();
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true, ":");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    expect(harness.quickOpen().quickOpenOpen).toBe(true);
+    expect(harness.quickOpen().quickOpenQuery).toBe(":");
+    expect(harness.quickOpen().quickOpenRequest).toEqual({
+      kind: "currentFileLinePrompt",
+      reason: "empty",
+    });
+    expect(deps.fileSearch.searchFiles).not.toHaveBeenCalled();
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(false);
+      harness.quickOpen().setQuickOpenOpen(true);
+    });
+
+    expect(harness.quickOpen().quickOpenQuery).toBe("");
+
+    harness.unmount();
+  });
+
   it("surfaces backend walk truncation independently of the result count", async () => {
     const deps = makeDeps({
       fileSearch: {

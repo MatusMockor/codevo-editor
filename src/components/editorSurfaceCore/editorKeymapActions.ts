@@ -453,19 +453,22 @@ function registerExplicitEditorActions({
       id: "mockor.fileStructure",
       label: "File Structure",
       keybindings: keybinding("editor.fileStructure"),
-      run: () =>
-        runRegisteredCommand(commandExecutionRunnerRef, "editor.fileStructure", () =>
-          editorActionCommandPortRef.current.openFileStructure(),
-        ),
+      run: () => {
+        if (commandExecutionRunnerRef.current?.("editor.fileStructure") === "executed") return;
+        editorActionCommandPortRef.current.openFileStructure();
+      },
     }),
     editor.addAction({
       id: "mockor.gotoLine",
       label: "Go to Line/Column",
       keybindings: keybinding("editor.gotoLine"),
       run: () =>
-        runRegisteredCommand(commandExecutionRunnerRef, "editor.gotoLine", () =>
-          triggerEditorSurfaceCommand(editor, "editor.gotoLine"),
-        ),
+        runRegisteredCommand(commandExecutionRunnerRef, "editor.gotoLine", () => undefined),
+    }),
+    editor.addAction({
+      id: "mockor.commandPalette",
+      label: "Command Palette",
+      run: () => requestRegisteredCommand(commandExecutionRunnerRef, "palette.open"),
     }),
     editor.addAction({
       id: "mockor.rename",
