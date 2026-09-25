@@ -108,12 +108,20 @@ describe("agent thread Airy style contract", () => {
       ".agent-find__step:focus-visible",
       ".agent-find__close:focus-visible",
       ".agent-minimap__dash:focus-visible",
-      ".agent-minimap__toggle:focus-visible",
     ]) {
       expect(winningDeclaration(selector, "box-shadow"), selector).toMatch(
         /(-focus-ring|--cv-ring-focus)\)$/,
       );
     }
+  });
+
+  it("anchors the narrow Go to Turn list without a visible chip or a layout row", () => {
+    expect(winningDeclaration(".agent-minimap--compact", "position")).toBe("absolute");
+    expect(winningDeclaration(".agent-minimap--compact", "width")).toBe("0");
+    expect(winningDeclaration(".agent-minimap--compact", "height")).toBe("0");
+    expect(declarations(".agent-minimap--compact", "margin-block-end")).toEqual([]);
+    expect(declarations(".agent-minimap--compact", "z-index")).toEqual([]);
+    expect(declarations(".agent-minimap__toggle", "height")).toEqual([]);
   });
 
   it("floats the find pill on the column corner without taking a layout row", () => {

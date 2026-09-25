@@ -287,10 +287,11 @@ describe("agent thread session minimap and find pill", () => {
     render({ thread: threadView(turns(3)) });
 
     expect(host.querySelector(".agent-minimap--rail")).toBeNull();
-    expect(host.querySelector(".agent-minimap__toggle")?.textContent).toBe("Turns · 3");
+    expect(host.querySelector(".agent-minimap--compact button")).toBeNull();
+    expect(host.textContent).not.toContain("Turns ·");
     expect(observers.every((observer) => observer.disconnected)).toBe(true);
 
-    act(() => host.querySelector<HTMLButtonElement>(".agent-minimap__toggle")?.click());
+    render({ thread: threadView(turns(3)), goToTurnSignal: 1 });
 
     expect(observers.some((observer) => !observer.disconnected)).toBe(true);
     expect(host.querySelectorAll('nav[aria-label="Your turns"] ol > li > button')).toHaveLength(3);
@@ -411,7 +412,7 @@ describe("agent thread session minimap and find pill", () => {
     );
   });
 
-  it("swaps the rail for the popover at the one gutter-derived threshold", () => {
+  it("swaps the rail for the Go to Turn list at the one gutter-derived threshold", () => {
     const threshold = AGENT_MINIMAP_COLUMN_WIDTH + 2 * AGENT_MINIMAP_PERSISTENT_GUTTER;
     expect(threshold).toBe(864);
 
@@ -482,8 +483,8 @@ describe("agent thread session minimap and find pill", () => {
     window.innerWidth = width;
     render({ thread: threadView(turns(3), `agt-${width}`) });
     const rail = host.querySelector(".agent-minimap--rail");
-    const toggle = host.querySelector(".agent-minimap__toggle");
-    expect(rail === null, `${width}px`).not.toBe(toggle === null);
+    const list = host.querySelector(".agent-minimap--compact");
+    expect(rail === null, `${width}px`).not.toBe(list === null);
     return rail === null ? "list" : "rail";
   }
 

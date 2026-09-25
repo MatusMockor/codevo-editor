@@ -117,7 +117,7 @@ describe("expanded editing shell layout contract", () => {
       '.workbench-frame[data-layout="agent"] > [data-slot="editor"]',
     );
     expect(editorSlot.get("padding-top")).toBe("var(--agent-surface-header-height)");
-    expect(editorSlot.has("padding-left")).toBe(false);
+    expect(editorSlot.get("padding-left")).toBe("var(--agent-surface-edge-width)");
     expect(editorSlot.get("background")).toBe("var(--cv-canvas)");
     expect(editorSlot.get("background-clip")).toBe("content-box");
     expect(editorSlot.get("clip-path")).toBe(

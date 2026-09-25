@@ -11,7 +11,7 @@ const TOKEN = /(?<![\w-])--[a-z][a-z0-9-]*/g;
 const LEGACY_FAMILY =
   /^--(?:color-|codevo-|symbol-|vis-|radius-|change-(?:added|deleted|modified))/;
 const LAYOUT_VARIABLE =
-  /^--agent-(?:rail-|right-panel-|bottom-panel-|find-pill-|minimap-|center-min-width$|surface-header-height$|surface-editor-gutter$|surface-focus-gutter$|session-gutter$|find-inset$|turn-gap$|row-pad$)/;
+  /^--agent-(?:rail-|right-panel-|bottom-panel-|find-pill-|minimap-|center-min-width$|surface-header-height$|surface-edge-width$|surface-editor-gutter$|surface-focus-gutter$|session-gutter$|find-inset$|turn-gap$|row-pad$)/;
 const LEGACY_ALIASES: ReadonlySet<string> = new Set([
   "--accent",
   "--background-active",

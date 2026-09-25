@@ -52,6 +52,7 @@
 */
 .app-shell {
   --agent-surface-header-height: var(--cv-topbar-h);
+  --agent-surface-edge-width: 1px;
   --agent-surface-editor-gutter: 8px;
 }
 
@@ -110,6 +111,7 @@
 .workbench-frame[data-layout="agent"] > [data-slot="editor"] {
   z-index: 1;
   padding-top: var(--agent-surface-header-height);
+  padding-left: var(--agent-surface-edge-width);
   background: var(--cv-canvas);
   background-clip: content-box;
   clip-path: inset(var(--agent-surface-header-height) 0 0 0);
@@ -186,6 +188,11 @@
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="surface"] {
   grid-column: 2;
   grid-row: 1;
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] .agent-surface {
+  padding-left: 0;
+  box-shadow: none;
 }
 
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="editor"] {

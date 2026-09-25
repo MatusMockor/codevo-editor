@@ -2,7 +2,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -15,7 +14,7 @@ import {
 } from "./agentThreadMinimapPresentation";
 import { AGENT_MINIMAP_HIT_STRIP_MAX } from "./agentMinimapPlacement";
 import type { AgentThreadColumnAnchor } from "./agentThreadColumn";
-import { useAgentPopover } from "./agentPopover";
+import { useAgentPopover, useAgentPopoverPlacement } from "./agentPopover";
 import { useAgentMinimapPreview } from "./agentMinimapPreview";
 
 export const MIN_AGENT_MINIMAP_ENTRIES = 2;
@@ -119,22 +118,38 @@ function AgentMinimapDisclosure({
   onJump(anchor: AgentThreadColumnAnchor): void;
   onOpenChange?(open: boolean): void;
 }) {
-  const popover = useAgentPopover("start");
-  const { hide, onBlur, open, popoverRef, rootRef, show, style, toggle, triggerRef } = popover;
-  const listId = useId();
+  const { hide, onBlur, open, popoverRef, rootRef, show } = useAgentPopover("start");
+  const anchorRef = useRef<HTMLSpanElement | null>(null);
+  const placement = useAgentPopoverPlacement(open, anchorRef, popoverRef, "start");
   const handledSignal = useRef(openSignal);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const escapedRef = useRef(false);
   const [focusSignal, setFocusSignal] = useState(0);
 
   useEffect(() => {
     if (openSignal === handledSignal.current) return;
     handledSignal.current = openSignal;
+    if (open) {
+      setFocusSignal((current) => current + 1);
+      return;
+    }
+    const active = document.activeElement;
+    openerRef.current = active instanceof HTMLElement ? active : null;
     show();
-  }, [openSignal, show]);
+  }, [open, openSignal, show]);
 
   useEffect(() => {
     onOpenChange?.(open);
-    if (!open) return;
-    setFocusSignal((current) => current + 1);
+    if (open) {
+      setFocusSignal((current) => current + 1);
+      return;
+    }
+    const opener = openerRef.current;
+    const escaped = escapedRef.current;
+    openerRef.current = null;
+    escapedRef.current = false;
+    if (!escaped || opener === null || !opener.isConnected) return;
+    opener.focus({ preventScroll: true });
   }, [onOpenChange, open]);
 
   useEffect(
@@ -152,25 +167,25 @@ function AgentMinimapDisclosure({
     [hide, onJump],
   );
 
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Escape") return;
+    escapedRef.current = true;
+  };
+
   return (
-    <div className="agent-minimap agent-minimap--compact" onBlur={onBlur} ref={rootRef}>
-      <button
-        aria-controls={open ? listId : undefined}
-        aria-expanded={open}
-        className="agent-minimap__toggle"
-        onClick={toggle}
-        ref={triggerRef}
-        type="button"
-      >
-        Turns · {model.turnCount}
-      </button>
+    <div
+      className="agent-minimap agent-minimap--compact"
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+      ref={rootRef}
+    >
+      <span aria-hidden="true" className="agent-minimap__anchor" ref={anchorRef} />
       {open && (
         <nav
           aria-label="Your turns"
           className="agent-popover agent-minimap__popover"
-          id={listId}
           ref={popoverRef}
-          style={style}
+          style={placement.style}
         >
           <AgentTurnJumpList
             currentIndex={currentIndex}

@@ -307,7 +307,7 @@ describe("agent mode responsive layout contract", () => {
     expect(shellCss).not.toContain("agent-surface-tree-width");
     expect(rule(".agent-surface-tree")).toContain("flex: 1 1 auto");
     const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
-    expect(editor).not.toContain("padding-left");
+    expect(editor).toContain("padding-left: var(--agent-surface-edge-width)");
     expect(editor.replace(/\s+/g, " ")).toContain(
       "clip-path: inset(var(--agent-surface-header-height) 0 0 0)",
     );
@@ -379,7 +379,7 @@ describe("agent mode responsive layout contract", () => {
   it("offsets the editor overlay by the same header token that sizes the surface head", () => {
     const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
     expect(editor).toContain("padding-top: var(--agent-surface-header-height)");
-    expect(editor).not.toContain("padding-left");
+    expect(editor).toContain("padding-left: var(--agent-surface-edge-width)");
     expect(editor).toContain("grid-row: 1 / -1");
     expect(rule(".app-shell {", shellCss)).toContain(
       "--agent-surface-header-height: var(--cv-topbar-h)",

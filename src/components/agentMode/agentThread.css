@@ -214,12 +214,11 @@
 .agent-split__chevron::before {
   content: "";
   position: absolute;
-  top: 50%;
+  top: 7px;
+  bottom: 7px;
   left: 0;
   width: 1px;
-  height: 14px;
   background: var(--cv-tint-2);
-  transform: translateY(-50%);
 }
 
 .agent-split__main:hover:not(:disabled),
@@ -401,7 +400,7 @@
 }
 
 /* A hover-driven strip means nothing without a hovering pointer; a coarse
-   pointer keeps the `Turns · N` popover instead. */
+   pointer reaches the turns through Go to Turn instead. */
 @media (pointer: coarse) {
   .agent-minimap--rail {
     display: none;
@@ -556,32 +555,17 @@
 }
 
 .agent-minimap--compact {
-  align-self: flex-start;
-  margin-block-end: var(--cv-space-2);
+  position: absolute;
+  top: var(--agent-find-pill-top);
+  left: var(--agent-minimap-inset);
+  width: 0;
+  height: 0;
 }
 
-.agent-minimap__toggle {
-  height: 24px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--cv-r-control);
-  background: var(--cv-raised);
-  box-shadow: var(--cv-lift);
-  color: var(--cv-fg);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--cv-t-xs);
-  outline: none;
-}
-
-.agent-minimap__toggle:hover {
-  background: var(--cv-tint-2);
-  color: var(--cv-fg-strong);
-}
-
-.agent-minimap__toggle:focus-visible {
-  box-shadow: var(--cv-ring-focus);
-  outline: none;
+.agent-minimap__anchor {
+  display: block;
+  width: 0;
+  height: 0;
 }
 
 .agent-minimap__popover {

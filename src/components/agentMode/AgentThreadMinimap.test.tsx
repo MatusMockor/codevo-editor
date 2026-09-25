@@ -164,27 +164,22 @@ describe("AgentThreadMinimap", () => {
     expect(inert?.className).toContain("agent-minimap--inert");
   });
 
-  it("falls back to the same list in a popover at narrow widths", () => {
+  it("shows no turn chip at narrow widths and opens the list only for Go to Turn", () => {
     const onJump = vi.fn();
-    render({
+    const props = {
       currentIndex: 1,
       model: model(["First", "Second", "Third"]),
       onJump,
       surface: "list",
-    });
+    } as const;
+    render(props);
 
     expect(host.querySelector(".agent-minimap--rail")).toBeNull();
-    const toggle = host.querySelector<HTMLButtonElement>(".agent-minimap__toggle");
-    expect(toggle?.textContent).toBe("Turns · 3");
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelectorAll("button")).toHaveLength(0);
+    expect(host.textContent).toBe("");
 
-    act(() => toggle?.click());
+    render({ ...props, openSignal: 1 });
 
-    expect(
-      host
-        .querySelector<HTMLButtonElement>(".agent-minimap__toggle")
-        ?.getAttribute("aria-expanded"),
-    ).toBe("true");
     const buttons = [...host.querySelectorAll('nav[aria-label="Your turns"] ol > li > button')];
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "Turn 1 of 3: First",
@@ -193,14 +188,17 @@ describe("AgentThreadMinimap", () => {
     ]);
     expect(buttons[1]?.getAttribute("aria-current")).toBe("true");
     expect(buttons[1]?.textContent).toContain("Second");
+    expect(document.activeElement).toBe(buttons[1]);
 
     act(() => (buttons[2] as HTMLButtonElement).click());
     expect(onJump).toHaveBeenLastCalledWith({ scope: "turn", turnId: "t3" });
+    expect(host.querySelector(".agent-minimap__popover")).toBeNull();
   });
 
   it("closes the turn list when focus leaves it", () => {
-    render({ currentIndex: 0, model: model(["First", "Second"]), surface: "list" });
-    act(() => host.querySelector<HTMLButtonElement>(".agent-minimap__toggle")?.click());
+    const props = { currentIndex: 0, model: model(["First", "Second"]), surface: "list" } as const;
+    render(props);
+    render({ ...props, openSignal: 1 });
     expect(host.querySelector(".agent-minimap__popover")).not.toBeNull();
 
     const outside = document.createElement("button");
@@ -212,10 +210,46 @@ describe("AgentThreadMinimap", () => {
     });
 
     expect(host.querySelector(".agent-minimap__popover")).toBeNull();
-    expect(host.querySelector(".agent-minimap__toggle")?.getAttribute("aria-expanded")).toBe(
-      "false",
-    );
     outside.remove();
+  });
+
+  it("returns focus to where Go to Turn was invoked when Escape dismisses the list", () => {
+    const opener = document.createElement("textarea");
+    document.body.append(opener);
+    opener.focus();
+    const props = { currentIndex: 0, model: model(["First", "Second"]), surface: "list" } as const;
+    render(props);
+    render({ ...props, openSignal: 1 });
+    render({ ...props, openSignal: 2 });
+    const focused = document.activeElement;
+    expect(focused).toBe(buttonList()[0]);
+
+    act(() => {
+      focused?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+
+    expect(host.querySelector(".agent-minimap__popover")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("leaves focus alone when a pointer press outside dismisses the list", () => {
+    const opener = document.createElement("textarea");
+    const elsewhere = document.createElement("p");
+    document.body.append(opener, elsewhere);
+    opener.focus();
+    const props = { currentIndex: 0, model: model(["First", "Second"]), surface: "list" } as const;
+    render(props);
+    render({ ...props, openSignal: 1 });
+
+    act(() => {
+      elsewhere.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(host.querySelector(".agent-minimap__popover")).toBeNull();
+    expect(document.activeElement).not.toBe(opener);
+    opener.remove();
+    elsewhere.remove();
   });
 
   it("keeps hover and keyboard previews outside the scrolling rail and within its bounds", () => {
