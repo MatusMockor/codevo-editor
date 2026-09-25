@@ -198,3 +198,48 @@ describe("AgentComposer interactions", () => {
     outside.remove();
   });
 });
+
+describe("AgentComposer stop confirmation", () => {
+  function stopConfirmationButton(name: string): HTMLButtonElement {
+    const match = [...host.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === name,
+    );
+    expect(match).toBeInstanceOf(HTMLButtonElement);
+    return match as HTMLButtonElement;
+  }
+
+  function stopAnnouncer(): HTMLElement | null {
+    return host.querySelector<HTMLElement>(".agent-stop-confirmation-announcer");
+  }
+
+  it("returns focus to the prompt after Stop everything or Keep running", () => {
+    const onStopNow = vi.fn();
+    const onCancel = vi.fn();
+    render({ onStopNow, stopConfirmation: { liveTaskCount: 1, onCancel } });
+
+    const stopEverything = stopConfirmationButton("Stop everything");
+    stopEverything.focus();
+    act(() => stopEverything.click());
+    expect(onStopNow).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(textarea());
+
+    const keepRunning = stopConfirmationButton("Keep running");
+    keepRunning.focus();
+    act(() => keepRunning.click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(textarea());
+  });
+
+  it("announces the confirmation through a live region that stays mounted", () => {
+    render({ stopConfirmation: null });
+    const region = stopAnnouncer();
+    expect(region?.getAttribute("role")).toBe("status");
+    expect(region?.textContent).toBe("");
+
+    render({ onStopNow: vi.fn(), stopConfirmation: { liveTaskCount: 2, onCancel: vi.fn() } });
+    expect(stopAnnouncer()).toBe(region);
+    expect(region?.textContent).toBe(
+      "2 background tasks are still running. Press Stop or Esc again to end them.",
+    );
+  });
+});

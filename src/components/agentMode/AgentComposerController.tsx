@@ -133,6 +133,8 @@ function agentComposerControllerPropsEqual(
     leftProps.immediateBlockedReason === rightProps.immediateBlockedReason &&
     leftProps.promptOwnerKey === rightProps.promptOwnerKey &&
     leftProps.onStop === rightProps.onStop &&
+    leftProps.onStopNow === rightProps.onStopNow &&
+    leftProps.stopConfirmation === rightProps.stopConfirmation &&
     sameGuard(leftProps.guard, rightProps.guard) &&
     leftProps.isolation === rightProps.isolation &&
     leftProps.isolationReason === rightProps.isolationReason &&

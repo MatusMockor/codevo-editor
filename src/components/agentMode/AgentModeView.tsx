@@ -1090,7 +1090,7 @@ function LocalAgentModeView({
                       : undefined
                   }
                   onReviewInDiff={reviewInDiff}
-                  onStopBackground={composer.composerProps.onStop}
+                  onStopBackground={composer.composerProps.onStopNow}
                   onOpenTurnDiff={openRecordedDiff}
                   turnChangesRevision={
                     sessionThread

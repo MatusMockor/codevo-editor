@@ -670,6 +670,50 @@ describe("useAgentComposerState", () => {
     expect(stop).toHaveBeenCalledWith("agt-1");
   });
 
+  it("asks before stopping background-only work and stops on the second press", () => {
+    const stop = vi.fn(async () => undefined);
+    render(threadsSurfaceFixture({ threads: [backgroundOnlyThreadView()], stop }));
+    act(() => current().navigation.selectThread("agt-1"));
+
+    act(() => current().composer.composerProps.onStop?.());
+    expect(stop).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.stopConfirmation?.liveTaskCount).toBe(1);
+
+    act(() => current().composer.composerProps.onStop?.());
+    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(current().composer.composerProps.stopConfirmation).toBeNull();
+  });
+
+  it("drops a pending stop confirmation when the running thread changes A to B to A", () => {
+    const stop = vi.fn(async () => undefined);
+    render(
+      threadsSurfaceFixture({
+        threads: [backgroundOnlyThreadView("agt-1"), backgroundOnlyThreadView("agt-2")],
+        stop,
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onStop?.());
+    expect(current().composer.composerProps.stopConfirmation?.liveTaskCount).toBe(1);
+
+    act(() => current().navigation.selectThread("agt-2"));
+    expect(current().composer.composerProps.stopConfirmation).toBeNull();
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.stopConfirmation).toBeNull();
+
+    act(() => current().composer.composerProps.onStop?.());
+    expect(stop).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.stopConfirmation?.liveTaskCount).toBe(1);
+  });
+
+  it("stops at once from the explicit stop-everything action", () => {
+    const stop = vi.fn(async () => undefined);
+    render(threadsSurfaceFixture({ threads: [backgroundOnlyThreadView()], stop }));
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onStopNow?.());
+    expect(stop).toHaveBeenCalledWith("agt-1");
+  });
+
   it("can stop a running server turn without queue support and keep writing after it stops", () => {
     const stop = vi.fn(async () => undefined);
     const base = steerableThreadView();
@@ -2032,4 +2076,25 @@ function steerableThreadView(provider: AgentCliKind = "claudeCode"): AgentThread
       turns: [running],
     },
   };
+}
+
+function backgroundOnlyThreadView(threadId = "agt-1"): AgentThreadView {
+  const base = steerableThreadView();
+  const running: AgentTurn = {
+    turnId: `${threadId}-t1`,
+    prompt: "Start the dev server",
+    status: { kind: "running" },
+    startedAtEpochMs: 1_700_000_000_000,
+    endedAtEpochMs: null,
+    events: [
+      { kind: "backgroundTask", taskId: "watch", status: "starting", taskType: "shell" },
+      { kind: "result", text: "Started", isError: false, usage: null },
+    ],
+    eventsTruncated: false,
+    lastStatusSequence: 1,
+    lastOutputSequence: 2,
+    launch: defaultAgentLaunchOptions("claudeCode"),
+    cliVersion: null,
+  };
+  return { ...base, thread: { ...base.thread, threadId, turns: [running] } };
 }

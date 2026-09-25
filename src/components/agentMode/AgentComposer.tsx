@@ -63,6 +63,11 @@ import { useCompactComposerControls } from "./useCompactComposerControls";
 import { AgentComposerSubmitControls } from "./AgentComposerSubmitControls";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
 import { AgentComposerCompactionBanner } from "./AgentComposerCompactionBanner";
+import {
+  AgentStopConfirmationAnnouncer,
+  AgentStopConfirmationBanner,
+  type AgentStopConfirmationView,
+} from "./AgentStopConfirmationBanner";
 import { AgentComposerDrawerStart } from "./AgentComposerDrawerStart";
 import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
 import { IconButton } from "../../ui/foundation/IconButton";
@@ -140,6 +145,8 @@ export interface AgentComposerProps {
   onOpenEnvironmentSettings?(): void;
   onShowUsageLimits?(): void;
   onStop?(): void;
+  onStopNow?(): void;
+  readonly stopConfirmation?: AgentStopConfirmationView | null;
   onRecoverDraft?(): "started" | "unavailable" | "draftTooLarge";
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void | Promise<boolean>;
@@ -182,6 +189,8 @@ export function AgentComposer({
   onPromptChange,
   onSelectRepository,
   onStop,
+  onStopNow,
+  stopConfirmation = null,
   onRecoverDraft,
   onSubmit,
   onCompactContext,
@@ -237,6 +246,7 @@ export function AgentComposer({
   const interactionActive = interaction !== null && interaction.kind !== "notice";
   const slabRef = useRef<HTMLDivElement>(null);
   useAgentComposerFocusReturn(interactionActive, slabRef, textareaRef);
+  const focusPrompt = (): void => textareaRef.current?.focus({ preventScroll: true });
   const steering = mode.kind === "steer";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason =
@@ -577,6 +587,7 @@ export function AgentComposer({
 
   const slab = (
     <div className="cv-composer__slab" ref={slabRef}>
+      <AgentStopConfirmationAnnouncer confirmation={stopConfirmation} />
       {interaction?.kind === "approval" && (
         <AgentComposerApprovalPanel interaction={interaction} key={interaction.key} />
       )}
@@ -755,6 +766,11 @@ export function AgentComposer({
       banners={
         <>
           {banners}
+          <AgentStopConfirmationBanner
+            confirmation={stopConfirmation}
+            onConfirm={onStopNow}
+            onFocusReturn={focusPrompt}
+          />
           <AgentComposerCompactionBanner
             available={
               !running &&

@@ -20,6 +20,11 @@ pub mod agent_task_pending_stops;
 
 use agent_task_pending_stops::{PendingAgentTaskStops, AGENT_TASK_STOPPED_BEFORE_START_ERROR};
 
+#[path = "agent_task_process_group.rs"]
+mod process_group;
+
+use process_group::{AgentProcessGroup, AgentProcessGroupState};
+
 use agent_task_steering::{
     close_agent_task_input, close_input_after_result, result_watch, AgentTaskStopTargets,
 };
@@ -63,6 +68,7 @@ const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const FORCE_STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const PUMP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const CLEAN_EXIT_GRACE: Duration = Duration::from_secs(2);
 const AGENT_TASK_START_PANIC_ERROR: &str = "Agent task startup failed unexpectedly.";
 
 #[cfg(unix)]
@@ -149,6 +155,14 @@ pub trait AgentProcessGroupSignalSender: Send + Sync {
     fn send_after_observed_exit(&self, process_group_id: i32, signal: i32) -> Result<(), String> {
         self.send(process_group_id, signal)
     }
+
+    fn group_has_members_besides_leader(&self, _process_group_id: i32) -> Option<bool> {
+        None
+    }
+}
+
+pub fn system_process_group_signals() -> Arc<dyn AgentProcessGroupSignalSender> {
+    Arc::new(SystemAgentProcessGroupSignalSender)
 }
 
 struct SystemAgentProcessGroupSignalSender;
@@ -188,6 +202,12 @@ impl AgentProcessGroupSignalSender for SystemAgentProcessGroupSignalSender {
         )
     }
 
+    #[cfg(target_os = "macos")]
+    fn group_has_members_besides_leader(&self, process_group_id: i32) -> Option<bool> {
+        macos_group_members(process_group_id)
+            .map(|members| members.iter().any(|pid| *pid != process_group_id))
+    }
+
     #[cfg(not(unix))]
     fn send(&self, _process_group_id: i32, _signal: i32) -> Result<(), String> {
         Err("Process-group signals are unavailable on this platform.".to_string())
@@ -216,6 +236,13 @@ fn send_unix_process_group_signal_with(
 
 #[cfg(target_os = "macos")]
 fn macos_group_contains_only_leader(process_group_id: i32) -> bool {
+    macos_group_members(process_group_id).is_some_and(|members| {
+        !members.is_empty() && members.iter().all(|pid| *pid == process_group_id)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_group_members(process_group_id: i32) -> Option<Vec<i32>> {
     const PROC_PGRP_ONLY: u32 = 2;
     #[link(name = "proc")]
     unsafe extern "C" {
@@ -227,12 +254,10 @@ fn macos_group_contains_only_leader(process_group_id: i32) -> bool {
         ) -> i32;
     }
 
-    let Ok(group) = u32::try_from(process_group_id) else {
-        return false;
-    };
+    let group = u32::try_from(process_group_id).ok()?;
     let required = unsafe { proc_listpids(PROC_PGRP_ONLY, group, std::ptr::null_mut(), 0) };
     if required <= 0 {
-        return false;
+        return None;
     }
     let mut pids = vec![0_i32; required as usize / std::mem::size_of::<i32>() + 1];
     let bytes = unsafe {
@@ -244,20 +269,21 @@ fn macos_group_contains_only_leader(process_group_id: i32) -> bool {
         )
     };
     if bytes <= 0 {
-        return false;
+        return None;
     }
     let returned = bytes as usize;
     let capacity = pids.len() * std::mem::size_of::<i32>();
     if returned >= capacity || !returned.is_multiple_of(std::mem::size_of::<i32>()) {
-        return false;
+        return None;
     }
     let count = returned / std::mem::size_of::<i32>();
-    let members: Vec<i32> = pids[..count]
-        .iter()
-        .copied()
-        .filter(|pid| *pid > 0)
-        .collect();
-    !members.is_empty() && members.iter().all(|pid| *pid == process_group_id)
+    Some(
+        pids[..count]
+            .iter()
+            .copied()
+            .filter(|pid| *pid > 0)
+            .collect(),
+    )
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -279,149 +305,6 @@ pub struct AgentTaskStartRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AgentTaskStartResult {
     pub task_id: String,
-}
-
-#[derive(Clone, Copy)]
-enum AgentProcessGroupState {
-    Active { process_group_id: i32 },
-    SharedSession,
-    Released,
-    CleanupUncertain,
-}
-
-struct AgentProcessGroup {
-    state: Mutex<AgentProcessGroupState>,
-    signals: Arc<dyn AgentProcessGroupSignalSender>,
-    force_requested: AtomicBool,
-    cleanup_verified: AtomicBool,
-    input: std::sync::OnceLock<Arc<AgentTaskInputSlot>>,
-}
-
-impl AgentProcessGroup {
-    fn new(process_group_id: i32, signals: Arc<dyn AgentProcessGroupSignalSender>) -> Arc<Self> {
-        Arc::new(Self {
-            state: Mutex::new(AgentProcessGroupState::Active { process_group_id }),
-            signals,
-            force_requested: AtomicBool::new(false),
-            cleanup_verified: AtomicBool::new(false),
-            input: std::sync::OnceLock::new(),
-        })
-    }
-
-    fn signal(&self, signal: i32) -> Result<(), String> {
-        self.close_input();
-        let state = self.state();
-        let process_group_id = match *state {
-            AgentProcessGroupState::Active { process_group_id } => process_group_id,
-            AgentProcessGroupState::SharedSession => {
-                self.force_requested.store(true, Ordering::SeqCst);
-                return Ok(());
-            }
-            AgentProcessGroupState::Released | AgentProcessGroupState::CleanupUncertain => {
-                return Ok(())
-            }
-        };
-        if process_group_id <= 0 {
-            return Err("Agent process-group authority is invalid.".to_string());
-        }
-        catch_unwind(AssertUnwindSafe(|| {
-            self.signals.send(process_group_id, signal)
-        }))
-        .map_err(|_| "Agent process-group signal sender panicked.".to_string())?
-    }
-
-    fn force_stop(&self) -> Result<(), String> {
-        self.force_requested.store(true, Ordering::SeqCst);
-        let result = self.signal(KILL_PROCESS_GROUP_SIGNAL);
-        if result.is_ok() {
-            self.cleanup_verified.store(true, Ordering::SeqCst);
-        }
-        result
-    }
-
-    fn close_input(&self) {
-        if let Some(input) = self.input.get() {
-            input.close(AgentTaskInputState::ClosedByStop);
-        }
-    }
-
-    fn force_stop_after_observed_exit(&self) -> Result<(), String> {
-        self.close_input();
-        self.force_requested.store(true, Ordering::SeqCst);
-        let process_group_id = match *self.state() {
-            AgentProcessGroupState::Active { process_group_id } if process_group_id > 0 => {
-                process_group_id
-            }
-            AgentProcessGroupState::SharedSession => {
-                self.cleanup_verified.store(true, Ordering::SeqCst);
-                return Ok(());
-            }
-            AgentProcessGroupState::Active { .. } => {
-                return Err("Agent process-group authority is invalid.".to_string())
-            }
-            AgentProcessGroupState::Released | AgentProcessGroupState::CleanupUncertain => {
-                return Ok(())
-            }
-        };
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            self.signals
-                .send_after_observed_exit(process_group_id, KILL_PROCESS_GROUP_SIGNAL)
-        }))
-        .map_err(|_| "Agent process-group signal sender panicked.".to_string())?;
-        if result.is_ok() {
-            self.cleanup_verified.store(true, Ordering::SeqCst);
-        }
-        result
-    }
-
-    fn force_requested(&self) -> bool {
-        self.force_requested.load(Ordering::SeqCst)
-    }
-
-    fn observe_exit(&self, child: &mut dyn AgentChild) -> Result<bool, String> {
-        child.observe_exit()
-    }
-
-    fn reap(&self, child: &mut dyn AgentChild) -> Result<i32, String> {
-        // The unreaped leader is the identity anchor that makes this group signal safe.
-        // Clean the whole group before surrendering that anchor on every exit path.
-        let cleanup = if self.cleanup_verified.load(Ordering::SeqCst) {
-            Ok(())
-        } else {
-            self.force_stop_after_observed_exit()
-        };
-        let reaped = child.reap();
-        match (cleanup, reaped) {
-            (Ok(()), Ok(exit_code)) => {
-                *self.state() = AgentProcessGroupState::Released;
-                Ok(exit_code)
-            }
-            (Err(cleanup_error), Ok(_)) => {
-                *self.state() = AgentProcessGroupState::CleanupUncertain;
-                Err(format!(
-                    "Agent process-group cleanup failed: {cleanup_error}"
-                ))
-            }
-            (_, Err(reap_error)) => Err(reap_error),
-        }
-    }
-
-    fn try_wait(&self, child: &mut dyn AgentChild) -> Result<Option<i32>, String> {
-        if !self.observe_exit(child)? {
-            return Ok(None);
-        }
-        self.reap(child).map(Some)
-    }
-
-    fn is_reaped(&self) -> bool {
-        matches!(*self.state(), AgentProcessGroupState::Released)
-    }
-
-    fn state(&self) -> MutexGuard<'_, AgentProcessGroupState> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 #[derive(Default)]
@@ -525,6 +408,7 @@ struct AgentTaskRuntimeTuning {
     max_runtime: Duration,
     graceful_timeout: Duration,
     force_timeout: Duration,
+    clean_exit_grace: Duration,
 }
 
 impl Default for AgentTaskRuntimeTuning {
@@ -533,6 +417,7 @@ impl Default for AgentTaskRuntimeTuning {
             max_runtime: AGENT_TASK_MAX_RUNTIME,
             graceful_timeout: GRACEFUL_STOP_TIMEOUT,
             force_timeout: FORCE_STOP_TIMEOUT,
+            clean_exit_grace: CLEAN_EXIT_GRACE,
         }
     }
 }
@@ -771,8 +656,17 @@ impl AgentTaskRegistry {
                 max_runtime,
                 graceful_timeout,
                 force_timeout,
+                clean_exit_grace: Duration::ZERO,
             },
         )
+    }
+
+    #[cfg(test)]
+    pub fn with_clean_exit_grace_for_tests(mut self, grace: Duration) -> Self {
+        let shared = Arc::get_mut(&mut self.shared)
+            .expect("clean-exit grace must be tuned before the registry is shared");
+        shared.tuning.clean_exit_grace = grace;
+        self
     }
 
     fn assemble(
@@ -909,6 +803,7 @@ impl AgentTaskRegistry {
         unpublished.group = Some(AgentProcessGroup::for_child(
             spawned.as_ref(),
             Arc::clone(&self.shared.signals),
+            self.shared.tuning.clean_exit_grace,
         ));
         let child = unpublished
             .child_mut()

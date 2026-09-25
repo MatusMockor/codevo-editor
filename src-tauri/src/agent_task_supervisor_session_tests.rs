@@ -75,7 +75,8 @@ impl AgentChild for SessionChild {
 fn shared_session_signals_request_turn_stop_without_signalling_the_host() {
     for signal in [TERMINATE_PROCESS_GROUP_SIGNAL, KILL_PROCESS_GROUP_SIGNAL] {
         let child = SessionChild::new(false, 0);
-        let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals));
+        let group =
+            AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals), Duration::ZERO);
         assert!(!group.force_requested());
         group.signal(signal).unwrap();
         assert!(group.force_requested());
@@ -87,7 +88,7 @@ fn shared_session_signals_request_turn_stop_without_signalling_the_host() {
 #[test]
 fn shared_session_force_stop_never_signals_the_host() {
     let child = SessionChild::new(false, 0);
-    let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals));
+    let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals), Duration::ZERO);
     group.force_stop().unwrap();
     assert!(group.force_requested());
     assert_eq!(child.force_calls, 0);
@@ -97,7 +98,7 @@ fn shared_session_force_stop_never_signals_the_host() {
 #[test]
 fn shared_session_cleanup_after_observed_exit_does_not_kill_the_host() {
     let mut child = SessionChild::new(true, 0);
-    let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals));
+    let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals), Duration::ZERO);
     assert!(group.observe_exit(&mut child).unwrap());
     group.force_stop_after_observed_exit().unwrap();
     assert!(group.cleanup_verified.load(Ordering::SeqCst));
@@ -110,7 +111,8 @@ fn shared_session_cleanup_after_observed_exit_does_not_kill_the_host() {
 fn shared_session_normal_reap_preserves_turn_exit_code() {
     for exit_code in [0, 73] {
         let mut child = SessionChild::new(true, exit_code);
-        let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals));
+        let group =
+            AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals), Duration::ZERO);
         assert_eq!(group.try_wait(&mut child).unwrap(), Some(exit_code));
         assert!(group.cleanup_verified.load(Ordering::SeqCst));
         assert!(group.is_reaped());
@@ -132,7 +134,7 @@ impl AgentTaskEventSink for NoEvents {
 #[test]
 fn shared_session_waiter_dispatches_stop_to_child_and_reaps_the_turn() {
     let mut child = SessionChild::new(false, 0);
-    let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals));
+    let group = AgentProcessGroup::for_child(&child, Arc::new(NoProcessSignals), Duration::ZERO);
     let shared = Arc::new(AgentTaskShared {
         sink: Arc::new(NoEvents),
         signals: Arc::new(NoProcessSignals),

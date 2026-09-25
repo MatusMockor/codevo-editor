@@ -86,11 +86,7 @@ export function projectAgentBackgroundState(
   for (const event of events) {
     root.observe(event);
     if (event.kind === "result") foregroundSettled = true;
-    if (
-      (event.kind === "assistantText" || event.kind === "toolCall") &&
-      event.parentToolId === undefined
-    )
-      foregroundSettled = false;
+    if (startsRootForeground(event)) foregroundSettled = false;
     if (event.kind !== "backgroundTask" || !processAlive) continue;
     const previous = observed.get(event.taskId);
     // Tombstones prohibit duplicate/stale starts or progress resurrecting completed work.
@@ -125,6 +121,19 @@ export function projectAgentBackgroundState(
   if (!processAlive || truncated || tasks.length === 0 || anchor === null)
     return { foreground: { kind: "running" }, tasks, truncated };
   return { foreground: { kind: "inferredIdle", anchor }, tasks, truncated };
+}
+
+function startsRootForeground(event: AgentTurnEvent): boolean {
+  switch (event.kind) {
+    case "assistantText":
+    case "reasoning":
+    case "toolCall":
+      return event.parentToolId === undefined;
+    case "userMessage":
+      return true;
+    default:
+      return false;
+  }
 }
 
 type RootForegroundEvent = "assistantText" | "other";

@@ -1762,6 +1762,90 @@ Expected, all of these must hold:
   - `lifecycle_states_for_turn1`
   - `init_frames`, which tells you whether `system/init` is emitted per turn or once
 
+#### Probe results (2026-09-25)
+
+**Verdict: the gate passes. Fix 3 may proceed, with the amendment in finding F1 below.**
+
+Setup:
+- CLI 2.1.281, macOS. Scratch dir `/tmp/codevo-claude-probe.*` (mode 0700), outside the repo.
+- The plan's probe script ran with small additions: raw event and sent-frame capture, a 4th turn after the interrupt, a descendant `ps` snapshot, and `try/finally` cleanup by exact PID and PGID.
+- Final run used the default model (`system/init.model` = `claude-opus-5-5[1m]`) with effort unset. An earlier run with `--model claude-haiku-4-5-20251001` produced the same frames and values.
+- A second mini-probe checked native `run_in_background`.
+- Every started process was confirmed gone afterwards (`ps -p` exit 1).
+
+Argv:
+
+`claude -p --output-format stream-json --verbose --input-format stream-json --permission-prompt-tool stdio --permission-mode bypassPermissions`
+
+Frames sent on stdin, one JSON object per line:
+- `{"uuid":"<u>","type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}`
+- `{"type":"control_request","request_id":"<r>","request":{"subtype":"interrupt"}}`
+
+Report values against the Step 2 expectations (default model):
+
+| Key | Value | Expected |
+|-----|-------|----------|
+| `turn1_result` | `true` | pass |
+| `cli_alive_after_result` | `true` | pass |
+| `background_alive_after_result` | `true` (the nohup `sleep 600` has ppid 1 and its own pgid) | pass |
+| `lifecycle_states_for_turn1` | `["completed","queued","started"]` | shape recorded |
+| `idle_output` (5 s after turn 1) | `[]` | pass |
+| `turn2_result` | `true` | pass |
+| `session_ids` | exactly 1 | pass |
+| `init_frames` after 2 turns | `2`, so `system/init` is emitted **once per turn** (4 after 4 turns) | shape recorded |
+| `interrupt_response` | `{"type":"control_response","response":{"subtype":"success","request_id":"<r>","response":{"still_queued":[]}}}` | pass |
+| `turn3_result_after_interrupt` | `true`; the result came 0.1 s after the interrupt | pass |
+| `turn3_result` | `{"subtype":"error_during_execution","is_error":true}` | shape recorded |
+| `cli_alive_after_interrupt` | `true` | pass |
+| extra: turn 4 after the interrupt | `success`, result `"FOURTH"`, same session | pass |
+| `cli_exited_after_stdin_close` | `true`, 0.41 s, exit code 0 | recorded |
+| `background_alive_after_cli_exit` | `true`: the nohup'd process outlives a clean CLI exit | recorded |
+
+Observed ordering for a normal turn:
+1. `command_lifecycle{state:queued, command_uuid:<u>}`
+2. `command_lifecycle{state:started}`
+3. `system/init` (the first turn is also preceded by `system/hook_started` and `system/hook_response` frames from the user's SessionStart hooks)
+4. `system/thinking_tokens*`, `assistant*`, and `user`(tool_result)`*`
+5. `result{subtype:success, stop_reason:end_turn, terminal_reason:completed, result_index:n, user_message_uuid:<u>, user_message_uuids:[<u>], queued_turn_count:0}`
+6. `command_lifecycle{state:completed}`
+
+`total_cost_usd` in each `result` is cumulative for the process, not per turn.
+
+Observed ordering for the interrupted turn (the interrupt was sent while a foreground Bash `for ... sleep 1` loop ran):
+1. `control_response{success, still_queued:[]}`
+2. `system/task_notification{status:"stopped"}` for the foreground `local_bash` task
+3. `user` tool_result with the text "The user doesn't want to proceed with this tool use...", then `user` text `[Request interrupted by user for tool use]`
+4. `result{subtype:"error_during_execution", is_error:true, stop_reason:"tool_use", terminal_reason:"aborted_tools", errors:["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"], user_message_uuid:<u>}`
+5. `command_lifecycle{state:"cancelled"}`
+
+The Bash child tree was gone 2 s later. The foreground Bash task also emits `system/task_started{is_backgrounded:false, task_type:"local_bash"}`.
+
+Findings for Fix 3:
+
+- **F1 (design-impacting): a native background task produces an unprompted turn when it finishes.** The mini-probe prompt asked for Bash with `run_in_background: true` running `sleep 15`, then a reply of STARTED. The frames were:
+  1. `system/background_tasks_changed{tasks:[{task_id, task_type:"local_bash", description}]}` and `system/task_started{is_backgrounded:true}`
+  2. `result success "STARTED"` and `command_lifecycle completed`
+  3. About 14 s of silence
+  4. `system/background_tasks_changed{tasks:[]}`, `system/task_updated{patch:{status:"completed"}}`, `system/task_notification{status:"completed", output_file, summary}`
+  5. **A new turn with no user frame:** `system/init`, then `assistant`, then `result{subtype:success, user_message_uuid:null, result_index:1}`, with **no `command_lifecycle` frames**
+
+  The same happened on Haiku and the default model. So "no unprompted output while idle" holds only while no native background task is live. Fix 3 must:
+  - treat an idle-session root `result` whose `user_message_uuid` is null as an unsolicited turn, not as a turn it owns;
+  - route or record that unsolicited turn instead of attributing it to the next user turn;
+  - not settle a live Codevo turn on it.
+
+  Task 3.7's fake CLI must emit this sequence.
+
+- **F2: `command_lifecycle` is the exact per-user-frame correlation.** Its `command_uuid` equals the `uuid` field of the sent user frame. The `result.user_message_uuid` equals it too. The terminal states seen were `completed` and `cancelled`.
+- **F3: the Bash tool runs each command in its own session and process group.** The zsh wrapper has stat `Ss` and pgid equal to its own pid, not the CLI's pgid. A `nohup ... &` child keeps the wrapper's pgid and is reparented to pid 1. A signal to the CLI's process group (`agent_task_spawner.rs` `process_group(0)`) therefore does not reach Bash-tool descendants directly. Whatever currently kills them at turn end is the CLI's own teardown, not our group signal. Fix 2 and Fix 3 should not assume group membership.
+- **F4:** After stdin closes on an idle session, the CLI exits 0 within about 0.4 to 0.6 s. It leaves detached (nohup) processes running.
+
+Cost and calls: 4 CLI processes, 10 user turns and 2 unprompted turns in total:
+- Haiku: main probe (4 turns, $0.048) and background mini-probe (1 user turn plus 1 unprompted turn, $0.039)
+- Default model: main probe (4 turns, $0.209) and background mini-probe ($0.190)
+
+The dollar figures are API-equivalent `total_cost_usd` values. The only session transcripts are under `~/.claude/projects/-private-tmp-codevo-claude-probe-*`.
+
 ### Task 3.1: Detector settle policy, re-arm and single-parse entry; lifecycle abandon
 
 **Files:**

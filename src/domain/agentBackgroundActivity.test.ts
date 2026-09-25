@@ -171,6 +171,26 @@ describe("factual background activity", () => {
       projectAgentBackgroundActivity([...backgroundAgentLaunch, leadAnswer], true, true),
     ).toMatchObject({ phase: "working", foregroundSettled: false, truncated: true });
   });
+  it("treats a wake-up that begins with root reasoning or a user message as foreground work", () => {
+    const settled = [task("starting"), result];
+    expect(projectAgentBackgroundActivity(settled, true).foregroundSettled).toBe(true);
+    expect(
+      projectAgentBackgroundActivity([...settled, { kind: "reasoning", text: "Checking" }], true)
+        .foregroundSettled,
+    ).toBe(false);
+    expect(
+      projectAgentBackgroundActivity(
+        [...settled, { kind: "userMessage", text: "Now deploy" }],
+        true,
+      ).foregroundSettled,
+    ).toBe(false);
+    expect(
+      projectAgentBackgroundActivity(
+        [...settled, { kind: "reasoning", text: "child", parentToolId: "spawn" }],
+        true,
+      ).foregroundSettled,
+    ).toBe(true);
+  });
   it("distinguishes result-confirmed settlement from inferred idle", () => {
     const shell = [launchShell, launchShellResult, task("starting")];
     expect(projectAgentBackgroundState([...shell, leadAnswer, result], true).foreground).toEqual({

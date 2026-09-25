@@ -3839,3 +3839,6 @@ mod capture_lifecycle;
 
 #[path = "support/agent_task_pending_stop_tests.rs"]
 mod pending_stop;
+
+#[path = "support/agent_task_clean_exit_grace_tests.rs"]
+mod clean_exit_grace;

@@ -15,6 +15,8 @@ import {
   agentThreadIsSteerable,
 } from "../../application/agentTurnAdmission";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { runningTurn } from "../../domain/agentThread";
+import { useAgentStopController } from "../../application/useAgentStopController";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
   useAgentComposerRepositoryPreference,
@@ -355,11 +357,43 @@ export function useAgentComposerControllerState({
   const dispatching =
     composerDispatching(agents, agentComposerDraftKey(selectedThread, target)) || steering;
   const stopThread = agents.stop;
+  const selectedThreadRef = useRef(selectedThread);
+  selectedThreadRef.current = selectedThread;
+  const stopController = useAgentStopController({
+    readRunningTurn: (threadId) => {
+      const view = selectedThreadRef.current;
+      if (view === null || view.thread.threadId !== threadId) return null;
+      return runningTurn(view.thread);
+    },
+    hardStop: stopThread,
+  });
+  const {
+    cancelStop,
+    confirmation: pendingStop,
+    requestStop: requestControlledStop,
+    stopNow: stopControlledNow,
+  } = stopController;
+  useEffect(() => {
+    if (runningThreadId === null) return;
+    return cancelStop;
+  }, [cancelStop, runningThreadId]);
   const requestStop = useCallback((): void => {
     const threadId = runningThreadIdRef.current;
     if (threadId === null) return;
-    void stopThread(threadId);
-  }, [stopThread]);
+    requestControlledStop(threadId);
+  }, [requestControlledStop]);
+  const stopNow = useCallback((): void => {
+    const threadId = runningThreadIdRef.current;
+    if (threadId === null) return;
+    stopControlledNow(threadId);
+  }, [stopControlledNow]);
+  const stopConfirmation = useMemo(
+    () =>
+      pendingStop === null || pendingStop.threadId !== runningThreadId
+        ? null
+        : { liveTaskCount: pendingStop.liveTaskCount, onCancel: cancelStop },
+    [cancelStop, pendingStop, runningThreadId],
+  );
   const lastUsedLaunch = agents.lastUsedLaunch;
   const composerLaunch = useMemo(
     () =>
@@ -615,6 +649,8 @@ export function useAgentComposerControllerState({
     onNewThread: clearSelection,
     onSelectRepository: selectRepository,
     onStop: requestStop,
+    onStopNow: stopNow,
+    stopConfirmation,
     running: runningThreadId !== null,
     target: composerTargetView(composerProjects, target),
     worktreeAvailable,

@@ -14,13 +14,14 @@ impl AgentProcessGroup {
     pub(super) fn for_child(
         child: &dyn AgentChild,
         signals: Arc<dyn AgentProcessGroupSignalSender>,
+        clean_exit_grace: Duration,
     ) -> Arc<Self> {
         match child.ownership() {
             AgentTaskProcessOwnership::OwnedGroup { process_group_id } => {
-                Self::new(process_group_id, signals)
+                Self::new(process_group_id, signals, clean_exit_grace)
             }
             AgentTaskProcessOwnership::SharedSession => {
-                let group = Self::new(0, signals);
+                let group = Self::new(0, signals, Duration::ZERO);
                 *group.state() = AgentProcessGroupState::SharedSession;
                 group
             }
