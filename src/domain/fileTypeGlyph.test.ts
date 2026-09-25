@@ -8,9 +8,8 @@ import {
   type FileTypeGlyphKind,
 } from "./fileTypeGlyph";
 
-const TOKENS_CSS_PATH = fileURLToPath(
-  new URL("../components/agentMode/agentModeTokens.css", import.meta.url),
-);
+const TOKENS_CSS_PATH = fileURLToPath(new URL("../ui/tokens/semantic.css", import.meta.url));
+const GLYPH_CSS_PATH = fileURLToPath(new URL("../components/fileTypeGlyph.css", import.meta.url));
 
 const EXTENSION_CASES: readonly (readonly [string, FileTypeGlyphKind])[] = [
   ["index.ts", "ts"],
@@ -119,20 +118,26 @@ describe("fileTypeGlyphKind", () => {
 describe("file glyph colour tokens", () => {
   const css = readFileSync(TOKENS_CSS_PATH, "utf8");
   const colouredKinds = FILE_TYPE_GLYPH_KINDS.filter((kind) => kind !== "file");
-  const darkBlock = blockFor(css, ".app-shell {");
-  const lightBlock = blockFor(css, '.app-shell[data-theme="light"],');
+  const darkBlock = blockFor(css, ':root[data-cv-scheme="dark"] {');
+  const lightBlock = blockFor(css, ':root[data-cv-scheme="light"] {');
+  const glyphCss = readFileSync(GLYPH_CSS_PATH, "utf8");
 
-  it.each(colouredKinds)("declares --codevo-ft-%s in the dark ladder", (kind) => {
-    expect(darkBlock).toContain(`--codevo-ft-${kind}:`);
+  it.each(colouredKinds)("declares --cv-ft-%s in the dark ladder", (kind) => {
+    expect(darkBlock).toContain(`--cv-ft-${kind}:`);
   });
 
-  it.each(colouredKinds)("declares --codevo-ft-%s in the light ladder", (kind) => {
-    expect(lightBlock).toContain(`--codevo-ft-${kind}:`);
+  it.each(colouredKinds)("declares --cv-ft-%s in the light ladder", (kind) => {
+    expect(lightBlock).toContain(`--cv-ft-${kind}:`);
+  });
+
+  it.each(colouredKinds)("paints the %s glyph from its ladder token", (kind) => {
+    expect(blockFor(glyphCss, `.file-glyph--${kind} {`)).toContain(`color: var(--cv-ft-${kind});`);
   });
 
   it("keeps the generic glyph on the subtle foreground token", () => {
-    expect(darkBlock).toContain("--codevo-fg-subtle:");
-    expect(lightBlock).not.toContain("--codevo-ft-file:");
+    expect(blockFor(glyphCss, ".file-glyph--file {")).toContain("color: var(--cv-fg-subtle);");
+    expect(darkBlock).not.toContain("--cv-ft-file:");
+    expect(lightBlock).not.toContain("--cv-ft-file:");
   });
 });
 

@@ -378,10 +378,10 @@ describe("agent thread session minimap and find pill", () => {
     const pillTop = pixels(tokenValue("--agent-find-pill-top"));
     const pillHeight = pixels(tokenValue("--agent-find-pill-height"));
     expect(sessionPadding + inset).toBeGreaterThanOrEqual(pillTop + pillHeight);
-    expect(pixels(tokenValue("--agent-thread-column"))).toBe(
+    expect(pixels("var(--cv-column)")).toBe(
       pixels(declaration(".cv-conversation-column", "max-width") ?? ""),
     );
-    expect(AGENT_MINIMAP_COLUMN_WIDTH).toBe(pixels(tokenValue("--agent-thread-column")));
+    expect(AGENT_MINIMAP_COLUMN_WIDTH).toBe(pixels("var(--cv-column)"));
     expect(AGENT_MINIMAP_PERSISTENT_GUTTER).toBe(
       pixels(tokenValue("--agent-minimap-persistent-gutter")),
     );
@@ -392,7 +392,7 @@ describe("agent thread session minimap and find pill", () => {
   it("hangs the rail off the session edge instead of the reading column", () => {
     const left = declaration(".agent-minimap--rail", "left");
     expect(left).toBe("var(--agent-minimap-inset)");
-    expect(left).not.toContain("--agent-thread-column");
+    expect(left).not.toContain("--cv-column");
     expect(declaration(".agent-minimap--rail", "width")).toBe(
       "var(--minimap-strip, var(--agent-minimap-rail))",
     );
@@ -588,7 +588,7 @@ function cssValue(selector: string): string {
 
 function tokenValue(name: string): string {
   const values = STYLES.rules
-    .filter((rule) => rule.sheet === "components/agentMode/agentModeTokens.css")
+    .filter((rule) => rule.sheet === "components/workbenchShellFrame.css")
     .flatMap((rule) =>
       rule.declarations.filter((entry) => entry.property === name).map((entry) => entry.value),
     );

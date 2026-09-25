@@ -4123,7 +4123,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         javaScriptTypeScriptValidation: false,
         statusBar: {
           ...defaultWorkspaceSettings().statusBar,
-          message: false,
+          index: false,
         },
       },
       indexProgressGateway,
@@ -4221,7 +4221,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().workspaceTabs).toEqual([]);
     expect(getWorkbench().workspaceSettings.intelligenceMode).toBe("basic");
     expect(getWorkbench().workspaceSettings.javaScriptTypeScriptValidation).toBe(true);
-    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
+    expect(getWorkbench().workspaceSettings.statusBar.index).toBe(true);
     expect(getWorkbench().phpIdeReadinessVersion).toBe(0);
     expect(getWorkbench().message).toBeNull();
     expect(getWorkbench().notices).toEqual([]);

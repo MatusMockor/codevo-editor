@@ -16,7 +16,7 @@ export type NetteWorkspaceRoutesPanelProps = NetteWorkspaceRoutesPanelModel;
 const styles: Record<string, CSSProperties> = {
   action: {
     background: "transparent",
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 4,
     color: "inherit",
     cursor: "pointer",
@@ -24,23 +24,23 @@ const styles: Record<string, CSSProperties> = {
   },
   actions: { display: "flex", gap: 5, justifyContent: "flex-end" },
   badge: {
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 8,
-    color: "var(--text-muted)",
+    color: "var(--cv-fg-muted)",
     fontSize: 11,
     padding: "1px 6px",
   },
   header: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     gap: 8,
     padding: "6px 8px",
   },
   input: { background: "transparent", border: 0, color: "inherit", flex: 1, minWidth: 100 },
   list: { listStyle: "none", margin: 0, outline: "none", padding: 0 },
-  message: { color: "var(--text-muted)", padding: 16 },
-  muted: { color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" },
+  message: { color: "var(--cv-fg-muted)", padding: 16 },
+  muted: { color: "var(--cv-fg-muted)", overflow: "hidden", textOverflow: "ellipsis" },
   panel: { height: "100%", overflow: "auto" },
   row: {
     alignItems: "center",
@@ -50,7 +50,7 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 34,
     padding: "4px 8px",
   },
-  selected: { background: "var(--selection-background)" },
+  selected: { background: "var(--cv-accent-soft)" },
 };
 
 export function NetteWorkspaceRoutesPanel(props: NetteWorkspaceRoutesPanelProps): ReactNode {

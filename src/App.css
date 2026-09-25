@@ -1,5 +1,4 @@
 @import "./ui/tokens/tokens.css";
-@import "./components/agentMode/agentModeTokens.css";
 @import "./components/agentMode/agentMode.css";
 @import "./components/agentMode/agentRail.css";
 @import "./components/agentMode/agentThread.css";
@@ -15,700 +14,15 @@
 @import "./components/toastNotification.css";
 
 :root {
-  --color-accent: #4fcdb3;
-  --color-accent-text: #08201b;
-  --color-active: #292d35;
-  --color-active-text: #f1f3f7;
-  --color-active-muted: #23262e;
-  --color-app: #13151a;
-  --color-border: #20232a;
-  --color-border-strong: #292d35;
-  --color-control: #0f1014;
-  --color-disabled: #4a505c;
-  --color-error: #ef6f6f;
-  --color-hover: #20232a;
-  --color-hover-strong: #23262e;
-  --color-modal: #1a1d23;
-  --color-panel: #0c0d10;
-  --color-panel-deep: #0c0d10;
-  --color-sidebar: #0c0d10;
-  --color-status: #0c0d10;
-  --color-success: #4cc38a;
-  --color-surface: #1a1d23;
-  --color-tab: #13151a;
-  --color-tab-active: #1a1d23;
-  --color-tabs: #13151a;
-  --color-text: #d3d7de;
-  --color-text-muted: #9aa0ab;
-  --color-text-strong: #f1f3f7;
-  --color-text-subtle: #6a7180;
-  --color-warning: #e5b354;
-  --color-white: #ffffff;
-  --change-added: #7ddc9f;
-  --change-added-soft: rgba(125, 220, 159, 0.13);
-  --change-added-strong: #a7f0bf;
-  --change-deleted: #ef7373;
-  --change-deleted-soft: rgba(239, 115, 115, 0.13);
-  --change-deleted-strong: #ff9b9b;
-  --change-modified: #e7c66c;
-  --change-modified-soft: rgba(231, 198, 108, 0.14);
-  --change-modified-strong: #f6dc86;
-  --symbol-method: #b48ead;
-  --symbol-property: #d08770;
-  --symbol-const: #5e9cd0;
-  --symbol-class: #a3be8c;
-  --symbol-interface: #5fb3b3;
-  --symbol-enum: #ebcb8b;
-  --symbol-function: #b48ead;
-  --symbol-trait: #6cb6c9;
-  --symbol-variable: #8b94a3;
-  --symbol-keyword: #b48ead;
-  --symbol-icon-foreground: #000000;
-  --vis-public: #8fbf7f;
-  --vis-private: #d07f7f;
-  --vis-protected: #d8b977;
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 14px;
-  --radius-pill: 999px;
-  --motion-fast: 120ms;
-  --motion-base: 180ms;
-  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
-  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --color-accent-bar: var(--color-accent);
-  --focus-ring: 0 0 0 2px var(--color-app), 0 0 0 4px var(--color-accent);
-  color: var(--color-text);
-  background: var(--color-app);
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  color: var(--cv-fg);
+  background: var(--cv-canvas);
+  font-family: var(--cv-font-ui);
   font-size: 14px;
   font-synthesis: none;
   line-height: 1.4;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-.app-shell[data-theme="light"] {
-  --color-accent: #13836f;
-  --color-accent-text: #ffffff;
-  --color-active: #dbdfe6;
-  --color-active-text: #171a1f;
-  --color-active-muted: #e1e4ea;
-  --color-app: #f0f2f5;
-  --color-border: #e5e8ed;
-  --color-border-strong: #dbdfe6;
-  --color-control: #eaedf1;
-  --color-disabled: #c2c7cf;
-  --color-error: #d64545;
-  --color-hover: #e5e8ed;
-  --color-hover-strong: #e1e4ea;
-  --color-modal: #ffffff;
-  --color-panel: #fbfcfd;
-  --color-panel-deep: #fbfcfd;
-  --color-sidebar: #fbfcfd;
-  --color-status: #fbfcfd;
-  --color-success: #1f9d5f;
-  --color-surface: #ffffff;
-  --color-tab: #f0f2f5;
-  --color-tab-active: #ffffff;
-  --color-tabs: #f0f2f5;
-  --color-text: #333840;
-  --color-text-muted: #656d7b;
-  --color-text-strong: #171a1f;
-  --color-text-subtle: #99a1ad;
-  --color-warning: #b7791f;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #23845f;
-  --change-added-soft: rgba(35, 132, 95, 0.13);
-  --change-added-strong: #14684b;
-  --change-deleted: #bd4d4d;
-  --change-deleted-soft: rgba(189, 77, 77, 0.12);
-  --change-deleted-strong: #9c3232;
-  --change-modified: #bd8525;
-  --change-modified-soft: rgba(189, 133, 37, 0.14);
-  --change-modified-strong: #81570d;
-  --symbol-method: #8250c4;
-  --symbol-property: #c25a3a;
-  --symbol-const: #2f6fb0;
-  --symbol-class: #3f7a3f;
-  --symbol-interface: #1d7a86;
-  --symbol-enum: #9a7016;
-  --symbol-function: #8250c4;
-  --symbol-trait: #2a7d6f;
-  --symbol-variable: #6b727d;
-  --symbol-keyword: #8a5c8f;
-  --vis-public: #3f8a3f;
-  --vis-private: #c2484a;
-  --vis-protected: #b07d18;
-  color-scheme: light;
-}
-
-.app-shell[data-theme="ayuMirage"] {
-  --color-accent: #ffcc66;
-  --color-accent-text: #1f2430;
-  --color-active: #2d3650;
-  --color-active-text: #ffffff;
-  --color-active-muted: #242c44;
-  --color-app: #1f2430;
-  --color-border: #2a3140;
-  --color-border-strong: #3a4357;
-  --color-control: #1b2029;
-  --color-disabled: #707a8c;
-  --color-error: #f28779;
-  --color-hover: #303748;
-  --color-hover-strong: #363e51;
-  --color-modal: #272d3c;
-  --color-panel: #1a1f29;
-  --color-panel-deep: #1a1f29;
-  --color-sidebar: #1f2430;
-  --color-status: #1a1f29;
-  --color-success: #87d96c;
-  --color-surface: #272d3c;
-  --color-tab: #1f2430;
-  --color-tab-active: #272d3c;
-  --color-tabs: #1f2430;
-  --color-text: #cbccc6;
-  --color-text-muted: #9aa3b4;
-  --color-text-strong: #ffffff;
-  --color-text-subtle: #707a8c;
-  --color-warning: #ffd580;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #87d96c;
-  --change-added-soft: rgba(135, 217, 108, 0.14);
-  --change-added-strong: #a6e88c;
-  --change-deleted: #f28779;
-  --change-deleted-soft: rgba(242, 135, 121, 0.14);
-  --change-deleted-strong: #ffab9d;
-  --change-modified: #ffcc66;
-  --change-modified-soft: rgba(255, 204, 102, 0.15);
-  --change-modified-strong: #ffd580;
-  --symbol-method: #d4bfff;
-  --symbol-property: #ffa759;
-  --symbol-const: #73d0ff;
-  --symbol-class: #bae67e;
-  --symbol-interface: #5ccfe6;
-  --symbol-enum: #ffd580;
-  --symbol-function: #d4bfff;
-  --symbol-trait: #5ccfe6;
-  --symbol-variable: #9aa3b4;
-  --symbol-keyword: #ffa659;
-  --vis-public: #87d96c;
-  --vis-private: #f28779;
-  --vis-protected: #ffcc66;
-  color-scheme: dark;
-}
-
-.app-shell[data-theme="materialDeepOcean"] {
-  --color-accent: #84ffff;
-  --color-accent-text: #0f111a;
-  --color-active: #1f3a5f;
-  --color-active-text: #ffffff;
-  --color-active-muted: #16263f;
-  --color-app: #0f111a;
-  --color-border: #1c2133;
-  --color-border-strong: #2a3350;
-  --color-control: #0c0e16;
-  --color-disabled: #4b5572;
-  --color-error: #f07178;
-  --color-hover: #212739;
-  --color-hover-strong: #272e44;
-  --color-modal: #181d2c;
-  --color-panel: #0a0c14;
-  --color-panel-deep: #0a0c14;
-  --color-sidebar: #0f111a;
-  --color-status: #0a0c14;
-  --color-success: #c3e88d;
-  --color-surface: #181d2c;
-  --color-tab: #0f111a;
-  --color-tab-active: #181d2c;
-  --color-tabs: #0f111a;
-  --color-text: #a6accd;
-  --color-text-muted: #8a90b5;
-  --color-text-strong: #ffffff;
-  --color-text-subtle: #4b5572;
-  --color-warning: #ffcb6b;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #c3e88d;
-  --change-added-soft: rgba(195, 232, 141, 0.13);
-  --change-added-strong: #d7ff9d;
-  --change-deleted: #f07178;
-  --change-deleted-soft: rgba(240, 113, 120, 0.14);
-  --change-deleted-strong: #ff9aa0;
-  --change-modified: #ffcb6b;
-  --change-modified-soft: rgba(255, 203, 107, 0.15);
-  --change-modified-strong: #ffd98a;
-  --symbol-method: #c792ea;
-  --symbol-property: #f78c6c;
-  --symbol-const: #82aaff;
-  --symbol-class: #c3e88d;
-  --symbol-interface: #89ddff;
-  --symbol-enum: #ffcb6b;
-  --symbol-function: #c792ea;
-  --symbol-trait: #89ddff;
-  --symbol-variable: #8a90b5;
-  --symbol-keyword: #c792ea;
-  --vis-public: #c3e88d;
-  --vis-private: #f07178;
-  --vis-protected: #ffcb6b;
-  color-scheme: dark;
-}
-
-.app-shell[data-theme="oneDarkPro"] {
-  --color-accent: #61afef;
-  --color-accent-text: #21252b;
-  --color-active: #2f4156;
-  --color-active-text: #ffffff;
-  --color-active-muted: #2a3744;
-  --color-app: #282c34;
-  --color-border: #31363f;
-  --color-border-strong: #3e4451;
-  --color-control: #23272e;
-  --color-disabled: #5c6370;
-  --color-error: #e06c75;
-  --color-hover: #3a404b;
-  --color-hover-strong: #414855;
-  --color-modal: #31363f;
-  --color-panel: #21252b;
-  --color-panel-deep: #21252b;
-  --color-sidebar: #282c34;
-  --color-status: #21252b;
-  --color-success: #98c379;
-  --color-surface: #31363f;
-  --color-tab: #282c34;
-  --color-tab-active: #31363f;
-  --color-tabs: #282c34;
-  --color-text: #abb2bf;
-  --color-text-muted: #9aa2b1;
-  --color-text-strong: #ffffff;
-  --color-text-subtle: #5c6370;
-  --color-warning: #e5c07b;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #98c379;
-  --change-added-soft: rgba(152, 195, 121, 0.14);
-  --change-added-strong: #b6e09a;
-  --change-deleted: #e06c75;
-  --change-deleted-soft: rgba(224, 108, 117, 0.14);
-  --change-deleted-strong: #f4929a;
-  --change-modified: #e5c07b;
-  --change-modified-soft: rgba(229, 192, 123, 0.16);
-  --change-modified-strong: #f0d29a;
-  --symbol-method: #c678dd;
-  --symbol-property: #e06c75;
-  --symbol-const: #56b6c2;
-  --symbol-class: #98c379;
-  --symbol-interface: #56b6c2;
-  --symbol-enum: #e5c07b;
-  --symbol-function: #c678dd;
-  --symbol-trait: #56b6c2;
-  --symbol-variable: #868e9c;
-  --symbol-keyword: #c678dd;
-  --vis-public: #98c379;
-  --vis-private: #e06c75;
-  --vis-protected: #e5c07b;
-  color-scheme: dark;
-}
-
-.app-shell[data-theme="dracula"] {
-  --color-accent: #bd93f9;
-  --color-accent-text: #21222c;
-  --color-active: #443a5e;
-  --color-active-text: #ffffff;
-  --color-active-muted: #353145;
-  --color-app: #282a36;
-  --color-border: #343746;
-  --color-border-strong: #44475a;
-  --color-control: #23242f;
-  --color-disabled: #6272a4;
-  --color-error: #ff5555;
-  --color-hover: #3b3d50;
-  --color-hover-strong: #43465b;
-  --color-modal: #313343;
-  --color-panel: #21222c;
-  --color-panel-deep: #21222c;
-  --color-sidebar: #282a36;
-  --color-status: #21222c;
-  --color-success: #50fa7b;
-  --color-surface: #313343;
-  --color-tab: #282a36;
-  --color-tab-active: #313343;
-  --color-tabs: #282a36;
-  --color-text: #f8f8f2;
-  --color-text-muted: #b3bbe0;
-  --color-text-strong: #ffffff;
-  --color-text-subtle: #6272a4;
-  --color-warning: #ffb86c;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #50fa7b;
-  --change-added-soft: rgba(80, 250, 123, 0.13);
-  --change-added-strong: #74ffa0;
-  --change-deleted: #ff5555;
-  --change-deleted-soft: rgba(255, 85, 85, 0.14);
-  --change-deleted-strong: #ff8080;
-  --change-modified: #ffb86c;
-  --change-modified-soft: rgba(255, 184, 108, 0.16);
-  --change-modified-strong: #ffce95;
-  --symbol-method: #bd93f9;
-  --symbol-property: #ff79c6;
-  --symbol-const: #8be9fd;
-  --symbol-class: #50fa7b;
-  --symbol-interface: #8be9fd;
-  --symbol-enum: #f1fa8c;
-  --symbol-function: #bd93f9;
-  --symbol-trait: #8be9fd;
-  --symbol-variable: #9aa3c4;
-  --symbol-keyword: #ff79c6;
-  --vis-public: #50fa7b;
-  --vis-private: #ff5555;
-  --vis-protected: #ffb86c;
-  color-scheme: dark;
-}
-
-.app-shell[data-theme="catppuccinMocha"] {
-  --color-accent: #cba6f7;
-  --color-accent-text: #181825;
-  --color-active: #423d5c;
-  --color-active-text: #ffffff;
-  --color-active-muted: #302d44;
-  --color-app: #1e1e2e;
-  --color-border: #2a2b3c;
-  --color-border-strong: #45475a;
-  --color-control: #1a1a28;
-  --color-disabled: #6c7086;
-  --color-error: #f38ba8;
-  --color-hover: #313244;
-  --color-hover-strong: #383a4e;
-  --color-modal: #2a2a3d;
-  --color-panel: #181825;
-  --color-panel-deep: #181825;
-  --color-sidebar: #1e1e2e;
-  --color-status: #181825;
-  --color-success: #a6e3a1;
-  --color-surface: #2a2a3d;
-  --color-tab: #1e1e2e;
-  --color-tab-active: #2a2a3d;
-  --color-tabs: #1e1e2e;
-  --color-text: #cdd6f4;
-  --color-text-muted: #a6adc8;
-  --color-text-strong: #ffffff;
-  --color-text-subtle: #6c7086;
-  --color-warning: #f9e2af;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #a6e3a1;
-  --change-added-soft: rgba(166, 227, 161, 0.14);
-  --change-added-strong: #c2f0bd;
-  --change-deleted: #f38ba8;
-  --change-deleted-soft: rgba(243, 139, 168, 0.15);
-  --change-deleted-strong: #f8aec2;
-  --change-modified: #f9e2af;
-  --change-modified-soft: rgba(249, 226, 175, 0.16);
-  --change-modified-strong: #fceec6;
-  --symbol-method: #cba6f7;
-  --symbol-property: #fab387;
-  --symbol-const: #74c7ec;
-  --symbol-class: #a6e3a1;
-  --symbol-interface: #89dceb;
-  --symbol-enum: #f9e2af;
-  --symbol-function: #cba6f7;
-  --symbol-trait: #94e2d5;
-  --symbol-variable: #a6adc8;
-  --symbol-keyword: #cba6f7;
-  --vis-public: #a6e3a1;
-  --vis-private: #f38ba8;
-  --vis-protected: #f9e2af;
-  color-scheme: dark;
-}
-
-.app-shell[data-theme="darkPlus"] {
-  --color-accent: #007acc;
-  --color-accent-text: #ffffff;
-  --color-active: #094771;
-  --color-active-text: #ffffff;
-  --color-active-muted: #0a2a3f;
-  --color-app: #1e1e1e;
-  --color-border: #2d2d2d;
-  --color-border-strong: #3c3c3c;
-  --color-control: #181818;
-  --color-disabled: #6b6b6b;
-  --color-error: #f48771;
-  --color-hover: #383838;
-  --color-hover-strong: #3f3f3f;
-  --color-modal: #2d2d2d;
-  --color-panel: #252526;
-  --color-panel-deep: #181818;
-  --color-sidebar: #252526;
-  --color-status: #007acc;
-  --color-success: #89d185;
-  --color-surface: #2d2d2d;
-  --color-tab: #1e1e1e;
-  --color-tab-active: #2d2d2d;
-  --color-tabs: #252526;
-  --color-text: #cccccc;
-  --color-text-muted: #9d9d9d;
-  --color-text-strong: #ffffff;
-  --color-text-subtle: #858585;
-  --color-warning: #cca700;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #89d185;
-  --change-added-soft: rgba(137, 209, 133, 0.14);
-  --change-added-strong: #b0e3ad;
-  --change-deleted: #f48771;
-  --change-deleted-soft: rgba(244, 135, 113, 0.14);
-  --change-deleted-strong: #f7a895;
-  --change-modified: #e2c08d;
-  --change-modified-soft: rgba(226, 192, 141, 0.16);
-  --change-modified-strong: #efd6ad;
-  --symbol-method: #c586c0;
-  --symbol-property: #ce9178;
-  --symbol-const: #4fc1ff;
-  --symbol-class: #4ec9b0;
-  --symbol-interface: #4ec9b0;
-  --symbol-enum: #dcdcaa;
-  --symbol-function: #c586c0;
-  --symbol-trait: #4ec9b0;
-  --symbol-variable: #9d9d9d;
-  --symbol-keyword: #c586c0;
-  --vis-public: #89d185;
-  --vis-private: #f48771;
-  --vis-protected: #cca700;
-  color-scheme: dark;
-}
-
-.app-shell[data-theme="catppuccinLatte"] {
-  --color-accent: #8839ef;
-  --color-accent-text: #ffffff;
-  --color-active: #e0d4f7;
-  --color-active-text: #2a124e;
-  --color-active-muted: #e9e2f6;
-  --color-app: #eff1f5;
-  --color-border: #dce0e8;
-  --color-border-strong: #ccd0da;
-  --color-control: #e6e9ef;
-  --color-disabled: #9ca0b0;
-  --color-error: #d20f39;
-  --color-hover: #e2e5ed;
-  --color-hover-strong: #dce0e8;
-  --color-modal: #ffffff;
-  --color-panel: #f7f8fa;
-  --color-panel-deep: #f7f8fa;
-  --color-sidebar: #eff1f5;
-  --color-status: #f7f8fa;
-  --color-success: #40a02b;
-  --color-surface: #ffffff;
-  --color-tab: #eff1f5;
-  --color-tab-active: #ffffff;
-  --color-tabs: #eff1f5;
-  --color-text: #4c4f69;
-  --color-text-muted: #6c6f85;
-  --color-text-strong: #1e2030;
-  --color-text-subtle: #8c8fa1;
-  --color-warning: #df8e1d;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #2e7d20;
-  --change-added-soft: rgba(64, 160, 43, 0.14);
-  --change-added-strong: #1f5e16;
-  --change-deleted: #d20f39;
-  --change-deleted-soft: rgba(210, 15, 57, 0.12);
-  --change-deleted-strong: #a00c2c;
-  --change-modified: #b07407;
-  --change-modified-soft: rgba(223, 142, 29, 0.16);
-  --change-modified-strong: #8a5a05;
-  --symbol-method: #8839ef;
-  --symbol-property: #c24e00;
-  --symbol-const: #1e66f5;
-  --symbol-class: #2e7d20;
-  --symbol-interface: #16798a;
-  --symbol-enum: #9a6200;
-  --symbol-function: #8839ef;
-  --symbol-trait: #147a80;
-  --symbol-variable: #6c6f85;
-  --symbol-keyword: #8839ef;
-  --vis-public: #40a02b;
-  --vis-private: #d20f39;
-  --vis-protected: #df8e1d;
-  color-scheme: light;
-}
-
-.app-shell[data-theme="oneLight"] {
-  --color-accent: #4078f2;
-  --color-accent-text: #081324;
-  --color-active: #d6e2fd;
-  --color-active-text: #15294f;
-  --color-active-muted: #e4ecfd;
-  --color-app: #fafafa;
-  --color-border: #ececec;
-  --color-border-strong: #dcdcdc;
-  --color-control: #eaeaeb;
-  --color-disabled: #a0a1a7;
-  --color-error: #e45649;
-  --color-hover: #e8e8e9;
-  --color-hover-strong: #e0e0e2;
-  --color-modal: #ffffff;
-  --color-panel: #fdfdfd;
-  --color-panel-deep: #fdfdfd;
-  --color-sidebar: #fafafa;
-  --color-status: #fdfdfd;
-  --color-success: #50a14f;
-  --color-surface: #ffffff;
-  --color-tab: #f1f1f2;
-  --color-tab-active: #ffffff;
-  --color-tabs: #f1f1f2;
-  --color-text: #383a42;
-  --color-text-muted: #696c77;
-  --color-text-strong: #1c1d22;
-  --color-text-subtle: #a0a1a7;
-  --color-warning: #c18401;
-  --color-white: #ffffff;
-  --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-  --change-added: #3f8c3e;
-  --change-added-soft: rgba(80, 161, 79, 0.14);
-  --change-added-strong: #2f6b2e;
-  --change-deleted: #d83b2c;
-  --change-deleted-soft: rgba(228, 86, 73, 0.13);
-  --change-deleted-strong: #ad2c20;
-  --change-modified: #9a6801;
-  --change-modified-soft: rgba(193, 132, 1, 0.16);
-  --change-modified-strong: #7a5201;
-  --symbol-method: #a626a4;
-  --symbol-property: #d75f00;
-  --symbol-const: #0184bc;
-  --symbol-class: #3f8c3e;
-  --symbol-interface: #08788f;
-  --symbol-enum: #9a6801;
-  --symbol-function: #a626a4;
-  --symbol-trait: #08788f;
-  --symbol-variable: #696c77;
-  --symbol-keyword: #a626a4;
-  --vis-public: #3f8c3e;
-  --vis-private: #d83b2c;
-  --vis-protected: #9a6801;
-  color-scheme: light;
-}
-
-:root,
-.app-shell[data-theme="light"],
-.app-shell[data-theme="system"],
-.app-shell[data-theme="ayuMirage"],
-.app-shell[data-theme="materialDeepOcean"],
-.app-shell[data-theme="oneDarkPro"],
-.app-shell[data-theme="dracula"],
-.app-shell[data-theme="catppuccinMocha"],
-.app-shell[data-theme="darkPlus"],
-.app-shell[data-theme="catppuccinLatte"],
-.app-shell[data-theme="oneLight"] {
-  --accent: var(--color-accent);
-  --background-active: var(--color-accent-soft);
-  --background-primary: var(--color-panel);
-  --border-color: var(--color-border);
-  --border-strong: var(--color-border-strong);
-  --border-subtle: var(--color-border);
-  --button-primary-bg: var(--color-accent);
-  --color-bg: var(--color-app);
-  --color-border-subtle: var(--color-border);
-  --color-danger: var(--color-error);
-  --color-editor: var(--color-app);
-  --color-focus: var(--color-accent);
-  --color-info: var(--color-accent);
-  --color-input-background: var(--color-control);
-  --color-panel-soft: var(--color-hover);
-  --color-surface-hover: var(--color-hover);
-  --color-surface-raised: var(--color-modal);
-  --color-surface-strong: var(--color-panel-deep);
-  --danger-border: var(--color-error);
-  --danger-surface: var(--change-deleted-soft);
-  --danger-text: var(--color-error);
-  --editor-background: var(--color-app);
-  --editor-bg: var(--color-app);
-  --input-background: var(--color-control);
-  --panel-background: var(--color-panel);
-  --panel-bg: var(--color-modal);
-  --selection-background: var(--color-accent-soft);
-  --selection-bg: var(--color-accent-soft);
-  --status-error: var(--color-error);
-  --status-success: var(--color-success);
-  --success: var(--color-success);
-  --surface-control: var(--color-control);
-  --surface-input: var(--color-control);
-  --surface-raised: var(--color-modal);
-  --text-danger: var(--color-error);
-  --text-muted: var(--color-text-muted);
-  --text-primary: var(--color-text);
-  --text-secondary: var(--color-text-muted);
-  --warning: var(--color-warning);
-}
-
-@media (prefers-color-scheme: light) {
-  .app-shell[data-theme="system"] {
-    --color-accent: #13836f;
-    --color-accent-text: #ffffff;
-    --color-active: #dbdfe6;
-    --color-active-text: #171a1f;
-    --color-active-muted: #e1e4ea;
-    --color-app: #f0f2f5;
-    --color-border: #e5e8ed;
-    --color-border-strong: #dbdfe6;
-    --color-control: #eaedf1;
-    --color-disabled: #c2c7cf;
-    --color-error: #d64545;
-    --color-hover: #e5e8ed;
-    --color-hover-strong: #e1e4ea;
-    --color-modal: #ffffff;
-    --color-panel: #fbfcfd;
-    --color-panel-deep: #fbfcfd;
-    --color-sidebar: #fbfcfd;
-    --color-status: #fbfcfd;
-    --color-success: #1f9d5f;
-    --color-surface: #ffffff;
-    --color-tab: #f0f2f5;
-    --color-tab-active: #ffffff;
-    --color-tabs: #f0f2f5;
-    --color-text: #333840;
-    --color-text-muted: #656d7b;
-    --color-text-strong: #171a1f;
-    --color-text-subtle: #99a1ad;
-    --color-warning: #b7791f;
-    --color-white: #ffffff;
-    --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel));
-    --change-added: #23845f;
-    --change-added-soft: rgba(35, 132, 95, 0.13);
-    --change-added-strong: #14684b;
-    --change-deleted: #bd4d4d;
-    --change-deleted-soft: rgba(189, 77, 77, 0.12);
-    --change-deleted-strong: #9c3232;
-    --change-modified: #bd8525;
-    --change-modified-soft: rgba(189, 133, 37, 0.14);
-    --change-modified-strong: #81570d;
-    --symbol-method: #8250c4;
-    --symbol-property: #c25a3a;
-    --symbol-const: #2f6fb0;
-    --symbol-class: #3f7a3f;
-    --symbol-interface: #1d7a86;
-    --symbol-enum: #9a7016;
-    --symbol-function: #8250c4;
-    --symbol-trait: #2a7d6f;
-    --symbol-variable: #6b727d;
-    --symbol-keyword: #8a5c8f;
-    --vis-public: #3f8a3f;
-    --vis-private: #c2484a;
-    --vis-protected: #b07d18;
-    color-scheme: light;
-  }
 }
 
 * {
@@ -724,7 +38,7 @@ body,
   min-height: 100%;
   margin: 0;
   overflow: hidden;
-  background: var(--color-app);
+  background: var(--cv-canvas);
 }
 
 button,
@@ -763,10 +77,9 @@ button {
 .app-shell {
   --window-chrome-height: 36px;
   --window-native-controls-inset: 0px;
-  --cv-shell-window-inset: var(--window-native-controls-inset);
+  --shell-window-inset: var(--window-native-controls-inset);
   --window-native-controls-row: 0px;
 
-  color-scheme: dark;
   display: grid;
   width: 100%;
   height: 100%;
@@ -774,7 +87,7 @@ button {
   min-height: 100%;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--window-chrome-height) minmax(0, 1fr);
-  background: var(--color-app);
+  background: var(--cv-canvas);
 }
 
 .app-shell--agent-mode.app-shell--mac {
@@ -798,8 +111,8 @@ button {
   align-items: center;
   min-width: 0;
   min-height: var(--window-chrome-height);
-  background: var(--color-panel-deep);
-  color: var(--color-text);
+  background: var(--cv-side);
+  color: var(--cv-fg);
   user-select: none;
 }
 
@@ -845,9 +158,9 @@ button {
 .window-menu-button {
   height: 26px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
@@ -856,8 +169,8 @@ button {
 
 .window-menu-button:hover,
 .window-menu-button.active {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .window-menu-popover {
@@ -868,9 +181,9 @@ button {
   display: grid;
   min-width: 220px;
   gap: 1px;
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   padding: 6px;
 }
 
@@ -884,7 +197,7 @@ button {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12.5px;
   padding: 0 10px;
@@ -901,17 +214,17 @@ button {
   right: 8px;
   left: 8px;
   height: 1px;
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
   content: "";
 }
 
 .window-menu-item:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .window-menu-item:disabled {
-  color: var(--color-disabled);
+  color: var(--cv-fg-disabled);
   cursor: not-allowed;
 }
 
@@ -923,7 +236,7 @@ button {
 }
 
 .window-menu-item kbd {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font: inherit;
   font-size: 11px;
 }
@@ -931,7 +244,7 @@ button {
 .window-title {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   font-weight: 750;
   letter-spacing: 0;
@@ -957,19 +270,19 @@ button {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   padding: 0;
 }
 
 .window-control:hover {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .window-control-close:hover {
-  background: var(--color-error);
-  color: var(--symbol-icon-foreground);
+  background: var(--cv-danger);
+  color: var(--cv-sym-icon-fg);
 }
 
 .window-chrome-action-spacer {
@@ -979,49 +292,13 @@ button {
   align-self: stretch;
 }
 
-.sidebar-tabs {
-  display: inline-flex;
-  min-width: 0;
-  gap: 4px;
-}
-
-.sidebar-subview-panel {
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow: auto;
-}
-
-.sidebar-tab {
-  height: 28px;
-  padding: 0 6px;
-  border: 0 !important;
-  border-radius: 0;
-  background: transparent !important;
-  color: var(--color-text-muted);
-  box-shadow: inset 0 -2px 0 transparent;
-  transition:
-    color var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard);
-}
-
-.sidebar-tab:hover:not(:disabled) {
-  color: var(--color-text);
-}
-
-.sidebar-tab.active {
-  color: var(--color-text-strong);
-  box-shadow: inset 0 -2px 0 var(--color-accent);
-}
-
 .file-tree,
-.git-changes,
 .php-tree {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
 }
 
-.git-changes,
 .php-tree {
   padding: 6px 0 10px;
 }
@@ -1032,7 +309,7 @@ button {
   height: 100%;
   min-height: 0;
   place-items: center;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .empty-tree p,
@@ -1049,19 +326,19 @@ button {
   gap: 8px;
   padding: 24px;
   text-align: center;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .error-boundary-title {
   margin: 0;
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--cv-fg);
 }
 
 .error-boundary-message {
   margin: 0;
   max-width: 60ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--cv-font-mono);
   font-size: 12px;
   opacity: 0.8;
   word-break: break-word;
@@ -1093,13 +370,13 @@ button {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 0 8px 0 calc(8px + var(--tree-level) * 16px);
   text-align: left;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease);
 }
 
 .tree-row.has-load-failure {
@@ -1115,8 +392,8 @@ button {
   margin: 0;
   border: 0;
   border-radius: 4px;
-  background: var(--color-control);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 11px;
   line-height: 22px;
@@ -1126,22 +403,22 @@ button {
 
 .tree-row-retry:hover,
 .tree-row-retry:focus-visible {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .tree-row:hover {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .tree-row.active {
-  background: var(--color-accent-soft);
-  color: var(--color-active-text);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .tree-row.active small {
-  color: var(--color-active-text);
+  color: var(--cv-fg-strong);
 }
 
 .tree-virtual-content {
@@ -1179,11 +456,11 @@ button {
   width: 18px;
   min-width: 18px;
   place-items: center;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .tree-row small {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .tree-row-status {
@@ -1204,23 +481,23 @@ button {
 }
 
 .tree-row-meta {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .tree-row-load-failure {
-  color: var(--color-danger);
+  color: var(--cv-danger);
 }
 
 .tree-row-status-added,
 .tree-row-status-renamed {
-  color: var(--color-success);
+  color: var(--cv-ok);
   width: 18px;
   min-width: 18px;
   opacity: 1;
 }
 
 .tree-row-status-modified {
-  color: var(--color-warning);
+  color: var(--cv-warn);
   width: 18px;
   min-width: 18px;
   opacity: 1;
@@ -1229,502 +506,15 @@ button {
 .tree-row-status-untracked,
 .tree-row-status-deleted,
 .tree-row-status-conflicted {
-  color: var(--color-error);
+  color: var(--cv-danger);
   width: 18px;
   min-width: 18px;
   opacity: 1;
 }
 
-.php-file-outline-row small,
 .php-tree-row small {
   font-size: 10px;
   text-transform: uppercase;
-}
-
-.git-commit-title-row {
-  display: inline-flex;
-  align-items: center;
-}
-
-/* JetBrains "Local Changes" total-count pill shown beside the Commit title. */
-.git-changes-summary {
-  display: inline-grid;
-  place-items: center;
-  min-width: 18px;
-  height: 17px;
-  margin-left: 6px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-accent) 22%, var(--color-control));
-  color: var(--color-text-strong);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.git-change-row-wrapper {
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  margin: 1px 6px 1px 28px;
-  overflow: hidden;
-  width: calc(100% - 34px);
-}
-
-.git-change-row-wrapper.active .git-change-row {
-  background: var(--color-accent-soft);
-  color: var(--color-active-text);
-}
-
-.git-change-row-wrapper.active .git-change-row small {
-  color: var(--color-active-text);
-}
-
-/* On the selected row the soft-accent fill sits behind the status glyph and the
-   trailing status letter; tint both to the active-text token so the selection
-   reads as one clean JetBrains-classic highlight instead of a warm/red glyph
-   fighting the accent fill. Theme-aware via --color-active-text. */
-.git-change-row-wrapper.active .git-change-row .git-change-status-icon,
-.git-change-row-wrapper.active .git-change-row [class*="tree-row-status-"] {
-  color: var(--color-active-text);
-}
-
-.git-change-row {
-  box-sizing: border-box;
-  grid-template-columns: 18px minmax(48px, 1fr) minmax(0, 36%) 18px;
-  gap: 6px;
-  margin: 0;
-  padding: 0 6px 0 0;
-  overflow: hidden;
-  width: 100%;
-}
-
-/* Per-status file glyph (JetBrains "Local Changes" feel). The status tints the
-   icon so the kind of change reads before the trailing letter does. Colors
-   resolve from the active theme, so every theme stays in sync. */
-.git-change-status-icon {
-  display: inline-grid;
-  place-items: center;
-  line-height: 0;
-}
-
-.git-change-status-icon-added,
-.git-change-status-icon-renamed {
-  color: var(--color-success);
-}
-
-.git-change-status-icon-modified {
-  color: var(--color-warning);
-}
-
-.git-change-status-icon-deleted,
-.git-change-status-icon-untracked,
-.git-change-status-icon-conflicted {
-  color: var(--color-error);
-}
-
-.git-commit-panel {
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  overflow: hidden;
-}
-
-.git-commit-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  border-bottom: 1px solid var(--color-border-subtle);
-  padding: 8px 10px;
-}
-
-.git-commit-title {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  color: var(--color-text-strong);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.git-commit-title small {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 5px;
-  color: var(--color-text-muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.git-upstream-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 4px;
-  border-radius: var(--radius-sm);
-  background: var(--color-hover);
-  color: var(--color-text-muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.git-commit-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.git-commit-toolbar button {
-  display: inline-grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.git-commit-toolbar button:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
-}
-
-.git-commit-toolbar button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.git-repository-section {
-  display: grid;
-  gap: 0;
-}
-
-.git-repository-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px 2px;
-  color: var(--color-text-muted);
-}
-
-.git-repository-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-strong);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.git-repository-branch {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
-  color: var(--color-text-subtle);
-  font-size: 11px;
-}
-
-.git-repository-count {
-  display: inline-grid;
-  min-width: 18px;
-  height: 16px;
-  place-items: center;
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
-  background: var(--color-hover);
-  color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.git-change-group {
-  display: grid;
-  gap: 0;
-  padding: 2px 0;
-}
-
-.git-change-group-header {
-  display: grid;
-  min-height: 26px;
-  grid-template-columns: 14px 14px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  color: var(--color-text-muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.git-change-group-toggle {
-  display: inline-grid;
-  min-width: 0;
-  width: 14px;
-  height: 24px;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  text-align: left;
-}
-
-.git-change-group-toggle:hover {
-  color: var(--color-text-strong);
-}
-
-.git-change-group-title,
-.git-change-name,
-.git-change-directory {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.git-change-name {
-  color: var(--color-text);
-}
-
-.git-change-directory {
-  justify-self: end;
-  max-width: 100%;
-  color: var(--color-text-subtle);
-  font-size: 11px;
-}
-
-.git-themed-checkbox {
-  display: inline-grid;
-  width: 14px;
-  height: 14px;
-  place-items: center;
-  cursor: pointer;
-}
-
-.git-themed-checkbox input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  border: 0;
-  clip-path: inset(50%);
-  overflow: hidden;
-  padding: 0;
-}
-
-.git-themed-checkbox-box {
-  display: inline-grid;
-  width: 12px;
-  height: 12px;
-  place-items: center;
-  border: 1px solid var(--color-text-muted);
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--color-panel) 72%, var(--color-text-muted));
-  color: var(--color-active-text);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-panel) 55%, transparent);
-}
-
-.git-themed-checkbox:hover .git-themed-checkbox-box {
-  border-color: var(--color-text);
-  background: color-mix(in srgb, var(--color-panel) 58%, var(--color-text-muted));
-}
-
-.git-themed-checkbox.checked .git-themed-checkbox-box {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-}
-
-.git-themed-checkbox input:focus-visible + .git-themed-checkbox-box {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.git-themed-checkbox input:disabled + .git-themed-checkbox-box {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.git-commit-footer {
-  display: grid;
-  gap: 8px;
-  border-top: 1px solid var(--color-border-subtle);
-  padding: 8px 10px 10px;
-}
-
-.git-commit-message {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 76px;
-  max-height: 150px;
-  resize: vertical;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-panel);
-  color: var(--color-text);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 8px 32px 8px 8px;
-}
-
-.git-commit-message-field {
-  position: relative;
-}
-
-.git-commit-history {
-  position: absolute;
-  right: 5px;
-  top: 5px;
-}
-
-.git-commit-history-button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  justify-content: center;
-  padding: 3px;
-}
-
-.git-commit-history-button:hover,
-.git-commit-history-button[aria-expanded="true"] {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.git-commit-history-button:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 1px;
-}
-
-.git-commit-history-button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.git-commit-history-list {
-  background: var(--color-panel);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
-  max-height: 220px;
-  min-width: 220px;
-  outline: none;
-  overflow-y: auto;
-  padding: 4px;
-  position: absolute;
-  right: 0;
-  top: 26px;
-  width: min(320px, calc(100vw - 32px));
-  z-index: 20;
-}
-
-.git-commit-history-option {
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 12px;
-  overflow: hidden;
-  padding: 6px 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.git-commit-history-option:hover,
-.git-commit-history-option.active {
-  background: var(--color-hover);
-}
-
-.git-conventional-commit-hints {
-  align-items: center;
-  background: color-mix(in srgb, var(--color-panel) 82%, var(--color-hover));
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 4px;
-  padding: 3px;
-}
-
-.git-conventional-commit-hints button {
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  padding: 2px 5px;
-}
-
-.git-conventional-commit-hints button:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
-}
-
-.git-conventional-commit-hints button:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 1px;
-}
-
-.git-conventional-commit-hints button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.git-commit-message:focus {
-  border-color: var(--color-border-strong);
-  outline: none;
-}
-
-.git-commit-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-start;
-}
-
-.git-amend-toggle {
-  align-items: center;
-  color: var(--color-text-muted);
-  display: flex;
-  font-size: 12px;
-  gap: 5px;
-  height: auto;
-  width: fit-content;
-}
-
-.git-commit-button {
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent);
-  color: var(--color-active-text);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 6px 14px;
-}
-
-.git-commit-button:disabled {
-  cursor: default;
-  opacity: 0.45;
 }
 
 .git-diff-preview {
@@ -1740,9 +530,9 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-tabs);
-  color: var(--color-text);
+  border-bottom: 1px solid var(--cv-hair);
+  background: var(--cv-canvas);
+  color: var(--cv-fg);
   padding: 0 12px;
 }
 
@@ -1755,7 +545,7 @@ button {
 
 .git-diff-header strong {
   overflow: hidden;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 13px;
   font-weight: 700;
   text-overflow: ellipsis;
@@ -1763,7 +553,7 @@ button {
 }
 
 .git-diff-header span {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   text-transform: capitalize;
 }
@@ -1778,13 +568,13 @@ button {
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .git-diff-header button:hover:not(:disabled) {
-  border-color: var(--color-border-strong);
-  background: var(--color-panel-soft);
-  color: var(--color-text);
+  border-color: var(--cv-hair-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
 }
 
 .git-diff-header button:disabled {
@@ -1806,24 +596,24 @@ button {
   gap: 2px;
   padding: 0 3px;
   transform: translateX(calc(-100% - 4px));
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--cv-hair-strong);
   border-radius: 3px;
-  background: var(--color-panel);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-border-strong) 65%, transparent);
-  color: var(--color-text-muted);
+  background: var(--cv-side);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--cv-hair-strong) 65%, transparent);
+  color: var(--cv-fg-muted);
   cursor: pointer;
 }
 
 .git-diff-hunk:hover:not(:has(input:disabled)) {
-  background: var(--color-panel-soft);
-  color: var(--color-text);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
 }
 
 .git-diff-hunk input {
   width: 12px;
   height: 12px;
   margin: 0;
-  accent-color: var(--color-accent);
+  accent-color: var(--cv-accent);
 }
 
 .git-diff-hunk:has(input:disabled) {
@@ -1836,7 +626,7 @@ button {
   width: 10px;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--cv-font-mono);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
@@ -1850,7 +640,7 @@ button {
   justify-content: center;
   padding: 0;
   border: 0;
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid var(--cv-hair);
   border-radius: 0;
   background: transparent;
   color: inherit;
@@ -1867,9 +657,9 @@ button {
   min-height: 27px;
   flex: 0 0 auto;
   grid-template-columns: 1fr 1fr;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-panel-soft);
-  color: var(--color-text-subtle);
+  border-bottom: 1px solid var(--cv-hair);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
 }
 
@@ -1881,7 +671,7 @@ button {
 }
 
 .git-diff-pane-labels span + span {
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid var(--cv-hair);
 }
 
 .git-diff-editor {
@@ -1889,7 +679,7 @@ button {
   height: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--color-editor);
+  background: var(--cv-canvas);
 }
 
 .git-diff-fallback {
@@ -1898,13 +688,13 @@ button {
   align-content: center;
   gap: 6px;
   place-items: center;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   padding: 24px;
   text-align: center;
 }
 
 .git-diff-fallback strong {
-  color: var(--color-text);
+  color: var(--cv-fg);
   font-size: 13px;
 }
 
@@ -1926,7 +716,7 @@ button {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: var(--color-app);
+  background: var(--cv-canvas);
 }
 
 .editor-mode-surface {
@@ -1946,8 +736,8 @@ button {
   height: 24px;
   border: 0;
   border-radius: 7px;
-  background: var(--color-control);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -1955,8 +745,8 @@ button {
 }
 
 .bottom-panel-text-action:hover {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .breakpoint-editor-popover {
@@ -1964,11 +754,11 @@ button {
   z-index: 90;
   min-width: 220px;
   padding: 6px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--cv-hair);
   border-radius: 6px;
-  background: var(--color-surface-raised);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 45%, transparent);
-  color: var(--color-text);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
+  color: var(--cv-fg);
 }
 
 .breakpoint-editor-menu {
@@ -1987,7 +777,7 @@ button {
 
 .breakpoint-editor-menu button:hover,
 .breakpoint-editor-menu button:focus-visible {
-  background: var(--color-surface-hover);
+  background: var(--cv-tint-2);
   outline: none;
 }
 
@@ -2005,32 +795,21 @@ button {
 .breakpoint-editor-dialog input {
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--cv-hair);
   border-radius: 4px;
-  background: var(--color-input-background);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
 }
 
 .breakpoint-editor-dialog input:focus {
-  border-color: var(--color-border-strong);
+  border-color: var(--cv-hair-strong);
   outline: none;
 }
 
-.breakpoint-editor-error {
-  color: var(--color-error);
-  font-size: 11px;
-}
-
-.breakpoint-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
 .editor-change-popover {
-  --change-popover-accent: var(--change-modified);
-  --change-popover-accent-strong: var(--change-modified-strong);
-  --change-popover-soft: var(--change-modified-soft);
+  --change-popover-accent: var(--cv-warn);
+  --change-popover-accent-strong: var(--cv-warn);
+  --change-popover-soft: var(--cv-warn-soft);
   position: absolute;
   z-index: 45;
   display: grid;
@@ -2038,34 +817,33 @@ button {
   width: min(620px, calc(100% - 92px));
   max-height: min(360px, calc(100% - 42px));
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--change-popover-accent) 44%, var(--color-border-strong));
+  border: 1px solid color-mix(in srgb, var(--change-popover-accent) 44%, var(--cv-hair-strong));
   border-radius: 8px;
   background:
-    linear-gradient(90deg, var(--change-popover-accent) 0 3px, transparent 3px),
-    var(--color-panel-deep);
+    linear-gradient(90deg, var(--change-popover-accent) 0 3px, transparent 3px), var(--cv-side);
   box-shadow:
-    var(--shadow-pop),
+    var(--cv-shadow-pop),
     0 0 0 1px color-mix(in srgb, var(--change-popover-accent) 22%, rgba(0, 0, 0, 0.5));
-  color: var(--color-text);
+  color: var(--cv-fg);
   isolation: isolate;
 }
 
 .editor-change-popover-added {
-  --change-popover-accent: var(--change-added);
-  --change-popover-accent-strong: var(--change-added-strong);
-  --change-popover-soft: var(--change-added-soft);
+  --change-popover-accent: var(--cv-ok);
+  --change-popover-accent-strong: var(--cv-ok);
+  --change-popover-soft: var(--cv-add-bg);
 }
 
 .editor-change-popover-deleted {
-  --change-popover-accent: var(--change-deleted);
-  --change-popover-accent-strong: var(--change-deleted-strong);
-  --change-popover-soft: var(--change-deleted-soft);
+  --change-popover-accent: var(--cv-danger);
+  --change-popover-accent-strong: var(--cv-danger);
+  --change-popover-soft: var(--cv-del-bg);
 }
 
 .editor-change-popover-modified {
-  --change-popover-accent: var(--change-modified);
-  --change-popover-accent-strong: var(--change-modified-strong);
-  --change-popover-soft: var(--change-modified-soft);
+  --change-popover-accent: var(--cv-warn);
+  --change-popover-accent-strong: var(--cv-warn);
+  --change-popover-soft: var(--cv-warn-soft);
 }
 
 .editor-change-popover-header {
@@ -2075,11 +853,11 @@ button {
   gap: 12px;
   min-height: 34px;
   min-width: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--change-popover-accent) 24%, var(--color-border));
+  border-bottom: 1px solid color-mix(in srgb, var(--change-popover-accent) 24%, var(--cv-hair));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--change-popover-accent) 14%, var(--color-control)),
-    var(--color-control) 78%
+    color-mix(in srgb, var(--change-popover-accent) 14%, var(--cv-raised)),
+    var(--cv-raised) 78%
   );
   padding: 5px 8px 5px 12px;
 }
@@ -2089,7 +867,7 @@ button {
   align-items: center;
   gap: 7px;
   min-width: 0;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 12px;
   font-weight: 800;
 }
@@ -2103,27 +881,27 @@ button {
 }
 
 .editor-change-popover-kind.added::before {
-  background: var(--change-added);
+  background: var(--cv-ok);
 }
 
 .editor-change-popover-kind.modified::before {
-  background: var(--change-modified);
+  background: var(--cv-warn);
 }
 
 .editor-change-popover-kind.deleted::before {
-  background: var(--change-deleted);
+  background: var(--cv-danger);
 }
 
 .editor-change-popover-icon-button,
 .editor-change-popover-action {
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-control);
-  color: var(--color-text);
+  border: 1px solid var(--cv-hair-strong);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    border-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease);
 }
 
 .editor-change-popover-nav {
@@ -2139,14 +917,14 @@ button {
   width: 26px;
   height: 26px;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   line-height: 0;
 }
 
 .editor-change-popover-section-label {
-  background: color-mix(in srgb, var(--change-popover-soft) 55%, var(--color-panel-deep));
-  border-bottom: 1px solid color-mix(in srgb, var(--change-popover-accent) 18%, var(--color-border));
-  color: color-mix(in srgb, var(--change-popover-accent-strong) 65%, var(--color-text-strong));
+  background: color-mix(in srgb, var(--change-popover-soft) 55%, var(--cv-side));
+  border-bottom: 1px solid color-mix(in srgb, var(--change-popover-accent) 18%, var(--cv-hair));
+  color: color-mix(in srgb, var(--change-popover-accent-strong) 65%, var(--cv-fg-strong));
   font-size: 11px;
   font-weight: 800;
   padding: 7px 12px;
@@ -2164,8 +942,8 @@ button {
       color-mix(in srgb, var(--change-popover-accent) 10%, transparent),
       transparent 34px
     ),
-    color-mix(in srgb, var(--change-popover-soft) 28%, var(--color-panel-deep));
-  color: var(--color-text);
+    color-mix(in srgb, var(--change-popover-soft) 28%, var(--cv-side));
+  color: var(--cv-fg);
   font-family: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
@@ -2178,29 +956,21 @@ button {
    content read at a glance, like JetBrains' split rollback diff. */
 .editor-change-popover-code-removed {
   background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--change-deleted) 16%, transparent),
-      transparent 40px
-    ),
-    color-mix(in srgb, var(--change-deleted-soft) 24%, var(--color-panel-deep));
+    linear-gradient(90deg, color-mix(in srgb, var(--cv-danger) 16%, transparent), transparent 40px),
+    color-mix(in srgb, var(--cv-del-bg) 24%, var(--cv-side));
 }
 
 .editor-change-popover-code-added {
   background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--change-added) 16%, transparent),
-      transparent 40px
-    ),
-    color-mix(in srgb, var(--change-added-soft) 24%, var(--color-panel-deep));
+    linear-gradient(90deg, color-mix(in srgb, var(--cv-ok) 16%, transparent), transparent 40px),
+    color-mix(in srgb, var(--cv-add-bg) 24%, var(--cv-side));
 }
 
 .editor-change-popover-actions {
   display: flex;
   justify-content: flex-end;
-  background: color-mix(in srgb, var(--change-popover-soft) 42%, var(--color-control));
-  border-top: 1px solid color-mix(in srgb, var(--change-popover-accent) 18%, var(--color-border));
+  background: color-mix(in srgb, var(--change-popover-soft) 42%, var(--cv-raised));
+  border-top: 1px solid color-mix(in srgb, var(--change-popover-accent) 18%, var(--cv-hair));
   padding: 8px 10px 8px 12px;
 }
 
@@ -2209,7 +979,7 @@ button {
   align-items: center;
   gap: 6px;
   height: 26px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   font-size: 12px;
   font-weight: 800;
   padding: 0 10px;
@@ -2218,8 +988,8 @@ button {
 .editor-change-popover-icon-button:hover,
 .editor-change-popover-action:hover {
   border-color: var(--change-popover-accent);
-  background: color-mix(in srgb, var(--change-popover-soft) 60%, var(--color-hover));
-  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--change-popover-soft) 60%, var(--cv-tint-2));
+  color: var(--cv-fg-strong);
 }
 
 .bottom-panel {
@@ -2230,7 +1000,7 @@ button {
   min-height: 96px;
   max-height: min(70vh, 520px);
   grid-template-rows: 38px minmax(0, 1fr);
-  background: var(--color-app);
+  background: var(--cv-canvas);
 }
 
 .bottom-panel-resize-handle {
@@ -2255,11 +1025,11 @@ button {
 }
 
 .bottom-panel:hover .bottom-panel-resize-handle::after {
-  background: var(--color-border-strong);
+  background: var(--cv-hair-strong);
 }
 
 .bottom-panel-resize-handle:hover {
-  background: var(--color-accent);
+  background: var(--cv-accent);
 }
 
 .bottom-panel-header {
@@ -2267,7 +1037,7 @@ button {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  color: var(--color-text);
+  color: var(--cv-fg);
   font-size: 12px;
   font-weight: 500;
   overflow: hidden;
@@ -2291,7 +1061,7 @@ button {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -2299,14 +1069,14 @@ button {
 }
 
 .bottom-panel-tab:hover {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .bottom-panel-tab.active {
-  background: var(--color-surface);
-  box-shadow: var(--codevo-shadow-card);
-  color: var(--color-text-strong);
+  background: var(--cv-raised);
+  box-shadow: var(--cv-shadow-card);
+  color: var(--cv-fg-strong);
 }
 
 .bottom-panel-action {
@@ -2317,13 +1087,13 @@ button {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   cursor: pointer;
 }
 
 .bottom-panel-action:hover {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .terminal-profile-select {
@@ -2331,16 +1101,16 @@ button {
   height: 24px;
   border: 0;
   border-radius: 7px;
-  background: var(--color-control);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   font-size: 12px;
   outline: 0;
   padding: 0 8px;
 }
 
 .terminal-profile-select:focus {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .bottom-panel-body {
@@ -2374,13 +1144,13 @@ button {
   min-width: 0;
   gap: 2px;
   border-radius: 6px;
-  background: var(--color-surface);
+  background: var(--cv-raised);
   padding: 5px 7px;
 }
 
 .index-health-metric span,
 .index-health-list h3 {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 10px;
   letter-spacing: 0;
   margin: 0;
@@ -2390,7 +1160,7 @@ button {
 .index-health-metric strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 12px;
   font-weight: 700;
   text-overflow: ellipsis;
@@ -2410,21 +1180,21 @@ button {
   justify-content: center;
   gap: 6px;
   height: 28px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--cv-hair-strong);
   border-radius: 6px;
-  background: var(--color-control);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12px;
 }
 
 .index-health-actions button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  color: var(--color-text-strong);
+  border-color: var(--cv-accent);
+  color: var(--cv-fg-strong);
 }
 
 .index-health-actions button:disabled {
-  color: var(--color-disabled);
+  color: var(--cv-fg-disabled);
   cursor: not-allowed;
 }
 
@@ -2447,7 +1217,7 @@ button {
 
 .index-health-list p {
   margin: 0;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
 }
 
@@ -2459,17 +1229,17 @@ button {
   align-items: center;
   gap: 5px;
   border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-warning);
+  background: var(--cv-raised);
+  color: var(--cv-warn);
   padding: 4px 6px;
 }
 
 .index-health-row.error {
-  color: var(--color-error);
+  color: var(--cv-danger);
 }
 
 .index-health-row.info {
-  color: var(--color-success);
+  color: var(--cv-ok);
 }
 
 .index-health-row span {
@@ -2485,11 +1255,11 @@ button {
 }
 
 .index-health-row strong {
-  color: var(--color-text);
+  color: var(--cv-fg);
 }
 
 .index-health-row small {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .terminal-viewport .xterm {
@@ -2527,10 +1297,10 @@ button {
   min-height: 0;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-surface) 66%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-surface) 82%, var(--color-text-muted));
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-card);
+  background: color-mix(in srgb, var(--cv-raised) 66%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--cv-raised) 82%, var(--cv-fg-muted));
   overflow: hidden;
 }
 
@@ -2544,10 +1314,10 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--cv-hair);
   padding: 0 8px;
-  background: color-mix(in srgb, var(--color-surface) 74%, transparent);
-  color: var(--color-text);
+  background: color-mix(in srgb, var(--cv-raised) 74%, transparent);
+  color: var(--cv-fg);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -2561,7 +1331,7 @@ button {
 }
 
 .git-history-inline-error {
-  color: var(--color-error);
+  color: var(--cv-danger);
   font-size: 10px;
 }
 
@@ -2579,10 +1349,10 @@ button {
   align-items: center;
   gap: 6px;
   min-height: 22px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-control);
-  color: var(--color-text-subtle);
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg-subtle);
   padding: 0 6px;
 }
 
@@ -2592,12 +1362,12 @@ button {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   font-size: 11px;
 }
 
 .git-history-filter input::placeholder {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .git-history-branch-body {
@@ -2618,7 +1388,7 @@ button {
 
 .git-history-current-branch p {
   margin: 0;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
 }
 
@@ -2626,7 +1396,7 @@ button {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2639,10 +1409,10 @@ button {
   align-items: center;
   gap: 6px;
   border: 0;
-  border-bottom: 1px dashed color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--cv-hair) 60%, transparent);
   border-radius: 0;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   font-size: 10px;
   font-weight: 700;
@@ -2651,7 +1421,7 @@ button {
 }
 
 .git-history-group-toggle:hover {
-  color: var(--color-text);
+  color: var(--cv-fg);
 }
 
 .git-history-branch-row {
@@ -2660,9 +1430,9 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12px;
   line-height: 1.35;
@@ -2671,7 +1441,7 @@ button {
 }
 
 .git-history-branch-row small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 10px;
 }
 
@@ -2683,12 +1453,12 @@ button {
 }
 
 .git-history-branch-row.selected {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .git-history-branch-row:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .git-history-commit-list {
@@ -2701,7 +1471,7 @@ button {
 }
 
 .git-history-commit-list:focus-visible {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid var(--cv-accent);
   outline-offset: -2px;
 }
 
@@ -2728,7 +1498,7 @@ button {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   font-size: 11.5px;
   height: 30px;
@@ -2738,16 +1508,16 @@ button {
 
 .git-history-commit-row:hover,
 .git-history-commit-row:focus-visible {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .git-history-commit-row.selected {
-  color: var(--color-text-strong);
-  background: var(--color-accent-soft);
+  color: var(--cv-fg-strong);
+  background: var(--cv-accent-soft);
 }
 
 .git-history-commit-row--merge {
-  box-shadow: inset 2px 0 0 var(--color-warning);
+  box-shadow: inset 2px 0 0 var(--cv-warn);
 }
 
 .git-history-commit-graph {
@@ -2756,7 +1526,7 @@ button {
   min-width: 76px;
   align-items: center;
   justify-content: start;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .git-history-commit-graph-svg {
@@ -2769,7 +1539,7 @@ button {
 .git-history-commit-graph-line,
 .git-history-commit-graph-branch {
   fill: none;
-  stroke: var(--color-border-strong);
+  stroke: var(--cv-hair-strong);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.2;
@@ -2777,26 +1547,26 @@ button {
 }
 
 .git-history-commit-graph-branch {
-  stroke: var(--color-accent);
+  stroke: var(--cv-accent);
   stroke-width: 1.35;
   opacity: 0.95;
 }
 
 .git-history-commit-graph-node {
-  fill: var(--color-bg);
-  stroke: var(--color-accent);
+  fill: var(--cv-canvas);
+  stroke: var(--cv-accent);
   stroke-width: 1.7;
 }
 
 .git-history-commit-graph-node--merge {
-  fill: var(--color-warning);
-  stroke: var(--color-warning);
+  fill: var(--cv-warn);
+  stroke: var(--cv-warn);
 }
 
 .git-history-commit-subject {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text);
+  color: var(--cv-fg);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2807,7 +1577,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 10px;
 }
 
@@ -2831,7 +1601,7 @@ button {
 .git-history-commit-meta-panel {
   display: grid;
   gap: 6px;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--cv-hair);
   padding-bottom: 6px;
 }
 
@@ -2844,13 +1614,13 @@ button {
 .git-history-commit-title-line strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .git-history-commit-title-line span {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 11px;
 }
 
@@ -2865,9 +1635,9 @@ button {
   height: 18px;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid var(--color-accent);
-  background: var(--color-control);
-  color: var(--color-accent);
+  border: 1px solid var(--cv-accent);
+  background: var(--cv-raised);
+  color: var(--cv-accent);
   font-size: 10px;
   padding: 0 7px;
 }
@@ -2875,7 +1645,7 @@ button {
 .git-history-branches-line {
   min-width: 0;
   overflow: hidden;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2885,7 +1655,7 @@ button {
   place-items: center;
   gap: 8px;
   min-height: 0;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   padding: 18px 12px;
   text-align: center;
 }
@@ -2895,7 +1665,7 @@ button {
 }
 
 .git-history-message-subtle {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
 }
 
@@ -2905,10 +1675,10 @@ button {
   width: fit-content;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-control);
-  color: var(--color-text);
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   gap: 4px;
   padding: 0 10px;
@@ -2916,7 +1686,7 @@ button {
 }
 
 .git-history-refresh:hover {
-  border-color: var(--color-accent);
+  border-color: var(--cv-accent);
 }
 
 .git-history-files {
@@ -2939,7 +1709,7 @@ button {
   align-items: center;
   gap: 4px;
   padding: 0 6px 0 calc(6px + var(--git-history-file-depth, 0) * 14px);
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 10px;
   font-weight: 700;
 }
@@ -2961,7 +1731,7 @@ button {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   text-align: left;
   padding: 0 6px 0 calc(6px + var(--git-history-file-depth, 0) * 14px);
@@ -2969,7 +1739,7 @@ button {
 
 .git-history-file-row:hover,
 .git-history-file-row:focus-visible {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .git-history-file-status {
@@ -2978,22 +1748,22 @@ button {
   min-width: 16px;
   justify-items: center;
   align-items: center;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   font-weight: 700;
 }
 
 .git-history-file-status.status-a {
-  color: var(--color-success);
+  color: var(--cv-ok);
 }
 
 .git-history-file-status.status-m {
-  color: var(--color-warning);
+  color: var(--cv-warn);
 }
 
 .git-history-file-status.status-d,
 .git-history-file-status.status-r {
-  color: var(--color-error);
+  color: var(--cv-danger);
 }
 
 .git-history-file-path {
@@ -3042,10 +1812,10 @@ button {
   flex-direction: column;
   width: min(560px, calc(100vw - 32px));
   max-height: min(520px, calc(100vh - 72px));
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   overflow: hidden;
 }
 
@@ -3076,16 +1846,16 @@ button {
  * like the other widgets (JetBrains-classic). Theme-aware via our tokens.
  */
 .file-structure .quick-open-result.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
-  border-radius: var(--radius-sm);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
+  border-radius: var(--cv-r-control);
   margin-inline: 4px;
 }
 
 /* Keep the left accent bar tucked inside the now-inset, rounded fill. */
 .file-structure .quick-open-result.active::before {
   left: 4px;
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-radius: var(--cv-r-control) 0 0 var(--cv-r-control);
 }
 
 .file-structure .symbol-label {
@@ -3101,7 +1871,7 @@ button {
 .file-structure .symbol-label strong {
   font-size: 13px;
   font-weight: 500;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3110,7 +1880,7 @@ button {
 .file-structure .symbol-label .signature {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3126,51 +1896,51 @@ button {
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
-  color: var(--color-white);
-  background: var(--symbol-variable);
+  color: var(--cv-sym-badge-fg);
+  background: var(--cv-sym-variable);
   flex: none;
 }
 
 .symbol-icon[data-kind="method"] {
-  background: var(--symbol-method);
+  background: var(--cv-sym-method);
 }
 
 .symbol-icon[data-kind="property"] {
-  background: var(--symbol-property);
+  background: var(--cv-sym-property);
 }
 
 .symbol-icon[data-kind="constant"] {
-  background: var(--symbol-const);
+  background: var(--cv-sym-const);
 }
 
 .symbol-icon[data-kind="class"] {
-  background: var(--symbol-class);
+  background: var(--cv-sym-class);
 }
 
 .symbol-icon[data-kind="interface"] {
-  background: var(--symbol-interface);
+  background: var(--cv-sym-interface);
 }
 
 .symbol-icon[data-kind="enum"] {
-  background: var(--symbol-enum);
+  background: var(--cv-sym-enum);
 }
 
 .symbol-icon[data-kind="function"] {
-  background: var(--symbol-function);
+  background: var(--cv-sym-function);
 }
 
 .symbol-icon[data-kind="trait"] {
-  background: var(--symbol-trait);
+  background: var(--cv-sym-trait);
 }
 
 .symbol-icon[data-kind="variable"] {
-  background: var(--symbol-variable);
+  background: var(--cv-sym-variable);
 }
 
 /* Static members get a subtle ring to set them apart without an extra glyph. */
 .symbol-icon[data-static="true"] {
   box-shadow:
-    0 0 0 1px var(--color-modal),
+    0 0 0 1px var(--cv-popover),
     0 0 0 2px currentColor;
 }
 
@@ -3187,15 +1957,15 @@ button {
 }
 
 .symbol-visibility[data-visibility="public"] {
-  color: var(--vis-public);
+  color: var(--cv-vis-public);
 }
 
 .symbol-visibility[data-visibility="private"] {
-  color: var(--vis-private);
+  color: var(--cv-vis-private);
 }
 
 .symbol-visibility[data-visibility="protected"] {
-  color: var(--vis-protected);
+  color: var(--cv-vis-protected);
 }
 
 .file-structure-option {
@@ -3203,8 +1973,8 @@ button {
   min-height: 36px;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg);
   font-size: 12px;
   padding: 0 14px;
 }
@@ -3213,7 +1983,7 @@ button {
   width: 14px;
   height: 14px;
   margin: 0;
-  accent-color: var(--color-accent);
+  accent-color: var(--cv-accent);
 }
 
 @keyframes status-activity-sweep {
@@ -3240,9 +2010,9 @@ button {
   min-width: 190px;
   gap: 1px;
   border: 0;
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   padding: 6px;
 }
 
@@ -3254,7 +2024,7 @@ button {
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   font: inherit;
   padding: 0 8px;
@@ -3262,7 +2032,7 @@ button {
 }
 
 .context-menu-item:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .status-bar-menu-item {
@@ -3272,20 +2042,20 @@ button {
   align-items: center;
   gap: 7px;
   border-radius: 7px;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12.5px;
   padding: 0 10px;
 }
 
 .status-bar-menu-item:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .status-bar-menu-item input {
   width: 13px;
   height: 13px;
-  accent-color: var(--color-accent);
+  accent-color: var(--cv-accent);
 }
 
 .palette-backdrop {
@@ -3306,9 +2076,9 @@ button {
   max-height: min(520px, calc(100vh - 80px));
   overflow: hidden;
   border: 0;
-  border-radius: var(--radius-xl);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
 }
 
 /* Palettes are a flex column so the results scroll while the search header and
@@ -3339,23 +2109,23 @@ button {
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease);
 }
 
 .text-search-toggle:hover {
-  background: var(--color-hover);
-  color: var(--color-text);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
 }
 
 .text-search-toggle.active {
-  background: var(--color-accent-soft, var(--color-hover));
-  color: var(--color-accent);
+  background: var(--cv-accent-soft);
+  color: var(--cv-accent);
 }
 
 .text-search-mask {
@@ -3365,7 +2135,7 @@ button {
   gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .text-search-mask input {
@@ -3374,24 +2144,24 @@ button {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
 }
 
 .text-search-match {
-  background: var(--color-accent-soft, var(--color-hover));
+  background: var(--cv-accent-soft);
   border-radius: 3px;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   padding: 0 2px;
 }
 
 .text-search-replaced-match {
-  color: var(--color-error);
+  color: var(--cv-danger);
   text-decoration-color: currentColor;
 }
 
 .text-search-replacement {
   margin-left: 2px;
-  color: var(--color-success);
+  color: var(--cv-ok);
   text-decoration: none;
 }
 
@@ -3399,7 +2169,7 @@ button {
    as .text-search-match so every search surface reads consistently). */
 .match-highlight {
   background: transparent;
-  color: var(--color-accent);
+  color: var(--cv-accent);
   font-weight: 600;
 }
 
@@ -3421,22 +2191,22 @@ button {
   height: 30px;
   padding: 0 12px;
   border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft, var(--color-hover));
-  color: var(--color-accent);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-accent-soft);
+  color: var(--cv-accent);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease),
+    opacity var(--cv-motion-fast) var(--cv-ease);
 }
 
 .text-search-replace-all:hover:not(:disabled) {
-  background: var(--color-accent);
-  color: var(--color-bg, #fff);
+  background: var(--cv-accent-fill);
+  color: var(--cv-on-accent);
 }
 
 .text-search-replace-all:disabled {
@@ -3462,15 +2232,15 @@ button {
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   cursor: pointer;
   opacity: 0;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease),
+    opacity var(--cv-motion-fast) var(--cv-ease);
 }
 
 .text-search-file-actions {
@@ -3485,15 +2255,15 @@ button {
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   cursor: pointer;
   opacity: 0;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease),
+    opacity var(--cv-motion-fast) var(--cv-ease);
 }
 
 .text-search-result-row:hover .text-search-replace-file,
@@ -3504,13 +2274,13 @@ button {
 }
 
 .text-search-dismiss-file:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
 }
 
 .text-search-replace-file:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-accent);
+  background: var(--cv-tint-2);
+  color: var(--cv-accent);
 }
 
 .text-search-replace-file:disabled {
@@ -3525,7 +2295,7 @@ button {
 
 .text-search-summary {
   padding: 4px 10px 6px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
 }
 
@@ -3540,15 +2310,15 @@ button {
   margin-right: 10px;
   padding: 2px 6px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-accent);
+  color: var(--cv-accent);
   font-size: 12px;
   cursor: pointer;
 }
 
 .text-search-restore-dismissed:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .surround-with-picker {
@@ -3570,8 +2340,8 @@ button {
   z-index: 2;
   border: 0;
   border-radius: 7px;
-  background: color-mix(in srgb, var(--color-success) 18%, var(--color-modal));
-  color: var(--color-text);
+  background: color-mix(in srgb, var(--cv-ok) 18%, var(--cv-popover));
+  color: var(--cv-fg);
   padding: 5px 10px;
   font-size: 12px;
   white-space: nowrap;
@@ -3581,10 +2351,10 @@ button {
   width: min(620px, calc(100vw - 36px));
   max-height: min(360px, calc(100vh - 96px));
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   outline: 0;
 }
 
@@ -3593,8 +2363,8 @@ button {
   min-height: 44px;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-strong);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-strong);
   gap: 12px;
   padding: 0 13px;
 }
@@ -3608,7 +2378,7 @@ button {
 }
 
 .implementation-chooser-header svg {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   flex: 0 0 auto;
 }
 
@@ -3622,10 +2392,10 @@ button {
   width: min(680px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 96px));
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   outline: 0;
 }
 
@@ -3635,8 +2405,8 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-strong);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-strong);
   padding: 7px 13px;
 }
 
@@ -3658,13 +2428,13 @@ button {
 }
 
 .call-hierarchy-header small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   font-weight: 500;
 }
 
 .call-hierarchy-header svg {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .call-hierarchy-results {
@@ -3675,13 +2445,13 @@ button {
 
 .call-hierarchy-section + .call-hierarchy-section {
   margin-top: 8px;
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--cv-hair);
   padding-top: 7px;
 }
 
 .call-hierarchy-section h2 {
   margin: 0 0 4px;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -3689,7 +2459,7 @@ button {
 }
 
 .call-hierarchy-empty {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   padding: 7px 8px;
 }
@@ -3702,25 +2472,25 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 5px 8px;
   text-align: left;
 }
 
 .call-hierarchy-row:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .call-hierarchy-row.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .call-hierarchy-row svg {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .call-hierarchy-row span {
@@ -3742,7 +2512,7 @@ button {
 }
 
 .call-hierarchy-row small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
 }
 
@@ -3750,10 +2520,10 @@ button {
   width: min(680px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 96px));
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   outline: 0;
 }
 
@@ -3763,8 +2533,8 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-strong);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-strong);
   padding: 7px 13px;
 }
 
@@ -3786,13 +2556,13 @@ button {
 }
 
 .references-panel-header small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   font-weight: 500;
 }
 
 .references-panel-header svg {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .references-panel-results {
@@ -3803,14 +2573,14 @@ button {
 
 .references-panel-group + .references-panel-group {
   margin-top: 8px;
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--cv-hair);
   padding-top: 7px;
 }
 
 .references-panel-group h2 {
   margin: 0 0 4px;
   overflow: hidden;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -3820,7 +2590,7 @@ button {
 }
 
 .references-panel-empty {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   padding: 7px 8px;
 }
@@ -3833,25 +2603,25 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 5px 8px;
   text-align: left;
 }
 
 .references-panel-row:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .references-panel-row.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .references-panel-row svg {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .references-panel-row span {
@@ -3873,7 +2643,7 @@ button {
 }
 
 .references-panel-row small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
 }
 
@@ -3883,18 +2653,18 @@ button {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid var(--color-border);
-  color: var(--color-text-subtle);
+  border-top: 1px solid var(--cv-hair);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   padding: 6px 10px;
   text-align: center;
 }
 
 .references-panel-pagination button {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 4px 9px;
 }
@@ -3910,10 +2680,10 @@ button {
   height: min(680px, calc(100vh - 96px));
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   outline: 0;
 }
 
@@ -3924,8 +2694,8 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-strong);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-strong);
   padding: 7px 13px;
 }
 
@@ -3941,7 +2711,7 @@ button {
 
 .file-history-header small {
   overflow: hidden;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -3958,13 +2728,13 @@ button {
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .file-history-header button:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-panel-soft);
-  color: var(--color-text);
+  border-color: var(--cv-hair-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
 }
 
 .file-history-body {
@@ -3977,12 +2747,12 @@ button {
 .file-history-commits {
   min-height: 0;
   overflow: auto;
-  border-right: 1px solid var(--color-border);
+  border-right: 1px solid var(--cv-hair);
   padding: 7px 8px 9px;
 }
 
 .file-history-empty {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   padding: 7px 8px;
 }
@@ -3995,25 +2765,25 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 5px 8px;
   text-align: left;
 }
 
 .file-history-row:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .file-history-row.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .file-history-row svg {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .file-history-row span {
@@ -4035,7 +2805,7 @@ button {
 }
 
 .file-history-row small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
 }
 
@@ -4056,7 +2826,7 @@ button {
   flex: 1 1 auto;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 13px;
   padding: 16px;
   text-align: center;
@@ -4082,8 +2852,8 @@ button {
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-muted);
   padding: 0 12px;
 }
 
@@ -4093,7 +2863,7 @@ button {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
 }
 
 .git-branch-actions-bar {
@@ -4101,7 +2871,7 @@ button {
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--cv-hair);
   padding: 8px 12px;
 }
 
@@ -4109,10 +2879,10 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-panel-soft);
-  color: var(--color-text);
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
@@ -4120,8 +2890,8 @@ button {
 }
 
 .git-branch-new-button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  color: var(--color-text-strong);
+  border-color: var(--cv-accent);
+  color: var(--cv-fg-strong);
 }
 
 .git-branch-new-button:disabled {
@@ -4136,19 +2906,19 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   padding: 2px 4px;
 }
 
 .git-branch-row:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .git-branch-row.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .git-branch-switch {
@@ -4187,16 +2957,16 @@ button {
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   padding: 0;
 }
 
 .git-branch-row-action:hover:not(:disabled) {
-  background: var(--color-panel-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .git-branch-row-action:disabled {
@@ -4205,7 +2975,7 @@ button {
 }
 
 .git-branch-delete:hover:not(:disabled) {
-  color: var(--color-error);
+  color: var(--cv-danger);
 }
 
 .git-branch-rename-form {
@@ -4219,10 +2989,10 @@ button {
 
 .git-branch-rename-form input {
   min-width: 0;
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-sm);
-  background: var(--color-control);
-  color: var(--color-text);
+  border: 1px solid var(--cv-accent);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   font: inherit;
   font-size: 13px;
   padding: 4px 6px;
@@ -4235,16 +3005,16 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   padding: 2px 4px 4px 30px;
 }
 
 .git-branch-force-delete {
-  border: 1px solid var(--color-error);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--cv-danger);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-error);
+  color: var(--cv-danger);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
@@ -4252,7 +3022,7 @@ button {
 }
 
 .git-branch-force-delete:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  background: color-mix(in srgb, var(--cv-danger) 12%, transparent);
 }
 
 .git-branch-force-delete:disabled {
@@ -4261,7 +3031,7 @@ button {
 }
 
 .git-branch-icon {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .git-branch-name {
@@ -4272,11 +3042,11 @@ button {
 }
 
 .git-branch-current {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .git-remote-branches-section {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--cv-hair);
   margin-top: 6px;
   padding-top: 6px;
 }
@@ -4289,22 +3059,22 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 6px 8px;
   text-align: left;
 }
 
 .git-remote-branches-toggle {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   font-weight: 600;
 }
 
 .git-remote-branches-count {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-variant-numeric: tabular-nums;
 }
 
@@ -4315,7 +3085,7 @@ button {
 
 .git-remote-branches-toggle:hover,
 .git-remote-branch-row:hover:not(:disabled) {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .git-remote-branch-row:disabled {
@@ -4329,8 +3099,8 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-subtle);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   padding: 6px 12px;
 }
@@ -4340,10 +3110,10 @@ button {
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--cv-hair-strong);
   border-radius: 4px;
-  background: var(--color-panel-soft);
-  color: var(--color-text);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
@@ -4351,18 +3121,18 @@ button {
 }
 
 .local-history-revert:hover {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .todo-panel {
   width: min(680px, calc(100vw - 36px));
   max-height: min(540px, calc(100vh - 96px));
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal);
-  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
   outline: 0;
 }
 
@@ -4372,8 +3142,8 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-strong);
+  border-bottom: 1px solid var(--cv-hair);
+  color: var(--cv-fg-strong);
   padding: 7px 13px;
 }
 
@@ -4388,7 +3158,7 @@ button {
 }
 
 .todo-panel-header small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
   font-weight: 500;
 }
@@ -4399,20 +3169,20 @@ button {
   justify-content: center;
   height: 28px;
   width: 28px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-control);
-  color: var(--color-text);
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
 }
 
 .todo-panel-action:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  color: var(--color-text-strong);
+  border-color: var(--cv-accent);
+  color: var(--cv-fg-strong);
 }
 
 .todo-panel-action:disabled {
-  color: var(--color-disabled);
+  color: var(--cv-fg-disabled);
   cursor: not-allowed;
 }
 
@@ -4424,14 +3194,14 @@ button {
 
 .todo-panel-group + .todo-panel-group {
   margin-top: 8px;
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--cv-hair);
   padding-top: 7px;
 }
 
 .todo-panel-group h2 {
   margin: 0 0 4px;
   overflow: hidden;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -4441,7 +3211,7 @@ button {
 }
 
 .todo-panel-empty {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   padding: 7px 8px;
 }
@@ -4454,25 +3224,25 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 5px 8px;
   text-align: left;
 }
 
 .todo-panel-row:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .todo-panel-row.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .todo-panel-row svg {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .todo-panel-row span {
@@ -4497,15 +3267,15 @@ button {
 }
 
 .todo-panel-row small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
 }
 
 .todo-tag {
   flex: none;
   border-radius: 4px;
-  background: var(--color-control);
-  color: var(--color-text-subtle);
+  background: var(--cv-raised);
+  color: var(--cv-fg-subtle);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -4516,12 +3286,12 @@ button {
 .todo-tag.fixme,
 .todo-tag.bug,
 .todo-tag.xxx {
-  background: var(--color-error);
+  background: var(--cv-danger);
   color: #fff;
 }
 
 .todo-tag.hack {
-  background: var(--color-warning);
+  background: var(--cv-warn);
   color: #000;
 }
 
@@ -4533,25 +3303,25 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--cv-r-card);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 4px 8px;
   text-align: left;
 }
 
 .implementation-choice:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .implementation-choice.active {
-  background: var(--color-accent-soft);
-  color: var(--color-text-strong);
+  background: var(--cv-accent-soft);
+  color: var(--cv-fg-strong);
 }
 
 .implementation-choice svg {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .implementation-choice span {
@@ -4570,7 +3340,7 @@ button {
 }
 
 .implementation-choice small {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .palette-search {
@@ -4579,7 +3349,7 @@ button {
   column-gap: 10px;
   align-items: center;
   border: 0;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   padding: 0 16px;
 }
 
@@ -4589,7 +3359,7 @@ button {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 14px;
 }
 
@@ -4600,7 +3370,7 @@ button {
 /*
  * The search field autofocuses the instant a palette opens, and autofocused
  * text inputs always earn a real `:focus-visible` match in Chromium. That
- * trips the generic `:focus-visible { box-shadow: var(--focus-ring); }`
+ * trips the generic `:focus-visible { box-shadow: var(--cv-ring-focus); }`
  * rule below, painting a sharp-cornered ring around this borderless input.
  * The palette shell clips its content with a large border-radius, so the
  * square ring reads as a stray corner artifact jammed against the shell's
@@ -4617,7 +3387,7 @@ button {
   align-items: center;
   outline: 0;
   font-weight: 600;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
 }
 
 .palette-results {
@@ -4635,30 +3405,30 @@ button {
   justify-content: space-between;
   gap: 12px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 13px;
   padding: 4px 10px;
   text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-standard);
+  transition: background-color var(--cv-motion-fast) var(--cv-ease);
 }
 
 .palette-command:hover:not(:disabled) {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 .palette-command:disabled {
-  color: var(--color-disabled);
+  color: var(--cv-fg-disabled);
   cursor: not-allowed;
 }
 
 /* JetBrains-classic active row: accent-soft fill + a subtle left accent bar,
    mirroring the .quick-open-result.active treatment so all palettes match. */
 .palette-command.active:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .palette-command.active::before {
@@ -4669,7 +3439,7 @@ button {
   bottom: 3px;
   width: 2px;
   border-radius: 0 2px 2px 0;
-  background: var(--color-accent-bar, var(--color-accent));
+  background: var(--cv-accent);
 }
 
 .palette-command span {
@@ -4685,7 +3455,7 @@ button {
 }
 
 .palette-command small {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .quick-open-results,
@@ -4714,21 +3484,21 @@ button {
   align-items: center;
   gap: 10px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--cv-r-control);
   background: transparent;
-  color: var(--color-text);
+  color: var(--cv-fg);
   cursor: pointer;
   font-size: 13px;
   padding: 4px 10px;
   text-align: left;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard);
+    background-color var(--cv-motion-fast) var(--cv-ease),
+    color var(--cv-motion-fast) var(--cv-ease);
 }
 
 .quick-open-result:hover,
 .text-search-result:hover {
-  background: var(--color-hover);
+  background: var(--cv-tint-2);
 }
 
 /* JetBrains-classic active row: accent-soft fill + a subtle left accent bar.
@@ -4736,8 +3506,8 @@ button {
    Text Search dialog keeps its existing active treatment. */
 .quick-open-result.active,
 .text-search-result.active {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .quick-open-result.active::before {
@@ -4748,7 +3518,7 @@ button {
   bottom: 3px;
   width: 2px;
   border-radius: 0 2px 2px 0;
-  background: var(--color-accent-bar, var(--color-accent));
+  background: var(--cv-accent);
 }
 
 .quick-open-result span,
@@ -4769,7 +3539,7 @@ button {
 .quick-open-result small,
 .text-search-result small,
 .quick-open-state {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .quick-open-state {
@@ -4783,7 +3553,7 @@ button {
 
 .search-everywhere-section-label {
   padding: 8px 10px 4px;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -4799,8 +3569,8 @@ button {
   padding: 2px 6px;
   border: 0;
   border-radius: 6px;
-  background: var(--color-hover);
-  color: var(--color-text-muted);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-muted);
   font-size: 10.5px;
   white-space: nowrap;
 }
@@ -4813,9 +3583,9 @@ button {
   gap: 14px;
   height: 36px;
   border: 0;
-  background: var(--color-modal);
+  background: var(--cv-popover);
   padding: 0 16px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 11.5px;
   white-space: nowrap;
 }
@@ -4835,8 +3605,8 @@ button {
   padding: 0 5px;
   border: 0;
   border-radius: 6px;
-  background: var(--color-hover);
-  color: var(--color-text-muted);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-muted);
   font-size: 10.5px;
   line-height: 1;
 }
@@ -4847,7 +3617,7 @@ button {
   justify-content: space-between;
   min-height: 46px;
   border: 0;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-weight: 600;
   padding: 0 10px 0 16px;
 }
@@ -4859,7 +3629,7 @@ button {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   cursor: pointer;
 }
 
@@ -4891,14 +3661,9 @@ button {
   gap: 6px;
 }
 
-.setup-manual-install {
-  display: grid;
-  gap: 8px;
-}
-
 .setup-manual-install-title {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -4932,9 +3697,9 @@ button {
   height: 28px;
   padding: 0 12px;
   border: 0;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-modal));
-  color: var(--color-text);
+  border-radius: var(--cv-r-control);
+  background: color-mix(in srgb, var(--cv-accent) 18%, var(--cv-popover));
+  color: var(--cv-fg);
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -4952,7 +3717,7 @@ button {
   height: 12px;
   border: 0;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0deg, var(--color-text-subtle) 300deg);
+  background: conic-gradient(from 0deg, transparent 0deg, var(--cv-fg-subtle) 300deg);
   -webkit-mask: radial-gradient(
     closest-side,
     transparent calc(100% - 2px),
@@ -4963,8 +3728,8 @@ button {
 }
 
 .setup-install-command:hover {
-  background: color-mix(in srgb, var(--color-accent) 24%, transparent);
-  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--cv-accent) 24%, transparent);
+  color: var(--cv-fg-strong);
 }
 
 .setup-install-command[disabled] {
@@ -4977,22 +3742,22 @@ button {
   width: 100%;
   height: 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  background: color-mix(in srgb, var(--cv-accent) 12%, transparent);
   overflow: hidden;
 }
 
 .setup-install-progress-indicator {
   width: 40%;
   height: 100%;
-  background: color-mix(in srgb, var(--color-accent) 50%, var(--color-text));
+  background: color-mix(in srgb, var(--cv-accent) 50%, var(--cv-fg));
   border-radius: 999px;
   animation: mockor-indeterminate-progress 1s linear infinite;
 }
 
 .setup-header button:hover,
 .setup-command .setup-copy-command:hover {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .setup-body {
@@ -5004,7 +3769,7 @@ button {
 
 .setup-body p {
   margin: 0 0 4px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .setup-command {
@@ -5014,8 +3779,8 @@ button {
   align-items: center;
   gap: 8px;
   border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   padding: 7px 9px;
 }
 
@@ -5028,7 +3793,7 @@ button {
 }
 
 .setup-command code {
-  color: var(--color-success);
+  color: var(--cv-ok);
   max-width: 100%;
   font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
@@ -5059,12 +3824,12 @@ button {
 }
 
 .setup-command small {
-  color: var(--color-success);
+  color: var(--cv-ok);
 }
 
 mark {
   background: transparent;
-  color: var(--color-accent);
+  color: var(--cv-accent);
   font-weight: 600;
 }
 
@@ -5072,8 +3837,8 @@ kbd {
   flex: 0 0 auto;
   border: 0;
   border-radius: 6px;
-  background: var(--color-control);
-  color: var(--color-text-muted);
+  background: var(--cv-raised);
+  color: var(--cv-fg-muted);
   font-size: 11px;
   padding: 2px 6px;
 }
@@ -5081,7 +3846,7 @@ kbd {
 /* Subtle, blended scrollbars — thin overlay-style thumb, no visible track */
 * {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-text-subtle) 35%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--cv-fg-subtle) 35%, transparent) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -5096,14 +3861,14 @@ kbd {
 
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-text-subtle) 32%, transparent);
+  border-radius: var(--cv-r-pill);
+  background: color-mix(in srgb, var(--cv-fg-subtle) 32%, transparent);
   background-clip: padding-box;
-  transition: background-color var(--motion-base) var(--ease-standard);
+  transition: background-color var(--cv-motion-base) var(--cv-ease);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--color-text-subtle) 60%, transparent);
+  background: color-mix(in srgb, var(--cv-fg-subtle) 60%, transparent);
   background-clip: padding-box;
 }
 
@@ -5113,7 +3878,7 @@ kbd {
 
 :focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--cv-ring-focus);
 }
 
 :where(
@@ -5149,16 +3914,16 @@ kbd {
 
 .runtime-observability-empty {
   margin: 4px 2px;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 12px;
 }
 
 .runtime-observability-row {
   display: grid;
   gap: 6px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--cv-hair);
   border-radius: 6px;
-  background: var(--color-surface);
+  background: var(--cv-raised);
   padding: 8px 10px;
 }
 
@@ -5173,34 +3938,34 @@ kbd {
   height: 9px;
   flex: none;
   border-radius: 50%;
-  background: var(--color-text-subtle);
+  background: var(--cv-fg-subtle);
 }
 
 .runtime-observability-indicator.ok {
-  background: var(--color-success, #3fb950);
+  background: var(--cv-ok);
 }
 
 .runtime-observability-indicator.warn {
-  background: var(--color-warning, #d29922);
+  background: var(--cv-warn);
 }
 
 .runtime-observability-indicator.error {
-  background: var(--color-danger, #f85149);
+  background: var(--cv-danger);
 }
 
 .runtime-observability-indicator.idle {
-  background: var(--color-text-subtle);
+  background: var(--cv-fg-subtle);
 }
 
 .runtime-observability-name {
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 13px;
   font-weight: 700;
 }
 
 .runtime-observability-state {
   margin-left: auto;
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -5218,12 +3983,12 @@ kbd {
   gap: 2px;
   min-width: 0;
   border-radius: 5px;
-  background: var(--color-control);
+  background: var(--cv-raised);
   padding: 4px 7px;
 }
 
 .runtime-observability-metric dt {
-  color: var(--color-text-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 10px;
   text-transform: uppercase;
 }
@@ -5231,7 +3996,7 @@ kbd {
 .runtime-observability-metric dd {
   margin: 0;
   overflow: hidden;
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 12px;
   font-weight: 700;
   text-overflow: ellipsis;
@@ -5241,7 +4006,7 @@ kbd {
 .runtime-observability-crash {
   margin: 0;
   overflow: hidden;
-  color: var(--color-danger, #f85149);
+  color: var(--cv-danger);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5258,22 +4023,22 @@ kbd {
   align-items: center;
   gap: 6px;
   height: 26px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--cv-hair-strong);
   border-radius: 6px;
-  background: var(--color-control);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 0 10px;
   font-size: 12px;
 }
 
 .runtime-observability-actions button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  color: var(--color-text-strong);
+  border-color: var(--cv-accent);
+  color: var(--cv-fg-strong);
 }
 
 .runtime-observability-actions button:disabled {
-  color: var(--color-disabled);
+  color: var(--cv-fg-disabled);
   cursor: not-allowed;
 }
 
@@ -5287,23 +4052,23 @@ kbd {
   align-items: center;
   gap: 6px;
   height: 26px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--cv-hair-strong);
   border-radius: 6px;
-  background: var(--color-control);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   padding: 0 10px;
   font-size: 12px;
 }
 
 .runtime-observability-copy-bundle:hover {
-  border-color: var(--color-accent);
-  color: var(--color-text-strong);
+  border-color: var(--cv-accent);
+  color: var(--cv-fg-strong);
 }
 
 .runtime-observability-section-title {
   margin: 8px 0 4px;
-  color: var(--color-text-subtle, #8b949e);
+  color: var(--cv-fg-subtle);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -5320,11 +4085,11 @@ kbd {
 .runtime-observability-requests-table td {
   padding: 2px 6px;
   text-align: left;
-  border-bottom: 1px solid var(--color-border, #30363d);
+  border-bottom: 1px solid var(--cv-hair);
 }
 
 .runtime-observability-requests-table th {
-  color: var(--color-text-subtle, #8b949e);
+  color: var(--cv-fg-subtle);
   font-weight: 600;
 }
 
@@ -5336,12 +4101,12 @@ kbd {
 }
 
 .runtime-observability-request-error td:last-child {
-  color: var(--color-danger, #f85149);
+  color: var(--cv-danger);
   font-weight: 600;
 }
 
 .runtime-observability-request-ok td:last-child {
-  color: var(--color-success, #3fb950);
+  color: var(--cv-ok);
 }
 
 .runtime-observability-stderr-tail {
@@ -5349,11 +4114,11 @@ kbd {
   max-height: 140px;
   overflow: auto;
   padding: 6px 8px;
-  border: 1px solid var(--color-border, #30363d);
+  border: 1px solid var(--cv-hair);
   border-radius: 6px;
-  background: var(--color-surface-strong, #0d1117);
-  color: var(--color-text, #c9d1d9);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--cv-side);
+  color: var(--cv-fg);
+  font-family: var(--cv-font-mono);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -5362,13 +4127,13 @@ kbd {
 
 .runtime-observability-latency {
   margin-top: 12px;
-  border-top: 1px solid var(--color-border, #30363d);
+  border-top: 1px solid var(--cv-hair);
   padding-top: 10px;
 }
 
 .runtime-observability-latency-title {
   margin: 0 0 6px;
-  color: var(--color-text-strong, #f0f6fc);
+  color: var(--cv-fg-strong);
   font-size: 12px;
   font-weight: 600;
 }
@@ -5383,11 +4148,11 @@ kbd {
 .runtime-observability-latency-table td {
   padding: 2px 6px;
   text-align: left;
-  border-bottom: 1px solid var(--color-border, #30363d);
+  border-bottom: 1px solid var(--cv-hair);
 }
 
 .runtime-observability-latency-table thead th {
-  color: var(--color-text-subtle, #8b949e);
+  color: var(--cv-fg-subtle);
   font-weight: 600;
 }
 
@@ -5396,7 +4161,7 @@ kbd {
   align-items: center;
   gap: 6px;
   font-weight: 500;
-  color: var(--color-text, #c9d1d9);
+  color: var(--cv-fg);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5409,7 +4174,7 @@ kbd {
 }
 
 .image-viewer {
-  background: var(--color-surface);
+  background: var(--cv-raised);
   display: flex;
   flex: 1;
   min-height: 0;
@@ -5419,26 +4184,10 @@ kbd {
 .image-viewer-canvas {
   align-items: center;
   background-image:
-    linear-gradient(
-      45deg,
-      color-mix(in srgb, var(--color-text) 4%, transparent) 25%,
-      transparent 25%
-    ),
-    linear-gradient(
-      -45deg,
-      color-mix(in srgb, var(--color-text) 4%, transparent) 25%,
-      transparent 25%
-    ),
-    linear-gradient(
-      45deg,
-      transparent 75%,
-      color-mix(in srgb, var(--color-text) 4%, transparent) 75%
-    ),
-    linear-gradient(
-      -45deg,
-      transparent 75%,
-      color-mix(in srgb, var(--color-text) 4%, transparent) 75%
-    );
+    linear-gradient(45deg, color-mix(in srgb, var(--cv-fg) 4%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--cv-fg) 4%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--cv-fg) 4%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--cv-fg) 4%, transparent) 75%);
   background-position:
     0 0,
     0 8px,
@@ -5462,8 +4211,8 @@ kbd {
 
 .image-viewer-footer {
   align-items: center;
-  border-top: 1px solid var(--color-border);
-  color: var(--color-text-muted);
+  border-top: 1px solid var(--cv-hair);
+  color: var(--cv-fg-muted);
   display: flex;
   flex: 0 0 24px;
   font-size: 11px;
@@ -5473,8 +4222,8 @@ kbd {
 }
 
 .markdown-preview {
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -5489,12 +4238,12 @@ kbd {
 
 .markdown-preview-content h1,
 .markdown-preview-content h2 {
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--cv-hair);
   padding-bottom: 0.3em;
 }
 
 .markdown-preview-content a {
-  color: var(--color-accent);
+  color: var(--cv-accent);
 }
 
 .markdown-preview-content img {
@@ -5503,9 +4252,9 @@ kbd {
 
 .markdown-preview-content pre,
 .markdown-preview-content code {
-  background: var(--color-control);
+  background: var(--cv-raised);
   border-radius: 4px;
-  font-family: var(--font-mono);
+  font-family: var(--cv-font-mono);
 }
 
 .markdown-preview-content code {
@@ -5528,14 +4277,14 @@ kbd {
 
 .markdown-preview-content th,
 .markdown-preview-content td {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--cv-hair);
   padding: 6px 12px;
   text-align: left;
 }
 
 .markdown-preview-content blockquote {
-  border-left: 4px solid var(--color-border-strong);
-  color: var(--color-text-muted);
+  border-left: 4px solid var(--cv-hair-strong);
+  color: var(--cv-fg-muted);
   margin-left: 0;
   padding-left: 16px;
 }
@@ -5546,13 +4295,13 @@ kbd {
 }
 
 .editor-group {
-  background: var(--color-app);
+  background: var(--cv-canvas);
   border: 0;
   overflow: hidden;
 }
 
 .editor-group.active {
-  background: var(--color-app);
+  background: var(--cv-canvas);
 }
 
 .editor-group .editor-panel {
@@ -5560,7 +4309,7 @@ kbd {
 }
 
 .editor-split-resizer {
-  background: var(--border-color, #2d333d);
+  background: var(--cv-hair);
   outline: none;
   transition: background-color 120ms ease;
   z-index: 3;
@@ -5568,5 +4317,5 @@ kbd {
 
 .editor-split-resizer:hover,
 .editor-split-resizer:focus-visible {
-  background: var(--accent, #6fb7ad);
+  background: var(--cv-accent);
 }

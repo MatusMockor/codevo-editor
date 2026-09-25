@@ -1,4 +1,4 @@
-import { agentDiffStatusDemand } from "./agentDiffStatusDemand";
+import { agentGitStatusDemand } from "./agentGitStatusDemand";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
 import { useActiveManifestWorkspaces } from "./useActiveManifestWorkspaces";
@@ -1756,7 +1756,7 @@ export function useWorkbenchController(
     persistWorkspaceSettings,
   });
 
-  const agentDiffVisible = agentDiffStatusDemand(agents.agentWorkbench);
+  const agentDiffVisible = agentGitStatusDemand(agents.agentWorkbench);
 
   const editorFile = useWorkbenchEditorFileCoordinator({
     changeSignature: {

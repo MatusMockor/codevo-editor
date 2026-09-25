@@ -1911,7 +1911,7 @@ MissingClass::class;
       ...defaultWorkspaceSettings(),
       statusBar: {
         ...defaultWorkspaceSettings().statusBar,
-        message: false,
+        index: false,
       },
     };
     const unregister = vi.fn(releasedWorkspaceOwner);
@@ -1967,7 +1967,7 @@ MissingClass::class;
     });
     expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
     expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
-    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(false);
+    expect(getWorkbench().workspaceSettings.statusBar.index).toBe(false);
     expect(unregister).not.toHaveBeenCalled();
   });
   it("invalidates a deferred openPath admission on unmount", async () => {
@@ -2163,7 +2163,7 @@ MissingClass::class;
     expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).not.toHaveBeenCalled();
 
     await act(async () => {
-      await getWorkbench().setStatusBarItemVisibility("message", false);
+      await getWorkbench().setStatusBarItemVisibility("index", false);
     });
     expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenLastCalledWith(
       {
@@ -2209,7 +2209,7 @@ MissingClass::class;
     expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).not.toHaveBeenCalled();
 
     await act(async () => {
-      await getWorkbench().setStatusBarItemVisibility("message", false);
+      await getWorkbench().setStatusBarItemVisibility("index", false);
     });
     expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenLastCalledWith(
       {

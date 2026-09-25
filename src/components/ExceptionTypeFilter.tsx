@@ -74,10 +74,10 @@ export function ExceptionTypeFilter({ disabled, filter, onChange }: ExceptionTyp
 }
 
 const styles: Record<string, CSSProperties> = {
-  error: { color: "var(--text-danger, #f87171)", fontSize: 11 },
+  error: { color: "var(--cv-danger)", fontSize: 11 },
   name: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   row: { alignItems: "center", display: "flex", gap: 6 },
   section: { display: "flex", flexDirection: "column", gap: 6, padding: "6px 8px" },
-  status: { color: "var(--text-muted)", fontSize: 11 },
+  status: { color: "var(--cv-fg-muted)", fontSize: 11 },
   title: { fontSize: 11 },
 };

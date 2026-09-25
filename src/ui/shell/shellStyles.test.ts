@@ -83,7 +83,7 @@ describe("shell stylesheet", () => {
         "",
       ),
     ).toBe(
-      "max(var(--cv-topbar-pad),calc(var(--cv-shell-window-inset,0px)-var(--cv-shell-sidebar-track,0px)))",
+      "max(var(--shell-topbar-pad),calc(var(--shell-window-inset,0px)-var(--shell-sidebar-track,0px)))",
     );
     expect(declaration(shellRules, ".cv-topbar__actions", "opacity")).toBe("0");
     const reveal = shellRules.find((rule) =>
@@ -98,11 +98,11 @@ describe("shell stylesheet", () => {
       (rule) => rule.sheet === "components/workbenchShellFrame.css",
     );
 
-    expect(declaration(appShell, ".app-shell", "--cv-shell-window-inset")).toBe(
+    expect(declaration(appShell, ".app-shell", "--shell-window-inset")).toBe(
       "var(--window-native-controls-inset)",
     );
     expect(
-      declaration(frame, '.workbench-frame[data-layout="agent"]', "--cv-shell-sidebar-track"),
+      declaration(frame, '.workbench-frame[data-layout="agent"]', "--shell-sidebar-track"),
     ).toBe("var(--agent-rail-track)");
   });
 });

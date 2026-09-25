@@ -52,7 +52,7 @@ const styles: Record<string, CSSProperties> = {
     textTransform: "uppercase",
   },
   case: {
-    borderTop: "1px solid var(--border-subtle)",
+    borderTop: "1px solid var(--cv-hair)",
     display: "grid",
     gap: 8,
     gridTemplateColumns: "80px minmax(180px, 1fr) minmax(180px, 2fr) 70px 24px",
@@ -60,12 +60,12 @@ const styles: Record<string, CSSProperties> = {
   },
   chip: {
     background: "transparent",
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 999,
     color: "inherit",
     padding: "2px 8px",
   },
-  chipActive: { background: "var(--background-active, rgba(127, 127, 127, 0.2))" },
+  chipActive: { background: "var(--cv-accent-soft)" },
   filtered: {
     maxWidth: 320,
     overflow: "hidden",
@@ -74,19 +74,19 @@ const styles: Record<string, CSSProperties> = {
   },
   header: { alignItems: "center", display: "flex", gap: 8, padding: "6px 8px" },
   message: { padding: 16 },
-  muted: { color: "var(--text-muted)" },
+  muted: { color: "var(--cv-fg-muted)" },
   panel: { height: "100%", overflow: "auto" },
-  suite: { borderBottom: "1px solid var(--border-subtle)" },
+  suite: { borderBottom: "1px solid var(--cv-hair)" },
   suiteHeader: { alignItems: "center", display: "flex", gap: 8, padding: "7px 10px" },
   summary: { marginLeft: "auto" },
   text: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 };
 
 const statusColors: Record<TestStatus, string> = {
-  error: "var(--status-error, #ef4444)",
-  failed: "var(--status-error, #ef4444)",
-  passed: "var(--status-success, #22c55e)",
-  skipped: "var(--text-muted)",
+  error: "var(--cv-danger)",
+  failed: "var(--cv-danger)",
+  passed: "var(--cv-ok)",
+  skipped: "var(--cv-fg-muted)",
 };
 
 type StatusFilter = "all" | "failed" | "skipped" | "passed";

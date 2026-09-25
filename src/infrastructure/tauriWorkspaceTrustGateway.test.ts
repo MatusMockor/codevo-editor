@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import contract from "../../contracts/workspace-trust-errors.json";
+import { AgentOpenedProjectAdmission } from "../application/agentOpenedProjectAdmission";
+import type { WorkspaceIdentityDescriptor } from "../application/workspaceIdentityGatewayPort";
 import { TauriWorkspaceTrustGateway } from "./tauriWorkspaceTrustGateway";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -69,5 +72,37 @@ describe("opened project trust admission", () => {
   ])("rejects mismatched or malformed response %j", async (result) => {
     vi.mocked(invoke).mockResolvedValue(result);
     await expect(new TauriWorkspaceTrustGateway().grantOpenedProject(identity)).rejects.toThrow();
+  });
+
+  it("keeps a clone-origin root refused by the backend untrusted instead of auto-admitting it", async () => {
+    vi.mocked(invoke)
+      .mockRejectedValueOnce(contract.revokedRefusal)
+      .mockRejectedValueOnce(contract.revokedRefusal);
+    const gateway = new TauriWorkspaceTrustGateway();
+    const descriptor: WorkspaceIdentityDescriptor = {
+      ...identity,
+      caseSensitive: true,
+      unicodeNormalizationPolicy: "preserved",
+      policy: { caseSensitive: true, unicodeNormalization: "none" },
+    };
+
+    await expect(
+      new AgentOpenedProjectAdmission().authorize(
+        descriptor,
+        { rootPath: "/real", trusted: false },
+        gateway,
+        () => true,
+      ),
+    ).resolves.toBeNull();
+    await expect(gateway.grantOpenedProject(identity)).rejects.toBe(contract.revokedRefusal);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenCalledWith("grant_opened_project_trust", {
+      target: {
+        workspaceId: "ws-a",
+        admissionToken: 4,
+        selectedRootPath: "/alias",
+        canonicalRootPath: "/real",
+      },
+    });
   });
 });

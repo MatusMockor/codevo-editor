@@ -117,20 +117,20 @@ export function FunctionBreakpoints({
 const styles: Record<string, CSSProperties> = {
   add: {
     background: "transparent",
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 3,
     color: "inherit",
     cursor: "pointer",
     lineHeight: 1,
     padding: "1px 5px",
   },
-  error: { color: "var(--text-danger, #f87171)", fontSize: 11 },
+  error: { color: "var(--cv-danger)", fontSize: 11 },
   header: {
     alignItems: "center",
     display: "flex",
     justifyContent: "space-between",
   },
-  help: { color: "var(--text-muted)", fontSize: 10 },
+  help: { color: "var(--cv-fg-muted)", fontSize: 10 },
   indicator: {
     borderRadius: "50%",
     boxSizing: "border-box",
@@ -140,20 +140,20 @@ const styles: Record<string, CSSProperties> = {
   },
   indicatorUnverified: {
     background: "transparent",
-    border: "1.5px solid var(--color-text-muted)",
+    border: "1.5px solid var(--cv-fg-muted)",
   },
   indicatorPending: {
     background: "transparent",
-    border: "1.5px dashed var(--color-text-muted)",
+    border: "1.5px dashed var(--cv-fg-muted)",
   },
   indicatorDisabled: {
     background: "transparent",
-    border: "1.5px solid var(--color-text-muted)",
+    border: "1.5px solid var(--cv-fg-muted)",
     opacity: 0.55,
   },
   indicatorVerified: {
-    background: "var(--color-error)",
-    boxShadow: "0 0 0 1px color-mix(in srgb, var(--color-error) 35%, transparent)",
+    background: "var(--cv-danger)",
+    boxShadow: "0 0 0 1px color-mix(in srgb, var(--cv-danger) 35%, transparent)",
   },
   name: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   remove: { fontSize: 11 },

@@ -24,6 +24,7 @@ import {
   WorkbenchFrameEditorStateContext,
   type WorkbenchFrameEditorState,
 } from "../workbenchFrameEditorReport";
+import { readStyleSheet } from "../cssContractTestSupport";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import {
   WithRightPanelContext,
@@ -196,8 +197,8 @@ describe("AgentSurfacePanel", () => {
 
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-surface")).toBe("files");
-    expect(aside?.getAttribute("data-tree")).toBe("visible");
     expect(aside?.getAttribute("data-editor-slot")).toBe("none");
+    expect(aside?.hasAttribute("data-tree")).toBe(false);
     expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
     expect(host.querySelector('input[aria-label="Search workspace files"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
@@ -210,7 +211,6 @@ describe("AgentSurfacePanel", () => {
 
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-editor-slot")).toBe("open");
-    expect(aside?.getAttribute("data-tree")).toBe("hidden");
     const slot = host.querySelector(
       '#agent-surface-panel-editor > .cv-editor-slot[data-editor-slot="open"]',
     );
@@ -264,18 +264,15 @@ describe("AgentSurfacePanel", () => {
 
   it("reports the tree hidden when the Files surface has no tree or is not active", () => {
     render({ layout: open(["files"], "files"), fileTree: null, thread: null });
-    const aside = host.querySelector("aside.agent-surface");
-    expect(aside?.getAttribute("data-tree")).toBe("hidden");
     expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
     expect(host.querySelector(".agent-surface__files")?.childElementCount).toBe(0);
 
     render({ layout: open(["files", "diff"], "diff") });
-    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
 
     render({ layout: open(["files"], "files"), hidden: true });
-    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
   });
 
   it("renders one tab per open surface with its close glyph and the add button", () => {
@@ -293,7 +290,7 @@ describe("AgentSurfacePanel", () => {
       host.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("aria-controls"),
     ).toBe("agent-surface-panel-files");
     expect(host.querySelectorAll(".cv-tab__close")).toHaveLength(2);
-    expect(cssRule(agentModeCss, ".workbench-frame {")).toContain(
+    expect(cssRule(shellFrameCss, ".workbench-frame {")).toContain(
       "--agent-surface-focus-gutter: 4px",
     );
 
@@ -649,7 +646,7 @@ describe("AgentSurfacePanel", () => {
     );
 
     render({ hidden: true, layout: open(["files"], "files") });
-    expect(host.querySelector("[data-surface]")?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
   });
 
   it("shows terminal sessions as strip tabs and closes the surface with the last session", async () => {
@@ -782,7 +779,7 @@ describe("agent surface styles", () => {
     const tree = cssRule(agentModeCss, ".agent-surface-tree {");
     expect(tree).toContain("flex: 1 1 auto");
     expect(tree).not.toMatch(/(^|\s)width:/);
-    expect(tree).toContain("background: var(--codevo-canvas)");
+    expect(tree).toContain("background: var(--cv-canvas)");
     expect(tree).not.toContain("border");
 
     expect(agentModeCss).not.toContain(".agent-surface-tree__tools");
@@ -792,39 +789,30 @@ describe("agent surface styles", () => {
 
   it("keeps the change list on the shared rail tone and lifts the open row", () => {
     expect(cssRule(agentModeCss, ".agent-surface-diff__list {")).toContain(
-      "background: var(--codevo-canvas)",
+      "background: var(--cv-canvas)",
     );
     const row = cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row {");
-    expect(row).toContain("min-height: calc(28px * var(--codevo-fs-scale))");
+    expect(row).toContain("min-height: calc(28px * var(--cv-type-scale))");
     expect(row).toContain("border-radius: 7px");
     const selected = cssRule(
       agentModeCss,
       ".agent-surface-diff__list .agent-files__row--selected,",
     );
-    expect(selected).toContain("background: var(--codevo-raised)");
-    expect(selected).toContain("box-shadow: var(--codevo-shadow-card)");
+    expect(selected).toContain("background: var(--cv-raised)");
+    expect(selected).toContain("box-shadow: var(--cv-shadow-card)");
     expect(
       cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__status--added,"),
-    ).toContain("background: var(--codevo-ok-soft)");
+    ).toContain("background: var(--cv-ok-soft)");
     expect(
       cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__status--deleted,"),
-    ).toContain("background: var(--codevo-danger-soft)");
+    ).toContain("background: var(--cv-danger-soft)");
 
     const preview = cssRule(agentModeCss, ".agent-surface-diff__preview {");
-    expect(preview).toContain("background: var(--codevo-canvas)");
-    expect(preview).toContain("border-radius: var(--agent-radius-md)");
+    expect(preview).toContain("background: var(--cv-canvas)");
+    expect(preview).toContain("border-radius: var(--cv-r-card)");
     const terminal = cssRule(agentModeCss, ".agent-surface-terminal {");
-    expect(terminal).toContain("background: var(--codevo-canvas)");
-    expect(terminal).toContain("border-radius: var(--agent-radius-md)");
-  });
-
-  it("sizes the thread changes cue at the meta size with no underline rule", () => {
-    const cue = cssRule(agentModeCss, ".agent-session__changes-cue {");
-    expect(cue).toContain("font-size: var(--agent-fs-sm)");
-    expect(cue).toContain("color: var(--agent-text-muted)");
-    expect(cssRule(agentModeCss, ".agent-session__changes-cue .agent-linkbutton {")).toContain(
-      "border-bottom: 0",
-    );
+    expect(terminal).toContain("background: var(--cv-canvas)");
+    expect(terminal).toContain("border-radius: var(--cv-r-card)");
   });
 });
 
@@ -908,6 +896,7 @@ function terminalThemeStub(): NonNullable<AgentSurfacePanelProps["terminal"]>["t
 }
 
 const agentModeCss = readAgentModeStyles();
+const shellFrameCss = readStyleSheet("components/workbenchShellFrame.css").source;
 
 function cssRule(source: string, selector: string): string {
   const start = source.indexOf(selector);

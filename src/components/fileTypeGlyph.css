@@ -5,12 +5,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--codevo-mono);
+  font-family: var(--cv-font-mono);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.02em;
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .file-glyph svg {
@@ -19,53 +19,53 @@
 }
 
 .file-glyph--ts {
-  color: var(--codevo-ft-ts);
+  color: var(--cv-ft-ts);
 }
 
 .file-glyph--tsx {
-  color: var(--codevo-ft-tsx);
+  color: var(--cv-ft-tsx);
 }
 
 .file-glyph--js {
-  color: var(--codevo-ft-js);
+  color: var(--cv-ft-js);
 }
 
 .file-glyph--json {
-  color: var(--codevo-ft-json);
+  color: var(--cv-ft-json);
 }
 
 .file-glyph--npm {
-  color: var(--codevo-ft-npm);
+  color: var(--cv-ft-npm);
 }
 
 .file-glyph--md {
-  color: var(--codevo-ft-md);
+  color: var(--cv-ft-md);
 }
 
 .file-glyph--css {
-  color: var(--codevo-ft-css);
+  color: var(--cv-ft-css);
 }
 
 .file-glyph--sh {
-  color: var(--codevo-ft-sh);
+  color: var(--cv-ft-sh);
 }
 
 .file-glyph--docker {
-  color: var(--codevo-ft-docker);
+  color: var(--cv-ft-docker);
 }
 
 .file-glyph--git {
-  color: var(--codevo-ft-git);
+  color: var(--cv-ft-git);
 }
 
 .file-glyph--env {
-  color: var(--codevo-ft-env);
+  color: var(--cv-ft-env);
 }
 
 .file-glyph--lock {
-  color: var(--codevo-ft-lock);
+  color: var(--cv-ft-lock);
 }
 
 .file-glyph--file {
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
 }

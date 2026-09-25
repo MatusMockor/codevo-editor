@@ -497,7 +497,7 @@ describe("TerminalPanel", () => {
     ).terminal;
     const marker = sessionTerminal.registerMarker(-1);
     const options = {
-      backgroundColor: "var(--color-success)",
+      backgroundColor: "var(--cv-ok)",
       marker,
       tooltip: "Exit code 0",
     };

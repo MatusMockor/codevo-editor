@@ -87,7 +87,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "3px 5px",
   },
   children: { listStyle: "none", margin: 0, padding: 0 },
-  coverage: { borderBottom: "1px solid var(--border-subtle)", padding: "7px 8px" },
+  coverage: { borderBottom: "1px solid var(--cv-hair)", padding: "7px 8px" },
   coverageFile: {
     alignItems: "center",
     display: "flex",
@@ -110,7 +110,7 @@ const styles: Record<string, CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  message: { color: "var(--text-muted)", padding: 16 },
+  message: { color: "var(--cv-fg-muted)", padding: 16 },
   node: { listStyle: "none" },
   panel: { height: "100%", overflow: "auto" },
   row: {
@@ -124,7 +124,7 @@ const styles: Record<string, CSSProperties> = {
   status: { display: "inline-block", flex: "0 0 14px", textAlign: "center" },
   toolbar: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     gap: 6,
     padding: "6px 8px",

@@ -152,7 +152,7 @@ describe("css border contract", () => {
         rule.declarations.some(
           (declaration) =>
             declaration.property === "box-shadow" &&
-            varReferences(declaration.value).includes("--codevo-separator-inset"),
+            varReferences(declaration.value).some((name) => name.includes("separator")),
         ),
       )
       .map(ruleEntry)

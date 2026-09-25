@@ -1,10 +1,10 @@
 .bottom-panel {
-  --terminal-surface-background: var(--color-panel-deep);
+  --terminal-surface-background: var(--cv-side);
 }
 
 .bottom-panel[data-active-view="terminal"] {
   grid-template-rows: 38px minmax(0, 1fr);
-  background: var(--terminal-surface-background, var(--color-panel-deep));
+  background: var(--terminal-surface-background, var(--cv-side));
 }
 
 .bottom-panel[data-active-view="terminal"] .bottom-panel-header {
@@ -38,7 +38,7 @@
 .bottom-panel[data-active-view="terminal"] .terminal-profile-select,
 .bottom-panel[data-active-view="terminal"] .bottom-panel-text-action {
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .bottom-panel[data-active-view="terminal"] .terminal-profile-select {
@@ -86,7 +86,7 @@
 
 .terminal-tabs-toolbar {
   gap: 3px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .terminal-tabs-toolbar__sessions {
@@ -104,12 +104,12 @@
   flex: 0 0 auto;
   min-height: 28px;
   border-radius: 4px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
 }
 
 .terminal-tabs-toolbar__session:has([aria-selected="true"]) {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .terminal-tabs-toolbar__tab,
@@ -145,13 +145,13 @@
 
 .terminal-tabs-toolbar button:hover:not(:disabled),
 .terminal-tabs-toolbar__sessions button:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .terminal-tabs-toolbar button:focus-visible,
 .terminal-tabs-toolbar__sessions button:focus-visible {
-  outline: 1px solid var(--color-accent);
+  outline: 1px solid var(--cv-accent);
   outline-offset: -1px;
 }
 
@@ -169,7 +169,7 @@
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: var(--terminal-surface-background, var(--color-panel-deep));
+  background: var(--terminal-surface-background, var(--cv-side));
 }
 
 .terminal-viewport {

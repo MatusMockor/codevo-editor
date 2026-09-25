@@ -32,7 +32,7 @@ const TAB_LABELS: Record<SymfonyWorkspacePanelTab, string> = {
 const styles: Record<string, CSSProperties> = {
   action: {
     background: "transparent",
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 4,
     color: "inherit",
     cursor: "pointer",
@@ -40,15 +40,15 @@ const styles: Record<string, CSSProperties> = {
   },
   actions: { display: "flex", gap: 5, justifyContent: "flex-end" },
   badge: {
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 8,
-    color: "var(--text-muted)",
+    color: "var(--cv-fg-muted)",
     fontSize: 11,
     padding: "1px 6px",
   },
   header: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     gap: 8,
     padding: "6px 8px",
@@ -69,10 +69,10 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
   },
   list: { listStyle: "none", margin: 0, padding: 0 },
-  message: { color: "var(--text-muted)", padding: 16 },
-  muted: { color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" },
+  message: { color: "var(--cv-fg-muted)", padding: 16 },
+  muted: { color: "var(--cv-fg-muted)", overflow: "hidden", textOverflow: "ellipsis" },
   panel: { height: "100%", overflow: "auto" },
-  selected: { background: "var(--selection-background)" },
+  selected: { background: "var(--cv-accent-soft)" },
   tab: {
     background: "transparent",
     border: 0,
@@ -81,8 +81,8 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     padding: "6px 10px",
   },
-  tabActive: { borderBottomColor: "var(--accent, currentColor)" },
-  tabs: { borderBottom: "1px solid var(--border-subtle)", display: "flex", paddingLeft: 4 },
+  tabActive: { borderBottomColor: "var(--cv-accent)" },
+  tabs: { borderBottom: "1px solid var(--cv-hair)", display: "flex", paddingLeft: 4 },
 };
 
 export function SymfonyWorkspacePanel(props: SymfonyWorkspacePanelProps): ReactNode {

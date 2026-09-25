@@ -1,7 +1,6 @@
 import { readStyleSheet } from "../cssContractTestSupport";
 
 export const AGENT_MODE_STYLE_SHEETS = [
-  "agentModeTokens.css",
   "agentMode.css",
   "agentRail.css",
   "agentThread.css",

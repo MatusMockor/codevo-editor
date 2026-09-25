@@ -259,19 +259,10 @@ export interface WorkspaceSessionViewState {
 type WorkspaceSessionGroupViewStates = NonNullable<WorkspaceSessionState["viewStates"]>;
 
 export interface StatusBarItemVisibility {
-  activePath: boolean;
   agentAttention: boolean;
   cursorPosition: boolean;
-  dirtyCount: boolean;
-  gitBranch: boolean;
   index: boolean;
-  language: boolean;
-  largeFileMode: boolean;
   languageServer: boolean;
-  message: boolean;
-  mode: boolean;
-  workspaceInfo: boolean;
-  workspaceTrust: boolean;
 }
 
 export interface SettingsGateway {
@@ -424,21 +415,7 @@ export function defaultWorkspaceSessionState(): WorkspaceSessionState {
 }
 
 export function defaultStatusBarItemVisibility(): StatusBarItemVisibility {
-  return {
-    activePath: true,
-    agentAttention: true,
-    cursorPosition: true,
-    dirtyCount: true,
-    gitBranch: true,
-    index: true,
-    language: true,
-    largeFileMode: true,
-    languageServer: true,
-    message: true,
-    mode: true,
-    workspaceInfo: true,
-    workspaceTrust: true,
-  };
+  return { agentAttention: true, cursorPosition: true, index: true, languageServer: true };
 }
 
 export function normalizeAppSettings(value: unknown): AppSettings {
@@ -997,19 +974,10 @@ export function normalizeStatusBarItemVisibility(value: unknown): StatusBarItemV
   }
 
   return {
-    activePath: normalizeBoolean(value.activePath, defaults.activePath),
     agentAttention: normalizeBoolean(value.agentAttention, defaults.agentAttention),
     cursorPosition: normalizeBoolean(value.cursorPosition, defaults.cursorPosition),
-    dirtyCount: normalizeBoolean(value.dirtyCount, defaults.dirtyCount),
-    gitBranch: normalizeBoolean(value.gitBranch, defaults.gitBranch),
     index: normalizeBoolean(value.index, defaults.index),
-    language: normalizeBoolean(value.language, defaults.language),
-    largeFileMode: normalizeBoolean(value.largeFileMode, defaults.largeFileMode),
     languageServer: normalizeBoolean(value.languageServer, defaults.languageServer),
-    message: normalizeBoolean(value.message, defaults.message),
-    mode: normalizeBoolean(value.mode, defaults.mode),
-    workspaceInfo: normalizeBoolean(value.workspaceInfo, defaults.workspaceInfo),
-    workspaceTrust: normalizeBoolean(value.workspaceTrust, defaults.workspaceTrust),
   };
 }
 

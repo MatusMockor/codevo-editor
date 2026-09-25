@@ -4,18 +4,16 @@ export interface TerminalCommandDecoration {
   tooltip: string;
 }
 
-export function terminalCommandDecoration(
-  exitCode: number,
-): TerminalCommandDecoration {
+export function terminalCommandDecoration(exitCode: number): TerminalCommandDecoration {
   if (exitCode === 0) {
     return {
-      backgroundColor: "var(--color-success)",
+      backgroundColor: "var(--cv-ok)",
       tooltip: "Exit code 0",
     };
   }
 
   return {
-    backgroundColor: "var(--color-error)",
+    backgroundColor: "var(--cv-danger)",
     tooltip: `Exit code ${exitCode}`,
   };
 }

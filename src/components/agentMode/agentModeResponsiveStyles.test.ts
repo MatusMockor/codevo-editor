@@ -11,6 +11,10 @@ import {
 
 const appCss = readAgentModeStyles();
 const shellCss = readFileSync(resolve(import.meta.dirname, "../workbenchShellFrame.css"), "utf8");
+const semanticCss = readFileSync(
+  resolve(import.meta.dirname, "../../ui/tokens/semantic.css"),
+  "utf8",
+);
 const rootCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
 
 function block(source: string, marker: string): string {
@@ -95,7 +99,7 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".cv-composer-dock", composerCss)).not.toMatch(/position:\s*absolute/);
     expect(rule(".cv-composer-dock", composerCss)).toContain("flex: none");
     expect(rule(".agent-composer__textarea", composerCss)).toContain(
-      "max-height: min(40vh, calc(420px * var(--codevo-fs-scale, 1)))",
+      "max-height: min(40vh, calc(420px * var(--cv-type-scale)))",
     );
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });
@@ -184,10 +188,10 @@ describe("agent mode responsive layout contract", () => {
     const shell = rule(".app-shell {", rootCss);
     expect(roots).toContain("min-width: 100%");
     expect(roots).toContain("min-height: 100%");
-    expect(roots).toContain("background: var(--color-app)");
+    expect(roots).toContain("background: var(--cv-canvas)");
     expect(shell).toContain("min-width: 100%");
     expect(shell).toContain("min-height: 100%");
-    expect(shell).toContain("background: var(--color-app)");
+    expect(shell).toContain("background: var(--cv-canvas)");
   });
 
   it("keeps narrow and short media rules off the composer slab form", () => {
@@ -218,7 +222,7 @@ describe("agent mode responsive layout contract", () => {
       "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr)",
     );
     expect(appCss).not.toContain(".agent-info");
-    expect(appCss).not.toContain("--agent-info-width");
+    expect(appCss).not.toContain("agent-info-width");
     expect(rule(".agent-mode__grid", narrow)).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-mode__grid", narrow)).toContain(
       "grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr)",
@@ -292,12 +296,15 @@ describe("agent mode responsive layout contract", () => {
   });
 
   it("reserves the largest variant focus-ring spread inside the surface scrollport", () => {
-    expect(rule(".workbench-frame {")).toContain("--agent-surface-focus-gutter: 4px");
-    expect(rule(".app-shell {")).toContain("0 0 0 4px var(--codevo-primary)");
+    expect(rule(".workbench-frame {", shellCss)).toContain("--agent-surface-focus-gutter: 4px");
+    const ring = /--cv-ring-focus:([^;]+);/.exec(semanticCss)?.[1] ?? "";
+    const spreads = [...ring.matchAll(/0 0 0 (\d+)px/g)].map((match) => Number(match[1]));
+    expect(spreads.length).toBeGreaterThan(0);
+    expect(Math.max(...spreads)).toBeLessThanOrEqual(4);
   });
 
   it("lets the Files tree fill its surface and never offsets the editor overlay by a tree", () => {
-    expect(shellCss).not.toContain("--agent-surface-tree-width");
+    expect(shellCss).not.toContain("agent-surface-tree-width");
     expect(rule(".agent-surface-tree")).toContain("flex: 1 1 auto");
     const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
     expect(editor).not.toContain("padding-left");
@@ -435,13 +442,10 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-files__row")).toContain("flex-wrap: wrap");
   });
 
-  it("preserves the Code escape and wraps secondary toolbar controls", () => {
+  it("wraps the workbench toolbar on narrow windows", () => {
     const narrow = block(appCss, "@media (max-width: 720px)");
 
     expect(rule(".workbench-toolbar", narrow)).toContain("flex-wrap: wrap");
-    expect(rule(".workbench-mode-switch", narrow)).toContain("position: sticky");
-    expect(rule(".workbench-mode-switch", narrow)).toContain("left: 0");
-    expect(rule(".toolbar-status", narrow)).toContain("display: none");
   });
 
   it("collapses the sidebar to a zero track and never leaves an empty stacked row", () => {

@@ -60,6 +60,8 @@
   --cv-edge-start-quote: inset 2px 0 0 var(--cv-hair-strong);
   --cv-ring-danger-soft: inset 0 0 0 1px color-mix(in srgb, var(--cv-danger) 28%, transparent);
   --cv-ring-media: 0 0 0 1px rgba(255, 255, 255, 0.2);
+  --cv-type-scale: 1;
+  --cv-sym-icon-fg: #000000;
 }
 
 :root,
@@ -88,6 +90,36 @@
   --cv-breakpoint: #e5534b;
   --cv-match: rgba(237, 187, 78, 0.16);
   --cv-match-current: rgba(237, 187, 78, 0.38);
+  color-scheme: dark;
+  --cv-ok-soft: color-mix(in srgb, var(--cv-ok) 14%, transparent);
+  --cv-danger-soft: color-mix(in srgb, var(--cv-danger) 14%, transparent);
+  --cv-shadow-card: none;
+  --cv-ft-ts: #3b8eea;
+  --cv-ft-tsx: #38bdf8;
+  --cv-ft-js: #e8d44d;
+  --cv-ft-json: #e5a33b;
+  --cv-ft-npm: #d64a3a;
+  --cv-ft-md: #8fa3b8;
+  --cv-ft-css: #7f9cf5;
+  --cv-ft-sh: #4cc38a;
+  --cv-ft-docker: #3aa0e6;
+  --cv-ft-git: #f0603f;
+  --cv-ft-env: #d7c26b;
+  --cv-ft-lock: #8a8f98;
+  --cv-sym-badge-fg: #000000;
+  --cv-sym-method: #b48ead;
+  --cv-sym-property: #d08770;
+  --cv-sym-const: #5e9cd0;
+  --cv-sym-class: #a3be8c;
+  --cv-sym-interface: #5fb3b3;
+  --cv-sym-enum: #ebcb8b;
+  --cv-sym-function: #b48ead;
+  --cv-sym-trait: #6cb6c9;
+  --cv-sym-variable: #8b94a3;
+  --cv-sym-keyword: #b48ead;
+  --cv-vis-public: #8fbf7f;
+  --cv-vis-private: #d07f7f;
+  --cv-vis-protected: #d8b977;
 }
 
 :root[data-cv-scheme="light"] {
@@ -115,6 +147,36 @@
   --cv-breakpoint: #d1242f;
   --cv-match: rgba(180, 120, 0, 0.14);
   --cv-match-current: rgba(180, 120, 0, 0.32);
+  color-scheme: light;
+  --cv-ok-soft: color-mix(in srgb, var(--cv-ok) 12%, transparent);
+  --cv-danger-soft: color-mix(in srgb, var(--cv-danger) 10%, transparent);
+  --cv-shadow-card: 0 1px 2px rgba(18, 20, 30, 0.05), 0 6px 20px rgba(18, 20, 30, 0.05);
+  --cv-ft-ts: #2f6fd0;
+  --cv-ft-tsx: #0e8ec2;
+  --cv-ft-js: #b39a12;
+  --cv-ft-json: #c07d1a;
+  --cv-ft-npm: #c53b2c;
+  --cv-ft-md: #5f7389;
+  --cv-ft-css: #4d6ee0;
+  --cv-ft-sh: #1f9d5f;
+  --cv-ft-docker: #1f7fc4;
+  --cv-ft-git: #d9502f;
+  --cv-ft-env: #9c8a2b;
+  --cv-ft-lock: #7a7f88;
+  --cv-sym-badge-fg: #ffffff;
+  --cv-sym-method: #8250c4;
+  --cv-sym-property: #c25a3a;
+  --cv-sym-const: #2f6fb0;
+  --cv-sym-class: #3f7a3f;
+  --cv-sym-interface: #1d7a86;
+  --cv-sym-enum: #9a7016;
+  --cv-sym-function: #8250c4;
+  --cv-sym-trait: #2a7d6f;
+  --cv-sym-variable: #6b727d;
+  --cv-sym-keyword: #8a5c8f;
+  --cv-vis-public: #3f8a3f;
+  --cv-vis-private: #c2484a;
+  --cv-vis-protected: #b07d18;
 }
 
 @media (prefers-reduced-motion: reduce) {

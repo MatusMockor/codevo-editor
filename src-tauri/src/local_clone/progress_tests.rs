@@ -161,7 +161,7 @@ fn classifies_an_error_printed_after_the_retention_limit() {
 
 #[test]
 fn classification_order_prefers_specific_causes() {
-    let cases: [(&[&str], CloneFailure); 10] = [
+    let cases: [(&[&str], CloneFailure); 21] = [
         (
             &[
                 "host key verification failed.",
@@ -208,6 +208,62 @@ fn classification_order_prefers_specific_causes() {
         (
             &["ssh: could not resolve hostname example.com: nodename nor servname provided"],
             CloneFailure::Network,
+        ),
+        (
+            &[
+                "remote: ssl is deprecated on this mirror",
+                "fatal: couldn't find remote ref refs/heads/nope",
+            ],
+            CloneFailure::Other,
+        ),
+        (
+            &[
+                "remote: permission denied (publickey) is logged for bots",
+                "fatal: the remote end hung up unexpectedly",
+            ],
+            CloneFailure::Network,
+        ),
+        (
+            &["fatal: unable to access 'https://example.com/a.git/': ssl certificate problem: self-signed certificate"],
+            CloneFailure::Network,
+        ),
+        (
+            &[
+                "remote: http basic: access denied",
+                "fatal: authentication failed for 'https://gitlab.com/a/b.git/'",
+            ],
+            CloneFailure::Authentication,
+        ),
+        (&["remote: repository not found."], CloneFailure::NotFound),
+        (
+            &["remote: http basic: access denied"],
+            CloneFailure::Authentication,
+        ),
+        (
+            &[
+                "remote: the project you were looking for could not be found or you don't have permission to view it.",
+                "fatal: could not read from remote repository.",
+            ],
+            CloneFailure::NotFound,
+        ),
+        (
+            &["error: rpc failed; curl 56 openssl ssl_read: connection was reset, errno 54"],
+            CloneFailure::Network,
+        ),
+        (
+            &["fatal: unable to access 'https://example.com/a.git/': openssl/3.0.2: error:0a00010b:wrong version number"],
+            CloneFailure::Network,
+        ),
+        (
+            &["error: rpc failed; curl 56 recv failure: connection was reset"],
+            CloneFailure::Network,
+        ),
+        (
+            &[
+                "remote: openssl ssl_read: connection was reset on the mirror",
+                "fatal: couldn't find remote ref refs/heads/nope",
+            ],
+            CloneFailure::Other,
         ),
         (&["error: something unexpected"], CloneFailure::Other),
         (&[], CloneFailure::Other),

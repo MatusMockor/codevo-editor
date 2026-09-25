@@ -11,6 +11,7 @@ import {
   normalizeAppSettings,
   normalizeEditorFontSize,
   normalizeRecentWorkspacePaths,
+  normalizeStatusBarItemVisibility,
   normalizeWorkspaceSession,
   normalizeWorkspaceSettings,
   pushRecentWorkspacePath,
@@ -123,19 +124,10 @@ describe("settings defaults", () => {
         version: 1,
       },
       statusBar: {
-        activePath: true,
         agentAttention: true,
         cursorPosition: true,
-        dirtyCount: true,
-        gitBranch: true,
         index: true,
-        language: true,
-        largeFileMode: true,
         languageServer: true,
-        message: true,
-        mode: true,
-        workspaceInfo: true,
-        workspaceTrust: true,
       },
     });
     expect(defaultWorkspaceSessionState()).toEqual({
@@ -777,21 +769,24 @@ describe("normalizeWorkspaceSettings", () => {
         version: 1,
       },
       statusBar: {
-        activePath: true,
         agentAttention: true,
         cursorPosition: true,
-        dirtyCount: false,
-        gitBranch: true,
         index: false,
-        language: true,
-        largeFileMode: true,
         languageServer: true,
-        message: true,
-        mode: false,
-        workspaceInfo: false,
-        workspaceTrust: true,
       },
     });
+  });
+
+  it("keeps only the editor header readouts that still exist when reading old settings", () => {
+    expect(
+      normalizeStatusBarItemVisibility({
+        activePath: false,
+        gitBranch: false,
+        cursorPosition: false,
+        message: true,
+        index: false,
+      }),
+    ).toEqual({ agentAttention: true, cursorPosition: false, index: false, languageServer: true });
   });
 
   it.each([undefined, null, "false", 0, {}, []])(

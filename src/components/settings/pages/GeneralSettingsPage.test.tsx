@@ -172,11 +172,13 @@ describe("GeneralSettingsPage", () => {
     });
   });
 
-  it("offers cursor position and git branch status bar chips", async () => {
+  it("offers only the header readouts the editor renders", async () => {
     const onSave = await render({});
+    const labels = [
+      ...rowElement("general.statusBar").querySelectorAll<HTMLButtonElement>(".settings-chip"),
+    ].map((candidate) => candidate.textContent);
 
-    expect(chip("Cursor position").getAttribute("aria-pressed")).toBe("true");
-    expect(chip("Git branch").getAttribute("aria-pressed")).toBe("true");
+    expect(labels).toEqual(["Index", "IDE engine", "Cursor position"]);
 
     act(() => chip("Cursor position").click());
 
@@ -473,7 +475,7 @@ describe("GeneralSettingsPage", () => {
     const workspaceSettings: WorkspaceSettings = {
       ...defaultWorkspaceSettings(),
       defaultTabSize: 2,
-      statusBar: { ...defaultWorkspaceSettings().statusBar, message: false },
+      statusBar: { ...defaultWorkspaceSettings().statusBar, index: false },
     };
     const onSave = await render({ trusted: false, workspaceSettings });
     const syntax = () => queryIn<HTMLSelectElement>("appearance.syntaxTheme", "select");

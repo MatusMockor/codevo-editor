@@ -146,6 +146,13 @@ pub fn run() {
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
             let trust_service = WorkspaceTrustService::load(trust_path)?;
             app.manage(Mutex::new(trust_service));
+            let trust_prune_app = app.handle().clone();
+            let _ = std::thread::Builder::new()
+                .name("workspace-trust-prune".into())
+                .spawn(move || {
+                    let trust = trust_prune_app.state::<Mutex<WorkspaceTrustService>>();
+                    let _ = crate::trust::prune_missing_clone_roots(trust.inner());
+                });
             let agent_task_admission =
                 Arc::new(agent_task_admission::AgentTaskAdmissionRegistry::new());
             app.manage(Arc::clone(&agent_task_admission));
@@ -180,7 +187,7 @@ pub fn run() {
                 agent_task_spawner::agent_provider::agent_cli_version::AgentCliVersionRegistry::new(),
             );
             let agent_cli_discovery = Arc::new(agent_cli_discovery::AgentCliDiscovery::new(
-                Arc::clone(&agent_cli_versions),
+                agent_cli_versions,
             ));
             let provider_executable_resolver: Arc<
                 dyn agent_task_spawner::agent_provider::runtime::AgentProviderExecutableResolver,
@@ -202,7 +209,6 @@ pub fn run() {
                 }
             });
             app.manage(codex_hosts);
-            app.manage(agent_cli_versions);
             app.manage(Arc::new(repository_lookup::RepositoryLookupService::new(
                 Arc::clone(&agent_cli_discovery),
             )));
@@ -643,7 +649,6 @@ pub fn run() {
             agent_session_history_commands::preview_external_agent_session,
             agent_session_history_commands::read_external_agent_session_history,
             agent_cli_discovery_commands::discover_agent_clis,
-            agent_cli_version_commands::probe_agent_cli_version,
             agent_provider_commands::register_agent_provider_policy,
             agent_provider_commands::get_agent_provider_policy,
             agent_provider_commands::probe_agent_provider_health,

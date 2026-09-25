@@ -195,7 +195,7 @@ const splitTestResultsStyles = {
   },
   jsBlock: { minHeight: 0, overflow: "hidden" },
   phpBlock: {
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     minHeight: 0,
     overflow: "hidden",
   },

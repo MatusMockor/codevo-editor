@@ -113,8 +113,8 @@ describe("createTerminalSession", () => {
   });
 
   it.each([
-    [1, "var(--color-error)", "Exit code 1"],
-    [0, "var(--color-success)", "Exit code 0"],
+    [1, "var(--cv-danger)", "Exit code 1"],
+    [0, "var(--cv-ok)", "Exit code 0"],
   ])("decorates a completed command with exit code %s", async (exitCode, color, tooltip) => {
     const harness = terminalHarness({ shellIntegrationEnabled: true });
 

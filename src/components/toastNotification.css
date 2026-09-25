@@ -1,34 +1,35 @@
 .app-shell {
-  --toast-radius: var(--codevo-r-lg);
-  --toast-radius-action: var(--codevo-r-sm);
-  --toast-radius-tile: var(--codevo-r-sm);
-  --toast-radius-pill: var(--codevo-r-pill);
+  --toast-radius: var(--cv-r-group);
+  --toast-radius-action: var(--cv-r-control);
+  --toast-radius-tile: var(--cv-r-control);
+  --toast-radius-pill: var(--cv-r-pill);
   --toast-width: 380px;
   --toast-inset: 16px;
   --toast-top: calc(var(--window-chrome-height, 36px) + 16px);
-  --toast-surface: var(--codevo-raised);
-  --toast-surface-raised: var(--codevo-raised);
-  --toast-well: var(--codevo-well);
-  --toast-hover: var(--codevo-hover);
-  --toast-active: var(--codevo-active);
-  --toast-foreground: var(--codevo-fg-strong);
-  --toast-body: var(--codevo-fg);
-  --toast-muted: var(--codevo-fg-muted);
-  --toast-subtle: var(--codevo-fg-subtle);
-  --toast-primary: var(--codevo-primary);
-  --toast-primary-foreground: var(--codevo-primary-fg);
-  --toast-primary-soft: var(--codevo-primary-soft);
-  --toast-update: var(--codevo-primary);
-  --toast-brand: var(--codevo-primary);
-  --toast-success: var(--codevo-ok);
-  --toast-success-soft: var(--codevo-ok-soft);
-  --toast-error: var(--codevo-danger);
-  --toast-error-soft: var(--codevo-danger-soft);
-  --toast-warning: var(--codevo-warn);
-  --toast-warning-soft: var(--codevo-warn-soft);
-  --toast-mono: var(--codevo-mono);
-  --toast-shadow: var(--codevo-shadow-float);
-  --toast-focus-ring: var(--codevo-focus-ring);
+  --toast-surface: var(--cv-raised);
+  --toast-surface-raised: var(--cv-raised);
+  --toast-well: var(--cv-raised);
+  --toast-hover: var(--cv-tint-2);
+  --toast-active: var(--cv-s3);
+  --toast-foreground: var(--cv-fg-strong);
+  --toast-body: var(--cv-fg);
+  --toast-muted: var(--cv-fg-muted);
+  --toast-subtle: var(--cv-fg-subtle);
+  --toast-primary: var(--cv-accent);
+  --toast-primary-fill: var(--cv-accent-fill);
+  --toast-primary-foreground: var(--cv-on-accent);
+  --toast-primary-soft: var(--cv-accent-soft);
+  --toast-update: var(--cv-accent);
+  --toast-brand: var(--cv-accent);
+  --toast-success: var(--cv-ok);
+  --toast-success-soft: var(--cv-ok-soft);
+  --toast-error: var(--cv-danger);
+  --toast-error-soft: var(--cv-danger-soft);
+  --toast-warning: var(--cv-warn);
+  --toast-warning-soft: var(--cv-warn-soft);
+  --toast-mono: var(--cv-font-mono);
+  --toast-shadow: var(--cv-shadow-pop);
+  --toast-focus-ring: var(--cv-ring-focus);
 }
 
 .toast-region {
@@ -274,7 +275,7 @@
 }
 
 .toast-notification-action--primary {
-  background: var(--toast-primary);
+  background: var(--toast-primary-fill);
   color: var(--toast-primary-foreground);
 }
 
@@ -287,7 +288,7 @@
 }
 
 .toast-notification-action--primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--toast-primary) 88%, var(--toast-foreground));
+  background: color-mix(in srgb, var(--toast-primary-fill) 94%, var(--toast-foreground));
 }
 
 .toast-notification-action--secondary:hover,

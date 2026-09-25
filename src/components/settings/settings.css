@@ -191,7 +191,7 @@ code.settings-readout,
 }
 
 .settings-btn--primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--cv-accent-fill) 88%, var(--cv-fg-strong));
+  background: color-mix(in srgb, var(--cv-accent-fill) 94%, var(--cv-fg-strong));
 }
 
 .settings-btn--outline {
@@ -1488,7 +1488,6 @@ code.settings-readout,
 .settings-screen .settings-row:focus-visible,
 .settings-screen .settings-provider:focus-visible,
 .settings-screen .settings-screen__page:focus-visible,
-.settings-screen .settings-screen__title:focus-visible,
 .settings-screen .settings-search__input:focus-visible,
 .settings-screen .settings-select__input:focus-visible,
 .settings-screen .settings-numfield__value:focus-visible,

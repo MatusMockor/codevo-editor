@@ -611,19 +611,10 @@ describe("BrowserSettingsGateway", () => {
         version: 1,
       },
       statusBar: {
-        activePath: true,
         agentAttention: true,
         cursorPosition: true,
-        dirtyCount: true,
-        gitBranch: true,
         index: true,
-        language: true,
-        largeFileMode: true,
         languageServer: true,
-        message: true,
-        mode: true,
-        workspaceInfo: true,
-        workspaceTrust: true,
       },
     });
   });
@@ -730,19 +721,10 @@ describe("BrowserSettingsGateway", () => {
         version: 1,
       },
       statusBar: {
-        activePath: true,
         agentAttention: true,
         cursorPosition: true,
-        dirtyCount: true,
-        gitBranch: true,
         index: false,
-        language: true,
-        largeFileMode: true,
         languageServer: true,
-        message: true,
-        mode: true,
-        workspaceInfo: false,
-        workspaceTrust: true,
       },
     });
 
@@ -846,19 +828,10 @@ describe("BrowserSettingsGateway", () => {
         version: 1,
       },
       statusBar: {
-        activePath: true,
         agentAttention: true,
         cursorPosition: true,
-        dirtyCount: true,
-        gitBranch: true,
         index: false,
-        language: true,
-        largeFileMode: true,
         languageServer: true,
-        message: true,
-        mode: true,
-        workspaceInfo: false,
-        workspaceTrust: true,
       },
     });
   });
@@ -875,7 +848,7 @@ describe("BrowserSettingsGateway", () => {
 
     const reloaded = await new BrowserSettingsGateway(storage).loadWorkspaceSettings(identity);
     expect(reloaded.statusBar.agentAttention).toBe(false);
-    expect(reloaded.statusBar.message).toBe(true);
+    expect(reloaded.statusBar.cursorPosition).toBe(true);
   });
 
   it("reads the initial appearance synchronously with the same normaliser the loader uses", async () => {
@@ -996,19 +969,10 @@ describe("BrowserSettingsGateway", () => {
         version: 1,
       },
       statusBar: {
-        activePath: true,
         agentAttention: true,
         cursorPosition: true,
-        dirtyCount: true,
-        gitBranch: true,
         index: true,
-        language: true,
-        largeFileMode: true,
         languageServer: true,
-        message: true,
-        mode: true,
-        workspaceInfo: true,
-        workspaceTrust: true,
       },
     });
   });

@@ -1,9 +1,9 @@
 .agent-remote-add-project {
   align-self: flex-start;
   border: 0;
-  border-radius: var(--codevo-r-xl);
-  background: var(--codevo-raised);
-  box-shadow: var(--codevo-shadow-float);
+  border-radius: var(--cv-r-group);
+  background: var(--cv-raised);
+  box-shadow: var(--cv-shadow-pop);
 }
 
 .agent-remote-add-project__crumb {
@@ -11,9 +11,9 @@
   flex: none;
   align-items: center;
   gap: 10px;
-  height: calc(56px * var(--codevo-fs-scale));
+  height: calc(56px * var(--cv-type-scale));
   padding: 0 20px;
-  color: var(--codevo-fg-strong);
+  color: var(--cv-fg-strong);
 }
 
 .agent-remote-add-project__crumb .agent-iconbutton {
@@ -24,8 +24,8 @@
 .agent-remote-add-project__title {
   overflow: hidden;
   min-width: 0;
-  color: var(--codevo-fg-strong);
-  font-size: var(--codevo-fs-meta);
+  color: var(--cv-fg-strong);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -34,21 +34,21 @@
 .agent-remote-add-project .palette-search {
   height: 34px;
   border-bottom: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
-  color: var(--codevo-fg-muted);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg-muted);
   margin: 0 20px 12px;
   padding: 0 10px;
-  gap: var(--agent-space-3);
+  gap: var(--cv-space-4);
 }
 
 .agent-remote-add-project .palette-search input {
   height: 34px;
-  color: var(--codevo-fg-strong);
+  color: var(--cv-fg-strong);
 }
 
 .agent-remote-add-project .palette-search input::placeholder {
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
 }
 
 .agent-remote-add-project .palette-search input:focus-visible {
@@ -59,16 +59,16 @@
 .agent-remote-add-project__badge {
   flex: none;
   border: 0;
-  border-radius: var(--codevo-r-pill);
-  background: var(--codevo-hover);
-  color: var(--codevo-fg-muted);
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-muted);
   font: inherit;
-  font-size: var(--codevo-fs-label);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
   padding: 3px 8px;
 }
 
 .agent-remote-add-project__host:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }
 
@@ -80,8 +80,8 @@
 }
 
 .agent-remote-add-project .search-everywhere-section-label {
-  color: var(--codevo-fg-subtle);
-  font-size: var(--codevo-fs-label);
+  color: var(--cv-fg-subtle);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
   font-weight: 600;
   letter-spacing: 0.12em;
   padding: 6px 10px 4px;
@@ -95,18 +95,18 @@
 .agent-remote-add-project__row {
   grid-template-columns: 20px minmax(0, 1fr) auto;
   min-height: 36px;
-  border-radius: var(--codevo-r-sm);
-  color: var(--codevo-fg);
+  border-radius: var(--cv-r-control);
+  color: var(--cv-fg);
 }
 
 .agent-remote-add-project__row svg {
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 
 .agent-remote-add-project__row:hover,
 .agent-remote-add-project__row.active {
-  background: var(--codevo-hover);
-  color: var(--codevo-fg-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .agent-remote-add-project__row.active::before {
@@ -114,30 +114,30 @@
 }
 
 .agent-remote-add-project__row[aria-disabled="true"] {
-  color: var(--codevo-fg-disabled);
+  color: var(--cv-fg-disabled);
   cursor: default;
 }
 
 .agent-remote-add-project__chip {
-  border-radius: var(--codevo-r-pill);
-  background: var(--codevo-warn-soft);
-  color: var(--codevo-warn);
-  font-size: var(--codevo-fs-label);
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-warn-soft);
+  color: var(--cv-warn);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
   padding: 2px 8px;
   white-space: nowrap;
 }
 
 .agent-remote-add-project__pending,
 .agent-remote-add-project__meta {
-  color: var(--codevo-fg-subtle);
-  font-size: var(--codevo-fs-label);
+  color: var(--cv-fg-subtle);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
   white-space: nowrap;
 }
 
 .agent-remote-add-project__entry {
   display: flex;
   flex-direction: column;
-  gap: var(--agent-space-2);
+  gap: var(--cv-space-2);
   padding: 4px 10px 8px;
 }
 
@@ -145,18 +145,18 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--agent-space-3);
+  gap: var(--cv-space-4);
   padding: 0;
 }
 
 .agent-remote-add-project__outcome-text {
-  color: var(--codevo-fg-strong);
+  color: var(--cv-fg-strong);
 }
 
 .agent-remote-add-project__note {
   margin: 0;
-  color: var(--codevo-fg-subtle);
-  font-size: var(--codevo-fs-meta);
+  color: var(--cv-fg-subtle);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
 }
 
 .agent-remote-add-project__form {
@@ -169,20 +169,20 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--agent-space-3);
-  border-radius: var(--codevo-r-md);
-  background: var(--codevo-well);
+  gap: var(--cv-space-4);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-raised);
   padding: 10px 12px;
 }
 
 .agent-remote-add-project__repo > svg {
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 
 .agent-remote-add-project__repo strong {
   display: block;
   overflow: hidden;
-  color: var(--codevo-fg-strong);
+  color: var(--cv-fg-strong);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -190,25 +190,25 @@
 
 .agent-remote-add-project__repo small {
   display: block;
-  color: var(--codevo-fg-subtle);
-  font-size: var(--codevo-fs-label);
+  color: var(--cv-fg-subtle);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
 }
 
 .agent-remote-add-project__field {
   display: grid;
   gap: 4px;
-  color: var(--codevo-fg-muted);
-  font-size: var(--codevo-fs-label);
+  color: var(--cv-fg-muted);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
 }
 
 .agent-remote-add-project__field input {
   height: 38px;
   border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
-  color: var(--codevo-fg-strong);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg-strong);
   font: inherit;
-  font-size: var(--codevo-fs-meta);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   outline: none;
   padding: 0 10px;
 }
@@ -217,34 +217,12 @@
   box-shadow: var(--cv-ring-hair-strong);
 }
 
-.agent-remote-add-project__prefixed {
-  display: flex;
-  align-items: center;
-  gap: var(--agent-space-2);
-}
-
-.agent-remote-add-project__prefixed input {
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-remote-add-project__prefix {
-  flex: none;
-  max-width: 55%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--codevo-fg-subtle);
-  font-family: var(--codevo-mono);
-  font-size: var(--codevo-fs-label);
-}
-
 .agent-remote-add-project__segmented {
   display: inline-flex;
   width: fit-content;
   gap: 2px;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
   padding: 3px;
 }
 
@@ -252,46 +230,46 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
   cursor: pointer;
   font: inherit;
-  font-size: var(--codevo-fs-label);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
   padding: 4px 12px;
 }
 
 .agent-remote-add-project__segmented button[aria-pressed="true"] {
-  background: var(--codevo-raised);
-  color: var(--codevo-fg-strong);
+  background: var(--cv-raised);
+  color: var(--cv-fg-strong);
 }
 
 .agent-remote-add-project__segmented button:disabled {
-  color: var(--codevo-fg-disabled);
+  color: var(--cv-fg-disabled);
   cursor: default;
 }
 
 .agent-remote-add-project__segmented button:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }
 
 .agent-remote-add-project__warning {
   margin: 0;
-  color: var(--codevo-warn);
-  font-size: var(--codevo-fs-meta);
+  color: var(--cv-warn);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
 }
 
 .agent-remote-add-project__error {
   margin: 0;
-  color: var(--codevo-danger);
-  font-size: var(--codevo-fs-meta);
+  color: var(--cv-danger);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   overflow-wrap: anywhere;
 }
 
 .agent-remote-add-project__footer {
   height: 36px;
   border-top: 0;
-  gap: var(--agent-space-3);
-  color: var(--codevo-fg-muted);
+  gap: var(--cv-space-4);
+  color: var(--cv-fg-muted);
   font-size: 11.5px;
   padding: 0 16px;
 }
@@ -301,8 +279,8 @@
   height: 18px;
   border: 0;
   border-radius: 6px;
-  background: var(--codevo-well);
-  color: var(--codevo-fg-muted);
+  background: var(--cv-raised);
+  color: var(--cv-fg-muted);
   font-size: 10.5px;
   font-weight: 500;
   padding: 0 5px;
@@ -316,41 +294,41 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  height: calc(24px * var(--codevo-fs-scale));
+  height: calc(24px * var(--cv-type-scale));
   border: none;
   border-radius: 7px;
-  background: var(--codevo-primary);
-  color: var(--codevo-primary-fg);
+  background: var(--cv-accent-fill);
+  color: var(--cv-on-accent);
   cursor: pointer;
-  font-size: var(--codevo-fs-meta);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   font-weight: 600;
   padding: 0 10px;
 }
 
 .agent-remote-add-project__primary:disabled {
-  background: var(--codevo-well);
-  color: var(--codevo-fg-disabled);
+  background: var(--cv-raised);
+  color: var(--cv-fg-disabled);
   cursor: default;
 }
 
 .agent-remote-add-project__primary:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }
 
 .agent-rail-clone {
   display: grid;
   gap: 4px;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
   margin: 4px 10px;
   padding: 8px 10px;
 }
 
 .agent-rail-clone__name {
   overflow: hidden;
-  color: var(--codevo-fg-strong);
-  font-size: var(--codevo-fs-meta);
+  color: var(--cv-fg-strong);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -359,12 +337,12 @@
 .agent-rail-clone__status,
 .agent-rail-clone__error {
   margin: 0;
-  color: var(--codevo-fg-subtle);
-  font-size: var(--codevo-fs-label);
+  color: var(--cv-fg-subtle);
+  font-size: calc(var(--cv-t-2xs) * var(--cv-type-scale));
 }
 
 .agent-rail-clone__error {
-  color: var(--codevo-danger);
+  color: var(--cv-danger);
   overflow-wrap: anywhere;
 }
 
@@ -373,7 +351,7 @@
   overflow: hidden;
   height: 3px;
   border-radius: 2px;
-  background: var(--codevo-hover);
+  background: var(--cv-tint-2);
 }
 
 .agent-rail-clone__track i {
@@ -381,7 +359,7 @@
   width: 40%;
   height: 100%;
   border-radius: 2px;
-  background: var(--codevo-primary);
+  background: var(--cv-accent);
   animation: agent-rail-clone-slide 1.4s linear infinite;
 }
 
@@ -414,36 +392,8 @@
 .agent-project-source .agent-remote-add-project__crumb {
   height: auto;
   padding: 20px 20px 16px;
-  color: var(--codevo-fg-strong);
-  font-size: var(--codevo-fs-ui);
-}
-
-.agent-project-source__environment {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 0 20px 12px;
-  color: var(--codevo-fg-muted);
-  font-size: var(--codevo-fs-small);
-}
-
-.agent-project-source__environment-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.agent-project-source__environment select {
-  width: 100%;
-  min-width: 0;
-  height: 40px;
-  border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
-  color: var(--codevo-fg-strong);
-  font: inherit;
-  font-size: var(--codevo-fs-meta);
-  padding: 0 12px;
+  color: var(--cv-fg-strong);
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
 }
 
 .agent-project-source .quick-open-results {
@@ -455,21 +405,21 @@
 .agent-project-source .quick-open-result {
   min-height: 40px;
   gap: 12px;
-  border-radius: var(--codevo-r-sm);
+  border-radius: var(--cv-r-control);
   padding: 8px 12px;
 }
 
 .agent-project-source .quick-open-result svg {
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 
 .agent-remote-add-project :is(button, select):focus-visible {
-  outline: 2px solid var(--codevo-fg-muted);
+  outline: 2px solid var(--cv-fg-muted);
   outline-offset: 2px;
   box-shadow: none;
 }
 
 .agent-project-source:focus {
   outline: none;
-  box-shadow: var(--codevo-shadow-float);
+  box-shadow: var(--cv-shadow-pop);
 }

@@ -3,7 +3,7 @@
   padding: 14px var(--cv-space-6) var(--cv-space-6);
   min-width: 0;
   color: var(--cv-fg);
-  font-size: calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
   overflow-wrap: anywhere;
 }
 .agent-question-card__status {

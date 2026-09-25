@@ -43,7 +43,6 @@ describe("agent shell frame surfaces", () => {
     expect(value(agentRules, ".agent-mode__center", "display")).toBe("flex");
     expect(value(agentRules, ".agent-mode__center", "flex-direction")).toBe("column");
     expect(value(agentRules, ".agent-mode__center", "min-height")).toBe("0");
-    expect(value(agentRules, ".workbench-frame", "--agent-thread-column")).toBe("var(--cv-column)");
   });
 
   it("retires every rule the shell primitive replaced", () => {

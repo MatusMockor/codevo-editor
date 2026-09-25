@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { PALETTE_IDS, RESOLVED_COLOR_SCHEMES } from "../domain/appearance";
 
 /**
  * Guards the "JetBrains classic" chrome the editor paints onto Monaco's built-in
@@ -10,6 +11,11 @@ import { describe, expect, it } from "vitest";
  */
 const appCss = readFileSync("src/App.css", "utf8");
 const widgetCss = readFileSync("src/components/editorPanel/editorWidgets.css", "utf8");
+const paletteCss = readFileSync("src/ui/tokens/palettes.css", "utf8");
+const semanticCss = readFileSync("src/ui/tokens/semantic.css", "utf8");
+const PALETTE_BLOCK =
+  /:root\[data-cv-palette="([^"]+)"\]\[data-cv-scheme="([^"]+)"\]\s*\{([^}]*)\}/g;
+const SCHEME_BLOCK = /:root\[data-cv-scheme="([^"]+)"\]\s*\{([^}]*)\}/g;
 const MONACO_DEFAULT_BLUES = /#(?:007acc|04395e|062f4a|094771|0e639c|264f78|006ab1)\b/i;
 
 /** Returns the body of the FIRST CSS rule whose selector text matches. */
@@ -24,32 +30,6 @@ function ruleBody(css: string, selectorNeedle: string): string {
     throw new Error(`Unterminated CSS rule for selector ${selectorNeedle}`);
   }
   return css.slice(bodyStart + 1, bodyEnd);
-}
-
-function themeBlocks(css: string): Array<{ selector: string; body: string }> {
-  const blocks: Array<{ selector: string; body: string }> = [];
-  const themeSelector = /(^|\n)(\s*(?::root|\.app-shell\[data-theme="[^"]+"\])\s*)\{/g;
-  let match: RegExpExecArray | null;
-  while ((match = themeSelector.exec(css)) !== null) {
-    const selector = match[2].trim();
-    let precedingIndex = match.index - 1;
-    while (precedingIndex >= 0 && /\s/.test(css[precedingIndex] ?? "")) {
-      precedingIndex -= 1;
-    }
-    if (css[precedingIndex] === ",") {
-      continue;
-    }
-    const bodyStart = css.indexOf("{", match.index);
-    const bodyEnd = css.indexOf("}", bodyStart);
-    if (bodyStart < 0 || bodyEnd < 0) {
-      throw new Error(`Unterminated theme block for selector ${selector}`);
-    }
-    blocks.push({
-      selector,
-      body: css.slice(bodyStart + 1, bodyEnd),
-    });
-  }
-  return blocks;
 }
 
 function escapeRegExp(value: string): string {
@@ -120,7 +100,7 @@ describe("Monaco widget chrome", () => {
     // active row here: soft accent fill, rounded corners and a small horizontal
     // inset so it floats off the palette edges like the other widgets.
     const body = ruleBody(appCss, ".file-structure .quick-open-result.active");
-    expect(body).toContain("var(--color-accent-soft)");
+    expect(body).toContain("var(--cv-accent-soft)");
     expect(body).toContain("border-radius");
     // Inset from the palette edges so the fill is not full-width.
     expect(body).toMatch(/margin(-inline|-left|-right|-inline-start)?:/);
@@ -225,41 +205,39 @@ describe("Monaco suggest-widget kind icon recolor", () => {
     expect(widgetCss).not.toMatch(/\b(rgb|rgba|hsl|hsla)\(/);
   });
 
-  it("declares required widget and symbol variables in every theme block", () => {
-    const requiredThemeVariables = [
-      "--color-accent-soft",
-      "--color-modal",
-      "--color-border-strong",
-      "--symbol-method",
-      "--symbol-property",
-      "--symbol-const",
-      "--symbol-class",
-      "--symbol-interface",
-      "--symbol-enum",
-      "--symbol-function",
-      "--symbol-trait",
-      "--symbol-variable",
-      "--symbol-keyword",
+  it("declares required widget and symbol tokens for every palette and scheme", () => {
+    const paletteVariables = ["--cv-accent-soft", "--cv-hair-strong"];
+    const schemeVariables = [
+      "--cv-popover",
+      "--cv-sym-method",
+      "--cv-sym-property",
+      "--cv-sym-const",
+      "--cv-sym-class",
+      "--cv-sym-interface",
+      "--cv-sym-enum",
+      "--cv-sym-function",
+      "--cv-sym-trait",
+      "--cv-sym-variable",
+      "--cv-sym-keyword",
     ];
 
-    const blocks = themeBlocks(appCss);
-    expect(blocks.map(({ selector }) => selector)).toEqual([
-      ":root",
-      '.app-shell[data-theme="light"]',
-      '.app-shell[data-theme="ayuMirage"]',
-      '.app-shell[data-theme="materialDeepOcean"]',
-      '.app-shell[data-theme="oneDarkPro"]',
-      '.app-shell[data-theme="dracula"]',
-      '.app-shell[data-theme="catppuccinMocha"]',
-      '.app-shell[data-theme="darkPlus"]',
-      '.app-shell[data-theme="catppuccinLatte"]',
-      '.app-shell[data-theme="oneLight"]',
-      '.app-shell[data-theme="system"]',
-    ]);
+    const palettes = [...paletteCss.matchAll(PALETTE_BLOCK)];
+    expect(palettes.map(([, palette, scheme]) => `${palette} ${scheme}`)).toEqual(
+      PALETTE_IDS.flatMap((palette) =>
+        RESOLVED_COLOR_SCHEMES.map((scheme) => `${palette} ${scheme}`),
+      ),
+    );
+    for (const [, palette, scheme, body] of palettes) {
+      for (const variable of paletteVariables) {
+        expect(body, `${palette} ${scheme} missing ${variable}`).toContain(`${variable}:`);
+      }
+    }
 
-    for (const { selector, body } of blocks) {
-      for (const variable of requiredThemeVariables) {
-        expect(body, `${selector} missing ${variable}`).toContain(`${variable}:`);
+    const schemes = [...semanticCss.matchAll(SCHEME_BLOCK)];
+    expect(schemes.map(([, scheme]) => scheme)).toEqual([...RESOLVED_COLOR_SCHEMES]);
+    for (const [, scheme, body] of schemes) {
+      for (const variable of schemeVariables) {
+        expect(body, `${scheme} missing ${variable}`).toContain(`${variable}:`);
       }
     }
   });
@@ -268,7 +246,7 @@ describe("Monaco suggest-widget kind icon recolor", () => {
 /**
  * Final visual pass on the gutter change/rollback popover and the Git "Local
  * Changes" panel. Both are app-owned DOM (not Monaco widgets), so the chrome is
- * theme-aware through our --color-* / --change-* tokens. These guards lock the
+ * theme-aware through our palette tokens. These guards lock the
  * JetBrains-classic hover/spacing polish so it survives future edits.
  */
 describe("Gutter rollback popover + Git Local Changes polish", () => {
@@ -278,7 +256,7 @@ describe("Gutter rollback popover + Git Local Changes polish", () => {
     // toolbar buttons and feels clickable across every theme.
     const body = ruleBody(appCss, ".editor-change-popover-icon-button:hover,");
     expect(body).toContain("background");
-    expect(body).toMatch(/var\(--change-popover-soft\)|var\(--color-hover\)/);
+    expect(body).toMatch(/var\(--change-popover-soft\)|var\(--cv-tint-2\)/);
   });
 
   it("gives the popover buttons a motion-token hover transition", () => {
@@ -287,22 +265,5 @@ describe("Gutter rollback popover + Git Local Changes polish", () => {
       ".editor-change-popover-icon-button,\n.editor-change-popover-action {",
     );
     expect(body).toContain("transition");
-  });
-
-  it("tints the active Git change row icon so it stays legible on the accent fill", () => {
-    // The active row paints --color-accent-soft behind a status-tinted glyph; on
-    // some themes the warm/red glyph clashes with the fill. Pin the active row's
-    // icon + status letter to the active-text token so the selection reads clean.
-    const body = ruleBody(
-      appCss,
-      ".git-change-row-wrapper.active .git-change-row .git-change-status-icon",
-    );
-    expect(body).toContain("var(--color-active-text)");
-  });
-
-  it("keeps the Local Changes count pill tabular and theme-aware", () => {
-    const body = ruleBody(appCss, ".git-changes-summary {");
-    expect(body).toContain("font-variant-numeric: tabular-nums");
-    expect(body).toContain("var(--color-accent)");
   });
 });

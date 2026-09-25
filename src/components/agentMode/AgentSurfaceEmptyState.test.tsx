@@ -182,12 +182,12 @@ describe("surface chooser styles", () => {
 
     const card = cssRule(css, ".agent-surface-card {");
     expect(card).toContain("position: relative");
-    expect(card).toContain("background: var(--codevo-raised)");
-    expect(card).toContain("box-shadow: var(--codevo-shadow-card)");
-    expect(card).toContain("border-radius: var(--agent-radius-lg)");
+    expect(card).toContain("background: var(--cv-raised)");
+    expect(card).toContain("box-shadow: var(--cv-shadow-card)");
+    expect(card).toContain("border-radius: var(--cv-r-group)");
     expect(card).toContain("border: 0");
     expect(cssRule(css, ".agent-surface-card:hover:not(:disabled) {")).toContain(
-      "background: var(--codevo-hover)",
+      "background: var(--cv-tint-2)",
     );
     expect(cssRule(css, ".agent-surface-card:disabled {")).toContain("background: transparent");
   });
@@ -197,7 +197,7 @@ describe("surface chooser styles", () => {
     expect(key).toContain("position: absolute");
     expect(key).toContain("top: 12px");
     expect(key).toContain("right: 12px");
-    expect(key).toContain("background: var(--codevo-hover)");
+    expect(key).toContain("background: var(--cv-tint-2)");
     expect(key).not.toContain("border:");
   });
 });

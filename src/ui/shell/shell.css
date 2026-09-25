@@ -1,12 +1,12 @@
 .cv-topbar {
-  --cv-topbar-pad: var(--cv-space-5);
+  --shell-topbar-pad: var(--cv-space-5);
   display: flex;
   flex: none;
   align-items: center;
   gap: var(--cv-space-4);
   min-width: 0;
   height: var(--cv-topbar-h);
-  padding: 0 var(--cv-space-5) 0 var(--cv-topbar-pad);
+  padding: 0 var(--cv-space-5) 0 var(--shell-topbar-pad);
   color: var(--cv-fg);
   font-family: var(--cv-font-ui);
   font-size: var(--cv-t-sm);
@@ -16,18 +16,18 @@
 
 .cv-topbar--sidebar,
 .cv-topbar--main {
-  --cv-topbar-pad: 20px;
+  --shell-topbar-pad: 20px;
 }
 
 .cv-topbar--panel {
-  --cv-topbar-pad: var(--cv-space-4);
+  --shell-topbar-pad: var(--cv-space-4);
   padding-right: var(--cv-space-4);
 }
 
 .cv-topbar--window-edge {
   padding-left: max(
-    var(--cv-topbar-pad),
-    calc(var(--cv-shell-window-inset, 0px) - var(--cv-shell-sidebar-track, 0px))
+    var(--shell-topbar-pad),
+    calc(var(--shell-window-inset, 0px) - var(--shell-sidebar-track, 0px))
   );
 }
 

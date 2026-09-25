@@ -9,5 +9,5 @@
 }
 
 .agent-session__provenance {
-  color: color-mix(in srgb, var(--agent-text-muted) 75%, transparent);
+  color: color-mix(in srgb, var(--cv-fg-muted) 75%, transparent);
 }

@@ -11,7 +11,7 @@
   background: none;
   color: var(--cv-fg-subtle);
   font-family: var(--cv-font-ui);
-  font-size: calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
   line-height: var(--cv-lh-prose);
   text-align: left;
   cursor: pointer;
@@ -74,7 +74,7 @@
   min-height: 28px;
   padding: 0 var(--cv-space-1) var(--cv-space-4);
   color: var(--cv-fg-subtle);
-  font-size: calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
 }
 
 .cv-live-row__icon {
@@ -218,7 +218,7 @@
 
 .agent-thought__body {
   color: var(--cv-fg-muted);
-  font-size: calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
   line-height: var(--cv-lh-prose);
   overflow-wrap: anywhere;
 }

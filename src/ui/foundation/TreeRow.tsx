@@ -65,7 +65,7 @@ export function TreeRow({
       onClick={activate}
       onKeyDown={handleKeyDown}
       role="treeitem"
-      style={{ "--cv-tree-depth": level } as CSSProperties}
+      style={{ "--tree-row-depth": level } as CSSProperties}
       tabIndex={selected ? 0 : -1}
     >
       <span aria-hidden="true" className="cv-tree-row__chevron">

@@ -56,7 +56,7 @@
   display: block;
   width: 100%;
   min-height: calc(var(--cv-t-sm) * var(--cv-lh-prose) * 2);
-  max-height: min(40vh, calc(420px * var(--codevo-fs-scale, 1)));
+  max-height: min(40vh, calc(420px * var(--cv-type-scale)));
   padding: 0;
   border: 0;
   outline: 0;
@@ -64,7 +64,7 @@
   background: none;
   color: var(--cv-fg-strong);
   font-family: var(--cv-font-ui);
-  font-size: calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
   line-height: var(--cv-lh-prose);
 }
 

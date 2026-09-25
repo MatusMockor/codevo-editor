@@ -105,7 +105,7 @@ describe("composer content sizing", () => {
     const textarea = render("multiline draft");
     contentHeight = 220;
     await act(async () => {
-      host.style.setProperty("--codevo-fs-scale", "1.5");
+      host.style.setProperty("--cv-type-scale", "1.5");
     });
     expect(textarea.style.height).toBe("220px");
     expect(textarea.style.overflowY).toBe("hidden");

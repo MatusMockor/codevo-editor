@@ -7,6 +7,7 @@ import {
   agentThreadBulkPlan,
   agentThreadBulkReport,
   threadCountLabel,
+  type AgentThreadBulkAction,
   type AgentThreadBulkCandidate,
   type AgentThreadBulkRequest,
 } from "./agentThreadBulkAction";
@@ -182,5 +183,13 @@ describe("agent thread bulk plan", () => {
     expect(agentThreadBulkConfirmReady(1_000, 1_000 + AGENT_THREAD_BULK_CONFIRM_DELAY_MS)).toBe(
       true,
     );
+  });
+
+  it("offers only archive and delete as bulk actions", () => {
+    const actions: ReadonlyArray<AgentThreadBulkAction> = ["archive", "delete"];
+    expect(actions.map((action) => agentThreadBulkConfirmLabel(action, 2))).toEqual([
+      "Confirm archive of 2 threads",
+      "Confirm delete of 2 threads",
+    ]);
   });
 });

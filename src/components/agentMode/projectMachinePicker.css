@@ -10,11 +10,11 @@
   height: 40px;
   gap: 12px;
   border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
-  color: var(--codevo-fg-strong);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg-strong);
   font-family: inherit;
-  font-size: var(--codevo-fs-meta);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   padding: 0 12px;
   text-align: left;
 }
@@ -25,7 +25,7 @@
 }
 
 .project-machine-picker .agent-picker__trigger:focus-visible {
-  outline: 2px solid var(--codevo-fg-muted);
+  outline: 2px solid var(--cv-fg-muted);
   outline-offset: 2px;
   box-shadow: none;
 }

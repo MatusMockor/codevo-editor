@@ -810,7 +810,7 @@ describe("useAgentShipFlow authority and concurrency", () => {
     harness.unmount();
   });
 
-  it("discards an integration result after the owner changed", async () => {
+  it("settles a completed integration without publishing when the owner changed", async () => {
     const integrated = deferred<GitIntegrationOutcome>();
     const harness = renderFlow();
     harness.gitIntegrationGateway.integrateWorktreeBranch.mockReturnValueOnce(integrated.promise);
@@ -824,9 +824,92 @@ describe("useAgentShipFlow authority and concurrency", () => {
       integrated.resolve({ kind: "integrated", mergeSha: SHA_M, intoBranch: "main" });
       await pending;
     });
+
+    expect(harness.state()).toBeUndefined();
+    expect(receipts(harness.actions)).toEqual([]);
+    expect(harness.onShipStepCompleted).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("still reports authority loss when an integration was refused after the owner changed", async () => {
+    const integrated = deferred<GitIntegrationOutcome>();
+    const harness = renderFlow();
+    harness.gitIntegrationGateway.integrateWorktreeBranch.mockReturnValueOnce(integrated.promise);
+
+    const pending = harness.hook().integrate(THREAD_ID, "fastForward");
+    await waitForReact(() =>
+      expect(harness.gitIntegrationGateway.integrateWorktreeBranch).toHaveBeenCalledTimes(1),
+    );
+    harness.set({ projects: [project({ generation: 2 })] });
+    await act(async () => {
+      integrated.resolve({ kind: "notFastForward" });
+      await pending;
+    });
+
     expect(harness.state()).toMatchObject({
       kind: "failed",
       failure: { step: "integrate", reason: "authorityLost" },
+    });
+    harness.unmount();
+  });
+
+  it("settles a completed worktree removal without publishing when the owner changed", async () => {
+    const removed = deferred<undefined>();
+    const harness = renderFlow();
+    harness.gitWorktreeGateway.removeWorktree.mockReturnValueOnce(removed.promise);
+
+    const pending = harness.hook().removeWorktree(THREAD_ID, { deleteBranch: false });
+    await waitForReact(() =>
+      expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledTimes(1),
+    );
+    harness.set({ projects: [project({ generation: 2 })] });
+    await act(async () => {
+      removed.resolve(undefined);
+      await pending;
+    });
+
+    expect(harness.state()).toBeUndefined();
+    expect(harness.onWorktreeRemoved).not.toHaveBeenCalled();
+    expect(harness.setNotice).not.toHaveBeenCalled();
+    expect(receipts(harness.actions)).toEqual([]);
+    harness.unmount();
+  });
+
+  it("settles a deleted branch without publishing when the owner changed during deletion", async () => {
+    const deleted = deferred<undefined>();
+    const harness = renderFlow();
+    harness.gitGateway.deleteBranch.mockReturnValueOnce(deleted.promise);
+
+    const pending = harness.hook().removeWorktree(THREAD_ID, { deleteBranch: true });
+    await waitForReact(() => expect(harness.gitGateway.deleteBranch).toHaveBeenCalledTimes(1));
+    harness.set({ projects: [project({ ownerId: "agent-root:other" })] });
+    await act(async () => {
+      deleted.resolve(undefined);
+      await pending;
+    });
+
+    expect(harness.state()).toBeUndefined();
+    expect(harness.setNotice).not.toHaveBeenCalled();
+    expect(receipts(harness.actions)).toEqual([]);
+    harness.unmount();
+  });
+
+  it("still reports authority loss when a branch deletion failed after the owner changed", async () => {
+    const deleted = deferred<undefined>();
+    const harness = renderFlow();
+    harness.gitGateway.deleteBranch.mockReturnValueOnce(deleted.promise);
+
+    const pending = harness.hook().removeWorktree(THREAD_ID, { deleteBranch: true });
+    await waitForReact(() => expect(harness.gitGateway.deleteBranch).toHaveBeenCalledTimes(1));
+    harness.set({ projects: [project({ generation: 2 })] });
+    await act(async () => {
+      deleted.reject(new Error("branch is checked out"));
+      await pending;
+    });
+
+    expect(harness.state()).toMatchObject({
+      kind: "failed",
+      failure: { step: "removeWorktree", reason: "authorityLost" },
     });
     expect(receipts(harness.actions)).toEqual([]);
     harness.unmount();

@@ -213,12 +213,12 @@ describe("VscodeProcessTasksPanel", () => {
       "plain stderr\n",
     );
     const stdout = host.querySelector<HTMLElement>('pre[aria-label="stdout output"]');
-    expect(stdout?.style.background).toBe("var(--color-surface)");
+    expect(stdout?.style.background).toBe("var(--cv-raised)");
     expect(stdout?.closest("div")?.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
     const truncation = [...host.querySelectorAll("p")].find((element) =>
       element.textContent?.includes("Additional task output was truncated."),
     );
-    expect(truncation?.style.color).toBe("var(--color-warning)");
+    expect(truncation?.style.color).toBe("var(--cv-warn)");
     expect(host.textContent).toContain("Additional configured tasks or diagnostics");
     expect(host.textContent).toContain("Tasks could not be refreshed.");
   });

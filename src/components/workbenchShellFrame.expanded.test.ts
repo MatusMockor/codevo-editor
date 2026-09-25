@@ -74,7 +74,7 @@ describe("expanded editing shell layout contract", () => {
     const tokens = declarations(shell, ".app-shell");
     expect(tokens.get("--agent-surface-header-height")).toBe("var(--cv-topbar-h)");
     expect(tokens.get("--agent-surface-editor-gutter")).toBe("8px");
-    expect(tokens.has("--agent-surface-tree-width")).toBe(false);
+    expect([...tokens.keys()].filter((name) => name.includes("tree"))).toEqual([]);
     expect(parsed.rules.some((rule) => rule.selector.includes("data-tree"))).toBe(false);
   });
 
@@ -97,16 +97,16 @@ describe("expanded editing shell layout contract", () => {
     );
     expect(editorSlot.get("clip-path")).toBe(
       compact(
-        "inset(var(--agent-surface-header-height) 0 var(--agent-surface-editor-gutter) var(--agent-surface-editor-gutter) round var(--codevo-r-lg))",
+        "inset(var(--agent-surface-header-height) 0 var(--agent-surface-editor-gutter) var(--agent-surface-editor-gutter) round var(--cv-r-group))",
       ),
     );
 
     const bottomSlot = declarations(shell, `${MAXIMIZED} > [data-slot="bottom"]`);
     expect(bottomSlot.get("grid-column")).toBe("2");
     expect(bottomSlot.get("grid-row")).toBe("2");
-    expect(bottomSlot.get("background")).toBe("var(--codevo-canvas)");
+    expect(bottomSlot.get("background")).toBe("var(--cv-canvas)");
     expect(bottomSlot.get("border-radius")).toBe(
-      compact("var(--codevo-r-lg) var(--codevo-r-lg) 0 0"),
+      compact("var(--cv-r-group) var(--cv-r-group) 0 0"),
     );
     expect(bottomSlot.get("margin-left")).toBe("var(--agent-surface-editor-gutter)");
   });
@@ -118,7 +118,7 @@ describe("expanded editing shell layout contract", () => {
     );
     expect(editorSlot.get("padding-top")).toBe("var(--agent-surface-header-height)");
     expect(editorSlot.has("padding-left")).toBe(false);
-    expect(editorSlot.get("background")).toBe("var(--codevo-canvas)");
+    expect(editorSlot.get("background")).toBe("var(--cv-canvas)");
     expect(editorSlot.get("background-clip")).toBe("content-box");
     expect(editorSlot.get("clip-path")).toBe(
       compact("inset(var(--agent-surface-header-height) 0 0 0)"),
@@ -169,9 +169,7 @@ describe("expanded editing shell layout contract", () => {
     const owned = parsed.rules.filter((rule) => [SHELL_SHEET, SURFACE_SHEET].includes(rule.sheet));
     expect(collectBorderViolations(owned, tokenTable)).toEqual([]);
     expect(declarations(surface, ".agent-surface").get("background")).toBe("var(--cv-canvas)");
-    expect(declarations(surface, ".agent-surface-tree").get("background")).toBe(
-      "var(--codevo-canvas)",
-    );
+    expect(declarations(surface, ".agent-surface-tree").get("background")).toBe("var(--cv-canvas)");
   });
 });
 
@@ -259,6 +257,27 @@ describe("workbenchFrameEditorReport", () => {
     );
     expect(narrow?.selector).toContain('[data-right-panel="docked"]');
     expect(narrow?.declarations).toEqual([{ property: "--agent-rail-track", value: "0px" }]);
-    expect(declarations(shell, MAXIMIZED).get("background")).toBe("var(--codevo-canvas)");
+    expect(declarations(shell, MAXIMIZED).get("background")).toBe("var(--cv-canvas)");
+  });
+});
+
+describe("dialog, toast and terminal chrome", () => {
+  it("resolve only palette tokens so portaled surfaces never go transparent", () => {
+    const sheets = new Set([
+      "components/ExternalFileConflict.css",
+      "components/DirtyCloseDecisionDialogHost.css",
+      "components/QuickInputDialogHost.css",
+      "components/terminalPanel.css",
+      "components/toastNotification.css",
+      "components/fileTypeGlyph.css",
+    ]);
+    const legacy = parseAllStyleSheets()
+      .rules.filter((rule) => sheets.has(rule.sheet))
+      .flatMap((rule) =>
+        rule.declarations.map((declaration) => `${rule.sheet} ${declaration.value}`),
+      )
+      .filter((entry) => /var\(--(?:color|codevo|agent)-/.test(entry));
+
+    expect(legacy).toEqual([]);
   });
 });

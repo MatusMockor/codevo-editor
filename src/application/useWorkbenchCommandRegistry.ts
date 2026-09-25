@@ -1010,7 +1010,7 @@ export function useWorkbenchCommandRegistry(
     }).forEach((command) => registry.register(command));
 
     workbenchGitSidebarCommands({
-      showGitSidebar: () => setSidebarView("git"),
+      agentLayout: agents.agentWorkbench,
       refreshGitStatus,
     }).forEach((command) => registry.register(command));
 

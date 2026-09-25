@@ -12,7 +12,7 @@ function scaleOf(size: unknown): unknown {
 
 describe("appShellTypeScaleStyle", () => {
   it("publishes the type scale on the shell custom property", () => {
-    expect(AGENT_TYPE_SCALE_VARIABLE).toBe("--codevo-fs-scale");
+    expect(AGENT_TYPE_SCALE_VARIABLE).toBe("--cv-type-scale");
     expect(scaleOf(DEFAULT_AGENT_THREAD_FONT_SIZE)).toBe("1");
   });
 
@@ -36,7 +36,7 @@ describe("appShellTypeScaleStyle", () => {
 
     expect(style).toEqual({
       "--bottom-panel-height": "300px",
-      "--codevo-fs-scale": "1.333",
+      "--cv-type-scale": "1.333",
     });
   });
 });

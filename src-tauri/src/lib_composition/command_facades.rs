@@ -2,8 +2,6 @@
 mod agent_attachment_commands;
 #[path = "agent_cli_discovery_commands.rs"]
 mod agent_cli_discovery_commands;
-#[path = "agent_cli_version_commands.rs"]
-mod agent_cli_version_commands;
 #[path = "agent_image_source_commands.rs"]
 mod agent_image_source_commands;
 #[path = "agent_output_artifact_commands.rs"]

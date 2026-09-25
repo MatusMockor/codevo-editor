@@ -1,4 +1,5 @@
 // Terminal runtime modules remain in the crate namespace.
+mod incremental_utf8;
 mod terminal_commands;
 mod terminal_line_endings;
 mod terminal_process_tree;

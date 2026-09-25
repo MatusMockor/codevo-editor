@@ -2,7 +2,7 @@
   display: grid;
   gap: 4px;
   padding: 4px 16px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
 }
 .remote-instruction-source label {
@@ -14,7 +14,7 @@
   min-width: 0;
   max-width: 360px;
   color: inherit;
-  background: var(--color-control);
+  background: var(--cv-raised);
   border: 0;
   border-radius: 6px;
 }

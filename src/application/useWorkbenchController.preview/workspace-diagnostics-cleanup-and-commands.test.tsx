@@ -4808,7 +4808,7 @@ describe("useWorkbenchController document editing and language-service mutations
       ...defaultWorkspaceSettings(),
       statusBar: {
         ...defaultWorkspaceSettings().statusBar,
-        message: false,
+        index: false,
       },
     };
     const { dependencies, getWorkbench } = renderController({
@@ -4826,14 +4826,14 @@ describe("useWorkbenchController document editing and language-service mutations
 
     let savePromise: Promise<void> = Promise.resolve();
     await act(async () => {
-      savePromise = getWorkbench().setStatusBarItemVisibility("message", true);
+      savePromise = getWorkbench().setStatusBarItemVisibility("index", true);
       await Promise.resolve();
     });
     await waitForReact(() => {
       expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
         expectedWorkspaceSettingsIdentity("/workspace-a"),
         expect.objectContaining({
-          statusBar: expect.objectContaining({ message: true }),
+          statusBar: expect.objectContaining({ index: true }),
         }),
       );
     });
@@ -4847,15 +4847,15 @@ describe("useWorkbenchController document editing and language-service mutations
       await Promise.all([savePromise, switchPromise]);
     });
     await act(async () => {
-      await getWorkbench().setStatusBarItemVisibility("message", true);
+      await getWorkbench().setStatusBarItemVisibility("index", true);
     });
     await flushAsyncTurns();
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
+    expect(getWorkbench().workspaceSettings.statusBar.index).toBe(true);
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
+    expect(getWorkbench().workspaceSettings.statusBar.index).toBe(true);
     expect(
       getWorkbench().notices.some(
         (notice) => notice.source === "Status Bar" && notice.message.includes("stale status bar"),

@@ -22,6 +22,7 @@ import { agentThreadBulkCandidates } from "./useAgentThreadMenuCommands";
 import { __resetKeymapPlatformCacheForTests } from "../../domain/keymap";
 import { createAgentTurnLogFactsStore } from "../../application/agentTurnLogStatusStore";
 import { AgentClockProvider } from "./agentClock";
+import { readStyleSheet } from "../cssContractTestSupport";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
@@ -31,6 +32,7 @@ const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
 const NOW = 1_700_000_600_000;
 const AGENT_MODE_CSS = readAgentModeStyles();
+const SIDEBAR_CSS = readStyleSheet("components/agentMode/agentSidebar.css").source;
 const ROOT_OWNER = agentThreadBulkOwnerKey({ rootKey: ROOT, ownerId: `agent-root:${ROOT}` });
 
 describe("AgentThreadsSidebar", () => {
@@ -217,6 +219,36 @@ describe("AgentThreadsSidebar", () => {
     expect(option?.querySelector(".cv-sr__when")?.textContent).toBe("2m");
   });
 
+  it("titles a rail search hit on an archived thread without rendering it as a rail row", () => {
+    const search = searchSurface("parser", {
+      query: "parser",
+      truncated: false,
+      documentsTruncated: false,
+      matches: [
+        {
+          threadId: "arc-1",
+          source: "assistant",
+          turnId: "turn-1",
+          eventIndex: null,
+          snippet: "the parser change",
+          ranges: [{ start: 4, end: 10 }],
+          segmentStart: 4,
+          segmentEnd: 10,
+          score: 1,
+        },
+      ],
+    });
+    render({
+      groups: [group(ROOT, "app", [settled("arc-1", "Old parser work", { archived: true })])],
+      search,
+    });
+
+    const option = host.querySelector(".cv-sb-results .cv-sr");
+    expect(option?.textContent).toContain("Old parser work");
+    expect(option?.textContent).not.toContain("arc-1");
+    expect(host.querySelector('[data-thread-id="arc-1"]')).toBeNull();
+  });
+
   it("moves snoozed rows back to active at their deadline without a data refresh", () => {
     const original = settled("sleep", "Sleeping");
     const sleeping = { ...original, thread: { ...original.thread, snoozedUntil: NOW + 1000 } };
@@ -294,26 +326,21 @@ describe("AgentThreadsSidebar", () => {
     expect(scroll?.nextElementSibling).toBe(host.querySelector(".agent-provider-footer"));
   });
 
-  it("pins the rail frame and the scaled 78px cards", () => {
+  it("pins the rail frame", () => {
     expect(cssRule("\n.agent-rail {")).toContain("background: var(--cv-side)");
     expect(cssRule("\n.agent-rail {")).toContain("padding: 0 6px 8px");
     expect(cssRule("\n.agent-rail {")).toContain("box-shadow: var(--cv-edge-end-divider)");
     expect(AGENT_MODE_CSS).not.toContain(".agent-rail__chrome");
     expect(cssRule("\n.agent-rail__scroll {")).toContain("padding: 6px 4px 4px");
     expect(cssRule(".agent-iconbutton {")).toContain("width: 32px");
-    expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--codevo-r-sm)");
-    expect(cssRule(".agent-row {")).toContain("border-radius: var(--cv-r-card)");
-    expect(cssRule(".agent-row:hover {")).toContain("background: var(--cv-row-hover)");
-    const on = cssRule("\n.agent-row--on,\n.agent-row--on:hover {");
-    expect(on).toContain("background: var(--cv-raised)");
-    expect(on).toContain("box-shadow: var(--cv-lift)");
+    expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--cv-r-control)");
   });
 
-  it("styles the thread search palette as a raised 14px sheet with primary marks", () => {
+  it("styles the thread search palette as a raised 12px sheet with primary marks", () => {
     const palette = cssRule("\n.agent-thread-palette {");
-    expect(palette).toContain("border-radius: var(--codevo-r-xl)");
-    expect(palette).toContain("background: var(--codevo-raised)");
-    expect(palette).toContain("box-shadow: var(--codevo-shadow-float)");
+    expect(palette).toContain("border-radius: var(--cv-r-group)");
+    expect(palette).toContain("background: var(--cv-raised)");
+    expect(palette).toContain("box-shadow: var(--cv-shadow-pop)");
     expect(cssRule(".agent-thread-palette .palette-search {")).toContain("border-bottom: 0");
     expect(cssRule(".agent-thread-palette .palette-search input {")).toContain("height: 46px");
     expect(cssRule(".agent-search-row {")).toContain("min-height: 32px");
@@ -326,7 +353,7 @@ describe("AgentThreadsSidebar", () => {
 
   it("keeps the footer icon-only, scaled from 44px and without a top rule", () => {
     expect(cssRule("\n.agent-provider-footer {")).toContain(
-      "min-height: calc(44px * var(--codevo-fs-scale))",
+      "min-height: calc(44px * var(--cv-type-scale))",
     );
     expect(cssRule("\n.agent-provider-footer {")).not.toContain("border");
     expect(cssRule(".agent-provider-footer__navigation .agent-iconbutton {")).toContain(
@@ -346,26 +373,26 @@ describe("AgentThreadsSidebar", () => {
     expect(cssRule(".agent-provider-footer__providers {")).toContain("align-items: stretch");
     const pill = cssRule("\n.agent-provider-footer__pill {");
     expect(pill).toContain("width: 100%");
-    expect(pill).toContain("min-height: calc(30px * var(--codevo-fs-scale))");
+    expect(pill).toContain("min-height: calc(30px * var(--cv-type-scale))");
     expect(pill).toContain("border: none");
-    expect(pill).toContain("border-radius: var(--codevo-r-sm)");
-    expect(pill).toContain("font-size: var(--codevo-fs-meta)");
+    expect(pill).toContain("border-radius: var(--cv-r-control)");
+    expect(pill).toContain("font-size: calc(var(--cv-t-md) * var(--cv-type-scale))");
     expect(pill).toContain("font-weight: 500");
-    expect(pill).toContain("--provider-pill-tint: var(--codevo-primary)");
-    expect(pill).toContain("--provider-pill-ink: var(--codevo-primary)");
-    expect(pill).toContain("--provider-pill-fill: var(--codevo-primary-soft)");
+    expect(pill).toContain("--provider-pill-tint: var(--cv-accent)");
+    expect(pill).toContain("--provider-pill-ink: var(--cv-accent)");
+    expect(pill).toContain("--provider-pill-fill: var(--cv-accent-soft)");
     expect(pill).toContain("background: var(--provider-pill-fill)");
     expect(pill).toContain("color: var(--provider-pill-ink)");
     expect(pill).not.toContain("hairline");
     expect(pill).not.toContain("color: var(--provider-pill-tint)");
     const success = cssRule(".agent-provider-footer__pill--success {");
-    expect(success).toContain("--provider-pill-tint: var(--codevo-ok)");
-    expect(success).toContain("--provider-pill-ink: var(--codevo-ok)");
-    expect(success).toContain("--provider-pill-fill: var(--codevo-ok-soft)");
+    expect(success).toContain("--provider-pill-tint: var(--cv-ok)");
+    expect(success).toContain("--provider-pill-ink: var(--cv-ok)");
+    expect(success).toContain("--provider-pill-fill: var(--cv-ok-soft)");
     const danger = cssRule(".agent-provider-footer__pill--danger {");
-    expect(danger).toContain("--provider-pill-tint: var(--codevo-danger)");
-    expect(danger).toContain("--provider-pill-ink: var(--codevo-danger)");
-    expect(danger).toContain("--provider-pill-fill: var(--codevo-danger-soft)");
+    expect(danger).toContain("--provider-pill-tint: var(--cv-danger)");
+    expect(danger).toContain("--provider-pill-ink: var(--cv-danger)");
+    expect(danger).toContain("--provider-pill-fill: var(--cv-danger-soft)");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__pill--primary");
     const disabled = cssRule("button.agent-provider-footer__pill:disabled {");
     expect(disabled).not.toContain("opacity");
@@ -376,23 +403,17 @@ describe("AgentThreadsSidebar", () => {
     expect(cssRule(".agent-provider-footer__pill-label {")).toContain("text-overflow: ellipsis");
   });
 
-  it("lifts the receding rail labels to full muted under every light theme", () => {
+  it("lifts the search note to full muted under the light palette scheme", () => {
     const light = AGENT_MODE_CSS.slice(AGENT_MODE_CSS.indexOf(".agent-thread-palette"));
-    for (const selector of [
-      '.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])',
-      '.app-shell[data-theme="system"]',
-    ]) {
-      const scope = light.slice(light.indexOf(selector));
-      expect(scope).toContain(".agent-row--recede,");
-      expect(scope).toContain(".agent-row__time,");
-      expect(scope).toContain(".agent-row--slim .agent-row__title,");
-      expect(scope).toContain(".agent-search-results__note");
-      expect(scope).toContain("color: var(--cv-fg-muted)");
-      expect(scope).toContain("color: var(--cv-fg-strong)");
-    }
-    expect(light).toContain("@media (prefers-color-scheme: light)");
+    const scope = light.slice(light.indexOf(':root[data-cv-scheme="light"]'));
+    expect(light).toContain(':root[data-cv-scheme="light"]');
+    expect(scope).toContain(
+      ':root[data-cv-scheme="light"] .agent-search-results__note {\n  color: var(--cv-fg-muted);\n}',
+    );
+    expect(light).not.toContain("data-theme");
+    expect(light).not.toContain("@media (prefers-color-scheme: light)");
     expect(AGENT_MODE_CSS).toContain(
-      ".agent-iconbutton:focus-visible {\n  box-shadow: var(--codevo-focus-ring);\n}",
+      ".agent-iconbutton:focus-visible {\n  box-shadow: var(--cv-ring-focus);\n}",
     );
   });
 
@@ -1204,6 +1225,20 @@ describe("AgentThreadsSidebar", () => {
     expect(selectionBar()).toBeNull();
   });
 
+  it("offers only Archive and Delete for a multi-selection", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    render({ groups: [group(ROOT, "app", threeThreads())] });
+
+    clickRow("agt-1", { metaKey: true });
+    clickRow("agt-2", { metaKey: true });
+
+    const labels = [...(selectionBar()?.querySelectorAll("button") ?? [])].map(
+      (button) => button.textContent,
+    );
+    expect(labels).toEqual(["Archive", "Delete", ""]);
+    expect(selectionBar()?.textContent).not.toContain("Unarchive");
+  });
+
   it("uses control instead of command as the toggle modifier off mac", () => {
     withUserAgent("Mozilla/5.0 (X11; Linux x86_64)");
     const onSelectThread = vi.fn();
@@ -1487,25 +1522,12 @@ describe("AgentThreadsSidebar", () => {
   });
 
   it("tints every marked row, the open one included, without borders or outlines", () => {
-    const marked = cssRule("\n.agent-row--marked {");
-    expect(marked).toContain("color-mix(in srgb, var(--cv-accent) 18%, var(--cv-raised))");
+    const marked = cssRule(".cv-card-row.is-current,\n.cv-card-row.is-marked {", SIDEBAR_CSS);
+    expect(marked).toContain("background: var(--cv-row-active)");
     expect(marked).not.toContain("border");
     expect(marked).not.toContain("outline");
     expect(marked).not.toContain("opacity");
-    expect(cssRule(".agent-row--marked:hover {")).toContain(
-      "color-mix(in srgb, var(--cv-accent) 26%, var(--cv-raised))",
-    );
-    expect(AGENT_MODE_CSS).not.toContain(".agent-row--marked:not(.agent-row--on)");
-    expect(AGENT_MODE_CSS.indexOf("\n.agent-row--marked {")).toBeGreaterThan(
-      AGENT_MODE_CSS.indexOf("\n.agent-row--on,\n.agent-row--on:hover {"),
-    );
     expect(cssRule(".agent-selection-bar {")).toContain("border-radius: var(--cv-r-card)");
-  });
-
-  it("keeps the in-flight dimming and the strong title on a marked row", () => {
-    expect(cssRule(".agent-row--inflight:not(.agent-row--on) {")).toContain("opacity: 0.7");
-    expect(AGENT_MODE_CSS).toContain(".agent-row--marked .agent-row__title,");
-    expect(AGENT_MODE_CSS).toContain(".agent-row--slim.agent-row--marked .agent-row__title,");
   });
 
   it("tints the open thread too, so a range anchored on it cannot hide what will be deleted", () => {
@@ -1716,12 +1738,12 @@ describe("AgentThreadsSidebar", () => {
     });
   }
 
-  function cssRule(selector: string): string {
-    const start = AGENT_MODE_CSS.indexOf(selector);
+  function cssRule(selector: string, source: string = AGENT_MODE_CSS): string {
+    const start = source.indexOf(selector);
     expect(start).toBeGreaterThanOrEqual(0);
-    const bodyStart = AGENT_MODE_CSS.indexOf("{", start);
-    const end = AGENT_MODE_CSS.indexOf("}", bodyStart);
-    return AGENT_MODE_CSS.slice(bodyStart + 1, end);
+    const bodyStart = source.indexOf("{", start);
+    const end = source.indexOf("}", bodyStart);
+    return source.slice(bodyStart + 1, end);
   }
 
   function key(element: HTMLElement, keyName: string): void {

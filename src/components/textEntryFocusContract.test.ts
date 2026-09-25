@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { lastOf, parseAllStyleSheets, selectorParts, type CssRule } from "./cssContractTestSupport";
 
-const ACCENT_RING =
-  /--cv-ring-focus|--cv-focus\b|--cv-accent|--codevo-focus-ring|--codevo-primary|--agent-focus-ring|--agent-accent|--settings-focus-ring|--focus-ring|--color-accent|--color-focus/;
+const ACCENT_RING = /--cv-ring-focus|--cv-focus\b|--cv-accent|--settings-focus-ring/;
 const RING_PROPERTIES = new Set(["box-shadow", "outline", "outline-color", "border-color"]);
 const NON_TEXT_INPUT =
   /input\[type="(checkbox|radio|range|button|submit|reset|color|file|image)"\]/;
@@ -165,7 +164,9 @@ describe("text-entry focus contract", () => {
   });
 
   it("keeps the global keyboard ring for non-text controls", () => {
-    expect(declarationValue("App.css", ":focus-visible", "box-shadow")).toBe("var(--focus-ring)");
+    expect(declarationValue("App.css", ":focus-visible", "box-shadow")).toBe(
+      "var(--cv-ring-focus)",
+    );
   });
 
   it.each([

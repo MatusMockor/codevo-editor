@@ -22,17 +22,17 @@ const styles: Record<string, CSSProperties> = {
   },
   body: {
     flex: 1,
-    fontFamily: "var(--font-mono, monospace)",
+    fontFamily: "var(--cv-font-mono)",
     fontSize: 12,
     overflow: "auto",
     padding: "8px",
     whiteSpace: "pre-wrap",
   },
-  empty: { color: "var(--text-muted)" },
-  error: { color: "var(--status-error, #ef4444)" },
+  empty: { color: "var(--cv-fg-muted)" },
+  error: { color: "var(--cv-danger)" },
   header: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     gap: 8,
     padding: "6px 8px",
@@ -42,7 +42,7 @@ const styles: Record<string, CSSProperties> = {
   section: { margin: "0 0 12px" },
   sectionHeading: { fontFamily: "inherit", fontSize: 11, margin: "0 0 4px" },
   status: { padding: "4px 8px" },
-  truncation: { color: "var(--text-muted)", marginTop: 4 },
+  truncation: { color: "var(--cv-fg-muted)", marginTop: 4 },
 };
 
 export function JsTestOutputView({

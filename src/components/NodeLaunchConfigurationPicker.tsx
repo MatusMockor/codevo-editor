@@ -68,8 +68,8 @@ const styles: Record<string, CSSProperties> = {
     padding: 3,
   },
   dialog: {
-    background: "var(--background-primary, #1e1e1e)",
-    border: "1px solid var(--border-subtle)",
+    background: "var(--cv-side)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 6,
     boxShadow: "0 12px 36px rgba(0, 0, 0, 0.45)",
     color: "inherit",
@@ -86,7 +86,7 @@ const styles: Record<string, CSSProperties> = {
   inputWrapper: { alignItems: "center", display: "flex", gap: 6 },
   input: {
     background: "transparent",
-    border: "1px solid var(--border-subtle)",
+    border: "1px solid var(--cv-hair)",
     borderRadius: 4,
     color: "inherit",
     flex: 1,
@@ -94,7 +94,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "6px 8px",
   },
   list: { margin: 0, maxHeight: "50vh", overflow: "auto", padding: 0 },
-  message: { color: "var(--text-muted)", padding: "12px 8px" },
+  message: { color: "var(--cv-fg-muted)", padding: "12px 8px" },
   option: {
     alignItems: "center",
     background: "transparent",
@@ -107,15 +107,15 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "left",
     width: "100%",
   },
-  optionActive: { background: "var(--background-active, rgba(127, 127, 127, 0.2))" },
-  target: { color: "var(--text-muted)", fontSize: 11 },
+  optionActive: { background: "var(--cv-accent-soft)" },
+  target: { color: "var(--cv-fg-muted)", fontSize: 11 },
   optionDetails: {
     alignItems: "flex-end",
     display: "flex",
     flexDirection: "column",
     gap: 2,
   },
-  source: { color: "var(--text-muted)", fontSize: 11 },
+  source: { color: "var(--cv-fg-muted)", fontSize: 11 },
 };
 
 export function NodeLaunchConfigurationPicker({
@@ -332,11 +332,7 @@ export function NodeLaunchConfigurationPicker({
           />
         </label>
         {diagnosticNotice ? (
-          <div
-            aria-label={diagnosticNotice.message}
-            role="status"
-            style={styles.message}
-          >
+          <div aria-label={diagnosticNotice.message} role="status" style={styles.message}>
             {diagnosticNotice.message}
           </div>
         ) : null}

@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialIndexProgress } from "../domain/indexProgress";
 import { initialAgentWorkbenchLayout } from "../domain/agentWorkbenchLayout";
-import { agentDiffStatusDemand } from "./agentDiffStatusDemand";
+import { agentGitStatusDemand } from "./agentGitStatusDemand";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 
 describe("visible project Diff status demand", () => {
@@ -17,7 +17,7 @@ describe("visible project Diff status demand", () => {
   function Harness() {
     useWorkbenchSidebarDataRefresh({
       sidebarView: "files",
-      agentDiffVisible: agentDiffStatusDemand({
+      agentDiffVisible: agentGitStatusDemand({
         layout,
         effectiveLayout: mode,
         dispatch: () => undefined,
@@ -57,8 +57,18 @@ describe("visible project Diff status demand", () => {
   it.each(["closed", "otherSurface", "editor"])("does not demand refresh while %s", (hidden) => {
     if (hidden === "closed") layout = { ...layout, rightPanel: "closed" };
     if (hidden === "otherSurface")
-      layout = { ...layout, activeSurface: "files", openSurfaces: ["diff", "files"] };
+      layout = { ...layout, activeSurface: "terminal", openSurfaces: ["diff", "terminal"] };
     if (hidden === "editor") mode = "editor-only";
+    render();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+  it("refreshes git markers while the Files surface is visible", () => {
+    layout = { ...layout, activeSurface: "files", openSurfaces: ["files"] };
+    render();
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+  it("does not demand refresh when no surface is active", () => {
+    layout = { ...layout, activeSurface: null, openSurfaces: [] };
     render();
     expect(refresh).not.toHaveBeenCalled();
   });

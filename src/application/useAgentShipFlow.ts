@@ -571,7 +571,10 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
             mergeMessage: mergeMessage(status.worktree.branch, thread?.title ?? ""),
           },
         );
-        if (!owns(target)) return authorityLost(threadId, "integrate");
+        if (!owns(target)) {
+          if (outcome.kind === "integrated") return settledWithoutOwner(threadId);
+          return authorityLost(threadId, "integrate");
+        }
         if (outcome.kind !== "integrated") {
           apply(threadId, { kind: "stepFailed", failure: { step: "integrate", outcome } });
           void refreshShipStatus(threadId);
@@ -581,7 +584,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
           integrated: { intoBranch: outcome.intoBranch, mergeSha: outcome.mergeSha, mode },
         });
         const refreshed = await attempt(() => loadStatus(target));
-        if (!owns(target)) return authorityLost(threadId, "integrate");
+        if (!owns(target)) return settledWithoutOwner(threadId);
         if (refreshed.ok) statusLoadedAtRef.current.set(threadId, nowMs());
         apply(threadId, {
           kind: "integrateSucceeded",
@@ -603,6 +606,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       persistReceipt,
       refreshShipStatus,
       run,
+      settledWithoutOwner,
     ],
   );
 
@@ -639,7 +643,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
           worktreePath,
           dirty,
         );
-        if (!owns(target)) return authorityLost(threadId, "removeWorktree");
+        if (!owns(target)) return settledWithoutOwner(threadId);
         dependenciesRef.current.onWorktreeRemoved(threadId);
         if (!options.deleteBranch || shipStatus === null) {
           apply(threadId, { kind: "removeSucceeded", branchDeleted: false });
@@ -652,7 +656,10 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         const deleted = await attempt(() =>
           deleteBranch(dependenciesRef.current, target, branch, force),
         );
-        if (!owns(target)) return authorityLost(threadId, "removeWorktree");
+        if (!owns(target)) {
+          if (deleted.ok) return settledWithoutOwner(threadId);
+          return authorityLost(threadId, "removeWorktree");
+        }
         if (!deleted.ok) {
           dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, deleted.error);
           apply(threadId, {
@@ -679,6 +686,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       ownsStoppedTarget,
       persistReceipt,
       run,
+      settledWithoutOwner,
     ],
   );
 

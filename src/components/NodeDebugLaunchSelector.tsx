@@ -43,14 +43,14 @@ const styles: Record<string, CSSProperties> = {
     padding: 2,
   },
   error: {
-    color: "var(--status-error, #ef4444)",
+    color: "var(--cv-danger)",
     maxWidth: 260,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
   selector: { maxWidth: 220, minWidth: 120 },
-  status: { color: "var(--text-muted)" },
+  status: { color: "var(--cv-fg-muted)" },
   wrapper: { alignItems: "center", display: "inline-flex", gap: 4, minWidth: 0 },
 };
 

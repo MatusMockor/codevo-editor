@@ -15,7 +15,7 @@ const COVERAGE_ROW_HEIGHT = 46;
 const WINDOWING_THRESHOLD = 80;
 
 const styles: Record<string, CSSProperties> = {
-  coverage: { borderBottom: "1px solid var(--border-subtle)", padding: "7px 8px" },
+  coverage: { borderBottom: "1px solid var(--cv-hair)", padding: "7px 8px" },
   coverageFile: {
     alignItems: "center",
     display: "flex",

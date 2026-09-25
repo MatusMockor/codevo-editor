@@ -10,5 +10,5 @@
 .remote-clone-destination .agent-iconbutton {
   flex: 0 0 36px;
   height: 36px;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }

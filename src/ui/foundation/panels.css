@@ -147,13 +147,13 @@
 }
 
 .cv-tree-row {
-  --cv-tree-depth: 0;
+  --tree-row-depth: 0;
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
   height: 26px;
-  padding: 0 6px 0 calc(6px + var(--cv-tree-depth) * 12px);
+  padding: 0 6px 0 calc(6px + var(--tree-row-depth) * 12px);
   border-radius: var(--cv-r-sm);
   color: var(--cv-fg);
   font: var(--cv-t-xs) / 1 var(--cv-font-ui);

@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Check, Folder, FolderGit2, Pin } from "lucide-react";
+import { Check, Pin } from "lucide-react";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
@@ -15,7 +15,6 @@ import {
   type AgentTurnLogEvidenceLookup,
 } from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
-import { AgentCompactRelativeTime } from "./agentClock";
 import {
   AgentThreadRowStatusSlot,
   RemoteThreadIndicator,
@@ -118,9 +117,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     command({ kind: "rename", title: trimmed });
   };
 
-  const Icon = thread.target.isolation === "worktree" ? FolderGit2 : Folder;
   const rowClass = agentRowClassName({
-    variant: model.variant,
     on,
     marked: selected,
     recede: model.recede,
@@ -135,45 +132,6 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     });
   };
   const menuNode = menu.overlays;
-
-  if (model.variant === "slim") {
-    return (
-      <li className="agent-slim-slot" role="none">
-        <div
-          aria-current={on ? "true" : undefined}
-          aria-selected={selected}
-          className={rowClass}
-          data-thread-id={threadId}
-          draggable={!renaming && props.reorderable === true}
-          onClick={selectRow}
-          onContextMenu={openMenu}
-          onKeyDown={onRowKeyDown}
-          ref={rowRef}
-          role="option"
-          tabIndex={focused ? 0 : -1}
-        >
-          <Icon aria-hidden="true" className="agent-row__icon" size={16} />
-          {renaming ? (
-            <RenameInput
-              initial={thread.title}
-              onCancel={() => setRenaming(false)}
-              onCommit={commitRename}
-            />
-          ) : (
-            <span className="agent-row__title">{model.title}</span>
-          )}
-          {view.execution?.kind === "remote" && (
-            <RemoteThreadIndicator serverId={view.execution.serverId} />
-          )}
-          {importedLabel !== null && <ImportedBadge label={importedLabel} />}
-          <span className="agent-row__time agent-num">
-            <AgentCompactRelativeTime epochMs={thread.updatedAtEpochMs} />
-          </span>
-        </div>
-        {menuNode}
-      </li>
-    );
-  }
 
   const canSettle = !agentRowIsLive(status) && thread.settledAt == null && !renaming;
   return (

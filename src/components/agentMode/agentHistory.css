@@ -1,10 +1,10 @@
 .agent-history {
-  --history-lane-0: var(--codevo-ok);
-  --history-lane-1: var(--codevo-ft-ts);
-  --history-lane-2: var(--codevo-ft-css);
-  --history-lane-3: var(--codevo-warn);
-  --history-lane-4: var(--codevo-ft-git);
-  --history-lane-5: var(--codevo-ft-tsx);
+  --history-lane-0: var(--cv-ok);
+  --history-lane-1: var(--cv-ft-ts);
+  --history-lane-2: var(--cv-ft-css);
+  --history-lane-3: var(--cv-warn);
+  --history-lane-4: var(--cv-ft-git);
+  --history-lane-5: var(--cv-ft-tsx);
   display: flex;
   flex-direction: column;
   container-type: inline-size;
@@ -12,7 +12,7 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  color: var(--codevo-fg);
+  color: var(--cv-fg);
 }
 
 .agent-history__toolbar {
@@ -34,7 +34,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 
 .agent-history__branch-picker {
@@ -52,8 +52,8 @@
   flex: 0 0 25px;
   padding-right: 12px;
   font-size: 10px;
-  color: var(--codevo-fg-subtle);
-  background: color-mix(in srgb, var(--codevo-raised) 48%, transparent);
+  color: var(--cv-fg-subtle);
+  background: color-mix(in srgb, var(--cv-raised) 48%, transparent);
 }
 .agent-history__graph-heading > span:first-child {
   flex-shrink: 0;
@@ -96,15 +96,15 @@
 }
 .agent-history__commit:hover,
 .agent-history__file:hover {
-  background: var(--codevo-hover);
+  background: var(--cv-tint-2);
 }
 .agent-history__commit[aria-pressed="true"],
 .agent-history__file[aria-pressed="true"] {
-  background: var(--codevo-raised);
+  background: var(--cv-raised);
 }
 .agent-history__commit:focus-visible,
 .agent-history__file:focus-visible {
-  outline: 1px solid var(--codevo-primary);
+  outline: 1px solid var(--cv-accent);
   outline-offset: -2px;
 }
 .agent-history__graph {
@@ -118,11 +118,11 @@
 }
 .agent-history__graph circle {
   fill: currentColor;
-  stroke: var(--codevo-canvas);
+  stroke: var(--cv-canvas);
   stroke-width: 1.5px;
 }
 .agent-history__graph circle[data-merge="true"] {
-  fill: var(--codevo-canvas);
+  fill: var(--cv-canvas);
   stroke: currentColor;
 }
 .agent-history__commit-main {
@@ -143,11 +143,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  color: var(--codevo-fg-strong);
+  color: var(--cv-fg-strong);
 }
 .agent-history__merge {
   flex-shrink: 0;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 .agent-history__commit-secondary {
   display: flex;
@@ -156,12 +156,12 @@
   height: 13px;
   overflow: hidden;
   font-size: 10px;
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
   white-space: nowrap;
 }
 .agent-history__commit-secondary code {
   font: inherit;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--cv-font-mono);
 }
 .agent-history__compact-author {
   overflow: hidden;
@@ -178,12 +178,12 @@
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 9px;
-  color: var(--codevo-ok);
-  background: var(--codevo-ok-soft);
+  color: var(--cv-ok);
+  background: var(--cv-ok-soft);
 }
 .agent-history__ref[data-tag="true"] {
-  color: var(--codevo-warn);
-  background: var(--codevo-warn-soft);
+  color: var(--cv-warn);
+  background: var(--cv-warn-soft);
 }
 .agent-history__author {
   display: none;
@@ -191,7 +191,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
   font-size: 10px;
 }
 .agent-history__date {
@@ -199,7 +199,7 @@
   flex-shrink: 0;
   text-align: right;
   white-space: nowrap;
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 10px;
 }
 .agent-history__graph-footer {
@@ -208,7 +208,7 @@
   justify-content: space-between;
   flex: 0 0 26px;
   padding: 0 12px;
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
   font-size: 10px;
 }
 .agent-history__graph-footer button {
@@ -216,29 +216,29 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
   font: inherit;
   cursor: pointer;
 }
 .agent-history__graph-footer button:hover {
-  background: var(--codevo-hover);
+  background: var(--cv-tint-2);
 }
 .agent-history__graph-footer button:disabled {
-  color: var(--codevo-fg-disabled);
+  color: var(--cv-fg-disabled);
 }
 .agent-history__details {
   flex: 0 1 35%;
   min-height: 100px;
   overflow: auto;
   padding: 6px 12px 10px;
-  background: color-mix(in srgb, var(--codevo-raised) 48%, transparent);
+  background: color-mix(in srgb, var(--cv-raised) 48%, transparent);
 }
 .agent-history__inspector-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 4px;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
   font-size: 10px;
 }
 .agent-history__details h3 {
@@ -253,7 +253,7 @@
   gap: 8px;
   margin: 0 0 8px;
   font-size: 10px;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 .agent-history__message {
   font-size: 11px;
@@ -271,16 +271,16 @@
   white-space: nowrap;
 }
 .agent-history__file > span:first-child {
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 .agent-history__file > span[data-status="A"] {
-  color: var(--codevo-ok);
+  color: var(--cv-ok);
 }
 .agent-history__file > span[data-status="D"] {
-  color: var(--codevo-danger);
+  color: var(--cv-danger);
 }
 .agent-history__file > span[data-status="M"] {
-  color: var(--codevo-warn);
+  color: var(--cv-warn);
 }
 .agent-history__diff {
   display: flex;
@@ -319,7 +319,7 @@
   gap: 6px 10px;
   padding: 0 12px 8px;
   font-size: 11px;
-  color: var(--codevo-fg-muted);
+  color: var(--cv-fg-muted);
 }
 
 .agent-history__working-branch {
@@ -342,8 +342,8 @@
 
 .agent-history__switch {
   font: inherit;
-  color: var(--codevo-fg);
-  background: var(--agent-outline-button-bg);
+  color: var(--cv-fg);
+  background: var(--cv-raised);
   border: 0;
   border-radius: 5px;
   padding: 4px 7px;
@@ -351,17 +351,17 @@
 }
 
 .agent-history__switch:hover:not(:disabled) {
-  background: var(--agent-outline-button-hover);
+  background: var(--cv-tint-2);
 }
 
 .agent-history__switch:disabled {
-  color: var(--codevo-fg-subtle);
+  color: var(--cv-fg-subtle);
   cursor: default;
 }
 
 .agent-history__switch:focus-visible {
   outline: none;
-  box-shadow: var(--agent-focus-ring);
+  box-shadow: var(--cv-ring-focus);
 }
 
 .agent-history__checkout-reason {
@@ -370,7 +370,6 @@
   overflow-wrap: anywhere;
 }
 
-.agent-history-pager,
 .agent-history-catalog {
   display: flex;
   flex-wrap: wrap;
@@ -380,42 +379,37 @@
   min-width: 0;
 }
 
-.agent-history-pager > p,
 .agent-history-catalog > label,
 .agent-history-catalog > ul {
   flex-basis: 100%;
 }
 
-.agent-history-pager button,
 .agent-history-catalog button,
 .agent-history-catalog select {
-  min-height: calc(28px * var(--codevo-fs-scale));
+  min-height: calc(28px * var(--cv-type-scale));
   max-width: 100%;
   padding: 4px 10px;
   border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-raised);
-  color: var(--codevo-fg);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  color: var(--cv-fg);
   cursor: pointer;
   font: inherit;
-  font-size: var(--codevo-fs-meta);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   text-align: start;
 }
 
-.agent-history-pager button:hover,
 .agent-history-catalog button:hover {
-  background: var(--codevo-hover);
-  color: var(--codevo-fg-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
-.agent-history-pager button:focus-visible,
 .agent-history-catalog button:focus-visible,
 .agent-history-catalog select:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }
 
-.agent-history-pager button:disabled,
 .agent-history-catalog button:disabled {
   cursor: default;
   opacity: 0.55;

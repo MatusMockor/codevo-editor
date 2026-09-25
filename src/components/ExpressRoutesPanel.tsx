@@ -38,14 +38,14 @@ const styles: Record<string, CSSProperties> = {
   cell: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   header: {
     alignItems: "center",
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     gap: 8,
     padding: "6px 8px",
   },
   input: { background: "transparent", border: 0, color: "inherit", flex: 1, minWidth: 100 },
   list: { flex: 1, minHeight: 0, overflow: "auto", position: "relative" },
-  message: { color: "var(--text-muted)", padding: 16 },
+  message: { color: "var(--cv-fg-muted)", padding: 16 },
   method: { fontWeight: 700 },
   panel: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" },
   route: {
@@ -62,7 +62,7 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "left",
     width: "100%",
   },
-  selectedRoute: { background: "var(--selection-background)" },
+  selectedRoute: { background: "var(--cv-accent-soft)" },
 };
 
 const ROUTE_ROW_HEIGHT = 32;

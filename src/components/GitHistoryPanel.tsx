@@ -1,25 +1,6 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import type {
-  ChangeEvent,
-  CSSProperties,
-  KeyboardEvent,
-  UIEvent,
-} from "react";
-import {
-  GitBranch,
-  ChevronDown,
-  ChevronRight,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, CSSProperties, KeyboardEvent, UIEvent } from "react";
+import { GitBranch, ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-react";
 import {
   type Commit,
   type CommitDetails,
@@ -44,9 +25,9 @@ const COMMIT_GRAPH_LANE_GAP = 11;
 const COMMIT_GRAPH_LANE_START = 9;
 const COMMIT_GRAPH_MAX_DEPTH = 5;
 const COMMIT_GRAPH_COLORS = [
-  "var(--color-accent)",
-  "var(--color-success)",
-  "var(--color-warning)",
+  "var(--cv-accent)",
+  "var(--cv-ok)",
+  "var(--cv-warn)",
   "#a78bfa",
   "#38bdf8",
   "#f472b6",
@@ -205,9 +186,10 @@ function graphColor(index: number): string {
 }
 
 function graphX(depth: number): number {
-  return COMMIT_GRAPH_LANE_START +
-    Math.min(Math.max(depth, 0), COMMIT_GRAPH_MAX_DEPTH) *
-      COMMIT_GRAPH_LANE_GAP;
+  return (
+    COMMIT_GRAPH_LANE_START +
+    Math.min(Math.max(depth, 0), COMMIT_GRAPH_MAX_DEPTH) * COMMIT_GRAPH_LANE_GAP
+  );
 }
 
 function buildCommitGraph(commits: Commit[]): RenderedCommitGraphNode[] {
@@ -246,9 +228,7 @@ function buildCommitGraph(commits: Commit[]): RenderedCommitGraphNode[] {
 
     const colorIndex = lanes[depth]?.colorIndex ?? 0;
     const activeLanes = lanes
-      .map((lane, laneDepth) =>
-        lane ? { colorIndex: lane.colorIndex, depth: laneDepth } : null,
-      )
+      .map((lane, laneDepth) => (lane ? { colorIndex: lane.colorIndex, depth: laneDepth } : null))
       .filter((lane): lane is CommitGraphLane => lane !== null);
 
     if (!activeLanes.some((lane) => lane.depth === depth)) {
@@ -260,9 +240,9 @@ function buildCommitGraph(commits: Commit[]): RenderedCommitGraphNode[] {
     const mergeLanes: CommitGraphLane[] = [];
     lanes[depth] = firstParent
       ? {
-        colorIndex,
-        hash: firstParent,
-      }
+          colorIndex,
+          hash: firstParent,
+        }
       : null;
 
     for (const parent of additionalParents) {
@@ -317,10 +297,7 @@ function buildCommitGraph(commits: Commit[]): RenderedCommitGraphNode[] {
   });
 }
 
-function CommitGraphCell(props: {
-  commit: Commit;
-  node: RenderedCommitGraphNode | undefined;
-}) {
+function CommitGraphCell(props: { commit: Commit; node: RenderedCommitGraphNode | undefined }) {
   const { commit, node } = props;
   const depth = Math.min(Math.max(node?.depth ?? 0, 0), COMMIT_GRAPH_MAX_DEPTH);
   const nodeX = graphX(depth);
@@ -328,8 +305,9 @@ function CommitGraphCell(props: {
   const hasFork = (node?.children.length ?? 0) > 1;
   const title = isMerge ? "Merge commit" : hasFork ? "Branch point" : "Commit";
   const activeLanes = node?.activeLanes ?? [{ colorIndex: 0, depth }];
-  const mergeLanes =
-    node?.mergeLanes.length ? node.mergeLanes : hasFork
+  const mergeLanes = node?.mergeLanes.length
+    ? node.mergeLanes
+    : hasFork
       ? [{ colorIndex: (node?.colorIndex ?? 0) + 1, depth: depth + 1 }]
       : [];
   const nodeColor = graphColor(node?.colorIndex ?? 0);
@@ -384,7 +362,7 @@ function CommitGraphCell(props: {
           }`}
           cx={nodeX}
           cy={nodeY}
-          style={{ fill: isMerge ? nodeColor : "var(--color-bg)", stroke: nodeColor }}
+          style={{ fill: isMerge ? nodeColor : "var(--cv-canvas)", stroke: nodeColor }}
           r={isMerge ? 4 : 3}
         />
       </svg>
@@ -457,9 +435,7 @@ function fileTreeDepthStyle(
   return { "--git-history-file-depth": depth };
 }
 
-export const GitHistoryPanel = memo(function GitHistoryPanel(
-  props: GitHistoryPanelProps,
-) {
+export const GitHistoryPanel = memo(function GitHistoryPanel(props: GitHistoryPanelProps) {
   const { gateway, onOpenCommitFileDiff, rootPath } = props;
   const [repoStatus, setRepoStatus] = useState<GitRepoStatus>(emptyRepoStatus());
   const [branches, setBranches] = useState<GitBranches>(emptyBranches());
@@ -516,10 +492,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
 
   const shouldVirtualize = commits.length >= COMMIT_LIST_VIRTUAL_THRESHOLD;
 
-  const commitGraphIndex = useMemo(
-    () => commitGraphByHash(commitGraph),
-    [commitGraph],
-  );
+  const commitGraphIndex = useMemo(() => commitGraphByHash(commitGraph), [commitGraph]);
 
   const selectedIndex = useMemo(
     () => commits.findIndex((commit) => commit.hash === selectedCommitHash),
@@ -529,7 +502,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   const selectedCommit = useMemo(
     () =>
       selectedCommitHash
-        ? commits.find((commit) => commit.hash === selectedCommitHash) ?? null
+        ? (commits.find((commit) => commit.hash === selectedCommitHash) ?? null)
         : null,
     [commits, selectedCommitHash],
   );
@@ -545,14 +518,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   );
 
   const selectedCommitIsHead = Boolean(
-    selectedCommit &&
-      branches.current &&
-      selectedCommit.labels.includes(branches.current),
+    selectedCommit && branches.current && selectedCommit.labels.includes(branches.current),
   );
   const selectedCommitIsPushed = Boolean(
-    selectedDetails?.containingBranches.some((branch) =>
-      remoteBranchNames.has(branch),
-    ),
+    selectedDetails?.containingBranches.some((branch) => remoteBranchNames.has(branch)),
   );
   const canRewordSelectedCommit = Boolean(
     selectedDetails && selectedCommitIsHead && !selectedCommitIsPushed,
@@ -565,15 +534,11 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   );
 
   const effectiveCommitListHeight =
-    commitListViewportHeight > 0
-      ? commitListViewportHeight
-      : COMMIT_LIST_VIEWPORT_FALLBACK_HEIGHT;
+    commitListViewportHeight > 0 ? commitListViewportHeight : COMMIT_LIST_VIEWPORT_FALLBACK_HEIGHT;
   const pageSize = Math.max(
     1,
     Math.floor(
-      (effectiveCommitListHeight -
-        COMMIT_LIST_PADDING_TOP -
-        COMMIT_LIST_PADDING_BOTTOM) /
+      (effectiveCommitListHeight - COMMIT_LIST_PADDING_TOP - COMMIT_LIST_PADDING_BOTTOM) /
         COMMIT_LIST_ROW_HEIGHT,
     ),
   );
@@ -589,26 +554,20 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     ),
   );
 
-  const normalizedRowsScrollTop = Math.max(
-    0,
-    normalizedCommitScrollTop - COMMIT_LIST_PADDING_TOP,
-  );
+  const normalizedRowsScrollTop = Math.max(0, normalizedCommitScrollTop - COMMIT_LIST_PADDING_TOP);
   const visibleCommitStart = shouldVirtualize
     ? Math.max(
-      0,
-      Math.floor(normalizedRowsScrollTop / COMMIT_LIST_ROW_HEIGHT) -
-        COMMIT_LIST_OVERSCAN,
-    )
+        0,
+        Math.floor(normalizedRowsScrollTop / COMMIT_LIST_ROW_HEIGHT) - COMMIT_LIST_OVERSCAN,
+      )
     : 0;
   const visibleCommitEnd = shouldVirtualize
     ? Math.min(
-      commits.length,
-      visibleCommitStart +
-        Math.ceil(
-          effectiveCommitListHeight / COMMIT_LIST_ROW_HEIGHT,
-        ) +
-        COMMIT_LIST_OVERSCAN * 2,
-    )
+        commits.length,
+        visibleCommitStart +
+          Math.ceil(effectiveCommitListHeight / COMMIT_LIST_ROW_HEIGHT) +
+          COMMIT_LIST_OVERSCAN * 2,
+      )
     : commits.length;
   const visibleCommits = useMemo(
     () => commits.slice(visibleCommitStart, visibleCommitEnd),
@@ -616,16 +575,11 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   );
   const visibleCommitOffset = visibleCommitStart * COMMIT_LIST_ROW_HEIGHT;
   const totalCommitListHeight = Math.max(
-    commits.length * COMMIT_LIST_ROW_HEIGHT +
-      COMMIT_LIST_PADDING_TOP +
-      COMMIT_LIST_PADDING_BOTTOM,
+    commits.length * COMMIT_LIST_ROW_HEIGHT + COMMIT_LIST_PADDING_TOP + COMMIT_LIST_PADDING_BOTTOM,
     effectiveCommitListHeight,
   );
 
-  const commitFileTree = useMemo(
-    () => buildFileTree(selectedFiles),
-    [selectedFiles],
-  );
+  const commitFileTree = useMemo(() => buildFileTree(selectedFiles), [selectedFiles]);
 
   const ensureCommitIndexVisible = useCallback(
     (index: number) => {
@@ -651,10 +605,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       }
 
       if (rowBottom > commitListScrollTop + viewportHeight) {
-        const nextScrollTop = Math.min(
-          maxScrollTop,
-          Math.max(0, rowBottom - viewportHeight + 1),
-        );
+        const nextScrollTop = Math.min(maxScrollTop, Math.max(0, rowBottom - viewportHeight + 1));
 
         setCommitListScrollTop(nextScrollTop);
         commitListRef.current.scrollTop = nextScrollTop;
@@ -680,8 +631,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   }, [rootPath]);
 
   const isCurrentRootPath = useCallback(
-    (requestedRootPath: string | null) =>
-      currentRootPathRef.current === requestedRootPath,
+    (requestedRootPath: string | null) => currentRootPathRef.current === requestedRootPath,
     [],
   );
 
@@ -718,10 +668,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         gateway.getBranches(rootPath),
       ]);
 
-      if (
-        requestToken !== branchesRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== branchesRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -739,10 +686,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         setSelectedFiles([]);
       }
     } catch (nextError: unknown) {
-      if (
-        requestToken !== branchesRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== branchesRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -759,10 +703,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setBranchesError("Failed to load git repository info.");
       console.error(nextError);
     } finally {
-      if (
-        requestToken === branchesRequestTokenRef.current &&
-        isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken === branchesRequestTokenRef.current && isCurrentRootPath(rootPath)) {
         setLoading((current) => ({ ...current, branches: false }));
       }
     }
@@ -790,10 +731,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         query: query || undefined,
       });
 
-      if (
-        requestToken !== commitsRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== commitsRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -801,7 +739,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       const nextSelectedHash =
         currentSelectedHash && nextCommits.some((commit) => commit.hash === currentSelectedHash)
           ? currentSelectedHash
-          : nextCommits[0]?.hash ?? null;
+          : (nextCommits[0]?.hash ?? null);
 
       setCommits(nextCommits);
       setCommitGraph(buildCommitGraph(nextCommits));
@@ -822,10 +760,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       selectedCommitHashRef.current = nextSelectedHash;
       setSelectedCommitHash(nextSelectedHash);
     } catch (nextError: unknown) {
-      if (
-        requestToken !== commitsRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== commitsRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -840,10 +775,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setCommitsError("Failed to load commit log.");
       console.error(nextError);
     } finally {
-      if (
-        requestToken === commitsRequestTokenRef.current &&
-        isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken === commitsRequestTokenRef.current && isCurrentRootPath(rootPath)) {
         setLoading((current) => ({ ...current, commits: false }));
       }
     }
@@ -883,10 +815,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         query: query || undefined,
       });
 
-      if (
-        requestToken !== commitsRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== commitsRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -897,10 +826,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       });
       setHasMoreCommits(nextCommits.length === COMMIT_LOG_PAGE_SIZE);
     } catch (nextError: unknown) {
-      if (
-        requestToken !== commitsRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== commitsRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -908,10 +834,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setCommitsError("Failed to load more commits.");
       console.error(nextError);
     } finally {
-      if (
-        requestToken === commitsRequestTokenRef.current &&
-        isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken === commitsRequestTokenRef.current && isCurrentRootPath(rootPath)) {
         setLoadingMoreCommits(false);
       }
     }
@@ -946,20 +869,14 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         gateway.getCommitFiles(rootPath, selectedCommitHash),
       ]);
 
-      if (
-        requestToken !== detailsRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== detailsRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
       setSelectedDetails(details);
       setSelectedFiles(files);
     } catch (nextError: unknown) {
-      if (
-        requestToken !== detailsRequestTokenRef.current ||
-        !isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken !== detailsRequestTokenRef.current || !isCurrentRootPath(rootPath)) {
         return;
       }
 
@@ -968,20 +885,11 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       setDetailsError("Failed to load selected commit data.");
       console.error(nextError);
     } finally {
-      if (
-        requestToken === detailsRequestTokenRef.current &&
-        isCurrentRootPath(rootPath)
-      ) {
+      if (requestToken === detailsRequestTokenRef.current && isCurrentRootPath(rootPath)) {
         setLoading((current) => ({ ...current, details: false }));
       }
     }
-  }, [
-    gateway,
-    isCurrentRootPath,
-    rootPath,
-    repoStatus.isRepository,
-    selectedCommitHash,
-  ]);
+  }, [gateway, isCurrentRootPath, rootPath, repoStatus.isRepository, selectedCommitHash]);
 
   useEffect(() => {
     void loadBranches();
@@ -1001,9 +909,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     }
 
     const updateHeight = () => {
-      setCommitListViewportHeight(
-        measureGitHistoryViewportHeight(commitListRef.current),
-      );
+      setCommitListViewportHeight(measureGitHistoryViewportHeight(commitListRef.current));
     };
 
     updateHeight();
@@ -1054,10 +960,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     const { clientHeight, scrollHeight, scrollTop } = event.currentTarget;
     pendingCommitListScrollTopRef.current = event.currentTarget.scrollTop;
 
-    if (
-      scrollHeight - scrollTop - clientHeight <=
-      COMMIT_LOG_LOAD_MORE_THRESHOLD_PX
-    ) {
+    if (scrollHeight - scrollTop - clientHeight <= COMMIT_LOG_LOAD_MORE_THRESHOLD_PX) {
       void loadMoreCommits();
     }
 
@@ -1075,16 +978,13 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     });
   };
 
-  const onSelectCommit = useCallback(
-    (commitHash: string) => {
-      selectedCommitHashRef.current = commitHash;
-      setSelectedDetails(null);
-      setSelectedFiles([]);
-      setDetailsError(null);
-      setSelectedCommitHash(commitHash);
-    },
-    [],
-  );
+  const onSelectCommit = useCallback((commitHash: string) => {
+    selectedCommitHashRef.current = commitHash;
+    setSelectedDetails(null);
+    setSelectedFiles([]);
+    setDetailsError(null);
+    setSelectedCommitHash(commitHash);
+  }, []);
 
   const onCommitKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -1118,29 +1018,27 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
       onSelectCommit(commits[nextIndex]?.hash ?? selectedCommitHash ?? "");
       ensureCommitIndexVisible(nextIndex);
     },
-    [commits, ensureCommitIndexVisible, pageSize, onSelectCommit, selectedCommitHash, selectedIndex],
+    [
+      commits,
+      ensureCommitIndexVisible,
+      pageSize,
+      onSelectCommit,
+      selectedCommitHash,
+      selectedIndex,
+    ],
   );
 
-  const onCommitSearch = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      setQuery(event.target.value);
-    },
-    [],
-  );
+  const onCommitSearch = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setQuery(event.target.value);
+  }, []);
 
-  const onAuthorSearch = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      setAuthorFilter(event.target.value);
-    },
-    [],
-  );
+  const onAuthorSearch = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setAuthorFilter(event.target.value);
+  }, []);
 
-  const onPathSearch = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      setPathFilter(event.target.value);
-    },
-    [],
-  );
+  const onPathSearch = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setPathFilter(event.target.value);
+  }, []);
 
   const onRefreshBranches = useCallback(() => {
     void loadBranches();
@@ -1186,9 +1084,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         return;
       }
 
-      setRevertError(
-        nextError instanceof Error ? nextError.message : String(nextError),
-      );
+      setRevertError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       if (isCurrentRootPath(requestedRoot)) {
         setRevertingCommit(false);
@@ -1244,9 +1140,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         return;
       }
 
-      setCherryPickError(
-        nextError instanceof Error ? nextError.message : String(nextError),
-      );
+      setCherryPickError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       if (isCurrentRootPath(requestedRoot)) {
         setCherryPickingCommit(false);
@@ -1318,9 +1212,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         return;
       }
 
-      setRewordError(
-        nextError instanceof Error ? nextError.message : String(nextError),
-      );
+      setRewordError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       if (isCurrentRootPath(requestedRoot)) {
         setRewordingCommit(false);
@@ -1343,17 +1235,11 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     };
 
     window.addEventListener("mockor-reword-selected-git-commit", startListener);
-    window.addEventListener(
-      "mockor-query-reword-selected-git-commit",
-      availabilityListener,
-    );
+    window.addEventListener("mockor-query-reword-selected-git-commit", availabilityListener);
 
     return () => {
       window.removeEventListener("mockor-reword-selected-git-commit", startListener);
-      window.removeEventListener(
-        "mockor-query-reword-selected-git-commit",
-        availabilityListener,
-      );
+      window.removeEventListener("mockor-query-reword-selected-git-commit", availabilityListener);
     };
   }, [canRewordSelectedCommit, startRewordSelectedCommit]);
 
@@ -1453,9 +1339,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
             </div>
             <button
               aria-pressed={branchFilter === null}
-              className={`git-history-branch-row ${
-                branchFilter === null ? "selected" : ""
-              }`}
+              className={`git-history-branch-row ${branchFilter === null ? "selected" : ""}`}
               onClick={() => setBranchFilter(null)}
               type="button"
             >
@@ -1468,11 +1352,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
                 onClick={() => setLocalExpanded((value) => !value)}
                 type="button"
               >
-                {localExpanded ? (
-                  <ChevronDown size={12} />
-                ) : (
-                  <ChevronRight size={12} />
-                )}
+                {localExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 <span>Local</span>
               </button>
               {localExpanded ? (
@@ -1488,9 +1368,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
                       type="button"
                     >
                       <span>{entry.branch}</span>
-                      {entry.branch === branches.current ? (
-                        <small>current</small>
-                      ) : null}
+                      {entry.branch === branches.current ? <small>current</small> : null}
                     </button>
                   ))}
                 </div>
@@ -1503,11 +1381,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
                 onClick={() => setRemoteExpanded((value) => !value)}
                 type="button"
               >
-                {remoteExpanded ? (
-                  <ChevronDown size={12} />
-                ) : (
-                  <ChevronRight size={12} />
-                )}
+                {remoteExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 <span>Remotes</span>
               </button>
               {remoteExpanded ? (
@@ -1575,11 +1449,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
           ) : commits.length === 0 ? (
             <div className="git-history-empty">
               <p>No commits yet</p>
-              <button
-                className="git-history-refresh"
-                onClick={onRefreshCommits}
-                type="button"
-              >
+              <button className="git-history-refresh" onClick={onRefreshCommits} type="button">
                 Retry
               </button>
             </div>
@@ -1616,16 +1486,11 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
                         type="button"
                       >
                         <CommitGraphCell commit={commit} node={node} />
-                        <span className="git-history-commit-subject">
-                          {commit.subject}
-                        </span>
+                        <span className="git-history-commit-subject">{commit.subject}</span>
                         <span className="git-history-commit-meta">
-                          {commit.authorName || "Unknown author"} · {" "}
-                          {formatCommitDate(commit.date)}
+                          {commit.authorName || "Unknown author"} · {formatCommitDate(commit.date)}
                         </span>
-                        <span className="git-history-commit-hash">
-                          {commit.abbrevHash}
-                        </span>
+                        <span className="git-history-commit-hash">{commit.abbrevHash}</span>
                       </button>
                     );
                   })}
@@ -1718,9 +1583,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
               {cherryPickingCommit ? "Cherry-picking" : "Cherry-pick commit"}
             </button>
           </header>
-          {revertError ? (
-            <small className="git-history-inline-error">{revertError}</small>
-          ) : null}
+          {revertError ? <small className="git-history-inline-error">{revertError}</small> : null}
           {cherryPickError ? (
             <small className="git-history-inline-error">{cherryPickError}</small>
           ) : null}
@@ -1729,9 +1592,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
               Reword unavailable: {rewordUnavailableReason}
             </small>
           ) : null}
-          {rewordError ? (
-            <small className="git-history-inline-error">{rewordError}</small>
-          ) : null}
+          {rewordError ? <small className="git-history-inline-error">{rewordError}</small> : null}
           {!selectedCommit ? (
             <div className="git-history-empty">
               <p>No commit selected</p>
@@ -1794,10 +1655,7 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
                 </div>
               ) : (
                 <div className="git-history-files">
-                  <FileTreeRows
-                    node={commitFileTree}
-                    onOpenFile={onOpenFile}
-                  />
+                  <FileTreeRows node={commitFileTree} onOpenFile={onOpenFile} />
                 </div>
               )}
             </div>
@@ -1814,21 +1672,13 @@ interface FileTreeRowsProps {
   depth?: number;
 }
 
-function FileTreeRows({
-  depth = 0,
-  node,
-  onOpenFile,
-}: FileTreeRowsProps) {
+function FileTreeRows({ depth = 0, node, onOpenFile }: FileTreeRowsProps) {
   return (
     <>
       {sortedFileTreeChildren(node).map((child) => {
         const childRows =
           child.children.size > 0 ? (
-            <FileTreeRows
-              depth={depth + 1}
-              node={child}
-              onOpenFile={onOpenFile}
-            />
+            <FileTreeRows depth={depth + 1} node={child} onOpenFile={onOpenFile} />
           ) : null;
 
         if (child.file) {
@@ -1844,9 +1694,7 @@ function FileTreeRows({
                 onClick={() => onOpenFile(file)}
                 style={fileTreeDepthStyle(depth)}
                 title={
-                  file.isRename && file.oldPath
-                    ? `${file.oldPath} -> ${file.path}`
-                    : file.path
+                  file.isRename && file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path
                 }
                 type="button"
               >
@@ -1857,9 +1705,7 @@ function FileTreeRows({
                   {statusIcon(file.status)}
                 </span>
                 <span className="git-history-file-path">
-                  {file.isRename && file.oldPath
-                    ? `${file.oldPath} -> ${file.path}`
-                    : child.name}
+                  {file.isRename && file.oldPath ? `${file.oldPath} -> ${file.path}` : child.name}
                 </span>
               </button>
               {childRows}
@@ -1868,10 +1714,7 @@ function FileTreeRows({
         }
 
         return (
-          <div
-            className="git-history-file-folder"
-            key={`folder:${depth}:${child.name}`}
-          >
+          <div className="git-history-file-folder" key={`folder:${depth}:${child.name}`}>
             <div
               className="git-history-file-folder-label"
               style={fileTreeDepthStyle(depth)}

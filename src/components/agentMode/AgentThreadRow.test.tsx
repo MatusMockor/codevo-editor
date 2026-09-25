@@ -268,7 +268,7 @@ describe("AgentThreadRow", () => {
     expect(line1().querySelector(".cv-card-row__when")?.textContent).toBe("2m");
   });
 
-  it("marks an imported thread on the card and the slim row, and leaves plain threads unbadged", () => {
+  it("marks an imported thread on the card, archived or not, and leaves plain threads unbadged", () => {
     render(pinnedDone());
     expect(host.querySelector(".agent-microlabel")).toBeNull();
 
@@ -279,7 +279,8 @@ describe("AgentThreadRow", () => {
     expect(badge?.title).toBe("Imported terminal session");
 
     render(importedView({ archived: true }));
-    expect(host.querySelector(".agent-row--slim .agent-microlabel")?.textContent).toBe("Imported");
+    expect(host.querySelector(".agent-row--slim")).toBeNull();
+    expect(host.querySelector(".cv-card-row__l3 .agent-microlabel")?.textContent).toBe("Imported");
   });
 
   it("keeps the branch first on line three without a provider glyph", () => {

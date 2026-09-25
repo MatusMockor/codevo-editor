@@ -231,10 +231,9 @@ describe("agent row status", () => {
     );
   });
 
-  it("builds the row class list from the variant and states", () => {
+  it("builds the row class list from the row states", () => {
     expect(
       agentRowClassName({
-        variant: "card",
         on: true,
         marked: false,
         recede: false,
@@ -244,7 +243,6 @@ describe("agent row status", () => {
     ).toBe("cv-card-row is-current is-live is-unread");
     expect(
       agentRowClassName({
-        variant: "card",
         on: false,
         marked: false,
         recede: false,
@@ -252,22 +250,11 @@ describe("agent row status", () => {
         unread: false,
       }),
     ).toBe("cv-card-row is-live");
-    expect(
-      agentRowClassName({
-        variant: "slim",
-        on: false,
-        marked: false,
-        recede: true,
-        status: { kind: "none" },
-        unread: false,
-      }),
-    ).toBe("agent-row agent-row--slim agent-row--recede");
   });
 
   it("keeps the open row marked when it is part of the selection", () => {
     expect(
       agentRowClassName({
-        variant: "card",
         on: true,
         marked: true,
         recede: false,
@@ -280,7 +267,6 @@ describe("agent row status", () => {
   it("marks a multi-selected row after the open state", () => {
     expect(
       agentRowClassName({
-        variant: "card",
         on: false,
         marked: true,
         recede: false,
@@ -387,6 +373,13 @@ describe("agent rail sections", () => {
     expect(agentRowProjectLabel(agentRailProjectLabels([multi]), view({}))).toBe("app / app");
   });
 
+  it("builds the same card row model for an archived thread, with no slim variant", () => {
+    const model = agentThreadRowModel(view({ threadId: "arc-1", archived: true }), false);
+
+    expect(Object.keys(model)).not.toContain("variant");
+    expect(model.title).toBe("Thread arc-1");
+  });
+
   it("builds a row model with the project line, branch fallback and file count", () => {
     const model = agentThreadRowModel(view({ threadId: "agt-1" }), false);
 
@@ -396,7 +389,6 @@ describe("agent rail sections", () => {
     expect(model.branch).toBe("worktree");
     expect(model.filesLabel).toBeNull();
     expect(model.provider).toBe("claudeCode");
-    expect(model.variant).toBe("card");
     expect(model.status.kind).toBe("working");
     expect(model.recede).toBe(true);
     expect(agentThreadRowModel(view({ threadId: "agt-1" }), true).recede).toBe(false);

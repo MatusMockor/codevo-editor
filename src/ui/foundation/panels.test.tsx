@@ -139,7 +139,7 @@ describe("TreeRow", () => {
     expect(row.getAttribute("aria-expanded")).toBe("false");
     expect(row.getAttribute("aria-selected")).toBe("true");
     expect(row.tabIndex).toBe(0);
-    expect(row.style.getPropertyValue("--cv-tree-depth")).toBe("2");
+    expect(row.style.getPropertyValue("--tree-row-depth")).toBe("2");
   });
 
   it("toggles folders by click and arrows and activates files with Enter", () => {

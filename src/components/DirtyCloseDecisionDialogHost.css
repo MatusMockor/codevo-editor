@@ -1,9 +1,9 @@
 .dirty-close-decision-dialog {
-  background: var(--color-modal);
+  background: var(--cv-popover);
   border: 0;
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-pop);
-  color: var(--color-text);
+  border-radius: var(--cv-r-group);
+  box-shadow: var(--cv-shadow-pop);
+  color: var(--cv-fg);
   margin: auto;
   max-width: calc(100vw - 32px);
   padding: 0;
@@ -21,7 +21,7 @@
 }
 
 .dirty-close-decision-content h2 {
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 15px;
   font-weight: 600;
   line-height: 1.35;
@@ -30,16 +30,16 @@
 }
 
 .dirty-close-decision-content p {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 12px;
   line-height: 1.5;
   margin: 5px 0 0;
 }
 
 .dirty-close-decision-content ul {
-  background: var(--color-panel-deep);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  background: var(--cv-side);
+  border: 1px solid var(--cv-hair);
+  border-radius: var(--cv-r-control);
   list-style: none;
   margin: 0;
   max-height: 144px;
@@ -48,7 +48,7 @@
 }
 
 .dirty-close-decision-content li {
-  color: var(--color-text);
+  color: var(--cv-fg);
   font-size: 12px;
   line-height: 1.4;
   min-height: 24px;
@@ -64,38 +64,38 @@
 }
 
 .dirty-close-decision-content button {
-  background: var(--color-control);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-control);
+  color: var(--cv-fg);
   font: inherit;
   min-height: 30px;
   padding: 4px 12px;
 }
 
 .dirty-close-decision-content button:hover {
-  background: var(--color-hover-strong);
-  color: var(--color-text-strong);
+  background: var(--cv-row-active);
+  color: var(--cv-fg-strong);
 }
 
 .dirty-close-decision-content button:focus-visible,
 .dirty-close-decision-dialog:focus-visible {
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }
 
 .dirty-close-decision-content .dirty-close-decision-discard {
-  color: var(--color-error);
+  color: var(--cv-danger);
 }
 
 .dirty-close-decision-content .dirty-close-decision-save {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-active-text);
+  background: var(--cv-accent-fill);
+  border-color: var(--cv-accent-fill);
+  color: var(--cv-on-accent);
   font-weight: 600;
 }
 
 .dirty-close-decision-content .dirty-close-decision-save:hover {
-  background: color-mix(in srgb, var(--color-accent) 85%, var(--color-text));
-  color: var(--color-active-text);
+  background: color-mix(in srgb, var(--cv-accent-fill) 94%, var(--cv-fg-strong));
+  color: var(--cv-on-accent);
 }

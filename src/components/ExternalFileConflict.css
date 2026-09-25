@@ -1,8 +1,8 @@
 .external-file-conflict-bar {
   align-items: center;
-  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-app));
+  background: color-mix(in srgb, var(--cv-warn) 12%, var(--cv-canvas));
   border: 0;
-  color: var(--color-text);
+  color: var(--cv-fg);
   display: flex;
   gap: 9px;
   min-height: 38px;
@@ -10,7 +10,7 @@
 }
 
 .external-file-conflict-icon {
-  color: var(--color-warning);
+  color: var(--cv-warn);
   flex: 0 0 auto;
 }
 
@@ -23,13 +23,13 @@
 }
 
 .external-file-conflict-message strong {
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 12px;
   font-weight: 600;
 }
 
 .external-file-conflict-message span {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -46,10 +46,10 @@
 .external-file-conflict-action,
 .external-file-compare-close {
   align-items: center;
-  background: var(--color-control);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--color-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-hair-strong);
+  border-radius: var(--cv-r-control);
+  color: var(--cv-fg);
   display: inline-flex;
   font: inherit;
   justify-content: center;
@@ -64,36 +64,36 @@
 
 .external-file-conflict-action:hover:not(:disabled),
 .external-file-compare-close:hover {
-  background: var(--color-hover-strong);
-  color: var(--color-text-strong);
+  background: var(--cv-row-active);
+  color: var(--cv-fg-strong);
 }
 
 .external-file-conflict-action:focus-visible,
 .external-file-compare-close:focus-visible,
 .external-file-compare-dialog:focus-visible {
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }
 
 .external-file-conflict-action:disabled {
-  color: var(--color-disabled);
+  color: var(--cv-fg-disabled);
   cursor: default;
 }
 
 .external-file-conflict-action-primary {
-  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border-strong));
+  border-color: color-mix(in srgb, var(--cv-accent) 55%, var(--cv-hair-strong));
 }
 
 .external-file-conflict-action-warning {
-  color: var(--color-warning);
+  color: var(--cv-warn);
 }
 
 .external-file-compare-dialog {
-  background: var(--color-modal);
+  background: var(--cv-popover);
   border: 0;
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-pop);
-  color: var(--color-text);
+  border-radius: var(--cv-r-group);
+  box-shadow: var(--cv-shadow-pop);
+  color: var(--cv-fg);
   height: min(78vh, 760px);
   inset: 0;
   margin: auto;
@@ -117,7 +117,7 @@
 
 .external-file-compare-header {
   align-items: center;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--cv-hair);
   display: flex;
   justify-content: space-between;
   min-width: 0;
@@ -125,7 +125,7 @@
 }
 
 .external-file-compare-header h2 {
-  color: var(--color-text-strong);
+  color: var(--cv-fg-strong);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
@@ -133,7 +133,7 @@
 }
 
 .external-file-compare-header p {
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 11px;
   line-height: 1.3;
   margin: 1px 0 0;
@@ -147,8 +147,8 @@
 }
 
 .external-file-compare-labels {
-  background: var(--color-panel-deep);
-  border-bottom: 1px solid var(--color-border);
+  background: var(--cv-side);
+  border-bottom: 1px solid var(--cv-hair);
   display: grid;
   font-size: 11px;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -166,7 +166,7 @@
 }
 
 .external-file-compare-labels span + span {
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid var(--cv-hair);
 }
 
 .external-file-compare-labels-inline {
@@ -175,7 +175,7 @@
 
 .external-file-compare-labels-inline span + span {
   border-left: 0;
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--cv-hair);
 }
 
 .external-file-compare-editor {
@@ -209,6 +209,6 @@
 
   .external-file-compare-labels span + span {
     border-left: 0;
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid var(--cv-hair);
   }
 }

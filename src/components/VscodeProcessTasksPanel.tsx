@@ -20,16 +20,16 @@ const styles: Record<string, CSSProperties> = {
   actions: { alignItems: "center", display: "flex", gap: 8 },
   diagnostic: { marginBlock: 4 },
   diagnostics: { margin: 0, paddingInlineStart: 20 },
-  empty: { color: "var(--color-text-muted)", margin: 0, padding: 12 },
+  empty: { color: "var(--cv-fg-muted)", margin: 0, padding: 12 },
   header: {
     alignItems: "center",
-    borderBottom: "1px solid var(--color-border)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     justifyContent: "space-between",
     padding: "8px 10px",
   },
   output: {
-    background: "var(--color-surface)",
+    background: "var(--cv-raised)",
     margin: 0,
     maxHeight: 180,
     overflow: "auto",
@@ -39,10 +39,10 @@ const styles: Record<string, CSSProperties> = {
   },
   outputGrid: { display: "grid", gap: 8, gridTemplateColumns: "minmax(0, 1fr)" },
   panel: { display: "flex", flexDirection: "column", minHeight: 0 },
-  section: { borderBottom: "1px solid var(--color-border)", padding: 10 },
+  section: { borderBottom: "1px solid var(--cv-hair)", padding: 10 },
   task: {
     alignItems: "center",
-    borderBottom: "1px solid var(--color-border)",
+    borderBottom: "1px solid var(--cv-hair)",
     display: "flex",
     gap: 12,
     justifyContent: "space-between",
@@ -51,10 +51,10 @@ const styles: Record<string, CSSProperties> = {
   taskList: { listStyle: "none", margin: 0, padding: 0 },
   taskMetadata: { display: "grid", gap: 3, minWidth: 0 },
   taskDependency: {
-    color: "var(--color-text-muted)",
+    color: "var(--cv-fg-muted)",
     overflowWrap: "anywhere",
   },
-  truncation: { color: "var(--color-warning)", margin: "8px 0 0" },
+  truncation: { color: "var(--cv-warn)", margin: "8px 0 0" },
 };
 
 export function VscodeProcessTasksPanel({

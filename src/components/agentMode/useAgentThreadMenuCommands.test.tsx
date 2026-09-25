@@ -451,33 +451,6 @@ describe("useAgentThreadMenuCommands", () => {
     expect(notices).toEqual([{ kind: "info", message: "Archived 1 thread.", action: null }]);
   });
 
-  it("unarchives only archived threads from a bulk selection", async () => {
-    const unarchive = vi.fn(() => true);
-    const agents: AgentMenuCommandSurface = {
-      ...threadsSurfaceFixture({ threads: [surfaceThreadView(), archivedView("agt-old")] }),
-      unarchive,
-    };
-    render({ agents });
-
-    await act(async () =>
-      current().handleThreadBulkCommand({
-        kind: "apply",
-        request: {
-          action: "unarchive",
-          threadIds: ["agt-1", "agt-old"],
-          ownerKeys: capturedOwners(["agt-1", "agt-old"]),
-          missingIds: [],
-        },
-      }),
-    );
-
-    expect(unarchive).toHaveBeenCalledTimes(1);
-    expect(unarchive).toHaveBeenCalledWith("agt-old");
-    expect(notices).toEqual([
-      { kind: "info", message: "Unarchived 1 thread. Skipped 1: 1 not archived.", action: null },
-    ]);
-  });
-
   it("touches nothing when the selection was captured under another workspace generation", () => {
     const agents = threadsSurfaceFixture({
       threads: [surfaceThreadView()],

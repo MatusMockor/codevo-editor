@@ -29,7 +29,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "1px 4px",
   },
   cell: {
-    borderBottom: "1px solid var(--border-subtle)",
+    borderBottom: "1px solid var(--cv-hair)",
     maxWidth: 420,
     overflow: "hidden",
     padding: "5px 8px",
@@ -39,7 +39,7 @@ const styles: Record<string, CSSProperties> = {
   header: { alignItems: "center", display: "flex", gap: 8, padding: "6px 8px" },
   input: { background: "transparent", border: 0, color: "inherit", flex: 1 },
   message: { padding: 16 },
-  muted: { color: "var(--text-muted)" },
+  muted: { color: "var(--cv-fg-muted)" },
   panel: { height: "100%", overflow: "auto" },
   table: { borderCollapse: "collapse", fontSize: 12, width: "100%" },
 };
@@ -56,9 +56,7 @@ export function ArtisanRoutesPanel({
   unavailable,
 }: ArtisanRoutesPanelProps) {
   const filtered = query.trim().length > 0 && routes.length < total;
-  const routeCount = filtered
-    ? `${routes.length} of ${total} routes`
-    : `${total} routes`;
+  const routeCount = filtered ? `${routes.length} of ${total} routes` : `${total} routes`;
   const changeQuery = (event: ChangeEvent<HTMLInputElement>) => {
     onChangeQuery(event.target.value);
   };
@@ -91,7 +89,11 @@ export function ArtisanRoutesPanel({
         </div>
       ) : null}
       {unavailable ? <div style={styles.message}>{unavailable}</div> : null}
-      {error ? <div role="alert" style={styles.message}>{error}</div> : null}
+      {error ? (
+        <div role="alert" style={styles.message}>
+          {error}
+        </div>
+      ) : null}
       {!loading && !unavailable && !error && routes.length === 0 ? (
         <div style={styles.message}>No routes match the current filter.</div>
       ) : null}

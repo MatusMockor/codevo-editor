@@ -21,7 +21,7 @@
 }
 
 .html-editor-preview__toolbar button[aria-pressed="true"] {
-  background: var(--color-surface);
+  background: var(--cv-raised);
 }
 
 .html-editor-preview__source {
@@ -44,6 +44,6 @@
 .html-editor-preview__hint {
   margin: 0;
   padding: 5px 10px;
-  color: var(--color-text-muted);
+  color: var(--cv-fg-muted);
   font-size: 11px;
 }

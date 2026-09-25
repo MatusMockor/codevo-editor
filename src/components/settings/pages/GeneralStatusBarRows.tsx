@@ -9,18 +9,9 @@ const STATUS_BAR_CHIPS: ReadonlyArray<{
   readonly value: keyof StatusBarItemVisibility;
   readonly label: string;
 }> = [
-  { value: "activePath", label: "File path" },
-  { value: "workspaceInfo", label: "Project info" },
   { value: "index", label: "Index" },
   { value: "languageServer", label: "IDE engine" },
-  { value: "largeFileMode", label: "Large file mode" },
-  { value: "workspaceTrust", label: "Trust" },
-  { value: "mode", label: "Mode" },
-  { value: "language", label: "Language" },
   { value: "cursorPosition", label: "Cursor position" },
-  { value: "gitBranch", label: "Git branch" },
-  { value: "dirtyCount", label: "Unsaved files" },
-  { value: "message", label: "Messages" },
 ];
 
 export function GeneralStatusBarRows({ actions, draft, env }: SettingsPageProps) {

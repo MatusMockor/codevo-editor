@@ -31,9 +31,8 @@ const MEDIA_CHIP_SELECTORS: ReadonlySet<string> = new Set<string>([
   ".agent-composer-attachment__remove",
   ".agent-composer-attachment__remove:hover",
 ]);
-const TYPE_SCALE = "--codevo-fs-scale";
-const LEGACY_TOKEN =
-  /var\(\s*--(color|agent|settings|toast|change|ease)-|var\(\s*--codevo-(?!fs-scale\b)/;
+const TYPE_SCALE = "--cv-type-scale";
+const LEGACY_TOKEN = /var\(\s*--(color|agent|settings|toast|change|ease)-|var\(\s*--codevo-/;
 const MOTION_PROPERTIES = new Set([
   "transition",
   "transition-duration",
@@ -189,7 +188,7 @@ describe("P3 conversation sheets", () => {
       "var(--cv-tint-2)",
     );
     expect(declaredValue(CONVERSATION, ".agent-prompt__bubble", "font-size")).toBe(
-      "calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1))",
+      "calc(var(--cv-t-sm) * var(--cv-type-scale))",
     );
     expect(declaredValue(CONVERSATION, ".agent-prompt__bubble", "line-height")).toBe(
       "var(--cv-lh-prose)",
@@ -202,7 +201,7 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(WORK_ROWS, ".cv-work-row", "min-height")).toBe("28px");
     expect(declaredValue(WORK_ROWS, ".cv-work-row", "gap")).toBe("var(--cv-space-3)");
     expect(declaredValue(WORK_ROWS, ".cv-work-row", "font-size")).toBe(
-      "calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1))",
+      "calc(var(--cv-t-sm) * var(--cv-type-scale))",
     );
     expect(declaredValue(WORK_ROWS, ".cv-work-row", "color")).toBe("var(--cv-fg-subtle)");
     expect(declaredValue(WORK_ROWS, ".cv-work-row:hover", "color")).toBe("var(--cv-fg-strong)");
@@ -245,7 +244,7 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(COMPOSER, ".cv-composer__drawer", "border-radius")).toBe("0 0 14px 14px");
     expect(declaredValue(COMPOSER, ".cv-composer__drawer", "background")).toBe("var(--cv-side)");
     expect(declaredValue(COMPOSER, ".agent-composer__textarea", "font-size")).toBe(
-      "calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1))",
+      "calc(var(--cv-t-sm) * var(--cv-type-scale))",
     );
     expect(declaredValue(COMPOSER, '.cv-composer-dock[data-layout="hero"]', "flex")).toBe("1 1 0");
   });
@@ -298,7 +297,7 @@ describe("P3 conversation sheets", () => {
 
   it("sets assistant prose and markdown like the mockup", () => {
     expect(declaredValue(PROSE, ".agent-text", "font-size")).toBe(
-      "calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1))",
+      "calc(var(--cv-t-sm) * var(--cv-type-scale))",
     );
     expect(declaredValue(PROSE, ".agent-text", "line-height")).toBe("var(--cv-lh-prose)");
     expect(declaredValue(PROSE, ".agent-text__paragraph", "margin")).toBe("0 0 10px");

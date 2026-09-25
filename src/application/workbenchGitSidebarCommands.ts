@@ -1,12 +1,13 @@
 import type { Command } from "./commandRegistry";
+import type { AgentWorkbenchLayoutCommandPort } from "./workbenchAgentCommands";
 
 interface WorkbenchGitSidebarCommandsOptions {
-  showGitSidebar: Command["run"];
+  agentLayout: AgentWorkbenchLayoutCommandPort;
   refreshGitStatus: Command["run"];
 }
 
 export function workbenchGitSidebarCommands({
-  showGitSidebar,
+  agentLayout,
   refreshGitStatus,
 }: WorkbenchGitSidebarCommandsOptions): Command[] {
   return [
@@ -15,7 +16,7 @@ export function workbenchGitSidebarCommands({
       title: "Show Git Changes",
       category: "Git",
       isEnabled: (context) => context.hasWorkspace,
-      run: showGitSidebar,
+      run: () => agentLayout.dispatch({ kind: "openSurface", surface: "git" }),
     },
     {
       id: "git.refresh",

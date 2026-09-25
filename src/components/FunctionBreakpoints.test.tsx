@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -123,7 +125,7 @@ describe("FunctionBreakpoints", () => {
     );
     expect(unverified?.title).toBe("Unverified - function not resolved yet");
     expect(unverified?.style.background).toBe("transparent");
-    expect(unverified?.style.border).toBe("1.5px solid var(--color-text-muted)");
+    expect(unverified?.style.border).toBe("1.5px solid var(--cv-fg-muted)");
 
     render(true);
     const verified = host.querySelector<HTMLElement>(
@@ -131,7 +133,7 @@ describe("FunctionBreakpoints", () => {
     );
     expect(verified).toBe(unverified);
     expect(verified?.title).toBe("Verified function breakpoint");
-    expect(verified?.style.background).toBe("var(--color-error)");
+    expect(verified?.style.background).toBe("var(--cv-danger)");
     expect(verified?.style.border).toBe("");
   });
 
@@ -153,7 +155,7 @@ describe("FunctionBreakpoints", () => {
     expect(pending?.dataset.status).toBe("pending");
     expect(pending?.title).toBe("Pending verification");
     expect(pending?.style.background).toBe("transparent");
-    expect(pending?.style.border).toBe("1.5px dashed var(--color-text-muted)");
+    expect(pending?.style.border).toBe("1.5px dashed var(--cv-fg-muted)");
     expect(host.querySelector('[aria-label^="Verified function breakpoint"]')).toBeNull();
   });
 
@@ -217,6 +219,15 @@ describe("FunctionBreakpoints", () => {
     expect(onAdd).not.toHaveBeenCalled();
     expect(onRemove).not.toHaveBeenCalled();
     expect(onSetEnabled).not.toHaveBeenCalled();
+  });
+});
+
+describe("function breakpoint styles", () => {
+  it("use palette tokens only", () => {
+    const source = readFileSync(resolve(import.meta.dirname, "FunctionBreakpoints.tsx"), "utf8");
+
+    expect(source).not.toMatch(/var\(--(?:color|text|border|status|background)-/);
+    expect(source).toContain("var(--cv-danger)");
   });
 });
 

@@ -26,6 +26,7 @@ const CLASSIFICATION_TABLE: [(CloneFailure, &[&str]); 5] = [
             "could not read password",
             "permission denied (publickey",
             "invalid username or password",
+            "http basic: access denied",
             "terminal prompts disabled",
             "the requested url returned error: 401",
             "the requested url returned error: 403",
@@ -42,6 +43,7 @@ const CLASSIFICATION_TABLE: [(CloneFailure, &[&str]); 5] = [
             "does not appear to be a git repository",
             "the requested url returned error: 404",
             "' not found",
+            "the project you were looking for could not be found",
         ],
     ),
     (
@@ -53,20 +55,45 @@ const CLASSIFICATION_TABLE: [(CloneFailure, &[&str]); 5] = [
             "connection timed out",
             "connection refused",
             "connection reset",
+            "connection was reset",
             "network is unreachable",
             "operation timed out",
-            "ssl",
+            "openssl",
+            "ssl_read",
+            "ssl certificate problem",
+            "ssl_connect",
+            "ssl_error",
+            "ssl routines",
+            "tls handshake",
+            "gnutls_handshake",
+            "schannel",
             "early eof",
             "the remote end hung up unexpectedly",
         ],
     ),
 ];
 
+const KNOWN_REMOTE_HOST_MESSAGES: [&str; 4] = [
+    "remote: repository not found",
+    "remote: invalid username or password",
+    "remote: http basic: access denied",
+    "remote: the project you were looking for could not be found",
+];
+
+fn classifiable(line: &str) -> bool {
+    if !line.starts_with("remote:") {
+        return true;
+    }
+    KNOWN_REMOTE_HOST_MESSAGES
+        .iter()
+        .any(|message| line.starts_with(message))
+}
+
 pub(crate) fn classify_failure<'a>(lines: impl Iterator<Item = &'a str> + Clone) -> CloneFailure {
     for (failure, needles) in CLASSIFICATION_TABLE {
         if lines
             .clone()
-            .any(|line| needles.iter().any(|needle| line.contains(needle)))
+            .any(|line| classifiable(line) && needles.iter().any(|needle| line.contains(needle)))
         {
             return failure;
         }

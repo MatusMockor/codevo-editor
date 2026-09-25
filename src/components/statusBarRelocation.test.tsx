@@ -68,19 +68,19 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
   {
     item: "git branch",
     source: "editor",
-    visibilityKeys: ["gitBranch"],
+    visibilityKeys: [],
     homes: ["editorMoreMenu", "composerBranch"],
   },
   {
     item: "active path",
     source: "editor",
-    visibilityKeys: ["activePath"],
+    visibilityKeys: [],
     homes: ["editorSubheader"],
   },
   {
     item: "workspace info",
     source: "editor",
-    visibilityKeys: ["workspaceInfo"],
+    visibilityKeys: [],
     homes: ["editorMoreMenu"],
   },
   {
@@ -93,14 +93,14 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
   {
     item: "trust",
     source: "editor",
-    visibilityKeys: ["workspaceTrust"],
+    visibilityKeys: [],
     homes: ["editorMoreMenu"],
   },
-  { item: "mode", source: "editor", visibilityKeys: ["mode"], homes: ["editorMoreMenu"] },
+  { item: "mode", source: "editor", visibilityKeys: [], homes: ["editorMoreMenu"] },
   {
     item: "large file",
     source: "editor",
-    visibilityKeys: ["largeFileMode"],
+    visibilityKeys: [],
     homes: ["editorMoreMenu"],
   },
   {
@@ -112,19 +112,19 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
   {
     item: "language",
     source: "editor",
-    visibilityKeys: ["language"],
+    visibilityKeys: [],
     homes: ["editorMoreMenu"],
   },
   {
     item: "unsaved",
     source: "editor",
-    visibilityKeys: ["dirtyCount"],
+    visibilityKeys: [],
     homes: ["editorMoreMenu"],
   },
   {
     item: "messages",
     source: "editor",
-    visibilityKeys: ["message"],
+    visibilityKeys: [],
     homes: ["editorToast"],
   },
   { item: "update notices", source: "agent", visibilityKeys: [], homes: ["toasts"] },

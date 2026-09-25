@@ -1,3 +1,11 @@
+#[path = "trust/clone_roots.rs"]
+mod clone_roots;
+#[path = "trust/revoked_roots.rs"]
+mod revoked_roots;
+
+pub(crate) use clone_roots::prune_missing_clone_roots;
+use clone_roots::{CloneRoots, CloneRootsPruneBatch};
+use revoked_roots::RevokedRoots;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -26,6 +34,13 @@ struct PersistedWorkspaceTrust {
     trusted_roots: Vec<String>,
     #[serde(default)]
     revoked_roots: Vec<String>,
+    #[serde(default)]
+    clone_roots: Vec<String>,
+}
+
+enum RevocationOrigin {
+    Manual,
+    Clone,
 }
 
 pub struct WorkspaceTrustService {
@@ -33,7 +48,8 @@ pub struct WorkspaceTrustService {
     root_generations: HashMap<String, u64>,
     storage_path: PathBuf,
     trusted_roots: HashSet<String>,
-    revoked_roots: HashSet<String>,
+    revoked_roots: RevokedRoots,
+    clone_roots: CloneRoots,
     launches: Arc<WorkspaceTrustLaunchRegistry>,
 }
 
@@ -70,7 +86,8 @@ impl WorkspaceTrustService {
                 root_generations: HashMap::new(),
                 storage_path,
                 trusted_roots: HashSet::new(),
-                revoked_roots: HashSet::new(),
+                revoked_roots: RevokedRoots::default(),
+                clone_roots: CloneRoots::default(),
                 launches: Arc::new(WorkspaceTrustLaunchRegistry::default()),
             });
         }
@@ -83,7 +100,8 @@ impl WorkspaceTrustService {
             root_generations: HashMap::new(),
             storage_path,
             trusted_roots: persisted.trusted_roots.into_iter().collect(),
-            revoked_roots: persisted.revoked_roots.into_iter().collect(),
+            revoked_roots: RevokedRoots::from_persisted(persisted.revoked_roots),
+            clone_roots: CloneRoots::from_persisted(persisted.clone_roots),
             launches: Arc::new(WorkspaceTrustLaunchRegistry::default()),
         })
     }
@@ -150,33 +168,53 @@ impl WorkspaceTrustService {
         normalized_path: String,
         trusted: bool,
     ) -> io::Result<WorkspaceTrustState> {
-        let next_generation = self.generation.checked_add(1).ok_or_else(|| {
-            io::Error::other("workspace trust generation capacity has been exhausted")
-        })?;
-
         if trusted {
-            let inserted = self.trusted_roots.insert(normalized_path.clone());
-            let was_revoked = self.revoked_roots.remove(&normalized_path);
-
-            if let Err(error) = self.save() {
-                if inserted {
-                    self.trusted_roots.remove(&normalized_path);
-                }
-                if was_revoked {
-                    self.revoked_roots.insert(normalized_path.clone());
-                }
-                return Err(error);
-            }
-            self.generation = next_generation;
-            self.root_generations
-                .insert(normalized_path.clone(), next_generation);
-
-            return Ok(WorkspaceTrustState {
-                root_path: normalized_path,
-                trusted: true,
-            });
+            return self.grant_canonical(normalized_path);
         }
+        self.revoke_canonical(normalized_path, RevocationOrigin::Manual)
+    }
 
+    fn next_generation(&self) -> io::Result<u64> {
+        self.generation.checked_add(1).ok_or_else(|| {
+            io::Error::other("workspace trust generation capacity has been exhausted")
+        })
+    }
+
+    fn grant_canonical(&mut self, normalized_path: String) -> io::Result<WorkspaceTrustState> {
+        let next_generation = self.next_generation()?;
+        let inserted = self.trusted_roots.insert(normalized_path.clone());
+        let was_revoked = self.revoked_roots.remove(&normalized_path);
+        let was_clone = self.clone_roots.unmark(&normalized_path);
+
+        if let Err(error) = self.save() {
+            if inserted {
+                self.trusted_roots.remove(&normalized_path);
+            }
+            if let Some(position) = was_revoked {
+                self.revoked_roots
+                    .restore(normalized_path.clone(), position);
+            }
+            if was_clone {
+                self.clone_roots.restore(vec![normalized_path]);
+            }
+            return Err(error);
+        }
+        self.generation = next_generation;
+        self.root_generations
+            .insert(normalized_path.clone(), next_generation);
+
+        Ok(WorkspaceTrustState {
+            root_path: normalized_path,
+            trusted: true,
+        })
+    }
+
+    fn revoke_canonical(
+        &mut self,
+        normalized_path: String,
+        origin: RevocationOrigin,
+    ) -> io::Result<WorkspaceTrustState> {
+        let next_generation = self.next_generation()?;
         if self.launches.has_active(&normalized_path)? {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
@@ -185,14 +223,19 @@ impl WorkspaceTrustService {
         }
 
         let removed = self.trusted_roots.remove(&normalized_path);
-        let newly_revoked = self.revoked_roots.insert(normalized_path.clone());
+        let insertion = self.revoked_roots.insert(normalized_path.clone());
+        let newly_marked = match origin {
+            RevocationOrigin::Clone => self.clone_roots.mark(normalized_path.clone()),
+            RevocationOrigin::Manual => false,
+        };
 
         if let Err(error) = self.save() {
             if removed {
                 self.trusted_roots.insert(normalized_path.clone());
             }
-            if newly_revoked {
-                self.revoked_roots.remove(&normalized_path);
+            self.revoked_roots.undo_insert(&normalized_path, insertion);
+            if newly_marked {
+                self.clone_roots.unmark(&normalized_path);
             }
             return Err(error);
         }
@@ -206,6 +249,34 @@ impl WorkspaceTrustService {
         })
     }
 
+    pub(crate) fn revoke_clone_canonical_root(
+        &mut self,
+        root: &str,
+    ) -> io::Result<WorkspaceTrustState> {
+        self.revoke_canonical(root.to_owned(), RevocationOrigin::Clone)
+    }
+
+    pub(crate) fn clone_roots_prune_batch(&self) -> CloneRootsPruneBatch {
+        self.clone_roots.prune_batch()
+    }
+
+    pub(crate) fn forget_clone_roots(
+        &mut self,
+        batch: &CloneRootsPruneBatch,
+        missing: Vec<String>,
+    ) -> io::Result<usize> {
+        let forgotten = self.clone_roots.forget(batch, missing);
+        if forgotten.is_empty() {
+            return Ok(0);
+        }
+        if let Err(error) = self.save() {
+            self.clone_roots.restore(forgotten);
+            return Err(error);
+        }
+        Ok(forgotten.len())
+    }
+
+    #[cfg(test)]
     pub(crate) fn revoke_canonical_root(&mut self, root: &str) -> io::Result<WorkspaceTrustState> {
         self.set_canonical(root.to_owned(), false)
     }
@@ -214,7 +285,7 @@ impl WorkspaceTrustService {
         &mut self,
         root: &str,
     ) -> io::Result<WorkspaceTrustState> {
-        if self.revoked_roots.contains(root) {
+        if self.revoked_roots.contains(root) || self.clone_roots.contains(root) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 WORKSPACE_TRUST_REVOKED_REFUSAL,
@@ -285,11 +356,10 @@ impl WorkspaceTrustService {
         let mut trusted_roots = self.trusted_roots.iter().cloned().collect::<Vec<_>>();
         trusted_roots.sort();
 
-        let mut revoked_roots = self.revoked_roots.iter().cloned().collect::<Vec<_>>();
-        revoked_roots.sort();
         let content = serde_json::to_string_pretty(&PersistedWorkspaceTrust {
             trusted_roots,
-            revoked_roots,
+            revoked_roots: self.revoked_roots.persisted(),
+            clone_roots: self.clone_roots.persisted(),
         })
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         fs::write(&self.storage_path, content)
@@ -388,7 +458,12 @@ fn normalize_path_string(path: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "trust/clone_roots_tests.rs"]
+mod clone_roots_tests;
+
+#[cfg(test)]
 mod tests {
+    use super::revoked_roots::MAX_REVOKED_ROOTS;
     use super::{WorkspaceTrustService, WORKSPACE_TRUST_REVOKED_REFUSAL};
     use std::{
         fs,
@@ -643,6 +718,144 @@ mod tests {
         assert!(!storage.exists());
         assert!(!service.get("/fixture/a").trusted);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn revoked_roots_keep_only_the_newest_entries_in_insertion_order() {
+        let root = create_temp_dir("trust-revoked-cap");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage.clone()).unwrap();
+        for index in 0..(MAX_REVOKED_ROOTS + 3) {
+            service
+                .revoke_canonical_root(&format!("/revoked/{index:04}"))
+                .unwrap();
+        }
+        drop(service);
+
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage).unwrap()).unwrap();
+        let revoked = persisted["revokedRoots"].as_array().unwrap();
+        assert_eq!(revoked.len(), MAX_REVOKED_ROOTS);
+        assert_eq!(revoked[0], "/revoked/0003");
+        assert_eq!(
+            revoked[MAX_REVOKED_ROOTS - 1],
+            format!("/revoked/{:04}", MAX_REVOKED_ROOTS + 2)
+        );
+
+        let mut reloaded = WorkspaceTrustService::load(storage).unwrap();
+        assert!(
+            reloaded
+                .grant_opened_canonical_root("/revoked/0000")
+                .unwrap()
+                .trusted
+        );
+        let refusal = reloaded
+            .grant_opened_canonical_root("/revoked/0003")
+            .unwrap_err();
+        assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_restores_the_evicted_revoked_root() {
+        let root = create_temp_dir("trust-revoked-rollback");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage.clone()).unwrap();
+        for index in 0..MAX_REVOKED_ROOTS {
+            service
+                .revoke_canonical_root(&format!("/revoked/{index:04}"))
+                .unwrap();
+        }
+        fs::remove_file(&storage).unwrap();
+        fs::create_dir(&storage).unwrap();
+
+        assert!(service.revoke_canonical_root("/revoked/new").is_err());
+        let still_revoked = service
+            .grant_opened_canonical_root("/revoked/0000")
+            .unwrap_err();
+        assert_eq!(still_revoked.kind(), std::io::ErrorKind::PermissionDenied);
+        let not_revoked = service
+            .grant_opened_canonical_root("/revoked/new")
+            .unwrap_err();
+        assert_ne!(not_revoked.kind(), std::io::ErrorKind::PermissionDenied);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_trust_save_restores_the_revoked_root_at_its_position() {
+        let root = create_temp_dir("trust-revoked-position");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage.clone()).unwrap();
+        for name in ["c", "a", "b"] {
+            service
+                .revoke_canonical_root(&format!("/revoked/{name}"))
+                .unwrap();
+        }
+        let blocker = root.join("blocked-parent");
+        fs::write(&blocker, "not a directory").unwrap();
+        service.storage_path = blocker.join("trust.json");
+        assert!(service.set("/revoked/a", true).is_err());
+        assert!(!service.get("/revoked/a").trusted);
+
+        service.storage_path = storage.clone();
+        service.revoke_canonical_root("/revoked/d").unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage).unwrap()).unwrap();
+        assert_eq!(
+            persisted["revokedRoots"],
+            serde_json::json!(["/revoked/c", "/revoked/a", "/revoked/b", "/revoked/d"])
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn re_revoking_a_root_moves_it_to_the_newest_position() {
+        let root = create_temp_dir("trust-revoked-move");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage.clone()).unwrap();
+        for name in ["a", "b", "c", "a"] {
+            service
+                .revoke_canonical_root(&format!("/revoked/{name}"))
+                .unwrap();
+        }
+        let blocker = root.join("blocked-parent");
+        fs::write(&blocker, "not a directory").unwrap();
+        service.storage_path = blocker.join("trust.json");
+        assert!(service.revoke_canonical_root("/revoked/b").is_err());
+
+        service.storage_path = storage.clone();
+        service.revoke_canonical_root("/revoked/d").unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage).unwrap()).unwrap();
+        assert_eq!(
+            persisted["revokedRoots"],
+            serde_json::json!(["/revoked/b", "/revoked/c", "/revoked/a", "/revoked/d"])
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_oversized_persisted_list_loads_its_newest_entries() {
+        let root = create_temp_dir("trust-revoked-load");
+        let storage = root.join("trust.json");
+        let revoked: Vec<String> = (0..(MAX_REVOKED_ROOTS + 10))
+            .map(|index| format!("/old/{index:04}"))
+            .collect();
+        fs::write(
+            &storage,
+            serde_json::json!({ "trustedRoots": [], "revokedRoots": revoked }).to_string(),
+        )
+        .unwrap();
+
+        let mut service = WorkspaceTrustService::load(storage).unwrap();
+        assert!(
+            service
+                .grant_opened_canonical_root("/old/0009")
+                .unwrap()
+                .trusted
+        );
+        assert!(service.grant_opened_canonical_root("/old/0010").is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn create_temp_dir(prefix: &str) -> std::path::PathBuf {

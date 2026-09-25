@@ -1,4 +1,6 @@
-use crate::terminal::{TerminalEventSink, TerminalOutputEvent, TerminalRuntimeStatus};
+use crate::incremental_utf8::IncrementalUtf8Decoder;
+use crate::terminal::{TerminalEventSink, TerminalRuntimeStatus};
+use crate::terminal_line_endings::emit_terminal_text;
 use std::{
     io::Read,
     sync::{
@@ -57,17 +59,21 @@ pub(crate) fn spawn_terminal_reader(
                 return;
             }
             let mut buffer = [0_u8; 8192];
+            let mut decoder = IncrementalUtf8Decoder::default();
             loop {
                 if stop_requested.load(Ordering::SeqCst) {
                     return;
                 }
                 match reader.read(&mut buffer) {
-                    Ok(0) => return,
-                    Ok(count) => sink.emit_output(TerminalOutputEvent {
-                        data: String::from_utf8_lossy(&buffer[..count]).to_string(),
-                        session_id,
-                    }),
+                    Ok(0) => {
+                        emit_terminal_text(&*sink, decoder.finish(), session_id);
+                        return;
+                    }
+                    Ok(count) => {
+                        emit_terminal_text(&*sink, decoder.push(&buffer[..count]), session_id);
+                    }
                     Err(error) => {
+                        emit_terminal_text(&*sink, decoder.finish(), session_id);
                         if !stop_requested.load(Ordering::SeqCst) {
                             sink.emit_status(TerminalRuntimeStatus::Crashed {
                                 message: format!("Terminal output stream failed: {error}"),
@@ -80,4 +86,76 @@ pub(crate) fn spawn_terminal_reader(
             }
         })
         .map_err(|error| format!("Failed to start terminal reader: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::TerminalOutputEvent;
+    use std::{collections::VecDeque, io};
+
+    struct ChunkedReader(VecDeque<Vec<u8>>);
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let Some(chunk) = self.0.pop_front() else {
+                return Ok(0);
+            };
+            buffer[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<String>>);
+
+    impl TerminalEventSink for RecordingSink {
+        fn emit_output(&self, event: TerminalOutputEvent) {
+            self.0.lock().unwrap().push(event.data);
+        }
+
+        fn emit_status(&self, _status: TerminalRuntimeStatus) {}
+    }
+
+    fn read_all(chunks: VecDeque<Vec<u8>>) -> Vec<String> {
+        let sink = Arc::new(RecordingSink::default());
+        let gate = Arc::new(TerminalStartGate::new());
+        gate.release();
+        let handle = spawn_terminal_reader(
+            Box::new(ChunkedReader(chunks)),
+            Arc::clone(&sink) as Arc<dyn TerminalEventSink>,
+            gate,
+            Arc::new(AtomicBool::new(false)),
+            7,
+        )
+        .unwrap();
+        handle.join().unwrap();
+        let events = sink.0.lock().unwrap().clone();
+        events
+    }
+
+    #[test]
+    fn multibyte_text_split_at_every_boundary_is_emitted_losslessly() {
+        let text = "ASCII žltý kôň 🦀 koniec";
+        for split in 0..=text.len() {
+            let bytes = text.as_bytes();
+            let chunks = [bytes[..split].to_vec(), bytes[split..].to_vec()]
+                .into_iter()
+                .filter(|chunk| !chunk.is_empty())
+                .collect::<VecDeque<_>>();
+            let events = read_all(chunks);
+
+            assert_eq!(events.concat(), text, "split at byte {split}");
+            assert!(
+                events.iter().all(|event| !event.is_empty()),
+                "split at byte {split}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_and_truncated_bytes_are_replaced_instead_of_buffered() {
+        let events = read_all(VecDeque::from([b"a\xffb".to_vec(), b"\xf0\x9f".to_vec()]));
+        assert_eq!(events.concat(), "a\u{fffd}b\u{fffd}");
+    }
 }

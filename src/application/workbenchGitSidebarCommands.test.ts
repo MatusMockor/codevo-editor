@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  initialAgentWorkbenchLayout,
+  type AgentWorkbenchLayoutAction,
+} from "../domain/agentWorkbenchLayout";
 import type { CommandContext } from "./commandRegistry";
+import type { AgentWorkbenchLayoutCommandPort } from "./workbenchAgentCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 
 const disabledContext: CommandContext = {
@@ -17,7 +22,7 @@ const enabledContext: CommandContext = {
 describe("workbenchGitSidebarCommands", () => {
   it("returns git sidebar commands in registry order with metadata", () => {
     const commands = workbenchGitSidebarCommands({
-      showGitSidebar: vi.fn(),
+      agentLayout: recordingLayout(),
       refreshGitStatus: vi.fn(),
     });
 
@@ -46,32 +51,27 @@ describe("workbenchGitSidebarCommands", () => {
 
   it("disables commands without a workspace", () => {
     const commands = workbenchGitSidebarCommands({
-      showGitSidebar: vi.fn(),
+      agentLayout: recordingLayout(),
       refreshGitStatus: vi.fn(),
     });
 
-    expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
-      [false, false],
-    );
+    expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual([false, false]);
   });
 
   it("enables commands with a workspace", () => {
     const commands = workbenchGitSidebarCommands({
-      showGitSidebar: vi.fn(),
+      agentLayout: recordingLayout(),
       refreshGitStatus: vi.fn(),
     });
 
-    expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
-      true,
-      true,
-    ]);
+    expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([true, true]);
   });
 
   it("invokes the injected callbacks", async () => {
-    const showGitSidebar = vi.fn();
+    const agentLayout = recordingLayout();
     const refreshGitStatus = vi.fn();
     const commands = workbenchGitSidebarCommands({
-      showGitSidebar,
+      agentLayout,
       refreshGitStatus,
     });
 
@@ -79,7 +79,31 @@ describe("workbenchGitSidebarCommands", () => {
       await command.run();
     }
 
-    expect(showGitSidebar).toHaveBeenCalledTimes(1);
+    expect(agentLayout.actions).toHaveLength(1);
     expect(refreshGitStatus).toHaveBeenCalledTimes(1);
   });
+
+  it("opens the Git surface in the right panel", () => {
+    const agentLayout = recordingLayout();
+    const show = workbenchGitSidebarCommands({ agentLayout, refreshGitStatus: vi.fn() }).find(
+      (command) => command.id === "git.show",
+    );
+
+    show?.run(enabledContext);
+
+    expect(agentLayout.actions).toEqual([{ kind: "openSurface", surface: "git" }]);
+  });
 });
+
+function recordingLayout(): AgentWorkbenchLayoutCommandPort & {
+  readonly actions: AgentWorkbenchLayoutAction[];
+} {
+  const actions: AgentWorkbenchLayoutAction[] = [];
+  return {
+    actions,
+    layout: initialAgentWorkbenchLayout,
+    dispatch: (action) => {
+      actions.push(action);
+    },
+  };
+}

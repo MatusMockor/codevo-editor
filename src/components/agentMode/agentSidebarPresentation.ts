@@ -45,8 +45,6 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 export const MAX_AGENT_THREAD_JUMP_SLOTS = 9;
 export const NO_PROJECT_SCOPE_LABEL = "No project";
 
-export type AgentRowVariant = "card" | "slim";
-
 export interface AgentRailScope {
   readonly memberProjectRootKeys?: ReadonlyArray<string>;
   readonly projectRootKey: string;
@@ -121,10 +119,6 @@ export function agentRowRecedes(view: AgentThreadView, on: boolean): boolean {
   if (on) return false;
   if (view.unread) return false;
   return true;
-}
-
-export function agentRowVariant(view: AgentThreadView): AgentRowVariant {
-  return view.thread.archived ? "slim" : "card";
 }
 
 export function agentRailSections(
@@ -406,7 +400,6 @@ export interface AgentThreadRowModel {
   readonly filesLabel: string | null;
   readonly provider: AgentCliKind;
   readonly status: AgentRowStatus;
-  readonly variant: AgentRowVariant;
   readonly recede: boolean;
 }
 
@@ -427,7 +420,6 @@ export function agentThreadRowModel(
     filesLabel: agentRowFilesLabel(view),
     provider: thread.provider.kind,
     status,
-    variant: agentRowVariant(view),
     recede: agentRowRecedes(view, on),
   };
 }
@@ -451,7 +443,6 @@ function agentRowFilesLabel(view: AgentThreadView): string | null {
 }
 
 export interface AgentRowClassNameModel {
-  readonly variant: AgentRowVariant;
   readonly on: boolean;
   readonly marked: boolean;
   readonly recede: boolean;
@@ -460,23 +451,12 @@ export interface AgentRowClassNameModel {
 }
 
 export function agentRowClassName(model: AgentRowClassNameModel): string {
-  if (model.variant === "slim") return slimRowClassName(model);
   const classes = ["cv-card-row"];
   if (model.on) classes.push("is-current");
   if (model.marked) classes.push("is-marked");
   if (model.recede) classes.push("is-recede");
   if (agentRowIsLive(model.status)) classes.push("is-live");
   if (model.unread) classes.push("is-unread");
-  return classes.join(" ");
-}
-
-function slimRowClassName(model: AgentRowClassNameModel): string {
-  const classes = ["agent-row", "agent-row--slim"];
-  if (model.on) classes.push("agent-row--on");
-  if (model.marked) classes.push("agent-row--marked");
-  if (model.recede) classes.push("agent-row--recede");
-  if (agentRowIsLive(model.status)) classes.push("agent-row--inflight");
-  if (model.unread) classes.push("agent-row--unread");
   return classes.join(" ");
 }
 

@@ -121,8 +121,6 @@ export function useAgentThreadMenuCommands({
       switch (action) {
         case "archive":
           return settleAgentThreadMutation(agents.archive(threadId));
-        case "unarchive":
-          return settleAgentThreadMutation(agents.unarchive?.(threadId));
         case "delete":
           return remove(threadId);
         default:
@@ -351,8 +349,6 @@ function bulkPastTense(action: AgentThreadBulkAction): string {
   switch (action) {
     case "archive":
       return "archived";
-    case "unarchive":
-      return "unarchived";
     case "delete":
       return "deleted";
     default:

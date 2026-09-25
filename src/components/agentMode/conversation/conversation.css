@@ -53,7 +53,7 @@
   border-radius: var(--cv-r-bubble);
   background: var(--cv-tint-2);
   color: var(--cv-fg-strong);
-  font-size: calc(var(--cv-t-sm) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
   line-height: var(--cv-lh-prose);
 }
 
@@ -91,7 +91,7 @@
   max-width: 100%;
   height: 20px;
   color: var(--cv-fg-subtle);
-  font-size: calc(var(--cv-t-xs) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-xs) * var(--cv-type-scale));
   font-variant-numeric: tabular-nums;
   opacity: 0;
   transition: opacity var(--cv-motion-slow) var(--cv-ease);
@@ -201,7 +201,7 @@
   border-radius: var(--cv-r-control);
   background: var(--cv-tint-1);
   color: var(--cv-fg);
-  font-size: calc(var(--cv-t-xs) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-xs) * var(--cv-type-scale));
 }
 
 .agent-attachments__chip[data-agent-attachment="unavailable"] {
@@ -227,7 +227,7 @@
   align-items: center;
   gap: var(--cv-space-2) var(--cv-space-4);
   color: var(--cv-fg-subtle);
-  font-size: calc(var(--cv-t-xs) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-xs) * var(--cv-type-scale));
 }
 
 .agent-prompt__queue-status,
@@ -335,7 +335,7 @@
   border: 0;
   background: none;
   color: var(--cv-fg-subtle);
-  font-size: calc(var(--cv-t-xs) * var(--codevo-fs-scale, 1));
+  font-size: calc(var(--cv-t-xs) * var(--cv-type-scale));
   cursor: pointer;
   transition: color var(--cv-motion-fast) var(--cv-ease);
 }

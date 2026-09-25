@@ -48,9 +48,9 @@ const styles: Record<string, CSSProperties> = {
     zIndex: 1000,
   },
   dialog: {
-    background: "var(--panel-background)",
-    border: "1px solid var(--border-subtle)",
-    color: "var(--text-primary)",
+    background: "var(--cv-side)",
+    border: "1px solid var(--cv-hair)",
+    color: "var(--cv-fg)",
     display: "grid",
     gap: 12,
     maxHeight: "85vh",
@@ -63,7 +63,7 @@ const styles: Record<string, CSSProperties> = {
   form: { display: "grid", gap: 10 },
   grid: { display: "grid", gap: 16, gridTemplateColumns: "220px minmax(0, 1fr)" },
   header: { alignItems: "center", display: "flex", justifyContent: "space-between" },
-  message: { color: "var(--text-muted)" },
+  message: { color: "var(--cv-fg-muted)" },
   toolbar: { display: "flex", gap: 6 },
 };
 

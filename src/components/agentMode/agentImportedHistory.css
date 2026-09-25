@@ -14,26 +14,26 @@
 .agent-imported-history__retry {
   display: inline-flex;
   align-items: center;
-  height: calc(28px * var(--codevo-fs-scale));
+  height: calc(28px * var(--cv-type-scale));
   border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-raised);
-  box-shadow: var(--codevo-shadow-card);
-  color: var(--codevo-fg);
+  border-radius: var(--cv-r-control);
+  background: var(--cv-raised);
+  box-shadow: var(--cv-shadow-card);
+  color: var(--cv-fg);
   cursor: pointer;
   font: inherit;
-  font-size: var(--codevo-fs-meta);
+  font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
   font-weight: 500;
   padding: 0 10px;
 }
 
 .agent-imported-history__retry:hover,
 .agent-imported-history__retry:focus-visible {
-  background: var(--codevo-hover);
-  color: var(--codevo-fg-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .agent-imported-history__retry:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
+  box-shadow: var(--cv-ring-focus);
   outline: none;
 }

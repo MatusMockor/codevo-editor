@@ -2,10 +2,10 @@ export const AGENT_THREAD_BULK_LIMIT = 200;
 export const AGENT_THREAD_BULK_CONFIRM_DELAY_MS = 350;
 export const AGENT_THREAD_BULK_CONCURRENCY = 2;
 
-export type AgentThreadBulkAction = "archive" | "unarchive" | "delete";
+export type AgentThreadBulkAction = "archive" | "delete";
 
 export type AgentThreadBulkSkipReason =
-  "missing" | "foreignOwner" | "running" | "alreadyArchived" | "notArchived" | "overLimit";
+  "missing" | "foreignOwner" | "running" | "alreadyArchived" | "overLimit";
 
 export interface AgentThreadBulkCandidate {
   readonly threadId: string;
@@ -48,10 +48,9 @@ export function agentThreadBulkOwnerKey(owner: AgentThreadBulkOwner): string {
 const SKIP_REASON_RANK: Readonly<Record<AgentThreadBulkSkipReason, number>> = {
   running: 0,
   alreadyArchived: 1,
-  notArchived: 2,
-  missing: 3,
-  foreignOwner: 4,
-  overLimit: 5,
+  missing: 2,
+  foreignOwner: 3,
+  overLimit: 4,
 };
 
 const SKIP_REASON_LABEL: Readonly<Record<AgentThreadBulkSkipReason, string>> = {
@@ -59,7 +58,6 @@ const SKIP_REASON_LABEL: Readonly<Record<AgentThreadBulkSkipReason, string>> = {
   foreignOwner: "owned by another project",
   running: "still running",
   alreadyArchived: "already archived",
-  notArchived: "not archived",
   overLimit: "beyond the batch limit",
 };
 
@@ -140,7 +138,6 @@ export function threadCountLabel(count: number): string {
 
 function appliedVerb(action: AgentThreadBulkAction): string {
   if (action === "archive") return "Archived";
-  if (action === "unarchive") return "Unarchived";
   if (action === "delete") return "Deleted";
   return unsupportedAgentThreadBulkAction(action);
 }
@@ -153,10 +150,6 @@ function blockedReason(
   if (action === "delete") return null;
   if (action === "archive") {
     if (candidate.archived) return "alreadyArchived";
-    return null;
-  }
-  if (action === "unarchive") {
-    if (!candidate.archived) return "notArchived";
     return null;
   }
   return unsupportedAgentThreadBulkAction(action);

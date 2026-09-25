@@ -79,14 +79,11 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-find__input:focus-visible", "box-shadow")).toBe("none");
     expect(winningDeclaration(".agent-find__input", "outline")).toBe("none");
     expect(winningDeclaration(".agent-find__input", "background")).toBe("transparent");
-    expect(winningDeclaration(".agent-find__input", "caret-color")).toBe("var(--agent-accent)");
-    expect(winningDeclaration(".agent-find", "box-shadow")).toBe("var(--codevo-shadow-float)");
-    expect(winningDeclaration(".agent-find:focus-within", "box-shadow")).toBe(
-      "var(--codevo-shadow-window)",
-    );
-    expect(winningDeclaration(".agent-find:focus-within .agent-find__glyph", "color")).toBe(
-      "var(--agent-accent)",
-    );
+    expect(winningDeclaration(".agent-find__input", "caret-color")).toBe("var(--cv-accent)");
+    expect(winningDeclaration(".agent-find", "box-shadow")).toBe("var(--cv-shadow-pop)");
+    expect(winningDeclaration(".agent-find:focus-within", "box-shadow")).toBeNull();
+    expect(winningDeclaration(".agent-find:focus-within .agent-find__glyph", "color")).toBeNull();
+    expect(winningDeclaration(".agent-find__glyph", "color")).toBe("var(--cv-fg-subtle)");
   });
 
   it("keeps the shell-wide focus ring off the autofocused find input", () => {
@@ -101,7 +98,7 @@ describe("agent thread Airy style contract", () => {
           .map((entry) => entry.value),
       );
 
-    expect(shellRing).toEqual(["var(--focus-ring)"]);
+    expect(shellRing).toEqual(["var(--cv-ring-focus)"]);
     expect(winningDeclaration(".agent-find__input:focus-visible", "box-shadow")).toBe("none");
     expect(winningDeclaration(".agent-find__input", "outline")).toBe("none");
   });
@@ -123,21 +120,21 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-find", "position")).toBe("absolute");
     expect(winningDeclaration(".agent-find", "top")).toBe("var(--agent-find-pill-top)");
     expect(winningDeclaration(".agent-find", "right")).toBe(
-      "max(var(--agent-session-gutter), calc((100% - var(--agent-thread-column)) / 2))",
+      "max(var(--agent-session-gutter), calc((100% - var(--cv-column)) / 2))",
     );
     expect(winningDeclaration(".agent-find", "height")).toBe("var(--agent-find-pill-height)");
-    expect(winningDeclaration(".agent-find", "border-radius")).toBe("var(--agent-radius-lg)");
-    expect(winningDeclaration(".agent-find", "background")).toBe("var(--agent-raised)");
-    expect(winningDeclaration(".agent-find", "box-shadow")).toBe("var(--codevo-shadow-float)");
+    expect(winningDeclaration(".agent-find", "border-radius")).toBe("var(--cv-r-group)");
+    expect(winningDeclaration(".agent-find", "background")).toBe("var(--cv-raised)");
+    expect(winningDeclaration(".agent-find", "box-shadow")).toBe("var(--cv-shadow-pop)");
   });
 
   it("wears the cap as a readable note with a warm mark, never as an error", () => {
-    expect(winningDeclaration(".agent-find__note", "color")).toBe("var(--agent-text-muted)");
-    expect(winningDeclaration(".agent-find__plus", "color")).toBe("var(--agent-attention)");
-    expect(winningDeclaration(".agent-find__count--empty", "color")).toBe(
-      "var(--agent-text-subtle)",
+    expect(winningDeclaration(".agent-find__note", "color")).toBe("var(--cv-fg-muted)");
+    expect(winningDeclaration(".agent-find__plus", "color")).toBe("var(--cv-warn)");
+    expect(winningDeclaration(".agent-find__count--empty", "color")).toBe("var(--cv-fg-subtle)");
+    expect(winningDeclaration(".agent-find__note", "font-size")).toBe(
+      "calc(var(--cv-t-xs) * var(--cv-type-scale))",
     );
-    expect(winningDeclaration(".agent-find__note", "font-size")).toBe("var(--agent-fs-2xs)");
   });
 
   it("steps the minimap dash width down to a floor of 8px and accents only the current one", () => {
@@ -180,68 +177,72 @@ describe("agent thread Airy style contract", () => {
     expect(
       RULES.filter((entry) => entry.selectors.includes(".agent-session__reveal-slack")),
     ).toEqual([]);
-    expect(css).not.toContain("--agent-band-reveal-inset");
+    expect(css).not.toContain("agent-band-reveal-inset");
     expect(css).not.toContain("reveal-slack");
   });
 
   it("puts the changes summary on a raised card", () => {
-    for (const selector of [".agent-diff__text"]) {
-      expect(winningDeclaration(selector, "border-radius"), selector).toBe(
-        "var(--agent-radius-md)",
-      );
-      expect(declarations(selector, "box-shadow"), selector).toEqual([]);
-    }
-    expect(winningDeclaration(".agent-diff__text", "background")).toBe("var(--agent-well)");
-    expect(winningDeclaration(".agent-changes", "background")).toBe("var(--agent-raised)");
-    expect(winningDeclaration(".agent-changes", "box-shadow")).toBe("var(--agent-shadow-raised)");
-    expect(winningDeclaration(".agent-changes", "border-radius")).toBe("var(--agent-radius-md)");
+    expect(winningDeclaration(".agent-changes", "background")).toBe("var(--cv-raised)");
+    expect(winningDeclaration(".agent-changes", "box-shadow")).toBe("var(--cv-shadow-card)");
+    expect(winningDeclaration(".agent-changes", "border-radius")).toBe("var(--cv-r-card)");
     expect(declarations(".agent-changes", "border-top")).toEqual([]);
     expect(declarations(".agent-files__row + .agent-files__row", "border-top")).toEqual([]);
   });
 
-  it("declares every thread-body selector once, in the thread stylesheet", () => {
-    for (const selector of [".agent-reasoning", ".agent-subagents"]) {
-      expect(RULES.filter((entry) => entry.selectors.includes(selector))).toHaveLength(1);
-    }
-  });
-
   it("raises the header split controls with a tone divider instead of a border", () => {
-    expect(winningDeclaration(".agent-split", "height")).toBe(
-      "calc(28px * var(--codevo-fs-scale))",
-    );
-    expect(winningDeclaration(".agent-split", "background")).toBe("var(--agent-outline-button-bg)");
-    expect(winningDeclaration(".agent-split", "border-radius")).toBe("var(--agent-radius-sm)");
-    expect(winningDeclaration(".agent-split", "box-shadow")).toBe("var(--agent-shadow-raised)");
+    expect(winningDeclaration(".agent-split", "height")).toBe("calc(28px * var(--cv-type-scale))");
+    expect(winningDeclaration(".agent-split", "background")).toBe("var(--cv-raised)");
+    expect(winningDeclaration(".agent-split", "border-radius")).toBe("var(--cv-r-control)");
+    expect(winningDeclaration(".agent-split", "box-shadow")).toBe("var(--cv-shadow-card)");
     expect(declarations(".agent-split", "border")).toEqual([]);
     expect(declarations(".agent-split__chevron", "border-left")).toEqual([]);
     expect(winningDeclaration(".agent-split__chevron::before", "width")).toBe("1px");
     expect(winningDeclaration(".agent-split__chevron::before", "background")).toBe(
-      "var(--agent-hover)",
+      "var(--cv-tint-2)",
     );
-    expect(winningDeclaration(".agent-split--open", "background")).toBe("var(--agent-fill)");
+    expect(winningDeclaration(".agent-split--open", "background")).toBe("var(--cv-s3)");
     expect(declarations(".agent-split--open", "border-color")).toEqual([]);
     expect(winningDeclaration(".agent-split__main:hover:not(:disabled)", "background")).toBe(
-      "var(--agent-outline-button-hover)",
+      "var(--cv-tint-2)",
     );
   });
 
   it("floats menus and popovers on the float shadow without a hairline ring", () => {
-    expect(winningDeclaration(".agent-menu", "box-shadow")).toBe("var(--codevo-shadow-float)");
-    expect(winningDeclaration(".agent-menu", "border-radius")).toBe("var(--agent-radius-lg)");
+    expect(winningDeclaration(".agent-menu", "box-shadow")).toBe("var(--cv-shadow-pop)");
+    expect(winningDeclaration(".agent-menu", "border-radius")).toBe("var(--cv-r-group)");
     expect(winningDeclaration(".agent-menu__item", "min-height")).toBe(
-      "calc(30px * var(--codevo-fs-scale))",
+      "calc(30px * var(--cv-type-scale))",
     );
     expect(winningDeclaration(".agent-menu__item", "border-radius")).toBe("7px");
     expect(winningDeclaration(".agent-menu__item:hover:not(:disabled)", "background")).toBe(
-      "var(--codevo-active)",
+      "var(--cv-s3)",
     );
     expect(winningDeclaration(".agent-menu__item:focus-visible", "box-shadow")).toBe(
-      "var(--agent-focus-ring)",
+      "var(--cv-ring-focus)",
     );
-    expect(winningDeclaration(".agent-menu__item--armed", "background")).toBe(
-      "var(--agent-glow-danger)",
+    expect(winningDeclaration(".agent-menu__separator", "background")).toBe("var(--cv-tint-2)");
+  });
+});
+
+describe("inline find bar stays calm", () => {
+  const rules = parseAllStyleSheets().rules.filter(
+    (rule) => rule.sheet === "components/agentMode/agentMode.css",
+  );
+
+  it("does not lift with a heavier shadow or recolour its glyph on focus", () => {
+    const focusRules = rules.filter((rule) =>
+      selectorParts(rule.selector).some((part) => part.startsWith(".agent-find:focus-within")),
     );
-    expect(declarations(".agent-menu__item--armed", "box-shadow")).toEqual([]);
-    expect(winningDeclaration(".agent-menu__separator", "background")).toBe("var(--agent-hover)");
+
+    expect(focusRules.map((rule) => rule.selector)).toEqual([]);
+  });
+
+  it("keeps rail light-scheme overrides keyed on the palette scheme", () => {
+    const classic = parseAllStyleSheets()
+      .rules.filter((rule) => rule.sheet.startsWith("components/agentMode/"))
+      .filter((rule) => rule.selector.includes("data-theme"))
+      .map((rule) => `${rule.sheet} ${rule.selector}`);
+
+    expect(classic).toEqual([]);
   });
 });

@@ -39,7 +39,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 4,
   },
   message: { padding: "4px 8px" },
-  summary: { color: "var(--text-muted)", whiteSpace: "nowrap" },
+  summary: { color: "var(--cv-fg-muted)", whiteSpace: "nowrap" },
 };
 
 export function PhpTestResultsPanel({

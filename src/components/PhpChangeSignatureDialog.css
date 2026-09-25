@@ -3,11 +3,11 @@
   max-height: calc(100vh - 64px);
   padding: 0;
   overflow: hidden;
-  color: var(--text-primary);
-  background: var(--surface-raised);
+  color: var(--cv-fg);
+  background: var(--cv-popover);
   border: 0;
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--cv-r-group);
+  box-shadow: var(--cv-shadow-pop);
 }
 .php-change-signature-dialog::backdrop {
   background: rgb(0 0 0 / 48%);
@@ -18,11 +18,11 @@
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  border-color: var(--border-subtle);
+  border-color: var(--cv-hair);
 }
 .php-change-signature-dialog > header {
   justify-content: space-between;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--cv-hair);
 }
 .php-change-signature-dialog > header h2 {
   margin: 0;
@@ -30,7 +30,7 @@
 }
 .php-change-signature-dialog > header p {
   margin: 4px 0 0;
-  color: var(--text-secondary);
+  color: var(--cv-fg-muted);
   font-size: 12px;
 }
 .php-change-signature-dialog button {
@@ -40,8 +40,8 @@
   gap: 6px;
   min-height: 28px;
   color: inherit;
-  background: var(--surface-control);
-  border: 1px solid var(--border-subtle);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-hair);
   border-radius: 5px;
 }
 .php-change-signature-dialog button:disabled {
@@ -58,7 +58,7 @@
 }
 .php-change-signature-table-wrap th {
   padding: 0 6px 6px;
-  color: var(--text-secondary);
+  color: var(--cv-fg-muted);
   font-size: 11px;
   text-align: left;
   font-weight: 600;
@@ -68,7 +68,7 @@
 }
 .php-change-signature-table-wrap td {
   padding: 4px 6px;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--cv-hair);
 }
 .php-change-signature-table-wrap input {
   box-sizing: border-box;
@@ -77,8 +77,8 @@
   height: 30px;
   padding: 0 8px;
   color: inherit;
-  background: var(--surface-input);
-  border: 1px solid var(--border-subtle);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-hair);
   border-radius: 4px;
   font: inherit;
 }
@@ -107,19 +107,19 @@
   border-radius: 5px;
 }
 .php-change-signature-error {
-  color: var(--danger-text);
-  background: var(--danger-surface);
-  border: 1px solid var(--danger-border);
+  color: var(--cv-danger);
+  background: var(--cv-del-bg);
+  border: 1px solid var(--cv-danger);
 }
 .php-change-signature-loading {
-  color: var(--text-secondary);
-  background: var(--surface-control);
+  color: var(--cv-fg-muted);
+  background: var(--cv-raised);
 }
 .php-change-signature-preview {
   margin: 0 16px 14px;
   padding: 11px 12px;
-  background: var(--surface-control);
-  border: 1px solid var(--border-subtle);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-hair);
   border-radius: 5px;
 }
 .php-change-signature-preview strong,
@@ -128,7 +128,7 @@
 }
 .php-change-signature-preview span {
   margin-top: 4px;
-  color: var(--text-secondary);
+  color: var(--cv-fg-muted);
   font-size: 12px;
 }
 .php-change-signature-preview ul {
@@ -136,23 +136,23 @@
   margin: 8px 0 0;
   padding-left: 18px;
   overflow: auto;
-  color: var(--text-secondary);
+  color: var(--cv-fg-muted);
   font-size: 11px;
 }
 .php-change-signature-dialog > footer {
   justify-content: flex-end;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--cv-hair);
 }
 .php-change-signature-dialog > footer span {
   margin-right: auto;
-  color: var(--text-secondary);
+  color: var(--cv-fg-muted);
   font-size: 11px;
 }
 .php-change-signature-dialog > footer button {
   padding: 0 12px;
 }
 .php-change-signature-dialog > footer .php-change-signature-apply {
-  color: var(--button-primary-text);
-  background: var(--button-primary-bg);
-  border-color: var(--button-primary-bg);
+  color: var(--cv-on-accent);
+  background: var(--cv-accent-fill);
+  border-color: var(--cv-accent-fill);
 }

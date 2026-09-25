@@ -369,17 +369,20 @@ describe("startup skeleton", () => {
       appCss.filter((rule) => rule.context.length === 0 && rule.selector === ":root"),
       "",
     );
-    expect(startupDeclaration(":root", "--startup-font")).toBe(lastOf(appRoot.get("font-family")));
+    expect(lastOf(appRoot.get("font-family"))).toBe("var(--cv-font-ui)");
 
-    const codevo = buildTokenTable(
+    const palette = buildTokenTable(
       parseAllStyleSheets().rules.filter(
         (rule) =>
-          rule.sheet === "components/agentMode/agentModeTokens.css" &&
+          rule.sheet === "ui/tokens/semantic.css" &&
           rule.context.length === 0 &&
-          rule.selector === ".app-shell",
+          rule.selector === ":root",
       ),
     );
-    expect(startupDeclaration(":root", "--startup-mono")).toBe(lastOf(codevo.get("--codevo-mono")));
+    expect(startupDeclaration(":root", "--startup-font")).toBe(lastOf(palette.get("--cv-font-ui")));
+    expect(startupDeclaration(":root", "--startup-mono")).toBe(
+      lastOf(palette.get("--cv-font-mono")),
+    );
   });
 
   it("stops the hairline animation under reduced motion", () => {

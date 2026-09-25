@@ -162,7 +162,6 @@ export function AgentSurfacePanel({
       className="agent-surface"
       data-editor-slot={editorSlot}
       data-surface={activeSurface ?? "empty"}
-      data-tree={treeShown ? "visible" : "hidden"}
       ref={panelRef}
     >
       <div

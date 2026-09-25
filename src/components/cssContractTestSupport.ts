@@ -28,17 +28,11 @@ export type TokenTable = ReadonlyMap<string, readonly string[]>;
 
 export const SRC_ROOT = resolve(import.meta.dirname, "..");
 export const TOKEN_SHEETS = [
-  "components/agentMode/agentModeTokens.css",
+  "ui/tokens/semantic.css",
+  "ui/tokens/palettes.css",
   "components/settings/settings.css",
   "components/toastNotification.css",
 ] as const;
-export const LIGHT_THEME_SELECTORS = [
-  '.app-shell[data-theme="light"]',
-  '.app-shell[data-theme="catppuccinLatte"]',
-  '.app-shell[data-theme="oneLight"]',
-] as const;
-export const SYSTEM_LIGHT_CONTEXT = "@media (prefers-color-scheme: light)";
-export const SYSTEM_THEME_SELECTOR = '.app-shell[data-theme="system"]';
 
 const MAX_SHEETS = 500;
 const MAX_WALK_DEPTH = 8;
@@ -183,11 +177,6 @@ export type BorderViolation = {
 };
 
 export const SHADOW_TOKEN_ROOTS = [
-  "--codevo-shadow-card",
-  "--codevo-shadow-float",
-  "--codevo-shadow-window",
-  "--codevo-focus-ring",
-  "--codevo-separator-inset",
   "--cv-ring-hair",
   "--cv-ring-hair-strong",
   "--cv-ring-focus",
@@ -208,6 +197,7 @@ export const SHADOW_TOKEN_ROOTS = [
   "--cv-fill-edge",
   "--cv-switch-edge",
   "--cv-shadow-knob",
+  "--cv-shadow-card",
   "--cv-shadow-pop",
   "--cv-shadow-dialog",
   "--cv-shadow-toast",
@@ -217,7 +207,7 @@ const BORDER_PROPERTY =
   /^border(-(top|right|bottom|left|inline|block)(-(start|end))?)?(-(color|width|style))?$/;
 const OUTLINE_PROPERTY = /^outline(-(color|width|style))?$/;
 const ZERO_BORDER = /^(0|none|0 none|none 0)$/;
-const REMAP_PREFIXES = ["--agent-", "--settings-", "--toast-", "--shadow-", "--focus-"] as const;
+const REMAP_PREFIXES = ["--settings-", "--toast-"] as const;
 
 export function collectBorderViolations(
   rules: readonly CssRule[],
