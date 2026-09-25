@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { KeyMod } from "monaco-editor/esm/vs/editor/common/services/editorBaseApi.js";
+import { KeyCode } from "monaco-editor/esm/vs/editor/common/standalone/standaloneEnums.js";
 import { DEFAULT_APPEARANCE } from "./domain/appearance";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,13 +37,23 @@ vi.mock("@monaco-editor/react", async () => {
       appGitDiffClickMocks.diffEditorProps.push(props);
 
       React.useEffect(() => {
-        const onMount = props.onMount as ((editor: Record<string, unknown>) => void) | undefined;
-        onMount?.({
-          getLineChanges: () => [],
-          getModel: () => null,
-          onDidUpdateDiff: () => ({ dispose: vi.fn() }),
-          setModel: vi.fn(),
-        });
+        const onMount = props.onMount as
+          ((editor: Record<string, unknown>, monaco: Record<string, unknown>) => void) | undefined;
+        const innerEditor = {
+          addAction: () => ({ dispose: vi.fn() }),
+          onDidDispose: () => ({ dispose: vi.fn() }),
+        };
+        onMount?.(
+          {
+            getLineChanges: () => [],
+            getModel: () => null,
+            getModifiedEditor: () => innerEditor,
+            getOriginalEditor: () => innerEditor,
+            onDidUpdateDiff: () => ({ dispose: vi.fn() }),
+            setModel: vi.fn(),
+          },
+          { KeyCode, KeyMod },
+        );
       }, [props.onMount]);
 
       return (

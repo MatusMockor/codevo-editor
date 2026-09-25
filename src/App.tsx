@@ -27,8 +27,7 @@ import { WorkbenchEditorSlot } from "./components/editorPanel/WorkbenchEditorSlo
 import { workbenchPanelPlacement } from "./domain/editorDrawer";
 import { WorkbenchOverlayDialogsHost } from "./components/WorkbenchOverlayDialogsHost";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
-import { appShellClassName } from "./components/appShellClassName";
-import { appShellTypeScaleStyle } from "./components/appShellTypeScale";
+import { AppShellRoot } from "./components/AppShellRoot";
 import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
 import { useAgentPanelResizeCommit } from "./application/useAgentPanelResizeCommit";
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
@@ -872,17 +871,8 @@ function App() {
     workbench,
     workspaceTrusted,
   };
-  const appShellStyle = useMemo(
-    () => appShellTypeScaleStyle(workbench.appSettings.agentThreadFontSize, shellStyle),
-    [shellStyle, workbench.appSettings.agentThreadFontSize],
-  );
-
   return (
-    <main
-      className={appShellClassName(workbench.agentModeActive, workbench.settingsOpen)}
-      data-theme={colorScheme}
-      style={appShellStyle}
-    >
+    <AppShellRoot colorScheme={colorScheme} shellStyle={shellStyle} workbench={workbench}>
       <WindowChrome
         appTitle={windowTitle}
         commandContext={editorMenuCommandContext}
@@ -1196,7 +1186,7 @@ function App() {
         workspaceFiles={workspaceGateways.files}
         workspaceTrusted={workspaceTrusted}
       />
-    </main>
+    </AppShellRoot>
   );
 }
 

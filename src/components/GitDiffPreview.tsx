@@ -26,6 +26,7 @@ import {
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
 import { initializeMonacoRuntime } from "./monacoRuntimeLoader";
+import { useDiffEditorKeymapBridge } from "./secondaryEditorKeymap/useDiffEditorKeymapBridge";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -248,20 +249,6 @@ export function GitDiffPreview({
     }
   }, []);
 
-  const onDiffEditorMount = useCallback(
-    (editor: Monaco.editor.IStandaloneDiffEditor) => {
-      diffListenerRef.current?.dispose();
-      disposeHunkWidgets();
-      diffEditorRef.current = editor;
-      setEditorEpoch((current) => current + 1);
-      refreshLineChanges(editor);
-      diffListenerRef.current = editor.onDidUpdateDiff(() => {
-        refreshLineChanges(editor);
-      });
-    },
-    [disposeHunkWidgets, refreshLineChanges],
-  );
-
   const onDiffEditorRelease = useCallback(
     (editor: Monaco.editor.IStandaloneDiffEditor) => {
       if (diffEditorRef.current !== editor) {
@@ -295,6 +282,26 @@ export function GitDiffPreview({
       revealLogicalChange(editor, lineChange);
     },
     [activeChangeIndex, lineChanges],
+  );
+
+  const attachKeymapBridge = useDiffEditorKeymapBridge({
+    closeSurface: onClose,
+    navigateChange: goToChange,
+  });
+
+  const onDiffEditorMount = useCallback(
+    (editor: Monaco.editor.IStandaloneDiffEditor, monaco: typeof Monaco) => {
+      diffListenerRef.current?.dispose();
+      disposeHunkWidgets();
+      diffEditorRef.current = editor;
+      setEditorEpoch((current) => current + 1);
+      refreshLineChanges(editor);
+      diffListenerRef.current = editor.onDidUpdateDiff(() => {
+        refreshLineChanges(editor);
+      });
+      attachKeymapBridge(editor, monaco);
+    },
+    [attachKeymapBridge, disposeHunkWidgets, refreshLineChanges],
   );
 
   const onToggleHunk = useCallback(

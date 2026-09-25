@@ -28,6 +28,7 @@ import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
+import { useDiffEditorKeymapBridge } from "./secondaryEditorKeymap/useDiffEditorKeymapBridge";
 import "./ExternalFileConflict.css";
 
 interface ExternalFileCompareDialogProps {
@@ -70,6 +71,7 @@ export function ExternalFileCompareDialog({
     null,
   );
   const editorDisposeListenerRef = useRef<Monaco.IDisposable | null>(null);
+  const attachKeymapBridge = useDiffEditorKeymapBridge();
   const invokingElementRef = useRef<HTMLElement | null>(null);
   const monacoRef = useRef<Parameters<typeof setupShikiTokenization>[0] | null>(
     null,
@@ -281,9 +283,10 @@ export function ExternalFileCompareDialog({
             height="100%"
             language={language}
             modified={conflict.disk?.content ?? ""}
-            onMount={(editor) => {
+            onMount={(editor, monaco) => {
               editorDisposeListenerRef.current?.dispose();
               diffEditorRef.current = editor;
+              attachKeymapBridge(editor, monaco);
               editor.updateOptions({
                 fontFamily: editorFontFamily,
                 fontLigatures,

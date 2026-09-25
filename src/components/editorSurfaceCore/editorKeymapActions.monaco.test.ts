@@ -20,6 +20,10 @@ vi.mock("@monaco-editor/react", () => ({ loader: { config: () => undefined } }))
 type MonacoApi = typeof Monaco;
 type RegisterEditorKeymapActions =
   typeof import("./editorKeymapActions").registerEditorKeymapActions;
+type InstallDiffEditorKeymapBridge =
+  typeof import("../secondaryEditorKeymap/installCodevoEditorKeymapBridge").installDiffEditorKeymapBridge;
+type OnDiffEditorDisposed =
+  typeof import("../secondaryEditorKeymap/installCodevoEditorKeymapBridge").onDiffEditorDisposed;
 type DefaultCommandsForKeybinding =
   typeof import("../../infrastructure/monacoWorkbenchPolicy").monacoDefaultEditorCommandsForKeybinding;
 
@@ -54,6 +58,8 @@ const KEY_CODES: Readonly<Record<string, number>> = {
 
 let monaco: MonacoApi;
 let registerEditorKeymapActions: RegisterEditorKeymapActions;
+let installDiffEditorKeymapBridge: InstallDiffEditorKeymapBridge;
+let onDiffEditorDisposed: OnDiffEditorDisposed;
 let defaultEditorCommandsForKeybinding: DefaultCommandsForKeybinding;
 let menuItems: () => ReadonlyArray<{ command?: { id: string }; when?: unknown }>;
 let editor: Monaco.editor.IStandaloneCodeEditor;
@@ -102,6 +108,14 @@ function installBrowserShims(): void {
   Object.defineProperty(globalThis, "CSS", {
     configurable: true,
     value: { escape: (value: string) => value, supports: () => false },
+  });
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: class {
+      disconnect(): void {}
+      observe(): void {}
+      unobserve(): void {}
+    },
   });
   HTMLCanvasElement.prototype.getContext = (() =>
     new Proxy(
@@ -196,6 +210,18 @@ function registerActions(keymap: KeymapSettings): void {
   disposables = [...registerEditorKeymapActions(options)];
 }
 
+function recordActionRuns(target: Monaco.editor.IStandaloneCodeEditor): void {
+  const addAction = target.addAction.bind(target);
+  target.addAction = (descriptor) =>
+    addAction({
+      ...descriptor,
+      run: (...args) => {
+        ranEditorActions.push(descriptor.id);
+        return descriptor.run(...args);
+      },
+    });
+}
+
 function editorReachableShortcuts(keymap: KeymapSettings) {
   return keymapCommands
     .map((command) => command.id)
@@ -227,6 +253,8 @@ describe("editor keymap actions on a real Monaco editor", () => {
     environment.configureMonacoEnvironment({});
     monaco = await import("monaco-editor/esm/vs/editor/editor.api.js");
     ({ registerEditorKeymapActions } = await import("./editorKeymapActions"));
+    ({ installDiffEditorKeymapBridge, onDiffEditorDisposed } =
+      await import("../secondaryEditorKeymap/installCodevoEditorKeymapBridge"));
     ({ monacoDefaultEditorCommandsForKeybinding: defaultEditorCommandsForKeybinding } =
       await import("../../infrastructure/monacoWorkbenchPolicy"));
     const { MenuId, MenuRegistry } =
@@ -265,15 +293,7 @@ describe("editor keymap actions on a real Monaco editor", () => {
       minimap: { enabled: false },
       occurrencesHighlight: "off",
     });
-    const addAction = editor.addAction.bind(editor);
-    editor.addAction = (descriptor) =>
-      addAction({
-        ...descriptor,
-        run: (...args) => {
-          ranEditorActions.push(descriptor.id);
-          return descriptor.run(...args);
-        },
-      });
+    recordActionRuns(editor);
     windowKeys = [];
     window.addEventListener("keydown", recordWindowKey);
     commandOutcome = () => "executed";
@@ -624,5 +644,279 @@ describe("editor keymap actions on a real Monaco editor", () => {
     expect(visible).not.toContain("mockor.goToDefinition.contextMenu");
     expect(visible).not.toContain("mockor.rename.contextMenu");
     expect(visible).not.toContain("editor.action.revealDefinition");
+  });
+
+  describe("on a read-only diff editor", () => {
+    let diffHost: HTMLDivElement;
+    let diffEditor: Monaco.editor.IStandaloneDiffEditor;
+    let bridge: Monaco.IDisposable | null = null;
+    let navigatedChanges: string[] = [];
+    let closedSurfaces = 0;
+
+    const hostActions = {
+      closeSurface: () => {
+        closedSurfaces += 1;
+      },
+      navigateChange: (target: "next" | "previous") => {
+        navigatedChanges.push(target);
+      },
+    };
+
+    function textareaOf(inner: Monaco.editor.ICodeEditor): Element | null {
+      return inner.getDomNode()?.querySelector("textarea.inputarea") ?? null;
+    }
+
+    function modifiedTextarea(): Element | null {
+      return textareaOf(diffEditor.getModifiedEditor());
+    }
+
+    function pressInDiff(shortcut: string, target: Element | null = modifiedTextarea()) {
+      return press(shortcut, target);
+    }
+
+    function closeDiffQuickInput(): void {
+      diffHost
+        .querySelector(".quick-input-widget input")
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
+        );
+    }
+
+    function resetDiffChordState(target: Element | null = modifiedTextarea()): void {
+      closeDiffQuickInput();
+      const inner = [diffEditor.getOriginalEditor(), diffEditor.getModifiedEditor()].find(
+        (candidate) => textareaOf(candidate) === target,
+      );
+      inner?.focus();
+      press("Escape", target);
+      ranEditorActions = [];
+      ranCommands = [];
+    }
+
+    function installBridge(
+      keymap: KeymapSettings,
+      host: Partial<typeof hostActions> = hostActions,
+    ): void {
+      bridge?.dispose();
+      bridge = installDiffEditorKeymapBridge(diffEditor, {
+        commandRunnerRef: {
+          current: (commandId) => {
+            ranCommands.push(commandId);
+            return commandOutcome(commandId);
+          },
+        },
+        defaultEditorCommandsForKeybinding,
+        hostRef: { current: host },
+        keymap,
+        keymapPlatform: "mac",
+        monaco,
+      });
+    }
+
+    function visibleDiffQuickInputWidgets(): Element[] {
+      return [...diffHost.querySelectorAll<HTMLElement>(".quick-input-widget")].filter(
+        (widget) => widget.style.display !== "none",
+      );
+    }
+
+    beforeEach(() => {
+      diffHost = document.createElement("div");
+      document.body.append(diffHost);
+      diffEditor = monaco.editor.createDiffEditor(diffHost, {
+        minimap: { enabled: false },
+        occurrencesHighlight: "off",
+        originalEditable: false,
+        readOnly: true,
+        renderSideBySide: true,
+      });
+      diffEditor.setModel({
+        modified: monaco.editor.createModel("alpha\ngamma\nalpha\n", LANGUAGE_ID),
+        original: monaco.editor.createModel("alpha\nbeta\nalpha\n", LANGUAGE_ID),
+      });
+      recordActionRuns(diffEditor.getOriginalEditor());
+      recordActionRuns(diffEditor.getModifiedEditor());
+      navigatedChanges = [];
+      closedSurfaces = 0;
+      installBridge(defaultKeymapSettings("mac"));
+      diffEditor.getModifiedEditor().focus();
+      resetDiffChordState();
+    });
+
+    afterEach(async () => {
+      bridge?.dispose();
+      bridge = null;
+      closeDiffQuickInput();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const models = diffEditor.getModel();
+      diffEditor.dispose();
+      models?.original.dispose();
+      models?.modified.dispose();
+      diffHost.remove();
+    });
+
+    it.each(["modified", "original"] as const)(
+      "never lets a Monaco default shadow an app shortcut in the %s side",
+      (side) => {
+        const inner =
+          side === "modified" ? diffEditor.getModifiedEditor() : diffEditor.getOriginalEditor();
+        inner.focus();
+        const target = textareaOf(inner);
+        const shadowed: string[] = [];
+
+        for (const { commandId, shortcut } of editorReachableShortcuts(
+          defaultKeymapSettings("mac"),
+        )) {
+          resetDiffChordState(target);
+          const { reachedWindow } = press(shortcut, target);
+          const handledByCodevo = ranEditorActions.some((id) => id.startsWith("mockor."));
+          if (!reachedWindow && !handledByCodevo) shadowed.push(`${commandId} (${shortcut})`);
+        }
+
+        expect(shadowed).toEqual([]);
+      },
+    );
+
+    it.each([
+      ["Cmd+E", "editor.recentFiles"],
+      ["F8", "editor.nextProblem"],
+      ["Cmd+Enter", "git.commit"],
+      ["Cmd+K W", "editor.closeGroup"],
+      ["Cmd+K Cmd+\\", "editor.splitDown"],
+      ["Cmd+P", "file.quickOpen"],
+      ["Cmd+O", "class.quickOpen"],
+      ["Cmd+[", "navigation.back"],
+    ])("routes %s to %s through the command registry", (shortcut, commandId) => {
+      const { reachedWindow } = pressInDiff(shortcut);
+
+      expect(reachedWindow).toBe(false);
+      expect(ranCommands).toEqual([commandId]);
+    });
+
+    it.each(["F2", "Cmd+B", "F12", "Shift+F12", "Shift+Alt+F", "Alt+Enter", "Cmd+Alt+B", "Cmd+U"])(
+      "keeps the main-editor document command on %s unavailable instead of acting elsewhere",
+      (shortcut) => {
+        const before = diffEditor.getModifiedEditor().getValue();
+
+        const { reachedWindow } = pressInDiff(shortcut);
+
+        expect(reachedWindow).toBe(false);
+        expect(ranCommands).toEqual([]);
+        expect(ranEditorActions.every((id) => id.startsWith("mockor.secondary."))).toBe(true);
+        expect(ranEditorActions).not.toEqual([]);
+        expect(diffEditor.getModifiedEditor().getValue()).toBe(before);
+      },
+    );
+
+    it("routes Codevo's next and previous change shortcuts to the host diff navigation", () => {
+      pressInDiff("Alt+F5");
+      pressInDiff("Shift+Alt+F5");
+
+      expect(navigatedChanges).toEqual(["next", "previous"]);
+      expect(ranCommands).toEqual([]);
+    });
+
+    it("falls back to Monaco's own diff navigation when the host has none", () => {
+      installBridge(defaultKeymapSettings("mac"), {});
+      const goToDiff = vi.spyOn(diffEditor, "goToDiff");
+      resetDiffChordState();
+
+      pressInDiff("Alt+F5");
+      pressInDiff("Shift+Alt+F5");
+
+      expect(goToDiff.mock.calls).toEqual([["next"], ["previous"]]);
+    });
+
+    it("leaves Monaco's own diff viewer keys to the diff editor", () => {
+      pressInDiff("F7");
+
+      expect(ranEditorActions.filter((id) => id.startsWith("mockor."))).toEqual([]);
+      expect(ranCommands).toEqual([]);
+    });
+
+    it("closes the owning surface on Cmd+W instead of the main editor tab", () => {
+      pressInDiff("Cmd+W");
+
+      expect(closedSurfaces).toBe(1);
+      expect(ranCommands).toEqual([]);
+    });
+
+    it("swallows Cmd+W when the host has no surface to close", () => {
+      installBridge(defaultKeymapSettings("mac"), {});
+      resetDiffChordState();
+
+      const { reachedWindow } = pressInDiff("Cmd+W");
+
+      expect(reachedWindow).toBe(false);
+      expect(ranCommands).toEqual([]);
+    });
+
+    it("runs selection shortcuts against the diff editor's own model", () => {
+      const modified = diffEditor.getModifiedEditor();
+      modified.setSelection(new monaco.Selection(1, 1, 1, 6));
+
+      pressInDiff("Cmd+D");
+
+      expect(modified.getSelections()?.map((selection) => selection.startLineNumber)).toEqual([
+        1, 3,
+      ]);
+      expect(ranCommands).toEqual([]);
+    });
+
+    it("keeps Monaco's Go to Line picker for the diff editor", async () => {
+      pressInDiff("Cmd+L");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ranCommands).toEqual([]);
+      expect(visibleDiffQuickInputWidgets()).toHaveLength(1);
+    });
+
+    it("re-registers the diff bridge when a shortcut is rebound in settings", () => {
+      installBridge({ ...defaultKeymapSettings("mac"), "editor.splitDown": "Cmd+K Cmd+D" });
+      resetDiffChordState();
+
+      pressInDiff("Cmd+K Cmd+\\");
+      expect(ranCommands).toEqual([]);
+
+      resetDiffChordState();
+      pressInDiff("Cmd+K Cmd+D");
+      expect(ranCommands).toEqual(["editor.splitDown"]);
+    });
+
+    it("reports the diff editor's disposal so a stale bridge is released", async () => {
+      const disposedHost = document.createElement("div");
+      document.body.append(disposedHost);
+      const disposable = monaco.editor.createDiffEditor(disposedHost, {
+        minimap: { enabled: false },
+        readOnly: true,
+      });
+      const models = {
+        modified: monaco.editor.createModel("b\n", LANGUAGE_ID),
+        original: monaco.editor.createModel("a\n", LANGUAGE_ID),
+      };
+      disposable.setModel(models);
+      const released = vi.fn();
+      onDiffEditorDisposed(disposable, released);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      disposable.dispose();
+      models.original.dispose();
+      models.modified.dispose();
+      disposedHost.remove();
+
+      expect(released).toHaveBeenCalledTimes(1);
+    });
+
+    it("hands the keys back to Monaco once the bridge is disposed", () => {
+      bridge?.dispose();
+      bridge = null;
+      resetDiffChordState();
+
+      pressInDiff("Cmd+E");
+      pressInDiff("Alt+F5");
+
+      expect(ranCommands).toEqual([]);
+      expect(navigatedChanges).toEqual([]);
+      expect(ranEditorActions.filter((id) => id.startsWith("mockor."))).toEqual([]);
+    });
   });
 });

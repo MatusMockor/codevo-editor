@@ -3,10 +3,6 @@ import type * as Monaco from "monaco-editor";
 import { monacoDefaultEditorCommandsForKeybinding } from "../../infrastructure/monacoWorkbenchPolicy";
 import type { CommandExecutionRunner } from "../../application/commandRegistry";
 import { requestRegisteredCommand, runRegisteredCommand } from "../../application/commandChain";
-import {
-  planEditorKeymapCommandBindings,
-  type EditorKeymapCommandBinding,
-} from "../../application/editorKeymapCommandBindings";
 import type { HippieSession } from "../../domain/hippieCompletion";
 import {
   defaultShortcutForCommand,
@@ -31,6 +27,10 @@ import {
   type SurroundWithRequest,
 } from "./editorCommands";
 import { configuredF12NeedsNativeDefinition } from "./useEditorDefinitionNavigation";
+import {
+  registerKeymapCommandBridge,
+  type DefaultEditorCommandsForKeybinding,
+} from "./editorKeymapCommandBridge";
 
 export interface EditorActionCommandPort {
   closeActiveTab(): void;
@@ -50,10 +50,7 @@ export interface EditorKeymapActionOptions {
   readonly columnSelectionEnabledRef: MutableRefObject<boolean>;
   readonly commandExecutionRunnerRef: { readonly current: CommandExecutionRunner | undefined };
   readonly customDefinitionNavigationEnabled: boolean;
-  readonly defaultEditorCommandsForKeybinding: (
-    keybinding: number,
-    editor: Monaco.editor.IStandaloneCodeEditor,
-  ) => readonly string[];
+  readonly defaultEditorCommandsForKeybinding: DefaultEditorCommandsForKeybinding;
   readonly editor: Monaco.editor.IStandaloneCodeEditor;
   readonly editorActionCommandPortRef: { readonly current: EditorActionCommandPort };
   readonly hippieSessionRef: MutableRefObject<HippieSession | null>;
@@ -63,60 +60,6 @@ export interface EditorKeymapActionOptions {
   readonly monaco: typeof Monaco;
   readonly requestSurroundWith: (request: SurroundWithRequest) => void;
 }
-
-export const EDITOR_SURFACE_OWNED_KEYMAP_COMMAND_IDS: ReadonlySet<KeymapCommandId> = new Set([
-  "class.quickOpen",
-  "editor.action.refactor",
-  "editor.action.sourceAction",
-  "editor.addSelectionToNextMatch",
-  "editor.closeTab",
-  "editor.completeStatement",
-  "editor.cyclicExpandWord",
-  "editor.deleteLine",
-  "editor.duplicateLine",
-  "editor.extendSelection",
-  "editor.fileStructure",
-  "editor.findFileReferences",
-  "editor.findReferences",
-  "editor.foldAll",
-  "editor.foldRecursively",
-  "editor.formatDocument",
-  "editor.formatSelection",
-  "editor.goToDeclaration",
-  "editor.goToDefinition",
-  "editor.goToImplementation",
-  "editor.goToSourceDefinition",
-  "editor.goToSuperMethod",
-  "editor.goToTypeDefinition",
-  "editor.gotoLine",
-  "editor.insertCursorAbove",
-  "editor.insertCursorBelow",
-  "editor.joinLines",
-  "editor.moveLineDown",
-  "editor.moveLineUp",
-  "editor.moveStatementDown",
-  "editor.moveStatementUp",
-  "editor.nextChange",
-  "editor.previousChange",
-  "editor.quickDefinition",
-  "editor.quickFix",
-  "editor.rename",
-  "editor.selectAllOccurrences",
-  "editor.shrinkSelection",
-  "editor.sortLinesAscending",
-  "editor.sortLinesDescending",
-  "editor.surroundWith",
-  "editor.toggleCase",
-  "editor.toggleColumnSelection",
-  "editor.toggleGitBlame",
-  "editor.transformToLowercase",
-  "editor.unfoldAll",
-  "editor.unfoldRecursively",
-  "file.quickOpen",
-  "navigation.back",
-  "navigation.forward",
-  "npm.runSelectedScript",
-]);
 
 interface EditorContextMenuEntry {
   readonly actionId: string;
@@ -204,8 +147,7 @@ export const EDITOR_CONTEXT_MENU_ENTRIES: readonly EditorContextMenuEntry[] = [
   },
 ];
 
-const F12_DISPATCH_SHORTCUT = "F12";
-const EDITOR_TEXT_FOCUS = "editorTextFocus";
+const MAIN_EDITOR_RESERVED_SHORTCUTS: ReadonlySet<string> = new Set(["F12"]);
 
 type EditorKeymapActionHookOptions = Omit<
   EditorKeymapActionOptions,
@@ -273,7 +215,11 @@ export function registerEditorKeymapActions(
   return [
     ...registerExplicitEditorActions(options),
     ...registerEditorContextMenuEntries(options),
-    ...registerKeymapCommandBridge(options),
+    ...registerKeymapCommandBridge({
+      ...options,
+      commandRunnerRef: options.commandExecutionRunnerRef,
+      reservedShortcuts: MAIN_EDITOR_RESERVED_SHORTCUTS,
+    }),
   ];
 }
 
@@ -801,59 +747,4 @@ function registerEditorContextMenuEntries({
       run: () => editor.getAction(entry.actionId)?.run(),
     }),
   );
-}
-
-function registerKeymapCommandBridge({
-  commandExecutionRunnerRef,
-  defaultEditorCommandsForKeybinding,
-  editor,
-  keymap,
-  keymapPlatform,
-  monaco,
-}: EditorKeymapActionOptions): readonly Monaco.IDisposable[] {
-  const bindings = planEditorKeymapCommandBindings(
-    keymap,
-    keymapPlatform,
-    EDITOR_SURFACE_OWNED_KEYMAP_COMMAND_IDS,
-  );
-
-  return bindings.flatMap((binding, index) => {
-    if (binding.shortcut === F12_DISPATCH_SHORTCUT) return [];
-    const keybindings = monacoKeybindingsForShortcut(monaco, binding.shortcut, keymapPlatform);
-    const keybinding = keybindings[0];
-    if (keybinding === undefined) return [];
-
-    return [
-      editor.addAction({
-        id: `mockor.keymap.${index}`,
-        keybindingContext: EDITOR_TEXT_FOCUS,
-        keybindings,
-        label: binding.shortcut,
-        run: () => {
-          if (runKeymapBinding(commandExecutionRunnerRef.current, binding)) return;
-          runMonacoDefault(editor, defaultEditorCommandsForKeybinding(keybinding, editor));
-        },
-      }),
-    ];
-  });
-}
-
-function runKeymapBinding(
-  runCommand: CommandExecutionRunner | undefined,
-  binding: EditorKeymapCommandBinding,
-): boolean {
-  if (!runCommand) return false;
-  return binding.commandIds.some((commandId) => runCommand(commandId) === "executed");
-}
-
-function runMonacoDefault(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  commandIds: readonly string[],
-): void {
-  for (const commandId of commandIds) {
-    const action = editor.getAction(commandId);
-    if (!action?.isSupported()) continue;
-    void action.run();
-    return;
-  }
 }

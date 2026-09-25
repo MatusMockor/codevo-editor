@@ -19,6 +19,7 @@ import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
+import { useDiffEditorKeymapBridge } from "./secondaryEditorKeymap/useDiffEditorKeymapBridge";
 
 interface FileHistoryPanelProps {
   commits: GitFileHistoryEntry[];
@@ -209,6 +210,7 @@ function FileHistoryDiff({
   const [diffEditor, setDiffEditor] = useState<
     Monaco.editor.IStandaloneDiffEditor | null
   >(null);
+  const attachKeymapBridge = useDiffEditorKeymapBridge();
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
 
@@ -250,7 +252,10 @@ function FileHistoryDiff({
 
   return (
     <DiffEditor
-      onMount={(editor) => setDiffEditor(editor)}
+      onMount={(editor, monaco) => {
+        setDiffEditor(editor);
+        attachKeymapBridge(editor, monaco);
+      }}
       beforeMount={(monaco) => {
         applyImmediateFallbackTheme(monaco, monacoTheme);
         setupShikiTokenization(monaco, monacoTheme).catch((error) => {

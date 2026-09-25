@@ -1,9 +1,11 @@
 import { DiffEditor } from "@monaco-editor/react";
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import type { editor } from "monaco-editor";
+import { useDiffEditorKeymapBridge } from "../secondaryEditorKeymap/useDiffEditorKeymapBridge";
 
 export default function RemoteFileComparison(props: ComponentProps<typeof DiffEditor>) {
   const editorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+  const attachKeymapBridge = useDiffEditorKeymapBridge();
 
   useLayoutEffect(
     () => () => {
@@ -30,6 +32,7 @@ export default function RemoteFileComparison(props: ComponentProps<typeof DiffEd
       keepCurrentModifiedModel
       onMount={(instance, monaco) => {
         editorRef.current = instance;
+        attachKeymapBridge(instance, monaco);
         props.onMount?.(instance, monaco);
       }}
     />
