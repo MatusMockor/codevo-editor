@@ -1,4 +1,3 @@
-import { isAppUpdateChannel, type AppUpdateChannel } from "../domain/appUpdateChannel";
 import { parseAppUpdateNotesSpan, type AppUpdateNotesSpan } from "../domain/appUpdateNotes";
 import {
   MAX_APP_UPDATE_DATE_LENGTH,
@@ -23,13 +22,8 @@ export interface TauriUpdaterBridgeUpdate {
   close(): Promise<void>;
 }
 
-export interface TauriUpdaterBridgeNoRelease {
-  readonly kind: "noRelease";
-  readonly channel: AppUpdateChannel;
-}
-
 export interface TauriUpdaterBridge {
-  check(channel: AppUpdateChannel): Promise<unknown>;
+  check(): Promise<unknown>;
   getInstallMode?(): Promise<unknown>;
   relaunch(): Promise<void>;
 }
@@ -67,7 +61,7 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
     );
   }
 
-  async check(channel: AppUpdateChannel): Promise<AppUpdateCheckResult> {
+  async check(): Promise<AppUpdateCheckResult> {
     if (this.restarting) throw new Error("An application update operation is already active.");
     const requestRevision = this.nextRevision();
     if (this.installing) {
@@ -76,7 +70,7 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
     }
     const installed = this.installed;
     if (installed) {
-      const supersededBy = await this.probeSupersedingRelease(installed.snapshot.version, channel);
+      const supersededBy = await this.probeSupersedingRelease(installed.snapshot.version);
       this.requireCurrentRevision(requestRevision);
       if (this.restarting || this.installed !== installed) {
         throw new Error("The application update candidate is no longer current.");
@@ -101,17 +95,10 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
       }
       mode = rawMode;
     }
-    const rawUpdate = await this.bridge.check(channel);
+    const rawUpdate = await this.bridge.check();
     if (rawUpdate === null) {
       this.requireCurrentRevision(requestRevision);
       return { kind: "upToDate", currentVersion: this.currentVersion };
-    }
-    if (isTauriUpdaterBridgeNoRelease(rawUpdate)) {
-      this.requireCurrentRevision(requestRevision);
-      if (rawUpdate.channel !== channel) {
-        throw new Error("The updater reported a missing release for another channel.");
-      }
-      return { kind: "noRelease", currentVersion: this.currentVersion, channel };
     }
     const update = await this.parseOwnedUpdate(rawUpdate, requestRevision);
     this.requireCurrentRevision(requestRevision);
@@ -177,15 +164,13 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
 
   private async probeSupersedingRelease(
     installedVersion: string,
-    channel: AppUpdateChannel,
   ): Promise<AppUpdateSupersedingRelease | null> {
     const probe = await settleBoundedProbe(
-      () => this.bridge.check(channel),
+      () => this.bridge.check(),
       APP_UPDATE_SUPERSEDING_PROBE_TIMEOUT_MS,
     );
     if (probe.kind !== "succeeded") return null;
     if (probe.value === null) return null;
-    if (isTauriUpdaterBridgeNoRelease(probe.value)) return null;
     const parsed = tryParseTauriUpdaterBridgeUpdate(probe.value);
     await closeProbeResource(probe.value);
     if (parsed === null) return null;
@@ -338,15 +323,6 @@ export function parseTauriUpdaterBridgeUpdate(value: unknown): TauriUpdaterBridg
     install: value.install.bind(value) as () => Promise<void>,
     close: value.close.bind(value) as () => Promise<void>,
   };
-}
-
-export function isTauriUpdaterBridgeNoRelease(
-  value: unknown,
-): value is TauriUpdaterBridgeNoRelease {
-  if (!isRecord(value)) return false;
-  if (value.kind !== "noRelease") return false;
-  if (!isAppUpdateChannel(value.channel)) return false;
-  return Object.keys(value).length === 2;
 }
 
 function candidateFromUpdate(

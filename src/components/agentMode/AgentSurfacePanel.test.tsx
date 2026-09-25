@@ -96,9 +96,10 @@ describe("AgentSurfacePanel", () => {
       render({ layout, layoutControls: <button type="button">Toggle panel</button> });
       const header = host.querySelector("[data-agent-surface-head]");
       expect(header?.getAttribute("data-tauri-drag-region")).toBe("deep");
-      expect(
-        header?.querySelector(".agent-session__spacer")?.closest("[data-tauri-drag-region]"),
-      ).toBe(header);
+      expect(header?.querySelector(".cv-rp-strip")?.closest("[data-tauri-drag-region]")).toBe(
+        header,
+      );
+      expect(header?.querySelector(".agent-session__spacer")).toBeNull();
       for (const button of header?.querySelectorAll("button") ?? []) {
         expect(button.hasAttribute("data-tauri-drag-region")).toBe(false);
         expect(button.querySelector("[data-tauri-drag-region]")).toBeNull();

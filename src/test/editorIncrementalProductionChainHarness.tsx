@@ -1035,7 +1035,13 @@ function createProductionChainMonaco(currentModel: () => Monaco.editor.ITextMode
       F12: 69,
       UpArrow: 10,
     },
-    KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },
+    KeyMod: {
+      Alt: 512,
+      chord: (first: number, second: number) => (first | ((second & 0xffff) << 16)) >>> 0,
+      CtrlCmd: 2048,
+      Shift: 1024,
+      WinCtrl: 4096,
+    },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },

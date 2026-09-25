@@ -45,4 +45,13 @@ describe("right panel styles use shared tokens", () => {
       }
     }
   });
+
+  it("lets the tab list be the strip's only horizontal scroller", () => {
+    const wrapper = rules.filter((rule) => rule.selector === ".cv-rp-strip__tabs");
+    expect(wrapper.length).toBeGreaterThan(0);
+    for (const rule of wrapper) {
+      const overflow = rule.declarations.filter(({ property }) => property.startsWith("overflow"));
+      expect(overflow, rule.selector).toEqual([]);
+    }
+  });
 });

@@ -38,7 +38,7 @@ describe("settings registry", () => {
     expect(resolveSettingsRoute("archive")).toEqual({ section: "archive", row: null });
   });
 
-  it("files every appearance row and the new update channel row under General", () => {
+  it("files every appearance row and the single updates row under General", () => {
     const general = settingsRowsForSection("general").map((row) => row.id);
     expect(general).toEqual(
       expect.arrayContaining([
@@ -49,12 +49,11 @@ describe("settings registry", () => {
         "appearance.editorFontFamily",
         "appearance.editorFontSize",
         "general.appUpdates",
-        "general.updateChannel",
         "general.statusBar",
         "general.threadAttention",
       ]),
     );
-    expect(settingsRowDescriptor("general.updateChannel").title).toBe("Update track");
+    expect(general).not.toContain("general.updateChannel");
     expect(settingsRowDescriptor("general.statusBar").title).toBe("Editor header items");
     expect(settingsRowsForSection("usage").map((row) => row.id)).toEqual([
       "usage.limits",

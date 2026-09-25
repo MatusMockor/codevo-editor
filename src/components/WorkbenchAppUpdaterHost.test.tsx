@@ -7,7 +7,6 @@ import type {
   AgentProviderManagementSurface,
   AgentProviderManagementToast,
 } from "../application/useAgentProviderManagement";
-import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import type { WorkbenchAppUpdaterComposition } from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
 import {
   createWorkbenchNotice,
@@ -253,34 +252,6 @@ describe("WorkbenchAppUpdaterHost", () => {
     expect(last(mocks.settingsContainers)).toBe(container);
   });
 
-  it("holds the startup update check until app settings hydrate and then checks the stable channel", async () => {
-    const gateway = updaterGateway();
-    const props = hostProps({ gateway, appSettingsHydrated: false });
-    const stableSettings = { ...defaultAppSettings(), appUpdateChannel: "stable" as const };
-    await render(props);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(gateway.check).not.toHaveBeenCalled();
-    expect(host.querySelector(".toast-region")).toBeNull();
-
-    await render({
-      ...props,
-      workbench: {
-        ...props.workbench,
-        appSettings: stableSettings,
-        agents: agentsSurface(true),
-      },
-    });
-
-    await waitForReact(() => {
-      expect(host.textContent).toContain("Update Available: Codevo v0.2.0");
-    });
-    expect(gateway.check).toHaveBeenCalledOnce();
-    expect(gateway.check).toHaveBeenCalledWith("stable");
-  });
-
   async function render(props: WorkbenchAppUpdaterHostProps): Promise<void> {
     await act(async () => {
       root.render(<WorkbenchAppUpdaterHost {...props} />);
@@ -304,7 +275,6 @@ describe("WorkbenchAppUpdaterHost", () => {
 });
 
 function hostProps(overrides: {
-  readonly appSettingsHydrated?: boolean;
   readonly configureAgentCli?: () => void;
   readonly gateway?: AppUpdaterGateway;
   readonly notices?: WorkbenchNotice[];
@@ -326,7 +296,6 @@ function hostProps(overrides: {
     providerManagement: overrides.providerManagement ?? providerManagement(),
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
     workbench: {
-      agents: agentsSurface(overrides.appSettingsHydrated ?? true),
       appSettings: defaultAppSettings(),
       closeNodeLaunchConfigurations: vi.fn(),
       gitRepositoryMappings: [],
@@ -429,20 +398,6 @@ function providerManagement(
     saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: false }),
     update: vi.fn(async () => null),
   };
-}
-
-function agentsSurface(appSettingsHydrated: boolean) {
-  const providerSignIn: AgentProviderSignInSurface = {
-    states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
-    terminalIntents: { claudeCode: null, codex: null },
-    blockedReason: () => null,
-    isActive: () => false,
-    request: () => false,
-    cancelStart: vi.fn(),
-    start: async () => null,
-    settle: async () => undefined,
-  };
-  return { appSettingsHydrated, providerSignIn };
 }
 
 function last<T>(values: ReadonlyArray<T>): T | undefined {

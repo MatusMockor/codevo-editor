@@ -27,6 +27,22 @@ describe("BrowserSettingsGateway", () => {
     ).toBe("queue");
   });
 
+  it("ignores an update channel persisted by an earlier build and never writes it back", async () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "editor.settings.app",
+      JSON.stringify({ appUpdateChannel: "stable", appUpdaterSkippedVersion: "0.2.0" }),
+    );
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const loaded = await gateway.loadAppSettings();
+
+    expect(loaded).not.toHaveProperty("appUpdateChannel");
+    expect(loaded.appUpdaterSkippedVersion).toBe("0.2.0");
+    await gateway.saveAppSettings(loaded);
+    expect(storage.getItem("editor.settings.app")).not.toContain("appUpdateChannel");
+  });
+
   it("enables automatic CLI update checks for both providers on a fresh install", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
@@ -511,7 +527,6 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -619,7 +634,6 @@ describe("BrowserSettingsGateway", () => {
 
     await gateway.saveAppSettings({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
@@ -734,7 +748,6 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -899,7 +912,6 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,

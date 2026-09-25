@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { AppUpdateChannel } from "../domain/appUpdateChannel";
 import {
   isSkippedAppUpdateVersion,
   initialAppUpdaterState,
   reduceAppUpdaterState,
   type AppUpdateCandidate,
-  type AppUpdateCheckResult,
   type AppUpdaterAction,
   type AppUpdaterGateway,
   type AppUpdaterPreferencesGateway,
@@ -22,33 +20,28 @@ export interface AppUpdaterSurface {
 }
 
 export interface UseAppUpdaterOptions {
-  readonly channel: AppUpdateChannel;
   readonly currentVersion: string;
   readonly gateway: AppUpdaterGateway;
   readonly preferencesGateway: AppUpdaterPreferencesGateway;
   readonly scheduleAfterUiInteractive?: (task: () => void) => () => void;
   readonly logStartupFailure?: (message: string) => void;
   readonly persistSkippedVersion: (version: string) => Promise<void>;
-  readonly settingsHydrated: boolean;
 }
 
 export function useAppUpdater({
-  channel,
   currentVersion,
   gateway,
   preferencesGateway,
   scheduleAfterUiInteractive = defaultUiInteractiveScheduler,
   logStartupFailure = defaultStartupFailureLogger,
   persistSkippedVersion,
-  settingsHydrated,
 }: UseAppUpdaterOptions): AppUpdaterSurface {
   const [state, setState] = useState(() => initialAppUpdaterState(currentVersion));
   const stateRef = useRef(state);
   const candidateRef = useRef<AppUpdateCandidate | null>(null);
   const generationRef = useRef(0);
   const mountedRef = useRef(true);
-  const startupCheckStartedRef = useRef(false);
-  const authorityRef = useRef({ channel, currentVersion, gateway, preferencesGateway });
+  const authorityRef = useRef({ currentVersion, gateway, preferencesGateway });
 
   const publish = useCallback((action: AppUpdaterAction) => {
     const next = reduceAppUpdaterState(stateRef.current, action);
@@ -58,7 +51,6 @@ export function useAppUpdater({
 
   useLayoutEffect(() => {
     if (
-      authorityRef.current.channel === channel &&
       authorityRef.current.gateway === gateway &&
       authorityRef.current.preferencesGateway === preferencesGateway &&
       authorityRef.current.currentVersion === currentVersion
@@ -66,12 +58,12 @@ export function useAppUpdater({
       return;
     }
     const previousOwner = authorityRef.current;
-    authorityRef.current = { channel, currentVersion, gateway, preferencesGateway };
+    authorityRef.current = { currentVersion, gateway, preferencesGateway };
     generationRef.current += 1;
     candidateRef.current = null;
     publish({ kind: "reset", currentVersion });
     void disposeGateway(previousOwner.gateway);
-  }, [channel, currentVersion, gateway, preferencesGateway, publish]);
+  }, [currentVersion, gateway, preferencesGateway, publish]);
 
   const performCheck = useCallback(
     async (intent: "manual" | "startup") => {
@@ -89,7 +81,7 @@ export function useAppUpdater({
           }
         }
         if (!ownsRequest(owner, generation, authorityRef, generationRef, mountedRef)) return;
-        const result = await owner.gateway.check(owner.channel);
+        const result = await owner.gateway.check();
         if (!ownsRequest(owner, generation, authorityRef, generationRef, mountedRef)) return;
         if (
           result.kind === "available" &&
@@ -100,7 +92,7 @@ export function useAppUpdater({
           publish({ kind: "dismissed" });
           return;
         }
-        candidateRef.current = checkResultCandidate(result);
+        if (result.kind !== "upToDate") candidateRef.current = result.candidate;
         publish({ kind: "checkSettled", generation, result });
       } catch {
         if (!ownsRequest(owner, generation, authorityRef, generationRef, mountedRef)) return;
@@ -122,21 +114,17 @@ export function useAppUpdater({
 
   useEffect(() => {
     mountedRef.current = true;
+    const cancelStartupCheck = scheduleAfterUiInteractive(() => {
+      void performCheck("startup");
+    });
     return () => {
+      cancelStartupCheck();
       mountedRef.current = false;
       generationRef.current += 1;
       candidateRef.current = null;
       void disposeGateway(authorityRef.current.gateway);
     };
-  }, []);
-
-  useEffect(() => {
-    if (!settingsHydrated || startupCheckStartedRef.current) return;
-    return scheduleAfterUiInteractive(() => {
-      startupCheckStartedRef.current = true;
-      void performCheck("startup");
-    });
-  }, [performCheck, scheduleAfterUiInteractive, settingsHydrated]);
+  }, [performCheck, scheduleAfterUiInteractive]);
 
   const check = useCallback(async () => {
     await performCheck("manual");
@@ -282,23 +270,8 @@ export function useAppUpdater({
   return { state, check, dismiss, download, installAndRestart, skipVersion };
 }
 
-type Authority = Pick<
-  UseAppUpdaterOptions,
-  "channel" | "currentVersion" | "gateway" | "preferencesGateway"
->;
+type Authority = Pick<UseAppUpdaterOptions, "currentVersion" | "gateway" | "preferencesGateway">;
 type Ref<T> = { current: T };
-
-function checkResultCandidate(result: AppUpdateCheckResult): AppUpdateCandidate | null {
-  switch (result.kind) {
-    case "upToDate":
-    case "noRelease":
-      return null;
-    case "available":
-    case "readyToRestart":
-    case "readyToRestartOutdated":
-      return result.candidate;
-  }
-}
 
 function nextGeneration(generationRef: Ref<number>): number {
   generationRef.current += 1;

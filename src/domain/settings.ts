@@ -3,11 +3,6 @@ import {
   type AgentFollowUpBehavior,
 } from "./agentFollowUpBehavior";
 import type { IntelligenceMode } from "./workspace";
-import {
-  DEFAULT_APP_UPDATE_CHANNEL,
-  normalizeAppUpdateChannel,
-  type AppUpdateChannel,
-} from "./appUpdateChannel";
 import { defaultKeymapSettings, normalizeKeymapSettings, type KeymapSettings } from "./keymap";
 import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
@@ -134,7 +129,6 @@ const genericEditorFontFamilies = new Set([
 
 export interface AppSettings {
   appUpdaterSkippedVersion: string | null;
-  appUpdateChannel: AppUpdateChannel;
   agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
   agentFollowUpBehavior: AgentFollowUpBehavior;
@@ -301,7 +295,6 @@ export function defaultAppSettings(): AppSettings {
   return {
     ...defaultAgentAppSettings(),
     appUpdaterSkippedVersion: null,
-    appUpdateChannel: DEFAULT_APP_UPDATE_CHANNEL,
     editorFontFamily: defaultEditorFontFamily,
     editorFontLigatures: defaultEditorFontLigatures,
     editorFontSize: defaultEditorFontSize,
@@ -500,7 +493,6 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 
   return {
     appUpdaterSkippedVersion: normalizeAppUpdaterSkippedVersion(value.appUpdaterSkippedVersion),
-    appUpdateChannel: normalizeAppUpdateChannel(value.appUpdateChannel),
     agentCliPaths,
     agentCliKind,
     agentFollowUpBehavior: normalizeAgentFollowUpBehavior(value.agentFollowUpBehavior),

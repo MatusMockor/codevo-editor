@@ -58,10 +58,15 @@ export function AgentRightPanelTabStrip(props: AgentRightPanelTabStripProps) {
   }, [props.entries]);
   useEffect(() => {
     if (selectedId === null) return;
-    const tab = tabsRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    if (typeof tab?.scrollIntoView !== "function") return;
-    tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+    revealSelectedTab(tabsRef.current);
   }, [selectedId]);
+  useEffect(() => {
+    const strip = tabsRef.current;
+    if (strip === null || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() => revealSelectedTab(strip));
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, []);
   const pin = (id: string): void => {
     const entry = byId.get(id);
     if (entry === undefined || entry.kind !== "editorDocument") return;
@@ -134,6 +139,12 @@ export function AgentRightPanelTabStrip(props: AgentRightPanelTabStripProps) {
       </Menu>
     </div>
   );
+}
+
+function revealSelectedTab(strip: HTMLElement | null): void {
+  const tab = strip?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+  if (typeof tab?.scrollIntoView !== "function") return;
+  tab.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function pendingFocusAfterClose(

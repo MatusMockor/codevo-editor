@@ -30,7 +30,7 @@ interface DispatchResolvedWorkbenchShortcutCommandsOptions {
 }
 
 const KEYMAP_COMMAND_IDS = keymapCommands.map((command) => command.id);
-const FOCUS_SCOPED_COMMAND_IDS: ReadonlySet<KeymapCommandId> = new Set([
+export const FOCUS_SCOPED_COMMAND_IDS: ReadonlySet<KeymapCommandId> = new Set([
   "agent.findInThread",
   "agent.toggleSidebar",
   "debug.setVariable",

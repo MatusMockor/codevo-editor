@@ -11,7 +11,10 @@ import {
   type EditorChangeHunksBaseline,
   type EditorChangeHunksSnapshotPort,
 } from "./editorChangeHunksSnapshotPort";
-import type { LiveDocumentSnapshot } from "./liveDocumentSnapshotBroker";
+import type {
+  CaptureLiveDocumentSnapshotReceipt,
+  LiveDocumentSnapshot,
+} from "./liveDocumentSnapshotBroker";
 import type { LiveModelRevision, LiveModelSourceHandle } from "./liveModelIngressCoordinator";
 
 const EMPTY_HUNKS: readonly EditorChangeHunk[] = Object.freeze([]);
@@ -217,6 +220,61 @@ function useSnapshotOwnedEditorChangeHunksState({
     };
     const remainsCurrent = (generation: number) =>
       effectActive && generationRef.current === generation;
+    const delayMs = Math.max(0, coalesceMs ?? EDITOR_CHANGE_HUNKS_COALESCE_MS);
+    const startWork = (generation: number, attempt: CaptureAttempt) => {
+      const work: SnapshotWork = {
+        controller: new AbortController(),
+        snapshot: null,
+      };
+      activeWork = work;
+      timeout = window.setTimeout(() => {
+        timeout = null;
+        if (!remainsCurrent(generation) || activeWork !== work) return;
+        void runSnapshotComputation({
+          abortController: work.controller,
+          authorityToken,
+          baseline,
+          characterLimit,
+          gateway,
+          generation,
+          handle,
+          lineLimit,
+          clearRetainedSnapshot: (snapshot) => {
+            if (work.snapshot === snapshot) work.snapshot = null;
+          },
+          releaseRetainedSnapshot: () => {
+            releaseWorkSnapshot(work);
+            if (activeWork === work) activeWork = null;
+          },
+          remainsCurrent,
+          retainSnapshot: (snapshot) => {
+            if (
+              !effectActive ||
+              activeWork !== work ||
+              work.controller.signal.aborted ||
+              work.snapshot
+            ) {
+              try {
+                snapshots.release(handle, snapshot);
+              } catch {
+                // A stale capture is released best-effort and never admitted.
+              }
+              return false;
+            }
+            work.snapshot = snapshot;
+            return true;
+          },
+          retryCapture: () => {
+            if (!remainsCurrent(generation) || activeWork !== work) return "stale";
+            if (attempt === "retry") return "exhausted";
+            startWork(generation, "retry");
+            return "scheduled";
+          },
+          setPublication,
+          snapshots,
+        });
+      }, delayMs);
+    };
     const schedule = (revision: LiveModelRevision | null) => {
       if (!effectActive) return;
       cancelScheduledOrRunning();
@@ -230,56 +288,7 @@ function useSnapshotOwnedEditorChangeHunksState({
         return;
       }
       largeRevisionPublished = false;
-      const work: SnapshotWork = {
-        controller: new AbortController(),
-        snapshot: null,
-      };
-      activeWork = work;
-      timeout = window.setTimeout(
-        () => {
-          timeout = null;
-          if (!remainsCurrent(generation)) return;
-          setPublication({ authorityToken, state: PENDING_STATE });
-          void runSnapshotComputation({
-            abortController: work.controller,
-            authorityToken,
-            baseline,
-            characterLimit,
-            gateway,
-            generation,
-            handle,
-            lineLimit,
-            clearRetainedSnapshot: (snapshot) => {
-              if (work.snapshot === snapshot) work.snapshot = null;
-            },
-            releaseRetainedSnapshot: () => {
-              releaseWorkSnapshot(work);
-              if (activeWork === work) activeWork = null;
-            },
-            remainsCurrent,
-            retainSnapshot: (snapshot) => {
-              if (
-                !effectActive ||
-                activeWork !== work ||
-                work.controller.signal.aborted ||
-                work.snapshot
-              ) {
-                try {
-                  snapshots.release(handle, snapshot);
-                } catch {
-                  // A stale capture is released best-effort and never admitted.
-                }
-                return false;
-              }
-              work.snapshot = snapshot;
-              return true;
-            },
-            setPublication,
-            snapshots,
-          });
-        },
-        Math.max(0, coalesceMs ?? EDITOR_CHANGE_HUNKS_COALESCE_MS),
-      );
+      startWork(generation, "initial");
     };
 
     let unsubscribe: (() => void) | null = null;
@@ -456,6 +465,7 @@ interface SnapshotComputationInput {
   readonly releaseRetainedSnapshot: () => void;
   readonly remainsCurrent: (generation: number) => boolean;
   readonly retainSnapshot: (snapshot: LiveDocumentSnapshot) => boolean;
+  readonly retryCapture: () => CaptureRetryDecision;
   readonly setPublication: (publication: {
     readonly authorityToken: object;
     readonly state: OwnedEditorChangeHunksState;
@@ -476,26 +486,32 @@ async function runSnapshotComputation({
   releaseRetainedSnapshot,
   remainsCurrent,
   retainSnapshot,
+  retryCapture,
   setPublication,
   snapshots,
 }: SnapshotComputationInput): Promise<void> {
   try {
     const captured = snapshots.capture(handle, abortController.signal);
     if (captured.status === "rejected") {
-      if (!abortController.signal.aborted && remainsCurrent(generation)) {
+      if (abortController.signal.aborted || !remainsCurrent(generation)) return;
+      const outcome = rejectedCaptureOutcome(captured.reason);
+      if (outcome.kind === "retry") {
+        if (retryCapture() !== "exhausted") return;
         setPublication({
           authorityToken,
-          state:
-            captured.reason === "document-too-large"
-              ? LARGE_FILE_STATE
-              : snapshotErrorState(captured.reason),
+          state: snapshotErrorState(`${captured.reason}, retry exhausted`),
         });
+        return;
       }
+      setPublication({ authorityToken, state: outcome.state });
       return;
     }
 
     const snapshot = captured.snapshot;
     if (!retainSnapshot(snapshot)) return;
+    if (!abortController.signal.aborted && remainsCurrent(generation)) {
+      setPublication({ authorityToken, state: PENDING_STATE });
+    }
     if (
       abortController.signal.aborted ||
       !remainsCurrent(generation) ||
@@ -561,6 +577,9 @@ async function runSnapshotComputation({
   }
 }
 
+type CaptureAttempt = "initial" | "retry";
+type CaptureRetryDecision = "scheduled" | "exhausted" | "stale";
+
 interface SnapshotWork {
   readonly controller: AbortController;
   snapshot: LiveDocumentSnapshot | null;
@@ -580,6 +599,39 @@ function errorState(error: unknown): OwnedEditorChangeHunksState {
     message: error instanceof Error ? error.message : String(error),
     status: "error",
   };
+}
+
+type RejectedCaptureReason = Extract<
+  CaptureLiveDocumentSnapshotReceipt,
+  { readonly status: "rejected" }
+>["reason"];
+
+type RejectedCaptureOutcome =
+  | { readonly kind: "publish"; readonly state: OwnedEditorChangeHunksState }
+  | { readonly kind: "retry" };
+
+const RETRY_CAPTURE_OUTCOME: RejectedCaptureOutcome = Object.freeze({ kind: "retry" });
+
+function rejectedCaptureOutcome(reason: RejectedCaptureReason): RejectedCaptureOutcome {
+  switch (reason) {
+    case "stale":
+    case "capture-in-flight":
+      return RETRY_CAPTURE_OUTCOME;
+    case "document-too-large":
+      return { kind: "publish", state: LARGE_FILE_STATE };
+    case "not-live":
+    case "aborted":
+      return { kind: "publish", state: IDLE_STATE };
+    case "source-unavailable":
+    case "source-failed":
+    case "outstanding-limit":
+    case "aggregate-limit":
+      return { kind: "publish", state: snapshotErrorState(reason) };
+    default: {
+      const unreachable: never = reason;
+      return unreachable;
+    }
+  }
 }
 
 function snapshotErrorState(reason: string): OwnedEditorChangeHunksState {

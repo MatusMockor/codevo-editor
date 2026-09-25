@@ -96,13 +96,6 @@ export const SETTINGS_ROW_TABLE = [
     ["update", "release", "version", "download", "install"],
   ),
   row(
-    "general.updateChannel",
-    "general",
-    "Update track",
-    "Use stable releases or beta builds. Switch back anytime.",
-    ["update", "channel", "track", "beta", "stable", "release"],
-  ),
-  row(
     "general.workspaceRoot",
     "general",
     "Workspace root",

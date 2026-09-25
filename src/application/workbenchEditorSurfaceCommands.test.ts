@@ -111,6 +111,12 @@ describe("workbenchEditorSurfaceCommands", () => {
         shortcut: "shortcut:editor.action.refactor",
       },
       {
+        id: "editor.action.sourceAction",
+        title: "Source Action",
+        category: "Editor",
+        shortcut: "shortcut:editor.action.sourceAction",
+      },
+      {
         id: "editor.nextChange",
         title: "Go to Next Change",
         category: "Editor",
@@ -310,6 +316,7 @@ describe("workbenchEditorSurfaceCommands", () => {
     ["editor.formatDocument", "formatting"],
     ["editor.formatSelection", "rangeFormatting"],
     ["editor.quickFix", "codeAction"],
+    ["editor.action.sourceAction", "codeAction"],
   ] as const)("gates %s on the exact JS/TS %s capability", (commandId, supportedFeature) => {
     const runner = vi.fn() as EditorSurfaceCommandRunner;
     runner.isEnabled = vi.fn(() => true);

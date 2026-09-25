@@ -59,7 +59,7 @@ describe("agentTerminalPanelIntent", () => {
     expect(idle.showTerminal).toBe(false);
   });
 
-  it("reveals the terminal view when the controller shows the panel with an unchanged view", () => {
+  it("keeps an explicit request for the unchanged drawer view out of the terminal reveal", () => {
     const opened = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
       active: true,
@@ -68,17 +68,25 @@ describe("agentTerminalPanelIntent", () => {
       persisted: false,
     });
 
-    expect(opened.showTerminal).toBe(true);
+    expect(opened.showTerminal).toBe(false);
 
     const closed = agentTerminalPanelIntent(opened.state, {
       owner: OWNER,
       active: true,
       visible: false,
-      view: "terminal",
+      view: "problems",
       persisted: true,
     });
-
     expect(closed.showTerminal).toBe(false);
+
+    const reopened = agentTerminalPanelIntent(closed.state, {
+      owner: OWNER,
+      active: true,
+      visible: true,
+      view: "problems",
+      persisted: true,
+    });
+    expect(reopened.showTerminal).toBe(false);
   });
 
   it("keeps an explicit view change out of the terminal reveal", () => {

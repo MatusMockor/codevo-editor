@@ -122,7 +122,11 @@ type LargeDocumentMonacoOptions = Pick<
   | "autoIndent"
   | "bracketPairColorization"
   | "codeLens"
+  | "colorDecorators"
   | "folding"
+  | "inlayHints"
+  | "lightbulb"
+  | "links"
   | "minimap"
   | "occurrencesHighlight"
   | "parameterHints"
@@ -148,7 +152,11 @@ export function largeDocumentMonacoOptions(
     autoIndent: large ? "keep" : "full",
     bracketPairColorization: { enabled: !large },
     codeLens: !large,
+    colorDecorators: !large,
     folding: !large,
+    inlayHints: { enabled: large ? "off" : "on" },
+    lightbulb: { enabled: (large ? "off" : "onCode") as Monaco.editor.ShowLightbulbIconMode },
+    links: !large,
     minimap: { enabled: !large && minimapEnabled },
     occurrencesHighlight: large ? "off" : "singleFile",
     parameterHints: { enabled: !large, cycle: true },
@@ -177,6 +185,8 @@ export function largeDocumentFeatureNotice(
     "code folding",
     ...(minimapEnabled ? ["the minimap"] : []),
     "CodeLens",
+    "inlay hints",
+    "document links",
     "automatic suggestions",
   ];
   const finalFeature = reducedFeatures[reducedFeatures.length - 1];

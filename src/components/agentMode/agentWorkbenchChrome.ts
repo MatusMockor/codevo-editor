@@ -207,10 +207,7 @@ export function agentTerminalPanelIntent(
   }
 
   if (state.visible !== next.visible) {
-    return {
-      state: { ...tracked, applied: true },
-      showTerminal: next.visible && state.view === next.view,
-    };
+    return { state: { ...tracked, applied: true }, showTerminal: false };
   }
 
   if (!state.applied && next.persisted) {

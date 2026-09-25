@@ -15,6 +15,24 @@ interface WorkbenchPanelCommandsOptions {
   refreshWorkspaceTodos: () => void | Promise<void>;
 }
 
+export interface BottomPanelToggleInput {
+  readonly agentModeActive: boolean;
+  readonly view: BottomPanelView;
+  showBottomPanelView(view: BottomPanelView): void;
+  toggleBottomPanel(): void;
+}
+
+export function bottomPanelToggle({
+  agentModeActive,
+  showBottomPanelView,
+  toggleBottomPanel,
+  view,
+}: BottomPanelToggleInput): () => void {
+  if (!agentModeActive) return toggleBottomPanel;
+  if (view === "terminal") return toggleBottomPanel;
+  return () => showBottomPanelView("terminal");
+}
+
 export function workbenchPanelCommands({
   canShowExpressRoutes = false,
   canShowNette = false,

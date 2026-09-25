@@ -282,6 +282,43 @@ describe("ProblemsPanel", () => {
     expect(host.textContent).not.toContain("No problems match");
   });
 
+  it("shows an active package filter chip that clears back to all packages", () => {
+    render(
+      [
+        problemNotice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api problem"),
+        problemNotice("web", "/workspace/packages/web/src/index.ts", 1, "error", "web problem"),
+      ],
+      vi.fn(),
+      "/workspace",
+      WORKSPACE_PACKAGE_MANIFESTS,
+    );
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Filter by package"]');
+
+    expect(host.querySelector(".cv-problems__package-chip")).toBeNull();
+
+    act(() => {
+      if (!select) return;
+      select.value = "@repo/api";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const chip = host.querySelector<HTMLElement>(".cv-problems__package-chip");
+    expect(chip?.textContent).toContain("Package: @repo/api");
+    const clear = chip?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Clear package filter"]',
+    );
+    expect(clear).not.toBeNull();
+
+    act(() => {
+      clear?.click();
+    });
+
+    expect(select?.value).toBe("");
+    expect(host.querySelector(".cv-problems__package-chip")).toBeNull();
+    expect(host.textContent).toContain("api problem");
+    expect(host.textContent).toContain("web problem");
+  });
+
   it("labels bounded package authority as unknown and marks package controls degraded", () => {
     render(
       [problemNotice("unknown", "/workspace/tools/release.ts", 1, "error", "unknown owner")],

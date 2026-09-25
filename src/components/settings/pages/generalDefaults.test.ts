@@ -9,7 +9,6 @@ describe("restoreGeneralAppDefaults", () => {
     const current: AppSettings = {
       ...defaultAppSettings(),
       agentThreadFontSize: 19,
-      appUpdateChannel: "stable",
       agentModelFavoriteKeys: [favorite],
       editorFontFamily: "Menlo",
       editorFontLigatures: true,
@@ -29,7 +28,6 @@ describe("restoreGeneralAppDefaults", () => {
     expect(restored.minimapEnabled).toBe(false);
     expect(restored.wordWrapEnabled).toBe(false);
     expect(restored.terminalShellIntegrationEnabled).toBe(false);
-    expect(restored.appUpdateChannel).toBe("stable");
     expect(restored.agentModelFavoriteKeys).toEqual([favorite]);
   });
 });

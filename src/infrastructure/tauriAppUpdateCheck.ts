@@ -1,6 +1,4 @@
 import { Update } from "@tauri-apps/plugin-updater";
-import { isAppUpdateChannel, type AppUpdateChannel } from "../domain/appUpdateChannel";
-import type { TauriUpdaterBridgeNoRelease } from "./tauriAppUpdaterGateway";
 
 export const APP_UPDATE_CHECK_COMMAND = "app_update_check";
 
@@ -8,13 +6,9 @@ export type AppUpdateMetadata = ConstructorParameters<typeof Update>[0];
 
 export type AppUpdateCheckOutcome =
   | { readonly kind: "available"; readonly metadata: AppUpdateMetadata }
-  | { readonly kind: "upToDate" }
-  | TauriUpdaterBridgeNoRelease;
+  | { readonly kind: "upToDate" };
 
-export type InvokeAppUpdateCheck = (
-  command: typeof APP_UPDATE_CHECK_COMMAND,
-  args: { readonly request: { readonly channel: AppUpdateChannel } },
-) => Promise<unknown>;
+export type InvokeAppUpdateCheck = (command: typeof APP_UPDATE_CHECK_COMMAND) => Promise<unknown>;
 
 const AVAILABLE_KEYS: ReadonlySet<string> = new Set([
   "kind",
@@ -26,22 +20,19 @@ const AVAILABLE_KEYS: ReadonlySet<string> = new Set([
   "rawJson",
 ]);
 const UP_TO_DATE_KEYS: ReadonlySet<string> = new Set(["kind"]);
-const NO_RELEASE_KEYS: ReadonlySet<string> = new Set(["kind", "channel"]);
 
-export function createChannelUpdateCheck(
+export function createAppUpdateCheck(
   invokeCommand: InvokeAppUpdateCheck,
   construct: (metadata: AppUpdateMetadata) => unknown = (metadata) => new Update(metadata),
-): (channel: AppUpdateChannel) => Promise<unknown> {
-  return async (channel) => {
-    const raw = await invokeCommand(APP_UPDATE_CHECK_COMMAND, { request: { channel } });
+): () => Promise<unknown> {
+  return async () => {
+    const raw = await invokeCommand(APP_UPDATE_CHECK_COMMAND);
     const outcome = parseAppUpdateCheckOutcome(raw);
     switch (outcome.kind) {
       case "available":
         return construct(outcome.metadata);
       case "upToDate":
         return null;
-      case "noRelease":
-        return outcome;
       default:
         return assertNever(outcome);
     }
@@ -60,10 +51,6 @@ export function parseAppUpdateCheckOutcome(value: unknown): AppUpdateCheckOutcom
     case "upToDate":
       requireExactKeys(record, UP_TO_DATE_KEYS);
       return { kind: "upToDate" };
-    case "noRelease":
-      requireExactKeys(record, NO_RELEASE_KEYS);
-      if (!isAppUpdateChannel(record.channel)) throw invalid("channel");
-      return { kind: "noRelease", channel: record.channel };
     default:
       throw invalid("kind");
   }

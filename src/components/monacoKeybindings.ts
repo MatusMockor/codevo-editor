@@ -37,28 +37,37 @@ function monacoKeybindingForStroke(
 }
 
 function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
-  if (/^[a-z]$/.test(key)) {
-    return monaco.KeyCode[`Key${key.toUpperCase()}` as keyof typeof monaco.KeyCode] ?? null;
-  }
-  const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
-    ",": "Comma",
-    ".": "Period",
-    "-": "Minus",
-    "/": "Slash",
-    "=": "Equal",
-    "`": "Backquote",
-    "[": "BracketLeft",
-    "]": "BracketRight",
-    arrowdown: "DownArrow",
-    arrowleft: "LeftArrow",
-    arrowright: "RightArrow",
-    arrowup: "UpArrow",
-    enter: "Enter",
-    escape: "Escape",
-    f12: "F12",
-    f2: "F2",
-    f5: "F5",
-  };
-  const keyCodeName = specialKeyCodes[key];
+  const keyCodeName = monacoKeyCodeName(key);
   return keyCodeName ? (monaco.KeyCode[keyCodeName] ?? null) : null;
 }
+
+function monacoKeyCodeName(key: string): keyof typeof Monaco.KeyCode | null {
+  if (/^[a-z]$/.test(key)) return `Key${key.toUpperCase()}` as keyof typeof Monaco.KeyCode;
+  if (/^[0-9]$/.test(key)) return `Digit${key}` as keyof typeof Monaco.KeyCode;
+  if (/^f(?:[1-9]|1\d|2[0-4])$/.test(key)) return key.toUpperCase() as keyof typeof Monaco.KeyCode;
+  return SPECIAL_KEY_CODE_NAMES[key] ?? null;
+}
+
+const SPECIAL_KEY_CODE_NAMES: Readonly<Record<string, keyof typeof Monaco.KeyCode>> = {
+  "'": "Quote",
+  ",": "Comma",
+  ".": "Period",
+  "-": "Minus",
+  "/": "Slash",
+  ";": "Semicolon",
+  "=": "Equal",
+  "\\": "Backslash",
+  "`": "Backquote",
+  "[": "BracketLeft",
+  "]": "BracketRight",
+  arrowdown: "DownArrow",
+  arrowleft: "LeftArrow",
+  arrowright: "RightArrow",
+  arrowup: "UpArrow",
+  backspace: "Backspace",
+  delete: "Delete",
+  enter: "Enter",
+  escape: "Escape",
+  space: "Space",
+  tab: "Tab",
+};

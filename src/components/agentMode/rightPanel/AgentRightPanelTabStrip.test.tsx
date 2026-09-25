@@ -218,6 +218,44 @@ describe("AgentRightPanelTabStrip", () => {
     }
   });
 
+  it("keeps the active tab in view when the strip is resized", () => {
+    const original = Element.prototype.scrollIntoView;
+    const originalObserver = globalThis.ResizeObserver;
+    const observers: Array<{ callback: () => void; disconnected: boolean }> = [];
+    class ResizeObserverSpy {
+      private readonly record: { callback: () => void; disconnected: boolean };
+      constructor(callback: () => void) {
+        this.record = { callback, disconnected: false };
+        observers.push(this.record);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {
+        this.record.disconnected = true;
+      }
+    }
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+      scrolled.push((this as HTMLElement).title);
+    };
+    Object.assign(globalThis, { ResizeObserver: ResizeObserverSpy });
+    try {
+      const open: ReadonlyArray<AgentSurfaceKind> = ["diff", "terminal", "git", "scripts"];
+      ui = mountUi();
+      ui.render(<AgentRightPanelTabStrip {...props({ entries: surfaceEntries(open, "git") })} />);
+      scrolled.length = 0;
+      const live = observers.filter((observer) => !observer.disconnected);
+      expect(live).toHaveLength(1);
+
+      act(() => live[0]?.callback());
+
+      expect(scrolled).toEqual(["Git"]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      Object.assign(globalThis, { ResizeObserver: originalObserver });
+    }
+  });
+
   it("tolerates an environment without scrollIntoView", () => {
     const original = Element.prototype.scrollIntoView;
     Object.defineProperty(Element.prototype, "scrollIntoView", {

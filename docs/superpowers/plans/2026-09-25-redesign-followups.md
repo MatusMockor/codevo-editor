@@ -59,3 +59,10 @@ Items that were reviewed and knowingly deferred. Handle in P10 or a dedicated sl
 - `sidebarView` / `setSidebarView` still live in the controller and session cache. Remove them in a separate controller slice.
 - AgentSurfacePanel still sets `data-tree`, which has no CSS consumer (only P6 tests read it).
 - The Git amend action (and stage/unstage/revert from the old sidebar Git view) is no longer reachable anywhere after P7 removed the legacy chrome. Decide whether the P6 Git surface needs amend.
+- Clone auto-open only starts from the visible clone composer. If the user navigates away before the clone finishes, the project waits until they click the clone row. The sidebar also keeps the default-scope highlight while the clone composer is shown.
+- Editor change markers compare the buffer to the saved file, not to git HEAD. A file that is changed in git but saved shows no markers, unlike VS Code. After a tab switch, unsaved edits show no markers until the next keystroke; the snapshot broker should capture unedited buffers.
+- Narrow editor drawer: the Problems filter is partly scrolled out of view at a window width of 1100px or less. The Package grouping and filter only appear when the header is wider than 720px.
+
+## Editor keybinding bridge (QA-fix round)
+- Only the main EditorSurface Monaco editor gets the Codevo keymap bridge, context-menu twins and command-layer routing. Other Monaco instances (diff editors, previews, agent-mode editors) still let Monaco defaults such as Cmd+K chords, F8 and Cmd+E shadow Codevo shortcuts while they have focus. Give them the same bridge.
+- Cmd+J in agent mode is not plain VS Code parity: if the bottom panel shows a view other than the terminal (for example, Problems or Search in the drawer), Cmd+J switches to the terminal instead of closing the panel. This keeps the terminal reachable in agent mode. Decide whether to keep this exception or split terminal and drawer toggles into separate commands.

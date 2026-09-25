@@ -39,7 +39,6 @@ describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -162,11 +161,15 @@ describe("settings defaults", () => {
     ).toBeNull();
   });
 
-  it("persists the update channel and repairs an unknown value", () => {
-    expect(defaultAppSettings().appUpdateChannel).toBe("beta");
-    expect(normalizeAppSettings({ appUpdateChannel: "stable" }).appUpdateChannel).toBe("stable");
-    expect(normalizeAppSettings({ appUpdateChannel: "nightly" }).appUpdateChannel).toBe("beta");
-    expect(normalizeAppSettings({}).appUpdateChannel).toBe("beta");
+  it("ignores an update channel persisted by an earlier build", () => {
+    const normalized = normalizeAppSettings({
+      appUpdateChannel: "stable",
+      appUpdaterSkippedVersion: "0.2.0",
+    });
+
+    expect(normalized).not.toHaveProperty("appUpdateChannel");
+    expect(defaultAppSettings()).not.toHaveProperty("appUpdateChannel");
+    expect(normalized.appUpdaterSkippedVersion).toBe("0.2.0");
   });
 });
 
@@ -305,7 +308,6 @@ describe("normalizeAppSettings", () => {
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -345,7 +347,6 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -380,7 +381,6 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -461,7 +461,6 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
@@ -522,7 +521,6 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       appUpdaterSkippedVersion: null,
-      appUpdateChannel: "beta",
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,

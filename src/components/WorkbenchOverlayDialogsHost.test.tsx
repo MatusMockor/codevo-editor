@@ -4,7 +4,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
-import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import type { WorkbenchAppUpdaterComposition } from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
 import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import type { AppUpdaterGateway } from "../domain/appUpdater";
@@ -81,7 +80,6 @@ function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHos
     settingsContainer: null,
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
     workbench: {
-      agents: { appSettingsHydrated: true, providerSignIn: providerSignIn() },
       appSettings: defaultAppSettings(),
       closeNodeLaunchConfigurations: vi.fn(),
       gitRepositoryMappings: [],
@@ -110,19 +108,6 @@ function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHos
     },
     workspaceFiles: fileGateway(),
     workspaceTrusted: false,
-  };
-}
-
-function providerSignIn(): AgentProviderSignInSurface {
-  return {
-    states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
-    terminalIntents: { claudeCode: null, codex: null },
-    blockedReason: () => null,
-    isActive: () => false,
-    request: () => false,
-    cancelStart: vi.fn(),
-    start: async () => null,
-    settle: async () => undefined,
   };
 }
 

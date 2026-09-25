@@ -26,6 +26,14 @@ import {
   type SnapshotOwnedEditorChangeHunksInput,
 } from "./useOwnedEditorChangeHunks";
 
+type RejectedCaptureReason = Extract<
+  CaptureLiveDocumentSnapshotReceipt,
+  { readonly status: "rejected" }
+>["reason"];
+type RetryableCaptureReason = Extract<RejectedCaptureReason, "stale" | "capture-in-flight">;
+
+const RETRY_TEST_COALESCE_MS = 50;
+
 const SMALL_FILE_POLICY = {
   characterLimit: 16 * 1024,
   lineLimit: 500,
@@ -163,6 +171,43 @@ class FakeSnapshotPort implements EditorChangeHunksSnapshotPort {
   }
 }
 
+class ScriptedRejectionPort implements EditorChangeHunksSnapshotPort {
+  readonly captures: LiveModelSourceHandle[] = [];
+  private readonly rejections: RejectedCaptureReason[] = [];
+
+  constructor(private readonly base: FakeSnapshotPort) {}
+
+  rejectNext(...reasons: readonly RejectedCaptureReason[]): void {
+    this.rejections.push(...reasons);
+  }
+
+  capturesOf(handle: LiveModelSourceHandle): number {
+    return this.captures.filter((captured) => captured === handle).length;
+  }
+
+  capture(handle: LiveModelSourceHandle, signal: AbortSignal): CaptureLiveDocumentSnapshotReceipt {
+    this.captures.push(handle);
+    const reason = this.rejections.shift();
+    if (reason) return { reason, status: "rejected" };
+    return this.base.capture(handle, signal);
+  }
+
+  consumeCurrent(handle: LiveModelSourceHandle, snapshot: LiveDocumentSnapshot): boolean {
+    return this.base.consumeCurrent(handle, snapshot);
+  }
+
+  release(handle: LiveModelSourceHandle, snapshot: LiveDocumentSnapshot): boolean {
+    return this.base.release(handle, snapshot);
+  }
+
+  subscribe(
+    handle: LiveModelSourceHandle,
+    listener: (revision: LiveModelRevision) => void,
+  ): () => void {
+    return this.base.subscribe(handle, listener);
+  }
+}
+
 describe("useOwnedEditorChangeHunks", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -198,6 +243,16 @@ describe("useOwnedEditorChangeHunks", () => {
         />,
       ),
     );
+  }
+
+  async function publishReady(gateway: DeferredGateway, id: string): Promise<EditorChangeHunk> {
+    await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS));
+    const published = hunk(id);
+    const call = gateway.calls[gateway.calls.length - 1];
+    expect(call).toBeDefined();
+    await act(async () => resolveReady(call!, [published]));
+    expect(current).toEqual({ hunks: [published], status: "ready" });
+    return published;
   }
 
   it("observes a rapid revision storm without a React render or snapshot per edit", async () => {
@@ -467,6 +522,201 @@ describe("useOwnedEditorChangeHunks", () => {
     });
   });
 
+  it.each<RejectedCaptureReason>(["not-live", "aborted"])(
+    "keeps a %s capture rejection idle and recovers on the next edit",
+    async (reason) => {
+      const gateway = new DeferredGateway();
+      const snapshots = new FakeSnapshotPort();
+      const document = liveDocument("workspace-a", "/workspace-a/file.ts", "after");
+      snapshots.add(document);
+      let rejectNext = true;
+      const rejectingOnce: EditorChangeHunksSnapshotPort = {
+        capture: (handle, signal) => {
+          if (!rejectNext) return snapshots.capture(handle, signal);
+          rejectNext = false;
+          return { reason, status: "rejected" };
+        },
+        consumeCurrent: (handle, snapshot) => snapshots.consumeCurrent(handle, snapshot),
+        release: (handle, snapshot) => snapshots.release(handle, snapshot),
+        subscribe: (handle, listener) => snapshots.subscribe(handle, listener),
+      };
+      render({
+        ...snapshotInput(document, gateway, snapshots, { coalesceMs: 0 }),
+        snapshots: rejectingOnce,
+      });
+      await act(async () => vi.runOnlyPendingTimers());
+
+      expect(current).toEqual({ hunks: [], status: "idle" });
+      expect(gateway.calls).toHaveLength(0);
+
+      act(() => snapshots.edit(document, "edited"));
+      await act(async () => vi.runOnlyPendingTimers());
+      const hunkValue = hunk("edited");
+      await act(async () => {
+        resolveReady(gateway.calls[0], [hunkValue]);
+      });
+
+      expect(current).toEqual({ hunks: [hunkValue], status: "ready" });
+    },
+  );
+
+  it.each<RetryableCaptureReason>(["stale", "capture-in-flight"])(
+    "keeps the previous publication on a %s rejection and publishes after one retry",
+    async (reason) => {
+      const gateway = new DeferredGateway();
+      const base = new FakeSnapshotPort();
+      const document = liveDocument("workspace-a", "/workspace-a/file.ts", "after");
+      base.add(document);
+      const snapshots = new ScriptedRejectionPort(base);
+      render(snapshotInput(document, gateway, snapshots, { coalesceMs: RETRY_TEST_COALESCE_MS }));
+      const previous = await publishReady(gateway, "previous");
+
+      snapshots.rejectNext(reason);
+      act(() => base.edit(document, "edited"));
+      await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS));
+
+      expect(snapshots.captures).toHaveLength(2);
+      expect(current).toEqual({ hunks: [previous], status: "ready" });
+      expect(gateway.calls).toHaveLength(1);
+
+      await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS - 1));
+      expect(snapshots.captures).toHaveLength(2);
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(snapshots.captures).toHaveLength(3);
+      expect(gateway.calls).toHaveLength(2);
+      expect(gateway.calls[1].request.content).toBe("edited");
+
+      const retried = hunk("retried");
+      await act(async () => resolveReady(gateway.calls[1], [retried]));
+      expect(current).toEqual({ hunks: [retried], status: "ready" });
+    },
+  );
+
+  it.each<RetryableCaptureReason>(["stale", "capture-in-flight"])(
+    "retries a %s rejection at most once per episode and then publishes a bounded error",
+    async (reason) => {
+      const gateway = new DeferredGateway();
+      const base = new FakeSnapshotPort();
+      const document = liveDocument("workspace-a", "/workspace-a/file.ts", "after");
+      base.add(document);
+      const snapshots = new ScriptedRejectionPort(base);
+      render(snapshotInput(document, gateway, snapshots, { coalesceMs: RETRY_TEST_COALESCE_MS }));
+      await publishReady(gateway, "previous");
+
+      snapshots.rejectNext(reason, reason);
+      act(() => base.edit(document, "edited"));
+      await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS * 20));
+
+      expect(snapshots.captures).toHaveLength(3);
+      expect(gateway.calls).toHaveLength(1);
+      expect(current).toEqual({
+        hunks: [],
+        message: `Editor snapshot unavailable (${reason}, retry exhausted).`,
+        status: "error",
+      });
+
+      snapshots.rejectNext(reason);
+      act(() => base.edit(document, "edited again"));
+      await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS * 20));
+
+      expect(snapshots.captures).toHaveLength(5);
+      expect(gateway.calls).toHaveLength(2);
+      expect(gateway.calls[1].request.content).toBe("edited again");
+    },
+  );
+
+  it("clears a scheduled capture retry on unmount", async () => {
+    const gateway = new DeferredGateway();
+    const base = new FakeSnapshotPort();
+    const document = liveDocument("workspace-a", "/workspace-a/file.ts", "after");
+    base.add(document);
+    const snapshots = new ScriptedRejectionPort(base);
+    render(snapshotInput(document, gateway, snapshots, { coalesceMs: RETRY_TEST_COALESCE_MS }));
+    await publishReady(gateway, "previous");
+
+    snapshots.rejectNext("stale");
+    act(() => base.edit(document, "edited"));
+    await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS));
+    expect(snapshots.captures).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(1);
+
+    act(() => root.unmount());
+    rootMounted = false;
+
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS * 20));
+    expect(snapshots.captures).toHaveLength(2);
+    expect(gateway.calls).toHaveLength(1);
+  });
+
+  it("drops a scheduled capture retry across an A to B to A owner change", async () => {
+    const gateway = new DeferredGateway();
+    const base = new FakeSnapshotPort();
+    const firstA = liveDocument("owner-a", "/a/file.ts", "first-a");
+    const documentB = liveDocument("owner-b", "/b/file.ts", "value-b");
+    const secondA = liveDocument("owner-a", "/a/file.ts", "second-a");
+    base.add(firstA);
+    base.add(documentB);
+    base.add(secondA);
+    const snapshots = new ScriptedRejectionPort(base);
+    render(snapshotInput(firstA, gateway, snapshots, { coalesceMs: RETRY_TEST_COALESCE_MS }));
+    await publishReady(gateway, "first-a");
+
+    snapshots.rejectNext("capture-in-flight");
+    act(() => base.edit(firstA, "first-a edited"));
+    await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS));
+    const firstACaptures = snapshots.capturesOf(firstA.handle);
+
+    render(snapshotInput(documentB, gateway, snapshots, { coalesceMs: RETRY_TEST_COALESCE_MS }));
+    render(snapshotInput(secondA, gateway, snapshots, { coalesceMs: RETRY_TEST_COALESCE_MS }));
+    await act(async () => vi.advanceTimersByTime(RETRY_TEST_COALESCE_MS * 20));
+
+    expect(snapshots.capturesOf(firstA.handle)).toBe(firstACaptures);
+    expect(snapshots.capturesOf(documentB.handle)).toBe(0);
+    expect(snapshots.capturesOf(secondA.handle)).toBe(1);
+    expect(gateway.calls).toHaveLength(2);
+    expect(gateway.calls[1].request.content).toBe("second-a");
+
+    const latest = hunk("second-a");
+    await act(async () => resolveReady(gateway.calls[1], [latest]));
+    expect(current).toEqual({ hunks: [latest], status: "ready" });
+  });
+
+  it.each<RejectedCaptureReason>([
+    "source-unavailable",
+    "source-failed",
+    "outstanding-limit",
+    "aggregate-limit",
+  ])("reports a %s capture rejection as an error state without retrying", async (reason) => {
+    const gateway = new DeferredGateway();
+    const snapshots = new FakeSnapshotPort();
+    const document = liveDocument("workspace-a", "/workspace-a/file.ts", "after");
+    snapshots.add(document);
+    let capturesAfterRejection = 0;
+    const rejecting: EditorChangeHunksSnapshotPort = {
+      capture: () => {
+        capturesAfterRejection += 1;
+        return { reason, status: "rejected" };
+      },
+      consumeCurrent: (handle, snapshot) => snapshots.consumeCurrent(handle, snapshot),
+      release: (handle, snapshot) => snapshots.release(handle, snapshot),
+      subscribe: (handle, listener) => snapshots.subscribe(handle, listener),
+    };
+    render({
+      ...snapshotInput(document, gateway, snapshots, { coalesceMs: 0 }),
+      snapshots: rejecting,
+    });
+    await act(async () => vi.runOnlyPendingTimers());
+
+    expect(current).toEqual({
+      hunks: [],
+      message: `Editor snapshot unavailable (${reason}).`,
+      status: "error",
+    });
+    await act(async () => vi.advanceTimersByTime(1_000));
+    expect(capturesAfterRejection).toBe(1);
+  });
+
   it("aborts work, releases its snapshot, and unsubscribes on unmount", async () => {
     const gateway = new DeferredGateway();
     const snapshots = new FakeSnapshotPort();
@@ -563,7 +813,7 @@ function baselineFor(document: FakeLiveDocument): EditorChangeHunksBaseline {
 function snapshotInput(
   document: FakeLiveDocument,
   gateway: DeferredGateway,
-  snapshots: FakeSnapshotPort,
+  snapshots: EditorChangeHunksSnapshotPort,
   options: { readonly coalesceMs: number },
 ): SnapshotOwnedEditorChangeHunksInput {
   return {

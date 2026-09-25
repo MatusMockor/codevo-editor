@@ -44,7 +44,11 @@ const SEMANTIC_HIGHLIGHTING_OPTION = "semanticHighlighting.enabled";
 const LARGE_DOCUMENT_DISABLED_OPTIONS = {
   bracketPairColorization: { enabled: false },
   codeLens: false,
+  colorDecorators: false,
   folding: false,
+  inlayHints: { enabled: "off" },
+  lightbulb: { enabled: "off" },
+  links: false,
   minimap: { enabled: false },
   occurrencesHighlight: "off",
   parameterHints: { enabled: false, cycle: true },
@@ -59,7 +63,11 @@ const LARGE_DOCUMENT_DISABLED_OPTIONS = {
 const SMALL_DOCUMENT_ENABLED_OPTIONS = {
   bracketPairColorization: { enabled: true },
   codeLens: true,
+  colorDecorators: true,
   folding: true,
+  inlayHints: { enabled: "on" },
+  lightbulb: { enabled: "onCode" },
+  links: true,
   occurrencesHighlight: "singleFile",
   parameterHints: { enabled: true, cycle: true },
   quickSuggestions: { other: true, comments: false, strings: true },
@@ -148,7 +156,7 @@ describe("useEditorSurfacePresentation semantic highlighting", () => {
     const notice = host.querySelector('[data-testid="editor-large-file-notice"]');
     expect(notice?.getAttribute("role")).toBe("status");
     expect(notice?.textContent).toBe(
-      "Large file mode: semantic highlighting, code folding, the minimap, CodeLens, and automatic suggestions are turned off to keep editing responsive.",
+      "Large file mode: semantic highlighting, code folding, the minimap, CodeLens, inlay hints, document links, and automatic suggestions are turned off to keep editing responsive.",
     );
     expect(notice?.getAttribute("title")).toBe(notice?.textContent);
   });

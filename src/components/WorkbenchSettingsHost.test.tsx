@@ -173,13 +173,11 @@ function ControlledSettingsHost({
     saveSkippedVersion: async () => undefined,
   }))[0];
   const appUpdater = useAppUpdater({
-    channel: "beta",
     currentVersion: "0.2.0-beta.1",
     gateway: appUpdaterGateway,
     preferencesGateway: preferencesGatewayRef,
     persistSkippedVersion: vi.fn(async () => undefined),
     scheduleAfterUiInteractive: neverSchedule,
-    settingsHydrated: true,
   });
   return (
     <WorkbenchSettingsHost

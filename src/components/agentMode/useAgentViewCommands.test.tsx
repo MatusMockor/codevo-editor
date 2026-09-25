@@ -50,6 +50,16 @@ describe("useAgentViewCommands", () => {
     expect(handlers.openCommitMenu).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards panel.toggleMaximized to the bound view", () => {
+    const bridge = createAgentViewCommandBridge();
+    const handlers = { ...spyHandlers(), toggleMaximizedPanel: vi.fn() };
+    render(bridge, handlers);
+
+    act(() => bridge.run("panel.toggleMaximized"));
+
+    expect(handlers.toggleMaximizedPanel).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards project.add to the bound view", () => {
     const bridge = createAgentViewCommandBridge();
     const handlers = { ...spyHandlers(), addProject: vi.fn() };

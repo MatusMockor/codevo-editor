@@ -23,6 +23,8 @@ export function editorActionForSurfaceCommand(commandId: EditorSurfaceCommandId)
       return "editor.action.quickFix";
     case "editor.action.refactor":
       return "editor.action.refactor";
+    case "editor.action.sourceAction":
+      return "editor.action.sourceAction";
     case "editor.rename":
       return "editor.action.rename";
   }

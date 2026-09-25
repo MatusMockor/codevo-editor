@@ -53,16 +53,13 @@ import type {
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import { BackgroundTokenizer, idleCallbackScheduler } from "../domain/backgroundTokenizer";
-import {
-  defaultShortcutForCommand,
-  detectKeymapPlatform,
-  keymapCommandIdsForShortcut,
-  shortcutForCommand,
-  type KeymapCommandId,
-  type KeymapSettings,
-} from "../domain/keymap";
+import { detectKeymapPlatform, shortcutForCommand, type KeymapSettings } from "../domain/keymap";
 import { monacoKeybindingsForShortcut } from "./monacoKeybindings";
-import { requestRegisteredCommand, runRegisteredCommand } from "../application/commandChain";
+import {
+  type EditorActionCommandPort,
+  useEditorKeymapActions,
+} from "./editorSurfaceCore/editorKeymapActions";
+import { registerMonacoLinkOpener } from "../infrastructure/monacoLinkOpener";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 import {
   defaultLargeSmartDocumentPolicy,
@@ -150,16 +147,7 @@ import {
   modelMatchesWorkspacePath,
   type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
-import {
-  applyCompleteStatement,
-  applyCyclicExpandWord,
-  applyMoveStatement,
-  expandEditorSelection,
-  surroundWithRequestFromEditor,
-  triggerEditorAction,
-  triggerEditorSurfaceCommand,
-  type SurroundWithRequest,
-} from "./editorSurfaceCore/editorCommands";
+import { type SurroundWithRequest } from "./editorSurfaceCore/editorCommands";
 import {
   EMPTY_BOOKMARK_LINES,
   EMPTY_BREADCRUMB_SYMBOLS,
@@ -182,10 +170,7 @@ import { useEditorBreadcrumbLifecycle } from "./editorSurfaceCore/useEditorBread
 import { useEditorInputLifecycle } from "./editorSurfaceCore/useEditorInputLifecycle";
 import { useEditorActiveModelLifecycle } from "./editorSurfaceCore/useEditorActiveModelLifecycle";
 import { useEditorModelCachePruning } from "./editorSurfaceCore/useEditorModelCachePruning";
-import {
-  configuredF12NeedsNativeDefinition,
-  useEditorDefinitionNavigation,
-} from "./editorSurfaceCore/useEditorDefinitionNavigation";
+import { useEditorDefinitionNavigation } from "./editorSurfaceCore/useEditorDefinitionNavigation";
 import {
   type EditorChangePreviewState,
   useEditorMouseInteractions,
@@ -365,19 +350,6 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
     source: string,
     range: { endLine: number; startLine: number },
   ): Promise<PhpParameterNameInlayHint[]>;
-}
-
-interface EditorActionCommandPort {
-  closeActiveTab(): void;
-  goBack(): void;
-  goForward(): void;
-  goToDefinition(): void;
-  goToImplementationAt(position: EditorPosition): void;
-  goToSuperMethod(): void;
-  openClass(): void;
-  openFile(): void;
-  openFileStructure(): void;
-  toggleGitBlame?(): void;
 }
 
 type GuardedQaDefinitionProvider = (
@@ -1399,486 +1371,25 @@ function EditorSurfaceComponent({
     workspaceRoot,
   });
 
-  useEffect(() => {
-    if (!editorApi || !monacoApi) {
-      return;
-    }
-
-    const keymapPlatform = detectKeymapPlatform();
-    const keybinding = (commandId: KeymapCommandId) =>
-      monacoKeybindingsForShortcut(
-        monacoApi,
-        shortcutForCommand(keymap, commandId, keymapPlatform),
-        keymapPlatform,
-      ).filter((binding) => binding !== monacoApi.KeyCode.F12);
-    const configuredF12CommandIds = keymapCommandIdsForShortcut(keymap, "F12", keymapPlatform);
-    const definitionUsesDefaultShortcut =
-      shortcutForCommand(keymap, "editor.goToDefinition", keymapPlatform) ===
-      defaultShortcutForCommand("editor.goToDefinition", keymapPlatform);
-    const disposables = [
-      editorApi.addAction({
-        id: "mockor.dispatchF12",
-        label: "Dispatch F12",
-        keybindings: [monacoApi.KeyCode.F12],
-        run: () => {
-          if (configuredF12CommandIds.length > 0) {
-            if (
-              configuredF12NeedsNativeDefinition({
-                commandIds: configuredF12CommandIds,
-                customNavigationEnabled: customDefinitionNavigationEnabled,
-                runCommand: commandExecutionRunnerRef.current,
-              })
-            ) {
-              triggerEditorAction(editorApi, "editor.action.revealDefinition");
-            }
-            return;
-          }
-
-          if (definitionUsesDefaultShortcut) {
-            if (customDefinitionNavigationEnabled) {
-              runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
-                editorActionCommandPortRef.current.goToDefinition(),
-              );
-            } else {
-              triggerEditorAction(editorApi, "editor.action.revealDefinition");
-            }
-          }
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.goToDefinition",
-        label: "Go to Definition",
-        keybindings: keybinding("editor.goToDefinition"),
-        run: () => {
-          if (!customDefinitionNavigationEnabled) {
-            triggerEditorAction(editorApi, "editor.action.revealDefinition");
-            return;
-          }
-
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
-            editorActionCommandPortRef.current.goToDefinition(),
-          );
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.quickDefinition",
-        label: "Quick Definition",
-        keybindings: keybinding("editor.quickDefinition"),
-        run: () => requestRegisteredCommand(commandExecutionRunnerRef, "editor.quickDefinition"),
-      }),
-      editorApi.addAction({
-        id: "mockor.goToSourceDefinition",
-        label: "Go to Source Definition",
-        keybindings: keybinding("editor.goToSourceDefinition"),
-        run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.goToSourceDefinition",
-            () => undefined,
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.goToDeclaration",
-        label: "Go to Declaration",
-        keybindings: keybinding("editor.goToDeclaration"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDeclaration", () =>
-            triggerEditorAction(editorApi, "editor.action.revealDeclaration"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.goToTypeDefinition",
-        label: "Go to Type Definition",
-        keybindings: keybinding("editor.goToTypeDefinition"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToTypeDefinition", () =>
-            triggerEditorAction(editorApi, "editor.action.goToTypeDefinition"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.goToImplementation",
-        label: "Go to Implementation",
-        keybindings: keybinding("editor.goToImplementation"),
-        run: () => {
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToImplementation", () => {
-            const position = editorApi.getPosition();
-
-            if (!position) {
-              return;
-            }
-
-            editorActionCommandPortRef.current.goToImplementationAt(position);
-          });
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.goToSuperMethod",
-        label: "Go to Super Method",
-        keybindings: keybinding("editor.goToSuperMethod"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToSuperMethod", () =>
-            editorActionCommandPortRef.current.goToSuperMethod(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.findReferences",
-        label: "Find All References",
-        keybindingContext: "!referenceSearchVisible && !inReferenceSearchEditor",
-        keybindings: keybinding("editor.findReferences"),
-        run: () => {
-          if (managedJavaScriptTypeScriptDocumentActive) {
-            requestRegisteredCommand(commandExecutionRunnerRef, "editor.findReferences");
-            return;
-          }
-
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.findReferences", () =>
-            triggerEditorAction(editorApi, "editor.action.goToReferences"),
-          );
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.findFileReferences",
-        label: "Find File References",
-        keybindings: keybinding("editor.findFileReferences"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.findFileReferences", () =>
-            triggerEditorAction(editorApi, "editor.action.peekImplementation"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.openClass",
-        label: "Open Class",
-        keybindings: keybinding("class.quickOpen"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "class.quickOpen", () =>
-            editorActionCommandPortRef.current.openClass(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.openFile",
-        label: "Open File",
-        keybindings: keybinding("file.quickOpen"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "file.quickOpen", () =>
-            editorActionCommandPortRef.current.openFile(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.fileStructure",
-        label: "File Structure",
-        keybindings: keybinding("editor.fileStructure"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.fileStructure", () =>
-            editorActionCommandPortRef.current.openFileStructure(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.gotoLine",
-        label: "Go to Line/Column",
-        keybindings: keybinding("editor.gotoLine"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.gotoLine", () =>
-            triggerEditorSurfaceCommand(editorApi, "editor.gotoLine"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.rename",
-        label: "Rename Symbol",
-        keybindings: keybinding("editor.rename"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.rename", () =>
-            triggerEditorSurfaceCommand(editorApi, "editor.rename"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.toggleGitBlame",
-        label: "Annotate with Git Blame",
-        keybindings: keybinding("editor.toggleGitBlame"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.toggleGitBlame", () =>
-            editorActionCommandPortRef.current.toggleGitBlame?.(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.formatDocument",
-        label: "Format Document",
-        keybindings: keybinding("editor.formatDocument"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.formatDocument", () =>
-            triggerEditorSurfaceCommand(editorApi, "editor.formatDocument"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.formatSelection",
-        label: "Format Selection",
-        keybindings: keybinding("editor.formatSelection"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.formatSelection", () =>
-            triggerEditorSurfaceCommand(editorApi, "editor.formatSelection"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.quickFix",
-        label: "Show Context Actions",
-        keybindings: [
-          ...keybinding("editor.quickFix"),
-          monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.Period,
-        ],
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.quickFix", () =>
-            triggerEditorSurfaceCommand(editorApi, "editor.quickFix"),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.extendSelection",
-        label: "Extend Selection",
-        keybindings: keybinding("editor.extendSelection"),
-        run: () => {
-          if (expandEditorSelection(monacoApi, editorApi)) {
-            return;
-          }
-
-          editorApi.trigger("keyboard", "editor.action.smartSelect.expand", {});
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.shrinkSelection",
-        label: "Shrink Selection",
-        keybindings: keybinding("editor.shrinkSelection"),
-        run: () => triggerEditorAction(editorApi, "editor.action.smartSelect.shrink"),
-      }),
-      editorApi.addAction({
-        id: "mockor.insertCursorAbove",
-        label: "Add Caret Above",
-        keybindings: keybinding("editor.insertCursorAbove"),
-        run: () => triggerEditorAction(editorApi, "editor.action.insertCursorAbove"),
-      }),
-      editorApi.addAction({
-        id: "mockor.insertCursorBelow",
-        label: "Add Caret Below",
-        keybindings: keybinding("editor.insertCursorBelow"),
-        run: () => triggerEditorAction(editorApi, "editor.action.insertCursorBelow"),
-      }),
-      editorApi.addAction({
-        id: "mockor.selectAllOccurrences",
-        label: "Select All Occurrences",
-        keybindings: keybinding("editor.selectAllOccurrences"),
-        run: () => triggerEditorAction(editorApi, "editor.action.selectHighlights"),
-      }),
-      editorApi.addAction({
-        id: "mockor.toggleColumnSelection",
-        label: "Toggle Column Selection Mode",
-        keybindings: keybinding("editor.toggleColumnSelection"),
-        run: () => {
-          if (!editorApi.getModel()) {
-            return;
-          }
-
-          columnSelectionEnabledRef.current = !columnSelectionEnabledRef.current;
-          editorApi.updateOptions({
-            columnSelection: columnSelectionEnabledRef.current,
-          });
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.moveStatementUp",
-        label: "Move Statement Up",
-        keybindings: keybinding("editor.moveStatementUp"),
-        run: () => {
-          if (
-            activeDocumentRef.current?.language === "php" &&
-            applyMoveStatement(monacoApi, editorApi, "up")
-          ) {
-            return;
-          }
-
-          triggerEditorAction(editorApi, "editor.action.moveLinesUpAction");
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.moveStatementDown",
-        label: "Move Statement Down",
-        keybindings: keybinding("editor.moveStatementDown"),
-        run: () => {
-          if (
-            activeDocumentRef.current?.language === "php" &&
-            applyMoveStatement(monacoApi, editorApi, "down")
-          ) {
-            return;
-          }
-
-          triggerEditorAction(editorApi, "editor.action.moveLinesDownAction");
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.moveLineUp",
-        label: "Move Line Up",
-        keybindings: keybinding("editor.moveLineUp"),
-        run: () => triggerEditorAction(editorApi, "editor.action.moveLinesUpAction"),
-      }),
-      editorApi.addAction({
-        id: "mockor.moveLineDown",
-        label: "Move Line Down",
-        keybindings: keybinding("editor.moveLineDown"),
-        run: () => triggerEditorAction(editorApi, "editor.action.moveLinesDownAction"),
-      }),
-      editorApi.addAction({
-        id: "mockor.duplicateLine",
-        label: "Duplicate Line or Selection",
-        keybindings: keybinding("editor.duplicateLine"),
-        run: () => triggerEditorAction(editorApi, "editor.action.copyLinesDownAction"),
-      }),
-      editorApi.addAction({
-        id: "mockor.addSelectionToNextMatch",
-        label: "Add Selection to Next Match",
-        keybindings: keybinding("editor.addSelectionToNextMatch"),
-        run: () => triggerEditorAction(editorApi, "editor.action.addSelectionToNextFindMatch"),
-      }),
-      editorApi.addAction({
-        id: "mockor.deleteLine",
-        label: "Delete Line",
-        keybindings: keybinding("editor.deleteLine"),
-        run: () => triggerEditorAction(editorApi, "editor.action.deleteLines"),
-      }),
-      editorApi.addAction({
-        id: "mockor.joinLines",
-        label: "Join Lines",
-        keybindings: keybinding("editor.joinLines"),
-        run: () => triggerEditorAction(editorApi, "editor.action.joinLines"),
-      }),
-      editorApi.addAction({
-        id: "mockor.foldAll",
-        label: "Fold All",
-        keybindings: keybinding("editor.foldAll"),
-        run: () => triggerEditorAction(editorApi, "editor.foldAll"),
-      }),
-      editorApi.addAction({
-        id: "mockor.unfoldAll",
-        label: "Unfold All",
-        keybindings: keybinding("editor.unfoldAll"),
-        run: () => triggerEditorAction(editorApi, "editor.unfoldAll"),
-      }),
-      editorApi.addAction({
-        id: "mockor.foldRecursively",
-        label: "Fold Recursively",
-        keybindings: keybinding("editor.foldRecursively"),
-        run: () => triggerEditorAction(editorApi, "editor.foldRecursively"),
-      }),
-      editorApi.addAction({
-        id: "mockor.unfoldRecursively",
-        label: "Unfold Recursively",
-        keybindings: keybinding("editor.unfoldRecursively"),
-        run: () => triggerEditorAction(editorApi, "editor.unfoldRecursively"),
-      }),
-      editorApi.addAction({
-        id: "mockor.sortLinesAscending",
-        label: "Sort Lines Ascending",
-        keybindings: keybinding("editor.sortLinesAscending"),
-        run: () => triggerEditorAction(editorApi, "editor.action.sortLinesAscending"),
-      }),
-      editorApi.addAction({
-        id: "mockor.sortLinesDescending",
-        label: "Sort Lines Descending",
-        keybindings: keybinding("editor.sortLinesDescending"),
-        run: () => triggerEditorAction(editorApi, "editor.action.sortLinesDescending"),
-      }),
-      editorApi.addAction({
-        id: "mockor.toggleCase",
-        label: "Toggle Case",
-        keybindings: keybinding("editor.toggleCase"),
-        run: () => triggerEditorAction(editorApi, "editor.action.transformToUppercase"),
-      }),
-      editorApi.addAction({
-        id: "mockor.transformToLowercase",
-        label: "Transform to Lowercase",
-        keybindings: keybinding("editor.transformToLowercase"),
-        run: () => triggerEditorAction(editorApi, "editor.action.transformToLowercase"),
-      }),
-      editorApi.addAction({
-        id: "mockor.surroundWith",
-        label: "Surround With",
-        keybindings: keybinding("editor.surroundWith"),
-        run: () => {
-          const request = surroundWithRequestFromEditor(monacoApi, editorApi);
-
-          if (!request) {
-            return;
-          }
-
-          setSurroundWithRequest(request);
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.completeStatement",
-        label: "Complete Current Statement",
-        keybindings: keybinding("editor.completeStatement"),
-        run: () => {
-          if (activeDocumentRef.current?.language !== "php") {
-            return;
-          }
-
-          applyCompleteStatement(monacoApi, editorApi);
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.cyclicExpandWord",
-        label: "Cyclic Expand Word",
-        keybindings: keybinding("editor.cyclicExpandWord"),
-        run: () => {
-          applyCyclicExpandWord(monacoApi, editorApi, hippieSessionRef);
-        },
-      }),
-      editorApi.addAction({
-        id: "mockor.closeTab",
-        label: "Close Tab",
-        keybindings: keybinding("editor.closeTab"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "editor.closeTab", () =>
-            editorActionCommandPortRef.current.closeActiveTab(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.goBack",
-        label: "Go Back",
-        keybindings: keybinding("navigation.back"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "navigation.back", () =>
-            editorActionCommandPortRef.current.goBack(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.goForward",
-        label: "Go Forward",
-        keybindings: keybinding("navigation.forward"),
-        run: () =>
-          runRegisteredCommand(commandExecutionRunnerRef, "navigation.forward", () =>
-            editorActionCommandPortRef.current.goForward(),
-          ),
-      }),
-      editorApi.addAction({
-        id: "mockor.nextChange",
-        label: "Go to Next Change",
-        keybindings: keybinding("editor.nextChange"),
-        run: () => requestRegisteredCommand(commandExecutionRunnerRef, "editor.nextChange"),
-      }),
-      editorApi.addAction({
-        id: "mockor.previousChange",
-        label: "Go to Previous Change",
-        keybindings: keybinding("editor.previousChange"),
-        run: () => requestRegisteredCommand(commandExecutionRunnerRef, "editor.previousChange"),
-      }),
-    ];
-
-    return () => {
-      disposables.forEach((disposable) => disposable?.dispose());
-    };
-  }, [
+  useEditorKeymapActions({
+    activeDocumentRef,
+    columnSelectionEnabledRef,
+    commandExecutionRunnerRef,
     customDefinitionNavigationEnabled,
-    editorApi,
+    editor: editorApi,
+    editorActionCommandPortRef,
+    hippieSessionRef,
     keymap,
     managedJavaScriptTypeScriptDocumentActive,
-    monacoApi,
-  ]);
+    monaco: monacoApi,
+    requestSurroundWith: setSurroundWithRequest,
+  });
+
+  useEffect(() => {
+    if (!monacoApi) return;
+    const disposable = registerMonacoLinkOpener(monacoApi);
+    return () => disposable?.dispose();
+  }, [monacoApi]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {

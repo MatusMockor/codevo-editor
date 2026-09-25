@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { createDiagnosticsCoalescer } from "../../domain/diagnosticsCoalescer";
 import type { WorkspaceHomeReference } from "../../domain/workspaceRootEligibility";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
@@ -6,6 +6,7 @@ import { executeCommandAndReport, type CommandExecutionRunner } from "../command
 import { createJsTestRerunLastRunCommands } from "../workbenchDebugControllerOptions";
 import { useFloatingSurfaces } from "../useFloatingSurfaces";
 import { useWorkbenchCommandRegistry } from "../useWorkbenchCommandRegistry";
+import { bottomPanelToggle } from "../workbenchPanelCommands";
 import { useWorkbenchSearchEverywhere } from "../useWorkbenchSearchEverywhere";
 import { useQuickOpenPrefixDestinations } from "../useQuickOpenPrefixDispatch";
 import {
@@ -438,6 +439,7 @@ type SearchEverywhere = ReturnType<typeof useWorkbenchSearchEverywhere>;
 
 interface CommandEffectsCompositionDependencies {
   readonly agents: CommandRegistryDependencies["agents"] & {
+    readonly agentModeActive: boolean;
     readonly markAppSettingsHydrated: Parameters<
       typeof useInitialAppSettingsHydration
     >[0]["onAppSettingsHydrated"];
@@ -1473,6 +1475,19 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     openWorkspaceSymbolsSurface,
     openCommandPaletteWithInitialQuery,
   );
+  const { showBottomPanelView: showTaskDebugPanelView, toggleBottomPanel: toggleTaskDebugPanel } =
+    taskDebug;
+  const { agentModeActive } = agents;
+  const toggleBottomPanel = useMemo(
+    () =>
+      bottomPanelToggle({
+        agentModeActive,
+        showBottomPanelView: showTaskDebugPanelView,
+        toggleBottomPanel: toggleTaskDebugPanel,
+        view: bottomPanelView,
+      }),
+    [agentModeActive, bottomPanelView, showTaskDebugPanelView, toggleTaskDebugPanel],
+  );
 
   const commandRegistry = useWorkbenchCommandRegistry({
     canShowNette: hasNetteApplicationFramework,
@@ -1630,7 +1645,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     agents,
     toggleBookmarkAtCursor: bookmarkActions.toggleBookmarkAtCursor,
     toggleBookmarksPanel: bookmarkActions.toggleBookmarksPanel,
-    toggleBottomPanel: taskDebug.toggleBottomPanel,
+    toggleBottomPanel,
     toggleEditorFontLigatures,
     toggleGitBlame: gitHistory.toggleGitBlame,
     toggleSmartMode,

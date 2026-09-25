@@ -182,3 +182,41 @@ describe("editor drawer, Problems and debug style contract", () => {
     );
   });
 });
+
+describe("editor drawer header fit contract", () => {
+  const drawer = readFileSync(resolve(dir, "editorDrawer.css"), "utf8");
+
+  function block(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return drawer.match(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`))?.[1] ?? "";
+  }
+
+  it("keeps the drawer tabs at their natural width", () => {
+    expect(block(".cv-edrawer__tabs")).toMatch(/flex: none;/);
+    expect(block(".cv-edrawer__more")).toMatch(/flex: none;/);
+  });
+
+  it("lets only the view extras shrink so header actions and Close stay visible", () => {
+    expect(block(".cv-edrawer__end")).toMatch(/min-width: 0;/);
+    expect(block(".cv-edrawer__end > *")).toMatch(/flex: none;/);
+    const extras = block(".cv-edrawer__end > .cv-edrawer__extras");
+    expect(extras).toMatch(/flex: 0 1 auto;/);
+    expect(extras).toMatch(/min-width: 0;/);
+    expect(extras).toMatch(/overflow-x: auto;/);
+  });
+
+  it("collapses secondary Problems controls when the drawer header is narrow", () => {
+    expect(block(".cv-edrawer__head")).toMatch(/container: cv-edrawer-head \/ inline-size;/);
+    expect(drawer).toMatch(
+      /@container cv-edrawer-head \(max-width: 720px\) \{[^@]*\.cv-problems__toolbar \.cv-problems__grouping,\s*\.cv-problems__toolbar \.cv-problems__package-filter \{\s*display: none;/,
+    );
+    expect(block(".cv-problems__filter")).toMatch(/flex: 0 1 180px;/);
+  });
+
+  it("shows the active package filter chip only while the package select is collapsed", () => {
+    expect(block(".cv-problems__package-chip")).toMatch(/display: none;/);
+    expect(drawer).toMatch(
+      /@container cv-edrawer-head \(max-width: 720px\) \{[^@]*\.cv-problems__toolbar \.cv-problems__package-chip \{\s*display: inline-flex;/,
+    );
+  });
+});

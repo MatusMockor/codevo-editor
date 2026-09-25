@@ -211,7 +211,6 @@ export function AgentSurfacePanel({
           onTerminalSessionCommand={onTerminalSessionCommand}
           tabPanelsRendered={unavailable === null}
         />
-        <span className="agent-session__spacer" />
       </TopBar>
       <div className="agent-surface__body" data-agent-surface-body>
         {unavailable}

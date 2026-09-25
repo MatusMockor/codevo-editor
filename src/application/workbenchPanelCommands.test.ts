@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { CommandContext } from "./commandRegistry";
-import { workbenchPanelCommands } from "./workbenchPanelCommands";
+import { bottomPanelToggle, workbenchPanelCommands } from "./workbenchPanelCommands";
 
 const disabledContext: CommandContext = {
   activeDocumentDirty: false,
@@ -239,6 +239,63 @@ describe("workbenchPanelCommands", () => {
     expect(refreshWorkspaceTodos).toHaveBeenCalledTimes(1);
   });
 
+  it.each<BottomPanelView>(["terminal", "problems", "debug", "search"])(
+    "panel.toggle closes the visible panel regardless of its view (%s)",
+    async (view) => {
+      const panel = panelHarness({ agentModeActive: false, view, visible: true });
+
+      await panel.runToggle();
+
+      expect(panel.state()).toEqual({ view, visible: false });
+    },
+  );
+
+  it.each<BottomPanelView>(["terminal", "problems", "search"])(
+    "panel.toggle reopens the last view when hidden (%s)",
+    async (view) => {
+      const panel = panelHarness({ agentModeActive: false, view, visible: false });
+
+      await panel.runToggle();
+
+      expect(panel.state()).toEqual({ view, visible: true });
+    },
+  );
+
+  it.each<{ readonly view: BottomPanelView; readonly visible: boolean }>([
+    { view: "problems", visible: true },
+    { view: "search", visible: true },
+    { view: "problems", visible: false },
+    { view: "terminal", visible: false },
+  ])(
+    "panel.toggle in agent mode toggles the terminal, not the drawer ($view, visible=$visible)",
+    async ({ view, visible }) => {
+      const panel = panelHarness({ agentModeActive: true, view, visible });
+
+      await panel.runToggle();
+
+      expect(panel.state()).toEqual({ view: "terminal", visible: true });
+    },
+  );
+
+  it("panel.toggle in agent mode closes the visible terminal", async () => {
+    const panel = panelHarness({ agentModeActive: true, view: "terminal", visible: true });
+
+    await panel.runToggle();
+
+    expect(panel.state()).toEqual({ view: "terminal", visible: false });
+  });
+
+  it.each([false, true])(
+    "panel.showProblems opens Problems even while the terminal is visible (agent mode %s)",
+    async (agentModeActive) => {
+      const panel = panelHarness({ agentModeActive, view: "terminal", visible: true });
+
+      await panel.run("panel.showProblems");
+
+      expect(panel.state()).toEqual({ view: "problems", visible: true });
+    },
+  );
+
   it("does not await TODO refresh from the command body", () => {
     const refreshWorkspaceTodos = vi.fn(() => new Promise<void>(() => undefined));
     const refreshCommand = workbenchPanelCommands({
@@ -254,3 +311,44 @@ describe("workbenchPanelCommands", () => {
     expect(refreshWorkspaceTodos).toHaveBeenCalledTimes(1);
   });
 });
+
+interface PanelHarnessInput {
+  readonly agentModeActive: boolean;
+  readonly view: BottomPanelView;
+  readonly visible: boolean;
+}
+
+function panelHarness(initial: PanelHarnessInput) {
+  let view = initial.view;
+  let visible = initial.visible;
+  const showBottomPanelView = (next: BottomPanelView) => {
+    view = next;
+    visible = true;
+  };
+  const toggleBottomPanel = () => {
+    visible = !visible;
+  };
+  const commands = workbenchPanelCommands({
+    shortcut: () => "",
+    openCommandsPalette: vi.fn(),
+    showBottomPanelView,
+    toggleBottomPanel: bottomPanelToggle({
+      agentModeActive: initial.agentModeActive,
+      showBottomPanelView,
+      toggleBottomPanel,
+      view,
+    }),
+    toggleTodoPanel: vi.fn(),
+    refreshWorkspaceTodos: vi.fn(),
+  });
+  const run = async (id: string) => {
+    const command = commands.find((candidate) => candidate.id === id);
+    expect(command).toBeDefined();
+    await command?.run(enabledContext);
+  };
+  return {
+    run,
+    runToggle: () => run("panel.toggle"),
+    state: () => ({ view, visible }),
+  };
+}

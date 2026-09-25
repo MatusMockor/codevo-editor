@@ -39,7 +39,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ Update: updaterBridge.Update }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: updaterBridge.relaunch }));
 
 describe("workbench live-document runtime composition", () => {
-  it("checks the selected channel through Rust and prepares an update without restarting", async () => {
+  it("checks the single configured update source through Rust and prepares an update without restarting", async () => {
     updaterBridge.invoke.mockResolvedValueOnce("prepareBeforeRestart").mockResolvedValueOnce({
       kind: "available",
       rid: 4,
@@ -58,12 +58,13 @@ describe("workbench live-document runtime composition", () => {
     };
     updaterBridge.construct.mockReturnValueOnce(update);
     const gateway = createWorkbenchComposition().appUpdater.appUpdaterGateway;
-    const result = await gateway.check("stable");
+    const result = await gateway.check();
     expect(result.kind).toBe("available");
     if (result.kind !== "available") return;
-    expect(updaterBridge.invoke).toHaveBeenCalledWith("app_update_check", {
-      request: { channel: "stable" },
-    });
+    expect(updaterBridge.invoke).toHaveBeenCalledWith("app_update_check");
+    expect(
+      updaterBridge.invoke.mock.calls.find(([command]) => command === "app_update_check"),
+    ).toEqual(["app_update_check"]);
     expect(updaterBridge.construct).toHaveBeenCalledWith({
       rid: 4,
       currentVersion: packageMetadata.version,

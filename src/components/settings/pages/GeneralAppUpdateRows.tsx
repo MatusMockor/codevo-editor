@@ -4,33 +4,16 @@ import {
   singleAppUpdateNotesSpan,
   type AppUpdateNotesSpan,
 } from "../../../domain/appUpdateNotes";
-import {
-  APP_UPDATE_CHANNELS,
-  APP_UPDATE_CHANNEL_LABELS,
-  type AppUpdateChannel,
-} from "../../../domain/appUpdateChannel";
-import { appUpdaterNoReleaseStatus, type AppUpdaterState } from "../../../domain/appUpdater";
-import { SegmentedControl } from "../../../ui/foundation/SegmentedControl";
+import type { AppUpdaterState } from "../../../domain/appUpdater";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 
 export interface GeneralAppUpdateRowsProps {
-  readonly channel: AppUpdateChannel;
   readonly updater: AppUpdaterSurface | null;
-  onChangeChannel(channel: AppUpdateChannel): void;
 }
 
-const CHANNEL_OPTIONS = APP_UPDATE_CHANNELS.map((value) => ({
-  value,
-  label: APP_UPDATE_CHANNEL_LABELS[value],
-}));
-
-export function GeneralAppUpdateRows({
-  channel,
-  onChangeChannel,
-  updater,
-}: GeneralAppUpdateRowsProps) {
+export function GeneralAppUpdateRows({ updater }: GeneralAppUpdateRowsProps) {
   return (
     <SettingsSectionHeading title="Updates">
       {updater === null ? (
@@ -40,14 +23,6 @@ export function GeneralAppUpdateRows({
       ) : (
         <AppUpdateRow updater={updater} />
       )}
-      <SettingsRow rowId="general.updateChannel">
-        <SegmentedControl
-          label="Update track"
-          onChange={onChangeChannel}
-          options={CHANNEL_OPTIONS}
-          value={channel}
-        />
-      </SettingsRow>
     </SettingsSectionHeading>
   );
 }
@@ -152,14 +127,6 @@ function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation 
         singleAppUpdateNotesSpan(null),
         "Codevo is up to date.",
         "success",
-      );
-    case "noRelease":
-      return presentation(
-        { action: "check" },
-        null,
-        singleAppUpdateNotesSpan(null),
-        appUpdaterNoReleaseStatus(state.channel),
-        "neutral",
       );
     case "available":
       return presentation({ action: "download" }, state.version, state.notesSpan);

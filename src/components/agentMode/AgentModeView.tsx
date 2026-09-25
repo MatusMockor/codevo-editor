@@ -762,16 +762,28 @@ function LocalAgentModeView({
   const remoteAddCloneRunning =
     remoteAdd.pendingClone !== null && remoteAddProjectCloneActive(remoteAdd.pendingClone.status);
 
-  const headerFallback = useMemo(
-    () =>
-      composerTargetProjectRootKey === null || composerTargetRepositoryRoot === null
+  const cloneComposerVisible =
+    creation.visible && creation.pending !== null && creation.pendingClone !== null;
+  const cloneProjectRootKey = creation.completedProject?.rootKey ?? null;
+  const cloneProjectRootPath = creation.completedProject?.rootPath ?? null;
+  const headerFallback = useMemo(() => {
+    if (cloneComposerVisible)
+      return cloneProjectRootKey === null || cloneProjectRootPath === null
         ? null
-        : {
-            projectRootKey: composerTargetProjectRootKey,
-            repositoryRoot: composerTargetRepositoryRoot,
-          },
-    [composerTargetProjectRootKey, composerTargetRepositoryRoot],
-  );
+        : { projectRootKey: cloneProjectRootKey, repositoryRoot: cloneProjectRootPath };
+    return composerTargetProjectRootKey === null || composerTargetRepositoryRoot === null
+      ? null
+      : {
+          projectRootKey: composerTargetProjectRootKey,
+          repositoryRoot: composerTargetRepositoryRoot,
+        };
+  }, [
+    cloneComposerVisible,
+    cloneProjectRootKey,
+    cloneProjectRootPath,
+    composerTargetProjectRootKey,
+    composerTargetRepositoryRoot,
+  ]);
   const headerProject = useMemo(() => {
     const header = agentThreadHeaderProject(
       selectedThread,

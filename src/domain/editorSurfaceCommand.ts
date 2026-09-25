@@ -6,6 +6,7 @@ export const editorSurfaceCommandIds = [
   "editor.rename",
   "editor.quickFix",
   "editor.action.refactor",
+  "editor.action.sourceAction",
   "editor.formatDocument",
   "editor.formatSelection",
   "editor.action.organizeImports",

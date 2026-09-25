@@ -81,8 +81,14 @@ describe("searchSettingsRows", () => {
     expect(ids("zoom")).toContain("appearance.agentThreadFontSize");
   });
 
-  it("finds the update track by channel words", () => {
-    const hits = searchSettingsRows("beta", SETTINGS_ROWS, false);
-    expect(hits.map((hit) => hit.row.id)).toContain("general.updateChannel");
+  it("finds the updates row and no update track row", () => {
+    expect(searchSettingsRows("update", SETTINGS_ROWS, false).map((hit) => hit.row.id)).toContain(
+      "general.appUpdates",
+    );
+    for (const query of ["track", "stable", "beta", "channel"]) {
+      const ids = searchSettingsRows(query, SETTINGS_ROWS, false).map((hit) => hit.row.id);
+      expect(ids).not.toContain("general.updateChannel");
+    }
+    expect(SETTINGS_ROWS.some((row) => row.title === "Update track")).toBe(false);
   });
 });

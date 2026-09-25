@@ -332,13 +332,23 @@ describe("AgentWorkbenchScreen", () => {
     expect(visible.hideBottomPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the terminal view when the controller shows the panel in the agent layout", () => {
+  it("keeps an unchanged drawer view the controller shows again in the agent layout", () => {
     const layout = recordedLayoutState();
-    render(createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false }));
+    render(
+      createWorkbench(ROOT_A, {
+        agentWorkbench: layout,
+        bottomPanelView: "problems",
+        bottomPanelVisible: false,
+      }),
+    );
 
-    const opened = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: true });
+    const opened = createWorkbench(ROOT_A, {
+      agentWorkbench: layout,
+      bottomPanelView: "problems",
+      bottomPanelVisible: true,
+    });
     render(opened);
-    expect(opened.showBottomPanelView).toHaveBeenCalledWith("terminal");
+    expect(opened.showBottomPanelView).not.toHaveBeenCalled();
 
     const closed = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false });
     render(closed);
@@ -1025,6 +1035,81 @@ describe("AgentWorkbenchScreen", () => {
     await waitForReact(() => expect(resolveTauriWorkspaceHome).toHaveBeenCalled());
     expect(listDirectoryEntries).not.toHaveBeenCalledWith(expect.objectContaining({ path: null }));
     agentComposerDraftStore.reset();
+  });
+
+  it("scopes the header to the cloned project and keeps its workspace open after the clone", async () => {
+    agentComposerDraftStore.reset();
+    const next = createWorkbench(ROOT_B);
+    const receipt = await next.openWorkspaceRootWithReceipt(ROOT_B);
+    const gateway: LocalProjectCloneGateway = {
+      start: vi.fn<LocalProjectCloneGateway["start"]>(async (request) => ({
+        cloneId: request.idempotencyKey,
+        status: "completed",
+        path: ROOT_B,
+        error: null,
+        progress: null,
+        failure: null,
+      })),
+      get: vi.fn(async () => {
+        throw new Error("Clone already completed");
+      }),
+      cancel: vi.fn(async () => {
+        throw new Error("Not canceled");
+      }),
+    };
+    const destination: AgentWorkbenchScreenWorkbench = {
+      ...next,
+      agents: {
+        ...next.agents,
+        agentProjects: {
+          ...next.agents.agentProjects,
+          projects: [
+            { ...project(ROOT_A), origin: "background-tab" },
+            {
+              ...project(ROOT_B),
+              ownerId: "workspace-app",
+              label: "api",
+              trust: "untrusted",
+            },
+          ],
+        },
+      },
+    };
+    const opening = vi.fn(async () => {
+      await act(async () =>
+        root.render(
+          <AgentWorkbenchScreen
+            {...defaultProps({ ...destination, openWorkspaceRootWithReceipt: opening })}
+            localCloneGateway={gateway}
+          />,
+        ),
+      );
+      return receipt;
+    });
+    await act(async () =>
+      root.render(
+        <AgentWorkbenchScreen
+          {...defaultProps(createWorkbench(ROOT_A, { openWorkspaceRootWithReceipt: opening }))}
+          localCloneGateway={gateway}
+        />,
+      ),
+    );
+    click('button[aria-label="Add project"]');
+    chooseAddProjectSource("Git URL");
+    await submitLocalCloneForm("https://github.com/example/api.git");
+    await waitForReact(() =>
+      expect(
+        [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+          (button) => button.textContent === "Review",
+        ),
+      ).toBeDefined(),
+    );
+    await act(async () => {});
+    expect(host.querySelector(".agent-clone-composer")).not.toBeNull();
+    expect(
+      host.querySelector('nav[aria-label="Thread breadcrumb"] button')?.getAttribute("aria-label"),
+    ).toBe("New thread in api");
+    expect(opening).toHaveBeenCalledExactlyOnceWith(ROOT_B);
   });
 
   it("reports the refusal when the workspace open flow declines the directory", async () => {

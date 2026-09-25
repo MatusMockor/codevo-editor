@@ -87,7 +87,7 @@ import { TauriWorkspaceTestDiscoveryGateway } from "./infrastructure/tauriWorksp
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
-import { createChannelUpdateCheck } from "./infrastructure/tauriAppUpdateChannelCheck";
+import { createAppUpdateCheck } from "./infrastructure/tauriAppUpdateCheck";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import packageMetadata from "../package.json";
@@ -110,7 +110,7 @@ export function createWorkbenchComposition() {
   const workspaceTrustPrompt = new WorkspaceTrustPromptCoordinator();
   const appUpdaterGateway = new TauriAppUpdaterGateway(
     {
-      check: createChannelUpdateCheck((command, args) => invoke(command, args)),
+      check: createAppUpdateCheck((command) => invoke(command)),
       relaunch,
       getInstallMode: () => invoke("app_update_install_mode"),
     },

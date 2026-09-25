@@ -28,6 +28,7 @@ import {
   createProblemsPackageAttribution,
 } from "../domain/problemsPackageAttribution";
 import type { WorkspacePackageManifestInput } from "../domain/workspacePackageGraph";
+import { IconButton } from "../ui/foundation/IconButton";
 import type { WorkspacePackageAuthority } from "../application/useWorkspacePackageGraph";
 import { EditorDrawerExtrasContext } from "./editorPanel/EditorDrawerExtrasContext";
 
@@ -115,6 +116,7 @@ function ProblemsPanelWorkspace({
   const effectivePackageFilterKey = packageOptions.some(({ key }) => key === packageFilterKey)
     ? packageFilterKey
     : "";
+  const activePackageFilter = packageOptions.find(({ key }) => key === effectivePackageFilterKey);
   const view = useMemo(
     () =>
       buildProblemsView(notices, workspaceRoot, visibility, filterText, {
@@ -250,7 +252,7 @@ function ProblemsPanelWorkspace({
           <span>{view.totals.warnings}</span>
         </button>
       </div>
-      <div aria-label="Problem grouping" role="group">
+      <div aria-label="Problem grouping" className="cv-problems__grouping" role="group">
         <button
           aria-label="Group by file"
           aria-pressed={grouping === "file"}
@@ -274,7 +276,7 @@ function ProblemsPanelWorkspace({
           {workspacePackageAuthority === "bounded" ? "Package (degraded)" : "Package"}
         </button>
       </div>
-      <label>
+      <label className="cv-problems__package-filter">
         <span>Package</span>
         <select
           aria-label="Filter by package"
@@ -295,6 +297,19 @@ function ProblemsPanelWorkspace({
           ))}
         </select>
       </label>
+      {activePackageFilter ? (
+        <span className="cv-problems__package-chip" title={activePackageFilter.label}>
+          <span className="cv-problems__package-chip-label">
+            Package: {activePackageFilter.label}
+          </span>
+          <IconButton
+            icon={<X size={12} />}
+            label="Clear package filter"
+            onClick={() => setPackageFilterKey("")}
+            size="xs"
+          />
+        </span>
+      ) : null}
       <div className="cv-problems__filter">
         <input
           aria-label="Filter problems"

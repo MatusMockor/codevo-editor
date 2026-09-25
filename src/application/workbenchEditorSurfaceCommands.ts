@@ -197,6 +197,12 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
   },
   {
     category: "Editor",
+    id: "editor.action.sourceAction",
+    requiredJavaScriptTypeScriptFeature: "codeAction",
+    title: "Source Action",
+  },
+  {
+    category: "Editor",
     id: "editor.nextChange",
     title: "Go to Next Change",
   },

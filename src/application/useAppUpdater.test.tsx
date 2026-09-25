@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
-import { StrictMode, useState } from "react";
+import { StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppUpdateChannel } from "../domain/appUpdateChannel";
-import type { AppUpdateCheckResult, AppUpdaterGateway } from "../domain/appUpdater";
+import type { AppUpdaterGateway } from "../domain/appUpdater";
 import { TauriAppUpdaterGateway } from "../infrastructure/tauriAppUpdaterGateway";
 import { useAppUpdater, type AppUpdaterSurface } from "./useAppUpdater";
 
@@ -288,13 +287,11 @@ describe("useAppUpdater", () => {
     const preferencesGateway = preferenceGateway();
     function Harness() {
       surface = useAppUpdater({
-        channel: "beta",
         currentVersion: "0.1.0",
         gateway,
         preferencesGateway,
         persistSkippedVersion: vi.fn(async () => undefined),
         scheduleAfterUiInteractive: neverSchedule,
-        settingsHydrated: true,
       });
       return null;
     }
@@ -313,195 +310,36 @@ describe("useAppUpdater", () => {
     root = createRoot(host);
   });
 
-  it("checks on the selected channel and drops a check that settles after the channel changed", async () => {
-    const gateway = gatewayWithUpdate();
-    const control: { settle: ((result: AppUpdateCheckResult) => void) | null } = { settle: null };
-    gateway.check.mockImplementationOnce(
-      () =>
-        new Promise<AppUpdateCheckResult>((resolve) => {
-          control.settle = resolve;
-        }),
-    );
-    const selector = renderWithChannelSelector(gateway);
-
-    let firstCheck: Promise<void> | undefined;
-    act(() => {
-      firstCheck = surface?.check();
-    });
-    expect(gateway.check).toHaveBeenLastCalledWith("beta");
-
-    act(() => selector.set?.("stable"));
-    expect(surface?.state.kind).toBe("idle");
-    expect(gateway.dispose).toHaveBeenCalled();
-
-    await act(async () => {
-      control.settle?.({
-        kind: "available",
-        candidate: {
-          candidateRevision: 1,
-          currentVersion: "0.1.0",
-          version: "0.1.1-beta.1",
-          date: null,
-          notesSpan: { kind: "single", notes: "Beta" },
-        },
-      });
-      await firstCheck;
-    });
-    expect(surface?.state.kind).toBe("idle");
-
-    await act(async () => surface?.check());
-    expect(gateway.check).toHaveBeenLastCalledWith("stable");
-    expect(surface?.state.kind).toBe("available");
-  });
-
-  it("disposes a downloaded candidate when the channel changes and checks the new channel next", async () => {
-    const gateway = gatewayWithUpdate();
-    const selector = renderWithChannelSelector(gateway);
-    await act(async () => surface?.check());
-    await act(async () => surface?.download());
-    expect(surface?.state.kind).toBe("readyToInstall");
-    const disposeCallsBeforeSwitch = gateway.dispose.mock.calls.length;
-
-    act(() => selector.set?.("stable"));
-
-    expect(surface?.state.kind).toBe("idle");
-    expect(gateway.dispose).toHaveBeenCalledTimes(disposeCallsBeforeSwitch + 1);
-    await act(async () => surface?.installAndRestart());
-    expect(gateway.installAndRestart).not.toHaveBeenCalled();
-    await act(async () => surface?.check());
-    expect(gateway.check).toHaveBeenLastCalledWith("stable");
-  });
-
-  it("reports a channel without any release as a distinct state on a manual check", async () => {
-    const gateway = gatewayWithUpdate();
-    gateway.check.mockResolvedValue({
-      kind: "noRelease",
-      currentVersion: "0.1.0",
-      channel: "stable",
-    });
-    render(gateway, { channel: "stable" });
-
-    await act(async () => surface?.check());
-
-    expect(gateway.check).toHaveBeenCalledWith("stable");
-    expect(surface?.state).toEqual({
-      kind: "noRelease",
-      currentVersion: "0.1.0",
-      channel: "stable",
-    });
-    await act(async () => surface?.download());
-    expect(gateway.download).not.toHaveBeenCalled();
-  });
-
-  it("keeps a startup check without any channel release silent and does not retry it", async () => {
-    const gateway = gatewayWithUpdate();
-    gateway.check.mockResolvedValue({
-      kind: "noRelease",
-      currentVersion: "0.1.0",
-      channel: "stable",
-    });
-    const logStartupFailure = vi.fn();
-    let start!: () => void;
-    render(gateway, {
-      channel: "stable",
-      logStartupFailure,
-      scheduleAfterUiInteractive: (task) => {
-        start = task;
-        return vi.fn();
-      },
-    });
-
-    await act(async () => start());
-
-    expect(surface?.state.kind).toBe("noRelease");
-    expect(gateway.check).toHaveBeenCalledOnce();
-    expect(logStartupFailure).not.toHaveBeenCalled();
-  });
-
-  it("defers the startup check until settings hydrate and checks the hydrated stable channel once", async () => {
+  it("runs exactly one startup check without waiting for settings or a channel", async () => {
     const gateway = gatewayWithUpdate();
     const scheduler = recordingScheduler();
-    const control = renderWithHydration(gateway, scheduler.schedule);
+    const logStartupFailure = vi.fn();
+    render(gateway, { logStartupFailure, scheduleAfterUiInteractive: scheduler.schedule });
 
+    expect(scheduler.tasks).toHaveLength(1);
     await act(async () => scheduler.runAll());
-    expect(scheduler.tasks).toHaveLength(0);
-    expect(gateway.check).not.toHaveBeenCalled();
-    expect(surface?.state.kind).toBe("idle");
-
-    act(() => control.set?.({ channel: "stable", hydrated: true }));
-    await act(async () => scheduler.runAll());
-    act(() => control.set?.({ channel: "stable", hydrated: true }));
     await act(async () => scheduler.runAll());
 
     expect(gateway.check).toHaveBeenCalledOnce();
-    expect(gateway.check).toHaveBeenCalledWith("stable");
+    expect(gateway.check).toHaveBeenCalledWith();
     expect(surface?.state).toMatchObject({ kind: "available", version: "0.2.0" });
   });
 
-  it("runs exactly one startup check on the default beta channel after hydration", async () => {
+  it("keeps a startup check for a missing release silent and does not retry it", async () => {
     const gateway = gatewayWithUpdate();
+    gateway.check.mockRejectedValue(new Error("Could not fetch a valid release JSON"));
+    const logStartupFailure = vi.fn();
     const scheduler = recordingScheduler();
-    const control = renderWithHydration(gateway, scheduler.schedule);
+    render(gateway, { logStartupFailure, scheduleAfterUiInteractive: scheduler.schedule });
 
-    act(() => control.set?.({ channel: "beta", hydrated: true }));
-    await act(async () => scheduler.runAll());
     await act(async () => scheduler.runAll());
 
+    expect(surface?.state).toEqual({ kind: "idle", currentVersion: "0.1.0" });
     expect(gateway.check).toHaveBeenCalledOnce();
-    expect(gateway.check).toHaveBeenCalledWith("beta");
+    expect(logStartupFailure).toHaveBeenCalledWith(
+      "Application update check failed during startup.",
+    );
   });
-
-  function renderWithHydration(
-    gateway: AppUpdaterGateway,
-    scheduleAfterUiInteractive: (task: () => void) => () => void,
-  ): { set: ((next: HydrationState) => void) | null } {
-    const preferencesGateway = preferenceGateway();
-    const persistSkippedVersion = vi.fn(async () => undefined);
-    const control: { set: ((next: HydrationState) => void) | null } = { set: null };
-    function HydrationHarness() {
-      const [hydration, setHydration] = useState<HydrationState>({
-        channel: "beta",
-        hydrated: false,
-      });
-      control.set = setHydration;
-      surface = useAppUpdater({
-        channel: hydration.channel,
-        currentVersion: "0.1.0",
-        gateway,
-        persistSkippedVersion,
-        preferencesGateway,
-        scheduleAfterUiInteractive,
-        settingsHydrated: hydration.hydrated,
-      });
-      return null;
-    }
-    act(() => root.render(<HydrationHarness />));
-    return control;
-  }
-
-  function renderWithChannelSelector(gateway: AppUpdaterGateway): {
-    set: ((channel: AppUpdateChannel) => void) | null;
-  } {
-    const preferencesGateway = preferenceGateway();
-    const persistSkippedVersion = vi.fn(async () => undefined);
-    const selector: { set: ((channel: AppUpdateChannel) => void) | null } = { set: null };
-    function ChannelHarness() {
-      const [channel, setChannel] = useState<AppUpdateChannel>("beta");
-      selector.set = setChannel;
-      surface = useAppUpdater({
-        channel,
-        currentVersion: "0.1.0",
-        gateway,
-        persistSkippedVersion,
-        preferencesGateway,
-        scheduleAfterUiInteractive: neverSchedule,
-        settingsHydrated: true,
-      });
-      return null;
-    }
-    act(() => root.render(<ChannelHarness />));
-    return selector;
-  }
 
   function render(
     gateway: AppUpdaterGateway,
@@ -510,13 +348,11 @@ describe("useAppUpdater", () => {
     const preferencesGateway = overrides.preferencesGateway ?? preferenceGateway();
     function Harness() {
       surface = useAppUpdater({
-        channel: "beta",
         currentVersion: "0.1.0",
         gateway,
         preferencesGateway,
         persistSkippedVersion: vi.fn(async () => undefined),
         scheduleAfterUiInteractive: neverSchedule,
-        settingsHydrated: true,
         ...overrides,
       });
       return null;
@@ -544,11 +380,6 @@ function gatewayWithUpdate() {
 }
 
 const neverSchedule = () => () => undefined;
-
-interface HydrationState {
-  readonly channel: AppUpdateChannel;
-  readonly hydrated: boolean;
-}
 
 function recordingScheduler() {
   const tasks: Array<() => void> = [];

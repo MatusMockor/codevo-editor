@@ -39,8 +39,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(162);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(160);
+    expect(keymapCommands).toHaveLength(163);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(161);
   });
 
   it("creates defaults for editable shortcuts", () => {

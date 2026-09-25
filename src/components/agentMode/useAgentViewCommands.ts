@@ -29,6 +29,7 @@ export function useAgentViewCommands(
       editorTextFocused: () => editorTextFocused(document),
       runPreferredScript: () => ref.current.runPreferredScript?.(),
       openCommitMenu: () => ref.current.openCommitMenu?.(),
+      toggleMaximizedPanel: () => ref.current.toggleMaximizedPanel?.(),
       addProject: () => ref.current.addProject?.(),
       threadSelected: () => ref.current.threadSelected(),
       surfaceBlocked: (surface) => ref.current.surfaceBlocked(surface),

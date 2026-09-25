@@ -12,6 +12,7 @@ elements or decoration. In the same program, fix the bugs deferred during this s
 the new features the owner approved.
 
 Success means:
+
 - every screen in `docs/redesign/v3-*.html` exists in the real app with the same structure,
   sizes, copy and interactions, in all 6 palettes x dark/light;
 - no existing capability is lost (agent workflows, editor, debugging, git, scripts, terminals,
@@ -90,15 +91,15 @@ Success means:
 
 ### 3.2 Deferred bugs
 
-| # | Bug | Expected |
-|---|---|---|
-| B1 | Preview of an HTML file linked by an agent shows "The file could not be read." + Retry (observed on `docs/redesign/*.html`, 100-120 KB, well under the 2 MB limit) | Root cause found and fixed; preview opens |
-| B2 | Sidebar background label uses the immediate inferred-idle rule, so the thread row can flicker between Working and Working in background | Sidebar uses the same 3 s quiescence resolution as the conversation |
-| B3 | Codex subagents render as a generic `details` block with nested tool calls, duplicated with the spawn row | Codex `collabAgentToolCall` mapped to typed events; Codex subagents use the same batch row / Agents panel as Claude, grouped per spawn call with its task title |
-| B4 | Diff in the narrow right panel is cramped and clips file names/content | Resolved by the redesigned resizable panel and diff layout (§3.1.8) |
-| B5 | Queued-message edit shows image attachments as icons | Thumbnails as in t3code |
-| B6 | Usage panel sums Codex app-server `contextTokens` (last request total) as input, not a per-turn sum | Per-turn deltas from thread-cumulative totals; no double counting across old and new events |
-| B7 | Long turns show "Earlier activity of this turn is saved but not shown here yet." with no way to see it | A quiet "Load earlier activity" control (t3code "Load earlier turns" pattern) pages older events from the turn log; bounded memory, no scroll jump |
+| #   | Bug                                                                                                                                                                | Expected                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B1  | Preview of an HTML file linked by an agent shows "The file could not be read." + Retry (observed on `docs/redesign/*.html`, 100-120 KB, well under the 2 MB limit) | Root cause found and fixed; preview opens                                                                                                                       |
+| B2  | Sidebar background label uses the immediate inferred-idle rule, so the thread row can flicker between Working and Working in background                            | Sidebar uses the same 3 s quiescence resolution as the conversation                                                                                             |
+| B3  | Codex subagents render as a generic `details` block with nested tool calls, duplicated with the spawn row                                                          | Codex `collabAgentToolCall` mapped to typed events; Codex subagents use the same batch row / Agents panel as Claude, grouped per spawn call with its task title |
+| B4  | Diff in the narrow right panel is cramped and clips file names/content                                                                                             | Resolved by the redesigned resizable panel and diff layout (§3.1.8)                                                                                             |
+| B5  | Queued-message edit shows image attachments as icons                                                                                                               | Thumbnails as in t3code                                                                                                                                         |
+| B6  | Usage panel sums Codex app-server `contextTokens` (last request total) as input, not a per-turn sum                                                                | Per-turn deltas from thread-cumulative totals; no double counting across old and new events                                                                     |
+| B7  | Long turns show "Earlier activity of this turn is saved but not shown here yet." with no way to see it                                                             | A quiet "Load earlier activity" control (t3code "Load earlier turns" pattern) pages older events from the turn log; bounded memory, no scroll jump              |
 
 ### 3.3 New features approved in this session
 
@@ -108,7 +109,8 @@ Success means:
 - F4 Workspace trust dialog (replaces the one-click trust button).
 - F5 Clone destination default `~/code/<name>`, remembering the last parent folder.
 - F6 One-step clone form (URL, destination, optional branch) with live validation.
-- F7 Update channel Stable / Beta.
+- F7 Update channel Stable / Beta. Dropped by owner decision on 2026-09-25: the app is still
+  in beta, so Settings > General shows a single Updates section with no channel split.
 - F8 Branch picker in the composer environment area.
 - F9 Git, Scripts and Pull request as right-panel tabs; PR creation form.
 - F10 Keyboard shortcuts cheatsheet (⌘/), command palette files/branches/scripts results and `@` file prefix.
@@ -123,13 +125,14 @@ redesigned in this program), PHP-specific settings pages.
   module (`src/ui/` or `src/components/foundation/`), consumed by feature components; no
   feature component defines its own colors.
 - Redesign is presentation-level: domain, application and Rust layers change only where a
-  feature or bug requires it (F1, F2, F3, F4, F5, F7, F8, F9, B2, B3, B6).
+  feature or bug requires it (F1, F2, F3, F4, F5, F8, F9, B2, B3, B6).
 - Hotspot limits: `App.tsx`, `useWorkbenchController.ts`, `AgentThreadSession.tsx` and other
   large files must shrink or stay flat; new surfaces get their own focused modules.
 - Old styles are removed as each surface is migrated; no long-lived dual styling.
 - Contracts: F1 changes thread views from per-project to all-projects with filter; F9 PR
-  creation uses a closed typed command through the existing git/forge boundary; F7 adds an
-  updater channel setting with a typed enum on both TS and Rust sides; B3 adds a Codex event
+  creation uses a closed typed command through the existing git/forge boundary; F7 (dropped
+  2026-09-25) no longer adds an updater channel setting, and the argument-free Rust
+  `app_update_check` command reads only the configured endpoint; B3 adds a Codex event
   kind to the TS/Rust wire contracts with tests on both sides.
 
 ## 5. Delivery plan (phases)
@@ -138,19 +141,19 @@ Each phase gets its own implementation plan (writing-plans), is implemented by O
 agents with disjoint file ownership, reviewed by a separate Opus 5.5 read-only agent, passes
 all gates, is verified in a separately built QA app, and is committed to `main`.
 
-| Phase | Content | Depends on |
-|---|---|---|
-| P0 | Bugs B1, B2, B5, B6 (independent, small) | - |
-| P1 | Tokens, palettes, appearance setting, base components | - |
-| P2 | App shell: window chrome, top bar, sidebar frame, right panel frame; P1 carry-overs (hover/active tint contrast, light-palette native window flash, faint light-scheme panel borders) | P1 |
-| P3 | Conversation, composer, attachments, states, B7 | P2 |
-| P4 | Sidebar and thread management, F1, F2, Agents panel, B3 | P2 |
-| P5 | Command palette, F10 | P2 |
-| P6 | Right panel: diff, files, terminal, git, PR, scripts, F9, B4 | P2 |
-| P7 | Editor and debugging surfaces | P6 |
-| P8 | Projects, clone, onboarding, trust, F3-F6 | P5 |
-| P9 | Settings and pickers, F7, F8 | P1, P3 |
-| P10 | Full-app QA pass in all palettes, cleanup of dead styles, release | all |
+| Phase | Content                                                                                                                                                                               | Depends on |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| P0    | Bugs B1, B2, B5, B6 (independent, small)                                                                                                                                              | -          |
+| P1    | Tokens, palettes, appearance setting, base components                                                                                                                                 | -          |
+| P2    | App shell: window chrome, top bar, sidebar frame, right panel frame; P1 carry-overs (hover/active tint contrast, light-palette native window flash, faint light-scheme panel borders) | P1         |
+| P3    | Conversation, composer, attachments, states, B7                                                                                                                                       | P2         |
+| P4    | Sidebar and thread management, F1, F2, Agents panel, B3                                                                                                                               | P2         |
+| P5    | Command palette, F10                                                                                                                                                                  | P2         |
+| P6    | Right panel: diff, files, terminal, git, PR, scripts, F9, B4                                                                                                                          | P2         |
+| P7    | Editor and debugging surfaces                                                                                                                                                         | P6         |
+| P8    | Projects, clone, onboarding, trust, F3-F6                                                                                                                                             | P5         |
+| P9    | Settings and pickers, F8 (F7 dropped 2026-09-25)                                                                                                                                      | P1, P3     |
+| P10   | Full-app QA pass in all palettes, cleanup of dead styles, release                                                                                                                     | all        |
 
 P0 and P1 run in parallel. After P2, P3-P6 can run in parallel where file ownership allows.
 

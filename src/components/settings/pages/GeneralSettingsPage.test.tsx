@@ -346,18 +346,13 @@ describe("GeneralSettingsPage", () => {
     },
   );
 
-  it("changes the update track through the Stable/Beta segmented control", async () => {
-    const onSave = await render({});
+  it("shows a single Updates section without an update track row", async () => {
+    await render({});
 
-    expect(radioIn("general.updateChannel", "Beta").getAttribute("aria-checked")).toBe("true");
-
-    act(() => radioIn("general.updateChannel", "Stable").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), appUpdateChannel: "stable" },
-      trusted: true,
-      workspaceSettings: defaultWorkspaceSettings(),
-    });
+    expect(host.querySelector('[data-settings-row="general.appUpdates"]')).not.toBeNull();
+    expect(host.querySelector('[data-settings-row="general.updateChannel"]')).toBeNull();
+    expect(host.textContent).not.toContain("Update track");
+    expect(host.querySelector('[role="radiogroup"][aria-label="Update track"]')).toBeNull();
   });
 
   it("toggles the sidebar attention item in editor header items", async () => {

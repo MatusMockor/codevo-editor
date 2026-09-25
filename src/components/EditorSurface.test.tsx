@@ -15149,7 +15149,7 @@ class Foo
   });
 
   it.each([1, 2, 4])(
-    "keeps 49 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
+    "keeps every Monaco action stable across callback-only rerenders for %i editor pane(s)",
     async (paneCount) => {
       const activeDocument: EditorDocument = {
         content: "const value = 1;\n",
@@ -15207,8 +15207,10 @@ class Foo
         await Promise.resolve();
       });
 
+      const registeredActionCount = editors[0]?.addAction.mock.calls.length ?? 0;
+      expect(registeredActionCount).toBeGreaterThan(49);
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(49);
+        expect(editor.addAction).toHaveBeenCalledTimes(registeredActionCount);
       });
 
       await act(async () => {
@@ -15218,7 +15220,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(49);
+        expect(editor.addAction).toHaveBeenCalledTimes(registeredActionCount);
       });
       for (const [paneIndex, editor] of editors.entries()) {
         const actions = editor.addAction.mock.calls.map(([action]) => action);
@@ -15242,7 +15244,7 @@ class Foo
       });
 
       actionDisposersByPane.forEach((actionDisposers) => {
-        expect(actionDisposers).toHaveLength(49);
+        expect(actionDisposers).toHaveLength(registeredActionCount);
         actionDisposers.forEach((dispose) => {
           expect(dispose).toHaveBeenCalledTimes(1);
         });
@@ -15288,7 +15290,8 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(49);
+    const registeredActionCount = editor.addAction.mock.calls.length;
+    expect(registeredActionCount).toBeGreaterThan(49);
 
     await act(async () => {
       root.render(createElement(EditorSurface, { ...props, keymap: secondKeymap }));
@@ -15296,11 +15299,11 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(98);
-    actionDisposers.slice(0, 49).forEach((dispose) => {
+    expect(editor.addAction).toHaveBeenCalledTimes(registeredActionCount * 2);
+    actionDisposers.slice(0, registeredActionCount).forEach((dispose) => {
       expect(dispose).toHaveBeenCalledTimes(1);
     });
-    actionDisposers.slice(49).forEach((dispose) => {
+    actionDisposers.slice(registeredActionCount).forEach((dispose) => {
       expect(dispose).not.toHaveBeenCalled();
     });
 
@@ -18039,7 +18042,13 @@ function createMonaco(model: FakeModel) {
       Slash: 90,
       UpArrow: 9,
     },
-    KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },
+    KeyMod: {
+      Alt: 512,
+      chord: (first: number, second: number) => (first | ((second & 0xffff) << 16)) >>> 0,
+      CtrlCmd: 2048,
+      Shift: 1024,
+      WinCtrl: 4096,
+    },
     MarkerTag: {
       Deprecated: 2,
       Unnecessary: 1,

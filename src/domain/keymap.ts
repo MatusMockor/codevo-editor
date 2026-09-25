@@ -286,6 +286,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "",
+    id: "editor.action.sourceAction",
+    label: "Source Action",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "F8",
     id: "editor.nextProblem",
     label: "Go to Next Problem",

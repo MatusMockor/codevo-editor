@@ -1,4 +1,3 @@
-import type { AppUpdateChannel } from "./appUpdateChannel";
 import type { AppUpdateNotesSpan } from "./appUpdateNotes";
 
 export const MAX_APP_UPDATE_VERSION_LENGTH = 64;
@@ -23,7 +22,6 @@ export type AppUpdatePreparation = "readyToInstall" | "readyToRestart";
 
 export type AppUpdateCheckResult =
   | { readonly kind: "upToDate"; readonly currentVersion: string }
-  | AppUpdateNoRelease
   | { readonly kind: "available" | "readyToRestart"; readonly candidate: AppUpdateCandidate }
   | {
       readonly kind: "readyToRestartOutdated";
@@ -31,14 +29,8 @@ export type AppUpdateCheckResult =
       readonly supersededBy: AppUpdateSupersedingRelease;
     };
 
-export interface AppUpdateNoRelease {
-  readonly kind: "noRelease";
-  readonly currentVersion: string;
-  readonly channel: AppUpdateChannel;
-}
-
 export interface AppUpdaterGateway {
-  check(channel: AppUpdateChannel): Promise<AppUpdateCheckResult>;
+  check(): Promise<AppUpdateCheckResult>;
   download(candidateRevision: number): Promise<AppUpdatePreparation>;
   installAndRestart(candidateRevision: number): Promise<void>;
   dispose(): Promise<void>;
@@ -54,7 +46,6 @@ export type AppUpdaterState =
   | { readonly kind: "idle"; readonly currentVersion: string }
   | { readonly kind: "checking"; readonly currentVersion: string; readonly generation: number }
   | { readonly kind: "upToDate"; readonly currentVersion: string }
-  | AppUpdateNoRelease
   | (AppUpdaterReleasePresentation & { readonly kind: "available" })
   | (AppUpdaterReleasePresentation & {
       readonly kind: "downloading";
@@ -127,13 +118,6 @@ export function reduceAppUpdaterState(
       if (action.result.kind === "upToDate") {
         return { kind: "upToDate", currentVersion: action.result.currentVersion };
       }
-      if (action.result.kind === "noRelease") {
-        return {
-          kind: "noRelease",
-          currentVersion: action.result.currentVersion,
-          channel: action.result.channel,
-        };
-      }
       if (action.result.kind === "readyToRestartOutdated") {
         return {
           ...availableState(action.result.candidate),
@@ -199,7 +183,6 @@ export function presentAppUpdateToast(state: AppUpdaterState): AppUpdateToastPre
     case "idle":
     case "checking":
     case "upToDate":
-    case "noRelease":
       return null;
     case "available":
       return {
@@ -231,15 +214,6 @@ export function presentAppUpdateToast(state: AppUpdaterState): AppUpdateToastPre
         operation: state.operation,
         message: state.message,
       };
-  }
-}
-
-export function appUpdaterNoReleaseStatus(channel: AppUpdateChannel): string {
-  switch (channel) {
-    case "stable":
-      return "No stable release yet";
-    case "beta":
-      return "No beta release yet";
   }
 }
 
