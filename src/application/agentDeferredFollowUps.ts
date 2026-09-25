@@ -2,9 +2,10 @@ import type { AgentFollowUpRequest } from "./agentThreadPorts";
 
 export const MAX_DEFERRED_FOLLOW_UPS_PER_THREAD = 8;
 export const MAX_DEFERRED_FOLLOW_UP_THREADS = 64;
+export const DEFERRED_NEXT_TURN_NOTICE = "Will send when the current turn ends.";
 
 export interface DeferredFollowUp {
-  readonly state?: "queued" | "paused" | "uncertain";
+  readonly state?: "queued" | "next" | "paused" | "uncertain";
   readonly id: string;
   readonly request: AgentFollowUpRequest;
   /** Presentation only; never an executable attachment reference. */
@@ -67,6 +68,30 @@ export function removeDeferred(
   const retained = queue.filter((candidate) => candidate.id !== id);
   if (retained.length === queue.length) return map;
   return withQueue(map, threadId, retained);
+}
+
+export function promoteDeferred(
+  map: DeferredFollowUps,
+  threadId: string,
+  id: string,
+): DeferredFollowUps {
+  const queue = deferredFollowUpsForThread(map, threadId);
+  const entry = queue.find((candidate) => candidate.id === id);
+  if (entry === undefined) return map;
+  return withQueue(map, threadId, [
+    { ...entry, state: "next" },
+    ...queue.filter((candidate) => candidate !== entry),
+  ]);
+}
+
+export function releaseNextDeferred(map: DeferredFollowUps, threadId: string): DeferredFollowUps {
+  const queue = deferredFollowUpsForThread(map, threadId);
+  if (!queue.some((entry) => entry.state === "next")) return map;
+  return withQueue(
+    map,
+    threadId,
+    queue.map((entry) => (entry.state === "next" ? { ...entry, state: "queued" } : entry)),
+  );
 }
 
 export function deferredQueueIsEditing(queue: ReadonlyArray<DeferredFollowUp>): boolean {

@@ -6,6 +6,8 @@ import {
   deferredFollowUpsForThread,
   emptyDeferredFollowUps,
   enqueueDeferred,
+  promoteDeferred,
+  releaseNextDeferred,
   removeDeferred,
   takeDeferredHead,
   beginDeferredEdit,
@@ -81,6 +83,39 @@ describe("agentDeferredFollowUps", () => {
     ).toEqual(["d0", "d2"]);
     expect(removeDeferred(map, "agt-t1-0001", "missing")).toBe(map);
     expect(removeDeferred(map, "agt-t9-0009", "d1")).toBe(map);
+  });
+
+  it("promotes one entry to the front for the next turn and leaves an unknown id alone", () => {
+    const map = filled(3);
+
+    const promoted = deferredFollowUpsForThread(
+      promoteDeferred(map, "agt-t1-0001", "d2"),
+      "agt-t1-0001",
+    );
+
+    expect(promoted.map((item) => [item.id, item.state])).toEqual([
+      ["d2", "next"],
+      ["d0", undefined],
+      ["d1", undefined],
+    ]);
+    expect(promoted[0].request).toBe(deferredFollowUpsForThread(map, "agt-t1-0001")[2].request);
+    expect(promoteDeferred(map, "agt-t1-0001", "missing")).toBe(map);
+    expect(promoteDeferred(map, "agt-t9-0009", "d1")).toBe(map);
+  });
+
+  it("releases a next-turn hold back to queued and leaves a queue without one alone", () => {
+    const map = filled(2);
+    const promoted = promoteDeferred(map, "agt-t1-0001", "d1");
+
+    expect(
+      deferredFollowUpsForThread(releaseNextDeferred(promoted, "agt-t1-0001"), "agt-t1-0001").map(
+        (item) => [item.id, item.state],
+      ),
+    ).toEqual([
+      ["d1", "queued"],
+      ["d0", undefined],
+    ]);
+    expect(releaseNextDeferred(map, "agt-t1-0001")).toBe(map);
   });
 
   it("refuses overflow at the global bound without discarding another thread", () => {

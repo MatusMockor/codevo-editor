@@ -5,6 +5,7 @@ import { act, memo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
+import { agentAttachmentImageKey } from "../../application/useAgentAttachmentImages";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
@@ -861,6 +862,45 @@ describe("AgentModeView", () => {
     render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
     expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
     expect(promptField().value).toBe("half a thought");
+  });
+
+  it("shows the kept queued image as a thumbnail while editing and saves it", async () => {
+    const session = queuedEditSession();
+    const ensure = vi.fn();
+    const imageKey = agentAttachmentImageKey(ownerIdFor(ROOT), "agt-1", QUEUED_ATTACHMENT_ID);
+    const commitDeferredFollowUpEdit = vi.fn(async () => true);
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit,
+      cancelDeferredFollowUpEdit: vi.fn(),
+      attachmentImages: attachmentImagesSurfaceFixture({
+        ensure,
+        images: new Map([[imageKey, { kind: "ready" as const, url: "blob:queued-shot" }]]),
+      }),
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+
+    await waitForReact(() =>
+      expect(ensure).toHaveBeenCalledWith({
+        workspaceId: ownerIdFor(ROOT),
+        threadId: "agt-1",
+        attachmentId: QUEUED_ATTACHMENT_ID,
+        mime: "image/png",
+      }),
+    );
+    expect(
+      host
+        .querySelector(".agent-composer__box img.agent-composer-attachment__preview")
+        ?.getAttribute("src"),
+    ).toBe("blob:queued-shot");
+    await submitFormAsync();
+    expect(commitDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session, {
+      prompt: "and then ship it",
+      keptAttachmentKeys: ["attachment-0"],
+    });
   });
 
   it("removes a kept attachment while editing and saves without it", async () => {

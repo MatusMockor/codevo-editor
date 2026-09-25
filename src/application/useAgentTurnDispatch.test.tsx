@@ -87,6 +87,7 @@ import {
   AGENT_SESSION_LOST_NOTICE,
 } from "./agentTurnDispatchPolicy";
 import { AGENT_DISPATCH_IN_PROGRESS_NOTICE } from "./agentDispatchKeys";
+import { DEFERRED_NEXT_TURN_NOTICE } from "./agentDeferredFollowUps";
 import {
   DEFERRED_CLEARED_NOTICE,
   DEFERRED_FULL_NOTICE,
@@ -3067,7 +3068,8 @@ describe("useAgentTurnDispatch steering", () => {
       ]),
     );
     expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
-    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).not.toBe("paused");
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("next");
+    expect(harness.notice()).toBeNull();
     await act(async () =>
       harness.emitStatus(harness.turnIdOf(threadId, 0), 2, { kind: "exited", exitCode: 0 }),
     );
@@ -3179,6 +3181,229 @@ describe("useAgentTurnDispatch steering", () => {
     const entry = harness.hook().deferredFollowUps.get(threadId)![0];
     await act(() => harness.hook().sendDeferredFollowUpNow(threadId, entry.id));
     expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it.each(["inputClosed", "notRunning", "notRegistered"] as const)(
+    "keeps an explicit send-now at the front for the next turn when the agent rejects it with %s",
+    async (reason) => {
+      const harness = renderDispatch();
+      const threadId = await harness.startRunningThread();
+      const turnId = harness.turnIdOf(threadId, 0);
+      await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+      await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" });
+      const second = harness.hook().deferredFollowUps.get(threadId)![1];
+      harness.agent.steerAgentTask.mockResolvedValueOnce(rejection(reason));
+
+      await act(() => harness.hook().sendDeferredFollowUpNow(threadId, second.id));
+
+      expect(
+        harness
+          .hook()
+          .deferredFollowUps.get(threadId)
+          ?.map((entry) => [entry.request.prompt, entry.state ?? "queued"]),
+      ).toEqual([
+        ["second", "next"],
+        ["first", "queued"],
+      ]);
+      expect(harness.notice()).toEqual({
+        kind: "info",
+        message: DEFERRED_NEXT_TURN_NOTICE,
+        action: null,
+      });
+      await act(async () => {
+        harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+        harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+      });
+      await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+      expect(harness.startedRequests[1].prompt).toBe("second");
+      expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+      harness.unmount();
+    },
+  );
+
+  async function holdSecondForNextTurn(
+    harness: ReturnType<typeof renderDispatch>,
+    threadId: string,
+  ): Promise<string> {
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" });
+    const second = harness.hook().deferredFollowUps.get(threadId)![1];
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, second.id));
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("next");
+    return second.id;
+  }
+
+  it("keeps a transiently unsteerable send-now in place and does not hold it for the next turn", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" });
+    const second = harness.hook().deferredFollowUps.get(threadId)![1];
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("notSteerable"));
+
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, second.id));
+
+    expect(
+      harness
+        .hook()
+        .deferredFollowUps.get(threadId)
+        ?.map((entry) => [entry.request.prompt, entry.state ?? "queued"]),
+    ).toEqual([
+      ["first", "queued"],
+      ["second", "queued"],
+    ]);
+    expect(harness.notice()?.message).toBe(
+      "The agent cannot receive this message now. Your message has not been sent.",
+    );
+    harness.unmount();
+  });
+
+  it("pauses a message held for the next turn when the turn fails", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await holdSecondForNextTurn(harness, threadId);
+
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 1 });
+    });
+
+    await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
+    expect(
+      harness
+        .hook()
+        .deferredFollowUps.get(threadId)
+        ?.map((entry) => [entry.request.prompt, entry.state]),
+    ).toEqual([
+      ["second", "paused"],
+      ["first", "paused"],
+    ]);
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("pauses a message held for the next turn on Stop and never launches it late", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await holdSecondForNextTurn(harness, threadId);
+
+    await act(() => harness.hook().stop(threadId));
+    await act(async () => harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }));
+
+    expect(
+      harness
+        .hook()
+        .deferredFollowUps.get(threadId)
+        ?.map((entry) => [entry.request.prompt, entry.state]),
+    ).toEqual([
+      ["second", "paused"],
+      ["first", "paused"],
+    ]);
+    expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("keeps a message held for the next turn at the front while it is edited", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    const heldId = await holdSecondForNextTurn(harness, threadId);
+
+    const session = beginEdit(harness, threadId, heldId);
+    expect(session).not.toBeNull();
+    expect(
+      await commitEdit(harness, session!, { prompt: "second, edited", keptAttachmentKeys: [] }),
+    ).toBe(true);
+
+    expect(
+      harness
+        .hook()
+        .deferredFollowUps.get(threadId)
+        ?.map((entry) => [entry.request.prompt, entry.state ?? "queued"]),
+    ).toEqual([
+      ["second, edited", "next"],
+      ["first", "queued"],
+    ]);
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].prompt).toBe("second, edited");
+    harness.unmount();
+  });
+
+  it("drops the next-turn label once another turn has started before the held message", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await holdSecondForNextTurn(harness, threadId);
+    const first = harness.hook().deferredFollowUps.get(threadId)![1];
+    const session = beginEdit(harness, threadId, first.id);
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    const launch = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "plan",
+      effort: "default",
+    } as const;
+    const directSent = await act(() =>
+      harness.hook().sendFollowUp({ threadId, prompt: "direct", launch }),
+    );
+    expect(directSent).toBe(true);
+    await act(async () =>
+      harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "running" }),
+    );
+
+    act(() => harness.hook().cancelDeferredFollowUpEdit(session!));
+
+    await waitForReact(() =>
+      expect(
+        harness
+          .hook()
+          .deferredFollowUps.get(threadId)
+          ?.map((entry) => [entry.request.prompt, entry.state ?? "queued"]),
+      ).toEqual([
+        ["second", "queued"],
+        ["first", "queued"],
+      ]),
+    );
+    harness.unmount();
+  });
+
+  it("makes the chosen entry the head when the turn settles while send-now is in flight", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" });
+    const second = harness.hook().deferredFollowUps.get(threadId)![1];
+    const gate = createDeferred<boolean>();
+    harness.environment.hasPendingThreadInput = () => gate.promise;
+    let sending: Promise<void> | undefined;
+    await act(async () => {
+      sending = harness.hook().sendDeferredFollowUpNow(threadId, second.id);
+    });
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await act(async () => {
+      gate.resolve(false);
+      await sending;
+    });
+
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].prompt).toBe("second");
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
     harness.unmount();
   });
 

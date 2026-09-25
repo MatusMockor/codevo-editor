@@ -1,9 +1,10 @@
 import { ArrowUp, Clock3, Paperclip, Pause, Pencil, X } from "lucide-react";
+import { DEFERRED_NEXT_TURN_NOTICE } from "../../application/agentDeferredFollowUps";
 import type { AgentTurnAttachmentIntent } from "../../application/agentThreadPorts";
 import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
 
-export type AgentQueuedPromptState = "queued" | "paused" | "uncertain" | "editing";
+export type AgentQueuedPromptState = "queued" | "next" | "paused" | "uncertain" | "editing";
 
 export interface AgentQueuedPromptProps {
   readonly displayAttachmentCount?: number;
@@ -18,6 +19,7 @@ export interface AgentQueuedPromptProps {
 
 export const AGENT_QUEUED_UNCERTAIN_NOTICE =
   "Delivery could not be confirmed. Remove this message before sending it again.";
+export const AGENT_QUEUED_NEXT_TURN_NOTICE = DEFERRED_NEXT_TURN_NOTICE;
 export const AGENT_QUEUED_EDIT_LABEL = "Edit queued message";
 export const AGENT_QUEUED_EDITING_NOTICE =
   "Editing in the composer. It keeps its place in the queue until you save or cancel.";
@@ -78,7 +80,7 @@ export function AgentQueuedPrompt({
               <Pencil aria-hidden="true" />
             </button>
           )}
-          {state === "queued" && onSendNow !== undefined && (
+          {(state === "queued" || state === "next") && onSendNow !== undefined && (
             <button
               aria-label="Send queued message now"
               className="agent-prompt__queue-action"
@@ -118,6 +120,8 @@ function queuedStatusLabel(state: AgentQueuedPromptState): string {
   switch (state) {
     case "queued":
       return "Queued";
+    case "next":
+      return "Next";
     case "paused":
       return "Paused";
     case "uncertain":
@@ -133,6 +137,8 @@ function queuedStatusDescription(state: AgentQueuedPromptState): string {
   switch (state) {
     case "queued":
       return "Waiting for the next tool or response to finish.";
+    case "next":
+      return AGENT_QUEUED_NEXT_TURN_NOTICE;
     case "paused":
       return "Paused. Resume queued messages when you are ready.";
     case "uncertain":

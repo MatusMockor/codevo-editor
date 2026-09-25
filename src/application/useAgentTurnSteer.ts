@@ -21,6 +21,7 @@ import {
 import { AgentDeferredBoundaryTracker } from "./agentDeferredBoundaryTracker";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import {
+  DEFERRED_NEXT_TURN_NOTICE,
   MAX_DEFERRED_FOLLOW_UPS_PER_THREAD,
   MAX_DEFERRED_FOLLOW_UP_THREADS,
   beginDeferredEdit,
@@ -31,6 +32,8 @@ import {
   emptyDeferredFollowUps,
   endDeferredEdit,
   enqueueDeferred,
+  promoteDeferred,
+  releaseNextDeferred,
   removeDeferred,
   takeDeferredHead,
   type DeferredFollowUp,
@@ -159,6 +162,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
   const awaitingSettlementRef = useRef(new Set<string>());
   const pendingDrainsRef = useRef<Set<string>>(new Set());
   const sendingQueuedRef = useRef<Map<string, string>>(new Map());
+  const userSendNowRef = useRef(new Set<string>());
   const pausedThreadsRef = useRef<Set<string>>(new Set());
   const deferredSequenceRef = useRef(0);
   const editLeaseRef = useRef(0);
@@ -247,6 +251,20 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     [armDrain, commitDeferred, dependenciesRef, mountedRef],
   );
 
+  const holdForNextTurn = useCallback(
+    (threadId: string, id: string): AgentSteerOutcome => {
+      const promoted = promoteDeferred(deferredRef.current, threadId, id);
+      if (promoted === deferredRef.current) return "kept";
+      commitDeferred(promoted);
+      awaitingSettlementRef.current.add(threadId);
+      if (userSendNowRef.current.has(threadId)) {
+        dependenciesRef.current.setNotice(info(DEFERRED_NEXT_TURN_NOTICE));
+      }
+      return "kept";
+    },
+    [commitDeferred, dependenciesRef],
+  );
+
   const rejectSteer = useCallback(
     (
       reason: AgentTaskSteerRejectionReason,
@@ -257,12 +275,16 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       prepared: ClaimedTurnAttachments,
     ): AgentSteerOutcome => {
       const deps = dependenciesRef.current;
+      const queuedId = sendingQueuedRef.current.get(threadId);
       switch (reason) {
         case "notSteerable":
         case "inputClosed":
         case "notRunning":
           if (request.delivery === "immediate") {
-            if (sendingQueuedRef.current.has(threadId)) awaitingSettlementRef.current.add(threadId);
+            if (queuedId !== undefined && reason !== "notSteerable") {
+              return holdForNextTurn(threadId, queuedId);
+            }
+            if (queuedId !== undefined) awaitingSettlementRef.current.add(threadId);
             deps.setNotice(
               info("The agent cannot receive this message now. Your message has not been sent."),
             );
@@ -280,6 +302,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           deps.setNotice(warning(STEER_UNAVAILABLE_NOTICE));
           return "kept";
         case "notRegistered":
+          if (queuedId !== undefined) return holdForNextTurn(threadId, queuedId);
           deps.setNotice(warning(STEER_UNREGISTERED_NOTICE));
           return "kept";
         case "writeTimedOut":
@@ -290,7 +313,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           return unsupportedSteerRejection(reason);
       }
     },
-    [deferSteer, dependenciesRef],
+    [deferSteer, dependenciesRef, holdForNextTurn],
   );
 
   const steer = useCallback(
@@ -556,8 +579,19 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     [armDrain, commitDeferred, dependenciesRef, mountedRef],
   );
 
-  const sendDeferredFollowUpNow = useCallback(
-    async (threadId: string, id: string): Promise<void> => {
+  const promoteIfSettled = useCallback(
+    (threadId: string, id: string): void => {
+      if (pausedThreadsRef.current.has(threadId)) return;
+      const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
+      if (thread === undefined || runningTurn(thread) !== null) return;
+      const promoted = promoteDeferred(deferredRef.current, threadId, id);
+      if (promoted !== deferredRef.current) commitDeferred(promoted);
+    },
+    [commitDeferred, dependenciesRef],
+  );
+
+  const sendQueuedNow = useCallback(
+    async (threadId: string, id: string, userInitiated: boolean): Promise<void> => {
       const entry = deferredFollowUpsForThread(deferredRef.current, threadId).find(
         (candidate) => candidate.id === id,
       );
@@ -572,16 +606,17 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         return;
       if (!isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)) return;
       sendingQueuedRef.current.set(threadId, id);
+      if (userInitiated) userSendNowRef.current.add(threadId);
       try {
         const outcome = await steer(
           { ...entry.request, delivery: "immediate" },
           preparedDeferredRef.current.get(entry.request),
         );
-        if (
-          !isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) ||
-          outcome === "kept"
-        )
+        if (!isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)) return;
+        if (outcome === "kept") {
+          if (userInitiated) promoteIfSettled(threadId, id);
           return;
+        }
         const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
         boundaryTrackerRef.current.anchor(
           threadId,
@@ -591,10 +626,16 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         removeDeferredFollowUp(threadId, id);
       } finally {
         sendingQueuedRef.current.delete(threadId);
+        userSendNowRef.current.delete(threadId);
         if (pendingDrainsRef.current.has(threadId)) armDrain(threadId);
       }
     },
-    [armDrain, dependenciesRef, mountedRef, removeDeferredFollowUp, steer],
+    [armDrain, dependenciesRef, mountedRef, promoteIfSettled, removeDeferredFollowUp, steer],
+  );
+
+  const sendDeferredFollowUpNow = useCallback(
+    (threadId: string, id: string): Promise<void> => sendQueuedNow(threadId, id, true),
+    [sendQueuedNow],
   );
 
   const resumeDeferredFollowUps = useCallback(
@@ -632,6 +673,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
 
   const onTurnSettled = useCallback(
     (threadId: string): void => {
+      awaitingSettlementRef.current.delete(threadId);
       if (deferredFollowUpsForThread(deferredRef.current, threadId).length === 0) return;
       const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
       const status = thread?.turns[thread.turns.length - 1]?.status;
@@ -734,7 +776,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           !boundaryTrackerRef.current.takeDue(threadId, turn)
         )
           continue;
-        void sendDeferredFollowUpNow(threadId, head.id).then(() => {
+        void sendQueuedNow(threadId, head.id, false).then(() => {
           if (
             !blockedThreadsRef.current.has(threadId) &&
             !awaitingSettlementRef.current.has(threadId) &&
@@ -752,7 +794,12 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         )
           continue;
         const thread = current.threads.get(threadId);
-        if (thread !== undefined && runningTurn(thread) !== null) continue;
+        if (thread !== undefined && runningTurn(thread) !== null) {
+          if (awaitingSettlementRef.current.has(threadId)) continue;
+          const released = releaseNextDeferred(deferredRef.current, threadId);
+          if (released !== deferredRef.current) commitDeferred(released);
+          continue;
+        }
         pendingDrainsRef.current.delete(threadId);
         if (thread === undefined || thread.archived) {
           const dropped = clearDeferred(deferredRef.current, threadId);
@@ -806,7 +853,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       mountedRef,
       pauseDeferred,
       sendFollowUpRef,
-      sendDeferredFollowUpNow,
+      sendQueuedNow,
     ],
   );
 
