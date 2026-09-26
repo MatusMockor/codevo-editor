@@ -2,12 +2,14 @@ import type { DiffViewComputationGateway } from "../../../application/diffViewCo
 import type { GitGateway, GitStatus } from "../../../domain/git";
 import type { GitBranchDiffGateway } from "../../../domain/gitBranchDiff";
 import type { GitSurfaceStatusGateway } from "../../../domain/gitSurfaceStatus";
+import type { GitWorkingTreeGateway } from "../../../domain/gitWorkingTree";
 import type { BranchWorktreeReceipt, BranchWorktreeRequest } from "../../../domain/gitWorktree";
 import type { PullRequestGateway } from "../../../domain/pullRequest";
 import type { FileSearchGateway } from "../../../domain/workspace";
 import { BrowserDiffViewGateway } from "../../../infrastructure/browserDiffViewGateway";
 import { TauriGitGateway } from "../../../infrastructure/tauriGitGateway";
 import { TauriGitSurfaceGateway } from "../../../infrastructure/tauriGitSurfaceGateway";
+import { TauriGitWorkingTreeGateway } from "../../../infrastructure/tauriGitWorkingTreeGateway";
 import { TauriGitWorktreeGateway } from "../../../infrastructure/tauriGitWorktreeGateway";
 import {
   TauriForgeUrlOpener,
@@ -21,6 +23,7 @@ export interface AgentRightPanelGateways {
     "getStatus" | "getDiff" | "stageFiles" | "commit" | "push" | "createBranch" | "switchBranch"
   > & { fetch(rootPath: string): Promise<GitStatus> };
   readonly surfaceStatus: GitSurfaceStatusGateway;
+  readonly workingTree: GitWorkingTreeGateway;
   readonly branchDiff: GitBranchDiffGateway;
   readonly diffComputation: DiffViewComputationGateway;
   readonly fileSearch: FileSearchGateway;
@@ -38,6 +41,7 @@ export function createDefaultAgentRightPanelGateways(
   return {
     git: new TauriGitGateway(),
     surfaceStatus: surface,
+    workingTree: new TauriGitWorkingTreeGateway(),
     branchDiff: surface,
     diffComputation: new BrowserDiffViewGateway(),
     fileSearch,

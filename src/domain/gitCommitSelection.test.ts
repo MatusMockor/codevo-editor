@@ -4,6 +4,7 @@ import {
   ALL_CHANGES,
   includeSelection,
   includeSummary,
+  gitChangeRowKey,
   mergeChangesByPath,
   pruneExcluded,
   selectCommitChanges,
@@ -71,27 +72,29 @@ describe("commit selection", () => {
   });
 
   it("tracks include checkboxes as an excluded set", () => {
-    const paths = changes.map((item) => item.relativePath);
-    const excluded = setIncluded(new Set(), ".env.example", false);
+    const paths = changes.map(gitChangeRowKey);
+    const excluded = setIncluded(new Set(), "tracked:.env.example", false);
     expect(includeSummary(paths, excluded)).toEqual({ included: 2, total: 3, checked: "mixed" });
     expect(includeSelection(paths, excluded)).toEqual({
-      kind: "paths",
-      relativePaths: ["a.ts", "b.ts"],
+      kind: "rows",
+      rowKeys: ["tracked:a.ts", "tracked:b.ts"],
     });
-    expect(includeSelection(paths, new Set())).toEqual({ kind: "paths", relativePaths: paths });
+    expect(includeSelection(paths, new Set())).toEqual({ kind: "rows", rowKeys: paths });
     expect(includeSummary(paths, setAllIncluded(paths, false))).toEqual({
       included: 0,
       total: 3,
       checked: false,
     });
-    expect(setIncluded(excluded, ".env.example", true)).toEqual(new Set());
-    expect(pruneExcluded(new Set(["gone.ts", "a.ts"]), paths)).toEqual(new Set(["a.ts"]));
+    expect(setIncluded(excluded, "tracked:.env.example", true)).toEqual(new Set());
+    expect(pruneExcluded(new Set(["tracked:gone.ts", "tracked:a.ts"]), paths)).toEqual(
+      new Set(["tracked:a.ts"]),
+    );
   });
 
   it("never widens an all-included selection to changes that were not listed", () => {
-    expect(includeSelection(["a.ts"], new Set())).toEqual({
-      kind: "paths",
-      relativePaths: ["a.ts"],
+    expect(includeSelection(["tracked:a.ts"], new Set())).toEqual({
+      kind: "rows",
+      rowKeys: ["tracked:a.ts"],
     });
   });
 
@@ -107,5 +110,26 @@ describe("commit selection", () => {
     expect(
       mergeChangesByPath([unstaged, { ...change("a.ts"), isStaged: true, status: "conflicted" }]),
     ).toEqual([{ ...change("a.ts"), isStaged: false, status: "conflicted" }]);
+  });
+
+  it("keeps a staged delete and its recreated untracked file as two rows", () => {
+    const deleted = { ...change("secrets.env"), isStaged: true, status: "deleted" as const };
+    const untracked = {
+      ...change("secrets.env"),
+      isUnversioned: true,
+      status: "untracked" as const,
+    };
+    const merged = mergeChangesByPath([deleted, untracked]);
+
+    expect(merged.map(gitChangeRowKey)).toEqual(["tracked:secrets.env", "untracked:secrets.env"]);
+    expect(
+      selectCommitChanges([deleted, untracked], { kind: "rows", rowKeys: ["tracked:secrets.env"] }),
+    ).toEqual({ kind: "ok", changes: [deleted] });
+    expect(
+      selectCommitChanges([deleted], {
+        kind: "rows",
+        rowKeys: ["tracked:secrets.env", "untracked:secrets.env"],
+      }),
+    ).toEqual({ kind: "stale", missing: ["untracked:secrets.env"] });
   });
 });

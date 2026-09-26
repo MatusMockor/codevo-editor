@@ -109,6 +109,8 @@ function pendingPort() {
       calls.push({ message, selection, result });
       return result.promise;
     },
+    amendCandidate: async () => ({ kind: "unavailable", reason: "not in this test" }),
+    amend: async () => ({ kind: "failed", message: "not in this test" }),
   };
   return { calls, port };
 }
@@ -171,13 +173,23 @@ describe("useAgentGitSurface", () => {
     await waitForReact(() => expect(surface().rows).toHaveLength(2));
     expect(surface().rows).toEqual([
       {
+        key: "tracked:src/orders/a.ts",
         relativePath: "src/orders/a.ts",
+        oldRelativePath: null,
         status: "modified",
         added: 12,
         deleted: 3,
         included: true,
       },
-      { relativePath: "src/orders/b.ts", status: "added", added: 4, deleted: 0, included: true },
+      {
+        key: "tracked:src/orders/b.ts",
+        relativePath: "src/orders/b.ts",
+        oldRelativePath: null,
+        status: "added",
+        added: 4,
+        deleted: 0,
+        included: true,
+      },
     ]);
     expect(surface().summary).toEqual({ included: 2, total: 2, checked: true });
   });
@@ -187,7 +199,7 @@ describe("useAgentGitSurface", () => {
     render(options({ git: memory.git }));
     await waitForReact(() => expect(surface().rows).toHaveLength(3));
 
-    act(() => surface().setRowIncluded("b.ts", false));
+    act(() => surface().setRowIncluded("tracked:b.ts", false));
 
     expect(surface().rows.map((row) => row.included)).toEqual([true, false, true]);
     expect(surface().summary).toEqual({ included: 2, total: 3, checked: "mixed" });
@@ -203,13 +215,13 @@ describe("useAgentGitSurface", () => {
     render(
       options({
         git: memory.git,
-        port: projectGitCommitPort(memory.git, "/r"),
+        port: projectGitCommitPort(memory.git, "/r", null),
         threadTitle: "Replay idempotent responses",
         onCommitted: () => committed.push("done"),
       }),
     );
     await waitForReact(() => expect(surface().rows).toHaveLength(2));
-    act(() => surface().setRowIncluded("src/orders/b.ts", false));
+    act(() => surface().setRowIncluded("tracked:src/orders/b.ts", false));
 
     act(() => surface().commit());
 
@@ -310,7 +322,7 @@ describe("useAgentGitSurface", () => {
 
   it("never commits a change that appeared after the list was rendered", async () => {
     const memory = memoryGit([change("a.ts")]);
-    render(options({ git: memory.git, port: projectGitCommitPort(memory.git, "/r") }));
+    render(options({ git: memory.git, port: projectGitCommitPort(memory.git, "/r", null) }));
     await waitForReact(() => expect(surface().rows).toHaveLength(1));
     act(() => surface().setMessage("Only a"));
 
@@ -332,10 +344,10 @@ describe("useAgentGitSurface", () => {
     await waitForReact(() => expect(surface().rows).toHaveLength(2));
 
     expect(surface().rows.map((row) => row.relativePath)).toEqual(["a.ts", "b.ts"]);
-    act(() => surface().setRowIncluded("b.ts", false));
+    act(() => surface().setRowIncluded("tracked:b.ts", false));
     expect(surface().summary).toEqual({ included: 1, total: 2, checked: "mixed" });
     act(() => surface().commit());
-    expect(port.calls[0]?.selection).toEqual({ kind: "paths", relativePaths: ["a.ts"] });
+    expect(port.calls[0]?.selection).toEqual({ kind: "rows", rowKeys: ["tracked:a.ts"] });
   });
 
   it("keeps drafts per owner across switches", async () => {
@@ -358,7 +370,7 @@ describe("useAgentGitSurface", () => {
     act(() => surface().commitAndPush());
     expect(surface().busy).toBe("pushing");
     expect(pending.calls[0]?.message).toBe("Fix it");
-    expect(pending.calls[0]?.selection).toEqual({ kind: "paths", relativePaths: ["a.ts"] });
+    expect(pending.calls[0]?.selection).toEqual({ kind: "rows", rowKeys: ["tracked:a.ts"] });
     await act(async () =>
       pending.calls[0]?.result.resolve({
         kind: "failed",
@@ -405,5 +417,22 @@ describe("useAgentGitSurface", () => {
     );
     await waitForReact(() => expect(surface().error).toBe("not a repository"));
     expect(surface().loading).toBe(false);
+  });
+
+  it("shows line stats only on the tracked row of a staged delete and its untracked copy", async () => {
+    const deleted = { ...change("secrets.env", "deleted"), isStaged: true };
+    const memory = memoryGit([deleted, change("secrets.env", "untracked")]);
+    render(
+      options({
+        git: memory.git,
+        lineStats: [{ relativePath: "secrets.env", added: 0, deleted: 3 }],
+      }),
+    );
+    await waitForReact(() => expect(surface().rows).toHaveLength(2));
+
+    expect(surface().rows.map((row) => [row.key, row.added, row.deleted])).toEqual([
+      ["tracked:secrets.env", 0, 3],
+      ["untracked:secrets.env", null, null],
+    ]);
   });
 });

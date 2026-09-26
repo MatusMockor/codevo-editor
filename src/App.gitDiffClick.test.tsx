@@ -381,7 +381,6 @@ function createWorkbench(overrides: Record<string, unknown>) {
       fileHistoryPanelOpen: false,
       fileStructureOpen: false,
       gitBranchPanelOpen: false,
-      gitAmendEnabled: false,
       gitCommitMessage: "",
       gitLoading: false,
       gitOperationLoading: false,

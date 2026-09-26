@@ -16,21 +16,41 @@ const NOW_MS = 1_800_000_000_000;
 
 const ROWS: ReadonlyArray<AgentGitChangeRow> = [
   {
+    key: "tracked:src/middleware/idempotency.ts",
     relativePath: "src/middleware/idempotency.ts",
+    oldRelativePath: null,
     status: "added",
     added: 29,
     deleted: 0,
     included: true,
   },
   {
+    key: "tracked:src/routes/orders.ts",
     relativePath: "src/routes/orders.ts",
+    oldRelativePath: null,
     status: "modified",
     added: 4,
     deleted: 1,
     included: true,
   },
-  { relativePath: "test/orders.test.ts", status: "modified", added: 9, deleted: 6, included: true },
-  { relativePath: ".env.example", status: "modified", added: 1, deleted: 1, included: false },
+  {
+    key: "tracked:test/orders.test.ts",
+    relativePath: "test/orders.test.ts",
+    oldRelativePath: null,
+    status: "modified",
+    added: 9,
+    deleted: 6,
+    included: true,
+  },
+  {
+    key: "tracked:.env.example",
+    relativePath: ".env.example",
+    oldRelativePath: null,
+    status: "modified",
+    added: 1,
+    deleted: 1,
+    included: false,
+  },
 ];
 
 function props(overrides: Partial<AgentGitSurfaceProps> = {}): AgentGitSurfaceProps {
@@ -58,7 +78,11 @@ function props(overrides: Partial<AgentGitSurfaceProps> = {}): AgentGitSurfacePr
       message: "",
       busy: "idle",
       notice: null,
+      amend: { active: false, checking: false, unavailableReason: null, shortSha: null },
     },
+    discardAvailable: true,
+    discardNotice: null,
+    focusAfterDiscard: null,
     onRowIncludedChange: vi.fn(),
     onAllIncludedChange: vi.fn(),
     onMessageChange: vi.fn(),
@@ -67,6 +91,9 @@ function props(overrides: Partial<AgentGitSurfaceProps> = {}): AgentGitSurfacePr
     onCommitAndPush: vi.fn(),
     onFetch: vi.fn(),
     onOpenPullRequest: vi.fn(),
+    onDiscard: vi.fn(),
+    onCheckAmend: vi.fn(),
+    onAmendChange: vi.fn(),
     ...overrides,
   };
 }
@@ -121,7 +148,7 @@ describe("AgentGitSurface", () => {
     click(button(host, "Include src/routes/orders.ts"));
     click(button(host, "Include all files"));
 
-    expect(next.onRowIncludedChange).toHaveBeenCalledWith("src/routes/orders.ts", false);
+    expect(next.onRowIncludedChange).toHaveBeenCalledWith("tracked:src/routes/orders.ts", false);
     expect(next.onAllIncludedChange).toHaveBeenCalledWith(true);
   });
 

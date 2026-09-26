@@ -1,5 +1,5 @@
 use super::{
-    amend_git_commit, create_git_branch, delete_git_branch, ensure_local_history_relative_path,
+    create_git_branch, delete_git_branch, ensure_local_history_relative_path,
     ensure_lsp_call_hierarchy_item_in_workspace,
     ensure_lsp_code_action_context_payloads_in_workspace,
     ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,

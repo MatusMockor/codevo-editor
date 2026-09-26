@@ -589,23 +589,6 @@ pub(crate) async fn commit_git_changes(
 }
 
 #[tauri::command]
-pub(crate) async fn amend_git_commit(
-    root_path: String,
-    message: String,
-    changes: Vec<GitChangedFile>,
-    trust: GitTrustState<'_>,
-) -> Result<GitStatus, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .amend(&root, &message, &changes)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn reword_git_commit(
     root_path: String,
     commit_hash: String,

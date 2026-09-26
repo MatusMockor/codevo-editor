@@ -1,4 +1,5 @@
 import {
+  AMEND_UNAVAILABLE_REASONS,
   pushFailureMessage,
   type AgentGitCommitOutcome,
   type AgentGitCommitPort,
@@ -33,6 +34,8 @@ export function threadGitCommitPort(
   };
   return {
     commit: commitStep,
+    amendCandidate: async () => ({ kind: "unavailable", reason: AMEND_UNAVAILABLE_REASONS.thread }),
+    amend: async () => ({ kind: "failed", message: AMEND_UNAVAILABLE_REASONS.thread }),
     async commitAndPush(message, selection) {
       const committed = await commitStep(message, selection);
       if (committed.kind !== "committed") return committed;

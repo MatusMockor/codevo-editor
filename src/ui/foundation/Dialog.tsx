@@ -26,6 +26,7 @@ export interface DialogProps {
   readonly initialFocusRef?: RefObject<HTMLElement | null>;
   readonly returnFocusRef?: RefObject<HTMLElement | null>;
   readonly dismissOnBackdrop?: boolean;
+  readonly role?: "dialog" | "alertdialog";
   onClose(): void;
 }
 
@@ -42,6 +43,7 @@ function DialogSurface({
   initialFocusRef,
   onClose,
   returnFocusRef,
+  role = "dialog",
   title,
   width = "sm",
 }: DialogProps) {
@@ -91,7 +93,7 @@ function DialogSurface({
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         ref={surfaceRef}
-        role="dialog"
+        role={role}
         tabIndex={-1}
       >
         <header className="cv-dialog__header">

@@ -248,52 +248,6 @@ fn git_status_stays_isolated_per_workspace_root_off_thread() {
 }
 
 #[test]
-fn amend_git_commit_stays_isolated_per_workspace_root_off_thread() {
-    let root_a = temp_workspace("git-amend-iso-a");
-    let root_b = temp_workspace("git-amend-iso-b");
-    init_test_git_repo(&root_a);
-    init_test_git_repo(&root_b);
-    fs::write(root_a.join("tracked.txt"), "one\n").expect("file a");
-    fs::write(root_b.join("tracked.txt"), "one\n").expect("file b");
-    run_test_git(&root_a, &["add", "tracked.txt"]);
-    run_test_git(&root_b, &["add", "tracked.txt"]);
-    run_test_git(&root_a, &["commit", "-m", "initial a"]);
-    run_test_git(&root_b, &["commit", "-m", "initial b"]);
-    let old_a_head = test_git_output(&root_a, &["rev-parse", "HEAD"]);
-    let old_b_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
-    fs::write(root_a.join("tracked.txt"), "two\n").expect("change a");
-    run_test_git(&root_a, &["add", "tracked.txt"]);
-    let change = crate::git::GitChangedFile {
-        is_staged: true,
-        is_unversioned: false,
-        old_path: None,
-        old_relative_path: None,
-        path: path_string(&root_a.join("tracked.txt")),
-        relative_path: "tracked.txt".to_string(),
-        status: crate::git::GitChangeStatus::Modified,
-    };
-
-    tauri::async_runtime::block_on(amend_git_commit(
-        path_string(&root_a),
-        "amended a".to_string(),
-        vec![change],
-        true,
-    ))
-    .expect("amend workspace A");
-
-    assert_ne!(test_git_output(&root_a, &["rev-parse", "HEAD"]), old_a_head);
-    assert_eq!(test_git_output(&root_b, &["rev-parse", "HEAD"]), old_b_head);
-    assert_eq!(
-        test_git_output(&root_a, &["show", "HEAD:tracked.txt"]),
-        "two"
-    );
-    assert_eq!(
-        test_git_output(&root_b, &["show", "HEAD:tracked.txt"]),
-        "one"
-    );
-}
-
-#[test]
 fn reword_git_commit_stays_isolated_per_workspace_root_off_thread() {
     let root_a = temp_workspace("git-reword-iso-a");
     let root_b = temp_workspace("git-reword-iso-b");

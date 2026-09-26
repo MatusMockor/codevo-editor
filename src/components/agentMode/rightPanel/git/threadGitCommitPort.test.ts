@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentShipStepResult } from "../../../../domain/agentShip";
 import type { AgentCommitSelection } from "../../../../domain/gitCommitSelection";
+import { AMEND_UNAVAILABLE_REASONS } from "../../../../application/rightPanel/projectGitCommitPort";
 import { threadGitCommitPort } from "./threadGitCommitPort";
 
 const THREAD = "agt-1";
@@ -97,6 +98,20 @@ describe("threadGitCommitPort", () => {
     await expect(
       port.commit("   ", { kind: "paths", relativePaths: ["a.ts"] }),
     ).resolves.toMatchObject({ kind: "failed" });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("keeps amend unavailable for agent threads without touching the ship flow", async () => {
+    const fake = scripted(SUCCEEDED);
+    const port = threadGitCommitPort(fake.actions, THREAD);
+    await expect(port.amendCandidate()).resolves.toEqual({
+      kind: "unavailable",
+      reason: AMEND_UNAVAILABLE_REASONS.thread,
+    });
+    await expect(port.amend("a".repeat(40), "m", { kind: "all" })).resolves.toEqual({
+      kind: "failed",
+      message: AMEND_UNAVAILABLE_REASONS.thread,
+    });
     expect(fake.calls).toEqual([]);
   });
 });

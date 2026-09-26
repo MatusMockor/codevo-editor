@@ -14,12 +14,21 @@ use std::{
 const MAX_DIFF_SNAPSHOT_BYTES: u64 = 2_000_000;
 static HUNK_REVERT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+mod amend_index;
 pub(crate) mod bounded_process;
 mod branch_checkout;
+mod discard_guard;
+mod discard_restore;
+pub(crate) mod file_discard;
+pub(crate) mod head_amend;
 mod history;
 mod history_log;
 mod history_refs;
+mod pinned_root;
 mod repository_discovery;
+mod scratch_index;
+#[cfg(test)]
+pub(crate) mod working_tree_test_repo;
 
 pub use history::{load_commit_details, load_commit_diff, load_commit_files};
 pub use history_log::load_commit_log;
@@ -250,12 +259,6 @@ pub struct GitBranch {
 }
 
 pub trait GitRepositoryGateway {
-    fn amend(
-        &self,
-        root: &Path,
-        message: &str,
-        changes: &[GitChangedFile],
-    ) -> io::Result<GitStatus>;
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>>;
     fn file_commit_diff(
         &self,
@@ -424,41 +427,6 @@ impl CommandGitRepositoryGateway {
 }
 
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
-    fn amend(
-        &self,
-        root: &Path,
-        message: &str,
-        changes: &[GitChangedFile],
-    ) -> io::Result<GitStatus> {
-        let root = root.canonicalize()?;
-
-        if changes.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "At least one file is required for amend.",
-            ));
-        }
-
-        for change in changes {
-            safe_relative_path(&change.relative_path)?;
-            if let Some(old_relative_path) = change.old_relative_path.as_deref() {
-                safe_relative_path(old_relative_path)?;
-            }
-        }
-
-        refuse_amend_of_pushed_head(&root, self.trusted)?;
-        let expected_head =
-            git_output_vec(&root, vec!["rev-parse", "--verify", "HEAD"], self.trusted)?;
-        amend_selected_staged_changes(
-            &root,
-            expected_head.trim(),
-            message.trim(),
-            changes,
-            self.trusted,
-        )?;
-        self.status(&root)
-    }
-
     fn blame(&self, root: &Path, relative_path: &str) -> io::Result<Vec<GitBlameLine>> {
         let root = root.canonicalize()?;
         let relative = safe_relative_path(relative_path)?;
@@ -484,7 +452,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
 
     fn reword(&self, root: &Path, commit_hash: &str, message: &str) -> io::Result<GitCommit> {
         let root = root.canonicalize()?;
-        refuse_amend_of_pushed_head(&root, self.trusted)?;
+        head_amend::refuse_amend_of_pushed_head(&root, self.trusted)?;
 
         if message.trim().is_empty() {
             return Err(io::Error::new(
@@ -2222,55 +2190,6 @@ fn commit_selected_staged_changes(
     Ok(())
 }
 
-fn refuse_amend_of_pushed_head(root: &Path, trusted: bool) -> io::Result<()> {
-    if git_output_vec(
-        root,
-        vec!["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-        trusted,
-    )
-    .is_err()
-    {
-        return Ok(());
-    }
-
-    let ahead = git_output_vec(root, vec!["rev-list", "@{u}..HEAD"], trusted)?;
-    if !ahead.trim().is_empty() {
-        return Ok(());
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "cannot amend a pushed commit",
-    ))
-}
-
-fn amend_selected_staged_changes(
-    root: &Path,
-    expected_head: &str,
-    message: &str,
-    changes: &[GitChangedFile],
-    trusted: bool,
-) -> io::Result<()> {
-    let tree = write_selected_staged_tree(root, changes, Some(expected_head), trusted)?;
-    let message = if message.is_empty() {
-        git_output_vec(
-            root,
-            vec!["log", "-1", "--format=%B", expected_head],
-            trusted,
-        )?
-    } else {
-        message.to_string()
-    };
-
-    rewrite_commit(
-        root,
-        expected_head,
-        tree.trim(),
-        message.trim_end(),
-        trusted,
-    )
-}
-
 fn reword_head_commit(
     root: &Path,
     expected_head: &str,
@@ -2415,7 +2334,13 @@ fn apply_staged_change_to_temp_index(
 
     let entry = git_output_vec(
         root,
-        vec!["ls-files", "-s", "--", change.relative_path.as_str()],
+        vec![
+            "--literal-pathspecs",
+            "ls-files",
+            "-s",
+            "--",
+            change.relative_path.as_str(),
+        ],
         trusted,
     )?;
     let mut entries = entry.lines();
@@ -2513,7 +2438,11 @@ fn is_cached_deletion(root: &Path, relative_path: &str, trusted: bool) -> io::Re
 }
 
 fn has_unmerged_index_entries(root: &Path, relative_path: &str, trusted: bool) -> io::Result<bool> {
-    let output = git_output_vec(root, vec!["ls-files", "-u", "--", relative_path], trusted)?;
+    let output = git_output_vec(
+        root,
+        vec!["--literal-pathspecs", "ls-files", "-u", "--", relative_path],
+        trusted,
+    )?;
 
     Ok(!output.trim().is_empty())
 }
@@ -2961,13 +2890,13 @@ mod tests {
     include!("git/history_graph_tests.rs");
     include!("git/branch_checkout_tests.rs");
     use super::{
-        amend_selected_staged_changes, detect_git_repositories, git_command, hunk_identity,
-        load_commit_details, load_commit_diff, load_commit_files, load_commit_log,
-        parse_blame_porcelain, parse_branch_list, parse_diff_hunks, parse_file_history,
-        parse_porcelain_status, parse_stash_list, read_git_object_content, reword_head_commit,
-        safe_branch_name, safe_commit_sha, safe_relative_path, safe_stash_index, single_hunk_patch,
-        split_diff, BoundedContent, CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile,
-        GitCommitFilters, GitDiffPreviewUnavailableReason, GitRepositoryGateway,
+        detect_git_repositories, git_command, hunk_identity, load_commit_details, load_commit_diff,
+        load_commit_files, load_commit_log, parse_blame_porcelain, parse_branch_list,
+        parse_diff_hunks, parse_file_history, parse_porcelain_status, parse_stash_list,
+        read_git_object_content, reword_head_commit, safe_branch_name, safe_commit_sha,
+        safe_relative_path, safe_stash_index, single_hunk_patch, split_diff, BoundedContent,
+        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitCommitFilters,
+        GitDiffPreviewUnavailableReason, GitRepositoryGateway,
         DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH, MAX_DIFF_SNAPSHOT_BYTES,
         REVERT_HUNK_BEFORE_CAS_HOOK,
     };
@@ -4314,231 +4243,6 @@ mod tests {
 
         assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
         assert_eq!(repo.read("file.txt"), "three\n");
-    }
-
-    #[test]
-    fn amend_replaces_head_with_selected_tree_message_and_existing_parent() {
-        let repo = TestGitRepo::new();
-        repo.run(["config", "user.email", "test@example.com"]);
-        repo.run(["config", "user.name", "Test User"]);
-        repo.write("base.txt", "base\n");
-        repo.run(["add", "base.txt"]);
-        repo.run(["commit", "-m", "base"]);
-        repo.write("file.txt", "one\n");
-        repo.run(["add", "file.txt"]);
-        repo.run(["commit", "-m", "original"]);
-        let original_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
-        let original_parent = repo.git_output(["rev-parse", "HEAD^"]).trim().to_string();
-        repo.write("file.txt", "two\n");
-        repo.run(["add", "file.txt"]);
-
-        CommandGitRepositoryGateway::new(true)
-            .amend(
-                repo.path(),
-                "replacement",
-                &[git_changed_file(
-                    "file.txt",
-                    true,
-                    GitChangeStatus::Modified,
-                )],
-            )
-            .expect("amend");
-
-        assert_ne!(repo.git_output(["rev-parse", "HEAD"]).trim(), original_head);
-        assert_eq!(
-            repo.git_output(["rev-parse", "HEAD^"]).trim(),
-            original_parent
-        );
-        assert_eq!(
-            repo.git_output(["log", "-1", "--format=%B"]).trim(),
-            "replacement"
-        );
-        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
-    }
-
-    #[test]
-    fn amend_with_empty_message_keeps_head_message() {
-        let repo = TestGitRepo::new();
-        repo.run(["config", "user.email", "test@example.com"]);
-        repo.run(["config", "user.name", "Test User"]);
-        repo.write("file.txt", "one\n");
-        repo.run(["add", "file.txt"]);
-        repo.run(["commit", "-m", "original message"]);
-        repo.write("file.txt", "two\n");
-        repo.run(["add", "file.txt"]);
-
-        CommandGitRepositoryGateway::new(true)
-            .amend(
-                repo.path(),
-                "",
-                &[git_changed_file(
-                    "file.txt",
-                    true,
-                    GitChangeStatus::Modified,
-                )],
-            )
-            .expect("amend");
-
-        assert_eq!(
-            repo.git_output(["log", "-1", "--format=%B"]).trim(),
-            "original message"
-        );
-    }
-
-    #[test]
-    fn amend_root_commit_keeps_it_parentless() {
-        let repo = TestGitRepo::new();
-        repo.run(["config", "user.email", "test@example.com"]);
-        repo.run(["config", "user.name", "Test User"]);
-        repo.write("file.txt", "one\n");
-        repo.run(["add", "file.txt"]);
-        repo.run(["commit", "-m", "root"]);
-        repo.write("file.txt", "two\n");
-        repo.run(["add", "file.txt"]);
-
-        CommandGitRepositoryGateway::new(true)
-            .amend(
-                repo.path(),
-                "amended root",
-                &[git_changed_file(
-                    "file.txt",
-                    true,
-                    GitChangeStatus::Modified,
-                )],
-            )
-            .expect("amend root");
-
-        assert_eq!(
-            repo.git_output(["rev-list", "--parents", "-n", "1", "HEAD"])
-                .split_whitespace()
-                .count(),
-            1
-        );
-        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
-    }
-
-    #[test]
-    fn amend_refuses_head_that_is_present_on_upstream() {
-        let fixture = RemoteGitFixture::new();
-        fs::write(fixture.workspace_a.join("base.txt"), "changed\n").expect("change file");
-        RemoteGitFixture::run_git(&fixture.workspace_a, ["add", "base.txt"]);
-        let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
-
-        let error = CommandGitRepositoryGateway::new(true)
-            .amend(
-                &fixture.workspace_a,
-                "unsafe",
-                &[git_changed_file(
-                    "base.txt",
-                    true,
-                    GitChangeStatus::Modified,
-                )],
-            )
-            .expect_err("pushed amend must fail");
-
-        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-        assert!(error.to_string().contains("cannot amend a pushed commit"));
-        assert_eq!(
-            fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]),
-            original_head
-        );
-    }
-
-    #[test]
-    fn amend_allows_head_ahead_of_upstream() {
-        let fixture = RemoteGitFixture::new();
-        fixture.commit_in(&fixture.workspace_a, "local.txt", "one\n", "local");
-        let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
-        fs::write(fixture.workspace_a.join("local.txt"), "two\n").expect("change file");
-        RemoteGitFixture::run_git(&fixture.workspace_a, ["add", "local.txt"]);
-
-        CommandGitRepositoryGateway::new(true)
-            .amend(
-                &fixture.workspace_a,
-                "amended local",
-                &[git_changed_file(
-                    "local.txt",
-                    true,
-                    GitChangeStatus::Modified,
-                )],
-            )
-            .expect("ahead amend");
-
-        assert_ne!(
-            fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]),
-            original_head
-        );
-        assert_eq!(
-            fixture.git_output(&fixture.workspace_a, ["show", "HEAD:local.txt"]),
-            "two"
-        );
-    }
-
-    #[test]
-    fn amend_preserves_original_author_identity_and_date() {
-        let repo = TestGitRepo::new();
-        repo.run(["config", "user.email", "committer@example.com"]);
-        repo.run(["config", "user.name", "Current Committer"]);
-        repo.write("file.txt", "one\n");
-        repo.run(["add", "file.txt"]);
-        repo.run([
-            "commit",
-            "--author=Original Author <original@example.com>",
-            "--date=2001-02-03T04:05:06+00:00",
-            "-m",
-            "original",
-        ]);
-        let original_author = repo.git_output(["show", "-s", "--format=%an%x1f%ae%x1f%aI", "HEAD"]);
-        repo.write("file.txt", "two\n");
-        repo.run(["add", "file.txt"]);
-
-        CommandGitRepositoryGateway::new(true)
-            .amend(
-                repo.path(),
-                "replacement",
-                &[git_changed_file(
-                    "file.txt",
-                    true,
-                    GitChangeStatus::Modified,
-                )],
-            )
-            .expect("amend");
-
-        assert_eq!(
-            repo.git_output(["show", "-s", "--format=%an%x1f%ae%x1f%aI", "HEAD"]),
-            original_author
-        );
-    }
-
-    #[test]
-    fn amend_compare_and_swap_refuses_moved_head() {
-        let repo = TestGitRepo::new();
-        repo.run(["config", "user.email", "test@example.com"]);
-        repo.run(["config", "user.name", "Test User"]);
-        repo.write("file.txt", "one\n");
-        repo.run(["add", "file.txt"]);
-        repo.run(["commit", "-m", "original"]);
-        let expected_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
-        repo.write("file.txt", "two\n");
-        repo.run(["add", "file.txt"]);
-        repo.run(["commit", "-m", "external"]);
-        let external_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
-
-        let error = amend_selected_staged_changes(
-            repo.path(),
-            &expected_head,
-            "replacement",
-            &[git_changed_file(
-                "file.txt",
-                true,
-                GitChangeStatus::Modified,
-            )],
-            true,
-        )
-        .expect_err("moved HEAD must fail");
-
-        assert!(!error.to_string().is_empty());
-        assert_eq!(repo.git_output(["rev-parse", "HEAD"]).trim(), external_head);
     }
 
     #[test]

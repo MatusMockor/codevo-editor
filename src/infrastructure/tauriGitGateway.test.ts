@@ -218,7 +218,6 @@ describe("TauriGitGateway", () => {
     await gateway.unstageFiles("/workspace", [change]);
     await gateway.revertFiles("/workspace", [change]);
     await gateway.commit("/workspace", "feat: update user", [change]);
-    await gateway.amend("/workspace", "feat: amended user", [change]);
     await gateway.rewordCommit(
       "/workspace",
       "1111111111111111111111111111111111111111",
@@ -245,11 +244,7 @@ describe("TauriGitGateway", () => {
       message: "feat: update user",
       rootPath: "/workspace",
     });
-    expect(invoke).toHaveBeenCalledWith("amend_git_commit", {
-      changes: [change],
-      message: "feat: amended user",
-      rootPath: "/workspace",
-    });
+    expect(invoke).not.toHaveBeenCalledWith("amend_git_commit", expect.anything());
     expect(invoke).toHaveBeenCalledWith("reword_git_commit", {
       commitHash: "1111111111111111111111111111111111111111",
       message: "feat: reworded user",

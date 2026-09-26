@@ -1894,7 +1894,7 @@ export function useWorkbenchController(
   const { refreshWorkspace } = editorFile.directory;
   const { openFile, openPinnedFile, pinDocument } = editorFile.documentTabs;
   const { closeGitDiffPreview, commitGitChanges, revertGitChanges } = editorFile.gitChanges;
-  const { setGitAmendEnabled, setGitCommitMessage } = editorFile.gitChanges;
+  const { setGitCommitMessage } = editorFile.gitChanges;
   const { loadPhpFileOutline, openPhpFileOutlineNode } = editorFile.phpOutline;
   const { openPhpTreeNode, refreshPhpTree } = editorFile.phpOutline;
   const { openFileStructure, openFileStructureWithInitialQuery } = editorFile.fileStructure;
@@ -2647,7 +2647,6 @@ export function useWorkbenchController(
     editorGroups,
     closeGitDiffPreview,
     closeWorkspaceTab,
-    amendGitChanges: editorFile.gitChanges.amendGitChanges,
     commitAndPushGitChanges: editorFile.gitChanges.commitAndPushGitChanges,
     commitGitChanges,
     commands: commandEffects.commandRegistry.list(),
@@ -2693,7 +2692,6 @@ export function useWorkbenchController(
     gitDiffPreview,
     gitCommitMessage: editorFile.gitChanges.gitCommitMessage,
     gitCommitMessageHistory: editorFile.gitChanges.gitCommitMessageHistory,
-    gitAmendEnabled: editorFile.gitChanges.gitAmendEnabled,
     includedGitChangePaths: editorFile.gitChanges.includedGitChangePaths,
     gitLoading,
     gitStatusLoaded,
@@ -2812,7 +2810,6 @@ export function useWorkbenchController(
     setClassOpenOpen,
     setWorkspaceSymbolsOpen,
     setWorkspaceSymbolsQuery,
-    setGitAmendEnabled,
     setGitCommitMessage,
     setClassOpenQuery: classOpen.setClassOpenQuery,
     setQuickOpenOpen: setQuickOpenOpen,

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "amendCandidates": {
+    "ready": {
+      "kind": "ready",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "message": "feat: first\n\nBody line."
+    },
+    "noCommit": {
+      "kind": "noCommit"
+    },
+    "pushed": {
+      "kind": "pushed",
+      "headSha": "89abcdef0123456789abcdef0123456789abcdef"
+    },
+    "messageTooLarge": {
+      "kind": "messageTooLarge",
+      "headSha": "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    "operationInProgress": {
+      "kind": "operationInProgress"
+    }
+  },
+  "amendRequest": {
+    "request": {
+      "repositoryRoot": "/repo",
+      "worktreePath": "/repo/.worktrees/t",
+      "expectedHead": "0123456789abcdef0123456789abcdef01234567",
+      "message": "feat: first, amended",
+      "files": [
+        {
+          "relativePath": "src/a.ts",
+          "action": "stageWorktree"
+        },
+        {
+          "relativePath": "src/old.ts",
+          "action": "stageDeletion"
+        }
+      ]
+    }
+  },
+  "amendReceipt": {
+    "headSha": "1111111111111111111111111111111111111111",
+    "indexSynced": true
+  },
+  "discardRequest": {
+    "request": {
+      "repositoryRoot": "/repo",
+      "worktreePath": null,
+      "file": {
+        "relativePath": "src/moved.ts",
+        "oldRelativePath": "src/old.ts",
+        "expectedStatus": "renamed"
+      },
+      "fingerprint": "abababababababababababababababababababababababababababababababab"
+    }
+  },
+  "discardReceipts": {
+    "restored": {
+      "relativePath": "src/moved.ts",
+      "action": "restored"
+    },
+    "deleted": {
+      "relativePath": "notes.txt",
+      "action": "deleted"
+    }
+  },
+  "prepareDiscardRequest": {
+    "request": {
+      "repositoryRoot": "/repo",
+      "worktreePath": null,
+      "file": {
+        "relativePath": "notes.txt",
+        "oldRelativePath": null,
+        "expectedStatus": "untracked"
+      }
+    }
+  },
+  "discardPreparation": {
+    "fingerprint": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+  }
+}

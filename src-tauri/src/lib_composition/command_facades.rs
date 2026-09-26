@@ -30,6 +30,8 @@ mod directory_listing_commands;
 mod git_integration_commands;
 #[path = "git_surface_commands.rs"]
 mod git_surface_commands;
+#[path = "git_working_tree_commands.rs"]
+mod git_working_tree_commands;
 #[path = "git_worktree_commands.rs"]
 mod git_worktree_commands;
 #[path = "language_features_facade.rs"]
@@ -142,18 +144,17 @@ pub(crate) use workspace_facade::{
     QUIT_APPLICATION_MENU_ID, TOGGLE_FONT_LIGATURES_EVENT, TOGGLE_FONT_LIGATURES_MENU_ID,
 };
 pub(crate) use workspace_services::{
-    amend_git_commit, begin_project_symbol_search, cancel_project_symbol_search,
-    checkout_git_remote_branch, commit_git_changes, create_git_branch, delete_git_branch,
-    fetch_git_changes, get_git_current_branch, get_git_file_commit_diff, get_git_file_hunks,
-    get_git_stash_diff, get_git_stash_list, get_local_history_version_content,
-    get_local_history_versions, get_php_file_outline, get_php_tree, list_git_branches,
-    list_git_remote_branches, plan_javascript_typescript_language_server, plan_php_language_server,
-    pull_git_changes, push_git_changes, read_directory, read_text_file,
-    record_local_history_snapshot, rename_git_branch, revert_git_files, revert_git_hunk,
-    reword_git_commit, save_git_stash, search_files, search_project_symbols, search_text,
-    stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
-    switch_git_branch, trusted_for, unstage_git_files, unstage_git_hunk, GitTrustState,
-    JavaScriptTypeScriptLanguageServerOptions,
+    begin_project_symbol_search, cancel_project_symbol_search, checkout_git_remote_branch,
+    commit_git_changes, create_git_branch, delete_git_branch, fetch_git_changes,
+    get_git_current_branch, get_git_file_commit_diff, get_git_file_hunks, get_git_stash_diff,
+    get_git_stash_list, get_local_history_version_content, get_local_history_versions,
+    get_php_file_outline, get_php_tree, list_git_branches, list_git_remote_branches,
+    plan_javascript_typescript_language_server, plan_php_language_server, pull_git_changes,
+    push_git_changes, read_directory, read_text_file, record_local_history_snapshot,
+    rename_git_branch, revert_git_files, revert_git_hunk, reword_git_commit, save_git_stash,
+    search_files, search_project_symbols, search_text, stage_git_files, stage_git_hunk,
+    stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, trusted_for,
+    unstage_git_files, unstage_git_hunk, GitTrustState, JavaScriptTypeScriptLanguageServerOptions,
 };
 
 #[cfg(test)]

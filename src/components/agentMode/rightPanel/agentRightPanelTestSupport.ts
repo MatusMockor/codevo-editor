@@ -20,6 +20,12 @@ export function rightPanelTestContext(
         surfaceStatus: {
           getSurfaceStatus: () => Promise.reject(new Error("no status in this test")),
         },
+        workingTree: {
+          getAmendCandidate: () => Promise.reject(new Error("no working tree in this test")),
+          amendHead: () => Promise.reject(new Error("no working tree in this test")),
+          prepareDiscard: () => Promise.reject(new Error("no working tree in this test")),
+          discardFile: () => Promise.reject(new Error("no working tree in this test")),
+        },
         branchDiff: {
           getBranchChanges: () => Promise.reject(new Error("no branch diff in this test")),
           getBranchFileSides: () => Promise.reject(new Error("no branch diff in this test")),

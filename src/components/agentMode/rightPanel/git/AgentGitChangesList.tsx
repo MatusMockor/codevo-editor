@@ -1,7 +1,13 @@
+import { Trash2, Undo2 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import type { AgentGitDiscardFocus } from "../../../../application/rightPanel/useAgentGitDiscard";
 import type { AgentGitChangeRow } from "../../../../application/rightPanel/useAgentGitSurface";
 import type { GitChangeStatus } from "../../../../domain/git";
 import type { CommitIncludeSummary } from "../../../../domain/gitCommitSelection";
+import { gitDiscardBlock, gitDiscardEffect } from "../../../../domain/gitWorkingTree";
 import { Checkbox } from "../../../../ui/foundation/Checkbox";
+import { IconButton } from "../../../../ui/foundation/IconButton";
+import { DISCARD_BLOCKED_REASONS } from "./agentGitPresentation";
 import { DiffStat } from "../diff/AgentDiffFileSection";
 
 export interface AgentGitChangesListProps {
@@ -9,11 +15,44 @@ export interface AgentGitChangesListProps {
   readonly summary: CommitIncludeSummary;
   readonly loading: boolean;
   readonly error: string | null;
-  onRowIncludedChange(relativePath: string, include: boolean): void;
+  readonly discardAvailable: boolean;
+  readonly focusAfterDiscard: AgentGitDiscardFocus | null;
+  onRowIncludedChange(rowKey: string, include: boolean): void;
   onAllIncludedChange(include: boolean): void;
+  onDiscard(row: AgentGitChangeRow): void;
 }
 
 export function AgentGitChangesList(props: AgentGitChangesListProps) {
+  return (
+    <div
+      className="cv-git-list"
+      ref={useDiscardFocus(props.focusAfterDiscard, props.rows)}
+      tabIndex={-1}
+    >
+      <ChangesListBody {...props} />
+    </div>
+  );
+}
+
+function useDiscardFocus(
+  request: AgentGitDiscardFocus | null,
+  rows: ReadonlyArray<AgentGitChangeRow>,
+) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const handled = useRef(0);
+  useEffect(() => {
+    const list = listRef.current;
+    if (request === null || list === null || handled.current === request.sequence) return;
+    if (rows.some((row) => row.key === request.removedKey)) return;
+    handled.current = request.sequence;
+    const checkboxes = list.querySelectorAll<HTMLElement>(".cv-git-row [role='checkbox']");
+    const target = checkboxes[Math.min(request.index, checkboxes.length - 1)] ?? list;
+    target.focus();
+  }, [request, rows]);
+  return listRef;
+}
+
+function ChangesListBody(props: AgentGitChangesListProps) {
   if (props.error !== null && props.rows.length === 0) {
     return <p className="cv-rp-note cv-rp-note--warning">{props.error}</p>;
   }
@@ -41,7 +80,12 @@ export function AgentGitChangesList(props: AgentGitChangesListProps) {
         </span>
       </div>
       {props.rows.map((row) => (
-        <ChangeRow key={row.relativePath} onIncludedChange={props.onRowIncludedChange} row={row} />
+        <ChangeRow
+          key={row.key}
+          onDiscard={props.discardAvailable ? props.onDiscard : null}
+          onIncludedChange={props.onRowIncludedChange}
+          row={row}
+        />
       ))}
     </div>
   );
@@ -49,7 +93,8 @@ export function AgentGitChangesList(props: AgentGitChangesListProps) {
 
 function ChangeRow(props: {
   readonly row: AgentGitChangeRow;
-  onIncludedChange(relativePath: string, include: boolean): void;
+  readonly onDiscard: ((row: AgentGitChangeRow) => void) | null;
+  onIncludedChange(rowKey: string, include: boolean): void;
 }) {
   const { row } = props;
   const slash = row.relativePath.lastIndexOf("/");
@@ -59,8 +104,12 @@ function ChangeRow(props: {
     <div className={row.included ? "cv-git-row" : "cv-git-row cv-git-row--off"}>
       <Checkbox
         checked={row.included}
-        label={`Include ${row.relativePath}`}
-        onChange={(include) => props.onIncludedChange(row.relativePath, include)}
+        label={
+          row.status === "untracked"
+            ? `Include ${row.relativePath} (untracked)`
+            : `Include ${row.relativePath}`
+        }
+        onChange={(include) => props.onIncludedChange(row.key, include)}
       />
       <abbr className={`cv-git-status cv-git-status--${row.status}`} title={row.status}>
         {statusLetter(row.status)}
@@ -76,7 +125,28 @@ function ChangeRow(props: {
           <span className="cv-git-row__excluded">Excluded</span>
         )}
       </span>
+      {props.onDiscard !== null && <DiscardButton onDiscard={props.onDiscard} row={row} />}
     </div>
+  );
+}
+
+function DiscardButton(props: {
+  readonly row: AgentGitChangeRow;
+  onDiscard(row: AgentGitChangeRow): void;
+}) {
+  const { row } = props;
+  const block = gitDiscardBlock(row.relativePath, row.status);
+  const deletes = gitDiscardEffect(row.status) === "delete";
+  return (
+    <IconButton
+      className="cv-git-row__action"
+      disabled={block !== null}
+      icon={deletes ? <Trash2 size={13} /> : <Undo2 size={13} />}
+      label={deletes ? `Delete ${row.relativePath}` : `Discard changes to ${row.relativePath}`}
+      onClick={() => props.onDiscard(row)}
+      size="xs"
+      title={block === null ? undefined : DISCARD_BLOCKED_REASONS[block]}
+    />
   );
 }
 

@@ -155,8 +155,8 @@ describe("AgentGitSurfaceContainer", () => {
 
     await waitForReact(() =>
       expect(actions.onCommit).toHaveBeenCalledWith("agt-1", "fix(b): refactor the parser", {
-        kind: "paths",
-        relativePaths: ["b.ts"],
+        kind: "rows",
+        rowKeys: ["tracked:b.ts"],
       }),
     );
     expect(memory.calls).toContain("status:/repo/.worktrees/agt-1");
@@ -193,8 +193,8 @@ describe("AgentGitSurfaceContainer", () => {
 
     await waitForReact(() => expect(ui?.host.textContent).toContain("Committed."));
     expect(actions.onCommit).toHaveBeenCalledWith("agt-1", "fix(orders): refactor the parser", {
-      kind: "paths",
-      relativePaths: ["orders.ts"],
+      kind: "rows",
+      rowKeys: ["tracked:orders.ts"],
     });
     expect(refresh).toHaveBeenCalled();
     await waitForReact(() =>

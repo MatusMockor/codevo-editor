@@ -3,6 +3,7 @@ import { withBoundedEntry } from "../../domain/boundedKeyedMap";
 import { generateCommitMessage } from "../../domain/commitMessageDraft";
 import type { GitChangeStatus, GitChangedFile, GitGateway } from "../../domain/git";
 import {
+  gitChangeRowKey,
   includeSelection,
   includeSummary,
   mergeChangesByPath,
@@ -14,19 +15,30 @@ import {
 import type { GitLineStat } from "../../domain/gitSurfaceStatus";
 import { useLatest } from "../../ui/foundation/useLatest";
 import type { AgentGitCommitOutcome, AgentGitCommitPort } from "./projectGitCommitPort";
+import {
+  useAgentGitAmendMode,
+  type AgentGitAmendAuthority,
+  type AgentGitAmendView,
+} from "./useAgentGitAmendMode";
 
 export const MAX_COMMIT_MESSAGE_DRAFTS = 32;
 export const MAX_REMEMBERED_OUTCOMES = 16;
+export const AMENDED_INDEX_STALE_MESSAGE =
+  "Amended the last commit, but Git could not update the staged files. Check the staged changes before committing again.";
 
 export interface AgentGitChangeRow {
+  readonly key: string;
   readonly relativePath: string;
+  readonly oldRelativePath: string | null;
   readonly status: GitChangeStatus;
   readonly added: number | null;
   readonly deleted: number | null;
   readonly included: boolean;
 }
 
-export type AgentGitBusy = "idle" | "committing" | "pushing";
+export type AgentGitBusy = "idle" | "committing" | "pushing" | "amending";
+
+type AgentGitRunKind = "commit" | "commitAndPush" | "amend";
 
 export interface AgentGitNotice {
   readonly kind: "ok" | "error";
@@ -41,12 +53,15 @@ export interface AgentGitSurfaceState {
   readonly message: string;
   readonly busy: AgentGitBusy;
   readonly notice: AgentGitNotice | null;
+  readonly amend: AgentGitAmendView;
   setMessage(message: string): void;
-  setRowIncluded(relativePath: string, include: boolean): void;
+  setRowIncluded(rowKey: string, include: boolean): void;
   setAllIncluded(include: boolean): void;
   generate(): void;
   commit(): void;
   commitAndPush(): void;
+  checkAmend(): void;
+  setAmending(active: boolean): void;
   refresh(): void;
 }
 
@@ -84,6 +99,7 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
   const [nonce, setNonce] = useState(0);
   const loadGeneration = useRef(0);
   const activeKey = useRef<string | null>(null);
+  const authority = useRef<AgentGitAmendAuthority>({ key: null, generation: 0 });
   const inFlight = useRef<Set<string>>(new Set());
   const ownerRef = useLatest(ownerKey);
   const gitRef = useLatest(options.git);
@@ -94,10 +110,12 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
 
   useLayoutEffect(() => {
     activeKey.current = statusKey;
+    authority.current = { key: statusKey, generation: authority.current.generation + 1 };
     setExcluded(new Set());
     setError(null);
     return () => {
       activeKey.current = null;
+      authority.current = { key: null, generation: authority.current.generation + 1 };
     };
   }, [statusKey]);
 
@@ -136,23 +154,30 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
   );
 
   const files = changes.key === statusKey ? changes.files : EMPTY_FILES;
-  const paths = useMemo(() => files.map((file) => file.relativePath), [files]);
+  const paths = useMemo(() => files.map(gitChangeRowKey), [files]);
   const effectiveExcluded = useMemo(() => pruneExcluded(excluded, paths), [excluded, paths]);
   const stats = useMemo(
     () => new Map(lineStats.map((stat) => [stat.relativePath, stat])),
     [lineStats],
   );
-  const rows = useMemo<ReadonlyArray<AgentGitChangeRow>>(
-    () =>
-      files.map((file) => ({
-        relativePath: file.relativePath,
-        status: file.status,
-        added: stats.get(file.relativePath)?.added ?? null,
-        deleted: stats.get(file.relativePath)?.deleted ?? null,
-        included: !effectiveExcluded.has(file.relativePath),
-      })),
-    [effectiveExcluded, files, stats],
-  );
+  const rows = useMemo<ReadonlyArray<AgentGitChangeRow>>(() => {
+    const trackedPaths = new Set(
+      files.filter((file) => file.status !== "untracked").map((file) => file.relativePath),
+    );
+    const statFor = (file: GitChangedFile): GitLineStat | undefined =>
+      file.status === "untracked" && trackedPaths.has(file.relativePath)
+        ? undefined
+        : stats.get(file.relativePath);
+    return files.map((file) => ({
+      key: gitChangeRowKey(file),
+      relativePath: file.relativePath,
+      oldRelativePath: file.oldRelativePath,
+      status: file.status,
+      added: statFor(file)?.added ?? null,
+      deleted: statFor(file)?.deleted ?? null,
+      included: !effectiveExcluded.has(gitChangeRowKey(file)),
+    }));
+  }, [effectiveExcluded, files, stats]);
   const summary = useMemo(
     () => includeSummary(paths, effectiveExcluded),
     [effectiveExcluded, paths],
@@ -171,6 +196,14 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
     [ownerRef],
   );
 
+  const amendMode = useAgentGitAmendMode({
+    statusKey,
+    authority,
+    port: portRef,
+    message,
+    replaceMessage: setMessage,
+  });
+
   const generated = (): string =>
     generateCommitMessage({
       files: rows
@@ -181,6 +214,7 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
 
   const settle = (owner: string, key: string, outcome: AgentGitCommitOutcome): void => {
     inFlight.current.delete(key);
+    if (outcome.kind === "amended" || outcome.kind === "amendedIndexStale") amendMode.finish(key);
     const notice =
       outcome.kind === "failed" ? errorNotice(outcome.message) : successNotice(outcome);
     setRuns((current) =>
@@ -197,19 +231,31 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
     onCommittedRef.current();
   };
 
-  const run = (push: boolean): void => {
+  const run = (kind: AgentGitRunKind): void => {
     const owner = ownerRef.current;
     const key = activeKey.current;
     const port = portRef.current;
     if (owner === null || key === null || port === null || inFlight.current.has(key)) return;
+    const headSha = amendMode.headSha;
+    if ((kind === "amend") !== (headSha !== null)) return;
+    const text = message.trim().length > 0 ? message.trim() : generated();
+    if (kind === "amend" && message.trim().length === 0) return;
     inFlight.current.add(key);
     const selection = includeSelection(paths, effectiveExcluded);
-    const text = message.trim().length > 0 ? message.trim() : generated();
-    const busy: AgentGitBusy = push ? "pushing" : "committing";
     setRuns((current) =>
-      withBoundedEntry(current, key, { busy, notice: null }, MAX_REMEMBERED_OUTCOMES),
+      withBoundedEntry(
+        current,
+        key,
+        { busy: RUN_BUSY[kind], notice: null },
+        MAX_REMEMBERED_OUTCOMES,
+      ),
     );
-    const pending = push ? port.commitAndPush(text, selection) : port.commit(text, selection);
+    const pending =
+      headSha !== null
+        ? port.amend(headSha, text, selection)
+        : kind === "commitAndPush"
+          ? port.commitAndPush(text, selection)
+          : port.commit(text, selection);
     void pending.then(
       (outcome) => settle(owner, key, outcome),
       (reason: unknown) =>
@@ -228,19 +274,27 @@ export function useAgentGitSurface(options: UseAgentGitSurfaceOptions): AgentGit
     message,
     busy: ownerRun.busy,
     notice: ownerRun.notice,
+    amend: amendMode.view,
     setMessage,
-    setRowIncluded: (relativePath, include) =>
-      setExcluded((current) => setIncluded(current, relativePath, include)),
+    setRowIncluded: (rowKey, include) =>
+      setExcluded((current) => setIncluded(current, rowKey, include)),
     setAllIncluded: (include) => setExcluded(setAllIncluded(paths, include)),
     generate: () => setMessage(generated()),
-    commit: () => run(false),
-    commitAndPush: () => run(true),
+    commit: () => run(amendMode.headSha === null ? "commit" : "amend"),
+    commitAndPush: () => run("commitAndPush"),
+    checkAmend: amendMode.check,
+    setAmending: amendMode.setActive,
     refresh: () => setNonce((value) => value + 1),
   };
 }
 
 const EMPTY_FILES: ReadonlyArray<GitChangedFile> = [];
 const IDLE_RUN: OwnerRun = { busy: "idle", notice: null };
+const RUN_BUSY: Readonly<Record<AgentGitRunKind, AgentGitBusy>> = {
+  commit: "committing",
+  commitAndPush: "pushing",
+  amend: "amending",
+};
 
 function successNotice(
   outcome: Exclude<AgentGitCommitOutcome, { kind: "failed" }>,
@@ -248,6 +302,10 @@ function successNotice(
   switch (outcome.kind) {
     case "committed":
       return { kind: "ok", text: "Committed." };
+    case "amended":
+      return { kind: "ok", text: "Amended the last commit." };
+    case "amendedIndexStale":
+      return { kind: "error", text: AMENDED_INDEX_STALE_MESSAGE };
     case "pushed":
       return { kind: "ok", text: "Committed and pushed." };
     case "pushFailed":

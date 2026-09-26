@@ -2,7 +2,13 @@ import type { GitChangedFile } from "./git";
 
 export type AgentCommitSelection =
   | { readonly kind: "all" }
-  | { readonly kind: "paths"; readonly relativePaths: ReadonlyArray<string> };
+  | { readonly kind: "paths"; readonly relativePaths: ReadonlyArray<string> }
+  | { readonly kind: "rows"; readonly rowKeys: ReadonlyArray<string> };
+
+export function gitChangeRowKey(change: Pick<GitChangedFile, "relativePath" | "status">): string {
+  const side = change.status === "untracked" ? "untracked" : "tracked";
+  return `${side}:${change.relativePath}`;
+}
 
 export const ALL_CHANGES: AgentCommitSelection = Object.freeze({ kind: "all" });
 export const STALE_COMMIT_SELECTION_MESSAGE =
@@ -27,12 +33,16 @@ export function selectCommitChanges(
     if (changes.length === 0) return { kind: "empty" };
     return { kind: "ok", changes };
   }
-  const wanted = new Set(selection.relativePaths);
+  const keyOf =
+    selection.kind === "rows"
+      ? gitChangeRowKey
+      : (change: GitChangedFile): string => change.relativePath;
+  const wanted = new Set(selection.kind === "rows" ? selection.rowKeys : selection.relativePaths);
   if (wanted.size === 0) return { kind: "empty" };
-  const present = new Set(changes.map((change) => change.relativePath));
-  const missing = [...wanted].filter((path) => !present.has(path));
+  const present = new Set(changes.map(keyOf));
+  const missing = [...wanted].filter((key) => !present.has(key));
   if (missing.length > 0) return { kind: "stale", missing };
-  return { kind: "ok", changes: changes.filter((change) => wanted.has(change.relativePath)) };
+  return { kind: "ok", changes: changes.filter((change) => wanted.has(keyOf(change))) };
 }
 
 export function includeSelection(
@@ -40,7 +50,7 @@ export function includeSelection(
   excluded: ReadonlySet<string>,
 ): AgentCommitSelection {
   const effective = pruneExcluded(excluded, paths);
-  return { kind: "paths", relativePaths: paths.filter((path) => !effective.has(path)) };
+  return { kind: "rows", rowKeys: paths.filter((path) => !effective.has(path)) };
 }
 
 export function mergeChangesByPath(
@@ -48,11 +58,9 @@ export function mergeChangesByPath(
 ): ReadonlyArray<GitChangedFile> {
   const merged = new Map<string, GitChangedFile>();
   for (const change of changes) {
-    const previous = merged.get(change.relativePath);
-    merged.set(
-      change.relativePath,
-      previous === undefined ? change : mergeChange(previous, change),
-    );
+    const key = gitChangeRowKey(change);
+    const previous = merged.get(key);
+    merged.set(key, previous === undefined ? change : mergeChange(previous, change));
   }
   return [...merged.values()];
 }

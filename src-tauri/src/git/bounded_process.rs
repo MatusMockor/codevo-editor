@@ -38,13 +38,27 @@ impl From<CommandError> for String {
 }
 
 pub(crate) fn run_bounded_command_bytes(
-    mut command: Command,
+    command: Command,
     timeout: Duration,
     max_bytes: usize,
 ) -> Result<Vec<u8>, CommandError> {
+    run_bounded_command_with_input(command, timeout, max_bytes, None)
+}
+
+pub(crate) fn run_bounded_command_with_input(
+    mut command: Command,
+    timeout: Duration,
+    max_bytes: usize,
+    input: Option<Vec<u8>>,
+) -> Result<Vec<u8>, CommandError> {
     configure_process_group(&mut command);
+    let stdin = if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
     let child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -63,6 +77,13 @@ pub(crate) fn run_bounded_command_bytes(
     };
 
     let watchdog = Watchdog::start(guard.process_id, timeout);
+    let writer = match (input, guard.child.stdin.take()) {
+        (Some(bytes), Some(mut stdin)) => Some(thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&bytes);
+        })),
+        _ => None,
+    };
     let stderr_reader =
         thread::spawn(move || read_bounded_stream(stderr, MAX_INTEGRATION_STDERR_BYTES));
     let stdout_result = read_bounded_stream(stdout, max_bytes);
@@ -72,6 +93,9 @@ pub(crate) fn run_bounded_command_bytes(
 
     let stderr_result = stderr_reader.join();
     let status = guard.wait();
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
     let timed_out = watchdog.finish();
 
     if timed_out {

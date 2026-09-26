@@ -1,6 +1,11 @@
 import { GitPullRequest, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
-import type { AgentGitSurfaceState } from "../../../../application/rightPanel/useAgentGitSurface";
+import type { AgentGitDiscardFocus } from "../../../../application/rightPanel/useAgentGitDiscard";
+import type {
+  AgentGitChangeRow,
+  AgentGitNotice,
+  AgentGitSurfaceState,
+} from "../../../../application/rightPanel/useAgentGitSurface";
 import type { GitUnpushedCommit } from "../../../../domain/gitSurfaceStatus";
 import { IconButton } from "../../../../ui/foundation/IconButton";
 import { AgentGitChangesList } from "./AgentGitChangesList";
@@ -10,7 +15,7 @@ import "./agentGit.css";
 
 export type AgentGitSurfaceViewState = Pick<
   AgentGitSurfaceState,
-  "rows" | "loading" | "error" | "summary" | "message" | "busy" | "notice"
+  "rows" | "loading" | "error" | "summary" | "message" | "busy" | "notice" | "amend"
 >;
 
 export interface AgentGitSurfaceProps {
@@ -23,7 +28,10 @@ export interface AgentGitSurfaceProps {
   readonly unpushed: ReadonlyArray<GitUnpushedCommit>;
   readonly nowMs: number;
   readonly state: AgentGitSurfaceViewState;
-  onRowIncludedChange(relativePath: string, include: boolean): void;
+  readonly discardAvailable: boolean;
+  readonly discardNotice: AgentGitNotice | null;
+  readonly focusAfterDiscard: AgentGitDiscardFocus | null;
+  onRowIncludedChange(rowKey: string, include: boolean): void;
   onAllIncludedChange(include: boolean): void;
   onMessageChange(message: string): void;
   onGenerate(): void;
@@ -31,6 +39,9 @@ export interface AgentGitSurfaceProps {
   onCommitAndPush(): void;
   onFetch(): void;
   onOpenPullRequest(): void;
+  onDiscard(row: AgentGitChangeRow): void;
+  onCheckAmend(): void;
+  onAmendChange(active: boolean): void;
 }
 
 export function AgentGitSurface(props: AgentGitSurfaceProps) {
@@ -59,10 +70,14 @@ export function AgentGitSurface(props: AgentGitSurfaceProps) {
       </div>
       <div className="cv-git__body">
         {props.banner}
+        {props.discardNotice !== null && <GitNotice notice={props.discardNotice} />}
         <AgentGitChangesList
+          discardAvailable={props.discardAvailable}
+          focusAfterDiscard={props.focusAfterDiscard}
           error={props.state.error}
           loading={props.state.loading}
           onAllIncludedChange={props.onAllIncludedChange}
+          onDiscard={props.onDiscard}
           onRowIncludedChange={props.onRowIncludedChange}
           rows={props.state.rows}
           summary={props.state.summary}
@@ -85,22 +100,18 @@ export function AgentGitSurface(props: AgentGitSurfaceProps) {
       </div>
       <div className="cv-git__foot">
         <AgentGitCommitBox
+          amend={props.state.amend}
           busy={props.state.busy}
           canCommit={props.state.summary.included > 0}
           message={props.state.message}
           onCommit={props.onCommit}
+          onAmendChange={props.onAmendChange}
+          onCheckAmend={props.onCheckAmend}
           onCommitAndPush={props.onCommitAndPush}
           onGenerate={props.onGenerate}
           onMessageChange={props.onMessageChange}
         />
-        {props.state.notice !== null && (
-          <p
-            className={`cv-git-notice cv-git-notice--${props.state.notice.kind}`}
-            role={props.state.notice.kind === "error" ? "alert" : "status"}
-          >
-            {props.state.notice.text}
-          </p>
-        )}
+        {props.state.notice !== null && <GitNotice notice={props.state.notice} />}
         {unpublished && (
           <p className="cv-git-hint">
             Next:
@@ -112,5 +123,16 @@ export function AgentGitSurface(props: AgentGitSurfaceProps) {
         )}
       </div>
     </section>
+  );
+}
+
+function GitNotice(props: { readonly notice: AgentGitNotice }) {
+  return (
+    <p
+      className={`cv-git-notice cv-git-notice--${props.notice.kind}`}
+      role={props.notice.kind === "error" ? "alert" : "status"}
+    >
+      {props.notice.text}
+    </p>
   );
 }
