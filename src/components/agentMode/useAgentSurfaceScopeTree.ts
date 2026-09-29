@@ -16,6 +16,7 @@ import type {
 } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceScope } from "./agentSurfacePolicy";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
+import { useDeferredPreviewReveal } from "./useDeferredPreviewReveal";
 
 export interface AgentSurfaceScopeTreeOptions {
   readonly chrome: Pick<
@@ -35,6 +36,8 @@ const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
 };
 
 const NO_PROJECT: AgentSurfaceTreeUnavailable = { kind: "noProject" };
+
+const NO_REVEAL = (): void => undefined;
 
 export function agentSurfaceTreeTarget(
   workspaceId: string | null,
@@ -132,6 +135,10 @@ export function useAgentSurfaceScopeTree({
       mountedRef.current = false;
     };
   }, []);
+  const previewReveal = useDeferredPreviewReveal(
+    fileTreeChrome?.revealEditor ?? NO_REVEAL,
+    targetKey,
+  );
   const tree = useAgentSurfaceFileTree({
     target,
     files: fileTreeChrome?.files ?? UNAVAILABLE_FILES,
@@ -159,10 +166,11 @@ export function useAgentSurfaceScopeTree({
   const rootPath = tree.rootPath;
   return useMemo<AgentSurfaceFileTreeProps | null>(() => {
     if (fileTreeChrome === null) return null;
+    const current = (): boolean => mountedRef.current && authorityRef.current === authority;
     const guarded =
       (open: (entry: FileEntry) => void) =>
       (entry: FileEntry): void => {
-        if (!mountedRef.current || authorityRef.current !== authority) return;
+        if (!current()) return;
         if (rootPath === null || !isInsideAgentSurfaceRoot(rootPath, entry.path)) return;
         open(entry);
       };
@@ -184,12 +192,18 @@ export function useAgentSurfaceScopeTree({
         unavailable === null && workspaceReady
           ? { shortcut: fileTreeChrome.searchFilesShortcut ?? "" }
           : null,
-      onOpenFile: guarded(fileTreeChrome.onOpenFile),
-      onPreviewFile: guarded(fileTreeChrome.onPreviewFile),
+      onOpenFile: guarded((entry) => {
+        previewReveal.cancel();
+        fileTreeChrome.onOpenFile(entry);
+      }),
+      onPreviewFile: guarded((entry) =>
+        previewReveal.schedule(fileTreeChrome.onPreviewFile(entry), current),
+      ),
     };
   }, [
     authority,
     fileTreeChrome,
+    previewReveal,
     rootPath,
     scope,
     scopeAction,

@@ -161,7 +161,7 @@ export interface WorkbenchDocumentTabs {
   activateDocument: (path: string) => void;
   pinDocument: (path: string) => void;
   openFile: (entry: FileEntry, options?: OpenFileOptions) => Promise<boolean>;
-  previewFile: (entry: FileEntry) => Promise<void>;
+  previewFile: (entry: FileEntry) => Promise<boolean>;
   openPinnedFile: (entry: FileEntry, shouldCommit?: () => boolean) => Promise<boolean>;
   openReadOnlyDocument: (document: EditorDocument, options?: OpenReadOnlyDocumentOptions) => void;
   prefetchFile: (entry: FileEntry) => void;
@@ -669,12 +669,7 @@ export function useWorkbenchDocumentTabs(
     [filePrefetchTimersRef],
   );
 
-  const previewFile = useCallback(
-    async (entry: FileEntry) => {
-      await openFile(entry);
-    },
-    [openFile],
-  );
+  const previewFile = useCallback((entry: FileEntry) => openFile(entry), [openFile]);
 
   const openPinnedFile = useCallback(
     async (entry: FileEntry, shouldCommit?: () => boolean) => {

@@ -60,6 +60,7 @@ import {
   externalSessionsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
 import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
+import { PREVIEW_REVEAL_DELAY_MS } from "./useDeferredPreviewReveal";
 import {
   ADD_PROJECT_REFUSED_REASON,
   AgentWorkbenchScreen,
@@ -74,6 +75,7 @@ const resolveTauriWorkspaceHome = vi.hoisted(() =>
 vi.mock("../../infrastructure/tauriHomeDirectory", () => ({ resolveTauriWorkspaceHome }));
 
 const ROOT_A = "/workspace/app";
+const ORDERS_ENTRY = { name: "orders.ts", path: `${ROOT_A}/orders.ts`, kind: "file" as const };
 const ROOT_B = "/workspace/api";
 
 describe("AgentWorkbenchScreen", () => {
@@ -504,6 +506,65 @@ describe("AgentWorkbenchScreen", () => {
     await waitForReact(() => expect(searchFiles).toHaveBeenCalledOnce());
     expect(searchFiles.mock.calls[0]?.[1]).toBe("users");
   });
+
+  it("reveals a single-clicked Files entry only after the double-click window", async () => {
+    const { layout, previewFile, workbench, row } = await renderFilesTree();
+
+    click(row);
+    await act(async () => Promise.resolve());
+    expect(previewFile).toHaveBeenCalledExactlyOnceWith(ORDERS_ENTRY);
+    expect(editorReveals(layout)).toBe(0);
+
+    await waitForReact(() => expect(editorReveals(layout)).toBe(1));
+    expect(workbench.openPinnedFile).not.toHaveBeenCalled();
+  });
+
+  it("pins a double-clicked Files entry and reveals the editor exactly once", async () => {
+    const { layout, previewFile, workbench, row } = await renderFilesTree();
+
+    click(row);
+    await act(async () => Promise.resolve());
+    expect(editorReveals(layout)).toBe(0);
+    const target = host.querySelector<HTMLElement>(row);
+    act(() => {
+      target?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+      target?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+    });
+    await act(
+      async () => new Promise((resolve) => setTimeout(resolve, PREVIEW_REVEAL_DELAY_MS * 2)),
+    );
+
+    expect(previewFile).toHaveBeenCalledExactlyOnceWith(ORDERS_ENTRY);
+    expect(workbench.openPinnedFile).toHaveBeenCalledExactlyOnceWith(ORDERS_ENTRY);
+    expect(editorReveals(layout)).toBe(1);
+  });
+
+  async function renderFilesTree() {
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["files"],
+      activeSurface: "files",
+    });
+    const previewFile = vi.fn(async () => true);
+    const openPinnedFile = vi.fn(async () => true);
+    const workbench = {
+      ...createWorkbench(ROOT_A, { agentWorkbench: layout }),
+      openPinnedFile,
+      previewFile,
+    };
+    act(() =>
+      root.render(
+        <AgentWorkbenchScreen
+          {...defaultProps(workbench)}
+          files={{ readDirectory: async (path) => (path === ROOT_A ? [ORDERS_ENTRY] : []) }}
+        />,
+      ),
+    );
+    click('[data-thread-id="agt-1"]');
+    const row = '.tree-row[title$="orders.ts"]';
+    await waitForReact(() => expect(host.querySelector(row)).not.toBeNull());
+    return { layout, previewFile, workbench, row };
+  }
 
   it("opens the Scripts surface from the scripts menu", async () => {
     const layout = recordedLayoutState();
@@ -1711,4 +1772,10 @@ function gatewayFixture() {
     projects.push({ id: "cloned", name: "storefront-api" });
   };
   return { gateway, finishClone };
+}
+
+function editorReveals(layout: RecordedAgentWorkbenchLayout): number {
+  return layout.actions.filter(
+    (action) => action.kind === "openSurface" && action.surface === "editor",
+  ).length;
 }

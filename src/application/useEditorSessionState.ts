@@ -10,6 +10,8 @@ import {
 } from "react";
 import {
   activateEditorGroupPath,
+  closeEmptiedEditorGroups,
+  collapseEmptyEditorGroups,
   createEditorGroup,
   createInitialEditorGroupsState,
   editorGroupVisiblePaths,
@@ -25,6 +27,7 @@ import {
   type DocumentContentCommitCoalescingPolicy,
 } from "../domain/documentContentCommitCoalescing";
 import { isPersistableEditorDocumentPath } from "../domain/editorDocumentSchemes";
+import { DEFAULT_WORKSPACE_EDITOR_GROUP_ID } from "../domain/settings";
 import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
 import { classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics } from "../domain/javaScriptTypeScriptLargeDocumentCapability";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
@@ -585,10 +588,9 @@ export function useEditorSessionState(
     [],
   );
 
-  const updateEditorGroups = useCallback(
-    (update: (current: EditorGroupsState) => EditorGroupsState) => {
+  const commitEditorGroups = useCallback(
+    (next: EditorGroupsState) => {
       const current = editorGroupsRef.current;
-      const next = update(current);
       const authorityTopologyChanged =
         documentSessionAuthorityActiveRef.current &&
         !editorGroupAuthorityTopologiesEqual(current, next);
@@ -605,6 +607,16 @@ export function useEditorSessionState(
       invalidateChangedGroupSelections,
       synchronizeActiveGroupRefs,
     ],
+  );
+
+  const updateEditorGroups = useCallback(
+    (update: (current: EditorGroupsState) => EditorGroupsState) => {
+      const current = editorGroupsRef.current;
+      commitEditorGroups(
+        closeEmptiedEditorGroups(current, update(current), DEFAULT_WORKSPACE_EDITOR_GROUP_ID),
+      );
+    },
+    [commitEditorGroups],
   );
 
   const activeGroupId = editorGroups.activeGroupId;
@@ -731,7 +743,8 @@ export function useEditorSessionState(
   );
 
   const commitDocumentTabs = useCallback(
-    (snapshot: DocumentTabSessionSnapshot) => {
+    (proposed: DocumentTabSessionSnapshot) => {
+      const snapshot = withEmptiedGroupsClosed(editorGroupsRef.current, proposed);
       if (documentTabSnapshotsEqual(liveDocumentTabSnapshot(), snapshot)) {
         return;
       }
@@ -854,7 +867,7 @@ export function useEditorSessionState(
       removeDocument: (path) => {
         const transition = removeDocumentFromSession(liveDocumentTabSnapshot(), path);
         commitDocumentTabs(transition.snapshot);
-        return transition.result;
+        return { ...transition.result, nextActivePath: liveDocumentTabSnapshot().activePath };
       },
       snapshot: snapshotDocumentTabs,
     }),
@@ -889,7 +902,9 @@ export function useEditorSessionState(
       setDocuments(restored.documents);
       setImageTabs(restored.imageTabs);
       setMarkdownPreviewTabs(restored.markdownPreviewTabs);
-      updateEditorGroups(() => restored.editorGroups);
+      commitEditorGroups(
+        collapseEmptyEditorGroups(restored.editorGroups, DEFAULT_WORKSPACE_EDITOR_GROUP_ID),
+      );
       const reconciled = documentAuthorityRef.current!.reconcile(restored.documents);
       if (reconciled.status === "applied") {
         if (
@@ -910,10 +925,10 @@ export function useEditorSessionState(
     [
       invalidateReplacedDocumentSelections,
       advanceDocumentSessionAuthorityRevision,
+      commitEditorGroups,
       setDocuments,
       setImageTabs,
       setMarkdownPreviewTabs,
-      updateEditorGroups,
     ],
   );
 
@@ -1241,4 +1256,17 @@ function editorGroupEqual(
   }
 
   return current.openPaths.every((path, index) => path === next.openPaths[index]);
+}
+
+function withEmptiedGroupsClosed(
+  previous: EditorGroupsState,
+  snapshot: DocumentTabSessionSnapshot,
+): DocumentTabSessionSnapshot {
+  const editorGroups = closeEmptiedEditorGroups(
+    previous,
+    snapshot.editorGroups,
+    DEFAULT_WORKSPACE_EDITOR_GROUP_ID,
+  );
+  if (editorGroups === snapshot.editorGroups) return snapshot;
+  return synchronizeSnapshotView({ ...snapshot, editorGroups });
 }

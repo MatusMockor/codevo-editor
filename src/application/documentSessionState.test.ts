@@ -358,7 +358,7 @@ describe("documentSessionState", () => {
     ).toBe(false);
   });
 
-  it("persists and restores split groups while reading each unique path once", async () => {
+  it("persists and restores split groups, collapsing an empty one, while reading each path once", async () => {
     const editor = splitEditorFixture();
     const session = currentWorkspaceSessionForEditorGroups(
       "/workspace",
@@ -397,8 +397,39 @@ describe("documentSessionState", () => {
       left: { "/workspace/shared.ts": { column: 2, line: 3 } },
       right: { "/workspace/shared.ts": { column: 8, line: 9 } },
     });
-    expect(restored.editor.layout).toEqual(editor.layout);
+    expect(restored.editor.layout).toEqual({
+      kind: "split",
+      orientation: "horizontal",
+      sizes: [0.5, 0.5],
+      children: [
+        { kind: "group", groupId: "left" },
+        { kind: "group", groupId: "right" },
+      ],
+    });
+    expect(restored.editor.groups.empty).toBeUndefined();
     expect(reads).not.toContain("/workspace/../project-b/Secret.ts");
+  });
+
+  it("collapses a restored split whose side group has no readable file", async () => {
+    const session = currentWorkspaceSessionForEditorGroups(
+      "/workspace",
+      mainAndSideEditor("/workspace/orders.ts"),
+      "files",
+      "problems",
+    );
+
+    const restored = await restoreWorkspaceSession("/workspace", session, async (path) => {
+      if (path.endsWith("orders.ts")) {
+        throw new Error("missing");
+      }
+      return { path };
+    });
+
+    expect(restored.failedPaths).toEqual(["/workspace/orders.ts"]);
+    expect(Object.keys(restored.editor.groups)).toEqual(["editor-main"]);
+    expect(restored.editor.layout).toEqual({ kind: "group", groupId: "editor-main" });
+    expect(restored.editor.activeGroupId).toBe("editor-main");
+    expect(restored.editor.groups["editor-main"].activePath).toBe("/workspace/greet.ts");
   });
 
   it("does not restore a UNC traversal alias from a foreign authority", async () => {
@@ -490,6 +521,29 @@ function splitEditorFixture(): EditorGroupsState {
             { kind: "group", groupId: "empty" },
           ],
         },
+      ],
+    },
+  };
+}
+
+function mainAndSideEditor(sidePath: string): EditorGroupsState {
+  return {
+    groups: {
+      "editor-main": {
+        activePath: "/workspace/greet.ts",
+        openPaths: ["/workspace/greet.ts"],
+        previewPath: null,
+      },
+      "editor-1": { activePath: sidePath, openPaths: [sidePath], previewPath: null },
+    },
+    activeGroupId: "editor-1",
+    layout: {
+      kind: "split",
+      orientation: "horizontal",
+      sizes: [0.5, 0.5],
+      children: [
+        { kind: "group", groupId: "editor-main" },
+        { kind: "group", groupId: "editor-1" },
       ],
     },
   };

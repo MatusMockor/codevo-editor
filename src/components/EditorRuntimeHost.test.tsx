@@ -1129,6 +1129,62 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("left.php");
   });
 
+  it.each([
+    ["focuses the neighbour once the focused side group closes", false, 1],
+    ["leaves focus that moved outside the editor alone", true, 0],
+  ])("%s", async (_label, focusElsewhere, expectedFocusCalls) => {
+    const fixture = runtimeFixture();
+    const animationFrames = animationFrameFixture();
+    const composer = document.createElement("textarea");
+    document.body.append(composer);
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost activeGroupId="right">
+          <RuntimeSurface {...fixture} groupId="left" key="left" name="left.php" />
+          <RuntimeSurface {...fixture} groupId="right" key="right" name="right.php" />
+        </EditorRuntimeHost>,
+      );
+    });
+    if (focusElsewhere) composer.focus();
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost activeGroupId="left">
+          <RuntimeSurface {...fixture} groupId="left" key="left" name="left.php" />
+        </EditorRuntimeHost>,
+      );
+    });
+    await act(async () => animationFrames.flush());
+
+    expect(fixture.leftEditor.focus).toHaveBeenCalledTimes(expectedFocusCalls);
+    composer.remove();
+  });
+
+  it("does not move focus when the active group changes and the previous one remains", async () => {
+    const fixture = runtimeFixture();
+    const animationFrames = animationFrameFixture();
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost activeGroupId="right">
+          <RuntimeSurface {...fixture} groupId="left" key="left" name="left.php" />
+          <RuntimeSurface {...fixture} groupId="right" key="right" name="right.php" />
+        </EditorRuntimeHost>,
+      );
+    });
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost activeGroupId="left">
+          <RuntimeSurface {...fixture} groupId="left" key="left" name="left.php" />
+          <RuntimeSurface {...fixture} groupId="right" key="right" name="right.php" />
+        </EditorRuntimeHost>,
+      );
+    });
+    await act(async () => animationFrames.flush());
+
+    expect(fixture.leftEditor.focus).not.toHaveBeenCalled();
+  });
+
   it("does not carry a scheduled group focus into another workspace", async () => {
     const first = runtimeFixture("/first");
     const second = runtimeFixture("/second");

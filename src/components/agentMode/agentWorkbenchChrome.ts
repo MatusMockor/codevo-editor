@@ -38,7 +38,8 @@ export interface AgentWorkbenchFileTreeChrome {
   readonly fileStatusesByPath?: Record<string, GitChangeStatus>;
   readonly searchFilesShortcut?: string;
   onOpenFile(entry: FileEntry): void;
-  onPreviewFile(entry: FileEntry): void;
+  onPreviewFile(entry: FileEntry): Promise<boolean>;
+  revealEditor(): void;
 }
 
 const MAX_ARIA_KEYSHORTCUT_LENGTH = 64;

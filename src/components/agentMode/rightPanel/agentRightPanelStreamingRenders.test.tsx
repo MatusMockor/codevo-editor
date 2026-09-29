@@ -212,7 +212,8 @@ function hostProps(): AgentSurfaceHostProps {
       activePath: null,
       revealActivePathSignal: 0,
       onOpenFile: () => undefined,
-      onPreviewFile: () => undefined,
+      onPreviewFile: async () => true,
+      revealEditor: () => undefined,
     },
     diff: { monacoTheme: "calm-dark" },
     terminal: {

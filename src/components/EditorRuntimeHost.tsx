@@ -555,6 +555,17 @@ export function EditorRuntimeHost({
     return () => onGroupFocusRunnerChange?.(null);
   }, [focusRegisteredEditorGroup, onGroupFocusRunnerChange]);
 
+  const previousActiveGroupIdRef = useRef(activeGroupId);
+  useEffect(() => {
+    const previous = previousActiveGroupIdRef.current;
+    previousActiveGroupIdRef.current = activeGroupId;
+    if (activeGroupId === null || previous === null || previous === activeGroupId) return;
+    const root = admittedWorkspaceRootRef.current;
+    if (registeredEditorGroup(registrationsRef.current, previous, root)) return;
+    if (!editorFocusWasDropped()) return;
+    focusRegisteredEditorGroup(activeGroupId);
+  }, [activeGroupId, focusRegisteredEditorGroup]);
+
   const registrations = [...registrationsRef.current.values()];
   const activeRegistration =
     activeRuntimeRegistrationEntry(
@@ -1543,6 +1554,11 @@ function registrationOwnsRuntime(
   }
 
   return workspaceRootKeysEqual(registration.workspaceRoot, admittedRoot);
+}
+
+function editorFocusWasDropped(): boolean {
+  const focused = document.activeElement;
+  return focused === null || focused === document.body;
 }
 
 function registeredEditorGroup(

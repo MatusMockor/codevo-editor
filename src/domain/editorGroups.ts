@@ -232,6 +232,45 @@ export function normalizeEditorGroupsState(
   return { groups, activeGroupId, layout };
 }
 
+export function collapseEmptyEditorGroups(
+  state: EditorGroupsState,
+  mainGroupId: EditorGroupId,
+): EditorGroupsState {
+  return closeEmptyEditorGroups(state, mainGroupId, () => true);
+}
+
+export function closeEmptiedEditorGroups(
+  previous: EditorGroupsState,
+  next: EditorGroupsState,
+  mainGroupId: EditorGroupId,
+): EditorGroupsState {
+  return closeEmptyEditorGroups(next, mainGroupId, (groupId) => {
+    const before = getOwnGroup(previous.groups, groupId);
+    return before !== undefined && editorGroupVisiblePaths(before).length > 0;
+  });
+}
+
+function closeEmptyEditorGroups(
+  state: EditorGroupsState,
+  mainGroupId: EditorGroupId,
+  closable: (groupId: EditorGroupId) => boolean,
+): EditorGroupsState {
+  let next = state;
+  for (const groupId of editorGroupIdsInLayout(state.layout)) {
+    const group = getOwnGroup(next.groups, groupId);
+    if (groupId === mainGroupId || !group || editorGroupVisiblePaths(group).length > 0) {
+      continue;
+    }
+    if (Object.keys(next.groups).length < 2) {
+      return next;
+    }
+    if (closable(groupId)) {
+      next = closeEditorGroup(next, groupId).state;
+    }
+  }
+  return next;
+}
+
 export function editorGroupsReducer(
   state: EditorGroupsState,
   action: EditorGroupsAction,

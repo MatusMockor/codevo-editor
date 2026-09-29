@@ -4,6 +4,7 @@ import type {
   WorkspaceSessionViewState,
 } from "../domain/settings";
 import {
+  collapseEmptyEditorGroups,
   editorGroupVisiblePaths,
   normalizeEditorGroupsState,
   type EditorGroupsState,
@@ -233,8 +234,8 @@ export async function restoreWorkspaceSession<Document>(
       return [groupId, { activePath, openPaths, previewPath }];
     }),
   );
-  const restoredEditor = normalizeEditorGroupsState(
-    { ...editor, groups },
+  const restoredEditor = collapseEmptyEditorGroups(
+    normalizeEditorGroupsState({ ...editor, groups }, DEFAULT_WORKSPACE_EDITOR_GROUP_ID),
     DEFAULT_WORKSPACE_EDITOR_GROUP_ID,
   );
   const viewStates = Object.fromEntries(

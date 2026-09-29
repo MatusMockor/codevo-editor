@@ -886,7 +886,8 @@ function filesChrome(
       activePath: null,
       revealActivePathSignal: 0,
       onOpenFile: () => undefined,
-      onPreviewFile: () => undefined,
+      onPreviewFile: async () => true,
+      revealEditor: () => undefined,
       ...overrides,
     },
   };

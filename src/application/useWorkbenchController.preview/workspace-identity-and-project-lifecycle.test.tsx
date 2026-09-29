@@ -2944,41 +2944,6 @@ MissingClass::class;
       "editor-2",
     ]);
   });
-  it("moves a tab between groups atomically without closing its document", async () => {
-    const path = "/workspace/src/Move.ts";
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 92,
-    };
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
-      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
-      javaScriptTypeScriptRuntimeStatus: runningStatus,
-      readTextFile: vi.fn(async () => "export const moved = true;\n"),
-    });
-    await flushAsyncTurns(24);
-    await act(async () => {
-      await getWorkbench().openPinnedFile({ kind: "file", name: "Move.ts", path });
-    });
-    act(() => getWorkbench().splitActiveEditorGroup("right"));
-    const groupIds = Object.keys(getWorkbench().editorGroups.groups);
-    vi.mocked(dependencies.documentSyncGateway.didClose).mockClear();
-    await act(async () => {
-      getWorkbench().closeDocumentInEditorGroup(groupIds[1], path);
-      getWorkbench().moveEditorGroupTab(groupIds[0], groupIds[1], path);
-      await Promise.resolve();
-    });
-
-    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([path]);
-    expect(getWorkbench().editorGroups.groups[groupIds[0]].activePath).toBeNull();
-    expect(getWorkbench().editorGroups.groups[groupIds[1]].activePath).toBe(path);
-    expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalled();
-  });
   it("prompts only when closing the final dirty split membership", async () => {
     const path = "/workspace/src/Dirty.ts";
     const confirm = vi.fn(() => false);

@@ -3,12 +3,13 @@ import { openThenRevealFiles } from "../agentMode/openThenRevealFiles";
 
 export interface EditorFileOpeners {
   openPinnedFile(entry: FileEntry): Promise<boolean>;
-  previewFile(entry: FileEntry): Promise<void>;
+  previewFile(entry: FileEntry): Promise<boolean>;
 }
 
 export interface RevealingFileOpeners {
   onOpenFile(entry: FileEntry): void;
-  onPreviewFile(entry: FileEntry): void;
+  onPreviewFile(entry: FileEntry): Promise<boolean>;
+  revealEditor(): void;
 }
 
 export function revealingFileOpeners(
@@ -17,6 +18,7 @@ export function revealingFileOpeners(
 ): RevealingFileOpeners {
   return {
     onOpenFile: (entry) => void openThenRevealFiles(() => openers.openPinnedFile(entry), reveal),
-    onPreviewFile: (entry) => void openers.previewFile(entry),
+    onPreviewFile: (entry) => openers.previewFile(entry),
+    revealEditor: reveal,
   };
 }

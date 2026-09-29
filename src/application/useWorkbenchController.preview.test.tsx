@@ -462,7 +462,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     const { getWorkbench } = renderController({ readTextFile });
     const file = fileEntry("/workspace/src/User.php", "User.php");
 
-    let previewPromise: Promise<void> | null = null;
+    let previewPromise: Promise<boolean> | null = null;
     let pinPromise: Promise<boolean> | null = null;
 
     act(() => {

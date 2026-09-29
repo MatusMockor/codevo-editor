@@ -615,6 +615,7 @@ export function AgentWorkbenchScreen({
         searchFilesShortcut,
         onOpenFile: treeFileOpeners.onOpenFile,
         onPreviewFile: treeFileOpeners.onPreviewFile,
+        revealEditor: treeFileOpeners.revealEditor,
       },
       diff: {
         monacoTheme,

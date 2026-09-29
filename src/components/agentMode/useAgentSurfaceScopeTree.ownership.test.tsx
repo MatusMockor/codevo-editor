@@ -24,6 +24,7 @@ describe("file tree selected-project action ownership", () => {
       revealActivePathSignal: 0,
       onOpenFile: open,
       onPreviewFile: preview,
+      revealEditor: () => undefined,
       searchFilesShortcut: "Cmd+P",
     },
   });

@@ -4,6 +4,8 @@ import {
   closeEditorGroupPath,
   closeEditorGroup,
   closeEditorGroupTab,
+  closeEmptiedEditorGroups,
+  collapseEmptyEditorGroups,
   countDirtyEditorDocuments,
   countEditorGroupMemberships,
   createEditorGroup,
@@ -393,5 +395,98 @@ describe("EditorGroupsState", () => {
     });
     expect(resized.layout).toMatchObject({ sizes: [0.9, 0.09999999999999998] });
     expect(editorGroupsReducer(resized, { type: "resize-split", splitPath: [4], sizes: [1, 1] })).toBe(resized);
+  });
+});
+
+describe("closing empty editor groups", () => {
+  function mainAndSide() {
+    let state = createInitialEditorGroupsState("editor-main", createEditorGroup({
+      activePath: "/greet.ts",
+      openPaths: ["/greet.ts"],
+      previewPath: null,
+    }));
+    state = editorGroupsReducer(state, { type: "split-group", groupId: "editor-main", newGroupId: "editor-1", direction: "right" });
+    return editorGroupsReducer(state, { type: "open-tab", groupId: "editor-1", path: "/orders.ts" });
+  }
+
+  function closeTabs(state: ReturnType<typeof mainAndSide>, groupId: string, paths: string[]) {
+    return paths.reduce((current, path) => closeEditorGroupTab(current, groupId, path).state, state);
+  }
+
+  it("closes a side group once its last tab closes and focuses the neighbouring group", () => {
+    const before = closeTabs(mainAndSide(), "editor-1", ["/greet.ts"]);
+    const emptied = closeTabs(before, "editor-1", ["/orders.ts"]);
+
+    const closed = closeEmptiedEditorGroups(before, emptied, "editor-main");
+
+    expect(Object.keys(closed.groups)).toEqual(["editor-main"]);
+    expect(closed.layout).toEqual({ kind: "group", groupId: "editor-main" });
+    expect(closed.activeGroupId).toBe("editor-main");
+    expect(closed.groups["editor-main"]).toEqual(emptied.groups["editor-main"]);
+  });
+
+  it("focuses the adjacent group of a nested split when the active side group empties", () => {
+    let before = editorGroupsReducer(mainAndSide(), { type: "split-group", groupId: "editor-1", newGroupId: "editor-2", direction: "down" });
+    before = editorGroupsReducer(before, { type: "activate-group", groupId: "editor-1" });
+    const emptied = closeTabs(before, "editor-1", ["/greet.ts", "/orders.ts"]);
+
+    const closed = closeEmptiedEditorGroups(before, emptied, "editor-main");
+
+    expect(editorGroupIdsInLayout(closed.layout)).toEqual(["editor-main", "editor-2"]);
+    expect(closed.activeGroupId).toBe("editor-2");
+  });
+
+  it("keeps an emptied main group beside a side group that still has tabs", () => {
+    const before = mainAndSide();
+    const emptied = closeTabs(before, "editor-main", ["/greet.ts"]);
+
+    expect(closeEmptiedEditorGroups(before, emptied, "editor-main")).toBe(emptied);
+  });
+
+  it("keeps the only remaining group even when it empties and is not the main group", () => {
+    const before = closeEditorGroup(mainAndSide(), "editor-main").state;
+    const emptied = closeTabs(before, "editor-1", ["/greet.ts", "/orders.ts"]);
+
+    expect(closeEmptiedEditorGroups(before, emptied, "editor-main")).toBe(emptied);
+  });
+
+  it("keeps a group that was already empty, such as a split of an empty editor", () => {
+    const empty = createInitialEditorGroupsState("editor-main");
+    const split = editorGroupsReducer(empty, { type: "split-group", newGroupId: "editor-1", direction: "right" });
+
+    expect(closeEmptiedEditorGroups(empty, split, "editor-main")).toBe(split);
+    expect(closeEmptiedEditorGroups(split, split, "editor-main")).toBe(split);
+  });
+
+  it("collapses every empty side group of a restored split but keeps the main group", () => {
+    const restored = normalizeEditorGroupsState({
+      groups: {
+        "editor-main": { activePath: null, openPaths: [], previewPath: null },
+        "editor-1": { activePath: null, openPaths: [], previewPath: null },
+        "editor-2": { activePath: "/orders.ts", openPaths: ["/orders.ts"], previewPath: null },
+      },
+      activeGroupId: "editor-1",
+      layout: {
+        kind: "split",
+        orientation: "horizontal",
+        sizes: [0.5, 0.5],
+        children: [
+          { kind: "group", groupId: "editor-main" },
+          {
+            kind: "split",
+            orientation: "horizontal",
+            sizes: [0.5, 0.5],
+            children: [{ kind: "group", groupId: "editor-1" }, { kind: "group", groupId: "editor-2" }],
+          },
+        ],
+      },
+    }, "editor-main");
+    expect(Object.keys(restored.groups)).toHaveLength(3);
+
+    const collapsed = collapseEmptyEditorGroups(restored, "editor-main");
+
+    expect(editorGroupIdsInLayout(collapsed.layout)).toEqual(["editor-main", "editor-2"]);
+    expect(collapsed.activeGroupId).toBe("editor-2");
+    expect(collapseEmptyEditorGroups(collapsed, "editor-main")).toBe(collapsed);
   });
 });
