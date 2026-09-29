@@ -51,6 +51,20 @@ describe("configureMonacoEnvironment", () => {
     }
   }, 30_000);
 
+  it("registers the suggest commands the QA and perf bridges trigger on the active editor", async () => {
+    const { configureMonacoEnvironment } = await import("./monacoEnvironment");
+    const { EditorExtensionsRegistry } =
+      await import("monaco-editor/esm/vs/editor/browser/editorExtensions.js");
+    const { CommandsRegistry } =
+      await import("monaco-editor/esm/vs/platform/commands/common/commands.js");
+
+    configureMonacoEnvironment({});
+
+    const actions = EditorExtensionsRegistry.getEditorActions().map(({ id }) => id);
+    expect(actions).toContain("editor.action.triggerSuggest");
+    expect(CommandsRegistry.getCommand("hideSuggestWidget")).toBeDefined();
+  }, 30_000);
+
   it("hides Monaco's command-layer bypasses from the editor context menu and unbinds F1", async () => {
     const { configureMonacoEnvironment } = await import("./monacoEnvironment");
     const { MenuId, MenuRegistry } =

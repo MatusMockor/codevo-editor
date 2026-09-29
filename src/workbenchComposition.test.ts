@@ -9,6 +9,7 @@ import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDis
 import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
 import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
+import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -142,6 +143,14 @@ describe("workbench live-document runtime composition", () => {
     );
     expect(composition.agentControllerGateways.gitWorktreeGateway).toBeInstanceOf(
       TauriGitWorktreeGateway,
+    );
+  });
+
+  it("wires the agent root lease so the shipped workbench always opens the agent layout", () => {
+    const composition = createWorkbenchComposition();
+
+    expect(composition.agentControllerGateways.agentRootLeaseGateway).toBeInstanceOf(
+      TauriAgentRootLeaseGateway,
     );
   });
 
