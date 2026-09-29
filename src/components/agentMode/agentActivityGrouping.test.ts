@@ -137,7 +137,7 @@ describe("agentActivityEntries", () => {
       ["item", "e6"],
       ["group", "group:tool-7"],
     ]);
-    expect(agentActivityAttentionCount(items)).toBe(1);
+    expect(agentActivityAttentionCount(items, null)).toBe(1);
   });
 
   it("folds an adjacent run of different tool kinds into one summarized group", () => {
@@ -326,7 +326,25 @@ describe("interrupted tool rows", () => {
     const entries = agentActivityEntries([activityTool(0), interrupted, activityTool(2)]);
     expect(entries.map((entry) => entry.kind)).toEqual(["item", "item", "item"]);
     expect(entries[1]).toMatchObject({ kind: "item", item: interrupted });
-    expect(agentActivityAttentionCount([activityTool(0), interrupted])).toBe(1);
+    expect(agentActivityAttentionCount([activityTool(0), interrupted], null)).toBe(1);
+  });
+});
+
+describe("user-stopped work attention", () => {
+  const stopped = activityTool(1, { status: "stopped" });
+  const failed = activityTool(2, { status: "error" });
+  const haltResult = { kind: "result" as const, key: "e3", text: "", isError: true };
+
+  it.each(["stopping", "stopped"] as const)(
+    "does not ask for attention for a %s tool or the halt result",
+    (halt) => {
+      expect(agentActivityAttentionCount([activityTool(0), stopped, haltResult], halt)).toBe(0);
+      expect(agentActivityAttentionCount([failed, stopped, haltResult], halt)).toBe(1);
+    },
+  );
+
+  it("still asks for attention for an error result without a halt", () => {
+    expect(agentActivityAttentionCount([stopped, haltResult], null)).toBe(1);
   });
 });
 

@@ -62,6 +62,7 @@ import { agentThreadColumnKey } from "./agentThreadColumn";
 import { agentTurnAttachmentViews } from "./agentTurnAttachmentPresentation";
 import {
   agentTurnEndMarker,
+  agentTurnHalt,
   createTurnErrorContext,
   repeatsLastError,
   turnFailure,
@@ -132,6 +133,7 @@ export const AgentTurnView = memo(function AgentTurnView({
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
   const settlement = agentTurnSettlement(turn.status);
   const toolSettlement = agentToolSettlement(turn.status);
+  const halt = agentTurnHalt(turn);
   const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
   const [renderedLimit, setRenderedLimit] = useState(MAX_RENDERED_EVENTS_PER_TURN);
   const projection = useMemo(
@@ -143,8 +145,18 @@ export const AgentTurnView = memo(function AgentTurnView({
         toolSettlement,
         eventOffset,
         renderedLimit,
+        undefined,
+        halt,
       ),
-    [turn.events, revealEventIndex, workspaceRoot, toolSettlement, eventOffset, renderedLimit],
+    [
+      turn.events,
+      revealEventIndex,
+      workspaceRoot,
+      toolSettlement,
+      eventOffset,
+      renderedLimit,
+      halt,
+    ],
   );
   const running = settlement === "running";
   const readerSource =
@@ -228,8 +240,9 @@ export const AgentTurnView = memo(function AgentTurnView({
             0,
             MAX_REVEALED_EVENTS_PER_TURN,
             (offset) => agentTurnLogItemKey(windowEvents.seqs[offset] ?? 0),
+            halt,
           ),
-    [turn.status, windowEvents, workspaceRoot],
+    [halt, turn.status, windowEvents, workspaceRoot],
   );
   const savedItems = useMemo(() => {
     if (savedWork === null) return null;
@@ -362,7 +375,7 @@ export const AgentTurnView = memo(function AgentTurnView({
                       activityWindow === null ? projection.hiddenCount : 0,
                     ),
                   ),
-                  agentActivityAttentionCount(workFold?.workItems ?? []),
+                  agentActivityAttentionCount(workFold?.workItems ?? [], halt),
                 )}
                 meta={
                   foregroundRunning
@@ -376,7 +389,7 @@ export const AgentTurnView = memo(function AgentTurnView({
                 autoOpen={
                   activityWindow !== null ||
                   foregroundRunning ||
-                  agentActivityAttentionCount(workFold?.workItems ?? []) > 0
+                  agentActivityAttentionCount(workFold?.workItems ?? [], halt) > 0
                 }
                 trailing={
                   <AgentTurnLaterControl

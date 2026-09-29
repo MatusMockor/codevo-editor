@@ -6,6 +6,7 @@ import {
   type AgentActivityCategoryCount,
 } from "../../domain/agentActivityFold";
 import { isAgentSubagentToolItem, type AgentTurnItem } from "./agentModePresentation";
+import type { AgentTurnHalt } from "./agentTurnErrorPresentation";
 
 export type AgentActivityTool = Extract<AgentTurnItem, { kind: "tool" }>;
 export type AgentActivityThought = Extract<AgentTurnItem, { kind: "reasoning" }>;
@@ -196,13 +197,18 @@ export function agentActivityEntries(
   return entries;
 }
 
-export function agentActivityAttentionCount(items: ReadonlyArray<AgentTurnItem>): number {
-  return items.filter(
-    (item) =>
-      item.kind === "error" ||
-      (item.kind === "result" && item.isError) ||
-      (item.kind === "tool" && unsettledToolStatus(item.status)),
-  ).length;
+export function agentActivityAttentionCount(
+  items: ReadonlyArray<AgentTurnItem>,
+  halt: AgentTurnHalt | null,
+): number {
+  return items.filter((item) => needsAttention(item, halt)).length;
+}
+
+function needsAttention(item: AgentTurnItem, halt: AgentTurnHalt | null): boolean {
+  if (item.kind === "error") return true;
+  if (item.kind === "result") return item.isError && halt === null;
+  if (item.kind !== "tool") return false;
+  return item.status === "error" || item.status === "interrupted";
 }
 
 export type AgentThoughtLayout = "row" | "body";

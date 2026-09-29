@@ -3,6 +3,8 @@ import { agentTurnItemKey } from "./agentTurnItemKeys";
 import type { AgentAttachment } from "../../domain/agentAttachment";
 import type { AgentTaskOutputStream } from "../../domain/agentTask";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
+import { isAgentToolUseRejection } from "../../domain/agentOutput/agentToolUseRejection";
+import type { AgentTurnHalt } from "./agentTurnErrorPresentation";
 import {
   AGENT_TOOL_PATH_LIST_SEPARATOR,
   toolRowKind,
@@ -137,23 +139,50 @@ interface AgentToolRowSource {
   readonly description?: string;
   readonly outcome: AgentToolOutcome | null;
   readonly settlement: AgentToolSettlement;
+  readonly halt: AgentTurnHalt | null;
   readonly workspaceRoot: string | null;
 }
 
 function toolRowStatus(
   outcome: AgentToolOutcome | null,
   settlement: AgentToolSettlement,
+  halt: AgentTurnHalt | null,
 ): AgentToolItemStatus {
-  if (outcome !== null) return outcome.isError ? "error" : "ok";
+  if (outcome !== null) return toolOutcomeStatus(outcome, halt);
   if (settlement === "running") return "running";
   if (settlement === "stopped") return "stopped";
   if (settlement === "interrupted") return "interrupted";
   return "ok";
 }
 
+function toolOutcomeStatus(
+  outcome: AgentToolOutcome,
+  halt: AgentTurnHalt | null,
+): AgentToolItemStatus {
+  if (!outcome.isError) return "ok";
+  if (halt === null || !isAgentToolUseRejection(outcome.outputSummary)) return "error";
+  return haltedToolStatus(halt);
+}
+
+function haltedToolStatus(halt: AgentTurnHalt): AgentToolItemStatus {
+  switch (halt) {
+    case "stopping":
+    case "stopped":
+      return "stopped";
+    case "interrupted":
+      return "interrupted";
+    default:
+      return unsupportedTurnHalt(halt);
+  }
+}
+
+function unsupportedTurnHalt(halt: never): never {
+  throw new TypeError(`Unsupported agent turn halt: ${String(halt)}.`);
+}
+
 function toolRowFields(source: AgentToolRowSource): AgentToolRowFields {
   const rowKind = toolRowKind(source.name);
-  const status = toolRowStatus(source.outcome, source.settlement);
+  const status = toolRowStatus(source.outcome, source.settlement, source.halt);
   const interrupted = status === "interrupted";
   const label = toolRowLabel({
     name: source.name,
@@ -226,6 +255,7 @@ export function agentTurnProjection(
   firstEventOffset = 0,
   renderedLimit: number = MAX_RENDERED_EVENTS_PER_TURN,
   keyOf?: (offset: number) => string,
+  halt: AgentTurnHalt | null = null,
 ): AgentTurnProjection {
   const limit = agentRenderedEventLimit(renderedLimit);
   const renderable = events
@@ -272,6 +302,7 @@ export function agentTurnProjection(
     appendTurnItem({
       calls,
       event,
+      halt,
       items,
       key,
       rawLines,
@@ -464,6 +495,7 @@ export function isSubagentSpawnTool(name: string): boolean {
 interface TurnItemAppend {
   readonly calls: ReadonlyMap<string, AgentToolCallSummary>;
   readonly event: AgentTurnEvent;
+  readonly halt: AgentTurnHalt | null;
   readonly items: AgentTurnItem[];
   readonly key: string;
   readonly rawLines: AgentRawLine[];
@@ -475,6 +507,7 @@ interface TurnItemAppend {
 function appendTurnItem({
   calls,
   event,
+  halt,
   items,
   key,
   rawLines,
@@ -515,6 +548,7 @@ function appendTurnItem({
         inputSummary: event.inputSummary,
         outcome: null,
         settlement,
+        halt,
         workspaceRoot,
         ...presentField("description", event.description),
       }),
@@ -528,7 +562,16 @@ function appendTurnItem({
   }
   if (event.kind === "subagent" || appServerGroupId(event) !== null) return;
   if (event.kind === "toolResult") {
-    attachToolResult({ calls, event, items, key, settlement, toolItemByToolId, workspaceRoot });
+    attachToolResult({
+      calls,
+      event,
+      halt,
+      items,
+      key,
+      settlement,
+      toolItemByToolId,
+      workspaceRoot,
+    });
     return;
   }
   if (event.kind === "result") {
@@ -563,6 +606,7 @@ function appendTurnItem({
 interface ToolResultAttach {
   readonly calls: ReadonlyMap<string, AgentToolCallSummary>;
   readonly event: Extract<AgentTurnEvent, { kind: "toolResult" }>;
+  readonly halt: AgentTurnHalt | null;
   readonly items: AgentTurnItem[];
   readonly key: string;
   readonly settlement: AgentToolSettlement;
@@ -573,6 +617,7 @@ interface ToolResultAttach {
 function attachToolResult({
   calls,
   event,
+  halt,
   items,
   key,
   settlement,
@@ -595,6 +640,7 @@ function attachToolResult({
         inputSummary: pending.inputSummary,
         outcome,
         settlement,
+        halt,
         workspaceRoot,
         ...presentField("description", call?.description),
       }),
@@ -616,6 +662,7 @@ function attachToolResult({
       inputSummary,
       outcome,
       settlement,
+      halt,
       workspaceRoot,
       ...presentField("description", call?.description),
     }),

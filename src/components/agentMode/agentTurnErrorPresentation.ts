@@ -45,7 +45,9 @@ export function createTurnErrorContext(
   };
 }
 
-function agentTurnHalt(turn: Pick<AgentTurn, "status" | "haltRequested">): AgentTurnHalt | null {
+export function agentTurnHalt(
+  turn: Pick<AgentTurn, "status" | "haltRequested">,
+): AgentTurnHalt | null {
   const { status } = turn;
   if (status.kind === "stopped" || status.kind === "interrupted") return status.kind;
   if (turn.haltRequested === true && !isTerminalAgentTurnStatus(status)) return "stopping";
