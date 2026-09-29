@@ -308,6 +308,11 @@ impl ClaudeSessionRouter {
         if self.acknowledges_interrupt(&message) {
             step.interrupt_acknowledged = true;
         }
+        if self.detector.expire_level_ended(&message) && self.owned() {
+            if let (true, via_interrupt) = self.settle_ready() {
+                self.record_settlement(via_interrupt, step);
+            }
+        }
         let finishes_command = self.finishes_attached_command(&message);
         let destination = self.classify(&message, step);
         let owned = self.owned();
@@ -343,9 +348,12 @@ impl ClaudeSessionRouter {
             false if self.owned() => self.settle_ready(),
             false => (false, false),
         };
-        if !settled {
-            return;
+        if settled {
+            self.record_settlement(via_interrupt, step);
         }
+    }
+
+    fn record_settlement(&mut self, via_interrupt: bool, step: &mut RouterStep) {
         step.settled = true;
         step.interrupted = self
             .attached

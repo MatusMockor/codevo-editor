@@ -816,3 +816,121 @@ fn an_inherited_task_restarted_after_the_arm_blocks_again() {
     assert!(!detector.feed(RESULT).unwrap());
     assert!(detector.feed(DONE).unwrap());
 }
+
+const POLL_SESSION: &str = "05cae361-94fc-4216-aec7-0e2e87c0a3a6";
+
+fn poll_frame(body: &str) -> Vec<u8> {
+    format!("{{\"type\":\"system\",{body},\"session_id\":\"{POLL_SESSION}\"}}\n").into_bytes()
+}
+
+fn poll_started() -> Vec<u8> {
+    poll_frame("\"subtype\":\"task_started\",\"task_id\":\"baa0ysq6h\",\"tool_use_id\":\"toolu_01SvfpGmZKYToWiKzG5TaQUN\",\"description\":\"Poll the CRM MR pipeline until it finishes and list failed jobs\",\"task_type\":\"local_bash\",\"is_backgrounded\":true")
+}
+
+fn poll_listed() -> Vec<u8> {
+    poll_frame("\"subtype\":\"background_tasks_changed\",\"tasks\":[{\"task_id\":\"baa0ysq6h\",\"task_type\":\"local_bash\",\"description\":\"Poll the CRM MR pipeline until it finishes and list failed jobs\"}]")
+}
+
+fn tasks_emptied() -> Vec<u8> {
+    poll_frame("\"subtype\":\"background_tasks_changed\",\"tasks\":[]")
+}
+
+fn poll_answer() -> Vec<u8> {
+    format!("{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"Pipeline na CRM MR este bezi, sledujem ju na pozadi.\"}}]}},\"parent_tool_use_id\":null,\"session_id\":\"{POLL_SESSION}\"}}\n").into_bytes()
+}
+
+fn poll_result() -> Vec<u8> {
+    format!("{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Pipeline na CRM MR este bezi.\",\"num_turns\":12,\"session_id\":\"{POLL_SESSION}\"}}\n").into_bytes()
+}
+
+fn poll_notified() -> Vec<u8> {
+    poll_frame("\"subtype\":\"task_notification\",\"task_id\":\"baa0ysq6h\",\"tool_use_id\":\"toolu_01SvfpGmZKYToWiKzG5TaQUN\",\"status\":\"completed\",\"output_file\":\"\",\"summary\":\"Background command completed (exit code 0)\"")
+}
+
+#[test]
+fn level_snapshot_ends_a_listed_task_at_the_first_frame_that_is_not_its_bookend() {
+    let mut detector = awaiting();
+    for line in [
+        poll_listed(),
+        poll_started(),
+        poll_answer(),
+        poll_result(),
+        tasks_emptied(),
+    ] {
+        assert!(!detector.feed(&line).unwrap());
+    }
+    assert_eq!(detector.live_background_task_count(), 1);
+    detector.feed(&poll_frame("\"subtype\":\"init\"")).unwrap();
+    assert_eq!(detector.live_background_task_count(), 0);
+}
+
+#[test]
+fn level_snapshot_waits_for_the_bookends_that_follow_it() {
+    let mut detector = awaiting();
+    for line in [
+        poll_listed(),
+        poll_started(),
+        poll_answer(),
+        poll_result(),
+        tasks_emptied(),
+    ] {
+        assert!(!detector.feed(&line).unwrap());
+    }
+    assert!(detector.feed(&poll_notified()).unwrap());
+}
+
+#[test]
+fn level_snapshot_never_retires_a_task_it_has_not_listed() {
+    let mut detector = awaiting();
+    for line in [
+        poll_started(),
+        tasks_emptied(),
+        poll_answer(),
+        poll_result(),
+    ] {
+        assert!(!detector.feed(&line).unwrap());
+    }
+    assert_eq!(detector.live_background_task_count(), 1);
+    assert!(detector.feed(&poll_notified()).unwrap());
+}
+
+#[test]
+fn level_snapshot_keeps_listed_tasks_live() {
+    let mut detector = awaiting();
+    for line in [
+        poll_listed(),
+        poll_started(),
+        poll_listed(),
+        poll_result(),
+        poll_answer(),
+    ] {
+        assert!(!detector.feed(&line).unwrap());
+    }
+    assert_eq!(detector.live_background_task_count(), 1);
+}
+
+#[test]
+fn idle_session_level_snapshot_clears_the_live_task_count() {
+    let mut detector = awaiting();
+    for line in [poll_listed(), poll_started(), poll_answer(), poll_result()] {
+        detector.feed(&line).unwrap();
+    }
+    detector.rearm(None);
+    detector.track_message(&parsed(&tasks_emptied())).unwrap();
+    detector
+        .track_message(&parsed(&poll_frame("\"subtype\":\"init\"")))
+        .unwrap();
+    assert_eq!(detector.live_background_task_count(), 0);
+}
+
+#[test]
+fn ambient_tasks_never_hold_the_turn_or_the_session() {
+    let watcher = poll_frame("\"subtype\":\"task_started\",\"task_id\":\"w1\",\"description\":\"live updates\",\"task_type\":\"monitor_ws\",\"ambient\":true");
+    let fork = poll_frame("\"subtype\":\"task_started\",\"task_id\":\"a1\",\"description\":\"fork\",\"task_type\":\"local_agent\",\"is_backgrounded\":true,\"skip_transcript\":true,\"ambient\":true");
+    let mut detector = awaiting();
+    for line in [watcher, fork, poll_answer()] {
+        assert!(!detector.feed(&line).unwrap());
+    }
+    assert_eq!(detector.live_task_count(), 0);
+    assert!(detector.feed(&poll_result()).unwrap());
+}

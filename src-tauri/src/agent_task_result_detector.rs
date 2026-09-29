@@ -22,6 +22,7 @@ pub struct ResultLineDetector {
     skipping_line: bool,
     fired: bool,
     live: HashMap<String, TaskScope>,
+    level: BackgroundLevel,
     inherited: HashSet<String>,
     terminal: HashMap<String, Tombstone>,
     buried: VecDeque<String>,
@@ -92,6 +93,7 @@ impl ResultLineDetector {
         if !self.accepts_root(message) {
             return Ok(());
         }
+        self.expire_level_ended(message);
         if message.get("type").and_then(Value::as_str) != Some("system") {
             return Ok(());
         }
@@ -281,6 +283,7 @@ impl ResultLineDetector {
         if !self.accepts_root(message) {
             return Ok(false);
         }
+        self.expire_level_ended(message);
         let kind = message.get("type").and_then(Value::as_str);
         if kind == Some("result") && self.unprompted_result(message) {
             return Ok(false);
@@ -360,6 +363,7 @@ impl ResultLineDetector {
             self.retired.push_back(session);
         }
         self.inherited.clear();
+        self.level = BackgroundLevel::default();
         let retired: Vec<String> = self.live.drain().map(|(task, _)| task).collect();
         for task in retired {
             self.bury(task, Tombstone::Retired);
@@ -392,9 +396,44 @@ impl ResultLineDetector {
         Ok(())
     }
 
+    pub fn expire_level_ended(&mut self, message: &Value) -> bool {
+        if !self.level.has_ended() || !self.own_root(message) || self.level.awaits(message) {
+            return false;
+        }
+        for task in self.level.take_ended() {
+            self.finish(task);
+        }
+        true
+    }
+
+    fn own_root(&self, message: &Value) -> bool {
+        message.get("parent_tool_use_id").is_none_or(Value::is_null)
+            && message
+                .get("session_id")
+                .and_then(Value::as_str)
+                .is_none_or(|session| self.session.as_deref().is_none_or(|own| own == session))
+    }
+
+    fn start(&mut self, task: &str, scope: TaskScope, message: &Value) {
+        self.level.started(task, leveled_task(message));
+        self.live.insert(task.to_string(), scope);
+    }
+
+    fn finish(&mut self, task: String) {
+        self.live.remove(&task);
+        self.inherited.remove(&task);
+        self.level.forget(&task);
+        self.bury(task, Tombstone::Finished);
+    }
+
     fn consume_task(&mut self, message: &Value) -> Result<(), &'static str> {
+        let subtype = message.get("subtype").and_then(Value::as_str);
+        if subtype == Some("background_tasks_changed") {
+            self.level.replace(message);
+            return Ok(());
+        }
         let Some(kind @ ("task_started" | "task_progress" | "task_notification" | "task_updated")) =
-            message.get("subtype").and_then(Value::as_str)
+            subtype
         else {
             return Ok(());
         };
@@ -415,10 +454,11 @@ impl ResultLineDetector {
             Some(false) => TaskScope::Foreground,
             Some(true) | None => TaskScope::Background,
         };
-        let inert = message
-            .get("task_type")
-            .and_then(Value::as_str)
-            .is_some_and(|kind| matches!(kind, "plan" | "dream"));
+        let inert = message.get("ambient").and_then(Value::as_bool) == Some(true)
+            || message
+                .get("task_type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| matches!(kind, "plan" | "dream"));
         let terminal = inert
             || status.is_some_and(|status| {
                 matches!(
@@ -435,16 +475,14 @@ impl ResultLineDetector {
             }
             self.exhume(id);
             self.inherited.remove(id);
-            self.live.insert(id.to_string(), scope);
+            self.start(id, scope, message);
             return Ok(());
         }
         if terminal {
             if !self.terminal.contains_key(id) && !self.live.contains_key(id) {
                 self.make_room()?;
             }
-            self.live.remove(id);
-            self.inherited.remove(id);
-            self.bury(id.to_string(), Tombstone::Finished);
+            self.finish(id.to_string());
         } else if kind == "task_started"
             && !self.terminal.contains_key(id)
             && !self.live.contains_key(id)
@@ -455,7 +493,7 @@ impl ResultLineDetector {
             if self.make_room().is_err() {
                 return Err("Claude background tasks exceeded their tracking limit.");
             }
-            self.live.insert(id.to_string(), scope);
+            self.start(id, scope, message);
         }
         Ok(())
     }
@@ -477,6 +515,99 @@ fn did_work(message: &Value) -> bool {
             .get("result")
             .and_then(Value::as_str)
             .is_some_and(|text| !text.trim().is_empty())
+}
+
+fn leveled_task(message: &Value) -> bool {
+    message
+        .get("task_type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| matches!(kind, "local_bash" | "monitor_mcp" | "monitor_ws"))
+}
+
+fn task_bookend(message: &Value) -> Option<&str> {
+    let subtype = message.get("subtype").and_then(Value::as_str)?;
+    if !matches!(
+        subtype,
+        "task_progress" | "task_notification" | "task_updated" | "background_tasks_changed"
+    ) {
+        return None;
+    }
+    Some(
+        message
+            .get("task_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+}
+
+#[derive(Default)]
+struct BackgroundLevel {
+    announced: HashSet<String>,
+    tracked: HashSet<String>,
+    listed: HashSet<String>,
+    ended: HashSet<String>,
+}
+
+impl BackgroundLevel {
+    fn replace(&mut self, message: &Value) {
+        let Some(tasks) = message
+            .get("tasks")
+            .and_then(Value::as_array)
+            .filter(|tasks| tasks.len() <= MAX_OBSERVED_TASKS)
+        else {
+            return;
+        };
+        self.announced = tasks
+            .iter()
+            .filter(|task| task.get("ambient").and_then(Value::as_bool) != Some(true))
+            .filter_map(|task| task.get("task_id").and_then(Value::as_str))
+            .filter(|task| valid_id(task))
+            .map(str::to_string)
+            .collect();
+        let announced = &self.announced;
+        self.ended.extend(
+            self.listed
+                .iter()
+                .filter(|task| !announced.contains(*task))
+                .cloned(),
+        );
+        self.ended.retain(|task| !announced.contains(task));
+        self.listed.extend(
+            self.tracked
+                .iter()
+                .filter(|task| announced.contains(*task))
+                .cloned(),
+        );
+    }
+
+    fn started(&mut self, task: &str, leveled: bool) {
+        self.forget(task);
+        if !leveled {
+            return;
+        }
+        self.tracked.insert(task.to_string());
+        if self.announced.contains(task) {
+            self.listed.insert(task.to_string());
+        }
+    }
+
+    fn forget(&mut self, task: &str) {
+        self.tracked.remove(task);
+        self.listed.remove(task);
+        self.ended.remove(task);
+    }
+
+    fn has_ended(&self) -> bool {
+        !self.ended.is_empty()
+    }
+
+    fn awaits(&self, message: &Value) -> bool {
+        task_bookend(message).is_some_and(|task| task.is_empty() || self.ended.contains(task))
+    }
+
+    fn take_ended(&mut self) -> Vec<String> {
+        self.ended.drain().collect()
+    }
 }
 
 fn valid_id(id: &str) -> bool {

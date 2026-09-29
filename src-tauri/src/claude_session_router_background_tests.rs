@@ -475,3 +475,84 @@ fn unsupported_control_requests_are_capped_per_idle_period_and_per_unprompted_tu
     );
     answer_up_to_the_cap(&mut router, "next-idle");
 }
+
+fn agent_started(id: &str) -> Vec<u8> {
+    line(serde_json::json!({
+        "type":"system",
+        "subtype":"task_started",
+        "task_id":id,
+        "task_type":"local_agent",
+        "is_backgrounded":true,
+        "session_id":"sess-abcdefgh"
+    }))
+}
+
+fn agents_listed(id: &str) -> Vec<u8> {
+    line(serde_json::json!({
+        "type":"system",
+        "subtype":"background_tasks_changed",
+        "tasks":[{"task_id":id,"task_type":"local_agent","description":"review"}],
+        "session_id":"sess-abcdefgh"
+    }))
+}
+
+#[test]
+fn a_listed_shell_task_whose_bookends_never_arrive_ends_at_the_next_frame() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let reply = assistant("Pipeline na CRM MR este bezi, sledujem ju na pozadi.");
+    let own = result(Some(&id), 0.25, "watching");
+    let completed = lifecycle(&id, "completed");
+    let turn = feed_all(
+        &mut router,
+        &[TASKS_LISTED, TASK_STARTED, &reply, &own, &completed],
+    );
+    assert_eq!(turn.settles, 0);
+    assert_eq!(router.live_background_tasks(), 1);
+    let emptied = router.feed(TASKS_EMPTIED);
+    assert!(!emptied.settled, "the bookends may still follow the level");
+    let wake = router.feed(INIT);
+    assert!(wake.settled);
+    assert!(wake.turn_output.is_empty());
+    assert_eq!(router.live_background_tasks(), 0);
+    let unprompted_reply = assistant("background-finished");
+    let unprompted_result = result(None, 0.5, "background-finished");
+    let after = feed_all(&mut router, &[&unprompted_reply, &unprompted_result]);
+    assert_eq!(after.settles, 0);
+    assert!(after.turn.is_empty());
+    assert_eq!(after.background.len(), 1);
+    assert!(after.background[0].complete);
+}
+
+#[test]
+fn late_bookends_after_the_level_still_land_in_the_turn() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let own = result(Some(&id), 0.25, "watching");
+    let completed = lifecycle(&id, "completed");
+    feed_all(&mut router, &[TASKS_LISTED, TASK_STARTED, &own, &completed]);
+    assert!(!router.feed(TASKS_EMPTIED).settled);
+    let progress = router.feed(&task_finished("bg-1", "running"));
+    assert!(!progress.settled);
+    let drained = router.feed(TASK_UPDATED);
+    assert!(drained.settled);
+    assert_eq!(drained.turn_output, TASK_UPDATED);
+}
+
+#[test]
+fn a_level_never_ends_agents_or_tasks_it_never_listed() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let agent = agent_started("a-1");
+    let listed = agents_listed("a-1");
+    let own = result(Some(&id), 0.25, "working");
+    let completed = lifecycle(&id, "completed");
+    feed_all(
+        &mut router,
+        &[&listed, &agent, TASK_STARTED, &own, &completed],
+    );
+    assert_eq!(router.live_background_tasks(), 2);
+    let quiet = feed_all(&mut router, &[TASKS_EMPTIED, KEEP_ALIVE, KEEP_ALIVE]);
+    assert_eq!(quiet.settles, 0);
+    assert_eq!(router.live_background_tasks(), 2);
+}

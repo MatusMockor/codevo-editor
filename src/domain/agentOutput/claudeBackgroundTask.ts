@@ -18,7 +18,8 @@ export function claudeBackgroundTask(value: Record<string, unknown>): Background
     utf8ByteLength(taskId) > MAX_AGENT_TOOL_ID_BYTES
   )
     return null;
-  if (value.task_type === "plan" || value.task_type === "dream") return null;
+  if (value.task_type === "plan" || value.task_type === "dream" || value.ambient === true)
+    return null;
   const patch =
     typeof value.patch === "object" && value.patch !== null && !Array.isArray(value.patch)
       ? (value.patch as Record<string, unknown>)

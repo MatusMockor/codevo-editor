@@ -47,6 +47,24 @@ describe("Claude native background task parsing", () => {
   ])("rejects inert/nested/malformed task %j", (override) => {
     expect(parse({ subtype: "task_started", ...override })).toEqual([]);
   });
+  it.each([
+    { subtype: "task_started", task_type: "monitor_ws", ambient: true },
+    {
+      subtype: "task_started",
+      task_type: "local_agent",
+      is_backgrounded: true,
+      skip_transcript: true,
+      ambient: true,
+    },
+    { subtype: "task_notification", status: "completed", skip_transcript: true, ambient: true },
+  ])("excludes CLI ambient tasks from activity %j", (frame) => {
+    expect(parse(frame)).toEqual([]);
+  });
+  it("keeps tasks the CLI does not mark ambient", () => {
+    expect(parse({ subtype: "task_started", task_type: "local_bash", ambient: false })).toEqual([
+      { kind: "backgroundTask", taskId: "task-1", status: "starting", taskType: "shell" },
+    ]);
+  });
   it("rejects unknown status and status-free patches", () => {
     expect(parse({ subtype: "task_notification", status: "surprise" })).toEqual([]);
     expect(parse({ subtype: "task_updated", patch: { description: "hello" } })).toEqual([]);
