@@ -65,7 +65,7 @@ function Host({
     status: {
       workspaceLabel: "w",
       ideActivityLabel: null,
-      ideActivityState: "idle",
+      ideActivitySummary: null,
       ideActivityDetail: "",
     },
     activeLanguage: "TypeScript",

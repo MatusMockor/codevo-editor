@@ -152,7 +152,7 @@ describe("status bar removal inventory", () => {
   it("renders every editor item in the editor sub-header or its More menu", () => {
     const chrome = chromeFixture({
       diagnostics: { errors: 1, warnings: 4 },
-      activity: { label: "Indexing 40%", state: "scanning", detail: null },
+      activity: { kind: "problem", text: "Indexing failed", title: "Indexing failed\ndisk full" },
       nodeRun: { canStop: true, label: "Running dev", phase: "running", stopLabel: "Stop dev" },
       statusRows: editorStatusRows({
         activeLanguage: "TypeScript",
@@ -185,7 +185,7 @@ describe("status bar removal inventory", () => {
     expect(
       subheader?.querySelector('button[aria-label="1 error, 4 warnings. Show problems"]'),
     ).not.toBeNull();
-    expect(subheader?.querySelector('button[aria-label="Indexing 40%"]')).not.toBeNull();
+    expect(subheader?.querySelector('button[aria-label="Indexing failed"]')).not.toBeNull();
     click(subheader?.querySelector('button[aria-label="More editor actions"]') as Element);
     const menu = document.body.querySelector('[role="menu"][aria-label="More editor actions"]');
     for (const expected of [

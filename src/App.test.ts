@@ -12,7 +12,6 @@ vi.mock("./infrastructure/shikiHighlighter", () => ({
 
 import {
   ideActivityDetail,
-  ideActivityState,
   ideActivityStatus,
   phpLanguageServerActivityLabel,
 } from "./domain/ideActivity";
@@ -53,45 +52,8 @@ describe("preloadSyntaxHighlighter", () => {
   });
 });
 
-describe("ideActivityState", () => {
-  it("ignores runtime statuses that do not belong to the active workspace", () => {
-    const rootlessRunningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 1,
-    };
-    const rootedRunningStatus: LanguageServerRuntimeStatus = {
-      ...rootlessRunningStatus,
-      rootPath: "/workspace",
-      sessionId: 2,
-    };
-    const otherWorkspaceStartingStatus: LanguageServerRuntimeStatus = {
-      kind: "starting",
-      rootPath: "/other",
-      sessionId: 3,
-    };
-
-    expect(
-      ideActivityState(
-        "/workspace",
-        rootlessRunningStatus,
-        otherWorkspaceStartingStatus,
-        initialIndexProgress(),
-      ),
-    ).toBe("idle");
-    expect(
-      ideActivityState(
-        "/workspace",
-        rootedRunningStatus,
-        otherWorkspaceStartingStatus,
-        initialIndexProgress(),
-      ),
-    ).toBe("active");
-  });
-});
-
 describe("ideActivityDetail", () => {
-  it("summarizes PHPactor, TS server, and index state on separate lines", () => {
+  it("summarizes PHPactor, TypeScript, and index state on separate lines", () => {
     const runningPhp: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
       kind: "running",
@@ -122,14 +84,14 @@ describe("ideActivityDetail", () => {
     const detail = ideActivityDetail("/workspace", runningPhp, startingTs, progress);
 
     expect(detail).toBe(
-      ["PHPactor: running", "TS Server: starting", "Index: 500 of 1000 (50%)"].join("\n"),
+      ["PHPactor: running", "TypeScript: starting", "Index: 500 of 1000 (50%)"].join("\n"),
     );
   });
 
   it("reports a stopped runtime and idle index when nothing is active", () => {
     const detail = ideActivityDetail("/workspace", null, null, initialIndexProgress());
 
-    expect(detail).toBe(["PHPactor: stopped", "TS Server: stopped", "Index: idle"].join("\n"));
+    expect(detail).toBe(["PHPactor: stopped", "TypeScript: stopped", "Index: idle"].join("\n"));
   });
 
   it("reports a crashed runtime distinctly from stopped", () => {
@@ -141,7 +103,7 @@ describe("ideActivityDetail", () => {
 
     const detail = ideActivityDetail("/workspace", crashedPhp, null, initialIndexProgress());
 
-    expect(detail).toBe(["PHPactor: crashed", "TS Server: stopped", "Index: idle"].join("\n"));
+    expect(detail).toBe(["PHPactor: crashed", "TypeScript: stopped", "Index: idle"].join("\n"));
   });
 
   it("ignores runtime statuses that belong to a different workspace", () => {
@@ -154,7 +116,7 @@ describe("ideActivityDetail", () => {
 
     const detail = ideActivityDetail("/workspace", otherWorkspacePhp, null, initialIndexProgress());
 
-    expect(detail).toBe(["PHPactor: stopped", "TS Server: stopped", "Index: idle"].join("\n"));
+    expect(detail).toBe(["PHPactor: stopped", "TypeScript: stopped", "Index: idle"].join("\n"));
   });
 });
 
@@ -213,14 +175,7 @@ describe("ideActivityStatus composed with the PHPactor and TS Server labels", ()
     });
     const combinedLabel = [phpLabel, tsLabel].filter(Boolean).join(" · ");
 
-    const activity = ideActivityStatus(
-      "/workspace",
-      runningPhp,
-      runningTs,
-      progress,
-      combinedLabel,
-      null,
-    );
+    const activity = ideActivityStatus(progress, combinedLabel, null);
 
     expect(activity.label).toBe(
       "IDE: PHPactor running · TS Server running for this project · Index 608 files",
@@ -228,7 +183,6 @@ describe("ideActivityStatus composed with the PHPactor and TS Server labels", ()
     expect(activity.label).not.toContain("smart selection");
     expect(activity.label).not.toContain("document highlights");
     expect(activity.label).not.toContain("hover, completion");
-    expect(activity.state).toBe("active");
   });
 });
 
@@ -250,9 +204,8 @@ describe("ideActivityStatus index progress", () => {
       },
     );
 
-    const activity = ideActivityStatus("/workspace", null, null, progress, null, null);
+    const activity = ideActivityStatus(progress, null, null);
 
-    expect(activity.state).toBe("scanning");
     expect(activity.label).toBe("IDE: Indexing 500 of 1000 (50%)");
   });
 
@@ -273,7 +226,7 @@ describe("ideActivityStatus index progress", () => {
       },
     );
 
-    const activity = ideActivityStatus("/workspace", null, null, progress, null, null);
+    const activity = ideActivityStatus(progress, null, null);
 
     expect(activity.label).toBe("IDE: Indexing 320 files");
   });
@@ -298,25 +251,16 @@ describe("ideActivityStatus framework profile segment", () => {
   }
 
   it("adds a compact Laravel/Nette segment after the runtime label", () => {
-    expect(
-      ideActivityStatus("/workspace", runningPhp, null, completedIndex, phpChipLabel(), "Laravel")
-        .label,
-    ).toBe("IDE: PHPactor running · Laravel · Index 610 files");
-    expect(
-      ideActivityStatus("/workspace", runningPhp, null, completedIndex, phpChipLabel(), "Nette")
-        .label,
-    ).toBe("IDE: PHPactor running · Nette · Index 610 files");
+    expect(ideActivityStatus(completedIndex, phpChipLabel(), "Laravel").label).toBe(
+      "IDE: PHPactor running · Laravel · Index 610 files",
+    );
+    expect(ideActivityStatus(completedIndex, phpChipLabel(), "Nette").label).toBe(
+      "IDE: PHPactor running · Nette · Index 610 files",
+    );
   });
 
   it("omits the profile segment for generic projects", () => {
-    const label = ideActivityStatus(
-      "/workspace",
-      runningPhp,
-      null,
-      completedIndex,
-      phpChipLabel(),
-      null,
-    ).label;
+    const label = ideActivityStatus(completedIndex, phpChipLabel(), null).label;
 
     expect(label).toBe("IDE: PHPactor running · Index 610 files");
     expect(label).not.toContain("Laravel");
@@ -330,7 +274,7 @@ describe("ideActivityStatus framework profile segment", () => {
       status: "idle" as const,
     };
 
-    expect(ideActivityStatus("/workspace", null, null, idleIndex, null, "Nette").label).toBeNull();
+    expect(ideActivityStatus(idleIndex, null, "Nette").label).toBeNull();
   });
 });
 

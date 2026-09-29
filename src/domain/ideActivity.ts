@@ -8,7 +8,9 @@ import { indexProgressPercent, type IndexProgressState } from "./indexProgress";
 import type { IntelligenceMode } from "./workspace";
 import { workspaceRootKeysEqual } from "./workspaceRootKey";
 
-export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
+export type IdeActivitySummary =
+  | { readonly kind: "busy"; readonly text: string }
+  | { readonly kind: "problem"; readonly text: string; readonly reason: string | null };
 
 export function phpLanguageServerActivityLabel(
   intelligenceMode: IntelligenceMode,
@@ -23,51 +25,18 @@ export function phpLanguageServerActivityLabel(
 }
 
 export function ideActivityStatus(
-  workspaceRoot: string | null,
-  phpRuntimeStatus: LanguageServerRuntimeStatus | null,
-  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
   indexProgress: IndexProgressState,
   languageServerLabel: string | null,
   frameworkActivityLabel: string | null,
-): { label: string | null; state: IdeActivityState | null } {
+): { label: string | null } {
   const runtimeLabel = compactLanguageServerActivityLabel(languageServerLabel);
   const labels = [
     runtimeLabel,
     runtimeLabel ? frameworkActivityLabel : null,
     compactIndexActivityLabel(indexProgress),
   ].filter((label): label is string => Boolean(label));
-  if (labels.length === 0) return { label: null, state: null };
-  return {
-    label: `IDE: ${labels.join(" · ")}`,
-    state: ideActivityState(
-      workspaceRoot,
-      phpRuntimeStatus,
-      javaScriptTypeScriptRuntimeStatus,
-      indexProgress,
-    ),
-  };
-}
-
-export function ideActivityState(
-  workspaceRoot: string | null,
-  phpRuntimeStatus: LanguageServerRuntimeStatus | null,
-  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
-  indexProgress: IndexProgressState,
-): IdeActivityState {
-  const phpKind = runtimeStatusKindForWorkspace(phpRuntimeStatus, workspaceRoot);
-  const tsKind = runtimeStatusKindForWorkspace(javaScriptTypeScriptRuntimeStatus, workspaceRoot);
-  if (
-    phpKind === "crashed" ||
-    tsKind === "crashed" ||
-    indexProgress.status === "failed" ||
-    indexProgress.erroredEntries > 0
-  )
-    return "problem";
-  if (phpKind === "starting" || tsKind === "starting" || indexProgress.status === "scanning")
-    return "scanning";
-  if (phpKind === "running" || tsKind === "running" || indexProgress.status === "completed")
-    return "active";
-  return "idle";
+  if (labels.length === 0) return { label: null };
+  return { label: `IDE: ${labels.join(" · ")}` };
 }
 
 export function ideActivityDetail(
@@ -78,9 +47,70 @@ export function ideActivityDetail(
 ): string {
   return [
     `PHPactor: ${runtimeKindLabel(runtimeStatusKindForWorkspace(phpRuntimeStatus, workspaceRoot))}`,
-    `TS Server: ${runtimeKindLabel(runtimeStatusKindForWorkspace(javaScriptTypeScriptRuntimeStatus, workspaceRoot))}`,
+    `TypeScript: ${runtimeKindLabel(runtimeStatusKindForWorkspace(javaScriptTypeScriptRuntimeStatus, workspaceRoot))}`,
     `Index: ${indexDetailLabel(indexProgress, workspaceRoot)}`,
   ].join("\n");
+}
+
+export function ideActivitySummary(
+  workspaceRoot: string | null,
+  phpRuntimeStatus: LanguageServerRuntimeStatus | null,
+  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
+  indexProgress: IndexProgressState,
+): IdeActivitySummary | null {
+  const typeScript = runtimeStatusForWorkspace(javaScriptTypeScriptRuntimeStatus, workspaceRoot);
+  const php = runtimeStatusForWorkspace(phpRuntimeStatus, workspaceRoot);
+  const index = indexProgressForWorkspace(indexProgress, workspaceRoot);
+  return (
+    runtimeProblem(typeScript, "TypeScript") ??
+    runtimeProblem(php, "PHPactor") ??
+    indexProblem(index) ??
+    runtimeBusy(typeScript, "TypeScript") ??
+    runtimeBusy(php, "PHPactor") ??
+    indexBusy(index)
+  );
+}
+
+function runtimeProblem(
+  status: LanguageServerRuntimeStatus | null,
+  name: string,
+): IdeActivitySummary | null {
+  if (status?.kind !== "crashed") return null;
+  return { kind: "problem", text: `${name} crashed`, reason: status.message || null };
+}
+
+function indexProgressForWorkspace(
+  progress: IndexProgressState,
+  workspaceRoot: string | null,
+): IndexProgressState | null {
+  if (!progress.rootPath || !workspaceRoot) return null;
+  return workspaceRootKeysEqual(progress.rootPath, workspaceRoot) ? progress : null;
+}
+
+function indexProblem(progress: IndexProgressState | null): IdeActivitySummary | null {
+  if (progress === null) return null;
+  if (progress.status === "failed") {
+    return { kind: "problem", text: "Indexing failed", reason: progress.message || null };
+  }
+  if (progress.erroredEntries <= 0) return null;
+  const files = progress.erroredEntries === 1 ? "file" : "files";
+  return { kind: "problem", text: `${progress.erroredEntries} ${files} not indexed`, reason: null };
+}
+
+function runtimeBusy(
+  status: LanguageServerRuntimeStatus | null,
+  name: string,
+): IdeActivitySummary | null {
+  if (status?.kind !== "starting") return null;
+  return { kind: "busy", text: `Starting ${name}…` };
+}
+
+function indexBusy(progress: IndexProgressState | null): IdeActivitySummary | null {
+  if (progress?.status !== "scanning") return null;
+  if (progress.totalFiles === null || progress.totalFiles <= 0) {
+    return { kind: "busy", text: "Indexing…" };
+  }
+  return { kind: "busy", text: `Indexing ${indexProgressPercent(progress)}%…` };
 }
 
 function compactLanguageServerActivityLabel(label: string | null): string | null {
@@ -123,11 +153,16 @@ function runtimeStatusKindForWorkspace(
   status: LanguageServerRuntimeStatus | null,
   workspaceRoot: string | null,
 ): LanguageServerRuntimeStatus["kind"] | null {
+  return runtimeStatusForWorkspace(status, workspaceRoot)?.kind ?? null;
+}
+
+function runtimeStatusForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  workspaceRoot: string | null,
+): LanguageServerRuntimeStatus | null {
   if (!status) return null;
-  if (!workspaceRoot) return status.kind;
-  return status.rootPath && workspaceRootKeysEqual(status.rootPath, workspaceRoot)
-    ? status.kind
-    : null;
+  if (!workspaceRoot) return status;
+  return status.rootPath && workspaceRootKeysEqual(status.rootPath, workspaceRoot) ? status : null;
 }
 
 function languageServerPlanLabel(plan: LanguageServerPlan): string {

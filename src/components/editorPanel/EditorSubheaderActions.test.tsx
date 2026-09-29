@@ -9,6 +9,7 @@ import { click, mountUi, type MountedUi } from "../../ui/foundation/foundationTe
 import { EditorChromeContext, type EditorChrome } from "./EditorChromeContext";
 import { chromeFixture } from "./editorChromeTestSupport";
 import { EditorSubheaderActions } from "./EditorSubheaderActions";
+import { EDITOR_BUSY_REVEAL_DELAY_MS } from "./useRevealedEditorActivity";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -17,6 +18,7 @@ let mounted: MountedUi | null = null;
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  vi.useRealTimers();
 });
 
 function renderActions(chrome: EditorChrome, onFind = vi.fn()) {
@@ -98,16 +100,99 @@ describe("EditorSubheaderActions", () => {
     expect(host.querySelector(".cv-esub__pos")).toBeNull();
   });
 
-  it("shows IDE activity only while it is not idle and opens the Runtime view", () => {
+  it("never flashes a busy indicator for work that settles before the reveal delay", () => {
+    vi.useFakeTimers();
+    const busy = chromeFixture({
+      activity: { kind: "busy", text: "Starting TypeScript…", title: "Starting TypeScript…" },
+    });
+    const host = renderActions(busy);
+
+    act(() => vi.advanceTimersByTime(EDITOR_BUSY_REVEAL_DELAY_MS - 1));
+    expect(host.querySelector(".cv-esub__activity")).toBeNull();
+    mounted?.render(
+      <EditorChromeContext.Provider value={chromeFixture()}>
+        <EditorSubheaderActions groupId="editor-main" onFind={vi.fn()} />
+      </EditorChromeContext.Provider>,
+    );
+    act(() => vi.advanceTimersByTime(EDITOR_BUSY_REVEAL_DELAY_MS));
+    expect(host.querySelector(".cv-esub__activity")).toBeNull();
+  });
+
+  it("reveals labelled busy work after the delay, clears it on completion and opens Runtime", () => {
+    vi.useFakeTimers();
     const chrome = chromeFixture({
-      activity: { label: "Indexing 40%", state: "scanning", detail: "PHPactor: Off" },
+      activity: {
+        kind: "busy",
+        text: "Indexing 40%…",
+        title: "Indexing 40%…\nTS Server: running",
+      },
     });
     const host = renderActions(chrome);
-    const activity = host.querySelector<HTMLButtonElement>('button[aria-label="Indexing 40%"]');
 
-    expect(activity?.title).toBe("Indexing 40%\nPHPactor: Off");
+    act(() => vi.advanceTimersByTime(EDITOR_BUSY_REVEAL_DELAY_MS));
+    const activity = host.querySelector<HTMLButtonElement>('button[aria-label="Indexing 40%…"]');
+    expect(activity?.textContent).toBe("Indexing 40%…");
+    expect(activity?.title).toBe("Indexing 40%…\nTS Server: running");
+    expect(activity?.querySelector('[role="status"]')).toBeNull();
+    expect(activity?.querySelector(".cv-spinner")).not.toBeNull();
     click(activity as Element);
     expect(chrome.openRuntimeView).toHaveBeenCalledTimes(1);
+
+    mounted?.render(
+      <EditorChromeContext.Provider value={chromeFixture()}>
+        <EditorSubheaderActions groupId="editor-main" onFind={vi.fn()} />
+      </EditorChromeContext.Provider>,
+    );
+    expect(host.querySelector(".cv-esub__activity")).toBeNull();
+  });
+
+  it("restarts the reveal delay when busy work follows a failure", () => {
+    vi.useFakeTimers();
+    const busy = chromeFixture({
+      activity: { kind: "busy", text: "Starting TypeScript…", title: "Starting TypeScript…" },
+    });
+    const problem = chromeFixture({
+      activity: { kind: "problem", text: "TypeScript crashed", title: "TypeScript crashed" },
+    });
+    const host = renderActions(busy);
+    const show = (chrome: EditorChrome) =>
+      mounted?.render(
+        <EditorChromeContext.Provider value={chrome}>
+          <EditorSubheaderActions groupId="editor-main" onFind={vi.fn()} />
+        </EditorChromeContext.Provider>,
+      );
+
+    act(() => vi.advanceTimersByTime(EDITOR_BUSY_REVEAL_DELAY_MS));
+    expect(host.querySelector('button[aria-label="Starting TypeScript…"]')).not.toBeNull();
+    show(problem);
+    expect(host.querySelector('button[aria-label="TypeScript crashed"]')).not.toBeNull();
+    expect(host.querySelector(".cv-spinner")).toBeNull();
+    show(busy);
+    expect(host.querySelector(".cv-esub__activity")).toBeNull();
+    act(() => vi.advanceTimersByTime(EDITOR_BUSY_REVEAL_DELAY_MS - 1));
+    expect(host.querySelector(".cv-esub__activity")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(host.querySelector('button[aria-label="Starting TypeScript…"]')).not.toBeNull();
+  });
+
+  it("shows a failure at once without a spinner and explains it on hover", () => {
+    vi.useFakeTimers();
+    const host = renderActions(
+      chromeFixture({
+        activity: {
+          kind: "problem",
+          text: "TypeScript crashed",
+          title: "TypeScript crashed\ntsserver exited with code 1",
+        },
+      }),
+    );
+    const activity = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="TypeScript crashed"]',
+    );
+
+    expect(activity?.title).toBe("TypeScript crashed\ntsserver exited with code 1");
+    expect(activity?.classList.contains("cv-esub__activity--problem")).toBe(true);
+    expect(activity?.querySelector(".cv-spinner")).toBeNull();
   });
 
   it("shows a running Node program with Stop", () => {

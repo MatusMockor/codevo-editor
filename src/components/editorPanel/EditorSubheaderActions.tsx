@@ -1,6 +1,5 @@
 import {
   CircleX,
-  LoaderCircle,
   MoreHorizontal,
   Search,
   SquareSplitHorizontal,
@@ -9,7 +8,8 @@ import {
 import { useCallback, useRef, useState } from "react";
 import { cx } from "../../ui/foundation/classNames";
 import { IconButton } from "../../ui/foundation/IconButton";
-import { useEditorChrome, type EditorChromeActivity } from "./EditorChromeContext";
+import { EditorActivityIndicator } from "./EditorActivityIndicator";
+import { useEditorChrome } from "./EditorChromeContext";
 import { EditorCursorPosition } from "./EditorCursorPosition";
 import { EditorMoreMenu } from "./EditorMoreMenu";
 import { EditorNodeRunChip } from "./EditorNodeRunChip";
@@ -35,7 +35,7 @@ export function EditorSubheaderActions({ groupId, onFind }: EditorSubheaderActio
         <EditorNodeRunChip nodeRun={chrome.nodeRun} onStop={chrome.stopNodeRun} />
       )}
       {chrome.activity === null ? null : (
-        <EditorActivityButton activity={chrome.activity} onOpen={chrome.openRuntimeView} />
+        <EditorActivityIndicator activity={chrome.activity} onOpen={chrome.openRuntimeView} />
       )}
       {chrome.cursorVisible && chrome.cursorStore !== null ? (
         <EditorCursorPosition
@@ -86,30 +86,6 @@ export function EditorSubheaderActions({ groupId, onFind }: EditorSubheaderActio
       />
       <EditorMoreMenu anchorRef={moreRef} chrome={chrome} onClose={closeMore} open={moreOpen} />
     </div>
-  );
-}
-
-interface EditorActivityButtonProps {
-  readonly activity: EditorChromeActivity;
-  onOpen(): void;
-}
-
-function EditorActivityButton({ activity, onOpen }: EditorActivityButtonProps) {
-  const title = activity.detail === null ? activity.label : `${activity.label}\n${activity.detail}`;
-  return (
-    <button
-      aria-label={activity.label}
-      className={cx("cv-esub__activity", `cv-esub__activity--${activity.state}`)}
-      onClick={onOpen}
-      title={title}
-      type="button"
-    >
-      {activity.state === "problem" ? (
-        <TriangleAlert aria-hidden="true" size={14} />
-      ) : (
-        <LoaderCircle aria-hidden="true" className="cv-esub__spin" size={14} />
-      )}
-    </button>
   );
 }
 

@@ -4,15 +4,14 @@ import type {
   EditorCursorStorePort,
 } from "../../application/editorCursorStore";
 import type { NodeRunStatusPresentation } from "../../application/nodeRunWithoutDebuggingPresentation";
-import type { IdeActivityState } from "../../domain/ideActivity";
 
 export type EditorDebugEntry =
   "start" | "runWithoutDebugging" | "launchConfigurations" | "attach" | "showViews";
 
 export interface EditorChromeActivity {
-  readonly label: string;
-  readonly state: IdeActivityState;
-  readonly detail: string | null;
+  readonly kind: "busy" | "problem";
+  readonly text: string;
+  readonly title: string;
 }
 
 export type EditorStatusRowId =

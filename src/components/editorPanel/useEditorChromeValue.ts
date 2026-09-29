@@ -151,15 +151,15 @@ function useStableActivity(
   status: EditorStatusPresentation,
   statusBar: StatusBarItemVisibility,
 ): EditorChromeActivity | null {
-  const visible =
-    status.ideActivityLabel !== null &&
-    status.ideActivityState !== null &&
-    status.ideActivityState !== "idle" &&
-    (statusBar.index || statusBar.languageServer);
-  const label = visible ? status.ideActivityLabel : null;
-  const state = status.ideActivityState ?? "active";
-  const detail = status.ideActivityDetail === "" ? null : status.ideActivityDetail;
-  return useMemo(() => (label === null ? null : { label, state, detail }), [detail, label, state]);
+  const summary = status.ideActivitySummary;
+  const visible = summary !== null && (statusBar.index || statusBar.languageServer);
+  const kind = visible ? summary.kind : null;
+  const text = summary?.text ?? "";
+  const reason = summary?.kind === "problem" ? summary.reason : null;
+  const title = [text, reason, status.ideActivityDetail]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+  return useMemo(() => (kind === null ? null : { kind, text, title }), [kind, text, title]);
 }
 
 function useStableShortcuts(shortcuts: EditorChromeShortcuts): EditorChromeShortcuts {

@@ -138,8 +138,10 @@
   color: var(--cv-warn);
 }
 
-.cv-esub__spin {
-  animation: cv-esub-spin var(--cv-motion-spin) linear infinite;
+.cv-esub__activity-text {
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cv-esub__run {
@@ -193,17 +195,7 @@
   white-space: nowrap;
 }
 
-@keyframes cv-esub-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .cv-esub__spin {
-    animation: none;
-  }
-
   .cv-esub__acts {
     transition: none;
   }

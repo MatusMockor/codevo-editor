@@ -3,8 +3,9 @@ import type { useWorkbenchController } from "../application/useWorkbenchControll
 import {
   ideActivityDetail,
   ideActivityStatus,
+  ideActivitySummary,
   phpLanguageServerActivityLabel,
-  type IdeActivityState,
+  type IdeActivitySummary,
 } from "../domain/ideActivity";
 import { languageServerStatusLabel } from "../domain/languageServerRuntime";
 import { workspaceInfoLabel } from "./appPresentation";
@@ -28,7 +29,7 @@ export type EditorStatusWorkbench = Pick<
 export interface EditorStatusPresentation {
   readonly workspaceLabel: string | null;
   readonly ideActivityLabel: string | null;
-  readonly ideActivityState: IdeActivityState | null;
+  readonly ideActivitySummary: IdeActivitySummary | null;
   readonly ideActivityDetail: string;
 }
 
@@ -88,23 +89,13 @@ export function useEditorStatusPresentation(
     ],
   );
   const activity = useMemo(
+    () => ideActivityStatus(indexProgress, languageServerLabel, activeFrameworkActivityLabel),
+    [activeFrameworkActivityLabel, indexProgress, languageServerLabel],
+  );
+  const summary = useMemo(
     () =>
-      ideActivityStatus(
-        workspaceRoot,
-        phpRuntimeStatus,
-        typeScriptRuntimeStatus,
-        indexProgress,
-        languageServerLabel,
-        activeFrameworkActivityLabel,
-      ),
-    [
-      activeFrameworkActivityLabel,
-      indexProgress,
-      languageServerLabel,
-      phpRuntimeStatus,
-      typeScriptRuntimeStatus,
-      workspaceRoot,
-    ],
+      ideActivitySummary(workspaceRoot, phpRuntimeStatus, typeScriptRuntimeStatus, indexProgress),
+    [indexProgress, phpRuntimeStatus, typeScriptRuntimeStatus, workspaceRoot],
   );
   const detail = useMemo(
     () =>
@@ -115,9 +106,9 @@ export function useEditorStatusPresentation(
     () => ({
       workspaceLabel,
       ideActivityLabel: activity.label,
-      ideActivityState: activity.state,
+      ideActivitySummary: summary,
       ideActivityDetail: detail,
     }),
-    [activity, detail, workspaceLabel],
+    [activity, detail, summary, workspaceLabel],
   );
 }

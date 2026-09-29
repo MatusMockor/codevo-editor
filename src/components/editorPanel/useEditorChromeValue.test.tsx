@@ -32,7 +32,7 @@ function input(overrides: Partial<EditorChromeInput> = {}): EditorChromeInput {
     status: {
       workspaceLabel: "orders-api",
       ideActivityLabel: null,
-      ideActivityState: "idle",
+      ideActivitySummary: null,
       ideActivityDetail: "",
     },
     activeLanguage: "TypeScript",
@@ -143,15 +143,15 @@ describe("useEditorChromeValue", () => {
 
     const busy = {
       workspaceLabel: null,
-      ideActivityLabel: "Indexing 40%",
-      ideActivityState: "scanning" as const,
-      ideActivityDetail: "PHPactor: Off",
+      ideActivityLabel: "IDE: Indexing 40 of 100 (40%)",
+      ideActivitySummary: { kind: "busy" as const, text: "Indexing 40%…" },
+      ideActivityDetail: "PHPactor: stopped",
     };
     render(input({ status: busy }));
     expect(results[1]?.activity).toEqual({
-      label: "Indexing 40%",
-      state: "scanning",
-      detail: "PHPactor: Off",
+      kind: "busy",
+      text: "Indexing 40%…",
+      title: "Indexing 40%…\nPHPactor: stopped",
     });
 
     render(
@@ -161,6 +161,52 @@ describe("useEditorChromeValue", () => {
       }),
     );
     expect(results[2]?.activity).toBeNull();
+  });
+
+  it("puts a failure reason in the activity tooltip and hides settled engines", () => {
+    render(
+      input({
+        status: {
+          workspaceLabel: null,
+          ideActivityLabel: "IDE: TS Server crashed for this project",
+          ideActivitySummary: {
+            kind: "problem",
+            text: "TypeScript crashed",
+            reason: "tsserver exited with code 1",
+          },
+          ideActivityDetail: "TypeScript: crashed",
+        },
+      }),
+    );
+    expect(results[0]?.activity).toEqual({
+      kind: "problem",
+      text: "TypeScript crashed",
+      title: "TypeScript crashed\ntsserver exited with code 1\nTypeScript: crashed",
+    });
+
+    render(
+      input({
+        status: {
+          workspaceLabel: null,
+          ideActivityLabel: "IDE: TS Server running for this project",
+          ideActivitySummary: null,
+          ideActivityDetail: "TS Server: running",
+        },
+      }),
+    );
+    expect(results[1]?.activity).toBeNull();
+
+    render(
+      input({
+        status: {
+          workspaceLabel: null,
+          ideActivityLabel: null,
+          ideActivitySummary: { kind: "busy", text: "Indexing…" },
+          ideActivityDetail: "",
+        },
+      }),
+    );
+    expect(results[2]?.activity).toEqual({ kind: "busy", text: "Indexing…", title: "Indexing…" });
   });
 
   it("derives cursor visibility, IDE mode and trust from settings and the workspace", () => {

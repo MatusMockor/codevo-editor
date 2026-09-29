@@ -63,11 +63,11 @@ describe("useEditorStatusPresentation", () => {
       ]
         .filter(Boolean)
         .join(" · ") || null;
-    const activity = ideActivityStatus(ROOT, null, null, workbench.indexProgress, combined, null);
+    const activity = ideActivityStatus(workbench.indexProgress, combined, null);
     const latest = results[results.length - 1];
 
     expect(latest?.ideActivityLabel).toBe(activity.label);
-    expect(latest?.ideActivityState).toBe(activity.state);
+    expect(latest?.ideActivitySummary).toBeNull();
     expect(latest?.ideActivityDetail).toBe(
       ideActivityDetail(ROOT, null, null, workbench.indexProgress),
     );
@@ -80,6 +80,27 @@ describe("useEditorStatusPresentation", () => {
         workspaceDescriptor: null,
       }),
     );
+  });
+
+  it("summarizes a starting TypeScript server for the workspace", () => {
+    mounted = mountUi();
+    mounted.render(
+      <Probe
+        workbench={{
+          ...fixture(),
+          javaScriptTypeScriptLanguageServerRuntimeStatus: {
+            kind: "starting",
+            rootPath: ROOT,
+            sessionId: 1,
+          },
+        }}
+      />,
+    );
+
+    expect(results[results.length - 1]?.ideActivitySummary).toEqual({
+      kind: "busy",
+      text: "Starting TypeScript…",
+    });
   });
 
   it("keeps a stable result while its inputs do not change", () => {
