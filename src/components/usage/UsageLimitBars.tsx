@@ -40,11 +40,13 @@ export function UsageLimitBars({
                   : `${model.ariaLabel}. The line is where even spending would be.`
               }
             >
-              <span
-                className="cv-usage-bar__fill"
-                data-hot={model.hot ? "true" : undefined}
-                style={{ width: `${model.usedPercent}%` }}
-              />
+              {model.usedPercent > 0 ? (
+                <span
+                  className="cv-usage-bar__fill"
+                  data-hot={model.hot ? "true" : undefined}
+                  style={{ width: `${model.usedPercent}%` }}
+                />
+              ) : null}
               {model.elapsedPercent === null ? null : (
                 <span className="cv-usage-bar__pace" style={{ left: `${model.elapsedPercent}%` }} />
               )}

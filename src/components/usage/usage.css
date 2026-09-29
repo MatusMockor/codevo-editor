@@ -71,11 +71,18 @@
 
 .cv-usage-bar__pace {
   position: absolute;
-  top: 5px;
-  bottom: 5px;
+  top: 9px;
+  bottom: 9px;
   width: 1px;
-  background: var(--cv-fg-muted);
+  background: var(--cv-fg-subtle);
+  opacity: 0;
   transform: translateX(-50%);
+  transition: opacity var(--cv-motion-base);
+}
+
+.cv-usage-bar:hover .cv-usage-bar__pace,
+.cv-usage-bar:focus-visible .cv-usage-bar__pace {
+  opacity: 1;
 }
 
 .cv-usage-limits__reset {

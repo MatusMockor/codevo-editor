@@ -163,7 +163,7 @@ describe("UsageSettingsPage", () => {
     );
   });
 
-  it("draws a pace line only for windows with a known reset time", () => {
+  it("draws a pace line only for windows with a known reset time and no fill at zero usage", () => {
     const now = Date.now();
     render(
       activity({
@@ -183,9 +183,14 @@ describe("UsageSettingsPage", () => {
         },
       }),
     );
+    const bars = [...host.querySelectorAll<HTMLElement>(".cv-usage-bar")];
+    expect(bars.map((bar) => bar.querySelector(".cv-usage-bar__fill") === null)).toEqual([
+      true,
+      false,
+    ]);
     const fills = [...host.querySelectorAll<HTMLElement>(".cv-usage-bar__fill")];
-    expect(fills.map((fill) => fill.style.width)).toEqual(["0%", "100%"]);
-    expect(fills.map((fill) => fill.dataset.hot ?? null)).toEqual([null, "true"]);
+    expect(fills.map((fill) => fill.style.width)).toEqual(["100%"]);
+    expect(fills.map((fill) => fill.dataset.hot ?? null)).toEqual(["true"]);
     expect(host.querySelectorAll(".cv-usage-bar__pace").length).toBe(1);
     expect(sectionText("Codex")).toContain("Reset unavailable");
   });
