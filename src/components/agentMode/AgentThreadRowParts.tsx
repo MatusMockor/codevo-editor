@@ -1,7 +1,6 @@
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useState, type ComponentType, type KeyboardEvent } from "react";
 import {
-  Bot,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -25,7 +24,7 @@ const STATUS_ICONS: Readonly<
   Record<Exclude<AgentRowStatusKind, "none">, ComponentType<LucideProps>>
 > = {
   working: CircleDashed,
-  agents: Bot,
+  agents: CircleDashed,
   approval: ShieldQuestionMark,
   input: MessageCircleQuestionMark,
   done: CircleCheck,
@@ -59,7 +58,7 @@ export function AgentThreadRowStatusSlot({
     >
       <Icon aria-hidden="true" size={AGENT_ROW_STATUS_ICON_SIZE} />
       <span className="cv-card-row__status-label">{label}</span>
-      {status.kind === "working" && (
+      {(status.kind === "working" || status.kind === "agents") && (
         <span aria-hidden="true" className="cv-card-row__tick">
           <AgentRowElapsed startedAtEpochMs={status.startedAtEpochMs} />
         </span>

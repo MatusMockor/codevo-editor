@@ -3,6 +3,7 @@ import {
   projectAgentBackgroundActivity,
   type AgentBackgroundActivity,
 } from "../../domain/agentBackgroundActivity";
+import { agentAgentsRunningLabel } from "./agentBackgroundIndicatorPresentation";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import {
   runningTurn,
@@ -24,7 +25,12 @@ export type AgentRowStatus =
     }
   | { readonly kind: "approval" }
   | { readonly kind: "input" }
-  | { readonly kind: "agents"; readonly count: number }
+  | {
+      readonly kind: "agents";
+      readonly count: number;
+      readonly lead: "working" | "waiting";
+      readonly startedAtEpochMs: number;
+    }
   | { readonly kind: "failed" }
   | { readonly kind: "stopped" }
   | { readonly kind: "done" }
@@ -49,9 +55,16 @@ export function agentRowStatus(
   if (running !== null) {
     if (signals.pending === "approval") return { kind: "approval" };
     if (signals.pending === "input") return { kind: "input" };
-    if (signals.workingAgents > 0) return { kind: "agents", count: signals.workingAgents };
     const activity =
       background === undefined ? immediateRowBackground(view, running, evidenceOf) : background;
+    const agents = Math.max(signals.workingAgents, liveAgentTasks(activity));
+    if (agents > 0)
+      return {
+        kind: "agents",
+        count: agents,
+        lead: activity?.foregroundSettled === true ? "waiting" : "working",
+        startedAtEpochMs: running.startedAtEpochMs,
+      };
     return {
       kind: "working",
       startedAtEpochMs: running.startedAtEpochMs,
@@ -95,7 +108,7 @@ export function agentRowStatusLabel(status: AgentRowStatus): string | null {
     case "input":
       return "Input";
     case "agents":
-      return agentCountLabel(status.count);
+      return agentAgentsRunningLabel(status.count);
     case "failed":
       return "Failed";
     case "stopped":
@@ -110,7 +123,10 @@ export function agentRowStatusLabel(status: AgentRowStatus): string | null {
 }
 
 export function agentRowStatusTitle(status: AgentRowStatus): string | null {
-  if (status.kind === "agents") return `Waiting for ${agentCountLabel(status.count)}`;
+  if (status.kind === "agents")
+    return status.lead === "waiting"
+      ? `Waiting for ${agentCountLabel(status.count)}`
+      : `Working with ${agentCountLabel(status.count)}`;
   if (status.kind === "approval") return "Waiting for your approval";
   if (status.kind === "input") return "Waiting for your answer";
   return null;
@@ -146,6 +162,11 @@ export function agentRowElapsedLabel(startedAtEpochMs: number, now: number): str
 
 function agentCountLabel(count: number): string {
   return count === 1 ? "1 agent" : `${count} agents`;
+}
+
+function liveAgentTasks(activity: AgentBackgroundActivity | null): number {
+  if (activity === null || !activity.foregroundSettled || activity.phase === "inactive") return 0;
+  return activity.tasks.filter((task) => task.taskType === "agent").length;
 }
 
 function immediateRowBackground(

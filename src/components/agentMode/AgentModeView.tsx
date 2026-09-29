@@ -1101,6 +1101,8 @@ function LocalAgentModeView({
                   }
                   onReviewInDiff={reviewInDiff}
                   onStopBackground={composer.composerProps.onStopNow}
+                  pendingSend={composer.pendingSend}
+                  onDismissPendingSend={composer.dismissPendingSend}
                   onOpenTurnDiff={openRecordedDiff}
                   turnChangesRevision={
                     sessionThread

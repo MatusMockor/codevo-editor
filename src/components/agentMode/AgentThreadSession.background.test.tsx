@@ -240,6 +240,19 @@ describe("thread background activity visibility", () => {
     act(() => host.querySelector<HTMLButtonElement>(".cv-spawn__open")?.click());
     expect(host.querySelector(".cv-agents-row__name")?.textContent).toBe("explorer");
   });
+  it("renders exactly one activity bar while the lead works with Claude or Codex agents", () => {
+    const stop = vi.fn();
+    render(claudeAgents, { kind: "running" }, "Delegate", "claudeCode", stop);
+    expect(bars()).toHaveLength(1);
+    expect(banner()?.textContent).toBe("2 agents runningStream A backend, Stream B gatewayView");
+    expect(stopButton()).toBeNull();
+    render(codexAgents, { kind: "running" }, "Delegate", "codex", stop);
+    expect(bars()).toHaveLength(1);
+    expect(banner()?.textContent).toBe("1 agent runningexplorerView");
+    act(() => viewButton()?.click());
+    expect(host.querySelector(".cv-agents-row__name")?.textContent).toBe("explorer");
+    expect(stop).not.toHaveBeenCalled();
+  });
   it("hides the agent indicator once the agents or the run settle", () => {
     render(
       [
@@ -324,7 +337,12 @@ describe("thread background activity visibility", () => {
     parent_tool_use_id: null,
   };
   const workTitle = () => host.querySelector(".agent-work__title")?.textContent;
-  const banner = () => host.querySelector(".agent-background-banner");
+  const bars = () => host.querySelectorAll(".cv-session-dock__banners .cv-composer-banner");
+  const banner = () => host.querySelector(".cv-session-dock__banners .cv-composer-banner");
+  const stopButton = () =>
+    host.querySelector<HTMLButtonElement>('button[aria-label="Stop agent and background work"]');
+  const viewButton = () =>
+    host.querySelector<HTMLButtonElement>('button[aria-label="View agents"]');
   const elapse = (ms: number) => act(() => vi.advanceTimersByTime(ms));
 
   it("shows an idle lead waiting on background agents without a result event", () => {
@@ -347,16 +365,21 @@ describe("thread background activity visibility", () => {
       "claudeCode",
       stop,
     );
-    expect(banner()).toBeNull();
+    expect(bars()).toHaveLength(1);
+    expect(stopButton()).toBeNull();
     elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
     expect(workTitle()).toBe("Waiting for 1 agent");
     expect(host.textContent).not.toContain("Working for");
     expect(host.querySelector(".agent-work")?.hasAttribute("open")).toBe(false);
     expect(host.querySelector(".agent-work")?.textContent).not.toContain(leadAnswer);
     expect(host.querySelector(".agent-turn__events")?.textContent).toContain(leadAnswer);
-    expect(banner()?.textContent).toContain("1 agent working");
-    act(() => host.querySelector<HTMLButtonElement>(".agent-background-banner__stop")?.click());
+    expect(bars()).toHaveLength(1);
+    expect(banner()?.querySelectorAll(".cv-spinner")).toHaveLength(1);
+    expect(banner()?.textContent).toBe("1 agent runninggeneral-purposeViewStop");
+    act(() => stopButton()?.click());
     expect(stop).toHaveBeenCalledTimes(1);
+    act(() => viewButton()?.click());
+    expect(host.querySelector(".cv-agents-row__name")?.textContent).toBe("Gateway review");
   });
   it("keeps the lead working while a root tool call is still open", () => {
     render(
@@ -377,7 +400,8 @@ describe("thread background activity visibility", () => {
       () => {},
     );
     expect(workTitle()).toContain("Working for");
-    expect(banner()).toBeNull();
+    expect(bars()).toHaveLength(1);
+    expect(stopButton()).toBeNull();
   });
   it("counts background shells and hides the banner once the run or provider does not apply", () => {
     const shells: AgentTurnEvent[] = [
@@ -391,7 +415,8 @@ describe("thread background activity visibility", () => {
     render(shells, { kind: "running" }, "Test", "claudeCode", () => {});
     elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
     expect(workTitle()).toBe("Waiting for 2 background tasks");
-    expect(banner()?.textContent).toContain("2 background tasks running");
+    expect(bars()).toHaveLength(1);
+    expect(banner()?.textContent).toBe("2 background tasks runningStop");
     render(shells, { kind: "exited", exitCode: 0 }, "Test", "claudeCode", () => {});
     expect(banner()).toBeNull();
     render(shells, { kind: "running" }, "Test", "codex", () => {});
@@ -399,7 +424,8 @@ describe("thread background activity visibility", () => {
     render(shells, { kind: "running" }, "Test", "claudeCode");
     elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
     expect(banner()?.textContent).toContain("2 background tasks running");
-    expect(host.querySelector(".agent-background-banner__stop")).toBeNull();
+    expect(bars()).toHaveLength(1);
+    expect(stopButton()).toBeNull();
   });
   const shellLaunch: AgentTurnEvent[] = [
     { kind: "toolCall", toolId: "b1", name: "Bash", inputSummary: "npm test" },

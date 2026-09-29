@@ -1,8 +1,10 @@
 import type { AgentRuntimeSubagents } from "../../../domain/agentRuntimeSubagent";
+import { agentAgentsRunningLabel } from "../agentBackgroundIndicatorPresentation";
 
 export const MAX_AGENTS_BANNER_NAMES = 3;
 
 export interface AgentAgentsBannerModel {
+  readonly count: number;
   readonly label: string;
   readonly names: string;
 }
@@ -22,7 +24,8 @@ export function agentAgentsBannerModel(
   const shown = labels.slice(0, MAX_AGENTS_BANNER_NAMES);
   const hidden = labels.length - shown.length;
   return {
-    label: `${working.length} ${working.length === 1 ? "agent" : "agents"} running`,
+    count: working.length,
+    label: agentAgentsRunningLabel(working.length),
     names: hidden > 0 ? `${shown.join(", ")} +${hidden}` : shown.join(", "),
   };
 }

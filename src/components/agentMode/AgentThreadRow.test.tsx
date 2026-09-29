@@ -390,8 +390,11 @@ describe("AgentThreadRow", () => {
       },
     });
     const status = host.querySelector(".cv-card-row__status");
-    expect(status?.textContent).toContain("2 agents");
-    expect(status?.getAttribute("title")).toBe("Waiting for 2 agents");
+    expect(status?.querySelector(".cv-card-row__status-label")?.textContent).toBe(
+      "2 agents running",
+    );
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("10:00");
+    expect(status?.getAttribute("title")).toBe("Working with 2 agents");
   });
 
   const renameInput = (): HTMLInputElement => {
@@ -523,21 +526,39 @@ describe("AgentThreadRow", () => {
     act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS - 1));
     expect(statusLabel()).toBe("Working");
     act(() => vi.advanceTimersByTime(1));
-    expect(statusLabel()).toBe("Working in background");
+    expect(statusLabel()).toBe("1 agent running");
+    expect(host.querySelector(".cv-card-row__status")?.getAttribute("title")).toBe(
+      "Waiting for 1 agent",
+    );
+    expect(host.querySelector(".cv-card-row__tick")?.textContent).not.toBe("");
     render(runningWith([spawn, answer, { kind: "assistantText", text: "Still checking." }]));
     expect(statusLabel()).toBe("Working");
     act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS));
-    expect(statusLabel()).toBe("Working in background");
+    expect(statusLabel()).toBe("1 agent running");
+    render({
+      ...runningWith([spawn, answer]),
+      thread: {
+        ...runningWith([spawn, answer]).thread,
+        turns: [
+          {
+            ...runningWith([spawn, answer]).thread.turns[0]!,
+            status: { kind: "interrupted" },
+          },
+        ],
+      },
+    });
+    expect(statusLabel()).not.toBe("1 agent running");
+    expect(host.querySelector(".cv-card-row__tick")).toBeNull();
   });
 
   it("restarts the quiescence window when a new turn produces the same anchor", () => {
     render(runningWith([spawn, answer]));
     act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS));
-    expect(statusLabel()).toBe("Working in background");
+    expect(statusLabel()).toBe("1 agent running");
     render(runningWith([spawn, answer], "agt-1-t2"));
     expect(statusLabel()).toBe("Working");
     act(() => vi.advanceTimersByTime(AGENT_FOREGROUND_QUIESCENCE_MS));
-    expect(statusLabel()).toBe("Working in background");
+    expect(statusLabel()).toBe("1 agent running");
   });
 
   it("never schedules background resolution for a Codex row", () => {

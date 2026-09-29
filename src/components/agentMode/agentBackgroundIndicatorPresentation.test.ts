@@ -48,10 +48,10 @@ describe("background wait presentation", () => {
     );
     expect(wait).toEqual({ kind: "agents", count: 2 });
     expect(agentBackgroundWaitTitle(wait)).toBe("Waiting for 2 agents");
-    expect(agentBackgroundWaitStatus(wait)).toBe("2 agents working");
+    expect(agentBackgroundWaitStatus(wait)).toBe("2 agents running");
     const single = agentBackgroundWait(activity([]), subagents(working("a")));
     expect(agentBackgroundWaitTitle(single)).toBe("Waiting for 1 agent");
-    expect(agentBackgroundWaitStatus(single)).toBe("1 agent working");
+    expect(agentBackgroundWaitStatus(single)).toBe("1 agent running");
   });
   it("pluralizes background tasks and stays truthful when the count is unknown", () => {
     const one = agentBackgroundWait(activity([shellTask("s")]), EMPTY_AGENT_RUNTIME_SUBAGENTS);

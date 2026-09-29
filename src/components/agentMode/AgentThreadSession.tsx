@@ -2,7 +2,7 @@ import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
 import { AgentThreadSessionEmpty } from "./AgentThreadSessionEmpty";
 import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
 import { AgentAgentsDock } from "./AgentAgentsDock";
-import { AgentBackgroundWorkBanner } from "./AgentBackgroundWorkBanner";
+import { useAgentBackgroundWait } from "./useAgentBackgroundWait";
 import { useAgentThreadAgents } from "./useAgentThreadAgents";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
 import { AgentArtifactPreviewScope } from "./AgentOutputArtifacts";
@@ -69,6 +69,12 @@ import { AgentCodeColorizerContext, type AgentCodeColorizer } from "./agentCodeC
 import { defaultAgentCodeColorizer } from "./shikiAgentCodeColorizer";
 import { AgentSessionDock } from "./conversation/AgentSessionDock";
 import { agentAgentsBannerModel } from "./conversation/agentAgentsBannerPresentation";
+import { agentSessionActivityBar } from "./conversation/agentSessionActivityBar";
+import {
+  AgentPendingThreadStart,
+  AgentPendingUserMessage,
+} from "./conversation/AgentPendingUserMessage";
+import type { AgentPendingSend } from "./agentPendingSend";
 import { AgentLiveRow } from "./conversation/AgentLiveRow";
 import { AgentSessionPreamble } from "./conversation/AgentSessionPreamble";
 import { AgentQueuedMessages } from "./conversation/AgentQueuedMessages";
@@ -126,6 +132,8 @@ export interface AgentThreadSessionProps {
   readonly turnLog?: AgentTurnLogFactsSource | null;
   onReviewInDiff(threadId: string): void;
   onStopBackground?(): void;
+  readonly pendingSend?: AgentPendingSend | null;
+  onDismissPendingSend?(): void;
   readonly onOpenTurnDiff?: (
     threadId: string,
     summary: AgentTurnChangeSummary,
@@ -142,6 +150,15 @@ export interface AgentThreadSessionProps {
 export function AgentThreadSession(props: AgentThreadSessionProps) {
   const thread = props.thread;
   if (thread === null) {
+    const pendingSend = props.pendingSend ?? null;
+    if (pendingSend !== null)
+      return (
+        <AgentPendingThreadStart
+          onDismiss={props.onDismissPendingSend ?? ignorePendingSendDismissal}
+          send={pendingSend}
+          textClipboard={props.textClipboard ?? null}
+        />
+      );
     return <AgentThreadSessionEmpty repositoryLabel={props.composerRepositoryLabel} />;
   }
 
@@ -167,6 +184,8 @@ function AgentThreadSessionBody({
   onSendDeferredFollowUpNow,
   onRevealAttachment,
   onStopBackground,
+  pendingSend = null,
+  onDismissPendingSend,
   findBar = null,
   findHitIndex,
   findHits,
@@ -243,9 +262,16 @@ function AgentThreadSessionBody({
   const lastEventCount = lastTurn?.events.length ?? 0;
   const lastStatusKind = lastTurn?.status.kind ?? null;
   const updatedAtEpochMs = record.updatedAtEpochMs;
+  const pendingSendKey = pendingSend === null ? null : `${pendingSend.id}:${pendingSend.status}`;
   const contentRevision = useMemo(
-    () => ({ lastEventCount, lastStatusKind, displayedImportedHistory, updatedAtEpochMs }),
-    [displayedImportedHistory, lastEventCount, lastStatusKind, updatedAtEpochMs],
+    () => ({
+      lastEventCount,
+      lastStatusKind,
+      displayedImportedHistory,
+      updatedAtEpochMs,
+      pendingSendKey,
+    }),
+    [displayedImportedHistory, lastEventCount, lastStatusKind, pendingSendKey, updatedAtEpochMs],
   );
   const queuedPrompts = useMemo(
     () => deferredFollowUps.map((entry) => entry.request.prompt),
@@ -318,6 +344,11 @@ function AgentThreadSessionBody({
   }, [activeHit, findOpen, reveal]);
 
   const liveTurn = record.turns[record.turns.length - 1] ?? null;
+  const backgroundWait = useAgentBackgroundWait(record.provider.kind, threadId, liveTurn);
+  const activityBar = useMemo(
+    () => agentSessionActivityBar(agentsBanner, backgroundWait),
+    [agentsBanner, backgroundWait],
+  );
   const findInsetRef = useRef(0);
   useLayoutEffect(() => {
     const container = scrollRef.current;
@@ -533,6 +564,13 @@ function AgentThreadSessionBody({
                   )}
                 </Fragment>
               ))}
+              {pendingSend !== null && historyPage === null && (
+                <AgentPendingUserMessage
+                  onDismiss={onDismissPendingSend ?? ignorePendingSendDismissal}
+                  send={pendingSend}
+                  textClipboard={textClipboard}
+                />
+              )}
             </div>
           </AgentArtifactPreviewScope>
           {awaiting !== null &&
@@ -568,18 +606,11 @@ function AgentThreadSessionBody({
       </div>
 
       <AgentSessionDock
-        agents={agentsBanner}
-        background={
-          <AgentBackgroundWorkBanner
-            onStop={onStopBackground}
-            provider={record.provider.kind}
-            threadId={threadId}
-            turn={liveTurn}
-          />
-        }
+        activity={activityBar}
         follow={follow}
         onOpenAgents={agents.openPanel}
         onRevealQueue={revealQueue}
+        onStop={onStopBackground}
         queuedCount={deferredFollowUps.length}
       />
 
@@ -598,3 +629,5 @@ function AgentThreadSessionBody({
     </AgentCodeColorizerContext.Provider>
   );
 }
+
+function ignorePendingSendDismissal(): void {}

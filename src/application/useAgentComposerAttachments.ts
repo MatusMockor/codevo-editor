@@ -101,6 +101,8 @@ export interface AgentComposerAttachmentsSurface {
   remove(draftId: string): void;
   clear(): void;
   markSent(draftIds: ReadonlyArray<string>): void;
+  holdForSend?(draftIds: ReadonlyArray<string>): ReadonlyArray<AgentComposerAttachmentDraft>;
+  returnToComposer?(draftIds: ReadonlyArray<string>): void;
   refuse(reason: string): void;
   dismissRefusal(): void;
   prepareTurn(projectRootKey: string): Promise<AgentComposerTurnAttachments | null>;
@@ -131,6 +133,7 @@ interface AttachmentDraft extends AgentComposerAttachmentDraft {
 interface DraftStore {
   projectRootKey: string | null;
   readonly drafts: Map<string, AttachmentDraft>;
+  readonly held: Set<string>;
 }
 
 interface DraftCoordinator {
@@ -189,7 +192,7 @@ export function useAgentComposerAttachments(
           // Empty scopes are disposable; attachment-bearing drafts are never silently evicted.
           if (scopes.current.size >= 128) {
             for (const [key, candidate] of scopes.current) {
-              if (candidate.snapshot().drafts.length === 0 && key !== "") {
+              if (candidate.retained().length === 0 && key !== "") {
                 candidate.dispose();
                 scopes.current.delete(key);
               }
@@ -201,7 +204,7 @@ export function useAgentComposerAttachments(
             () => mountedRef.current,
             previews,
             publish,
-            () => [...scopes.current.values()].flatMap((candidate) => candidate.snapshot().drafts),
+            () => [...scopes.current.values()].flatMap((candidate) => candidate.retained()),
           );
           scopes.current.set(draftKey, scope);
         }
@@ -225,7 +228,7 @@ function createDraftScope(
   publish: () => void,
   retainedDrafts: () => ReadonlyArray<AgentComposerAttachmentDraft>,
 ) {
-  const store: DraftStore = { projectRootKey: null, drafts: new Map() };
+  const store: DraftStore = { projectRootKey: null, drafts: new Map(), held: new Set() };
   let disposed = false;
   let epoch = 0;
   let lastGateway = deps().gateway;
@@ -312,6 +315,7 @@ function createDraftScope(
       }
     }
     store.drafts.clear();
+    store.held.clear();
     store.projectRootKey = null;
     publish();
   };
@@ -325,9 +329,26 @@ function createDraftScope(
       if (deps().sentAttachmentDisposition === "release") void releaseDraft(context, draft);
       else previews.revoke(draft.previewUrl);
       store.drafts.delete(draftId);
+      store.held.delete(draftId);
     }
     if (store.drafts.size === 0) store.projectRootKey = null;
     publish();
+  };
+  const holdForSend = (draftIds: ReadonlyArray<string>): ReadonlyArray<AttachmentDraft> => {
+    const held: AttachmentDraft[] = [];
+    for (const draftId of draftIds) {
+      const draft = store.drafts.get(draftId);
+      if (draft === undefined || draft.state !== "ready") continue;
+      store.held.add(draftId);
+      held.push(draft);
+    }
+    if (held.length > 0) publish();
+    return held;
+  };
+  const returnToComposer = (draftIds: ReadonlyArray<string>): void => {
+    let returned = false;
+    for (const draftId of draftIds) returned = store.held.delete(draftId) || returned;
+    if (returned) publish();
   };
   const prepareTurn = async (target: string): Promise<AgentComposerTurnAttachments | null> => {
     const context = coordinator();
@@ -337,7 +358,7 @@ function createDraftScope(
     agentPasteClaim(files, plainTextLength);
   const dismissRefusal = () => setRefusal(null);
   const snapshot = (): AgentComposerAttachmentsSurface => {
-    const drafts = [...store.drafts.values()];
+    const drafts = composerDrafts(store);
     return {
       drafts,
       projectRootKey: store.projectRootKey,
@@ -351,6 +372,8 @@ function createDraftScope(
       remove,
       clear,
       markSent,
+      holdForSend,
+      returnToComposer,
       refuse: setRefusal,
       dismissRefusal,
       prepareTurn,
@@ -358,6 +381,7 @@ function createDraftScope(
   };
   return {
     snapshot,
+    retained: (): ReadonlyArray<AgentComposerAttachmentDraft> => [...store.drafts.values()],
     clear,
     prune: () => {
       const currentOwner =
@@ -467,6 +491,10 @@ async function intakeAgentAttachmentSource(
 
 function countedDrafts(context: DraftCoordinator): ReadonlyArray<AttachmentDraft> {
   return [...context.store.drafts.values()].filter((draft) => draft.state !== "failed");
+}
+
+function composerDrafts(store: DraftStore): AttachmentDraft[] {
+  return [...store.drafts.values()].filter((draft) => !store.held.has(draft.draftId));
 }
 
 function duplicatePathDraft(
@@ -596,7 +624,7 @@ async function prepareAgentTurnAttachments(
   if (context.store.projectRootKey !== projectRootKey) return null;
   const owner = context.deps().resolveOwner(projectRootKey);
   if (owner === null) return discardStaleDrafts(context);
-  const drafts = [...context.store.drafts.values()].filter((draft) => draft.state === "ready");
+  const drafts = composerDrafts(context.store).filter((draft) => draft.state === "ready");
   if (drafts.length === 0) return { owner, draftIds: [], intents: [] };
   if (drafts.some((draft) => !sameOwner(draft.owner, owner))) return discardStaleDrafts(context);
   for (const draft of drafts) {
@@ -760,6 +788,7 @@ function retarget(context: DraftCoordinator, projectRootKey: string): void {
 function releaseAll(context: DraftCoordinator): void {
   for (const draft of [...context.store.drafts.values()]) void releaseDraft(context, draft);
   context.store.drafts.clear();
+  context.store.held.clear();
 }
 
 function appendDraft(context: DraftCoordinator, draft: AttachmentDraft): void {
@@ -781,6 +810,7 @@ function replaceDraft(context: DraftCoordinator, draft: AttachmentDraft): boolea
 }
 
 function discardDraft(context: DraftCoordinator, draftId: string): void {
+  context.store.held.delete(draftId);
   if (!context.store.drafts.delete(draftId)) return;
   context.publish();
 }

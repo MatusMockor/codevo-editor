@@ -19,6 +19,7 @@ import {
   agentAttachmentDuplicateRefusal,
   useAgentComposerAttachments,
   type AgentAttachmentOwner,
+  type AgentComposerAttachmentDraft,
   type AgentComposerAttachmentsSurface,
 } from "./useAgentComposerAttachments";
 
@@ -680,6 +681,70 @@ describe("useAgentComposerAttachments ownership", () => {
     expect(harness.hook().drafts).toHaveLength(0);
     expect(harness.hook().projectRootKey).toBeNull();
     expect(harness.released).toEqual([]);
+    harness.unmount();
+  });
+
+  it("holds sent drafts out of the composer and returns them intact when the send fails", async () => {
+    const harness = renderAttachments(environment());
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    const draftIds = prepared?.draftIds ?? [];
+    let held: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+    act(() => {
+      held = harness.hook().holdForSend?.(draftIds) ?? [];
+    });
+
+    expect(held.map((draft) => [draft.name, draft.previewUrl])).toEqual([
+      ["shot.png", "blob:preview-1"],
+    ]);
+    expect(harness.hook().drafts).toEqual([]);
+    expect(harness.hook().blocked).toBe(false);
+    expect(harness.hook().promptLineBytes).toBe(0);
+    const again = await act(() => harness.hook().prepareTurn(ROOT_A));
+    expect(again?.draftIds).toEqual([]);
+    expect(harness.revoked).toEqual([]);
+    expect(harness.released).toEqual([]);
+
+    act(() => harness.hook().returnToComposer?.(draftIds));
+    expect(harness.hook().drafts.map((draft) => [draft.name, draft.previewUrl])).toEqual([
+      ["shot.png", "blob:preview-1"],
+    ]);
+    expect(harness.hook().projectRootKey).toBe(ROOT_A);
+    harness.unmount();
+  });
+
+  it("settles held drafts once the send succeeds without releasing the claimed files", async () => {
+    const harness = renderAttachments(environment());
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    const draftIds = prepared?.draftIds ?? [];
+    act(() => {
+      harness.hook().holdForSend?.(draftIds);
+    });
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/next.png" }]));
+    expect(harness.hook().drafts.map((draft) => draft.name)).toEqual(["next.png"]);
+
+    act(() => harness.hook().markSent(draftIds));
+    act(() => harness.hook().returnToComposer?.(draftIds));
+    expect(harness.hook().drafts.map((draft) => draft.name)).toEqual(["next.png"]);
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+    expect(harness.released).toEqual([]);
+    harness.unmount();
+  });
+
+  it("releases held drafts when the composer is cleared while the send is in flight", async () => {
+    const harness = renderAttachments(environment());
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    const draftIds = prepared?.draftIds ?? [];
+    act(() => {
+      harness.hook().holdForSend?.(draftIds);
+    });
+    await act(async () => harness.hook().clear());
+    act(() => harness.hook().returnToComposer?.(draftIds));
+    expect(harness.hook().drafts).toEqual([]);
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+    expect(harness.released).toEqual([IMAGE_ID]);
     harness.unmount();
   });
 

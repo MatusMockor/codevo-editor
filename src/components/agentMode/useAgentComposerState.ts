@@ -6,6 +6,13 @@ import {
   type AgentSessionRestartSurface,
 } from "./useAgentSessionRestartConsent";
 import { useAgentComposerStop, type AgentComposerStopSurface } from "./useAgentComposerStop";
+import type { AgentPendingSend } from "./agentPendingSend";
+import {
+  agentPendingSendSelection,
+  holdComposerAttachments,
+  pendingSendOutcome,
+  useAgentPendingSends,
+} from "./useAgentPendingSends";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentComposerDraftStore,
@@ -37,6 +44,7 @@ import type {
   AgentThreadsSurface,
   AgentThreadView,
   AgentTurnAttachmentRequest,
+  AgentThreadStartResult,
 } from "../../application/agentThreadPorts";
 import type {
   AgentComposerAttachmentDraft,
@@ -114,6 +122,8 @@ export interface AgentComposerState {
   readonly target: ComposerTarget | null;
   readonly composerLabel: string | null;
   readonly composerProps: AgentComposerPromptProps;
+  readonly pendingSend: AgentPendingSend | null;
+  dismissPendingSend(): void;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
   clearDraftTarget(): void;
@@ -144,6 +154,8 @@ export interface AgentComposerControllerState {
   readonly target: ComposerTarget | null;
   readonly composerLabel: string | null;
   readonly composerProps: AgentComposerControllerProps;
+  readonly pendingSend: AgentPendingSend | null;
+  dismissPendingSend(): void;
   readonly submissionBlocked: boolean;
   submit(
     prompt: string,
@@ -169,6 +181,8 @@ export function useAgentComposerState({
     target: controller.target,
     composerLabel: controller.composerLabel,
     composerProps,
+    pendingSend: controller.pendingSend,
+    dismissPendingSend: controller.dismissPendingSend,
     startNewThread: controller.startNewThread,
     clearSelection: controller.clearSelection,
     clearDraftTarget: controller.clearDraftTarget,
@@ -440,6 +454,17 @@ export function useAgentComposerControllerState({
       ? queuedEdit
       : null;
 
+  const selectedThreadId = selectedThread?.thread.threadId ?? null;
+  const selectedTurns = selectedThread?.thread.turns ?? null;
+  const selectedLastTurnId = selectedTurns?.[selectedTurns.length - 1]?.turnId ?? null;
+  const pendingSelectionRootKey = target?.projectRootKey ?? null;
+  const pendingSelection = useMemo(
+    () => agentPendingSendSelection(selectedThreadId, selectedLastTurnId, pendingSelectionRootKey),
+    [pendingSelectionRootKey, selectedLastTurnId, selectedThreadId],
+  );
+  const pendingSends = useAgentPendingSends(pendingSelection);
+  const followUpNeedsSessionRestart = agents.followUpNeedsSessionRestart;
+
   const submit = useCallback(
     async (
       prompt: string,
@@ -457,16 +482,22 @@ export function useAgentComposerControllerState({
         : NO_PREPARED_ATTACHMENTS;
       if (prepared === null) return false;
       if (pendingAttachments && !isCurrent()) return false;
+      const hold = holdComposerAttachments(attachments, prepared.draftIds);
       if (authority.kind === "followUp" && threadQueuedEdit?.threadId === authority.threadId) {
-        const committed = await threadQueuedEdit.commit(prompt, prepared.request);
-        if (committed && pendingAttachments) attachments?.markSent(prepared.draftIds);
-        return committed;
+        let committed = false;
+        try {
+          committed = await threadQueuedEdit.commit(prompt, prepared.request);
+          return committed;
+        } finally {
+          hold.settle(committed);
+        }
       }
       switch (authority.kind) {
         case "followUp": {
           restart.clear();
           if (authority.steer) {
             setSteering(true);
+            let delivered = false;
             try {
               const outcome = await steerThread({
                 delivery: submission.delivery ?? "queued",
@@ -475,25 +506,41 @@ export function useAgentComposerControllerState({
                 prompt,
                 dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
               });
-              if (steerKeptThePrompt(outcome)) return false;
-              if (pendingAttachments) attachments?.markSent(prepared.draftIds);
-              return true;
+              delivered = !steerKeptThePrompt(outcome);
+              return delivered;
             } finally {
+              hold.settle(delivered);
               if (mountedRef.current) setSteering(false);
             }
           }
-          const sent = await sendFollowUp(
-            {
-              ...prepared.request,
-              threadId: authority.threadId,
-              prompt,
-              launch: submission.launch,
-              dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
-              ...restart.followUpRestart(submission),
-            },
-            "caller",
+          const pendingId = pendingSends.begin(
+            { kind: "followUp", threadId: authority.threadId, baseTurnId: selectedLastTurnId },
+            prompt,
+            hold.drafts,
           );
-          if (sent && pendingAttachments) attachments?.markSent(prepared.draftIds);
+          let sent = false;
+          try {
+            sent = await sendFollowUp(
+              {
+                ...prepared.request,
+                threadId: authority.threadId,
+                prompt,
+                launch: submission.launch,
+                dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+                ...restart.followUpRestart(submission),
+              },
+              "caller",
+            );
+          } finally {
+            hold.settle(sent);
+            pendingSends.settle(
+              pendingId,
+              pendingSendOutcome(
+                sent,
+                !sent && followUpNeedsSessionRestart?.(authority.threadId) === true,
+              ),
+            );
+          }
           restart.settleFollowUp(
             { threadId: authority.threadId, submission, source },
             sent,
@@ -502,19 +549,29 @@ export function useAgentComposerControllerState({
           return sent;
         }
         case "new": {
-          const started = await startThread({
-            ...prepared.request,
-            projectRootKey: authority.projectRootKey,
-            repositoryRoot: authority.repositoryRoot,
+          const pendingId = pendingSends.begin(
+            { kind: "new", projectRootKey: authority.projectRootKey },
             prompt,
-            isolation,
-            worktreeBase,
-            unsafeInPlaceConfirmationKey,
-            launch: submission.launch,
-            dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
-          });
+            hold.drafts,
+          );
+          let started: AgentThreadStartResult | null = null;
+          try {
+            started = await startThread({
+              ...prepared.request,
+              projectRootKey: authority.projectRootKey,
+              repositoryRoot: authority.repositoryRoot,
+              prompt,
+              isolation,
+              worktreeBase,
+              unsafeInPlaceConfirmationKey,
+              launch: submission.launch,
+              dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+            });
+          } finally {
+            hold.settle(started !== null);
+            pendingSends.settle(pendingId, pendingSendOutcome(started !== null, false));
+          }
           if (started === null) return false;
-          if (pendingAttachments) attachments?.markSent(prepared.draftIds);
           if (!isCurrent()) return false;
           onThreadStarted(started.threadId);
           return true;
@@ -524,7 +581,10 @@ export function useAgentComposerControllerState({
     [
       attachments,
       attachmentTargetKey,
+      followUpNeedsSessionRestart,
+      pendingSends,
       restart,
+      selectedLastTurnId,
       unsafeInPlaceConfirmationKey,
       isolation,
       worktreeBase,
@@ -633,6 +693,8 @@ export function useAgentComposerControllerState({
     target,
     composerLabel,
     composerProps,
+    pendingSend: pendingSends.visible,
+    dismissPendingSend: pendingSends.dismiss,
     submissionBlocked,
     submit,
     startNewThread,
@@ -809,16 +871,27 @@ export function useAgentComposerPromptState(
       const clearedRevision = promptRevisionRef.current + 1;
       promptRevisionRef.current = clearedRevision;
       setDraft({ key: submittedDraftKey, text: "" });
-      void controller.submit(submittedPrompt, submission).then((submitted) => {
-        if (submitted) return;
+      const restore = (): void => {
         if (promptOwnerRef.current !== submittedOwner) {
           retainForeignComposerDraft(drafts, submittedDraftKey, submittedPrompt);
           return;
         }
-        if (promptRevisionRef.current !== clearedRevision) return;
+        const untouched = promptRevisionRef.current === clearedRevision;
         promptRevisionRef.current += 1;
-        setDraft({ key: submittedDraftKey, text: submittedPrompt });
-      });
+        setDraft((current) =>
+          current.key !== submittedDraftKey
+            ? current
+            : {
+                key: current.key,
+                text: untouched
+                  ? submittedPrompt
+                  : restoredDraftText(current.text, submittedPrompt),
+              },
+        );
+      };
+      void controller.submit(submittedPrompt, submission).then((submitted) => {
+        if (!submitted) restore();
+      }, restore);
     },
     [controller, draft.key, drafts, prompt, submitBlocked],
   );
@@ -851,6 +924,11 @@ export function useAgentComposerPromptState(
     promptBytes,
     submitBlocked,
   };
+}
+
+function restoredDraftText(current: string, restored: string): string {
+  const merged = mergeRestoredPrompt(current, restored);
+  return agentPromptByteLength(merged) > MAX_AGENT_COMPOSER_DRAFT_BYTES ? current : merged;
 }
 
 export const AGENT_COMPOSER_PROMPT_ID = "agent-prompt";

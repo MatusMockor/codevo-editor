@@ -78,6 +78,10 @@ function agentsIndicator(
   };
 }
 
+export function agentAgentsRunningLabel(count: number): string {
+  return `${countLabel(count, "agent")} running`;
+}
+
 function countLabel(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
@@ -113,7 +117,7 @@ export function agentBackgroundWaitTitle(wait: AgentBackgroundWait): string {
 export function agentBackgroundWaitStatus(wait: AgentBackgroundWait): string {
   switch (wait.kind) {
     case "agents":
-      return `${countLabel(wait.count, "agent")} working`;
+      return agentAgentsRunningLabel(wait.count);
     case "tasks":
       if (wait.count === null) return "Background tasks running";
       return `${countLabel(wait.count, "background task")} running`;

@@ -90,10 +90,25 @@ describe("AgentThreadRowStatusSlot", () => {
     expect(slot().textContent).toBe("Input");
     expect(slot().getAttribute("data-tone")).toBe("warn");
 
-    render({ kind: "agents", count: 3 });
-    expect(slot().textContent).toBe("3 agents");
+    render({ kind: "agents", count: 3, lead: "waiting", startedAtEpochMs: NOW - 25_000 });
     expect(slot().getAttribute("data-tone")).toBe("work");
     expect(slot().title).toBe("Waiting for 3 agents");
+  });
+
+  it("shows running agents with the Working glyph and a live elapsed time", () => {
+    render({ kind: "working", startedAtEpochMs: NOW - 25_000 });
+    const workingGlyph = slot().querySelector("svg")?.getAttribute("class");
+    render({ kind: "agents", count: 3, lead: "waiting", startedAtEpochMs: NOW - 25_000 });
+    expect(slot().querySelector("svg")?.getAttribute("class")).toBe(workingGlyph);
+    expect(slot().querySelector(".cv-card-row__status-label")?.textContent).toBe(
+      "3 agents running",
+    );
+    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("0:25");
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("0:30");
+    render({ kind: "agents", count: 1, lead: "working", startedAtEpochMs: NOW - 25_000 });
+    expect(slot().querySelector(".cv-card-row__status-label")?.textContent).toBe("1 agent running");
+    expect(slot().title).toBe("Working with 1 agent");
   });
 
   it.each([

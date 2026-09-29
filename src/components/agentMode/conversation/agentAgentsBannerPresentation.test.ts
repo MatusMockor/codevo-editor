@@ -39,7 +39,7 @@ describe("agentAgentsBannerModel", () => {
         group([agent("a", { role: "explorer" }), agent("b", { status: "completed" })]),
         group([agent("c", { role: "reviewer" })]),
       ]),
-    ).toEqual({ label: "2 agents running", names: "explorer, reviewer" });
+    ).toEqual({ count: 2, label: "2 agents running", names: "explorer, reviewer" });
   });
 
   it("falls back to titles, dedupes and bounds the names", () => {
@@ -47,7 +47,7 @@ describe("agentAgentsBannerModel", () => {
       agentAgentsBannerModel([
         group([agent("a"), agent("b"), agent("c"), agent("d"), agent("e", { title: "Agent a" })]),
       ]),
-    ).toEqual({ label: "5 agents running", names: "Agent a, Agent b, Agent c +1" });
+    ).toEqual({ count: 5, label: "5 agents running", names: "Agent a, Agent b, Agent c +1" });
   });
 
   it("hides the banner when nothing is working", () => {

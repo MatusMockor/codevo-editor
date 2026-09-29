@@ -84,7 +84,7 @@ describe("agent row status", () => {
           resolveAgentBackgroundActivity(state, "settled"),
         ),
       ),
-    ).toBe("Working in background");
+    ).toBe("1 agent running");
     expect(agentRowStatusLabel(agentRowStatus(running, NO_AGENT_TURN_LOG_EVIDENCE, null))).toBe(
       "Working",
     );
@@ -153,7 +153,7 @@ describe("agent row status", () => {
       agentRowStatusLabel(
         agentRowStatus(view({ events: [{ ...start, taskType: "agent" }, result] })),
       ),
-    ).toBe("Working in background");
+    ).toBe("1 agent running");
     expect(agentRowStatusLabel(agentRowStatus(view({ events: [result] })))).toBe("Working");
     expect(
       agentRowStatusLabel(
