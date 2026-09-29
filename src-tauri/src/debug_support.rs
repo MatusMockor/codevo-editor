@@ -708,8 +708,11 @@ mod process_tests {
     fn wait_for_child_pid(path: &PathBuf) -> u32 {
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            if let Ok(content) = fs::read_to_string(path) {
-                return content.trim().parse().expect("child process id");
+            if let Some(process_id) = fs::read_to_string(path)
+                .ok()
+                .and_then(|content| content.trim().parse().ok())
+            {
+                return process_id;
             }
             thread::sleep(Duration::from_millis(10));
         }
