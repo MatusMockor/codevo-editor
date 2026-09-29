@@ -16,6 +16,8 @@ const approval: AgentApprovalRequest = {
   status: "pending",
 };
 
+const NO_ATTACHMENTS = { kind: "unavailable", reason: "No attachments." } as const;
+
 const question: AgentQuestionRequest = {
   id: "q1",
   taskId: "task",
@@ -27,7 +29,13 @@ const question: AgentQuestionRequest = {
 function inputs(patch: Partial<Parameters<typeof pickAgentComposerInteraction>[0]> = {}) {
   return {
     approvals: { requests: [], answering: null, error: null, answer: vi.fn() },
-    questions: { requests: [], answering: null, error: null, answer: vi.fn() },
+    questions: {
+      requests: [],
+      attachments: NO_ATTACHMENTS,
+      answering: null,
+      error: null,
+      answer: vi.fn(),
+    },
     running: true,
     ...patch,
   };
@@ -60,7 +68,13 @@ describe("pickAgentComposerInteraction", () => {
     expect(
       pickAgentComposerInteraction(
         inputs({
-          questions: { requests: [question], answering: null, error: null, answer: vi.fn() },
+          questions: {
+            requests: [question],
+            attachments: NO_ATTACHMENTS,
+            answering: null,
+            error: null,
+            answer: vi.fn(),
+          },
         }),
       )?.kind,
     ).toBe("question");
@@ -82,6 +96,7 @@ describe("pickAgentComposerInteraction", () => {
   it("shows a question error only while the thread runs", () => {
     const failing = {
       requests: [],
+      attachments: NO_ATTACHMENTS,
       answering: null,
       error: "The answer could not be confirmed.",
       answer: vi.fn(),

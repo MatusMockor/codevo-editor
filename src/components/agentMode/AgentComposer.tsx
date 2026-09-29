@@ -43,6 +43,7 @@ import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
 import { agentComposerPopoverOpen } from "./agentConversationEscape";
 import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
+  agentClipboardFiles,
   openAgentAttachmentPicker,
   openAgentImageAttachmentPicker,
   subscribeAgentAttachmentDragDrop,
@@ -371,14 +372,7 @@ export function AgentComposer({
     if (dispatching) return;
     const data = event.clipboardData;
     if (data === null || data === undefined) return;
-    const files = Array.from(data.files);
-    if (files.length === 0) {
-      for (const item of Array.from(data.items ?? [])) {
-        if (item.kind !== "file") continue;
-        const file = item.getAsFile();
-        if (file !== null) files.push(file);
-      }
-    }
+    const files = agentClipboardFiles(data);
     if (attachments === null || attachmentTargetKey === null) {
       if (files.length === 0 && textPaste.paste(event)) return;
       if (files.length > 0) {

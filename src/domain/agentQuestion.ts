@@ -42,6 +42,17 @@ export const MAX_AGENT_QUESTIONS = 4;
 export const MAX_AGENT_QUESTION_OPTIONS = 12;
 export const MAX_AGENT_QUESTION_TEXT_BYTES = 8192;
 
+export function agentQuestionAnswerWithAttachments(
+  answer: AgentQuestionAnswer,
+  attachmentLines: readonly string[],
+): AgentQuestionAnswer {
+  if (attachmentLines.length === 0) return answer;
+  const block = attachmentLines.join("\n");
+  if (answer.text.trim() !== "") return { ...answer, text: `${answer.text}\n\n${block}` };
+  if (answer.optionIds.length > 0) return { ...answer, text: `\n\n${block}` };
+  return { ...answer, text: block };
+}
+
 function invalid(): never {
   throw new Error("Invalid agent question payload.");
 }

@@ -82,6 +82,7 @@ export interface AgentComposerTurnAttachments {
 export interface AgentComposerAttachmentsSurface {
   forDraft?(draftKey: string): AgentComposerAttachmentsSurface;
   clearAll?(): void;
+  readonly revision?: number;
   readonly drafts: ReadonlyArray<AgentComposerAttachmentDraft>;
   readonly projectRootKey: string | null;
   readonly staging: boolean;
@@ -153,7 +154,7 @@ const MAX_RETAINED_DRAFTS = 32;
 export function useAgentComposerAttachments(
   dependencies: AgentComposerAttachmentsDependencies,
 ): AgentComposerAttachmentsSurface {
-  const [, setRevision] = useState(0);
+  const [revision, setRevision] = useState(0);
   const dependenciesRef = useRef(dependencies);
   const mountedRef = useRef(true);
   const scopes = useRef(new Map<string, ReturnType<typeof createDraftScope>>());
@@ -214,7 +215,7 @@ export function useAgentComposerAttachments(
     },
     [],
   );
-  return { ...forDraft(""), forDraft, clearAll };
+  return { ...forDraft(""), forDraft, clearAll, revision };
 }
 
 function createDraftScope(

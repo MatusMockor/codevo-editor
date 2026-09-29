@@ -65,6 +65,7 @@ import type {
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
 import { AgentComposerController } from "./AgentComposerController";
+import { AgentQuestionAttachmentsContext } from "./composer/agentQuestionAttachmentsContext";
 import { AgentPanelWindowControls } from "./AgentPanelLayoutControls";
 import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
@@ -1138,7 +1139,9 @@ function LocalAgentModeView({
                 </div>
               )}
               {!creation.visible && (
-                <>
+                <AgentQuestionAttachmentsContext.Provider
+                  value={agents.questionAttachments ?? null}
+                >
                   <AgentComposerController
                     followUpBehavior={followUpBehavior}
                     executionServerId={
@@ -1166,7 +1169,7 @@ function LocalAgentModeView({
                     onShowUsageLimits={composerExtras.onShowUsageLimits}
                     renderDrawerEnd={composerExtras.renderDrawerEnd}
                   />
-                </>
+                </AgentQuestionAttachmentsContext.Provider>
               )}
             </div>
           </div>

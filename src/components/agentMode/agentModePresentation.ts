@@ -26,6 +26,10 @@ import {
   type AgentShipIntegrationMode,
   type AgentShipState,
 } from "../../domain/agentShip";
+import {
+  agentQuestionOutputMayCarryImages,
+  isAgentQuestionTool,
+} from "../../domain/agentQuestionTranscript";
 import type { GitChangeStatus, GitChangedFile, GitFileDiff } from "../../domain/git";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
@@ -177,9 +181,19 @@ export function agentThreadDisplayTitle(thread: AgentThread): string {
 
 export function agentTurnCarriesAttachments(turn: AgentTurn): boolean {
   if ((turn.attachments?.length ?? 0) > 0) return true;
-  return turn.events.some(
-    (event) => event.kind === "userMessage" && (event.attachments?.length ?? 0) > 0,
-  );
+  const questionTools = new Set<string>();
+  return turn.events.some((event) => {
+    if (event.kind === "userMessage") return (event.attachments?.length ?? 0) > 0;
+    if (event.kind === "toolCall" && isAgentQuestionTool(event.name)) {
+      questionTools.add(event.toolId);
+      return false;
+    }
+    return (
+      event.kind === "toolResult" &&
+      questionTools.has(event.toolId) &&
+      agentQuestionOutputMayCarryImages(event.outputSummary)
+    );
+  });
 }
 
 export function agentRunningTurnCount(thread: AgentThread): number {

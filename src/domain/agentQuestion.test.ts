@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { parseAgentQuestionRequest, parseAgentQuestionResponse } from "./agentQuestion";
+import {
+  agentQuestionAnswerWithAttachments,
+  parseAgentQuestionRequest,
+  parseAgentQuestionResponse,
+} from "./agentQuestion";
+
+describe("agentQuestionAnswerWithAttachments", () => {
+  const line = '[Attached image "s.png" is saved at: /data/s.png]';
+
+  it("keeps the attachment block on its own line after selected options", () => {
+    const answer = { questionId: "q", optionIds: ["o"], text: "" };
+    expect(agentQuestionAnswerWithAttachments(answer, [line]).text).toBe(`\n\n${line}`);
+  });
+
+  it("appends the block after custom text and leaves attachment-free answers alone", () => {
+    const answer = { questionId: "q", optionIds: ["o"], text: "Broken" };
+    expect(agentQuestionAnswerWithAttachments(answer, [line]).text).toBe(`Broken\n\n${line}`);
+    expect(agentQuestionAnswerWithAttachments(answer, [])).toBe(answer);
+    const blank = { questionId: "q", optionIds: [], text: " " };
+    expect(agentQuestionAnswerWithAttachments(blank, [line]).text).toBe(line);
+  });
+});
 
 const question = {
   id: "q1",

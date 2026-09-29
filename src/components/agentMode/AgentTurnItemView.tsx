@@ -14,6 +14,8 @@ import {
 import { AgentCompactionBoundary } from "./AgentCompactionActivity";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentThought } from "./AgentThought";
+import { isAgentQuestionTool } from "../../domain/agentQuestionTranscript";
+import { AgentQuestionToolRow } from "./AgentQuestionToolRow";
 import { AgentToolRow } from "./AgentToolRow";
 import { AgentTurnPrompt } from "./AgentTurnParts";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
@@ -87,6 +89,8 @@ export function AgentTurnItemView({
         />
       );
     case "tool":
+      if (isAgentQuestionTool(item.name))
+        return <AgentQuestionToolRow attachmentImages={attachmentImages} item={item} />;
       return <AgentToolRow item={item} />;
     case "result":
       return (

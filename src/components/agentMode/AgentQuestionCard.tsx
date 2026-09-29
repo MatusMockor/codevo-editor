@@ -1,12 +1,28 @@
 import { useId, useRef, useState } from "react";
+import type { AgentQuestionAttachments } from "../../application/agentQuestionAttachments";
 import {
   MAX_AGENT_QUESTION_TEXT_BYTES,
+  agentQuestionAnswerWithAttachments,
   parseAgentQuestionResponse,
   type AgentQuestionAnswer,
   type AgentQuestionRequest,
   type AgentQuestionResponse,
 } from "../../domain/agentQuestion";
+import { AgentQuestionCustomAnswer } from "./AgentQuestionCustomAnswer";
+import {
+  openAgentAttachmentPicker,
+  subscribeAgentAttachmentDragDrop,
+  type AgentComposerDragDropSubscribe,
+  type AgentComposerFilePicker,
+} from "./agentComposerAttachmentPorts";
+import { AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE } from "./composer/agentComposerInteraction";
+import { useAgentQuestionAttachments } from "./useAgentQuestionAttachments";
 import "./agentQuestionCard.css";
+
+export const AGENT_QUESTION_ATTACHMENTS_TOO_LONG =
+  "This answer is too long with its attachment paths. Shorten it or remove an attachment.";
+
+const UTF8 = new TextEncoder();
 
 export interface AgentQuestionCardProps {
   readonly request: AgentQuestionRequest;
@@ -14,6 +30,10 @@ export interface AgentQuestionCardProps {
   readonly error: string | null;
   /** Resolve only after acceptance; reject on failure so the user can retry. */
   readonly onAnswer: (response: AgentQuestionResponse) => void | Promise<void>;
+  readonly attachments?: AgentQuestionAttachments | null;
+  readonly attachmentsUnavailableReason?: string;
+  readonly attachmentPicker?: AgentComposerFilePicker;
+  readonly attachmentDragDrop?: AgentComposerDragDropSubscribe;
 }
 
 /** Callers key this card by their exact workspace/server ownership generation. */
@@ -27,8 +47,37 @@ export function AgentQuestionCard(props: AgentQuestionCardProps) {
   );
 }
 
-function AgentQuestionCardBody({ request, pending, error, onAnswer }: AgentQuestionCardProps) {
+function AgentQuestionCardBody(props: AgentQuestionCardProps) {
+  const { request } = props;
+  switch (request.status) {
+    case "pending":
+      return <AgentQuestionForm {...props} />;
+    case "answered":
+      return null;
+    case "cancelled":
+    case "expired":
+      return (
+        <section className="agent-question-card" aria-label="Agent question">
+          <p role="status">
+            {request.status === "cancelled"
+              ? "Question cancelled. The agent is no longer waiting for an answer."
+              : "Question expired. This run can no longer receive an answer."}
+          </p>
+        </section>
+      );
+    default:
+      return unsupportedQuestionStatus(request);
+  }
+}
+
+function unsupportedQuestionStatus(request: never): never {
+  throw new TypeError(`Unsupported agent question status: ${JSON.stringify(request)}.`);
+}
+
+function AgentQuestionForm(props: AgentQuestionCardProps) {
+  const { request, pending, error, onAnswer } = props;
   const controlId = useId();
+  const dropRef = useRef<HTMLDivElement | null>(null);
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<readonly AgentQuestionAnswer[]>(() =>
     request.questions.map((question) => ({ questionId: question.id, optionIds: [], text: "" })),
@@ -40,56 +89,44 @@ function AgentQuestionCardBody({ request, pending, error, onAnswer }: AgentQuest
   const question = request.questions[index];
   const answer = answers[index];
   const busy = pending || submitting || accepted;
-
-  if (request.status === "answered") {
-    return (
-      <section className="agent-question-card" aria-label="Agent question">
-        <details>
-          <summary>Answer sent</summary>
-          <dl>
-            {request.questions.map((item) => {
-              const response = request.answers.find((value) => value.questionId === item.id)!;
-              return (
-                <div key={item.id}>
-                  <dt>{item.prompt}</dt>
-                  <dd>
-                    {[
-                      ...item.options
-                        .filter((option) => response.optionIds.includes(option.id))
-                        .map((option) => option.label),
-                      response.text,
-                    ]
-                      .filter(Boolean)
-                      .join("\n")}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-        </details>
-      </section>
-    );
-  }
-  if (request.status !== "pending") {
-    return (
-      <section className="agent-question-card" aria-label="Agent question">
-        <p role="status">
-          {request.status === "cancelled"
-            ? "Question cancelled. The agent is no longer waiting for an answer."
-            : "Question expired. This run can no longer receive an answer."}
-        </p>
-      </section>
-    );
-  }
+  const questionAttachments = useAgentQuestionAttachments({
+    capability: props.attachments ?? null,
+    unavailableReason: props.attachmentsUnavailableReason ?? AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
+    request,
+    questionId: question.id,
+    enabled: question.allowCustom,
+    busy,
+    picker: props.attachmentPicker ?? openAgentAttachmentPicker,
+    dragDrop: props.attachmentDragDrop ?? subscribeAgentAttachmentDragDrop,
+    dropTarget: dropRef,
+  });
 
   const update = (next: AgentQuestionAnswer) => {
     setAnswers((current) => current.map((item, position) => (position === index ? next : item)));
     setSubmitError(null);
   };
-  const currentValid = validResponse([answer], { questions: [question] });
-  const allValid = validResponse(answers, request);
-  const tooLong = new TextEncoder().encode(answer.text).length > MAX_AGENT_QUESTION_TEXT_BYTES;
+  const withReservedPaths = (item: AgentQuestionAnswer): AgentQuestionAnswer => {
+    const reserved = questionAttachments.reservedLineBytes(item.questionId);
+    if (reserved === 0) return item;
+    return agentQuestionAnswerWithAttachments(item, ["x".repeat(reserved)]);
+  };
+  const overflows = (item: AgentQuestionAnswer): boolean =>
+    UTF8.encode(withReservedPaths(item).text).length > MAX_AGENT_QUESTION_TEXT_BYTES;
+  const currentValid = validResponse([withReservedPaths(answer)], { questions: [question] });
+  const allValid = validResponse(answers.map(withReservedPaths), request);
+  const sendable = allValid && !questionAttachments.blocked;
+  const tooLong = UTF8.encode(answer.text).length > MAX_AGENT_QUESTION_TEXT_BYTES;
+  const tooLongWithPaths = !tooLong && overflows(answer);
+  const lengthError = tooLong
+    ? "This answer is too long. Please shorten it."
+    : tooLongWithPaths
+      ? AGENT_QUESTION_ATTACHMENTS_TOO_LONG
+      : null;
   const last = index === request.questions.length - 1;
+  const sendHint =
+    last && !busy && !sendable
+      ? agentQuestionSendHint(request, answers, questionAttachments.blockedQuestion, overflows)
+      : null;
 
   return (
     <section className="agent-question-card" aria-label="Agent question" aria-busy={busy}>
@@ -108,13 +145,21 @@ function AgentQuestionCardBody({ request, pending, error, onAnswer }: AgentQuest
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (!allValid || busy || submittingRef.current || !last) return;
+          if (!sendable || busy || submittingRef.current || !last) return;
           submittingRef.current = true;
           setSubmitting(true);
           setSubmitError(null);
           void (async () => {
             try {
-              await onAnswer(parseAgentQuestionResponse({ answers }, request));
+              const resolved = await questionAttachments.resolve(answers);
+              if (resolved.kind === "abandoned") return;
+              if (resolved.kind === "refused") {
+                submittingRef.current = false;
+                setSubmitError(resolved.reason);
+                return;
+              }
+              await onAnswer(parseAgentQuestionResponse({ answers: resolved.answers }, request));
+              questionAttachments.markSent();
               setAccepted(true);
             } catch {
               submittingRef.current = false;
@@ -176,25 +221,22 @@ function AgentQuestionCardBody({ request, pending, error, onAnswer }: AgentQuest
                   Clear selection
                 </button>
               )}
-              <label className="agent-question-card__custom-label" htmlFor={`${controlId}-custom`}>
-                Your own answer or additional details
-              </label>
-              <textarea
-                id={`${controlId}-custom`}
-                value={answer.text}
-                maxLength={MAX_AGENT_QUESTION_TEXT_BYTES}
-                aria-invalid={tooLong || undefined}
-                aria-describedby={tooLong ? `${controlId}-length` : undefined}
-                onChange={(event) => update({ ...answer, text: event.target.value })}
+              <AgentQuestionCustomAnswer
+                attachments={questionAttachments}
+                controlId={controlId}
+                dropRef={dropRef}
+                lengthError={lengthError}
+                onChange={(text) => update({ ...answer, text })}
+                text={answer.text}
               />
-              {tooLong && (
-                <p className="agent-question-card__error" id={`${controlId}-length`}>
-                  This answer is too long. Please shorten it.
-                </p>
-              )}
             </>
           )}
         </fieldset>
+        {sendHint !== null && !(error || submitError) && (
+          <p className="agent-question-card__hint" role="status">
+            {sendHint}
+          </p>
+        )}
         {(error || submitError) && (
           <p className="agent-question-card__error" role="alert">
             {error || submitError}
@@ -210,7 +252,7 @@ function AgentQuestionCardBody({ request, pending, error, onAnswer }: AgentQuest
             <button
               type="submit"
               className="agent-question-card__submit"
-              disabled={busy || !allValid}
+              disabled={busy || !sendable}
             >
               {accepted ? "Waiting…" : busy ? "Sending…" : "Send answer"}
             </button>
@@ -227,6 +269,23 @@ function AgentQuestionCardBody({ request, pending, error, onAnswer }: AgentQuest
       </form>
     </section>
   );
+}
+
+function agentQuestionSendHint(
+  request: AgentQuestionRequest,
+  answers: readonly AgentQuestionAnswer[],
+  blocked: (questionId: string) => boolean,
+  overflows: (answer: AgentQuestionAnswer) => boolean,
+): string | null {
+  const total = request.questions.length;
+  for (const [position, answer] of answers.entries()) {
+    const label = total === 1 ? "This answer" : `Answer ${position + 1}`;
+    if (blocked(answer.questionId)) {
+      return `${label} has an attachment that is still saving or failed. Wait for it or remove it.`;
+    }
+    if (overflows(answer)) return `${label} is too long with its attachment paths.`;
+  }
+  return null;
 }
 
 function validResponse(

@@ -205,7 +205,7 @@ describe("AgentQuestionCard", () => {
     expect(host.querySelector("textarea")?.value).toBe("");
   });
 
-  it("shows only a collapsed confirmed answer after acknowledgement", () => {
+  it("leaves an answered question to the transcript instead of pinning it in the composer", () => {
     render({
       ...request,
       status: "answered",
@@ -217,11 +217,7 @@ describe("AgentQuestionCard", () => {
         },
       ],
     });
-    expect(host.querySelector("details")?.open).toBe(false);
-    expect(host.querySelector("summary")?.textContent).toBe("Answer sent");
-    expect(host.querySelector("dd")?.textContent).toBe("PostgreSQL\nUse production defaults.");
-    expect(host.querySelector("form")).toBeNull();
-    expect(host.innerHTML).not.toContain("private-");
+    expect(host.innerHTML).toBe("");
   });
 
   it.each(["cancelled", "expired"] as const)("makes %s questions non-interactive", (status) => {

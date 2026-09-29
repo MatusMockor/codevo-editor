@@ -1,5 +1,5 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
-import { memo, useState, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
 import { agentQuestionOwner } from "../../application/agentQuestionOwner";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -11,7 +11,12 @@ import type { AgentContextCompactionOffer } from "../../domain/agentContextCompa
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
 import type { AgentComposerDrawerContext } from "./composer/AgentComposerFrame";
-import type { AgentComposerInteraction } from "./composer/agentComposerInteraction";
+import {
+  AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
+  AGENT_QUESTION_REMOTE_ATTACHMENTS_UNAVAILABLE,
+  type AgentComposerInteraction,
+  type AgentComposerQuestionAttachmentTarget,
+} from "./composer/agentComposerInteraction";
 import { AgentComposerInteractionSource } from "./composer/AgentComposerInteractionSource";
 import {
   useAgentComposerPromptState,
@@ -68,6 +73,12 @@ export const AgentComposerController = memo(function AgentComposerController({
   const [interaction, setInteraction] = useState<AgentComposerInteraction | null>(null);
   const owner = interactions === undefined ? null : agentQuestionOwner(interactions.thread);
   const ownerKey = JSON.stringify(owner);
+  const attachmentThreadId =
+    owner?.kind === "local" ? (interactions?.thread?.thread.threadId ?? null) : null;
+  const questionAttachments = useMemo(
+    () => questionAttachmentTarget(owner?.kind ?? null, attachmentThreadId),
+    [owner?.kind, attachmentThreadId],
+  );
   const compactContext = (submission: Parameters<typeof submit>[1]): Promise<boolean> =>
     submit("/compact", submission, "compaction");
   return (
@@ -78,6 +89,7 @@ export const AgentComposerController = memo(function AgentComposerController({
           key={ownerKey}
           onChange={setInteraction}
           owner={owner}
+          questionAttachments={questionAttachments}
           running={interactions.thread?.lifecycle === "running"}
         />
       )}
@@ -153,6 +165,17 @@ function agentComposerControllerPropsEqual(
     sameComposerTarget(leftProps.target, rightProps.target) &&
     agentLaunchOptionsEqual(leftProps.launch, rightProps.launch)
   );
+}
+
+function questionAttachmentTarget(
+  ownerKind: "local" | "remote" | null,
+  threadId: string | null,
+): AgentComposerQuestionAttachmentTarget {
+  if (threadId !== null) return { kind: "thread", threadId };
+  if (ownerKind === "remote") {
+    return { kind: "unavailable", reason: AGENT_QUESTION_REMOTE_ATTACHMENTS_UNAVAILABLE };
+  }
+  return { kind: "unavailable", reason: AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE };
 }
 
 function sameInteractions(

@@ -6,6 +6,15 @@ import {
   type AgentApprovalView,
 } from "../agentApprovalPresenter";
 
+export const AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE =
+  "Attachments can't be added to this answer. Describe the image in text instead.";
+export const AGENT_QUESTION_REMOTE_ATTACHMENTS_UNAVAILABLE =
+  "Attachments aren't supported for answers on a remote server. Describe the image in text instead.";
+
+export type AgentComposerQuestionAttachmentTarget =
+  | { readonly kind: "thread"; readonly threadId: string }
+  | { readonly kind: "unavailable"; readonly reason: string };
+
 export type AgentComposerInteraction =
   | {
       readonly kind: "approval";
@@ -20,6 +29,7 @@ export type AgentComposerInteraction =
       readonly kind: "question";
       readonly key: string;
       readonly request: AgentQuestionRequest;
+      readonly attachments: AgentComposerQuestionAttachmentTarget;
       readonly sending: boolean;
       readonly error: string | null;
       answer(response: AgentQuestionResponse): Promise<void>;
@@ -35,6 +45,7 @@ export interface AgentComposerInteractionInputs {
   };
   readonly questions: {
     readonly requests: ReadonlyArray<AgentQuestionRequest>;
+    readonly attachments: AgentComposerQuestionAttachmentTarget;
     readonly answering: string | null;
     readonly error: string | null;
     answer(requestId: string, response: AgentQuestionResponse): Promise<void>;
@@ -65,6 +76,7 @@ export function pickAgentComposerInteraction(
       kind: "question",
       key: `question:${question.taskId}:${question.id}`,
       request: question,
+      attachments: inputs.questions.attachments,
       sending: inputs.questions.answering === question.id,
       error: inputs.questions.error,
       answer: (response) => inputs.questions.answer(question.id, response),

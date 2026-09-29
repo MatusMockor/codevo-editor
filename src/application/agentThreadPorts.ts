@@ -18,6 +18,7 @@ import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
 import type { AgentComposerAttachmentsSurface } from "./useAgentComposerAttachments";
+import type { AgentQuestionAttachmentsPort } from "./agentQuestionAttachments";
 import type { AgentProjectOrigin } from "../domain/agentProject";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type {
@@ -362,6 +363,7 @@ export interface AgentThreadsSurface {
   readonly historySearch?: AgentHistorySearchPort;
   readonly turnLog?: AgentTurnLogFactsSource;
   readonly attachments: AgentComposerAttachmentsSurface;
+  readonly questionAttachments?: AgentQuestionAttachmentsPort;
   readonly attachmentImages: AgentAttachmentImagesSurface;
   revealAttachment(threadId: string, attachmentId: string): Promise<void>;
   readonly externalHistory?: {

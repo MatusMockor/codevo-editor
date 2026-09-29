@@ -28,6 +28,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   turns and Claude continues on its own when it finishes.
 - End Claude session from the thread menu, with a confirmation while background tasks
   run.
+- Attach images when answering an agent's question; answered questions show as a
+  compact row.
 
 ### Changed
 
@@ -41,7 +43,6 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   open. Closing the last tab of a side editor group closes the group.
 - Codevo shortcuts such as Cmd+E and F8 win over built-in editor defaults, also in diff
   and compare editors.
-- The status bar is gone; its readouts moved to the editor header.
 
 ### Fixed
 

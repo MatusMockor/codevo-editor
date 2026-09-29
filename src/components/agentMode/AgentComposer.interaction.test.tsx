@@ -81,6 +81,7 @@ function question(
     kind: "question",
     key: "question:task:q1",
     request: QUESTION,
+    attachments: { kind: "unavailable", reason: "No attachments." },
     sending: false,
     error: null,
     answer,

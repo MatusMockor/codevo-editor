@@ -65,6 +65,7 @@ import {
   useAgentComposerAttachments,
   type AgentAttachmentOwner,
 } from "./useAgentComposerAttachments";
+import { createAgentQuestionAttachmentsPort } from "./agentQuestionAttachments";
 import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
 import { useExternalSessions } from "./useExternalSessions";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
@@ -365,6 +366,24 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     gateway: attachmentGateway,
     reportError,
   });
+
+  const attachmentDrafts = attachments.forDraft;
+  const attachmentRevision = attachments.revision;
+  const questionAttachments = useMemo(
+    () =>
+      attachmentGateway === null || attachmentRevision === undefined
+        ? undefined
+        : createAgentQuestionAttachmentsPort({
+            gateway: attachmentGateway,
+            forDraft: attachmentDrafts,
+            resolveThreadRootKey: (threadId) => {
+              const thread = store.currentState().threads.get(threadId);
+              if (thread === undefined || !ownsThread(projects, thread)) return null;
+              return thread.owner.rootKey;
+            },
+          }),
+    [attachmentGateway, attachmentDrafts, attachmentRevision, projects, store],
+  );
 
   const revealAttachment = useCallback(
     async (threadId: string, attachmentId: string): Promise<void> => {
@@ -865,6 +884,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     getTurnFileDiff: turnChanges.getTurnFileDiff,
     threads: threadViews,
     attachments,
+    questionAttachments,
     attachmentImages,
     revealAttachment,
     repositories,

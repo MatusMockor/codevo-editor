@@ -37,6 +37,22 @@ export function agentAttachmentSourcesFromPaths(
   return paths.filter((path) => path !== "").map((path) => ({ kind: "path", path }));
 }
 
+export interface AgentClipboardFileSource {
+  readonly files: ArrayLike<File>;
+  readonly items?: ArrayLike<{ readonly kind: string; getAsFile(): File | null }>;
+}
+
+export function agentClipboardFiles(data: AgentClipboardFileSource): File[] {
+  const files = Array.from(data.files);
+  if (files.length > 0) return files;
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (file !== null) files.push(file);
+  }
+  return files;
+}
+
 export async function agentAttachmentSourcesFromFiles(
   files: ReadonlyArray<File>,
 ): Promise<ReadonlyArray<AgentAttachmentSource>> {
