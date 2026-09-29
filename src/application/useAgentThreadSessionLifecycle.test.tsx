@@ -107,6 +107,7 @@ function render(current: AgentThread | undefined, fake: AgentThreadSessionGatewa
   };
   const setNotice = vi.fn();
   const reportError = vi.fn();
+  const recordHaltRequest = vi.fn();
   let latest: AgentThreadSessionLifecycle | null = null;
 
   function Harness() {
@@ -114,6 +115,7 @@ function render(current: AgentThread | undefined, fake: AgentThreadSessionGatewa
       gateway: fake,
       readThread: (threadId) =>
         scenario.current?.threadId === threadId ? scenario.current : undefined,
+      recordHaltRequest,
       ownsOwner: (owner: AgentThreadOwner) => scenario.currentOwners.includes(owner.ownerId),
       resumeSessionId: (candidate) => scenario.resumeSessionId(candidate),
       setNotice,
@@ -136,6 +138,7 @@ function render(current: AgentThread | undefined, fake: AgentThreadSessionGatewa
     scenario,
     setNotice,
     reportError,
+    recordHaltRequest,
     unmount,
     rerender: () => act(() => root.render(createElement(Harness))),
     hook(): AgentThreadSessionLifecycle {
@@ -158,6 +161,11 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
       taskId: "agt-1-t2",
       workspaceId: OWNER_ID,
       threadId: THREAD_ID,
+    });
+    expect(harness.recordHaltRequest).toHaveBeenCalledWith({
+      threadId: THREAD_ID,
+      ownerId: OWNER_ID,
+      turnId: "agt-1-t2",
     });
   });
 
@@ -202,6 +210,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
         await expect(harness.hook().interrupt(threadId)).resolves.toBe(false);
       });
       expect(fake.interruptAgentTask).not.toHaveBeenCalled();
+      expect(harness.recordHaltRequest).not.toHaveBeenCalled();
     }
     const unwired = render(thread({ turns: [running] }), undefined);
     await act(async () => {

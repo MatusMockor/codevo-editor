@@ -41,6 +41,7 @@ export function useAgentThreadSessions(options: AgentThreadSessionsOptions): Age
   const lifecycle = useAgentThreadSessionLifecycle({
     gateway: options.gateway,
     readThread: (threadId) => ownedThread(projects, store.currentState(), threadId),
+    recordHaltRequest: (request) => store.dispatchAction({ kind: "turnHaltRequested", ...request }),
     ownsOwner: (owner) => projects.some((project) => agentProjectOwnsOwner(project, owner)),
     resumeSessionId: (thread) => dispatch.current?.resumeSessionIdFor(thread) ?? null,
     setNotice: options.setNotice,

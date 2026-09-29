@@ -865,6 +865,139 @@ describe("AgentThreadSession", () => {
     expect(block?.querySelector(".agent-microlabel--bad")?.textContent).toBe("run failed");
   });
 
+  it.each([
+    { name: "S4 interrupt", events: STOP_WHILE_BACKGROUND_SHELL_EVENTS },
+    { name: "S3 hard stop", events: STOP_AFTER_BLOCKED_SLEEP_EVENTS },
+  ])("never flashes a failed run while the requested $name has not settled yet", ({ events }) => {
+    for (let count = 1; count <= events.length; count += 1) {
+      render({
+        thread: threadView({
+          provider: "claudeCode",
+          turns: [
+            haltRequested(turn("agt-1-t1", "Sleep", { kind: "running" }, events.slice(0, count))),
+          ],
+        }),
+      });
+      expectNoFailedRun();
+    }
+
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [haltRequested(turn("agt-1-t1", "Sleep", { kind: "stopped" }, events))],
+      }),
+    });
+    expectNoFailedRun();
+    expect(host.querySelector(".agent-turn-end")?.textContent).toContain("Stopped");
+  });
+
+  it("labels a reported error result of a turn that is still stopping neutrally", () => {
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [
+          haltRequested(
+            turn("agt-1-t1", "Sleep", { kind: "running" }, [
+              { kind: "result", text: "Request interrupted by user", isError: true, usage: null },
+            ]),
+          ),
+        ],
+      }),
+    });
+
+    const block = host.querySelector("[data-agent-event] .agent-finale__body")?.closest("section");
+    expectNoFailedRun();
+    expect(block?.className).toBe("agent-finale");
+    expect(block?.querySelector(".agent-microlabel")?.textContent).toBe("stopping");
+    expect(block?.querySelector(".agent-finale__body")?.textContent).toBe(
+      "Request interrupted by user",
+    );
+  });
+
+  it.each([
+    { name: "S4", events: STOP_WHILE_BACKGROUND_SHELL_EVENTS },
+    { name: "S3", events: STOP_AFTER_BLOCKED_SLEEP_EVENTS },
+  ])("still presents the $name error result as a failed run without a stop request", (row) => {
+    for (const status of [
+      { kind: "running" } as const,
+      { kind: "exited", exitCode: 1 } as const,
+      { kind: "failed", message: "Claude Code crashed" } as const,
+    ]) {
+      render({
+        thread: threadView({
+          provider: "claudeCode",
+          turns: [turn("agt-1-t1", "Sleep", status, row.events)],
+        }),
+      });
+
+      expect(failedRunLabels()).toEqual(["run failed"]);
+    }
+  });
+
+  it("keeps a failed run once a requested turn ended with a non-zero exit", () => {
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [
+          haltRequested(
+            turn(
+              "agt-1-t1",
+              "Sleep",
+              { kind: "exited", exitCode: 1 },
+              STOP_WHILE_BACKGROUND_SHELL_EVENTS,
+            ),
+          ),
+        ],
+      }),
+    });
+
+    expect(failedRunLabels()).toEqual(["run failed"]);
+  });
+
+  it("scopes a stop request to its exact turn", () => {
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [
+          haltRequested(
+            turn("agt-1-t1", "Sleep", { kind: "stopped" }, STOP_WHILE_BACKGROUND_SHELL_EVENTS),
+          ),
+          turn("agt-1-t2", "Sleep again", { kind: "running" }, STOP_AFTER_BLOCKED_SLEEP_EVENTS),
+        ],
+      }),
+    });
+    expect(failedRunLabels()).toEqual(["run failed"]);
+
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [
+          turn(
+            "agt-1-t1",
+            "Sleep",
+            { kind: "exited", exitCode: 1 },
+            STOP_WHILE_BACKGROUND_SHELL_EVENTS,
+          ),
+          haltRequested(
+            turn("agt-1-t2", "Sleep again", { kind: "running" }, STOP_AFTER_BLOCKED_SLEEP_EVENTS),
+          ),
+        ],
+      }),
+    });
+    expect(failedRunLabels()).toEqual(["run failed"]);
+  });
+
+  function failedRunLabels(): ReadonlyArray<string> {
+    return [
+      ...host.querySelectorAll("[data-agent-event].agent-finale--bad .agent-microlabel--bad"),
+    ].map((label) => label.textContent ?? "");
+  }
+
+  function expectNoFailedRun(): void {
+    expect(host.textContent).not.toMatch(/run failed/iu);
+    expect(host.querySelector(".agent-finale--bad")).toBeNull();
+  }
+
   it("targets server upgrades and hides the runner wrapper after a provider failure", () => {
     const message = "The 'gpt-6-astra' model requires a newer version of Codex.";
     render({
@@ -1957,4 +2090,76 @@ const INTERRUPTED_RESULT_FRAME_EVENTS: ReadonlyArray<AgentTurnEvent> = [
     inputTokens: null,
     contextWindow: 1_000_000,
   },
+];
+
+function haltRequested(value: AgentTurn): AgentTurn {
+  return { ...value, haltRequested: true };
+}
+
+const ABORTED_RESULT_FRAME: AgentTurnEvent = {
+  kind: "result",
+  text: "",
+  isError: true,
+  usage: {
+    cachedInputTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    contextTokens: 0,
+    costUsd: 0.0,
+  },
+};
+
+const STOP_CONTEXT_USAGE: AgentTurnEvent = {
+  kind: "contextUsage",
+  model: "claude-opus-5[1m]",
+  inputTokens: 21_000,
+  contextWindow: 1_000_000,
+};
+
+const STOP_WHILE_BACKGROUND_SHELL_EVENTS: ReadonlyArray<AgentTurnEvent> = [
+  {
+    kind: "unknownLine",
+    stream: "stdout",
+    raw: "Unsupported Claude stream frame: command_lifecycle",
+    clipped: false,
+  },
+  { kind: "reasoning", text: "The user wants me to wait a minute." },
+  STOP_CONTEXT_USAGE,
+  { kind: "toolCall", toolId: "toolu-sleep", name: "Bash", inputSummary: "sleep 60" },
+  { kind: "backgroundTask", taskId: "bg-sleep", status: "starting", taskType: "shell" },
+  {
+    kind: "toolResult",
+    toolId: "toolu-sleep",
+    outputSummary: "Command running in background with ID: bg-sleep",
+    isError: false,
+  },
+  ABORTED_RESULT_FRAME,
+  STOP_CONTEXT_USAGE,
+];
+
+const STOP_AFTER_BLOCKED_SLEEP_EVENTS: ReadonlyArray<AgentTurnEvent> = [
+  {
+    kind: "unknownLine",
+    stream: "stdout",
+    raw: "Unsupported Claude stream frame: command_lifecycle",
+    clipped: false,
+  },
+  { kind: "reasoning", text: "The user wants me to wait a minute." },
+  STOP_CONTEXT_USAGE,
+  {
+    kind: "toolCall",
+    toolId: "toolu-sleep",
+    name: "Bash",
+    inputSummary: "sleep 60",
+    description: "Počká 60 sekúnd",
+  },
+  {
+    kind: "toolResult",
+    toolId: "toolu-sleep",
+    outputSummary:
+      "<tool_use_error>Blocked: standalone sleep 60. Run blocking commands in the background.</tool_use_error>",
+    isError: true,
+  },
+  ABORTED_RESULT_FRAME,
+  STOP_CONTEXT_USAGE,
 ];

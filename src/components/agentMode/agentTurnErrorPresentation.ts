@@ -1,5 +1,9 @@
 import type { AgentCliKind } from "../../domain/agentTask";
-import type { AgentTurnStatus } from "../../domain/agentThread";
+import {
+  isTerminalAgentTurnStatus,
+  type AgentTurn,
+  type AgentTurnStatus,
+} from "../../domain/agentThread";
 import type { AgentTurnItem } from "./agentModePresentation";
 import {
   classifyAgentProviderError,
@@ -7,7 +11,7 @@ import {
   type AgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
 
-export type AgentTurnHalt = "stopped" | "interrupted";
+export type AgentTurnHalt = "stopping" | "stopped" | "interrupted";
 
 export interface AgentTurnErrorContext {
   readonly provider: AgentCliKind;
@@ -21,14 +25,14 @@ export function createTurnErrorContext(
   provider: AgentCliKind,
   installedVersion: string | null,
   executionTarget: "local" | "remote",
-  status: AgentTurnStatus,
+  turn: Pick<AgentTurn, "status" | "haltRequested">,
   items: ReadonlyArray<AgentTurnItem>,
 ): AgentTurnErrorContext {
   return {
     provider,
     installedVersion,
     executionTarget,
-    halt: agentTurnHalt(status),
+    halt: agentTurnHalt(turn),
     hasProviderFailure: items.some((item) => {
       const error = reportedError(item, provider);
       return (
@@ -41,8 +45,10 @@ export function createTurnErrorContext(
   };
 }
 
-function agentTurnHalt(status: AgentTurnStatus): AgentTurnHalt | null {
+function agentTurnHalt(turn: Pick<AgentTurn, "status" | "haltRequested">): AgentTurnHalt | null {
+  const { status } = turn;
   if (status.kind === "stopped" || status.kind === "interrupted") return status.kind;
+  if (turn.haltRequested === true && !isTerminalAgentTurnStatus(status)) return "stopping";
   return null;
 }
 

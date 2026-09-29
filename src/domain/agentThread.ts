@@ -30,6 +30,7 @@ import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agen
 import { recoverAgentTurnResultStatus } from "./agentTurnRestartRecovery";
 import { agentProviderSessionAfterReport } from "./agentSessionIdentity";
 import { restorableAgentTurnLifecycle } from "./agentTurnLifecycleRestore";
+import { requestAgentTurnHalt, type AgentTurnHaltRequest } from "./agentTurnHaltRequest";
 import {
   capAgentTurnEvents,
   retainAgentTurnEvents,
@@ -257,6 +258,7 @@ export interface AgentTurn {
   readonly queueBoundarySequence?: number;
   /** Runtime-only reconciliation mark; the JSON prompt was replaced from this turn's log. */
   readonly promptRestored?: boolean;
+  readonly haltRequested?: boolean;
   readonly foregroundSettled?: boolean;
   readonly firstEventOffset?: number;
   readonly subagentLifecycle?: AgentSubagentLifecycle;
@@ -390,6 +392,7 @@ export type AgentThreadsAction =
       readonly event: Extract<AgentTurnEvent, { kind: "userMessage" }>;
     }
   | { readonly kind: "turnInterrupted"; readonly turnId: string; readonly nowEpochMs: number }
+  | ({ readonly kind: "turnHaltRequested" } & AgentTurnHaltRequest)
   | {
       readonly kind: "turnHydrated";
       readonly threadId: string;
@@ -619,6 +622,8 @@ export function agentThreadsReducer(
       return appendSteeredMessage(state, action);
     case "turnInterrupted":
       return interruptTurn(state, action.turnId, action.nowEpochMs);
+    case "turnHaltRequested":
+      return requestAgentTurnHalt(state, action);
     case "turnHydrated":
       return hydrateTurn(state, action);
     case "turnPromptRestored":

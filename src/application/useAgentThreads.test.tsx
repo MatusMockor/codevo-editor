@@ -856,7 +856,82 @@ describe("useAgentThreads Claude session lifecycle", () => {
     expect(session.endAgentThreadSession).not.toHaveBeenCalled();
     harness.unmount();
   });
+
+  it("records an interrupt request on the exact turn before the runtime answers, even when refused", async () => {
+    let answer: (outcome: { readonly kind: "unsupported" }) => void = () => undefined;
+    const session = {
+      ...sessionGateway(),
+      interruptAgentTask: vi.fn(
+        () =>
+          new Promise<{ readonly kind: "unsupported" }>((resolve) => {
+            answer = resolve;
+          }),
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
+
+    let interrupted: Promise<boolean> = Promise.resolve(true);
+    act(() => {
+      interrupted = harness.hook().interrupt?.(threadId) ?? Promise.resolve(true);
+    });
+    expect(session.interruptAgentTask).toHaveBeenCalledTimes(1);
+    expect(lastTurnOf(harness.hook(), threadId)?.haltRequested).toBe(true);
+
+    await act(async () => answer({ kind: "unsupported" }));
+    await expect(interrupted).resolves.toBe(false);
+    expect(lastTurnOf(harness.hook(), threadId)?.haltRequested).toBe(true);
+    harness.unmount();
+  });
+
+  it("records a hard stop request on the exact turn and never carries it to the next turn", async () => {
+    let settle: () => void = () => undefined;
+    const harness = renderThreads({ agentThreadSessionGateway: sessionGateway() });
+    harness.agent.stopAgentTask.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          settle = () => resolve(undefined);
+        }),
+    );
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
+
+    let stopped: Promise<void> = Promise.resolve();
+    act(() => {
+      stopped = harness.hook().stop(threadId);
+    });
+    expect(lastTurnOf(harness.hook(), threadId)?.haltRequested).toBe(true);
+    await act(async () => settle());
+    await act(() => stopped);
+    await act(async () => {
+      harness.emitStatus(threadId, 2, { kind: "stopped" });
+    });
+
+    const sent = await act(() =>
+      harness
+        .hook()
+        .sendFollowUp({ threadId, prompt: "again", launch: concreteLaunch("claudeCode") }),
+    );
+    expect(sent).toBe(true);
+    const turns = harness.hook().threads[0]?.thread.turns ?? [];
+    expect(turns.map((turn) => turn.haltRequested)).toEqual([true, undefined]);
+    const saves = harness.store.saveAgentThread.mock.calls;
+    const lastSaved = saves[saves.length - 1]?.[0].thread;
+    expect(JSON.stringify(serializeAgentThread(lastSaved as AgentThread))).not.toContain(
+      "haltRequested",
+    );
+    harness.unmount();
+  });
 });
+
+function lastTurnOf(hook: AgentThreadsHookSurface, threadId: string) {
+  const turns = hook.threads.find((view) => view.thread.threadId === threadId)?.thread.turns ?? [];
+  return turns[turns.length - 1];
+}
 
 describe("useAgentThreads views and viewed marks", () => {
   it("keeps view identity for untouched threads across a burst of output events", async () => {

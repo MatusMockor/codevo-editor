@@ -193,10 +193,10 @@ export const AgentTurnView = memo(function AgentTurnView({
         provider,
         turn.cliVersion,
         executionTarget,
-        turn.status,
+        { status: turn.status, haltRequested: turn.haltRequested },
         projection.items,
       ),
-    [executionTarget, projection.items, provider, turn.cliVersion, turn.status],
+    [executionTarget, projection.items, provider, turn.cliVersion, turn.haltRequested, turn.status],
   );
   const rawLines = useMemo(
     () =>

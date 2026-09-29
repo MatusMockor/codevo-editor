@@ -152,6 +152,7 @@ function render(initial: AgentThread | undefined, fake: AgentThreadSessionGatewa
       gateway: fake,
       readThread: (threadId) =>
         scenario.current?.threadId === threadId ? scenario.current : undefined,
+      recordHaltRequest: () => undefined,
       ownsOwner: (owner) => owner.ownerId === OWNER_ID,
       resumeSessionId: (candidate) => candidate.provider.sessionId,
       setNotice,

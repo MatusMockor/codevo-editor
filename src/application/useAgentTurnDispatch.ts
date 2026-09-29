@@ -890,6 +890,12 @@ export function useAgentTurnDispatch(
       if (thread === undefined) return;
       const turn = runningTurn(thread);
       if (turn === null) return;
+      deps.store.dispatchAction({
+        kind: "turnHaltRequested",
+        threadId,
+        ownerId: thread.owner.ownerId,
+        turnId: turn.turnId,
+      });
       const stopRecorded = startContextRef.current.startIntents.requestStop(turn.turnId);
       const stopped = await attempt(() =>
         deps.agentTaskGateway.stopAgentTask({

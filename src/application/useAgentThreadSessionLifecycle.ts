@@ -9,6 +9,7 @@ import {
   type AgentTaskInterruptOutcome,
   type AgentThreadSessionGateway,
 } from "../domain/agentThreadSession";
+import type { AgentTurnHaltRequest } from "../domain/agentTurnHaltRequest";
 import { latestPromptedAgentLaunch } from "../domain/agentTurnOrigin";
 import {
   AgentBackgroundTurnRecorder,
@@ -27,6 +28,7 @@ import { isRemoteAgentIdentity } from "./remoteAgentSurface";
 export interface AgentThreadSessionLifecycleOptions {
   readonly gateway: AgentThreadSessionGateway | undefined;
   readonly readThread: (threadId: string) => AgentThread | undefined;
+  readonly recordHaltRequest: (request: AgentTurnHaltRequest) => void;
   readonly ownsOwner: (owner: AgentThreadOwner) => boolean;
   readonly resumeSessionId: (thread: AgentThread) => string | null;
   readonly setNotice: (notice: AgentTasksNotice) => void;
@@ -115,6 +117,7 @@ export function useAgentThreadSessionLifecycle(
       const turn = runningTurn(thread);
       if (turn === null) return false;
       const authority = { threadId, ownerId: thread.owner.ownerId };
+      optionsRef.current.recordHaltRequest({ ...authority, turnId: turn.turnId });
       const outcome = await attempt(() =>
         gateway.interruptAgentTask({
           taskId: turn.turnId,
