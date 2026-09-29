@@ -23,6 +23,7 @@ import {
   type AgentTurnStatus,
 } from "../../domain/agentThread";
 import { agentTurnContentLost } from "../../domain/agentTurnContentLoss";
+import { isAgentBackgroundTurn } from "../../domain/agentTurnOrigin";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentActivityItems } from "./AgentActivityItems";
 import type { AgentProseContext, AgentProseStream } from "./AgentAssistantText";
@@ -33,7 +34,7 @@ import { AgentToolDisclosureContext, useAgentTurnToolDisclosure } from "./AgentT
 import { AgentTurnArtifacts, type AgentArtifactScope } from "./AgentTurnArtifacts";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import { AgentProviderErrorHint, AgentTurnItemView } from "./AgentTurnItemView";
-import { AgentTurnPrompt } from "./AgentTurnParts";
+import { AgentTurnOriginLabel, AgentTurnPrompt } from "./AgentTurnParts";
 import { AgentTurnMeta } from "./conversation/AgentTurnMeta";
 import { AgentLiveRow } from "./conversation/AgentLiveRow";
 import { AgentTurnWork } from "./conversation/AgentTurnWork";
@@ -286,16 +287,20 @@ export const AgentTurnView = memo(function AgentTurnView({
         data-agent-turn={turn.turnId}
         data-agent-turn-offset={eventOffset}
       >
-        <AgentTurnPrompt
-          attachmentImages={attachmentImages}
-          attachments={attachments}
-          current={promptCurrent}
-          prompt={turn.prompt}
-          promptClipped={agentPromptLooksClipped(turn.prompt) && turn.promptRestored !== true}
-          query={highlight?.query ?? ""}
-          sentAtEpochMs={turn.startedAtEpochMs}
-          textClipboard={textClipboard}
-        />
+        {isAgentBackgroundTurn(turn) ? (
+          <AgentTurnOriginLabel prompt={turn.prompt} />
+        ) : (
+          <AgentTurnPrompt
+            attachmentImages={attachmentImages}
+            attachments={attachments}
+            current={promptCurrent}
+            prompt={turn.prompt}
+            promptClipped={agentPromptLooksClipped(turn.prompt) && turn.promptRestored !== true}
+            query={highlight?.query ?? ""}
+            sentAtEpochMs={turn.startedAtEpochMs}
+            textClipboard={textClipboard}
+          />
+        )}
 
         <div className="agent-answer">
           {turn.status.kind === "pending" && provider === "codex" && !compacting && (

@@ -18,6 +18,9 @@ use crate::agent_task_spawner::agent_provider::runtime::{
 use crate::agent_task_spawner::agent_task_input::{
     AgentTaskSteerRejection, MAX_AGENT_STEER_FRAME_BYTES,
 };
+use crate::agent_task_spawner::claude_session_policy::ClaudeSessionRestartPolicy;
+use crate::agent_task_spawner::claude_session_registry::ClaudeSessionRegistry;
+use crate::agent_task_spawner::claude_session_turn::ClaudeSessionAuthority;
 use crate::agent_task_spawner::{
     claude_user_frame, plan_agent_invocation_with_authority, AgentCliInvocation,
     AgentImageAttachment, AgentInvocationRequest, AgentTaskSpawnPlan,
@@ -67,6 +70,8 @@ mod agent_task_start_authority;
 pub(crate) use crate::agent_task_spawner::{
     codex_app_server_host, codex_app_server_protocol, codex_app_server_turn,
 };
+#[path = "claude_session_composition.rs"]
+pub(crate) mod claude_session_composition;
 #[path = "codex_task_composition.rs"]
 pub(crate) mod codex_task_composition;
 
@@ -117,6 +122,8 @@ pub(crate) struct StartAgentTaskRequest {
     thread_id: String,
     #[serde(default)]
     attachments: Vec<StartAgentTaskAttachment>,
+    #[serde(default)]
+    session_restart: ClaudeSessionRestartPolicy,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -628,7 +635,7 @@ async fn start_owned_agent_task(
         let start_request = request.clone();
         let start_authority = authority.clone();
         let start_identity = plan.executable_identity().clone();
-        let validate_authority = Arc::new(move || {
+        let validate_authority: ClaudeSessionAuthority = Arc::new(move || {
             revalidate_agent_task_filesystem_authority(
                 &start_app.state::<WorkspaceRegistry>(),
                 &start_request,
@@ -655,8 +662,15 @@ async fn start_owned_agent_task(
             &provider_turn,
             app.state::<Arc<codex_app_server_host::CodexAppServerHostRegistry>>()
                 .inner(),
-            validate_authority,
+            Arc::clone(&validate_authority),
         )?;
+        let plan = claude_session_composition::prepare_transport(
+            plan,
+            &request,
+            &registry_request.repository_root,
+            app.state::<Arc<ClaudeSessionRegistry>>().inner(),
+            validate_authority,
+        );
         revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;
         app.state::<Arc<AgentProviderRuntimeRegistry>>()
             .revalidate_turn_authority(&provider_turn)?;
@@ -926,6 +940,7 @@ pub(crate) fn close_agent_task_input(
 
 #[tauri::command]
 pub(crate) fn stop_agent_tasks_for_root(
+    app: AppHandle,
     request: StopAgentTasksForRootRequest,
     state: AgentTaskRuntimeState<'_>,
 ) -> Result<(), String> {
@@ -934,6 +949,11 @@ pub(crate) fn stop_agent_tasks_for_root(
     state
         .registry
         .stop_for_workspace_root(request.workspace_id.as_str(), &root);
+    claude_session_composition::end_sessions_for_root(
+        &app,
+        Some(request.workspace_id.as_str()),
+        &root,
+    );
     Ok(())
 }
 
@@ -1229,7 +1249,11 @@ fn agent_root_lease_receipt(lease: RegisteredAgentRootLease) -> AgentRootLeaseRe
     }
 }
 
-pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
+pub(crate) fn stop_agent_tasks_on_dispose(
+    app: &AppHandle,
+    workspace_id: Option<&str>,
+    root: &Path,
+) {
     let leases = app.try_state::<Arc<AgentRootLeaseRegistry>>();
     let held = leases.as_ref().map(|state| state.inner().as_ref());
     if !agent_root_lease::dispose_should_stop_agent_tasks(held, root) {
@@ -1241,6 +1265,7 @@ pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
     };
 
     agent_tasks.stop_for_root(root);
+    claude_session_composition::end_sessions_on_root_dispose(app, workspace_id, root);
     if let Some(hosts) = app.try_state::<Arc<codex_app_server_host::CodexAppServerHostRegistry>>() {
         hosts.retire_for_repository(root);
     }

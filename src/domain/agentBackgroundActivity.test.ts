@@ -248,15 +248,43 @@ describe("factual background activity", () => {
         .foregroundSettled,
     ).toBe(true);
   });
-  it("does not resurrect terminal IDs from late progress or duplicate starts", () => {
+  it("does not resurrect terminal IDs from late progress or terminal updates", () => {
+    for (const terminal of ["completed", "failed", "stopped"] as const) {
+      expect(
+        projectAgentBackgroundActivity([task(terminal), task("running"), result], true).tasks,
+      ).toEqual([]);
+      for (const late of ["completed", "failed", "stopped"] as const) {
+        expect(
+          projectAgentBackgroundActivity([task(terminal), task(late), result], true).tasks,
+        ).toEqual([]);
+      }
+    }
+  });
+  it("revives a terminal ID only on a genuine restart", () => {
     for (const terminal of ["completed", "failed", "stopped"] as const) {
       expect(
         projectAgentBackgroundActivity(
           [task(terminal), task("starting"), task("running"), result],
           true,
-        ).tasks,
-      ).toEqual([]);
+        ),
+      ).toMatchObject({ phase: "monitoring", tasks: [{ taskId: "task-1", taskType: "shell" }] });
     }
+  });
+  it("keeps a resumed background agent live after the previous process reported it stopped", () => {
+    const resumed = [
+      task("stopped", "agent", "agent-task"),
+      task("starting", "agent", "agent-task"),
+      result,
+    ];
+    expect(projectAgentBackgroundActivity(resumed, true)).toMatchObject({
+      phase: "working",
+      foregroundSettled: true,
+      tasks: [{ taskId: "agent-task", taskType: "agent" }],
+      truncated: false,
+    });
+    expect(
+      projectAgentBackgroundActivity([...resumed, task("completed", "agent", "agent-task")], true),
+    ).toMatchObject({ phase: "inactive", tasks: [] });
   });
   it("deduplicates starts and retains task type when progress omits native type", () => {
     expect(
@@ -284,7 +312,7 @@ describe("factual background activity", () => {
     const terminals = Array.from({ length: MAX_AGENT_BACKGROUND_OBSERVED_TASKS + 1 }, (_, i) =>
       task("completed", "shell", `done-${i}`),
     );
-    const events = [...terminals, task("starting", "shell", "done-0"), result];
+    const events = [...terminals, task("running", "shell", "done-0"), result];
     expect(projectAgentBackgroundActivity(events, true)).toMatchObject({
       phase: "working",
       truncated: true,
@@ -295,6 +323,12 @@ describe("factual background activity", () => {
       truncated: false,
       tasks: [],
     });
+    expect(
+      projectAgentBackgroundActivity(
+        [...terminals, task("starting", "shell", "done-0"), result],
+        true,
+      ),
+    ).toMatchObject({ phase: "working", truncated: true, tasks: [{ taskId: "done-0" }] });
   });
   it("bounds active work and reports uncertainty instead of false idle", () => {
     const starts = Array.from({ length: MAX_AGENT_BACKGROUND_TASKS + 1 }, (_, i) =>

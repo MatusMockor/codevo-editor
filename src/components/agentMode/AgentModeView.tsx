@@ -66,6 +66,7 @@ import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { remoteAddProjectCloneActive } from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
+import { AgentEndSessionConfirmationBanner } from "./AgentEndSessionConfirmationBanner";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
 import { AgentSidebarReveal } from "./AgentSidebarReveal";
 import { AgentThreadActivity } from "./AgentThreadActivity";
@@ -1114,12 +1115,17 @@ function LocalAgentModeView({
                     }
                   />
                 )}
+              <AgentEndSessionConfirmationBanner confirmation={menu.endSessionConfirmation} />
               {notice && (
                 <div className="agent-thread-notice">
                   <AgentNoticeBar
                     notice={notice}
                     onConfigure={() => agents.configureAgentCli()}
                     onDismiss={dismissNotice}
+                    onRestartFollowUp={(action) => {
+                      dismissNotice();
+                      void agents.restartDeferredFollowUp?.(action.threadId, action.entryId);
+                    }}
                   />
                 </div>
               )}

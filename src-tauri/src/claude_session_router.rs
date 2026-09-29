@@ -1,0 +1,681 @@
+use super::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
+use crate::agent_task_supervisor::agent_task_result_detector::{
+    failed_result, lifecycle_candidate, ResultLineDetector, ResultSettlePolicy,
+};
+use serde_json::Value;
+use std::sync::Arc;
+
+pub const MAX_ROUTED_LINE_BYTES: usize = 1024 * 1024;
+pub const MAX_BACKGROUND_TURN_BYTES: usize = 256 * 1024;
+pub const BACKGROUND_RESULT_RESERVE_BYTES: usize = 64 * 1024;
+const OVERSIZED_FRAME_ERROR: &str = "Claude session frame exceeded its size limit.";
+const COST_FIELD: &str = "total_cost_usd";
+const PROCESS_COST_FIELD: &str = "codevo_process_total_cost_usd";
+const COST_TOLERANCE: f64 = 1e-9;
+const MAX_BACKGROUND_PERMISSION_DENIALS: usize = 16;
+const MAX_UNOWNED_CONTROL_ANSWERS: usize = 16;
+const MAX_CONTROL_REQUEST_ID_BYTES: usize = 128;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClaudeBackgroundTurn {
+    pub output: Vec<u8>,
+    pub truncated: bool,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RouterStep {
+    pub turn_output: Vec<u8>,
+    pub settled: bool,
+    pub interrupted: bool,
+    pub cancelled: bool,
+    pub result_failed: bool,
+    pub interrupt_acknowledged: bool,
+    pub unowned_activity: bool,
+    pub background_turns: Vec<ClaudeBackgroundTurn>,
+    pub permission_denials: Vec<String>,
+    pub unsupported_requests: Vec<String>,
+    pub failure: Option<&'static str>,
+}
+
+struct AttachedTurn {
+    lifecycle: Arc<ClaudeInputLifecycle>,
+    command_id: String,
+    started: bool,
+    result_seen: bool,
+    init_expected: bool,
+    running: Option<String>,
+    interrupting: bool,
+    interrupt_evidence: bool,
+    cancelled: bool,
+    result_failed: bool,
+}
+
+#[derive(Default)]
+struct UnsolicitedTurn {
+    output: Vec<u8>,
+    truncated: bool,
+    denials: usize,
+    unsupported_answers: usize,
+}
+
+impl UnsolicitedTurn {
+    fn push(&mut self, line: &[u8], closing: bool) -> bool {
+        let limit = match closing {
+            true => MAX_BACKGROUND_TURN_BYTES,
+            false => MAX_BACKGROUND_TURN_BYTES - BACKGROUND_RESULT_RESERVE_BYTES,
+        };
+        if self.output.len() + line.len() > limit {
+            self.truncated = true;
+            return false;
+        }
+        self.output.extend_from_slice(line);
+        true
+    }
+
+    fn finish(self, complete: bool) -> ClaudeBackgroundTurn {
+        ClaudeBackgroundTurn {
+            output: self.output,
+            truncated: self.truncated,
+            complete,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Destination {
+    Turn,
+    Command,
+    Unsolicited,
+    Background,
+    Discard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LineMode {
+    Buffering,
+    Streaming,
+    Skipping,
+}
+
+pub struct ClaudeSessionRouter {
+    detector: ResultLineDetector,
+    attached: Option<AttachedTurn>,
+    lifecycle_supported: bool,
+    unsolicited: Option<UnsolicitedTurn>,
+    pending_interrupt: Option<String>,
+    cost_baseline: f64,
+    idle_unsupported_answers: usize,
+    line: Vec<u8>,
+    mode: LineMode,
+}
+
+impl Default for ClaudeSessionRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ClaudeSessionRouter {
+    pub fn new() -> Self {
+        Self {
+            detector: ResultLineDetector::new()
+                .with_settle_policy(ResultSettlePolicy::AwaitBackgroundWork),
+            attached: None,
+            lifecycle_supported: false,
+            unsolicited: None,
+            pending_interrupt: None,
+            cost_baseline: 0.0,
+            idle_unsupported_answers: 0,
+            line: Vec::new(),
+            mode: LineMode::Buffering,
+        }
+    }
+
+    pub fn attach(&mut self, lifecycle: Arc<ClaudeInputLifecycle>) {
+        self.detector.rearm(Some(Arc::clone(&lifecycle)));
+        let command_id = lifecycle.initial_command_id().to_string();
+        self.attached = Some(AttachedTurn {
+            running: Some(command_id.clone()),
+            command_id,
+            lifecycle,
+            started: false,
+            result_seen: false,
+            init_expected: false,
+            interrupting: false,
+            interrupt_evidence: false,
+            cancelled: false,
+            result_failed: false,
+        });
+        self.pending_interrupt = None;
+        self.idle_unsupported_answers = 0;
+    }
+
+    pub fn detach(&mut self) {
+        self.detector.rearm(None);
+        self.attached = None;
+        self.pending_interrupt = None;
+        self.idle_unsupported_answers = 0;
+    }
+
+    pub fn interrupt_sent(&mut self, request_id: String) {
+        self.pending_interrupt = Some(request_id);
+        self.detector.suspend_drain_settlement();
+        if let Some(turn) = self.attached.as_mut() {
+            turn.interrupting = true;
+        }
+    }
+
+    pub fn withdraw_interrupt(&mut self, request_id: &str) {
+        if self.pending_interrupt.as_deref() != Some(request_id) {
+            return;
+        }
+        self.pending_interrupt = None;
+        self.detector.resume_drain_settlement();
+        if let Some(turn) = self.attached.as_mut() {
+            turn.interrupting = false;
+            turn.interrupt_evidence = false;
+        }
+    }
+
+    pub fn settle_finished_foreground(&mut self) -> Option<RouterStep> {
+        let finished = self
+            .attached
+            .as_ref()
+            .is_some_and(|turn| turn.result_seen && turn.running.is_none() && !turn.interrupting);
+        if !finished || !self.detector.settle_finished_foreground() {
+            return None;
+        }
+        let result_failed = self.attached_result_failed();
+        self.detach();
+        Some(RouterStep {
+            settled: true,
+            result_failed,
+            ..RouterStep::default()
+        })
+    }
+
+    fn attached_result_failed(&self) -> bool {
+        self.attached
+            .as_ref()
+            .is_some_and(|turn| turn.result_failed)
+    }
+
+    pub fn conversation(&self) -> Option<&str> {
+        self.detector.session_id()
+    }
+
+    pub fn live_background_tasks(&self) -> usize {
+        self.detector.live_background_task_count()
+    }
+
+    pub fn is_attached_to(&self, lifecycle: &Arc<ClaudeInputLifecycle>) -> bool {
+        self.attached
+            .as_ref()
+            .is_some_and(|turn| Arc::ptr_eq(&turn.lifecycle, lifecycle))
+    }
+
+    pub fn feed(&mut self, chunk: &[u8]) -> RouterStep {
+        let mut step = RouterStep::default();
+        let mut rest = chunk;
+        while !rest.is_empty() && step.failure.is_none() {
+            let end = rest
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(rest.len(), |newline| newline + 1);
+            let (piece, remaining) = rest.split_at(end);
+            rest = remaining;
+            self.absorb(piece, piece.ends_with(b"\n"), &mut step);
+        }
+        step
+    }
+
+    pub fn finish(&mut self) -> RouterStep {
+        let mut step = RouterStep::default();
+        let partial = std::mem::take(&mut self.line);
+        let mode = std::mem::replace(&mut self.mode, LineMode::Buffering);
+        if mode == LineMode::Buffering && self.owned() {
+            step.turn_output = partial;
+        }
+        if let Some(active) = self.unsolicited.take() {
+            step.background_turns.push(active.finish(false));
+        }
+        step
+    }
+
+    fn absorb(&mut self, piece: &[u8], complete: bool, step: &mut RouterStep) {
+        let next = match complete {
+            true => LineMode::Buffering,
+            false => self.mode,
+        };
+        match self.mode {
+            LineMode::Streaming => {
+                step.turn_output.extend_from_slice(piece);
+                self.mode = next;
+                return;
+            }
+            LineMode::Skipping => {
+                self.mode = next;
+                return;
+            }
+            LineMode::Buffering => {}
+        }
+        self.line.extend_from_slice(piece);
+        if self.line.len() - usize::from(complete) > MAX_ROUTED_LINE_BYTES {
+            self.overflow(complete, step);
+            return;
+        }
+        if !complete {
+            return;
+        }
+        let line = std::mem::take(&mut self.line);
+        self.route_line(line, step);
+    }
+
+    fn overflow(&mut self, complete: bool, step: &mut RouterStep) {
+        let prefix = std::mem::take(&mut self.line);
+        self.mode = match complete {
+            true => LineMode::Buffering,
+            false => LineMode::Skipping,
+        };
+        if lifecycle_candidate(&prefix) {
+            step.failure = Some(OVERSIZED_FRAME_ERROR);
+            return;
+        }
+        if self.owned() {
+            step.turn_output.extend_from_slice(&prefix);
+            self.mode = match complete {
+                true => LineMode::Buffering,
+                false => LineMode::Streaming,
+            };
+            return;
+        }
+        if let Some(active) = self.unsolicited.as_mut() {
+            active.truncated = true;
+        }
+    }
+
+    fn route_line(&mut self, line: Vec<u8>, step: &mut RouterStep) {
+        let Ok(message) = serde_json::from_slice::<Value>(&line) else {
+            if let Some(active) = self.unsolicited.as_mut() {
+                active.truncated = true;
+                return;
+            }
+            let destination = self.attached_destination();
+            self.deliver(destination, line, false, step);
+            return;
+        };
+        if self.acknowledges_interrupt(&message) {
+            step.interrupt_acknowledged = true;
+        }
+        let finishes_command = self.finishes_attached_command(&message);
+        let destination = self.classify(&message, step);
+        let owned = self.owned();
+        let outcome = match destination {
+            Destination::Turn | Destination::Command if owned => {
+                self.detector.consume_message(&message)
+            }
+            Destination::Command => self.detector.observe_command(&message).map(|()| false),
+            _ => self.detector.track_message(&message).map(|()| false),
+        };
+        let closing = root_result(&message);
+        let ends_unsolicited = destination == Destination::Unsolicited && closing;
+        let (line, process_total) = self.normalize_cost(destination, message, line);
+        let accepted = self.deliver(destination, line, closing, step);
+        if let (true, Some(total)) = (accepted, process_total) {
+            self.cost_baseline = total;
+        }
+        if ends_unsolicited {
+            self.emit_unsolicited(true, step);
+        }
+        let natural = match outcome {
+            Ok(settled) => settled,
+            Err(error) => {
+                step.failure = Some(error);
+                return;
+            }
+        };
+        if finishes_command {
+            self.detector.command_finished();
+        }
+        let (settled, via_interrupt) = match natural {
+            true => (true, false),
+            false if self.owned() => self.settle_ready(),
+            false => (false, false),
+        };
+        if !settled {
+            return;
+        }
+        step.settled = true;
+        step.interrupted = self
+            .attached
+            .as_ref()
+            .is_some_and(|turn| turn.interrupting && (via_interrupt || turn.interrupt_evidence));
+        step.cancelled = !step.interrupted
+            && self
+                .attached
+                .as_ref()
+                .is_some_and(|turn| turn.cancelled && !turn.result_seen);
+        step.result_failed = !step.interrupted && !step.cancelled && self.attached_result_failed();
+        self.detach();
+    }
+
+    fn classify(&mut self, message: &Value, step: &mut RouterStep) -> Destination {
+        let kind = message.get("type").and_then(Value::as_str);
+        let root = message.get("parent_tool_use_id").is_none_or(Value::is_null);
+        if kind == Some("command_lifecycle") {
+            return self.classify_lifecycle(message, step);
+        }
+        if kind == Some("control_response") {
+            return self.attached_destination();
+        }
+        if kind == Some("control_request") && root {
+            return self.classify_control_request(message, step);
+        }
+        if root_result(message) && self.names_our_result(message) {
+            self.emit_unsolicited(false, step);
+            if let Some(turn) = self.attached.as_mut() {
+                turn.started = true;
+                turn.result_seen = true;
+                turn.init_expected = false;
+                turn.result_failed = failed_result(message);
+                turn.interrupt_evidence |= turn.interrupting && turn.result_failed;
+                let finished = turn
+                    .running
+                    .as_deref()
+                    .is_some_and(|running| result_names(message, running));
+                if finished || !self.lifecycle_supported {
+                    turn.running = None;
+                }
+            }
+            return Destination::Turn;
+        }
+        if self.unsolicited.is_some() {
+            return Destination::Unsolicited;
+        }
+        if self.owned() {
+            return self.classify_owned(kind, message);
+        }
+        if root && opens_activity(kind, message) {
+            self.unsolicited = Some(UnsolicitedTurn::default());
+            return Destination::Unsolicited;
+        }
+        self.attached_destination()
+    }
+
+    fn classify_control_request(&mut self, message: &Value, step: &mut RouterStep) -> Destination {
+        if self.owned() {
+            return Destination::Turn;
+        }
+        if let Some(request_id) = self.background_permission(message) {
+            step.permission_denials.push(request_id);
+            return Destination::Unsolicited;
+        }
+        let Some(request_id) = self.unsupported_request(message) else {
+            step.unowned_activity = true;
+            return Destination::Discard;
+        };
+        step.unsupported_requests.push(request_id);
+        match self.unsolicited {
+            Some(_) => Destination::Unsolicited,
+            None => Destination::Discard,
+        }
+    }
+
+    fn classify_owned(&mut self, kind: Option<&str>, message: &Value) -> Destination {
+        if root_result(message) {
+            return Destination::Background;
+        }
+        let root_init = kind == Some("system")
+            && message.get("subtype").and_then(Value::as_str) == Some("init")
+            && message.get("parent_tool_use_id").is_none_or(Value::is_null);
+        let Some(turn) = self.attached.as_mut().filter(|_| root_init) else {
+            return Destination::Turn;
+        };
+        if turn.result_seen && !turn.init_expected {
+            self.unsolicited = Some(UnsolicitedTurn::default());
+            return Destination::Unsolicited;
+        }
+        turn.init_expected = false;
+        Destination::Turn
+    }
+
+    fn classify_lifecycle(&mut self, message: &Value, step: &mut RouterStep) -> Destination {
+        self.lifecycle_supported = true;
+        let id = message
+            .get("command_uuid")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some(turn) = self.attached.as_mut() else {
+            return Destination::Discard;
+        };
+        if !turn.lifecycle.names_command(id) {
+            return Destination::Discard;
+        }
+        let state = message.get("state").and_then(Value::as_str);
+        if matches!(state, Some("completed" | "cancelled")) {
+            turn.started |= id == turn.command_id;
+            turn.interrupt_evidence |= turn.interrupting && state == Some("cancelled");
+            turn.cancelled |= state == Some("cancelled")
+                && id == turn.command_id
+                && !turn.interrupting
+                && !turn.result_seen;
+            if turn.running.as_deref() == Some(id) {
+                turn.running = None;
+            }
+            return Destination::Command;
+        }
+        if state != Some("started") {
+            return Destination::Command;
+        }
+        turn.running = Some(id.to_string());
+        turn.started |= id == turn.command_id;
+        turn.init_expected = true;
+        self.emit_unsolicited(false, step);
+        Destination::Command
+    }
+
+    fn finishes_attached_command(&self, message: &Value) -> bool {
+        let Some(turn) = self.attached.as_ref() else {
+            return false;
+        };
+        message.get("type").and_then(Value::as_str) == Some("command_lifecycle")
+            && message.get("command_uuid").and_then(Value::as_str) == Some(&turn.command_id)
+            && matches!(
+                message.get("state").and_then(Value::as_str),
+                Some("completed" | "cancelled")
+            )
+    }
+
+    fn settle_ready(&mut self) -> (bool, bool) {
+        let interrupted = self
+            .attached
+            .as_ref()
+            .is_some_and(|turn| turn.interrupting && turn.running.is_none());
+        if interrupted {
+            return (self.detector.settle_interrupted(), true);
+        }
+        (self.detector.settle_if_ready(), false)
+    }
+
+    fn names_our_result(&self, message: &Value) -> bool {
+        let Some(turn) = self.attached.as_ref() else {
+            return false;
+        };
+        let uuid = message.get("user_message_uuid");
+        let uuids = message.get("user_message_uuids");
+        let named = uuid
+            .into_iter()
+            .chain(uuids.and_then(Value::as_array).into_iter().flatten())
+            .filter_map(Value::as_str)
+            .any(|id| turn.lifecycle.names_command(id));
+        if named {
+            return true;
+        }
+        !self.lifecycle_supported
+            && self.unsolicited.is_none()
+            && uuid.is_none()
+            && uuids.is_none()
+            && message.pointer("/origin/kind").is_none()
+    }
+
+    fn background_permission(&mut self, message: &Value) -> Option<String> {
+        let active = self.unsolicited.as_mut()?;
+        if message.pointer("/request/subtype").and_then(Value::as_str) != Some("can_use_tool")
+            || active.denials >= MAX_BACKGROUND_PERMISSION_DENIALS
+        {
+            return None;
+        }
+        let request_id = message
+            .get("request_id")
+            .and_then(Value::as_str)
+            .filter(|id| valid_request_id(id))?;
+        active.denials += 1;
+        Some(request_id.to_string())
+    }
+
+    fn unsupported_request(&mut self, message: &Value) -> Option<String> {
+        if message.pointer("/request/subtype").and_then(Value::as_str) == Some("can_use_tool") {
+            return None;
+        }
+        let request_id = message
+            .get("request_id")
+            .and_then(Value::as_str)
+            .filter(|id| valid_request_id(id))?;
+        let answered = match self.unsolicited.as_mut() {
+            Some(active) => &mut active.unsupported_answers,
+            None => &mut self.idle_unsupported_answers,
+        };
+        if *answered >= MAX_UNOWNED_CONTROL_ANSWERS {
+            return None;
+        }
+        *answered += 1;
+        Some(request_id.to_string())
+    }
+
+    fn owned(&self) -> bool {
+        self.unsolicited.is_none()
+            && self
+                .attached
+                .as_ref()
+                .is_some_and(|turn| turn.started || !self.lifecycle_supported)
+    }
+
+    fn attached_destination(&self) -> Destination {
+        match self.attached {
+            Some(_) => Destination::Turn,
+            None => Destination::Discard,
+        }
+    }
+
+    fn deliver(
+        &mut self,
+        destination: Destination,
+        line: Vec<u8>,
+        closing: bool,
+        step: &mut RouterStep,
+    ) -> bool {
+        match destination {
+            Destination::Turn | Destination::Command => {
+                step.turn_output.extend_from_slice(&line);
+                true
+            }
+            Destination::Unsolicited => self
+                .unsolicited
+                .as_mut()
+                .is_some_and(|active| active.push(&line, closing)),
+            Destination::Background => {
+                let mut turn = UnsolicitedTurn::default();
+                let accepted = turn.push(&line, true);
+                step.background_turns.push(turn.finish(true));
+                accepted
+            }
+            Destination::Discard => false,
+        }
+    }
+
+    fn emit_unsolicited(&mut self, complete: bool, step: &mut RouterStep) {
+        if let Some(active) = self.unsolicited.take() {
+            step.background_turns.push(active.finish(complete));
+        }
+    }
+
+    fn normalize_cost(
+        &mut self,
+        destination: Destination,
+        message: Value,
+        line: Vec<u8>,
+    ) -> (Vec<u8>, Option<f64>) {
+        if destination == Destination::Discard || !root_result(&message) {
+            return (line, None);
+        }
+        let Some(total) = message
+            .get(COST_FIELD)
+            .and_then(Value::as_f64)
+            .filter(|total| total.is_finite() && *total >= 0.0)
+        else {
+            return (line, None);
+        };
+        let Value::Object(mut fields) = message else {
+            return (line, None);
+        };
+        let delta = total - self.cost_baseline;
+        fields.remove(COST_FIELD);
+        if delta >= -COST_TOLERANCE {
+            fields.insert(COST_FIELD.to_string(), Value::from(delta.max(0.0)));
+        }
+        fields.insert(PROCESS_COST_FIELD.to_string(), Value::from(total));
+        let Ok(mut rewritten) = serde_json::to_vec(&Value::Object(fields)) else {
+            return (line, None);
+        };
+        rewritten.push(b'\n');
+        (rewritten, Some(total))
+    }
+
+    fn acknowledges_interrupt(&mut self, message: &Value) -> bool {
+        if message.get("type").and_then(Value::as_str) != Some("control_response") {
+            return false;
+        }
+        let id = message
+            .pointer("/response/request_id")
+            .and_then(Value::as_str);
+        if id.is_none() || id != self.pending_interrupt.as_deref() {
+            return false;
+        }
+        self.pending_interrupt = None;
+        true
+    }
+}
+
+fn result_names(message: &Value, id: &str) -> bool {
+    message.get("user_message_uuid").and_then(Value::as_str) == Some(id)
+        || message
+            .get("user_message_uuids")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.iter().any(|named| named.as_str() == Some(id)))
+}
+
+fn valid_request_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_CONTROL_REQUEST_ID_BYTES
+        && id.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && b"_.:-".contains(&byte))
+        })
+}
+
+fn root_result(message: &Value) -> bool {
+    message.get("type").and_then(Value::as_str) == Some("result")
+        && message.get("parent_tool_use_id").is_none_or(Value::is_null)
+}
+
+fn opens_activity(kind: Option<&str>, message: &Value) -> bool {
+    match kind {
+        Some("assistant" | "user" | "stream_event" | "result") => true,
+        Some("system") => message.get("subtype").and_then(Value::as_str) == Some("init"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+#[path = "claude_session_router_tests.rs"]
+mod tests;

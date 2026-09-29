@@ -33,6 +33,7 @@ import {
   type AgentTurnEvent,
 } from "../domain/agentThread";
 import { agentPromptLooksClipped } from "../domain/agentPromptClipping";
+import { isAgentBackgroundTurn } from "../domain/agentTurnOrigin";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import { NO_AGENT_TURN_LOG_LOSS, type AgentTurnLogLoss } from "../domain/agentTurnLog";
 import { isRemoteAgentIdentity } from "./remoteAgentSurface";
@@ -711,6 +712,8 @@ function applyTurnLogEffects(
       return openCreatedThreadTurnLogSlots(turnLog, projects, next, action.thread.threadId);
     case "turnStarted":
       return openStartedTurnLogSlot(turnLog, projects, next, action);
+    case "backgroundTurnRecorded":
+      return recordBackgroundTurnLog(turnLog, projects, next, action);
     case "turnEventsAppended":
       return recordTurnLogEvents(turnLog, next, action);
     case "turnSteered":
@@ -740,6 +743,24 @@ function openStartedTurnLogSlot(
   openTurnLogSlot(turnLog, projects, thread, action.turn);
 }
 
+function recordBackgroundTurnLog(
+  turnLog: AgentTurnLogIntegration,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  next: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "backgroundTurnRecorded" }>,
+): void {
+  const thread = next.threads.get(action.threadId);
+  const turn = thread?.turns.find((candidate) => candidate.turnId === action.turn.turnId);
+  if (thread === undefined || turn === undefined) return;
+  if (!openTurnLogSlot(turnLog, projects, thread, turn, NO_AGENT_TURN_LOG_LOSS)) return;
+  turnLog.writer.recordEvents(turn.turnId, turn.events);
+  if (turn.subagentLifecycle !== undefined) {
+    turnLog.writer.recordLifecycle(turn.turnId, turn.subagentLifecycle);
+  }
+  if (turn.eventsTruncated) turnLog.writer.reportLoss(turn.turnId, { kind: "supervisorGap" });
+  turnLog.writer.sealTurn(turn.turnId);
+}
+
 function openCreatedThreadTurnLogSlots(
   turnLog: AgentTurnLogIntegration,
   projects: ReadonlyArray<AgentProjectDescriptor>,
@@ -761,6 +782,7 @@ function openTurnLogSlot(
   projects: ReadonlyArray<AgentProjectDescriptor>,
   thread: AgentThread,
   turn: AgentTurn,
+  priorLoss: AgentTurnLogLoss = resumedTurnLoss(turn.eventsTruncated),
 ): boolean {
   if (!isLoggedAgentThread(thread)) return false;
   const authority = threadAuthority(projects, thread);
@@ -774,15 +796,16 @@ function openTurnLogSlot(
     },
     generation: authority.generation,
     provider: thread.provider.kind,
-    priorLoss: resumedTurnLoss(turn.eventsTruncated),
-    prompt: loggablePrompt(turn.prompt),
+    priorLoss,
+    prompt: loggablePrompt(turn),
   });
   return true;
 }
 
-function loggablePrompt(prompt: string): string | null {
-  if (agentPromptLooksClipped(prompt)) return null;
-  return prompt;
+function loggablePrompt(turn: AgentTurn): string | null {
+  if (isAgentBackgroundTurn(turn)) return null;
+  if (agentPromptLooksClipped(turn.prompt)) return null;
+  return turn.prompt;
 }
 
 function resumedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
@@ -846,7 +869,7 @@ function sealInterruptedTurnLogs(
       generation: authority.generation,
       provider: thread.provider.kind,
       priorLoss: loss,
-      prompt: loggablePrompt(turn.prompt),
+      prompt: loggablePrompt(turn),
     });
     turnLog.writer.sealTurn(turn.turnId);
     sealed += 1;
@@ -883,6 +906,7 @@ function persistIntent(
     case "threadCreated":
       return saveIntent(action.thread.threadId, "immediate");
     case "turnStarted":
+    case "backgroundTurnRecorded":
     case "externalHistoryLoaded":
       return saveIntent(action.threadId, "immediate");
     case "taskStatusEvent":

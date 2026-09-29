@@ -84,6 +84,7 @@ fn start_request(
         provider_generation: 1,
         thread_id: "agt-thread-0001".to_string(),
         attachments: Vec::new(),
+        session_restart: Default::default(),
     }
 }
 

@@ -267,6 +267,28 @@ describe("invokeStartAgentTaskIpc", () => {
     );
   });
 
+  it("classifies the session restart refusal as a definite rejection by its prefix", async () => {
+    const messages: readonly string[] = [
+      "sessionRestartRequiresConfirmation: Restarting ends this Claude session. Background tasks it started may stop.",
+      "sessionRestartRequiresConfirmation: a future wording",
+    ];
+    for (const message of messages) {
+      const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(message);
+      const rejection = await invokeStartAgentTaskIpc(invokeCommand, START_REQUEST).catch(
+        (error: unknown) => error,
+      );
+      expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
+      expect((rejection as Error).message).toBe(message);
+    }
+    const lookalike = vi
+      .fn<InvokeAgentTaskCommand>()
+      .mockRejectedValue("Something sessionRestartRequiresConfirmation: later");
+    const uncertain = await invokeStartAgentTaskIpc(lookalike, START_REQUEST).catch(
+      (error: unknown) => error,
+    );
+    expect(isDefiniteAgentTaskStartRejection(uncertain)).toBe(false);
+  });
+
   it("classifies a missing or updating agent CLI binary as a definite rejection", async () => {
     const messages: readonly string[] = [
       "The Claude CLI binary is missing or not executable (it may be updating). Retry in a moment.",

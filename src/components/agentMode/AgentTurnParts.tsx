@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
+import { agentBackgroundTurnCause, agentBackgroundTurnLabel } from "../../domain/agentTurnOrigin";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { HighlightRun } from "./agentThreadHighlight";
@@ -69,5 +70,17 @@ export const AgentTurnPrompt = memo(function AgentTurnPrompt({
         </div>
       </div>
     </div>
+  );
+});
+
+export const AgentTurnOriginLabel = memo(function AgentTurnOriginLabel({
+  prompt,
+}: {
+  readonly prompt: string;
+}) {
+  return (
+    <p className="agent-note" data-agent-turn-origin="background">
+      {agentBackgroundTurnLabel(agentBackgroundTurnCause({ prompt }))}
+    </p>
   );
 });

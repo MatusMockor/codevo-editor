@@ -28,6 +28,15 @@ pub(super) fn complete(
     task_id: &str,
     payload: AgentTaskStatusPayload,
 ) {
+    complete_settled(shared, task_id, payload, None);
+}
+
+pub(super) fn complete_settled(
+    shared: &Arc<AgentTaskShared>,
+    task_id: &str,
+    payload: AgentTaskStatusPayload,
+    settled_by_interrupt: Option<bool>,
+) {
     if !capture_completion(shared, task_id) {
         return;
     }
@@ -49,8 +58,12 @@ pub(super) fn complete(
             released_input = entry.input.take();
             released_questions = entry.questions.clone();
             entry.watchdog.finish();
-            let status =
-                resolve_terminal_status(entry.stop_requested, entry.watchdog_timed_out, payload);
+            let interrupted = entry.interrupt_requested && settled_by_interrupt != Some(false);
+            let status = resolve_terminal_status(
+                entry.stop_requested || interrupted,
+                entry.watchdog_timed_out,
+                payload,
+            );
             if entry.acknowledged
                 && !entry.flushing
                 && !shared.sink.requires_output_acknowledgement()

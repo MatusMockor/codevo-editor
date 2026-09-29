@@ -2,10 +2,12 @@ import { AlertTriangle } from "lucide-react";
 import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
 import { agentStopConfirmationText } from "./agentStopConfirmationPresentation";
 
-export interface AgentStopConfirmationView {
-  readonly liveTaskCount: number;
-  onCancel(): void;
-}
+export const AGENT_STOP_INTERRUPTING_TEXT =
+  "Stopping the current step. Press Stop or Esc again to end Claude's session.";
+
+export type AgentStopConfirmationView =
+  | { readonly kind: "confirmBackground"; readonly liveTaskCount: number; onCancel(): void }
+  | { readonly kind: "interrupting"; onCancel(): void };
 
 export function AgentStopConfirmationBanner({
   confirmation,
@@ -35,7 +37,7 @@ export function AgentStopConfirmationBanner({
             onClick={choose(() => confirmation.onCancel())}
             type="button"
           >
-            Keep running
+            {confirmation.kind === "interrupting" ? "Dismiss" : "Keep running"}
           </button>
         </>
       }
@@ -43,7 +45,7 @@ export function AgentStopConfirmationBanner({
       icon={<AlertTriangle size={12} strokeWidth={1.5} />}
       tone="warn"
     >
-      {agentStopConfirmationText(confirmation.liveTaskCount)}
+      {agentStopConfirmationViewText(confirmation)}
     </ComposerBanner>
   );
 }
@@ -59,7 +61,22 @@ export function AgentStopConfirmationAnnouncer({
       className="agent-stop-confirmation-announcer agent-visually-hidden"
       role="status"
     >
-      {confirmation === null ? "" : agentStopConfirmationText(confirmation.liveTaskCount)}
+      {confirmation === null ? "" : agentStopConfirmationViewText(confirmation)}
     </span>
   );
+}
+
+function agentStopConfirmationViewText(confirmation: AgentStopConfirmationView): string {
+  switch (confirmation.kind) {
+    case "interrupting":
+      return AGENT_STOP_INTERRUPTING_TEXT;
+    case "confirmBackground":
+      return agentStopConfirmationText(confirmation.liveTaskCount);
+    default:
+      return unsupportedConfirmation(confirmation);
+  }
+}
+
+function unsupportedConfirmation(confirmation: never): never {
+  throw new Error(`Unsupported stop confirmation: ${JSON.stringify(confirmation)}`);
 }

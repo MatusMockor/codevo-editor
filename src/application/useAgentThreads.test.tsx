@@ -13,7 +13,11 @@ import type {
   AgentTaskStatusEvent,
   StartAgentTaskRequest,
 } from "../domain/agentTask";
-import type { AgentThread } from "../domain/agentThread";
+import { parseAgentThread, serializeAgentThread, type AgentThread } from "../domain/agentThread";
+import type {
+  AgentSessionBackgroundTurnEvent,
+  AgentThreadSessionGateway,
+} from "../domain/agentThreadSession";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
 import type { GitStatus } from "../domain/git";
 import type { GitIntegrationOutcome, GitShipStatus } from "../domain/gitIntegration";
@@ -61,6 +65,8 @@ interface Environment {
   externalSessionGateway?: ExternalSessionGateway;
   agentQuestionGateway?: AgentQuestionGateway;
   externalSessionImportGateway?: ExternalSessionImportGateway;
+  agentThreadSessionGateway?: AgentThreadSessionGateway;
+  onProviderTurnCompleted?: (provider: AgentCliKind) => void;
   durableHistory?: boolean;
 }
 
@@ -406,6 +412,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   let statusHandler: ((event: AgentTaskStatusEvent) => void) | null = null;
   let outputHandler: ((event: AgentTaskOutputEvent) => void) | null = null;
   let entropy = 0;
+  const entropyScript: string[] = [];
 
   const agent = {
     startAgentTask: vi.fn(async (payload: StartAgentTaskRequest) => {
@@ -511,6 +518,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     const dependencies: AgentThreadsDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
       agentQuestionGateway: environment.agentQuestionGateway,
+      agentThreadSessionGateway: environment.agentThreadSessionGateway,
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
       externalSessionGateway: environment.externalSessionGateway,
       externalSessionImportGateway: environment.externalSessionImportGateway,
@@ -536,8 +544,11 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       getDirtyEditorDocumentCount: () => 0,
       reportError,
       openAgentSettings,
+      onProviderTurnCompleted: environment.onProviderTurnCompleted,
       now: () => 1_700_000_000_000 + entropy,
       createEntropyHex4: () => {
+        const scripted = entropyScript.shift();
+        if (scripted !== undefined) return scripted;
         entropy += 1;
         return entropy.toString(16).padStart(4, "0");
       },
@@ -560,6 +571,9 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     gitIntegration,
     editor,
     startedRequests,
+    scriptEntropy(values: ReadonlyArray<string>): void {
+      entropyScript.push(...values);
+    },
     set(next: Partial<Environment>): void {
       Object.assign(environment, next);
       render();
@@ -600,6 +614,249 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     },
   };
 }
+
+describe("useAgentThreads Claude session lifecycle", () => {
+  function sessionGateway() {
+    return {
+      interruptAgentTask: vi.fn(async () => ({ kind: "unsupported" }) as const),
+      inspectAgentThreadSession: vi.fn(async () => ({ kind: "none" }) as const),
+      endAgentThreadSession: vi.fn(async () => true),
+      subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
+      subscribeAgentSessionBackgroundTurn: vi.fn(async () => () => undefined),
+    } satisfies AgentThreadSessionGateway;
+  }
+
+  it.each([
+    [1, 0],
+    [0, 1],
+  ])(
+    "counts a provider turn as completed only for a clean exit (exit code %i)",
+    async (exitCode, completions) => {
+      const onProviderTurnCompleted = vi.fn();
+      const harness = renderThreads({ onProviderTurnCompleted });
+      await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+      const threadId =
+        (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+
+      await act(async () => {
+        harness.emitStatus(threadId, 1, { kind: "exited", exitCode });
+      });
+
+      expect(harness.hook().threads[0]?.lifecycle).toBe("settled");
+      expect(onProviderTurnCompleted).toHaveBeenCalledTimes(completions);
+      if (completions > 0) expect(onProviderTurnCompleted).toHaveBeenCalledWith("claudeCode");
+      harness.unmount();
+    },
+  );
+
+  it("asks before a follow-up restarts a Claude session with background work and starts no turn", async () => {
+    const session = {
+      ...sessionGateway(),
+      inspectAgentThreadSession: vi.fn(
+        async () => ({ kind: "restart", backgroundTasks: true }) as const,
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+
+    const sent = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "/compact",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+
+    expect(sent).toBe(false);
+    expect(session.inspectAgentThreadSession).toHaveBeenCalledTimes(1);
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.hook().threads[0]?.thread.turns).toHaveLength(1);
+    expect(harness.hook().followUpNeedsSessionRestart?.(threadId)).toBe(true);
+    expect(harness.hook().notice?.action).toMatchObject({ kind: "restartFollowUp", threadId });
+    harness.unmount();
+  });
+
+  it("ends the local Claude session once when its settled thread is archived or removed", async () => {
+    const session = sessionGateway();
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+
+    act(() => {
+      harness.hook().archive(threadId);
+      harness.hook().remove(threadId);
+    });
+    expect(session.endAgentThreadSession).not.toHaveBeenCalled();
+
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    await act(async () => {
+      harness.hook().archive(threadId);
+      harness.hook().archive(threadId);
+    });
+    expect(session.endAgentThreadSession).toHaveBeenCalledTimes(1);
+    expect(session.endAgentThreadSession).toHaveBeenLastCalledWith({
+      workspaceId: OWNER,
+      threadId,
+    });
+
+    await act(async () => {
+      harness.hook().remove(threadId);
+    });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(0));
+    expect(session.endAgentThreadSession).toHaveBeenCalledTimes(2);
+    expect(session.endAgentThreadSession).toHaveBeenLastCalledWith({
+      workspaceId: OWNER,
+      threadId,
+    });
+    harness.unmount();
+  });
+
+  it("never gives a background reply the turn id a pending follow-up already minted", async () => {
+    let background: ((event: AgentSessionBackgroundTurnEvent) => void) | null = null;
+    const session = {
+      ...sessionGateway(),
+      subscribeAgentSessionBackgroundTurn: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTurnEvent) => void) => {
+          background = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(background).not.toBeNull());
+
+    harness.scriptEntropy(["0aaa", "0aaa", "0bbb"]);
+    let sent!: Promise<boolean>;
+    await act(async () => {
+      sent = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "What did the build report?",
+        launch: concreteLaunch("claudeCode"),
+      });
+      background?.({
+        workspaceId: OWNER,
+        threadId,
+        output: `${assistantLine("background-finished")}\n`,
+        truncated: false,
+        complete: true,
+      });
+      expect(await sent).toBe(true);
+    });
+
+    const turns = harness.hook().threads[0]?.thread.turns ?? [];
+    expect(turns.map((turn) => turn.origin)).toEqual([undefined, "background", undefined]);
+    expect(new Set(turns.map((turn) => turn.turnId)).size).toBe(3);
+    expect(harness.startedRequests[harness.startedRequests.length - 1]?.taskId).toBe(
+      turns[2]?.turnId,
+    );
+    harness.unmount();
+  });
+
+  it("records a background reply that survives a reload while dispatched turns keep their launch", async () => {
+    let background: ((event: AgentSessionBackgroundTurnEvent) => void) | null = null;
+    const session = {
+      ...sessionGateway(),
+      subscribeAgentSessionBackgroundTurn: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTurnEvent) => void) => {
+          background = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(background).not.toBeNull());
+
+    act(() =>
+      background?.({
+        workspaceId: OWNER,
+        threadId,
+        output: `${assistantLine("background-finished")}\n`,
+        truncated: false,
+        complete: true,
+      }),
+    );
+    const sent = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "What did the build report?",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    expect(sent).toBe(true);
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+
+    const live = harness.hook().threads[0]?.thread;
+    expect(live?.turns.map((turn) => turn.origin)).toEqual([undefined, "background", undefined]);
+    await waitForReact(() =>
+      expect(
+        harness.store.saveAgentThread.mock.calls.some(
+          ([request]) => request.thread.turns.length === 3,
+        ),
+      ).toBe(true),
+    );
+    for (const [request] of harness.store.saveAgentThread.mock.calls) {
+      for (const turn of request.thread.turns) {
+        if (turn.origin === "background") continue;
+        expect(turn.launch).not.toBeNull();
+      }
+    }
+    const saves = harness.store.saveAgentThread.mock.calls;
+    const lastSaved = saves[saves.length - 1]?.[0].thread;
+    const wire = JSON.stringify(serializeAgentThread(lastSaved as AgentThread));
+    expect(wire).not.toContain('"origin"');
+    const reloaded = parseAgentThread(JSON.parse(wire));
+    expect(reloaded.turns.map((turn) => turn.origin)).toEqual([undefined, "background", undefined]);
+    harness.unmount();
+  });
+
+  it("never ends sessions for Codex threads or threads of a foreign owner", async () => {
+    const session = sessionGateway();
+    const claude = storedThread("agt-stored-0001", "agt-stored-0002");
+    const codex: AgentThread = {
+      ...storedThread("agt-stored-0003", "agt-stored-0004"),
+      provider: { kind: "codex", sessionId: null },
+    };
+    const harness = renderThreads({
+      agentThreadSessionGateway: session,
+      storedThreads: [claude, codex],
+    });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(2));
+
+    await act(async () => {
+      harness.hook().archive(codex.threadId);
+      harness.hook().remove(codex.threadId);
+    });
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    await act(async () => {
+      harness.hook().archive(claude.threadId);
+      harness.hook().remove(claude.threadId);
+    });
+
+    expect(session.endAgentThreadSession).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+});
 
 describe("useAgentThreads views and viewed marks", () => {
   it("keeps view identity for untouched threads across a burst of output events", async () => {

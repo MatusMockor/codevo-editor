@@ -4,6 +4,7 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_STOP_INTERRUPTING_TEXT,
   AgentStopConfirmationAnnouncer,
   AgentStopConfirmationBanner,
 } from "./AgentStopConfirmationBanner";
@@ -55,7 +56,7 @@ describe("AgentStopConfirmationBanner", () => {
     const onFocusReturn = vi.fn();
     const host = render(
       <AgentStopConfirmationBanner
-        confirmation={{ liveTaskCount: 2, onCancel }}
+        confirmation={{ kind: "confirmBackground", liveTaskCount: 2, onCancel }}
         onConfirm={onConfirm}
         onFocusReturn={onFocusReturn}
       />,
@@ -69,10 +70,30 @@ describe("AgentStopConfirmationBanner", () => {
     expect(onFocusReturn).toHaveBeenCalledTimes(2);
   });
 
+  it("explains an interrupt and offers stopping everything or dismissing", () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    const host = render(
+      <AgentStopConfirmationBanner
+        confirmation={{ kind: "interrupting", onCancel }}
+        onConfirm={onConfirm}
+      />,
+    );
+    expect(AGENT_STOP_INTERRUPTING_TEXT).toBe(
+      "Stopping the current step. Press Stop or Esc again to end Claude's session.",
+    );
+    expect(host.textContent).toContain(AGENT_STOP_INTERRUPTING_TEXT);
+    expect(host.textContent).not.toContain("Keep running");
+    act(() => button(host, "Stop everything").click());
+    act(() => button(host, "Dismiss").click());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves the announcement to the persistent live region", () => {
     const host = render(
       <AgentStopConfirmationBanner
-        confirmation={{ liveTaskCount: 1, onCancel: vi.fn() }}
+        confirmation={{ kind: "confirmBackground", liveTaskCount: 1, onCancel: vi.fn() }}
         onConfirm={vi.fn()}
       />,
     );
@@ -100,9 +121,19 @@ describe("AgentStopConfirmationAnnouncer", () => {
     expect(region?.getAttribute("aria-live")).toBe("polite");
     expect(region?.textContent).toBe("");
 
-    rerender(<AgentStopConfirmationAnnouncer confirmation={{ liveTaskCount: 1, onCancel() {} }} />);
+    rerender(
+      <AgentStopConfirmationAnnouncer
+        confirmation={{ kind: "confirmBackground", liveTaskCount: 1, onCancel() {} }}
+      />,
+    );
     expect(host.querySelector("[role='status']")).toBe(region);
     expect(region?.textContent).toBe(agentStopConfirmationText(1));
+
+    rerender(
+      <AgentStopConfirmationAnnouncer confirmation={{ kind: "interrupting", onCancel() {} }} />,
+    );
+    expect(host.querySelector("[role='status']")).toBe(region);
+    expect(region?.textContent).toBe(AGENT_STOP_INTERRUPTING_TEXT);
 
     rerender(<AgentStopConfirmationAnnouncer confirmation={null} />);
     expect(host.querySelector("[role='status']")).toBe(region);

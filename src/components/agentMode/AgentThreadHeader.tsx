@@ -88,6 +88,10 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
       snoozed: (thread?.thread.snoozedUntil ?? 0) > Date.now(),
       settled: thread?.thread.settledAt != null,
       canMarkUnread: thread !== null && agentViewCanMarkUnread(thread),
+      claudeSession:
+        thread !== null &&
+        thread.thread.provider.kind === "claudeCode" &&
+        thread.execution?.kind !== "remote",
     }),
     onCommand: threadCommand,
     onRename: () => setRenaming(true),

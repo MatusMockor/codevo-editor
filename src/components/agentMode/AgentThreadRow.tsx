@@ -98,6 +98,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       snoozed: (thread.snoozedUntil ?? 0) > Date.now(),
       settled: thread.settledAt != null,
       canMarkUnread: agentViewCanMarkUnread(view),
+      claudeSession: thread.provider.kind === "claudeCode" && view.execution?.kind !== "remote",
       moveUpId: props.moveUpId,
       moveDownId: props.moveDownId,
     }),

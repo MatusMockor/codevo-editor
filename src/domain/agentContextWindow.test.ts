@@ -311,3 +311,57 @@ describe("Codex context occupancy", () => {
     ).toBeNull();
   });
 });
+
+describe("Claude context occupancy after an is_error result", () => {
+  const measured = [input("main", 100), capacity("main", 1000)];
+  const errorResult: AgentTurnEvent = {
+    kind: "result",
+    text: "Claude hit an error",
+    isError: true,
+    usage: null,
+  };
+  const withStatus = (
+    claude: AgentThread,
+    status: { readonly kind: "exited"; readonly exitCode: number },
+  ): AgentThread => ({
+    ...claude,
+    turns: claude.turns.map((turn) => ({ ...turn, status })),
+  });
+
+  it("clears the window when the turn ends Exited{1}, as an is_error result now settles it", () => {
+    expect(agentContextWindow(withStatus(thread(measured), { kind: "exited", exitCode: 1 }))).toBe(
+      null,
+    );
+    expect(
+      agentContextWindow(
+        withStatus(thread([...measured, errorResult]), { kind: "exited", exitCode: 1 }),
+      ),
+    ).toBeNull();
+    const truncated = withStatus(thread(measured), { kind: "exited", exitCode: 1 });
+    expect(
+      agentContextWindow(
+        {
+          ...truncated,
+          turns: truncated.turns.map((turn) => ({ ...turn, eventsTruncated: true })),
+        },
+        { usedTokens: 4_242, contextWindow: 200_000 },
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps the window when the same turn ends Exited{0}", () => {
+    expect(
+      agentContextWindow(withStatus(thread(measured), { kind: "exited", exitCode: 0 })),
+    ).toEqual({ usedTokens: 100, contextWindow: 1000 });
+    const truncated = withStatus(thread(measured), { kind: "exited", exitCode: 0 });
+    expect(
+      agentContextWindow(
+        {
+          ...truncated,
+          turns: truncated.turns.map((turn) => ({ ...turn, eventsTruncated: true })),
+        },
+        { usedTokens: 4_242, contextWindow: 200_000 },
+      ),
+    ).toEqual({ usedTokens: 4_242, contextWindow: 200_000 });
+  });
+});

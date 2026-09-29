@@ -15,6 +15,9 @@ pub(super) type AgentTaskResultWatch = (Arc<AgentTaskInputSlot>, ResultLineDetec
 
 pub(super) fn result_watch(input: Option<Arc<AgentTaskInputSlot>>) -> Option<AgentTaskResultWatch> {
     let input = input?;
+    if input.provider_owns_settlement() {
+        return None;
+    }
     let detector = ResultLineDetector::new().with_lifecycle(input.claude_lifecycle());
     Some((input, detector))
 }
@@ -166,7 +169,7 @@ impl AgentTaskRegistry {
         if thread_id.is_some_and(|thread_id| entry.metadata.thread_id != thread_id) {
             return Err(AgentTaskSteerRejection::NotRegistered);
         }
-        if entry.stop_requested || entry.watchdog_timed_out {
+        if entry.stop_requested || entry.interrupt_requested || entry.watchdog_timed_out {
             return Err(AgentTaskSteerRejection::Stopping);
         }
         if !matches!(entry.phase, AgentTaskPhase::Running) {
@@ -220,4 +223,43 @@ pub(super) fn close_agent_task_input(
         return;
     };
     input.close(state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_task_spawner::agent_task_input::{
+        claude_lifecycle::ClaudeInputLifecycle, AgentTaskInput,
+    };
+    use std::io;
+
+    struct SessionOwnedInput(bool);
+
+    impl AgentTaskInput for SessionOwnedInput {
+        fn claude_lifecycle(&self) -> Option<Arc<ClaudeInputLifecycle>> {
+            Some(Arc::new(ClaudeInputLifecycle::new()))
+        }
+
+        fn provider_owns_settlement(&self) -> bool {
+            self.0
+        }
+
+        fn write_frame(&mut self, _frame: &[u8], _deadline: Instant) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn close(&mut self) {}
+    }
+
+    fn watch_for(provider_owns_settlement: bool) -> Option<AgentTaskResultWatch> {
+        let input =
+            AgentTaskInputSlot::new(Box::new(SessionOwnedInput(provider_owns_settlement)), None);
+        result_watch(Some(Arc::new(input)))
+    }
+
+    #[test]
+    fn the_pump_never_observes_a_lifecycle_whose_provider_owns_settlement() {
+        assert!(watch_for(false).is_some());
+        assert!(watch_for(true).is_none());
+    }
 }

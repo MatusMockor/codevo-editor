@@ -1,5 +1,6 @@
 use crate::{
     agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry,
+    agent_task_spawner::claude_session_registry::ClaudeSessionRegistry,
     agent_task_supervisor::AgentTaskRegistry,
     debug_adapter::DebugSessionRegistry,
     eslint,
@@ -82,6 +83,9 @@ pub(crate) fn shutdown_runtime_processes(
     if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
         agent_tasks.close_start_admission();
     }
+    if let Some(sessions) = app.try_state::<Arc<ClaudeSessionRegistry>>() {
+        sessions.close_admission();
+    }
     if let Some(registry) = app.try_state::<WorkspaceRegistry>() {
         registry
             .begin_runtime_shutdown()
@@ -89,6 +93,9 @@ pub(crate) fn shutdown_runtime_processes(
     }
     if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
         agent_tasks.shutdown_all();
+    }
+    if let Some(sessions) = app.try_state::<Arc<ClaudeSessionRegistry>>() {
+        sessions.shutdown_all();
     }
     if let Some(hosts) = app.try_state::<Arc<crate::agent_task_spawner::codex_app_server_host::CodexAppServerHostRegistry>>() {
         hosts.drain_for_dispose();

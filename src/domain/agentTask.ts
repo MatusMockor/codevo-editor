@@ -57,6 +57,8 @@ export interface AgentTaskOutputEvent {
   readonly startsAtLineBoundary?: boolean;
 }
 
+export type AgentSessionRestartPolicy = "refuseIfBackground" | "stopBackground";
+
 export type StartAgentTaskAttachment =
   | { readonly kind: "staged"; readonly attachmentId: string }
   | { readonly kind: "reference"; readonly name: string; readonly path: string };
@@ -75,6 +77,7 @@ export interface StartAgentTaskRequest {
   readonly launch: AgentLaunchOptions;
   readonly providerGeneration: number;
   readonly attachments: ReadonlyArray<StartAgentTaskAttachment>;
+  readonly sessionRestart?: AgentSessionRestartPolicy;
 }
 
 export interface StartAgentTaskResult {
@@ -285,7 +288,7 @@ export function parseStartAgentTaskResult(value: unknown): StartAgentTaskResult 
 
 export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskRequest {
   const request = record(value, "request");
-  exactKeys(
+  boundedKeys(
     request,
     [
       "taskId",
@@ -302,6 +305,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "providerGeneration",
       "attachments",
     ],
+    ["sessionRestart"],
     "request",
   );
   const isolation = agentTaskIsolation(request.isolation, "request.isolation");
@@ -332,7 +336,26 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "request.providerGeneration",
     ),
     attachments: startAgentTaskAttachments(request.attachments, "request.attachments"),
+    ...(request.sessionRestart === undefined
+      ? {}
+      : {
+          sessionRestart: agentSessionRestartPolicy(
+            request.sessionRestart,
+            "request.sessionRestart",
+          ),
+        }),
   };
+}
+
+export function agentSessionRestartPolicy(value: unknown, path: string): AgentSessionRestartPolicy {
+  if (value === "refuseIfBackground" || value === "stopBackground") return value;
+  return invalid(path, "refuseIfBackground or stopBackground");
+}
+
+export function failureMessageOf(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "";
 }
 
 function startAgentTaskAttachments(
@@ -507,7 +530,7 @@ function agentPath(value: unknown, path: string): string {
   return candidate;
 }
 
-function agentTaskId(value: unknown, path: string): string {
+export function agentTaskId(value: unknown, path: string): string {
   const candidate = boundedText(value, path, MAX_AGENT_TASK_ID_BYTES, false, true);
   if (!AGENT_TASK_ID_PATTERN.test(candidate)) invalid(path, "a safe agent task id");
   return candidate;
@@ -519,7 +542,7 @@ function optionalAgentSessionId(value: unknown, path: string): string | null {
   return value;
 }
 
-function agentWorkspaceId(value: unknown, path: string): string {
+export function agentWorkspaceId(value: unknown, path: string): string {
   return boundedText(value, path, MAX_AGENT_TASK_WORKSPACE_ID_BYTES, false, true);
 }
 
@@ -542,7 +565,7 @@ function boundedText(
   return value;
 }
 
-function booleanFlag(value: unknown, path: string): boolean {
+export function booleanFlag(value: unknown, path: string): boolean {
   if (typeof value !== "boolean") invalid(path, "a boolean");
   return value;
 }
@@ -572,7 +595,7 @@ function signedExitCode(value: unknown, path: string): number {
   return value as number;
 }
 
-function exactKeys(
+export function exactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
   path: string,
@@ -598,7 +621,7 @@ function boundedKeys(
   }
 }
 
-function record(value: unknown, path: string): Record<string, unknown> {
+export function record(value: unknown, path: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     invalid(path, "an object");
   }
@@ -613,6 +636,6 @@ function unsupportedStatusKind(kind: never): never {
   throw new TypeError(`Unsupported agent task status kind: ${String(kind)}.`);
 }
 
-function invalid(path: string, expectation: string): never {
+export function invalid(path: string, expectation: string): never {
   throw new TypeError(`Invalid agent task value at ${path}: expected ${expectation}.`);
 }

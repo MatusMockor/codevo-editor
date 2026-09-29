@@ -575,3 +575,270 @@ fn question_arriving_after_initial_admission_is_rechecked_with_writer_locked() {
     assert_eq!(slot.frames_written(), 0);
     assert_eq!(slot.state(), AgentTaskInputState::Open);
 }
+
+struct InterruptingWriter {
+    interrupts: Arc<AtomicUsize>,
+    failure: Option<io::ErrorKind>,
+}
+
+impl AgentTaskInput for InterruptingWriter {
+    fn provider_owns_settlement(&self) -> bool {
+        true
+    }
+
+    fn write_frame(&mut self, _frame: &[u8], _deadline: Instant) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn interrupt(&mut self, _deadline: Instant) -> io::Result<()> {
+        self.interrupts.fetch_add(1, Ordering::SeqCst);
+        match self.failure {
+            Some(kind) => Err(io::Error::from(kind)),
+            None => Ok(()),
+        }
+    }
+
+    fn close(&mut self) {}
+}
+
+fn interrupting_slot(failure: Option<io::ErrorKind>) -> (AgentTaskInputSlot, Arc<AtomicUsize>) {
+    let interrupts = Arc::new(AtomicUsize::new(0));
+    let writer = InterruptingWriter {
+        interrupts: Arc::clone(&interrupts),
+        failure,
+    };
+    (AgentTaskInputSlot::new(Box::new(writer), None), interrupts)
+}
+
+#[test]
+fn legacy_writers_neither_own_settlement_nor_interrupt() {
+    let slot = slot_with(RecordingWriter::new());
+    assert!(!slot.provider_owns_settlement());
+    assert_eq!(
+        slot.interrupt(deadline()),
+        Err(AgentTaskInterruptRejection::Unsupported)
+    );
+}
+
+#[test]
+fn a_session_writer_interrupts_and_maps_failures_truthfully() {
+    let (slot, interrupts) = interrupting_slot(None);
+    assert!(slot.provider_owns_settlement());
+    assert_eq!(slot.interrupt(deadline()), Ok(()));
+    assert_eq!(interrupts.load(Ordering::SeqCst), 1);
+    let (slot, _) = interrupting_slot(Some(io::ErrorKind::WouldBlock));
+    assert_eq!(
+        slot.interrupt(deadline()),
+        Err(AgentTaskInterruptRejection::Unavailable)
+    );
+    let (slot, _) = interrupting_slot(Some(io::ErrorKind::BrokenPipe));
+    assert_eq!(
+        slot.interrupt(deadline()),
+        Err(AgentTaskInterruptRejection::WriteFailed)
+    );
+}
+
+#[test]
+fn a_closed_slot_refuses_to_interrupt() {
+    let (slot, interrupts) = interrupting_slot(None);
+    slot.close(AgentTaskInputState::ClosedByStop);
+    assert_eq!(
+        slot.interrupt(deadline()),
+        Err(AgentTaskInterruptRejection::Unavailable)
+    );
+    assert_eq!(interrupts.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn an_interrupt_behind_a_writer_holding_the_lock_is_unavailable_not_a_write_failure() {
+    let writer = RecordingWriter::slow(Duration::from_millis(500));
+    let writing = writer.writing();
+    let slot = Arc::new(slot_with(writer));
+    let steering = Arc::clone(&slot);
+    let steer = std::thread::spawn(move || steering.write(b"frame", deadline(), 4));
+    assert!(wait_until(Duration::from_secs(5), || writing
+        .load(Ordering::SeqCst)
+        == 1));
+    assert_eq!(
+        slot.interrupt(Instant::now() + Duration::from_millis(50)),
+        Err(AgentTaskInterruptRejection::Unavailable)
+    );
+    assert_eq!(steer.join().expect("steer thread"), Ok(()));
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
+}
+
+struct LifecycleWriter {
+    inner: RecordingWriter,
+    lifecycle: Arc<claude_lifecycle::ClaudeInputLifecycle>,
+}
+
+impl AgentTaskInput for LifecycleWriter {
+    fn claude_lifecycle(&self) -> Option<Arc<claude_lifecycle::ClaudeInputLifecycle>> {
+        Some(Arc::clone(&self.lifecycle))
+    }
+
+    fn write_frame(&mut self, frame: &[u8], deadline: Instant) -> io::Result<()> {
+        self.inner.write_frame(frame, deadline)
+    }
+
+    fn close(&mut self) {
+        self.inner.close();
+    }
+}
+
+fn started_lifecycle() -> Arc<claude_lifecycle::ClaudeInputLifecycle> {
+    let lifecycle = Arc::new(claude_lifecycle::ClaudeInputLifecycle::new());
+    lifecycle
+        .observe(&serde_json::json!({
+            "type": "command_lifecycle",
+            "command_uuid": lifecycle.initial_command_id(),
+            "state": "started",
+        }))
+        .expect("started lifecycle");
+    lifecycle
+}
+
+fn lifecycle_slot(
+    inner: RecordingWriter,
+    lifecycle: &Arc<claude_lifecycle::ClaudeInputLifecycle>,
+) -> AgentTaskInputSlot {
+    let writer = LifecycleWriter {
+        inner,
+        lifecycle: Arc::clone(lifecycle),
+    };
+    AgentTaskInputSlot::new(Box::new(writer), None)
+}
+
+#[test]
+fn a_steer_after_the_lifecycle_closed_is_input_closed() {
+    let lifecycle = started_lifecycle();
+    assert!(lifecycle.close_if_settled());
+    let writer = RecordingWriter::new();
+    let frames = writer.frames();
+    let closes = writer.closes();
+    let slot = lifecycle_slot(writer, &lifecycle);
+    assert_eq!(
+        slot.write(
+            b"{\"type\":\"user\"}\n",
+            deadline(),
+            MAX_AGENT_STEERS_PER_TURN
+        ),
+        Err(AgentTaskSteerRejection::InputClosed)
+    );
+    assert!(frames.lock().unwrap().is_empty());
+    assert_eq!(slot.frames_written(), 0);
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
+    assert_eq!(closes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_steer_after_an_interrupt_began_is_stopping_without_writing_or_reserving() {
+    let lifecycle = started_lifecycle();
+    lifecycle.begin_interrupt();
+    let writer = RecordingWriter::new();
+    let frames = writer.frames();
+    let closes = writer.closes();
+    let slot = lifecycle_slot(writer, &lifecycle);
+    assert_eq!(
+        slot.write(
+            b"{\"type\":\"user\"}\n",
+            deadline(),
+            MAX_AGENT_STEERS_PER_TURN
+        ),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+    assert!(frames.lock().unwrap().is_empty());
+    assert!(!lifecycle.has_pending());
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
+    assert_eq!(closes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_lifecycle_refusal_while_open_stays_not_steerable() {
+    let unsupported = Arc::new(claude_lifecycle::ClaudeInputLifecycle::new());
+    let slot = lifecycle_slot(RecordingWriter::new(), &unsupported);
+    assert_eq!(
+        slot.write(
+            b"{\"type\":\"user\"}\n",
+            deadline(),
+            MAX_AGENT_STEERS_PER_TURN
+        ),
+        Err(AgentTaskSteerRejection::NotSteerable)
+    );
+    let saturated = started_lifecycle();
+    for _ in 0..32 {
+        saturated.reserve(b"{}\n").expect("reserve within bound");
+    }
+    let slot = lifecycle_slot(RecordingWriter::new(), &saturated);
+    assert_eq!(
+        slot.write(
+            b"{\"type\":\"user\"}\n",
+            deadline(),
+            MAX_AGENT_STEERS_PER_TURN
+        ),
+        Err(AgentTaskSteerRejection::NotSteerable)
+    );
+    assert!(!saturated.is_closed());
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
+}
+
+#[test]
+fn a_not_connected_writer_is_input_closed_without_detaching_or_stopping() {
+    let lifecycle = started_lifecycle();
+    let writer = RecordingWriter::failing(io::ErrorKind::NotConnected);
+    let closes = writer.closes();
+    let slot = lifecycle_slot(writer, &lifecycle);
+    assert_eq!(
+        slot.write(
+            b"{\"type\":\"user\"}\n",
+            deadline(),
+            MAX_AGENT_STEERS_PER_TURN
+        ),
+        Err(AgentTaskSteerRejection::InputClosed)
+    );
+    assert_eq!(slot.state(), AgentTaskInputState::Open);
+    assert_eq!(closes.load(Ordering::SeqCst), 0);
+    assert_eq!(slot.frames_written(), 0);
+    assert!(!lifecycle.has_pending());
+    assert!(slot.writer.lock().unwrap().is_some());
+}
+
+#[test]
+fn writer_error_kinds_keep_their_legacy_mappings() {
+    let cases = [
+        (
+            io::ErrorKind::WouldBlock,
+            AgentTaskSteerRejection::NotSteerable,
+            AgentTaskInputState::Open,
+        ),
+        (
+            io::ErrorKind::NotConnected,
+            AgentTaskSteerRejection::InputClosed,
+            AgentTaskInputState::Open,
+        ),
+        (
+            io::ErrorKind::TimedOut,
+            AgentTaskSteerRejection::WriteTimedOut,
+            AgentTaskInputState::Detached,
+        ),
+        (
+            io::ErrorKind::BrokenPipe,
+            AgentTaskSteerRejection::WriteFailed,
+            AgentTaskInputState::Detached,
+        ),
+        (
+            io::ErrorKind::Other,
+            AgentTaskSteerRejection::WriteFailed,
+            AgentTaskInputState::Detached,
+        ),
+    ];
+    for (kind, rejection, state) in cases {
+        let slot = slot_with(RecordingWriter::failing(kind));
+        assert_eq!(
+            slot.write(b"frame\n", deadline(), MAX_AGENT_STEERS_PER_TURN),
+            Err(rejection),
+            "{kind:?}"
+        );
+        assert_eq!(slot.state(), state, "{kind:?}");
+    }
+}

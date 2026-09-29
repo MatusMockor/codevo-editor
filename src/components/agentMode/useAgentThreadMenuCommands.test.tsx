@@ -10,6 +10,11 @@ import { agentThreadBulkOwnerKey } from "../../domain/agentThreadBulkAction";
 import type { AgentProjectMenuTarget } from "./agentProjectMenuPresentation";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import {
+  claudeSessionEndFailedNotice,
+  claudeSessionEndedNotice,
+  noClaudeSessionNotice,
+} from "./useAgentEndSessionCommand";
+import {
   CLIPBOARD_UNAVAILABLE_NOTICE,
   NOTHING_TO_COPY_NOTICE,
   REVEAL_FAILED_NOTICE,
@@ -204,6 +209,198 @@ describe("useAgentThreadMenuCommands", () => {
     expect(agents.remove).toHaveBeenCalledWith("agt-1");
     expect(removed).toEqual(["agt-1"]);
     expect(started).toEqual([[SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT]]);
+  });
+
+  it("ends the Claude session at once when no background tasks are live and says so", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    const inspectSessionBackground = vi.fn(async () => "none" as const);
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession,
+        inspectSessionBackground,
+      }),
+    });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(inspectSessionBackground).toHaveBeenCalledWith("agt-1");
+    expect(endSession).toHaveBeenCalledWith("agt-1");
+    expect(current().endSessionConfirmation).toBeNull();
+    expect(notices).toEqual([claudeSessionEndedNotice("Refactor the parser")]);
+  });
+
+  it("tells the user when the thread had no Claude session to end", async () => {
+    const endSession = vi.fn(async () => "none" as const);
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession,
+        inspectSessionBackground: async () => "none" as const,
+      }),
+    });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(endSession).toHaveBeenCalledTimes(1);
+    expect(notices).toEqual([noClaudeSessionNotice("Refactor the parser")]);
+  });
+
+  it("reports an error notice when ending the session failed", async () => {
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession: async () => "failed" as const,
+        inspectSessionBackground: async () => "none" as const,
+      }),
+    });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(notices).toEqual([claudeSessionEndFailedNotice("Refactor the parser")]);
+  });
+
+  it("asks before ending a session with live background tasks and ends it on confirmation", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      }),
+    });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(endSession).not.toHaveBeenCalled();
+    expect(current().endSessionConfirmation).toMatchObject({ background: "live" });
+    await act(async () => current().endSessionConfirmation?.onConfirm());
+    expect(endSession).toHaveBeenCalledWith("agt-1");
+    expect(current().endSessionConfirmation).toBeNull();
+    expect(notices).toEqual([claudeSessionEndedNotice("Refactor the parser")]);
+  });
+
+  it("names the thread the confirmation concerns, even when another row asked", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    const selected = surfaceThreadView();
+    const other = surfaceThreadView({
+      thread: { ...surfaceThreadView().thread, threadId: "agt-2", title: "Nightly build" },
+    });
+    const surface = (target: AgentThreadView) =>
+      threadsSurfaceFixture({
+        threads: [selected, target],
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      });
+    render({ agents: surface(other) });
+    await act(async () => current().handleThreadMenuCommand("agt-2", { kind: "endSession" }));
+    expect(current().endSessionConfirmation).toMatchObject({
+      threadId: "agt-2",
+      title: "Nightly build",
+      background: "live",
+    });
+
+    render({
+      agents: surface({ ...other, thread: { ...other.thread, title: "Nightly build v2" } }),
+    });
+    expect(current().endSessionConfirmation).toMatchObject({
+      threadId: "agt-2",
+      title: "Nightly build v2",
+    });
+    await act(async () => current().endSessionConfirmation?.onConfirm());
+    expect(endSession).toHaveBeenCalledWith("agt-2");
+    expect(endSession).toHaveBeenCalledTimes(1);
+    expect(notices).toEqual([claudeSessionEndedNotice("Nightly build v2")]);
+  });
+
+  it("words every end session notice with the thread title", () => {
+    expect(claudeSessionEndedNotice("Nightly build")).toEqual({
+      kind: "info",
+      message: 'Ended Claude\'s session for "Nightly build".',
+      action: null,
+    });
+    expect(noClaudeSessionNotice("Nightly build")).toEqual({
+      kind: "info",
+      message: '"Nightly build" has no running Claude session, so there was nothing to end.',
+      action: null,
+    });
+    expect(claudeSessionEndFailedNotice("Nightly build")).toEqual({
+      kind: "error",
+      message: 'Could not end Claude\'s session for "Nightly build".',
+      action: null,
+    });
+  });
+
+  it("keeps the session running when the confirmation is cancelled", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      }),
+    });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    act(() => current().endSessionConfirmation?.onCancel());
+    expect(current().endSessionConfirmation).toBeNull();
+    expect(endSession).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
+  });
+
+  it("asks when the background check could not answer", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession,
+        inspectSessionBackground: async () => "unknown" as const,
+      }),
+    });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(endSession).not.toHaveBeenCalled();
+    expect(current().endSessionConfirmation).toMatchObject({ background: "unknown" });
+  });
+
+  it("drops a pending confirmation once the thread runs again or disappears", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    const idle = surfaceThreadView();
+    const surface = (threads: ReadonlyArray<AgentThreadView>) =>
+      threadsSurfaceFixture({
+        threads,
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      });
+    render({ agents: surface([idle]) });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(current().endSessionConfirmation).not.toBeNull();
+    render({ agents: surface([{ ...idle, lifecycle: "running" }]) });
+    expect(current().endSessionConfirmation).toBeNull();
+    render({ agents: surface([idle]) });
+    expect(current().endSessionConfirmation).toBeNull();
+
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    render({ agents: surface([]) });
+    expect(current().endSessionConfirmation).toBeNull();
+    expect(endSession).not.toHaveBeenCalled();
+  });
+
+  it("only the latest End Claude session request may ask", async () => {
+    const answers: Array<(value: "live" | "none") => void> = [];
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession,
+        inspectSessionBackground: () =>
+          new Promise<"live" | "none">((resolve) => {
+            answers.push(resolve);
+          }),
+      }),
+    });
+    act(() => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    act(() => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    await act(async () => answers[1]?.("live"));
+    await act(async () => answers[0]?.("none"));
+    expect(endSession).not.toHaveBeenCalled();
+    expect(current().endSessionConfirmation).toMatchObject({ background: "live" });
+  });
+
+  it("ignores End Claude session when the surface has no session support", async () => {
+    render({ agents: threadsSurfaceFixture({ threads: [surfaceThreadView()] }) });
+    await act(async () => current().handleThreadMenuCommand("agt-1", { kind: "endSession" }));
+    expect(notices).toEqual([]);
   });
 
   it("keeps the selection when the surface refuses to delete the thread", async () => {

@@ -3842,3 +3842,15 @@ mod pending_stop;
 
 #[path = "support/agent_task_clean_exit_grace_tests.rs"]
 mod clean_exit_grace;
+
+#[path = "support/fake_claude_cli.rs"]
+mod fake_claude_cli;
+
+#[path = "support/claude_thread_session_tests.rs"]
+mod claude_thread_session_tests;
+
+#[path = "support/claude_session_registry_tests.rs"]
+mod claude_session_registry_tests;
+
+#[path = "support/claude_session_supervisor_tests.rs"]
+mod claude_session_supervisor_tests;

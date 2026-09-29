@@ -177,6 +177,49 @@ describe("AgentThreadRow", () => {
     });
   });
 
+  it("offers ending the Claude session for an idle local Claude thread", () => {
+    const onMenuCommand = vi.fn();
+    render(viewedDone(), null, onMenuCommand);
+    openContextMenu();
+    act(() => menuItem("End Claude session").click());
+    expect(onMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "endSession" });
+  });
+
+  it("never offers ending a Claude session for a server or Codex thread", () => {
+    const local = viewedDone();
+    const labels = (): ReadonlyArray<string> =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map(
+        (item) => item.textContent ?? "",
+      );
+    render({
+      ...local,
+      execution: {
+        kind: "remote",
+        serverId: "server-1",
+        runnerId: "runner-1",
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        latestTaskId: "task-1",
+        resume: null,
+      },
+    });
+    openContextMenu();
+    expect(labels()).toContain("Rename thread");
+    expect(labels()).not.toContain("End Claude session");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    render({
+      ...local,
+      thread: { ...local.thread, provider: { kind: "codex", sessionId: null } },
+    });
+    openContextMenu();
+    expect(labels()).toContain("Rename thread");
+    expect(labels()).not.toContain("End Claude session");
+  });
+
   const line1 = (): HTMLElement => {
     const element = host.querySelector<HTMLElement>(".cv-card-row__l1");
     expect(element).not.toBeNull();

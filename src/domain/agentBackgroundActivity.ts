@@ -89,8 +89,7 @@ export function projectAgentBackgroundState(
     if (startsRootForeground(event)) foregroundSettled = false;
     if (event.kind !== "backgroundTask" || !processAlive) continue;
     const previous = observed.get(event.taskId);
-    // Tombstones prohibit duplicate/stale starts or progress resurrecting completed work.
-    if (previous === null) continue;
+    if (previous === null && event.status !== "starting") continue;
     if (!observed.has(event.taskId) && observed.size >= MAX_AGENT_BACKGROUND_OBSERVED_TASKS) {
       truncated = true;
       continue;
@@ -99,11 +98,11 @@ export function projectAgentBackgroundState(
       if (previous !== undefined) liveCount -= 1;
       observed.set(event.taskId, null);
     } else if (event.status === "starting" || previous !== undefined) {
-      if (previous === undefined && liveCount >= MAX_AGENT_BACKGROUND_TASKS) {
+      if (!previous && liveCount >= MAX_AGENT_BACKGROUND_TASKS) {
         truncated = true;
         continue;
       }
-      if (previous === undefined) liveCount += 1;
+      if (!previous) liveCount += 1;
       observed.set(event.taskId, {
         taskId: event.taskId,
         taskType: event.taskType === "other" && previous ? previous.taskType : event.taskType,

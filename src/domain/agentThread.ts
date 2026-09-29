@@ -12,6 +12,7 @@ import {
 import type { AgentAttachment } from "./agentAttachment";
 import type { AgentLaunchOptions } from "./agentLaunch";
 import type { AgentSubagentSpawnEvent } from "./agentSubagentSpawn";
+import type { AgentTurnOrigin } from "./agentTurnOrigin";
 import {
   MAX_AGENT_STEERS_PER_TURN,
   MAX_AGENT_TASK_PROMPT_BYTES,
@@ -242,6 +243,7 @@ export type AgentTurnEvent =
 
 export interface AgentTurn {
   readonly codexTransport?: "appServer" | "exec";
+  readonly origin?: AgentTurnOrigin;
   readonly turnId: string;
   readonly prompt: string;
   readonly status: AgentTurnStatus;
@@ -354,6 +356,12 @@ export type AgentThreadsAction =
       readonly history: ExternalAgentSessionHistory;
     }
   | { readonly kind: "turnStarted"; readonly threadId: string; readonly turn: AgentTurn }
+  | {
+      readonly kind: "backgroundTurnRecorded";
+      readonly threadId: string;
+      readonly workspaceId: string;
+      readonly turn: AgentTurn;
+    }
   | {
       readonly kind: "taskStatusEvent";
       readonly threadId: string;
@@ -601,6 +609,8 @@ export function agentThreadsReducer(
       return loadExternalHistory(state, action);
     case "turnStarted":
       return startTurn(state, action.threadId, action.turn);
+    case "backgroundTurnRecorded":
+      return recordBackgroundTurn(state, action);
     case "taskStatusEvent":
       return applyTurnStatusEvent(state, action);
     case "turnEventsAppended":
@@ -758,19 +768,38 @@ function openHistoryThread(
 function startTurn(state: AgentThreadsState, threadId: string, turn: AgentTurn): AgentThreadsState {
   const thread = state.threads.get(threadId);
   if (thread === undefined) return state;
+  return appendTurn(state, thread, turn, turn.startedAtEpochMs);
+}
+
+function recordBackgroundTurn(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "backgroundTurnRecorded" }>,
+): AgentThreadsState {
+  const thread = state.threads.get(action.threadId);
+  if (thread === undefined || thread.owner.ownerId !== action.workspaceId) return state;
+  const { turn } = action;
+  if (turn.origin !== "background" || !isTerminalAgentTurnStatus(turn.status)) return state;
+  return appendTurn(state, thread, turn, turn.endedAtEpochMs ?? turn.startedAtEpochMs);
+}
+
+function appendTurn(
+  state: AgentThreadsState,
+  thread: AgentThread,
+  turn: AgentTurn,
+  atEpochMs: number,
+): AgentThreadsState {
   if (thread.archived) return state;
   if (runningTurn(thread) !== null) return state;
   if (findTurn(state, turn.turnId) !== null) return state;
   const retained = retainTurnsForNewTurn(thread);
   if (retained === null) return state;
-  const boundedTurn = boundAgentTurnEvents(turn);
   return replaceThread(state, {
     ...thread,
     ...(thread.snoozedUntil != null ? { snoozedUntil: null } : {}),
     ...(thread.settledAt != null ? { settledAt: null } : {}),
-    turns: [...retained.turns, boundedTurn],
+    turns: [...retained.turns, boundAgentTurnEvents(turn)],
     turnsTruncated: thread.turnsTruncated || retained.evicted,
-    updatedAtEpochMs: Math.max(thread.updatedAtEpochMs, turn.startedAtEpochMs),
+    updatedAtEpochMs: Math.max(thread.updatedAtEpochMs, atEpochMs),
   });
 }
 

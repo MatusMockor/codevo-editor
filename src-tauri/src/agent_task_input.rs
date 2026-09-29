@@ -77,6 +77,19 @@ pub trait AgentTaskInput: Send {
     fn cancellation_flag(&self) -> Option<Arc<AtomicBool>> {
         None
     }
+    fn provider_owns_settlement(&self) -> bool {
+        false
+    }
+    fn interrupt(&mut self, _deadline: Instant) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AgentTaskInterruptRejection {
+    Unsupported,
+    Unavailable,
+    WriteFailed,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
@@ -121,6 +134,7 @@ pub struct AgentTaskInputSlot {
     background_failure: Mutex<Option<&'static str>>,
     questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
     lifecycle: Option<Arc<claude_lifecycle::ClaudeInputLifecycle>>,
+    provider_owns_settlement: bool,
 }
 
 impl AgentTaskInputSlot {
@@ -131,10 +145,12 @@ impl AgentTaskInputSlot {
         let cancellation = writer.cancellation_flag();
         let kind = writer.kind();
         let lifecycle = writer.claude_lifecycle();
+        let provider_owns_settlement = writer.provider_owns_settlement();
         Self {
             cancellation,
             kind,
             lifecycle,
+            provider_owns_settlement,
             questions,
             background_failure: Mutex::new(None),
             state: Mutex::new(AgentTaskInputState::Open),
@@ -176,6 +192,31 @@ impl AgentTaskInputSlot {
 
     pub fn kind(&self) -> AgentTaskInputKind {
         self.kind
+    }
+
+    pub fn provider_owns_settlement(&self) -> bool {
+        self.provider_owns_settlement
+    }
+
+    pub fn interrupt(&self, deadline: Instant) -> Result<(), AgentTaskInterruptRejection> {
+        if self.state().rejection().is_some() {
+            return Err(AgentTaskInterruptRejection::Unavailable);
+        }
+        let mut writer = lock_before(&self.writer, deadline)
+            .map_err(|_| AgentTaskInterruptRejection::Unavailable)?;
+        let Some(handle) = writer.as_mut() else {
+            return Err(AgentTaskInterruptRejection::Unavailable);
+        };
+        match handle.interrupt(deadline) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => {
+                Err(AgentTaskInterruptRejection::Unsupported)
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                Err(AgentTaskInterruptRejection::Unavailable)
+            }
+            Err(_) => Err(AgentTaskInterruptRejection::WriteFailed),
+        }
     }
 
     pub fn state(&self) -> AgentTaskInputState {
@@ -254,7 +295,7 @@ impl AgentTaskInputSlot {
             (Some(lifecycle), AgentTaskInputFrame::Bytes(bytes)) => Some(
                 lifecycle
                     .reserve(bytes)
-                    .map_err(|_| AgentTaskSteerRejection::NotSteerable)?,
+                    .map_err(|refusal| reservation_refusal(lifecycle, refusal))?,
             ),
             _ => None,
         };
@@ -273,6 +314,9 @@ impl AgentTaskInputSlot {
             }
             if error.kind() == io::ErrorKind::WouldBlock {
                 return Err(AgentTaskSteerRejection::NotSteerable);
+            }
+            if error.kind() == io::ErrorKind::NotConnected {
+                return Err(AgentTaskSteerRejection::InputClosed);
             }
             self.mark_closed(AgentTaskInputState::Detached);
             release_writer(&mut writer);
@@ -309,6 +353,19 @@ impl AgentTaskInputSlot {
     }
 }
 
+fn reservation_refusal(
+    lifecycle: &claude_lifecycle::ClaudeInputLifecycle,
+    refusal: AgentTaskSteerRejection,
+) -> AgentTaskSteerRejection {
+    if refusal == AgentTaskSteerRejection::Stopping {
+        return refusal;
+    }
+    if lifecycle.is_closed() {
+        return AgentTaskSteerRejection::InputClosed;
+    }
+    AgentTaskSteerRejection::NotSteerable
+}
+
 fn release_writer(writer: &mut Option<Box<dyn AgentTaskInput>>) {
     let Some(mut handle) = writer.take() else {
         return;
@@ -342,6 +399,7 @@ struct RetainedStdinState {
 pub struct RetainedAgentStdin {
     state: Mutex<RetainedStdinState>,
     closed: Arc<AtomicBool>,
+    broken: AtomicBool,
 }
 
 pub type RetainedChildStdin = Arc<RetainedAgentStdin>;
@@ -354,7 +412,12 @@ impl RetainedAgentStdin {
                 first_frame_pending: true,
             }),
             closed: Arc::new(AtomicBool::new(false)),
+            broken: AtomicBool::new(false),
         }
+    }
+
+    pub fn is_broken(&self) -> bool {
+        self.broken.load(Ordering::SeqCst)
     }
 
     pub fn write_first_frame(&self, frame: &[u8], deadline: Instant) -> io::Result<()> {
@@ -397,6 +460,9 @@ impl RetainedAgentStdin {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
         };
         let outcome = write_frame_before_cancelled(stdin, frame, deadline, &self.closed);
+        if outcome.is_err() {
+            self.broken.store(true, Ordering::SeqCst);
+        }
         if outcome.is_err() || self.closed.load(Ordering::SeqCst) {
             state.stdin.take();
         }

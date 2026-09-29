@@ -1,10 +1,9 @@
 import { useLocalAgentTurnChanges } from "./useLocalAgentTurnChanges";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
-import {
-  compareAgentThreadOrder,
-  type AgentThreadOrganizationPatch,
-  type AgentThreadDropSection,
-  type AgentThreadPlacement,
+import type {
+  AgentThreadOrganizationPatch,
+  AgentThreadDropSection,
+  AgentThreadPlacement,
 } from "../domain/agentThreadOrganization";
 import { agentProjectOwnsOwner, agentRootOwnerId } from "../domain/agentProject";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
@@ -15,11 +14,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
+import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { agentThreadAutoTitle } from "../domain/agentThreadAutoTitle";
 import {
-  agentThreadAttention,
-  agentThreadLifecycle,
   agentThreadUnread,
   lastUsedAgentLaunch,
   normalizeAgentThreadTitle,
@@ -28,20 +26,13 @@ import {
   type AgentThreadsState,
 } from "../domain/agentThread";
 import { isExternalAgentSessionId } from "../domain/externalAgentSession";
-import {
-  agentShipStatus,
-  initialAgentShipState,
-  type AgentShipAvailability,
-  type AgentShipState,
-} from "../domain/agentShip";
+import { agentShipStatus, type AgentShipState } from "../domain/agentShip";
 import { normalizeAgentCliKind, normalizeMaxConcurrentAgentTasks } from "../domain/agentSettings";
 import type { GitGateway } from "../domain/git";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
-import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import type {
   AgentRepositoryStatusSnapshot,
-  AgentTaskChangeSummary,
   AgentTasksNotice,
   AgentThreadCopyDetail,
   AgentThreadStoreGateway,
@@ -78,11 +69,7 @@ import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
 import { useExternalSessions } from "./useExternalSessions";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
-import {
-  useAgentEditorBridge,
-  type AgentEditorBridgePort,
-  type AgentEditorBridgeSurface,
-} from "./useAgentEditorBridge";
+import { useAgentEditorBridge, type AgentEditorBridgePort } from "./useAgentEditorBridge";
 import { useAgentIsolationPreview } from "./useAgentIsolationPreview";
 import { useAgentShipFlow, type ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { isLoggedAgentThread, useAgentThreadStore } from "./useAgentThreadStore";
@@ -94,6 +81,15 @@ import {
 } from "./workbenchDefaultGateways";
 import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS, type AgentTurnLogGateway } from "./agentTurnLogPorts";
 import { useAgentTurnDispatch } from "./useAgentTurnDispatch";
+import {
+  useAgentThreadSessions,
+  type AgentThreadSessionDispatchPorts,
+} from "./useAgentThreadSessions";
+import {
+  agentThreadViews,
+  fallbackShipState,
+  flattenProjectRepositories,
+} from "./agentThreadViewProjection";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { AgentProviderAdmissionAuthorityReader } from "./agentProviderAdmissionAuthority";
@@ -107,6 +103,7 @@ export interface AgentThreadsDependencies {
   readonly turnChangesGateway?: AgentTurnChangesGateway;
   readonly externalSessionImportGateway?: ExternalSessionImportGateway;
   readonly agentTaskGateway: AgentTaskGateway;
+  readonly agentThreadSessionGateway?: AgentThreadSessionGateway;
   readonly agentQuestionGateway?: AgentQuestionGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
@@ -387,8 +384,22 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [attachmentGateway, projects, reportError, store],
   );
 
+  const sessionDispatchRef = useRef<AgentThreadSessionDispatchPorts | null>(null);
+  const sessions = useAgentThreadSessions({
+    gateway: dependencies.agentThreadSessionGateway,
+    projects,
+    store,
+    stateRevision: threads,
+    dispatch: sessionDispatchRef,
+    setNotice,
+    reportError,
+    now: dependencies.now,
+  });
+  const { endThreadSession } = sessions;
+
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
+    inspectSessionRestart: sessions.inspectRestart,
     hasPendingThreadInput: async (threadId) => {
       const gateway = dependencies.agentQuestionGateway;
       if (!gateway) return false;
@@ -428,6 +439,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     createEntropyHex4: dependencies.createEntropyHex4,
   });
 
+  sessionDispatchRef.current = dispatch;
+
   const { clear: clearSummary } = changes;
 
   const remove = useCallback(
@@ -445,12 +458,21 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       }
       removeFromStore(threadId);
       if (store.currentState().threads.has(threadId)) return false;
+      endThreadSession(thread);
       clearSummary(threadId);
       clearShip(threadId);
       void refreshOrphanedWorktrees();
       return true;
     },
-    [clearShip, clearSummary, projects, refreshOrphanedWorktrees, removeFromStore, store],
+    [
+      clearShip,
+      clearSummary,
+      endThreadSession,
+      projects,
+      refreshOrphanedWorktrees,
+      removeFromStore,
+      store,
+    ],
   );
 
   const { togglePin: togglePinInStore, archive: archiveInStore } = store;
@@ -468,9 +490,11 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       const thread = store.currentState().threads.get(threadId);
       if (thread === undefined || !ownsThread(projects, thread)) return false;
       archiveInStore(threadId);
-      return store.currentState().threads.get(threadId)?.archived === true;
+      const archived = store.currentState().threads.get(threadId)?.archived === true;
+      if (archived && !thread.archived) endThreadSession(thread);
+      return archived;
     },
-    [archiveInStore, projects, store],
+    [archiveInStore, endThreadSession, projects, store],
   );
 
   const unarchive = useCallback(
@@ -865,6 +889,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     refreshIsolationStatus: isolation.refreshIsolationStatus,
     startThread: dispatch.startThread,
     sendFollowUp: dispatch.sendFollowUp,
+    followUpNeedsSessionRestart: dispatch.followUpNeedsSessionRestart,
+    restartDeferredFollowUp: dispatch.restartDeferredFollowUp,
     deferredFollowUps: dispatch.deferredFollowUps,
     steer: dispatch.steer,
     removeDeferredFollowUp: dispatch.removeDeferredFollowUp,
@@ -880,6 +906,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     catalog: durableHistory ? catalog : undefined,
     turnLog: turnLog.facts,
     stop: dispatch.stop,
+    interrupt: sessions.interrupt,
+    endSession: sessions.endSession,
+    inspectSessionRestart: sessions.inspectRestart,
+    inspectSessionBackground: sessions.inspectBackground,
     togglePin,
     archive,
     unarchive,
@@ -977,106 +1007,4 @@ function threadBranch(thread: AgentThread, ship: AgentShipState): string | null 
 
 function unsupportedCopyDetail(detail: never): never {
   throw new TypeError(`Unsupported agent thread copy detail: ${JSON.stringify(detail)}.`);
-}
-
-function agentThreadViews(
-  previous: ReadonlyMap<string, AgentThreadView>,
-  threads: ReadonlyMap<string, AgentThread>,
-  summaries: ReadonlyMap<string, AgentTaskChangeSummary>,
-  removedWorktrees: ReadonlySet<string>,
-  missingWorktrees: ReadonlySet<string>,
-  shipStates: ReadonlyMap<string, AgentShipState>,
-  editor: AgentEditorBridgeSurface,
-  projects: ReadonlyArray<AgentProjectDescriptor>,
-): ReadonlyArray<AgentThreadView> {
-  const projectsByRootKey = new Map<string, AgentProjectDescriptor[]>();
-  for (const project of projects) {
-    const siblings = projectsByRootKey.get(project.rootKey);
-    if (siblings === undefined) {
-      projectsByRootKey.set(project.rootKey, [project]);
-      continue;
-    }
-    siblings.push(project);
-  }
-  const views: AgentThreadView[] = [];
-  for (const thread of threads.values()) {
-    const project = projectsByRootKey
-      .get(thread.owner.rootKey)
-      ?.find((candidate) => agentProjectOwnsOwner(candidate, thread.owner));
-    if (project === undefined) continue;
-    const next: AgentThreadView = {
-      thread,
-      lifecycle: agentThreadLifecycle(thread),
-      repositoryLabel: repositoryLabel(thread.owner.repositoryRoot, project.rootPath),
-      projectOrigin: project.origin,
-      worktreeRemoved: removedWorktrees.has(thread.threadId),
-      worktreeMissing: missingWorktrees.has(thread.threadId),
-      changeSummary: summaries.get(thread.threadId) ?? null,
-      ship: shipStates.get(thread.threadId) ?? fallbackShipState(thread),
-      editorAvailability: editor.canOpenInEditor(thread.threadId),
-      attention: agentThreadAttention(thread),
-      unread: agentThreadUnread(thread),
-    };
-    const cached = previous.get(thread.threadId);
-    views.push(cached !== undefined && sameThreadView(cached, next) ? cached : next);
-  }
-  return views.sort(compareThreadViews);
-}
-
-const fallbackShipStates = new WeakMap<AgentThread, AgentShipState>();
-
-function fallbackShipState(thread: AgentThread): AgentShipState {
-  const memoized = fallbackShipStates.get(thread);
-  if (memoized !== undefined) return memoized;
-  const initial = initialAgentShipState(thread.integration);
-  fallbackShipStates.set(thread, initial);
-  return initial;
-}
-
-function sameThreadView(cached: AgentThreadView, next: AgentThreadView): boolean {
-  if (cached.thread !== next.thread) return false;
-  if (cached.changeSummary !== next.changeSummary) return false;
-  if (cached.ship !== next.ship) return false;
-  if (cached.worktreeRemoved !== next.worktreeRemoved) return false;
-  if (cached.worktreeMissing !== next.worktreeMissing) return false;
-  if (cached.projectOrigin !== next.projectOrigin) return false;
-  if (cached.repositoryLabel !== next.repositoryLabel) return false;
-  return sameAvailability(cached.editorAvailability, next.editorAvailability);
-}
-
-function sameAvailability(left: AgentShipAvailability, right: AgentShipAvailability): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "blocked" && right.kind === "blocked") return left.reason === right.reason;
-  return true;
-}
-
-function compareThreadViews(left: AgentThreadView, right: AgentThreadView): number {
-  if (left.thread.pinned !== right.thread.pinned) return left.thread.pinned ? -1 : 1;
-  return compareAgentThreadOrder(left.thread, right.thread);
-}
-
-function flattenProjectRepositories(
-  projects: ReadonlyArray<AgentProjectDescriptor>,
-): ReadonlyArray<ResolvedGitRepository> {
-  const seen = new Set<string>();
-  const repositories: ResolvedGitRepository[] = [];
-  for (const project of projects) {
-    for (const repository of project.repositories) {
-      if (seen.has(repository.repositoryRoot)) continue;
-      seen.add(repository.repositoryRoot);
-      repositories.push(repository);
-    }
-  }
-  return repositories;
-}
-
-function repositoryLabel(repositoryRoot: string, projectRootPath: string): string {
-  if (repositoryRoot === projectRootPath) return lastSegment(projectRootPath);
-  if (!repositoryRoot.startsWith(`${projectRootPath}/`)) return repositoryRoot;
-  return repositoryRoot.slice(projectRootPath.length + 1);
-}
-
-function lastSegment(path: string): string {
-  const segments = path.split("/").filter((segment) => segment !== "");
-  return segments[segments.length - 1] ?? path;
 }

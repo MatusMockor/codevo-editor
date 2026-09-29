@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultAgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentQuestionRequest } from "../../domain/agentQuestion";
 import { AgentComposer, type AgentComposerProps } from "./AgentComposer";
 import { presentAgentApproval } from "./agentApprovalPresenter";
@@ -215,7 +216,10 @@ describe("AgentComposer stop confirmation", () => {
   it("returns focus to the prompt after Stop everything or Keep running", () => {
     const onStopNow = vi.fn();
     const onCancel = vi.fn();
-    render({ onStopNow, stopConfirmation: { liveTaskCount: 1, onCancel } });
+    render({
+      onStopNow,
+      stopConfirmation: { kind: "confirmBackground", liveTaskCount: 1, onCancel },
+    });
 
     const stopEverything = stopConfirmationButton("Stop everything");
     stopEverything.focus();
@@ -236,10 +240,99 @@ describe("AgentComposer stop confirmation", () => {
     expect(region?.getAttribute("role")).toBe("status");
     expect(region?.textContent).toBe("");
 
-    render({ onStopNow: vi.fn(), stopConfirmation: { liveTaskCount: 2, onCancel: vi.fn() } });
+    render({
+      onStopNow: vi.fn(),
+      stopConfirmation: { kind: "confirmBackground", liveTaskCount: 2, onCancel: vi.fn() },
+    });
     expect(stopAnnouncer()).toBe(region);
     expect(region?.textContent).toBe(
       "2 background tasks are still running. Press Stop or Esc again to end them.",
     );
   });
+});
+
+describe("AgentComposer session restart consent", () => {
+  function restartButton(name: string): HTMLButtonElement {
+    const match = [...host.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === name,
+    );
+    expect(match).toBeInstanceOf(HTMLButtonElement);
+    return match as HTMLButtonElement;
+  }
+
+  const followUp = {
+    running: false,
+    mode: { kind: "followUp", blockedReason: null },
+    launch: defaultAgentLaunchOptions("claudeCode"),
+    launchProvider: "claudeCode",
+  } satisfies Partial<AgentComposerProps>;
+
+  it("stays hidden without a pending restart", () => {
+    render({ ...followUp, sessionRestartConfirmation: null });
+    expect(host.textContent).not.toContain("restarts Claude");
+  });
+
+  it("explains the restart and sends with consent or cancels", () => {
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    render({
+      ...followUp,
+      onSubmit,
+      sessionRestartConfirmation: { onCancel, resend: { kind: "draft" } },
+    });
+    expect(host.textContent).toContain(
+      "Sending this restarts Claude for this thread. Restarting ends this Claude session. Background tasks it started may stop.",
+    );
+    act(() => restartButton("Restart and send").click());
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionRestartConfirmed: true }),
+    );
+    act(() => restartButton("Cancel").click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts and compacts with the exact held compaction instead of sending the draft", () => {
+    const onSubmit = vi.fn();
+    const onCompactContext = vi.fn(async () => true);
+    const held = {
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
+    };
+    render({
+      ...followUp,
+      prompt: "Unrelated draft",
+      promptBytes: 15,
+      onSubmit,
+      onCompactContext,
+      sessionRestartConfirmation: {
+        onCancel: vi.fn(),
+        resend: { kind: "compaction", submission: held },
+      },
+    });
+    act(() => restartButton("Restart and send").click());
+    expect(onCompactContext).toHaveBeenCalledTimes(1);
+    expect(onCompactContext).toHaveBeenCalledWith({ ...held, sessionRestartConfirmed: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a blocked prompt", { submitBlocked: true }],
+    ["a blocked thread", { mode: { kind: "followUp", blockedReason: "Archived." } }],
+    ["an active question", { interaction: question(() => Promise.resolve()) }],
+    ["a local slash command", { prompt: "/settings", promptBytes: 9 }],
+  ] satisfies ReadonlyArray<readonly [string, Partial<AgentComposerProps>]>)(
+    "restart and send honours the normal send gating for %s",
+    (_name, gating) => {
+      const onSubmit = vi.fn();
+      render({
+        ...followUp,
+        onSubmit,
+        onOpenProviderSettings: vi.fn(),
+        sessionRestartConfirmation: { onCancel: vi.fn(), resend: { kind: "draft" } },
+        ...gating,
+      });
+      act(() => restartButton("Restart and send").click());
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
 });

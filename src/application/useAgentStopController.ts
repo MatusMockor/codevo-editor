@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentTurn } from "../domain/agentThread";
 import {
   AGENT_STOP_CONFIRMATION_WINDOW_MS,
+  agentInterruptingDeadlineEpochMs,
+  agentStopDeadlineRemainingMs,
   decideAgentStop,
   type AgentStopArm,
   type AgentStopDecision,
@@ -10,13 +12,18 @@ import {
 export interface AgentStopControllerOptions {
   readonly readRunningTurn: (threadId: string) => AgentTurn | null;
   readonly hardStop: (threadId: string) => Promise<void>;
+  readonly interrupt?: (threadId: string) => Promise<boolean>;
   readonly now?: () => number;
 }
 
-export interface AgentStopConfirmation {
-  readonly threadId: string;
-  readonly liveTaskCount: number;
-}
+export type AgentStopConfirmation =
+  | {
+      readonly kind: "confirmBackground";
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly liveTaskCount: number;
+    }
+  | { readonly kind: "interrupting"; readonly threadId: string; readonly turnId: string };
 
 export interface AgentStopController {
   readonly confirmation: AgentStopConfirmation | null;
@@ -25,40 +32,103 @@ export interface AgentStopController {
   cancelStop(): void;
 }
 
+interface AgentInterruptedTurn {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly requestedAtEpochMs: number;
+}
+
+interface PendingStopConfirmation {
+  readonly confirmation: AgentStopConfirmation;
+  readonly deadlineEpochMs: number;
+}
+
+const MAX_REMEMBERED_INTERRUPTS = 64;
+
 export function useAgentStopController(options: AgentStopControllerOptions): AgentStopController {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const armRef = useRef<AgentStopArm | null>(null);
-  const [confirmation, setConfirmation] = useState<AgentStopConfirmation | null>(null);
+  const interruptedRef = useRef<Map<string, string>>(new Map());
+  const pendingInterruptRef = useRef<AgentInterruptedTurn | null>(null);
+  const [pending, setPending] = useState<PendingStopConfirmation | null>(null);
 
   const cancelStop = useCallback((): void => {
     armRef.current = null;
-    setConfirmation(null);
+    setPending(null);
   }, []);
 
   useEffect(() => {
-    if (confirmation === null) return;
-    const timer = setTimeout(cancelStop, AGENT_STOP_CONFIRMATION_WINDOW_MS);
+    if (pending === null) return;
+    const { now = Date.now } = optionsRef.current;
+    const remaining = agentStopDeadlineRemainingMs(pending.deadlineEpochMs, now());
+    const timer = setTimeout(cancelStop, remaining);
     return () => clearTimeout(timer);
-  }, [cancelStop, confirmation]);
+  }, [cancelStop, pending]);
 
   const stopNow = useCallback(
     (threadId: string): void => {
+      pendingInterruptRef.current = null;
       cancelStop();
       void optionsRef.current.hardStop(threadId);
     },
     [cancelStop],
   );
 
+  const settleInterrupt = useCallback(
+    (attempt: AgentInterruptedTurn, accepted: boolean): void => {
+      if (pendingInterruptRef.current !== attempt) return;
+      pendingInterruptRef.current = null;
+      if (optionsRef.current.readRunningTurn(attempt.threadId)?.turnId !== attempt.turnId) {
+        forgetInterrupt(interruptedRef.current, attempt);
+        return;
+      }
+      if (!accepted) {
+        forgetInterrupt(interruptedRef.current, attempt);
+        stopNow(attempt.threadId);
+        return;
+      }
+      const { now = Date.now } = optionsRef.current;
+      const deadlineEpochMs = agentInterruptingDeadlineEpochMs(attempt.requestedAtEpochMs);
+      if (agentStopDeadlineRemainingMs(deadlineEpochMs, now()) === 0) return;
+      setPending({
+        confirmation: { kind: "interrupting", threadId: attempt.threadId, turnId: attempt.turnId },
+        deadlineEpochMs,
+      });
+    },
+    [stopNow],
+  );
+
+  const startInterrupt = useCallback(
+    (threadId: string, turnId: string, requestedAtEpochMs: number): void => {
+      const interrupt = optionsRef.current.interrupt;
+      if (interrupt === undefined) {
+        stopNow(threadId);
+        return;
+      }
+      const attempt: AgentInterruptedTurn = { threadId, turnId, requestedAtEpochMs };
+      rememberInterrupt(interruptedRef.current, attempt);
+      pendingInterruptRef.current = attempt;
+      cancelStop();
+      void interrupt(threadId).then(
+        (accepted) => settleInterrupt(attempt, accepted),
+        () => settleInterrupt(attempt, false),
+      );
+    },
+    [cancelStop, settleInterrupt, stopNow],
+  );
+
   const requestStop = useCallback(
     (threadId: string): void => {
-      const { readRunningTurn, now = Date.now } = optionsRef.current;
+      const { readRunningTurn, now = Date.now, interrupt } = optionsRef.current;
       const nowEpochMs = now();
       const decision: AgentStopDecision = decideAgentStop({
         threadId,
         turn: readRunningTurn(threadId),
         arm: armRef.current,
         nowEpochMs,
+        interruptAvailable: interrupt !== undefined,
+        interruptedTurnId: interruptedRef.current.get(threadId) ?? null,
       });
       switch (decision.kind) {
         case "ignore":
@@ -67,18 +137,43 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
         case "hardStop":
           stopNow(threadId);
           return;
+        case "interrupt":
+          startInterrupt(threadId, decision.turnId, nowEpochMs);
+          return;
         case "confirmBackground":
           armRef.current = { threadId, turnId: decision.turnId, armedAtEpochMs: nowEpochMs };
-          setConfirmation({ threadId, liveTaskCount: decision.liveTaskCount });
+          setPending({
+            confirmation: {
+              kind: "confirmBackground",
+              threadId,
+              turnId: decision.turnId,
+              liveTaskCount: decision.liveTaskCount,
+            },
+            deadlineEpochMs: nowEpochMs + AGENT_STOP_CONFIRMATION_WINDOW_MS,
+          });
           return;
         default:
           unsupportedDecision(decision);
       }
     },
-    [cancelStop, stopNow],
+    [cancelStop, startInterrupt, stopNow],
   );
 
-  return { confirmation, requestStop, stopNow, cancelStop };
+  return { confirmation: pending?.confirmation ?? null, requestStop, stopNow, cancelStop };
+}
+
+function rememberInterrupt(remembered: Map<string, string>, attempt: AgentInterruptedTurn): void {
+  remembered.delete(attempt.threadId);
+  remembered.set(attempt.threadId, attempt.turnId);
+  if (remembered.size <= MAX_REMEMBERED_INTERRUPTS) return;
+  const oldest = remembered.keys().next();
+  if (oldest.done === true) return;
+  remembered.delete(oldest.value);
+}
+
+function forgetInterrupt(remembered: Map<string, string>, attempt: AgentInterruptedTurn): void {
+  if (remembered.get(attempt.threadId) !== attempt.turnId) return;
+  remembered.delete(attempt.threadId);
 }
 
 function unsupportedDecision(decision: never): never {

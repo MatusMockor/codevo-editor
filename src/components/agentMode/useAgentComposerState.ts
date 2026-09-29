@@ -1,5 +1,11 @@
 import { useAgentComposerRecovery, type AgentComposerRecovery } from "./useAgentComposerRecovery";
 import { useAgentComposerLaunchChoices } from "./useAgentComposerLaunchChoices";
+import {
+  useAgentSessionRestartDismissal,
+  useAgentSessionRestartGate,
+  type AgentSessionRestartSurface,
+} from "./useAgentSessionRestartConsent";
+import { useAgentComposerStop, type AgentComposerStopSurface } from "./useAgentComposerStop";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentComposerDraftStore,
@@ -15,8 +21,6 @@ import {
   agentThreadIsSteerable,
 } from "../../application/agentTurnAdmission";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { runningTurn } from "../../domain/agentThread";
-import { useAgentStopController } from "../../application/useAgentStopController";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
   useAgentComposerRepositoryPreference,
@@ -42,6 +46,7 @@ import type {
   AgentComposerMode,
   AgentComposerProps,
   AgentComposerSubmission,
+  AgentComposerSubmitSource,
 } from "./AgentComposer";
 import {
   resolveComposerLaunch,
@@ -86,8 +91,9 @@ export type AgentComposerSurface = Pick<
   | "sendFollowUp"
   | "startThread"
   | "steer"
-  | "stop"
->;
+> &
+  AgentComposerStopSurface &
+  AgentSessionRestartSurface;
 
 export interface AgentComposerStateOptions {
   readonly agents: AgentComposerSurface;
@@ -142,19 +148,12 @@ export interface AgentComposerControllerState {
   submit(
     prompt: string,
     submission: AgentComposerSubmission,
-    options?: AgentComposerSubmitOptions,
+    source?: AgentComposerSubmitSource,
   ): Promise<boolean>;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
   clearDraftTarget(): void;
 }
-
-export interface AgentComposerSubmitOptions {
-  readonly attachments: boolean;
-}
-
-export const WITH_COMPOSER_ATTACHMENTS: AgentComposerSubmitOptions = { attachments: true };
-export const WITHOUT_COMPOSER_ATTACHMENTS: AgentComposerSubmitOptions = { attachments: false };
 
 export type AgentComposerPromptController = Pick<
   AgentComposerControllerState,
@@ -342,10 +341,6 @@ export function useAgentComposerControllerState({
   );
   const composerMode = useComposerMode(selectedThread, agents, agentCliKind);
   const steerThreadId = composerMode.kind === "steer" ? composerMode.threadId : null;
-  const runningThreadId =
-    selectedThread?.lifecycle === "running" ? selectedThread.thread.threadId : null;
-  const runningThreadIdRef = useRef(runningThreadId);
-  runningThreadIdRef.current = runningThreadId;
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -356,44 +351,7 @@ export function useAgentComposerControllerState({
   const [steering, setSteering] = useState(false);
   const dispatching =
     composerDispatching(agents, agentComposerDraftKey(selectedThread, target)) || steering;
-  const stopThread = agents.stop;
-  const selectedThreadRef = useRef(selectedThread);
-  selectedThreadRef.current = selectedThread;
-  const stopController = useAgentStopController({
-    readRunningTurn: (threadId) => {
-      const view = selectedThreadRef.current;
-      if (view === null || view.thread.threadId !== threadId) return null;
-      return runningTurn(view.thread);
-    },
-    hardStop: stopThread,
-  });
-  const {
-    cancelStop,
-    confirmation: pendingStop,
-    requestStop: requestControlledStop,
-    stopNow: stopControlledNow,
-  } = stopController;
-  useEffect(() => {
-    if (runningThreadId === null) return;
-    return cancelStop;
-  }, [cancelStop, runningThreadId]);
-  const requestStop = useCallback((): void => {
-    const threadId = runningThreadIdRef.current;
-    if (threadId === null) return;
-    requestControlledStop(threadId);
-  }, [requestControlledStop]);
-  const stopNow = useCallback((): void => {
-    const threadId = runningThreadIdRef.current;
-    if (threadId === null) return;
-    stopControlledNow(threadId);
-  }, [stopControlledNow]);
-  const stopConfirmation = useMemo(
-    () =>
-      pendingStop === null || pendingStop.threadId !== runningThreadId
-        ? null
-        : { liveTaskCount: pendingStop.liveTaskCount, onCancel: cancelStop },
-    [cancelStop, pendingStop, runningThreadId],
-  );
+  const stop = useAgentComposerStop(selectedThread, agents);
   const lastUsedLaunch = agents.lastUsedLaunch;
   const composerLaunch = useMemo(
     () =>
@@ -404,6 +362,11 @@ export function useAgentComposerControllerState({
         lastUsedLaunch,
       ),
     [agentCliKind, lastUsedLaunch, launchChoice, launchScope, steerThreadId],
+  );
+  const restart = useAgentSessionRestartGate(
+    agents,
+    selectedThread?.thread.threadId ?? null,
+    composerLaunch,
   );
 
   const submissionBlocked =
@@ -481,22 +444,19 @@ export function useAgentComposerControllerState({
     async (
       prompt: string,
       submission: AgentComposerSubmission,
-      options: AgentComposerSubmitOptions = WITH_COMPOSER_ATTACHMENTS,
+      source: AgentComposerSubmitSource = "draft",
     ) => {
       if (submissionBlocked) return false;
       const authority = submissionAuthority;
       if (authority === null) return false;
-      const pendingAttachments = options.attachments && composerHasAttachments(attachments);
+      const isCurrent = () =>
+        composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority);
+      const pendingAttachments = source === "draft" && composerHasAttachments(attachments);
       const prepared = pendingAttachments
         ? await prepareComposerAttachments(attachments, attachmentTargetKey)
         : NO_PREPARED_ATTACHMENTS;
       if (prepared === null) return false;
-      if (
-        pendingAttachments &&
-        !composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)
-      ) {
-        return false;
-      }
+      if (pendingAttachments && !isCurrent()) return false;
       if (authority.kind === "followUp" && threadQueuedEdit?.threadId === authority.threadId) {
         const committed = await threadQueuedEdit.commit(prompt, prepared.request);
         if (committed && pendingAttachments) attachments?.markSent(prepared.draftIds);
@@ -504,6 +464,7 @@ export function useAgentComposerControllerState({
       }
       switch (authority.kind) {
         case "followUp": {
+          restart.clear();
           if (authority.steer) {
             setSteering(true);
             try {
@@ -521,14 +482,23 @@ export function useAgentComposerControllerState({
               if (mountedRef.current) setSteering(false);
             }
           }
-          const sent = await sendFollowUp({
-            ...prepared.request,
-            threadId: authority.threadId,
-            prompt,
-            launch: submission.launch,
-            dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
-          });
+          const sent = await sendFollowUp(
+            {
+              ...prepared.request,
+              threadId: authority.threadId,
+              prompt,
+              launch: submission.launch,
+              dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+              ...restart.followUpRestart(submission),
+            },
+            "caller",
+          );
           if (sent && pendingAttachments) attachments?.markSent(prepared.draftIds);
+          restart.settleFollowUp(
+            { threadId: authority.threadId, submission, source },
+            sent,
+            isCurrent,
+          );
           return sent;
         }
         case "new": {
@@ -545,9 +515,7 @@ export function useAgentComposerControllerState({
           });
           if (started === null) return false;
           if (pendingAttachments) attachments?.markSent(prepared.draftIds);
-          if (!composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)) {
-            return false;
-          }
+          if (!isCurrent()) return false;
           onThreadStarted(started.threadId);
           return true;
         }
@@ -556,6 +524,7 @@ export function useAgentComposerControllerState({
     [
       attachments,
       attachmentTargetKey,
+      restart,
       unsafeInPlaceConfirmationKey,
       isolation,
       worktreeBase,
@@ -648,10 +617,11 @@ export function useAgentComposerControllerState({
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,
     onSelectRepository: selectRepository,
-    onStop: requestStop,
-    onStopNow: stopNow,
-    stopConfirmation,
-    running: runningThreadId !== null,
+    onStop: stop.onStop,
+    onStopNow: stop.onStopNow,
+    stopConfirmation: stop.stopConfirmation,
+    sessionRestartConfirmation: restart.confirmation,
+    running: stop.running,
     target: composerTargetView(composerProjects, target),
     worktreeAvailable,
     worktreeOnly,
@@ -796,19 +766,30 @@ export function useAgentComposerPromptState(
     promptOwnerRef.current = { key: ownerKey, generation: promptOwnerRef.current.generation + 1 };
   }
   const promptRevisionRef = useRef(0);
-  const changePrompt = useCallback((next: string) => {
-    promptRevisionRef.current += 1;
-    setDraft((current) => ({ key: current.key, text: next }));
-  }, []);
+  const dismissRestart = useAgentSessionRestartDismissal(
+    composerProps.sessionRestartConfirmation ?? null,
+  );
+  const changePrompt = useCallback(
+    (next: string) => {
+      promptRevisionRef.current += 1;
+      dismissRestart();
+      setDraft((current) => ({ key: current.key, text: next }));
+    },
+    [dismissRestart],
+  );
   const draftRef = useRef(draft);
   useLayoutEffect(() => {
     draftRef.current = draft;
   }, [draft]);
-  const replaceDraft = useCallback((key: string, text: string, focus: boolean) => {
-    promptRevisionRef.current += 1;
-    setDraft({ key, text });
-    if (focus) focusAgentComposerPrompt(text.length);
-  }, []);
+  const replaceDraft = useCallback(
+    (key: string, text: string, focus: boolean) => {
+      promptRevisionRef.current += 1;
+      dismissRestart();
+      setDraft({ key, text });
+      if (focus) focusAgentComposerPrompt(text.length);
+    },
+    [dismissRestart],
+  );
   useAgentComposerQueuedEditPrompt(queuedEdit, draftKey, draftRef, replaceDraft);
   const attachments = composerProps.attachments ?? null;
   const readyAttachments =

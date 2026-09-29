@@ -653,6 +653,40 @@ describe("aggregateAgentUsage", () => {
     });
   });
 
+  it("counts the cost of background turns but not as started or completed turns", () => {
+    const costed = (costUsd: number): AgentTurnEvent => ({
+      kind: "result",
+      text: "",
+      isError: false,
+      usage: { inputTokens: 3, outputTokens: 2, contextTokens: 3, costUsd },
+    });
+    const result = aggregateAgentUsage(
+      [
+        thread("claudeCode", "project-a", [
+          turn("prompted", NOW - 20_000, EXITED, NOW - 19_000, costed(0.25)),
+          {
+            ...turn("background", NOW - 10_000, EXITED, NOW - 10_000, costed(0.5)),
+            origin: "background",
+          },
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.claudeCode.total).toMatchObject({
+      turnsStarted: 1,
+      turnsCompleted: 1,
+      turnsFailed: 0,
+      turnsStoppedOrInterrupted: 0,
+      turnsActive: 0,
+    });
+    expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
+      costUsd: 0.75,
+      costMeasuredTurns: 2,
+    });
+  });
+
   it("keeps Claude usage per turn even when older turns outside the period were ambiguous", () => {
     const yesterday = NOW - 24 * 60 * 60 * 1_000;
     const result = aggregateAgentUsage(

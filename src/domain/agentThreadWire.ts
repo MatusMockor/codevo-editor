@@ -20,6 +20,7 @@ import {
   type AgentImageMime,
 } from "./agentAttachment";
 import { parseAgentCliVersion } from "./agentCliVersion";
+import { derivedAgentTurnOrigin } from "./agentTurnOrigin";
 import { parseExternalAgentSessionHistory } from "./externalAgentSession";
 import {
   parseStoredAgentLaunchOptions,
@@ -645,6 +646,13 @@ function parseTurns(value: unknown, path: string): ReadonlyArray<AgentTurn> {
 }
 
 function parseTurn(value: unknown, path: string): AgentTurn {
+  const parsed = parseTurnFields(value, path);
+  const origin = derivedAgentTurnOrigin(parsed);
+  if (origin === undefined) return parsed;
+  return { ...parsed, origin };
+}
+
+function parseTurnFields(value: unknown, path: string): AgentTurn {
   const turn = record(value, path);
   boundedKeys(
     turn,

@@ -1,3 +1,4 @@
+use super::agent_task_commands::claude_session_composition::end_sessions_for_workspace;
 use super::agent_task_commands::stop_agent_tasks_on_dispose;
 use super::language_runtime_facade::registered_runtime_root;
 use crate::blocking_command::run_blocking_command;
@@ -326,6 +327,7 @@ fn close_workspace_owner_blocking(
                     .begin_root_deactivation(&descriptor.canonical_root_path.to_string_lossy()),
             );
             app.request_stop_workspace_tasks(&workspace_id, &state.js_test_batches);
+            end_sessions_for_workspace(app, workspace_id.as_str());
         },
         |descriptor, cleanup_errors| {
             if let Err(error) = state
@@ -452,11 +454,18 @@ pub(crate) fn dispose_workspace_root_blocking(
         .invalidate_listings()
         .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
     let root = registered_runtime_root(&state.workspace_registry, &root_path);
-    stop_agent_tasks_on_dispose(app, &root);
-    if let Ok(descriptor) = state
+    let descriptor = state
         .workspace_registry
         .descriptor_for_registered_path(&root)
-    {
+        .ok();
+    stop_agent_tasks_on_dispose(
+        app,
+        descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.workspace_id.as_str()),
+        &root,
+    );
+    if let Some(descriptor) = descriptor {
         state
             .file_search_lifecycle
             .cancel_workspace(&descriptor.workspace_id);

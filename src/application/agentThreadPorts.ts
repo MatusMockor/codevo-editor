@@ -23,6 +23,7 @@ import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type {
   AgentCliKind,
   AgentIsolationDefault,
+  AgentSessionRestartPolicy,
   AgentTaskIsolation,
   InPlaceDispatchGuard,
 } from "../domain/agentTask";
@@ -56,7 +57,13 @@ import type { AgentCommitSelection } from "../domain/gitCommitSelection";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import type { RemoteRunnerTaskResume } from "../domain/remoteRunner";
 
-export type AgentTasksNoticeAction = "configure-agent-cli" | null;
+export interface AgentRestartFollowUpAction {
+  readonly kind: "restartFollowUp";
+  readonly threadId: string;
+  readonly entryId: string;
+}
+
+export type AgentTasksNoticeAction = "configure-agent-cli" | AgentRestartFollowUpAction | null;
 
 export interface AgentTasksNotice {
   readonly kind: "info" | "warning" | "error";
@@ -329,7 +336,10 @@ export interface AgentFollowUpRequest extends AgentTurnAttachmentRequest {
   readonly prompt: string;
   readonly launch: AgentLaunchOptions;
   readonly dangerousLaunchConfirmed?: boolean;
+  readonly sessionRestart?: AgentSessionRestartPolicy;
 }
+
+export type AgentFollowUpRestartConsent = "notice" | "caller";
 
 export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
   readonly delivery?: "queued" | "immediate";
@@ -339,6 +349,12 @@ export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
 }
 
 export type AgentSteerOutcome = "sent" | "deferred" | "kept";
+
+export type AgentSessionRestartVerdict = "proceed" | "confirm";
+
+export type AgentSessionEndResult = "ended" | "none" | "failed";
+
+export type AgentSessionBackgroundInspection = "live" | "none" | "unknown";
 
 export interface AgentThreadsSurface {
   readonly history?: AgentThreadHistorySurface;
@@ -385,7 +401,12 @@ export interface AgentThreadsSurface {
     projectRootKey?: string,
   ): Promise<AgentRepositoryProbeOutcome | void>;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
-  sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
+  sendFollowUp(
+    request: AgentFollowUpRequest,
+    restartConsent?: AgentFollowUpRestartConsent,
+  ): Promise<boolean>;
+  followUpNeedsSessionRestart?(threadId: string): boolean;
+  restartDeferredFollowUp?(threadId: string, id: string): Promise<void>;
   readonly deferredFollowUps: DeferredFollowUps;
   resumeDeferredFollowUps?(threadId: string): Promise<void>;
   hasUnconfirmedMessage?(threadId: string): boolean;
@@ -403,6 +424,13 @@ export interface AgentThreadsSurface {
     request: ExternalSessionImportRequest,
   ): Promise<ExternalSessionImportResult | null>;
   stop(threadId: string): Promise<void>;
+  interrupt?(threadId: string): Promise<boolean>;
+  endSession?(threadId: string): Promise<AgentSessionEndResult>;
+  inspectSessionBackground?(threadId: string): Promise<AgentSessionBackgroundInspection>;
+  inspectSessionRestart?(
+    threadId: string,
+    launch: AgentLaunchOptions,
+  ): Promise<AgentSessionRestartVerdict>;
   togglePin(threadId: string): void;
   archive(threadId: string): AgentThreadMutationResult | void;
   unarchive?(threadId: string): AgentThreadMutationResult | void;

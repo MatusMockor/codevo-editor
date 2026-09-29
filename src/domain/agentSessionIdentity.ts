@@ -45,6 +45,11 @@ export function agentResumePlan(
   return { kind: "resume", sessionId: persistedSessionId };
 }
 
+export function resumePlanSessionId(plan: AgentResumePlan): string | null {
+  if (plan.kind === "resume") return plan.sessionId;
+  return null;
+}
+
 export function agentSessionDirectiveAfterReport(
   persistedSessionId: string | null,
   directive: AgentSessionDirective | null,
@@ -113,8 +118,7 @@ function agentResumeSessionId(
   persistedSessionId: string | null,
   directive: AgentSessionDirective | null,
 ): string | null {
-  const plan = agentResumePlan(persistedSessionId, directive);
-  return plan.kind === "resume" ? plan.sessionId : null;
+  return resumePlanSessionId(agentResumePlan(persistedSessionId, directive));
 }
 
 function currentDirective(

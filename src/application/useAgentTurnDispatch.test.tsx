@@ -42,6 +42,7 @@ import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type {
+  AgentSessionRestartVerdict,
   AgentSteerOutcome,
   AgentSteerRequest,
   AgentTasksNotice,
@@ -88,10 +89,11 @@ import {
 } from "./agentTurnDispatchPolicy";
 import { AGENT_DISPATCH_IN_PROGRESS_NOTICE } from "./agentDispatchKeys";
 import { DEFERRED_NEXT_TURN_NOTICE } from "./agentDeferredFollowUps";
+import { DEFERRED_SEND_FAILED_NOTICE } from "./agentDeferredFollowUpSend";
+import { DEFERRED_SESSION_RESTART_NOTICE } from "./agentSessionRestartConsent";
 import {
   DEFERRED_CLEARED_NOTICE,
   DEFERRED_FULL_NOTICE,
-  DEFERRED_SEND_FAILED_NOTICE,
   STEER_DROPPED_NOTICE,
   STEER_UNREGISTERED_NOTICE,
   STEER_STOPPING_NOTICE,
@@ -114,9 +116,15 @@ const ROOT_B = "/workspace/other";
 const OWNER_A = "workspace-a";
 const OWNER_B = "workspace-b";
 const SESSION_ID = "sess-0001-abcd";
+const RESTART_REFUSAL =
+  "sessionRestartRequiresConfirmation: Restarting ends this Claude session. Background tasks it started may stop.";
 
 interface Environment {
   hasPendingThreadInput?: (threadId: string) => Promise<boolean>;
+  inspectSessionRestart?: (
+    threadId: string,
+    launch: AgentLaunchOptions,
+  ) => Promise<AgentSessionRestartVerdict>;
   flushThread?: (threadId: string) => Promise<boolean>;
   codexTransport?: CodexTransport;
   activeRoot: string;
@@ -1361,6 +1369,312 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
+  it("forwards a confirmed session restart to the start request", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "switch model",
+          launch: concreteLaunch("claudeCode"),
+          sessionRestart: "stopBackground",
+        }),
+      ),
+    ).toBe(true);
+
+    expect(harness.startedRequests[0]).not.toHaveProperty("sessionRestart");
+    expect(harness.startedRequests[1]?.sessionRestart).toBe("stopBackground");
+    harness.unmount();
+  });
+
+  it.each([
+    ["a Retry", "Retry the failed step"],
+    ["a context compaction", "/compact"],
+  ])(
+    "aborts %s refused by a session restart without a failed turn and offers Restart and send once",
+    async (_label, prompt) => {
+      const harness = renderDispatch();
+      const threadId = await harness.settleThreadWithSession();
+      harness.agent.startAgentTask.mockRejectedValueOnce(
+        new AgentTaskStartRejectedError(RESTART_REFUSAL),
+      );
+
+      expect(
+        await act(() =>
+          harness.hook().sendFollowUp({ threadId, prompt, launch: concreteLaunch("claudeCode") }),
+        ),
+      ).toBe(false);
+
+      expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(true);
+      expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+      expect(harness.thread(threadId).turns.map((turn) => turn.status.kind)).not.toContain(
+        "failed",
+      );
+      expect(harness.reportError).not.toHaveBeenCalled();
+      expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
+      const notice = harness.notice();
+      expect(notice?.kind).toBe("warning");
+      expect(notice?.message).toBe(
+        "Claude was not restarted because it is running background tasks in this thread. Restarting ends this Claude session. Background tasks it started may stop.",
+      );
+      const action = notice?.action;
+      expect(action).toMatchObject({ kind: "restartFollowUp", threadId });
+      const offerId = typeof action === "object" && action !== null ? action.entryId : "";
+
+      await act(async () => harness.hook().restartDeferredFollowUp(threadId, offerId));
+      await act(async () => harness.hook().restartDeferredFollowUp(threadId, offerId));
+
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(3);
+      expect(harness.agent.startAgentTask.mock.calls[2]?.[0]).toMatchObject({
+        prompt,
+        sessionRestart: "stopBackground",
+      });
+      expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(false);
+      harness.unmount();
+    },
+  );
+
+  it("leaves the consent to a caller that owns it and offers no second Restart and send", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError(RESTART_REFUSAL),
+    );
+
+    expect(
+      await act(() =>
+        harness
+          .hook()
+          .sendFollowUp(
+            { threadId, prompt: "Use the faster model", launch: concreteLaunch("claudeCode") },
+            "caller",
+          ),
+      ),
+    ).toBe(false);
+
+    expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(true);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("drops a held restart offer once a newer message was sent to the thread", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError(RESTART_REFUSAL),
+    );
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "refused",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    const action = harness.notice()?.action;
+    const offerId = typeof action === "object" && action !== null ? action.entryId : "";
+    expect(offerId).not.toBe("");
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "restarted from the composer",
+        launch: concreteLaunch("claudeCode"),
+        sessionRestart: "stopBackground",
+      }),
+    );
+    const turnId = harness.turnIdOf(threadId, 2);
+    await act(async () => harness.emitStatus(turnId, 1, { kind: "exited", exitCode: 0 }));
+
+    await act(async () => harness.hook().restartDeferredFollowUp(threadId, offerId));
+
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(3);
+    harness.unmount();
+  });
+
+  it.each([
+    ["a Retry", "Retry the failed step"],
+    ["a context compaction", "/compact"],
+  ])(
+    "asks before %s restarts Claude and starts exactly one turn once confirmed",
+    async (_label, prompt) => {
+      const inspectSessionRestart = vi.fn<NonNullable<Environment["inspectSessionRestart"]>>(
+        async () => "confirm",
+      );
+      const harness = renderDispatch({ inspectSessionRestart });
+      const threadId = await harness.settleThreadWithSession();
+      const launch = concreteLaunch("claudeCode");
+
+      expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt, launch }))).toBe(
+        false,
+      );
+
+      expect(inspectSessionRestart).toHaveBeenCalledWith(threadId, expect.objectContaining(launch));
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+      expect(harness.thread(threadId).turns).toHaveLength(1);
+      expect(harness.actionsOf("turnStarted")).toHaveLength(0);
+      expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(true);
+      const notice = harness.notice();
+      expect(notice?.message).toBe(
+        "Claude was not restarted because it is running background tasks in this thread. Restarting ends this Claude session. Background tasks it started may stop.",
+      );
+      const action = notice?.action;
+      expect(action).toMatchObject({ kind: "restartFollowUp", threadId });
+      const offerId = typeof action === "object" && action !== null ? action.entryId : "";
+
+      await act(async () => harness.hook().restartDeferredFollowUp(threadId, offerId));
+      await act(async () => harness.hook().restartDeferredFollowUp(threadId, offerId));
+
+      expect(inspectSessionRestart).toHaveBeenCalledTimes(1);
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2);
+      expect(harness.startedRequests[1]).toMatchObject({
+        prompt,
+        sessionRestart: "stopBackground",
+      });
+      expect(inspectSessionRestart.mock.calls[0]?.[1]).toEqual(harness.startedRequests[1]?.launch);
+      expect(harness.thread(threadId).turns).toHaveLength(2);
+      expect(harness.turn(threadId, 1).prompt).toBe(prompt);
+      expect(harness.thread(threadId).turns.map((turn) => turn.status.kind)).not.toContain(
+        "stopped",
+      );
+      expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(false);
+      harness.unmount();
+    },
+  );
+
+  it("leaves a restart question found before the start to a caller and starts one turn once confirmed", async () => {
+    const inspectSessionRestart = vi.fn(async (): Promise<AgentSessionRestartVerdict> => "confirm");
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.settleThreadWithSession();
+    const request = {
+      threadId,
+      prompt: "Use the faster model",
+      launch: concreteLaunch("claudeCode"),
+    };
+
+    expect(await act(() => harness.hook().sendFollowUp(request, "caller"))).toBe(false);
+
+    expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(true);
+    expect(harness.notice()).toBeNull();
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.thread(threadId).turns).toHaveLength(1);
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({ ...request, sessionRestart: "stopBackground" }, "caller"),
+      ),
+    ).toBe(true);
+
+    expect(inspectSessionRestart).toHaveBeenCalledTimes(1);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.thread(threadId).turns).toHaveLength(2);
+    expect(harness.thread(threadId).turns.map((turn) => turn.status.kind)).not.toContain("stopped");
+    expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("starts the follow-up when the restart inspection fails and leaves the refusal to the backend", async () => {
+    const inspectSessionRestart = vi.fn((): Promise<AgentSessionRestartVerdict> =>
+      Promise.reject(new Error("The session could not be inspected.")),
+    );
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.settleThreadWithSession();
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: concreteLaunch("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
+
+    expect(inspectSessionRestart).toHaveBeenCalledTimes(1);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.startedRequests[1]).not.toHaveProperty("sessionRestart");
+    expect(harness.thread(threadId).turns).toHaveLength(2);
+    expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("drops a restart verdict that arrives after the project authority changed", async () => {
+    const verdict = createDeferred<AgentSessionRestartVerdict>();
+    const inspectSessionRestart = vi.fn(() => verdict.promise);
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.settleThreadWithSession();
+    let sent: Promise<boolean> = Promise.resolve(true);
+    act(() => {
+      sent = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Late verdict",
+        launch: concreteLaunch("claudeCode"),
+      });
+    });
+    await waitForReact(() => expect(inspectSessionRestart).toHaveBeenCalledTimes(1));
+    harness.environment.generation += 1;
+    harness.rerender();
+
+    await act(async () => verdict.resolve("confirm"));
+
+    expect(await act(() => sent)).toBe(false);
+    expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(false);
+    expect(harness.notice()?.action ?? null).toBeNull();
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.thread(threadId).turns).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("does not inspect a restart the user already confirmed", async () => {
+    const inspectSessionRestart = vi.fn(async (): Promise<AgentSessionRestartVerdict> => "confirm");
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.settleThreadWithSession();
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Restart now",
+          launch: concreteLaunch("claudeCode"),
+          sessionRestart: "stopBackground",
+        }),
+      ),
+    ).toBe(true);
+
+    expect(inspectSessionRestart).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("resolves the resume session exactly as the next start uses it", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    expect(harness.hook().resumeSessionIdFor(harness.thread(threadId))).toBe(SESSION_ID);
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    const resumedTurnId = harness.turnIdOf(threadId, 1);
+    await act(async () => {
+      harness.emitOutput(resumedTurnId, 1, "session:sess-0003-cafe");
+      harness.emitStatus(resumedTurnId, 1, { kind: "exited", exitCode: 0 });
+    });
+
+    const resolved = harness.hook().resumeSessionIdFor(harness.thread(threadId));
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Next",
+        launch: concreteLaunch("claudeCode"),
+      }),
+    );
+    expect(resolved).toBe(harness.startedRequests[2]?.resumeSessionId);
+    harness.unmount();
+  });
+
   it("refuses continuation when its snapshot authority expires", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
@@ -2414,6 +2728,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
       hasPendingThreadInput: (threadId) =>
         environment.hasPendingThreadInput?.(threadId) ?? Promise.resolve(false),
+      inspectSessionRestart: (threadId, launch) =>
+        environment.inspectSessionRestart?.(threadId, launch) ?? Promise.resolve("proceed"),
       agentAttachmentGateway: attachmentGateway as unknown as AgentAttachmentGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       get projects() {
@@ -3075,6 +3391,118 @@ describe("useAgentTurnDispatch steering", () => {
     );
     await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
     expect(harness.startedRequests[1].prompt).toBe("first");
+    harness.unmount();
+  });
+
+  it("pauses the queue truthfully when the next queued send would restart Claude", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError(RESTART_REFUSAL),
+    );
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "toolResult", toolId: "new", outputSummary: "done", isError: false },
+      ]),
+    );
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1));
+    await act(async () =>
+      harness.emitStatus(harness.turnIdOf(threadId, 0), 2, { kind: "exited", exitCode: 0 }),
+    );
+    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2));
+    await waitForReact(() =>
+      expect(harness.hook().deferredFollowUps.get(threadId)?.[0]?.state).toBe("paused"),
+    );
+
+    expect(
+      harness
+        .hook()
+        .deferredFollowUps.get(threadId)
+        ?.map((entry) => entry.request.prompt),
+    ).toEqual(["first"]);
+    const entryId = harness.hook().deferredFollowUps.get(threadId)?.[0]?.id ?? "";
+    const restartNotice = {
+      kind: "error",
+      message: DEFERRED_SESSION_RESTART_NOTICE,
+      action: { kind: "restartFollowUp", threadId, entryId },
+    };
+    expect(harness.notice()).toEqual(restartNotice);
+    expect(restartNotice.message).toBe(
+      "Queued messages are paused because sending the next one restarts Claude for this thread. Restarting ends this Claude session. Background tasks it started may stop.",
+    );
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    expect(harness.thread(threadId).turns.map((turn) => turn.status.kind)).not.toContain("failed");
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2);
+
+    act(() => harness.setNotice({ kind: "info", message: "unrelated", action: null }));
+    await act(async () => harness.hook().resumeDeferredFollowUps(threadId));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0]?.state).toBe("paused");
+    expect(harness.notice()).toEqual(restartNotice);
+
+    await act(async () => harness.hook().restartDeferredFollowUp(threadId, entryId));
+    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(3));
+    expect(harness.agent.startAgentTask.mock.calls[2]?.[0]).toMatchObject({
+      prompt: "first",
+      sessionRestart: "stopBackground",
+    });
+    await waitForReact(() => expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false));
+    await act(async () => harness.hook().restartDeferredFollowUp(threadId, entryId));
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(3);
+    harness.unmount();
+  });
+
+  it("asks before a queued send restarts Claude and starts exactly one turn once confirmed", async () => {
+    const inspectSessionRestart = vi.fn(async (): Promise<AgentSessionRestartVerdict> => "confirm");
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.startRunningThread();
+    await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" });
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await act(async () =>
+      appendBoundary(harness, threadId, 1, [
+        { kind: "toolResult", toolId: "new", outputSummary: "done", isError: false },
+      ]),
+    );
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1));
+    await act(async () =>
+      harness.emitStatus(harness.turnIdOf(threadId, 0), 2, { kind: "exited", exitCode: 0 }),
+    );
+    await waitForReact(() =>
+      expect(harness.hook().deferredFollowUps.get(threadId)?.[0]?.state).toBe("paused"),
+    );
+
+    expect(inspectSessionRestart).toHaveBeenCalledTimes(1);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.thread(threadId).turns).toHaveLength(1);
+    const entryId = harness.hook().deferredFollowUps.get(threadId)?.[0]?.id ?? "";
+    expect(harness.notice()).toEqual({
+      kind: "error",
+      message:
+        "Queued messages are paused because sending the next one restarts Claude for this thread. Restarting ends this Claude session. Background tasks it started may stop.",
+      action: { kind: "restartFollowUp", threadId, entryId },
+    });
+
+    await act(async () => harness.hook().restartDeferredFollowUp(threadId, entryId));
+    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(2));
+    await waitForReact(() => expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false));
+
+    expect(inspectSessionRestart).toHaveBeenCalledTimes(1);
+    expect(harness.startedRequests[1]).toMatchObject({
+      prompt: "first",
+      sessionRestart: "stopBackground",
+    });
+    expect(harness.thread(threadId).turns).toHaveLength(2);
+    expect(harness.thread(threadId).turns.map((turn) => turn.status.kind)).not.toContain("stopped");
     harness.unmount();
   });
 
@@ -3895,6 +4323,36 @@ describe("useAgentTurnDispatch steering", () => {
 
     expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
     expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
+    harness.unmount();
+  });
+
+  it("shows the stop notice and cancels the in-flight queued send when an interrupt stops the turn", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued" });
+    const entryId = harness.hook().deferredFollowUps.get(threadId)?.[0]?.id ?? "";
+    const gate = createDeferred<AgentTaskSteerResult>();
+    harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+    let sending: Promise<void> | null = null;
+    await act(async () => {
+      sending = harness.hook().sendDeferredFollowUpNow(threadId, entryId);
+    });
+    await waitForReact(() => expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(2));
+
+    await act(async () => harness.emitStatus(turnId, 2, { kind: "stopped" }));
+    await act(async () => {
+      gate.resolve(rejection("inputClosed"));
+      await sending;
+    });
+
+    expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0]?.state).toBe("paused");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(harness.startedRequests).toHaveLength(1);
     harness.unmount();
   });
 

@@ -22,6 +22,10 @@ import {
 } from "../../domain/agentThreadOrganization";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import type { AgentThreadCopyDetail, AgentThreadMenuCommand } from "./agentSidebarPresentation";
+import {
+  useAgentEndSessionCommand,
+  type AgentEndSessionConfirmationView,
+} from "./useAgentEndSessionCommand";
 import type {
   AgentProjectMenuCommand,
   AgentProjectMenuTarget,
@@ -56,6 +60,8 @@ export type AgentMenuCommandSurface = Pick<
   | "threads"
   | "togglePin"
   | "stop"
+  | "endSession"
+  | "inspectSessionBackground"
   | "archive"
   | "unarchive"
   | "remove"
@@ -84,6 +90,7 @@ export interface AgentThreadMenuCommands {
   handleProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
   handleThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
   handleThreadBulkCommand(command: AgentThreadBulkCommand): void;
+  readonly endSessionConfirmation: AgentEndSessionConfirmationView | null;
 }
 
 export function useAgentThreadMenuCommands({
@@ -99,6 +106,8 @@ export function useAgentThreadMenuCommands({
   startNewThread,
 }: AgentThreadMenuCommandOptions): AgentThreadMenuCommands {
   const threadViews = agents.threads;
+  const endSession = useAgentEndSessionCommand(agents, reportNotice);
+  const requestEndSession = endSession.request;
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -244,6 +253,9 @@ export function useAgentThreadMenuCommands({
         case "stop":
           void agents.stop(threadId);
           return;
+        case "endSession":
+          requestEndSession(threadId);
+          return;
         case "archive":
           void agents.archive(threadId);
           return;
@@ -274,7 +286,7 @@ export function useAgentThreadMenuCommands({
           return unsupportedThreadMenuCommand(command);
       }
     },
-    [agents, copyThreadDetail, groups, remove, startNewThread, threadViews],
+    [agents, copyThreadDetail, groups, remove, requestEndSession, startNewThread, threadViews],
   );
 
   const handleThreadBulkCommand = useCallback(
@@ -306,7 +318,12 @@ export function useAgentThreadMenuCommands({
     [agents, applyBulkAction, reportNotice, threadViews],
   );
 
-  return { handleProjectCommand, handleThreadBulkCommand, handleThreadMenuCommand };
+  return {
+    handleProjectCommand,
+    handleThreadBulkCommand,
+    handleThreadMenuCommand,
+    endSessionConfirmation: endSession.confirmation,
+  };
 }
 
 export function agentThreadBulkCandidates(

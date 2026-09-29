@@ -72,6 +72,7 @@ export interface AgentThreadContextMenuContext {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly canMarkUnread: boolean;
+  readonly claudeSession?: boolean;
   readonly moveUpId?: string;
   readonly moveDownId?: string;
   readonly now: number;
@@ -108,6 +109,9 @@ export function agentThreadContextMenu(
     );
   }
   if (context.running) nodes.push(item("stop", "Stop agent", "stop", command({ kind: "stop" })));
+  if (context.claudeSession === true && !context.running && !context.archived) {
+    nodes.push(item("endSession", "End Claude session", "stop", command({ kind: "endSession" })));
+  }
   nodes.push(
     separator("s1"),
     item("rename", "Rename thread", "rename", { kind: "rename" }),

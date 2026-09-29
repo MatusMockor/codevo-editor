@@ -1,5 +1,8 @@
+use crate::agent_task_spawner::claude_session_policy::ClaudeSessionEndReason;
+use crate::agent_task_spawner::claude_session_registry::ClaudeSessionRegistry;
 use crate::run_blocking_command;
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 #[path = "../agent_history_store/mod.rs"]
@@ -78,12 +81,23 @@ pub(crate) async fn read_agent_history_turns(
 pub(crate) async fn delete_agent_history_thread(
     request: HistoryThreadRequest,
     store: State<'_, Arc<AgentHistoryStore>>,
+    sessions: State<'_, Arc<ClaudeSessionRegistry>>,
 ) -> Result<(), String> {
     let store = Arc::clone(&store);
+    let sessions = Arc::clone(&sessions);
     run_blocking_command(move || {
-        store.delete(&request.root_key, &request.owner_id, &request.thread_id)
+        store.delete(&request.root_key, &request.owner_id, &request.thread_id)?;
+        end_deleted_thread_session(&sessions, &request.root_key, &request.thread_id);
+        Ok(())
     })
     .await
+}
+fn end_deleted_thread_session(sessions: &ClaudeSessionRegistry, root_key: &str, thread_id: &str) {
+    let root = std::fs::canonicalize(root_key).unwrap_or_else(|_| PathBuf::from(root_key));
+    if !root.is_absolute() {
+        return;
+    }
+    sessions.end_for_thread_under_root(thread_id, &root, ClaudeSessionEndReason::ThreadEnded);
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -133,3 +147,6 @@ pub(crate) async fn find_agent_history_import(
     })
     .await
 }
+#[cfg(all(test, unix))]
+#[path = "agent_history_commands_tests.rs"]
+mod tests;

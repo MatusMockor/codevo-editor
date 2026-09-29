@@ -1,7 +1,14 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { unsupportedAgentTurnChanges } from "../domain/agentTurnChanges";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
-import type { AgentThreadsSurface } from "./agentThreadPorts";
+import type {
+  AgentSessionBackgroundInspection,
+  AgentSessionEndResult,
+  AgentSessionRestartVerdict,
+  AgentThreadsSurface,
+} from "./agentThreadPorts";
+import { isRemoteAgentIdentity } from "./remoteAgentSurface";
 
 type Methods = {
   [
@@ -35,6 +42,13 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       refreshIsolationStatus: (...args) => current.current.refreshIsolationStatus(...args),
       startThread: (...args) => current.current.startThread(...args),
       sendFollowUp: (...args) => current.current.sendFollowUp(...args),
+      restartDeferredFollowUp: (threadId: string, id: string) => {
+        if (isRemoteAgentIdentity(threadId)) return Promise.resolve();
+        return current.current.restartDeferredFollowUp?.(threadId, id) ?? Promise.resolve();
+      },
+      followUpNeedsSessionRestart: (threadId: string) =>
+        !isRemoteAgentIdentity(threadId) &&
+        current.current.followUpNeedsSessionRestart?.(threadId) === true,
       hasUnconfirmedMessage: (threadId: string) =>
         current.current.hasUnconfirmedMessage?.(threadId) === true,
       discardUnconfirmedMessage: (threadId: string) =>
@@ -53,6 +67,27 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       ) => current.current.commitDeferredFollowUpEdit?.(session, commit) ?? Promise.resolve(false),
       importExternalSession: (...args) => current.current.importExternalSession(...args),
       stop: (...args) => current.current.stop(...args),
+      interrupt: (threadId: string) => {
+        if (isRemoteAgentIdentity(threadId)) return Promise.resolve(false);
+        return current.current.interrupt?.(threadId) ?? Promise.resolve(false);
+      },
+      endSession: (threadId: string): Promise<AgentSessionEndResult> => {
+        if (isRemoteAgentIdentity(threadId)) return Promise.resolve("none");
+        return current.current.endSession?.(threadId) ?? Promise.resolve("none");
+      },
+      inspectSessionBackground: (threadId: string): Promise<AgentSessionBackgroundInspection> => {
+        if (isRemoteAgentIdentity(threadId)) return Promise.resolve("none");
+        return current.current.inspectSessionBackground?.(threadId) ?? Promise.resolve("none");
+      },
+      inspectSessionRestart: (
+        threadId: string,
+        launch: AgentLaunchOptions,
+      ): Promise<AgentSessionRestartVerdict> => {
+        if (isRemoteAgentIdentity(threadId)) return Promise.resolve("proceed");
+        return (
+          current.current.inspectSessionRestart?.(threadId, launch) ?? Promise.resolve("proceed")
+        );
+      },
       togglePin: (...args) => current.current.togglePin(...args),
       archive: (...args) => current.current.archive(...args),
       unarchive: (threadId: string) => current.current.unarchive?.(threadId) ?? false,

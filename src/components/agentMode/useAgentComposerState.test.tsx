@@ -628,13 +628,337 @@ describe("useAgentComposerState", () => {
       current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: true });
     });
 
-    expect(sendFollowUp).toHaveBeenCalledWith({
-      threadId: "agt-1",
-      prompt: "Continue",
-      launch,
-      dangerousLaunchConfirmed: true,
-    });
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      {
+        threadId: "agt-1",
+        prompt: "Continue",
+        launch,
+        dangerousLaunchConfirmed: true,
+      },
+      "caller",
+    );
     expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("leaves the restart inspection to the send, then sends once with consent", async () => {
+    const refusal = restartRefusingSend();
+    const inspectSessionRestart = vi.fn(async () => "confirm" as const);
+    render(
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        sendFollowUp: refusal.sendFollowUp,
+        followUpNeedsSessionRestart: refusal.needsRestart,
+        inspectSessionRestart,
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Use the faster model"));
+    const launch = defaultAgentLaunchOptions("claudeCode");
+
+    await act(async () => {
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false });
+    });
+    expect(inspectSessionRestart).not.toHaveBeenCalled();
+    expect(refusal.sendFollowUp).toHaveBeenCalledTimes(1);
+    expect(current().composer.composerProps.prompt).toBe("Use the faster model");
+    expect(current().composer.composerProps.sessionRestartConfirmation).not.toBeNull();
+
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch,
+        dangerousLaunchConfirmed: false,
+        sessionRestartConfirmed: true,
+      });
+    });
+    expect(inspectSessionRestart).not.toHaveBeenCalled();
+    expect(refusal.sendFollowUp).toHaveBeenCalledTimes(2);
+    expect(refusal.sendFollowUp).toHaveBeenLastCalledWith(
+      {
+        threadId: "agt-1",
+        prompt: "Use the faster model",
+        launch,
+        dangerousLaunchConfirmed: false,
+        sessionRestart: "stopBackground",
+      },
+      "caller",
+    );
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+  });
+
+  it("sends without restart consent when the session can be reused", async () => {
+    const sendFollowUp = vi.fn(async () => true);
+    render(
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        sendFollowUp,
+        followUpNeedsSessionRestart: () => false,
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Continue"));
+    const launch = defaultAgentLaunchOptions("claudeCode");
+
+    await act(async () => {
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false });
+    });
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      {
+        threadId: "agt-1",
+        prompt: "Continue",
+        launch,
+        dangerousLaunchConfirmed: false,
+      },
+      "caller",
+    );
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+  });
+
+  it("cancelling the restart question keeps the prompt and sends nothing more", async () => {
+    const refusal = restartRefusingSend();
+    render(
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        sendFollowUp: refusal.sendFollowUp,
+        followUpNeedsSessionRestart: refusal.needsRestart,
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Switch models"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    act(() => current().composer.composerProps.sessionRestartConfirmation?.onCancel());
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+    expect(current().composer.composerProps.prompt).toBe("Switch models");
+    expect(refusal.sendFollowUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a restart refusal that arrives after the selected thread changed", async () => {
+    let refused = false;
+    let answer: (sent: boolean) => void = () => undefined;
+    const sendFollowUp = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const base = surfaceThreadView();
+    const other = surfaceThreadView({ thread: { ...base.thread, threadId: "agt-2" } });
+    render(
+      threadsSurfaceFixture({
+        threads: [base, other],
+        sendFollowUp,
+        followUpNeedsSessionRestart: (threadId: string) => refused && threadId === "agt-1",
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Late verdict"));
+    act(() => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    act(() => current().navigation.selectThread("agt-2"));
+    refused = true;
+    await act(async () => answer(false));
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+    expect(current().composer.composerProps.prompt).toBe("Late verdict");
+  });
+
+  it("keeps the last prompted launch when a background turn followed it", () => {
+    const base = surfaceThreadView();
+    const planLaunch: AgentLaunchOptions = {
+      ...defaultAgentLaunchOptions("claudeCode"),
+      mode: "plan",
+    } as AgentLaunchOptions;
+    const settled = (overrides: Partial<AgentTurn>): AgentTurn => ({
+      turnId: "agt-1-t1",
+      prompt: "Plan the refactor",
+      status: { kind: "exited", exitCode: 0 },
+      startedAtEpochMs: 1_700_000_000_000,
+      endedAtEpochMs: 1_700_000_000_500,
+      events: [],
+      eventsTruncated: false,
+      lastStatusSequence: 1,
+      lastOutputSequence: 0,
+      launch: planLaunch,
+      cliVersion: null,
+      ...overrides,
+    });
+    const view = surfaceThreadView({
+      thread: {
+        ...base.thread,
+        turns: [
+          settled({}),
+          settled({
+            turnId: "agt-1-t2",
+            origin: "background",
+            prompt: "Claude continued after background work finished",
+            launch: null,
+          }),
+        ],
+      },
+    });
+    render(threadsSurfaceFixture({ threads: [view], lastUsedLaunch: () => null }));
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.launch).toMatchObject({ mode: "plan" });
+  });
+
+  it("asks for restart consent when the backend refuses the send, keeping the prompt", async () => {
+    let refused = false;
+    const sendFollowUp = vi.fn(async () => {
+      refused = true;
+      return false;
+    });
+    render(
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        sendFollowUp,
+        inspectSessionRestart: async () => "proceed" as const,
+        followUpNeedsSessionRestart: (threadId: string) => refused && threadId === "agt-1",
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Use the faster model"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    expect(sendFollowUp).toHaveBeenCalledTimes(1);
+    expect(sendFollowUp).toHaveBeenLastCalledWith(expect.anything(), "caller");
+    expect(current().composer.composerProps.prompt).toBe("Use the faster model");
+    expect(current().composer.composerProps.sessionRestartConfirmation).not.toBeNull();
+  });
+
+  it("owns the consent of its own refused send and sends it once however often it is confirmed", async () => {
+    let refused = false;
+    const sendFollowUp = vi.fn<AgentThreadsSurface["sendFollowUp"]>(async (request) => {
+      if (request.sessionRestart === "stopBackground") return true;
+      refused = true;
+      return false;
+    });
+    render(
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        sendFollowUp,
+        inspectSessionRestart: async () => "proceed" as const,
+        followUpNeedsSessionRestart: (threadId: string) => refused && threadId === "agt-1",
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Use the faster model"));
+    const launch = defaultAgentLaunchOptions("claudeCode");
+    await act(async () => {
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false });
+    });
+    const confirmation = current().composer.composerProps.sessionRestartConfirmation;
+    expect(confirmation).toMatchObject({ resend: { kind: "draft" } });
+
+    const confirm = () =>
+      act(async () => {
+        current().composer.composerProps.onSubmit({
+          launch,
+          dangerousLaunchConfirmed: false,
+          sessionRestartConfirmed: true,
+        });
+      });
+    await confirm();
+    await confirm();
+
+    expect(sendFollowUp).toHaveBeenCalledTimes(2);
+    expect(sendFollowUp.mock.calls.map(([request]) => request.sessionRestart)).toEqual([
+      undefined,
+      "stopBackground",
+    ]);
+    expect(sendFollowUp.mock.calls.every(([, consent]) => consent === "caller")).toBe(true);
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+    expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("clears a pending restart question when the prompt, launch or thread changes", async () => {
+    const refusal = restartRefusingSend();
+    const base = surfaceThreadView();
+    const other = surfaceThreadView({ thread: { ...base.thread, threadId: "agt-2" } });
+    render(
+      threadsSurfaceFixture({
+        threads: [base, other],
+        sendFollowUp: refusal.sendFollowUp,
+        followUpNeedsSessionRestart: refusal.needsRestart,
+      }),
+    );
+    const ask = async () => {
+      act(() => current().composer.composerProps.onPromptChange("Switch models"));
+      await act(async () => {
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        });
+      });
+      expect(current().composer.composerProps.sessionRestartConfirmation).not.toBeNull();
+    };
+    act(() => current().navigation.selectThread("agt-1"));
+
+    await ask();
+    act(() => current().composer.composerProps.onPromptChange("Switch models now"));
+    act(() => current().composer.composerProps.onPromptChange("Switch models"));
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+
+    await ask();
+    act(() =>
+      current().composer.composerProps.onLaunchChange({
+        ...current().composer.composerProps.launch,
+        mode: "plan",
+      } as AgentLaunchOptions),
+    );
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+
+    await ask();
+    act(() => current().navigation.selectThread("agt-2"));
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+  });
+
+  it("clears a pending restart question when a fresh send is not refused", async () => {
+    let refused = false;
+    const sendFollowUp = vi
+      .fn<AgentThreadsSurface["sendFollowUp"]>()
+      .mockImplementationOnce(async () => {
+        refused = true;
+        return false;
+      })
+      .mockImplementationOnce(async () => {
+        refused = false;
+        return false;
+      });
+    render(
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        sendFollowUp,
+        followUpNeedsSessionRestart: (threadId: string) => refused && threadId === "agt-1",
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Switch models"));
+    const submit = async () =>
+      act(async () => {
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        });
+      });
+    await submit();
+    expect(current().composer.composerProps.sessionRestartConfirmation).not.toBeNull();
+    await submit();
+    expect(sendFollowUp).toHaveBeenCalledTimes(2);
+    expect(current().composer.composerProps.sessionRestartConfirmation).toBeNull();
+    expect(current().composer.composerProps.prompt).toBe("Switch models");
   });
 
   it("steers the running Claude turn instead of blocking the composer", async () => {
@@ -677,7 +1001,10 @@ describe("useAgentComposerState", () => {
 
     act(() => current().composer.composerProps.onStop?.());
     expect(stop).not.toHaveBeenCalled();
-    expect(current().composer.composerProps.stopConfirmation?.liveTaskCount).toBe(1);
+    expect(current().composer.composerProps.stopConfirmation).toMatchObject({
+      kind: "confirmBackground",
+      liveTaskCount: 1,
+    });
 
     act(() => current().composer.composerProps.onStop?.());
     expect(stop).toHaveBeenCalledWith("agt-1");
@@ -694,7 +1021,10 @@ describe("useAgentComposerState", () => {
     );
     act(() => current().navigation.selectThread("agt-1"));
     act(() => current().composer.composerProps.onStop?.());
-    expect(current().composer.composerProps.stopConfirmation?.liveTaskCount).toBe(1);
+    expect(current().composer.composerProps.stopConfirmation).toMatchObject({
+      kind: "confirmBackground",
+      liveTaskCount: 1,
+    });
 
     act(() => current().navigation.selectThread("agt-2"));
     expect(current().composer.composerProps.stopConfirmation).toBeNull();
@@ -703,7 +1033,65 @@ describe("useAgentComposerState", () => {
 
     act(() => current().composer.composerProps.onStop?.());
     expect(stop).not.toHaveBeenCalled();
-    expect(current().composer.composerProps.stopConfirmation?.liveTaskCount).toBe(1);
+    expect(current().composer.composerProps.stopConfirmation).toMatchObject({
+      kind: "confirmBackground",
+      liveTaskCount: 1,
+    });
+  });
+
+  it("interrupts a running Claude foreground first and stops everything on the second press", async () => {
+    const stop = vi.fn(async () => undefined);
+    const interrupt = vi.fn(async () => true);
+    render(threadsSurfaceFixture({ threads: [steerableThreadView()], stop, interrupt }));
+    act(() => current().navigation.selectThread("agt-1"));
+    await act(async () => current().composer.composerProps.onStop?.());
+    expect(interrupt).toHaveBeenCalledWith("agt-1");
+    expect(stop).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.stopConfirmation?.kind).toBe("interrupting");
+    await act(async () => current().composer.composerProps.onStop?.());
+    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(current().composer.composerProps.stopConfirmation).toBeNull();
+  });
+
+  it("drops the interrupting state once the interrupted turn is no longer the running turn", async () => {
+    const stop = vi.fn(async () => undefined);
+    const interrupt = vi.fn(async () => true);
+    const first = steerableThreadView();
+    render(threadsSurfaceFixture({ threads: [first], stop, interrupt }));
+    act(() => current().navigation.selectThread("agt-1"));
+    await act(async () => current().composer.composerProps.onStop?.());
+    expect(current().composer.composerProps.stopConfirmation?.kind).toBe("interrupting");
+    const [interrupted] = first.thread.turns;
+    expect(interrupted).toBeDefined();
+    const next: AgentThreadView = {
+      ...first,
+      thread: {
+        ...first.thread,
+        turns: [
+          { ...interrupted!, status: { kind: "stopped" }, endedAtEpochMs: 1_700_000_000_500 },
+          { ...interrupted!, turnId: "agt-1-t2", prompt: "Queued follow-up" },
+        ],
+      },
+    };
+    render(threadsSurfaceFixture({ threads: [next], stop, interrupt }));
+    expect(current().composer.composerProps.running).toBe(true);
+    expect(current().composer.composerProps.stopConfirmation).toBeNull();
+    await act(async () => current().composer.composerProps.onStop?.());
+    expect(stop).not.toHaveBeenCalled();
+    expect(interrupt).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops everything after the interrupting banner was dismissed", async () => {
+    const stop = vi.fn(async () => undefined);
+    const interrupt = vi.fn(async () => true);
+    render(threadsSurfaceFixture({ threads: [steerableThreadView()], stop, interrupt }));
+    act(() => current().navigation.selectThread("agt-1"));
+    await act(async () => current().composer.composerProps.onStop?.());
+    act(() => current().composer.composerProps.stopConfirmation?.onCancel());
+    expect(current().composer.composerProps.stopConfirmation).toBeNull();
+    await act(async () => current().composer.composerProps.onStop?.());
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledWith("agt-1");
   });
 
   it("stops at once from the explicit stop-everything action", () => {
@@ -1050,12 +1438,15 @@ describe("useAgentComposerState", () => {
     await act(async () =>
       current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false }),
     );
-    expect(sendFollowUp).toHaveBeenCalledWith({
-      threadId: "agt-1",
-      prompt: "Continue on the server",
-      launch,
-      dangerousLaunchConfirmed: false,
-    });
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      {
+        threadId: "agt-1",
+        prompt: "Continue on the server",
+        launch,
+        dangerousLaunchConfirmed: false,
+      },
+      "caller",
+    );
   });
 
   it("keeps new server conversations in worktrees even when their project is the active tab", async () => {
@@ -1948,6 +2339,7 @@ describe("useAgentComposerState", () => {
     expect(commit).not.toHaveBeenCalled();
     expect(sendFollowUp).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: "thread-b", prompt: "b draft" }),
+      "caller",
     );
 
     act(() => current().navigation.selectThread("thread-a"));
@@ -2051,6 +2443,18 @@ describe("useAgentComposerState", () => {
     );
   }
 });
+
+function restartRefusingSend() {
+  let refused = false;
+  const sendFollowUp = vi.fn<AgentThreadsSurface["sendFollowUp"]>(async (request) => {
+    refused = request.sessionRestart !== "stopBackground";
+    return !refused;
+  });
+  return {
+    sendFollowUp,
+    needsRestart: (threadId: string): boolean => refused && threadId === "agt-1",
+  };
+}
 
 function steerableThreadView(provider: AgentCliKind = "claudeCode"): AgentThreadView {
   const base = surfaceThreadView();

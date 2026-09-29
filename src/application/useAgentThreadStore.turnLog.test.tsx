@@ -5,8 +5,10 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentRootOwnerId, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentTaskStatusEvent } from "../domain/agentTask";
+import { agentBackgroundTurn, parseAgentBackgroundTurn } from "../domain/agentBackgroundTurn";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
+  parseAgentThread,
   serializeAgentThread,
   type AgentThread,
   type AgentTurn,
@@ -699,6 +701,62 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     await settle();
     expect(harness.seams).toContain(`closeTurn:${TURN_ID}`);
     expect(harness.turnLog.writer.status(TURN_ID)).toBeNull();
+    harness.unmount();
+  });
+
+  it("logs, seals and saves a background turn at once without an origin on the wire", async () => {
+    const harness = renderStore();
+    await settle();
+    const settled = turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 20 });
+    act(() =>
+      harness
+        .hook()
+        .dispatchAction({ kind: "threadCreated", thread: thread({ turns: [settled] }) }),
+    );
+    await settle();
+    const savesBefore = harness.saved.length;
+    const background = agentBackgroundTurn(
+      "agt-bg-0001",
+      parseAgentBackgroundTurn({
+        output: `${JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: { content: [{ type: "text", text: "background-finished" }] },
+        })}\n`,
+        truncated: true,
+        complete: true,
+      }),
+      60,
+    );
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "backgroundTurnRecorded",
+        threadId: THREAD_ID,
+        workspaceId: OWNER_ID,
+        turn: background,
+      }),
+    );
+    await settle();
+    await settle();
+
+    expect(harness.seams).toEqual([
+      "openTurn:agt-bg-0001",
+      "recordEvents:agt-bg-0001:1",
+      "reportLoss:agt-bg-0001:supervisorGap",
+      "sealTurn:agt-bg-0001",
+    ]);
+    expect(harness.logGateway.opens[0]?.prompt).toBeNull();
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "none" });
+    const sealed = lastAppend(harness.logGateway.appends);
+    expect(sealed?.seal).toBe(true);
+    expect(sealed?.loss).toEqual({ kind: "supervisorGap" });
+    expect(sealed?.ops.map((entry) => entry.event)).toEqual([say("background-finished")]);
+    expect(harness.saved.length).toBeGreaterThan(savesBefore);
+    const saved = harness.saved[harness.saved.length - 1]?.thread;
+    expect(saved?.turns.map((candidate) => candidate.origin)).toEqual([undefined, "background"]);
+    const wire = JSON.stringify(serializeAgentThread(saved as AgentThread));
+    expect(wire).not.toContain('"origin"');
+    expect(parseAgentThread(JSON.parse(wire)).turns[1]?.origin).toBe("background");
     harness.unmount();
   });
 

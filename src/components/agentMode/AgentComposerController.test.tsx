@@ -15,7 +15,6 @@ const submission: AgentComposerSubmission = {
 
 vi.mock("./useAgentComposerState", () => ({
   useAgentComposerPromptState: () => ({}),
-  WITHOUT_COMPOSER_ATTACHMENTS: { attachments: false },
 }));
 
 vi.mock("./AgentComposer", () => ({
@@ -81,7 +80,7 @@ describe("AgentComposerController context compaction", () => {
       host.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
     );
 
-    expect(submit).toHaveBeenCalledWith("/compact", submission, { attachments: false });
+    expect(submit).toHaveBeenCalledWith("/compact", submission, "compaction");
     act(() => root.unmount());
     host.remove();
   });

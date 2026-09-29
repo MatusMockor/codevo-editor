@@ -70,6 +70,8 @@ import {
 } from "./AgentStopConfirmationBanner";
 import { AgentComposerDrawerStart } from "./AgentComposerDrawerStart";
 import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
+import { AgentSessionRestartBanner } from "./AgentSessionRestartBanner";
+import type { AgentSessionRestartConfirmation } from "./useAgentSessionRestartConsent";
 import { IconButton } from "../../ui/foundation/IconButton";
 import { AgentComposerApprovalPanel } from "./composer/AgentComposerApprovalPanel";
 import type { AgentComposerInteraction } from "./composer/agentComposerInteraction";
@@ -100,7 +102,14 @@ export interface AgentComposerSubmission {
   readonly delivery?: "queued" | "immediate";
   readonly launch: AgentLaunchOptions;
   readonly dangerousLaunchConfirmed: boolean;
+  readonly sessionRestartConfirmed?: boolean;
 }
+
+export type AgentComposerSubmitSource = "draft" | "compaction";
+
+type SessionRestartConsent = Pick<AgentComposerSubmission, "sessionRestartConfirmed">;
+
+const SESSION_RESTART_CONFIRMED: SessionRestartConsent = { sessionRestartConfirmed: true };
 
 export interface AgentComposerProps {
   readonly followUpBehavior?: AgentFollowUpBehavior;
@@ -147,6 +156,7 @@ export interface AgentComposerProps {
   onStop?(): void;
   onStopNow?(): void;
   readonly stopConfirmation?: AgentStopConfirmationView | null;
+  readonly sessionRestartConfirmation?: AgentSessionRestartConfirmation | null;
   onRecoverDraft?(): "started" | "unavailable" | "draftTooLarge";
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void | Promise<boolean>;
@@ -191,6 +201,7 @@ export function AgentComposer({
   onStop,
   onStopNow,
   stopConfirmation = null,
+  sessionRestartConfirmation = null,
   onRecoverDraft,
   onSubmit,
   onCompactContext,
@@ -460,26 +471,26 @@ export function AgentComposer({
       onWorktreeBaseChange,
     ],
   );
+  const compactContext = (submission: AgentComposerSubmission): void => {
+    if (compactionBlocked || onCompactContext === undefined) return;
+    const submittedAuthority = promptAuthorityRef.current;
+    const submittedPrompt = prompt;
+    const compaction = onCompactContext(submission);
+    void Promise.resolve(compaction).then((accepted) => {
+      if (accepted === false || submittedAuthority === null) return;
+      if (promptAuthorityRef.current !== submittedAuthority) return;
+      // A suggestion can compact while an unrelated draft is already being written.
+      if (submittedPrompt.trim() !== "/compact") return;
+      changePrompt("");
+    });
+  };
   const chooseCommand = (command: AgentComposerCommandId, submitCommand: boolean): void => {
     if (command === "compact") {
       if (!submitCommand) {
         changePrompt("/compact ");
         return;
       }
-      if (compactionBlocked || onCompactContext === undefined) return;
-      const submittedAuthority = promptAuthorityRef.current;
-      const submittedPrompt = prompt;
-      const compaction = onCompactContext({
-        launch: effectiveLaunch,
-        dangerousLaunchConfirmed: dangerousLaunch,
-      });
-      void Promise.resolve(compaction).then((accepted) => {
-        if (accepted === false || submittedAuthority === null) return;
-        if (promptAuthorityRef.current !== submittedAuthority) return;
-        // A suggestion can compact while an unrelated draft is already being written.
-        if (submittedPrompt.trim() !== "/compact") return;
-        changePrompt("");
-      });
+      compactContext({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
       return;
     }
     if (command === "settings") {
@@ -528,7 +539,7 @@ export function AgentComposer({
       commands.exactCommand !== "compact" &&
       (commands.exactCommand === "new" || !allProvidersDisabled));
 
-  const dispatch = (alternate = false): void => {
+  const dispatch = (alternate = false, consent: SessionRestartConsent = {}): void => {
     if (editingQueued) {
       if (alternate) return;
       onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
@@ -540,15 +551,30 @@ export function AgentComposer({
       launch: effectiveLaunch,
       dangerousLaunchConfirmed: dangerousLaunch,
       ...(steering ? { delivery: queue ? ("queued" as const) : ("immediate" as const) } : {}),
+      ...consent,
     });
+  };
+
+  const submitGated = (consent: SessionRestartConsent = {}): void => {
+    if (interactionActive) return;
+    if (commands.interceptSubmit()) return;
+    if (blocked) return;
+    dispatch(false, consent);
+  };
+
+  const confirmSessionRestart = (): void => {
+    const resend = sessionRestartConfirmation?.resend;
+    if (resend === undefined) return;
+    if (resend.kind === "compaction") {
+      compactContext({ ...resend.submission, ...SESSION_RESTART_CONFIRMED });
+      return;
+    }
+    submitGated(SESSION_RESTART_CONFIRMED);
   };
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    if (interactionActive) return;
-    if (commands.interceptSubmit()) return;
-    if (blocked) return;
-    dispatch();
+    submitGated();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -770,6 +796,10 @@ export function AgentComposer({
             confirmation={stopConfirmation}
             onConfirm={onStopNow}
             onFocusReturn={focusPrompt}
+          />
+          <AgentSessionRestartBanner
+            confirmation={sessionRestartConfirmation}
+            onConfirm={confirmSessionRestart}
           />
           <AgentComposerCompactionBanner
             available={

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
+import {
+  AGENT_BACKGROUND_TURN_LABEL,
+  AGENT_UNPROMPTED_TURN_LABEL,
+} from "../../domain/agentTurnOrigin";
 import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
 import { agentImportedTurns } from "./agentImportedPresentation";
 import { agentThreadColumnKey } from "./agentThreadColumn";
@@ -57,6 +61,31 @@ describe("agent thread minimap presentation", () => {
     expect(model.entries.map((entry) => entry.preview)).not.toContain(
       expect.stringContaining("aa.png"),
     );
+  });
+
+  it("never counts or shows a background turn as a prompt", () => {
+    const background: AgentTurn = {
+      ...turn("bg1", AGENT_BACKGROUND_TURN_LABEL, SETTLED),
+      origin: "background",
+    };
+    const unprompted: AgentTurn = {
+      ...turn("bg2", AGENT_UNPROMPTED_TURN_LABEL, SETTLED),
+      origin: "background",
+    };
+    const [first, second] = thread(["start the build", "check the result"]);
+    const model = agentThreadMinimapModel([], [first, background, second, unprompted]);
+
+    expect(model.turnCount).toBe(2);
+    expect(model.entries.map((entry) => entry.name)).toEqual([
+      "Turn 1 of 2: start the build",
+      "Turn 2 of 2: check the result",
+    ]);
+    expect(model.entries.map((entry) => entry.preview).join(" ")).not.toContain("Claude");
+    const backgroundKey = agentThreadColumnKey({ scope: "turn", turnId: "bg1" });
+    const unpromptedKey = agentThreadColumnKey({ scope: "turn", turnId: "bg2" });
+    expect(agentMinimapEntryIndex(model, backgroundKey)).toBe(0);
+    expect(agentMinimapEntryIndex(model, unpromptedKey)).toBe(1);
+    expect(agentThreadMinimapModel([], [background, unprompted])).toBe(EMPTY_AGENT_MINIMAP);
   });
 
   it("returns the shared empty model for a thread with no turns", () => {

@@ -15,6 +15,10 @@ import type {
 } from "../../domain/agentThread";
 import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
 import { findInThread } from "../../domain/agentThreadSearch";
+import {
+  AGENT_BACKGROUND_TURN_LABEL,
+  AGENT_UNPROMPTED_TURN_LABEL,
+} from "../../domain/agentTurnOrigin";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
@@ -140,6 +144,44 @@ describe("agent thread turns", () => {
     expect(turns[0]?.parentElement?.className).toBe("agent-turn-list");
     expect(promptTexts()).toEqual(["First question", "Second question"]);
     expect(declaration(".agent-answer", "gap")).toBe("var(--cv-space-2)");
+  });
+
+  it("labels a background turn instead of showing a user prompt bubble", () => {
+    const background: AgentTurn = {
+      ...turn("t2", AGENT_BACKGROUND_TURN_LABEL, SETTLED, [text("background-finished")]),
+      origin: "background",
+    };
+    render({
+      thread: threadView([turn("t1", "Start the build", SETTLED, [text("started")]), background]),
+    });
+
+    const turns = [...host.querySelectorAll<HTMLElement>(".agent-turn")];
+    expect(turns).toHaveLength(2);
+    expect(promptTexts()).toEqual(["Start the build"]);
+    const second = turns[1];
+    expect(second?.querySelector(".agent-prompt")).toBeNull();
+    expect(second?.querySelector("button")?.getAttribute("aria-label") ?? "").not.toContain(
+      "your message",
+    );
+    const label = second?.querySelector<HTMLElement>("[data-agent-turn-origin='background']");
+    expect(label?.textContent).toBe("Claude continued after background work finished");
+    expect(second?.querySelector(".agent-answer")?.textContent).toContain("background-finished");
+  });
+
+  it("labels an unprompted turn that did not follow background work by what happened", () => {
+    const unprompted: AgentTurn = {
+      ...turn("t2", AGENT_UNPROMPTED_TURN_LABEL, SETTLED, [text("unprompted reply")]),
+      origin: "background",
+    };
+    render({
+      thread: threadView([turn("t1", "Start the build", SETTLED, [text("started")]), unprompted]),
+    });
+
+    const second = host.querySelectorAll<HTMLElement>(".agent-turn")[1];
+    expect(promptTexts()).toEqual(["Start the build"]);
+    expect(second?.querySelector(".agent-prompt")).toBeNull();
+    const label = second?.querySelector<HTMLElement>("[data-agent-turn-origin='background']");
+    expect(label?.textContent).toBe("Claude replied without a new message");
   });
 
   it("caps the prompt bubble at 80% of the column and pins it to the right edge", () => {

@@ -1,7 +1,7 @@
 import { HEAD_WORKTREE_BASE } from "../domain/agentWorktreeBase";
 import { createAgentOutputAcknowledgement } from "./agentOutputAcknowledgement";
 import type { CodexTransport } from "../domain/agentProviderSettings";
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import {
   isTerminalAgentTaskStatus,
@@ -29,13 +29,20 @@ import {
 } from "./agentProjectAuthority";
 import type {
   AgentFollowUpRequest,
+  AgentFollowUpRestartConsent,
   AgentSteerOutcome,
   AgentSteerRequest,
-  AgentTasksNotice,
   AgentThreadStartRequest,
   AgentThreadStartResult,
 } from "./agentThreadPorts";
-import type { AgentResumePlan } from "../domain/agentSessionIdentity";
+import { resumePlanSessionId } from "../domain/agentSessionIdentity";
+import { FollowUpRestartRefusals } from "./agentSessionRestartConsent";
+import {
+  inspectFollowUpRestart,
+  refuseFollowUpBeforeStart,
+  useAgentFollowUpRestart,
+  type AgentSessionRestartInspector,
+} from "./useAgentFollowUpRestart";
 import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import { useAgentTurnSteer } from "./useAgentTurnSteer";
@@ -52,15 +59,12 @@ import {
 } from "./agentTurnAdmission";
 import {
   acceptAgentTurnOutput,
-  agentSessionLost,
   createAgentTurnOutputStream,
   drainAgentAccountUsage,
   domainAgentOutputParser,
   drainAgentTurnOutput,
   finishAgentTurnOutput,
-  resumeRejected,
   scheduleAgentOutputFrame,
-  sessionChangeNotice,
   type AgentOutputParserPort,
   type AgentTurnOutputStream,
 } from "./agentTurnOutputStream";
@@ -88,12 +92,12 @@ import {
   createAgentSessionContinuity,
   type AgentSessionContinuity,
 } from "./agentSessionContinuity";
+import { rememberAttachmentReservation } from "./agentTurnDispatchPolicy";
 import {
-  AGENT_RESUME_REJECTED_NOTICE,
-  AGENT_SESSION_LOST_NOTICE,
-  agentFreshSessionNotice,
-  rememberAttachmentReservation,
-} from "./agentTurnDispatchPolicy";
+  followUpStartedNotice,
+  noteResumeFailure,
+  noteSessionReport,
+} from "./agentTurnSessionReports";
 
 export {
   agentPromptByteLength,
@@ -104,6 +108,7 @@ export {
 export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
   readonly hasPendingThreadInput?: (threadId: string) => Promise<boolean>;
+  readonly inspectSessionRestart?: AgentSessionRestartInspector;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly preflightInPlace: (
@@ -126,7 +131,13 @@ export interface AgentTurnDispatchSurface {
   readonly dispatchingKeys: ReadonlySet<string>;
   pendingTurnCount(provider: AgentCliKind): number;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
-  sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
+  sendFollowUp(
+    request: AgentFollowUpRequest,
+    restartConsent?: AgentFollowUpRestartConsent,
+  ): Promise<boolean>;
+  followUpNeedsSessionRestart(threadId: string): boolean;
+  resumeSessionIdFor(thread: AgentThread): string | null;
+  mintUnreservedTurnId(): string | null;
   readonly deferredFollowUps: DeferredFollowUps;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
@@ -138,6 +149,7 @@ export interface AgentTurnDispatchSurface {
   ): Promise<boolean>;
   sendDeferredFollowUpNow(threadId: string, id: string): Promise<void>;
   resumeDeferredFollowUps(threadId: string): Promise<void>;
+  restartDeferredFollowUp(threadId: string, id: string): Promise<void>;
   clearDeferredForOwner(ownerId: string): void;
   stop(threadId: string): Promise<void>;
   hasLiveTasksForOwner(ownerId: string): boolean;
@@ -157,6 +169,7 @@ export function useAgentTurnDispatch(
   const preparingThreadsRef = useRef<Set<string>>(new Set());
   const streamsRef = useRef<Map<string, AgentTurnOutputStream>>(new Map());
   const mintedIdsRef = useRef(new Set<string>());
+  const [restartRefusals] = useState(() => new FollowUpRestartRefusals());
   const sessionContinuityRef = useRef<AgentSessionContinuity>(createAgentSessionContinuity());
   const startContextRef = useRef<AgentTurnStartContext>({
     dependenciesRef,
@@ -179,6 +192,21 @@ export function useAgentTurnDispatch(
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
   });
+
+  const resumeSessionIdFor = useCallback(
+    (thread: AgentThread): string | null =>
+      resumePlanSessionId(sessionContinuityRef.current.resumePlan(thread)),
+    [],
+  );
+
+  const mintUnreservedTurnId = useCallback((): string | null => {
+    const deps = dependenciesRef.current;
+    const state = deps.store.currentState();
+    return mintUnusedId(
+      deps,
+      new Set([...state.threads.keys(), ...usedTurnIds(state), ...mintedIdsRef.current]),
+    );
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -238,6 +266,7 @@ export function useAgentTurnDispatch(
     commitDeferredFollowUpEdit,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
+    restartDeferredFollowUp,
     onTurnSettled,
     onThreadStopped,
     clearDeferredForOwner,
@@ -246,6 +275,7 @@ export function useAgentTurnDispatch(
     dependenciesRef,
     mountedRef,
     sendFollowUpRef,
+    needsRestart: restartRefusals.refused,
     flushStreams,
   });
 
@@ -680,6 +710,7 @@ export function useAgentTurnDispatch(
       isCurrent: () => boolean = () => true,
       claimed?: ClaimedTurnAttachments,
     ): Promise<boolean> => {
+      restartRefusals.forget(request.threadId);
       let deps = dependenciesRef.current;
       const candidate = deps.store.state.threads.get(request.threadId);
       if (
@@ -719,7 +750,7 @@ export function useAgentTurnDispatch(
         resumePlan,
         launch,
       } = admitted;
-      const resumeSessionId = resumePlan.kind === "resume" ? resumePlan.sessionId : null;
+      const resumeSessionId = resumePlanSessionId(resumePlan);
       const repositoryRoot = thread.owner.repositoryRoot;
       if (previousOwnerId !== thread.owner.ownerId) {
         deps.store.dispatchAction({
@@ -748,15 +779,24 @@ export function useAgentTurnDispatch(
       mintedIdsRef.current.add(turnId);
       inFlightThreadsRef.current.add(reboundThread.threadId);
       beginPendingTurn(reboundThread.provider.kind);
+      const stillCurrent = (): boolean =>
+        isCurrent() &&
+        isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) &&
+        providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority);
       try {
-        const flushed = await deps.store.flushThread?.(reboundThread.threadId);
-        if (
-          flushed === false ||
-          !isCurrent() ||
-          !isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) ||
-          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
-        )
+        const [flushed, verdict] = await Promise.all([
+          deps.store.flushThread?.(reboundThread.threadId),
+          inspectFollowUpRestart(deps, reboundThread, { ...request, launch }),
+        ]);
+        if (flushed === false || !stillCurrent()) return false;
+        if (verdict === "confirm") {
+          refuseFollowUpBeforeStart(
+            dependenciesRef.current,
+            restartRefusals,
+            reboundThread.threadId,
+          );
           return false;
+        }
         const prepared =
           claimed ??
           (await prepareTurnAttachments(
@@ -775,14 +815,7 @@ export function useAgentTurnDispatch(
             reboundThread.threadId,
             prompt,
           ));
-        if (
-          prepared === null ||
-          !isCurrent() ||
-          !isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) ||
-          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
-        ) {
-          return false;
-        }
+        if (prepared === null || !stillCurrent()) return false;
         const followedUp = await runTurnStart({
           isCurrent,
           startedNotice: followUpStartedNotice(resumePlan, prepared.notice),
@@ -802,8 +835,14 @@ export function useAgentTurnDispatch(
           providerAuthority,
           resumeSessionId,
           launch,
+          ...(request.sessionRestart === undefined
+            ? {}
+            : { sessionRestart: request.sessionRestart }),
           createdWorktree: null,
           registration: "before-start",
+          onSessionRestartRefused: () => {
+            if (isCurrent()) restartRefusals.refuse(reboundThread.threadId, turnId);
+          },
           register: (turn) => {
             registerStream(reboundThread, turn.turnId, resumeSessionId, turn.codexTransport);
             dependenciesRef.current.store.dispatchAction({
@@ -827,6 +866,7 @@ export function useAgentTurnDispatch(
       endPendingTurn,
       registerStream,
       releaseDispatch,
+      restartRefusals,
       runTurnStart,
     ],
   );
@@ -834,6 +874,13 @@ export function useAgentTurnDispatch(
   useLayoutEffect(() => {
     sendFollowUpRef.current = sendFollowUp;
   }, [sendFollowUp]);
+
+  const followUpRestart = useAgentFollowUpRestart({
+    dependenciesRef,
+    refusals: restartRefusals,
+    sendFollowUp,
+    restartDeferredFollowUp,
+  });
 
   const stop = useCallback(
     async (threadId: string): Promise<void> => {
@@ -897,7 +944,10 @@ export function useAgentTurnDispatch(
     dispatchingKeys: dispatchKeys.keys,
     pendingTurnCount,
     startThread,
-    sendFollowUp,
+    sendFollowUp: followUpRestart.sendFollowUp,
+    followUpNeedsSessionRestart: restartRefusals.refused,
+    resumeSessionIdFor,
+    mintUnreservedTurnId,
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
@@ -906,6 +956,7 @@ export function useAgentTurnDispatch(
     commitDeferredFollowUpEdit,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
+    restartDeferredFollowUp: followUpRestart.restartDeferredFollowUp,
     clearDeferredForOwner,
     stop,
     hasLiveTasksForOwner,
@@ -963,71 +1014,4 @@ function statusEventMatchesStream(
 
 function markOutputStreamsIncomplete(streams: ReadonlyMap<string, AgentTurnOutputStream>): void {
   for (const stream of streams.values()) stream.rawStreamComplete = false;
-}
-
-function noteSessionReport(
-  deps: AgentTurnDispatchDependencies,
-  continuity: AgentSessionContinuity,
-  stream: AgentTurnOutputStream,
-  sessionId: string | null,
-  warned: Set<string>,
-): void {
-  if (sessionId === null) return;
-  const state = deps.store.currentState();
-  const thread = ownedStreamThread(state.threads.get(stream.threadId), stream);
-  if (thread === null) return;
-  const change = continuity.noteReport(thread, {
-    provider: thread.provider.kind,
-    resumedSessionId: stream.resumedSessionId,
-    reportedSessionId: sessionId,
-  });
-  if (change.kind !== "keep") return;
-  const notice = sessionChangeNotice(state, stream.threadId, sessionId);
-  if (notice === null || warned.has(stream.threadId)) return;
-  warned.add(stream.threadId);
-  deps.setNotice(notice);
-}
-
-function noteResumeFailure(
-  deps: AgentTurnDispatchDependencies,
-  continuity: AgentSessionContinuity,
-  stream: AgentTurnOutputStream,
-  event: AgentTaskStatusEvent,
-): void {
-  if (agentSessionLost(stream, event) && stream.resumedSessionId !== null) {
-    const thread = ownedStreamThread(
-      deps.store.currentState().threads.get(stream.threadId),
-      stream,
-    );
-    if (thread === null) return;
-    continuity.noteLoss(thread, stream.resumedSessionId);
-    deps.store.dispatchAction({
-      kind: "providerSessionInvalidated",
-      threadId: thread.threadId,
-      owner: thread.owner,
-      sessionId: stream.resumedSessionId,
-    });
-    deps.setNotice(warning(AGENT_SESSION_LOST_NOTICE));
-    return;
-  }
-  if (resumeRejected(stream, event)) deps.setNotice(warning(AGENT_RESUME_REJECTED_NOTICE));
-}
-
-function followUpStartedNotice(
-  resumePlan: AgentResumePlan,
-  attachmentNotice: AgentTasksNotice | null,
-): AgentTasksNotice | null {
-  if (resumePlan.kind !== "fresh") return attachmentNotice;
-  const fresh = agentFreshSessionNotice(resumePlan.reason);
-  if (attachmentNotice === null) return warning(fresh);
-  return warning(`${fresh} ${attachmentNotice.message}`);
-}
-
-function ownedStreamThread(
-  thread: AgentThread | undefined,
-  stream: AgentTurnOutputStream,
-): AgentThread | null {
-  if (thread === undefined || thread.owner.ownerId !== stream.ownerId) return null;
-  if (thread.owner.repositoryRoot !== stream.repositoryRoot) return null;
-  return thread.turns.some((turn) => turn.turnId === stream.turnId) ? thread : null;
 }

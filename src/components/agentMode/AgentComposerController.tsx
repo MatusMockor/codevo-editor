@@ -15,7 +15,6 @@ import type { AgentComposerInteraction } from "./composer/agentComposerInteracti
 import { AgentComposerInteractionSource } from "./composer/AgentComposerInteractionSource";
 import {
   useAgentComposerPromptState,
-  WITHOUT_COMPOSER_ATTACHMENTS,
   type AgentComposerControllerProps as AgentComposerPresentation,
   type AgentComposerPromptController,
 } from "./useAgentComposerState";
@@ -70,7 +69,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   const owner = interactions === undefined ? null : agentQuestionOwner(interactions.thread);
   const ownerKey = JSON.stringify(owner);
   const compactContext = (submission: Parameters<typeof submit>[1]): Promise<boolean> =>
-    submit("/compact", submission, WITHOUT_COMPOSER_ATTACHMENTS);
+    submit("/compact", submission, "compaction");
   return (
     <>
       {interactions !== undefined && (
@@ -135,6 +134,7 @@ function agentComposerControllerPropsEqual(
     leftProps.onStop === rightProps.onStop &&
     leftProps.onStopNow === rightProps.onStopNow &&
     leftProps.stopConfirmation === rightProps.stopConfirmation &&
+    leftProps.sessionRestartConfirmation === rightProps.sessionRestartConfirmation &&
     sameGuard(leftProps.guard, rightProps.guard) &&
     leftProps.isolation === rightProps.isolation &&
     leftProps.isolationReason === rightProps.isolationReason &&

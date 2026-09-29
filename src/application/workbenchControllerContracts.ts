@@ -2,6 +2,7 @@ import type { WorkspaceHomeReference } from "../domain/workspaceRootEligibility"
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
+import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentSidebarRailPreferencePort } from "./useAgentWorkbenchLayout";
@@ -76,6 +77,7 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
   resolveWorkspaceHome?: () => Promise<WorkspaceHomeReference>;
   agentSidebarRailPreference?: AgentSidebarRailPreferencePort;
   agentTaskGateway?: AgentTaskGateway;
+  agentThreadSessionGateway?: AgentThreadSessionGateway;
   turnChangesGateway?: AgentTurnChangesGateway;
   agentQuestionGateway?: AgentQuestionGateway;
   gitWorktreeGateway?: GitWorktreeGateway;

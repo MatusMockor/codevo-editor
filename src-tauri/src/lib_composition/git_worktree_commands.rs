@@ -1,3 +1,4 @@
+use super::agent_task_commands::claude_session_composition::reap_sessions_in_worktree;
 use super::{canonicalize_workspace_root, trusted_for, GitTrustState};
 use crate::agent_task_supervisor::AgentTaskRegistry;
 use crate::debug_adapter::DebugSessionRegistry;
@@ -135,11 +136,12 @@ struct AppWorktreeRemovalHooks<'a> {
 
 impl WorktreeRemovalHooks for AppWorktreeRemovalHooks<'_> {
     fn stop_agent_tasks(&self, worktree_path: &Path) -> Result<(), String> {
-        let Some(registry) = self.app.try_state::<AgentTaskRegistry>() else {
-            return Ok(());
-        };
-
-        if !registry.stop_for_root_and_reap(worktree_path) {
+        let tasks_reaped = self
+            .app
+            .try_state::<AgentTaskRegistry>()
+            .is_none_or(|registry| registry.stop_for_root_and_reap(worktree_path));
+        let sessions_reaped = reap_sessions_in_worktree(self.app, worktree_path);
+        if !tasks_reaped || !sessions_reaped {
             return Err(
                 "Agent processes in this worktree could not be stopped in time.".to_string(),
             );

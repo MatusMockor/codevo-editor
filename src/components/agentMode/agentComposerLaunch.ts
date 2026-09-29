@@ -1,6 +1,7 @@
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { normalizeStoredAgentLaunch } from "../../domain/agentStoredLaunch";
 import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentThread";
+import { latestPromptedAgentLaunch } from "../../domain/agentTurnOrigin";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { lastAgentTurn } from "./agentModePresentation";
@@ -49,7 +50,7 @@ export function resolveLaunchScope(
     return {
       key: `thread:${thread.threadId}`,
       rootKey: thread.owner.rootKey,
-      seed: lastAgentTurn(thread)?.launch ?? null,
+      seed: latestPromptedAgentLaunch(thread.turns),
     };
   }
   if (targetRootKey === null) return { key: "draft", rootKey: null, seed: null };

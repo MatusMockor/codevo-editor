@@ -14,6 +14,7 @@ import {
   type AgentTurnLogEvidenceLookup,
 } from "./agentTurnContentLoss";
 import { agentTurnTokenMeasurer, type AgentTurnTokenMeasurement } from "./agentTurnTokenUsage";
+import { isAgentBackgroundTurn } from "./agentTurnOrigin";
 
 export type AgentUsagePeriod = "today" | "7days" | "30days";
 
@@ -241,11 +242,12 @@ function addTurn(
   contentLost: boolean,
   measurement: AgentTurnTokenMeasurement,
 ): void {
+  addCliUsage(metrics.cliUsage, turn, contentLost, measurement);
+  addStreamOutput(metrics.streamOutput, turn);
+  if (isAgentBackgroundTurn(turn)) return;
   metrics.turnsStarted += 1;
   classifyStatus(metrics, turn.status);
   addWallTime(metrics.wallTime, turn, windowEndEpochMs);
-  addCliUsage(metrics.cliUsage, turn, contentLost, measurement);
-  addStreamOutput(metrics.streamOutput, turn);
 }
 
 function classifyStatus(metrics: MutableMetrics, status: AgentTurnStatus): void {

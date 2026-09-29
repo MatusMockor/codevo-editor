@@ -1,5 +1,6 @@
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
+import { isAgentBackgroundTurn } from "../../domain/agentTurnOrigin";
 import { agentThreadColumnKey, type AgentThreadColumnAnchor } from "./agentThreadColumn";
 import type { AgentImportedTurn } from "./agentImportedPresentation";
 
@@ -66,6 +67,7 @@ export function agentThreadMinimapModel(
   const ordinals = new Map<string, number>();
 
   column.forEach((source, index) => ordinals.set(agentThreadColumnKey(source.anchor), index + 1));
+  backgroundTurnOrdinals(imported.length, turns, ordinals);
 
   for (let start = 0; start < turnCount; start += groupSize) {
     const group = column.slice(start, Math.min(start + groupSize, turnCount));
@@ -121,6 +123,7 @@ function columnSources(
   }
 
   for (const turn of turns) {
+    if (isAgentBackgroundTurn(turn)) continue;
     sources.push({
       anchor: { scope: "turn", turnId: turn.turnId },
       text: minimapPromptText(turn.prompt),
@@ -129,6 +132,22 @@ function columnSources(
   }
 
   return sources;
+}
+
+function backgroundTurnOrdinals(
+  importedCount: number,
+  turns: ReadonlyArray<AgentTurn>,
+  ordinals: Map<string, number>,
+): void {
+  let ordinal = importedCount;
+  for (const turn of turns) {
+    if (!isAgentBackgroundTurn(turn)) {
+      ordinal += 1;
+      continue;
+    }
+    if (ordinal === 0) continue;
+    ordinals.set(agentThreadColumnKey({ scope: "turn", turnId: turn.turnId }), ordinal);
+  }
 }
 
 function importedHeadText(entry: AgentImportedTurn): string {

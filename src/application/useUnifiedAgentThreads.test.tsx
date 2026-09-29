@@ -366,10 +366,10 @@ describe("unified original agent surface", () => {
     await h.render({ selectedThreadId: "agt-1", selectedServerId: server.id });
     const follow = { threadId: "agt-1", prompt: "Local follow-up", launch };
     await act(async () => {
-      expect(await h.current.agents.sendFollowUp(follow)).toBe(true);
+      expect(await h.current.agents.sendFollowUp(follow, "caller")).toBe(true);
     });
     expect(h.local.startThread).toHaveBeenCalledWith(localStart);
-    expect(h.local.sendFollowUp).toHaveBeenCalledWith(follow);
+    expect(h.local.sendFollowUp).toHaveBeenCalledWith(follow, "caller");
     expect(h.current.agents.attachments).toBe(h.local.attachments);
     expect(h.gw.createTask).not.toHaveBeenCalled();
     expect(h.gw.continueTask).not.toHaveBeenCalled();

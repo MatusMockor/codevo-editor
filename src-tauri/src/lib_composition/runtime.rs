@@ -193,7 +193,19 @@ pub fn run() {
                 dyn agent_task_spawner::agent_provider::runtime::AgentProviderExecutableResolver,
             > = agent_cli_discovery.clone();
             let codex_hosts = Arc::new(agent_task_spawner::codex_app_server_host::CodexAppServerHostRegistry::standard());
-            let host_lifecycle = Arc::new(agent_task_commands::codex_task_composition::CodexProviderHostLifecycle(Arc::clone(&codex_hosts)));
+            let claude_sessions = Arc::new(agent_task_spawner::claude_session_registry::ClaudeSessionRegistry::new(
+                agent_task_supervisor::system_process_group_signals(),
+                Arc::new(agent_task_commands::claude_session_composition::AppHandleClaudeSessionEvents(app.handle().clone())),
+            ));
+            let host_lifecycle = Arc::new(agent_task_commands::claude_session_composition::AgentProviderHostLifecycles {
+                codex: agent_task_commands::codex_task_composition::CodexProviderHostLifecycle(Arc::clone(&codex_hosts)),
+                claude: Arc::clone(&claude_sessions),
+            });
+            agent_task_commands::claude_session_composition::spawn_idle_session_retirement(
+                Arc::downgrade(&claude_sessions),
+                agent_task_commands::claude_session_composition::CLAUDE_SESSION_IDLE_SWEEP_INTERVAL,
+            );
+            app.manage(claude_sessions);
             let agent_provider_runtime = Arc::new(
                 agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry::with_discovery_and_host_lifecycle(
                     provider_executable_resolver,
@@ -626,6 +638,9 @@ pub fn run() {
             agent_task_commands::questions::answer_agent_approval,
             agent_task_commands::stop_agent_task,
             agent_task_commands::stop_agent_tasks_for_root,
+            agent_task_commands::claude_session_composition::interrupt_agent_task,
+            agent_task_commands::claude_session_composition::inspect_agent_thread_session,
+            agent_task_commands::claude_session_composition::end_agent_thread_session,
             agent_task_commands::acquire_agent_root_lease,
             agent_task_commands::release_agent_root_lease,
             agent_history_commands::read_agent_history_threads,

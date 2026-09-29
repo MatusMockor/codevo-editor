@@ -1,6 +1,7 @@
 import { agentLaunchIsDangerous, type AgentLaunchOptions } from "./agentLaunch";
 import { agentPromptLooksClipped } from "./agentPromptClipping";
 import { normalizeStoredAgentLaunch } from "./agentStoredLaunch";
+import { isAgentBackgroundTurn } from "./agentTurnOrigin";
 import { runningTurn, type AgentThread, type AgentTurn, type AgentTurnStatus } from "./agentThread";
 
 export const RETRY_CLIPPED_REASON =
@@ -35,6 +36,7 @@ export function agentFailedLastTurn(thread: AgentThread): AgentTurn | null {
   if (runningTurn(thread) !== null) return null;
   const last = thread.turns[thread.turns.length - 1];
   if (last === undefined || !agentTurnFailed(last.status)) return null;
+  if (isAgentBackgroundTurn(last)) return null;
   return last;
 }
 

@@ -1,6 +1,8 @@
 import { agentCliBinaryUnavailableMessage } from "../domain/agentCliVersion";
+import { AGENT_SESSION_RESTART_CONFIRMATION_PREFIX } from "../domain/agentThreadSession";
 import {
   AgentTaskStartRejectedError,
+  failureMessageOf,
   validateAcknowledgeAgentTaskOutputRequest,
   type AcknowledgeAgentTaskOutputRequest,
   parseAgentTaskOutputEvent,
@@ -75,10 +77,19 @@ export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set
   agentCliBinaryUnavailableMessage("codex"),
 ]);
 
+export const DEFINITE_AGENT_TASK_START_REJECTION_PREFIXES: ReadonlyArray<string> = [
+  AGENT_SESSION_RESTART_CONFIRMATION_PREFIX,
+];
+
 export function classifyAgentTaskStartFailure(error: unknown): unknown {
   const message = failureMessageOf(error);
-  if (!DEFINITE_AGENT_TASK_START_REJECTIONS.has(message)) return error;
+  if (!isDefiniteStartRejectionMessage(message)) return error;
   return new AgentTaskStartRejectedError(message);
+}
+
+function isDefiniteStartRejectionMessage(message: string): boolean {
+  if (DEFINITE_AGENT_TASK_START_REJECTIONS.has(message)) return true;
+  return DEFINITE_AGENT_TASK_START_REJECTION_PREFIXES.some((prefix) => message.startsWith(prefix));
 }
 
 export async function invokeStartAgentTaskIpc(
@@ -207,10 +218,4 @@ async function invokeStartCommand(
   } catch (error) {
     throw classifyAgentTaskStartFailure(error);
   }
-}
-
-function failureMessageOf(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  return "";
 }

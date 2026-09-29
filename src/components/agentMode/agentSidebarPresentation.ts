@@ -89,6 +89,7 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "markUnread" }
   | { readonly kind: "copy"; readonly detail: AgentThreadCopyDetail }
   | { readonly kind: "stop" }
+  | { readonly kind: "endSession" }
   | { readonly kind: "archive" }
   | { readonly kind: "unarchive" }
   | { readonly kind: "delete" }

@@ -1,5 +1,6 @@
 import type { AgentThread, AgentTurn, AgentTurnEvent } from "./agentThread";
 import { agentPromptDisplayText } from "./agentPromptDisplay";
+import { isAgentBackgroundTurn } from "./agentTurnOrigin";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
   agentTurnContentLost,
@@ -339,9 +340,9 @@ function turnSegments(
   turn: AgentTurn,
   maxEventsPerTurn: number = Number.POSITIVE_INFINITY,
 ): ReadonlyArray<AgentThreadSearchSegment> {
-  const segments: AgentThreadSearchSegment[] = [
-    segment("user", turn.turnId, null, agentPromptDisplayText(turn.prompt)),
-  ];
+  const segments: AgentThreadSearchSegment[] = isAgentBackgroundTurn(turn)
+    ? []
+    : [segment("user", turn.turnId, null, agentPromptDisplayText(turn.prompt))];
   const firstVisible = Math.max(0, turn.events.length - maxEventsPerTurn);
   turn.events.forEach((event, index) => {
     if (index < firstVisible) return;

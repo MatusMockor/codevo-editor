@@ -46,6 +46,8 @@ import { COMPOSER_REPOSITORY_PREFERENCE_KEY } from "./useAgentComposerRepository
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentQueuedEditSession } from "../../application/agentQueuedFollowUpEdit";
 import { agentClockTime } from "./conversation/agentTurnMetaLine";
+import { AGENT_END_SESSION_STOP_TEXT } from "./AgentEndSessionConfirmationBanner";
+import { AGENT_SESSION_RESTART_TEXT } from "./AgentSessionRestartBanner";
 
 const QUEUED_ATTACHMENT_ID = "0123456789abcdef0123456789abcdef";
 
@@ -237,6 +239,157 @@ describe("AgentModeView", () => {
 
     expect(configureAgentCli).toHaveBeenCalledTimes(1);
     expect(dismissNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms ending a Claude session with live background tasks from the thread menu", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: surface({
+        threads: [threadView({ threadId: "agt-1" })],
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      }),
+    });
+    expect(host.textContent).not.toContain(AGENT_END_SESSION_STOP_TEXT);
+
+    openRowMenu("agt-1");
+    await act(async () => clickMenuItem("End Claude session"));
+    expect(host.textContent).toContain(AGENT_END_SESSION_STOP_TEXT);
+    await act(async () => buttonNamedIn(host, "Keep running")?.click());
+    expect(host.textContent).not.toContain(AGENT_END_SESSION_STOP_TEXT);
+    expect(endSession).not.toHaveBeenCalled();
+
+    openRowMenu("agt-1");
+    await act(async () => clickMenuItem("End Claude session"));
+    await act(async () => buttonNamedIn(host, "End session")?.click());
+    expect(endSession).toHaveBeenCalledWith("agt-1");
+    expect(host.textContent).not.toContain(AGENT_END_SESSION_STOP_TEXT);
+  });
+
+  it("names the selected thread in its own End Claude session confirmation", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: surface({
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2", title: "Nightly build" }),
+        ],
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      }),
+    });
+    click('[data-thread-id="agt-1"]');
+
+    openRowMenu("agt-1");
+    await act(async () => clickMenuItem("End Claude session"));
+    expect(host.textContent).toContain('End Claude\'s session for "Refactor the parser"?');
+    expect(host.textContent).not.toContain('"Nightly build"?');
+    await act(async () => buttonNamedIn(host, "End session")?.click());
+    expect(endSession).toHaveBeenCalledWith("agt-1");
+    expect(endSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("names another row's thread when its menu asks to end its session", async () => {
+    const endSession = vi.fn(async () => "ended" as const);
+    render({
+      agents: surface({
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2", title: "Nightly build" }),
+        ],
+        endSession,
+        inspectSessionBackground: async () => "live" as const,
+      }),
+    });
+    click('[data-thread-id="agt-1"]');
+
+    openRowMenu("agt-2");
+    await act(async () => clickMenuItem("End Claude session"));
+    expect(host.textContent).toContain('End Claude\'s session for "Nightly build"?');
+    expect(host.textContent).not.toContain('"Refactor the parser"?');
+    await act(async () => buttonNamedIn(host, "End session")?.click());
+    expect(endSession).toHaveBeenCalledWith("agt-2");
+    expect(endSession).toHaveBeenCalledTimes(1);
+    expect(host.textContent).not.toContain(AGENT_END_SESSION_STOP_TEXT);
+  });
+
+  it("restarts and sends the exact refused queued message from the notice", () => {
+    const restartDeferredFollowUp = vi.fn(async () => undefined);
+    const dismissNotice = vi.fn();
+    render({
+      agents: surface({
+        restartDeferredFollowUp,
+        dismissNotice,
+        notice: {
+          kind: "error",
+          message: "Queued messages are paused.",
+          action: { kind: "restartFollowUp", threadId: "agt-1", entryId: "queued-1" },
+        },
+      }),
+    });
+
+    const restart = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Restart and send",
+    );
+    expect(restart).toBeInstanceOf(HTMLButtonElement);
+    act(() => restart?.click());
+
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(restartDeferredFollowUp).toHaveBeenCalledWith("agt-1", "queued-1");
+  });
+
+  it("asks before a compaction that ends background tasks, then compacts exactly once", async () => {
+    let refused = false;
+    const sendFollowUp = vi.fn<AgentModeViewProps["agents"]["sendFollowUp"]>(async (request) => {
+      refused = request.sessionRestart !== "stopBackground";
+      return !refused;
+    });
+    const followUpNeedsSessionRestart = (threadId: string): boolean =>
+      refused && threadId === "agt-1";
+    const view = threadView({
+      threadId: "agt-1",
+      events: [
+        { kind: "contextUsage", model: "sonnet", inputTokens: 120_000, contextWindow: 200_000 },
+      ],
+    });
+    const idle: AgentThreadView = {
+      ...view,
+      thread: {
+        ...view.thread,
+        turns: view.thread.turns.map((entry) => ({ ...entry, endedAtEpochMs: 1_700_000_000_500 })),
+      },
+    };
+    render({ agents: surface({ sendFollowUp, followUpNeedsSessionRestart, threads: [idle] }) });
+    clickText("Refactor the parser");
+    typePrompt("Keep this draft");
+
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>(".agent-compaction-offer__action")?.click(),
+    );
+    expect(host.textContent).toContain(AGENT_SESSION_RESTART_TEXT);
+    expect(sendFollowUp).toHaveBeenCalledTimes(1);
+    expect(sendFollowUp).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ sessionRestart: expect.anything() }),
+      "caller",
+    );
+    expect(sendFollowUp).toHaveBeenLastCalledWith(
+      expect.objectContaining({ threadId: "agt-1", prompt: "/compact" }),
+      "caller",
+    );
+
+    await act(async () => buttonNamedIn(host, "Restart and send")?.click());
+
+    expect(sendFollowUp).toHaveBeenCalledTimes(2);
+    expect(sendFollowUp).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        threadId: "agt-1",
+        prompt: "/compact",
+        sessionRestart: "stopBackground",
+      }),
+      "caller",
+    );
+    expect(promptField().value).toBe("Keep this draft");
+    expect(host.textContent).not.toContain(AGENT_SESSION_RESTART_TEXT);
   });
 
   it("routes rail settings and source control through their real workbench actions", () => {
@@ -573,12 +726,15 @@ describe("AgentModeView", () => {
     typePrompt("Also update the tests");
     await submitFormAsync();
 
-    expect(sendFollowUp).toHaveBeenCalledWith({
-      threadId: "agt-1",
-      prompt: "Also update the tests",
-      launch: DEFAULT_DISPATCH_LAUNCH,
-      dangerousLaunchConfirmed: true,
-    });
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      {
+        threadId: "agt-1",
+        prompt: "Also update the tests",
+        launch: DEFAULT_DISPATCH_LAUNCH,
+        dangerousLaunchConfirmed: true,
+      },
+      "caller",
+    );
     expect(promptField().value).toBe("");
   });
 
@@ -610,6 +766,7 @@ describe("AgentModeView", () => {
     await submitFormAsync();
     expect(sendFollowUp).toHaveBeenCalledWith(
       expect.objectContaining({ threadId: "agt-1", prompt: "Also update the tests" }),
+      "caller",
     );
   });
 
@@ -2240,20 +2397,23 @@ describe("AgentModeView", () => {
     typePrompt("Also update the docs");
     await submitFormAsync();
 
-    expect(sendFollowUp).toHaveBeenCalledWith({
-      threadId: "agt-1",
-      prompt: "Also update the docs",
-      launch: {
-        provider: "claudeCode",
-        model: "claude-opus-5",
-        mode: "bypassPermissions",
-        effort: "high",
-        context: "1m",
-        fastMode: false,
-        thinkingMode: false,
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      {
+        threadId: "agt-1",
+        prompt: "Also update the docs",
+        launch: {
+          provider: "claudeCode",
+          model: "claude-opus-5",
+          mode: "bypassPermissions",
+          effort: "high",
+          context: "1m",
+          fastMode: false,
+          thinkingMode: false,
+        },
+        dangerousLaunchConfirmed: true,
       },
-      dangerousLaunchConfirmed: true,
-    });
+      "caller",
+    );
   });
 
   it("marks the selected thread viewed and again when its turn settles", () => {
@@ -2350,20 +2510,23 @@ describe("AgentModeView", () => {
     typePrompt("Also update the docs");
     await submitFormAsync();
 
-    expect(sendFollowUp).toHaveBeenCalledWith({
-      threadId: "agt-b",
-      prompt: "Also update the docs",
-      launch: {
-        provider: "claudeCode",
-        model: "claude-opus-5",
-        mode: "bypassPermissions",
-        effort: "high",
-        context: "1m",
-        fastMode: false,
-        thinkingMode: false,
+    expect(sendFollowUp).toHaveBeenCalledWith(
+      {
+        threadId: "agt-b",
+        prompt: "Also update the docs",
+        launch: {
+          provider: "claudeCode",
+          model: "claude-opus-5",
+          mode: "bypassPermissions",
+          effort: "high",
+          context: "1m",
+          fastMode: false,
+          thinkingMode: false,
+        },
+        dangerousLaunchConfirmed: true,
       },
-      dangerousLaunchConfirmed: true,
-    });
+      "caller",
+    );
   });
 
   it("keeps a thread's full-access mode without a confirmation control", () => {
@@ -4291,4 +4454,10 @@ function turn(threadId: string, prompt: string, status: AgentTurnStatus): AgentT
     launch: null,
     cliVersion: null,
   };
+}
+
+function buttonNamedIn(container: HTMLElement, label: string): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
 }

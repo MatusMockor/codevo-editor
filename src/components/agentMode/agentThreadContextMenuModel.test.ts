@@ -142,4 +142,28 @@ describe("thread context menu", () => {
       "Copy thread ID",
     ]);
   });
+
+  it("offers ending the Claude session only for an idle local Claude thread", () => {
+    const labelsOf = (context: typeof base) =>
+      agentThreadContextMenu(context).flatMap((node) => ("label" in node ? [node.label] : []));
+    expect(labelsOf({ ...base, claudeSession: true })).toContain("End Claude session");
+    expect(labelsOf({ ...base, claudeSession: true, running: true })).not.toContain(
+      "End Claude session",
+    );
+    expect(labelsOf({ ...base, claudeSession: true, archived: true })).not.toContain(
+      "End Claude session",
+    );
+    expect(labelsOf(base)).not.toContain("End Claude session");
+  });
+
+  it("routes End Claude session to the endSession command", () => {
+    const node = agentThreadContextMenu({ ...base, claudeSession: true }).find(
+      (candidate) => candidate.kind === "item" && candidate.label === "End Claude session",
+    );
+    expect(node).toMatchObject({
+      kind: "item",
+      id: "endSession",
+      action: { kind: "command", command: { kind: "endSession" } },
+    });
+  });
 });

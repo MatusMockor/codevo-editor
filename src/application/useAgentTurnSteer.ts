@@ -5,6 +5,7 @@ import {
 } from "../domain/agentStoredLaunch";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type {
+  AgentSessionRestartPolicy,
   AgentTaskGateway,
   AgentTaskSteerRejectionReason,
   SteerAgentTaskRequest,
@@ -64,6 +65,8 @@ import type {
   AgentSteerOutcome,
   AgentSteerRequest,
 } from "./agentThreadPorts";
+import { DeferredRestartRefusals, deferredQueueInState } from "./agentSessionRestartConsent";
+import { DEFERRED_SEND_FAILED_NOTICE, sendDeferredFollowUp } from "./agentDeferredFollowUpSend";
 import {
   AGENT_THREAD_STEER_LIMIT_NOTICE,
   AGENT_THREAD_TURN_FULL_NOTICE,
@@ -98,8 +101,6 @@ export const STEER_TOO_LONG_NOTICE =
 export const DEFERRED_FULL_NOTICE = "Too many messages are already queued for this thread.";
 export const DEFERRED_CLEARED_NOTICE =
   "Queued messages are paused because the agent was stopped. Resume the queue to continue.";
-export const DEFERRED_SEND_FAILED_NOTICE =
-  "Queued messages could not be sent. The queue is paused; review the thread before resuming.";
 
 export interface AgentTurnSteerDependencies extends AgentTurnAdmissionDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
@@ -120,6 +121,7 @@ export interface AgentTurnSteerOptions {
         ) => Promise<boolean>)
       | null;
   };
+  readonly needsRestart: (threadId: string) => boolean;
   readonly flushStreams: () => void;
 }
 
@@ -135,13 +137,15 @@ export interface AgentTurnSteerSurface {
   ): Promise<boolean>;
   sendDeferredFollowUpNow(threadId: string, id: string): Promise<void>;
   resumeDeferredFollowUps(threadId: string): Promise<void>;
+  restartDeferredFollowUp(threadId: string, id: string): Promise<void>;
   onTurnSettled(threadId: string): void;
   onThreadStopped(threadId: string): void;
   clearDeferredForOwner(ownerId: string): void;
 }
 
 export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnSteerSurface {
-  const { state, dependenciesRef, mountedRef, sendFollowUpRef, flushStreams } = options;
+  const { state, dependenciesRef, mountedRef, sendFollowUpRef, needsRestart, flushStreams } =
+    options;
   const [deferredFollowUps, setDeferredFollowUps] =
     useState<DeferredFollowUps>(emptyDeferredFollowUps);
   const [drainTick, setDrainTick] = useState(0);
@@ -164,6 +168,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
   const sendingQueuedRef = useRef<Map<string, string>>(new Map());
   const userSendNowRef = useRef(new Set<string>());
   const pausedThreadsRef = useRef<Set<string>>(new Set());
+  const restartRefusalsRef = useRef(new DeferredRestartRefusals());
   const deferredSequenceRef = useRef(0);
   const editLeaseRef = useRef(0);
   const preparedDeferredRef = useRef(new WeakMap<AgentFollowUpRequest, ClaimedTurnAttachments>());
@@ -640,55 +645,28 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
 
   const resumeDeferredFollowUps = useCallback(
     async (threadId: string): Promise<void> => {
+      if (
+        restartRefusalsRef.current.renotify(deferredRef.current, threadId, dependenciesRef.current)
+      )
+        return;
       if (!pausedThreadsRef.current.delete(threadId)) return;
-      const queue = deferredFollowUpsForThread(deferredRef.current, threadId);
-      const next = new Map(deferredRef.current);
-      next.set(
-        threadId,
-        queue.map((entry) => ({ ...entry, state: "queued" as const })),
-      );
-      commitDeferred(next);
+      commitDeferred(deferredQueueInState(deferredRef.current, threadId, "queued"));
       boundaryTrackerRef.current.retry(threadId);
       awaitingSettlementRef.current.delete(threadId);
       armDrain(threadId);
     },
-    [armDrain, commitDeferred],
+    [armDrain, commitDeferred, dependenciesRef],
   );
 
   const pauseDeferred = useCallback(
-    (threadId: string): void => {
+    (threadId: string): boolean => {
       pendingDrainsRef.current.delete(threadId);
-      const queue = deferredFollowUpsForThread(deferredRef.current, threadId);
-      if (queue.length === 0) return;
+      if (deferredFollowUpsForThread(deferredRef.current, threadId).length === 0) return false;
       pausedThreadsRef.current.add(threadId);
-      const paused = new Map(deferredRef.current);
-      paused.set(
-        threadId,
-        queue.map((entry) => ({ ...entry, state: "paused" as const })),
-      );
-      commitDeferred(paused);
+      commitDeferred(deferredQueueInState(deferredRef.current, threadId, "paused"));
+      return true;
     },
     [commitDeferred],
-  );
-
-  const onTurnSettled = useCallback(
-    (threadId: string): void => {
-      awaitingSettlementRef.current.delete(threadId);
-      if (deferredFollowUpsForThread(deferredRef.current, threadId).length === 0) return;
-      const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
-      const status = thread?.turns[thread.turns.length - 1]?.status;
-      if (
-        status?.kind === "failed" ||
-        status?.kind === "stopped" ||
-        (status?.kind === "exited" && status.exitCode !== 0)
-      ) {
-        pauseDeferred(threadId);
-        dependenciesRef.current.setNotice(warning(DEFERRED_SEND_FAILED_NOTICE));
-        return;
-      }
-      armDrain(threadId);
-    },
-    [armDrain, dependenciesRef, pauseDeferred],
   );
 
   const onThreadStopped = useCallback(
@@ -697,19 +675,27 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       if (lease !== undefined) lease.cancelled = true;
       const drainLease = drainLeasesRef.current.get(threadId);
       if (drainLease !== undefined) drainLease.cancelled = true;
-      pendingDrainsRef.current.delete(threadId);
-      const queue = deferredFollowUpsForThread(deferredRef.current, threadId);
-      if (queue.length === 0) return;
-      pausedThreadsRef.current.add(threadId);
-      const paused = new Map(deferredRef.current);
-      paused.set(
-        threadId,
-        queue.map((entry) => ({ ...entry, state: "paused" as const })),
-      );
-      commitDeferred(paused);
+      if (!pauseDeferred(threadId)) return;
       dependenciesRef.current.setNotice(warning(DEFERRED_CLEARED_NOTICE));
     },
-    [commitDeferred, dependenciesRef],
+    [dependenciesRef, pauseDeferred],
+  );
+
+  const onTurnSettled = useCallback(
+    (threadId: string): void => {
+      awaitingSettlementRef.current.delete(threadId);
+      const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
+      const status = thread?.turns[thread.turns.length - 1]?.status;
+      if (status?.kind === "stopped") return onThreadStopped(threadId);
+      if (deferredFollowUpsForThread(deferredRef.current, threadId).length === 0) return;
+      if (status?.kind === "failed" || (status?.kind === "exited" && status.exitCode !== 0)) {
+        pauseDeferred(threadId);
+        dependenciesRef.current.setNotice(warning(DEFERRED_SEND_FAILED_NOTICE));
+        return;
+      }
+      armDrain(threadId);
+    },
+    [armDrain, dependenciesRef, onThreadStopped, pauseDeferred],
   );
 
   const clearDeferredForOwner = useCallback(
@@ -732,6 +718,72 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
       commitDeferred(next);
     },
     [commitDeferred, dependenciesRef],
+  );
+
+  const sendDeferredHead = useCallback(
+    (threadId: string, sessionRestart?: AgentSessionRestartPolicy): void => {
+      const send = sendFollowUpRef.current;
+      if (send === null) return;
+      if (drainLeasesRef.current.has(threadId)) return;
+      const authority = deferredAuthoritiesRef.current.get(threadId);
+      if (authority === undefined) return;
+      const taken = takeDeferredHead(deferredRef.current, threadId);
+      if (taken.head === null) return;
+      const lease = { authority, entryId: taken.head.id, cancelled: false };
+      drainLeasesRef.current.set(threadId, lease);
+      const isCurrent = (): boolean =>
+        !lease.cancelled && isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority);
+      const request = taken.head.request;
+      void sendDeferredFollowUp(dependenciesRef.current, {
+        send,
+        needsSessionRestart: needsRestart,
+        refusals: restartRefusalsRef.current,
+        entryId: lease.entryId,
+        request,
+        sessionRestart,
+        isCurrent,
+        prepared: preparedDeferredRef.current.get(request),
+      }).then((outcome) => {
+        if (drainLeasesRef.current.get(threadId) === lease) drainLeasesRef.current.delete(threadId);
+        if (outcome === "stale") {
+          if (
+            lease.cancelled &&
+            isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) &&
+            !pausedThreadsRef.current.has(threadId)
+          )
+            armDrain(threadId);
+          return;
+        }
+        if (outcome === "sent") {
+          commitDeferred(removeDeferred(deferredRef.current, threadId, lease.entryId));
+          const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
+          if (thread !== undefined && runningTurn(thread) === null) armDrain(threadId);
+          return;
+        }
+        pauseDeferred(threadId);
+      });
+    },
+    [
+      armDrain,
+      commitDeferred,
+      dependenciesRef,
+      mountedRef,
+      needsRestart,
+      pauseDeferred,
+      sendFollowUpRef,
+    ],
+  );
+
+  const restartDeferredFollowUp = useCallback(
+    async (threadId: string, id: string): Promise<void> => {
+      if (drainLeasesRef.current.has(threadId) || sendingQueuedRef.current.has(threadId)) return;
+      const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
+      if (!restartRefusalsRef.current.claim(deferredRef.current, thread, id)) return;
+      pausedThreadsRef.current.delete(threadId);
+      commitDeferred(deferredQueueInState(deferredRef.current, threadId, "queued"));
+      sendDeferredHead(threadId, "stopBackground");
+    },
+    [commitDeferred, dependenciesRef, sendDeferredHead],
   );
 
   const drainDeferred = useCallback(
@@ -806,55 +858,10 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
           if (dropped !== deferredRef.current) commitDeferred(dropped);
           continue;
         }
-        const send = sendFollowUpRef.current;
-        if (send === null) continue;
-        if (drainLeasesRef.current.has(threadId)) continue;
-        const authority = deferredAuthoritiesRef.current.get(threadId);
-        if (authority === undefined) continue;
-        const taken = takeDeferredHead(deferredRef.current, threadId);
-        if (taken.head === null) continue;
-        const lease = { authority, entryId: taken.head.id, cancelled: false };
-        drainLeasesRef.current.set(threadId, lease);
-        const isCurrent = (): boolean =>
-          !lease.cancelled &&
-          isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority);
-        void sendDeferredFollowUp(
-          deps,
-          send,
-          taken.head.request,
-          isCurrent,
-          preparedDeferredRef.current.get(taken.head.request),
-        ).then((sent) => {
-          if (drainLeasesRef.current.get(threadId) === lease)
-            drainLeasesRef.current.delete(threadId);
-          if (!isCurrent()) {
-            if (
-              lease.cancelled &&
-              isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) &&
-              !pausedThreadsRef.current.has(threadId)
-            )
-              armDrain(threadId);
-            return;
-          }
-          if (sent) {
-            commitDeferred(removeDeferred(deferredRef.current, threadId, lease.entryId));
-            const thread = dependenciesRef.current.store.currentState().threads.get(threadId);
-            if (thread !== undefined && runningTurn(thread) === null) armDrain(threadId);
-            return;
-          }
-          pauseDeferred(threadId);
-        });
+        sendDeferredHead(threadId);
       }
     },
-    [
-      armDrain,
-      commitDeferred,
-      dependenciesRef,
-      mountedRef,
-      pauseDeferred,
-      sendFollowUpRef,
-      sendQueuedNow,
-    ],
+    [commitDeferred, dependenciesRef, mountedRef, pauseDeferred, sendDeferredHead, sendQueuedNow],
   );
 
   useEffect(() => {
@@ -881,29 +888,11 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     commitDeferredFollowUpEdit,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
+    restartDeferredFollowUp,
     onTurnSettled,
     onThreadStopped,
     clearDeferredForOwner,
   };
-}
-
-async function sendDeferredFollowUp(
-  deps: AgentTurnSteerDependencies,
-  send: (
-    request: AgentFollowUpRequest,
-    isCurrent?: () => boolean,
-    prepared?: ClaimedTurnAttachments,
-  ) => Promise<boolean>,
-  request: AgentFollowUpRequest,
-  isCurrent: () => boolean,
-  prepared: ClaimedTurnAttachments | undefined,
-): Promise<boolean> {
-  const sent = await attempt(() => send(request, isCurrent, prepared));
-  if (!isCurrent()) return false;
-  if (sent.ok && sent.value) return true;
-  if (!sent.ok) deps.reportError(AGENT_TASKS_SOURCE, sent.error);
-  deps.setNotice(failure(DEFERRED_SEND_FAILED_NOTICE));
-  return false;
 }
 
 function steerEventFits(

@@ -249,6 +249,44 @@ describe("AgentThreadHeader", () => {
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "togglePin" });
   });
 
+  it("forwards End Claude session for an idle local Claude thread", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ onThreadMenuCommand });
+    act(() => {
+      host
+        .querySelector(".agent-crumbs")
+        ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 30 }));
+    });
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
+    act(() => menuItem(menu, "End Claude session").click());
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "endSession" });
+  });
+
+  it("hides End Claude session for a server thread", () => {
+    render({
+      thread: {
+        ...threadView({}),
+        execution: {
+          kind: "remote",
+          serverId: "server-1",
+          runnerId: "runner-1",
+          projectId: "project-1",
+          conversationId: "conversation-1",
+          latestTaskId: "task-1",
+          resume: null,
+        },
+      },
+    });
+    act(() => {
+      host
+        .querySelector(".agent-crumbs")
+        ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 30 }));
+    });
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
+    expect(menuItems(menu)).toContain("Rename thread");
+    expect(menuItems(menu)).not.toContain("End Claude session");
+  });
+
   it("opens the thread menu from the keyboard and returns focus to the title", () => {
     render({});
     const title = button("Thread actions for Refactor the parser");

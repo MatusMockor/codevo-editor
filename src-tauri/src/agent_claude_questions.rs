@@ -1,5 +1,5 @@
 //! Claude's documented SDK control channel, independently of transcript retention.
-use super::agent_task_input::RetainedChildStdin;
+use super::agent_task_input::RetainedAgentStdin;
 use crate::agent_questions::{AgentQuestionRequest, AgentQuestionSession};
 use serde_json::{json, Value};
 use std::{
@@ -12,17 +12,35 @@ use std::{
 mod approvals;
 
 const MAX_CONTROL_LINE_BYTES: usize = 256 * 1024;
+const CONTROL_RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
+const UNSUPPORTED_CONTROL_REQUEST: &str = "This editor does not support this control request.";
+
+pub trait ClaudeControlInput: Send + Sync {
+    fn write_control_frame(&self, frame: &[u8], deadline: Instant) -> io::Result<()>;
+}
+
+impl ClaudeControlInput for RetainedAgentStdin {
+    fn write_control_frame(&self, frame: &[u8], deadline: Instant) -> io::Result<()> {
+        self.write_frame(frame, deadline)
+    }
+}
+
+pub type ClaudeControlWriter = Arc<dyn ClaudeControlInput>;
 
 pub struct ClaudeQuestionReader<R> {
     reader: R,
     questions: Arc<AgentQuestionSession>,
-    input: RetainedChildStdin,
+    input: ClaudeControlWriter,
     line: Vec<u8>,
     dropping: bool,
 }
 
 impl<R: Read> ClaudeQuestionReader<R> {
-    pub fn new(reader: R, questions: Arc<AgentQuestionSession>, input: RetainedChildStdin) -> Self {
+    pub fn new(
+        reader: R,
+        questions: Arc<AgentQuestionSession>,
+        input: ClaudeControlWriter,
+    ) -> Self {
         Self {
             reader,
             questions,
@@ -93,16 +111,13 @@ impl<R: Read> ClaudeQuestionReader<R> {
         }
         let Some(request) = value.get("request") else {
             let _ = write_envelope(
-                &self.input,
+                self.input.as_ref(),
                 json!({"subtype":"error","request_id":request_id,"error":"Missing control request payload."}),
             );
             return;
         };
         if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
-            let _ = write_envelope(
-                &self.input,
-                json!({"subtype":"error", "request_id":request_id, "error":"This editor does not support this control request."}),
-            );
+            let _ = write_envelope(self.input.as_ref(), unsupported_envelope(request_id));
             return;
         }
         let tool_name = request
@@ -134,7 +149,7 @@ impl<R: Read> ClaudeQuestionReader<R> {
                 if let Some(tool_use_id) = &tool_use_id {
                     result["toolUseID"] = tool_use_id.clone();
                 }
-                write_response(&retained, &request_id_owned, result)
+                write_response(retained.as_ref(), &request_id_owned, result)
             },
         );
         if self.questions.register(question, responder).is_err() {
@@ -163,7 +178,9 @@ impl<R: Read> ClaudeQuestionReader<R> {
                 input: request.get("input").unwrap_or(&empty),
                 request,
             },
-            Arc::new(move |response| write_response(&retained, &request_id_owned, response)),
+            Arc::new(move |response| {
+                write_response(retained.as_ref(), &request_id_owned, response)
+            }),
         );
         if let Err(reason) = registered {
             self.deny(
@@ -174,11 +191,7 @@ impl<R: Read> ClaudeQuestionReader<R> {
     }
 
     fn deny(&self, request_id: &str, message: &str) {
-        let _ = write_response(
-            &self.input,
-            request_id,
-            json!({"behavior":"deny", "message":message}),
-        );
+        let _ = write_response(self.input.as_ref(), request_id, denial(message));
     }
 }
 
@@ -340,23 +353,45 @@ fn answered_input(original: &Value, response: &Value) -> Result<Value, String> {
     Ok(updated)
 }
 
+fn denial(message: &str) -> Value {
+    json!({"behavior":"deny", "message":message})
+}
+
+pub(crate) fn permission_denial_frame(request_id: &str, message: &str) -> Result<Vec<u8>, String> {
+    control_response_frame(success_envelope(request_id, denial(message)))
+}
+
+pub(crate) fn unsupported_request_frame(request_id: &str) -> Result<Vec<u8>, String> {
+    control_response_frame(unsupported_envelope(request_id))
+}
+
+fn unsupported_envelope(request_id: &str) -> Value {
+    json!({"subtype":"error", "request_id":request_id, "error":UNSUPPORTED_CONTROL_REQUEST})
+}
+
+fn success_envelope(request_id: &str, response: Value) -> Value {
+    json!({"subtype":"success","request_id":request_id,"response":response})
+}
+
 fn write_response(
-    input: &RetainedChildStdin,
+    input: &dyn ClaudeControlInput,
     request_id: &str,
     response: Value,
 ) -> Result<(), String> {
-    write_envelope(
-        input,
-        json!({"subtype":"success","request_id":request_id,"response":response}),
-    )
+    write_envelope(input, success_envelope(request_id, response))
 }
 
-fn write_envelope(input: &RetainedChildStdin, response: Value) -> Result<(), String> {
+fn control_response_frame(response: Value) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec(&json!({"type":"control_response","response":response}))
         .map_err(|_| "Unable to encode answer".to_string())?;
     bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn write_envelope(input: &dyn ClaudeControlInput, response: Value) -> Result<(), String> {
+    let bytes = control_response_frame(response)?;
     input
-        .write_frame(&bytes, Instant::now() + Duration::from_secs(5))
+        .write_control_frame(&bytes, Instant::now() + CONTROL_RESPONSE_DEADLINE)
         .map_err(|_| "Question response could not reach the active process.".to_string())
 }
 

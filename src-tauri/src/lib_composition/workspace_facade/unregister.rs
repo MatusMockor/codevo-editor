@@ -1,4 +1,4 @@
-use super::{stop_agent_tasks_on_dispose, WorkspaceLifecycleState};
+use super::{end_sessions_for_workspace, stop_agent_tasks_on_dispose, WorkspaceLifecycleState};
 use crate::blocking_command::run_blocking_command;
 use crate::runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
 use crate::workspace_file_watcher::{
@@ -264,7 +264,8 @@ fn dispose_registered_workspace_blocking(
                     .err()
                     .map(|_| "Node attach candidate invalidation failed.".to_string()),
                 RegisteredWorkspaceTeardownStep::AgentTasks => {
-                    stop_agent_tasks_on_dispose(app, root);
+                    end_sessions_for_workspace(app, descriptor.workspace_id.as_str());
+                    stop_agent_tasks_on_dispose(app, None, root);
                     None
                 }
                 RegisteredWorkspaceTeardownStep::FileSearch => {

@@ -4,11 +4,13 @@ import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import {
   isDefiniteAgentTaskStartRejection,
   type AgentCliKind,
+  type AgentSessionRestartPolicy,
   type AgentTaskIsolation,
   type AgentTaskStatus,
   type StartAgentTaskAttachment,
 } from "../domain/agentTask";
 import type { AgentTurn } from "../domain/agentThread";
+import { isAgentSessionRestartConfirmationError } from "../domain/agentThreadSession";
 import {
   AGENT_TASKS_SOURCE,
   attempt,
@@ -57,10 +59,12 @@ export interface AgentTurnStart {
   readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly resumeSessionId: string | null;
   readonly launch: AgentLaunchOptions;
+  readonly sessionRestart?: AgentSessionRestartPolicy;
   readonly createdWorktree: CreatedAgentWorktree | null;
   readonly registration: AgentTurnRegistration;
   readonly register: (turn: AgentTurn) => void;
   readonly onDefiniteStartRejection?: () => void;
+  readonly onSessionRestartRefused?: () => void;
   readonly startedNotice?: AgentTasksNotice | null;
 }
 
@@ -198,6 +202,7 @@ async function runOwnedTurnStart(
       resumeSessionId: start.resumeSessionId,
       launch: start.launch,
       attachments: start.attachmentReferences,
+      ...(start.sessionRestart === undefined ? {} : { sessionRestart: start.sessionRestart }),
     }),
   );
   if (!started.ok && intent.stopRequested) {
@@ -207,6 +212,13 @@ async function runOwnedTurnStart(
     }
     dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, started.error);
     return abandon();
+  }
+  if (!started.ok && start.createdWorktree === null && sessionRestartRefused(started.error)) {
+    settleRegisteredTurn(context, start, { kind: "stopped" });
+    if (turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) {
+      start.onSessionRestartRefused?.();
+    }
+    return false;
   }
   if (!started.ok) {
     await reportStartFailure(context, start, started.error, retainUncertain);
@@ -393,4 +405,8 @@ function startFailureNotice(start: AgentTurnStart, error: unknown, definite: boo
     return "The agent start result was uncertain, so a task may still be running.";
   }
   return "The agent start result was uncertain, so a task or its worktree may remain orphaned.";
+}
+
+function sessionRestartRefused(error: unknown): boolean {
+  return isDefiniteAgentTaskStartRejection(error) && isAgentSessionRestartConfirmationError(error);
 }

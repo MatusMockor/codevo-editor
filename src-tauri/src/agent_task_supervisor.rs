@@ -12,6 +12,9 @@ pub mod agent_task_result_detector;
 #[path = "agent_task_steering.rs"]
 pub mod agent_task_steering;
 
+#[path = "agent_task_interrupt.rs"]
+pub mod agent_task_interrupt;
+
 #[path = "agent_task_stop_escalation.rs"]
 pub mod agent_task_stop_escalation;
 
@@ -23,6 +26,7 @@ use agent_task_pending_stops::{PendingAgentTaskStops, AGENT_TASK_STOPPED_BEFORE_
 #[path = "agent_task_process_group.rs"]
 mod process_group;
 
+pub(crate) use process_group::terminate_group_survivors;
 use process_group::{AgentProcessGroup, AgentProcessGroupState};
 
 use agent_task_steering::{
@@ -482,6 +486,7 @@ struct AgentTaskEntry {
     stdout_at_line_boundary: bool,
     stderr_at_line_boundary: bool,
     stop_requested: bool,
+    interrupt_requested: bool,
     watchdog_timed_out: bool,
     group: Option<Arc<AgentProcessGroup>>,
     input: Option<Arc<AgentTaskInputSlot>>,
@@ -512,6 +517,7 @@ impl AgentTaskEntry {
             stdout_at_line_boundary: true,
             stderr_at_line_boundary: true,
             stop_requested: false,
+            interrupt_requested: false,
             watchdog_timed_out: false,
             group: None,
             input: None,
@@ -1479,24 +1485,20 @@ fn run_waiter_inner(
                 return;
             }
             match group.reap(child) {
-                Ok(exit_code) => complete(
+                Ok(exit_code) => complete_settled(
                     shared,
                     task_id,
                     AgentTaskStatusPayload::Exited { exit_code },
+                    child.settled_by_interrupt(),
                 ),
                 Err(error) => {
+                    let message = child.reap_failure_message(&error);
                     let _ = group.force_stop();
                     let _ = catch_unwind(AssertUnwindSafe(|| {
                         let _ = child.force_kill();
                     }));
                     reap_bounded(group, child, shared.tuning.force_timeout);
-                    complete(
-                        shared,
-                        task_id,
-                        AgentTaskStatusPayload::Failed {
-                            message: format!("Agent task reap failed: {error}"),
-                        },
-                    );
+                    complete(shared, task_id, AgentTaskStatusPayload::Failed { message });
                 }
             }
         }
@@ -1529,7 +1531,7 @@ fn remove_shared_entry(shared: &Arc<AgentTaskShared>, task_id: &str) {
 
 #[path = "agent_task_completion.rs"]
 mod completion;
-use completion::{capture_completion, complete};
+use completion::{capture_completion, complete, complete_settled};
 
 #[path = "agent_task_output_delivery.rs"]
 mod output_delivery;

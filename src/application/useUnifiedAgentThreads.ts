@@ -677,8 +677,9 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
             ),
           };
     },
-    sendFollowUp: async (request) => {
-      if (!isRemoteAgentIdentity(request.threadId)) return local.sendFollowUp(request);
+    sendFollowUp: async (request, restartConsent) => {
+      if (!isRemoteAgentIdentity(request.threadId))
+        return local.sendFollowUp(request, restartConsent);
       if (remoteSteer.hasUnconfirmed(request.threadId)) {
         report("Retry the original immediate message before sending another message.");
         return false;

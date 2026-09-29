@@ -51,7 +51,7 @@ fn bytewise_lifecycle_and_multiple_tasks_require_all_terminals() {
 }
 
 #[test]
-fn stale_start_progress_and_duplicate_notification_do_not_resurrect() {
+fn a_restarted_task_is_live_until_its_next_terminal() {
     let mut detector = ResultLineDetector::new();
     detector.feed(start("watch").as_bytes()).unwrap();
     detector.feed(DONE).unwrap();
@@ -59,6 +59,7 @@ fn stale_start_progress_and_duplicate_notification_do_not_resurrect() {
     detector
         .feed(b"{\"type\":\"system\",\"subtype\":\"task_progress\",\"task_id\":\"watch\"}\n")
         .unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
     detector.feed(DONE).unwrap();
     assert!(detector.feed(RESULT).unwrap());
 }
@@ -164,6 +165,37 @@ fn observed_history_limit_allows_existing_live_task_terminal_transition() {
     assert!(!detector.feed(DONE).unwrap());
     let overflow = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"overflow\",\"status\":\"completed\"}\n";
     assert!(detector.feed(overflow).is_err());
+}
+
+#[test]
+fn session_policy_evicts_the_oldest_tombstones_instead_of_failing() {
+    let mut detector =
+        ResultLineDetector::new().with_settle_policy(ResultSettlePolicy::AwaitBackgroundWork);
+    detector.feed(start("watch").as_bytes()).unwrap();
+    let total = MAX_OBSERVED_TASKS + 10;
+    for id in 0..total {
+        let done = format!("{{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"done-{id}\",\"status\":\"completed\"}}\n");
+        detector.feed(done.as_bytes()).unwrap();
+    }
+    assert!(detector.terminal.len() + detector.live.len() <= MAX_OBSERVED_TASKS);
+    assert_eq!(detector.buried.len(), detector.terminal.len());
+    assert!(detector.live.contains_key("watch"));
+    let evicted = total + 1 - MAX_OBSERVED_TASKS;
+    assert!((0..evicted).all(|id| !detector.terminal.contains_key(&format!("done-{id}"))));
+    assert!((evicted..total).all(|id| detector.terminal.contains_key(&format!("done-{id}"))));
+    assert_eq!(detector.buried.front(), Some(&format!("done-{evicted}")));
+}
+
+#[test]
+fn session_policy_still_bounds_live_tasks() {
+    let mut detector =
+        ResultLineDetector::new().with_settle_policy(ResultSettlePolicy::AwaitBackgroundWork);
+    for id in 0..MAX_LIVE_TASKS {
+        detector
+            .feed(start(&format!("live-{id}")).as_bytes())
+            .unwrap();
+    }
+    assert!(detector.feed(start("one-too-many").as_bytes()).is_err());
 }
 
 #[test]
@@ -404,4 +436,383 @@ fn cleared_session_tasks_still_retain_input() {
         ]),
         [false, false, false, false, false, false, false, false, true]
     );
+}
+
+fn parsed(line: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(line).expect("fixture json")
+}
+
+fn awaiting() -> ResultLineDetector {
+    ResultLineDetector::new().with_settle_policy(ResultSettlePolicy::AwaitBackgroundWork)
+}
+
+const FAILED: &[u8] =
+    b"{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true}\n";
+const STOPPED: &[u8] = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"watch\",\"status\":\"stopped\"}\n";
+const PROGRESS: &[u8] =
+    b"{\"type\":\"system\",\"subtype\":\"task_progress\",\"task_id\":\"watch\"}\n";
+const DRAINED: &[u8] = b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{\"status\":\"completed\"}}\n";
+const UNPROMPTED_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"background-finished\",\"num_turns\":1,\"origin\":{\"kind\":\"task-notification\"},\"result_index\":1}\n";
+const NULL_UUID_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"background-finished\",\"num_turns\":1,\"user_message_uuid\":null,\"result_index\":1}\n";
+
+#[test]
+fn await_background_policy_keeps_a_failed_result_open_until_the_drain() {
+    let mut detector = awaiting();
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert!(!detector.feed(FAILED).unwrap());
+    assert!(detector.feed(DONE).unwrap());
+    assert!(!detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn await_background_policy_settles_a_failed_result_without_live_tasks() {
+    assert!(awaiting().feed(FAILED).unwrap());
+}
+
+#[test]
+fn legacy_policy_still_settles_a_failed_result_immediately() {
+    let mut detector = ResultLineDetector::new();
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert!(detector.feed(FAILED).unwrap());
+}
+
+#[test]
+fn rearm_allows_a_second_settlement_and_keeps_tombstones_and_session() {
+    let mut detector = ResultLineDetector::new();
+    detector
+        .feed(b"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-abcdefgh\"}\n")
+        .unwrap();
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert!(!detector.feed(DONE).unwrap());
+    assert!(detector.feed(RESULT).unwrap());
+    detector.rearm(None);
+    assert!(!detector.feed(PROGRESS).unwrap());
+    assert_eq!(
+        detector.live_task_count(),
+        0,
+        "progress cannot revive a tombstone"
+    );
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert_eq!(
+        detector.live_task_count(),
+        1,
+        "a restarted task is live again"
+    );
+    assert_eq!(detector.session_id(), Some("sess-abcdefgh"));
+    assert!(!detector.feed(RESULT).unwrap());
+    assert!(!detector.feed(DONE).unwrap());
+    assert!(detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn resumed_background_task_restarted_under_the_same_id_keeps_the_turn_open() {
+    for policy in [
+        ResultSettlePolicy::SettleOnFailure,
+        ResultSettlePolicy::AwaitBackgroundWork,
+    ] {
+        let mut detector = ResultLineDetector::new().with_settle_policy(policy);
+        assert!(!detector.feed(INIT).unwrap());
+        assert!(!detector.feed(STOPPED).unwrap());
+        assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+        assert_eq!(detector.live_task_count(), 1);
+        assert!(!detector.feed(ASSISTANT).unwrap());
+        assert!(!detector.feed(REAL_RESULT).unwrap());
+        let drained = detector.feed(DONE).unwrap();
+        assert_eq!(
+            drained,
+            policy == ResultSettlePolicy::AwaitBackgroundWork,
+            "{policy:?}"
+        );
+        if !drained {
+            assert!(detector.feed(REAL_RESULT).unwrap());
+        }
+    }
+}
+
+#[test]
+fn notifications_and_updates_never_revive_a_tombstone() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.feed(DONE).unwrap();
+    let running = b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{\"status\":\"running\"}}\n";
+    let notice = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"watch\",\"status\":\"running\"}\n";
+    for line in [PROGRESS, running.as_slice(), notice.as_slice()] {
+        detector.feed(line).unwrap();
+        assert_eq!(detector.live_task_count(), 0);
+    }
+    assert!(detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn revival_respects_the_live_task_limit() {
+    let mut detector = ResultLineDetector::new();
+    detector.feed(STOPPED).unwrap();
+    for id in 0..MAX_LIVE_TASKS {
+        detector
+            .feed(start(&format!("task-{id}")).as_bytes())
+            .unwrap();
+    }
+    assert!(detector.feed(start("watch").as_bytes()).is_err());
+}
+
+#[test]
+fn consume_message_matches_feed() {
+    let mut by_value = ResultLineDetector::new();
+    assert!(!by_value
+        .consume_message(&parsed(start("watch").as_bytes()))
+        .unwrap());
+    assert!(!by_value.consume_message(&parsed(RESULT)).unwrap());
+    assert!(!by_value.consume_message(&parsed(DONE)).unwrap());
+    assert!(by_value.consume_message(&parsed(RESULT)).unwrap());
+    assert!(!by_value.consume_message(&parsed(RESULT)).unwrap());
+}
+
+#[test]
+fn native_background_turn_settles_at_the_drain_and_ignores_the_unprompted_turn() {
+    let queued_bg = b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"watch\",\"task_type\":\"local_bash\",\"is_backgrounded\":true}\n";
+    let changed = b"{\"type\":\"system\",\"subtype\":\"background_tasks_changed\",\"tasks\":[{\"task_id\":\"watch\"}]}\n";
+    let emptied = b"{\"type\":\"system\",\"subtype\":\"background_tasks_changed\",\"tasks\":[]}\n";
+    let result = b"{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"STARTED\",\"num_turns\":1,\"user_message_uuid\":\"u-1\",\"user_message_uuids\":[\"u-1\"],\"result_index\":0}\n";
+    let completed =
+        b"{\"type\":\"command_lifecycle\",\"command_uuid\":\"u-1\",\"state\":\"completed\"}\n";
+    let mut detector = awaiting();
+    for line in [
+        INIT,
+        changed.as_slice(),
+        queued_bg.as_slice(),
+        ASSISTANT,
+        result.as_slice(),
+        completed.as_slice(),
+        emptied.as_slice(),
+    ] {
+        assert!(!detector.feed(line).unwrap());
+    }
+    assert!(detector.feed(DRAINED).unwrap());
+    detector.rearm(None);
+    for line in [DONE, INIT, ASSISTANT, UNPROMPTED_RESULT] {
+        assert!(!detector.feed(line).unwrap());
+    }
+    assert_eq!(detector.live_task_count(), 0);
+}
+
+#[test]
+fn unsolicited_result_never_settles_and_never_reaches_the_ledger() {
+    use crate::agent_task_spawner::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
+    let ledger = std::sync::Arc::new(ClaudeInputLifecycle::new());
+    let lifecycle = |id: &str, state: &str| {
+        format!(
+            "{{\"type\":\"command_lifecycle\",\"command_uuid\":\"{id}\",\"state\":\"{state}\"}}\n"
+        )
+    };
+    let mut detector = awaiting().with_lifecycle(Some(std::sync::Arc::clone(&ledger)));
+    let initial = ledger.initial_command_id().to_string();
+    assert!(!detector
+        .feed(lifecycle(&initial, "started").as_bytes())
+        .unwrap());
+    assert!(!detector.feed(ASSISTANT).unwrap());
+    let (steer, _) = ledger.reserve(b"{}\n").unwrap();
+    assert!(!detector
+        .feed(lifecycle(&steer, "started").as_bytes())
+        .unwrap());
+    assert!(!detector.feed(UNPROMPTED_RESULT).unwrap());
+    assert!(!detector
+        .feed(lifecycle(&steer, "completed").as_bytes())
+        .unwrap());
+    assert!(
+        ledger.has_pending(),
+        "the unprompted result was not counted"
+    );
+    assert!(detector.feed(REAL_RESULT).unwrap());
+}
+
+#[test]
+fn missing_user_message_uuid_keeps_the_older_cli_behaviour() {
+    let mut detector = awaiting();
+    assert!(!detector.feed(ASSISTANT).unwrap());
+    assert!(detector.feed(REAL_RESULT).unwrap());
+}
+
+#[test]
+fn legacy_policy_after_a_drain_still_needs_another_result_and_counts_null_uuid() {
+    let mut detector = ResultLineDetector::new();
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert!(!detector.feed(RESULT).unwrap());
+    assert!(!detector.feed(DRAINED).unwrap());
+    assert!(detector.feed(UNPROMPTED_RESULT).unwrap());
+}
+
+#[test]
+fn rearm_forgets_a_result_seen_before_it() {
+    let mut detector = awaiting();
+    assert!(!detector.feed(start("watch").as_bytes()).unwrap());
+    assert!(!detector.feed(RESULT).unwrap());
+    detector.rearm(None);
+    assert!(!detector.feed(DONE).unwrap());
+    assert!(detector.feed(RESULT).unwrap());
+}
+
+#[test]
+fn an_explicit_null_uuid_result_is_unprompted_under_await_policy() {
+    let mut detector = awaiting();
+    assert!(!detector.feed(ASSISTANT).unwrap());
+    assert!(!detector.feed(NULL_UUID_RESULT).unwrap());
+    assert!(detector.feed(REAL_RESULT).unwrap());
+}
+
+#[test]
+fn tracking_updates_tasks_and_session_but_never_the_ledger_or_settlement() {
+    use crate::agent_task_spawner::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
+    let ledger = std::sync::Arc::new(ClaudeInputLifecycle::new());
+    let started = format!(
+        "{{\"type\":\"command_lifecycle\",\"command_uuid\":\"{}\",\"state\":\"started\"}}\n",
+        ledger.initial_command_id()
+    );
+    let mut detector = awaiting().with_lifecycle(Some(std::sync::Arc::clone(&ledger)));
+    detector
+        .observe_command(&parsed(started.as_bytes()))
+        .unwrap();
+    detector.track_message(&parsed(INIT)).unwrap();
+    detector
+        .track_message(&parsed(start("watch").as_bytes()))
+        .unwrap();
+    assert_eq!(detector.session_id(), Some("resumed"));
+    assert_eq!(detector.live_task_count(), 1);
+    detector.track_message(&parsed(ASSISTANT)).unwrap();
+    detector.track_message(&parsed(REAL_RESULT)).unwrap();
+    detector.track_message(&parsed(DONE)).unwrap();
+    assert_eq!(detector.live_task_count(), 0);
+    assert!(!detector.settle_if_ready());
+    assert!(
+        ledger.reserve(b"{}\n").is_ok(),
+        "tracking never closed the ledger"
+    );
+    let foreign = b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"other\",\"session_id\":\"foreign\"}\n";
+    detector.track_message(&parsed(foreign)).unwrap();
+    assert_eq!(detector.live_task_count(), 0);
+}
+
+#[test]
+fn observe_command_feeds_only_the_ledger() {
+    use crate::agent_task_spawner::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
+    let ledger = std::sync::Arc::new(ClaudeInputLifecycle::new());
+    let queued = format!(
+        "{{\"type\":\"command_lifecycle\",\"command_uuid\":\"{}\",\"state\":\"queued\"}}\n",
+        ledger.initial_command_id()
+    );
+    let mut detector = awaiting().with_lifecycle(Some(std::sync::Arc::clone(&ledger)));
+    assert!(ledger.reserve(b"{}\n").is_err());
+    detector
+        .observe_command(&parsed(queued.as_bytes()))
+        .unwrap();
+    assert!(ledger.reserve(b"{}\n").is_ok());
+}
+
+#[test]
+fn settle_if_ready_settles_a_drained_turn_once() {
+    let mut detector = awaiting();
+    assert!(!detector.settle_if_ready());
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    detector.track_message(&parsed(DONE)).unwrap();
+    assert!(detector.settle_if_ready());
+    assert!(!detector.settle_if_ready());
+}
+
+#[test]
+fn an_interrupt_suspends_drain_settlement_until_the_interrupted_result() {
+    let mut detector = awaiting();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    detector.suspend_drain_settlement();
+    assert!(!detector.feed(STOPPED).unwrap());
+    assert!(!detector.settle_if_ready());
+    assert!(detector.feed(FAILED).unwrap());
+    detector.rearm(None);
+    detector.feed(start("next").as_bytes()).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    let next_done = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"next\",\"status\":\"completed\"}\n";
+    assert!(
+        detector.feed(next_done).unwrap(),
+        "rearm restores drain settlement"
+    );
+}
+
+#[test]
+fn an_interrupt_still_settles_on_a_result_seen_before_it() {
+    let mut detector = awaiting();
+    assert!(!detector.feed(ASSISTANT).unwrap());
+    detector.suspend_drain_settlement();
+    assert!(detector.feed(REAL_RESULT).unwrap());
+}
+
+#[test]
+fn only_tasks_not_started_as_foreground_count_as_background() {
+    let foreground = b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"fg\",\"task_type\":\"local_bash\",\"is_backgrounded\":false}\n";
+    let native = b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"bg\",\"task_type\":\"local_bash\",\"is_backgrounded\":true}\n";
+    let native_done = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"bg\",\"status\":\"completed\"}\n";
+    let foreground_done = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"fg\",\"status\":\"stopped\"}\n";
+    let mut detector = awaiting();
+    detector.feed(foreground).unwrap();
+    assert_eq!(detector.live_task_count(), 1);
+    assert_eq!(detector.live_background_task_count(), 0);
+    detector.feed(native).unwrap();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert_eq!(detector.live_task_count(), 3);
+    assert_eq!(detector.live_background_task_count(), 2);
+    detector.feed(native_done).unwrap();
+    detector.feed(foreground_done).unwrap();
+    assert_eq!(detector.live_task_count(), 1);
+    assert_eq!(detector.live_background_task_count(), 1);
+    detector.feed(DONE).unwrap();
+    assert_eq!(detector.live_background_task_count(), 0);
+    detector.feed(foreground).unwrap();
+    assert_eq!(
+        detector.live_task_count(),
+        1,
+        "a restarted foreground task is live"
+    );
+    assert_eq!(detector.live_background_task_count(), 0);
+    detector.feed(native).unwrap();
+    assert_eq!(
+        detector.live_background_task_count(),
+        1,
+        "a restarted background task counts"
+    );
+    detector.feed(CLEAR_RESET).unwrap();
+    assert_eq!(detector.live_task_count(), 0);
+    assert_eq!(detector.live_background_task_count(), 0);
+}
+
+#[test]
+fn rearm_makes_live_tasks_inherited_for_settlement_only() {
+    let mut detector = awaiting();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    detector.rearm(None);
+    assert_eq!(detector.live_task_count(), 1);
+    assert!(
+        detector.feed(RESULT).unwrap(),
+        "an inherited task never blocks"
+    );
+    detector.rearm(None);
+    detector.feed(start("fresh").as_bytes()).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    assert!(
+        !detector.feed(DONE).unwrap(),
+        "the inherited drain is not ours"
+    );
+    let fresh_done = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"fresh\",\"status\":\"completed\"}\n";
+    assert!(detector.feed(fresh_done).unwrap());
+    assert_eq!(detector.live_task_count(), 0);
+}
+
+#[test]
+fn an_inherited_task_restarted_after_the_arm_blocks_again() {
+    let mut detector = awaiting();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    detector.rearm(None);
+    detector.feed(STOPPED).unwrap();
+    detector.feed(start("watch").as_bytes()).unwrap();
+    assert!(!detector.feed(RESULT).unwrap());
+    assert!(detector.feed(DONE).unwrap());
 }

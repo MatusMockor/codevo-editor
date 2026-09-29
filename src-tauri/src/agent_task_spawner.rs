@@ -10,6 +10,16 @@ use crate::effective_executable_environment::EffectiveExecutablePath;
 
 #[path = "agent_provider.rs"]
 pub mod agent_provider;
+#[path = "claude_session_policy.rs"]
+pub mod claude_session_policy;
+#[path = "claude_session_registry.rs"]
+pub mod claude_session_registry;
+#[path = "claude_session_router.rs"]
+pub mod claude_session_router;
+#[path = "claude_session_turn.rs"]
+pub mod claude_session_turn;
+#[path = "claude_thread_session.rs"]
+pub mod claude_thread_session;
 #[path = "codex_app_server_host.rs"]
 pub mod codex_app_server_host;
 #[path = "codex_app_server_protocol.rs"]
@@ -86,6 +96,7 @@ pub struct AgentTaskSpawnPlan {
     prompt: AgentPromptTransport,
     attachment_paths: Vec<PathBuf>,
     app_server: Option<crate::agent_task_spawner::codex_app_server_turn::CodexAppServerTurnPlan>,
+    claude_session: Option<claude_session_turn::ClaudeSessionTurnPlan>,
 }
 
 impl AgentTaskSpawnPlan {
@@ -95,6 +106,15 @@ impl AgentTaskSpawnPlan {
     ) -> Self {
         self.app_server = Some(plan);
         self
+    }
+
+    pub fn with_claude_session(mut self, plan: claude_session_turn::ClaudeSessionTurnPlan) -> Self {
+        self.claude_session = Some(plan);
+        self
+    }
+
+    pub(crate) fn stdin_frame_bytes(&self) -> Option<&Arc<[u8]>> {
+        self.stdin_frame()
     }
 
     pub fn executable_identity(&self) -> &agent_provider::process::ExecutableIdentity {
@@ -185,6 +205,7 @@ impl AgentTaskSpawnPlan {
             prompt: AgentPromptTransport::Argv(String::new()),
             attachment_paths: Vec::new(),
             app_server: None,
+            claude_session: None,
         }
     }
 
@@ -192,6 +213,11 @@ impl AgentTaskSpawnPlan {
     pub fn with_stdin_frame_for_tests(mut self, frame: Vec<u8>) -> Self {
         self.prompt = AgentPromptTransport::Stdin(frame.into());
         self
+    }
+
+    #[cfg(test)]
+    pub fn has_claude_session(&self) -> bool {
+        self.claude_session.is_some()
     }
 }
 
@@ -354,6 +380,7 @@ fn plan_agent_invocation_with_authority_and_environment(
         prompt: prompt_transport,
         attachment_paths,
         app_server: None,
+        claude_session: None,
     })
 }
 
@@ -613,6 +640,10 @@ pub enum AgentTaskProcessOwnership {
     SharedSession,
 }
 
+pub(crate) fn reap_failure_message(error: &str) -> String {
+    format!("Agent task reap failed: {error}")
+}
+
 pub trait AgentChild: Send {
     fn take_questions(&mut self) -> Option<Arc<crate::agent_questions::AgentQuestionSession>> {
         None
@@ -621,6 +652,9 @@ pub trait AgentChild: Send {
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn observe_exit(&mut self) -> Result<bool, String>;
     fn reap(&mut self) -> Result<i32, String>;
+    fn reap_failure_message(&self, error: &str) -> String {
+        reap_failure_message(error)
+    }
     fn try_wait(&mut self) -> Result<Option<i32>, String> {
         if !self.observe_exit()? {
             return Ok(None);
@@ -637,6 +671,9 @@ pub trait AgentChild: Send {
     fn take_input(&mut self) -> Option<Box<dyn AgentTaskInput>> {
         None
     }
+    fn settled_by_interrupt(&self) -> Option<bool> {
+        None
+    }
 }
 
 pub trait AgentProcessSpawner: Send + Sync {
@@ -650,86 +687,102 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
         if let Some(app_server) = &plan.app_server {
             return app_server.spawn();
         }
-        let mut bound = plan
-            .executable_identity
-            .bound_command()
-            .map_err(|_| "Agent CLI executable identity changed before launch.".to_string())?;
-        let command = bound.command_mut();
-        let stdin = match plan.stdin_frame() {
-            Some(_) => Stdio::piped(),
-            None => Stdio::null(),
-        };
-        command
-            .args(plan.args())
-            .env_clear()
-            .envs(plan.env().iter().cloned())
-            .stdin(stdin)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            use std::os::unix::process::CommandExt;
-
-            if let Some(cwd_authority) = plan.cwd_authority() {
-                let cwd_fd = cwd_authority.as_raw_fd();
-                unsafe {
-                    command.pre_exec(move || {
-                        if libc::fchdir(cwd_fd) == 0 {
-                            return Ok(());
-                        }
-                        Err(io::Error::last_os_error())
-                    });
-                }
-            }
-            if plan.cwd_authority().is_none() {
-                command.current_dir(plan.cwd());
-            }
-            command.process_group(0);
+        if let Some(session) = &plan.claude_session {
+            return session.spawn(plan);
         }
-        #[cfg(not(unix))]
-        command.current_dir(plan.cwd());
-        let mut child = match bound.spawn() {
-            Ok(child) => child,
-            Err(agent_provider::process::BoundExecutableSpawnFailure::IdentityChanged) => {
-                return Err("Agent CLI executable identity changed before launch.".to_string());
-            }
-            Err(agent_provider::process::BoundExecutableSpawnFailure::Spawn(error)) => {
-                return Err(format!("Unable to launch agent task: {error}"));
-            }
-        };
-        let Ok(process_group_id) = i32::try_from(child.id()) else {
-            let _ = child.kill();
-            let _ = reap_child(&mut child);
-            return Err("Agent process identifier is not addressable.".to_string());
-        };
-        let lifecycle = plan
-            .stdin_frame()
-            .map(|_| Arc::new(agent_task_input::claude_lifecycle::ClaudeInputLifecycle::new()));
-        let input = plan.stdin_frame().and_then(|frame| {
-            let retained: RetainedChildStdin =
-                Arc::new(RetainedAgentStdin::new(child.stdin.take()?));
-            let frame = lifecycle.as_ref().map_or_else(
-                || Arc::clone(frame),
-                |lifecycle| lifecycle.initial_frame(frame).into(),
-            );
-            write_prompt_frame_on_a_dedicated_thread(&retained, frame);
-            Some(retained)
-        });
-        let questions = input
-            .as_ref()
-            .map(|_| Arc::new(crate::agent_questions::AgentQuestionSession::new()));
-        let question_input = input.clone();
-        Ok(Box::new(StdAgentChild {
-            child,
-            process_group_id,
-            observed_exit_code: None,
-            input,
-            questions,
-            question_input,
-            lifecycle,
-        }))
+        spawn_per_turn_process(plan)
     }
+}
+
+pub(crate) fn spawn_bound_process(
+    plan: &AgentTaskSpawnPlan,
+    stdin: Stdio,
+) -> Result<(Child, i32), String> {
+    let mut bound = plan
+        .executable_identity
+        .bound_command()
+        .map_err(|_| "Agent CLI executable identity changed before launch.".to_string())?;
+    let command = bound.command_mut();
+    command
+        .args(plan.args())
+        .env_clear()
+        .envs(plan.env().iter().cloned())
+        .stdin(stdin)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+
+        if let Some(cwd_authority) = plan.cwd_authority() {
+            let cwd_fd = cwd_authority.as_raw_fd();
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(cwd_fd) == 0 {
+                        return Ok(());
+                    }
+                    Err(io::Error::last_os_error())
+                });
+            }
+        }
+        if plan.cwd_authority().is_none() {
+            command.current_dir(plan.cwd());
+        }
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    command.current_dir(plan.cwd());
+    let mut child = match bound.spawn() {
+        Ok(child) => child,
+        Err(agent_provider::process::BoundExecutableSpawnFailure::IdentityChanged) => {
+            return Err("Agent CLI executable identity changed before launch.".to_string());
+        }
+        Err(agent_provider::process::BoundExecutableSpawnFailure::Spawn(error)) => {
+            return Err(format!("Unable to launch agent task: {error}"));
+        }
+    };
+    let Ok(process_group_id) = i32::try_from(child.id()) else {
+        let _ = child.kill();
+        let _ = reap_child(&mut child);
+        return Err("Agent process identifier is not addressable.".to_string());
+    };
+    Ok((child, process_group_id))
+}
+
+pub(crate) fn spawn_per_turn_process(
+    plan: &AgentTaskSpawnPlan,
+) -> Result<Box<dyn AgentChild>, String> {
+    let stdin = match plan.stdin_frame() {
+        Some(_) => Stdio::piped(),
+        None => Stdio::null(),
+    };
+    let (mut child, process_group_id) = spawn_bound_process(plan, stdin)?;
+    let lifecycle = plan
+        .stdin_frame()
+        .map(|_| Arc::new(agent_task_input::claude_lifecycle::ClaudeInputLifecycle::new()));
+    let input = plan.stdin_frame().and_then(|frame| {
+        let retained: RetainedChildStdin = Arc::new(RetainedAgentStdin::new(child.stdin.take()?));
+        let frame = lifecycle.as_ref().map_or_else(
+            || Arc::clone(frame),
+            |lifecycle| lifecycle.initial_frame(frame).into(),
+        );
+        write_prompt_frame_on_a_dedicated_thread(&retained, frame);
+        Some(retained)
+    });
+    let questions = input
+        .as_ref()
+        .map(|_| Arc::new(crate::agent_questions::AgentQuestionSession::new()));
+    let question_input = input.clone();
+    Ok(Box::new(StdAgentChild {
+        child,
+        process_group_id,
+        observed_exit_code: None,
+        input,
+        questions,
+        question_input,
+        lifecycle,
+    }))
 }
 
 fn write_prompt_frame_on_a_dedicated_thread(retained: &RetainedChildStdin, frame: Arc<[u8]>) {
@@ -887,6 +940,11 @@ pub(crate) fn observe_exit_without_reaping(child: &Child) -> io::Result<bool> {
             return Err(error);
         }
     }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn observe_exit_without_reaping(_child: &Child) -> io::Result<bool> {
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 pub(crate) fn reap_child(child: &mut Child) -> io::Result<std::process::ExitStatus> {

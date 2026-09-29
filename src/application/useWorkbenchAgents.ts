@@ -10,6 +10,7 @@ import type {
 import { mergeAgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
+import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
@@ -86,6 +87,7 @@ export interface WorkbenchAgentProjectGateways {
 export interface WorkbenchAgentsOptions {
   readonly turnChangesGateway?: AgentTurnChangesGateway;
   readonly agentTaskGateway?: AgentTaskGateway;
+  readonly agentThreadSessionGateway?: AgentThreadSessionGateway;
   readonly agentQuestionGateway?: AgentQuestionGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
@@ -461,6 +463,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   const threads = useAgentThreads({
     turnChangesGateway: options.turnChangesGateway,
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
+    agentThreadSessionGateway: options.agentThreadSessionGateway,
     agentQuestionGateway: options.agentQuestionGateway,
     agentAttachmentGateway: options.agentAttachmentGateway ?? defaultAgentAttachmentGateway,
     agentImageSurface: options.agentImageSurface ?? defaultAgentImageSurface,
