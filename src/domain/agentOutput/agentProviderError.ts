@@ -6,12 +6,57 @@ export const MAX_AGENT_PROVIDER_ERROR_PAYLOAD_CHARS = 64 * 1_024;
 
 const MAX_ERROR_PAYLOAD_UNWRAPS = 4;
 const MAX_AGENT_MODEL_NAME_CHARS = 120;
+const MAX_USAGE_LIMIT_RESET_CHARS = 64;
 const QUOTE_CHARACTERS = "`'\"‘’“”";
 const NEWER_VERSION_PATTERN = /requires a newer version of\s+(codex|claude)/iu;
 const QUOTED_MODEL_PATTERN = new RegExp(
   `[${QUOTE_CHARACTERS}]([^\\s${QUOTE_CHARACTERS}]+)[${QUOTE_CHARACTERS}]\\s+model\\s+requires a newer version`,
   "iu",
 );
+
+const OAUTH_SESSION_EXPIRED_PATTERN =
+  /^Failed to authenticate: OAuth session expired and could not be refreshed[.!]?$/iu;
+const CLAUDE_USAGE_LIMIT_PREFIXES: ReadonlyArray<string> = [
+  "You've hit your ",
+  "You've reached your ",
+  "You're out of usage credits",
+  "You're out of extra usage",
+  "Your org is out of usage",
+];
+const CODEX_USAGE_LIMIT_PREFIXES: ReadonlyArray<string> = [
+  "You've hit your usage limit",
+  "You've reached your usage limit",
+  "You're out of credits",
+  "Usage limit reached",
+];
+const CLAUDE_CAPACITY_PATTERNS: ReadonlyArray<CapacityPattern> = [
+  {
+    pattern: /^API Error: Request rejected \(429\) · this may be a temporary capacity issue\b/u,
+    scope: "service",
+  },
+  {
+    pattern: /^API Error: Server is temporarily limiting requests \(not your usage limit\)/u,
+    scope: "service",
+  },
+  { pattern: /^API Error: Repeated 529 Overloaded errors\b/u, scope: "service" },
+  { pattern: /^API Error: 529\b/u, scope: "service" },
+  { pattern: /^Overloaded$/u, scope: "service" },
+  { pattern: /^[A-Z][\w.-]{0,40} is experiencing high load\b/u, scope: "model" },
+];
+const CODEX_CAPACITY_PATTERNS: ReadonlyArray<CapacityPattern> = [
+  { pattern: /^Selected model is at capacity\b/u, scope: "model" },
+];
+const CLAUDE_RESET_PATTERN = /\s·\s*resets\s+(.+)$/u;
+const CODEX_RESET_PATTERN = /\btry again (at|in)\s+(.+)$/iu;
+const RESET_TRAILING_PUNCTUATION = /[\s.!]+$/u;
+
+export type AgentAuthenticationFailureCause = "sessionExpired" | "rejected";
+export type AgentCapacityScope = "service" | "model";
+
+interface CapacityPattern {
+  readonly pattern: RegExp;
+  readonly scope: AgentCapacityScope;
+}
 
 export interface AgentProviderAdvisory {
   readonly provider: AgentCliKind;
@@ -31,7 +76,21 @@ export type AgentProviderErrorDetail =
       readonly provider: AgentCliKind;
       readonly model: string;
     }
-  | { readonly kind: "authenticationRequired"; readonly provider: AgentCliKind }
+  | {
+      readonly kind: "authenticationRequired";
+      readonly provider: AgentCliKind;
+      readonly cause: AgentAuthenticationFailureCause;
+    }
+  | {
+      readonly kind: "temporarilyOverCapacity";
+      readonly provider: AgentCliKind;
+      readonly scope: AgentCapacityScope;
+    }
+  | {
+      readonly kind: "usageLimited";
+      readonly provider: AgentCliKind;
+      readonly resetsAt: string | null;
+    }
   | { readonly kind: "protocolFailure"; readonly provider: AgentCliKind }
   | { readonly kind: "advisory"; readonly provider: AgentCliKind; readonly text: string }
   | { readonly kind: "unknown" };
@@ -50,7 +109,9 @@ export function classifyAgentProviderError(
   const message = boundedUtf8Text(unwrappedMessage(raw), MAX_AGENT_PROVIDER_ERROR_MESSAGE_BYTES);
   const detail = advisoryDetail(message, provider) ??
     unsupportedModelDetail(message, provider) ??
-    launchFailureDetail(message, provider) ?? { kind: "unknown" };
+    launchFailureDetail(message, provider) ??
+    usageLimitDetail(message, provider) ??
+    capacityDetail(message, provider) ?? { kind: "unknown" };
 
   return {
     detail,
@@ -73,8 +134,10 @@ export function agentProviderErrorHeadline(
 
     return `${subject} cannot run ${detail.model}. Update ${name} and try again.`;
   }
-  if (detail.kind === "authenticationRequired")
-    return `${agentProviderDisplayName(detail.provider)} needs you to sign in again.`;
+  if (detail.kind === "authenticationRequired") return authenticationHeadline(detail);
+  if (detail.kind === "usageLimited") return usageLimitHeadline(detail);
+  if (detail.kind === "temporarilyOverCapacity")
+    return `${agentProviderDisplayName(detail.provider)} is temporarily over capacity.`;
   if (detail.kind === "protocolFailure")
     return `${agentProviderDisplayName(detail.provider)} could not complete this run.`;
   if (detail.kind === "advisory") return detail.text;
@@ -133,16 +196,94 @@ function launchFailureDetail(
   provider: AgentCliKind,
 ): AgentProviderErrorDetail | null {
   if (message === "provider_protocol_failed") return { kind: "protocolFailure", provider };
-  if (
-    message === "authentication_failed" ||
-    (provider === "claudeCode" &&
-      /^Failed to authenticate: OAuth session expired and could not be refreshed[.!]?$/iu.test(
-        message,
-      ))
-  ) {
-    return { kind: "authenticationRequired", provider };
+  if (message === "authentication_failed") {
+    return { kind: "authenticationRequired", provider, cause: "rejected" };
+  }
+  if (provider === "claudeCode" && OAUTH_SESSION_EXPIRED_PATTERN.test(message)) {
+    return { kind: "authenticationRequired", provider, cause: "sessionExpired" };
   }
   return null;
+}
+
+function usageLimitDetail(
+  message: string,
+  provider: AgentCliKind,
+): AgentProviderErrorDetail | null {
+  const line = firstLine(message).replace(/[‘’]/gu, "'");
+  const prefixes =
+    provider === "claudeCode" ? CLAUDE_USAGE_LIMIT_PREFIXES : CODEX_USAGE_LIMIT_PREFIXES;
+
+  if (!prefixes.some((prefix) => line.startsWith(prefix))) return null;
+
+  return { kind: "usageLimited", provider, resetsAt: usageLimitReset(line, provider) };
+}
+
+function capacityDetail(message: string, provider: AgentCliKind): AgentProviderErrorDetail | null {
+  const line = firstLine(message);
+  const patterns = provider === "claudeCode" ? CLAUDE_CAPACITY_PATTERNS : CODEX_CAPACITY_PATTERNS;
+
+  const match = patterns.find((candidate) => candidate.pattern.test(line));
+
+  if (match === undefined) return null;
+
+  return { kind: "temporarilyOverCapacity", provider, scope: match.scope };
+}
+
+function usageLimitReset(line: string, provider: AgentCliKind): string | null {
+  const reset = provider === "claudeCode" ? claudeReset(line) : codexReset(line);
+
+  if (reset === null) return null;
+
+  const trimmed = reset.replace(RESET_TRAILING_PUNCTUATION, "").trim();
+
+  if (trimmed === "" || trimmed.length > MAX_USAGE_LIMIT_RESET_CHARS) return null;
+
+  return trimmed;
+}
+
+function claudeReset(line: string): string | null {
+  return CLAUDE_RESET_PATTERN.exec(line)?.[1] ?? null;
+}
+
+function codexReset(line: string): string | null {
+  const match = CODEX_RESET_PATTERN.exec(line);
+
+  if (match === null) return null;
+
+  const reset = match[2] ?? "";
+
+  return match[1]?.toLowerCase() === "in" ? `in ${reset}` : reset;
+}
+
+function firstLine(message: string): string {
+  const newline = message.indexOf("\n");
+
+  return (newline === -1 ? message : message.slice(0, newline)).trim();
+}
+
+function authenticationHeadline(
+  detail: Extract<AgentProviderErrorDetail, { kind: "authenticationRequired" }>,
+): string {
+  const name = agentProviderDisplayName(detail.provider);
+
+  switch (detail.cause) {
+    case "sessionExpired":
+      return `${name} needs you to sign in again.`;
+    case "rejected":
+      return `${name} could not authenticate this run.`;
+    default:
+      return unsupportedAuthenticationCause(detail.cause);
+  }
+}
+
+function usageLimitHeadline(
+  detail: Extract<AgentProviderErrorDetail, { kind: "usageLimited" }>,
+): string {
+  const headline = `${agentProviderDisplayName(detail.provider)} usage limit reached.`;
+
+  if (detail.resetsAt === null) return headline;
+
+  return `${headline} Resets ${detail.resetsAt}.`;
 }
 
 function advisoryDetail(message: string, provider: AgentCliKind): AgentProviderErrorDetail | null {
@@ -185,9 +326,16 @@ function errorSignature(detail: AgentProviderErrorDetail, message: string): stri
   if (detail.kind === "unsupportedModelForCliVersion") {
     return `unsupportedModelForCliVersion:${detail.provider}:${detail.model}`;
   }
-  if (detail.kind === "authenticationRequired" || detail.kind === "protocolFailure") {
-    return `${detail.kind}:${detail.provider}`;
+  if (detail.kind === "authenticationRequired") {
+    return `${detail.kind}:${detail.provider}:${detail.cause}`;
   }
+  if (detail.kind === "usageLimited") {
+    return `${detail.kind}:${detail.provider}:${detail.resetsAt ?? ""}`;
+  }
+  if (detail.kind === "temporarilyOverCapacity") {
+    return `${detail.kind}:${detail.provider}:${detail.scope}`;
+  }
+  if (detail.kind === "protocolFailure") return `${detail.kind}:${detail.provider}`;
   if (detail.kind === "advisory") {
     return `advisory:${detail.provider}:${normalizedMessage(detail.text)}`;
   }
@@ -224,6 +372,10 @@ function objectValue(value: unknown): Record<string, unknown> | null {
 
 function unsupportedAgentProviderErrorDetail(detail: never): never {
   throw new TypeError(`Unsupported agent provider error: ${JSON.stringify(detail)}.`);
+}
+
+function unsupportedAuthenticationCause(cause: never): never {
+  throw new TypeError(`Unsupported authentication failure cause: ${String(cause)}.`);
 }
 
 function unsupportedAgentProviderKind(provider: never): never {

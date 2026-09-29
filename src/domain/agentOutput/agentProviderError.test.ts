@@ -197,8 +197,23 @@ describe("launch failure guidance", () => {
       "Failed to authenticate: OAuth session expired and could not be refreshed",
       "claudeCode",
     );
-    expect(error.detail.kind).toBe("authenticationRequired");
+    expect(error.detail).toEqual({
+      kind: "authenticationRequired",
+      provider: "claudeCode",
+      cause: "sessionExpired",
+    });
     expect(agentProviderErrorHeadline(error, null)).toBe("Claude Code needs you to sign in again.");
+  });
+  it("does not claim an expired sign-in for a bare authentication failure code", () => {
+    const error = classifyAgentProviderError("authentication_failed", "claudeCode");
+    expect(error.detail).toEqual({
+      kind: "authenticationRequired",
+      provider: "claudeCode",
+      cause: "rejected",
+    });
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "Claude Code could not authenticate this run.",
+    );
   });
   it("does not mistake an arbitrary tool authentication message for provider login", () => {
     expect(
@@ -210,5 +225,209 @@ describe("launch failure guidance", () => {
     const error = classifyAgentProviderError("provider_protocol_failed", "codex");
     expect(agentProviderErrorHeadline(error, null)).toBe("Codex could not complete this run.");
     expect(error.raw).toBe("provider_protocol_failed");
+  });
+});
+
+describe("usage limits", () => {
+  it("reports the Claude weekly limit with its reset time instead of a sign-in", () => {
+    const error = classifyAgentProviderError(
+      "You've hit your weekly limit · resets Sep 29 at 8am (Europe/Bratislava)",
+      "claudeCode",
+    );
+    expect(error.detail).toEqual({
+      kind: "usageLimited",
+      provider: "claudeCode",
+      resetsAt: "Sep 29 at 8am (Europe/Bratislava)",
+    });
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "Claude Code usage limit reached. Resets Sep 29 at 8am (Europe/Bratislava).",
+    );
+  });
+
+  it("reads the Claude session limit reset clock", () => {
+    const error = classifyAgentProviderError(
+      "You've hit your session limit · resets 4:20pm (Europe/Bratislava)",
+      "claudeCode",
+    );
+    expect(error.detail).toEqual({
+      kind: "usageLimited",
+      provider: "claudeCode",
+      resetsAt: "4:20pm (Europe/Bratislava)",
+    });
+  });
+
+  it("recognizes Claude credit exhaustion without inventing a reset time", () => {
+    const error = classifyAgentProviderError(
+      "You're out of usage credits. Switch to another model to continue.",
+      "claudeCode",
+    );
+    expect(error.detail).toEqual({ kind: "usageLimited", provider: "claudeCode", resetsAt: null });
+    expect(agentProviderErrorHeadline(error, null)).toBe("Claude Code usage limit reached.");
+  });
+
+  it("reports the Codex usage limit with its curly apostrophe and reset date", () => {
+    const error = classifyAgentProviderError(
+      "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 28th, 2026 11:48 PM.",
+      "codex",
+    );
+    expect(error.detail).toEqual({
+      kind: "usageLimited",
+      provider: "codex",
+      resetsAt: "Sep 28th, 2026 11:48 PM",
+    });
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "Codex usage limit reached. Resets Sep 28th, 2026 11:48 PM.",
+    );
+  });
+
+  it("keeps a relative Codex reset readable", () => {
+    const error = classifyAgentProviderError(
+      "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro) or try again in 2 days 3 hours 5 minutes.",
+      "codex",
+    );
+    expect(error.detail).toEqual({
+      kind: "usageLimited",
+      provider: "codex",
+      resetsAt: "in 2 days 3 hours 5 minutes",
+    });
+  });
+
+  it("never doubles the closing punctuation of a reset", () => {
+    const claude = classifyAgentProviderError(
+      "You've hit your session limit · resets 3pm (Europe/Prague).",
+      "claudeCode",
+    );
+    expect(claude.detail).toEqual({
+      kind: "usageLimited",
+      provider: "claudeCode",
+      resetsAt: "3pm (Europe/Prague)",
+    });
+    expect(agentProviderErrorHeadline(claude, null)).toBe(
+      "Claude Code usage limit reached. Resets 3pm (Europe/Prague).",
+    );
+    const codex = classifyAgentProviderError(
+      "You've hit your usage limit. Try again in 5m!.",
+      "codex",
+    );
+    expect(codex.detail).toEqual({ kind: "usageLimited", provider: "codex", resetsAt: "in 5m" });
+    expect(agentProviderErrorHeadline(codex, null)).toBe(
+      "Codex usage limit reached. Resets in 5m.",
+    );
+  });
+
+  it("drops an oversized reset text instead of echoing it", () => {
+    const error = classifyAgentProviderError(
+      `You've hit your weekly limit · resets ${"x".repeat(200)}`,
+      "claudeCode",
+    );
+    expect(error.detail).toEqual({ kind: "usageLimited", provider: "claudeCode", resetsAt: null });
+  });
+
+  it("does not treat a limit quoted mid-sentence or from another provider as a usage limit", () => {
+    expect(
+      classifyAgentProviderError("The tool said You've hit your weekly limit", "claudeCode").detail,
+    ).toEqual({ kind: "unknown" });
+    expect(
+      classifyAgentProviderError(
+        "You've hit your weekly limit · resets Sep 29 at 8am (Europe/Bratislava)",
+        "codex",
+      ).detail,
+    ).toEqual({ kind: "unknown" });
+  });
+
+  it("treats the same limit and reset as one repeated error", () => {
+    const raw = "You've hit your weekly limit · resets Sep 29 at 8am (Europe/Bratislava)";
+    expect(
+      sameAgentProviderError(
+        classifyAgentProviderError(raw, "claudeCode"),
+        classifyAgentProviderError(`  ${raw}\n`, "claudeCode"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("temporary capacity problems", () => {
+  const overCapacity = (
+    provider: "claudeCode" | "codex",
+    scope: "service" | "model" = "service",
+  ) => ({
+    kind: "temporarilyOverCapacity",
+    provider,
+    scope,
+  });
+
+  it("recognizes the transient Claude 429 as a capacity problem, not a usage limit", () => {
+    const error = classifyAgentProviderError(
+      "API Error: Request rejected (429) · this may be a temporary capacity issue. If it persists, check https://status.claude.com",
+      "claudeCode",
+    );
+    expect(error.detail).toEqual(overCapacity("claudeCode"));
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "Claude Code is temporarily over capacity.",
+    );
+  });
+
+  it("recognizes server-side request limiting that is explicitly not a usage limit", () => {
+    expect(
+      classifyAgentProviderError(
+        "API Error: Server is temporarily limiting requests (not your usage limit) · this may be a temporary capacity issue.",
+        "claudeCode",
+      ).detail,
+    ).toEqual(overCapacity("claudeCode"));
+  });
+
+  it("recognizes Claude overloaded responses in their raw and summarized forms", () => {
+    const payload = JSON.stringify({
+      type: "error",
+      error: { type: "overloaded_error", message: "Overloaded" },
+    });
+    for (const raw of [
+      payload,
+      `API Error: 529 ${payload}`,
+      "API Error: Repeated 529 Overloaded errors",
+    ]) {
+      expect(classifyAgentProviderError(raw, "claudeCode").detail).toEqual(
+        overCapacity("claudeCode"),
+      );
+    }
+  });
+
+  it("marks a single overloaded Claude model as a model-scoped capacity problem", () => {
+    expect(
+      classifyAgentProviderError(
+        "Opus is experiencing high load, please use /model to switch to Sonnet",
+        "claudeCode",
+      ).detail,
+    ).toEqual(overCapacity("claudeCode", "model"));
+  });
+
+  it("recognizes the Codex at-capacity error", () => {
+    const error = classifyAgentProviderError(
+      "Selected model is at capacity. Please try a different model.",
+      "codex",
+    );
+    expect(error.detail).toEqual(overCapacity("codex", "model"));
+    expect(agentProviderErrorHeadline(error, null)).toBe("Codex is temporarily over capacity.");
+  });
+
+  it("lets a usage-limit message win over capacity wording", () => {
+    expect(
+      classifyAgentProviderError(
+        "You've hit your weekly limit · resets Sep 29 at 8am (Europe/Bratislava) · this may be a temporary capacity issue",
+        "claudeCode",
+      ).detail.kind,
+    ).toBe("usageLimited");
+  });
+
+  it("keeps capacity wording from another provider or mid-sentence unknown", () => {
+    expect(
+      classifyAgentProviderError(
+        "Selected model is at capacity. Please try a different model.",
+        "claudeCode",
+      ).detail,
+    ).toEqual({ kind: "unknown" });
+    expect(
+      classifyAgentProviderError("The build said Overloaded errors happen", "claudeCode").detail,
+    ).toEqual({ kind: "unknown" });
   });
 });

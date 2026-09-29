@@ -19,6 +19,7 @@ import { AgentTurnPrompt } from "./AgentTurnParts";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import type { AgentThoughtPresentation } from "./agentActivityGrouping";
 import { HighlightRun } from "./agentThreadHighlight";
+import { agentProviderErrorAdvice } from "./agentProviderErrorAdvice";
 import { agentTurnAttachmentViews } from "./agentTurnAttachmentPresentation";
 import { suppressGenericFailure, type AgentTurnErrorContext } from "./agentTurnErrorPresentation";
 import type { AgentTurnHighlight } from "./agentTurnHighlightModel";
@@ -210,7 +211,7 @@ export function AgentProviderErrorHint({
   readonly error: AgentProviderError;
   readonly context: AgentTurnErrorContext;
 }): ReactNode {
-  const hint = providerErrorHint(error, context.executionTarget === "remote");
+  const hint = agentProviderErrorAdvice(error, context.executionTarget);
   if (hint === null) return null;
   return (
     <>
@@ -221,25 +222,6 @@ export function AgentProviderErrorHint({
       </details>
     </>
   );
-}
-
-function providerErrorHint(error: AgentProviderError, remote: boolean): string | null {
-  switch (error.detail.kind) {
-    case "authenticationRequired":
-      return remote
-        ? "Sign in to the provider on the server running this thread, then try again."
-        : "Sign in to the provider on this computer, then try again.";
-    case "protocolFailure":
-      return remote
-        ? "The server could not continue the provider session. Check the runner on that server and try again."
-        : "The provider session could not continue. Check the provider CLI and try again.";
-    case "unsupportedModelForCliVersion":
-      return remote
-        ? "Update the CLI on the server running this thread, then try again."
-        : "Open Settings > Agents to update it.";
-    default:
-      return null;
-  }
 }
 
 function unsupportedItem(item: never): never {

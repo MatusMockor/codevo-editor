@@ -1,5 +1,7 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentTurn } from "../../domain/agentThread";
 import {
   agentProviderDisplayName,
   agentProviderErrorHeadline,
@@ -18,6 +20,10 @@ import {
   agentLaunchModeLabel,
   agentLaunchModelLabel,
 } from "./agentLaunchPresentation";
+import {
+  agentProviderErrorAdvice,
+  type AgentProviderErrorTarget,
+} from "./agentProviderErrorAdvice";
 
 const MAX_DETAIL_CHARACTERS = 240;
 const KEY_SEPARATOR = "\u0001";
@@ -51,7 +57,10 @@ export function agentThreadErrorBannerModel(
     retry,
   };
   const generic = `${agentProviderDisplayName(provider)} could not complete this run.`;
+  const target: AgentProviderErrorTarget = view.execution === undefined ? "local" : "remote";
   if (failed.status.kind === "exited") {
+    const reported = reportedFailure(failed, provider);
+    if (reported !== null) return { ...base, ...failureText(reported, generic, target) };
     return {
       ...base,
       title: generic,
@@ -60,7 +69,7 @@ export function agentThreadErrorBannerModel(
   }
   if (failed.status.kind !== "failed") return null;
   const error = classifyAgentProviderError(failed.status.message, provider);
-  return { ...base, ...failureText(error, generic) };
+  return { ...base, ...failureText(error, generic, target) };
 }
 
 export function agentRetryModeLabel(plan: AgentTurnRetryReadyPlan): string {
@@ -77,18 +86,38 @@ export function agentRetryLaunchNote(plan: AgentTurnRetryReadyPlan): string | nu
   return `Retries with ${mode}: ${agentLaunchModeHint(launch)}`;
 }
 
-function failureText(error: AgentProviderError, generic: string): BannerText {
+function reportedFailure(turn: AgentTurn, provider: AgentCliKind): AgentProviderError | null {
+  for (let index = turn.events.length - 1; index >= 0; index -= 1) {
+    const event = turn.events[index];
+    if (event?.kind === "result") {
+      return event.isError ? recognized(classifyAgentProviderError(event.text, provider)) : null;
+    }
+    if (event?.kind === "assistantText" || event?.kind === "toolCall") return null;
+    if (event?.kind !== "error") continue;
+    const error = classifyAgentProviderError(event.message, provider);
+    if (error.detail.kind !== "advisory") return recognized(error);
+  }
+  return null;
+}
+
+function recognized(error: AgentProviderError): AgentProviderError | null {
+  return error.detail.kind === "unknown" ? null : error;
+}
+
+function failureText(
+  error: AgentProviderError,
+  generic: string,
+  target: AgentProviderErrorTarget,
+): BannerText {
   const detail = error.detail;
   switch (detail.kind) {
     case "protocolFailure":
-      return {
-        title: agentProviderErrorHeadline(error, null),
-        detail: "The provider session could not continue. Check the provider CLI and try again.",
-      };
     case "authenticationRequired":
+    case "usageLimited":
+    case "temporarilyOverCapacity":
       return {
         title: agentProviderErrorHeadline(error, null),
-        detail: `Sign in to ${agentProviderDisplayName(detail.provider)} again, then retry.`,
+        detail: agentProviderErrorAdvice(error, target) ?? "",
       };
     case "unsupportedModelForCliVersion":
       return {

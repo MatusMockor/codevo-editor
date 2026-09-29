@@ -768,12 +768,35 @@ describe("AgentThreadSession", () => {
       }),
     });
     expect(host.querySelector(".agent-finale__body")?.textContent).toBe(
-      "Claude Code needs you to sign in again.",
+      "Claude Code could not authenticate this run.",
     );
-    expect(host.querySelector(".agent-note")?.textContent).toContain(
-      "Sign in to the provider on the server",
+    expect(host.querySelector(".agent-note")?.textContent).toBe(
+      "Try again. If it keeps failing, sign in to Claude Code on the server running this thread.",
     );
     expect((host.querySelector("details.agent-raw") as HTMLDetailsElement).open).toBe(false);
+  });
+
+  it("shows a usage limit with its reset and wait-or-switch advice instead of a sign-in", () => {
+    const limit = "You've hit your weekly limit · resets Sep 29 at 8am (Europe/Bratislava)";
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [
+          turn("agt-1-t1", "Hello", { kind: "exited", exitCode: 1 }, [
+            { kind: "result", text: limit, isError: true, usage: null },
+          ]),
+        ],
+      }),
+    });
+    const block = host.querySelector(".agent-finale--bad");
+    expect(block?.querySelector(".agent-finale__body")?.textContent).toBe(
+      "Claude Code usage limit reached. Resets Sep 29 at 8am (Europe/Bratislava).",
+    );
+    expect(block?.querySelector(".agent-note")?.textContent).toBe(
+      "Wait for the limit to reset, or switch to another model or provider.",
+    );
+    expect(block?.querySelector("details.agent-raw")?.textContent).toContain(limit);
+    expect(host.textContent).not.toMatch(/sign in/iu);
   });
 
   it("targets server upgrades and hides the runner wrapper after a provider failure", () => {
