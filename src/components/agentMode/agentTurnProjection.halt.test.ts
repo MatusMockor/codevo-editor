@@ -40,7 +40,7 @@ describe("agentTurnProjection halt", () => {
   it("keeps the rejection failed without a halt", () => {
     const [item] = agentTurnProjection(rejectedCommand(REJECTION), null, null, "running").items;
 
-    expect(item).toMatchObject({ kind: "tool", status: "error", label: "Failed npm test" });
+    expect(item).toMatchObject({ kind: "tool", status: "error", label: "Ran npm test" });
   });
 
   it("keeps a genuine tool error of a halted turn failed", () => {
@@ -55,7 +55,7 @@ describe("agentTurnProjection halt", () => {
       "stopped",
     ).items;
 
-    expect(item).toMatchObject({ kind: "tool", status: "error", label: "Failed npm test" });
+    expect(item).toMatchObject({ kind: "tool", status: "error", label: "Ran npm test" });
   });
 
   it("keeps a successful result that repeats the rejection text ok", () => {

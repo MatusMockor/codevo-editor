@@ -1654,7 +1654,7 @@ describe("agent tool row projection", () => {
     expect(failed.items[0]).toMatchObject({
       rowKind: "command",
       status: "error",
-      label: "Failed npm test",
+      label: "Ran npm test",
       output: "exit 1",
     });
   });
@@ -1847,7 +1847,7 @@ describe("agent tool row descriptions", () => {
     });
   });
 
-  it("keeps the description and adds the failure label when a running call fails", () => {
+  it("keeps the description and leaves the failure to the status when a running call fails", () => {
     const call: AgentTurnEvent = {
       kind: "toolCall",
       toolId: "t-1",
@@ -1865,7 +1865,7 @@ describe("agent tool row descriptions", () => {
         call,
         { kind: "toolResult", toolId: "t-1", outputSummary: "exit 1", isError: true },
       ]).items[0],
-    ).toMatchObject({ status: "error", label: "Failed Run the unit tests" });
+    ).toMatchObject({ status: "error", label: "Run the unit tests" });
   });
 
   it("recovers the description for a tool result that arrives after its row was flushed", () => {

@@ -202,10 +202,7 @@ export function toolRowLabel(input: AgentToolRowLabelInput): AgentToolRowLabel {
     root: input.workspaceRoot ?? null,
     summary,
   });
-  const spoken =
-    kind === "command" &&
-    description !== "" &&
-    (input.status === "running" || input.status === "ok");
+  const spoken = kind === "command" && description !== "" && input.status !== "stopped";
   return { verb: spoken ? "" : rowVerb(kind, input.status), ...parts };
 }
 
@@ -249,7 +246,6 @@ function commandSubject(description: string, name: string, summary: string): Row
 }
 
 function rowVerb(kind: AgentToolRowKind, status: AgentToolRowStatus): string {
-  if (status === "error") return "Failed";
   if (status === "stopped") return "Stopped";
   const running = status === "running";
   switch (kind) {
@@ -520,6 +516,10 @@ function basename(token: string): string {
 
 function singleLine(text: string): string {
   return text.replace(WHITESPACE_RUN, " ").trim();
+}
+
+export function clipAgentToolRowText(text: string): string {
+  return clipLine(text);
 }
 
 function clipLine(text: string): string {

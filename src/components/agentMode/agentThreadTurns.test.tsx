@@ -975,7 +975,7 @@ describe("agent thread turns", () => {
     expect(host.querySelector(".agent-tool-row__output")).toBeNull();
   });
 
-  it("marks a failed row with the danger modifier and the failed verb", () => {
+  it("marks a failed row with the failed modifier and a danger status tag", () => {
     render({
       thread: threadView([
         turn("t1", "Run it", SETTLED, [
@@ -988,8 +988,12 @@ describe("agent thread turns", () => {
 
     const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
     expect(row?.className).toBe("cv-work-row agent-tool-row agent-tool-row--failed");
-    expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Failed npm test");
-    expect(declaration(".agent-tool-row--failed", "color")).toBe("var(--cv-danger)");
+    expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Ran npm test");
+    expect(row?.querySelector(".cv-work-status__text")?.textContent).toBe("failed");
+    expect(declaration(".cv-work-status--failed .cv-work-status__icon", "color")).toBe(
+      "var(--cv-danger)",
+    );
+    expect(declaration(".agent-tool-row--failed", "color")).toBeNull();
   });
 
   it("discloses the command and the output when the row is clicked", () => {

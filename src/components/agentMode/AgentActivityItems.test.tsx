@@ -134,7 +134,7 @@ describe("AgentActivityItems", () => {
     }
   });
 
-  it("keeps live and failed activity visible while collapsed and avoids inferred success", () => {
+  it("keeps live activity visible, counts failures while collapsed and avoids inferred success", () => {
     const view = fixture();
     try {
       view.render([
@@ -144,7 +144,8 @@ describe("AgentActivityItems", () => {
         activityTool(3),
         activityTool(4, { status: "running", outcome: null }),
       ]);
-      expect(view.host.querySelector('[data-tool="e2"]')).not.toBeNull();
+      expect(view.host.querySelector('[data-tool="e2"]')).toBeNull();
+      expect(view.host.querySelector(".cv-work-status__text")?.textContent).toBe("1 failed");
       expect(view.host.querySelector('[data-tool="e4"]')).not.toBeNull();
       expect(view.host.querySelector("button")?.textContent).not.toContain("completed");
       expect(view.host.textContent).toContain("1 running");

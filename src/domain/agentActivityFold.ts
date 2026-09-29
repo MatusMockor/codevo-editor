@@ -6,12 +6,13 @@ export type AgentActivityCategory =
   | { readonly kind: "web" }
   | { readonly kind: "integration"; readonly server: string };
 
+export type AgentActivityToolState = "running" | "succeeded" | "failed" | "unreported";
+
 export interface AgentActivityToolCandidate {
   readonly kind: "tool";
   readonly stableId: string | null;
   readonly category: AgentActivityCategory;
-  readonly running: boolean;
-  readonly settledOk: boolean;
+  readonly state: AgentActivityToolState;
 }
 
 export type AgentActivityCandidate =
@@ -32,6 +33,7 @@ export type AgentActivityFoldEntry =
       readonly categories: ReadonlyArray<AgentActivityCategoryCount>;
       readonly running: number;
       readonly completed: number;
+      readonly failed: number;
       readonly thoughts: number;
     };
 
@@ -67,6 +69,7 @@ interface RunAccumulator {
   start: number;
   running: number;
   completed: number;
+  failed: number;
   thoughts: number;
   readonly counts: Map<string, CategoryDraft>;
 }
@@ -79,6 +82,7 @@ export function foldAgentActivity(
     start: -1,
     running: 0,
     completed: 0,
+    failed: 0,
     thoughts: 0,
     counts: new Map(),
   };
@@ -98,11 +102,32 @@ export function foldAgentActivity(
     const draft = run.counts.get(key) ?? { category: candidate.category, count: 0 };
     draft.count += 1;
     run.counts.set(key, draft);
-    if (candidate.running) run.running += 1;
-    if (candidate.settledOk) run.completed += 1;
+    countState(run, candidate.state);
   }
   closeRun(entries, candidates, run, candidates.length);
   return entries;
+}
+
+function countState(run: RunAccumulator, state: AgentActivityToolState): void {
+  switch (state) {
+    case "running":
+      run.running += 1;
+      return;
+    case "succeeded":
+      run.completed += 1;
+      return;
+    case "failed":
+      run.failed += 1;
+      return;
+    case "unreported":
+      return;
+    default:
+      unsupportedState(state);
+  }
+}
+
+function unsupportedState(state: never): never {
+  throw new TypeError(`Unsupported agent activity tool state: ${String(state)}`);
 }
 
 function closeRun(
@@ -123,12 +148,14 @@ function closeRun(
           categories: [...run.counts.values()].map(({ category, count }) => ({ category, count })),
           running: run.running,
           completed: run.completed,
+          failed: run.failed,
           thoughts: run.thoughts,
         },
   );
   run.start = -1;
   run.running = 0;
   run.completed = 0;
+  run.failed = 0;
   run.thoughts = 0;
   run.counts.clear();
 }

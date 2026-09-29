@@ -168,7 +168,7 @@ describe("remote grouped activity", () => {
     expect(summaries.every((b) => b.textContent?.includes("2 calls"))).toBe(true);
     await waitForReact(() => expect(host.textContent).toContain("Now inspect the next page."));
   });
-  it("keeps a remote command failure visible after successful turn settlement", () => {
+  it("keeps a remote command failure counted in its group after successful turn settlement", () => {
     const events = remote("codex", [
       ...[0, 1, 2].map((id) => ({
         type: "item.completed",
@@ -189,9 +189,12 @@ describe("remote grouped activity", () => {
     render(events, { kind: "exited", exitCode: 0 }, "Validate", "codex");
     expect((host.querySelector("details.agent-work") as HTMLDetailsElement)?.open).toBe(true);
     expect(host.querySelector(".agent-work__summary")?.textContent).toContain("need attention");
+    const group = host.querySelector<HTMLButtonElement>(".agent-activity-group__toggle");
+    expect(group?.querySelector(".cv-work-status__text")?.textContent).toBe("1 failed");
+    act(() => group?.click());
     const failed = host.querySelector(".agent-tool-row--failed");
     expect(failed?.textContent).toContain("check-2");
-    expect(failed?.closest(".agent-activity-group")).toBeNull();
+    expect(failed?.closest(".agent-activity-group")).toBe(group?.closest(".agent-activity-group"));
   });
   function renderMcpCalls(status: string | undefined): void {
     const events = remote(
@@ -226,6 +229,9 @@ describe("remote grouped activity", () => {
     "does not count remote MCP calls with a missing or unknown status (%s) as success",
     (status) => {
       renderMcpCalls(status);
+      const group = host.querySelector<HTMLButtonElement>(".agent-activity-group__toggle");
+      expect(group?.querySelector(".cv-work-status__text")?.textContent).toBe("2 failed");
+      act(() => group?.click());
       expect(host.querySelectorAll(".agent-tool-row--failed")).toHaveLength(2);
       expect(host.textContent).not.toMatch(/completed|passed/);
     },

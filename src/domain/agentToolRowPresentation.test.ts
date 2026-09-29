@@ -190,7 +190,8 @@ describe("toolRowLabel", () => {
       argument: "grep -rn needle src",
     });
     expect(label("Bash", "grep -rn needle src", "ok").verb).toBe("Ran");
-    expect(label("Bash", "grep -rn needle src", "error").verb).toBe("Failed");
+    expect(label("Bash", "grep -rn needle src", "error").verb).toBe("Ran");
+    expect(label("Read", "/tmp/a/b.ts", "error").verb).toBe("Read");
   });
 
   it("phrases reads, edits, searches, delegations, fetches and unknown tools", () => {
@@ -208,11 +209,11 @@ describe("toolRowLabel", () => {
     expect(label("TodoWrite", "").verb).toBe("Called");
   });
 
-  it("keeps failure and stopped status visible with a Claude bash description", () => {
+  it("keeps the stopped status in the verb and leaves failure to the row status", () => {
     const expectations: ReadonlyArray<readonly [AgentToolRowStatus, string]> = [
       ["running", ""],
       ["ok", ""],
-      ["error", "Failed"],
+      ["error", ""],
       ["stopped", "Stopped"],
     ];
     for (const [status, verb] of expectations) {

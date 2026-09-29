@@ -137,7 +137,8 @@ describe("tool rows of a user-halted turn", () => {
 
     const row = loopRow();
     expect(row?.className).toContain("agent-tool-row--failed");
-    expect(row?.textContent).toMatch(/^Failed /);
+    expect(row?.querySelector(".cv-work-status__text")?.textContent).toBe("failed");
+    expect(row?.textContent).not.toMatch(/^Failed /);
   });
 
   it("keeps a genuine failure that finished before the stop failed", () => {

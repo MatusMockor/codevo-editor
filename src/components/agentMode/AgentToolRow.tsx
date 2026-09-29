@@ -1,6 +1,8 @@
 import { useId } from "react";
 import { toolRowIcon } from "./agentToolRowIcon";
 import { useAgentToolDisclosure } from "./AgentToolDisclosure";
+import { agentToolFailureTag } from "./agentActivityGrouping";
+import { AgentWorkStatusTag } from "./AgentWorkStatusTag";
 import type { AgentTurnItem } from "./agentModePresentation";
 import type { AgentToolItemStatus } from "./agentTurnProjection";
 
@@ -48,9 +50,12 @@ export function AgentToolRow({
         <span aria-hidden="true" className="cv-work-row__icon">
           <Icon className="agent-tool-row__icon" size={16} strokeWidth={1.5} />
         </span>
-        <span className="agent-tool-row__label cv-work-row__label">{item.label}</span>
+        <span className="agent-tool-row__label cv-work-row__title">{item.label}</span>
+        <AgentWorkStatusTag text={agentToolFailureTag(item)} />
         {item.argument !== null && (
-          <span className="agent-tool-row__argument">{item.argument}</span>
+          <span className="agent-tool-row__argument cv-work-row__detail" title={item.argument}>
+            {item.argument}
+          </span>
         )}
       </button>
       <div className="agent-tool-row__detail" hidden={!expanded} id={detailId}>

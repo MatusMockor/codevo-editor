@@ -4,7 +4,9 @@ import {
   type AgentActivityCandidate,
   type AgentActivityCategory,
   type AgentActivityCategoryCount,
+  type AgentActivityToolState,
 } from "../../domain/agentActivityFold";
+import { clipAgentToolRowText } from "../../domain/agentToolRowPresentation";
 import { isAgentSubagentToolItem, type AgentTurnItem } from "./agentModePresentation";
 import type { AgentTurnHalt } from "./agentTurnErrorPresentation";
 
@@ -24,6 +26,7 @@ export type AgentActivityEntry =
       readonly tools: number;
       readonly running: number;
       readonly completed: number;
+      readonly failed: number;
       readonly items: ReadonlyArray<AgentActivityMember>;
     };
 
@@ -38,13 +41,13 @@ function integration(name: string): string | null {
   return codex?.[1] ?? null;
 }
 
-function unsettledToolStatus(status: AgentActivityTool["status"]): boolean {
-  return status === "error" || status === "stopped" || status === "interrupted";
+function haltedToolStatus(status: AgentActivityTool["status"]): boolean {
+  return status === "stopped" || status === "interrupted";
 }
 
 function toolCategory(item: AgentActivityTool): AgentActivityCategory | null {
   if (isAgentSubagentToolItem(item)) return null;
-  if (unsettledToolStatus(item.status)) return null;
+  if (haltedToolStatus(item.status)) return null;
   const server = integration(item.name);
   if (server !== null) return { kind: "integration", server };
   switch (item.rowKind) {
@@ -76,9 +79,15 @@ function activityCandidate(item: AgentTurnItem): AgentActivityCandidate {
     kind: "tool",
     stableId: item.toolId === "" ? null : item.toolId,
     category,
-    running: item.status === "running",
-    settledOk: item.outcome !== null && !item.outcome.isError,
+    state: toolState(item),
   };
+}
+
+function toolState(item: AgentActivityTool): AgentActivityToolState {
+  if (item.status === "running") return "running";
+  if (item.status === "error") return "failed";
+  if (item.outcome === null || item.outcome.isError) return "unreported";
+  return "succeeded";
 }
 
 function plural(count: number, singular: string, many = `${singular}s`): string {
@@ -98,7 +107,7 @@ function categoryPhrase({ category, count }: AgentActivityCategoryCount): string
     case "web":
       return `${count} web ${plural(count, "request")}`;
     case "integration":
-      return `${count} ${category.server} ${plural(count, "call")}`;
+      return `${count} ${clipAgentToolRowText(category.server)} ${plural(count, "call")}`;
   }
 }
 
@@ -146,7 +155,7 @@ function toolGroupLabel(
   if (only.category.kind === "command")
     return `${running > 0 ? "Running" : "Ran"} ${categoryPhrase(only)}`;
   if (only.category.kind === "integration")
-    return `Used ${only.category.server} · ${only.count} ${plural(only.count, "call")}`;
+    return `Used ${clipAgentToolRowText(only.category.server)} · ${only.count} ${plural(only.count, "call")}`;
   return categoryPhrase(only);
 }
 
@@ -191,10 +200,21 @@ export function agentActivityEntries(
       tools: members.length - entry.thoughts,
       running: entry.running,
       completed: entry.completed,
+      failed: entry.failed,
       items: members,
     });
   }
   return entries;
+}
+
+export function agentWorkFailureTag(failed: number): string | null {
+  if (failed <= 0) return null;
+  return `${failed} failed`;
+}
+
+export function agentToolFailureTag(item: AgentActivityTool): string | null {
+  if (item.status !== "error") return null;
+  return "failed";
 }
 
 export function agentActivityAttentionCount(

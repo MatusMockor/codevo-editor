@@ -17,12 +17,14 @@ import {
   AGENT_ACTIVITY_THOUGHT_CATEGORY,
   agentActivityEntries,
   agentThoughtPresentation,
+  agentWorkFailureTag,
   type AgentActivityEntry,
   type AgentActivityMember,
   type AgentActivityTool,
   type AgentActivityTurnState,
   type AgentThoughtPresentation,
 } from "./agentActivityGrouping";
+import { AgentWorkStatusTag } from "./AgentWorkStatusTag";
 
 interface Props {
   readonly scope?: string;
@@ -116,12 +118,13 @@ function AgentActivityGroup({
         <span
           className={
             group.phase === "thinking"
-              ? "agent-activity-group__label agent-activity-group__label--live cv-work-row__label"
-              : "agent-activity-group__label cv-work-row__label"
+              ? "agent-activity-group__label agent-activity-group__label--live cv-work-row__title"
+              : "agent-activity-group__label cv-work-row__title"
           }
         >
           {group.label}
         </span>
+        <AgentWorkStatusTag text={agentWorkFailureTag(group.failed)} />
         <ChevronRight
           aria-hidden="true"
           className="agent-activity-group__chevron cv-work-row__chevron"

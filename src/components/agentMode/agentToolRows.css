@@ -1,18 +1,3 @@
-.agent-tool-row__argument {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--cv-fg-subtle);
-  font-family: var(--cv-font-mono);
-  font-size: var(--cv-t-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-tool-row--failed {
-  color: var(--cv-danger);
-}
-
 .agent-tool-row--stopped,
 .agent-tool-row--interrupted {
   color: var(--cv-fg-subtle);

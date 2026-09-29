@@ -22,8 +22,7 @@ function candidate(
     kind: "tool",
     stableId: null,
     category,
-    running: false,
-    settledOk: true,
+    state: "succeeded",
     ...patch,
   };
 }
@@ -118,12 +117,27 @@ describe("foldAgentActivity", () => {
   it("counts running activities and never reports completion without result telemetry", () => {
     const [group] = groups(
       foldAgentActivity([
-        tool("command", { running: true, settledOk: false }),
-        tool("command", { settledOk: false }),
-        tool("read", { settledOk: true }),
+        tool("command", { state: "running" }),
+        tool("command", { state: "unreported" }),
+        tool("read", { state: "succeeded" }),
       ]),
     );
     expect([group.running, group.completed]).toEqual([1, 1]);
+  });
+
+  it("keeps failed activities inside the run and counts them apart from completions", () => {
+    const entries = foldAgentActivity([
+      tool("command"),
+      tool("command", { state: "failed" }),
+      THOUGHT,
+      tool("command"),
+      tool("command", { state: "failed" }),
+      tool("command"),
+    ]);
+    const [group] = groups(entries);
+    expect(entries).toHaveLength(1);
+    expect([group.start, group.end]).toEqual([0, 6]);
+    expect([group.completed, group.failed, group.running, group.thoughts]).toEqual([3, 2, 0, 1]);
   });
 
   it("keys a group by the first member's stable id across a prefix rebuild", () => {

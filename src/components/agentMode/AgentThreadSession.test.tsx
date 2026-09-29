@@ -467,6 +467,9 @@ describe("AgentThreadSession", () => {
       }),
     });
 
+    const group = host.querySelector<HTMLButtonElement>(".agent-activity-group__toggle");
+    expect(group?.querySelector(".cv-work-status__text")?.textContent).toBe("1 failed");
+    act(() => group?.click());
     const rows = [...host.querySelectorAll("button.agent-tool-row")];
 
     expect(rows).toHaveLength(2);

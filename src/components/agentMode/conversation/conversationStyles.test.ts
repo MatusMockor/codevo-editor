@@ -209,6 +209,15 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(WORK_ROWS, ".cv-work-row__icon", "width")).toBe("24px");
     expect(declaredValue(WORK_ROWS, ".cv-work-row__icon", "height")).toBe("24px");
     expect(declaredValue(WORK_ROWS, ".cv-work-row__label", "text-overflow")).toBe("ellipsis");
+    expect(declaredValue(WORK_ROWS, ".cv-work-row__title", "text-overflow")).toBeUndefined();
+    expect(declaredValue(WORK_ROWS, ".cv-work-row__title", "overflow-wrap")).toBe("anywhere");
+    expect(declaredValue(WORK_ROWS, ".cv-work-row__detail", "text-overflow")).toBe("ellipsis");
+    expect(declaredValue(WORK_ROWS, ".cv-work-row__detail", "flex")).toBe("1 1 0");
+    expect(declaredValue(WORK_ROWS, ".cv-work-row__detail", "min-width")).toBe("6ch");
+    expect(declaredValue(WORK_ROWS, ".cv-work-row__title", "-webkit-line-clamp")).toBe("2");
+    expect(declaredValue(WORK_ROWS, ".cv-work-row:hover .cv-work-status", "color")).toBe(
+      "var(--cv-fg-strong)",
+    );
     expect(declaredValue(WORK_ROWS, ".cv-work-row__meta", "opacity")).toBe("0");
     expect(declaredValue(WORK_ROWS, ".cv-live-row", "min-height")).toBe("28px");
   });
@@ -303,7 +312,10 @@ describe("P3 conversation sheets", () => {
       "var(--cv-space-2) var(--cv-space-1) var(--cv-space-4)",
     );
     expect(declaredValue(WORK_ROWS, ".agent-work", "margin-bottom")).toBe("var(--cv-space-4)");
-    expect(declaredValue(TOOL_ROWS, ".agent-tool-row--failed", "color")).toBe("var(--cv-danger)");
+    expect(declaredValue(TOOL_ROWS, ".agent-tool-row--failed", "color")).toBeUndefined();
+    expect(declaredValue(WORK_ROWS, ".cv-work-status--failed .cv-work-status__icon", "color")).toBe(
+      "var(--cv-danger)",
+    );
     expect(declaredValue(TOOL_ROWS, ".agent-tool-row__output", "white-space")).toBe("pre-wrap");
     expect(declaredValue(TOOL_ROWS, ".agent-tool-row__output", "overflow")).toBe("auto");
   });

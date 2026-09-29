@@ -3,6 +3,8 @@ import { toolRowKind } from "../../domain/agentToolRowPresentation";
 import {
   agentActivityEntries,
   agentActivityAttentionCount,
+  agentToolFailureTag,
+  agentWorkFailureTag,
   agentWorkFoldLabel,
   agentThoughtPresentation,
   type AgentActivityEntry,
@@ -116,7 +118,7 @@ describe("agentActivityEntries", () => {
     });
   });
 
-  it("preserves conversational, subagent and failure boundaries", () => {
+  it("preserves conversational and subagent boundaries and keeps failures in the run", () => {
     const items = [
       activityTool(0),
       activityTool(1),
@@ -133,10 +135,13 @@ describe("agentActivityEntries", () => {
       ["item", "e2"],
       ["item", "e3"],
       ["item", "e4"],
-      ["item", "e5"],
-      ["item", "e6"],
-      ["group", "group:tool-7"],
+      ["group", "group:tool-5"],
     ]);
+    expect(agentActivityEntries(items)[4]).toMatchObject({
+      label: "Ran 4 commands",
+      failed: 1,
+      completed: 3,
+    });
     expect(agentActivityAttentionCount(items, null)).toBe(1);
   });
 
@@ -193,6 +198,20 @@ describe("agentActivityEntries", () => {
     expect(agentActivityEntries(rows)[0]).toMatchObject({
       kind: "group",
       label: "1 a call · 1 b call · 1 c call · 1 d call · +2 more",
+    });
+  });
+
+  it("clips an unbounded integration server name in the headline and the mixed summary", () => {
+    const server = "s".repeat(200);
+    const clipped = `${"s".repeat(79)}…`;
+    const calls = [0, 1].map((index) =>
+      activityTool(index, { name: `mcp__${server}__call`, rowKind: "other" }),
+    );
+    expect(agentActivityEntries(calls)[0]).toMatchObject({
+      label: `Used ${clipped} · 2 calls`,
+    });
+    expect(agentActivityEntries([...calls, activityTool(2)])[0]).toMatchObject({
+      label: `2 ${clipped} calls · 1 command`,
     });
   });
 
@@ -253,8 +272,8 @@ describe("agentActivityEntries", () => {
     const started = performance.now();
     const entries = agentActivityEntries(items);
     const elapsed = performance.now() - started;
-    expect(entries.filter((entry) => entry.kind === "group")).toHaveLength(10);
-    expect(entries).toHaveLength(20);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: "group", failed: 10 });
     expect(elapsed).toBeLessThan(500);
   });
 
@@ -297,7 +316,7 @@ describe("agentActivityEntries", () => {
     const shape = (entries: ReturnType<typeof agentActivityEntries>) =>
       entries.map((entry) =>
         entry.kind === "group"
-          ? [entry.kind, entry.key, entry.category, entry.label, entry.items.length]
+          ? [entry.kind, entry.key, entry.category, entry.label, entry.items.length, entry.failed]
           : [entry.kind, entry.key],
       );
     const runs = [
@@ -312,11 +331,61 @@ describe("agentActivityEntries", () => {
         "group",
         "group:tool-0",
         "command",
-        "1 search · 1 file read · 2 commands · 1 chrome call",
-        5,
+        "1 search · 1 file read · 3 commands · 1 chrome call",
+        6,
+        1,
       ],
-      ["item", "e5"],
     ]);
+  });
+});
+
+describe("failed tool rows", () => {
+  it("merges the screenshot staircase of single and failed commands into one counted group", () => {
+    const entries = agentActivityEntries(
+      [
+        thought(0),
+        activityTool(1),
+        activityTool(2),
+        activityTool(3, { status: "error" }),
+        thought(4),
+        activityTool(5),
+        activityTool(6, { status: "error" }),
+        activityTool(7),
+        activityTool(8),
+      ],
+      "live",
+    );
+    const group = onlyGroup(entries);
+    expect(group).toMatchObject({
+      key: "e0",
+      label: "Ran 7 commands",
+      tools: 7,
+      completed: 5,
+      failed: 2,
+      running: 0,
+    });
+    expect(agentWorkFailureTag(group.failed)).toBe("2 failed");
+  });
+
+  it("keeps a stopped command a neutral boundary instead of a failure", () => {
+    const entries = agentActivityEntries([
+      activityTool(0),
+      activityTool(1, { status: "error" }),
+      activityTool(2, { status: "stopped" }),
+    ]);
+    expect(entries.map((entry) => [entry.kind, entry.key])).toEqual([
+      ["group", "group:tool-0"],
+      ["item", "e2"],
+    ]);
+    expect(entries[0]).toMatchObject({ failed: 1 });
+  });
+
+  it("tags only a failed row and only a group with failures", () => {
+    expect(agentToolFailureTag(activityTool(0, { status: "error" }))).toBe("failed");
+    for (const status of ["ok", "running", "stopped", "interrupted"] as const)
+      expect(agentToolFailureTag(activityTool(0, { status })), status).toBeNull();
+    expect(agentWorkFailureTag(0)).toBeNull();
+    expect(agentWorkFailureTag(1)).toBe("1 failed");
   });
 });
 
