@@ -11,17 +11,17 @@ const MAX_LIVE_TASKS: usize = 256;
 const MAX_OBSERVED_TASKS: usize = 4096;
 const MAX_ID_BYTES: usize = 256;
 const MAX_RETIRED_SESSIONS: usize = 16;
+pub const MAX_BACKGROUND_TASK_DESCRIPTION_BYTES: usize = 512;
 
 /// Owns only lifecycle evidence from root Claude JSONL messages. A foreground
 /// result is not the end of the stream while native background tasks are live.
-/// Terminal tombstones prevent delayed progress and updates from resurrecting tasks.
 /// A terminal task update followed by a root result settles this per-run CLI.
 #[derive(Default)]
 pub struct ResultLineDetector {
     line: Vec<u8>,
     skipping_line: bool,
     fired: bool,
-    live: HashMap<String, TaskScope>,
+    live: HashMap<String, LiveTask>,
     level: BackgroundLevel,
     inherited: HashSet<String>,
     terminal: HashMap<String, Tombstone>,
@@ -35,6 +35,8 @@ pub struct ResultLineDetector {
     reset_pending: bool,
     drain_suspended: bool,
     policy: ResultSettlePolicy,
+    started: u64,
+    background_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,8 +53,38 @@ enum TaskScope {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundTaskKind {
+    Agent,
+    Shell,
+    Monitor,
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveBackgroundTask {
+    pub task_id: String,
+    pub kind: BackgroundTaskKind,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TaskFacts {
+    kind: BackgroundTaskKind,
+    description: Option<String>,
+    run: Option<String>,
+    inert: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LiveTask {
+    scope: TaskScope,
+    facts: TaskFacts,
+    order: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Tombstone {
-    Finished,
+    Finished(TaskFacts),
     Retired,
 }
 
@@ -169,8 +201,29 @@ impl ResultLineDetector {
     pub fn live_background_task_count(&self) -> usize {
         self.live
             .values()
-            .filter(|scope| **scope == TaskScope::Background)
+            .filter(|task| task.scope == TaskScope::Background)
             .count()
+    }
+
+    pub fn background_revision(&self) -> u64 {
+        self.background_revision
+    }
+
+    pub fn background_tasks(&self) -> Vec<LiveBackgroundTask> {
+        let mut tasks: Vec<(&String, &LiveTask)> = self
+            .live
+            .iter()
+            .filter(|(_, task)| task.scope == TaskScope::Background)
+            .collect();
+        tasks.sort_by_key(|(_, task)| task.order);
+        tasks
+            .into_iter()
+            .map(|(id, task)| LiveBackgroundTask {
+                task_id: id.clone(),
+                kind: task.facts.kind,
+                description: task.facts.description.clone(),
+            })
+            .collect()
     }
 
     pub fn session_id(&self) -> Option<&str> {
@@ -352,7 +405,7 @@ impl ResultLineDetector {
     fn armed_foreground_live(&self) -> bool {
         self.live
             .iter()
-            .any(|(task, scope)| *scope == TaskScope::Foreground && !self.inherited.contains(task))
+            .any(|(id, task)| task.scope == TaskScope::Foreground && !self.inherited.contains(id))
     }
 
     fn retire_session(&mut self) {
@@ -364,9 +417,16 @@ impl ResultLineDetector {
         }
         self.inherited.clear();
         self.level = BackgroundLevel::default();
-        let retired: Vec<String> = self.live.drain().map(|(task, _)| task).collect();
-        for task in retired {
+        let retired: Vec<(String, LiveTask)> = self.live.drain().collect();
+        for (task, live) in retired {
+            self.note_background(live.scope);
             self.bury(task, Tombstone::Retired);
+        }
+    }
+
+    fn note_background(&mut self, scope: TaskScope) {
+        if scope == TaskScope::Background {
+            self.background_revision = self.background_revision.wrapping_add(1);
         }
     }
 
@@ -401,7 +461,7 @@ impl ResultLineDetector {
             return false;
         }
         for task in self.level.take_ended() {
-            self.finish(task);
+            self.finish(task, message);
         }
         true
     }
@@ -414,16 +474,31 @@ impl ResultLineDetector {
                 .is_none_or(|session| self.session.as_deref().is_none_or(|own| own == session))
     }
 
-    fn start(&mut self, task: &str, scope: TaskScope, message: &Value) {
+    fn start(&mut self, task: &str, scope: TaskScope, facts: TaskFacts, message: &Value) {
         self.level.started(task, leveled_task(message));
-        self.live.insert(task.to_string(), scope);
+        self.started = self.started.wrapping_add(1);
+        self.note_background(scope);
+        self.live.insert(
+            task.to_string(),
+            LiveTask {
+                scope,
+                facts,
+                order: self.started,
+            },
+        );
     }
 
-    fn finish(&mut self, task: String) {
-        self.live.remove(&task);
+    fn finish(&mut self, task: String, message: &Value) {
+        let facts = match self.live.remove(&task) {
+            Some(live) => {
+                self.note_background(live.scope);
+                live.facts
+            }
+            None => task_facts(message, None),
+        };
         self.inherited.remove(&task);
         self.level.forget(&task);
-        self.bury(task, Tombstone::Finished);
+        self.bury(task, Tombstone::Finished(facts));
     }
 
     fn consume_task(&mut self, message: &Value) -> Result<(), &'static str> {
@@ -466,23 +541,24 @@ impl ResultLineDetector {
                     "completed" | "failed" | "killed" | "cancelled" | "stopped" | "interrupted"
                 )
             });
-        if !terminal
-            && kind == "task_started"
-            && self.terminal.get(id) == Some(&Tombstone::Finished)
-        {
+        let finished = matches!(self.terminal.get(id), Some(Tombstone::Finished(_)));
+        if !terminal && kind == "task_started" && finished {
             if self.live.len() >= MAX_LIVE_TASKS {
                 return Err("Claude background tasks exceeded their tracking limit.");
             }
             self.exhume(id);
             self.inherited.remove(id);
-            self.start(id, scope, message);
+            self.start(id, scope, task_facts(message, None), message);
             return Ok(());
+        }
+        if !terminal && kind != "task_started" {
+            return self.revive_resumed(id, message);
         }
         if terminal {
             if !self.terminal.contains_key(id) && !self.live.contains_key(id) {
                 self.make_room()?;
             }
-            self.finish(id.to_string());
+            self.finish(id.to_string(), message);
         } else if kind == "task_started"
             && !self.terminal.contains_key(id)
             && !self.live.contains_key(id)
@@ -493,8 +569,33 @@ impl ResultLineDetector {
             if self.make_room().is_err() {
                 return Err("Claude background tasks exceeded their tracking limit.");
             }
-            self.start(id, scope, message);
+            self.start(id, scope, task_facts(message, None), message);
         }
+        Ok(())
+    }
+
+    fn revive_resumed(&mut self, id: &str, message: &Value) -> Result<(), &'static str> {
+        let Some(Tombstone::Finished(previous)) = self.terminal.get(id) else {
+            return Ok(());
+        };
+        let Some(run) = previous.run.as_deref() else {
+            return Ok(());
+        };
+        let resumed = message
+            .get("tool_use_id")
+            .and_then(Value::as_str)
+            .filter(|tool| valid_id(tool))
+            .is_some_and(|tool| tool != run);
+        if !resumed || previous.inert || previous.kind != BackgroundTaskKind::Agent {
+            return Ok(());
+        }
+        if self.live.len() >= MAX_LIVE_TASKS {
+            return Err("Claude background tasks exceeded their tracking limit.");
+        }
+        let facts = task_facts(message, Some(previous));
+        self.exhume(id);
+        self.start(id, TaskScope::Background, facts, message);
+        self.inherited.insert(id.to_string());
         Ok(())
     }
 }
@@ -515,6 +616,49 @@ fn did_work(message: &Value) -> bool {
             .get("result")
             .and_then(Value::as_str)
             .is_some_and(|text| !text.trim().is_empty())
+}
+
+fn task_facts(message: &Value, previous: Option<&TaskFacts>) -> TaskFacts {
+    let kind = match message.get("task_type").and_then(Value::as_str) {
+        Some("agent" | "local_agent" | "remote_agent") => BackgroundTaskKind::Agent,
+        Some("shell" | "local_bash") => BackgroundTaskKind::Shell,
+        Some("monitor" | "monitor_mcp" | "monitor_ws") => BackgroundTaskKind::Monitor,
+        Some(_) => BackgroundTaskKind::Other,
+        None => previous.map_or(BackgroundTaskKind::Other, |facts| facts.kind),
+    };
+    let description = match message.get("subtype").and_then(Value::as_str) {
+        Some("task_started") => bounded_description(message.get("description")),
+        _ => previous.and_then(|facts| facts.description.clone()),
+    };
+    let run = message
+        .get("tool_use_id")
+        .and_then(Value::as_str)
+        .filter(|tool| valid_id(tool))
+        .map(str::to_string)
+        .or_else(|| previous.and_then(|facts| facts.run.clone()));
+    let inert = message.get("ambient").and_then(Value::as_bool) == Some(true)
+        || message
+            .get("task_type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| matches!(kind, "plan" | "dream"));
+    TaskFacts {
+        kind,
+        description,
+        run,
+        inert,
+    }
+}
+
+fn bounded_description(value: Option<&Value>) -> Option<String> {
+    let text = value?.as_str()?.trim();
+    if text.is_empty() || text.chars().any(char::is_control) {
+        return None;
+    }
+    let mut end = text.len().min(MAX_BACKGROUND_TASK_DESCRIPTION_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(text[..end].to_string())
 }
 
 fn leveled_task(message: &Value) -> bool {
@@ -625,3 +769,7 @@ pub fn lifecycle_candidate(line: &[u8]) -> bool {
 #[cfg(test)]
 #[path = "agent_task_result_detector_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_task_result_detector_revival_tests.rs"]
+mod revival_tests;

@@ -6,7 +6,9 @@ use agent_task_spawner::claude_session_policy::{
     ClaudeSessionEndReason, ClaudeSessionKey, ClaudeSessionTuning, SessionAvailability,
     CLAUDE_SESSION_BUSY_ERROR,
 };
-use agent_task_spawner::claude_session_router::ClaudeBackgroundTurn;
+use agent_task_spawner::claude_session_router::{
+    BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn,
+};
 use agent_task_spawner::claude_session_turn::ClaudeSessionTurnChild;
 use agent_task_spawner::claude_thread_session::{
     ClaudeSessionIdentity, ClaudeSessionOwner, ClaudeThreadSession, IdleTermination, TurnOutcome,
@@ -14,6 +16,7 @@ use agent_task_spawner::claude_thread_session::{
 use agent_task_spawner::spawn_bound_process;
 use agent_task_supervisor::system_process_group_signals;
 use std::process::Stdio;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Weak;
 
 const TURN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -23,6 +26,12 @@ const REAP_TIMEOUT: Duration = Duration::from_secs(5);
 struct RecordingOwner {
     ended: Mutex<Vec<(ClaudeSessionEndReason, bool)>>,
     background: Mutex<Vec<(u64, ClaudeBackgroundTurn)>>,
+    tasks: Mutex<Vec<(u64, ClaudeBackgroundTasks)>>,
+    order: Mutex<Vec<&'static str>>,
+    refuse_levels: AtomicUsize,
+    level_delay_ms: AtomicU64,
+    delivering: AtomicBool,
+    delivered: AtomicUsize,
 }
 
 impl ClaudeSessionOwner for RecordingOwner {
@@ -37,6 +46,35 @@ impl ClaudeSessionOwner for RecordingOwner {
             .lock()
             .expect("ended lock")
             .push((reason, background_tasks_live));
+        self.order.lock().expect("order lock").push("ended");
+    }
+
+    fn background_tasks(
+        &self,
+        _key: &ClaudeSessionKey,
+        generation: u64,
+        tasks: ClaudeBackgroundTasks,
+    ) -> bool {
+        self.delivering.store(true, Ordering::SeqCst);
+        thread::sleep(Duration::from_millis(
+            self.level_delay_ms.load(Ordering::SeqCst),
+        ));
+        let refused = self
+            .refuse_levels
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        self.delivered.fetch_add(1, Ordering::SeqCst);
+        if refused {
+            return false;
+        }
+        self.tasks
+            .lock()
+            .expect("tasks lock")
+            .push((generation, tasks));
+        self.order.lock().expect("order lock").push("tasks");
+        true
     }
 
     fn background_turn(
@@ -68,6 +106,23 @@ impl RecordingOwner {
 
     fn background_turns(&self) -> Vec<(u64, ClaudeBackgroundTurn)> {
         self.background.lock().expect("background lock").clone()
+    }
+
+    fn task_totals(&self) -> Vec<usize> {
+        self.tasks
+            .lock()
+            .expect("tasks lock")
+            .iter()
+            .map(|(_, tasks)| tasks.total)
+            .collect()
+    }
+
+    fn last_tasks(&self) -> Option<(u64, ClaudeBackgroundTasks)> {
+        self.tasks.lock().expect("tasks lock").last().cloned()
+    }
+
+    fn order(&self) -> Vec<&'static str> {
+        self.order.lock().expect("order lock").clone()
     }
 }
 
@@ -525,6 +580,123 @@ fn a_native_background_task_settles_at_the_drain_and_its_wake_up_is_a_background
 }
 
 #[test]
+fn a_resumed_agent_is_live_session_work_while_idle_and_settles_on_its_completion() {
+    let cli = FakeCli::new("session-agent-resume");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+    let (output, mut turn) = run_turn(&session, "agent-resume");
+    assert!(output.contains("agent-launched"), "{output}");
+    assert!(output.contains("first-run-progress"), "{output}");
+    assert!(!output.contains("agent-resumed"), "{output}");
+    assert_eq!(turn.reap(), Ok(0));
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len() == 1));
+    assert!(wait_until(TURN_TIMEOUT, || owner.task_totals().last() == Some(&1)));
+    assert_eq!(session.background_tasks(), 1);
+    assert_eq!(session.facts().availability, SessionAvailability::Idle);
+    let (generation, live) = owner.last_tasks().expect("live snapshot");
+    assert_eq!(generation, 1);
+    assert_eq!(live.agents, 1);
+    assert_eq!(live.tasks.len(), 1);
+    assert_eq!(live.tasks[0].task_id, "a4b355dcf6056a875");
+    assert_eq!(live.tasks[0].kind, BackgroundTaskKind::Agent);
+    assert_eq!(
+        live.tasks[0].description.as_deref(),
+        Some("Live Codex model catalog like Claude")
+    );
+
+    cli.release_agent();
+    assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len() == 2));
+    assert!(wait_until(TURN_TIMEOUT, || owner.task_totals().last() == Some(&0)));
+    assert_eq!(session.background_tasks(), 0);
+    let totals = owner.task_totals();
+    assert_eq!(totals.first(), Some(&1), "{totals:?}");
+    assert!(
+        totals.windows(2).all(|pair| pair[0] != pair[1]),
+        "{totals:?}"
+    );
+    let turns = owner.background_turns();
+    let resumed = String::from_utf8_lossy(&turns[0].1.output).into_owned();
+    let finished = String::from_utf8_lossy(&turns[1].1.output).into_owned();
+    assert!(resumed.contains("agent-resumed"), "{resumed}");
+    assert!(resumed.contains("Resuming agent"), "{resumed}");
+    assert!(finished.contains("agent-finished"), "{finished}");
+    for text in [&resumed, &finished] {
+        assert!(!text.contains("idle-progress"), "{text}");
+    }
+    assert!(owner.reasons().is_empty());
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+    assert_eq!(owner.order().last(), Some(&"ended"));
+}
+
+#[test]
+fn a_session_ending_with_a_live_agent_reports_its_level_before_the_end() {
+    let cli = FakeCli::new("session-agent-end");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+    let (_, mut turn) = run_turn(&session, "agent-resume");
+    assert_eq!(turn.reap(), Ok(0));
+    assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len() == 1));
+    assert!(wait_until(TURN_TIMEOUT, || owner.task_totals().last() == Some(&1)));
+    session.terminate(ClaudeSessionEndReason::Stopped);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+    assert_eq!(owner.ended(), vec![(ClaudeSessionEndReason::Stopped, true)]);
+    let order = owner.order();
+    assert_eq!(order.last(), Some(&"ended"), "{order:?}");
+    assert_eq!(order.iter().filter(|event| **event == "ended").count(), 1);
+    cli.release_agent();
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(owner.order().last(), Some(&"ended"));
+}
+
+#[test]
+fn a_level_the_owner_could_not_deliver_is_offered_again_with_the_next_frame() {
+    let cli = FakeCli::new("session-level-refused");
+    let owner = Arc::new(RecordingOwner::default());
+    owner.refuse_levels.store(1, Ordering::SeqCst);
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+    let (_, mut turn) = run_turn(&session, "agent-resume");
+    assert_eq!(turn.reap(), Ok(0));
+    assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len() == 1));
+    assert!(wait_until(TURN_TIMEOUT, || owner.task_totals().last() == Some(&1)));
+    assert_eq!(owner.refuse_levels.load(Ordering::SeqCst), 0);
+    let totals = owner.task_totals();
+    assert_eq!(totals.first(), Some(&1), "{totals:?}");
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+}
+
+#[test]
+fn a_level_being_delivered_when_the_session_dies_is_reported_before_the_end() {
+    let cli = FakeCli::new("session-level-gate");
+    let owner = Arc::new(RecordingOwner::default());
+    owner.level_delay_ms.store(800, Ordering::SeqCst);
+    let tuning = ClaudeSessionTuning {
+        reader_drain: Duration::from_millis(100),
+        ..ClaudeSessionTuning::default()
+    };
+    let session = start_session(&cli, &owner, tuning);
+    let turn = session
+        .attach_turn(&claude_user_frame("agent-resume", &[]))
+        .expect("attach");
+    assert!(wait_until(TURN_TIMEOUT, || owner
+        .delivering
+        .load(Ordering::SeqCst)));
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+    assert!(wait_until(TURN_TIMEOUT, || owner
+        .delivered
+        .load(Ordering::SeqCst)
+        >= 1));
+    thread::sleep(Duration::from_millis(900));
+    let order = owner.order();
+    assert_eq!(order.last(), Some(&"ended"), "{order:?}");
+    assert_eq!(order.iter().filter(|event| **event == "ended").count(), 1);
+    drop(turn);
+}
+
+#[test]
 fn a_detached_bash_child_is_neither_counted_nor_stopped() {
     let cli = FakeCli::new("session-detached");
     let owner = Arc::new(RecordingOwner::default());
@@ -789,6 +961,15 @@ impl ClaudeSessionOwner for PanickingOwner {
         _generation: u64,
         _turn: ClaudeBackgroundTurn,
     ) {
+    }
+
+    fn background_tasks(
+        &self,
+        _key: &ClaudeSessionKey,
+        _generation: u64,
+        _tasks: ClaudeBackgroundTasks,
+    ) -> bool {
+        true
     }
 }
 

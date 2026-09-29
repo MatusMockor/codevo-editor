@@ -1,8 +1,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AGENT_SESSION_BACKGROUND_TASKS_EVENT,
   AGENT_SESSION_BACKGROUND_TURN_EVENT,
   AGENT_SESSION_ENDED_EVENT,
+  parseAgentSessionBackgroundTasksEvent,
   parseAgentSessionBackgroundTurnEvent,
   parseAgentSessionEndedEvent,
   parseAgentSessionInspection,
@@ -11,6 +13,7 @@ import {
   validateAgentThreadSessionRequest,
   validateInspectAgentThreadSessionRequest,
   validateInterruptAgentTaskRequest,
+  type AgentSessionBackgroundTasksEvent,
   type AgentSessionBackgroundTurnEvent,
   type AgentSessionEndedEvent,
   type AgentSessionInspection,
@@ -79,6 +82,16 @@ export class TauriAgentThreadSessionGateway implements AgentThreadSessionGateway
     return this.subscribe(
       AGENT_SESSION_BACKGROUND_TURN_EVENT,
       parseAgentSessionBackgroundTurnEvent,
+      handler,
+    );
+  }
+
+  subscribeAgentSessionBackgroundTasks(
+    handler: (event: AgentSessionBackgroundTasksEvent) => void,
+  ): Promise<() => void> {
+    return this.subscribe(
+      AGENT_SESSION_BACKGROUND_TASKS_EVENT,
+      parseAgentSessionBackgroundTasksEvent,
       handler,
     );
   }

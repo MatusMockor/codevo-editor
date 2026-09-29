@@ -15,7 +15,9 @@ import type {
 } from "../domain/agentTask";
 import { parseAgentThread, serializeAgentThread, type AgentThread } from "../domain/agentThread";
 import type {
+  AgentSessionBackgroundTasksEvent,
   AgentSessionBackgroundTurnEvent,
+  AgentSessionEndedEvent,
   AgentThreadSessionGateway,
 } from "../domain/agentThreadSession";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
@@ -623,6 +625,7 @@ describe("useAgentThreads Claude session lifecycle", () => {
       endAgentThreadSession: vi.fn(async () => true),
       subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
       subscribeAgentSessionBackgroundTurn: vi.fn(async () => () => undefined),
+      subscribeAgentSessionBackgroundTasks: vi.fn(async () => () => undefined),
     } satisfies AgentThreadSessionGateway;
   }
 
@@ -715,6 +718,58 @@ describe("useAgentThreads Claude session lifecycle", () => {
       workspaceId: OWNER,
       threadId,
     });
+    harness.unmount();
+  });
+
+  it("shows a resumed agent's live session level on the settled thread until its session ends", async () => {
+    let level: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
+    let ended: ((event: AgentSessionEndedEvent) => void) | null = null;
+    const session = {
+      ...sessionGateway(),
+      subscribeAgentSessionEnded: vi.fn(
+        async (handler: (event: AgentSessionEndedEvent) => void) => {
+          ended = handler;
+          return () => undefined;
+        },
+      ),
+      subscribeAgentSessionBackgroundTasks: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTasksEvent) => void) => {
+          level = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(level).not.toBeNull());
+    const resumed: AgentSessionBackgroundTasksEvent = {
+      workspaceId: OWNER,
+      threadId,
+      total: 1,
+      agents: 1,
+      tasks: [
+        {
+          taskId: "a4b355dcf6056a875",
+          taskType: "agent",
+          description: "Live Codex model catalog like Claude",
+        },
+      ],
+    };
+    act(() => level?.({ ...resumed, workspaceId: "agent-root:/elsewhere" }));
+    expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
+    act(() => level?.(resumed));
+    const view = harness.hook().threads[0];
+    expect(view?.sessionBackground).toMatchObject({ ownerId: OWNER, agents: 1, total: 1 });
+    expect(view?.sessionBackground?.tasks).toEqual(resumed.tasks);
+    act(() =>
+      ended?.({ workspaceId: OWNER, threadId, reason: "stopped", backgroundTasksLive: true }),
+    );
+    expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
     harness.unmount();
   });
 

@@ -6,8 +6,8 @@ use crate::agent_task_spawner::{
     agent_launch::AgentLaunchOptions,
     agent_provider::runtime::{AgentProviderHostLifecycle, AgentProviderRuntimeRegistry},
     claude_session_policy::{
-        ClaudeSessionBackgroundTurnEvent, ClaudeSessionEndReason, ClaudeSessionEndedEvent,
-        ClaudeSessionInspection, ClaudeSessionKey,
+        ClaudeSessionBackgroundTasksEvent, ClaudeSessionBackgroundTurnEvent,
+        ClaudeSessionEndReason, ClaudeSessionEndedEvent, ClaudeSessionInspection, ClaudeSessionKey,
     },
     claude_session_registry::{
         ClaudeSessionEventSink, ClaudeSessionRegistry, ClaudeSessionRequest,
@@ -32,6 +32,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State, Wry};
 pub(crate) const AGENT_SESSION_ENDED_EVENT_CHANNEL: &str = "agent-session://ended";
 pub(crate) const AGENT_SESSION_BACKGROUND_TURN_EVENT_CHANNEL: &str =
     "agent-session://background-turn";
+pub(crate) const AGENT_SESSION_BACKGROUND_TASKS_EVENT_CHANNEL: &str =
+    "agent-session://background-tasks";
 pub(crate) const CLAUDE_SESSION_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const WORKTREE_SESSION_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -76,6 +78,12 @@ impl<R: Runtime> ClaudeSessionEventSink for AppHandleClaudeSessionEvents<R> {
         let _ = self
             .0
             .emit(AGENT_SESSION_BACKGROUND_TURN_EVENT_CHANNEL, event);
+    }
+
+    fn background_tasks(&self, event: ClaudeSessionBackgroundTasksEvent) {
+        let _ = self
+            .0
+            .emit(AGENT_SESSION_BACKGROUND_TASKS_EVENT_CHANNEL, event);
     }
 }
 
@@ -251,7 +259,8 @@ pub(crate) async fn end_agent_thread_session(
 mod tests {
     use super::*;
     use crate::agent_task_spawner::claude_session_policy::{
-        ClaudeSessionRestartPolicy, ClaudeSessionTuning,
+        ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType, ClaudeSessionRestartPolicy,
+        ClaudeSessionTuning,
     };
     use crate::agent_task_spawner::claude_session_registry::ClaudeSessionLease;
     use crate::agent_task_spawner::claude_thread_session::{ClaudeThreadSession, TurnOutcome};
@@ -272,6 +281,8 @@ mod tests {
         fn ended(&self, _event: ClaudeSessionEndedEvent) {}
 
         fn background_turn(&self, _event: ClaudeSessionBackgroundTurnEvent) {}
+
+        fn background_tasks(&self, _event: ClaudeSessionBackgroundTasksEvent) {}
     }
 
     fn start_request(extra: serde_json::Value) -> Result<StartAgentTaskRequest, serde_json::Error> {
@@ -620,6 +631,34 @@ for raw in sys.stdin:
                 .recv_timeout(EVENT_WAIT)
                 .expect("background turn"),
             r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","output":"{\"type\":\"result\"}\n","truncated":false,"complete":true}"#
+        );
+    }
+
+    #[test]
+    fn the_app_handle_sink_emits_the_background_tasks_level() {
+        let (app, _sessions) = mock_app(ClaudeSessionTuning::default());
+        let tasks = listen(&app, AGENT_SESSION_BACKGROUND_TASKS_EVENT_CHANNEL);
+        let sink = AppHandleClaudeSessionEvents(app.handle().clone());
+
+        sink.background_tasks(ClaudeSessionBackgroundTasksEvent {
+            workspace_id: "ws-1".to_string(),
+            thread_id: "agt-1-0a1c".to_string(),
+            total: 1,
+            agents: 1,
+            tasks: vec![ClaudeSessionBackgroundTask {
+                task_id: "a4b355dcf6056a875".to_string(),
+                task_type: ClaudeSessionBackgroundTaskType::Agent,
+                description: Some("Live Codex model catalog like Claude".to_string()),
+            }],
+        });
+
+        assert_eq!(
+            AGENT_SESSION_BACKGROUND_TASKS_EVENT_CHANNEL,
+            "agent-session://background-tasks"
+        );
+        assert_eq!(
+            tasks.recv_timeout(EVENT_WAIT).expect("background tasks"),
+            r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}]}"#
         );
     }
 

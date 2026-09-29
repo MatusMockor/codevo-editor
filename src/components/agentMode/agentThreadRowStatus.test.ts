@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import type { AgentTurn } from "../../domain/agentThread";
+import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
+import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
   agentRowElapsedLabel,
+  agentRowIsLive,
   agentRowStatus,
   agentRowStatusLabel,
   agentRowStatusTitle,
@@ -125,6 +128,82 @@ describe("row status for background work", () => {
     expect(
       agentRowStatus(interrupted, undefined, settled, { pending: null, workingAgents: 3 }),
     ).toEqual({ kind: "stopped" });
+  });
+});
+
+const RESUMED_AT = 1_790_718_781_369;
+
+function idleSession(tasks: AgentSessionBackground["tasks"], exitCode = 0): AgentThreadView {
+  const settled = surfaceThreadView();
+  const turn: AgentTurn = {
+    turnId: "agt-mun7q6rd-9777",
+    prompt: "Claude continued after background work finished",
+    status: { kind: "exited", exitCode },
+    startedAtEpochMs: RESUMED_AT,
+    endedAtEpochMs: RESUMED_AT,
+    events: [],
+    eventsTruncated: false,
+    lastStatusSequence: 0,
+    lastOutputSequence: 0,
+    launch: null,
+    cliVersion: null,
+  };
+  return {
+    ...surfaceThreadView({ thread: { ...settled.thread, turns: [turn] } }),
+    unread: true,
+    sessionBackground: {
+      ownerId: settled.thread.owner.ownerId,
+      total: tasks.length,
+      agents: tasks.filter((task) => task.taskType === "agent").length,
+      tasks,
+      sinceEpochMs: RESUMED_AT,
+    },
+  };
+}
+
+const resumedAgent = {
+  taskId: "a4b355dcf6056a875",
+  taskType: "agent",
+  description: "Live Codex model catalog like Claude",
+} as const;
+
+describe("row status for live session background work", () => {
+  it("keeps a thread running with its agent count while a resumed agent works after the turn", () => {
+    const status = agentRowStatus(idleSession([resumedAgent]));
+    expect(status).toEqual({
+      kind: "agents",
+      count: 1,
+      lead: "waiting",
+      startedAtEpochMs: RESUMED_AT,
+    });
+    expect(agentRowStatusLabel(status)).toBe("1 agent running");
+    expect(agentRowIsLive(status)).toBe(true);
+    expect(agentRowStatus(idleSession([resumedAgent], 1))).toMatchObject({ kind: "agents" });
+  });
+
+  it("shows other live session tasks as background work or monitoring", () => {
+    const shell = { taskId: "bdxqm7bz6", taskType: "shell" } as const;
+    const monitor = { taskId: "mon-1", taskType: "monitor" } as const;
+    expect(agentRowStatus(idleSession([shell]))).toEqual({
+      kind: "working",
+      startedAtEpochMs: RESUMED_AT,
+      activity: "background",
+    });
+    expect(agentRowStatus(idleSession([monitor]))).toEqual({
+      kind: "working",
+      startedAtEpochMs: RESUMED_AT,
+      activity: "monitoring",
+    });
+  });
+
+  it("counts inherited session agents while a new turn runs", () => {
+    const view = {
+      ...runningView([]),
+      sessionBackground: idleSession([resumedAgent]).sessionBackground,
+    };
+    expect(
+      agentRowStatus(view, undefined, background(false, []), { pending: null, workingAgents: 0 }),
+    ).toEqual({ kind: "agents", count: 1, lead: "working", startedAtEpochMs: 1_000 });
   });
 });
 

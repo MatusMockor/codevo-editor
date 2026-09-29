@@ -397,6 +397,36 @@ describe("AgentThreadRow", () => {
     expect(status?.getAttribute("title")).toBe("Working with 2 agents");
   });
 
+  it("keeps a settled thread running with a ticking timer while its resumed agent works", () => {
+    const settled = viewedDone();
+    render({
+      ...settled,
+      sessionBackground: {
+        ownerId: settled.thread.owner.ownerId,
+        total: 1,
+        agents: 1,
+        tasks: [
+          {
+            taskId: "a4b355dcf6056a875",
+            taskType: "agent",
+            description: "Live Codex model catalog like Claude",
+          },
+        ],
+        sinceEpochMs: NOW - 90_000,
+      },
+    });
+    const status = host.querySelector(".cv-card-row__status");
+    expect(status?.querySelector(".cv-card-row__status-label")?.textContent).toBe(
+      "1 agent running",
+    );
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("1:30");
+    expect(status?.getAttribute("title")).toBe("Waiting for 1 agent");
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("1:31");
+    render(settled);
+    expect(host.querySelector(".cv-card-row__tick")).toBeNull();
+  });
+
   const renameInput = (): HTMLInputElement => {
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename thread"]');
     expect(input).not.toBeNull();

@@ -106,6 +106,56 @@ def native_drain(task, ask=False, hold=False):
     assistant("background-finished")
     unprompted_result("background-finished")
 
+AGENT_TASK = "a4b355dcf6056a875"
+AGENT_LAUNCH = "toolu_012nR5ST1SeGiHfvahNc1s2X"
+AGENT_RESUME = "toolu_019eyG6GAy4aZoYrH76mTu6u"
+AGENT_TITLE = "Live Codex model catalog like Claude"
+
+def agent_started(tool):
+    system("task_started", task_id=AGENT_TASK, tool_use_id=tool, description=AGENT_TITLE,
+           task_type="local_agent", subagent_type="general-purpose")
+
+def agent_progress(tool, description):
+    system("task_progress", task_id=AGENT_TASK, tool_use_id=tool, description=description,
+           last_tool_name="Bash", usage={"duration_ms": 1729706, "total_tokens": 330412, "tool_uses": 146})
+
+def agent_finished(tool):
+    system("task_updated", task_id=AGENT_TASK, patch={"status": "completed"})
+    system("task_notification", task_id=AGENT_TASK, tool_use_id=tool, status="completed",
+           usage={"duration_ms": 2021217, "total_tokens": 356341, "tool_uses": 161})
+
+def subagent_text(tool, text):
+    emit({"type": "assistant", "parent_tool_use_id": tool, "session_id": session_id,
+          "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}})
+
+def root_tool(tool, name, output):
+    emit({"type": "assistant", "parent_tool_use_id": None, "session_id": session_id,
+          "message": {"role": "assistant", "content": [{"type": "tool_use", "id": tool, "name": name, "input": {}}]}})
+    return lambda: emit({"type": "user", "parent_tool_use_id": None, "session_id": session_id,
+                         "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool,
+                                                                  "content": output}]}})
+
+def agent_resume():
+    time.sleep(0.2)
+    subagent_text(AGENT_LAUNCH, "first-run-progress")
+    agent_progress(AGENT_LAUNCH, "Running Show changed files and sizes")
+    agent_finished(AGENT_LAUNCH)
+    system("init")
+    resumed = root_tool(AGENT_RESUME, "SendMessage", "Resuming agent a4b355d")
+    agent_started(AGENT_RESUME)
+    resumed()
+    agent_progress(AGENT_RESUME, AGENT_TITLE)
+    assistant("agent-resumed")
+    unprompted_result("agent-resumed")
+    wait_for_release("release-agent")
+    for index in range(3):
+        subagent_text(AGENT_RESUME, f"idle-progress-{index}")
+        agent_progress(AGENT_RESUME, "Running idle-progress")
+    agent_finished(AGENT_RESUME)
+    system("init")
+    assistant("agent-finished")
+    unprompted_result("agent-finished")
+
 def wait_for_release(name):
     deadline = time.time() + 10
     while not os.path.exists(os.path.join(state_dir, name)) and time.time() < deadline:
@@ -261,6 +311,15 @@ for raw in sys.stdin:
         hold = text.startswith("native-held")
         threading.Thread(target=native_drain, args=(task, ask, hold), daemon=True).start()
         continue
+    if text.startswith("agent-resume"):
+        launched = root_tool(AGENT_LAUNCH, "Agent", "Async agent launched successfully.")
+        agent_started(AGENT_LAUNCH)
+        launched()
+        assistant("agent-launched", uid)
+        result(uid, text="agent-launched")
+        lifecycle(uid, "completed")
+        threading.Thread(target=agent_resume, daemon=True).start()
+        continue
     if text.startswith("error-result"):
         result(uid, subtype="error_max_turns")
         lifecycle(uid, "completed")
@@ -365,6 +424,10 @@ impl FakeCli {
 
     pub(crate) fn release_native_drain(&self) {
         fs::write(self.dir.join("release-drain"), b"").expect("release the native drain");
+    }
+
+    pub(crate) fn release_agent(&self) {
+        fs::write(self.dir.join("release-agent"), b"").expect("release the resumed agent");
     }
 
     pub(crate) fn big_result_written(&self) -> bool {

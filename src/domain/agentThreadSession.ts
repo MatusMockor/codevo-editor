@@ -1,3 +1,4 @@
+import type { AgentBackgroundTask } from "./agentBackgroundActivity";
 import { parseAgentLaunchOptions, type AgentLaunchOptions } from "./agentLaunch";
 import {
   agentTaskId,
@@ -14,6 +15,11 @@ export type { AgentSessionRestartPolicy } from "./agentTask";
 
 export const AGENT_SESSION_ENDED_EVENT = "agent-session://ended" as const;
 export const AGENT_SESSION_BACKGROUND_TURN_EVENT = "agent-session://background-turn" as const;
+export const AGENT_SESSION_BACKGROUND_TASKS_EVENT = "agent-session://background-tasks" as const;
+export const MAX_AGENT_SESSION_BACKGROUND_TASKS = 256;
+export const MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS = 32;
+const MAX_SESSION_BACKGROUND_TASK_ID_BYTES = 256;
+const MAX_SESSION_BACKGROUND_TASK_DESCRIPTION_BYTES = 512;
 export const AGENT_SESSION_RESTART_CONFIRMATION_PREFIX =
   "sessionRestartRequiresConfirmation:" as const;
 export const AGENT_SESSION_RESTART_REFUSED_MESSAGE =
@@ -68,6 +74,14 @@ export interface AgentSessionBackgroundTurnEvent {
   readonly complete: boolean;
 }
 
+export interface AgentSessionBackgroundTasksEvent {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly total: number;
+  readonly agents: number;
+  readonly tasks: ReadonlyArray<AgentBackgroundTask>;
+}
+
 export type AgentTaskInterruptOutcomeKind =
   "interrupting" | "unsupported" | "unavailable" | "stopping";
 
@@ -104,6 +118,9 @@ export interface AgentThreadSessionGateway {
   subscribeAgentSessionEnded(handler: (event: AgentSessionEndedEvent) => void): Promise<() => void>;
   subscribeAgentSessionBackgroundTurn(
     handler: (event: AgentSessionBackgroundTurnEvent) => void,
+  ): Promise<() => void>;
+  subscribeAgentSessionBackgroundTasks(
+    handler: (event: AgentSessionBackgroundTasksEvent) => void,
   ): Promise<() => void>;
 }
 
@@ -199,6 +216,24 @@ export function parseAgentSessionBackgroundTurnEvent(
   };
 }
 
+export function parseAgentSessionBackgroundTasksEvent(
+  value: unknown,
+): AgentSessionBackgroundTasksEvent {
+  const event = record(value, "event");
+  exactKeys(event, ["workspaceId", "threadId", "total", "agents", "tasks"], "event");
+  const total = boundedCount(event.total, MAX_AGENT_SESSION_BACKGROUND_TASKS, "event.total");
+  const agents = boundedCount(event.agents, total, "event.agents");
+  const tasks = backgroundTasks(event.tasks, total, "event.tasks");
+  if (total > 0 && tasks.length === 0) return invalid("event.tasks", "the live tasks it counts");
+  return {
+    workspaceId: agentWorkspaceId(event.workspaceId, "event.workspaceId"),
+    threadId: agentTaskId(event.threadId, "event.threadId"),
+    total,
+    agents,
+    tasks,
+  };
+}
+
 export function isAgentSessionRestartConfirmationError(error: unknown): boolean {
   return failureMessageOf(error).startsWith(AGENT_SESSION_RESTART_CONFIRMATION_PREFIX);
 }
@@ -230,6 +265,72 @@ function backgroundTurnOutput(value: unknown, path: string): string {
   }
   if (value.includes("\0")) return invalid(path, expectation);
   if (UTF8_ENCODER.encode(value).byteLength > MAX_AGENT_SESSION_BACKGROUND_TURN_OUTPUT_BYTES) {
+    return invalid(path, expectation);
+  }
+  return value;
+}
+
+function boundedCount(value: unknown, max: number, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > max) {
+    return invalid(path, `an integer from 0 to ${max}`);
+  }
+  return value;
+}
+
+function backgroundTasks(
+  value: unknown,
+  total: number,
+  path: string,
+): ReadonlyArray<AgentBackgroundTask> {
+  const limit = Math.min(total, MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS);
+  if (!Array.isArray(value) || value.length > limit) {
+    return invalid(path, `at most ${limit} live tasks`);
+  }
+  const tasks = value.map((entry, index) => backgroundTask(entry, `${path}[${index}]`));
+  if (new Set(tasks.map((task) => task.taskId)).size !== tasks.length) {
+    return invalid(path, "unique task ids");
+  }
+  return tasks;
+}
+
+function backgroundTask(value: unknown, path: string): AgentBackgroundTask {
+  const task = record(value, path);
+  const keys =
+    task.description === undefined ? ["taskId", "taskType"] : ["taskId", "taskType", "description"];
+  exactKeys(task, keys, path);
+  const taskId = boundedSessionText(
+    task.taskId,
+    MAX_SESSION_BACKGROUND_TASK_ID_BYTES,
+    `${path}.taskId`,
+  );
+  const taskType = backgroundTaskType(task.taskType, `${path}.taskType`);
+  if (task.description === undefined) return { taskId, taskType };
+  const description = boundedSessionText(
+    task.description,
+    MAX_SESSION_BACKGROUND_TASK_DESCRIPTION_BYTES,
+    `${path}.description`,
+  );
+  return { taskId, taskType, description };
+}
+
+function backgroundTaskType(value: unknown, path: string): AgentBackgroundTask["taskType"] {
+  switch (value) {
+    case "agent":
+    case "shell":
+    case "monitor":
+    case "other":
+      return value;
+    default:
+      return invalid(path, "agent, shell, monitor or other");
+  }
+}
+
+function boundedSessionText(value: unknown, maxBytes: number, path: string): string {
+  const expectation = `non-empty text of at most ${maxBytes} UTF-8 bytes without control characters`;
+  if (typeof value !== "string" || value.length === 0 || value.length > maxBytes) {
+    return invalid(path, expectation);
+  }
+  if (/\p{Cc}/u.test(value) || UTF8_ENCODER.encode(value).byteLength > maxBytes) {
     return invalid(path, expectation);
   }
   return value;

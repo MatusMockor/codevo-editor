@@ -74,6 +74,7 @@ function gateway(overrides: Partial<AgentThreadSessionGateway> = {}) {
       return unsubscribe;
     }),
     subscribeAgentSessionBackgroundTurn: vi.fn(async () => unsubscribeBackground),
+    subscribeAgentSessionBackgroundTasks: vi.fn(async () => () => undefined),
     ...overrides,
   } satisfies AgentThreadSessionGateway;
   return {

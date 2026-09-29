@@ -58,4 +58,38 @@ describe("agentSessionActivityBar", () => {
       "Background tasks running",
     );
   });
+
+  it("shows live session agents after the turn settled, without actions that need a turn", () => {
+    const session = {
+      ownerId: "ws-1",
+      total: 2,
+      agents: 1,
+      tasks: [
+        {
+          taskId: "a4b355dcf6056a875",
+          taskType: "agent",
+          description: "Live Codex model catalog like Claude",
+        },
+        { taskId: "bdxqm7bz6", taskType: "shell", description: "Run focused lib tests" },
+      ],
+      sinceEpochMs: 1_790_718_781_369,
+    } as const;
+    expect(agentSessionActivityBar(null, null, session)).toEqual({
+      label: "1 agent running · 1 background task",
+      names: "Live Codex model catalog like Claude",
+      actions: [],
+      announce: false,
+    });
+    expect(
+      agentSessionActivityBar(null, null, {
+        ...session,
+        total: 1,
+        agents: 0,
+        tasks: [session.tasks[1]],
+      }),
+    ).toEqual({ label: "1 background task running", names: "", actions: [], announce: false });
+    expect(agentSessionActivityBar(agents, null, { ...session, agents: 2 })?.label).toBe(
+      "2 agents running",
+    );
+  });
 });

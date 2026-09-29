@@ -2,12 +2,16 @@ use super::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
 use crate::agent_task_supervisor::agent_task_result_detector::{
     failed_result, lifecycle_candidate, ResultLineDetector, ResultSettlePolicy,
 };
+pub use crate::agent_task_supervisor::agent_task_result_detector::{
+    BackgroundTaskKind, LiveBackgroundTask,
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 pub const MAX_ROUTED_LINE_BYTES: usize = 1024 * 1024;
 pub const MAX_BACKGROUND_TURN_BYTES: usize = 256 * 1024;
 pub const BACKGROUND_RESULT_RESERVE_BYTES: usize = 64 * 1024;
+pub const MAX_REPORTED_BACKGROUND_TASKS: usize = 32;
 const OVERSIZED_FRAME_ERROR: &str = "Claude session frame exceeded its size limit.";
 const COST_FIELD: &str = "total_cost_usd";
 const PROCESS_COST_FIELD: &str = "codevo_process_total_cost_usd";
@@ -24,6 +28,13 @@ pub struct ClaudeBackgroundTurn {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClaudeBackgroundTasks {
+    pub tasks: Vec<LiveBackgroundTask>,
+    pub total: usize,
+    pub agents: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RouterStep {
     pub turn_output: Vec<u8>,
     pub settled: bool,
@@ -33,6 +44,7 @@ pub struct RouterStep {
     pub interrupt_acknowledged: bool,
     pub unowned_activity: bool,
     pub background_turns: Vec<ClaudeBackgroundTurn>,
+    pub background_tasks: Option<ClaudeBackgroundTasks>,
     pub permission_denials: Vec<String>,
     pub unsupported_requests: Vec<String>,
     pub failure: Option<&'static str>,
@@ -106,6 +118,9 @@ pub struct ClaudeSessionRouter {
     pending_interrupt: Option<String>,
     cost_baseline: f64,
     idle_unsupported_answers: usize,
+    background_revision: u64,
+    background_offer_pending: bool,
+    reported_background: ClaudeBackgroundTasks,
     line: Vec<u8>,
     mode: LineMode,
 }
@@ -127,6 +142,9 @@ impl ClaudeSessionRouter {
             pending_interrupt: None,
             cost_baseline: 0.0,
             idle_unsupported_answers: 0,
+            background_revision: 0,
+            background_offer_pending: false,
+            reported_background: ClaudeBackgroundTasks::default(),
             line: Vec::new(),
             mode: LineMode::Buffering,
         }
@@ -209,6 +227,24 @@ impl ClaudeSessionRouter {
         self.detector.live_background_task_count()
     }
 
+    pub fn background_tasks(&self) -> ClaudeBackgroundTasks {
+        let live = self.detector.background_tasks();
+        let agents = live
+            .iter()
+            .filter(|task| task.kind == BackgroundTaskKind::Agent)
+            .count();
+        let total = live.len();
+        let tasks = live
+            .into_iter()
+            .take(MAX_REPORTED_BACKGROUND_TASKS)
+            .collect();
+        ClaudeBackgroundTasks {
+            tasks,
+            total,
+            agents,
+        }
+    }
+
     pub fn is_attached_to(&self, lifecycle: &Arc<ClaudeInputLifecycle>) -> bool {
         self.attached
             .as_ref()
@@ -227,7 +263,28 @@ impl ClaudeSessionRouter {
             rest = remaining;
             self.absorb(piece, piece.ends_with(b"\n"), &mut step);
         }
+        step.background_tasks = self.background_change();
         step
+    }
+
+    pub fn forget_reported_background(&mut self) {
+        self.reported_background = ClaudeBackgroundTasks::default();
+        self.background_offer_pending = true;
+    }
+
+    fn background_change(&mut self) -> Option<ClaudeBackgroundTasks> {
+        let revision = self.detector.background_revision();
+        if revision == self.background_revision && !self.background_offer_pending {
+            return None;
+        }
+        self.background_offer_pending = false;
+        self.background_revision = revision;
+        let current = self.background_tasks();
+        if current == self.reported_background {
+            return None;
+        }
+        self.reported_background = current.clone();
+        Some(current)
     }
 
     pub fn finish(&mut self) -> RouterStep {

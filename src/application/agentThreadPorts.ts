@@ -1,4 +1,5 @@
 import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
+import type { AgentSessionBackground } from "../domain/agentSessionBackground";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
 import type {
   AgentThreadOrganizationPatch,
@@ -269,6 +270,7 @@ export interface AgentThreadView {
   readonly editorAvailability: AgentShipAvailability;
   readonly attention: AgentThreadAttention;
   readonly unread: boolean;
+  readonly sessionBackground?: AgentSessionBackground;
 }
 
 export interface AgentHistorySearchPort {

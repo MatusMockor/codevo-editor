@@ -12,6 +12,7 @@ describe("Claude native background task parsing", () => {
   it.each([
     ["monitor", "monitor"],
     ["monitor_mcp", "monitor"],
+    ["monitor_ws", "monitor"],
     ["local_bash", "shell"],
     ["shell", "shell"],
     ["local_agent", "agent"],

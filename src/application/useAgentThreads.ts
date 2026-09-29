@@ -86,6 +86,7 @@ import {
   useAgentThreadSessions,
   type AgentThreadSessionDispatchPorts,
 } from "./useAgentThreadSessions";
+import { useAgentSessionBackgrounds } from "./useAgentSessionBackgrounds";
 import {
   agentThreadViews,
   fallbackShipState,
@@ -415,6 +416,11 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     now: dependencies.now,
   });
   const { endThreadSession } = sessions;
+  const sessionBackgrounds = useAgentSessionBackgrounds(
+    dependencies.agentThreadSessionGateway,
+    dependencies.now ?? Date.now,
+    (error) => reportError(AGENT_TASKS_SOURCE, error),
+  );
 
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
@@ -860,6 +866,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       shipStates,
       editor,
       projects,
+      sessionBackgrounds,
     );
     viewCacheRef.current = new Map(views.map((view) => [view.thread.threadId, view]));
     return views;
@@ -868,6 +875,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     editor,
     missingWorktreeThreadIds,
     projects,
+    sessionBackgrounds,
     shipStates,
     threads,
     worktrees.removedWorktreeThreadIds,

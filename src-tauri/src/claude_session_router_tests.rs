@@ -124,6 +124,7 @@ struct Collected {
     acknowledgements: usize,
     unowned: bool,
     background: Vec<ClaudeBackgroundTurn>,
+    background_changes: usize,
     failure: Option<&'static str>,
 }
 
@@ -134,6 +135,7 @@ impl Collected {
         self.acknowledgements += usize::from(step.interrupt_acknowledged);
         self.unowned |= step.unowned_activity;
         self.background.extend(step.background_turns);
+        self.background_changes += usize::from(step.background_tasks.is_some());
         self.failure = self.failure.or(step.failure);
     }
 }
@@ -1115,3 +1117,6 @@ fn settlement_through_the_interrupt_path_is_labelled_interrupted() {
 
 #[path = "claude_session_router_background_tests.rs"]
 mod background;
+
+#[path = "claude_session_router_resume_tests.rs"]
+mod resume;

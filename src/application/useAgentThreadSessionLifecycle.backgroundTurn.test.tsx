@@ -109,6 +109,7 @@ function gateway() {
         return unsubscribeBackground;
       },
     ),
+    subscribeAgentSessionBackgroundTasks: vi.fn(async () => () => undefined),
   } satisfies AgentThreadSessionGateway;
   return {
     fake,

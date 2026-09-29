@@ -2,13 +2,17 @@ use super::{
     agent_launch::AgentLaunchOptions,
     claude_session_policy::{
         choose_eviction, decide_session_disposition, idle_retirement_due, inspect_session,
-        ClaudeSessionBackgroundTurnEvent, ClaudeSessionDisposition, ClaudeSessionEndReason,
-        ClaudeSessionEndedEvent, ClaudeSessionFingerprint, ClaudeSessionInspection,
-        ClaudeSessionKey, ClaudeSessionRestartPolicy, ClaudeSessionTuning, EvictionCandidate,
-        LiveSessionFacts, RequestedSessionFacts, SessionAvailability, CLAUDE_SESSION_BUSY_ERROR,
+        ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
+        ClaudeSessionBackgroundTasksEvent, ClaudeSessionBackgroundTurnEvent,
+        ClaudeSessionDisposition, ClaudeSessionEndReason, ClaudeSessionEndedEvent,
+        ClaudeSessionFingerprint, ClaudeSessionInspection, ClaudeSessionKey,
+        ClaudeSessionRestartPolicy, ClaudeSessionTuning, EvictionCandidate, LiveSessionFacts,
+        RequestedSessionFacts, SessionAvailability, CLAUDE_SESSION_BUSY_ERROR,
         CLAUDE_SESSION_RESTART_CONFIRMATION_ERROR, CLAUDE_SESSION_STOP_TIMEOUT_ERROR,
     },
-    claude_session_router::ClaudeBackgroundTurn,
+    claude_session_router::{
+        BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn, LiveBackgroundTask,
+    },
     claude_thread_session::{
         ClaudeSessionIdentity, ClaudeSessionOwner, ClaudeThreadSession, IdleTermination,
     },
@@ -35,6 +39,8 @@ pub trait ClaudeSessionEventSink: Send + Sync {
     fn ended(&self, event: ClaudeSessionEndedEvent);
 
     fn background_turn(&self, event: ClaudeSessionBackgroundTurnEvent);
+
+    fn background_tasks(&self, event: ClaudeSessionBackgroundTasksEvent);
 }
 
 #[derive(Clone, Debug)]
@@ -322,6 +328,16 @@ impl ClaudeSessionRegistry {
     ) {
         self.inner.background_turn(key, generation, turn);
     }
+
+    #[cfg(test)]
+    pub fn deliver_background_tasks_for_tests(
+        &self,
+        key: &ClaudeSessionKey,
+        generation: u64,
+        tasks: ClaudeBackgroundTasks,
+    ) {
+        let _ = self.inner.background_tasks(key, generation, tasks);
+    }
 }
 
 impl Drop for ClaudeSessionRegistry {
@@ -602,6 +618,39 @@ impl ClaudeSessionOwner for RegistryInner {
             turn.complete,
         );
         let _ = catch_unwind(AssertUnwindSafe(|| self.events.background_turn(event)));
+    }
+
+    fn background_tasks(
+        &self,
+        key: &ClaudeSessionKey,
+        generation: u64,
+        tasks: ClaudeBackgroundTasks,
+    ) -> bool {
+        if !self.is_current(key, generation) {
+            return false;
+        }
+        let event = ClaudeSessionBackgroundTasksEvent {
+            workspace_id: key.workspace_id.clone(),
+            thread_id: key.thread_id.clone(),
+            total: tasks.total,
+            agents: tasks.agents,
+            tasks: tasks.tasks.into_iter().map(wire_background_task).collect(),
+        };
+        let _ = catch_unwind(AssertUnwindSafe(|| self.events.background_tasks(event)));
+        true
+    }
+}
+
+fn wire_background_task(task: LiveBackgroundTask) -> ClaudeSessionBackgroundTask {
+    ClaudeSessionBackgroundTask {
+        task_id: task.task_id,
+        task_type: match task.kind {
+            BackgroundTaskKind::Agent => ClaudeSessionBackgroundTaskType::Agent,
+            BackgroundTaskKind::Shell => ClaudeSessionBackgroundTaskType::Shell,
+            BackgroundTaskKind::Monitor => ClaudeSessionBackgroundTaskType::Monitor,
+            BackgroundTaskKind::Other => ClaudeSessionBackgroundTaskType::Other,
+        },
+        description: task.description,
     }
 }
 

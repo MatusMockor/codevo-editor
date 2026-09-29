@@ -3,15 +3,18 @@ use super::fake_claude_cli::*;
 use super::*;
 use agent_task_spawner::agent_launch::{AgentLaunchOptions, ClaudeEffortChoice};
 use agent_task_spawner::claude_session_policy::{
-    ClaudeSessionBackgroundTurnEvent, ClaudeSessionEndReason, ClaudeSessionEndedEvent,
-    ClaudeSessionInspection, ClaudeSessionKey, ClaudeSessionRestartPolicy, ClaudeSessionTuning,
-    CLAUDE_SESSION_BUSY_ERROR, CLAUDE_SESSION_RESTART_CONFIRMATION_ERROR,
+    ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
+    ClaudeSessionBackgroundTasksEvent, ClaudeSessionBackgroundTurnEvent, ClaudeSessionEndReason,
+    ClaudeSessionEndedEvent, ClaudeSessionInspection, ClaudeSessionKey, ClaudeSessionRestartPolicy,
+    ClaudeSessionTuning, CLAUDE_SESSION_BUSY_ERROR, CLAUDE_SESSION_RESTART_CONFIRMATION_ERROR,
 };
 use agent_task_spawner::claude_session_registry::{
     ClaudeSessionEventSink, ClaudeSessionLease, ClaudeSessionRegistry, ClaudeSessionRequest,
     CLAUDE_SESSION_ADMISSION_CLOSED_ERROR,
 };
-use agent_task_spawner::claude_session_router::ClaudeBackgroundTurn;
+use agent_task_spawner::claude_session_router::{
+    BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn, LiveBackgroundTask,
+};
 use agent_task_spawner::claude_thread_session::ClaudeThreadSession;
 use agent_task_spawner::spawn_bound_process;
 use agent_task_supervisor::system_process_group_signals;
@@ -22,6 +25,7 @@ use std::sync::atomic::AtomicUsize;
 pub(crate) struct RecordingSessionEvents {
     events: Mutex<Vec<ClaudeSessionEndedEvent>>,
     background: Mutex<Vec<ClaudeSessionBackgroundTurnEvent>>,
+    tasks: Mutex<Vec<ClaudeSessionBackgroundTasksEvent>>,
 }
 
 impl ClaudeSessionEventSink for RecordingSessionEvents {
@@ -31,6 +35,10 @@ impl ClaudeSessionEventSink for RecordingSessionEvents {
 
     fn background_turn(&self, event: ClaudeSessionBackgroundTurnEvent) {
         self.background.lock().expect("background lock").push(event);
+    }
+
+    fn background_tasks(&self, event: ClaudeSessionBackgroundTasksEvent) {
+        self.tasks.lock().expect("tasks lock").push(event);
     }
 }
 
@@ -53,6 +61,10 @@ impl RecordingSessionEvents {
             .rev()
             .find(|event| event.thread_id == thread_id)
             .cloned()
+    }
+
+    pub(crate) fn background_task_levels(&self) -> Vec<ClaudeSessionBackgroundTasksEvent> {
+        self.tasks.lock().expect("tasks lock").clone()
     }
 
     pub(crate) fn background_turns(&self) -> Vec<ClaudeSessionBackgroundTurnEvent> {
@@ -1088,6 +1100,104 @@ fn a_native_background_turn_emits_exactly_one_event_for_its_key() {
 }
 
 #[test]
+fn a_resumed_agent_reports_background_task_levels_only_for_its_key() {
+    let cli = FakeCli::new("registry-agent-resume");
+    let (registry, events) = session_registry(ClaudeSessionTuning::default());
+    let launch = AgentLaunchOptions::default();
+    let policy = ClaudeSessionRestartPolicy::RefuseIfBackground;
+    let bystander = acquire(
+        &registry,
+        &cli,
+        &session_request(&cli, "ws-b", "t2", None, launch, policy),
+    )
+    .expect("bystander");
+    settle(bystander.session.as_ref().expect("bystander"), "hello");
+    let acquired = acquire(
+        &registry,
+        &cli,
+        &session_request(&cli, "ws-a", "t1", None, launch, policy),
+    )
+    .expect("acquire");
+    let session = acquired.session.expect("session");
+    settle(&session, "agent-resume");
+    let live = |events: &RecordingSessionEvents| {
+        events
+            .background_task_levels()
+            .last()
+            .map(|event| event.total)
+    };
+    assert!(wait_until(Duration::from_secs(5), || events
+        .background_turns()
+        .len()
+        == 1));
+    assert!(wait_until(Duration::from_secs(5), || live(&events) == Some(1)));
+    let level = events.background_task_levels().last().cloned();
+    assert_eq!(
+        level,
+        Some(ClaudeSessionBackgroundTasksEvent {
+            workspace_id: "ws-a".to_string(),
+            thread_id: "t1".to_string(),
+            total: 1,
+            agents: 1,
+            tasks: vec![ClaudeSessionBackgroundTask {
+                task_id: "a4b355dcf6056a875".to_string(),
+                task_type: ClaudeSessionBackgroundTaskType::Agent,
+                description: Some("Live Codex model catalog like Claude".to_string()),
+            }],
+        })
+    );
+    cli.release_agent();
+    assert!(wait_until(Duration::from_secs(5), || live(&events) == Some(0)));
+    assert!(events
+        .background_task_levels()
+        .iter()
+        .all(|event| event.workspace_id == "ws-a" && event.thread_id == "t1"));
+    assert!(registry.shutdown_all());
+}
+
+#[test]
+fn background_task_levels_from_a_stale_or_foreign_generation_are_dropped() {
+    let cli = FakeCli::new("registry-stale-levels");
+    let (registry, events) = session_registry(ClaudeSessionTuning::default());
+    let launch = AgentLaunchOptions::default();
+    let policy = ClaudeSessionRestartPolicy::StopBackground;
+    let first = acquire(
+        &registry,
+        &cli,
+        &session_request(&cli, "ws-a", "t1", None, launch, policy),
+    )
+    .expect("first");
+    let stale = first.session.as_ref().expect("first").generation();
+    settle(first.session.as_ref().expect("first"), "hello");
+    let restarted = acquire(
+        &registry,
+        &cli,
+        &session_request(&cli, "ws-a", "t1", None, launch, policy),
+    )
+    .expect("restart");
+    let current = restarted.session.as_ref().expect("restarted").generation();
+    let level = || ClaudeBackgroundTasks {
+        tasks: vec![LiveBackgroundTask {
+            task_id: "a4b355dcf6056a875".to_string(),
+            kind: BackgroundTaskKind::Agent,
+            description: None,
+        }],
+        total: 1,
+        agents: 1,
+    };
+    let key = session_key("ws-a", "t1");
+    registry.deliver_background_tasks_for_tests(&key, stale, level());
+    registry.deliver_background_tasks_for_tests(&session_key("ws-b", "t1"), current, level());
+    registry.deliver_background_tasks_for_tests(&key, current + 1, level());
+    assert!(events.background_task_levels().is_empty());
+    registry.deliver_background_tasks_for_tests(&key, current, level());
+    assert_eq!(events.background_task_levels().len(), 1);
+    assert!(registry.shutdown_all());
+    registry.deliver_background_tasks_for_tests(&key, current, level());
+    assert_eq!(events.background_task_levels().len(), 1);
+}
+
+#[test]
 fn a_background_turn_from_a_stale_generation_is_dropped() {
     let cli = FakeCli::new("registry-stale-background");
     let (registry, events) = session_registry(ClaudeSessionTuning::default());
@@ -1145,6 +1255,10 @@ impl ClaudeSessionEventSink for PanickingEvents {
 
     fn background_turn(&self, _event: ClaudeSessionBackgroundTurnEvent) {
         panic!("background sink panicked");
+    }
+
+    fn background_tasks(&self, _event: ClaudeSessionBackgroundTasksEvent) {
+        panic!("background level sink panicked");
     }
 }
 
@@ -1223,6 +1337,8 @@ impl ClaudeSessionEventSink for ReapCheckingEvents {
     }
 
     fn background_turn(&self, _event: ClaudeSessionBackgroundTurnEvent) {}
+
+    fn background_tasks(&self, _event: ClaudeSessionBackgroundTasksEvent) {}
 }
 
 fn acquire_tracked(

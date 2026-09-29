@@ -346,8 +346,8 @@ function AgentThreadSessionBody({
   const liveTurn = record.turns[record.turns.length - 1] ?? null;
   const backgroundWait = useAgentBackgroundWait(record.provider.kind, threadId, liveTurn);
   const activityBar = useMemo(
-    () => agentSessionActivityBar(agentsBanner, backgroundWait),
-    [agentsBanner, backgroundWait],
+    () => agentSessionActivityBar(agentsBanner, backgroundWait, thread.sessionBackground ?? null),
+    [agentsBanner, backgroundWait, thread.sessionBackground],
   );
   const findInsetRef = useRef(0);
   useLayoutEffect(() => {

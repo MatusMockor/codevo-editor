@@ -79,6 +79,7 @@ export function projectAgentBackgroundState(
   eventsTruncated = false,
 ): AgentBackgroundState {
   const observed = new Map<string, AgentBackgroundTask | null>();
+  const runs = new AgentTaskRuns();
   const root = new RootForegroundTracker();
   let foregroundSettled = false;
   let truncated = processAlive && eventsTruncated;
@@ -87,6 +88,17 @@ export function projectAgentBackgroundState(
     root.observe(event);
     if (event.kind === "result") foregroundSettled = true;
     if (startsRootForeground(event)) foregroundSettled = false;
+    if (event.kind === "subagent" && processAlive) {
+      const revived = runs.resumed(event, observed);
+      if (revived === null) continue;
+      if (liveCount >= MAX_AGENT_BACKGROUND_TASKS) {
+        truncated = true;
+        continue;
+      }
+      liveCount += 1;
+      observed.set(revived.taskId, revived);
+      continue;
+    }
     if (event.kind !== "backgroundTask" || !processAlive) continue;
     const previous = observed.get(event.taskId);
     if (previous === null && event.status !== "starting") continue;
@@ -96,6 +108,7 @@ export function projectAgentBackgroundState(
     }
     if (event.status === "completed" || event.status === "failed" || event.status === "stopped") {
       if (previous !== undefined) liveCount -= 1;
+      if (previous) runs.finish(previous);
       observed.set(event.taskId, null);
     } else if (event.status === "starting" || previous !== undefined) {
       if (!previous && liveCount >= MAX_AGENT_BACKGROUND_TASKS) {
@@ -120,6 +133,41 @@ export function projectAgentBackgroundState(
   if (!processAlive || truncated || tasks.length === 0 || anchor === null)
     return { foreground: { kind: "running" }, tasks, truncated };
   return { foreground: { kind: "inferredIdle", anchor }, tasks, truncated };
+}
+
+type SubagentEvent = Extract<AgentTurnEvent, { kind: "subagent" }>;
+
+class AgentTaskRuns {
+  private readonly current = new Map<string, string>();
+  private readonly finished = new Map<string, { run?: string; task: AgentBackgroundTask }>();
+
+  resumed(
+    event: SubagentEvent,
+    observed: ReadonlyMap<string, AgentBackgroundTask | null>,
+  ): AgentBackgroundTask | null {
+    const { taskId, toolId } = event;
+    if (taskId === undefined || toolId === undefined) return null;
+    if (event.status !== "starting" && event.status !== "running") return null;
+    this.remember(taskId, toolId);
+    const finished = this.finished.get(taskId);
+    if (event.status !== "running" || observed.get(taskId) !== null) return null;
+    if (finished?.run === undefined || finished.run === toolId) return null;
+    if (finished.task.taskType !== "agent") return null;
+    this.finished.delete(taskId);
+    return finished.task;
+  }
+
+  finish(task: AgentBackgroundTask): void {
+    if (this.finished.size >= MAX_AGENT_BACKGROUND_OBSERVED_TASKS) return;
+    const run = this.current.get(task.taskId);
+    this.finished.set(task.taskId, run === undefined ? { task } : { run, task });
+  }
+
+  private remember(taskId: string, toolId: string): void {
+    if (!this.current.has(taskId) && this.current.size >= MAX_AGENT_BACKGROUND_OBSERVED_TASKS)
+      return;
+    this.current.set(taskId, toolId);
+  }
 }
 
 function startsRootForeground(event: AgentTurnEvent): boolean {

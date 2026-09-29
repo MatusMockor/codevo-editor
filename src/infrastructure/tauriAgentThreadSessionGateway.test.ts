@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import {
+  AGENT_SESSION_BACKGROUND_TASKS_EVENT,
   AGENT_SESSION_BACKGROUND_TURN_EVENT,
   AGENT_SESSION_ENDED_EVENT,
 } from "../domain/agentThreadSession";
@@ -108,8 +109,10 @@ describe("TauriAgentThreadSessionGateway", () => {
     ).resolves.toBe(false);
     const ended = await gateway.subscribeAgentSessionEnded(vi.fn());
     const background = await gateway.subscribeAgentSessionBackgroundTurn(vi.fn());
+    const tasks = await gateway.subscribeAgentSessionBackgroundTasks(vi.fn());
     expect(() => ended()).not.toThrow();
     expect(() => background()).not.toThrow();
+    expect(() => tasks()).not.toThrow();
     expect(invoke).not.toHaveBeenCalled();
     expect(listen).not.toHaveBeenCalled();
   });
@@ -167,5 +170,37 @@ describe("TauriAgentThreadSessionGateway", () => {
       truncated: false,
       complete: true,
     });
+  });
+
+  it("drops malformed background-tasks levels and forwards the pinned shape", async () => {
+    const events = capturingListen();
+    const gateway = new TauriAgentThreadSessionGateway(vi.fn(), events.listen, () => true);
+    const handler = vi.fn();
+    const unsubscribe = await gateway.subscribeAgentSessionBackgroundTasks(handler);
+    const pinned = JSON.parse(
+      '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}]}',
+    ) as unknown;
+    events.deliver(AGENT_SESSION_BACKGROUND_TASKS_EVENT, { ...(pinned as object), agents: 2 });
+    events.deliver(AGENT_SESSION_BACKGROUND_TASKS_EVENT, pinned);
+    expect(events.listen).toHaveBeenCalledWith(
+      "agent-session://background-tasks",
+      expect.any(Function),
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      threadId: "agt-1-0a1c",
+      total: 1,
+      agents: 1,
+      tasks: [
+        {
+          taskId: "a4b355dcf6056a875",
+          taskType: "agent",
+          description: "Live Codex model catalog like Claude",
+        },
+      ],
+    });
+    unsubscribe();
+    expect(events.unsubscribe).toHaveBeenCalledTimes(1);
   });
 });

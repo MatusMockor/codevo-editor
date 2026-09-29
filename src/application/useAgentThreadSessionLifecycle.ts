@@ -24,6 +24,10 @@ import type {
   AgentTasksNotice,
 } from "./agentThreadPorts";
 import { isRemoteAgentIdentity } from "./remoteAgentSurface";
+import {
+  useAgentSessionEventSubscription,
+  type AgentSessionEventSubscription,
+} from "./useAgentSessionEventSubscription";
 
 export interface AgentThreadSessionLifecycleOptions {
   readonly gateway: AgentThreadSessionGateway | undefined;
@@ -44,30 +48,19 @@ export interface AgentThreadSessionLifecycle {
   inspectBackground(threadId: string): Promise<AgentSessionBackgroundInspection>;
 }
 
-type SessionEventSubscription<TEvent> = (
-  gateway: AgentThreadSessionGateway,
-  handler: (event: TEvent) => void,
-) => Promise<() => void>;
-
-interface SessionEventHandlers<TEvent> {
-  readonly onEvent: (event: TEvent) => void;
-  readonly onFailure: (error: unknown) => void;
-}
-
 interface ThreadAuthority {
   readonly threadId: string;
   readonly ownerId: string;
 }
 
-const subscribeSessionEnded: SessionEventSubscription<AgentSessionEndedEvent> = (
+const subscribeSessionEnded: AgentSessionEventSubscription<AgentSessionEndedEvent> = (
   gateway,
   handler,
 ) => gateway.subscribeAgentSessionEnded(handler);
 
-const subscribeSessionBackgroundTurn: SessionEventSubscription<AgentSessionBackgroundTurnEvent> = (
-  gateway,
-  handler,
-) => gateway.subscribeAgentSessionBackgroundTurn(handler);
+const subscribeSessionBackgroundTurn: AgentSessionEventSubscription<
+  AgentSessionBackgroundTurnEvent
+> = (gateway, handler) => gateway.subscribeAgentSessionBackgroundTurn(handler);
 
 export function useAgentThreadSessionLifecycle(
   options: AgentThreadSessionLifecycleOptions,
@@ -99,11 +92,11 @@ export function useAgentThreadSessionLifecycle(
     return thread.owner.ownerId === authority.ownerId;
   }, []);
 
-  useSessionEventSubscription(options.gateway, subscribeSessionEnded, {
+  useAgentSessionEventSubscription(options.gateway, subscribeSessionEnded, {
     onEvent: (event) => announceSessionEnded(options, event),
     onFailure: (error) => options.reportError(AGENT_TASKS_SOURCE, error),
   });
-  useSessionEventSubscription(options.gateway, subscribeSessionBackgroundTurn, {
+  useAgentSessionEventSubscription(options.gateway, subscribeSessionBackgroundTurn, {
     onEvent: (event) => recordSessionBackgroundTurn(options, recorder, event),
     onFailure: (error) => options.reportError(AGENT_TASKS_SOURCE, error),
   });
@@ -200,42 +193,6 @@ export function useAgentThreadSessionLifecycle(
   );
 
   return { interrupt, endSession, inspectRestart, inspectBackground };
-}
-
-function useSessionEventSubscription<TEvent>(
-  gateway: AgentThreadSessionGateway | undefined,
-  subscribe: SessionEventSubscription<TEvent>,
-  handlers: SessionEventHandlers<TEvent>,
-): void {
-  const handlersRef = useRef(handlers);
-  useLayoutEffect(() => {
-    handlersRef.current = handlers;
-  });
-  useEffect(() => {
-    if (gateway === undefined) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void subscribe(gateway, (event) => {
-      if (disposed) return;
-      handlersRef.current.onEvent(event);
-    }).then(
-      (stop) => {
-        if (disposed) {
-          stop();
-          return;
-        }
-        unsubscribe = stop;
-      },
-      (error: unknown) => {
-        if (disposed) return;
-        handlersRef.current.onFailure(error);
-      },
-    );
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [gateway, subscribe]);
 }
 
 function announceSessionEnded(

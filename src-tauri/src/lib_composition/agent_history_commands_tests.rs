@@ -1,8 +1,8 @@
 use super::*;
 use crate::agent_task_spawner::agent_launch::AgentLaunchOptions;
 use crate::agent_task_spawner::claude_session_policy::{
-    ClaudeSessionBackgroundTurnEvent, ClaudeSessionEndedEvent, ClaudeSessionFingerprint,
-    ClaudeSessionKey, ClaudeSessionRestartPolicy, ExecutableFingerprint,
+    ClaudeSessionBackgroundTasksEvent, ClaudeSessionBackgroundTurnEvent, ClaudeSessionEndedEvent,
+    ClaudeSessionFingerprint, ClaudeSessionKey, ClaudeSessionRestartPolicy, ExecutableFingerprint,
 };
 use crate::agent_task_spawner::claude_session_registry::{
     ClaudeSessionEventSink, ClaudeSessionLease, ClaudeSessionRequest,
@@ -33,6 +33,8 @@ impl ClaudeSessionEventSink for RecordingEvents {
     }
 
     fn background_turn(&self, _event: ClaudeSessionBackgroundTurnEvent) {}
+
+    fn background_tasks(&self, _event: ClaudeSessionBackgroundTasksEvent) {}
 }
 
 impl RecordingEvents {

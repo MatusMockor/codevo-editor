@@ -117,6 +117,34 @@ pub struct ClaudeSessionBackgroundTurnEvent {
     pub complete: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ClaudeSessionBackgroundTaskType {
+    Agent,
+    Shell,
+    Monitor,
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeSessionBackgroundTask {
+    pub task_id: String,
+    pub task_type: ClaudeSessionBackgroundTaskType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeSessionBackgroundTasksEvent {
+    pub workspace_id: String,
+    pub thread_id: String,
+    pub total: usize,
+    pub agents: usize,
+    pub tasks: Vec<ClaudeSessionBackgroundTask>,
+}
+
 impl ClaudeSessionBackgroundTurnEvent {
     pub fn from_output(
         key: &ClaudeSessionKey,

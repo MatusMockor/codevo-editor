@@ -8,7 +8,9 @@ use super::{
         ClaudeSessionEndReason, ClaudeSessionFingerprint, ClaudeSessionKey, ClaudeSessionTuning,
         SessionAvailability, CLAUDE_SESSION_BUSY_ERROR,
     },
-    claude_session_router::{ClaudeBackgroundTurn, ClaudeSessionRouter, RouterStep},
+    claude_session_router::{
+        ClaudeBackgroundTasks, ClaudeBackgroundTurn, ClaudeSessionRouter, RouterStep,
+    },
     claude_session_turn::ClaudeSessionTurnChild,
     configure_agent_output_reader, exit_code_of, observe_exit_without_reaping, reap_child,
     AGENT_STDIN_FRAME_DEADLINE,
@@ -52,6 +54,13 @@ pub trait ClaudeSessionOwner: Send + Sync {
     );
 
     fn background_turn(&self, key: &ClaudeSessionKey, generation: u64, turn: ClaudeBackgroundTurn);
+
+    fn background_tasks(
+        &self,
+        key: &ClaudeSessionKey,
+        generation: u64,
+        tasks: ClaudeBackgroundTasks,
+    ) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,6 +224,7 @@ pub struct ClaudeThreadSession {
     dead: Condvar,
     router: Mutex<ClaudeSessionRouter>,
     input_order: Mutex<()>,
+    notifications: Mutex<bool>,
 }
 
 impl ClaudeThreadSession {
@@ -264,6 +274,7 @@ impl ClaudeThreadSession {
             dead: Condvar::new(),
             router: Mutex::new(ClaudeSessionRouter::new()),
             input_order: Mutex::new(()),
+            notifications: Mutex::new(false),
         });
         let readers = match session.spawn_readers(stdout, stderr) {
             Ok(readers) => readers,
@@ -812,6 +823,8 @@ impl ClaudeThreadSession {
     }
 
     fn report_ended(&self, reason: ClaudeSessionEndReason, background_tasks_live: bool) {
+        let mut ended = lock(&self.notifications);
+        *ended = true;
         if let Some(owner) = self.owner.upgrade() {
             let _ = catch_unwind(AssertUnwindSafe(|| {
                 owner.session_ended(
@@ -822,6 +835,7 @@ impl ClaudeThreadSession {
                 )
             }));
         }
+        drop(ended);
         self.state().reported = true;
         self.dead.notify_all();
     }
@@ -963,19 +977,20 @@ impl ClaudeThreadSession {
     }
 
     fn route_step(&self, advance: impl FnOnce(&mut ClaudeSessionRouter) -> RouterStep) {
-        let (step, attached) = {
+        let (step, attached, background) = {
             let mut router = lock(&self.router);
             if self.phase() == SessionPhase::Dead {
                 return;
             }
-            let step = advance(&mut router);
+            let mut step = advance(&mut router);
+            let background = step.background_tasks.take();
             let mut state = self.state();
             state.last_activity = Instant::now();
             let attached = state
                 .attached
                 .as_ref()
                 .map(|turn| (turn.turn, turn.stdout.clone()));
-            (step, attached)
+            (step, attached, background)
         };
         if let Some((_, sender)) = &attached {
             self.send_output(sender, &step.turn_output);
@@ -989,6 +1004,7 @@ impl ClaudeThreadSession {
         }
         self.answer_unowned_requests(&step);
         self.deliver_background_turns(step.background_turns);
+        self.deliver_background_tasks(background);
         if step.unowned_activity {
             self.terminate(ClaudeSessionEndReason::UnownedActivity);
         }
@@ -1051,6 +1067,31 @@ impl ClaudeThreadSession {
                 return;
             }
         }
+    }
+
+    fn deliver_background_tasks(&self, tasks: Option<ClaudeBackgroundTasks>) {
+        let Some(tasks) = tasks else {
+            return;
+        };
+        if self.offer_background_tasks(tasks) {
+            return;
+        }
+        lock(&self.router).forget_reported_background();
+    }
+
+    fn offer_background_tasks(&self, tasks: ClaudeBackgroundTasks) -> bool {
+        let Some(owner) = self.owner.upgrade() else {
+            return false;
+        };
+        let ended = lock(&self.notifications);
+        if *ended {
+            return true;
+        }
+        let delivered = catch_unwind(AssertUnwindSafe(|| {
+            owner.background_tasks(&self.identity.key, self.identity.generation, tasks)
+        }));
+        drop(ended);
+        delivered.unwrap_or(false)
     }
 
     fn deliver_background_turns(&self, turns: Vec<ClaudeBackgroundTurn>) {

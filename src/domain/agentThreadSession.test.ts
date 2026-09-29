@@ -6,11 +6,14 @@ import {
   type StartAgentTaskRequest,
 } from "./agentTask";
 import {
+  AGENT_SESSION_BACKGROUND_TASKS_EVENT,
   AGENT_SESSION_BACKGROUND_TURN_EVENT,
+  MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS,
   AGENT_SESSION_ENDED_EVENT,
   MAX_AGENT_SESSION_BACKGROUND_TURN_OUTPUT_BYTES,
   agentSessionEndedNotice,
   isAgentSessionRestartConfirmationError,
+  parseAgentSessionBackgroundTasksEvent,
   parseAgentSessionBackgroundTurnEvent,
   parseAgentSessionEndedEvent,
   parseAgentSessionInspection,
@@ -36,6 +39,9 @@ const START: StartAgentTaskRequest = {
   providerGeneration: 1,
   attachments: [],
 };
+
+const PINNED_BACKGROUND_TASKS_JSON =
+  '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}]}';
 
 const PINNED_BACKGROUND_TURN_JSON =
   '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","output":"...","truncated":false,"complete":true}';
@@ -155,6 +161,84 @@ describe("agent thread session contracts", () => {
       TypeError,
     );
     expect(() => parseAgentSessionBackgroundTurnEvent([event])).toThrow(TypeError);
+  });
+
+  it("parses the pinned background-tasks level exactly as the backend serializes it", () => {
+    expect(AGENT_SESSION_BACKGROUND_TASKS_EVENT).toBe("agent-session://background-tasks");
+    expect(parseAgentSessionBackgroundTasksEvent(JSON.parse(PINNED_BACKGROUND_TASKS_JSON))).toEqual(
+      {
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        total: 1,
+        agents: 1,
+        tasks: [
+          {
+            taskId: "a4b355dcf6056a875",
+            taskType: "agent",
+            description: "Live Codex model catalog like Claude",
+          },
+        ],
+      },
+    );
+    expect(
+      parseAgentSessionBackgroundTasksEvent({
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        total: 0,
+        agents: 0,
+        tasks: [],
+      }),
+    ).toEqual({ workspaceId: "ws-1", threadId: "agt-1-0a1c", total: 0, agents: 0, tasks: [] });
+    expect(
+      parseAgentSessionBackgroundTasksEvent({
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        total: 40,
+        agents: 0,
+        tasks: Array.from({ length: MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS }, (_, index) => ({
+          taskId: `b${index}`,
+          taskType: "shell",
+        })),
+      }).tasks,
+    ).toHaveLength(MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS);
+  });
+
+  it("rejects background-tasks levels that are not exactly the pinned, bounded shape", () => {
+    const event = JSON.parse(PINNED_BACKGROUND_TASKS_JSON) as Record<string, unknown>;
+    const task = { taskId: "a4b355dcf6056a875", taskType: "agent" };
+    for (const broken of [
+      { ...event, extra: 1 },
+      { ...event, total: -1 },
+      { ...event, total: 1.5 },
+      { ...event, total: 257 },
+      { ...event, agents: 2 },
+      { ...event, total: 0, agents: 0 },
+      { ...event, tasks: [task, task] },
+      { ...event, tasks: [{ ...task, taskType: "workflow" }] },
+      { ...event, tasks: [{ ...task, extra: true }] },
+      { ...event, tasks: [{ ...task, taskId: "" }] },
+      { ...event, tasks: [{ ...task, taskId: "a\u0007b" }] },
+      { ...event, tasks: [{ ...task, description: "" }] },
+      { ...event, tasks: [{ ...task, description: "x".repeat(513) }] },
+      { ...event, tasks: [{ ...task, description: "é".repeat(257) }] },
+      { ...event, tasks: [{ ...task, description: "bell\u0007" }] },
+      { ...event, tasks: null },
+      { ...event, threadId: "../escape" },
+      {
+        ...event,
+        total: 40,
+        agents: 0,
+        tasks: Array.from(
+          { length: MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS + 1 },
+          (_, index) => ({
+            taskId: `b${index}`,
+            taskType: "shell",
+          }),
+        ),
+      },
+    ]) {
+      expect(() => parseAgentSessionBackgroundTasksEvent(broken)).toThrow(TypeError);
+    }
   });
 
   it("bounds background-turn output by UTF-8 bytes, not string length", () => {

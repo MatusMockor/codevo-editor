@@ -286,6 +286,109 @@ describe("factual background activity", () => {
       projectAgentBackgroundActivity([...resumed, task("completed", "agent", "agent-task")], true),
     ).toMatchObject({ phase: "inactive", tasks: [] });
   });
+  it("revives a finished agent whose progress arrives under the resuming tool call", () => {
+    const agentId = "a4b355dcf6056a875";
+    const launch = "toolu_012nR5ST1SeGiHfvahNc1s2X";
+    const resume = "toolu_019eyG6GAy4aZoYrH76mTu6u";
+    const title = "Live Codex model catalog like Claude";
+    const native = (
+      status: Extract<AgentTurnEvent, { kind: "backgroundTask" }>["status"],
+      taskType: Extract<AgentTurnEvent, { kind: "backgroundTask" }>["taskType"],
+      description?: string,
+    ): AgentTurnEvent => ({
+      kind: "backgroundTask",
+      taskId: agentId,
+      status,
+      taskType,
+      ...(description === undefined ? {} : { description }),
+    });
+    const progress = (toolId: string, description: string): AgentTurnEvent[] => [
+      {
+        kind: "subagent",
+        status: "running",
+        toolId,
+        taskId: agentId,
+        subagentType: "general-purpose",
+        description,
+      },
+      native("running", "other", description),
+    ];
+    const finishedRun: AgentTurnEvent[] = [
+      {
+        kind: "subagent",
+        status: "starting",
+        toolId: launch,
+        taskId: agentId,
+        subagentType: "general-purpose",
+        description: title,
+      },
+      native("starting", "agent", title),
+      ...progress(launch, "Running Show changed files and sizes"),
+      { kind: "subagent", status: "completed", taskId: agentId },
+      native("completed", "other"),
+      { kind: "subagent", status: "completed", toolId: launch, taskId: agentId },
+      native("completed", "other"),
+      result,
+    ];
+    expect(
+      projectAgentBackgroundActivity(
+        [...finishedRun, ...progress(resume, "Running Run presentation and domain tests")],
+        true,
+      ),
+    ).toMatchObject({
+      phase: "working",
+      tasks: [{ taskId: agentId, taskType: "agent" }],
+    });
+    expect(
+      projectAgentBackgroundActivity(
+        [...finishedRun, ...progress(launch, "Running Show changed files and sizes")],
+        true,
+      ).tasks,
+    ).toEqual([]);
+    expect(
+      projectAgentBackgroundActivity(
+        [
+          ...finishedRun,
+          ...progress(resume, "Running Run presentation and domain tests"),
+          { kind: "subagent", status: "completed", toolId: resume, taskId: agentId },
+          native("completed", "other"),
+        ],
+        true,
+      ).tasks,
+    ).toEqual([]);
+  });
+  it("revives only a finished agent run whose tool call is known, keeping its native type", () => {
+    const taskId = "a4b355dcf6056a875";
+    const resumed: AgentTurnEvent = {
+      kind: "subagent",
+      status: "running",
+      toolId: "toolu_019eyG6GAy4aZoYrH76mTu6u",
+      taskId,
+    };
+    const progress = task("running", "other", taskId);
+    const untracked = [
+      task("starting", "agent", taskId),
+      task("completed", "other", taskId),
+      result,
+    ];
+    expect(projectAgentBackgroundActivity([...untracked, resumed, progress], true).tasks).toEqual(
+      [],
+    );
+    const launch: AgentTurnEvent = {
+      kind: "subagent",
+      status: "starting",
+      toolId: "toolu_012nR5ST1SeGiHfvahNc1s2X",
+      taskId,
+    };
+    const shell = [launch, task("starting", "shell", taskId), task("completed", "other", taskId)];
+    expect(
+      projectAgentBackgroundActivity([...shell, result, resumed, progress], true).tasks,
+    ).toEqual([]);
+    const agent = [launch, task("starting", "agent", taskId), task("completed", "other", taskId)];
+    expect(
+      projectAgentBackgroundActivity([...agent, result, resumed, progress], true).tasks,
+    ).toEqual([{ taskId, taskType: "agent", description: "Watch pipeline" }]);
+  });
   it("deduplicates starts and retains task type when progress omits native type", () => {
     expect(
       projectAgentBackgroundActivity(

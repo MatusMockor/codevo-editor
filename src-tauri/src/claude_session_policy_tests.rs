@@ -364,3 +364,29 @@ fn background_turn_event_keeps_only_complete_valid_utf8_lines() {
     assert_eq!(event.workspace_id, "ws-1");
     assert_eq!(event.thread_id, "agt-1-0a1c");
 }
+
+#[test]
+fn background_tasks_event_serializes_to_the_pinned_wire_shape() {
+    let event = ClaudeSessionBackgroundTasksEvent {
+        workspace_id: "ws-1".to_string(),
+        thread_id: "agt-1-0a1c".to_string(),
+        total: 2,
+        agents: 1,
+        tasks: vec![
+            ClaudeSessionBackgroundTask {
+                task_id: "a4b355dcf6056a875".to_string(),
+                task_type: ClaudeSessionBackgroundTaskType::Agent,
+                description: Some("Live Codex model catalog like Claude".to_string()),
+            },
+            ClaudeSessionBackgroundTask {
+                task_id: "bdxqm7bz6".to_string(),
+                task_type: ClaudeSessionBackgroundTaskType::Shell,
+                description: None,
+            },
+        ],
+    };
+    assert_eq!(
+        serde_json::to_string(&event).unwrap(),
+        r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":2,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"},{"taskId":"bdxqm7bz6","taskType":"shell"}]}"#
+    );
+}

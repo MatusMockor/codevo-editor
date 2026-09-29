@@ -3,6 +3,7 @@ import {
   projectAgentBackgroundActivity,
   type AgentBackgroundActivity,
 } from "../../domain/agentBackgroundActivity";
+import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
 import { agentAgentsRunningLabel } from "./agentBackgroundIndicatorPresentation";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import {
@@ -52,12 +53,13 @@ export function agentRowStatus(
   signals: AgentRowSignals = NO_ROW_SIGNALS,
 ): AgentRowStatus {
   const running = runningTurn(view.thread);
+  const session = view.sessionBackground;
   if (running !== null) {
     if (signals.pending === "approval") return { kind: "approval" };
     if (signals.pending === "input") return { kind: "input" };
     const activity =
       background === undefined ? immediateRowBackground(view, running, evidenceOf) : background;
-    const agents = Math.max(signals.workingAgents, liveAgentTasks(activity));
+    const agents = Math.max(signals.workingAgents, liveAgentTasks(activity), session?.agents ?? 0);
     if (agents > 0)
       return {
         kind: "agents",
@@ -76,6 +78,7 @@ export function agentRowStatus(
         : {}),
     };
   }
+  if (session !== undefined) return sessionBackgroundStatus(session);
   const last = lastTurnStatus(view.thread);
   if (last !== null && isFailedTurnStatus(last)) return { kind: "failed" };
   if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };
@@ -167,6 +170,24 @@ function agentCountLabel(count: number): string {
 function liveAgentTasks(activity: AgentBackgroundActivity | null): number {
   if (activity === null || !activity.foregroundSettled || activity.phase === "inactive") return 0;
   return activity.tasks.filter((task) => task.taskType === "agent").length;
+}
+
+function sessionBackgroundStatus(session: AgentSessionBackground): AgentRowStatus {
+  if (session.agents > 0)
+    return {
+      kind: "agents",
+      count: session.agents,
+      lead: "waiting",
+      startedAtEpochMs: session.sinceEpochMs,
+    };
+  const monitoring =
+    session.tasks.length === session.total &&
+    session.tasks.every((task) => task.taskType === "monitor");
+  return {
+    kind: "working",
+    startedAtEpochMs: session.sinceEpochMs,
+    activity: monitoring ? "monitoring" : "background",
+  };
 }
 
 function immediateRowBackground(

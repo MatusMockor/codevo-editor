@@ -1,6 +1,11 @@
 import { compareAgentThreadOrder } from "../domain/agentThreadOrganization";
 import { agentProjectOwnsOwner, type AgentProjectDescriptor } from "../domain/agentProject";
 import {
+  NO_AGENT_SESSION_BACKGROUNDS,
+  agentSessionBackgroundFor,
+  type AgentSessionBackgrounds,
+} from "../domain/agentSessionBackground";
+import {
   agentThreadAttention,
   agentThreadLifecycle,
   agentThreadUnread,
@@ -24,6 +29,7 @@ export function agentThreadViews(
   shipStates: ReadonlyMap<string, AgentShipState>,
   editor: AgentEditorBridgeSurface,
   projects: ReadonlyArray<AgentProjectDescriptor>,
+  sessionBackgrounds: AgentSessionBackgrounds = NO_AGENT_SESSION_BACKGROUNDS,
 ): ReadonlyArray<AgentThreadView> {
   const projectsByRootKey = new Map<string, AgentProjectDescriptor[]>();
   for (const project of projects) {
@@ -40,6 +46,7 @@ export function agentThreadViews(
       .get(thread.owner.rootKey)
       ?.find((candidate) => agentProjectOwnsOwner(candidate, thread.owner));
     if (project === undefined) continue;
+    const sessionBackground = agentSessionBackgroundFor(sessionBackgrounds, thread);
     const next: AgentThreadView = {
       thread,
       lifecycle: agentThreadLifecycle(thread),
@@ -52,6 +59,7 @@ export function agentThreadViews(
       editorAvailability: editor.canOpenInEditor(thread.threadId),
       attention: agentThreadAttention(thread),
       unread: agentThreadUnread(thread),
+      ...(sessionBackground === undefined ? {} : { sessionBackground }),
     };
     const cached = previous.get(thread.threadId);
     views.push(cached !== undefined && sameThreadView(cached, next) ? cached : next);
@@ -72,6 +80,7 @@ export function fallbackShipState(thread: AgentThread): AgentShipState {
 function sameThreadView(cached: AgentThreadView, next: AgentThreadView): boolean {
   if (cached.thread !== next.thread) return false;
   if (cached.changeSummary !== next.changeSummary) return false;
+  if (cached.sessionBackground !== next.sessionBackground) return false;
   if (cached.ship !== next.ship) return false;
   if (cached.worktreeRemoved !== next.worktreeRemoved) return false;
   if (cached.worktreeMissing !== next.worktreeMissing) return false;

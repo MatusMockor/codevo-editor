@@ -53,7 +53,7 @@ function nativeStatus(value: unknown): BackgroundEvent["status"] | null {
   return null;
 }
 function taskType(value: unknown): BackgroundEvent["taskType"] {
-  if (value === "monitor" || value === "monitor_mcp") return "monitor";
+  if (value === "monitor" || value === "monitor_mcp" || value === "monitor_ws") return "monitor";
   if (value === "shell" || value === "local_bash") return "shell";
   if (value === "agent" || value === "local_agent" || value === "remote_agent") return "agent";
   return "other";
