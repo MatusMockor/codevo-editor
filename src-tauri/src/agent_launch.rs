@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agent_task_spawner::AgentCliInvocation;
+use crate::codex_model_catalog_domain::CodexCatalogSnapshot;
+
+#[path = "agent_launch_codex.rs"]
+mod codex;
+use codex::{codex_model_args, resolve_codex_launch};
+pub use codex::{CodexEffortChoice, CodexModelChoice};
 
 pub const AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR: &str =
     "Agent launch options do not match the agent CLI kind.";
@@ -101,25 +107,6 @@ pub enum ClaudePermissionMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub enum CodexModelChoice {
-    #[default]
-    #[serde(rename = "default")]
-    Default,
-    #[serde(rename = "gpt-6-astra")]
-    Gpt6Astra,
-    #[serde(rename = "gpt-5.6-sol")]
-    Gpt56Sol,
-    #[serde(rename = "gpt-5.6-terra")]
-    Gpt56Terra,
-    #[serde(rename = "gpt-5.6-luna")]
-    Gpt56Luna,
-    #[serde(rename = "gpt-5.5")]
-    Gpt55,
-    #[serde(rename = "gpt-5.4")]
-    Gpt54,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ClaudeEffortChoice {
     #[default]
@@ -175,6 +162,8 @@ pub enum AgentLaunchOptions {
     Codex {
         model: CodexModelChoice,
         mode: CodexExecutionMode,
+        #[serde(default, skip_serializing_if = "CodexEffortChoice::is_default")]
+        effort: CodexEffortChoice,
     },
 }
 
@@ -218,12 +207,18 @@ impl AgentLaunchOptions {
     }
 
     pub fn validate_capabilities(&self) -> Result<(), &'static str> {
+        if let Self::Codex { .. } = self {
+            return self.validate_codex_catalog(&codex_catalog()?);
+        }
         let manifest = crate::claude_model_manifest::snapshot()
             .map_err(|_| AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
         self.validate_manifest(&manifest, None)
     }
 
     pub fn validate_cli_version(&self, version: Option<&str>) -> Result<(), &'static str> {
+        if let Self::Codex { .. } = self {
+            return self.validate_codex_catalog(&codex_catalog()?);
+        }
         let manifest = crate::claude_model_manifest::snapshot()
             .map_err(|_| AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
         self.validate_version_requirement(&manifest, version)
@@ -309,6 +304,44 @@ impl AgentLaunchOptions {
         Ok(())
     }
 
+    fn validate_codex_catalog(&self, catalog: &CodexCatalogSnapshot) -> Result<(), &'static str> {
+        self.codex_catalog_args(catalog).map(|_| ())
+    }
+
+    fn codex_catalog_args(
+        &self,
+        catalog: &CodexCatalogSnapshot,
+    ) -> Result<CatalogLaunchArgs, &'static str> {
+        let Self::Codex { model, effort, .. } = self else {
+            return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
+        };
+        resolve_codex_launch(catalog, *model, *effort)?;
+        Ok(CatalogLaunchArgs {
+            model: codex_model_args(*model),
+            settings: Vec::new(),
+            effort: effort
+                .exec_args()
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        })
+    }
+
+    pub fn codex_model_id(&self) -> Option<&str> {
+        match self {
+            Self::Codex { model, .. } if !model.is_default() => Some(model.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn codex_effort(&self) -> Option<&'static str> {
+        match self {
+            Self::Codex { effort, .. } => effort.wire_value(),
+            Self::ClaudeCode { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
     pub fn model_args(&self) -> Vec<String> {
         let manifest = crate::claude_model_manifest::snapshot().expect("bundled catalog is valid");
         self.model_args_with_manifest(&manifest)
@@ -325,10 +358,7 @@ impl AgentLaunchOptions {
                     .is_some_and(|entry| !entry.context_windows.is_empty());
                 claude_model_args(*model, *context, supports_context)
             }
-            Self::Codex { model, .. } => codex_model_args(*model)
-                .iter()
-                .map(|value| (*value).to_string())
-                .collect(),
+            Self::Codex { model, .. } => codex_model_args(*model),
         }
     }
 
@@ -336,6 +366,11 @@ impl AgentLaunchOptions {
         &self,
         version: Option<&str>,
     ) -> Result<CatalogLaunchArgs, String> {
+        if let Self::Codex { .. } = self {
+            return self
+                .codex_catalog_args(&crate::codex_model_catalog::snapshot()?)
+                .map_err(str::to_string);
+        }
         let manifest = crate::claude_model_manifest::snapshot()?;
         self.validate_version_requirement(&manifest, version)
             .map_err(str::to_string)?;
@@ -374,7 +409,7 @@ impl AgentLaunchOptions {
     pub fn effort_args(&self) -> &'static [&'static str] {
         match self {
             Self::ClaudeCode { effort, .. } => claude_effort_args(*effort),
-            Self::Codex { .. } => &[],
+            Self::Codex { effort, .. } => effort.exec_args(),
         }
     }
 
@@ -547,16 +582,8 @@ fn claude_mode_args(mode: ClaudePermissionMode) -> &'static [&'static str] {
     }
 }
 
-fn codex_model_args(model: CodexModelChoice) -> &'static [&'static str] {
-    match model {
-        CodexModelChoice::Default => &[],
-        CodexModelChoice::Gpt6Astra => &["-m", "gpt-6-astra"],
-        CodexModelChoice::Gpt56Sol => &["-m", "gpt-5.6-sol"],
-        CodexModelChoice::Gpt56Terra => &["-m", "gpt-5.6-terra"],
-        CodexModelChoice::Gpt56Luna => &["-m", "gpt-5.6-luna"],
-        CodexModelChoice::Gpt55 => &["-m", "gpt-5.5"],
-        CodexModelChoice::Gpt54 => &["-m", "gpt-5.4"],
-    }
+fn codex_catalog() -> Result<CodexCatalogSnapshot, &'static str> {
+    crate::codex_model_catalog::snapshot().map_err(|_| AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
 }
 
 fn codex_mode_args(mode: CodexExecutionMode, resumed: bool) -> &'static [&'static str] {

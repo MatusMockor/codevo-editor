@@ -147,3 +147,22 @@ fn visual_guidance_preserves_maximum_user_prompt_and_attachment_budget() {
         .bounded()
     );
 }
+
+#[test]
+fn catalog_model_and_effort_reach_app_server_params_from_typed_launch_fields() {
+    let launch: AgentLaunchOptions = serde_json::from_str(
+        r#"{"provider":"codex","model":"gpt-6.1-sol","mode":"auto","effort":"ultra"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        model_selection(&launch),
+        (Some("gpt-6.1-sol".to_string()), Some("ultra".to_string()))
+    );
+    let default: AgentLaunchOptions =
+        serde_json::from_str(r#"{"provider":"codex","model":"default","mode":"auto"}"#).unwrap();
+    assert_eq!(model_selection(&default), (None, None));
+    let access = access_for(CodexExecutionMode::Auto, "/repo");
+    let (start, resume) = thread_params("/repo", Some("gpt-6.1-sol"), &access, Some("thread-1"));
+    assert_eq!(start.model.as_deref(), Some("gpt-6.1-sol"));
+    assert_eq!(resume.unwrap().model.as_deref(), Some("gpt-6.1-sol"));
+}

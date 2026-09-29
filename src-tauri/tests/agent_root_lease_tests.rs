@@ -5,6 +5,10 @@
 mod claude_model_manifest;
 #[path = "../src/claude_model_manifest_domain.rs"]
 mod claude_model_manifest_domain;
+#[path = "../src/codex_model_catalog.rs"]
+mod codex_model_catalog;
+#[path = "../src/codex_model_catalog_domain.rs"]
+mod codex_model_catalog_domain;
 
 #[path = "../src/agent_questions.rs"]
 mod agent_questions;

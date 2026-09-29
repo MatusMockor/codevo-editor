@@ -1,4 +1,5 @@
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
+import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
 import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import {
   Fragment,
@@ -80,6 +81,7 @@ export function AgentModelPicker({
   providerSwitchable = false,
 }: AgentModelPickerProps) {
   const catalog = useAgentClaudeModelCatalog();
+  const codexCatalog = useAgentCodexModelCatalog();
   const selectedProviderEnabled = providerIsEnabled(providerEnabled, launch.provider);
   const providerUnavailableReason = providerAvailabilityReason(
     providerManagement,
@@ -111,6 +113,7 @@ export function AgentModelPicker({
             configuredProviderModel(providerManagement, provider),
             configuredProviderVersion(providerManagement, provider),
             catalog,
+            codexCatalog,
           ),
         );
     }
@@ -120,10 +123,12 @@ export function AgentModelPicker({
           configuredProviderModel(providerManagement, displayProvider),
           configuredProviderVersion(providerManagement, displayProvider),
           catalog,
+          codexCatalog,
         )
       : [];
   }, [
     catalog,
+    codexCatalog,
     displayProvider,
     filter,
     launch.provider,
@@ -150,7 +155,7 @@ export function AgentModelPicker({
   const activeRow = visible[active] ?? null;
   const modifier = agentPlatformModifier().glyph;
   const configuredModel = configuredProviderModel(providerManagement, launch.provider);
-  const selectedModel = agentLaunchEffectiveModel(launch, configuredModel, catalog);
+  const selectedModel = agentLaunchEffectiveModel(launch, configuredModel, catalog, codexCatalog);
 
   const openPicker = useCallback(() => {
     if (pickerDisabled) return;
@@ -267,6 +272,7 @@ export function AgentModelPicker({
             launch,
             configuredProviderModel(providerManagement, launch.provider),
             catalog,
+            codexCatalog,
           )
         }
         type="button"
@@ -279,6 +285,7 @@ export function AgentModelPicker({
             launch,
             configuredProviderModel(providerManagement, launch.provider),
             catalog,
+            codexCatalog,
           )}
         </span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />

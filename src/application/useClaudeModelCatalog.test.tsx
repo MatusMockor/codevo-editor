@@ -76,6 +76,22 @@ describe("useClaudeModelCatalog", () => {
     expect(hook.result.current).toBe(updated);
     hook.unmount();
   });
+  it("keeps the current snapshot object when a poll returns the same timestamp", async () => {
+    let publish!: (catalog: ClaudeModelManifest) => void;
+    const hook = renderCatalog({
+      read: async () => updated,
+      subscribe: async (listener) => {
+        publish = listener;
+        return () => {};
+      },
+    });
+    await act(async () => {});
+    expect(hook.result.current).toBe(updated);
+    act(() => publish({ ...updated }));
+    expect(hook.result.current).toBe(updated);
+    hook.unmount();
+  });
+
   it("subscribes before the initial read and ignores events after replacement", async () => {
     let publish!: (catalog: ClaudeModelManifest) => void;
     const stop = vi.fn();

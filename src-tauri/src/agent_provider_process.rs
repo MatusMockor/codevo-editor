@@ -27,6 +27,16 @@ use digest_budget::{ExecutableDigestBudget, ExecutableValidationEffort};
 
 pub const AGENT_PROVIDER_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_PROVIDER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
+pub const AGENT_PROVIDER_MODEL_CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
+pub const AGENT_PROVIDER_MODEL_CATALOG_OUTPUT_BYTES: usize = 256 * 1024;
+const CODEX_APP_SERVER_HANDSHAKE: &str = concat!(
+    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"}}}\n",
+    "{\"method\":\"initialized\",\"params\":{}}\n",
+);
+const CODEX_ACCOUNT_USAGE_REQUEST: &str = "{\"method\":\"account/rateLimits/read\",\"id\":1}\n";
+const CODEX_MODEL_LIST_REQUEST: &str =
+    "{\"method\":\"model/list\",\"id\":1,\"params\":{\"includeHidden\":true,\"limit\":128}}\n";
+const CODEX_APP_SERVER_RESPONSE_MARKER: &[u8] = b"\"id\":1,\"result\"";
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const READER_GRACE: Duration = Duration::from_millis(250);
 const UPDATE_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -270,6 +280,7 @@ pub enum AgentProviderProcessIntent {
     AuthenticationStatus(AgentCliInvocation),
     AuthenticationStatusText(AgentCliInvocation),
     AccountUsage(AgentCliInvocation),
+    ModelCatalog(AgentCliInvocation),
     SelfUpdate(AgentCliInvocation),
     NpmGlobalRoot,
     NpmInventory,
@@ -365,6 +376,7 @@ impl AgentProviderProcessPlan {
             | AgentProviderProcessIntent::AuthenticationStatus(provider)
             | AgentProviderProcessIntent::AuthenticationStatusText(provider)
             | AgentProviderProcessIntent::AccountUsage(provider)
+            | AgentProviderProcessIntent::ModelCatalog(provider)
             | AgentProviderProcessIntent::SelfUpdate(provider) => provider,
             _ => return Err("Provider executable cannot run this operation.".to_string()),
         };
@@ -390,7 +402,8 @@ impl AgentProviderProcessPlan {
                 "dontAsk",
                 "--no-session-persistence",
             ],
-            AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec) => {
+            AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec)
+            | AgentProviderProcessIntent::ModelCatalog(AgentCliInvocation::CodexExec) => {
                 vec!["app-server", "--stdio"]
             }
             AgentProviderProcessIntent::SelfUpdate(_) => vec!["update"],
@@ -398,9 +411,13 @@ impl AgentProviderProcessPlan {
         };
         let requires_update_authorization =
             matches!(intent, AgentProviderProcessIntent::SelfUpdate(_));
-        let (timeout, output_limit) = match requires_update_authorization {
-            true => (AGENT_PROVIDER_UPDATE_TIMEOUT, UPDATE_OUTPUT_BYTES),
-            false => (
+        let (timeout, output_limit) = match (&intent, requires_update_authorization) {
+            (_, true) => (AGENT_PROVIDER_UPDATE_TIMEOUT, UPDATE_OUTPUT_BYTES),
+            (AgentProviderProcessIntent::ModelCatalog(_), false) => (
+                AGENT_PROVIDER_MODEL_CATALOG_TIMEOUT,
+                AGENT_PROVIDER_MODEL_CATALOG_OUTPUT_BYTES,
+            ),
+            (_, false) => (
                 AGENT_PROVIDER_PROBE_TIMEOUT,
                 MAX_AGENT_PROVIDER_OUTPUT_BYTES,
             ),
@@ -413,20 +430,21 @@ impl AgentProviderProcessPlan {
             output_limit,
             requires_update_authorization,
         );
-        if provider == AgentCliInvocation::CodexExec
-            && matches!(intent, AgentProviderProcessIntent::AccountUsage(_))
-        {
-            plan.stdin_payload = Some(
-                concat!(
-                    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"}}}\n",
-                    "{\"method\":\"initialized\",\"params\":{}}\n",
-                    "{\"method\":\"account/rateLimits/read\",\"id\":1}\n"
-                )
-                .as_bytes()
-                .into(),
-            );
-            plan.stdout_completion_marker = Some(b"\"id\":1,\"result\"".as_slice().into());
+        let request = match intent {
+            AgentProviderProcessIntent::AccountUsage(_) => CODEX_ACCOUNT_USAGE_REQUEST,
+            AgentProviderProcessIntent::ModelCatalog(_) => CODEX_MODEL_LIST_REQUEST,
+            _ => return Ok(plan),
+        };
+        if provider != AgentCliInvocation::CodexExec {
+            return Ok(plan);
         }
+        plan.stdin_payload = Some(
+            [CODEX_APP_SERVER_HANDSHAKE, request]
+                .concat()
+                .into_bytes()
+                .into(),
+        );
+        plan.stdout_completion_marker = Some(CODEX_APP_SERVER_RESPONSE_MARKER.into());
         Ok(plan)
     }
 
@@ -1376,9 +1394,10 @@ fn spawn_reader<R: Read + Send + 'static>(
                 ) {
                     Ok(_) => {
                         output.extend_from_slice(&buffer[..accepted]);
-                        if completion_marker.as_deref().is_some_and(|marker| {
-                            output.windows(marker.len()).any(|window| window == marker)
-                        }) {
+                        if completion_marker
+                            .as_deref()
+                            .is_some_and(|marker| completed_marker_line(&output, marker))
+                        {
                             completion_observed.store(true, Ordering::Release);
                         }
                         break;
@@ -1388,6 +1407,13 @@ fn spawn_reader<R: Read + Send + 'static>(
             }
         }
     })
+}
+
+fn completed_marker_line(output: &[u8], marker: &[u8]) -> bool {
+    output
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .is_some_and(|start| output[start + marker.len()..].contains(&b'\n'))
 }
 
 fn join_reader(reader: Option<thread::JoinHandle<Vec<u8>>>, deadline: Instant) -> Option<Vec<u8>> {

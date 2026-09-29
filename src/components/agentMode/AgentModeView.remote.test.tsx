@@ -17,7 +17,7 @@ import { surfaceThreadView, SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtu
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
 
-const launch = { provider: "codex", model: "gpt-5.6-sol", mode: "dangerFullAccess" } as const;
+const launch = { provider: "codex", model: "gpt-6.1-sol", mode: "dangerFullAccess" } as const;
 const remoteThreadId = remoteAgentThreadKey("linux", "runner", "first");
 function task(overrides: Partial<RemoteRunnerTask> = {}): RemoteRunnerTask {
   return {

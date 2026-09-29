@@ -73,7 +73,19 @@ fn claude_with_effort(
 }
 
 fn codex(model: CodexModelChoice, mode: CodexExecutionMode) -> AgentLaunchOptions {
-    AgentLaunchOptions::Codex { model, mode }
+    codex_with_effort(model, mode, CodexEffortChoice::Default)
+}
+
+fn codex_with_effort(
+    model: CodexModelChoice,
+    mode: CodexExecutionMode,
+    effort: CodexEffortChoice,
+) -> AgentLaunchOptions {
+    AgentLaunchOptions::Codex {
+        model,
+        mode,
+        effort,
+    }
 }
 
 #[test]
@@ -366,7 +378,7 @@ fn model_specific_capabilities_fail_closed() {
 }
 
 #[test]
-fn codex_never_carries_effort_args() {
+fn codex_default_effort_never_carries_effort_args() {
     for model in CODEX_MODELS {
         for mode in CODEX_MODES {
             assert!(codex(model, mode).effort_args().is_empty());
@@ -563,9 +575,24 @@ fn serde_uses_the_documented_wire_names() {
 
 #[test]
 fn serde_rejects_unknown_variants_fields_and_cross_provider_pairs() {
-    for model in ["gpt-6-astra-unknown", "gpt-6-astra --help", "gpt-6"] {
+    for model in [
+        "gpt-6-astra --help",
+        "--help",
+        "GPT-6",
+        "",
+        "gpt-6-",
+        "gpt..6",
+    ] {
         let wire = serde_json::json!({"provider": "codex", "model": model, "mode": "default"});
         assert!(serde_json::from_value::<AgentLaunchOptions>(wire).is_err());
+    }
+    for model in ["gpt-6-astra-unknown", "gpt-6"] {
+        let wire = serde_json::json!({"provider": "codex", "model": model, "mode": "default"});
+        let launch = serde_json::from_value::<AgentLaunchOptions>(wire).unwrap();
+        assert_eq!(
+            launch.validate_capabilities(),
+            Err(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
+        );
     }
     assert!(serde_json::from_str::<AgentLaunchOptions>(
         r#"{"provider":"claudeCode","model":"claude-opus-4","mode":"default"}"#
@@ -586,7 +613,7 @@ fn serde_rejects_unknown_variants_fields_and_cross_provider_pairs() {
     )
     .is_err());
     assert!(serde_json::from_str::<AgentLaunchOptions>(
-        r#"{"provider":"codex","model":"default","mode":"default","effort":"high"}"#
+        r#"{"provider":"codex","model":"default","mode":"default","effort":"ultrathink"}"#
     )
     .is_err());
     assert!(serde_json::from_str::<AgentLaunchOptions>(
@@ -598,11 +625,11 @@ fn serde_rejects_unknown_variants_fields_and_cross_provider_pairs() {
     )
     .is_err());
     assert!(serde_json::from_str::<AgentLaunchOptions>(
-        r#"{"provider":"codex","model":"default","mode":"default","effort":"low"}"#
+        r#"{"provider":"codex","model":"default","mode":"default","effort":"High"}"#
     )
     .is_err());
     assert!(serde_json::from_str::<AgentLaunchOptions>(
-        r#"{"provider":"codex","model":"default","mode":"default","effort":"default"}"#
+        r#"{"provider":"codex","model":"default","mode":"default","context":"1m"}"#
     )
     .is_err());
     assert!(serde_json::from_str::<AgentLaunchOptions>(
@@ -664,3 +691,6 @@ fn claude_summarized_thinking_display_is_gated_on_a_verified_cli_version() {
     let codex = codex(CodexModelChoice::Default, CodexExecutionMode::Default);
     assert!(codex.thinking_display_args(Some("9.9.9")).is_empty());
 }
+
+#[path = "agent_launch_codex_tests.rs"]
+mod codex_catalog;

@@ -1,6 +1,6 @@
 use super::agent_launch::{
     ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode,
-    CodexExecutionMode, CodexModelChoice,
+    CodexEffortChoice, CodexExecutionMode, CodexModelChoice,
 };
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,14 +64,13 @@ const CLAUDE_MODES: [ClaudePermissionMode; 4] = [
     ClaudePermissionMode::AcceptEdits,
     ClaudePermissionMode::BypassPermissions,
 ];
-const CODEX_MODELS: [CodexModelChoice; 7] = [
+const CODEX_MODELS: [CodexModelChoice; 6] = [
     CodexModelChoice::Default,
     CodexModelChoice::Gpt6Astra,
     CodexModelChoice::Gpt56Sol,
     CodexModelChoice::Gpt56Terra,
     CodexModelChoice::Gpt56Luna,
     CodexModelChoice::Gpt55,
-    CodexModelChoice::Gpt54,
 ];
 const CODEX_MODES: [CodexExecutionMode; 4] = [
     CodexExecutionMode::Default,
@@ -107,6 +106,7 @@ fn codex_default() -> AgentLaunchOptions {
     AgentLaunchOptions::Codex {
         model: CodexModelChoice::Default,
         mode: CodexExecutionMode::Default,
+        effort: CodexEffortChoice::Default,
     }
 }
 
@@ -708,6 +708,7 @@ fn codex_astra_reaches_fresh_and_resumed_cli_invocations() {
     let launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Gpt6Astra,
         mode: CodexExecutionMode::WorkspaceWrite,
+        effort: CodexEffortChoice::Default,
     };
     assert_eq!(
         agent_invocation_args(
@@ -754,6 +755,105 @@ fn codex_astra_reaches_fresh_and_resumed_cli_invocations() {
 }
 
 #[test]
+fn codex_effort_reaches_fresh_and_resumed_cli_invocations() {
+    let launch = AgentLaunchOptions::Codex {
+        model: CodexModelChoice::Gpt6Astra,
+        mode: CodexExecutionMode::ReadOnly,
+        effort: CodexEffortChoice::Xhigh,
+    };
+    assert_eq!(
+        agent_invocation_args(
+            AgentCliInvocation::CodexExec,
+            "do it",
+            None,
+            launch,
+            &no_attachments()
+        ),
+        [
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "-m",
+            "gpt-6-astra",
+            "--sandbox",
+            "read-only",
+            "-c",
+            "model_reasoning_effort=\"xhigh\"",
+            "--",
+            "do it"
+        ]
+    );
+    assert_eq!(
+        agent_invocation_args(
+            AgentCliInvocation::CodexExec,
+            "do it",
+            Some(SESSION_ID),
+            launch,
+            &no_attachments(),
+        ),
+        [
+            "exec",
+            "resume",
+            "--json",
+            "--skip-git-repo-check",
+            "-m",
+            "gpt-6-astra",
+            "-c",
+            "sandbox_mode=\"read-only\"",
+            "-c",
+            "model_reasoning_effort=\"xhigh\"",
+            SESSION_ID,
+            "--",
+            "do it"
+        ]
+    );
+}
+
+#[test]
+fn codex_models_outside_the_catalog_are_refused_before_spawn() {
+    let directory = std::env::temp_dir();
+    for launch in [
+        AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Gpt54,
+            mode: CodexExecutionMode::Default,
+            effort: CodexEffortChoice::Default,
+        },
+        AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Gpt56Luna,
+            mode: CodexExecutionMode::Default,
+            effort: CodexEffortChoice::Ultra,
+        },
+    ] {
+        assert_eq!(
+            plan_agent_invocation(
+                "/bin/sh",
+                AgentCliInvocation::CodexExec,
+                "do it",
+                &directory,
+                None,
+                launch,
+            )
+            .err()
+            .as_deref(),
+            Some(super::agent_launch::AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
+        );
+        assert_eq!(
+            try_agent_invocation_args(
+                AgentCliInvocation::CodexExec,
+                "do it",
+                None,
+                launch,
+                &no_attachments(),
+                None,
+            )
+            .err()
+            .as_deref(),
+            Some(super::agent_launch::AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)
+        );
+    }
+}
+
+#[test]
 fn codex_resume_argv_places_options_before_the_positional_session_id() {
     assert_eq!(
         agent_invocation_args(
@@ -763,6 +863,7 @@ fn codex_resume_argv_places_options_before_the_positional_session_id() {
             AgentLaunchOptions::Codex {
                 model: CodexModelChoice::Gpt55,
                 mode: CodexExecutionMode::WorkspaceWrite,
+                effort: CodexEffortChoice::Default,
             },
             &no_attachments()
         ),
@@ -863,7 +964,11 @@ fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
 fn codex_argv_table_covers_every_model_mode_and_resume_combination() {
     for model in CODEX_MODELS {
         for mode in CODEX_MODES {
-            let launch = AgentLaunchOptions::Codex { model, mode };
+            let launch = AgentLaunchOptions::Codex {
+                model,
+                mode,
+                effort: CodexEffortChoice::Default,
+            };
             for resume in [None, Some(SESSION_ID)] {
                 for images in [0usize, 1, 8] {
                     let paths = image_paths(images);

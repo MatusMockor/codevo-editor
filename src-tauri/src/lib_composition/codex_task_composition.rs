@@ -59,11 +59,7 @@ pub(super) fn prepare_transport(
         .to_str()
         .ok_or("Codex working directory is not valid UTF-8.")?
         .to_string();
-    let model = request
-        .launch
-        .model_args()
-        .get(1)
-        .map(|model| (*model).to_string());
+    let (model, effort) = model_selection(&request.launch);
     let access = access_for(mode, &cwd);
     let (thread_start, thread_resume) = thread_params(
         &cwd,
@@ -82,7 +78,7 @@ pub(super) fn prepare_transport(
         model,
         approval_policy: access.approval_policy,
         sandbox_policy: access.sandbox_policy,
-        effort: None,
+        effort,
         client_user_message_id: Some(request.task_id.clone()),
         turn_trigger: None,
     };
@@ -94,6 +90,13 @@ pub(super) fn prepare_transport(
         turn_start,
         validate_authority,
     }))
+}
+
+fn model_selection(launch: &AgentLaunchOptions) -> (Option<String>, Option<String>) {
+    (
+        launch.codex_model_id().map(str::to_string),
+        launch.codex_effort().map(str::to_string),
+    )
 }
 
 fn thread_params(

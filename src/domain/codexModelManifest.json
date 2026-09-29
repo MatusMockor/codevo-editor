@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "source": "bundled",
+  "revision": 0,
+  "models": [
+    {
+      "id": "gpt-6.1-sol",
+      "label": "GPT-6.1-Sol",
+      "description": "Latest workhorse model for coding and everyday work.",
+      "status": "current",
+      "isDefault": true,
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "defaultEffort": "low",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-6-astra",
+      "label": "GPT-6-Astra",
+      "description": "Frontier intelligence for the most demanding work.",
+      "status": "current",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "defaultEffort": "medium",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-6-sol",
+      "label": "GPT-6-Sol",
+      "description": "Previous generation workhorse model.",
+      "status": "current",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "defaultEffort": "medium",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-6-luna",
+      "label": "GPT-6-Luna",
+      "description": "Fast and affordable model for easier tasks.",
+      "status": "current",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "medium",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "label": "GPT-5.6-Sol",
+      "description": "Older generation workhorse model.",
+      "status": "current",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "defaultEffort": "low",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "label": "GPT-5.6-Terra",
+      "description": "Older balanced model for straightforward work.",
+      "status": "current",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "defaultEffort": "medium",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "label": "GPT-5.6-Luna",
+      "description": "Older fast and efficient model.",
+      "status": "current",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultEffort": "medium",
+      "upgradeTo": null
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "description": "Legacy coding model.",
+      "status": "legacy",
+      "isDefault": false,
+      "efforts": ["low", "medium", "high", "xhigh"],
+      "defaultEffort": "medium",
+      "upgradeTo": "gpt-5.6-sol"
+    }
+  ]
+}

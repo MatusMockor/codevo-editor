@@ -298,7 +298,7 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(providerFooter("claudeCode")).toBeNull();
     expect(providerFooter("codex")).toBeNull();
-    expect(modelPicker().textContent).toContain("GPT-5.6 Sol");
+    expect(modelPicker().textContent).toContain("GPT-6.1-Sol");
     expect(modelPicker().disabled).toBe(true);
     expect(prompt().disabled).toBe(false);
     expect(

@@ -70,7 +70,7 @@ describe("AgentLaunchControls", () => {
     expect(document.querySelectorAll('[role="menu"]')).toHaveLength(1);
   });
 
-  it("offers the reasoning effort for Claude only and reports the picked level", () => {
+  it("offers the reasoning effort of the selected model and reports the picked level", () => {
     const onLaunchChange = vi.fn();
     renderControls(
       {
@@ -98,9 +98,18 @@ describe("AgentLaunchControls", () => {
       context: "200k",
     });
 
-    renderControls({ provider: "codex", model: "default", mode: "default" });
+    renderControls({ provider: "codex", model: "gpt-5.5", mode: "readOnly" }, onLaunchChange);
 
-    expect(host.querySelector("#agent-launch-effort")).toBeNull();
+    expect(trigger("agent-launch-effort").textContent).toBe("Default");
+    act(() => trigger("agent-launch-effort").click());
+    expect(menuRadioLabels()).toEqual(["Default", "Low", "Medium", "High", "Extra high"]);
+    act(() => menuRadio("High")?.click());
+    expect(onLaunchChange).toHaveBeenLastCalledWith({
+      provider: "codex",
+      model: "gpt-5.5",
+      mode: "readOnly",
+      effort: "high",
+    });
   });
 
   it("shows the 1M default and applies the Claude model suffix selection", () => {
@@ -165,9 +174,10 @@ describe("AgentLaunchControls", () => {
 
     renderControls({ provider: "codex", model: "gpt-5.6-sol", mode: "workspaceWrite" });
 
-    expect(trigger("agent-launch-model").textContent).toBe("GPT-5.6 Sol");
+    expect(trigger("agent-launch-model").textContent).toBe("GPT-5.6-Sol");
+    expect(trigger("agent-launch-effort").textContent).toBe("Default");
     expect(trigger("agent-launch-mode").textContent).toBe("Workspace write");
-    expect(host.querySelectorAll(".agent-composer__divider")).toHaveLength(1);
+    expect(host.querySelectorAll(".agent-composer__divider")).toHaveLength(2);
   });
 
   it("shows an open lock only for a mode that removes the safety checks", () => {
@@ -190,12 +200,14 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "GPT-6 AstraNEW",
-      "GPT-5.6 Sol",
-      "GPT-5.6 Terra",
-      "GPT-5.6 Luna",
+      "GPT-6.1-SolNEW",
+      "GPT-6-Astra",
+      "GPT-6-Sol",
+      "GPT-6-Luna",
+      "GPT-5.6-Sol",
+      "GPT-5.6-Terra",
+      "GPT-5.6-Luna",
       "GPT-5.5",
-      "GPT-5.4",
     ]);
 
     open("agent-launch-mode");

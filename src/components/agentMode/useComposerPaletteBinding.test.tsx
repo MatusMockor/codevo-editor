@@ -9,6 +9,7 @@ import {
   useComposerPaletteBinding,
   type ComposerPaletteBindingOptions,
 } from "./useComposerPaletteBinding";
+import { BUNDLED_CODEX_MODEL_CATALOG } from "../../domain/codexModelCatalog";
 
 let ui: MountedUi | null = null;
 afterEach(() => {
@@ -29,6 +30,7 @@ describe("useComposerPaletteBinding", () => {
     ui.render(
       <Harness
         catalog={BUNDLED_CLAUDE_MODEL_MANIFEST}
+        codexCatalog={BUNDLED_CODEX_MODEL_CATALOG}
         disabled={false}
         launch={launch}
         providerEnabled={null}
@@ -52,6 +54,7 @@ describe("useComposerPaletteBinding", () => {
     ui.render(
       <Harness
         catalog={BUNDLED_CLAUDE_MODEL_MANIFEST}
+        codexCatalog={BUNDLED_CODEX_MODEL_CATALOG}
         disabled
         launch={defaultAgentComposerLaunch("claudeCode")}
         providerEnabled={null}

@@ -175,9 +175,12 @@ impl AgentProviderPackageManagerLocator for EffectivePathAgentProviderPackageMan
 pub(crate) async fn register_agent_provider_policy(
     request: RegisterAgentProviderPolicyRequest,
     registry: State<'_, Arc<AgentProviderRuntimeRegistry>>,
+    app: AppHandle,
 ) -> Result<RegisterAgentProviderPolicyReceipt, String> {
     let registry = Arc::clone(&registry);
-    run_blocking_command(move || {
+    let provider = request.provider;
+    let catalog_registry = Arc::clone(&registry);
+    let receipt = run_blocking_command(move || {
         let receipt = registry.register_policy(
             request.provider,
             request.settings_revision,
@@ -192,7 +195,11 @@ pub(crate) async fn register_agent_provider_policy(
         )?;
         Ok(wire_receipt(receipt))
     })
-    .await
+    .await?;
+    if provider == AgentCliInvocation::CodexExec {
+        crate::codex_model_catalog::request_refresh(&app, &catalog_registry);
+    }
+    Ok(receipt)
 }
 
 #[tauri::command]
@@ -248,6 +255,9 @@ pub(crate) async fn update_agent_provider(
     let provider_registry = Arc::clone(&provider_registry);
     let cancellation = ProviderRequestCancellation::new();
     let cancelled = cancellation.flag();
+    let catalog_registry = Arc::clone(&provider_registry);
+    let catalog_app = app.clone();
+    let provider = request.provider;
     let progress_sink: Arc<dyn AgentProviderUpdateProgressSink> =
         Arc::new(AppAgentProviderUpdateProgressSink(app));
     let result = run_blocking_command(move || {
@@ -260,6 +270,11 @@ pub(crate) async fn update_agent_provider(
     })
     .await;
     drop(cancellation);
+    if provider == AgentCliInvocation::CodexExec
+        && matches!(result, Ok(AgentProviderUpdateResult::Succeeded { .. }))
+    {
+        crate::codex_model_catalog::invalidate_and_refresh(&catalog_app, &catalog_registry);
+    }
     result
 }
 

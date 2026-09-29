@@ -1,4 +1,6 @@
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
+import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
+import { codexUnavailableModelNotice } from "./codexLaunchPresentation";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import {
   useCallback,
@@ -227,6 +229,7 @@ export function AgentComposer({
   interaction = null,
 }: AgentComposerProps) {
   const catalog = useAgentClaudeModelCatalog();
+  const codexCatalog = useAgentCodexModelCatalog();
   // Replace the lease whenever the draft or its owner changes, including A → B → A.
   // The application revision also catches edits batched into the same render.
   const promptAuthorityRef = useRef<object | null>(null);
@@ -288,10 +291,19 @@ export function AgentComposer({
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
   const executionTarget: AgentExecutionTarget = executionServerId === null ? "local" : "server";
   const effectiveLaunch = useMemo(() => {
-    const dispatched = agentLaunchForDispatch(normalizedLaunch, configuredModel, catalog);
+    const dispatched = agentLaunchForDispatch(
+      normalizedLaunch,
+      configuredModel,
+      catalog,
+      codexCatalog,
+    );
     if (executionTarget === "local") return dispatched;
     return agentLaunchWithoutBrowser(dispatched);
-  }, [normalizedLaunch, configuredModel, executionTarget, catalog]);
+  }, [normalizedLaunch, configuredModel, executionTarget, catalog, codexCatalog]);
+  const modelFallbackNotice =
+    normalizedLaunch.provider === "codex"
+      ? codexUnavailableModelNotice(normalizedLaunch, codexCatalog)
+      : null;
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false
@@ -734,6 +746,11 @@ export function AgentComposer({
           {unavailableAttachmentNotice !== null && (
             <p className="agent-composer__caption" role="alert">
               {unavailableAttachmentNotice}
+            </p>
+          )}
+          {modelFallbackNotice !== null && (
+            <p className="agent-composer__caption" role="status">
+              {modelFallbackNotice}
             </p>
           )}
           {caption && (

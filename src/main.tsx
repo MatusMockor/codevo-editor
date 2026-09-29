@@ -85,6 +85,8 @@ async function bootstrap(): Promise<void> {
     { RemoteRunnerProvider },
     { ClaudeModelCatalogProvider },
     { TauriClaudeModelCatalogGateway },
+    { CodexModelCatalogProvider },
+    { TauriCodexModelCatalogGateway },
     { TauriRemoteRunnerGateway },
     { TauriRemoteRunnerSurfacesGateway },
     { TauriRepositoryLookupGateway },
@@ -99,6 +101,8 @@ async function bootstrap(): Promise<void> {
     import("./components/remoteRunner/RemoteRunnerProvider"),
     import("./components/agentMode/ClaudeModelCatalogProvider"),
     import("./infrastructure/tauriClaudeModelCatalogGateway"),
+    import("./components/agentMode/CodexModelCatalogProvider"),
+    import("./infrastructure/tauriCodexModelCatalogGateway"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
     import("./infrastructure/tauriRemoteRunnerSurfacesGateway"),
     import("./infrastructure/tauriRepositoryLookupGateway"),
@@ -117,7 +121,10 @@ async function bootstrap(): Promise<void> {
       metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),
       children: React.createElement(ClaudeModelCatalogProvider, {
         gateway: new TauriClaudeModelCatalogGateway(),
-        children: React.createElement(App),
+        children: React.createElement(CodexModelCatalogProvider, {
+          gateway: new TauriCodexModelCatalogGateway(),
+          children: React.createElement(App),
+        }),
       }),
     }),
   });

@@ -85,7 +85,7 @@ describe("AgentProviderModelsList", () => {
   });
 
   it("hides the automatic default choice and renders no legacy toggle without legacy models", () => {
-    const rows = agentModelRows("codex");
+    const rows = agentModelRows("codex").filter((row) => row.isLegacy !== true);
     act(() =>
       root.render(
         <AgentProviderModelsList favoriteKeys={new Set()} onToggleFavorite={vi.fn()} rows={rows} />,

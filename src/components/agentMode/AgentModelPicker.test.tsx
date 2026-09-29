@@ -100,12 +100,14 @@ describe("AgentModelPicker", () => {
 
     act(() => claude.click());
     expect(optionValues()).toEqual([
+      "gpt-6.1-sol",
       "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
-      "gpt-5.4",
     ]);
     expect(selectedOption()?.dataset.value).toBe("gpt-5.5");
   });
@@ -282,15 +284,15 @@ describe("AgentModelPicker", () => {
     expect(selectedOption()?.dataset.value).toBe("claude-fable-5-1");
   });
 
-  it("keeps Astra first while resolving a saved Codex default to the explicit selected Sol row", () => {
+  it("keeps catalog order while resolving a saved Codex default to the catalog default row", () => {
     render({ ...CODEX, model: "default" });
     open();
-    expect(optionValues().slice(0, 2)).toEqual(["gpt-6-astra", "gpt-5.6-sol"]);
-    expect(selectedOption()?.dataset.value).toBe("gpt-5.6-sol");
-    expect(host.querySelector('[aria-label="Add GPT-5.6 Sol to favorites"]')).not.toBeNull();
+    expect(optionValues().slice(0, 2)).toEqual(["gpt-6.1-sol", "gpt-6-astra"]);
+    expect(selectedOption()?.dataset.value).toBe("gpt-6.1-sol");
+    expect(host.querySelector('[aria-label="Add GPT-6.1-Sol to favorites"]')).not.toBeNull();
   });
 
-  it.each([["codex/default"], ["codex/default", "codex/gpt-5.6-sol"]])(
+  it.each([["codex/default"], ["codex/default", "codex/gpt-6.1-sol"]])(
     "preserves and removes old configured-default favorites %j",
     (...initialKeys) => {
       function SavedFavorites() {
@@ -314,10 +316,10 @@ describe("AgentModelPicker", () => {
       act(() => root.render(<SavedFavorites />));
       open();
       act(() => favoritesRail().click());
-      expect(optionValues()).toEqual(["gpt-5.6-sol"]);
+      expect(optionValues()).toEqual(["gpt-6.1-sol"]);
       act(() =>
         host
-          .querySelector<HTMLButtonElement>('[aria-label="Remove GPT-5.6 Sol from favorites"]')!
+          .querySelector<HTMLButtonElement>('[aria-label="Remove GPT-6.1-Sol from favorites"]')!
           .click(),
       );
       expect(optionValues()).toEqual([]);

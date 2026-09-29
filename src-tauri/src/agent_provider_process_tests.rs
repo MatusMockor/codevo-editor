@@ -769,3 +769,57 @@ fn unsupported_shebang_arguments_fail_closed() {
     );
     fs::remove_file(cli).expect("cleanup");
 }
+
+#[test]
+fn completion_marker_waits_for_the_whole_response_line() {
+    let cli = executable(
+        "printf '{\"id\":1,\"result\":{\"data\":['; sleep 0.3; printf '1,2]}}\\n'; sleep 30",
+    );
+    let plan = provider_plan(
+        &cli,
+        AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec),
+    )
+    .expect("plan");
+    let started = Instant::now();
+    let output = execute_agent_provider_plan(&plan).expect("completed by marker");
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert_eq!(output.stdout, b"{\"id\":1,\"result\":{\"data\":[1,2]}}\n");
+    fs::remove_file(cli).expect("cleanup");
+}
+
+#[test]
+fn codex_model_catalog_plan_is_a_bounded_app_server_model_list_request() {
+    let cli = executable("exit 0");
+    let plan = provider_plan(
+        &cli,
+        AgentProviderProcessIntent::ModelCatalog(AgentCliInvocation::CodexExec),
+    )
+    .expect("plan");
+    assert_eq!(plan.args(), ["app-server", "--stdio"]);
+    assert_eq!(plan.timeout, Duration::from_secs(15));
+    assert_eq!(plan.output_limit, 256 * 1024);
+    assert!(!plan.requires_update_authorization);
+    let stdin = String::from_utf8(plan.stdin_payload.as_deref().expect("stdin").to_vec())
+        .expect("utf8 stdin");
+    let requests: Vec<serde_json::Value> = stdin
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("json request"))
+        .collect();
+    assert_eq!(requests[0]["method"], "initialize");
+    assert_eq!(requests[0]["id"], 0);
+    assert_eq!(requests[1]["method"], "initialized");
+    assert_eq!(
+        requests[2],
+        serde_json::json!({"method":"model/list","id":1,"params":{"includeHidden":true,"limit":128}})
+    );
+    assert_eq!(
+        plan.stdout_completion_marker.as_deref(),
+        Some(b"\"id\":1,\"result\"".as_slice())
+    );
+    assert!(provider_plan(
+        &cli,
+        AgentProviderProcessIntent::ModelCatalog(AgentCliInvocation::ClaudeCode),
+    )
+    .is_err());
+    fs::remove_file(cli).expect("cleanup");
+}

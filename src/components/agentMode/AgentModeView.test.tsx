@@ -2311,7 +2311,7 @@ describe("AgentModeView", () => {
   it("falls back to the provider default when the root has no remembered launch", () => {
     render({ agents: surface({ agentCliKind: "codex" }) });
 
-    expect(launchSelect("agent-launch-model").value).toBe("gpt-5.6-sol");
+    expect(launchSelect("agent-launch-model").value).toBe("gpt-6.1-sol");
     expect(launchSelect("agent-launch-mode").value).toBe("dangerFullAccess");
     expect(host.textContent).toContain("Full access");
   });
@@ -2350,7 +2350,7 @@ describe("AgentModeView", () => {
       }),
     });
 
-    expect(launchSelect("agent-launch-model").value).toBe("gpt-5.6-sol");
+    expect(launchSelect("agent-launch-model").value).toBe("gpt-6.1-sol");
   });
 
   it("carries full access into the start without a second confirmation", async () => {

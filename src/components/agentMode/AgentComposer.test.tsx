@@ -22,6 +22,11 @@ import { readStyleSheet } from "../cssContractTestSupport";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 
 import { ClaudeModelCatalogContext } from "./useAgentClaudeModelCatalog";
+import { CodexModelCatalogContext } from "./useAgentCodexModelCatalog";
+import {
+  BUNDLED_CODEX_MODEL_CATALOG,
+  parseCodexModelCatalog,
+} from "../../domain/codexModelCatalog";
 import {
   BUNDLED_CLAUDE_MODEL_MANIFEST,
   parseClaudeModelManifest,
@@ -623,7 +628,8 @@ describe("AgentComposer", () => {
 
     expect(pickerValue("agent-launch-model")).toBe("gpt-5.5");
     expect(pickerValue("agent-launch-mode")).toBe("readOnly");
-    expect(host.querySelector("#agent-launch-effort")).toBeNull();
+    expect(pickerValue("agent-launch-effort")).toBe("default");
+    expect(host.querySelector("#agent-launch-effort")?.textContent).toBe("Default");
   });
 
   it("reports a picked model as a whole launch value", () => {
@@ -670,7 +676,7 @@ describe("AgentComposer", () => {
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "codex", model: "gpt-5.6-sol", mode: "dangerFullAccess" },
+      launch: { provider: "codex", model: "gpt-6.1-sol", mode: "dangerFullAccess" },
       dangerousLaunchConfirmed: true,
     });
   });
@@ -702,7 +708,7 @@ describe("AgentComposer", () => {
   it("never claims a confirmation for a launch that is not dangerous", () => {
     const onSubmit = vi.fn();
     render({
-      launch: { provider: "codex", model: "gpt-5.4", mode: "workspaceWrite" },
+      launch: { provider: "codex", model: "gpt-5.6-luna", mode: "workspaceWrite" },
       launchProvider: "codex",
       onSubmit,
       prompt: "Fix it",
@@ -711,7 +717,7 @@ describe("AgentComposer", () => {
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "codex", model: "gpt-5.4", mode: "workspaceWrite" },
+      launch: { provider: "codex", model: "gpt-5.6-luna", mode: "workspaceWrite" },
       dangerousLaunchConfirmed: false,
     });
   });
@@ -1548,6 +1554,60 @@ describe("AgentComposer", () => {
           effort: "low",
           context: "200k",
         }),
+      }),
+    );
+  });
+
+  it("dispatches a vanished Codex model as the default and says so", () => {
+    const onSubmit = vi.fn();
+    const props = {
+      ...defaultProps(),
+      prompt: "Fix it",
+      onSubmit,
+      launch: { provider: "codex", model: "gpt-5.4", mode: "readOnly", effort: "high" } as const,
+      launchProvider: "codex" as const,
+    };
+    act(() => root.render(<AgentComposer {...props} />));
+    expect(host.textContent).toContain(
+      "gpt-5.4 is no longer available in Codex. This turn uses your Codex default model instead.",
+    );
+    submitForm();
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launch: { provider: "codex", model: "gpt-6.1-sol", mode: "readOnly" },
+      }),
+    );
+
+    const live = parseCodexModelCatalog({
+      ...BUNDLED_CODEX_MODEL_CATALOG,
+      source: "live",
+      revision: 2,
+      models: [
+        ...BUNDLED_CODEX_MODEL_CATALOG.models,
+        {
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          description: "Returned by the live catalog.",
+          status: "current",
+          isDefault: false,
+          efforts: ["high"],
+          defaultEffort: "high",
+          upgradeTo: null,
+        },
+      ],
+    });
+    act(() =>
+      root.render(
+        <CodexModelCatalogContext.Provider value={live}>
+          <AgentComposer {...props} />
+        </CodexModelCatalogContext.Provider>,
+      ),
+    );
+    expect(host.textContent).not.toContain("is no longer available in Codex");
+    submitForm();
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        launch: { provider: "codex", model: "gpt-5.4", mode: "readOnly", effort: "high" },
       }),
     );
   });

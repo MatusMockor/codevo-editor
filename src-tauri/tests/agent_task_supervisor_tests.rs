@@ -5,6 +5,10 @@
 mod claude_model_manifest;
 #[path = "../src/claude_model_manifest_domain.rs"]
 mod claude_model_manifest_domain;
+#[path = "../src/codex_model_catalog.rs"]
+mod codex_model_catalog;
+#[path = "../src/codex_model_catalog_domain.rs"]
+mod codex_model_catalog_domain;
 
 #[path = "../src/agent_questions.rs"]
 mod agent_questions;
@@ -29,7 +33,7 @@ use agent_task_admission::{
 };
 use agent_task_spawner::agent_launch::{
     AgentLaunchOptions, ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice,
-    ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
+    ClaudePermissionMode, CodexEffortChoice, CodexExecutionMode, CodexModelChoice,
 };
 use agent_task_spawner::agent_task_input::{
     AgentTaskInput, AgentTaskSteerRejection, MAX_AGENT_STEERS_PER_TURN,
@@ -811,6 +815,7 @@ const CLAUDE_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::ClaudeCode {
 const CODEX_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::Codex {
     model: CodexModelChoice::Default,
     mode: CodexExecutionMode::Default,
+    effort: CodexEffortChoice::Default,
 };
 
 #[test]

@@ -42,18 +42,44 @@ export const CLAUDE_PERMISSION_MODES = [
 ] as const;
 export type ClaudePermissionMode = (typeof CLAUDE_PERMISSION_MODES)[number];
 
-export const CODEX_MODEL_CHOICES = [
-  "default",
-  "gpt-6-astra",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-  "gpt-5.5",
-  "gpt-5.4",
-] as const;
-export type CodexModelChoice = (typeof CODEX_MODEL_CHOICES)[number];
+export type CodexModelId = Lowercase<string>;
+export type CodexModelChoice = "default" | CodexModelId;
 
-export const CODEX_NEW_MODEL_CHOICES: ReadonlySet<CodexModelChoice> = new Set(["gpt-6-astra"]);
+const CODEX_MODEL_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+export const MAX_CODEX_MODEL_ID_BYTES = 64;
+
+export function isCodexModelId(value: unknown): value is CodexModelId {
+  return (
+    typeof value === "string" &&
+    value.length <= MAX_CODEX_MODEL_ID_BYTES &&
+    CODEX_MODEL_ID_PATTERN.test(value)
+  );
+}
+
+export function isCodexModelChoice(value: unknown): value is CodexModelChoice {
+  return value === "default" || isCodexModelId(value);
+}
+
+function parseCodexModelChoice(value: unknown, path: string): CodexModelChoice {
+  if (!isCodexModelChoice(value)) invalid(path, "a bounded Codex model identifier");
+  return value;
+}
+
+export const CODEX_EFFORT_CHOICES = [
+  "default",
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
+export type CodexEffortChoice = (typeof CODEX_EFFORT_CHOICES)[number];
+export type CodexEffortLevel = Exclude<CodexEffortChoice, "default">;
+
+export const CODEX_NEW_MODEL_IDS: ReadonlySet<string> = new Set(["gpt-6.1-sol"]);
 
 export const CLAUDE_NEW_MODEL_IDS: ReadonlySet<string> = new Set(["claude-fable-5-1"]);
 
@@ -98,6 +124,7 @@ export interface CodexLaunchOptions {
   readonly provider: "codex";
   readonly model: CodexModelChoice;
   readonly mode: CodexExecutionMode;
+  readonly effort?: CodexEffortChoice;
 }
 
 export type AgentLaunchOptions = ClaudeLaunchOptions | CodexLaunchOptions;
@@ -145,7 +172,14 @@ export function serializeAgentLaunchOptions(options: AgentLaunchOptions): Record
       ...(options.chrome === undefined ? {} : { chrome: options.chrome }),
     };
   }
-  return { provider: options.provider, model: options.model, mode: options.mode };
+  return {
+    provider: options.provider,
+    model: options.model,
+    mode: options.mode,
+    ...(options.effort === undefined || options.effort === "default"
+      ? {}
+      : { effort: options.effort }),
+  };
 }
 
 export function agentLaunchWithoutBrowser(options: AgentLaunchOptions): AgentLaunchOptions {
@@ -177,6 +211,9 @@ export function agentLaunchOptionsEqual(a: AgentLaunchOptions, b: AgentLaunchOpt
   if (a.provider !== b.provider) return false;
   if (a.model !== b.model) return false;
   if (a.mode !== b.mode) return false;
+  if (a.provider === "codex" && b.provider === "codex") {
+    return (a.effort ?? "default") === (b.effort ?? "default");
+  }
   if (a.provider === "claudeCode" && b.provider === "claudeCode") {
     return (
       a.effort === b.effort &&
@@ -213,13 +250,19 @@ function parseLaunchOptions(value: unknown, path: string, stored: boolean): Agen
         : { chrome: boolean(options.chrome, `${path}.chrome`) }),
     };
   }
-  exactKeys(options, ["provider", "model", "mode"], path);
+  exactKeys(options, "effort" in options ? CODEX_LAUNCH_KEYS_WITH_EFFORT : CODEX_LAUNCH_KEYS, path);
   return {
     provider,
-    model: member(options.model, CODEX_MODEL_CHOICES, `${path}.model`),
+    model: parseCodexModelChoice(options.model, `${path}.model`),
     mode: member(options.mode, CODEX_EXECUTION_MODES, `${path}.mode`),
+    ...(options.effort === undefined
+      ? {}
+      : { effort: member(options.effort, CODEX_EFFORT_CHOICES, `${path}.effort`) }),
   };
 }
+
+const CODEX_LAUNCH_KEYS = ["provider", "model", "mode"] as const;
+const CODEX_LAUNCH_KEYS_WITH_EFFORT = [...CODEX_LAUNCH_KEYS, "effort"] as const;
 
 function claudeLaunchKeys(
   options: Record<string, unknown>,

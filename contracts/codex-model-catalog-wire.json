@@ -1,0 +1,317 @@
+{
+  "schemaVersion": 1,
+  "limits": {
+    "maxModels": 64,
+    "maxModelIdBytes": 64,
+    "maxLabelBytes": 128,
+    "maxDescriptionBytes": 1024,
+    "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+  },
+  "catalogs": [
+    {
+      "name": "liveSnapshot",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 3,
+        "models": [
+          {
+            "id": "gpt-6.1-sol",
+            "label": "GPT-6.1-Sol",
+            "description": "Latest workhorse model for coding and everyday work.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+            "defaultEffort": "low",
+            "upgradeTo": null
+          },
+          {
+            "id": "gpt-5.5",
+            "label": "GPT-5.5",
+            "description": "Legacy coding model.",
+            "status": "legacy",
+            "isDefault": false,
+            "efforts": ["low", "medium", "high", "xhigh"],
+            "defaultEffort": "medium",
+            "upgradeTo": "gpt-5.6-sol"
+          }
+        ]
+      }
+    },
+    {
+      "name": "modelWithoutEffortControl",
+      "value": {
+        "version": 1,
+        "source": "bundled",
+        "revision": 0,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier intelligence for the most demanding work.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    }
+  ],
+  "rejectedCatalogs": [
+    {
+      "name": "unknownEnvelopeField",
+      "value": { "version": 1, "source": "live", "revision": 1, "models": [], "extra": true }
+    },
+    {
+      "name": "unknownModelField",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["low"],
+            "defaultEffort": "low",
+            "upgradeTo": null,
+            "hidden": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsupportedVersion",
+      "value": { "version": 2, "source": "live", "revision": 1, "models": [] }
+    },
+    {
+      "name": "unknownSource",
+      "value": { "version": 1, "source": "modelsCache", "revision": 1, "models": [] }
+    },
+    {
+      "name": "noModels",
+      "value": { "version": 1, "source": "live", "revision": 1, "models": [] }
+    },
+    {
+      "name": "flagLikeModelId",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "--help",
+            "label": "Help",
+            "description": "Not a model.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknownEffort",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["turbo"],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "defaultEffortOutsideEfforts",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["low"],
+            "defaultEffort": "high",
+            "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "twoDefaults",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          },
+          {
+            "id": "gpt-6-sol",
+            "label": "GPT-6-Sol",
+            "description": "Workhorse.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicateModelId",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          },
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra again",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": false,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "controlCharacterInDescription",
+      "value": {
+        "version": 1,
+        "source": "live",
+        "revision": 1,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.\u0007",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundledWithNonZeroRevision",
+      "value": {
+        "version": 1,
+        "source": "bundled",
+        "revision": 4,
+        "models": [
+          {
+            "id": "gpt-6-astra",
+            "label": "GPT-6-Astra",
+            "description": "Frontier.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": [],
+            "defaultEffort": null,
+            "upgradeTo": null
+          }
+        ]
+      }
+    }
+  ],
+  "launches": [
+    {
+      "name": "defaultModel",
+      "value": { "provider": "codex", "model": "default", "mode": "default" }
+    },
+    {
+      "name": "liveModelWithEffort",
+      "value": {
+        "provider": "codex",
+        "model": "gpt-6.1-sol",
+        "mode": "workspaceWrite",
+        "effort": "ultra"
+      }
+    },
+    {
+      "name": "storedModelWithoutEffort",
+      "value": { "provider": "codex", "model": "gpt-5.4", "mode": "dangerFullAccess" }
+    }
+  ],
+  "rejectedLaunches": [
+    { "name": "flagModel", "value": { "provider": "codex", "model": "--help", "mode": "default" } },
+    {
+      "name": "modelWithArgument",
+      "value": { "provider": "codex", "model": "gpt-6-astra --yolo", "mode": "default" }
+    },
+    {
+      "name": "uppercaseModel",
+      "value": { "provider": "codex", "model": "GPT-6", "mode": "default" }
+    },
+    { "name": "emptyModel", "value": { "provider": "codex", "model": "", "mode": "default" } },
+    {
+      "name": "overlongModel",
+      "value": {
+        "provider": "codex",
+        "model": "gpt-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mode": "default"
+      }
+    },
+    {
+      "name": "unknownEffort",
+      "value": { "provider": "codex", "model": "gpt-6-astra", "mode": "default", "effort": "turbo" }
+    },
+    {
+      "name": "claudeEffortOnCodex",
+      "value": {
+        "provider": "codex",
+        "model": "gpt-6-astra",
+        "mode": "default",
+        "effort": "ultrathink"
+      }
+    },
+    {
+      "name": "unknownField",
+      "value": { "provider": "codex", "model": "gpt-6-astra", "mode": "default", "context": "1m" }
+    }
+  ]
+}

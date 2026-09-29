@@ -1573,7 +1573,7 @@ describe("agent thread wire compatibility", () => {
     const wire = serializeAgentThread(thread()) as Record<string, unknown>;
     const turns = (wire.turns as Record<string, unknown>[]).map((entry) => ({
       ...entry,
-      launch: { provider: "codex", model: "default", mode: "default", effort: "high" },
+      launch: { provider: "codex", model: "default", mode: "default", context: "1m" },
     }));
 
     expect(() => parseAgentThread({ ...wire, turns })).toThrow(/thread\.turns\[0\]\.launch/);

@@ -72,11 +72,18 @@ describe("agentThreadWire launch effort", () => {
     }
   });
 
-  it("keeps effort out of a stored codex turn and rejects an unknown level", () => {
+  it("round trips a stored codex effort and rejects an unknown level", () => {
     const codex = { provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" };
     expect(parseAgentThread(storedThread(codex)).turns[0].launch).toEqual(codex);
+    const withEffort = { ...codex, effort: "low" };
+    expect(parseAgentThread(storedThread(withEffort)).turns[0].launch).toEqual(withEffort);
+    expect(serializeAgentThread(parseAgentThread(storedThread(withEffort)))).toEqual(
+      storedThread(withEffort),
+    );
 
-    expect(() => parseAgentThread(storedThread({ ...codex, effort: "low" }))).toThrow(TypeError);
+    expect(() => parseAgentThread(storedThread({ ...codex, effort: "ultrathink" }))).toThrow(
+      /thread\.turns\[0\]\.launch\.effort/,
+    );
     expect(() =>
       parseAgentThread(
         storedThread({ provider: "claudeCode", model: "opus", mode: "plan", effort: "ultra" }),

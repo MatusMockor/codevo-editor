@@ -7,6 +7,7 @@ import type { AgentProviderManagementSurface } from "../../application/useAgentP
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { ClaudeModelManifest } from "../../domain/claudeModelCatalog";
+import type { CodexModelCatalog } from "../../domain/codexModelCatalog";
 import {
   agentLaunchEffectiveModel,
   agentModelProviderName,
@@ -25,6 +26,7 @@ const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 export interface ComposerPaletteBindingOptions {
   readonly launch: AgentLaunchOptions;
   readonly catalog: ClaudeModelManifest;
+  readonly codexCatalog: CodexModelCatalog;
   readonly providerManagement: AgentProviderManagementSurface | null;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>> | null;
   readonly providerSwitchable: boolean;
@@ -33,8 +35,15 @@ export interface ComposerPaletteBindingOptions {
 }
 
 export function useComposerPaletteBinding(options: ComposerPaletteBindingOptions): void {
-  const { catalog, disabled, launch, providerEnabled, providerManagement, providerSwitchable } =
-    options;
+  const {
+    catalog,
+    codexCatalog,
+    disabled,
+    launch,
+    providerEnabled,
+    providerManagement,
+    providerSwitchable,
+  } = options;
   const select = useRef(options.selectModel);
   select.current = options.selectModel;
   const rows = useMemo(
@@ -47,14 +56,23 @@ export function useComposerPaletteBinding(options: ComposerPaletteBindingOptions
             configuredProviderModel(providerManagement, provider),
             configuredProviderVersion(providerManagement, provider),
             catalog,
+            codexCatalog,
           ).filter((row) => row.isLegacy !== true),
         ),
-    [catalog, launch.provider, providerEnabled, providerManagement, providerSwitchable],
+    [
+      catalog,
+      codexCatalog,
+      launch.provider,
+      providerEnabled,
+      providerManagement,
+      providerSwitchable,
+    ],
   );
   const selected = agentLaunchEffectiveModel(
     launch,
     configuredProviderModel(providerManagement, launch.provider),
     catalog,
+    codexCatalog,
   );
 
   useEffect(() => {

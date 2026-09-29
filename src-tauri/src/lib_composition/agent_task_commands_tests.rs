@@ -2,7 +2,7 @@ use super::*;
 use crate::agent_task_spawner::agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS;
 use crate::agent_task_spawner::agent_launch::{
     ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode,
-    CodexExecutionMode, CodexModelChoice,
+    CodexEffortChoice, CodexExecutionMode, CodexModelChoice,
 };
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderPolicy, AGENT_PROVIDER_STALE_ERROR,
@@ -711,6 +711,7 @@ fn prepare_rejects_launch_options_from_another_provider() {
     request.launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Gpt55,
         mode: CodexExecutionMode::ReadOnly,
+        effort: CodexEffortChoice::Default,
     };
 
     let error = prepare_test_request(&request).expect_err("cross-provider launch");
@@ -740,6 +741,7 @@ fn prepare_rejects_a_provider_mismatch_before_any_path_or_process_work() {
     request.launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Default,
         mode: CodexExecutionMode::Default,
+        effort: CodexEffortChoice::Default,
     };
 
     let error = prepare_test_request(&request).expect_err("cross-provider launch");
@@ -768,6 +770,7 @@ fn prepare_forwards_the_codex_resume_sandbox_override_into_the_argv() {
     request.launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Gpt56Sol,
         mode: CodexExecutionMode::ReadOnly,
+        effort: CodexEffortChoice::Default,
     };
     request.resume_session_id = Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string());
 
@@ -827,6 +830,7 @@ fn the_start_request_contract_has_no_dangerous_launch_confirmation_field() {
         AgentLaunchOptions::Codex {
             model: CodexModelChoice::Gpt56Sol,
             mode: CodexExecutionMode::DangerFullAccess,
+            effort: CodexEffortChoice::Default,
         }
     );
     assert_eq!(parsed.agent_cli_kind, AgentCliInvocation::CodexExec);
@@ -980,6 +984,7 @@ fn a_start_carries_the_store_resolved_image_path_into_the_codex_argv() {
     request.launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Gpt55,
         mode: CodexExecutionMode::WorkspaceWrite,
+        effort: CodexEffortChoice::Default,
     };
     let attachment_id = staged_test_image(&store, &request, "shot.png");
     assert!(
@@ -1028,6 +1033,7 @@ fn a_start_refuses_a_prompt_whose_attachment_line_was_forged_by_the_client() {
     request.launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Gpt55,
         mode: CodexExecutionMode::WorkspaceWrite,
+        effort: CodexEffortChoice::Default,
     };
     let attachment_id = staged_test_image(&store, &request, "shot.png");
     request.attachments = vec![StartAgentTaskAttachment::Staged { attachment_id }];
@@ -1151,6 +1157,7 @@ fn a_refused_start_can_retry_attachments_only_with_the_same_thread_owner() {
     request.launch = AgentLaunchOptions::Codex {
         model: CodexModelChoice::Gpt55,
         mode: CodexExecutionMode::WorkspaceWrite,
+        effort: CodexEffortChoice::Default,
     };
     let attachment_id = staged_test_image(&store, &request, "shot.png");
     request.attachments = vec![StartAgentTaskAttachment::Staged {

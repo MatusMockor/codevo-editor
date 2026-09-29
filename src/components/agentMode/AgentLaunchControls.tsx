@@ -1,4 +1,6 @@
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
+import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
+import { AgentCodexEffortPicker } from "./AgentCodexEffortPicker";
 import type { ReactNode } from "react";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
@@ -53,6 +55,7 @@ export function AgentLaunchControls({
   providerSwitchable = false,
 }: AgentLaunchControlsProps) {
   const catalog = useAgentClaudeModelCatalog();
+  const codexCatalog = useAgentCodexModelCatalog();
   const effectiveLaunch = normalizeAgentComposerLaunch(launch);
   const configuredModelFor = (provider: AgentCliKind): string | null => {
     const discovered = providerManagement?.cliDiscovery[provider];
@@ -71,11 +74,13 @@ export function AgentLaunchControls({
         model,
         configuredModelFor(provider),
         catalog,
+        codexCatalog,
       ),
     );
   useComposerPaletteBinding({
     launch: effectiveLaunch,
     catalog,
+    codexCatalog,
     providerManagement,
     providerEnabled,
     providerSwitchable,
@@ -95,6 +100,19 @@ export function AgentLaunchControls({
             executionTarget={executionTarget}
             launch={effectiveLaunch}
             onChange={onLaunchChange}
+          />
+        </>
+      )}
+      {effectiveLaunch.provider === "codex" && (
+        <>
+          <AgentLaunchDivider />
+          <AgentCodexEffortPicker
+            configuredModel={configuredModel}
+            disabled={disabled}
+            launch={effectiveLaunch}
+            onChange={onLaunchChange}
+            onOpenRequestHandled={onOpenRequestHandled}
+            openRequest={openRequest?.kind === "reasoning" ? openRequest : null}
           />
         </>
       )}
@@ -127,7 +145,7 @@ export function AgentLaunchControls({
         providerSwitchable={providerSwitchable}
       />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
-        {agentLaunchModelHint(launch, configuredModel, catalog)}
+        {agentLaunchModelHint(launch, configuredModel, catalog, codexCatalog)}
       </span>
 
       {presentation.kind === "compact" ? (

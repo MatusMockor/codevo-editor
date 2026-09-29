@@ -257,6 +257,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             crate::claude_model_manifest::get_claude_model_manifest,
+            crate::codex_model_catalog::get_codex_model_catalog,
             crate::artifact_preview::artifact_preview_create,
             crate::artifact_preview::workspace_html_preview::workspace_html_preview_create,
             crate::artifact_preview::artifact_preview_revoke,

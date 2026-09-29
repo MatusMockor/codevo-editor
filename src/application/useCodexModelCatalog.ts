@@ -1,28 +1,24 @@
 import { useEffect, useState } from "react";
-import {
-  BUNDLED_CLAUDE_MODEL_MANIFEST,
-  type ClaudeModelManifest,
-} from "../domain/claudeModelCatalog";
-import type { ClaudeModelCatalogGateway } from "./claudeModelCatalogGateway";
+import { BUNDLED_CODEX_MODEL_CATALOG, type CodexModelCatalog } from "../domain/codexModelCatalog";
+import type { CodexModelCatalogGateway } from "./codexModelCatalogGateway";
 
-// The backend owns network TTL, retry backoff, validation and persistent cache.
+// The backend owns probe TTL, retry backoff, provider-generation ownership and validation.
 const CATALOG_CHECK_INTERVAL_MS = 60_000;
 
-export function useClaudeModelCatalog(gateway: ClaudeModelCatalogGateway): ClaudeModelManifest {
-  const [catalog, setCatalog] = useState(BUNDLED_CLAUDE_MODEL_MANIFEST);
+export function useCodexModelCatalog(gateway: CodexModelCatalogGateway): CodexModelCatalog {
+  const [catalog, setCatalog] = useState(BUNDLED_CODEX_MODEL_CATALOG);
   useEffect(() => {
     let owned = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let unsubscribe: (() => void) | undefined;
-    setCatalog(BUNDLED_CLAUDE_MODEL_MANIFEST);
-    const publish = (next: ClaudeModelManifest): void => {
+    setCatalog(BUNDLED_CODEX_MODEL_CATALOG);
+    const publish = (next: CodexModelCatalog): void => {
       if (!owned) return;
-      setCatalog((previous) => (next.updatedAt > previous.updatedAt ? next : previous));
+      setCatalog((previous) => (next.revision > previous.revision ? next : previous));
     };
     const refresh = async (): Promise<void> => {
       try {
-        const next = await gateway.read();
-        publish(next);
+        publish(await gateway.read());
       } catch {
         // A failed refresh must preserve the last usable catalog.
       }
@@ -30,7 +26,6 @@ export function useClaudeModelCatalog(gateway: ClaudeModelCatalogGateway): Claud
     };
     const start = async (): Promise<void> => {
       try {
-        // Subscribe before reading: background cache/remote completion cannot race us.
         const stop = await gateway.subscribe?.(publish);
         if (!owned) {
           stop?.();

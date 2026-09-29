@@ -865,6 +865,7 @@ fn a_launch_stamped_document_round_trips_both_new_fields() {
         Some(AgentLaunchOptions::Codex {
             model: crate::agent_task_spawner::agent_launch::CodexModelChoice::Gpt55,
             mode: crate::agent_task_spawner::agent_launch::CodexExecutionMode::WorkspaceWrite,
+            effort: crate::agent_task_spawner::agent_launch::CodexEffortChoice::Default,
         })
     );
     assert_eq!(

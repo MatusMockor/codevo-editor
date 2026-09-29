@@ -192,9 +192,9 @@ describe("invokeStartAgentTaskIpc", () => {
       invokeStartAgentTaskIpc(invokeCommand, {
         ...START_REQUEST,
         agentCliKind: "codex",
-        launch: { provider: "codex", model: "default", mode: "default", effort: "low" },
+        launch: { provider: "codex", model: "default", mode: "default", effort: "ultrathink" },
       } as unknown as StartAgentTaskRequest),
-    ).rejects.toThrow(/request\.launch/);
+    ).rejects.toThrow(/request\.launch\.effort/);
     await expect(
       invokeStartAgentTaskIpc(invokeCommand, {
         ...START_REQUEST,

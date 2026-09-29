@@ -82,7 +82,7 @@ it("switches providers on an unsent draft without changing text or staged attach
     expect(state?.composerProps.attachments).toBe(attachments);
     click('[aria-label="Agent model"]');
     click('[data-provider="codex"]');
-    click('[role="option"][data-value="gpt-5.5"]');
+    click('[role="option"][data-value="gpt-6-astra"]');
     expect(state?.composerProps.launchProvider).toBe("codex");
     expect(state?.composerProps.prompt).toBe("Keep my detailed draft\nwith another line");
     expect(state?.composerProps.attachments).toBe(attachments);

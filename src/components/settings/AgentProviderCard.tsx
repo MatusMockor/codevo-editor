@@ -12,6 +12,7 @@ import {
   type AgentModelFavoriteKey,
 } from "../../domain/agentSettings";
 import { useAgentClaudeModelCatalog } from "../agentMode/useAgentClaudeModelCatalog";
+import { useAgentCodexModelCatalog } from "../agentMode/useAgentCodexModelCatalog";
 import { agentModelRows } from "../agentMode/agentLaunchPresentation";
 import {
   configuredProviderModel,
@@ -89,6 +90,7 @@ export function AgentProviderCard({
   const updateAnchorRef = useRef<HTMLButtonElement | null>(null);
   const elementRef = useSettingsRowTarget(rowId);
   const catalog = useAgentClaudeModelCatalog();
+  const codexCatalog = useAgentCodexModelCatalog();
 
   const label = providerLabel(provider);
   const view = management.providers[provider];
@@ -286,6 +288,7 @@ export function AgentProviderCard({
                 configuredProviderModel(management, provider),
                 configuredProviderVersion(management, provider),
                 catalog,
+                codexCatalog,
               )}
             />
           }

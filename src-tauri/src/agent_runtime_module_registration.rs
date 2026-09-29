@@ -3,6 +3,8 @@ pub mod agent_cli_discovery;
 pub mod agent_questions;
 mod claude_model_manifest;
 mod claude_model_manifest_domain;
+mod codex_model_catalog;
+mod codex_model_catalog_domain;
 mod agent_subagent_lifecycle;
 pub mod agent_task_admission;
 pub mod agent_task_spawner;

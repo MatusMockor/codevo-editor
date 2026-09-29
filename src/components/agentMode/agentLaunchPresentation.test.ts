@@ -9,8 +9,8 @@ import {
   CLAUDE_MODEL_CHOICES,
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
-  CODEX_MODEL_CHOICES,
 } from "../../domain/agentLaunch";
+import { BUNDLED_CODEX_MODEL_CATALOG } from "../../domain/codexModelCatalog";
 import {
   MAX_AGENT_MODEL_QUERY_LENGTH,
   agentLaunchAccess,
@@ -47,6 +47,8 @@ import {
   agentLaunchWithModel,
 } from "./agentLaunchPresentation";
 
+const CODEX_CATALOG_IDS = BUNDLED_CODEX_MODEL_CATALOG.models.map((model) => model.id);
+
 describe("agentLaunchPresentation", () => {
   it("resolves configured Astra consistently for display, dispatch, search, and favorites", () => {
     const launch: AgentLaunchOptions = {
@@ -54,7 +56,7 @@ describe("agentLaunchPresentation", () => {
       model: "default",
       mode: "workspaceWrite",
     };
-    expect(agentLaunchModelLabel(launch, "gpt-6-astra")).toBe("GPT-6 Astra");
+    expect(agentLaunchModelLabel(launch, "gpt-6-astra")).toBe("GPT-6-Astra");
     expect(agentLaunchEffectiveModel(launch, "gpt-6-astra")).toBe("gpt-6-astra");
     expect(agentLaunchForDispatch(launch, "gpt-6-astra")).toEqual({
       ...launch,
@@ -131,9 +133,9 @@ describe("agentLaunchPresentation", () => {
       "plan",
       "default",
     ]);
-    expect(agentLaunchModelChoices("codex").map((choice) => choice.value)).toEqual([
-      ...CODEX_MODEL_CHOICES.filter((model) => model !== "default"),
-    ]);
+    expect(agentLaunchModelChoices("codex").map((choice) => choice.value)).toEqual(
+      BUNDLED_CODEX_MODEL_CATALOG.models.map((model) => model.id),
+    );
     expect(agentLaunchModeChoices("codex").map((choice) => choice.value)).toEqual([
       "readOnly",
       "workspaceWrite",
@@ -168,7 +170,7 @@ describe("agentLaunchPresentation", () => {
       }),
     ).toBe("Claude Sonnet 5");
     expect(agentLaunchModelLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
-      "GPT-5.6 Sol",
+      "GPT-6.1-Sol",
     );
     expect(
       agentLaunchModelHint({
@@ -390,7 +392,7 @@ describe("agentLaunchPresentation", () => {
     );
   });
 
-  it("reads the effort of a claude launch and falls back to the default for codex", () => {
+  it("reads the effort of a launch and falls back to the default for codex", () => {
     const claude: AgentLaunchOptions = {
       provider: "claudeCode",
       model: "opus",
@@ -400,9 +402,11 @@ describe("agentLaunchPresentation", () => {
     const codex: AgentLaunchOptions = { provider: "codex", model: "default", mode: "default" };
 
     expect(agentLaunchSupportsEffort(claude)).toBe(true);
-    expect(agentLaunchSupportsEffort(codex)).toBe(false);
+    expect(agentLaunchSupportsEffort(codex)).toBe(true);
     expect(agentLaunchEffortValue(claude)).toBe("xhigh");
     expect(agentLaunchEffortValue(codex)).toBe("default");
+    expect(agentLaunchEffortValue({ ...codex, effort: "ultra" })).toBe("ultra");
+    expect(agentLaunchEffortLabel({ ...codex, effort: "ultra" })).toBe("Ultra");
     expect(agentLaunchEffortLabel(claude)).toBe("Extra high");
     expect(agentLaunchEffortLabel(codex)).toBe("Default effort");
     expect(agentLaunchEffortMeta(claude)).toBe("xhigh");
@@ -411,7 +415,7 @@ describe("agentLaunchPresentation", () => {
     );
   });
 
-  it("changes the effort only for claude and only for a known level", () => {
+  it("changes the effort only to a level the selected model offers", () => {
     const claude: AgentLaunchOptions = {
       provider: "claudeCode",
       model: "opus",
@@ -424,7 +428,15 @@ describe("agentLaunchPresentation", () => {
       expect(agentLaunchWithEffort(claude, effort)).toEqual({ ...claude, effort });
     }
     expect(agentLaunchWithEffort(claude, "ultra")).toEqual(claude);
-    expect(agentLaunchWithEffort(codex, "high")).toEqual(codex);
+    expect(agentLaunchWithEffort(codex, "high")).toEqual({
+      ...codex,
+      model: "gpt-6.1-sol",
+      effort: "high",
+    });
+    expect(agentLaunchWithEffort(codex, "ultrathink")).toEqual(codex);
+    const luna: AgentLaunchOptions = { ...codex, model: "gpt-6-luna" };
+    expect(agentLaunchWithEffort(luna, "ultra")).toEqual(luna);
+    expect(agentLaunchWithEffort({ ...luna, effort: "max" }, "default")).toEqual(luna);
   });
 
   it("appends the effort to the meta label only when it is not the default", () => {
@@ -487,14 +499,7 @@ describe("agent model rows", () => {
       "claude-sonnet-4-6",
       "claude-haiku-4-5",
     ]);
-    expect(agentModelRows("codex").map((row) => row.value)).toEqual([
-      "gpt-6-astra",
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
-      "gpt-5.5",
-      "gpt-5.4",
-    ]);
+    expect(agentModelRows("codex").map((row) => row.value)).toEqual(CODEX_CATALOG_IDS);
     const opus = agentModelRows("claudeCode")[2];
     expect(opus?.providerName).toBe("Claude Code");
     expect(opus?.favoriteKey).toBe(agentModelFavoriteKey("claudeCode", "claude-opus-5"));
@@ -506,14 +511,7 @@ describe("agent model rows", () => {
     "keeps model order and favorite identity stable with configured %s",
     (configured) => {
       const rows = agentModelRows("codex", configured);
-      expect(rows.map((row) => row.value)).toEqual([
-        "gpt-6-astra",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.4",
-      ]);
+      expect(rows.map((row) => row.value)).toEqual(CODEX_CATALOG_IDS);
       expect(rows.find((row) => row.value === configured)?.favoriteKey).toBe(`codex/${configured}`);
       expect(
         agentLaunchForDispatch(
@@ -529,7 +527,7 @@ describe("agent model rows", () => {
     (configured) => {
       const rows = agentModelRows("codex", configured);
       const favorites = filterAgentModelRows(rows, "favorites", new Set(["codex/default"]), "");
-      expect(favorites.map((row) => row.value)).toEqual([configured ?? "gpt-5.6-sol"]);
+      expect(favorites.map((row) => row.value)).toEqual([configured ?? "gpt-6.1-sol"]);
     },
   );
 
@@ -724,8 +722,9 @@ describe("agent model row badges", () => {
       "claude-sonnet-5",
     ]);
     const codex = agentModelRows("codex");
-    expect(codex.filter((row) => row.isNew).map((row) => row.value)).toEqual(["gpt-6-astra"]);
-    expect(codex.filter((row) => row.isDefault).map((row) => row.value)).toEqual(["gpt-5.6-sol"]);
+    expect(codex.filter((row) => row.isNew).map((row) => row.value)).toEqual(["gpt-6.1-sol"]);
+    expect(codex.filter((row) => row.isDefault).map((row) => row.value)).toEqual(["gpt-6.1-sol"]);
+    expect(codex.filter((row) => row.isLegacy).map((row) => row.value)).toEqual(["gpt-5.5"]);
     const legacy = claude.filter((row) => row.isLegacy === true);
     expect(agentLegacyModelsSummary(legacy)).toMatch(/^Fable 5, Opus 4\.8 and \d+ more$/u);
     expect(agentLegacyModelsSummary(legacy.slice(0, 2))).toBe("Fable 5, Opus 4.8");

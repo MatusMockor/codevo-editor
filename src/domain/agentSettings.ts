@@ -4,7 +4,7 @@ import {
 } from "./agentFollowUpBehavior";
 import {
   isClaudeModelChoice,
-  CODEX_MODEL_CHOICES,
+  isCodexModelChoice,
   type ClaudeModelChoice,
   type CodexModelChoice,
 } from "./agentLaunch";
@@ -271,7 +271,7 @@ function agentModelFavoriteKey(value: unknown): AgentModelFavoriteKey | null {
   if (provider === "claudeCode" && isClaudeModelChoice(model)) {
     return value as AgentModelFavoriteKey;
   }
-  if (provider === "codex" && CODEX_MODEL_CHOICES.some((choice) => choice === model)) {
+  if (provider === "codex" && isCodexModelChoice(model)) {
     return value as AgentModelFavoriteKey;
   }
   return null;

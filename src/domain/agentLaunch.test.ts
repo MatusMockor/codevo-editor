@@ -4,7 +4,6 @@ import {
   CLAUDE_MODEL_CHOICES,
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
-  CODEX_MODEL_CHOICES,
   DEFAULT_AGENT_LAUNCH_OPTIONS,
   agentLaunchIsDangerous,
   agentLaunchMatchesProvider,
@@ -16,11 +15,17 @@ import {
   serializeAgentLaunchOptions,
   CLAUDE_EFFORT_CHOICES,
   CLAUDE_NEW_MODEL_IDS,
-  CODEX_NEW_MODEL_CHOICES,
+  CODEX_NEW_MODEL_IDS,
   type AgentLaunchOptions,
   type ClaudeLaunchOptions,
 } from "./agentLaunch";
 import { BUNDLED_CLAUDE_MODEL_MANIFEST } from "./claudeModelCatalog";
+import { BUNDLED_CODEX_MODEL_CATALOG, resolveCodexCatalogModel } from "./codexModelCatalog";
+
+const CODEX_MODEL_CHOICES = [
+  "default",
+  ...BUNDLED_CODEX_MODEL_CATALOG.models.map((model) => model.id),
+] as const;
 
 describe("agentLaunch", () => {
   it("keeps wire defaults flagless while the composer owns the product default", () => {
@@ -94,9 +99,14 @@ describe("agentLaunch", () => {
       ).toThrow(/launch\.mode/);
     }
     for (const model of CLAUDE_MODEL_CHOICES.filter((choice) => choice !== "default")) {
-      expect(() =>
-        parseAgentLaunchOptions({ provider: "codex", model, mode: "default" }, "launch"),
-      ).toThrow(/launch\.model/);
+      const launch = parseAgentLaunchOptions(
+        { provider: "codex", model, mode: "default" },
+        "launch",
+      );
+      expect(
+        launch.provider === "codex" &&
+          resolveCodexCatalogModel(BUNDLED_CODEX_MODEL_CATALOG, launch.model),
+      ).toBeNull();
     }
     for (const mode of CLAUDE_PERMISSION_MODES.filter(
       (choice) => choice !== "default" && choice !== "auto",
@@ -130,7 +140,7 @@ describe("agentLaunch", () => {
       const wire: unknown = JSON.parse(JSON.stringify(serializeAgentLaunchOptions(options)));
       expect(parseAgentLaunchOptions(wire, "launch")).toEqual(options);
     }
-    expect(pairs).toHaveLength(119);
+    expect(pairs).toHaveLength(84 + CODEX_MODEL_CHOICES.length * CODEX_EXECUTION_MODES.length);
   });
 
   it("rejects non-string and casing variants of a known choice", () => {
@@ -259,7 +269,7 @@ describe("agentLaunch", () => {
   it("rejects extra, missing, and non-object payloads", () => {
     expect(() =>
       parseAgentLaunchOptions(
-        { provider: "codex", model: "default", mode: "default", effort: "high" },
+        { provider: "codex", model: "default", mode: "default", context: "1m" },
         "launch",
       ),
     ).toThrow(TypeError);
@@ -353,7 +363,7 @@ describe("agentLaunch", () => {
 
     expect(() =>
       parseStoredAgentLaunchOptions(
-        { provider: "codex", model: "default", mode: "default", effort: "high" },
+        { provider: "codex", model: "default", mode: "default", context: "1m" },
         "launch",
       ),
     ).toThrow(TypeError);
@@ -369,9 +379,9 @@ describe("new model badges", () => {
     expect([...CLAUDE_NEW_MODEL_IDS].filter((id) => !manifestChoices.has(id))).toEqual([]);
   });
 
-  it("only marks Codex models that the Codex choices offer", () => {
+  it("only marks Codex models that the bundled catalog offers", () => {
     const codexChoices = new Set<string>(CODEX_MODEL_CHOICES);
-    expect(CODEX_NEW_MODEL_CHOICES.size).toBeGreaterThan(0);
-    expect([...CODEX_NEW_MODEL_CHOICES].filter((id) => !codexChoices.has(id))).toEqual([]);
+    expect(CODEX_NEW_MODEL_IDS.size).toBeGreaterThan(0);
+    expect([...CODEX_NEW_MODEL_IDS].filter((id) => !codexChoices.has(id))).toEqual([]);
   });
 });
