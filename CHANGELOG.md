@@ -7,6 +7,61 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.73] - 2026-09-29
+
+### Added
+
+- A calm new interface with six palettes - Graphite · Teal (default), Slate · Blue,
+  Black · Violet, Ink · Mint, Zinc · Orange and Carbon · Lime - each in dark and light,
+  with a System, Dark or Light setting.
+- One thread list for all projects with a project filter, pinned, active and settled
+  sections, search and inline rename.
+- Command palette (Cmd+K) for actions, files, threads, projects, branches and
+  scripts, and a shortcuts cheatsheet (Cmd+/).
+- Right panel with Diff, Files, Editor, Terminal, Git, Scripts and Pull request tabs.
+  The editor has a drawer for Problems, Search and Terminal.
+- Add projects from a folder, Git URL, GitHub or GitLab and clone in one step. Clones
+  stay untrusted until you allow them.
+- New Settings pages and model, effort, access and branch pickers in the composer.
+- Amend the last unpushed commit and discard single files in the Git tab.
+- Claude threads keep one session across turns, so background work survives between
+  turns and Claude continues on its own when it finishes.
+- End Claude session from the thread menu, with a confirmation while background tasks
+  run.
+
+### Changed
+
+- The first Stop ends the current step; a second Stop ends Claude's session. With only
+  background work running, Stop asks before stopping everything.
+- Codevo asks before a message restarts Claude while background tasks run.
+- Provider errors distinguish a usage limit (with its reset time), temporary overload
+  and an expired sign-in, and name the command to sign in again.
+- Provider update notices are calmer and never offer an installed version.
+- A single click in Files previews the file in the Editor tab; a double-click keeps it
+  open. Closing the last tab of a side editor group closes the group.
+- Codevo shortcuts such as Cmd+E and F8 win over built-in editor defaults, also in diff
+  and compare editors.
+- The status bar is gone; its readouts moved to the editor header.
+
+### Fixed
+
+- Esc stops a running agent from anywhere in the conversation, and stopped turns and
+  tools no longer show as failed. Background tasks no longer stay stuck as running.
+- "Send now" holds a queued message for the next turn instead of rejecting it.
+- Claude Haiku 4.5 threads no longer fail to start.
+- Inputs no longer use smart quotes, and the composer keeps focus after Send.
+- Watching a project no longer freezes the window.
+- Artifact previews, queued image thumbnails, Codex usage totals and terminal
+  characters split across reads.
+
+### Known issues
+
+- Settings > Archive lists only threads from this computer.
+- When file watching hits its limits, the app does not say so yet.
+- Pushing from a non-agent branch in a managed worktree fails.
+- A Claude reply after background work can appear after a message you sent meanwhile.
+- Find (Cmd+F) misses conversation rows loaded with "Load earlier activity".
+
 ## [0.2.0-beta.72] - 2026-09-23
 
 ### Added
