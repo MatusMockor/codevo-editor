@@ -47,3 +47,11 @@ function conversationIsInteractive(conversation: HTMLElement): boolean {
   if (typeof conversation.checkVisibility !== "function") return true;
   return conversation.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
 }
+
+const OPEN_COMPOSER_POPOVER_SELECTOR = '[aria-haspopup][aria-expanded="true"], .agent-popover';
+
+export function agentComposerPopoverOpen(composer: Element | null): boolean {
+  if (composer === null) return false;
+  const scope = composer.closest(".cv-composer") ?? composer;
+  return scope.querySelector(OPEN_COMPOSER_POPOVER_SELECTOR) !== null;
+}

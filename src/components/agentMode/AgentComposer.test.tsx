@@ -1353,6 +1353,25 @@ describe("AgentComposer", () => {
     }
   });
 
+  it.each(["agent-launch-model", "agent-launch-effort"])(
+    "lets Escape close an open %s popover before it stops the run",
+    (id) => {
+      const onStop = vi.fn();
+      render({ mode: { kind: "followUp", blockedReason: null }, running: true, onStop });
+      openPicker(id);
+      expect(trigger(id).getAttribute("aria-expanded")).toBe("true");
+
+      pressEscape();
+
+      expect(onStop).not.toHaveBeenCalled();
+      expect(trigger(id).getAttribute("aria-expanded")).toBe("false");
+
+      pressEscape();
+
+      expect(onStop).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("offers an explicit fresh draft action without sending or claiming to resume history", () => {
     const onRecoverDraft = vi.fn();
     const onSubmit = vi.fn();

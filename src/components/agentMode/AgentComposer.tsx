@@ -40,6 +40,7 @@ import {
   AgentComposerQueuedEditBar,
 } from "./AgentComposerQueuedEditBar";
 import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
+import { agentComposerPopoverOpen } from "./agentConversationEscape";
 import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
   openAgentAttachmentPicker,
@@ -583,6 +584,7 @@ export function AgentComposer({
     textPaste.keyDown(event);
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (commands.onKeyDown(event)) return;
+    if (event.key === "Escape" && agentComposerPopoverOpen(composerRef.current)) return;
     if (event.key === "Escape" && queuedEdit !== null) {
       event.preventDefault();
       event.stopPropagation();
