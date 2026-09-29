@@ -50,7 +50,11 @@ import {
 import { savedToolSettlement } from "./conversation/agentTurnWorkSettlement";
 import { toolRowIcon } from "./agentToolRowIcon";
 import { agentTurnMetaAgentLabel, agentTurnMetaAt } from "./conversation/agentTurnMetaLine";
-import { agentActivityAttentionCount, agentWorkFoldLabel } from "./agentActivityGrouping";
+import {
+  agentActivityAttentionCount,
+  agentActivityEndsThinking,
+  agentWorkFoldLabel,
+} from "./agentActivityGrouping";
 import {
   agentBackgroundIndicator,
   agentBackgroundWait,
@@ -281,9 +285,17 @@ export const AgentTurnView = memo(function AgentTurnView({
         (item.kind === "result" && !item.isError && item.text.trim() === ""),
     );
   const toolDisclosure = useAgentTurnToolDisclosure();
+  const foldThinking =
+    activityWindow === null &&
+    workFold !== null &&
+    agentActivityEndsThinking(workFold.workItems, stream === "streaming" ? "live" : "settled");
   const liveStatus =
     compacting || backgroundOnly || liveActivity === null || empty ? null : (
-      <AgentTurnLiveStatus activity={liveActivity} items={projection.items} />
+      <AgentTurnLiveStatus
+        activity={liveActivity}
+        foldThinking={foldThinking}
+        items={projection.items}
+      />
     );
   const cursor = highlight?.current ?? null;
   const promptCurrent = cursor !== null && cursor.kind === "prompt" ? cursor.occurrence : null;
@@ -551,13 +563,16 @@ function rawOutputDisclosed(status: AgentTurnStatus): boolean {
 
 function AgentTurnLiveStatus({
   activity,
+  foldThinking,
   items,
 }: {
   readonly activity: AgentTurnLiveActivity;
+  readonly foldThinking: boolean;
   readonly items: ReadonlyArray<AgentTurnItem>;
 }) {
   const working = activity.kind === "working";
   const thinking = working && items[items.length - 1]?.kind === "reasoning";
+  if (thinking && foldThinking) return null;
   const live = working
     ? undefined
     : items.find((item) => item.kind === "tool" && item.toolId === activity.toolId);

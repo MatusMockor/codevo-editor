@@ -3,6 +3,7 @@ import { toolRowKind } from "../../domain/agentToolRowPresentation";
 import {
   agentActivityEntries,
   agentActivityAttentionCount,
+  agentActivityEndsThinking,
   agentToolFailureTag,
   agentWorkFailureTag,
   agentWorkFoldLabel,
@@ -336,6 +337,22 @@ describe("agentActivityEntries", () => {
         1,
       ],
     ]);
+  });
+});
+
+describe("agentActivityEndsThinking", () => {
+  it("is true only for a live run whose latest item is a thought", () => {
+    expect(agentActivityEndsThinking([activityTool(0), thought(1)], "live")).toBe(true);
+    expect(agentActivityEndsThinking([activityTool(0), thought(1)], "settled")).toBe(false);
+    expect(agentActivityEndsThinking([thought(0), activityTool(1)], "live")).toBe(false);
+    expect(agentActivityEndsThinking([], "live")).toBe(false);
+  });
+
+  it("agrees with the trailing group's thinking phase", () => {
+    const items = [thought(0), thought(1)];
+    const group = onlyGroup(agentActivityEntries(items, "live"));
+    expect(group).toMatchObject({ phase: "thinking", label: "Thinking", tools: 0 });
+    expect(agentActivityEndsThinking(items, "live")).toBe(true);
   });
 });
 

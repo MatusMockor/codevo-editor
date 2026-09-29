@@ -164,9 +164,16 @@ function groupPhase(
   end: number,
   turn: AgentActivityTurnState,
 ): AgentActivityPhase {
-  if (turn === "settled") return "settled";
   if (end !== items.length) return "settled";
-  return items[end - 1]?.kind === "reasoning" ? "thinking" : "settled";
+  return agentActivityEndsThinking(items, turn) ? "thinking" : "settled";
+}
+
+export function agentActivityEndsThinking(
+  items: ReadonlyArray<AgentTurnItem>,
+  turn: AgentActivityTurnState,
+): boolean {
+  if (turn === "settled") return false;
+  return items[items.length - 1]?.kind === "reasoning";
 }
 
 export function agentActivityEntries(
