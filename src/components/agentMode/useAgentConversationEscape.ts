@@ -24,21 +24,21 @@ export function useAgentConversationEscape(
   onEscape: (() => void) | null,
 ): void {
   const onEscapeRef = useLatest(onEscape);
-  const ownsDetachedFocusRef = useRef(false);
+  const ownsLastInteractionRef = useRef(false);
   const enabled = onEscape !== null;
 
   useEffect(() => {
-    const claimFocusOwner = (event: Event): void => {
+    const recordLastInteraction = (event: Event): void => {
       const conversation = conversationRef.current;
       const target = event.target;
-      ownsDetachedFocusRef.current =
+      ownsLastInteractionRef.current =
         conversation !== null && target instanceof Node && conversation.contains(target);
     };
-    document.addEventListener("pointerdown", claimFocusOwner, true);
-    document.addEventListener("focusin", claimFocusOwner, true);
+    document.addEventListener("pointerdown", recordLastInteraction, true);
+    document.addEventListener("focusin", recordLastInteraction, true);
     return () => {
-      document.removeEventListener("pointerdown", claimFocusOwner, true);
-      document.removeEventListener("focusin", claimFocusOwner, true);
+      document.removeEventListener("pointerdown", recordLastInteraction, true);
+      document.removeEventListener("focusin", recordLastInteraction, true);
     };
   }, [conversationRef]);
 
@@ -49,7 +49,7 @@ export function useAgentConversationEscape(
       if (conversation === null) return;
       const applies = agentConversationEscapeApplies(event, {
         conversation,
-        ownsDetachedFocus: ownsDetachedFocusRef.current,
+        ownsLastInteraction: ownsLastInteractionRef.current,
       });
       if (!applies) return;
       event.preventDefault();

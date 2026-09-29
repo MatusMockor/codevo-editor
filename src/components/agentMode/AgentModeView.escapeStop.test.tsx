@@ -170,6 +170,55 @@ describe("Escape stops the running agent from anywhere in its conversation", () 
     expect(stop).toHaveBeenCalledExactlyOnceWith(THREAD_ID);
   });
 
+  it("stops after a header drag-region click that left focus on a panel tab", async () => {
+    const { stop } = await mount();
+    const panelTab = document.createElement("button");
+    panelTab.textContent = "Files";
+    document.body.append(panelTab);
+    pointerDown(panelTab);
+    act(() => panelTab.focus());
+    const header = host.querySelector<HTMLElement>("[data-agent-thread-head]")!;
+    expect(header.getAttribute("data-tauri-drag-region")).toBe("deep");
+    expect(center().contains(header)).toBe(true);
+    pointerDown(header.querySelector(".cv-topbar__title")!);
+    expect(document.activeElement).toBe(panelTab);
+
+    escape(panelTab);
+
+    expect(stop).toHaveBeenCalledExactlyOnceWith(THREAD_ID);
+    panelTab.remove();
+  });
+
+  it("leaves Escape to a text field that kept focus through a header drag-region click", async () => {
+    const { stop } = await mount();
+    const editor = document.createElement("textarea");
+    document.body.append(editor);
+    act(() => editor.focus());
+    pointerDown(host.querySelector("[data-agent-thread-head] .cv-topbar__title")!);
+
+    escape(editor);
+
+    expect(stop).not.toHaveBeenCalled();
+    editor.remove();
+  });
+
+  it("closes the thread menu opened from the title before a later Escape stops", async () => {
+    const { stop } = await mount();
+    const title = host.querySelector<HTMLButtonElement>(".agent-crumbs__title")!;
+    pointerDown(title);
+    act(() => title.click());
+    expect(title.getAttribute("aria-expanded")).toBe("true");
+
+    escape(document.activeElement ?? document.body);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(title.getAttribute("aria-expanded")).toBe("false");
+
+    escape(document.activeElement ?? document.body);
+
+    expect(stop).toHaveBeenCalledExactlyOnceWith(THREAD_ID);
+  });
+
   it("keeps a held Escape to one stop request", async () => {
     const { stop } = await mount();
     const transcript = host.querySelector<HTMLElement>(".agent-session__scroll")!;

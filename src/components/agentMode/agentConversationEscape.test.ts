@@ -33,7 +33,7 @@ describe("agentConversationEscapeApplies", () => {
     const root = conversation('<div class="row"><span>text</span></div>');
     const event = escapeAt(root.querySelector("span")!);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: false }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: false }),
     ).toBe(true);
   });
 
@@ -51,7 +51,7 @@ describe("agentConversationEscapeApplies", () => {
     const root = conversation(markup);
     const event = escapeAt(root.querySelector(selector)!);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: true }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
     ).toBe(false);
   });
 
@@ -63,28 +63,44 @@ describe("agentConversationEscapeApplies", () => {
     const root = conversation("<span></span>");
     const event = escapeAt(root.querySelector("span")!, init);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: true }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
     ).toBe(false);
   });
 
-  it("ignores targets outside the conversation", () => {
+  it("applies to stale focus outside only while the conversation owns the last interaction", () => {
     const root = conversation();
     const outside = document.createElement("button");
     document.body.append(outside);
     const event = escapeAt(outside);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: true }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: false }),
     ).toBe(false);
+    expect(
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
+    ).toBe(true);
+  });
+
+  it("leaves Escape to a text field or editor outside even after a conversation click", () => {
+    const root = conversation();
+    const outside = document.createElement("div");
+    outside.innerHTML = '<input /><div class="monaco-editor"><span>x</span></div>';
+    document.body.append(outside);
+    for (const target of [outside.querySelector("input")!, outside.querySelector("span")!]) {
+      const event = escapeAt(target);
+      expect(
+        agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
+      ).toBe(false);
+    }
   });
 
   it("applies to body focus only while the conversation owns the last interaction", () => {
     const root = conversation();
     const event = escapeAt(document.body);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: true }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
     ).toBe(true);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: false }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: false }),
     ).toBe(false);
   });
 
@@ -99,7 +115,7 @@ describe("agentConversationEscapeApplies", () => {
     hide(wrapper);
     const event = escapeAt(root.querySelector("span")!);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: true }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
     ).toBe(false);
   });
 
@@ -107,7 +123,7 @@ describe("agentConversationEscapeApplies", () => {
     const root = document.createElement("div");
     const event = escapeAt(document.body);
     expect(
-      agentConversationEscapeApplies(event, { conversation: root, ownsDetachedFocus: true }),
+      agentConversationEscapeApplies(event, { conversation: root, ownsLastInteraction: true }),
     ).toBe(false);
   });
 });

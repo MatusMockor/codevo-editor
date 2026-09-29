@@ -1,6 +1,6 @@
 export interface AgentConversationEscapeScope {
   readonly conversation: HTMLElement;
-  readonly ownsDetachedFocus: boolean;
+  readonly ownsLastInteraction: boolean;
 }
 
 const OWN_ESCAPE_SELECTOR = [
@@ -34,11 +34,11 @@ export function agentConversationEscapeApplies(
   if (document.querySelector(OPEN_MODAL_SELECTOR) !== null) return false;
   const target = event.target;
   if (target === document.body || target === document.documentElement || target === document) {
-    return scope.ownsDetachedFocus;
+    return scope.ownsLastInteraction;
   }
   if (!(target instanceof Element)) return false;
-  if (!scope.conversation.contains(target)) return false;
-  return target.closest(OWN_ESCAPE_SELECTOR) === null;
+  if (target.closest(OWN_ESCAPE_SELECTOR) !== null) return false;
+  return scope.conversation.contains(target) || scope.ownsLastInteraction;
 }
 
 function conversationIsInteractive(conversation: HTMLElement): boolean {
