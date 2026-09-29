@@ -188,8 +188,15 @@ export const AgentTurnView = memo(function AgentTurnView({
   const foregroundRunning = running && !backgroundOnly;
   const stream = proseStream(foregroundRunning, streamed);
   const errorContext = useMemo(
-    () => createTurnErrorContext(provider, turn.cliVersion, executionTarget, projection.items),
-    [executionTarget, projection.items, provider, turn.cliVersion],
+    () =>
+      createTurnErrorContext(
+        provider,
+        turn.cliVersion,
+        executionTarget,
+        turn.status,
+        projection.items,
+      ),
+    [executionTarget, projection.items, provider, turn.cliVersion, turn.status],
   );
   const rawLines = useMemo(
     () =>

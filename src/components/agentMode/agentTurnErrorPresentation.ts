@@ -7,10 +7,13 @@ import {
   type AgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
 
+export type AgentTurnHalt = "stopped" | "interrupted";
+
 export interface AgentTurnErrorContext {
   readonly provider: AgentCliKind;
   readonly installedVersion: string | null;
   readonly executionTarget: "local" | "remote";
+  readonly halt: AgentTurnHalt | null;
   readonly hasProviderFailure: boolean;
 }
 
@@ -18,12 +21,14 @@ export function createTurnErrorContext(
   provider: AgentCliKind,
   installedVersion: string | null,
   executionTarget: "local" | "remote",
+  status: AgentTurnStatus,
   items: ReadonlyArray<AgentTurnItem>,
 ): AgentTurnErrorContext {
   return {
     provider,
     installedVersion,
     executionTarget,
+    halt: agentTurnHalt(status),
     hasProviderFailure: items.some((item) => {
       const error = reportedError(item, provider);
       return (
@@ -34,6 +39,11 @@ export function createTurnErrorContext(
       );
     }),
   };
+}
+
+function agentTurnHalt(status: AgentTurnStatus): AgentTurnHalt | null {
+  if (status.kind === "stopped" || status.kind === "interrupted") return status.kind;
+  return null;
 }
 
 export function suppressGenericFailure(

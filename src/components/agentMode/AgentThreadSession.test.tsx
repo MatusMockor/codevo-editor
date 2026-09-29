@@ -799,6 +799,72 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).not.toMatch(/sign in/iu);
   });
 
+  it.each([
+    { status: { kind: "stopped" } as const, marker: "Stopped" },
+    { status: { kind: "interrupted" } as const, marker: "Interrupted" },
+  ])("does not present an interrupted result frame of a $status.kind turn as a failure", (row) => {
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [turn("agt-1-t1", "Hello", row.status, INTERRUPTED_RESULT_FRAME_EVENTS)],
+      }),
+    });
+
+    expect(host.textContent).not.toMatch(/run failed/iu);
+    expect(host.querySelector(".agent-finale--bad")).toBeNull();
+    expect(host.querySelector(".agent-microlabel--bad")).toBeNull();
+    expect(host.querySelector(".agent-turn-end")?.textContent).toContain(row.marker);
+  });
+
+  it.each([{ kind: "stopped" } as const, { kind: "interrupted" } as const])(
+    "renders a reported error result of a $kind turn neutrally",
+    (status) => {
+      render({
+        thread: threadView({
+          provider: "claudeCode",
+          turns: [
+            turn("agt-1-t1", "Hello", status, [
+              { kind: "result", text: "authentication_failed", isError: true, usage: null },
+            ]),
+          ],
+        }),
+      });
+
+      const block = host
+        .querySelector("[data-agent-event] .agent-finale__body")
+        ?.closest("section");
+      expect(host.textContent).not.toMatch(/run failed/iu);
+      expect(host.querySelector(".agent-finale--bad")).toBeNull();
+      expect(host.querySelector(".agent-microlabel--bad")).toBeNull();
+      expect(block?.className).toBe("agent-finale");
+      expect(block?.querySelector(".agent-microlabel")?.textContent).toBe(status.kind);
+      expect(block?.querySelector(".agent-finale__body")?.textContent).toBe(
+        "authentication_failed",
+      );
+      expect(block?.querySelector(".agent-note")).toBeNull();
+      expect(block?.querySelector("details.agent-raw")).toBeNull();
+    },
+  );
+
+  it.each([
+    { kind: "exited", exitCode: 1 } as const,
+    { kind: "failed", message: "Claude Code crashed" } as const,
+  ])("keeps presenting an error result of a $kind turn as a failed run", (status) => {
+    render({
+      thread: threadView({
+        provider: "claudeCode",
+        turns: [
+          turn("agt-1-t1", "Hello", status, [
+            { kind: "result", text: "Claude Code crashed", isError: true, usage: null },
+          ]),
+        ],
+      }),
+    });
+
+    const block = host.querySelector("[data-agent-event].agent-finale--bad");
+    expect(block?.querySelector(".agent-microlabel--bad")?.textContent).toBe("run failed");
+  });
+
   it("targets server upgrades and hides the runner wrapper after a provider failure", () => {
     const message = "The 'gpt-6-astra' model requires a newer version of Codex.";
     render({
@@ -1865,3 +1931,30 @@ function reveal(overrides: {
 }): AgentThreadRevealRequest {
   return { query: FIND_QUERY, start: 0, end: 6, ...overrides };
 }
+
+const INTERRUPTED_RESULT_FRAME_EVENTS: ReadonlyArray<AgentTurnEvent> = [
+  {
+    kind: "unknownLine",
+    stream: "stdout",
+    raw: "Unsupported Claude stream frame: command_lifecycle",
+    clipped: false,
+  },
+  {
+    kind: "result",
+    text: "",
+    isError: true,
+    usage: {
+      cachedInputTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      contextTokens: 0,
+      costUsd: 0.0,
+    },
+  },
+  {
+    kind: "contextUsage",
+    model: "claude-opus-5[1m]",
+    inputTokens: null,
+    contextWindow: 1_000_000,
+  },
+];

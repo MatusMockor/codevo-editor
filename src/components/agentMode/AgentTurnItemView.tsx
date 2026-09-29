@@ -117,19 +117,24 @@ function AgentResultItem({
   readonly item: Extract<AgentTurnItem, { kind: "result" }>;
   readonly textClipboard: TextClipboardGateway | null;
 }) {
-  const error = item.isError ? classifyAgentProviderError(item.text, errorContext.provider) : null;
+  const halt = item.isError ? errorContext.halt : null;
+  if (halt !== null && item.text.trim() === "") return null;
+  const error =
+    item.isError && halt === null
+      ? classifyAgentProviderError(item.text, errorContext.provider)
+      : null;
   if (error !== null && suppressGenericFailure(error, errorContext)) return null;
   const text =
     error === null ? item.text : agentProviderErrorHeadline(error, errorContext.installedVersion);
   return (
     <section
-      className={item.isError ? "agent-finale agent-finale--bad" : "agent-finale"}
+      className={error === null ? "agent-finale" : "agent-finale agent-finale--bad"}
       data-agent-event={item.key}
     >
       <span
-        className={item.isError ? "agent-microlabel agent-microlabel--bad" : "agent-microlabel"}
+        className={error === null ? "agent-microlabel" : "agent-microlabel agent-microlabel--bad"}
       >
-        {item.isError ? "run failed" : "result"}
+        {error === null ? (halt ?? "result") : "run failed"}
       </span>
       {text !== "" && (
         <p className="agent-finale__body">
