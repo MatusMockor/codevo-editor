@@ -4,8 +4,21 @@ use crate::agent_task_spawner::agent_provider::runtime::update_check::ProviderUp
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentProviderUpdateCheckResult {
-    update: AgentProviderUpdateAvailability,
+    update: AgentProviderUpdateCheckOutcome,
     checked_at_epoch_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub(crate) enum AgentProviderUpdateCheckOutcome {
+    Checked(AgentProviderUpdateAvailability),
+    ExecutableChanged(ExecutableChanged),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum ExecutableChanged {
+    ExecutableChanged,
 }
 
 #[tauri::command]
@@ -44,39 +57,56 @@ fn check_updates(
         return Err("Provider update check was cancelled.".to_string());
     }
     let update = if !lease.checks_enabled {
-        AgentProviderUpdateAvailability::ChecksDisabled
-    } else if let Some(installed) = lease.installed_version.as_deref() {
-        let latest = metadata.latest(lease.provider, &is_cancelled);
-        if is_cancelled() {
-            return Err("Provider update check was cancelled.".to_string());
-        }
-        match latest {
-            Ok(latest) => match compare_versions(installed, &latest) {
-                Some(Ordering::Less) => match lease.installer.clone() {
-                    Some(installer) => AgentProviderUpdateAvailability::Available {
-                        installed_version: installed.to_string(),
-                        available_version: latest,
-                        installer,
-                    },
-                    None => AgentProviderUpdateAvailability::ManualUpdateAvailable {
-                        installed_version: installed.to_string(),
-                        available_version: latest,
-                    },
-                },
-                Some(_) => AgentProviderUpdateAvailability::Current {
-                    installed_version: installed.to_string(),
-                },
-                None => unavailable(AgentProviderUpdateUnavailableReason::InvalidVersion),
-            },
-            Err(_) => unavailable(AgentProviderUpdateUnavailableReason::ProbeFailed),
-        }
+        AgentProviderUpdateCheckOutcome::Checked(AgentProviderUpdateAvailability::ChecksDisabled)
+    } else if lease.installed_version.is_some() && !lease.executable_is_current() {
+        AgentProviderUpdateCheckOutcome::ExecutableChanged(ExecutableChanged::ExecutableChanged)
     } else {
-        unavailable(AgentProviderUpdateUnavailableReason::InvalidVersion)
+        AgentProviderUpdateCheckOutcome::Checked(compare_with_latest(
+            &lease,
+            metadata,
+            &is_cancelled,
+        )?)
     };
     registry.revalidate_update_check(&lease)?;
     Ok(AgentProviderUpdateCheckResult {
         update,
         checked_at_epoch_ms: now_epoch_ms(),
+    })
+}
+
+fn compare_with_latest(
+    lease: &ProviderUpdateCheckLease,
+    metadata: &dyn AgentProviderReleaseMetadataSource,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<AgentProviderUpdateAvailability, String> {
+    let Some(installed) = lease.installed_version.as_deref() else {
+        return Ok(unavailable(
+            AgentProviderUpdateUnavailableReason::InvalidVersion,
+        ));
+    };
+    let latest = metadata.latest(lease.provider, is_cancelled);
+    if is_cancelled() {
+        return Err("Provider update check was cancelled.".to_string());
+    }
+    Ok(match latest {
+        Ok(latest) => match compare_versions(installed, &latest) {
+            Some(Ordering::Less) => match lease.installer.clone() {
+                Some(installer) => AgentProviderUpdateAvailability::Available {
+                    installed_version: installed.to_string(),
+                    available_version: latest,
+                    installer,
+                },
+                None => AgentProviderUpdateAvailability::ManualUpdateAvailable {
+                    installed_version: installed.to_string(),
+                    available_version: latest,
+                },
+            },
+            Some(_) => AgentProviderUpdateAvailability::Current {
+                installed_version: installed.to_string(),
+            },
+            None => unavailable(AgentProviderUpdateUnavailableReason::InvalidVersion),
+        },
+        Err(_) => unavailable(AgentProviderUpdateUnavailableReason::ProbeFailed),
     })
 }
 

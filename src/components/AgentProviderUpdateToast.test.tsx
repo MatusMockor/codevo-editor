@@ -82,7 +82,8 @@ describe("agent provider update toast", () => {
       root.render(<>{renderer(notice, { dismiss })}</>);
     });
 
-    expect(host.textContent).toContain("Update Available: Codex v0.150.1");
+    expect(host.querySelector(".toast-notification__title")?.textContent).toBe("Update available");
+    expect(rows()).toEqual([{ provider: "Codex", note: null, version: "v0.150.1" }]);
     expect(host.textContent).not.toContain("Claude Code");
     expect(host.textContent).not.toContain("999.999.999");
     expect(host.querySelector(".toast-notification__badge--update")).not.toBeNull();
@@ -92,11 +93,8 @@ describe("agent provider update toast", () => {
     expect(button("Copy command")).toBeUndefined();
   });
 
-  it("shows the installed version and installer meta for an offered update", async () => {
-    const view = createAgentProviderUpdateToastView("codex", "0.153.4", undefined, {
-      installedVersion: "0.152.0",
-      installer: "selfUpdate",
-    })!;
+  it("shows the installed and offered versions in one row without installer noise", async () => {
+    const view = createAgentProviderUpdateToastView("codex", "0.153.4", undefined, "0.152.0")!;
     const [groupKey, renderer] = agentProviderUpdateToastRenderer({ callbacks, view })!;
 
     await act(async () => {
@@ -109,15 +107,15 @@ describe("agent provider update toast", () => {
       );
     });
 
-    expect(host.textContent).toContain("Update Available: Codex v0.153.4");
-    expect(meta()).toEqual(["Installed v0.152.0", "via built-in updater"]);
+    expect(rows()).toEqual([{ provider: "Codex", note: null, version: "v0.152.0 to v0.153.4" }]);
+    expect(host.querySelector(".toast-notification__meta")).toBeNull();
+    expect(host.querySelector("code")).toBeNull();
+    expect(host.textContent).not.toContain("built-in updater");
+    expect(host.querySelector(".toast-notification-message")).toBeNull();
   });
 
-  it("omits an unknown installed version from the meta line", async () => {
-    const view = createAgentProviderUpdateToastView("codex", "0.153.4", undefined, {
-      installedVersion: null,
-      installer: "npm",
-    })!;
+  it("shows only the offered version when the installed version is unknown", async () => {
+    const view = createAgentProviderUpdateToastView("codex", "0.153.4", undefined, null)!;
     const [groupKey, renderer] = agentProviderUpdateToastRenderer({ callbacks, view })!;
 
     await act(async () => {
@@ -130,7 +128,7 @@ describe("agent provider update toast", () => {
       );
     });
 
-    expect(meta()).toEqual(["via npm"]);
+    expect(rows()).toEqual([{ provider: "Codex", note: null, version: "v0.153.4" }]);
   });
 
   it("fails closed for stale versions and foreign providers", () => {
@@ -163,10 +161,7 @@ describe("agent provider update toast", () => {
         configurable: true,
         value: { writeText },
       });
-      const view = createAgentProviderUpdateToastView(provider, "1.2.3", true, {
-        installedVersion: "1.2.2",
-        installer: "unknown",
-      })!;
+      const view = createAgentProviderUpdateToastView(provider, "1.2.3", true, "1.2.2")!;
       const [groupKey, renderer] = agentProviderUpdateToastRenderer({ callbacks, view })!;
       await act(async () => {
         root.render(
@@ -178,9 +173,13 @@ describe("agent provider update toast", () => {
         );
       });
 
-      expect(host.textContent).toContain(`Update Available: ${label} v1.2.3`);
+      expect(host.querySelector(".toast-notification__title")?.textContent).toBe(
+        "Update available",
+      );
       expect(host.textContent).toContain(`${label} can be updated from provider settings.`);
-      expect(meta()).toEqual(["Installed v1.2.2", "via unknown"]);
+      expect(rows()).toEqual([
+        { provider: label, note: "Manual update", version: "v1.2.2 to v1.2.3" },
+      ]);
       expect(host.querySelector(".toast-notification__badge--manual")).not.toBeNull();
       expect(button("Update")).toBeUndefined();
 
@@ -270,10 +269,19 @@ describe("agent provider update toast", () => {
     expect(dismiss).not.toHaveBeenCalled();
   });
 
-  function meta(): string[] {
-    return [...host.querySelectorAll(".toast-notification__meta li")].map(
-      (entry) => entry.textContent ?? "",
-    );
+  function accessibleText(element: Element | null): string {
+    if (element === null) return "";
+    const clone = element.cloneNode(true) as Element;
+    clone.querySelectorAll('[aria-hidden="true"]').forEach((hidden) => hidden.remove());
+    return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function rows(): { provider: string; note: string | null; version: string }[] {
+    return [...host.querySelectorAll(".toast-update-row")].map((row) => ({
+      provider: row.querySelector(".toast-update-row__provider")?.textContent ?? "",
+      note: row.querySelector(".toast-update-row__note")?.textContent ?? null,
+      version: accessibleText(row.querySelector(".toast-update-row__version")),
+    }));
   }
 
   function actionLabels(): string[] {

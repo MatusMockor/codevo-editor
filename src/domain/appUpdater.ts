@@ -225,7 +225,7 @@ export function appUpdateToastTitle(presentation: AppUpdateToastPresentation): s
   switch (presentation.kind) {
     case "available":
     case "readyToInstall":
-      return `Update Available: Codevo v${presentation.version}`;
+      return `Update available: Codevo v${presentation.version}`;
     case "downloading":
       return "Preparing update";
     case "readyToRestart":

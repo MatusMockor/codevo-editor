@@ -18,6 +18,7 @@ export interface ToastNotificationAction {
 
 export interface ToastNotificationProps {
   readonly actions?: readonly ToastNotificationAction[];
+  readonly body?: ReactNode;
   readonly className?: string;
   readonly closeLabel?: string;
   readonly description?: ReactNode;
@@ -44,6 +45,7 @@ const TOAST_TEMPLATES: Record<ToastTemplatePreset, ToastTemplate> = {
 
 export function ToastNotification({
   actions,
+  body,
   className = "",
   closeLabel = "Dismiss notification",
   description,
@@ -89,12 +91,15 @@ export function ToastNotification({
         <div className="toast-notification__text">
           <p className="toast-notification__title">{title || definition.title}</p>
           {description ? <p className="toast-notification-message">{description}</p> : null}
+          {body}
           {visibleMeta.length > 0 ? (
-            <ul className="toast-notification__meta">
-              {visibleMeta.map((entry, index) => (
-                <li key={index}>{entry}</li>
-              ))}
-            </ul>
+            <div className="toast-notification__meta-clip">
+              <ul className="toast-notification__meta">
+                {visibleMeta.map((entry, index) => (
+                  <li key={index}>{entry}</li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </div>
       </div>

@@ -41,7 +41,9 @@ mod resolution;
 use resolution::ResolvedProviderExecutableRef;
 #[cfg(test)]
 use resolution::TestProviderExecutableResolver;
-pub use resolution::{AgentProviderExecutableResolver, ResolvedProviderExecutable};
+pub use resolution::{
+    AgentProviderExecutableResolver, ProviderEntryPoint, ResolvedProviderExecutable,
+};
 
 pub const MAX_PROVIDER_OPERATION_ID_BYTES: usize = 128;
 pub const AGENT_PROVIDER_DISABLED_ERROR: &str =

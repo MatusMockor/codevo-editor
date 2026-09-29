@@ -13,6 +13,7 @@ interface UpdateCheckOwner {
   readonly gateway: AgentProviderHealthGateway;
   current(): boolean;
   publish(update: Update): void;
+  executableChanged(): void;
   reportError(error: unknown): void;
 }
 
@@ -31,6 +32,10 @@ export function createAgentProviderUpdateChecks(dependencies: {
       try {
         const result = await owner.gateway.checkAgentProviderUpdates(owner.request);
         if (!owner.current()) return;
+        if (result.update.kind === "executableChanged") {
+          owner.executableChanged();
+          return;
+        }
         if (
           "installedVersion" in result.update &&
           result.update.installedVersion !== owner.installedVersion

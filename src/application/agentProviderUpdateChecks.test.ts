@@ -17,6 +17,7 @@ function fixture() {
   const calls: ReturnType<typeof deferred>[] = [];
   const publish = vi.fn();
   const reportError = vi.fn();
+  const executableChanged = vi.fn();
   const gateway = {
     probeAgentProviderHealth: vi.fn(),
     checkAgentProviderUpdates: vi.fn(() => {
@@ -36,11 +37,13 @@ function fixture() {
         current: () => captured === generation,
         publish,
         reportError,
+        executableChanged,
       };
     },
   });
   return {
     calls,
+    executableChanged,
     publish,
     reportError,
     gateway,
@@ -78,6 +81,24 @@ describe("lightweight provider update checks", () => {
     const pending = f.checks.check("claudeCode");
     f.calls[0]!.resolve({ ...current, update: { kind: "current", installedVersion: "2.0.0" } });
     await pending;
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+  it("hands a self-updated executable to a fresh health probe instead of publishing", async () => {
+    const f = fixture();
+    const pending = f.checks.check("claudeCode");
+    f.calls[0]!.resolve({ update: { kind: "executableChanged" }, checkedAtEpochMs: 1 });
+    await pending;
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.executableChanged).toHaveBeenCalledOnce();
+    expect(f.checks.needsDiagnostics("claudeCode")).toBe(false);
+  });
+  it("ignores an executable change reported to an abandoned owner", async () => {
+    const f = fixture();
+    const pending = f.checks.check("claudeCode");
+    f.replace();
+    f.calls[0]!.resolve({ update: { kind: "executableChanged" }, checkedAtEpochMs: 1 });
+    await pending;
+    expect(f.executableChanged).not.toHaveBeenCalled();
     expect(f.publish).not.toHaveBeenCalled();
   });
   it("does no work without known eligible health", async () => {

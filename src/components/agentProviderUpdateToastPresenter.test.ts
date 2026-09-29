@@ -10,8 +10,9 @@ import type {
 import type { AgentCliKind } from "../domain/agentSettings";
 import {
   agentProviderUpdateFailureSentence,
-  agentProviderUpdateInstallerLabel,
   agentProviderUpdateNoticeGroupKey,
+  agentProviderUpdateNoticeMessage,
+  agentProviderUpdateVersionTransition,
   agentProviderUpdateRefusalSentence,
   agentProviderUpdateToastGroupKey,
   agentProviderUpdateToastTitle,
@@ -47,7 +48,7 @@ const CODEX_UPDATE: AgentProviderHealthState = {
 };
 
 describe("agent provider update toast presenter", () => {
-  it("presents a single one-click update with installed version and installer details", () => {
+  it("presents a single one-click update with the installed and offered versions", () => {
     const presentation = presentAgentProviderUpdateToast(
       source({
         toast: { kind: "updateAvailable", provider: "codex", version: "0.153.4" },
@@ -60,7 +61,7 @@ describe("agent provider update toast presenter", () => {
       view: {
         provider: "codex",
         availableVersion: "0.153.4",
-        details: { installedVersion: "0.152.0", installer: "npm" },
+        installedVersion: "0.152.0",
       },
     });
   });
@@ -80,13 +81,189 @@ describe("agent provider update toast presenter", () => {
       "codex@0.153.4",
       "claudeCode@2.1.0",
     ]);
-    expect(presentation.views[1].details).toEqual({
-      installedVersion: "2.0.0",
-      installer: "homebrew",
+    expect(presentation.views[1].installedVersion).toBe("2.0.0");
+  });
+
+  it("never offers an update to a version that is already installed or older", () => {
+    const codexToast: AgentProviderManagementToast = {
+      kind: "updateAvailable",
+      provider: "codex",
+      version: "0.159.0",
+    };
+    const offering = (installedVersion: string): AgentProviderHealthState => ({
+      ...CODEX_UPDATE,
+      installedVersion,
+      update: {
+        kind: "available",
+        installedVersion,
+        availableVersion: "0.159.0",
+        installer: { kind: "selfUpdate", command: "codexUpdate" },
+      },
+    });
+
+    for (const installed of ["0.159.0", "0.160.0", "0.159.0.1"]) {
+      expect(
+        presentAgentProviderUpdateToast(
+          source({ toast: codexToast, codex: { health: offering(installed) } }),
+        ),
+      ).toBeNull();
+    }
+    expect(
+      presentAgentProviderUpdateToast(
+        source({ toast: codexToast, codex: { health: offering("0.159.0-alpha.1") } }),
+      )?.kind,
+    ).toBe("available");
+  });
+
+  it("drops a merged provider whose offered version is already installed", () => {
+    const presentation = presentAgentProviderUpdateToast(
+      source({
+        toast: { kind: "updateAvailable", provider: "codex", version: "0.153.4" },
+        claudeCode: {
+          health: {
+            ...CLAUDE_UPDATE,
+            installedVersion: "2.1.284",
+            update: {
+              kind: "available",
+              installedVersion: "2.1.284",
+              availableVersion: "2.1.284",
+              installer: { kind: "selfUpdate", command: "claudeUpdate" },
+            },
+          },
+        },
+        codex: { health: CODEX_UPDATE },
+      }),
+    );
+
+    expect(presentation).toEqual({
+      kind: "available",
+      view: { provider: "codex", availableVersion: "0.153.4", installedVersion: "0.152.0" },
     });
   });
 
-  it("does not merge dismissed, manual, busy, or unregistered updates", () => {
+  it("withdraws a pending offer once the provider health no longer confirms it", () => {
+    const codexToast: AgentProviderManagementToast = {
+      kind: "updateAvailable",
+      provider: "codex",
+      version: "0.153.4",
+    };
+    const current: AgentProviderHealthState = {
+      ...CODEX_UPDATE,
+      installedVersion: "0.153.4",
+      update: { kind: "current", installedVersion: "0.153.4" },
+    };
+    const newerOffer: AgentProviderHealthState = {
+      ...CODEX_UPDATE,
+      update: {
+        kind: "available",
+        installedVersion: "0.152.0",
+        availableVersion: "0.154.0",
+        installer: { kind: "npm", packageName: "@openai/codex" },
+      },
+    };
+
+    expect(
+      presentAgentProviderUpdateToast(source({ toast: codexToast, codex: { health: current } })),
+    ).toBeNull();
+    expect(
+      presentAgentProviderUpdateToast(source({ toast: codexToast, codex: { health: newerOffer } })),
+    ).toBeNull();
+    expect(presentAgentProviderUpdateToast(source({ toast: codexToast }))).toBeNull();
+  });
+
+  it("keeps another provider's pending update when the toast's own offer is satisfied", () => {
+    const presentation = presentAgentProviderUpdateToast(
+      source({
+        toast: { kind: "updateAvailable", provider: "codex", version: "0.153.4" },
+        claudeCode: { health: CLAUDE_UPDATE },
+        codex: {
+          health: {
+            ...CODEX_UPDATE,
+            installedVersion: "0.153.4",
+            update: { kind: "current", installedVersion: "0.153.4" },
+          },
+        },
+      }),
+    );
+
+    expect(presentation).toEqual({
+      kind: "available",
+      view: { provider: "claudeCode", availableVersion: "2.1.0", installedVersion: "2.0.0" },
+    });
+  });
+
+  it("names every offered provider and version in the notice message", () => {
+    const codex = createAgentProviderUpdateToastView("codex", "0.159.0")!;
+    const claude = createAgentProviderUpdateToastView("claudeCode", "2.1.284")!;
+    expect(agentProviderUpdateNoticeMessage({ kind: "available", view: codex })).toBe(
+      "Update available: Codex v0.159.0",
+    );
+    expect(
+      agentProviderUpdateNoticeMessage({ kind: "availableMany", views: [codex, claude] }),
+    ).toBe("2 provider updates: Codex v0.159.0, Claude Code v2.1.284");
+    expect(
+      agentProviderUpdateNoticeMessage({ kind: "updating", provider: "codex", operationId: "1" }),
+    ).toBe("Updating provider");
+  });
+
+  it("formats the version transition with one consistent v prefix", () => {
+    expect(
+      agentProviderUpdateVersionTransition(
+        createAgentProviderUpdateToastView("codex", "0.159.0", undefined, "0.157.1")!,
+      ),
+    ).toEqual({ from: "v0.157.1", to: "v0.159.0" });
+    expect(
+      agentProviderUpdateVersionTransition(createAgentProviderUpdateToastView("codex", "0.159.0")!),
+    ).toEqual({ from: null, to: "v0.159.0" });
+  });
+
+  it("presents an unknown installed version without inventing one", () => {
+    const presentation = presentAgentProviderUpdateToast(
+      source({
+        toast: { kind: "updateAvailable", provider: "codex", version: "0.153.4" },
+        codex: { health: { ...CODEX_UPDATE, installedVersion: null } },
+      }),
+    );
+
+    expect(presentation).toEqual({
+      kind: "available",
+      view: { provider: "codex", availableVersion: "0.153.4" },
+    });
+  });
+
+  it("merges a manual update as a marked row next to a one-click update", () => {
+    const presentation = presentAgentProviderUpdateToast(
+      source({
+        toast: { kind: "updateAvailable", provider: "codex", version: "0.153.4" },
+        claudeCode: {
+          health: {
+            ...CLAUDE_UPDATE,
+            update: {
+              kind: "manualUpdateAvailable",
+              installedVersion: "2.0.0",
+              availableVersion: "2.1.0",
+            },
+          },
+        },
+        codex: { health: CODEX_UPDATE },
+      }),
+    );
+
+    expect(presentation).toEqual({
+      kind: "availableMany",
+      views: [
+        { provider: "codex", availableVersion: "0.153.4", installedVersion: "0.152.0" },
+        {
+          provider: "claudeCode",
+          availableVersion: "2.1.0",
+          installedVersion: "2.0.0",
+          manual: true,
+        },
+      ],
+    });
+  });
+
+  it("does not merge dismissed, busy, or unregistered updates", () => {
     const codexToast: AgentProviderManagementToast = {
       kind: "updateAvailable",
       provider: "codex",
@@ -102,29 +279,19 @@ describe("agent provider update toast presenter", () => {
     );
     expect(dismissed?.kind).toBe("available");
 
-    const manualOther = presentAgentProviderUpdateToast(
-      source({
-        toast: codexToast,
-        claudeCode: {
-          health: {
-            ...CLAUDE_UPDATE,
-            update: {
-              kind: "manualUpdateAvailable",
-              installedVersion: "2.0.0",
-              availableVersion: "2.1.0",
-            },
-          },
-        },
-        codex: { health: CODEX_UPDATE },
-      }),
-    );
-    expect(manualOther?.kind).toBe("available");
-
     const manualSelf = presentAgentProviderUpdateToast(
       source({
         toast: { ...codexToast, manual: true },
-        claudeCode: { health: CLAUDE_UPDATE },
-        codex: { health: CODEX_UPDATE },
+        codex: {
+          health: {
+            ...CODEX_UPDATE,
+            update: {
+              kind: "manualUpdateAvailable",
+              installedVersion: "0.152.0",
+              availableVersion: "0.153.4",
+            },
+          },
+        },
       }),
     );
     expect(manualSelf).toEqual({
@@ -132,8 +299,8 @@ describe("agent provider update toast presenter", () => {
       view: {
         provider: "codex",
         availableVersion: "0.153.4",
+        installedVersion: "0.152.0",
         manual: true,
-        details: { installedVersion: "0.152.0", installer: "npm" },
       },
     });
 
@@ -333,6 +500,24 @@ describe("agent provider update toast presenter", () => {
     expect(createAgentProviderUpdateToastView("codex", `1.${"0".repeat(300)}`)).toBeNull();
   });
 
+  it("builds a view only when the installed version is known to be older or unknown", () => {
+    expect(createAgentProviderUpdateToastView("codex", "0.153.4", undefined, "0.152.0")).toEqual({
+      provider: "codex",
+      availableVersion: "0.153.4",
+      installedVersion: "0.152.0",
+    });
+    expect(createAgentProviderUpdateToastView("codex", "0.153.4", undefined, null)).toEqual({
+      provider: "codex",
+      availableVersion: "0.153.4",
+    });
+    expect(createAgentProviderUpdateToastView("codex", "0.153.4", undefined, "0.153.4")).toBeNull();
+    expect(createAgentProviderUpdateToastView("codex", "0.153.4", undefined, "0.154.0")).toBeNull();
+    expect(
+      createAgentProviderUpdateToastView("codex", "0.153.4", undefined, " 0.152.0 "),
+    ).toBeNull();
+    expect(createAgentProviderUpdateToastView("codex", "0.153.4", undefined, "latest")).toBeNull();
+  });
+
   it("keeps toast group keys distinct per state so dismissals never leak across states", () => {
     const view = createAgentProviderUpdateToastView("codex", "0.153.4")!;
     const keys = [
@@ -400,13 +585,11 @@ describe("agent provider update toast presenter", () => {
     );
   });
 
-  it("derives D-cased titles for every presentation", () => {
+  it("derives sentence-cased titles for every presentation", () => {
     const view = createAgentProviderUpdateToastView("codex", "0.153.4")!;
-    expect(agentProviderUpdateToastTitle({ kind: "available", view })).toBe(
-      "Update Available: Codex v0.153.4",
-    );
+    expect(agentProviderUpdateToastTitle({ kind: "available", view })).toBe("Update available");
     expect(agentProviderUpdateToastTitle({ kind: "availableMany", views: [view, view] })).toBe(
-      "Updates Available: 2 providers",
+      "2 provider updates",
     );
     expect(
       agentProviderUpdateToastTitle({
@@ -425,7 +608,7 @@ describe("agent provider update toast presenter", () => {
     ).toBe("Provider update not started");
   });
 
-  it("translates failure reasons and installers into bounded copy", () => {
+  it("translates failure reasons into bounded copy", () => {
     expect(agentProviderUpdateFailureSentence(null)).toBe("Check provider settings for details.");
     expect(agentProviderUpdateFailureSentence("exited")).toBe(
       "The installer exited with an error.",
@@ -458,10 +641,6 @@ describe("agent provider update toast presenter", () => {
     ] as const) {
       expect(agentProviderUpdateFailureSentence(reason)).not.toContain("provider policy");
     }
-    expect(agentProviderUpdateInstallerLabel("npm")).toBe("npm");
-    expect(agentProviderUpdateInstallerLabel("homebrew")).toBe("Homebrew");
-    expect(agentProviderUpdateInstallerLabel("selfUpdate")).toBe("built-in updater");
-    expect(agentProviderUpdateInstallerLabel("unknown")).toBe("unknown");
   });
 });
 

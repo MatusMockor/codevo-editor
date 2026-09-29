@@ -10,14 +10,10 @@ import {
   type AgentProviderUpdatesToastProps,
 } from "./AgentProviderUpdatesToast";
 
-const CODEX = createAgentProviderUpdateToastView("codex", "0.153.4", undefined, {
-  installedVersion: "0.152.0",
-  installer: "npm",
-})!;
-const CLAUDE = createAgentProviderUpdateToastView("claudeCode", "2.1.0", undefined, {
-  installedVersion: "2.0.0",
-  installer: "homebrew",
-})!;
+const CODEX = createAgentProviderUpdateToastView("codex", "0.159.0", undefined, "0.157.1")!;
+const CLAUDE = createAgentProviderUpdateToastView("claudeCode", "2.1.284", undefined, "2.1.283")!;
+const CLAUDE_MANUAL = createAgentProviderUpdateToastView("claudeCode", "2.1.284", true, "2.1.283")!;
+const CODEX_MANUAL = createAgentProviderUpdateToastView("codex", "0.159.0", true)!;
 const CLAUDE_UPDATE_VERSION = createAgentProviderUpdateToastView(
   "claudeCode",
   "2.1.263",
@@ -55,21 +51,59 @@ describe("AgentProviderUpdatesToast", () => {
     });
   };
 
-  it("merges several providers into one toast with an update-all action", () => {
+  it("merges several providers into one row per provider with an update-all action", () => {
     render({ kind: "availableMany", views: [CODEX, CLAUDE] });
 
-    expect(host.querySelector('[role="status"]')?.textContent).toContain(
-      "Updates Available: 2 providers",
+    expect(host.querySelector(".toast-notification__title")?.textContent).toBe(
+      "2 provider updates",
     );
-    expect(host.textContent).toContain("Codex v0.153.4");
-    expect(host.textContent).toContain("Claude Code v2.1.0");
-    expect(host.textContent).toContain("Homebrew");
+    expect(rows()).toEqual([
+      { provider: "Codex", note: null, version: "v0.157.1 to v0.159.0" },
+      { provider: "Claude Code", note: null, version: "v2.1.283 to v2.1.284" },
+    ]);
+    expect(host.querySelector(".toast-notification__meta")).toBeNull();
+    expect(host.querySelector("code")).toBeNull();
+    const arrow = host.querySelector(".toast-update-row__arrow");
+    expect(arrow?.getAttribute("aria-hidden")).toBe("true");
+    expect(arrow?.textContent).toBe("→");
+    expect(host.querySelector(".toast-update-row__version")?.textContent).toBe(
+      "v0.157.1→ to v0.159.0",
+    );
+    expect(host.textContent).not.toContain("·");
+    expect(host.textContent).not.toContain("built-in updater");
+    expect(host.querySelector(".toast-notification-message")).toBeNull();
+    expect(buttons()).toEqual(["Settings", "Update all"]);
 
     act(() => button("Update all").click());
     expect(handlers.onUpdateAll).toHaveBeenCalledWith([CODEX, CLAUDE]);
 
     act(() => button("Settings").click());
     expect(handlers.onOpenSettings).toHaveBeenCalledOnce();
+  });
+
+  it("marks a manual provider and only offers to update the one-click provider", () => {
+    render({ kind: "availableMany", views: [CODEX, CLAUDE_MANUAL] });
+
+    expect(rows()).toEqual([
+      { provider: "Codex", note: null, version: "v0.157.1 to v0.159.0" },
+      { provider: "Claude Code", note: "Manual update", version: "v2.1.283 to v2.1.284" },
+    ]);
+    expect(buttons()).toEqual(["Settings", "Update Codex"]);
+
+    act(() => button("Update Codex").click());
+    expect(handlers.onUpdateAll).toHaveBeenCalledWith([CODEX]);
+  });
+
+  it("routes an all-manual merge to settings without an update action", () => {
+    render({ kind: "availableMany", views: [CODEX_MANUAL, CLAUDE_MANUAL] });
+
+    expect(rows()).toEqual([
+      { provider: "Codex", note: "Manual update", version: "v0.159.0" },
+      { provider: "Claude Code", note: "Manual update", version: "v2.1.283 to v2.1.284" },
+    ]);
+    expect(buttons()).toEqual(["Settings"]);
+    expect(host.querySelector(".toast-notification-action--primary")?.textContent).toBe("Settings");
+    expect(handlers.onUpdateAll).not.toHaveBeenCalled();
   });
 
   it("shows the running update without actions", () => {
@@ -86,7 +120,7 @@ describe("AgentProviderUpdatesToast", () => {
     render({ kind: "updated", provider: "codex", version: CODEX.availableVersion });
 
     expect(host.querySelector(".toast-notification--success")?.textContent).toContain(
-      "Codex updated: v0.153.4",
+      "Codex updated: v0.159.0",
     );
     expect(host.textContent).toContain(
       "Your next message will use the updated CLI, including in existing conversations.",
@@ -135,20 +169,20 @@ describe("AgentProviderUpdatesToast", () => {
 
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Provider update failed");
     expect(host.textContent).toContain("The installer exited with an error.");
-    expect(host.textContent).toContain("offered v0.153.4");
+    expect(host.textContent).toContain("offered v0.159.0");
     expect(host.textContent).toContain("still on v0.152.0");
 
     act(() => button("Copy error").click());
     expect(handlers.onCopyError).toHaveBeenCalledWith(
       [
         "Codex update failed: The installer exited with an error.",
-        "Offered version: 0.153.4",
+        "Offered version: 0.159.0",
         "Installed version: 0.152.0",
         "npm ERR! code 1",
       ].join("\n"),
     );
     act(() => button("Retry").click());
-    expect(handlers.onRetry).toHaveBeenCalledWith("codex", "0.153.4");
+    expect(handlers.onRetry).toHaveBeenCalledWith("codex", "0.159.0");
   });
 
   it("names the exact cause and both versions for a policy-free failure", () => {
@@ -189,7 +223,7 @@ describe("AgentProviderUpdatesToast", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toContain(
       "Claude Code did not change version",
     );
-    expect(host.textContent).toContain("The updater ran but Claude Code is still on v2.1.0.");
+    expect(host.textContent).toContain("The updater ran but Claude Code is still on v2.1.284.");
     expect(host.textContent).toContain(
       `v${CODEX.availableVersion} is published but did not apply to this install.`,
     );
@@ -245,7 +279,7 @@ describe("AgentProviderUpdatesToast", () => {
       "Provider update not started",
     );
     expect(host.textContent).toContain(
-      "Codex v0.153.4 was not updated. A provider turn is running.",
+      "Codex v0.159.0 was not updated. A provider turn is running.",
     );
     expect(buttons()).toEqual(["Settings"]);
     act(() =>
@@ -253,6 +287,21 @@ describe("AgentProviderUpdatesToast", () => {
     );
     expect(handlers.onDismiss).toHaveBeenCalledOnce();
   });
+
+  function accessibleText(element: Element | null): string {
+    if (element === null) return "";
+    const clone = element.cloneNode(true) as Element;
+    clone.querySelectorAll('[aria-hidden="true"]').forEach((hidden) => hidden.remove());
+    return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function rows(): { provider: string; note: string | null; version: string }[] {
+    return Array.from(host.querySelectorAll(".toast-update-row")).map((row) => ({
+      provider: row.querySelector(".toast-update-row__provider")?.textContent ?? "",
+      note: row.querySelector(".toast-update-row__note")?.textContent ?? null,
+      version: accessibleText(row.querySelector(".toast-update-row__version")),
+    }));
+  }
 
   function buttons(): string[] {
     return Array.from(host.querySelectorAll(".toast-notification-action")).map(

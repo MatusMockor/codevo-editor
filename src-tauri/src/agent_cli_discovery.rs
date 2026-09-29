@@ -2,7 +2,7 @@ use crate::agent_task_spawner::agent_provider::agent_cli_version::{
     now_epoch_ms, AgentCliVersionProbeRequest, AgentCliVersionRegistry,
 };
 use crate::agent_task_spawner::agent_provider::runtime::{
-    AgentProviderExecutableResolver, ResolvedProviderExecutable,
+    AgentProviderExecutableResolver, ProviderEntryPoint, ResolvedProviderExecutable,
 };
 use crate::agent_task_spawner::{
     agent_cli_binary_unavailable_error,
@@ -404,13 +404,13 @@ impl AgentCliDiscovery {
         let snapshot = Arc::new(EffectiveExecutableEnvironment {
             claude_code: self.discover_provider(
                 AgentCliInvocation::ClaudeCode,
-                "claude",
+                provider_executable_name(AgentCliInvocation::ClaudeCode),
                 &effective_path,
                 previous.and_then(|snapshot| snapshot.provider(AgentCliInvocation::ClaudeCode)),
             ),
             codex: self.discover_provider(
                 AgentCliInvocation::CodexExec,
-                "codex",
+                provider_executable_name(AgentCliInvocation::CodexExec),
                 &effective_path,
                 previous.and_then(|snapshot| snapshot.provider(AgentCliInvocation::CodexExec)),
             ),
@@ -612,6 +612,38 @@ fn bounded_model_id(value: &str) -> Option<String> {
 
 #[path = "agent_cli_discovery/provider_resolution.rs"]
 mod provider_resolution;
+
+pub(crate) fn provider_executable_name(provider: AgentCliInvocation) -> &'static str {
+    match provider {
+        AgentCliInvocation::ClaudeCode => "claude",
+        AgentCliInvocation::CodexExec => "codex",
+    }
+}
+
+pub(crate) fn provider_entry_point(
+    provider: AgentCliInvocation,
+    manual_override: Option<&str>,
+    effective_path: &str,
+) -> Option<ProviderEntryPoint> {
+    if let Some(manual) = manual_override {
+        let canonical = bounded_manual_path(manual)?;
+        return Some(ProviderEntryPoint {
+            unresolved: PathBuf::from(manual),
+            canonical,
+        });
+    }
+    let executable_name = provider_executable_name(provider);
+    split_path(effective_path)
+        .into_iter()
+        .find_map(|directory| {
+            let candidate = directory.join(executable_name);
+            let canonical = bounded_executable_path(&candidate)?;
+            Some(ProviderEntryPoint {
+                unresolved: candidate,
+                canonical,
+            })
+        })
+}
 
 fn bounded_manual_path(path: &str) -> Option<PathBuf> {
     if path.is_empty() || path.len() > MAX_AGENT_CLI_PATH_BYTES {

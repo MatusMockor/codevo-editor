@@ -23,8 +23,8 @@ describe("composeToastNotices", () => {
     ]);
     expect(notices.map((notice) => notice.groupKey)).toEqual(notices.map((notice) => notice.id));
     expect(notices.map((notice) => notice.message)).toEqual([
-      "Update Available: Codex v0.153.4",
-      "Update Available: Codevo v0.2.0",
+      "Update available: Codex v0.153.4",
+      "Update available: Codevo v0.2.0",
     ]);
     expect(notices.map((notice) => notice.severity)).toEqual(["info", "info"]);
     expect(composeToastNotices(sources, [])).toEqual(notices);

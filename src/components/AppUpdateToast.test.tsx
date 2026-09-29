@@ -43,7 +43,7 @@ describe("AppUpdateToast", () => {
     });
 
     expect(host.querySelector('[role="status"]')?.textContent).toContain(
-      "Update Available: Codevo v0.2.0",
+      "Update available: Codevo v0.2.0",
     );
     expect(host.textContent).toContain("Installed v0.1.0");
     expect(host.textContent).toContain("Released 2026-08-29");

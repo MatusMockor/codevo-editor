@@ -34,6 +34,21 @@ pub trait AgentProviderExecutableResolver: Send + Sync {
     ) -> Result<ResolvedProviderExecutable, String> {
         self.resolve_provider(provider, manual_override, false)
     }
+
+    fn entry_point(
+        &self,
+        _provider: AgentCliInvocation,
+        _manual_override: Option<&str>,
+        _effective_path: &str,
+    ) -> Option<ProviderEntryPoint> {
+        None
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderEntryPoint {
+    pub unresolved: std::path::PathBuf,
+    pub canonical: std::path::PathBuf,
 }
 
 #[derive(Clone, Copy)]

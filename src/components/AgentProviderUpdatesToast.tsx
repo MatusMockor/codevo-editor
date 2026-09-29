@@ -3,12 +3,14 @@ import { useEffect, useRef, type ReactElement } from "react";
 import type { AgentCliKind } from "../domain/agentSettings";
 import { AgentProviderGlyph } from "./agentMode/AgentProviderGlyph";
 import { agentProviderLabel } from "./agentMode/agentSidebarPresentation";
+import { AgentProviderUpdateRows } from "./AgentProviderUpdateRows";
 import {
+  agentProviderUpdateAllLabel,
   agentProviderUpdateFailureSentence,
-  agentProviderUpdateInstallerLabel,
   agentProviderUpdateRefusalSentence,
   agentProviderUpdateToastGroupKey,
   agentProviderUpdateToastTitle,
+  oneClickAgentProviderUpdates,
   type AgentProviderUpdateToastPresentation,
   type AgentProviderUpdateToastView,
   type AgentProviderUpdateVersion,
@@ -59,32 +61,13 @@ export function AgentProviderUpdatesToast({
     case "availableMany":
       return (
         <ToastNotification
-          actions={[
-            { id: "settings", label: "Settings", onClick: onOpenSettings, tone: "secondary" },
-            {
-              id: "update-all",
-              label: "Update all",
-              onClick: () => onUpdateAll(presentation.views),
-              tone: "primary",
-            },
-          ]}
-          description="Install the updates now or review provider settings."
+          actions={availableManyActions(presentation.views, { onOpenSettings, onUpdateAll })}
+          body={<AgentProviderUpdateRows views={presentation.views} />}
           icon={
             <ToastMark badge="update">
               <AgentProviderGlyph decorative kind={presentation.views[0].provider} />
             </ToastMark>
           }
-          meta={presentation.views.map((view) => (
-            <span key={view.provider}>
-              {agentProviderLabel(view.provider)} v{view.availableVersion}
-              {view.details ? (
-                <>
-                  {" "}
-                  <code>{agentProviderUpdateInstallerLabel(view.details.installer)}</code>
-                </>
-              ) : null}
-            </span>
-          ))}
           onClose={onDismiss}
           template="info"
           title={agentProviderUpdateToastTitle(presentation)}
@@ -166,6 +149,29 @@ export function AgentProviderUpdatesToast({
     default:
       return unsupportedPresentation(presentation);
   }
+}
+
+function availableManyActions(
+  views: readonly AgentProviderUpdateToastView[],
+  handlers: Pick<AgentProviderUpdatesToastProps, "onOpenSettings" | "onUpdateAll">,
+): ToastNotificationAction[] {
+  const updateLabel = agentProviderUpdateAllLabel(views);
+  const settings: ToastNotificationAction = {
+    id: "settings",
+    label: "Settings",
+    onClick: handlers.onOpenSettings,
+    tone: updateLabel === null ? "primary" : "secondary",
+  };
+  if (updateLabel === null) return [settings];
+  return [
+    settings,
+    {
+      id: "update-all",
+      label: updateLabel,
+      onClick: () => handlers.onUpdateAll(oneClickAgentProviderUpdates(views)),
+      tone: "primary",
+    },
+  ];
 }
 
 function failedActions(

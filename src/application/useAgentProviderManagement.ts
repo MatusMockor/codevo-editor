@@ -70,6 +70,7 @@ import {
 import { useAgentCliDiscovery, type AgentCliDiscoveryPublication } from "./useAgentCliDiscovery";
 
 import { createAgentProviderUpdateChecks } from "./agentProviderUpdateChecks";
+import { updateOfferToast, withoutSatisfiedUpdateOffer } from "./agentProviderUpdateOffer";
 import { refreshAgentProviderBatch } from "./agentProviderRefresh";
 
 const PROVIDERS: readonly AgentCliKind[] = ["claudeCode", "codex"];
@@ -382,21 +383,24 @@ export function useAgentProviderManagement(
             authorityRef.current[provider]?.preference,
           );
           publish(provider, (current) => ({ ...current, health: { kind: "ready", ...checked } }));
+          setToast((current) =>
+            withoutSatisfiedUpdateOffer(current, provider, checked.installedVersion, (other) => {
+              const health = runtimeRef.current[other].health;
+              if (health.kind !== "ready") return null;
+              const dismissed = authorityRef.current[other]?.preference.dismissedUpdateVersion;
+              return updateOfferToast(other, health.update, dismissed);
+            }),
+          );
           if (!ownerIsCurrent(owner)) return null;
-          if (
-            checked.update.kind !== "available" &&
-            checked.update.kind !== "manualUpdateAvailable"
-          )
-            return checked;
           const preference = authorityRef.current[provider]?.preference;
-          if (preference === undefined) return null;
-          if (preference.dismissedUpdateVersion === checked.update.availableVersion) return checked;
-          setToast({
-            kind: "updateAvailable",
+          const offer = updateOfferToast(
             provider,
-            version: checked.update.availableVersion,
-            ...(checked.update.kind === "manualUpdateAvailable" ? { manual: true as const } : {}),
-          });
+            checked.update,
+            preference?.dismissedUpdateVersion,
+          );
+          if (offer === null) return checked;
+          if (preference === undefined) return null;
+          setToast(offer);
           return checked;
         } catch (error) {
           if (!ownerIsCurrent(owner)) return null;
@@ -451,31 +455,22 @@ export function useAgentProviderManagement(
               });
               const checked = runtimeRef.current[provider].health;
               if (checked.kind !== "ready") return;
-              if (
-                checked.update.kind !== "available" &&
-                checked.update.kind !== "manualUpdateAvailable"
-              )
-                return;
-              if (
-                authorityRef.current[provider]?.preference.dismissedUpdateVersion ===
-                checked.update.availableVersion
-              )
-                return;
-              setToast({
-                kind: "updateAvailable",
+              const offer = updateOfferToast(
                 provider,
-                version: checked.update.availableVersion,
-                ...(checked.update.kind === "manualUpdateAvailable"
-                  ? { manual: true as const }
-                  : {}),
-              });
+                checked.update,
+                authorityRef.current[provider]?.preference.dismissedUpdateVersion,
+              );
+              if (offer !== null) setToast(offer);
+            },
+            executableChanged: () => {
+              void refreshHealth(provider);
             },
             reportError: (error) =>
               dependenciesRef.current.reportError("Agent provider update check", error),
           };
         },
       }),
-    [currentOwner, ownerIsCurrent, publish],
+    [currentOwner, ownerIsCurrent, publish, refreshHealth],
   );
 
   const scheduleHealth = useCallback(

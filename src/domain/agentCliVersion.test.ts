@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { agentCliBinaryUnavailableMessage, parseAgentCliVersion } from "./agentCliVersion";
+import {
+  agentCliBinaryUnavailableMessage,
+  compareAgentCliVersions,
+  parseAgentCliVersion,
+} from "./agentCliVersion";
 
 describe("parseAgentCliVersion", () => {
   it("accepts bounded canonical version strings", () => {
@@ -31,6 +35,33 @@ describe("parseAgentCliVersion", () => {
   });
 });
 
+describe("compareAgentCliVersions", () => {
+  it("orders numeric segments by value, treating missing segments as zero", () => {
+    expect(compareAgentCliVersions("0.157.1", "0.159.0")).toBe(-1);
+    expect(compareAgentCliVersions("2.1.284", "2.1.284")).toBe(0);
+    expect(compareAgentCliVersions("2.1.285", "2.1.284")).toBe(1);
+    expect(compareAgentCliVersions("2.1.9", "2.1.10")).toBe(-1);
+    expect(compareAgentCliVersions("1.2", "1.2.0")).toBe(0);
+    expect(compareAgentCliVersions("1.2.0.1", "1.2")).toBe(1);
+  });
+
+  it("orders a prerelease below its release and compares identifiers like the backend", () => {
+    expect(compareAgentCliVersions("0.104.0-alpha.1", "0.104.0")).toBe(-1);
+    expect(compareAgentCliVersions("0.104.0", "0.104.0-alpha.1")).toBe(1);
+    expect(compareAgentCliVersions("0.104.0-alpha.2", "0.104.0-alpha.10")).toBe(-1);
+    expect(compareAgentCliVersions("0.104.0-1", "0.104.0-alpha")).toBe(-1);
+    expect(compareAgentCliVersions("0.104.0-beta", "0.104.0-alpha")).toBe(1);
+    expect(compareAgentCliVersions("0.104.0-alpha", "0.104.0-alpha.1")).toBe(-1);
+    expect(compareAgentCliVersions("0.104.0-alpha.01", "0.104.0-alpha.1")).toBe(0);
+  });
+
+  it("fails closed with null when either side is not a canonical version", () => {
+    expect(compareAgentCliVersions("v2.1", "2.1.0")).toBeNull();
+    expect(compareAgentCliVersions("2.1.0", " 2.1.0 ")).toBeNull();
+    expect(compareAgentCliVersions("2.1.0", null)).toBeNull();
+  });
+});
+
 describe("agent CLI version messages", () => {
   it("explains a missing binary for both CLI kinds", () => {
     expect(agentCliBinaryUnavailableMessage("claudeCode")).toBe(
@@ -48,6 +79,7 @@ describe("agentCliVersion module surface", () => {
 
     expect(Object.keys(module).sort()).toEqual([
       "agentCliBinaryUnavailableMessage",
+      "compareAgentCliVersions",
       "parseAgentCliVersion",
     ]);
   });

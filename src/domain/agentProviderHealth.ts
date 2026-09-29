@@ -168,8 +168,12 @@ export interface AgentProviderHealthGateway {
   ): Promise<AgentProviderHealthProbeResult>;
 }
 
+export type AgentProviderUpdateCheckOutcome =
+  | Exclude<AgentProviderUpdateAvailability, { readonly kind: "checking" }>
+  | { readonly kind: "executableChanged" };
+
 export interface AgentProviderUpdateCheckResult {
-  readonly update: Exclude<AgentProviderUpdateAvailability, { readonly kind: "checking" }>;
+  readonly update: AgentProviderUpdateCheckOutcome;
   readonly checkedAtEpochMs: number;
 }
 
@@ -370,7 +374,7 @@ export function parseAgentProviderUpdateCheckResult(
   const result = object(value, "result");
   exactKeys(result, ["update", "checkedAtEpochMs"], "result");
   return {
-    update: updateAvailability(kind, result.update, "result.update"),
+    update: updateCheckOutcome(kind, result.update, "result.update"),
     checkedAtEpochMs: unsignedInteger(result.checkedAtEpochMs, "result.checkedAtEpochMs"),
   };
 }
@@ -587,6 +591,17 @@ function authState(value: unknown, path: string): AgentProviderAuthState {
     return { kind: auth.kind };
   }
   return invalid(`${path}.kind`, "expected signedIn, signedOut, or unknown");
+}
+
+function updateCheckOutcome(
+  kind: AgentCliKind,
+  value: unknown,
+  path: string,
+): AgentProviderUpdateCheckOutcome {
+  const outcome = object(value, path);
+  if (outcome.kind !== "executableChanged") return updateAvailability(kind, value, path);
+  exactKeys(outcome, ["kind"], path);
+  return { kind: "executableChanged" };
 }
 
 function updateAvailability(

@@ -3,9 +3,9 @@ import type {
   AgentProviderManagementView,
   AgentProviderUpdateRefusal,
 } from "../application/useAgentProviderManagement";
-import { parseAgentCliVersion } from "../domain/agentCliVersion";
+import { compareAgentCliVersions, parseAgentCliVersion } from "../domain/agentCliVersion";
 import type {
-  AgentProviderInstaller,
+  AgentProviderHealthState,
   AgentProviderUpdateFailureReason,
 } from "../domain/agentProviderHealth";
 import type { AgentCliKind } from "../domain/agentSettings";
@@ -17,18 +17,11 @@ export type AgentProviderUpdateVersion = string & {
   readonly [AGENT_PROVIDER_UPDATE_VERSION]: "AgentProviderUpdateVersion";
 };
 
-export type AgentProviderUpdateInstallerKind = AgentProviderInstaller["kind"];
-
-export interface AgentProviderUpdateToastDetails {
-  readonly installedVersion: string | null;
-  readonly installer: AgentProviderUpdateInstallerKind;
-}
-
 export interface AgentProviderUpdateToastView {
   readonly provider: AgentCliKind;
   readonly availableVersion: AgentProviderUpdateVersion;
+  readonly installedVersion?: AgentProviderUpdateVersion;
   readonly manual?: true;
-  readonly details?: AgentProviderUpdateToastDetails;
 }
 
 export type AgentProviderUpdateToastFailureReason =
@@ -87,19 +80,17 @@ export function createAgentProviderUpdateToastView(
   provider: AgentCliKind,
   availableVersion: unknown,
   manual?: true,
-  details?: AgentProviderUpdateToastDetails,
+  installedVersion?: unknown,
 ): AgentProviderUpdateToastView | null {
-  const parsedVersion = parseAgentCliVersion(availableVersion);
+  const available = parseUpdateVersion(availableVersion);
+  if (!available) return null;
+  const view = { availableVersion: available, provider, ...(manual ? { manual } : {}) };
+  if (installedVersion === undefined || installedVersion === null) return view;
 
-  if (!parsedVersion) return null;
-  if (parsedVersion !== availableVersion) return null;
-
-  return {
-    availableVersion: parsedVersion as AgentProviderUpdateVersion,
-    provider,
-    ...(manual ? { manual } : {}),
-    ...(details ? { details } : {}),
-  };
+  const installed = parseUpdateVersion(installedVersion);
+  if (!installed) return null;
+  if (compareAgentCliVersions(installed, available) !== -1) return null;
+  return { ...view, installedVersion: installed };
 }
 
 export function agentProviderUpdateNoticeGroupKey(
@@ -161,9 +152,9 @@ export function agentProviderUpdateToastTitle(
 ): string {
   switch (presentation.kind) {
     case "available":
-      return `Update Available: ${agentProviderLabel(presentation.view.provider)} v${presentation.view.availableVersion}`;
+      return "Update available";
     case "availableMany":
-      return `Updates Available: ${presentation.views.length} providers`;
+      return `${presentation.views.length} provider updates`;
     case "updating":
       return "Updating provider";
     case "updated":
@@ -177,6 +168,48 @@ export function agentProviderUpdateToastTitle(
     default:
       return unsupportedPresentation(presentation);
   }
+}
+
+export function agentProviderUpdateVersionTransition(view: AgentProviderUpdateToastView): {
+  readonly from: string | null;
+  readonly to: string;
+} {
+  const to = `v${view.availableVersion}`;
+  if (view.installedVersion === undefined) return { from: null, to };
+  return { from: `v${view.installedVersion}`, to };
+}
+
+export function agentProviderUpdateNoticeMessage(
+  presentation: AgentProviderUpdateToastPresentation,
+): string {
+  switch (presentation.kind) {
+    case "available":
+      return `Update available: ${offeredUpdateLabel(presentation.view)}`;
+    case "availableMany":
+      return `${agentProviderUpdateToastTitle(presentation)}: ${presentation.views.map(offeredUpdateLabel).join(", ")}`;
+    default:
+      return agentProviderUpdateToastTitle(presentation);
+  }
+}
+
+function offeredUpdateLabel(view: AgentProviderUpdateToastView): string {
+  return `${agentProviderLabel(view.provider)} v${view.availableVersion}`;
+}
+
+export function oneClickAgentProviderUpdates(
+  views: readonly AgentProviderUpdateToastView[],
+): readonly AgentProviderUpdateToastView[] {
+  return views.filter((view) => view.manual !== true);
+}
+
+export function agentProviderUpdateAllLabel(
+  views: readonly AgentProviderUpdateToastView[],
+): string | null {
+  const oneClick = oneClickAgentProviderUpdates(views);
+  if (oneClick.length === 0) return null;
+  if (oneClick.length === views.length) return "Update all";
+  if (oneClick.length === 1) return `Update ${agentProviderLabel(oneClick[0]!.provider)}`;
+  return `Update ${oneClick.length}`;
 }
 
 export function presentAgentProviderUpdateToast(
@@ -261,67 +294,51 @@ export function agentProviderUpdateRefusalSentence(refusal: AgentProviderUpdateR
   }
 }
 
-export function agentProviderUpdateInstallerLabel(
-  installer: AgentProviderUpdateInstallerKind,
-): string {
-  switch (installer) {
-    case "npm":
-      return "npm";
-    case "homebrew":
-      return "Homebrew";
-    case "selfUpdate":
-      return "built-in updater";
-    case "unknown":
-      return "unknown";
-    default:
-      return unsupportedInstaller(installer);
-  }
-}
-
 function presentAvailable(
   source: AgentProviderUpdateToastSource,
   provider: AgentCliKind,
   version: string,
   manual: true | undefined,
 ): AgentProviderUpdateToastPresentation | null {
-  const view = createAgentProviderUpdateToastView(
-    provider,
-    version,
-    manual,
-    detailsFor(source.providers[provider]),
-  );
-  if (!view) return null;
-  if (manual) return { kind: "available", view };
-
+  const offered = offeredUpdateView(provider, source.providers[provider].health, manual);
+  const confirmed = offered?.availableVersion === version ? [offered] : [];
   const others = PROVIDER_ORDER.filter((candidate) => candidate !== provider)
-    .map((candidate) => pendingOneClickUpdate(source, candidate))
+    .map((candidate) => pendingUpdate(source, candidate))
     .filter((candidate): candidate is AgentProviderUpdateToastView => candidate !== null);
-  if (others.length === 0) return { kind: "available", view };
-
-  return {
-    kind: "availableMany",
-    views: [view, ...others.slice(0, MAX_MERGED_PROVIDER_UPDATES - 1)],
-  };
+  const [first, ...rest] = [...confirmed, ...others].slice(0, MAX_MERGED_PROVIDER_UPDATES);
+  if (first === undefined) return null;
+  if (rest.length === 0) return { kind: "available", view: first };
+  return { kind: "availableMany", views: [first, ...rest] };
 }
 
-function pendingOneClickUpdate(
+function pendingUpdate(
   source: AgentProviderUpdateToastSource,
   provider: AgentCliKind,
 ): AgentProviderUpdateToastView | null {
   const view = source.providers[provider];
-  if (view.health.kind !== "ready") return null;
-  if (view.health.update.kind !== "available") return null;
   if (view.updateState.kind !== "idle") return null;
   const authority = source.authority(provider);
   if (authority === null) return null;
-  if (authority.preference.dismissedUpdateVersion === view.health.update.availableVersion) {
-    return null;
-  }
+  const offer = offeredUpdateView(provider, view.health, undefined);
+  if (offer === null) return null;
+  if (authority.preference.dismissedUpdateVersion === offer.availableVersion) return null;
+  return offer;
+}
+
+function offeredUpdateView(
+  provider: AgentCliKind,
+  health: AgentProviderHealthState,
+  manual: true | undefined,
+): AgentProviderUpdateToastView | null {
+  if (health.kind !== "ready") return null;
+  const update = health.update;
+  if (update.kind !== "available" && update.kind !== "manualUpdateAvailable") return null;
+  const requiresManualUpdate = manual === true || update.kind === "manualUpdateAvailable";
   return createAgentProviderUpdateToastView(
     provider,
-    view.health.update.availableVersion,
-    undefined,
-    detailsFor(view),
+    update.availableVersion,
+    requiresManualUpdate ? true : undefined,
+    health.installedVersion,
   );
 }
 
@@ -376,15 +393,6 @@ function firstUpdatingProvider(
   return null;
 }
 
-function detailsFor(view: AgentProviderManagementView): AgentProviderUpdateToastDetails {
-  if (view.health.kind !== "ready") return { installedVersion: null, installer: "unknown" };
-  return {
-    installedVersion: view.health.installedVersion,
-    installer:
-      view.health.update.kind === "available" ? view.health.update.installer.kind : "unknown",
-  };
-}
-
 function parseUpdateVersion(value: unknown): AgentProviderUpdateVersion | null {
   const parsed = parseAgentCliVersion(value);
   if (!parsed) return null;
@@ -406,8 +414,4 @@ function unsupportedRefusal(refusal: never): never {
 
 function unsupportedReason(reason: never): never {
   throw new TypeError(`Unsupported update failure reason: ${String(reason)}.`);
-}
-
-function unsupportedInstaller(installer: never): never {
-  throw new TypeError(`Unsupported installer: ${String(installer)}.`);
 }

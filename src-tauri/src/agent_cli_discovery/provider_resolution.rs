@@ -1,6 +1,15 @@
 use super::*;
 
 impl AgentProviderExecutableResolver for AgentCliDiscovery {
+    fn entry_point(
+        &self,
+        provider: AgentCliInvocation,
+        manual_override: Option<&str>,
+        effective_path: &str,
+    ) -> Option<ProviderEntryPoint> {
+        provider_entry_point(provider, manual_override, effective_path)
+    }
+
     fn observed_version(
         &self,
         provider: AgentCliInvocation,

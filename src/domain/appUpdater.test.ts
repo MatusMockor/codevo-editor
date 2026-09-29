@@ -221,6 +221,9 @@ describe("app update toast presentation", () => {
     expect(presentation === null ? null : appUpdateToastTitle(presentation)).toBe(
       "Newer update available after restart",
     );
+    expect(appUpdateToastTitle({ kind: "readyToInstall", version: "0.2.0" })).toBe(
+      "Update available: Codevo v0.2.0",
+    );
     expect(reduceAppUpdaterState(outdated, { kind: "installStarted", generation: 10 })).toEqual({
       kind: "installing",
       generation: 10,

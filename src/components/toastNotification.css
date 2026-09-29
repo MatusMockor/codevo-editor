@@ -27,7 +27,6 @@
   --toast-error-soft: var(--cv-danger-soft);
   --toast-warning: var(--cv-warn);
   --toast-warning-soft: var(--cv-warn-soft);
-  --toast-mono: var(--cv-font-mono);
   --toast-shadow: var(--cv-shadow-pop);
   --toast-focus-ring: var(--cv-ring-focus);
 }
@@ -203,11 +202,17 @@
   overflow-wrap: anywhere;
 }
 
+.toast-notification__meta-clip {
+  margin-block-start: 2px;
+  overflow: hidden;
+}
+
 .toast-notification__meta {
+  --toast-meta-gap: var(--cv-space-5);
   display: flex;
   flex-wrap: wrap;
-  gap: 0 6px;
-  margin: 2px 0 0;
+  margin: 0;
+  margin-inline-start: calc(var(--toast-meta-gap) * -1);
   padding: 0;
   list-style: none;
   color: var(--toast-muted);
@@ -215,19 +220,83 @@
   line-height: 16px;
 }
 
-.toast-notification__meta > li + li::before {
-  content: "·";
-  margin-right: 6px;
+.toast-notification__meta > li {
+  position: relative;
+  min-width: 0;
+  margin-inline-start: var(--toast-meta-gap);
+  overflow-wrap: anywhere;
 }
 
-.toast-notification__meta code {
-  padding: 0 5px;
-  border: 0;
-  border-radius: var(--toast-radius-pill);
-  background: var(--toast-well);
+.toast-notification__meta > li::before {
+  content: "·";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 100%;
+  inline-size: var(--toast-meta-gap);
+  text-align: center;
+}
+
+.toast-update-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.toast-update-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 12px;
+}
+
+.toast-update-row__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  min-width: 0;
+}
+
+.toast-update-row__provider {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--toast-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-update-row__note {
   color: var(--toast-muted);
-  font-family: var(--toast-mono);
-  font-size: 11px;
+  white-space: nowrap;
+}
+
+.toast-update-row__version {
+  color: var(--toast-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.toast-update-row__arrow {
+  margin-inline: var(--cv-space-2);
+  color: var(--toast-subtle);
+}
+
+.toast-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.toast-update-row__to {
+  color: var(--toast-foreground);
 }
 
 .toast-install-progress-note {

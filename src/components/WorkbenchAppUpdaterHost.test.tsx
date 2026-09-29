@@ -14,7 +14,8 @@ import {
   type WorkbenchNotice,
 } from "../application/workbenchNotice";
 import type { AppUpdaterGateway } from "../domain/appUpdater";
-import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
+import type { AgentProviderHealthState } from "../domain/agentProviderHealth";
+import { defaultAgentCliDiscoveryResult, type AgentCliKind } from "../domain/agentSettings";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
@@ -69,6 +70,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     const props = hostProps({
       providerManagement: {
         ...providerManagement(),
+        providers: providersOffering("codex", "0.150.1"),
         toast: { kind: "updateAvailable", provider: "codex", version: "0.150.1" },
         dismissUpdate,
         update,
@@ -76,7 +78,8 @@ describe("WorkbenchAppUpdaterHost", () => {
     });
     await render(props);
 
-    expect(host.querySelector(".toast-region")?.textContent).toContain("Codex v0.150.1");
+    expect(host.querySelector(".toast-update-row__provider")?.textContent).toBe("Codex");
+    expect(host.querySelector(".toast-update-row__to")?.textContent).toBe("v0.150.1");
     expect(host.querySelector('[role="status"]')).not.toBeNull();
     dismissUpdate.mockResolvedValueOnce(false);
     await act(async () => {
@@ -99,6 +102,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     const props = hostProps({
       providerManagement: {
         ...providerManagement(),
+        providers: providersOffering("claudeCode", "1.2.3", "manual"),
         toast: { kind: "updateAvailable", provider: "claudeCode", version: "1.2.3", manual: true },
         dismissToast,
       },
@@ -118,7 +122,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     await render(props);
 
     await waitForReact(() => {
-      expect(host.textContent).toContain("Update Available: Codevo v0.2.0");
+      expect(host.textContent).toContain("Update available: Codevo v0.2.0");
     });
     expect(host.querySelector('[role="dialog"]')).toBeNull();
 
@@ -162,7 +166,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     expect(slots[0]?.querySelector('[role="alert"]')?.textContent).toContain("Crashed");
     expect(slots[1]?.textContent).toContain("Codex updated: v0.150.1");
     expect(slots[1]?.getAttribute("aria-hidden")).toBe("true");
-    expect(host.textContent).not.toContain("Update Available: Codevo v0.2.0");
+    expect(host.textContent).not.toContain("Update available: Codevo v0.2.0");
   });
 
   it("stacks the application update behind a provider toast", async () => {
@@ -181,7 +185,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     });
     const slots = Array.from(host.querySelectorAll(".toast-region__slot"));
     expect(slots[0]?.textContent).toContain("Codex updated: v0.150.1");
-    expect(slots[1]?.textContent).toContain("Update Available: Codevo v0.2.0");
+    expect(slots[1]?.textContent).toContain("Update available: Codevo v0.2.0");
     expect(slots[1]?.getAttribute("aria-hidden")).toBe("true");
   });
 
@@ -189,6 +193,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     const update = vi.fn(async () => "turnActive" as const);
     const management = {
       ...providerManagement(),
+      providers: providersOffering("codex", "0.150.1"),
       toast: { kind: "updateAvailable", provider: "codex", version: "0.150.1" } as const,
       update,
     };
@@ -205,13 +210,14 @@ describe("WorkbenchAppUpdaterHost", () => {
       ...props,
       providerManagement: {
         ...management,
+        providers: providersOffering("codex", "0.150.2"),
         toast: { kind: "updateAvailable", provider: "codex", version: "0.150.2" },
       },
     });
     await waitForReact(() => {
       expect(host.textContent).not.toContain("Provider update not started");
     });
-    expect(host.textContent).toContain("Codex v0.150.2");
+    expect(host.querySelector(".toast-update-row__to")?.textContent).toBe("v0.150.2");
   });
 
   it("keeps a failed startup check silent", async () => {
@@ -232,7 +238,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     await render(props);
 
     await waitForReact(() => {
-      expect(host.textContent).toContain("Update Available: Codevo v0.2.0");
+      expect(host.textContent).toContain("Update available: Codevo v0.2.0");
     });
     expect(mocks.settingsSurfaceActive.length).toBeGreaterThan(0);
     expect(mocks.settingsSurfaceActive.every((active) => !active)).toBe(true);
@@ -360,6 +366,33 @@ function fileGateway(): NodeLaunchConfigurationFileGateway {
     readTextFileSnapshot: async () => ({ content: "", revision: null }),
     writeTextFileForWorkspace: async () => ({ status: "success", revision: null }),
   };
+}
+
+function providersOffering(
+  provider: AgentCliKind,
+  availableVersion: string,
+  installation: "oneClick" | "manual" = "oneClick",
+): AgentProviderManagementSurface["providers"] {
+  const providers = providerManagement().providers;
+  const health: AgentProviderHealthState = {
+    kind: "ready",
+    installedVersion: "0.1.0",
+    auth: { kind: "unknown" },
+    update:
+      installation === "manual"
+        ? { kind: "manualUpdateAvailable", installedVersion: "0.1.0", availableVersion }
+        : {
+            kind: "available",
+            installedVersion: "0.1.0",
+            availableVersion,
+            installer: {
+              kind: "selfUpdate",
+              command: provider === "codex" ? "codexUpdate" : "claudeUpdate",
+            },
+          },
+    checkedAtEpochMs: 1,
+  };
+  return { ...providers, [provider]: { ...providers[provider], health } };
 }
 
 function providerManagement(

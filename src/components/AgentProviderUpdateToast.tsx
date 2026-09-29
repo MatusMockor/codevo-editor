@@ -1,12 +1,12 @@
 import { Copy } from "lucide-react";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement } from "react";
 import { agentCliInstallCommand } from "../domain/agentSettings";
 import { AgentProviderGlyph } from "./agentMode/AgentProviderGlyph";
 import { agentProviderLabel } from "./agentMode/agentSidebarPresentation";
+import { AgentProviderUpdateRows } from "./AgentProviderUpdateRows";
 import { writeClipboardText } from "./clipboardText";
 import {
-  agentProviderUpdateInstallerLabel,
-  type AgentProviderUpdateToastDetails,
+  agentProviderUpdateToastTitle,
   type AgentProviderUpdateToastView,
 } from "./agentProviderUpdateToastPresenter";
 import { ToastMark, ToastNotification, type ToastNotificationAction } from "./ToastNotification";
@@ -24,20 +24,23 @@ export function AgentProviderUpdateToast({
   onUpdate,
   view,
 }: AgentProviderUpdateToastProps): ReactElement {
-  const provider = agentProviderLabel(view.provider);
   return (
     <ToastNotification
       actions={toastActions(view, { onOpenSettings, onUpdate })}
-      description={view.manual ? `${provider} can be updated from provider settings.` : undefined}
+      body={<AgentProviderUpdateRows views={[view]} />}
+      description={
+        view.manual
+          ? `${agentProviderLabel(view.provider)} can be updated from provider settings.`
+          : undefined
+      }
       icon={
         <ToastMark badge={view.manual ? "manual" : "update"}>
           <AgentProviderGlyph decorative kind={view.provider} />
         </ToastMark>
       }
-      meta={updateMeta(view.details)}
       onClose={onDismiss}
       template="info"
-      title={`Update Available: ${provider} v${view.availableVersion}`}
+      title={agentProviderUpdateToastTitle({ kind: "available", view })}
     />
   );
 }
@@ -68,13 +71,5 @@ function toastActions(
       tone: "ghost",
     },
     settingsAction,
-  ];
-}
-
-function updateMeta(details: AgentProviderUpdateToastDetails | undefined): readonly ReactNode[] {
-  if (details === undefined) return [];
-  return [
-    details.installedVersion === null ? null : `Installed v${details.installedVersion}`,
-    `via ${agentProviderUpdateInstallerLabel(details.installer)}`,
   ];
 }

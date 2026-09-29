@@ -5,8 +5,8 @@ import {
   type AppUpdateToastPresentation,
 } from "../domain/appUpdater";
 import {
+  agentProviderUpdateNoticeMessage,
   agentProviderUpdateToastGroupKey,
-  agentProviderUpdateToastTitle,
   type AgentProviderUpdateToastPresentation,
 } from "./agentProviderUpdateToastPresenter";
 
@@ -37,7 +37,7 @@ function providerNotice(presentation: AgentProviderUpdateToastPresentation): Wor
   return {
     groupKey,
     id: groupKey,
-    message: agentProviderUpdateToastTitle(presentation),
+    message: agentProviderUpdateNoticeMessage(presentation),
     severity: presentation.kind === "failed" ? "error" : "info",
     source: AGENT_PROVIDER_UPDATE_NOTICE_SOURCE,
   };

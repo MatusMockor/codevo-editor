@@ -1693,6 +1693,110 @@ describe("useAgentProviderManagement", () => {
     harness.unmount();
   });
 
+  it("re-probes a CLI that updated itself and withdraws the offer it already satisfies", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.283", "2.1.284"));
+    await settleHealth(harness, 1, currentHealth("0.159.0"));
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAvailable",
+      provider: "claudeCode",
+      version: "2.1.284",
+    });
+    vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates).mockImplementation(
+      async (request) =>
+        request.provider === "claudeCode"
+          ? { update: { kind: "executableChanged" }, checkedAtEpochMs: 99 }
+          : { update: { kind: "current", installedVersion: "0.159.0" }, checkedAtEpochMs: 99 },
+    );
+
+    await act(async () => harness.hook().refreshAll());
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("2.1.284"));
+
+    expect(harness.hook().providers.claudeCode.health).toMatchObject({
+      kind: "ready",
+      installedVersion: "2.1.284",
+      update: { kind: "current", installedVersion: "2.1.284" },
+    });
+    expect(harness.hook().toast).toBeNull();
+    expect(presentAgentProviderUpdateToast(harness.hook())).toBeNull();
+    harness.unmount();
+  });
+
+  it("hands the toast to another provider's pending offer when its own offer is satisfied", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 1, {
+      ...currentHealth("0.158.0"),
+      update: {
+        kind: "available",
+        installedVersion: "0.158.0",
+        availableVersion: "0.159.0",
+        installer: { kind: "selfUpdate", command: "codexUpdate" },
+      },
+    });
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.283", "2.1.284"));
+    expect(harness.hook().toast).toMatchObject({ provider: "claudeCode", version: "2.1.284" });
+    vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates).mockImplementation(
+      async (request) =>
+        request.provider === "claudeCode"
+          ? { update: { kind: "executableChanged" }, checkedAtEpochMs: 99 }
+          : {
+              update: {
+                kind: "available",
+                installedVersion: "0.158.0",
+                availableVersion: "0.159.0",
+                installer: { kind: "selfUpdate", command: "codexUpdate" },
+              },
+              checkedAtEpochMs: 99,
+            },
+    );
+
+    await act(async () => harness.hook().refreshAll());
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("2.1.284"));
+
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAvailable",
+      provider: "codex",
+      version: "0.159.0",
+    });
+    expect(presentAgentProviderUpdateToast(harness.hook())).toMatchObject({
+      kind: "available",
+      view: { provider: "codex", availableVersion: "0.159.0" },
+    });
+    harness.unmount();
+  });
+
+  it("keeps the offer when the re-probed CLI is still older than the offered version", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.282", "2.1.284"));
+    await settleHealth(harness, 1, currentHealth("0.159.0"));
+    vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates).mockImplementation(
+      async (request) =>
+        request.provider === "claudeCode"
+          ? { update: { kind: "executableChanged" }, checkedAtEpochMs: 99 }
+          : { update: { kind: "current", installedVersion: "0.159.0" }, checkedAtEpochMs: 99 },
+    );
+
+    await act(async () => harness.hook().refreshAll());
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, claudeSelfUpdateHealth("2.1.283", "2.1.284"));
+
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAvailable",
+      provider: "claudeCode",
+      version: "2.1.284",
+    });
+    expect(presentAgentProviderUpdateToast(harness.hook())).toMatchObject({
+      kind: "available",
+      view: { provider: "claudeCode", installedVersion: "2.1.283", availableVersion: "2.1.284" },
+    });
+    harness.unmount();
+  });
+
   it("settles an already-current self-update as informational and stops re-offering it", async () => {
     const harness = renderManagement();
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
