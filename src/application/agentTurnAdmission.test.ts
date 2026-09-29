@@ -394,6 +394,33 @@ describe("admitFollowUp session planning", () => {
     });
   });
 
+  it("admits Claude Haiku 4.5 without an effort level the model does not offer", () => {
+    const { deps, notices } = harness(thread({ turns: [settledTurn] }));
+    const haiku: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "claude-haiku-4-5",
+      mode: "auto",
+      effort: "default",
+      fastMode: false,
+      thinkingMode: false,
+      chrome: false,
+    };
+
+    const admitted = admitFollowUp(deps, { ...followUp(), launch: haiku }, new Set());
+    const opus = admitFollowUp(
+      deps,
+      {
+        ...followUp(),
+        launch: { ...haiku, model: "claude-opus-5", effort: "high", context: "1m" },
+      },
+      new Set(),
+    );
+
+    expect(admitted?.launch).toMatchObject({ model: "claude-haiku-4-5", effort: "default" });
+    expect(opus?.launch).toMatchObject({ model: "claude-opus-5", effort: "high", context: "1m" });
+    expect(notices).toEqual([]);
+  });
+
   it("tells the user to unarchive an archived thread", () => {
     const { deps, notices } = harness(thread({ archived: true, turns: [settledTurn] }));
 

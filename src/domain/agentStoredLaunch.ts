@@ -1,4 +1,10 @@
-import { agentLaunchIsDangerous, type AgentLaunchOptions } from "./agentLaunch";
+import {
+  agentLaunchIsDangerous,
+  type AgentLaunchOptions,
+  type ClaudeEffortChoice,
+  type ClaudeLaunchOptions,
+} from "./agentLaunch";
+import { BUNDLED_CLAUDE_MODEL_MANIFEST, type ClaudeManifestModel } from "./claudeModelCatalog";
 
 export type StoredAgentLaunchAdmission =
   | {
@@ -13,7 +19,7 @@ export function normalizeStoredAgentLaunch(launch: AgentLaunchOptions): AgentLau
     return {
       ...launch,
       mode: launch.mode === "default" ? "bypassPermissions" : launch.mode,
-      effort: launch.effort === "default" ? "high" : launch.effort,
+      effort: storedClaudeEffort(launch),
       context: launch.context ?? "1m",
     };
   }
@@ -21,6 +27,21 @@ export function normalizeStoredAgentLaunch(launch: AgentLaunchOptions): AgentLau
     ...launch,
     mode: launch.mode === "default" ? "dangerFullAccess" : launch.mode,
   };
+}
+
+function storedClaudeEffort(launch: ClaudeLaunchOptions): ClaudeEffortChoice {
+  const entry = catalogClaudeModel(launch.model);
+  if (entry !== null && entry.efforts.length === 0) return "default";
+  if (launch.effort !== "default") return launch.effort;
+  if (entry === null) return "default";
+  if (entry.efforts.includes("high")) return "high";
+  return entry.defaultEffort;
+}
+
+function catalogClaudeModel(model: ClaudeLaunchOptions["model"]): ClaudeManifestModel | null {
+  const models = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode;
+  if (model === "default") return models.find((entry) => entry.isDefault === true) ?? null;
+  return models.find((entry) => entry.choice === model || entry.runtimeIds.includes(model)) ?? null;
 }
 
 export function admitStoredAgentLaunch(
