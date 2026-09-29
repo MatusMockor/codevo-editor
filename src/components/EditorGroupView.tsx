@@ -2,7 +2,7 @@ import {
   EditorGroupHtmlPreview,
   type EditorHtmlPreviewEnvironment,
 } from "./EditorGroupHtmlPreview";
-import { memo, useRef, type ReactNode } from "react";
+import { memo, useRef, type ReactNode, type SyntheticEvent } from "react";
 import type { EditorGroup, EditorGroupId } from "../domain/editorGroups";
 import { visibleEditorPaths, type EditorDocument, type ImageTab } from "../domain/workspace";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
@@ -73,8 +73,11 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
       ? { kind: "document", document: activeDocument, path: group.activePath }
       : { kind: "empty" };
 
-  function activateGroup() {
+  function activateGroup(event: SyntheticEvent) {
     if (active) {
+      return;
+    }
+    if (tabsPlacement === "strip" && isInsideTabStrip(event.target)) {
       return;
     }
     onActivateGroup(groupId);
@@ -154,6 +157,10 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
     </section>
   );
 }, editorGroupViewPropsEqual);
+
+function isInsideTabStrip(target: EventTarget): boolean {
+  return target instanceof Element && target.closest(".editor-tabs") !== null;
+}
 
 function editorGroupViewPropsEqual(
   previous: EditorGroupViewProps,

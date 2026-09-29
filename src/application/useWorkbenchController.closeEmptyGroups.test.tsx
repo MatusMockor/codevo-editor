@@ -118,6 +118,30 @@ describe("useWorkbenchController closing empty editor groups", () => {
     expect(getWorkbench().editorGroups.layout).toEqual(workspaceBGroups.layout);
   });
 
+  it.each([
+    ["preview", "previewFile"],
+    ["pinned", "openPinnedFile"],
+  ] as const)(
+    "closes the split copy of a %s file with its tab and keeps the original",
+    async (_label, open) => {
+      const { getWorkbench } = render();
+      await flushAsyncTurns(24);
+      await act(async () => {
+        await getWorkbench()[open](GREET);
+      });
+      act(() => getWorkbench().splitActiveEditorGroup("right"));
+      const sideGroupId = getWorkbench().editorGroups.activeGroupId;
+      expect(sideGroupId).not.toBe("editor-main");
+
+      await act(async () => {
+        await getWorkbench().closeDocumentInEditorGroup(sideGroupId, GREET.path);
+      });
+
+      expect(Object.keys(getWorkbench().editorGroups.groups)).toEqual(["editor-main"]);
+      expect(getWorkbench().activePath).toBe(GREET.path);
+    },
+  );
+
   it("loads the neighbour's Git diff tab once a side group collapses", async () => {
     const change = gitChangedFile("src/Shared.php", false);
     const diffPath = "mockor-git-diff:worktree:/workspace/src/Shared.php";
