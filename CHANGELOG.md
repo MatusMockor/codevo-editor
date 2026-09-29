@@ -7,10 +7,29 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.74] - 2026-09-30
+
 ### Added
 
 - Attach images when answering an agent's question; answered questions show as a
-  compact row.
+  compact row that stays visible after the turn.
+- Codex models come from the installed Codex CLI, like Claude models: every model has
+  a description, internal models are hidden, and effort levels follow the model.
+
+### Changed
+
+- Sending a message with attachments is instant: the composer clears and your message
+  appears right away while the send finishes.
+- One agents bar above the composer instead of two, and sidebar rows show running
+  agents with a timer, including subagents resumed after a turn.
+- Work log rows follow t3code: consecutive commands are one group that counts
+  failures, titles are never cut, and a failed step shows a small failed tag.
+- The editor header shows activity only for real work, with a short label.
+
+### Fixed
+
+- Only one Thinking row while a turn is thinking.
+- The usage pace marker no longer shows as a white tick at rest.
 
 ## [0.2.0-beta.73] - 2026-09-29
 
