@@ -14,6 +14,59 @@ const IMAGE_ANSWER =
   'Your questions have been answered: "Which layout is broken?"="Sidebar\n\n' +
   `[Attached image "screen.png" is saved at: /data/agent-attachments/threads/thread/${IMAGE_ID}.png]". ` +
   "You can now continue with these answers in mind.";
+const QA_TOOL_ID = "toolu_01St7kbjjnQLSqHsZwvtRxKx";
+const QA_IMAGE_ID = "747fe7cabc7c35cf4012f0a89d223b0c";
+const QA_EVENTS: ReadonlyArray<AgentTurnEvent> = [
+  {
+    kind: "unknownLine",
+    stream: "stdout",
+    raw: "Unsupported Claude stream frame: command_lifecycle",
+    clipped: false,
+  },
+  {
+    kind: "assistantText",
+    text: "Invoking superpowers:using-superpowers to understand how to proceed with your request.",
+  },
+  {
+    kind: "toolCall",
+    toolId: "toolu_01Xtta8yCj3b7A5Xe7jtX5rp",
+    name: "Skill",
+    inputSummary: '{"skill":"superpowers:using-superpowers"}',
+  },
+  {
+    kind: "toolResult",
+    toolId: "toolu_01Xtta8yCj3b7A5Xe7jtX5rp",
+    outputSummary: "Launching skill: superpowers:using-superpowers",
+    isError: false,
+  },
+  { kind: "assistantText", text: "Teraz ti položím otázku o tvojej obľúbenej farbe." },
+  {
+    kind: "toolCall",
+    toolId: QA_TOOL_ID,
+    name: "AskUserQuestion",
+    inputSummary:
+      '{"questions":[{"question":"Ktorú farbu preferuješ?","header":"Farba","multiSelect":false,"options":[{"label":"Červená","description":"Živá a energická farba"},{"label":"Modrá","description":"Pokojná a upokojujúca farba"}]}]}',
+  },
+  {
+    kind: "toolResult",
+    toolId: QA_TOOL_ID,
+    outputSummary:
+      'The user answered: "Ktorú farbu preferuješ?"="Červená, \n\n[Attached image "qa-image.png" is saved at: /Users/me/Library/Application Support/dev.mockor.editor.qa/agent-attachments/threads/agt-mun52scd-3d6e/' +
+      QA_IMAGE_ID +
+      '.png]". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.',
+    isError: false,
+  },
+  {
+    kind: "assistantText",
+    text: "Výborně! Dostal som tvoju odpoveď:\n\n**Vybrali ste: Červená**",
+  },
+  {
+    kind: "result",
+    text: "Výborně! Dostal som tvoju odpoveď:\n\n**Vybrali ste: Červená**",
+    isError: false,
+    usage: { inputTokens: 92_999, outputTokens: 334, contextTokens: 92_999 },
+  },
+];
 const read = vi.fn(async () => new ArrayBuffer(16));
 const gateway = { readAgentAttachment: read } as unknown as AgentAttachmentGateway;
 
@@ -104,6 +157,21 @@ describe("an answered question in the transcript", () => {
     const text = host.querySelector(".agent-turn")?.textContent ?? "";
     expect(text.indexOf("Let me ask first.")).toBeLessThan(text.indexOf("Answered"));
     expect(text.indexOf("Answered")).toBeLessThan(text.indexOf("Fixing the sidebar now."));
+  });
+
+  it("keeps the answered row with its image visible in a settled turn replayed from the QA log", async () => {
+    read.mockClear();
+    render(QA_EVENTS, { kind: "exited", exitCode: 0 }, false, true);
+    const row = host.querySelector<HTMLButtonElement>(".agent-question-row button.cv-work-row");
+    expect(row?.textContent).toContain("Answered");
+    expect(row?.textContent).toContain("Ktorú farbu preferuješ?");
+    expect(host.querySelector(".agent-question-row__answer")?.textContent).toBe("Červená");
+    expect(row?.closest("details:not([open])")).toBeNull();
+    act(() => row!.click());
+    await waitForReact(() =>
+      expect(host.querySelector(".agent-question-row .agent-attachments__image")).not.toBeNull(),
+    );
+    expect(read).toHaveBeenCalledWith(expect.objectContaining({ attachmentId: QA_IMAGE_ID }));
   });
 
   function render(

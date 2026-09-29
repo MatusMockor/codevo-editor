@@ -4,6 +4,7 @@ import type { AgentAttachment } from "../../domain/agentAttachment";
 import type { AgentTaskOutputStream } from "../../domain/agentTask";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import { isAgentToolUseRejection } from "../../domain/agentOutput/agentToolUseRejection";
+import { isAgentQuestionTool } from "../../domain/agentQuestionTranscript";
 import type { AgentTurnHalt } from "./agentTurnErrorPresentation";
 import {
   AGENT_TOOL_PATH_LIST_SEPARATOR,
@@ -343,7 +344,10 @@ export function agentTurnWorkFold(
   }
   // A compaction boundary remains in the conversation, including when work is
   // collapsed. End the fold at the first boundary so later output keeps its order.
-  const boundaryIndex = items.findIndex((item) => item.kind === "contextCompaction");
+  const boundaryIndex = items.findIndex(
+    (item) =>
+      item.kind === "contextCompaction" || (item.kind === "tool" && isAgentQuestionTool(item.name)),
+  );
   if (boundaryIndex >= 0 && boundaryIndex < finalResponseIndex) finalResponseIndex = boundaryIndex;
   if (finalResponseIndex <= 0) return null;
   const workItems = items.slice(0, finalResponseIndex);
