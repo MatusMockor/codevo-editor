@@ -1,7 +1,7 @@
 .cv-composer-dock {
   flex: none;
   min-width: 0;
-  padding: 0 20px var(--cv-space-6);
+  padding: 0 20px 20px;
 }
 
 .cv-composer-dock[data-layout="hero"] {
@@ -172,9 +172,9 @@
   align-items: center;
   gap: var(--cv-space-3);
   min-width: 0;
-  height: 32px;
+  height: 40px;
   margin: -1px 22px 0;
-  padding: 0 var(--cv-space-5);
+  padding: 0 var(--cv-space-3);
   border-radius: 0 0 14px 14px;
   background: var(--cv-side);
   box-shadow:

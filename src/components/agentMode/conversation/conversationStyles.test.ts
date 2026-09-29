@@ -9,6 +9,7 @@ import {
 const CONVERSATION = "components/agentMode/conversation/conversation.css";
 const WORK_ROWS = "components/agentMode/conversation/agentWorkRows.css";
 const COMPOSER = "components/agentMode/composer/agentComposerFrame.css";
+const PICKERS = "components/agentMode/pickers/agentPickers.css";
 const TOOL_ROWS = "components/agentMode/agentToolRows.css";
 const PROSE = "components/agentMode/conversation/agentProse.css";
 const LIGHTBOX = "components/agentMode/conversation/agentLightbox.css";
@@ -239,7 +240,8 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(COMPOSER, ".cv-composer__foot", "padding")).toBe(
       "0 var(--cv-space-6) var(--cv-space-6) var(--cv-space-5)",
     );
-    expect(declaredValue(COMPOSER, ".cv-composer__drawer", "height")).toBe("32px");
+    expect(declaredValue(COMPOSER, ".cv-composer__drawer", "height")).toBe("40px");
+    expect(declaredValue(COMPOSER, ".cv-composer__drawer", "padding")).toBe("0 var(--cv-space-3)");
     expect(declaredValue(COMPOSER, ".cv-composer__drawer", "margin")).toBe("-1px 22px 0");
     expect(declaredValue(COMPOSER, ".cv-composer__drawer", "border-radius")).toBe("0 0 14px 14px");
     expect(declaredValue(COMPOSER, ".cv-composer__drawer", "background")).toBe("var(--cv-side)");
@@ -247,6 +249,17 @@ describe("P3 conversation sheets", () => {
       "calc(var(--cv-t-sm) * var(--cv-type-scale))",
     );
     expect(declaredValue(COMPOSER, '.cv-composer-dock[data-layout="hero"]', "flex")).toBe("1 1 0");
+  });
+
+  it("gives the drawer chips breathing room inside the drawer and above the window edge", () => {
+    const chip = ".agent-composer__footer .agent-picker__trigger--ghost";
+    expect(declaredValue(PICKERS, chip, "height")).toBe("28px");
+    expect(declaredValue(PICKERS, chip, "padding")).toBe("0 10px");
+    expect(declaredValue(PICKERS, chip, "line-height")).toBe("var(--cv-lh-sm)");
+    expect(declaredValue(PICKERS, chip, "min-width")).toBe("0");
+    expect(declaredValue(PICKERS, ".agent-composer__lock", "padding")).toBe("0 10px");
+    expect(declaredValue(PICKERS, ".agent-composer__lock", "align-items")).toBe("center");
+    expect(declaredValue(COMPOSER, ".cv-composer-dock", "padding")).toBe("0 20px 20px");
   });
 
   it("truncates the drawer and foot controls instead of widening the column", () => {

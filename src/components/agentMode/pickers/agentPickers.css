@@ -350,11 +350,13 @@
 .agent-composer__footer .agent-picker__trigger--ghost,
 .agent-composer__lock {
   height: 28px;
+  min-width: 0;
   max-width: 260px;
-  padding: 0 var(--cv-space-4);
+  padding: 0 10px;
   border-radius: var(--cv-r-control);
   font-size: var(--cv-t-md);
   font-weight: 500;
+  line-height: var(--cv-lh-sm);
 }
 
 .agent-composer__footer .agent-picker__prefix {
