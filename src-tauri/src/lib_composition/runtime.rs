@@ -10,6 +10,8 @@ use tauri::Emitter;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let startup_metrics = startup_metrics::StartupMetrics::new();
+    #[cfg(target_os = "macos")]
+    super::macos_text_substitution::register_code_friendly_text_input_defaults();
     #[cfg(all(feature = "perf-capture", target_os = "macos"))]
     perf_capture::claim_process_group().unwrap_or_else(|message| panic!("{message}"));
 

@@ -38,6 +38,9 @@ mod git_worktree_commands;
 mod language_features_facade;
 #[path = "language_runtime_facade.rs"]
 mod language_runtime_facade;
+#[cfg(target_os = "macos")]
+#[path = "../macos_text_substitution.rs"]
+mod macos_text_substitution;
 #[path = "pull_request_commands.rs"]
 mod pull_request_commands;
 #[path = "../repository_lookup/mod.rs"]

@@ -9,6 +9,7 @@ import {
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { AlertTriangle, Paperclip } from "lucide-react";
@@ -653,6 +654,10 @@ export function AgentComposer({
             disabled={targetReason !== null}
             ref={textareaRef}
             aria-autocomplete="list"
+            autoCapitalize="off"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
             aria-controls={commands.open ? "agent-composer-commands" : undefined}
             aria-expanded={commands.open}
             aria-activedescendant={
@@ -752,7 +757,7 @@ export function AgentComposer({
           hidden={interactionActive}
         >
           <div className="cv-composer__controls">{launchControls}</div>
-          <div className="cv-composer__actions">
+          <div className="cv-composer__actions" onMouseDown={keepPromptFocus}>
             <AgentComposerBytes promptBytes={promptBytes} />
             {(attachmentsEnabled || targetReason !== null) && (
               <IconButton
@@ -851,6 +856,11 @@ export function AgentComposer({
 }
 
 const BYTES_WARN_RATIO = 0.8;
+
+function keepPromptFocus(event: MouseEvent<HTMLElement>): void {
+  if (event.button !== 0) return;
+  event.preventDefault();
+}
 
 function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
   if (promptBytes < MAX_AGENT_TASK_PROMPT_BYTES * BYTES_WARN_RATIO) return null;
