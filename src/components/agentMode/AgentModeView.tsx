@@ -6,6 +6,10 @@ import { useProjectRepositoryIdentities } from "../../application/useProjectRepo
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
 import { TauriRemoteRepositoryIdentityGateway } from "../../infrastructure/tauriRemoteRepositoryIdentityGateway";
 import { useAgentProjectCreation } from "./useAgentProjectCreation";
+import {
+  agentConversationEscapeAction,
+  useAgentConversationEscape,
+} from "./useAgentConversationEscape";
 import { AgentCloneComposer } from "./AgentCloneComposer";
 import { NoProjectsHero } from "../projects/NoProjectsHero";
 import { ProjectOnboardingLayer } from "../projects/ProjectOnboardingLayer";
@@ -752,6 +756,10 @@ function LocalAgentModeView({
     refreshProjects: refreshRemoteProjects,
   });
   const { addProject, remoteAdd } = creation;
+  useAgentConversationEscape(
+    navigation.centerRef,
+    creation.visible ? null : agentConversationEscapeAction(composerProps),
+  );
   const openRemoteAddProject = useAgentLatestCallback(creation.open);
   const cancelPendingClone = useAgentLatestCallback(creation.cancel);
   const dismissPendingClone = useAgentLatestCallback(creation.dismiss);
