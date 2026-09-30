@@ -339,7 +339,7 @@ describe("agentTurnRuntimeSubagents from Claude stream-json", () => {
     expect(result.agents[0]).toMatchObject({ status: "failed", activity: "cargo test failed" });
     expect(result.agents[1]?.status).toBe("stopped");
     const summary = summarizeAgentRuntimeSubagents(result.agents);
-    expect(agentSpawnStatusLabel(summary)).toBe("1 failed");
+    expect(agentSpawnStatusLabel(summary)).toBe("1 failed · 1 stopped");
     expect(summary.tone).toBe("failed");
   });
 

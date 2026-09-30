@@ -14,6 +14,7 @@ import {
   agentSpawnBatchOrigin,
   agentSpawnLeadLabel,
   agentSpawnStatusLabel,
+  agentTurnSpawnBatch,
   agentTurnRuntimeSubagents,
 } from "./agentRuntimeSubagentPresentation";
 
@@ -248,6 +249,14 @@ describe("legacy keyless batching", () => {
       ["spawn:toolu_0", ["tool:toolu_0", "tool:toolu_2"]],
       ["legacy", ["tool:toolu_1", "tool:toolu_3"]],
     ]);
+    const row = agentTurnSpawnBatch(result);
+    expect(row?.id).toBe("spawn:toolu_0");
+    expect(row?.agents.map((agent) => agent.id)).toEqual([
+      "tool:toolu_0",
+      "tool:toolu_1",
+      "tool:toolu_2",
+      "tool:toolu_3",
+    ]);
   });
 
   it("keeps a running turn's keyless entry in its own batch so a late key cannot reshuffle it", () => {
@@ -308,7 +317,7 @@ describe("nested agents and truncation", () => {
     expect(agentSpawnStatusLabel(summarizeAgentRuntimeSubagents(completed))).toBe("✓ completed");
   });
 
-  it("shows only the working count while a batch is live and the breakdown once settled", () => {
+  it("shows working and failed counts while a batch is live and the breakdown once settled", () => {
     const live = summarizeAgentRuntimeSubagents([
       { status: "working" },
       { status: "working" },
@@ -317,7 +326,7 @@ describe("nested agents and truncation", () => {
     ]);
     const settled = summarizeAgentRuntimeSubagents([{ status: "completed" }, { status: "failed" }]);
 
-    expect(agentSpawnStatusLabel(live)).toBe("2 working");
+    expect(agentSpawnStatusLabel(live)).toBe("2 working · 1 failed");
     expect(agentSpawnStatusLabel(settled)).toBe("1 failed");
   });
 });

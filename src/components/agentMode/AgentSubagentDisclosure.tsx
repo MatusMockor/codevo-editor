@@ -15,6 +15,7 @@ import {
   agentSpawnBatchOrigin,
   agentSpawnLeadLabel,
   agentSpawnStatusLabel,
+  agentTurnSpawnBatch,
 } from "./agentRuntimeSubagentPresentation";
 import "./agentSubagents.css";
 
@@ -27,17 +28,16 @@ export const AgentSubagentDisclosure = memo(function AgentSubagentDisclosure({
   readonly onOpenAgents?: () => void;
   readonly memberRenderProbe?: (agentId: string) => void;
 }) {
-  if (subagents.batches.length === 0) return null;
+  const batch = useMemo(() => agentTurnSpawnBatch(subagents), [subagents]);
+  if (batch === null) return null;
   return (
     <div className="cv-spawn-list">
-      {subagents.batches.map((batch) => (
-        <AgentSpawnBatchRow
-          batch={batch}
-          key={batch.id}
-          memberRenderProbe={memberRenderProbe}
-          onOpenAgents={onOpenAgents}
-        />
-      ))}
+      <AgentSpawnBatchRow
+        batch={batch}
+        key={batch.id}
+        memberRenderProbe={memberRenderProbe}
+        onOpenAgents={onOpenAgents}
+      />
     </div>
   );
 });

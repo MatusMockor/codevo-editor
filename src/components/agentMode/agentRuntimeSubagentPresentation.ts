@@ -4,6 +4,7 @@ import {
   RUNTIME_SUBAGENT_TURN_BATCH_ID,
   projectAgentRuntimeSubagents,
   type AgentRuntimeSubagent,
+  type AgentRuntimeSubagentBatch,
   type AgentRuntimeSubagentSource,
   type AgentRuntimeSubagentStatus,
   type AgentRuntimeSubagentSummary,
@@ -83,6 +84,17 @@ export function agentSpawnBatchOrigin(batchId: string): AgentSpawnBatchOrigin {
   return "spawn";
 }
 
+export function agentTurnSpawnBatch(
+  subagents: AgentRuntimeSubagents,
+): AgentRuntimeSubagentBatch | null {
+  const [first] = subagents.batches;
+  if (first === undefined) return null;
+  if (subagents.batches.length === 1) return first;
+  const anchor =
+    subagents.batches.find((batch) => agentSpawnBatchOrigin(batch.id) !== "legacy") ?? first;
+  return { id: anchor.id, agents: subagents.agents };
+}
+
 export function agentSpawnLeadLabel(
   summary: AgentRuntimeSubagentSummary,
   origin: AgentSpawnBatchOrigin,
@@ -95,13 +107,20 @@ export function agentSpawnLeadLabel(
 
 export function agentSpawnStatusLabel(summary: AgentRuntimeSubagentSummary): string {
   const { counts } = summary;
-  if (summary.live) return `${counts.working} working`;
-  if (counts.failed > 0) return `${counts.failed} failed`;
-  if (counts.stopped > 0)
-    return counts.stopped === summary.count ? "stopped" : `${counts.stopped} stopped`;
+  const parts = [
+    counts.working > 0 ? `${counts.working} working` : null,
+    counts.failed > 0 ? `${counts.failed} failed` : null,
+    stoppedPart(counts.stopped, summary.count),
+  ].filter((part): part is string => part !== null);
+  if (parts.length > 0) return parts.join(" · ");
   if (counts.unknown > 0 || summary.count === 0) return "status unavailable";
   if (counts.idle > 0) return `${counts.idle} idle`;
   return "✓ completed";
+}
+
+function stoppedPart(stopped: number, count: number): string | null {
+  if (stopped === 0) return null;
+  return stopped === count ? "stopped" : `${stopped} stopped`;
 }
 
 const MEMBER_STATUS_LABELS: Readonly<Record<AgentRuntimeSubagentStatus, string>> = {

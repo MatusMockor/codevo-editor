@@ -10,7 +10,8 @@ import { isAgentBackgroundTurn } from "../domain/agentTurnOrigin";
 import { info } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 
-export const MAX_HELD_BACKGROUND_TURNS_PER_THREAD = 2;
+export const MAX_HELD_BACKGROUND_TURNS_PER_THREAD = 16;
+export const MAX_HELD_BACKGROUND_TURN_BYTES_PER_THREAD = 1024 * 1024;
 export const MAX_THREADS_WITH_HELD_BACKGROUND_TURNS = 8;
 
 export interface AgentBackgroundTurnPorts {
@@ -77,7 +78,7 @@ export class AgentBackgroundTurnRecorder {
   ): void {
     const existing = this.held.get(thread.threadId);
     const contents = [...(existing?.contents ?? []), content];
-    const overflow = contents.splice(0, contents.length - MAX_HELD_BACKGROUND_TURNS_PER_THREAD);
+    const overflow = contents.splice(0, heldOverflow(contents));
     for (const superseded of overflow) {
       recording.setNotice(backgroundReplyNotice(thread.title, superseded, "superseded"));
     }
@@ -126,6 +127,22 @@ export class AgentBackgroundTurnRecorder {
       recordBackgroundTurn(recording, threadId, entry.ownerId, content);
     }
   }
+}
+
+function heldOverflow(contents: ReadonlyArray<AgentBackgroundTurnContent>): number {
+  let bytes = contents.reduce((total, content) => total + content.receivedUtf8Bytes, 0);
+  let overflow = 0;
+  while (overflow < contents.length - 1) {
+    const kept = contents.length - overflow;
+    if (
+      kept <= MAX_HELD_BACKGROUND_TURNS_PER_THREAD &&
+      bytes <= MAX_HELD_BACKGROUND_TURN_BYTES_PER_THREAD
+    )
+      break;
+    bytes -= contents[overflow]?.receivedUtf8Bytes ?? 0;
+    overflow += 1;
+  }
+  return overflow;
 }
 
 function releaseHeld(

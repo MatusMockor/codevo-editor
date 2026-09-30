@@ -1,5 +1,6 @@
 import { appServerGroupId } from "./agentAppServerGroups";
 import { agentTurnItemKey } from "./agentTurnItemKeys";
+import { agentSettledSubagentTools, type AgentSubagentOutcome } from "./agentSettledSubagentTools";
 import type { AgentAttachment } from "../../domain/agentAttachment";
 import type { AgentTaskOutputStream } from "../../domain/agentTask";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
@@ -277,6 +278,7 @@ export function agentTurnProjection(
       : hiddenCount;
   const visible = renderable.slice(firstVisible, firstVisible + limit);
   const calls = toolCallIndex(events);
+  const settledSubagents = agentSettledSubagentTools(events);
   const visibleAssistantText = new Set(
     visible
       .filter(
@@ -308,6 +310,7 @@ export function agentTurnProjection(
       key,
       rawLines,
       settlement,
+      settledSubagents,
       toolItemByToolId,
       workspaceRoot,
     });
@@ -504,9 +507,27 @@ interface TurnItemAppend {
   readonly key: string;
   readonly rawLines: AgentRawLine[];
   readonly settlement: AgentToolSettlement;
+  readonly settledSubagents: ReadonlyMap<string, AgentSubagentOutcome>;
   readonly toolItemByToolId: Map<string, number>;
   readonly workspaceRoot: string | null;
 }
+
+function nestedToolSettlement(
+  settlement: AgentToolSettlement,
+  parentToolId: string | undefined,
+  settledSubagents: ReadonlyMap<string, AgentSubagentOutcome>,
+): AgentToolSettlement {
+  if (settlement !== "running" || parentToolId === undefined) return settlement;
+  const outcome = settledSubagents.get(parentToolId);
+  if (outcome === undefined) return settlement;
+  return SUBAGENT_OUTCOME_SETTLEMENT[outcome];
+}
+
+const SUBAGENT_OUTCOME_SETTLEMENT: Readonly<Record<AgentSubagentOutcome, AgentToolSettlement>> = {
+  completed: "settled",
+  failed: "interrupted",
+  stopped: "stopped",
+};
 
 function appendTurnItem({
   calls,
@@ -516,6 +537,7 @@ function appendTurnItem({
   key,
   rawLines,
   settlement,
+  settledSubagents,
   toolItemByToolId,
   workspaceRoot,
 }: TurnItemAppend): void {
@@ -551,7 +573,7 @@ function appendTurnItem({
         name: event.name,
         inputSummary: event.inputSummary,
         outcome: null,
-        settlement,
+        settlement: nestedToolSettlement(settlement, event.parentToolId, settledSubagents),
         halt,
         workspaceRoot,
         ...presentField("description", event.description),

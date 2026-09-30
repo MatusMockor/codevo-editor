@@ -117,6 +117,38 @@ describe("AgentSubagentDisclosure", () => {
       "failed",
     ],
     [
+      [
+        source({ id: "a" }),
+        source({ id: "b", batchId: "spawn:b" }),
+        source({ id: "c", batchId: "spawn:c", observedState: "failed" }),
+      ],
+      false,
+      "Kicked off 3 subagents",
+      "2 working · 1 failed",
+      "working",
+    ],
+    [
+      [
+        source({ id: "a", observedState: "failed" }),
+        source({ id: "b", batchId: "spawn:b", observedState: "interrupted" }),
+        source({ id: "c", batchId: "spawn:c", observedState: "completed" }),
+      ],
+      false,
+      "Ran 3 subagents",
+      "1 failed · 1 stopped",
+      "failed",
+    ],
+    [
+      [
+        source({ id: "a", observedState: "completed" }),
+        source({ id: "b", batchId: "spawn:b", observedState: "interrupted" }),
+      ],
+      false,
+      "Ran 2 subagents",
+      "1 stopped",
+      "inactive",
+    ],
+    [
       [source({ id: "a", observedState: "interrupted" })],
       false,
       "Ran 1 subagent",
@@ -345,9 +377,60 @@ describe("AgentSubagentDisclosure", () => {
     ).toEqual(["completed", "completed", "failed"]);
   });
 
-  it("renders one quiet row per spawn batch", () => {
+  it("renders one quiet row per turn for all of its spawn batches", () => {
     render([source({ id: "a", batchId: "spawn:a" }), source({ id: "b", batchId: "spawn:b" })]);
-    expect(host.querySelectorAll(".cv-spawn__head")).toHaveLength(2);
+    expect(host.querySelectorAll(".cv-spawn__head")).toHaveLength(1);
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe("Kicked off 2 subagents");
+  });
+
+  it("groups sequential spawns split by prose into one row that stays mounted once all complete", () => {
+    const prose = (text: string): AgentTurnEvent => ({ kind: "assistantText", text });
+    const titles = [
+      "Implement Fix 3 persistent session",
+      "Per-task stop for Claude background tasks",
+      "Make NEW badge time-bound, fix copy",
+      "Workspace indicator design proposals",
+      "Investigate two transcript screenshots",
+    ];
+    const ids = titles.map((_, index) => `toolu_${index}`);
+    const spawned = titles.flatMap((title, index) => [
+      ...asyncSpawn(ids[index] ?? "", title),
+      prose(`Delegated ${title}.`),
+    ]);
+    let previous: AgentRuntimeSubagents | null = null;
+    const show = (events: ReadonlyArray<AgentTurnEvent>, status: AgentTurnStatus) => {
+      const next = reconcileAgentRuntimeSubagents(
+        previous,
+        agentTurnRuntimeSubagents({ events, status }),
+      );
+      previous = next;
+      act(() => root.render(<AgentSubagentDisclosure subagents={next} />));
+    };
+
+    show(spawned.slice(0, 8), { kind: "running" });
+    expect(host.querySelectorAll(".cv-spawn")).toHaveLength(1);
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe("Kicked off 2 subagents");
+    const spawnRow = host.querySelector(".cv-spawn");
+
+    const completed = [...spawned, ...ids.map((id) => tick(id, "completed", "done"))];
+    show(completed, { kind: "running" });
+    expect(host.querySelectorAll(".cv-spawn")).toHaveLength(1);
+    expect(host.querySelector(".cv-spawn")).toBe(spawnRow);
+    expect(host.querySelector(".cv-spawn__lead")?.textContent).toBe("Ran 5 subagents");
+    expect(host.querySelector(".cv-spawn__status")?.textContent).toBe("✓ completed");
+    expect(row()?.getAttribute("aria-expanded")).toBe("false");
+    act(() => row()?.click());
+    expect(
+      [...host.querySelectorAll(".cv-spawn-member__title")].map((node) => node.textContent),
+    ).toEqual(titles);
+
+    show(
+      [...spawned, ...ids.map((id, index) => tick(id, index === 2 ? "failed" : "completed", "x"))],
+      { kind: "exited", exitCode: 0 },
+    );
+    expect(host.querySelectorAll(".cv-spawn")).toHaveLength(1);
+    expect(host.querySelector(".cv-spawn")).toBe(spawnRow);
+    expect(host.querySelector(".cv-spawn__status")?.textContent).toBe("1 failed");
   });
 
   it("marks a legacy batch and never claims it was kicked off", () => {
