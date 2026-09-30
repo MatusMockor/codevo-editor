@@ -53,6 +53,18 @@ describe("createAgentElapsedTicker", () => {
     vi.useRealTimers();
   });
 
+  it("counts a background task from when Codevo first saw it and never goes stale", () => {
+    const ticker = createAgentElapsedTicker();
+    const row = target();
+    const release = ticker.registerSince("task:s1", 1_000_000 - 90_000, row);
+    expect(row.clock.textContent).toBe("1m 30s");
+    vi.advanceTimersByTime(6 * HOUR_MS);
+    expect(row.clock.textContent).toBe("6h 01m");
+    expect(row.stale?.textContent).toBe("");
+    release();
+    ticker.dispose();
+  });
+
   it("stops looking precisely alive after one report and six silent hours", () => {
     const ticker = createAgentElapsedTicker();
     const row = target();

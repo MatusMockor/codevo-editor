@@ -265,6 +265,52 @@ button.cv-spawn-member__head {
   border-radius: var(--cv-r-sm);
 }
 
+.cv-agents-row[data-action="stop"] {
+  grid-template-columns: 6px minmax(0, 1fr) auto auto;
+}
+
+.cv-agents-row__stop {
+  grid-column: 4;
+  grid-row: 1 / 4;
+  align-self: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: transparent;
+  color: var(--cv-fg-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--cv-t-xs);
+}
+
+.cv-agents-row__stop:hover:enabled:not([aria-disabled="true"]) {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.cv-agents-row__stop:focus-visible {
+  outline: 2px solid var(--cv-focus);
+  outline-offset: 2px;
+}
+
+.cv-agents-row__stop:disabled,
+.cv-agents-row__stop[aria-disabled="true"] {
+  color: var(--cv-fg-subtle);
+  cursor: default;
+}
+
+.cv-agents-row[data-status="stopping"] .cv-agents-row__dot {
+  background: var(--cv-fg-subtle);
+}
+
+.cv-agents__running-more,
+.cv-agents__running-note {
+  margin: 4px 6px 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
 .cv-agents-row__dot {
   grid-row: 1;
   width: 6px;

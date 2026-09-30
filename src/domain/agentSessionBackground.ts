@@ -13,6 +13,7 @@ export interface AgentSessionBackground {
   readonly agents: number;
   readonly tasks: ReadonlyArray<AgentBackgroundTask>;
   readonly sinceEpochMs: number;
+  readonly taskSinceEpochMs: ReadonlyMap<string, number>;
 }
 
 export type AgentSessionBackgrounds = ReadonlyMap<string, AgentSessionBackground>;
@@ -35,6 +36,7 @@ export function applyAgentSessionBackgroundLevel(
     agents: event.agents,
     tasks: event.tasks,
     sinceEpochMs: sameOwner ? previous.sinceEpochMs : nowEpochMs,
+    taskSinceEpochMs: taskSince(sameOwner ? previous : undefined, event.tasks, nowEpochMs),
   });
   for (const threadId of next.keys()) {
     if (next.size <= MAX_AGENT_SESSION_BACKGROUNDS) break;
@@ -60,6 +62,16 @@ export function agentSessionBackgroundFor(
   const background = backgrounds.get(thread.threadId);
   if (background?.ownerId !== thread.owner.ownerId) return undefined;
   return background;
+}
+
+function taskSince(
+  previous: AgentSessionBackground | undefined,
+  tasks: ReadonlyArray<AgentBackgroundTask>,
+  nowEpochMs: number,
+): ReadonlyMap<string, number> {
+  return new Map(
+    tasks.map((task) => [task.taskId, previous?.taskSinceEpochMs.get(task.taskId) ?? nowEpochMs]),
+  );
 }
 
 function without(current: AgentSessionBackgrounds, threadId: string): AgentSessionBackgrounds {

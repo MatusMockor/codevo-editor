@@ -548,6 +548,7 @@ describe("AgentThreadRow", () => {
           },
         ],
         sinceEpochMs: NOW - 90_000,
+        taskSinceEpochMs: new Map(),
       },
     });
     const status = host.querySelector(".cv-card-row__status");

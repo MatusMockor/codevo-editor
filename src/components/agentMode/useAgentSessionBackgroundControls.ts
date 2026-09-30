@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -27,7 +27,7 @@ export type AgentSessionBackgroundControlsSurface = Pick<
 export interface AgentSessionBackgroundControls {
   readonly controls: AgentSessionTaskControls | null;
   readonly sessionStop: AgentComposerSessionStopPort | undefined;
-  onStopTask(taskId: string): void;
+  onStopTask(threadId: string, taskId: string): void;
   onEndSession(): void;
 }
 
@@ -39,17 +39,20 @@ export function useAgentSessionBackgroundControls(
 ): AgentSessionBackgroundControls {
   const stops = useAgentSessionTaskStops(agents, reportNotice);
   const endSessionAvailable = agents.endSession !== undefined;
+  const previousControls = useRef<AgentSessionTaskControls | null>(null);
   const controls = useMemo(
-    () => sessionTaskControlsFor(stops, view, endSessionAvailable),
+    () => sessionTaskControlsFor(stops, view, endSessionAvailable, previousControls.current),
     [endSessionAvailable, stops, view],
   );
+  useLayoutEffect(() => {
+    previousControls.current = controls;
+  }, [controls]);
   const viewRef = useLatest(view);
   const { available, stopAllTasks, stopTask } = stops;
   const onStopTask = useCallback(
-    (taskId: string): void => {
-      const current = viewRef.current;
-      if (current === null) return;
-      stopTask(current.thread.threadId, taskId);
+    (threadId: string, taskId: string): void => {
+      if (viewRef.current?.thread.threadId !== threadId) return;
+      stopTask(threadId, taskId);
     },
     [stopTask, viewRef],
   );
@@ -76,12 +79,14 @@ function sessionTaskControlsFor(
   stops: AgentSessionTaskStops,
   view: AgentThreadView | null,
   endSessionAvailable: boolean,
+  previous: AgentSessionTaskControls | null,
 ): AgentSessionTaskControls | null {
   if (view === null || !stops.available || !agentSessionTasksStoppable(view)) return null;
   return agentSessionTaskControls(
     view.sessionBackground ?? null,
     agentSessionPendingTaskIds(stops.pending, view),
     endSessionOffer(stops, view, endSessionAvailable),
+    previous,
   );
 }
 

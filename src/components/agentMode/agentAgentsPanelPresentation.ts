@@ -40,12 +40,16 @@ export function agentAgentsPanelRowKey(groupKey: string, agentId: string): strin
   return `${groupKey}:${agentId}`;
 }
 
+const NO_ROW_KEYS: ReadonlySet<string> = new Set();
+
 export function agentAgentsPanelModel(
   groups: ReadonlyArray<AgentAgentsPanelGroup>,
+  shownElsewhere: ReadonlySet<string> = NO_ROW_KEYS,
 ): AgentAgentsPanelModel {
   const populated = groups.filter((group) => group.subagents.agents.length > 0);
   const all = populated.flatMap(rowsOf);
-  const kept = new Set(all.slice(-MAX_AGENTS_PANEL_ROWS).map((row) => row.key));
+  const retained = all.slice(-MAX_AGENTS_PANEL_ROWS).map((row) => row.key);
+  const kept = new Set(retained.filter((key) => !shownElsewhere.has(key)));
   const latest = populated[populated.length - 1];
   const current = latest === undefined ? [] : rowsOf(latest).filter((row) => kept.has(row.key));
   const earlier = populated
@@ -59,24 +63,13 @@ export function agentAgentsPanelModel(
   return {
     current,
     earlier,
-    notice: panelNotice(kept.size, all.length, truncated),
+    notice: panelNotice(retained.length, all.length, truncated),
     truncated,
     working,
     idle,
     settled: all.length - working - idle,
     totalTokens: all.reduce((total, row) => total + (row.agent.totalTokens ?? 0), 0),
   };
-}
-
-export function agentWorkingAgentNames(
-  groups: ReadonlyArray<AgentAgentsPanelGroup>,
-): ReadonlyArray<string> {
-  const names = groups.flatMap((group) =>
-    group.subagents.agents
-      .filter((agent) => agent.status === "working")
-      .map((agent) => agent.role ?? agent.title),
-  );
-  return [...new Set(names)];
 }
 
 function rowsOf(group: AgentAgentsPanelGroup): ReadonlyArray<AgentAgentsPanelRow> {

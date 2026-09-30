@@ -106,6 +106,7 @@ describe("useAgentSessionBackgrounds", () => {
       agents: 1,
       tasks: RESUMED.tasks,
       sinceEpochMs: 1_790_718_781_369,
+      taskSinceEpochMs: new Map([["a4b355dcf6056a875", 1_790_718_781_369]]),
     });
     level({ ...RESUMED, total: 0, agents: 0, tasks: [] });
     expect(harness.observed.current?.has(THREAD)).toBe(false);

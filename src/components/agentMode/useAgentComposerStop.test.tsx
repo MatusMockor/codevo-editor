@@ -21,6 +21,7 @@ const watch: AgentSessionBackground = {
     { taskId: "b8kzpiexm", taskType: "shell", description: "Watch beta.75 release workflow" },
   ],
   sinceEpochMs: 1,
+  taskSinceEpochMs: new Map(),
 };
 
 const cleanups: Array<() => void> = [];

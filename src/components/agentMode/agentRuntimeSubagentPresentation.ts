@@ -60,6 +60,7 @@ export function agentTurnRuntimeSubagents(turn: RuntimeSubagentTurn): AgentRunti
       observedState: entry.state,
       resumable: entryThreadId(entry) !== undefined && settlement === "running",
       activityOrder: observation?.order ?? index - entries.length,
+      ...present("taskId", entry.taskId),
       ...present("title", title),
       ...present("role", entryRole(entry)),
       ...present("model", entryModel(entry)),

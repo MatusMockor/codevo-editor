@@ -7,7 +7,6 @@ import {
 } from "../../domain/agentRuntimeSubagent";
 import {
   agentBackgroundWait,
-  agentBackgroundWaitStatus,
   agentBackgroundWaitTitle,
 } from "./agentBackgroundIndicatorPresentation";
 
@@ -19,6 +18,7 @@ const agentTask = (taskId: string) => ({ taskId, taskType: "agent" as const });
 const shellTask = (taskId: string) => ({ taskId, taskType: "shell" as const });
 const working = (id: string): AgentRuntimeSubagent => ({
   id,
+  taskId: null,
   batchId: "turn",
   title: id,
   titleKnown: true,
@@ -48,15 +48,12 @@ describe("background wait presentation", () => {
     );
     expect(wait).toEqual({ kind: "agents", count: 2 });
     expect(agentBackgroundWaitTitle(wait)).toBe("Waiting for 2 agents");
-    expect(agentBackgroundWaitStatus(wait)).toBe("2 agents running");
     const single = agentBackgroundWait(activity([]), subagents(working("a")));
     expect(agentBackgroundWaitTitle(single)).toBe("Waiting for 1 agent");
-    expect(agentBackgroundWaitStatus(single)).toBe("1 agent running");
   });
   it("pluralizes background tasks and stays truthful when the count is unknown", () => {
     const one = agentBackgroundWait(activity([shellTask("s")]), EMPTY_AGENT_RUNTIME_SUBAGENTS);
     expect(agentBackgroundWaitTitle(one)).toBe("Waiting for 1 background task");
-    expect(agentBackgroundWaitStatus(one)).toBe("1 background task running");
     const two = agentBackgroundWait(
       activity([shellTask("s"), { taskId: "m", taskType: "monitor" }]),
       EMPTY_AGENT_RUNTIME_SUBAGENTS,
@@ -67,6 +64,5 @@ describe("background wait presentation", () => {
       EMPTY_AGENT_RUNTIME_SUBAGENTS,
     );
     expect(agentBackgroundWaitTitle(unknown)).toBe("Waiting for background tasks");
-    expect(agentBackgroundWaitStatus(unknown)).toBe("Background tasks running");
   });
 });

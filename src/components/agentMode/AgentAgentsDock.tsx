@@ -1,5 +1,9 @@
 import type { ReactNode } from "react";
-import { usePublishAgentThreadAgents } from "./agents/agentAgentsPanelHooks";
+import {
+  usePublishAgentRunningWork,
+  usePublishAgentThreadAgents,
+  type AgentRunningWorkSurface,
+} from "./agents/agentAgentsPanelHooks";
 import { AgentSubagentAnnouncer } from "./AgentSubagentAnnouncer";
 import type { AgentThreadAgents } from "./useAgentThreadAgents";
 import "./agentSubagents.css";
@@ -7,11 +11,14 @@ import "./agentSubagents.css";
 export function AgentAgentsDock({
   agents,
   children,
+  running,
 }: {
   readonly agents: AgentThreadAgents;
+  readonly running: AgentRunningWorkSurface;
   readonly children: ReactNode;
 }) {
   usePublishAgentThreadAgents(agents);
+  usePublishAgentRunningWork(running);
   return (
     <div className="agents-dock">
       <div className="agents-dock__main">{children}</div>

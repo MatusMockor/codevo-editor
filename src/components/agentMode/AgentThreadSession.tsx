@@ -68,8 +68,8 @@ import { useAgentThreadFollow } from "./useAgentThreadFollow";
 import { AgentCodeColorizerContext, type AgentCodeColorizer } from "./agentCodeColorizer";
 import { defaultAgentCodeColorizer } from "./shikiAgentCodeColorizer";
 import { AgentSessionDock } from "./conversation/AgentSessionDock";
-import { agentAgentsBannerModel } from "./conversation/agentAgentsBannerPresentation";
 import { agentSessionActivityBar } from "./conversation/agentSessionActivityBar";
+import { useAgentRunningWork } from "./agents/useAgentRunningWork";
 import type { AgentSessionTaskControls } from "./conversation/agentSessionTaskControls";
 import {
   AgentPendingThreadStart,
@@ -134,7 +134,7 @@ export interface AgentThreadSessionProps {
   onReviewInDiff(threadId: string): void;
   onStopBackground?(): void;
   readonly sessionTaskControls?: AgentSessionTaskControls | null;
-  onStopSessionTask?(taskId: string): void;
+  onStopSessionTask?(threadId: string, taskId: string): void;
   onEndSession?(): void;
   readonly pendingSend?: AgentPendingSend | null;
   onDismissPendingSend?(): void;
@@ -225,7 +225,6 @@ function AgentThreadSessionBody({
   const displayedTurns = historyPage?.turns ?? record.turns;
   const agents = useAgentThreadAgents(threadId, displayedTurns);
   const activitySources = useAgentActivitySources(history, threadId, displayedTurns);
-  const agentsBanner = useMemo(() => agentAgentsBannerModel(agents.groups), [agents.groups]);
   const serverId = thread.execution?.serverId;
   const runnerId = thread.execution?.runnerId;
   const artifactScope = useMemo<AgentArtifactScope | null>(
@@ -351,10 +350,20 @@ function AgentThreadSessionBody({
   }, [activeHit, findOpen, reveal]);
 
   const liveTurn = record.turns[record.turns.length - 1] ?? null;
-  const backgroundWait = useAgentBackgroundWait(record.provider.kind, threadId, liveTurn);
+  const liveBackground = useAgentBackgroundWait(record.provider.kind, threadId, liveTurn);
+  const running = useAgentRunningWork({
+    threadId,
+    provider: record.provider.kind,
+    remote: remoteExecution,
+    groups: agents.groups,
+    session: thread.sessionBackground ?? null,
+    live: liveBackground,
+    controls: sessionTaskControls,
+    onStopSessionTask,
+  });
   const activityBar = useMemo(
-    () => agentSessionActivityBar(agentsBanner, backgroundWait, thread.sessionBackground ?? null),
-    [agentsBanner, backgroundWait, thread.sessionBackground],
+    () => agentSessionActivityBar(running.work, liveBackground !== null),
+    [liveBackground, running.work],
   );
   const findInsetRef = useRef(0);
   useLayoutEffect(() => {
@@ -618,10 +627,11 @@ function AgentThreadSessionBody({
         onOpenAgents={agents.openPanel}
         onRevealQueue={revealQueue}
         onStop={onStopBackground}
-        onStopSessionTask={onStopSessionTask}
         onEndSession={onEndSession}
+        endSession={
+          onStopSessionTask === undefined ? "hidden" : (sessionTaskControls?.endSession ?? "hidden")
+        }
         queuedCount={deferredFollowUps.length}
-        sessionTasks={sessionTaskControls}
       />
 
       <AgentAttachmentLightbox
@@ -635,7 +645,9 @@ function AgentThreadSessionBody({
 
   return (
     <AgentCodeColorizerContext.Provider value={colorizer}>
-      <AgentAgentsDock agents={agents}>{session}</AgentAgentsDock>
+      <AgentAgentsDock agents={agents} running={running}>
+        {session}
+      </AgentAgentsDock>
     </AgentCodeColorizerContext.Provider>
   );
 }

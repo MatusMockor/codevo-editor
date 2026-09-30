@@ -244,11 +244,11 @@ describe("thread background activity visibility", () => {
     const stop = vi.fn();
     render(claudeAgents, { kind: "running" }, "Delegate", "claudeCode", stop);
     expect(bars()).toHaveLength(1);
-    expect(banner()?.textContent).toBe("2 agents runningStream A backend, Stream B gatewayView");
+    expect(banner()?.textContent).toBe("2 agents runningView");
     expect(stopButton()).toBeNull();
     render(codexAgents, { kind: "running" }, "Delegate", "codex", stop);
     expect(bars()).toHaveLength(1);
-    expect(banner()?.textContent).toBe("1 agent runningexplorerView");
+    expect(banner()?.textContent).toBe("1 agent runningView");
     act(() => viewButton()?.click());
     expect(host.querySelector(".cv-agents-row__name")?.textContent).toBe("explorer");
     expect(stop).not.toHaveBeenCalled();
@@ -375,7 +375,7 @@ describe("thread background activity visibility", () => {
     expect(host.querySelector(".agent-turn__events")?.textContent).toContain(leadAnswer);
     expect(bars()).toHaveLength(1);
     expect(banner()?.querySelectorAll(".cv-spinner")).toHaveLength(1);
-    expect(banner()?.textContent).toBe("1 agent runninggeneral-purposeViewStop");
+    expect(banner()?.textContent).toBe("1 agent runningViewStop");
     act(() => stopButton()?.click());
     expect(stop).toHaveBeenCalledTimes(1);
     act(() => viewButton()?.click());
@@ -416,7 +416,7 @@ describe("thread background activity visibility", () => {
     elapse(AGENT_FOREGROUND_QUIESCENCE_MS);
     expect(workTitle()).toBe("Waiting for 2 background tasks");
     expect(bars()).toHaveLength(1);
-    expect(banner()?.textContent).toBe("2 background tasks runningStop");
+    expect(banner()?.textContent).toBe("2 background tasks runningViewStop");
     render(shells, { kind: "exited", exitCode: 0 }, "Test", "claudeCode", () => {});
     expect(banner()).toBeNull();
     render(shells, { kind: "running" }, "Test", "codex", () => {});

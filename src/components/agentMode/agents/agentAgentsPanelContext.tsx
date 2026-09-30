@@ -1,5 +1,10 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { AgentAgentsPanelContext, createAgentAgentsStore } from "./agentAgentsPanelHooks";
+import type { AgentThreadAgents } from "../useAgentThreadAgents";
+import {
+  AgentAgentsPanelContext,
+  createAgentSnapshotStore,
+  type AgentRunningWorkSurface,
+} from "./agentAgentsPanelHooks";
 
 export function AgentAgentsPanelProvider({
   children,
@@ -12,10 +17,11 @@ export function AgentAgentsPanelProvider({
   onOpen(): void;
   onToggle(): void;
 }) {
-  const [store] = useState(createAgentAgentsStore);
+  const [store] = useState(createAgentSnapshotStore<AgentThreadAgents>);
+  const [running] = useState(createAgentSnapshotStore<AgentRunningWorkSurface>);
   const value = useMemo(
-    () => ({ store, isOpen, open: onOpen, toggle: onToggle }),
-    [isOpen, onOpen, onToggle, store],
+    () => ({ store, running, isOpen, open: onOpen, toggle: onToggle }),
+    [isOpen, onOpen, onToggle, running, store],
   );
   return (
     <AgentAgentsPanelContext.Provider value={value}>{children}</AgentAgentsPanelContext.Provider>

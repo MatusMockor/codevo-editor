@@ -157,6 +157,7 @@ function idleSession(tasks: AgentSessionBackground["tasks"], exitCode = 0): Agen
       agents: tasks.filter((task) => task.taskType === "agent").length,
       tasks,
       sinceEpochMs: RESUMED_AT,
+      taskSinceEpochMs: new Map(),
     },
   };
 }

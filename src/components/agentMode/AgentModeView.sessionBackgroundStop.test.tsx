@@ -23,6 +23,7 @@ import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNav
 
 const THREAD_ID = "agt-1";
 const STOP_LABEL = 'Stop background task "Watch beta.75 release workflow"';
+const STOPPING_LABEL = 'Stopping "Watch beta.75 release workflow"';
 
 const interruptedTurn: AgentTurn = {
   turnId: "turn-interrupted",
@@ -47,6 +48,7 @@ const watch: AgentSessionBackground = {
     { taskId: "b8kzpiexm", taskType: "shell", description: "Watch beta.75 release workflow" },
   ],
   sinceEpochMs: 1_700_000_001_000,
+  taskSinceEpochMs: new Map([["b8kzpiexm", 1_700_000_001_000]]),
 };
 
 function idleView(sessionBackground: AgentSessionBackground | undefined): AgentThreadView {
@@ -172,11 +174,33 @@ describe("stopping a native background task left live in an idle Claude session"
     });
   }
 
-  it("stops the task from the dock, shows it stopping and clears once the level drops it", async () => {
-    const harness = await mount();
+  async function openAgentsPanel(): Promise<Element | null> {
+    await act(async () => labelled("View background tasks")?.click());
+    const panel = host.querySelector('section[aria-label="Agents"]');
+    expect(panel).not.toBeNull();
+    return panel;
+  }
+
+  it("shows only the count in the bar and lists the task in the Agents panel View opens", async () => {
+    await mount();
     const bar = host.querySelector(".cv-session-dock__banners");
-    expect(bar?.textContent).toContain("1 background task running");
-    expect(bar?.textContent).toContain("Watch beta.75 release workflow");
+    expect(bar?.querySelector(".cv-banner-line")?.textContent).toBe("1 background task running");
+    expect(bar?.textContent).not.toContain("Watch beta.75 release workflow");
+    expect(labelled(STOP_LABEL)).toBeNull();
+
+    const panel = await openAgentsPanel();
+    const row = panel?.querySelector('.cv-agents__section[data-section="running"] .cv-agents-row');
+    expect(row?.querySelector(".cv-agents-row__name")?.textContent).toBe(
+      "Watch beta.75 release workflow",
+    );
+    expect(row?.querySelector(".cv-agents-row__activity")?.textContent).toBe(
+      "Running in background",
+    );
+  });
+
+  it("stops the task from its Agents panel row, shows it stopping and clears once the level drops it", async () => {
+    const harness = await mount();
+    await openAgentsPanel();
 
     const stop = labelled(STOP_LABEL);
     expect(stop).not.toBeNull();
@@ -187,11 +211,16 @@ describe("stopping a native background task left live in an idle Claude session"
       "b8kzpiexm",
     );
     expect(harness.stop).not.toHaveBeenCalled();
-    expect(labelled(STOP_LABEL)?.textContent).toBe("Stopping…");
-    expect(labelled(STOP_LABEL)?.disabled).toBe(true);
+    const stopping = labelled(STOPPING_LABEL);
+    expect(stopping?.textContent).toBe("Stopping…");
+    expect(stopping?.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => stopping?.click());
+    expect(harness.stopSessionBackgroundTask).toHaveBeenCalledTimes(1);
 
     harness.setThreads([idleView(undefined)]);
     expect(labelled(STOP_LABEL)).toBeNull();
+    expect(labelled(STOPPING_LABEL)).toBeNull();
+    expect(host.querySelector('.cv-agents__section[data-section="running"]')).toBeNull();
     expect(host.querySelector(".cv-session-dock__banners .cv-composer-banner")).toBeNull();
   });
 
@@ -224,6 +253,7 @@ describe("stopping a native background task left live in an idle Claude session"
       reason: "No task found with ID: b8kzpiexm",
     });
 
+    await openAgentsPanel();
     await act(async () => labelled(STOP_LABEL)?.click());
 
     expect(host.textContent).toContain(

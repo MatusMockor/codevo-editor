@@ -23,6 +23,7 @@ export interface AgentElapsedReading {
 export interface AgentElapsedTicker {
   observe(key: string, observedDurationMs: number | null): void;
   register(key: string, observedDurationMs: number | null, target: AgentElapsedTarget): () => void;
+  registerSince(key: string, sinceEpochMs: number, target: AgentElapsedTarget): () => void;
   dispose(): void;
 }
 
@@ -98,6 +99,10 @@ export function createAgentElapsedTicker(now: () => number = Date.now): AgentEla
       known?.observedDurationMs === observedDurationMs
         ? known
         : { observedDurationMs, anchoredAtEpochMs: now() };
+    return keep(key, anchor);
+  };
+
+  const keep = (key: string, anchor: ElapsedAnchor): ElapsedAnchor => {
     anchors.delete(key);
     anchors.set(key, anchor);
     evictAnchors();
@@ -136,22 +141,30 @@ export function createAgentElapsedTicker(now: () => number = Date.now): AgentEla
     timer = null;
   };
 
+  const track = (key: string, target: AgentElapsedTarget): (() => void) => {
+    const registration: ElapsedRegistration = { key, target, describedAtMs: null };
+    registrations.set(target.clock, registration);
+    writeRegistration(registration, now());
+    timer ??= setInterval(write, AGENT_ELAPSED_TICK_MS);
+    return () => {
+      if (registrations.get(target.clock) !== registration) return;
+      registrations.delete(target.clock);
+      writeText(target.stale, "");
+      if (registrations.size === 0) stop();
+    };
+  };
+
   return {
     observe(key, observedDurationMs) {
       observe(key, observedDurationMs);
     },
     register(key, observedDurationMs, target) {
-      const registration: ElapsedRegistration = { key, target, describedAtMs: null };
-      registrations.set(target.clock, registration);
       observe(key, observedDurationMs);
-      writeRegistration(registration, now());
-      timer ??= setInterval(write, AGENT_ELAPSED_TICK_MS);
-      return () => {
-        if (registrations.get(target.clock) !== registration) return;
-        registrations.delete(target.clock);
-        writeText(target.stale, "");
-        if (registrations.size === 0) stop();
-      };
+      return track(key, target);
+    },
+    registerSince(key, sinceEpochMs, target) {
+      keep(key, { observedDurationMs: null, anchoredAtEpochMs: sinceEpochMs });
+      return track(key, target);
     },
     dispose() {
       registrations.clear();

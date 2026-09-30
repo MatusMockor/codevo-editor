@@ -114,18 +114,6 @@ export function agentBackgroundWaitTitle(wait: AgentBackgroundWait): string {
   }
 }
 
-export function agentBackgroundWaitStatus(wait: AgentBackgroundWait): string {
-  switch (wait.kind) {
-    case "agents":
-      return agentAgentsRunningLabel(wait.count);
-    case "tasks":
-      if (wait.count === null) return "Background tasks running";
-      return `${countLabel(wait.count, "background task")} running`;
-    default:
-      return unreachableWait(wait);
-  }
-}
-
 function unreachableWait(wait: never): never {
   throw new Error(`Unsupported background wait: ${JSON.stringify(wait)}`);
 }

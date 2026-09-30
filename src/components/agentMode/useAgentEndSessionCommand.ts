@@ -7,10 +7,9 @@ import type {
   AgentThreadView,
 } from "../../application/agentThreadPorts";
 import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
-import {
-  MAX_AGENT_SESSION_TASK_ROWS,
-  agentSessionTaskLabel,
-} from "./conversation/agentSessionTaskControls";
+import { agentSessionTaskLabel } from "./conversation/agentSessionTaskControls";
+
+const MAX_AGENT_SESSION_TASK_ROWS = 3;
 
 export function claudeSessionEndedNotice(title: string): AgentTasksNotice {
   return { kind: "info", message: `Ended Claude's session for "${title}".`, action: null };

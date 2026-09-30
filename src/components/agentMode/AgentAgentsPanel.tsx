@@ -1,64 +1,56 @@
-import { Bot, Check, ChevronRight } from "lucide-react";
-import {
-  createContext,
-  memo,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import type { AgentRuntimeSubagent } from "../../domain/agentRuntimeSubagent";
-import { RoleTag } from "../../ui/foundation/RoleTag";
+import { Bot, ChevronRight } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { AgentsPanelRow } from "./AgentAgentsPanelRow";
+import { AgentElapsedTickerContext } from "./agentElapsedTickerContext";
 import {
   agentAgentsPanelModel,
   type AgentAgentsPanelEarlierGroup,
   type AgentAgentsPanelGroup,
   type AgentAgentsPanelModel,
 } from "./agentAgentsPanelPresentation";
-import {
-  agentElapsedObservation,
-  createAgentElapsedTicker,
-  type AgentElapsedTicker,
-} from "./agentElapsedTicker";
-import {
-  agentElapsedLabel,
-  agentRuntimeSubagentActivityLine,
-  agentRuntimeSubagentMetricsLabel,
-  agentRuntimeSubagentStatusLabel,
-  agentRecentActivityLabel,
-  agentTokenCountLabel,
-} from "./agentRuntimeSubagentPresentation";
+import { createAgentElapsedTicker, type AgentElapsedTicker } from "./agentElapsedTicker";
+import { agentTokenCountLabel } from "./agentRuntimeSubagentPresentation";
+import { AgentRunningSection } from "./agents/AgentRunningSection";
+import { agentRunningRowKeys } from "./agents/agentRunningWork";
+import type { AgentRunningWorkSurface } from "./agents/agentAgentsPanelHooks";
 import "./agentSubagents.css";
 
 export interface AgentAgentsPanelProps {
   readonly groups: ReadonlyArray<AgentAgentsPanelGroup>;
   readonly ticker?: AgentElapsedTicker;
+  readonly running?: AgentRunningWorkSurface | null;
   readonly rowRenderProbe?: (agentId: string) => void;
 }
-
-const ElapsedTickerContext = createContext<AgentElapsedTicker | null>(null);
 
 export function AgentAgentsPanel({
   groups,
   ticker: sharedTicker,
+  running = null,
   rowRenderProbe,
 }: AgentAgentsPanelProps) {
-  const model = useMemo(() => agentAgentsPanelModel(groups), [groups]);
+  const shownRunning = useMemo(
+    () => agentRunningRowKeys(running?.work ?? null, groups),
+    [groups, running],
+  );
+  const model = useMemo(() => agentAgentsPanelModel(groups, shownRunning), [groups, shownRunning]);
   const [ownTicker] = useState(() =>
     sharedTicker === undefined ? createAgentElapsedTicker() : null,
   );
   const ticker = sharedTicker ?? ownTicker;
   useEffect(() => () => ownTicker?.dispose(), [ownTicker]);
-  const empty = model.current.length === 0 && model.earlier.length === 0;
+  const settledEmpty = model.current.length === 0 && model.earlier.length === 0;
+  const runningEmpty = (running?.work.rows.length ?? 0) + (running?.work.unlisted ?? 0) === 0;
+  const empty = settledEmpty && runningEmpty;
 
   return (
     <section aria-label="Agents" className="cv-agents">
       <div className="cv-agents__body">
         {model.notice !== null && <p className="cv-agents__notice">{model.notice}</p>}
         {empty && <AgentsPanelEmpty />}
-        <ElapsedTickerContext.Provider value={ticker}>
+        <AgentElapsedTickerContext.Provider value={ticker}>
+          {running !== null && (
+            <AgentRunningSection renderProbe={rowRenderProbe} surface={running} />
+          )}
           {model.current.length > 0 && (
             <section className="cv-agents__section" data-section="current">
               <h3 className="cv-agents__label">This turn</h3>
@@ -82,9 +74,9 @@ export function AgentAgentsPanel({
               ))}
             </section>
           )}
-        </ElapsedTickerContext.Provider>
+        </AgentElapsedTickerContext.Provider>
       </div>
-      {!empty && <AgentsPanelFooter model={model} />}
+      {model.working + model.idle + model.settled > 0 && <AgentsPanelFooter model={model} />}
     </section>
   );
 }
@@ -157,97 +149,6 @@ function AgentsPanelEmpty() {
         When this thread spawns subagents, they show up here with live status, activity, and token
         usage.
       </p>
-    </div>
-  );
-}
-
-const AgentsPanelRow = memo(function AgentsPanelRow({
-  agent,
-  tickerKey,
-  renderProbe,
-}: {
-  readonly agent: AgentRuntimeSubagent;
-  readonly tickerKey: string;
-  readonly renderProbe?: (agentId: string) => void;
-}) {
-  renderProbe?.(agent.id);
-  const ticker = useContext(ElapsedTickerContext);
-  const clockRef = useRef<HTMLSpanElement | null>(null);
-  const staleRef = useRef<HTMLSpanElement | null>(null);
-  const descriptionRef = useRef<HTMLSpanElement | null>(null);
-  const elapsed = agent.elapsed;
-  const observedDurationMs = agentElapsedObservation(elapsed);
-  const ticking = observedDurationMs !== undefined;
-  const statusLabel = agentRuntimeSubagentStatusLabel(agent.status);
-
-  useEffect(() => {
-    const clock = clockRef.current;
-    if (ticker === null || clock === null || observedDurationMs === undefined) return;
-    return ticker.register(tickerKey, observedDurationMs, {
-      clock,
-      stale: staleRef.current,
-      description: descriptionRef.current,
-    });
-  }, [ticker, tickerKey, observedDurationMs]);
-
-  return (
-    <li className="cv-agents-item">
-      <div
-        className="cv-agents-row"
-        data-status={agent.status}
-        data-title={agent.titleKnown ? undefined : "unknown"}
-      >
-        <span aria-hidden="true" className="cv-agents-row__dot" />
-        <span className="cv-agents-row__title">
-          <span className="cv-agents-row__name">{agent.title}</span>
-          {agent.role !== null && <RoleTag>{agent.role}</RoleTag>}
-        </span>
-        <span className="cv-agents-row__elapsed">
-          {elapsed.kind === "settled" && <span>{agentElapsedLabel(elapsed.durationMs)}</span>}
-          {ticking && (
-            <span aria-hidden="true" ref={clockRef}>
-              {agentElapsedLabel(observedDurationMs ?? 0)}
-            </span>
-          )}
-          {agent.status === "completed" && <Check aria-hidden="true" size={12} />}
-        </span>
-        <span className="cv-agents-row__activity">
-          <span className="cv-agents-row__activity-text">
-            {agentRuntimeSubagentActivityLine(agent) ?? statusLabel}
-          </span>
-          {ticking && <span className="cv-agents-row__stale" ref={staleRef} />}
-        </span>
-        <span className="cv-agents-row__metrics">{agentRuntimeSubagentMetricsLabel(agent)}</span>
-        <span className="agent-visually-hidden">{statusLabel}</span>
-        {ticking && <span className="agent-visually-hidden" ref={descriptionRef} />}
-      </div>
-      <AgentsPanelRecentActivity entries={agent.recentActivity} />
-    </li>
-  );
-});
-
-function AgentsPanelRecentActivity({ entries }: { readonly entries: ReadonlyArray<string> }) {
-  const [open, setOpen] = useState(false);
-  const listId = useId();
-  if (entries.length === 0) return null;
-  return (
-    <div className="cv-agents-recent">
-      <button
-        aria-controls={open ? listId : undefined}
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <ChevronRight aria-hidden="true" size={12} />
-        {agentRecentActivityLabel(entries.length)}
-      </button>
-      {open && (
-        <ol aria-label="Recent activity" id={listId}>
-          {entries.map((entry, index) => (
-            <li key={index}>{entry}</li>
-          ))}
-        </ol>
-      )}
     </div>
   );
 }

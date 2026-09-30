@@ -1,14 +1,22 @@
 import { createContext, useContext, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { agentWorkingAgentNames } from "../agentAgentsPanelPresentation";
 import type { AgentThreadAgents } from "../useAgentThreadAgents";
-interface AgentAgentsStore {
-  getSnapshot(): AgentThreadAgents | null;
+import type { AgentRunningWork } from "./agentRunningWork";
+
+interface AgentSnapshotStore<T> {
+  getSnapshot(): T | null;
   subscribe(listener: () => void): () => void;
-  publish(agents: AgentThreadAgents | null): void;
+  publish(value: T | null): void;
+}
+
+export interface AgentRunningWorkSurface {
+  readonly threadId: string;
+  readonly work: AgentRunningWork;
+  stopTask(taskId: string): void;
 }
 
 export interface AgentAgentsPanelContextValue {
-  readonly store: AgentAgentsStore;
+  readonly store: AgentSnapshotStore<AgentThreadAgents>;
+  readonly running: AgentSnapshotStore<AgentRunningWorkSurface>;
   readonly isOpen: boolean;
   open(): void;
   toggle(): void;
@@ -17,7 +25,6 @@ export interface AgentAgentsPanelContextValue {
 export interface AgentAgentsPanelControls {
   readonly isOpen: boolean;
   readonly working: number;
-  readonly names: ReadonlyArray<string>;
   open(): void;
   toggle(): void;
 }
@@ -25,11 +32,10 @@ export interface AgentAgentsPanelControls {
 export const AgentAgentsPanelContext = createContext<AgentAgentsPanelContextValue | null>(null);
 const NOOP = (): void => undefined;
 const NO_SUBSCRIPTION = (): (() => void) => NOOP;
-const NO_AGENTS = (): AgentThreadAgents | null => null;
-const EMPTY_NAMES: ReadonlyArray<string> = [];
+const NO_SNAPSHOT = (): null => null;
 
-export function createAgentAgentsStore(): AgentAgentsStore {
-  let current: AgentThreadAgents | null = null;
+export function createAgentSnapshotStore<T>(): AgentSnapshotStore<T> {
+  let current: T | null = null;
   const listeners = new Set<() => void>();
   return {
     getSnapshot: () => current,
@@ -39,9 +45,9 @@ export function createAgentAgentsStore(): AgentAgentsStore {
         listeners.delete(listener);
       };
     },
-    publish(agents) {
-      if (agents === current) return;
-      current = agents;
+    publish(value) {
+      if (value === current) return;
+      current = value;
       for (const listener of [...listeners]) listener();
     },
   };
@@ -62,7 +68,26 @@ export function useAgentThreadAgentsSnapshot(): AgentThreadAgents | null {
   const context = useContext(AgentAgentsPanelContext);
   return useSyncExternalStore(
     context?.store.subscribe ?? NO_SUBSCRIPTION,
-    context?.store.getSnapshot ?? NO_AGENTS,
+    context?.store.getSnapshot ?? NO_SNAPSHOT,
+  );
+}
+
+export function usePublishAgentRunningWork(surface: AgentRunningWorkSurface): void {
+  const context = useContext(AgentAgentsPanelContext);
+  useLayoutEffect(() => {
+    if (context === null) return;
+    context.running.publish(surface);
+    return () => {
+      if (context.running.getSnapshot() === surface) context.running.publish(null);
+    };
+  }, [context, surface]);
+}
+
+export function useAgentRunningWorkSnapshot(): AgentRunningWorkSurface | null {
+  const context = useContext(AgentAgentsPanelContext);
+  return useSyncExternalStore(
+    context?.running.subscribe ?? NO_SUBSCRIPTION,
+    context?.running.getSnapshot ?? NO_SNAPSHOT,
   );
 }
 
@@ -73,14 +98,16 @@ export function useAgentAgentsPanelOpener(): () => void {
 export function useAgentAgentsPanelControls(): AgentAgentsPanelControls {
   const context = useContext(AgentAgentsPanelContext);
   const agents = useAgentThreadAgentsSnapshot();
+  const running = useAgentRunningWorkSnapshot();
+  const runningAgents =
+    running !== null && running.threadId === agents?.threadId ? running.work.agents : null;
   return useMemo(
     () => ({
       isOpen: context?.isOpen ?? false,
-      working: agents?.working ?? 0,
-      names: agents === null ? EMPTY_NAMES : agentWorkingAgentNames(agents.groups),
+      working: runningAgents ?? agents?.working ?? 0,
       open: context?.open ?? NOOP,
       toggle: context?.toggle ?? NOOP,
     }),
-    [agents, context],
+    [agents, context, runningAgents],
   );
 }

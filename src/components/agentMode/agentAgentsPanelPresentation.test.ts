@@ -9,7 +9,6 @@ import {
   agentAgentsPanelModel,
   agentAgentsWorkingLabel,
   agentSubagentAnnouncement,
-  agentWorkingAgentNames,
 } from "./agentAgentsPanelPresentation";
 
 const source = (id: string): AgentRuntimeSubagentSource => ({
@@ -138,17 +137,5 @@ describe("agents panel sections", () => {
     ]);
     expect(model.working).toBe(1);
     expect(model.settled).toBe(3);
-  });
-
-  it("names the working agents by role, falling back to the title", () => {
-    expect(
-      agentWorkingAgentNames([
-        groupOf("t1", [
-          sourceOf({ id: "a", title: "Review", role: "reviewer" }),
-          sourceOf({ id: "b", title: "Write retry tests" }),
-          sourceOf({ id: "c", title: "Done", observedState: "completed" }),
-        ]),
-      ]),
-    ).toEqual(["reviewer", "Write retry tests"]);
   });
 });

@@ -54,6 +54,7 @@ describe("agent session background levels", () => {
       agents: 1,
       tasks: RESUMED.tasks,
       sinceEpochMs: 1_000,
+      taskSinceEpochMs: new Map([["a4b355dcf6056a875", 1_000]]),
     });
     const second = applyAgentSessionBackgroundLevel(
       live,
@@ -62,10 +63,27 @@ describe("agent session background levels", () => {
     );
     expect(agentSessionBackgroundFor(second, thread())?.sinceEpochMs).toBe(1_000);
     expect(agentSessionBackgroundFor(second, thread())?.total).toBe(2);
+    expect(agentSessionBackgroundFor(second, thread())?.taskSinceEpochMs).toEqual(
+      new Map([
+        ["a4b355dcf6056a875", 1_000],
+        ["b1", 5_000],
+      ]),
+    );
+    const shellOnly = applyAgentSessionBackgroundLevel(
+      second,
+      { ...RESUMED, total: 1, agents: 0, tasks: [{ taskId: "b1", taskType: "shell" }] },
+      7_000,
+    );
+    expect(agentSessionBackgroundFor(shellOnly, thread())?.taskSinceEpochMs).toEqual(
+      new Map([["b1", 5_000]]),
+    );
     const drained = applyAgentSessionBackgroundLevel(second, DRAINED, 9_000);
     expect(agentSessionBackgroundFor(drained, thread())).toBeUndefined();
     const again = applyAgentSessionBackgroundLevel(drained, RESUMED, 12_000);
     expect(agentSessionBackgroundFor(again, thread())?.sinceEpochMs).toBe(12_000);
+    expect(agentSessionBackgroundFor(again, thread())?.taskSinceEpochMs).toEqual(
+      new Map([["a4b355dcf6056a875", 12_000]]),
+    );
   });
 
   it("clears the level when the exact owner's session ends and ignores foreign owners", () => {

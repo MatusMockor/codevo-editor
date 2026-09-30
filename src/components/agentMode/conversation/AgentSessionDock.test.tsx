@@ -28,15 +28,15 @@ function buttonLabelled(label: string): HTMLButtonElement | null {
 }
 
 describe("AgentSessionDock", () => {
-  it("renders one calm bar with the count, names, View and Stop", () => {
+  it("renders one calm bar with only the count, View and Stop", () => {
     const open = vi.fn();
     const stop = vi.fn();
     act(() =>
       root.render(
         <AgentSessionDock
           activity={{
-            label: "2 agents running",
-            names: "explorer, reviewer",
+            label: "4 agents running",
+            viewLabel: "View agents",
             actions: ["view", "stop"],
             announce: true,
           }}
@@ -54,7 +54,8 @@ describe("AgentSessionDock", () => {
     expect(bars[0]?.className).toContain("cv-composer-banner--working");
     expect(bars[0]?.querySelectorAll(".cv-spinner")).toHaveLength(1);
     expect(bars[0]?.getAttribute("role")).toBe("status");
-    expect(bars[0]?.textContent).toBe("2 agents runningexplorer, reviewerViewStop");
+    expect(bars[0]?.textContent).toBe("4 agents runningViewStop");
+    expect(bars[0]?.querySelector('[role="list"]')).toBeNull();
     act(() => host.querySelector<HTMLButtonElement>('button[aria-label="View agents"]')?.click());
     expect(open).toHaveBeenCalledTimes(1);
     act(() =>
@@ -70,7 +71,12 @@ describe("AgentSessionDock", () => {
       act(() =>
         root.render(
           <AgentSessionDock
-            activity={{ label: "1 agent running", names: "explorer", actions, announce: false }}
+            activity={{
+              label: "1 agent running",
+              viewLabel: "View agents",
+              actions,
+              announce: false,
+            }}
             follow={{ atLatest: true, unseenActivity: false, jumpToLatest: () => undefined }}
             onOpenAgents={() => undefined}
             onRevealQueue={() => undefined}
@@ -108,96 +114,39 @@ describe("AgentSessionDock", () => {
     expect(host.querySelector(".cv-session-dock__banners")).toBeNull();
   });
 
-  it("lists live session tasks with their own Stop, a pending Stopping state and End session", () => {
-    const stopTask = vi.fn();
+  it("offers End session next to View, emphasised when suggested, and hides it otherwise", () => {
     const endSession = vi.fn();
-    const render = (pending: boolean, offer: AgentSessionEndOffer) =>
+    const render = (offer: AgentSessionEndOffer, onEnd: (() => void) | null = endSession) =>
       act(() =>
         root.render(
           <AgentSessionDock
             activity={{
               label: "1 background task running",
-              names: "",
-              actions: [],
+              viewLabel: "View background tasks",
+              actions: ["view"],
               announce: false,
             }}
+            endSession={offer}
             follow={{ atLatest: true, unseenActivity: false, jumpToLatest: () => undefined }}
-            onEndSession={endSession}
+            onEndSession={onEnd ?? undefined}
             onOpenAgents={() => undefined}
             onRevealQueue={() => undefined}
-            onStopSessionTask={stopTask}
             queuedCount={0}
-            sessionTasks={{
-              rows: [
-                {
-                  taskId: "b8kzpiexm",
-                  label: "Watch beta.75 release workflow",
-                  stopLabel: 'Stop background task "Watch beta.75 release workflow"',
-                  pending,
-                },
-              ],
-              hiddenCount: 2,
-              endSession: offer,
-            }}
           />,
         ),
       );
-    render(false, "offered");
-
-    const stop = buttonLabelled('Stop background task "Watch beta.75 release workflow"');
-    expect(stop).not.toBeNull();
-    expect(stop?.disabled).toBe(false);
-    expect(stop?.textContent).toBe("Stop");
-    expect(host.querySelector('[role="list"]')?.textContent).toContain(
-      "Watch beta.75 release workflow",
-    );
-    expect(host.textContent).toContain("+2 more");
-    act(() => stop?.click());
-    expect(stopTask).toHaveBeenCalledWith("b8kzpiexm");
-    act(() =>
-      host.querySelector<HTMLButtonElement>('button[aria-label="End Claude session"]')?.click(),
-    );
-    expect(endSession).toHaveBeenCalledTimes(1);
-
-    render(true, "suggested");
-    expect(buttonLabelled("End Claude session")?.className).toContain("cv-banner-action--emphasis");
-    render(true, "hidden");
-    const stopping = buttonLabelled('Stop background task "Watch beta.75 release workflow"');
-    expect(stopping?.disabled).toBe(true);
-    expect(stopping?.textContent).toBe("Stopping…");
-    act(() => stopping?.click());
-    expect(stopTask).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('button[aria-label="End Claude session"]')).toBeNull();
-  });
-
-  it("shows no session task controls without a stop port", () => {
-    act(() =>
-      root.render(
-        <AgentSessionDock
-          activity={{ label: "1 background task running", names: "", actions: [], announce: false }}
-          follow={{ atLatest: true, unseenActivity: false, jumpToLatest: () => undefined }}
-          onOpenAgents={() => undefined}
-          onRevealQueue={() => undefined}
-          queuedCount={0}
-          sessionTasks={{
-            rows: [
-              {
-                taskId: "t1",
-                label: "Build",
-                stopLabel: 'Stop background task "Build"',
-                pending: false,
-              },
-            ],
-            hiddenCount: 0,
-            endSession: "offered",
-          }}
-        />,
-      ),
-    );
-    expect(host.querySelector('[role="list"]')).toBeNull();
-    expect(host.querySelector('button[aria-label="End Claude session"]')).toBeNull();
+    render("offered");
+    expect(buttonLabelled("View background tasks")).not.toBeNull();
     expect(host.querySelector(".cv-composer-banner")?.textContent).toBe(
-      "1 background task running",
+      "1 background task runningViewEnd session",
     );
+    act(() => buttonLabelled("End Claude session")?.click());
+    expect(endSession).toHaveBeenCalledTimes(1);
+    render("suggested");
+    expect(buttonLabelled("End Claude session")?.className).toContain("cv-banner-action--emphasis");
+    render("hidden");
+    expect(buttonLabelled("End Claude session")).toBeNull();
+    render("offered", null);
+    expect(buttonLabelled("End Claude session")).toBeNull();
   });
 });

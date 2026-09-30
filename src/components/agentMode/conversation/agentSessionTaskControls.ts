@@ -1,20 +1,10 @@
 import type { AgentBackgroundTask } from "../../../domain/agentBackgroundActivity";
 import type { AgentSessionBackground } from "../../../domain/agentSessionBackground";
 
-export const MAX_AGENT_SESSION_TASK_ROWS = 3;
-
-export interface AgentSessionTaskRow {
-  readonly taskId: string;
-  readonly label: string;
-  readonly stopLabel: string;
-  readonly pending: boolean;
-}
-
 export type AgentSessionEndOffer = "hidden" | "offered" | "suggested";
 
 export interface AgentSessionTaskControls {
-  readonly rows: ReadonlyArray<AgentSessionTaskRow>;
-  readonly hiddenCount: number;
+  readonly pendingTaskIds: ReadonlySet<string>;
   readonly endSession: AgentSessionEndOffer;
 }
 
@@ -22,22 +12,19 @@ export function agentSessionTaskControls(
   session: AgentSessionBackground | null,
   pendingTaskIds: ReadonlySet<string>,
   endSession: AgentSessionEndOffer,
+  previous: AgentSessionTaskControls | null = null,
 ): AgentSessionTaskControls | null {
   if (session === null || session.tasks.length === 0) return null;
-  const rows = session.tasks.slice(0, MAX_AGENT_SESSION_TASK_ROWS).map((task) => {
-    const label = agentSessionTaskLabel(task);
-    return {
-      taskId: task.taskId,
-      label,
-      stopLabel: `Stop background task "${label}"`,
-      pending: pendingTaskIds.has(task.taskId),
-    };
-  });
-  return {
-    rows,
-    hiddenCount: Math.max(session.total, session.tasks.length) - rows.length,
-    endSession,
-  };
+  const live = new Set(session.tasks.map((task) => task.taskId));
+  const pending = new Set([...pendingTaskIds].filter((taskId) => live.has(taskId)));
+  if (previous === null || !sameTaskIds(previous.pendingTaskIds, pending))
+    return { pendingTaskIds: pending, endSession };
+  if (previous.endSession === endSession) return previous;
+  return { pendingTaskIds: previous.pendingTaskIds, endSession };
+}
+
+function sameTaskIds(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((taskId) => right.has(taskId));
 }
 
 export function agentSessionTaskLabel(task: AgentBackgroundTask): string {

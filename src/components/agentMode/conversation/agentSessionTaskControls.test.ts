@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSessionBackground } from "../../../domain/agentSessionBackground";
-import {
-  MAX_AGENT_SESSION_TASK_ROWS,
-  agentSessionTaskControls,
-  agentSessionTaskLabel,
-} from "./agentSessionTaskControls";
+import { agentSessionTaskControls, agentSessionTaskLabel } from "./agentSessionTaskControls";
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -16,6 +12,7 @@ const watch: AgentSessionBackground = {
     { taskId: "b8kzpiexm", taskType: "shell", description: "Watch beta.75 release workflow" },
   ],
   sinceEpochMs: 1,
+  taskSinceEpochMs: new Map([["b8kzpiexm", 1]]),
 };
 
 describe("agentSessionTaskControls", () => {
@@ -23,49 +20,37 @@ describe("agentSessionTaskControls", () => {
     expect(agentSessionTaskControls(null, NONE, "offered")).toBeNull();
   });
 
-  it("lists a live session task with its own Stop and offers End session", () => {
+  it("carries the End session offer for a live session level", () => {
     expect(agentSessionTaskControls(watch, NONE, "offered")).toEqual({
-      rows: [
-        {
-          taskId: "b8kzpiexm",
-          label: "Watch beta.75 release workflow",
-          stopLabel: 'Stop background task "Watch beta.75 release workflow"',
-          pending: false,
-        },
-      ],
-      hiddenCount: 0,
+      pendingTaskIds: new Set(),
       endSession: "offered",
     });
     expect(agentSessionTaskControls(watch, NONE, "suggested")?.endSession).toBe("suggested");
   });
 
-  it("marks only the exact pending task as stopping and hides End session while a turn runs", () => {
+  it("keeps only pending stops of tasks that are still live", () => {
     const controls = agentSessionTaskControls(
       {
         ...watch,
         total: 2,
         tasks: [...watch.tasks, { taskId: "c9", taskType: "monitor", description: "Tail logs" }],
       },
-      new Set(["c9"]),
+      new Set(["c9", "gone"]),
       "hidden",
     );
-    expect(controls?.rows.map((row) => [row.taskId, row.pending])).toEqual([
-      ["b8kzpiexm", false],
-      ["c9", true],
-    ]);
+    expect(controls?.pendingTaskIds).toEqual(new Set(["c9"]));
     expect(controls?.endSession).toBe("hidden");
   });
 
-  it("bounds the rows and counts every other live task, listed or not", () => {
-    const tasks = Array.from({ length: 5 }, (_, index) => ({
-      taskId: `task-${index}`,
-      taskType: "shell" as const,
-      description: `Command ${index}`,
-    }));
-    const controls = agentSessionTaskControls({ ...watch, total: 9, tasks }, NONE, "offered");
-    expect(controls?.rows).toHaveLength(MAX_AGENT_SESSION_TASK_ROWS);
-    expect(controls?.rows.map((row) => row.taskId)).toEqual(["task-0", "task-1", "task-2"]);
-    expect(controls?.hiddenCount).toBe(6);
+  it("returns the previous controls and pending set while their contents are unchanged", () => {
+    const first = agentSessionTaskControls(watch, new Set(["b8kzpiexm"]), "offered");
+    const again = agentSessionTaskControls(watch, new Set(["b8kzpiexm"]), "offered", first);
+    expect(again).toBe(first);
+    const suggested = agentSessionTaskControls(watch, new Set(["b8kzpiexm"]), "suggested", first);
+    expect(suggested).not.toBe(first);
+    expect(suggested?.pendingTaskIds).toBe(first?.pendingTaskIds);
+    const cleared = agentSessionTaskControls(watch, NONE, "offered", first);
+    expect(cleared?.pendingTaskIds).toEqual(new Set());
   });
 
   it("falls back to a neutral label naming the task id when Claude gave no description", () => {

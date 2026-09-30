@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { act, useCallback, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
 import type { AgentTurn } from "../../domain/agentThread";
 import { AgentAgentsPanelProvider } from "./agents/agentAgentsPanelContext";
+import { AgentAgentsPanelSurface } from "./agents/AgentAgentsPanelSurface";
+import { agentRunningStopReasonText } from "./agents/agentRunningWork";
 import { AgentThreadSession } from "./AgentThreadSession";
 
 const RESUMED_AT = 1_790_718_781_369;
@@ -65,15 +67,21 @@ const resumedAgent: AgentSessionBackground = {
     },
   ],
   sinceEpochMs: RESUMED_AT,
+  taskSinceEpochMs: new Map(),
 };
 
 function PanelHarness({ children }: { readonly children: ReactNode }) {
-  const [, setOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const onOpen = useCallback(() => setOpen(true), []);
   const onToggle = useCallback(() => setOpen((current) => !current), []);
   return (
-    <AgentAgentsPanelProvider isOpen={false} onOpen={onOpen} onToggle={onToggle}>
+    <AgentAgentsPanelProvider isOpen={open} onOpen={onOpen} onToggle={onToggle}>
       {children}
+      {open && (
+        <aside data-testid="right-panel">
+          <AgentAgentsPanelSurface />
+        </aside>
+      )}
     </AgentAgentsPanelProvider>
   );
 }
@@ -92,7 +100,10 @@ describe("thread session with live session background work", () => {
     host.remove();
   });
 
-  function render(sessionBackground: AgentSessionBackground | undefined) {
+  function render(
+    sessionBackground: AgentSessionBackground | undefined,
+    onStopSessionTask?: (threadId: string, taskId: string) => void,
+  ) {
     const view: AgentThreadView = {
       thread: {
         threadId: "agt-mue1wenj-7ede",
@@ -129,6 +140,12 @@ describe("thread session with live session background work", () => {
             thread={view}
             composerRepositoryLabel="app"
             onReviewInDiff={() => {}}
+            onStopSessionTask={onStopSessionTask}
+            sessionTaskControls={
+              onStopSessionTask === undefined
+                ? null
+                : { pendingTaskIds: new Set(), endSession: "offered" }
+            }
           />
         </PanelHarness>,
       ),
@@ -140,10 +157,41 @@ describe("thread session with live session background work", () => {
   it("shows one thread-level bar for a resumed agent after its turn settled and never re-opens the turn", () => {
     render(resumedAgent);
     expect(bars()).toHaveLength(1);
-    expect(bars()[0]?.textContent).toBe("1 agent runningLive Codex model catalog like Claude");
+    expect(bars()[0]?.querySelector(".cv-banner-line")?.textContent).toBe("1 agent running");
     expect(host.querySelector('button[aria-label="Stop agent and background work"]')).toBeNull();
     expect(host.textContent).toContain("Claude continued after background work finished");
     render(undefined);
     expect(bars()).toHaveLength(0);
+  });
+
+  const rightPanelRows = () =>
+    host.querySelectorAll(
+      '[data-testid="right-panel"] .cv-agents__section[data-section="running"] .cv-agents-row',
+    );
+
+  it("opens the Agents panel on View with the resumed agent and its own Stop", () => {
+    const stopTask = vi.fn();
+    render(resumedAgent, stopTask);
+    expect(host.querySelector('[data-testid="right-panel"]')).toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>('button[aria-label="View agents"]')?.click());
+    expect(rightPanelRows()).toHaveLength(1);
+    expect(rightPanelRows()[0]?.querySelector(".cv-agents-row__name")?.textContent).toBe(
+      "Live Codex model catalog like Claude",
+    );
+    expect(host.querySelectorAll('[data-testid="right-panel"] .cv-agents-row')).toHaveLength(1);
+    const stop = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Stop background task \\"Live Codex model catalog like Claude\\""]',
+    );
+    act(() => stop?.click());
+    expect(stopTask).toHaveBeenCalledExactlyOnceWith("agt-mue1wenj-7ede", "a4b355dcf6056a875");
+  });
+
+  it("says why a row cannot stop on its own when Codevo has no per-task stop", () => {
+    render(resumedAgent);
+    act(() => host.querySelector<HTMLButtonElement>('button[aria-label="View agents"]')?.click());
+    expect(rightPanelRows()[0]?.querySelector(".cv-agents-row__stop")).toBeNull();
+    const note = host.querySelector('[data-testid="right-panel"] .cv-agents__running-note');
+    expect(note?.textContent).toBe(agentRunningStopReasonText("unavailable"));
+    expect(rightPanelRows()[0]?.closest("li")?.getAttribute("aria-describedby")).toBe(note?.id);
   });
 });

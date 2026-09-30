@@ -1,95 +1,59 @@
 import { describe, expect, it } from "vitest";
+import { NO_AGENT_RUNNING_WORK, type AgentRunningWork } from "../agents/agentRunningWork";
 import { agentSessionActivityBar } from "./agentSessionActivityBar";
 
-const agents = { count: 1, label: "1 agent running", names: "general-purpose" };
+function running(overrides: Partial<AgentRunningWork>): AgentRunningWork {
+  return { ...NO_AGENT_RUNNING_WORK, ...overrides };
+}
 
 describe("agentSessionActivityBar", () => {
-  it("hides the bar when neither agents nor background work run", () => {
-    expect(agentSessionActivityBar(null, null)).toBeNull();
+  it("hides the bar when nothing runs", () => {
+    expect(agentSessionActivityBar(NO_AGENT_RUNNING_WORK, false)).toBeNull();
   });
 
-  it("keeps foreground agents viewable without a background stop", () => {
-    expect(agentSessionActivityBar(agents, null)).toEqual({
-      label: "1 agent running",
-      names: "general-purpose",
+  it("shows only the count with View, never a names list", () => {
+    expect(agentSessionActivityBar(running({ agents: 4 }), false)).toEqual({
+      label: "4 agents running",
+      viewLabel: "View agents",
       actions: ["view"],
       announce: false,
     });
   });
 
-  it("merges background agents after the turn into one bar with View and Stop", () => {
-    expect(agentSessionActivityBar(agents, { kind: "agents", count: 1 })).toEqual({
+  it("adds the thread Stop and announces while a live turn waits on background work", () => {
+    expect(agentSessionActivityBar(running({ agents: 1 }), true)).toEqual({
       label: "1 agent running",
-      names: "general-purpose",
+      viewLabel: "View agents",
       actions: ["view", "stop"],
       announce: true,
     });
   });
 
-  it("never undercounts when native agent tasks outnumber projected subagents", () => {
-    expect(agentSessionActivityBar(agents, { kind: "agents", count: 3 })?.label).toBe(
-      "3 agents running",
-    );
-    expect(agentSessionActivityBar(null, { kind: "agents", count: 2 })).toEqual({
-      label: "2 agents running",
-      names: "",
-      actions: ["stop"],
+  it("names every combination of agents and background tasks", () => {
+    const label = (work: Partial<AgentRunningWork>) =>
+      agentSessionActivityBar(running(work), false)?.label;
+    expect(label({ agents: 3 })).toBe("3 agents running");
+    expect(label({ agents: 2, tasks: 1 })).toBe("2 agents running · 1 background task");
+    expect(label({ tasks: 1 })).toBe("1 background task running");
+    expect(label({ tasks: 3 })).toBe("3 background tasks running");
+    expect(label({ tasksUnknown: true })).toBe("Background tasks running");
+    expect(label({ agents: 1, tasksUnknown: true })).toBe("1 agent running · background tasks");
+    expect(label({ agents: 32, agentsLowerBound: true })).toBe("At least 32 agents running");
+  });
+
+  it("names the View target after what runs", () => {
+    const view = (work: Partial<AgentRunningWork>) =>
+      agentSessionActivityBar(running(work), false)?.viewLabel;
+    expect(view({ tasks: 2 })).toBe("View background tasks");
+    expect(view({ agents: 1, tasks: 2 })).toBe("View agents");
+  });
+
+  it("keeps a live wait visible even before any task is listed", () => {
+    expect(agentSessionActivityBar(NO_AGENT_RUNNING_WORK, true)).toEqual({
+      label: "Background tasks running",
+      viewLabel: "View background tasks",
+      actions: ["view", "stop"],
       announce: true,
     });
-  });
-
-  it("names background shell tasks next to running agents", () => {
-    expect(agentSessionActivityBar(agents, { kind: "tasks", count: 2 })?.label).toBe(
-      "1 agent running · 2 background tasks",
-    );
-    expect(agentSessionActivityBar(agents, { kind: "tasks", count: null })?.label).toBe(
-      "1 agent running · background tasks",
-    );
-  });
-
-  it("describes background tasks alone truthfully", () => {
-    expect(agentSessionActivityBar(null, { kind: "tasks", count: 1 })).toEqual({
-      label: "1 background task running",
-      names: "",
-      actions: ["stop"],
-      announce: true,
-    });
-    expect(agentSessionActivityBar(null, { kind: "tasks", count: null })?.label).toBe(
-      "Background tasks running",
-    );
-  });
-
-  it("shows live session agents after the turn settled, without actions that need a turn", () => {
-    const session = {
-      ownerId: "ws-1",
-      total: 2,
-      agents: 1,
-      tasks: [
-        {
-          taskId: "a4b355dcf6056a875",
-          taskType: "agent",
-          description: "Live Codex model catalog like Claude",
-        },
-        { taskId: "bdxqm7bz6", taskType: "shell", description: "Run focused lib tests" },
-      ],
-      sinceEpochMs: 1_790_718_781_369,
-    } as const;
-    expect(agentSessionActivityBar(null, null, session)).toEqual({
-      label: "1 agent running · 1 background task",
-      names: "Live Codex model catalog like Claude",
-      actions: [],
-      announce: false,
-    });
-    expect(
-      agentSessionActivityBar(null, null, {
-        ...session,
-        total: 1,
-        agents: 0,
-        tasks: [session.tasks[1]],
-      }),
-    ).toEqual({ label: "1 background task running", names: "", actions: [], announce: false });
-    expect(agentSessionActivityBar(agents, null, { ...session, agents: 2 })?.label).toBe(
-      "2 agents running",
-    );
   });
 });

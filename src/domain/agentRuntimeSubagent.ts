@@ -27,6 +27,7 @@ export type AgentRuntimeSubagentElapsed =
 
 export interface AgentRuntimeSubagentSource {
   readonly id: string;
+  readonly taskId?: string;
   readonly batchId: string;
   readonly observedState: AgentRuntimeSubagentObservedState;
   readonly resumable: boolean;
@@ -46,6 +47,7 @@ export interface AgentRuntimeSubagentSource {
 
 export interface AgentRuntimeSubagent {
   readonly id: string;
+  readonly taskId: string | null;
   readonly batchId: string;
   readonly title: string;
   readonly titleKnown: boolean;
@@ -200,6 +202,7 @@ function runtimeSubagent(source: AgentRuntimeSubagentSource): AgentRuntimeSubage
   const activity = boundedActivity(activityText(source, status));
   return {
     id: source.id,
+    taskId: presentText(source.taskId),
     batchId: source.batchId,
     title,
     titleKnown: taskTitle !== null,
@@ -295,6 +298,7 @@ function sameMembers(
 function sameAgent(previous: AgentRuntimeSubagent, next: AgentRuntimeSubagent): boolean {
   return (
     previous.batchId === next.batchId &&
+    previous.taskId === next.taskId &&
     previous.title === next.title &&
     previous.titleKnown === next.titleKnown &&
     previous.nestedAgents === next.nestedAgents &&

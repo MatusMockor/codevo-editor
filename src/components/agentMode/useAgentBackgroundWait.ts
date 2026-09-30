@@ -1,12 +1,8 @@
 import { useMemo } from "react";
 import type { AgentTurn } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentLiveBackground } from "./agents/agentRunningWork";
 import { agentTurnSettlement } from "./agentTurnProjection";
-import {
-  agentBackgroundWait,
-  type AgentBackgroundWait,
-} from "./agentBackgroundIndicatorPresentation";
-import { agentTurnRuntimeSubagents } from "./agentRuntimeSubagentPresentation";
 import { useAgentBackgroundActivity } from "./useAgentBackgroundActivity";
 
 const NO_EVENTS: AgentTurn["events"] = [];
@@ -15,7 +11,7 @@ export function useAgentBackgroundWait(
   provider: AgentCliKind,
   threadId: string,
   turn: AgentTurn | null,
-): AgentBackgroundWait | null {
+): AgentLiveBackground | null {
   const running = turn !== null && agentTurnSettlement(turn.status) === "running";
   const activity = useAgentBackgroundActivity(
     JSON.stringify([threadId, turn?.turnId ?? null]),
@@ -24,12 +20,10 @@ export function useAgentBackgroundWait(
     turn?.eventsTruncated ?? false,
   );
   const shown =
-    provider === "claudeCode" && activity.foregroundSettled && activity.phase !== "inactive";
-  return useMemo(
-    () =>
-      !shown || turn === null
-        ? null
-        : agentBackgroundWait(activity, agentTurnRuntimeSubagents(turn)),
-    [activity, shown, turn],
-  );
+    provider === "claudeCode" &&
+    turn !== null &&
+    activity.foregroundSettled &&
+    activity.phase !== "inactive";
+  const { tasks, truncated } = activity;
+  return useMemo(() => (shown ? { tasks, truncated } : null), [shown, tasks, truncated]);
 }
