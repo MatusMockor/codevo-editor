@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.75] - 2026-09-30
+
+### Changed
+
+- The file tree shows gitignored files and folders dimmed, like VS Code, and hides
+  only the usual system entries such as .git and .DS_Store.
+- A file link in an agent message that can't be opened now says why (not in this
+  project, outside the project, or unreadable) in a calm notice, and the link is
+  muted afterwards.
+
+### Fixed
+
+- The "No snapshot is available for this turn" note no longer appears under turns.
+
 ## [0.2.0-beta.74] - 2026-09-30
 
 ### Added
