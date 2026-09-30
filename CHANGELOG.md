@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.77] - 2026-09-30
+
+### Added
+
+- Codevo reopens where you left off: window size and position, the selected thread,
+  transcript position, unsent composer text, and the right panel.
+- The agents bar shows how many agents and background tasks run; View opens the
+  Agents panel, where each running item has its own Stop.
+
+### Changed
+
+- The sidebar Check for updates button also checks for Codevo updates and sits at the
+  right end of the footer.
+
+### Fixed
+
+- Codex subagents that keep running after their turn are no longer shown as finished.
+- The Codevo update check no longer hangs without a timeout.
+
 ## [0.2.0-beta.76] - 2026-09-30
 
 ### Added
