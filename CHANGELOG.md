@@ -7,6 +7,31 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.76] - 2026-09-30
+
+### Added
+
+- The composer shows where a thread works, like t3code: Run on (for servers), Local
+  checkout, New worktree or Previous worktree, and the branch. In-place threads can
+  switch branch later, with a Branch changed notice and Restore branch.
+- New thread asks "New thread in..." when there are several projects; shift-click
+  creates it in the current project.
+- Stop a single Claude background task from the bar above the composer.
+
+### Changed
+
+- The sidebar project filter only filters and remembers your choice; it no longer
+  switches the workspace. Rows show the branch or checkout, and the right panel states
+  which checkout and folder it shows.
+- One subagent row per turn, with counts for running, failed and stopped agents.
+- NEW badges follow real release dates; model rows show real descriptions.
+- Usage limits show the concrete reset day.
+
+### Fixed
+
+- Reading a running thread no longer jumps while new output arrives.
+- Replies Claude sends after background work are no longer dropped during long turns.
+
 ## [0.2.0-beta.75] - 2026-09-30
 
 ### Changed
