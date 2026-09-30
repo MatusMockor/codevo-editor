@@ -8,6 +8,7 @@ import type { AgentThread, AgentThreadOwner, AgentTurn } from "../domain/agentTh
 import type {
   AgentSessionEndedEvent,
   AgentSessionInspection,
+  AgentBackgroundTaskStopOutcome,
   AgentTaskInterruptOutcome,
   AgentThreadSessionGateway,
 } from "../domain/agentThreadSession";
@@ -69,6 +70,9 @@ function gateway(overrides: Partial<AgentThreadSessionGateway> = {}) {
       kind: "none",
     })),
     endAgentThreadSession: vi.fn(async () => true),
+    stopAgentBackgroundTask: vi.fn(async (): Promise<AgentBackgroundTaskStopOutcome> => ({
+      kind: "stopping",
+    })),
     subscribeAgentSessionEnded: vi.fn(async (handler: (event: AgentSessionEndedEvent) => void) => {
       ended = handler;
       return unsubscribe;
@@ -671,5 +675,119 @@ describe("useAgentThreadSessionLifecycle ended notices", () => {
     const harness = render(thread(), fake);
 
     await waitForReact(() => expect(harness.reportError).toHaveBeenCalledWith("Agents", failure));
+  });
+});
+
+describe("useAgentThreadSessionLifecycle stopBackgroundTask", () => {
+  const exited: AgentTurn = {
+    ...running,
+    status: { kind: "exited", exitCode: 130 },
+    endedAtEpochMs: 2,
+  };
+
+  it("asks the exact owner's idle local Claude session to stop one task", async () => {
+    const stopAgentBackgroundTask = vi.fn<AgentThreadSessionGateway["stopAgentBackgroundTask"]>(
+      async () => ({ kind: "stopping" }),
+    );
+    const { fake } = gateway({ stopAgentBackgroundTask });
+    const harness = render(thread({ turns: [exited] }), fake);
+
+    await act(async () => {
+      await expect(harness.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm")).resolves.toEqual({
+        kind: "stopping",
+      });
+    });
+
+    expect(stopAgentBackgroundTask).toHaveBeenCalledTimes(1);
+    expect(stopAgentBackgroundTask).toHaveBeenCalledWith({
+      workspaceId: OWNER_ID,
+      threadId: THREAD_ID,
+      taskId: "b8kzpiexm",
+    });
+  });
+
+  it("never sends a stop for Codex, remote or unknown threads or without a gateway", async () => {
+    const { fake } = gateway();
+    const codex = render(thread({ provider: { kind: "codex", sessionId: null } }), fake);
+    const remote = render(thread({ threadId: "remote-thread:server-1:runner-1:c" }), fake);
+    const unknown = render(undefined, fake);
+    const withoutGateway = render(thread(), undefined);
+
+    await act(async () => {
+      await expect(codex.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm")).resolves.toEqual({
+        kind: "noSession",
+      });
+      await expect(
+        remote.hook().stopBackgroundTask("remote-thread:server-1:runner-1:c", "b8kzpiexm"),
+      ).resolves.toEqual({ kind: "noSession" });
+      await expect(unknown.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm")).resolves.toEqual({
+        kind: "noSession",
+      });
+      await expect(
+        withoutGateway.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm"),
+      ).resolves.toEqual({ kind: "noSession" });
+    });
+
+    expect(fake.stopAgentBackgroundTask).not.toHaveBeenCalled();
+  });
+
+  it("neutralises a late outcome once the thread's owner changed during the stop", async () => {
+    const pending = deferred<AgentBackgroundTaskStopOutcome>();
+    const stopAgentBackgroundTask = vi.fn<AgentThreadSessionGateway["stopAgentBackgroundTask"]>(
+      () => pending.promise,
+    );
+    const { fake } = gateway({ stopAgentBackgroundTask });
+    const harness = render(thread(), fake);
+
+    let stopping!: Promise<unknown>;
+    act(() => {
+      stopping = harness.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm");
+    });
+    harness.scenario.current = thread({ owner: { ...thread().owner, ownerId: "ws-2" } });
+    await act(async () => {
+      pending.resolve({ kind: "refused", reason: "No task found with ID: b8kzpiexm" });
+      await expect(stopping).resolves.toEqual({ kind: "stale" });
+    });
+
+    expect(harness.setNotice).not.toHaveBeenCalled();
+    expect(harness.reportError).not.toHaveBeenCalled();
+  });
+
+  it("reports an undeliverable stop as unavailable while the owner is current", async () => {
+    const failure = new Error("ipc");
+    const stopAgentBackgroundTask = vi.fn<AgentThreadSessionGateway["stopAgentBackgroundTask"]>(
+      async () => Promise.reject(failure),
+    );
+    const { fake } = gateway({ stopAgentBackgroundTask });
+    const harness = render(thread(), fake);
+
+    await act(async () => {
+      await expect(harness.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm")).resolves.toEqual({
+        kind: "unavailable",
+      });
+    });
+
+    expect(harness.reportError).toHaveBeenCalledExactlyOnceWith("Agents", failure);
+  });
+
+  it("never reports a failed stop once the thread moved to another owner", async () => {
+    const pending = deferred<AgentBackgroundTaskStopOutcome>();
+    const stopAgentBackgroundTask = vi.fn<AgentThreadSessionGateway["stopAgentBackgroundTask"]>(
+      () => pending.promise,
+    );
+    const { fake } = gateway({ stopAgentBackgroundTask });
+    const harness = render(thread(), fake);
+
+    let stopping!: Promise<unknown>;
+    act(() => {
+      stopping = harness.hook().stopBackgroundTask(THREAD_ID, "b8kzpiexm");
+    });
+    harness.scenario.current = thread({ owner: { ...thread().owner, ownerId: "ws-2" } });
+    await act(async () => {
+      pending.reject(new Error("ipc"));
+      await expect(stopping).resolves.toEqual({ kind: "stale" });
+    });
+
+    expect(harness.reportError).not.toHaveBeenCalled();
   });
 });

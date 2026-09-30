@@ -14,7 +14,7 @@ const MAX_AGENT_STOP_DEADLINE_MS = Math.max(
 
 export interface AgentStopArm {
   readonly threadId: string;
-  readonly turnId: string;
+  readonly turnId: string | null;
   readonly armedAtEpochMs: number;
 }
 
@@ -26,7 +26,9 @@ export type AgentStopDecision =
       readonly kind: "confirmBackground";
       readonly turnId: string;
       readonly liveTaskCount: number;
-    };
+    }
+  | { readonly kind: "confirmSessionBackground"; readonly liveTaskCount: number }
+  | { readonly kind: "stopSessionBackground" };
 
 export interface AgentStopRequest {
   readonly threadId: string;
@@ -35,11 +37,12 @@ export interface AgentStopRequest {
   readonly nowEpochMs: number;
   readonly interruptAvailable: boolean;
   readonly interruptedTurnId: string | null;
+  readonly sessionBackgroundTaskCount?: number;
 }
 
 export function decideAgentStop(request: AgentStopRequest): AgentStopDecision {
   const { turn } = request;
-  if (turn === null) return { kind: "ignore" };
+  if (turn === null) return decideIdleSessionStop(request);
   if (agentStopArmIsLive(request.arm, request.threadId, turn.turnId, request.nowEpochMs)) {
     return { kind: "hardStop", turnId: turn.turnId };
   }
@@ -61,10 +64,19 @@ export function decideAgentStop(request: AgentStopRequest): AgentStopDecision {
   };
 }
 
+function decideIdleSessionStop(request: AgentStopRequest): AgentStopDecision {
+  const liveTaskCount = request.sessionBackgroundTaskCount ?? 0;
+  if (liveTaskCount <= 0) return { kind: "ignore" };
+  if (agentStopArmIsLive(request.arm, request.threadId, null, request.nowEpochMs)) {
+    return { kind: "stopSessionBackground" };
+  }
+  return { kind: "confirmSessionBackground", liveTaskCount };
+}
+
 export function agentStopArmIsLive(
   arm: AgentStopArm | null,
   threadId: string,
-  turnId: string,
+  turnId: string | null,
   nowEpochMs: number,
 ): boolean {
   if (arm === null) return false;

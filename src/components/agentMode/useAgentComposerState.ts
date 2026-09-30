@@ -5,7 +5,11 @@ import {
   useAgentSessionRestartGate,
   type AgentSessionRestartSurface,
 } from "./useAgentSessionRestartConsent";
-import { useAgentComposerStop, type AgentComposerStopSurface } from "./useAgentComposerStop";
+import {
+  useAgentComposerStop,
+  type AgentComposerSessionStopPort,
+  type AgentComposerStopSurface,
+} from "./useAgentComposerStop";
 import type { AgentPendingSend } from "./agentPendingSend";
 import {
   agentPendingSendSelection,
@@ -113,6 +117,7 @@ export interface AgentComposerStateOptions {
   readonly railScope: ComposerScope | null;
   readonly repositoryPreferenceStorage?: ComposerRepositoryPreferenceStorage;
   readonly drafts?: AgentComposerDraftStore;
+  readonly sessionStop?: AgentComposerSessionStopPort;
   onClearSelectedThread(): void;
   onThreadStarted(threadId: string): void;
   onSelectProjectEnvironment?(projectRootKey: string): void;
@@ -201,6 +206,7 @@ export function useAgentComposerControllerState({
   railScope,
   repositoryPreferenceStorage,
   selectedThread,
+  sessionStop,
 }: AgentComposerStateOptions): AgentComposerControllerState {
   const [selection, setSelection] = useState<ComposerSelection | null>(null);
   const { preferences, rememberRepository } = useAgentComposerRepositoryPreference(
@@ -365,7 +371,7 @@ export function useAgentComposerControllerState({
   const [steering, setSteering] = useState(false);
   const dispatching =
     composerDispatching(agents, agentComposerDraftKey(selectedThread, target)) || steering;
-  const stop = useAgentComposerStop(selectedThread, agents);
+  const stop = useAgentComposerStop(selectedThread, agents, sessionStop);
   const lastUsedLaunch = agents.lastUsedLaunch;
   const composerLaunch = useMemo(
     () =>
@@ -682,6 +688,7 @@ export function useAgentComposerControllerState({
     stopConfirmation: stop.stopConfirmation,
     sessionRestartConfirmation: restart.confirmation,
     running: stop.running,
+    sessionTasksStoppable: stop.sessionTasksStoppable,
     target: composerTargetView(composerProjects, target),
     worktreeAvailable,
     worktreeOnly,

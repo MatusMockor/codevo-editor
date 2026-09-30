@@ -6,6 +6,11 @@ import type {
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
+import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
+import {
+  MAX_AGENT_SESSION_TASK_ROWS,
+  agentSessionTaskLabel,
+} from "./conversation/agentSessionTaskControls";
 
 export function claudeSessionEndedNotice(title: string): AgentTasksNotice {
   return { kind: "info", message: `Ended Claude's session for "${title}".`, action: null };
@@ -25,10 +30,16 @@ export function claudeSessionEndFailedNotice(title: string): AgentTasksNotice {
 
 export type AgentEndSessionBackground = Exclude<AgentSessionBackgroundInspection, "none">;
 
+export interface AgentEndSessionLiveTasks {
+  readonly labels: ReadonlyArray<string>;
+  readonly hidden: number;
+}
+
 export interface AgentEndSessionConfirmationView {
   readonly threadId: string;
   readonly title: string;
   readonly background: AgentEndSessionBackground;
+  readonly liveTasks?: AgentEndSessionLiveTasks;
   onConfirm(): void;
   onCancel(): void;
 }
@@ -111,10 +122,12 @@ export function useAgentEndSessionCommand(
 
   const confirmation = useMemo((): AgentEndSessionConfirmationView | null => {
     if (pending === null || target === null) return null;
+    const liveTasks = endSessionLiveTasks(target.sessionBackground);
     return {
       threadId: pending.threadId,
       title: target.thread.title,
       background: pending.background,
+      ...(liveTasks === null ? {} : { liveTasks }),
       onConfirm: () => {
         cancel();
         void end(pending.threadId, target.thread.title);
@@ -134,6 +147,14 @@ function endSessionTarget(
   if (view === undefined) return null;
   if (view.lifecycle === "running" || view.thread.archived) return null;
   return view;
+}
+
+function endSessionLiveTasks(
+  session: AgentSessionBackground | undefined,
+): AgentEndSessionLiveTasks | null {
+  if (session === undefined || session.tasks.length === 0) return null;
+  const labels = session.tasks.slice(0, MAX_AGENT_SESSION_TASK_ROWS).map(agentSessionTaskLabel);
+  return { labels, hidden: Math.max(session.total, session.tasks.length) - labels.length };
 }
 
 function threadTitle(threads: ReadonlyArray<AgentThreadView>, threadId: string): string | null {

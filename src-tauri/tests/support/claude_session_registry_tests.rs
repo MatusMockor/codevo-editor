@@ -1643,3 +1643,6 @@ fn deleting_a_thread_ends_its_session_by_thread_id_under_the_canonical_root() {
         .live_sessions()
         == 0));
 }
+
+#[path = "claude_session_task_stop_tests.rs"]
+mod task_stop;

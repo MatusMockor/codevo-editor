@@ -1,4 +1,5 @@
 use super::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
+use super::claude_session_task_stop::{PendingTaskStops, TaskStopReply};
 use crate::agent_task_supervisor::agent_task_result_detector::{
     failed_result, lifecycle_candidate, ResultLineDetector, ResultSettlePolicy,
 };
@@ -121,6 +122,7 @@ pub struct ClaudeSessionRouter {
     background_revision: u64,
     background_offer_pending: bool,
     reported_background: ClaudeBackgroundTasks,
+    task_stops: PendingTaskStops,
     line: Vec<u8>,
     mode: LineMode,
 }
@@ -145,6 +147,7 @@ impl ClaudeSessionRouter {
             background_revision: 0,
             background_offer_pending: false,
             reported_background: ClaudeBackgroundTasks::default(),
+            task_stops: PendingTaskStops::default(),
             line: Vec::new(),
             mode: LineMode::Buffering,
         }
@@ -225,6 +228,22 @@ impl ClaudeSessionRouter {
 
     pub fn live_background_tasks(&self) -> usize {
         self.detector.live_background_task_count()
+    }
+
+    pub fn live_background_task(&self, task_id: &str) -> bool {
+        self.detector.has_live_background_task(task_id)
+    }
+
+    pub fn begin_task_stop(&mut self, request_id: String) -> bool {
+        self.task_stops.begin(request_id)
+    }
+
+    pub fn take_task_stop_reply(&mut self, request_id: &str) -> Option<TaskStopReply> {
+        self.task_stops.take(request_id)
+    }
+
+    pub fn withdraw_task_stop(&mut self, request_id: &str) {
+        self.task_stops.withdraw(request_id);
     }
 
     pub fn background_tasks(&self) -> ClaudeBackgroundTasks {
@@ -430,6 +449,9 @@ impl ClaudeSessionRouter {
         let root = message.get("parent_tool_use_id").is_none_or(Value::is_null);
         if kind == Some("command_lifecycle") {
             return self.classify_lifecycle(message, step);
+        }
+        if kind == Some("control_response") && self.task_stops.resolve(message) {
+            return Destination::Discard;
         }
         if kind == Some("control_response") {
             return self.attached_destination();

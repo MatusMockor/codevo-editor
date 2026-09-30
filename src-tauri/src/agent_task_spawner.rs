@@ -16,6 +16,8 @@ pub mod claude_session_policy;
 pub mod claude_session_registry;
 #[path = "claude_session_router.rs"]
 pub mod claude_session_router;
+#[path = "claude_session_task_stop.rs"]
+pub mod claude_session_task_stop;
 #[path = "claude_session_turn.rs"]
 pub mod claude_session_turn;
 #[path = "claude_thread_session.rs"]

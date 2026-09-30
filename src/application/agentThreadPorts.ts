@@ -1,5 +1,6 @@
 import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
 import type { AgentSessionBackground } from "../domain/agentSessionBackground";
+import type { AgentBackgroundTaskStopOutcome } from "../domain/agentThreadSession";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
 import type {
   AgentThreadOrganizationPatch,
@@ -359,6 +360,9 @@ export type AgentSessionEndResult = "ended" | "none" | "failed";
 
 export type AgentSessionBackgroundInspection = "live" | "none" | "unknown";
 
+export type AgentSessionTaskStopResult =
+  AgentBackgroundTaskStopOutcome | { readonly kind: "stale" };
+
 export interface AgentThreadsSurface {
   readonly history?: AgentThreadHistorySurface;
   readonly catalog?: AgentHistoryCatalogSurface;
@@ -431,6 +435,7 @@ export interface AgentThreadsSurface {
   interrupt?(threadId: string): Promise<boolean>;
   endSession?(threadId: string): Promise<AgentSessionEndResult>;
   inspectSessionBackground?(threadId: string): Promise<AgentSessionBackgroundInspection>;
+  stopSessionBackgroundTask?(threadId: string, taskId: string): Promise<AgentSessionTaskStopResult>;
   inspectSessionRestart?(
     threadId: string,
     launch: AgentLaunchOptions,

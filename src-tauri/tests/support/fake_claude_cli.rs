@@ -16,6 +16,9 @@ hold_interrupt = False
 cost = 0.0
 result_index = 0
 permission_answered = threading.Event()
+native_live = set()
+native_refusing = set()
+native_silent = set()
 SLEEPER = ("import os, sys, time; path = sys.argv[3]; "
            "open(path + '.tmp', 'w').write(str(os.getpid())); "
            "os.replace(path + '.tmp', path); time.sleep(300)")
@@ -204,6 +207,24 @@ def interrupt(frame):
     result(uid, subtype="error_during_execution")
     lifecycle(uid, "cancelled")
 
+def stop_task(frame):
+    request_id = frame.get("request_id")
+    task = (frame.get("request") or {}).get("task_id")
+    with open(os.path.join(state_dir, "stop_tasks.log"), "a") as handle:
+        handle.write(f"{task}\n")
+    if task in native_silent:
+        return
+    if task not in native_live or task in native_refusing:
+        emit({"type": "control_response",
+              "response": {"subtype": "error", "request_id": request_id,
+                           "error": f"No task found with ID: {task}"}})
+        return
+    native_live.discard(task)
+    emit({"type": "control_response", "response": {"subtype": "success", "request_id": request_id}})
+    system("task_notification", task_id=task, status="stopped", output_file="/dev/null",
+           summary="Command was stopped")
+    system("background_tasks_changed", tasks=[])
+
 for raw in sys.stdin:
     try:
         frame = json.loads(raw)
@@ -216,8 +237,11 @@ for raw in sys.stdin:
         permission_answered.set()
         continue
     if kind == "control_request":
-        if (frame.get("request") or {}).get("subtype") == "interrupt":
+        subtype = (frame.get("request") or {}).get("subtype")
+        if subtype == "interrupt":
             interrupt(frame)
+        if subtype == "stop_task":
+            stop_task(frame)
         continue
     if kind != "user":
         continue
@@ -277,6 +301,11 @@ for raw in sys.stdin:
         os._exit(0)
     if text.startswith("native-linger"):
         task = "linger-" + uid[:8]
+        native_live.add(task)
+        if text.startswith("native-linger-refuse"):
+            native_refusing.add(task)
+        if text.startswith("native-linger-silent"):
+            native_silent.add(task)
         system("background_tasks_changed", tasks=[{"task_id": task, "task_type": "local_bash", "description": "sleep"}])
         system("task_started", task_id=task, tool_use_id="toolu-linger", description="sleep",
                is_backgrounded=True, task_type="local_bash")
@@ -416,6 +445,14 @@ impl FakeCli {
 
     pub(crate) fn control_responses(&self) -> String {
         fs::read_to_string(self.dir.join("control_responses.log")).unwrap_or_default()
+    }
+
+    pub(crate) fn stop_task_requests(&self) -> Vec<String> {
+        fs::read_to_string(self.dir.join("stop_tasks.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     pub(crate) fn stdin_closed(&self) -> bool {

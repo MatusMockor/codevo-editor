@@ -644,6 +644,7 @@ pub fn run() {
             agent_task_commands::claude_session_composition::interrupt_agent_task,
             agent_task_commands::claude_session_composition::inspect_agent_thread_session,
             agent_task_commands::claude_session_composition::end_agent_thread_session,
+            agent_task_commands::claude_session_composition::stop_agent_background_task,
             agent_task_commands::acquire_agent_root_lease,
             agent_task_commands::release_agent_root_lease,
             agent_history_commands::read_agent_history_threads,

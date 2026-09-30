@@ -9,6 +9,7 @@ use agent_task_spawner::claude_session_policy::{
     ClaudeSessionTuning,
 };
 use agent_task_spawner::claude_session_registry::ClaudeSessionRegistry;
+use agent_task_spawner::claude_session_task_stop::ClaudeBackgroundTaskStopOutcome;
 use agent_task_spawner::claude_session_turn::ClaudeSessionTurnPlan;
 use agent_task_supervisor::agent_task_interrupt::AgentTaskInterruptOutcome;
 
@@ -432,6 +433,65 @@ fn first_stop_keeps_native_background_tasks_live_in_the_session() {
     );
     assert!(alive(cli_pid(&harness)));
     assert!(harness.events.reasons_for(THREAD).is_empty());
+    harness.assert_no_task_group_signals();
+}
+
+#[test]
+fn a_task_left_live_by_the_first_stop_is_stopped_per_task_and_the_idle_session_keeps_running() {
+    let harness = SessionHarness::recording("supervised-stop-task");
+    harness
+        .start_turn("agt-linger-2", THREAD, "native-linger", None)
+        .expect("lingering turn");
+    harness.await_stdout("agt-linger-2", "still-working");
+    assert_eq!(
+        harness
+            .tasks
+            .interrupt_for_thread("agt-linger-2", WORKSPACE, THREAD),
+        AgentTaskInterruptOutcome::Interrupting
+    );
+    assert!(matches!(
+        harness.terminal("agt-linger-2"),
+        AgentTaskStatusPayload::Stopped
+    ));
+    assert!(harness.native_background_tasks_live());
+    let level = |total: usize| {
+        harness
+            .events
+            .background_task_levels()
+            .into_iter()
+            .rev()
+            .find(|level| level.thread_id == THREAD)
+            .filter(|level| level.total == total)
+    };
+    assert!(wait_until(PROCESS_DEADLINE, || level(1).is_some()));
+    let task = level(1)
+        .and_then(|level| level.tasks.first().map(|task| task.task_id.clone()))
+        .unwrap_or_default();
+    let pid = cli_pid(&harness);
+
+    assert_eq!(
+        harness.sessions.stop_background_task(
+            WORKSPACE,
+            THREAD,
+            &task,
+            Instant::now() + PROCESS_DEADLINE
+        ),
+        ClaudeBackgroundTaskStopOutcome::Stopping
+    );
+    assert!(wait_until(PROCESS_DEADLINE, || level(0).is_some()));
+    assert!(!harness.native_background_tasks_live());
+    assert!(harness.events.reasons_for(THREAD).is_empty());
+    assert!(alive(pid));
+
+    harness
+        .start_turn("agt-after-stop", THREAD, "hello", RESUME)
+        .expect("next turn");
+    assert!(matches!(
+        harness.terminal("agt-after-stop"),
+        AgentTaskStatusPayload::Exited { exit_code: 0 }
+    ));
+    assert_eq!(harness.cli.cli_pids(), vec![pid]);
+    assert_eq!(harness.cli.stop_task_requests(), vec![task]);
     harness.assert_no_task_group_signals();
 }
 

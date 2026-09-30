@@ -9,6 +9,7 @@ import {
   END_AGENT_THREAD_SESSION_IPC_COMMAND,
   INSPECT_AGENT_THREAD_SESSION_IPC_COMMAND,
   INTERRUPT_AGENT_TASK_IPC_COMMAND,
+  STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND,
   TauriAgentThreadSessionGateway,
 } from "./tauriAgentThreadSessionGateway";
 
@@ -202,5 +203,57 @@ describe("TauriAgentThreadSessionGateway", () => {
     });
     unsubscribe();
     expect(events.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes the closed stop-background-task command and parses its outcome", async () => {
+    const invoke = vi.fn(async () =>
+      JSON.parse('{"kind":"refused","reason":"No task found with ID: b8kzpiexm"}'),
+    );
+    const gateway = new TauriAgentThreadSessionGateway(invoke, vi.fn(), () => true);
+    await expect(
+      gateway.stopAgentBackgroundTask({
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        taskId: "b8kzpiexm",
+      }),
+    ).resolves.toEqual({ kind: "refused", reason: "No task found with ID: b8kzpiexm" });
+    expect(STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND).toBe("stop_agent_background_task");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("stop_agent_background_task", {
+      request: { workspaceId: "ws-1", threadId: "agt-1-0a1c", taskId: "b8kzpiexm" },
+    });
+  });
+
+  it("validates the stop request before invoking and rejects malformed outcomes", async () => {
+    const invoke = vi.fn(async () => ({ kind: "stopped" }));
+    const gateway = new TauriAgentThreadSessionGateway(invoke, vi.fn(), () => true);
+    await expect(
+      gateway.stopAgentBackgroundTask({
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        taskId: "bad\u0007id",
+      }),
+    ).rejects.toThrow(TypeError);
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(
+      gateway.stopAgentBackgroundTask({
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        taskId: "b8kzpiexm",
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("reports the stop as unavailable without the native runtime", async () => {
+    const invoke = vi.fn();
+    const gateway = new TauriAgentThreadSessionGateway(invoke, vi.fn(), () => false);
+    await expect(
+      gateway.stopAgentBackgroundTask({
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        taskId: "b8kzpiexm",
+      }),
+    ).resolves.toEqual({ kind: "unavailable" });
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

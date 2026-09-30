@@ -12,6 +12,7 @@ use crate::agent_task_spawner::{
     claude_session_registry::{
         ClaudeSessionEventSink, ClaudeSessionRegistry, ClaudeSessionRequest,
     },
+    claude_session_task_stop::{valid_stoppable_task_id, ClaudeBackgroundTaskStopOutcome},
     claude_session_turn::{session_fingerprint, ClaudeSessionAuthority, ClaudeSessionTurnPlan},
     validate_resume_session_id, AgentCliInvocation, AgentTaskSpawnPlan,
 };
@@ -36,6 +37,8 @@ pub(crate) const AGENT_SESSION_BACKGROUND_TASKS_EVENT_CHANNEL: &str =
     "agent-session://background-tasks";
 pub(crate) const CLAUDE_SESSION_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const WORKTREE_SESSION_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+const BACKGROUND_TASK_STOP_DEADLINE: Duration = Duration::from_secs(5);
+const INVALID_BACKGROUND_TASK_ID_ERROR: &str = "Invalid Claude background task id.";
 
 pub(super) fn prepare_transport(
     plan: AgentTaskSpawnPlan,
@@ -180,6 +183,14 @@ pub(crate) struct InspectAgentThreadSessionRequest {
     launch: AgentLaunchOptions,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StopAgentBackgroundTaskRequest {
+    workspace_id: WorkspaceId,
+    thread_id: String,
+    task_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EndAgentThreadSessionResult {
@@ -251,6 +262,28 @@ pub(crate) async fn end_agent_thread_session(
                 ClaudeSessionEndReason::ThreadEnded,
             ),
         })
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn stop_agent_background_task(
+    request: StopAgentBackgroundTaskRequest,
+    sessions: State<'_, Arc<ClaudeSessionRegistry>>,
+) -> Result<ClaudeBackgroundTaskStopOutcome, String> {
+    let thread_id = safe_agent_task_id(&request.thread_id)?;
+    ensure_workspace_id_bounds(&request.workspace_id)?;
+    if !valid_stoppable_task_id(&request.task_id) {
+        return Err(INVALID_BACKGROUND_TASK_ID_ERROR.to_string());
+    }
+    let sessions = Arc::clone(&sessions);
+    run_blocking_command(move || {
+        Ok(sessions.stop_background_task(
+            request.workspace_id.as_str(),
+            &thread_id,
+            &request.task_id,
+            Instant::now() + BACKGROUND_TASK_STOP_DEADLINE,
+        ))
     })
     .await
 }
@@ -818,6 +851,69 @@ for raw in sys.stdin:
         assert!(end("ws-a", "agt-1-0a1c").expect("owner").ended);
         let event = ended_payload(&ended);
         assert_eq!(event["reason"], "threadEnded");
+        assert!(sessions.shutdown_all());
+    }
+
+    #[test]
+    fn background_task_stop_requests_are_closed() {
+        assert!(
+            serde_json::from_value::<StopAgentBackgroundTaskRequest>(json!({
+                "workspaceId": "ws-1", "threadId": "agt-1-0a1c", "taskId": "b8kzpiexm"
+            }))
+            .is_ok()
+        );
+        assert!(
+            serde_json::from_value::<StopAgentBackgroundTaskRequest>(json!({
+                "workspaceId": "ws-1", "threadId": "agt-1-0a1c", "taskId": "b8kzpiexm",
+                "force": true
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<StopAgentBackgroundTaskRequest>(json!({
+                "workspaceId": "ws-1", "threadId": "agt-1-0a1c"
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            serde_json::to_string(&ClaudeBackgroundTaskStopOutcome::NotLive).expect("json"),
+            r#"{"kind":"notLive"}"#
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_background_task_stop_command_is_keyed_by_the_exact_owner_and_a_valid_task_id() {
+        let (app, sessions) = mock_app(ClaudeSessionTuning::default());
+        let ended = listen(&app, AGENT_SESSION_ENDED_EVENT_CHANNEL);
+        start_unattached_session(&sessions, "ws-a", "agt-1-0a1c", Path::new("/repo"));
+        let stop = |workspace_id: &str, thread_id: &str, task_id: &str| {
+            let request = serde_json::from_value::<StopAgentBackgroundTaskRequest>(json!({
+                "workspaceId": workspace_id, "threadId": thread_id, "taskId": task_id
+            }))
+            .expect("request");
+            tauri::async_runtime::block_on(stop_agent_background_task(request, app.state()))
+        };
+
+        assert!(stop("ws-a", "Bad Id", "b8kzpiexm").is_err());
+        assert!(stop("", "agt-1-0a1c", "b8kzpiexm").is_err());
+        assert!(stop("ws-a", "agt-1-0a1c", "").is_err());
+        assert!(stop("ws-a", "agt-1-0a1c", "bad\nid").is_err());
+        assert!(stop("ws-a", "agt-1-0a1c", &"x".repeat(257)).is_err());
+        assert_eq!(
+            stop("ws-b", "agt-1-0a1c", "b8kzpiexm").expect("foreign workspace"),
+            ClaudeBackgroundTaskStopOutcome::NoSession
+        );
+        assert_eq!(
+            stop("ws-a", "agt-9-0a1c", "b8kzpiexm").expect("foreign thread"),
+            ClaudeBackgroundTaskStopOutcome::NoSession
+        );
+        assert_eq!(
+            stop("ws-a", "agt-1-0a1c", "b8kzpiexm").expect("owner"),
+            ClaudeBackgroundTaskStopOutcome::NotLive
+        );
+        assert!(ended.recv_timeout(Duration::from_millis(200)).is_err());
+        assert_eq!(sessions.live_sessions(), 1);
         assert!(sessions.shutdown_all());
     }
 

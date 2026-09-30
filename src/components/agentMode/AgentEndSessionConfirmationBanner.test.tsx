@@ -122,4 +122,84 @@ describe("AgentEndSessionConfirmationBanner", () => {
     expect(endSession).toHaveBeenCalledWith("agt-1");
     expect(host.textContent).toBe("");
   });
+
+  it("names the live session tasks that may outlive the session so the user can stop them", () => {
+    const host = render(
+      <AgentEndSessionConfirmationBanner
+        confirmation={{
+          threadId: "agt-1",
+          title: "Release",
+          background: "live",
+          liveTasks: { labels: ["Watch beta.75 release workflow"], hidden: 0 },
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+        }}
+      />,
+    );
+    expect(host.textContent).toContain(
+      'End Claude\'s session for "Release"? Background tasks are still running in this session. Ending the session may stop background tasks Claude started. If a task keeps running after the session ends, stop it yourself: "Watch beta.75 release workflow".',
+    );
+  });
+
+  it("bounds the named tasks and counts the rest", () => {
+    const host = render(
+      <AgentEndSessionConfirmationBanner
+        confirmation={{
+          threadId: "agt-1",
+          title: "Release",
+          background: "live",
+          liveTasks: { labels: ["Build", "Test", "Deploy"], hidden: 2 },
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+        }}
+      />,
+    );
+    expect(host.textContent).toContain(
+      'If a task keeps running after the session ends, stop it yourself: "Build", "Test", "Deploy" and 2 more.',
+    );
+  });
+
+  it("lists the thread's live session tasks in the confirmation requested from the menu", async () => {
+    const agents: AgentMenuCommandSurface = threadsSurfaceFixture({
+      threads: [
+        surfaceThreadView({
+          sessionBackground: {
+            ownerId: "agent-root:app",
+            total: 1,
+            agents: 0,
+            tasks: [
+              {
+                taskId: "b8kzpiexm",
+                taskType: "shell",
+                description: "Watch beta.75 release workflow",
+              },
+            ],
+            sinceEpochMs: 1,
+          },
+        }),
+      ],
+      endSession: vi.fn(async () => "ended" as const),
+      inspectSessionBackground: async () => "live" as const,
+    });
+    let request: (() => void) | null = null;
+    function MenuHost() {
+      const menu = useAgentThreadMenuCommands({
+        agents,
+        groups: agentProjectGroups([projectFixture()], agents.threads, []),
+        revealPath: async () => undefined,
+        reportNotice: () => undefined,
+        onTrustProject: () => undefined,
+        onCloseProject: () => undefined,
+        onReleaseProject: () => undefined,
+        onThreadRemoved: () => undefined,
+        onOpenTerminalSessions: () => undefined,
+        startNewThread: () => undefined,
+      });
+      request = () => menu.handleThreadMenuCommand("agt-1", { kind: "endSession" });
+      return <AgentEndSessionConfirmationBanner confirmation={menu.endSessionConfirmation} />;
+    }
+    const host = render(<MenuHost />);
+    await act(async () => request?.());
+    expect(host.textContent).toContain('stop it yourself: "Watch beta.75 release workflow".');
+  });
 });

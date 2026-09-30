@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSessionDock } from "./AgentSessionDock";
+import type { AgentSessionEndOffer } from "./agentSessionTaskControls";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -17,6 +18,14 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
 });
+
+function buttonLabelled(label: string): HTMLButtonElement | null {
+  return (
+    [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.getAttribute("aria-label") === label,
+    ) ?? null
+  );
+}
 
 describe("AgentSessionDock", () => {
   it("renders one calm bar with the count, names, View and Stop", () => {
@@ -97,5 +106,98 @@ describe("AgentSessionDock", () => {
       "2 queued",
     );
     expect(host.querySelector(".cv-session-dock__banners")).toBeNull();
+  });
+
+  it("lists live session tasks with their own Stop, a pending Stopping state and End session", () => {
+    const stopTask = vi.fn();
+    const endSession = vi.fn();
+    const render = (pending: boolean, offer: AgentSessionEndOffer) =>
+      act(() =>
+        root.render(
+          <AgentSessionDock
+            activity={{
+              label: "1 background task running",
+              names: "",
+              actions: [],
+              announce: false,
+            }}
+            follow={{ atLatest: true, unseenActivity: false, jumpToLatest: () => undefined }}
+            onEndSession={endSession}
+            onOpenAgents={() => undefined}
+            onRevealQueue={() => undefined}
+            onStopSessionTask={stopTask}
+            queuedCount={0}
+            sessionTasks={{
+              rows: [
+                {
+                  taskId: "b8kzpiexm",
+                  label: "Watch beta.75 release workflow",
+                  stopLabel: 'Stop background task "Watch beta.75 release workflow"',
+                  pending,
+                },
+              ],
+              hiddenCount: 2,
+              endSession: offer,
+            }}
+          />,
+        ),
+      );
+    render(false, "offered");
+
+    const stop = buttonLabelled('Stop background task "Watch beta.75 release workflow"');
+    expect(stop).not.toBeNull();
+    expect(stop?.disabled).toBe(false);
+    expect(stop?.textContent).toBe("Stop");
+    expect(host.querySelector('[role="list"]')?.textContent).toContain(
+      "Watch beta.75 release workflow",
+    );
+    expect(host.textContent).toContain("+2 more");
+    act(() => stop?.click());
+    expect(stopTask).toHaveBeenCalledWith("b8kzpiexm");
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="End Claude session"]')?.click(),
+    );
+    expect(endSession).toHaveBeenCalledTimes(1);
+
+    render(true, "suggested");
+    expect(buttonLabelled("End Claude session")?.className).toContain("cv-banner-action--emphasis");
+    render(true, "hidden");
+    const stopping = buttonLabelled('Stop background task "Watch beta.75 release workflow"');
+    expect(stopping?.disabled).toBe(true);
+    expect(stopping?.textContent).toBe("Stopping…");
+    act(() => stopping?.click());
+    expect(stopTask).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('button[aria-label="End Claude session"]')).toBeNull();
+  });
+
+  it("shows no session task controls without a stop port", () => {
+    act(() =>
+      root.render(
+        <AgentSessionDock
+          activity={{ label: "1 background task running", names: "", actions: [], announce: false }}
+          follow={{ atLatest: true, unseenActivity: false, jumpToLatest: () => undefined }}
+          onOpenAgents={() => undefined}
+          onRevealQueue={() => undefined}
+          queuedCount={0}
+          sessionTasks={{
+            rows: [
+              {
+                taskId: "t1",
+                label: "Build",
+                stopLabel: 'Stop background task "Build"',
+                pending: false,
+              },
+            ],
+            hiddenCount: 0,
+            endSession: "offered",
+          }}
+        />,
+      ),
+    );
+    expect(host.querySelector('[role="list"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="End Claude session"]')).toBeNull();
+    expect(host.querySelector(".cv-composer-banner")?.textContent).toBe(
+      "1 background task running",
+    );
   });
 });

@@ -144,6 +144,7 @@ export interface AgentComposerProps {
   readonly launchProvider: AgentCliKind;
   readonly dispatching: boolean;
   readonly running?: boolean;
+  readonly sessionTasksStoppable?: boolean;
   readonly submitBlocked: boolean;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly providerManagement?: AgentProviderManagementSurface | null;
@@ -217,6 +218,7 @@ export function AgentComposer({
   providerEnabled,
   providerManagement = null,
   running = false,
+  sessionTasksStoppable = false,
   submitBlocked,
   target,
   worktreeAvailable,
@@ -598,7 +600,7 @@ export function AgentComposer({
       return;
     }
     if (event.key === "Escape") {
-      if (!running) return;
+      if (!running && !sessionTasksStoppable) return;
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) onStop?.();

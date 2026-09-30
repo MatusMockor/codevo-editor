@@ -205,6 +205,12 @@ impl ResultLineDetector {
             .count()
     }
 
+    pub fn has_live_background_task(&self, task_id: &str) -> bool {
+        self.live
+            .get(task_id)
+            .is_some_and(|task| task.scope == TaskScope::Background)
+    }
+
     pub fn background_revision(&self) -> u64 {
         self.background_revision
     }

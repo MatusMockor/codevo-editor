@@ -90,6 +90,60 @@ describe("AgentStopConfirmationBanner", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("offers stopping an idle session's tasks, ending the session or keeping them running", () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    const onStopTasks = vi.fn();
+    const onEndSession = vi.fn();
+    const onFocusReturn = vi.fn();
+    const host = render(
+      <AgentStopConfirmationBanner
+        confirmation={{
+          kind: "confirmSessionBackground",
+          liveTaskCount: 1,
+          onCancel,
+          onStopTasks,
+          onEndSession,
+        }}
+        onConfirm={onConfirm}
+        onFocusReturn={onFocusReturn}
+      />,
+    );
+    expect(host.textContent).toContain(
+      "1 background task is still running in Claude's session. Press Stop tasks or Esc again to stop it.",
+    );
+    expect(host.textContent).not.toContain("Stop everything");
+    act(() => button(host, "Stop tasks").click());
+    act(() => button(host, "End session").click());
+    act(() => button(host, "Keep running").click());
+    expect(onStopTasks).toHaveBeenCalledTimes(1);
+    expect(onEndSession).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onFocusReturn).toHaveBeenCalledTimes(3);
+  });
+
+  it("words an idle session's several tasks and omits End session without a port", () => {
+    const host = render(
+      <AgentStopConfirmationBanner
+        confirmation={{
+          kind: "confirmSessionBackground",
+          liveTaskCount: 3,
+          onCancel: vi.fn(),
+          onStopTasks: vi.fn(),
+        }}
+        onConfirm={undefined}
+      />,
+    );
+    expect(host.textContent).toContain(
+      "3 background tasks are still running in Claude's session. Press Stop tasks or Esc again to stop them.",
+    );
+    expect([...host.querySelectorAll("button")].map((node) => node.textContent)).toEqual([
+      "Stop tasks",
+      "Keep running",
+    ]);
+  });
+
   it("leaves the announcement to the persistent live region", () => {
     const host = render(
       <AgentStopConfirmationBanner

@@ -16,12 +16,14 @@ import {
   parseAgentSessionBackgroundTasksEvent,
   parseAgentSessionBackgroundTurnEvent,
   parseAgentSessionEndedEvent,
+  parseAgentBackgroundTaskStopOutcome,
   parseAgentSessionInspection,
   parseAgentTaskInterruptOutcome,
   parseEndAgentThreadSessionResult,
   validateAgentThreadSessionRequest,
   validateInspectAgentThreadSessionRequest,
   validateInterruptAgentTaskRequest,
+  validateStopAgentBackgroundTaskRequest,
 } from "./agentThreadSession";
 
 const START: StartAgentTaskRequest = {
@@ -327,5 +329,69 @@ describe("agent thread session contracts", () => {
     expect(
       agentSessionEndedNotice({ ...base, reason: "crashed", backgroundTasksLive: false }),
     ).toBeNull();
+  });
+
+  it("validates the closed stop-background-task request", () => {
+    const request = { workspaceId: "ws-1", threadId: "agt-1-0a1c", taskId: "b8kzpiexm" };
+    expect(validateStopAgentBackgroundTaskRequest(request)).toEqual(request);
+    expect(validateStopAgentBackgroundTaskRequest({ ...request, taskId: "é".repeat(128) })).toEqual(
+      { ...request, taskId: "é".repeat(128) },
+    );
+    const invalid: ReadonlyArray<unknown> = [
+      { ...request, extra: 1 },
+      { workspaceId: "ws-1", threadId: "agt-1-0a1c" },
+      { ...request, threadId: "../escape" },
+      { ...request, workspaceId: "" },
+      { ...request, taskId: "" },
+      { ...request, taskId: "a".repeat(257) },
+      { ...request, taskId: "é".repeat(129) },
+      { ...request, taskId: "task\nid" },
+      { ...request, taskId: 7 },
+      null,
+    ];
+    for (const value of invalid) {
+      expect(() => validateStopAgentBackgroundTaskRequest(value)).toThrow(TypeError);
+    }
+  });
+
+  it("parses the pinned stop-background-task outcomes exactly as the backend serializes them", () => {
+    const pinned: ReadonlyArray<readonly [string, unknown]> = [
+      ['{"kind":"stopping"}', { kind: "stopping" }],
+      [
+        '{"kind":"refused","reason":"No task found with ID: b8kzpiexm"}',
+        { kind: "refused", reason: "No task found with ID: b8kzpiexm" },
+      ],
+      ['{"kind":"unconfirmed"}', { kind: "unconfirmed" }],
+      ['{"kind":"notLive"}', { kind: "notLive" }],
+      ['{"kind":"noSession"}', { kind: "noSession" }],
+      ['{"kind":"unavailable"}', { kind: "unavailable" }],
+    ];
+    for (const [json, expected] of pinned) {
+      expect(parseAgentBackgroundTaskStopOutcome(JSON.parse(json) as unknown)).toEqual(expected);
+    }
+  });
+
+  it("rejects stop-background-task outcomes that are not exactly the pinned, bounded shape", () => {
+    const invalid: ReadonlyArray<unknown> = [
+      { kind: "stopped" },
+      { kind: "stopping", reason: "extra" },
+      { kind: "notLive", extra: true },
+      { kind: "refused" },
+      { kind: "refused", reason: "" },
+      { kind: "refused", reason: "a".repeat(257) },
+      { kind: "refused", reason: "é".repeat(129) },
+      { kind: "refused", reason: "line\nbreak" },
+      { kind: "refused", reason: 3 },
+      { kind: "refused", reason: "ok", extra: 1 },
+      {},
+      "stopping",
+      null,
+    ];
+    for (const value of invalid) {
+      expect(() => parseAgentBackgroundTaskStopOutcome(value)).toThrow(TypeError);
+    }
+    expect(
+      parseAgentBackgroundTaskStopOutcome({ kind: "refused", reason: "é".repeat(128) }),
+    ).toEqual({ kind: "refused", reason: "é".repeat(128) });
   });
 });

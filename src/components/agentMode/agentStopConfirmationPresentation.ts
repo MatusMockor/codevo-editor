@@ -7,3 +7,10 @@ export function agentStopConfirmationText(liveTaskCount: number): string {
   }
   return `${liveTaskCount} background tasks are still running. Press Stop or Esc again to end them.`;
 }
+
+export function agentSessionStopConfirmationText(liveTaskCount: number): string {
+  if (liveTaskCount === 1) {
+    return "1 background task is still running in Claude's session. Press Stop tasks or Esc again to stop it.";
+  }
+  return `${liveTaskCount} background tasks are still running in Claude's session. Press Stop tasks or Esc again to stop them.`;
+}

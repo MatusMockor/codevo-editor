@@ -1120,3 +1120,6 @@ mod background;
 
 #[path = "claude_session_router_resume_tests.rs"]
 mod resume;
+
+#[path = "claude_session_router_task_stop_tests.rs"]
+mod task_stop;

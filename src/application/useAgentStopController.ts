@@ -13,6 +13,8 @@ export interface AgentStopControllerOptions {
   readonly readRunningTurn: (threadId: string) => AgentTurn | null;
   readonly hardStop: (threadId: string) => Promise<void>;
   readonly interrupt?: (threadId: string) => Promise<boolean>;
+  readonly readSessionBackgroundTaskCount?: (threadId: string) => number;
+  readonly stopSessionBackground?: (threadId: string) => void;
   readonly now?: () => number;
 }
 
@@ -23,7 +25,12 @@ export type AgentStopConfirmation =
       readonly turnId: string;
       readonly liveTaskCount: number;
     }
-  | { readonly kind: "interrupting"; readonly threadId: string; readonly turnId: string };
+  | { readonly kind: "interrupting"; readonly threadId: string; readonly turnId: string }
+  | {
+      readonly kind: "confirmSessionBackground";
+      readonly threadId: string;
+      readonly liveTaskCount: number;
+    };
 
 export interface AgentStopController {
   readonly confirmation: AgentStopConfirmation | null;
@@ -121,6 +128,7 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
   const requestStop = useCallback(
     (threadId: string): void => {
       const { readRunningTurn, now = Date.now, interrupt } = optionsRef.current;
+      const { readSessionBackgroundTaskCount } = optionsRef.current;
       const nowEpochMs = now();
       const decision: AgentStopDecision = decideAgentStop({
         threadId,
@@ -129,6 +137,7 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
         nowEpochMs,
         interruptAvailable: interrupt !== undefined,
         interruptedTurnId: interruptedRef.current.get(threadId) ?? null,
+        sessionBackgroundTaskCount: readSessionBackgroundTaskCount?.(threadId) ?? 0,
       });
       switch (decision.kind) {
         case "ignore":
@@ -151,6 +160,21 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
             },
             deadlineEpochMs: nowEpochMs + AGENT_STOP_CONFIRMATION_WINDOW_MS,
           });
+          return;
+        case "confirmSessionBackground":
+          armRef.current = { threadId, turnId: null, armedAtEpochMs: nowEpochMs };
+          setPending({
+            confirmation: {
+              kind: "confirmSessionBackground",
+              threadId,
+              liveTaskCount: decision.liveTaskCount,
+            },
+            deadlineEpochMs: nowEpochMs + AGENT_STOP_CONFIRMATION_WINDOW_MS,
+          });
+          return;
+        case "stopSessionBackground":
+          cancelStop();
+          optionsRef.current.stopSessionBackground?.(threadId);
           return;
         default:
           unsupportedDecision(decision);

@@ -938,6 +938,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     endSession: sessions.endSession,
     inspectSessionRestart: sessions.inspectRestart,
     inspectSessionBackground: sessions.inspectBackground,
+    stopSessionBackgroundTask: sessions.stopBackgroundTask,
     togglePin,
     archive,
     unarchive,

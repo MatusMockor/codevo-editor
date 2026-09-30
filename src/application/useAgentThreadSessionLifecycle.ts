@@ -21,6 +21,7 @@ import type {
   AgentSessionBackgroundInspection,
   AgentSessionEndResult,
   AgentSessionRestartVerdict,
+  AgentSessionTaskStopResult,
   AgentTasksNotice,
 } from "./agentThreadPorts";
 import { isRemoteAgentIdentity } from "./remoteAgentSurface";
@@ -46,6 +47,7 @@ export interface AgentThreadSessionLifecycle {
   endSession(thread: AgentThread): Promise<AgentSessionEndResult>;
   inspectRestart(threadId: string, launch: AgentLaunchOptions): Promise<AgentSessionRestartVerdict>;
   inspectBackground(threadId: string): Promise<AgentSessionBackgroundInspection>;
+  stopBackgroundTask(threadId: string, taskId: string): Promise<AgentSessionTaskStopResult>;
 }
 
 interface ThreadAuthority {
@@ -192,7 +194,29 @@ export function useAgentThreadSessionLifecycle(
     [isCurrent],
   );
 
-  return { interrupt, endSession, inspectRestart, inspectBackground };
+  const stopBackgroundTask = useCallback(
+    async (threadId: string, taskId: string): Promise<AgentSessionTaskStopResult> => {
+      const { gateway, readThread } = optionsRef.current;
+      const thread = readThread(threadId);
+      if (gateway === undefined || thread === undefined) return { kind: "noSession" };
+      if (!isLocalClaudeThread(thread)) return { kind: "noSession" };
+      const authority = { threadId, ownerId: thread.owner.ownerId };
+      const outcome = await attempt(() =>
+        gateway.stopAgentBackgroundTask({ workspaceId: authority.ownerId, threadId, taskId }),
+      );
+      if (!isCurrent(authority) || !optionsRef.current.ownsOwner(thread.owner)) {
+        return { kind: "stale" };
+      }
+      if (!outcome.ok) {
+        optionsRef.current.reportError(AGENT_TASKS_SOURCE, outcome.error);
+        return { kind: "unavailable" };
+      }
+      return outcome.value;
+    },
+    [isCurrent],
+  );
+
+  return { interrupt, endSession, inspectRestart, inspectBackground, stopBackgroundTask };
 }
 
 function announceSessionEnded(

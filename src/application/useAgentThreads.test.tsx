@@ -623,6 +623,7 @@ describe("useAgentThreads Claude session lifecycle", () => {
       interruptAgentTask: vi.fn(async () => ({ kind: "unsupported" }) as const),
       inspectAgentThreadSession: vi.fn(async () => ({ kind: "none" }) as const),
       endAgentThreadSession: vi.fn(async () => true),
+      stopAgentBackgroundTask: vi.fn(async () => ({ kind: "noSession" }) as const),
       subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
       subscribeAgentSessionBackgroundTurn: vi.fn(async () => () => undefined),
       subscribeAgentSessionBackgroundTasks: vi.fn(async () => () => undefined),
@@ -769,6 +770,62 @@ describe("useAgentThreads Claude session lifecycle", () => {
     act(() =>
       ended?.({ workspaceId: OWNER, threadId, reason: "stopped", backgroundTasksLive: true }),
     );
+    expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
+    harness.unmount();
+  });
+
+  it("stops a native background task left live after an interrupted turn through the exact owner's session", async () => {
+    let level: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
+    const stopAgentBackgroundTask = vi.fn<AgentThreadSessionGateway["stopAgentBackgroundTask"]>(
+      async () => ({ kind: "stopping" }),
+    );
+    const session = {
+      ...sessionGateway(),
+      stopAgentBackgroundTask,
+      subscribeAgentSessionBackgroundTasks: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTasksEvent) => void) => {
+          level = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 130 });
+    });
+    await waitForReact(() => expect(level).not.toBeNull());
+    expect(harness.hook().threads[0]?.lifecycle).not.toBe("running");
+    const watch: AgentSessionBackgroundTasksEvent = {
+      workspaceId: OWNER,
+      threadId,
+      total: 1,
+      agents: 0,
+      tasks: [
+        { taskId: "b8kzpiexm", taskType: "shell", description: "Watch beta.75 release workflow" },
+      ],
+    };
+    act(() => level?.(watch));
+    expect(harness.hook().threads[0]?.sessionBackground?.tasks).toEqual(watch.tasks);
+
+    await act(async () => {
+      await expect(
+        harness.hook().stopSessionBackgroundTask?.(threadId, "b8kzpiexm"),
+      ).resolves.toEqual({ kind: "stopping" });
+    });
+    expect(stopAgentBackgroundTask).toHaveBeenCalledTimes(1);
+    expect(stopAgentBackgroundTask).toHaveBeenCalledWith({
+      workspaceId: OWNER,
+      threadId,
+      taskId: "b8kzpiexm",
+    });
+    expect(harness.hook().threads[0]?.sessionBackground?.tasks).toEqual(watch.tasks);
+
+    act(() => level?.({ ...watch, workspaceId: "agent-root:/elsewhere", total: 0, tasks: [] }));
+    expect(harness.hook().threads[0]?.sessionBackground?.tasks).toEqual(watch.tasks);
+    act(() => level?.({ ...watch, total: 0, tasks: [] }));
     expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
     harness.unmount();
   });

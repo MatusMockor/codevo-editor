@@ -20,6 +20,7 @@ export const MAX_AGENT_SESSION_BACKGROUND_TASKS = 256;
 export const MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS = 32;
 const MAX_SESSION_BACKGROUND_TASK_ID_BYTES = 256;
 const MAX_SESSION_BACKGROUND_TASK_DESCRIPTION_BYTES = 512;
+const MAX_BACKGROUND_TASK_STOP_REASON_BYTES = 256;
 export const AGENT_SESSION_RESTART_CONFIRMATION_PREFIX =
   "sessionRestartRequiresConfirmation:" as const;
 export const AGENT_SESSION_RESTART_REFUSED_MESSAGE =
@@ -109,12 +110,27 @@ export interface InspectAgentThreadSessionRequest extends AgentThreadSessionRequ
   readonly launch: AgentLaunchOptions;
 }
 
+export interface StopAgentBackgroundTaskRequest extends AgentThreadSessionRequest {
+  readonly taskId: string;
+}
+
+export type AgentBackgroundTaskStopOutcome =
+  | { readonly kind: "stopping" }
+  | { readonly kind: "refused"; readonly reason: string }
+  | { readonly kind: "unconfirmed" }
+  | { readonly kind: "notLive" }
+  | { readonly kind: "noSession" }
+  | { readonly kind: "unavailable" };
+
 export interface AgentThreadSessionGateway {
   interruptAgentTask(request: InterruptAgentTaskRequest): Promise<AgentTaskInterruptOutcome>;
   inspectAgentThreadSession(
     request: InspectAgentThreadSessionRequest,
   ): Promise<AgentSessionInspection>;
   endAgentThreadSession(request: AgentThreadSessionRequest): Promise<boolean>;
+  stopAgentBackgroundTask(
+    request: StopAgentBackgroundTaskRequest,
+  ): Promise<AgentBackgroundTaskStopOutcome>;
   subscribeAgentSessionEnded(handler: (event: AgentSessionEndedEvent) => void): Promise<() => void>;
   subscribeAgentSessionBackgroundTurn(
     handler: (event: AgentSessionBackgroundTurnEvent) => void,
@@ -145,6 +161,22 @@ export function validateAgentThreadSessionRequest(value: unknown): AgentThreadSe
   };
 }
 
+export function validateStopAgentBackgroundTaskRequest(
+  value: unknown,
+): StopAgentBackgroundTaskRequest {
+  const request = record(value, "request");
+  exactKeys(request, ["workspaceId", "threadId", "taskId"], "request");
+  return {
+    workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
+    threadId: agentTaskId(request.threadId, "request.threadId"),
+    taskId: boundedSessionText(
+      request.taskId,
+      MAX_SESSION_BACKGROUND_TASK_ID_BYTES,
+      "request.taskId",
+    ),
+  };
+}
+
 export function validateInspectAgentThreadSessionRequest(
   value: unknown,
 ): InspectAgentThreadSessionRequest {
@@ -169,6 +201,35 @@ export function parseAgentTaskInterruptOutcome(value: unknown): AgentTaskInterru
       return { kind: outcome.kind };
     default:
       return invalid("result.kind", "interrupting, unsupported, unavailable or stopping");
+  }
+}
+
+export function parseAgentBackgroundTaskStopOutcome(
+  value: unknown,
+): AgentBackgroundTaskStopOutcome {
+  const outcome = record(value, "result");
+  if (outcome.kind === "refused") {
+    exactKeys(outcome, ["kind", "reason"], "result");
+    const reason = boundedSessionText(
+      outcome.reason,
+      MAX_BACKGROUND_TASK_STOP_REASON_BYTES,
+      "result.reason",
+    );
+    return { kind: "refused", reason };
+  }
+  exactKeys(outcome, ["kind"], "result");
+  switch (outcome.kind) {
+    case "stopping":
+    case "unconfirmed":
+    case "notLive":
+    case "noSession":
+    case "unavailable":
+      return { kind: outcome.kind };
+    default:
+      return invalid(
+        "result.kind",
+        "stopping, refused, unconfirmed, notLive, noSession or unavailable",
+      );
   }
 }
 

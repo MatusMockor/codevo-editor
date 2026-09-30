@@ -141,6 +141,7 @@ function agentComposerControllerPropsEqual(
     sameComposerAttachments(leftProps.attachments, rightProps.attachments) &&
     leftProps.dispatching === rightProps.dispatching &&
     leftProps.running === rightProps.running &&
+    leftProps.sessionTasksStoppable === rightProps.sessionTasksStoppable &&
     leftProps.immediateBlockedReason === rightProps.immediateBlockedReason &&
     leftProps.promptOwnerKey === rightProps.promptOwnerKey &&
     leftProps.onStop === rightProps.onStop &&

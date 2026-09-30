@@ -11,6 +11,7 @@ use super::{
     claude_session_router::{
         ClaudeBackgroundTasks, ClaudeBackgroundTurn, ClaudeSessionRouter, RouterStep,
     },
+    claude_session_task_stop::{stop_task_frame, ClaudeBackgroundTaskStopOutcome},
     claude_session_turn::ClaudeSessionTurnChild,
     configure_agent_output_reader, exit_code_of, observe_exit_without_reaping, reap_child,
     AGENT_STDIN_FRAME_DEADLINE,
@@ -447,6 +448,84 @@ impl ClaudeThreadSession {
         attached.lifecycle.begin_interrupt();
         router.interrupt_sent(request_id.clone());
         Ok(InterruptPlan::Write(request_id))
+    }
+
+    pub fn stop_background_task(
+        &self,
+        task_id: &str,
+        deadline: Instant,
+    ) -> ClaudeBackgroundTaskStopOutcome {
+        let Ok(order) = lock_before(&self.input_order, deadline) else {
+            return ClaudeBackgroundTaskStopOutcome::Unavailable;
+        };
+        let request_id = command_id();
+        if let Err(refusal) = self.prepare_task_stop(task_id, &request_id) {
+            return refusal;
+        }
+        let written = self
+            .stdin
+            .write_frame(&stop_task_frame(&request_id, task_id), deadline);
+        drop(order);
+        if written.is_err() {
+            lock(&self.router).withdraw_task_stop(&request_id);
+            if self.stdin.is_broken() {
+                self.terminate(ClaudeSessionEndReason::InputFailed);
+            }
+            return ClaudeBackgroundTaskStopOutcome::Unavailable;
+        }
+        self.await_task_stop_reply(&request_id, deadline)
+    }
+
+    fn prepare_task_stop(
+        &self,
+        task_id: &str,
+        request_id: &str,
+    ) -> Result<(), ClaudeBackgroundTaskStopOutcome> {
+        let mut router = lock(&self.router);
+        let state = self.state();
+        if state.end_reason.is_some()
+            || matches!(state.phase, SessionPhase::Ending | SessionPhase::Dead)
+        {
+            return Err(ClaudeBackgroundTaskStopOutcome::NoSession);
+        }
+        if !router.live_background_task(task_id) {
+            return Err(ClaudeBackgroundTaskStopOutcome::NotLive);
+        }
+        if !router.begin_task_stop(request_id.to_string()) {
+            return Err(ClaudeBackgroundTaskStopOutcome::Unavailable);
+        }
+        Ok(())
+    }
+
+    fn await_task_stop_reply(
+        &self,
+        request_id: &str,
+        deadline: Instant,
+    ) -> ClaudeBackgroundTaskStopOutcome {
+        loop {
+            if let Some(outcome) = self.poll_task_stop_reply(request_id, deadline) {
+                return outcome;
+            }
+            thread::sleep(SESSION_POLL);
+        }
+    }
+
+    fn poll_task_stop_reply(
+        &self,
+        request_id: &str,
+        deadline: Instant,
+    ) -> Option<ClaudeBackgroundTaskStopOutcome> {
+        let mut router = lock(&self.router);
+        if let Some(reply) = router.take_task_stop_reply(request_id) {
+            return Some(reply.outcome());
+        }
+        let outcome = match (self.is_ending(), Instant::now() >= deadline) {
+            (true, _) => ClaudeBackgroundTaskStopOutcome::NoSession,
+            (false, true) => ClaudeBackgroundTaskStopOutcome::Unconfirmed,
+            (false, false) => return None,
+        };
+        router.withdraw_task_stop(request_id);
+        Some(outcome)
     }
 
     pub fn terminate(&self, reason: ClaudeSessionEndReason) {

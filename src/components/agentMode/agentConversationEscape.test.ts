@@ -156,4 +156,13 @@ describe("agentConversationEscapeAction", () => {
     agentConversationEscapeAction({ running: true, onStop })?.();
     expect(onStop).toHaveBeenCalledTimes(1);
   });
+
+  it("asks to stop an idle thread's live session tasks", () => {
+    const onStop = vi.fn();
+    expect(
+      agentConversationEscapeAction({ running: false, sessionTasksStoppable: false, onStop }),
+    ).toBeNull();
+    agentConversationEscapeAction({ running: false, sessionTasksStoppable: true, onStop })?.();
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
 });

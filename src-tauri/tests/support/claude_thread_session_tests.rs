@@ -246,8 +246,12 @@ fn run_turn(session: &Arc<ClaudeThreadSession>, prompt: &str) -> (String, Claude
 }
 
 pub(crate) fn linger_native_background_task(session: &Arc<ClaudeThreadSession>) {
+    linger_native_background_task_with(session, "native-linger");
+}
+
+pub(crate) fn linger_native_background_task_with(session: &Arc<ClaudeThreadSession>, prompt: &str) {
     let mut turn = session
-        .attach_turn(&claude_user_frame("native-linger", &[]))
+        .attach_turn(&claude_user_frame(prompt, &[]))
         .expect("attach native-linger");
     let mut stdout = turn.stdout_reader().expect("turn stdout");
     let mut input = turn.take_input().expect("turn input");

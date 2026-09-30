@@ -13,6 +13,7 @@ use super::{
     claude_session_router::{
         BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn, LiveBackgroundTask,
     },
+    claude_session_task_stop::ClaudeBackgroundTaskStopOutcome,
     claude_thread_session::{
         ClaudeSessionIdentity, ClaudeSessionOwner, ClaudeThreadSession, IdleTermination,
     },
@@ -188,6 +189,27 @@ impl ClaudeSessionRegistry {
         };
         session.terminate(reason);
         true
+    }
+
+    pub fn stop_background_task(
+        &self,
+        workspace_id: &str,
+        thread_id: &str,
+        task_id: &str,
+        deadline: Instant,
+    ) -> ClaudeBackgroundTaskStopOutcome {
+        let key = ClaudeSessionKey {
+            workspace_id: workspace_id.to_string(),
+            thread_id: thread_id.to_string(),
+        };
+        let session = self.inner.state().sessions.get(&key).cloned();
+        let Some(session) = session else {
+            return ClaudeBackgroundTaskStopOutcome::NoSession;
+        };
+        if !self.inner.is_current(&key, session.generation()) {
+            return ClaudeBackgroundTaskStopOutcome::NoSession;
+        }
+        session.stop_background_task(task_id, deadline)
     }
 
     pub fn end_for_thread_under_root(

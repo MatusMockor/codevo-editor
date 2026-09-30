@@ -88,6 +88,7 @@ import { AgentAgentsToggleButton } from "./agents/AgentAgentsToggleButton";
 import { AgentTerminalSessionsPalette } from "./AgentTerminalSessionsPalette";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
+import { useAgentSessionBackgroundControls } from "./useAgentSessionBackgroundControls";
 import { usePreloadAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
 import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWorkbenchChrome";
@@ -410,8 +411,16 @@ function LocalAgentModeView({
     agents.attachmentImages,
     queuedEditImageOwner(selectedThread),
   );
+  const requestEndSessionRef = useRef<(threadId: string) => void>(() => undefined);
+  const sessionBackground = useAgentSessionBackgroundControls(
+    agents,
+    sessionThread,
+    setLocalNotice,
+    requestEndSessionRef,
+  );
   const composer = useAgentComposerControllerState({
     agents,
+    sessionStop: sessionBackground.sessionStop,
     groups: executionGroups,
     queuedEdit: previewedQueuedEdit,
     projects: composerProjects,
@@ -583,6 +592,10 @@ function LocalAgentModeView({
   const renameThread = useAgentLatestCallback(agents.renameThread);
   const togglePin = useAgentLatestCallback(agents.togglePin);
   const threadMenuCommand = useAgentLatestCallback(menu.handleThreadMenuCommand);
+  useLayoutEffect(() => {
+    requestEndSessionRef.current = (threadId) =>
+      threadMenuCommand(threadId, { kind: "endSession" });
+  }, [threadMenuCommand]);
   const threadBulkCommand = useAgentLatestCallback(menu.handleThreadBulkCommand);
   const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
   const newThread = useAgentLatestCallback(startNewThread);
@@ -1101,6 +1114,9 @@ function LocalAgentModeView({
                   }
                   onReviewInDiff={reviewInDiff}
                   onStopBackground={composer.composerProps.onStopNow}
+                  sessionTaskControls={sessionBackground.controls}
+                  onStopSessionTask={sessionBackground.onStopTask}
+                  onEndSession={sessionBackground.onEndSession}
                   pendingSend={composer.pendingSend}
                   onDismissPendingSend={composer.dismissPendingSend}
                   onOpenTurnDiff={openRecordedDiff}

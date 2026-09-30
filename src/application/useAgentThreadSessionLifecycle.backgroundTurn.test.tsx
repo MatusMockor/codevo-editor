@@ -19,6 +19,7 @@ import type {
 import { AGENT_BACKGROUND_TURN_LABEL } from "../domain/agentTurnOrigin";
 import { surfaceThreadView } from "../components/agentMode/agentSurfaceTestFixtures";
 import { waitForReact } from "../test/reactTestLifecycle";
+import { MAX_HELD_BACKGROUND_TURNS_PER_THREAD } from "./agentBackgroundTurnRecorder";
 import { useAgentThreadSessionLifecycle } from "./useAgentThreadSessionLifecycle";
 
 const THREAD_ID = "agt-1-0a1c";
@@ -102,6 +103,7 @@ function gateway() {
       kind: "none",
     })),
     endAgentThreadSession: vi.fn(async () => true),
+    stopAgentBackgroundTask: vi.fn(async () => ({ kind: "noSession" }) as const),
     subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
     subscribeAgentSessionBackgroundTurn: vi.fn(
       async (handler: (event: AgentSessionBackgroundTurnEvent) => void) => {
@@ -393,28 +395,30 @@ describe("useAgentThreadSessionLifecycle background turns", () => {
     }
   });
 
-  it("holds at most two replies per thread and surfaces the oldest instead of dropping it", async () => {
+  it("holds a bounded number of replies per thread and surfaces the oldest instead of dropping it", async () => {
     const { fake, emit } = gateway();
     const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-    harness.scenario.mintedIds.push("agt-bg-0002");
+    const replies = Array.from(
+      { length: MAX_HELD_BACKGROUND_TURNS_PER_THREAD + 1 },
+      (_, index) => `reply ${index}`,
+    );
+    harness.scenario.mintedIds.push(
+      ...replies.slice(2).map((_, index) => `agt-bg-${String(index + 2).padStart(4, "0")}`),
+    );
     await subscribed(fake);
 
-    emit(event({ output: output("first") }));
-    emit(event({ output: output("second") }));
-    emit(event({ output: output("third") }));
+    for (const text of replies) emit(event({ output: output(text) }));
 
     expect(noticeMessages(harness.setNotice)).toEqual([
-      'Claude replied in "Nightly build" after background work finished, but newer replies arrived before it could be added to the thread: "first"',
+      'Claude replied in "Nightly build" after background work finished, but newer replies arrived before it could be added to the thread: "reply 0"',
     ]);
 
     harness.update(thread({ turns: [settledTurn()] }));
 
     const recorded = harness.scenario.current?.turns.slice(1) ?? [];
-    expect(recorded.map((turn) => turn.turnId)).toEqual(["agt-bg-0001", "agt-bg-0002"]);
-    expect(recorded.map((turn) => turn.events.find((item) => item.kind === "result"))).toEqual([
-      expect.objectContaining({ text: "second" }),
-      expect.objectContaining({ text: "third" }),
-    ]);
+    expect(recorded.map((turn) => turn.events.find((item) => item.kind === "result"))).toEqual(
+      replies.slice(1).map((text) => expect.objectContaining({ text })),
+    );
     expect(harness.setNotice).toHaveBeenCalledTimes(1);
   });
 

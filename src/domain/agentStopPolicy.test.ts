@@ -53,6 +53,60 @@ describe("decideAgentStop", () => {
     });
   });
 
+  it("asks to confirm stopping a live session's tasks when an idle thread still runs them", () => {
+    const idle = {
+      threadId: "t",
+      turn: null,
+      arm: null,
+      nowEpochMs: 5,
+      interruptAvailable: true,
+      interruptedTurnId: null,
+    };
+    expect(decideAgentStop({ ...idle, sessionBackgroundTaskCount: 2 })).toEqual({
+      kind: "confirmSessionBackground",
+      liveTaskCount: 2,
+    });
+    expect(decideAgentStop({ ...idle, sessionBackgroundTaskCount: 0 })).toEqual({
+      kind: "ignore",
+    });
+  });
+
+  it("stops the idle session's tasks on a second request inside the window for the same thread only", () => {
+    const idle = {
+      threadId: "t",
+      turn: null,
+      interruptAvailable: true,
+      interruptedTurnId: null,
+      sessionBackgroundTaskCount: 1,
+    };
+    const arm = { threadId: "t", turnId: null, armedAtEpochMs: 1_000 };
+    expect(decideAgentStop({ ...idle, arm, nowEpochMs: 1_500 })).toEqual({
+      kind: "stopSessionBackground",
+    });
+    expect(
+      decideAgentStop({
+        ...idle,
+        arm,
+        nowEpochMs: 1_000 + AGENT_STOP_CONFIRMATION_WINDOW_MS,
+      }),
+    ).toEqual({ kind: "confirmSessionBackground", liveTaskCount: 1 });
+    expect(
+      decideAgentStop({ ...idle, arm: { ...arm, threadId: "other" }, nowEpochMs: 1_500 }),
+    ).toEqual({ kind: "confirmSessionBackground", liveTaskCount: 1 });
+    expect(
+      decideAgentStop({ ...idle, arm: { ...arm, turnId: "agt-1-t1" }, nowEpochMs: 1_500 }),
+    ).toEqual({ kind: "confirmSessionBackground", liveTaskCount: 1 });
+    expect(
+      decideAgentStop({
+        ...idle,
+        turn: turn([assistant]),
+        arm,
+        nowEpochMs: 1_500,
+        interruptAvailable: false,
+      }),
+    ).toEqual({ kind: "hardStop", turnId: "agt-1-t1" });
+  });
+
   it("hard-stops while the foreground is still running", () => {
     expect(
       decideAgentStop({

@@ -30,7 +30,7 @@ export interface AgentThreadSessionsOptions {
 
 export interface AgentThreadSessions extends Pick<
   AgentThreadSessionLifecycle,
-  "interrupt" | "inspectRestart" | "inspectBackground"
+  "interrupt" | "inspectRestart" | "inspectBackground" | "stopBackgroundTask"
 > {
   endSession(threadId: string): Promise<AgentSessionEndResult>;
   endThreadSession(thread: AgentThread): void;
@@ -58,6 +58,7 @@ export function useAgentThreadSessions(options: AgentThreadSessionsOptions): Age
     interrupt,
     inspectRestart,
     inspectBackground,
+    stopBackgroundTask,
   } = lifecycle;
   const endSession = useCallback(
     async (threadId: string): Promise<AgentSessionEndResult> => {
@@ -72,8 +73,22 @@ export function useAgentThreadSessions(options: AgentThreadSessionsOptions): Age
     [endLifecycleSession],
   );
   return useMemo(
-    () => ({ interrupt, inspectRestart, inspectBackground, endSession, endThreadSession }),
-    [endSession, endThreadSession, inspectBackground, inspectRestart, interrupt],
+    () => ({
+      interrupt,
+      inspectRestart,
+      inspectBackground,
+      stopBackgroundTask,
+      endSession,
+      endThreadSession,
+    }),
+    [
+      endSession,
+      endThreadSession,
+      inspectBackground,
+      inspectRestart,
+      interrupt,
+      stopBackgroundTask,
+    ],
   );
 }
 

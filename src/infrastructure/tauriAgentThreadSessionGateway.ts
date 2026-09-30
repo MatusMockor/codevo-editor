@@ -4,6 +4,7 @@ import {
   AGENT_SESSION_BACKGROUND_TASKS_EVENT,
   AGENT_SESSION_BACKGROUND_TURN_EVENT,
   AGENT_SESSION_ENDED_EVENT,
+  parseAgentBackgroundTaskStopOutcome,
   parseAgentSessionBackgroundTasksEvent,
   parseAgentSessionBackgroundTurnEvent,
   parseAgentSessionEndedEvent,
@@ -13,6 +14,8 @@ import {
   validateAgentThreadSessionRequest,
   validateInspectAgentThreadSessionRequest,
   validateInterruptAgentTaskRequest,
+  validateStopAgentBackgroundTaskRequest,
+  type AgentBackgroundTaskStopOutcome,
   type AgentSessionBackgroundTasksEvent,
   type AgentSessionBackgroundTurnEvent,
   type AgentSessionEndedEvent,
@@ -22,6 +25,7 @@ import {
   type AgentThreadSessionRequest,
   type InspectAgentThreadSessionRequest,
   type InterruptAgentTaskRequest,
+  type StopAgentBackgroundTaskRequest,
 } from "../domain/agentThreadSession";
 import type { AgentTaskRuntimeDetector, ListenToAgentTaskEvent } from "./tauriAgentTaskGateway";
 import type { InvokeAgentTaskCommand } from "./tauriAgentTaskIpcContract";
@@ -29,6 +33,7 @@ import type { InvokeAgentTaskCommand } from "./tauriAgentTaskIpcContract";
 export const INTERRUPT_AGENT_TASK_IPC_COMMAND = "interrupt_agent_task" as const;
 export const INSPECT_AGENT_THREAD_SESSION_IPC_COMMAND = "inspect_agent_thread_session" as const;
 export const END_AGENT_THREAD_SESSION_IPC_COMMAND = "end_agent_thread_session" as const;
+export const STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND = "stop_agent_background_task" as const;
 
 const invokeSessionCommand: InvokeAgentTaskCommand = (command, args) => invoke(command, args);
 
@@ -67,6 +72,16 @@ export class TauriAgentThreadSessionGateway implements AgentThreadSessionGateway
     const validated = validateAgentThreadSessionRequest(request);
     return parseEndAgentThreadSessionResult(
       await this.invokeCommand(END_AGENT_THREAD_SESSION_IPC_COMMAND, { request: validated }),
+    );
+  }
+
+  async stopAgentBackgroundTask(
+    request: StopAgentBackgroundTaskRequest,
+  ): Promise<AgentBackgroundTaskStopOutcome> {
+    if (!this.isRuntimeAvailable()) return { kind: "unavailable" };
+    const validated = validateStopAgentBackgroundTaskRequest(request);
+    return parseAgentBackgroundTaskStopOutcome(
+      await this.invokeCommand(STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND, { request: validated }),
     );
   }
 

@@ -5,7 +5,7 @@ import { agentConversationEscapeApplies } from "./agentConversationEscape";
 
 export type AgentConversationEscapeSource = Pick<
   AgentComposerProps,
-  "queuedEdit" | "running" | "onStop"
+  "queuedEdit" | "running" | "sessionTasksStoppable" | "onStop"
 >;
 
 export function agentConversationEscapeAction(
@@ -13,7 +13,7 @@ export function agentConversationEscapeAction(
 ): (() => void) | null {
   const queuedEdit = composer.queuedEdit ?? null;
   if (queuedEdit !== null) return () => queuedEdit.onCancel();
-  if (composer.running !== true) return null;
+  if (composer.running !== true && composer.sessionTasksStoppable !== true) return null;
   const stop = composer.onStop;
   if (stop === undefined) return null;
   return () => stop();

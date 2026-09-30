@@ -439,4 +439,68 @@ describe("useAgentStopController interrupt deadline", () => {
     });
     expect(hook.result.current.confirmation).toBeNull();
   });
+
+  describe("idle thread with live session background tasks", () => {
+    function setupIdle(count: number) {
+      const hardStop = vi.fn(async (_threadId: string) => undefined);
+      const stopSessionBackground = vi.fn((_threadId: string) => undefined);
+      let now = 1_000;
+      const hook = renderHook({
+        readRunningTurn: () => null,
+        readSessionBackgroundTaskCount: () => count,
+        stopSessionBackground,
+        hardStop,
+        interrupt: vi.fn(async () => true),
+        now: () => now,
+      });
+      return {
+        hook,
+        hardStop,
+        stopSessionBackground,
+        advance(ms: number) {
+          now += ms;
+          act(() => {
+            vi.advanceTimersByTime(ms);
+          });
+        },
+      };
+    }
+
+    it("asks first and stops the session's tasks on a second request inside the window", () => {
+      const { hook, hardStop, stopSessionBackground, advance } = setupIdle(1);
+      act(() => hook.result.current.requestStop("thread-1"));
+      expect(hook.result.current.confirmation).toEqual({
+        kind: "confirmSessionBackground",
+        threadId: "thread-1",
+        liveTaskCount: 1,
+      });
+      expect(stopSessionBackground).not.toHaveBeenCalled();
+      advance(AGENT_STOP_CONFIRMATION_WINDOW_MS - 1);
+      act(() => hook.result.current.requestStop("thread-1"));
+      expect(stopSessionBackground).toHaveBeenCalledWith("thread-1");
+      expect(hardStop).not.toHaveBeenCalled();
+      expect(hook.result.current.confirmation).toBeNull();
+    });
+
+    it("lets the confirmation lapse and asks again after the window", () => {
+      const { hook, stopSessionBackground, advance } = setupIdle(2);
+      act(() => hook.result.current.requestStop("thread-1"));
+      advance(AGENT_STOP_CONFIRMATION_WINDOW_MS);
+      expect(hook.result.current.confirmation).toBeNull();
+      act(() => hook.result.current.requestStop("thread-1"));
+      expect(stopSessionBackground).not.toHaveBeenCalled();
+      expect(hook.result.current.confirmation).toMatchObject({
+        kind: "confirmSessionBackground",
+        liveTaskCount: 2,
+      });
+    });
+
+    it("stays inert for an idle thread without live session tasks", () => {
+      const { hook, hardStop, stopSessionBackground } = setupIdle(0);
+      act(() => hook.result.current.requestStop("thread-1"));
+      expect(hook.result.current.confirmation).toBeNull();
+      expect(stopSessionBackground).not.toHaveBeenCalled();
+      expect(hardStop).not.toHaveBeenCalled();
+    });
+  });
 });

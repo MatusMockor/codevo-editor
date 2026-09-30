@@ -70,6 +70,7 @@ import { defaultAgentCodeColorizer } from "./shikiAgentCodeColorizer";
 import { AgentSessionDock } from "./conversation/AgentSessionDock";
 import { agentAgentsBannerModel } from "./conversation/agentAgentsBannerPresentation";
 import { agentSessionActivityBar } from "./conversation/agentSessionActivityBar";
+import type { AgentSessionTaskControls } from "./conversation/agentSessionTaskControls";
 import {
   AgentPendingThreadStart,
   AgentPendingUserMessage,
@@ -132,6 +133,9 @@ export interface AgentThreadSessionProps {
   readonly turnLog?: AgentTurnLogFactsSource | null;
   onReviewInDiff(threadId: string): void;
   onStopBackground?(): void;
+  readonly sessionTaskControls?: AgentSessionTaskControls | null;
+  onStopSessionTask?(taskId: string): void;
+  onEndSession?(): void;
   readonly pendingSend?: AgentPendingSend | null;
   onDismissPendingSend?(): void;
   readonly onOpenTurnDiff?: (
@@ -184,6 +188,9 @@ function AgentThreadSessionBody({
   onSendDeferredFollowUpNow,
   onRevealAttachment,
   onStopBackground,
+  sessionTaskControls = null,
+  onStopSessionTask,
+  onEndSession,
   pendingSend = null,
   onDismissPendingSend,
   findBar = null,
@@ -611,7 +618,10 @@ function AgentThreadSessionBody({
         onOpenAgents={agents.openPanel}
         onRevealQueue={revealQueue}
         onStop={onStopBackground}
+        onStopSessionTask={onStopSessionTask}
+        onEndSession={onEndSession}
         queuedCount={deferredFollowUps.length}
+        sessionTasks={sessionTaskControls}
       />
 
       <AgentAttachmentLightbox

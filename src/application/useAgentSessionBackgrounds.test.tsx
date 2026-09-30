@@ -36,6 +36,7 @@ function gateway() {
     interruptAgentTask: vi.fn(async () => ({ kind: "unsupported" }) as const),
     inspectAgentThreadSession: vi.fn(async () => ({ kind: "none" }) as const),
     endAgentThreadSession: vi.fn(async () => false),
+    stopAgentBackgroundTask: vi.fn(async () => ({ kind: "noSession" }) as const),
     subscribeAgentSessionEnded: vi.fn(async (handler: (event: AgentSessionEndedEvent) => void) => {
       ended = handler;
       return unsubscribeEnded;
