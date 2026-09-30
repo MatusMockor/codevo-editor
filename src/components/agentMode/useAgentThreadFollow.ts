@@ -9,8 +9,8 @@ import {
 } from "react";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentTurn } from "../../domain/agentThread";
+import { AgentTranscriptFollowController } from "./agentTranscriptFollowController";
 
-export const AGENT_PINNED_DISTANCE_PX = 32;
 export const AGENT_USER_SENT_TURN_WINDOW_MS = 15_000;
 
 export interface AgentThreadFollowSource {
@@ -68,52 +68,54 @@ export function useAgentThreadFollow({
     if (pinned) setUnseenActivity(false);
   }, []);
 
+  const controllerFor = useAgentTranscriptFollowController(scrollRef, pinnedRef, markPinned, now);
+
   const followLatest = useCallback(() => {
-    const container = scrollRef.current;
-    if (container === null) return;
-    if (!pinnedRef.current) return;
-    container.scrollTop = container.scrollHeight;
-  }, [scrollRef]);
+    controllerFor()?.followIfFollowing();
+  }, [controllerFor]);
 
   const jumpToLatest = useCallback(() => {
-    const container = scrollRef.current;
-    if (container === null) return;
-    container.scrollTop = container.scrollHeight;
-    markPinned(true);
+    const controller = controllerFor();
+    if (controller === null) return;
+    controller.follow();
     viewport?.remeasure();
-  }, [markPinned, scrollRef, viewport]);
+  }, [controllerFor, viewport]);
 
-  const release = useCallback(() => markPinned(false), [markPinned]);
+  const release = useCallback(() => controllerFor()?.release(), [controllerFor]);
 
   useEffect(() => {
-    const container = scrollRef.current;
-    if (container === null) return;
-    const updatePinnedState = () => {
-      const distanceFromBottom =
-        container.scrollHeight - container.scrollTop - container.clientHeight;
-      markPinned(distanceFromBottom <= AGENT_PINNED_DISTANCE_PX);
+    const controller = controllerFor();
+    if (controller === null) return;
+    const container = controller.container;
+    const onScroll = () => controller.handleScroll();
+    const onWheel = (event: WheelEvent) =>
+      controller.handleWheel(event.deltaX, event.deltaY, event.target);
+    const onClick = (event: MouseEvent) => controller.handleClick(event.target);
+    container.addEventListener("scroll", onScroll, { passive: true });
+    container.addEventListener("wheel", onWheel, { passive: true });
+    container.addEventListener("click", onClick, { capture: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("click", onClick, { capture: true });
     };
-    container.addEventListener("scroll", updatePinnedState, { passive: true });
-    return () => container.removeEventListener("scroll", updatePinnedState);
-  }, [markPinned, scrollRef, threadId]);
+  }, [controllerFor, threadId]);
 
   useEffect(() => {
-    const container = scrollRef.current;
-    if (container === null) return;
+    const controller = controllerFor();
+    if (controller === null) return;
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (!pinnedRef.current) return;
-      container.scrollTop = container.scrollHeight;
-    });
+    const container = controller.container;
+    const observer = new ResizeObserver(() => controller.handleLayout());
     observer.observe(container);
     const content = container.firstElementChild;
     if (content !== null) observer.observe(content);
     return () => observer.disconnect();
-  }, [scrollRef, threadId]);
+  }, [controllerFor, threadId]);
 
   useLayoutEffect(() => {
-    const container = scrollRef.current;
-    if (container === null) return;
+    const controller = controllerFor();
+    if (controller === null) return;
     const previous = renderedRef.current;
     const turnId = lastTurn?.turnId ?? null;
     renderedRef.current = {
@@ -126,28 +128,39 @@ export function useAgentThreadFollow({
     const replaced = previous.threadId !== threadId || previous.pageKey !== pageKey;
     const newTurn = previous.turnId !== turnId;
     const sentByUser = newTurn && turnSentByUser(lastTurn, previous.queuedPrompts, now());
-    if (!replaced && !sentByUser && !pinnedRef.current) {
+    if (!replaced && !sentByUser && !controller.isFollowing) {
       if (newTurn || previous.contentRevision !== contentRevision) setUnseenActivity(true);
       return;
     }
-    const before = container.scrollTop;
-    container.scrollTop = container.scrollHeight;
-    markPinned(true);
-    if (container.scrollTop === before) return;
+    const moved = replaced || sentByUser ? controller.follow() : controller.followIfFollowing();
+    if (!moved) return;
     viewport?.remeasure();
-  }, [
-    contentRevision,
-    lastTurn,
-    markPinned,
-    now,
-    pageKey,
-    queuedPrompts,
-    scrollRef,
-    threadId,
-    viewport,
-  ]);
+  }, [contentRevision, controllerFor, lastTurn, now, pageKey, queuedPrompts, threadId, viewport]);
 
   return { pinnedRef, atLatest, unseenActivity, followLatest, jumpToLatest, release };
+}
+
+function useAgentTranscriptFollowController(
+  scrollRef: RefObject<HTMLDivElement | null>,
+  pinnedRef: MutableRefObject<boolean>,
+  onFollowingChange: (following: boolean) => void,
+  now: () => number,
+): () => AgentTranscriptFollowController | null {
+  const controllerRef = useRef<AgentTranscriptFollowController | null>(null);
+  return useCallback(() => {
+    const container = scrollRef.current;
+    if (container === null) return null;
+    const current = controllerRef.current;
+    if (current !== null && current.container === container) return current;
+    const next = new AgentTranscriptFollowController(
+      container,
+      pinnedRef.current,
+      onFollowingChange,
+      now,
+    );
+    controllerRef.current = next;
+    return next;
+  }, [now, onFollowingChange, pinnedRef, scrollRef]);
 }
 
 export function turnSentByUser(
