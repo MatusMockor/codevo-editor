@@ -21,7 +21,7 @@ const manifest = (patch: Record<string, unknown> = {}) => ({
 
 describe("Claude model manifest", () => {
   it("validates the shared bundle into a deeply immutable snapshot", () => {
-    expect(BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode).toHaveLength(11);
+    expect(BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode).toHaveLength(12);
     const parsed = parseClaudeModelManifest(manifest());
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed.claudeCode)).toBe(true);
@@ -217,6 +217,23 @@ describe("Claude model manifest schema", () => {
         new RegExp(`^(Legacy )?${entry.label}( model)?\\.$`),
       );
     }
+  });
+
+  it("bundles Claude Sonnet 5.5 under its live catalog id with the official copy", () => {
+    const sonnet = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
+      (entry) => entry.choice === "claude-sonnet-5-5",
+    );
+    expect(sonnet).toMatchObject({
+      label: "Claude Sonnet 5.5",
+      description: "The best combination of speed and intelligence.",
+      releaseDate: "2026-09-28",
+      status: "current",
+    });
+    expect(sonnet?.runtimeIds).toEqual(["sonnet-5.5", "claude-sonnet-5.5", "claude-sonnet-5-5"]);
+    const haiku = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
+      (entry) => entry.choice === "claude-haiku-4-5",
+    );
+    expect(haiku?.description).toBe("The fastest model with near-frontier intelligence.");
   });
 
   it("falls back to the bundled description for a live model and to none otherwise", () => {

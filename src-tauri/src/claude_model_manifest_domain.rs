@@ -398,6 +398,21 @@ mod tests {
     }
 
     #[test]
+    fn bundles_sonnet_5_5_under_its_live_catalog_id() {
+        let catalog = parse_manifest(BUNDLE).unwrap();
+        let sonnet = catalog.resolve_model("claude-sonnet-5-5").unwrap();
+        assert_eq!(
+            sonnet.description.as_deref(),
+            Some("The best combination of speed and intelligence.")
+        );
+        assert_eq!(sonnet.release_date.as_deref(), Some("2026-09-28"));
+        assert!(sonnet
+            .runtime_ids
+            .iter()
+            .any(|id| id == "claude-sonnet-5-5"));
+    }
+
+    #[test]
     fn rejects_bad_envelopes_and_limits() {
         assert!(parse_manifest(&vec![b' '; MAX_MANIFEST_BYTES + 1]).is_err());
         assert!(!timestamp("2026-02-30T00:00:00Z"));

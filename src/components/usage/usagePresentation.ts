@@ -275,7 +275,6 @@ function resetText(window: AgentAccountUsageWindow, clock: CalendarClock): Reset
 function upcomingDayTime(at: CalendarDateTime): string {
   switch (at.relation) {
     case "today":
-      return at.time;
     case "yesterday":
     case "tomorrow":
       return `${at.day} at ${at.time}`;

@@ -48,6 +48,21 @@
       "thinkingMode": false
     },
     {
+      "choice": "claude-sonnet-5-5",
+      "label": "Claude Sonnet 5.5",
+      "runtimeIds": ["sonnet-5.5", "claude-sonnet-5.5", "claude-sonnet-5-5"],
+      "description": "The best combination of speed and intelligence.",
+      "releaseDate": "2026-09-28",
+      "status": "current",
+      "minVersion": "2.1.284",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultrathink"],
+      "defaultEffort": "high",
+      "contextWindows": ["200k", "1m"],
+      "defaultContext": "200k",
+      "fastMode": false,
+      "thinkingMode": false
+    },
+    {
       "choice": "claude-sonnet-5",
       "label": "Claude Sonnet 5",
       "runtimeIds": [
@@ -165,6 +180,7 @@
         "claude-haiku-4-5-20251001",
         "claude-haiku-4-5"
       ],
+      "description": "The fastest model with near-frontier intelligence.",
       "releaseDate": "2025-10-15",
       "status": "legacy",
       "efforts": [],

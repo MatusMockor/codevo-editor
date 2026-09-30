@@ -35,11 +35,14 @@ describe("usageLimitBarModel", () => {
     expect(bar.aheadOfPace).toBe(true);
     expect(bar.hot).toBe(false);
     expect(bar.usedLabel).toBe("72% used");
-    expect(bar.resetsLabel).toBe("Resets 16:00");
+    expect(bar.resetsLabel).toBe("Resets today at 16:00");
     expect(bar.resetsTitle).toBe("Thursday, 24 September 2026 at 16:00 · in 2h 0m");
   });
 
   it("names the concrete reset day", () => {
+    expect(model(window({ resetsAtEpochMs: Date.UTC(2026, 8, 24, 19, 49) })).resetsLabel).toBe(
+      "Resets today at 21:49",
+    );
     expect(model(window({ resetsAtEpochMs: Date.UTC(2026, 8, 25, 6, 0) })).resetsLabel).toBe(
       "Resets tomorrow at 08:00",
     );
@@ -56,7 +59,7 @@ describe("usageLimitBarModel", () => {
     expect(model(reset, Date.UTC(2026, 8, 24, 21, 59)).resetsLabel).toBe(
       "Resets tomorrow at 08:00",
     );
-    expect(model(reset, Date.UTC(2026, 8, 24, 22, 0)).resetsLabel).toBe("Resets 08:00");
+    expect(model(reset, Date.UTC(2026, 8, 24, 22, 0)).resetsLabel).toBe("Resets today at 08:00");
   });
 
   it("reads the concrete day out of a Claude reset label", () => {
@@ -68,7 +71,7 @@ describe("usageLimitBarModel", () => {
     expect(
       model(window({ resetsAtEpochMs: null, resetsLabel: "4:20pm (Europe/Bratislava)" }))
         .resetsLabel,
-    ).toBe("Resets 16:20");
+    ).toBe("Resets today at 16:20");
   });
 
   it("omits the pace line when the reset time is only a label (Claude)", () => {
@@ -113,13 +116,13 @@ describe("usageLimitBarModel", () => {
       name: "unknown window length",
       overrides: { windowDurationMinutes: null },
       elapsed: null,
-      reset: "Resets 16:00",
+      reset: "Resets today at 16:00",
     },
     {
       name: "zero window length",
       overrides: { windowDurationMinutes: 0 },
       elapsed: null,
-      reset: "Resets 16:00",
+      reset: "Resets today at 16:00",
     },
     {
       name: "reset further away than the window",
@@ -154,7 +157,7 @@ describe("usageLimitBarModel", () => {
 
   it("describes the bar for assistive technology", () => {
     expect(model(window({})).ariaLabel).toBe(
-      "5-hour limit: 38% used, 60% of the window elapsed, resets 16:00",
+      "5-hour limit: 38% used, 60% of the window elapsed, resets today at 16:00",
     );
   });
 });

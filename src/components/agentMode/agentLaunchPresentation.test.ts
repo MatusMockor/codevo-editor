@@ -116,6 +116,7 @@ describe("agentLaunchPresentation", () => {
       "claude-fable-5-1",
       "claude-opus-5-5",
       "claude-opus-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
       "claude-fable-5",
       "claude-opus-4-8",
@@ -495,6 +496,7 @@ describe("agent model rows", () => {
       "claude-fable-5-1",
       "claude-opus-5-5",
       "claude-opus-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
       "claude-fable-5",
       "claude-opus-4-8",
@@ -508,7 +510,7 @@ describe("agent model rows", () => {
     const opus = agentModelRows("claudeCode")[2];
     expect(opus?.providerName).toBe("Claude Code");
     expect(opus?.favoriteKey).toBe(agentModelFavoriteKey("claudeCode", "claude-opus-5"));
-    expect(agentModelRows("claudeCode")[4]?.isLegacy).toBe(true);
+    expect(agentModelRows("claudeCode")[5]?.isLegacy).toBe(true);
     expect(agentModelRows("codex")[0]?.providerName).toBe("Codex");
   });
 
@@ -546,10 +548,10 @@ describe("agent model rows", () => {
       "claude-opus-4-6",
       "claude-opus-4-5",
     ]);
-    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(11);
+    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(12);
     expect(filterAgentModelRows(rows, "all", new Set(), ".*").length).toBe(0);
     expect(filterAgentModelRows(rows, "all", new Set(), "latest").length).toBe(0);
-    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(11);
+    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(12);
   });
 
   it("filters models that require a newer Claude CLI", () => {

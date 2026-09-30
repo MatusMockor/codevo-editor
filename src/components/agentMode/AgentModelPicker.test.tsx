@@ -64,23 +64,24 @@ describe("AgentModelPicker", () => {
       "claude-fable-5-1",
       "claude-opus-5-5",
       "claude-opus-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
     ]);
     expect(selectedOption()?.dataset.value).toBe("claude-sonnet-5");
     expect(selectedOption()?.parentElement?.classList).toContain(
       "agent-model-picker__row--selected",
     );
-    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-3`);
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-4`);
     expect(
       [...host.querySelectorAll(".agent-model-picker__description")].map((el) => el.textContent),
     ).toEqual(
       agentModelRows("claudeCode")
-        .slice(0, 4)
+        .slice(0, 5)
         .map((row) => row.hint),
     );
     expect(
       [...host.querySelectorAll(".agent-model-picker__kbd")].map((el) => el.textContent),
-    ).toEqual([1, 2, 3, 4].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
+    ).toEqual([1, 2, 3, 4, 5].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
     expect(legacyToggle().textContent).toContain("Legacy models");
     expect(legacyToggle().textContent).toContain("Fable 5, Opus 4.8 and 5 more");
   });
@@ -92,27 +93,27 @@ describe("AgentModelPicker", () => {
     expect(host.querySelector(".agent-model-picker__new")).toBeNull();
   });
 
-  it("badges only the model the live catalog marks new and never invents a subtitle", () => {
+  it("badges only the models the live catalog marks new and never invents a subtitle", () => {
     const live = parseClaudeModelManifest({
       version: 1,
       source: "live",
       updatedAt: "2026-09-29T20:20:00Z",
       claudeCode: [
         ...BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.map(
-          ({ description: _description, ...entry }) => ({
+          ({ description: _description, releaseDate: _releaseDate, ...entry }) => ({
             ...entry,
-            isNew: entry.choice === "claude-opus-5-5",
+            isNew: entry.choice === "claude-opus-5-5" || entry.choice === "claude-sonnet-5-5",
           }),
         ),
         {
           ...BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode[0],
           description: undefined,
-          releaseDate: "2026-09-28",
-          choice: "claude-sonnet-5-5",
-          label: "Claude Sonnet 5.5",
-          runtimeIds: ["claude-sonnet-5-5"],
+          releaseDate: undefined,
+          choice: "claude-future-6",
+          label: "Claude Future 6",
+          runtimeIds: ["claude-future-6"],
           isDefault: false,
-          isNew: true,
+          isNew: false,
         },
       ],
     });
@@ -154,7 +155,10 @@ describe("AgentModelPicker", () => {
     expect(description("claude-fable-5-1")).toBe(
       "For demanding reasoning and long-horizon agentic work.",
     );
-    expect(description("claude-sonnet-5-5")).toBeNull();
+    expect(description("claude-sonnet-5-5")).toBe(
+      "The best combination of speed and intelligence.",
+    );
+    expect(description("claude-future-6")).toBeNull();
     expect(host.textContent).not.toMatch(/Claude [A-Za-z]+ [\d.]+ model\./u);
   });
 
@@ -188,7 +192,7 @@ describe("AgentModelPicker", () => {
     open();
 
     type("sON");
-    expect(optionValues()).toEqual(["claude-sonnet-5", "claude-sonnet-4-6"]);
+    expect(optionValues()).toEqual(["claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6"]);
     expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-0`);
 
     type("zzz");
@@ -197,7 +201,7 @@ describe("AgentModelPicker", () => {
 
     key("Escape");
     expect(search().value).toBe("");
-    expect(optionValues()).toHaveLength(4);
+    expect(optionValues()).toHaveLength(5);
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
 
     key("Escape");
@@ -211,16 +215,16 @@ describe("AgentModelPicker", () => {
     open();
 
     key("ArrowUp");
-    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-2`);
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-3`);
     expect(
       host
         .querySelector(".agent-model-picker__row--active [role='option']")
         ?.getAttribute("data-value"),
-    ).toBe("claude-opus-5");
+    ).toBe("claude-sonnet-5-5");
 
     key("Enter");
 
-    expect(onSelect).toHaveBeenCalledWith("claude-opus-5");
+    expect(onSelect).toHaveBeenCalledWith("claude-sonnet-5-5");
     expect(host.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger());
   });
@@ -230,7 +234,7 @@ describe("AgentModelPicker", () => {
     render(CLAUDE, onSelect);
     open();
     type("claude");
-    expect(optionValues()).toHaveLength(11);
+    expect(optionValues()).toHaveLength(12);
 
     key("0", { metaKey: true });
     expect(onSelect).not.toHaveBeenCalled();
@@ -265,7 +269,7 @@ describe("AgentModelPicker", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toContain("No favorite models yet");
 
     act(() => railItem("claudeCode").click());
-    expect(optionValues()).toHaveLength(4);
+    expect(optionValues()).toHaveLength(5);
   });
 
   it("closes on an outside pointer press and on a click of the chosen row", () => {
@@ -407,6 +411,7 @@ describe("AgentModelPicker", () => {
       "claude-fable-5-1",
       "claude-opus-5-5",
       "claude-opus-5",
+      "claude-sonnet-5-5",
       "claude-sonnet-5",
       "claude-fable-5",
       "claude-opus-4-8",
