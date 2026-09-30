@@ -29,6 +29,12 @@ import {
 } from "./agentProjectAuthority";
 import type { AgentTasksNotice, OrphanedWorktreeView } from "./agentThreadPorts";
 import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
+import {
+  gateWorktreeRemoval,
+  removeUnderLease,
+  sharedWorktreeRefusal,
+} from "./agentSharedWorktreeRemoval";
+import type { AgentWorktreeUseRegistry } from "./agentWorktreeUseRegistry";
 
 export interface AgentWorktreeLifecycleDependencies {
   readonly gitWorktreeGateway: GitWorktreeGateway;
@@ -41,6 +47,8 @@ export interface AgentWorktreeLifecycleDependencies {
   readonly setNotice: (notice: AgentTasksNotice | null) => void;
   readonly onWorktreeRemovalChanged: (threadId: string, removing: boolean) => void;
   readonly onWorktreeRemoved: (threadId: string) => void;
+  readonly worktreeUses?: AgentWorktreeUseRegistry;
+  readonly currentThreads?: () => ReadonlyMap<string, AgentThread>;
 }
 
 export interface AgentWorktreeLifecycleSurface {
@@ -214,6 +222,11 @@ export function useAgentWorktreeLifecycle(
         deps.setNotice(warning("Stop the agent before removing its worktree."));
         return;
       }
+      const shared = sharedWorktreeRefusal(liveThreads(deps), threadId, worktreePath);
+      if (shared !== null) {
+        deps.setNotice(warning(shared));
+        return;
+      }
       const project = projectByOwnerId(deps.projects, thread.owner.ownerId);
       if (project === undefined) return;
       const authority = projectAuthority(project, thread.owner.ownerId);
@@ -260,10 +273,20 @@ export function useAgentWorktreeLifecycle(
         ) {
           return;
         }
-        await dependenciesRef.current.gitWorktreeGateway.removeWorktree(
-          repositoryRoot,
+        const current = dependenciesRef.current;
+        const gate = gateWorktreeRemoval(
+          liveThreads(current),
+          current.worktreeUses,
+          threadId,
           worktreePath,
-          dirty,
+        );
+        if (gate.kind === "refused") {
+          current.onWorktreeRemovalChanged(threadId, false);
+          current.setNotice(warning(gate.message));
+          return;
+        }
+        await removeUnderLease(gate.lease, () =>
+          current.gitWorktreeGateway.removeWorktree(repositoryRoot, worktreePath, dirty),
         );
         if (
           !ownsThreadTarget(
@@ -425,6 +448,12 @@ export function useAgentWorktreeLifecycle(
     removeOrphanedWorktree,
     pruneOrphanedWorktrees,
   };
+}
+
+function liveThreads(
+  dependencies: AgentWorktreeLifecycleDependencies,
+): ReadonlyMap<string, AgentThread> {
+  return dependencies.currentThreads?.() ?? dependencies.threads;
 }
 
 function ownsRemovableThread(

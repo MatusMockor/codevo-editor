@@ -10,6 +10,13 @@ import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThrea
 import { AgentClockProvider } from "./agentClock";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import { AgentThreadRow, type AgentThreadRowProps } from "./AgentThreadRow";
+import { AgentThreadBranchMemoryContext } from "./agentThreadBranchMemoryContext";
+import {
+  EMPTY_AGENT_THREAD_BRANCH_MEMORY,
+  rememberAgentThreadBranch,
+  type AgentThreadBranchMemory,
+} from "../../domain/agentThreadBranchMemory";
+import { AgentRowServerNamesContext } from "./agentRowServerNamesContext";
 import { AGENT_FOREGROUND_QUIESCENCE_MS } from "./useAgentBackgroundActivity";
 
 const ROOT = "/workspace/app";
@@ -326,12 +333,140 @@ describe("AgentThreadRow", () => {
     expect(host.querySelector(".cv-card-row__l3 .agent-microlabel")?.textContent).toBe("Imported");
   });
 
-  it("keeps the branch first on line three without a provider glyph", () => {
+  it("leads line three with the checkout glyph and then the branch, without a provider glyph", () => {
     render(pinnedDone());
 
     const line3 = host.querySelector<HTMLElement>(".cv-card-row__l3");
-    expect(line3?.firstElementChild?.classList.contains("cv-card-row__branch")).toBe(true);
+    expect(line3?.firstElementChild?.classList.contains("cv-card-row__glyph")).toBe(true);
+    expect(line3?.children[1]?.classList.contains("cv-card-row__branch")).toBe(true);
     expect(line3?.querySelector('[aria-label="Claude Code"]')).toBeNull();
+  });
+
+  const renderLocated = (
+    view: AgentThreadView,
+    options: {
+      readonly memory?: AgentThreadBranchMemory;
+      readonly servers?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+    } = {},
+  ): void => {
+    const row = (
+      <AgentThreadBranchMemoryContext.Provider
+        value={options.memory ?? EMPTY_AGENT_THREAD_BRANCH_MEMORY}
+      >
+        <AgentClockProvider>
+          <ul role="listbox">
+            <AgentThreadRow
+              focused={false}
+              jumpLabel={null}
+              on={false}
+              onMenuCommand={() => undefined}
+              onSelect={() => undefined}
+              pending={null}
+              projectLabel="app"
+              selected={false}
+              view={view}
+            />
+          </ul>
+        </AgentClockProvider>
+      </AgentThreadBranchMemoryContext.Provider>
+    );
+    const servers = options.servers;
+    act(() => {
+      root.render(
+        servers === undefined ? (
+          row
+        ) : (
+          <AgentRowServerNamesContext.Provider
+            value={new Map(servers.map((server) => [server.id, server.name]))}
+          >
+            {row}
+          </AgentRowServerNamesContext.Provider>
+        ),
+      );
+    });
+  };
+
+  const token = (): { readonly glyph: string | null; readonly label: string | null } => {
+    const line3 = host.querySelector<HTMLElement>(".cv-card-row__l3");
+    return {
+      glyph: line3?.querySelector(".cv-card-row__glyph")?.getAttribute("data-glyph") ?? null,
+      label: line3?.querySelector(".cv-card-row__branch")?.textContent ?? null,
+    };
+  };
+
+  it("labels an in-place thread by its remembered branch, else Local checkout", () => {
+    const base = viewedDone();
+    const view: AgentThreadView = {
+      ...base,
+      thread: { ...base.thread, target: { isolation: "in-place", worktreePath: null } },
+    };
+    renderLocated(view);
+    expect(token()).toEqual({ glyph: "localCheckout", label: "Local checkout" });
+
+    const memory = rememberAgentThreadBranch(
+      EMPTY_AGENT_THREAD_BRANCH_MEMORY,
+      { threadId: "agt-1", rootKey: ROOT, ownerId: `agent-root:${ROOT}` },
+      "feature/invoices",
+    );
+    renderLocated(view, { memory });
+    expect(token()).toEqual({ glyph: "localCheckout", label: "feature/invoices" });
+    expect(host.querySelector(".cv-card-row__l3")?.getAttribute("title")).toBe(
+      "Local checkout · feature/invoices",
+    );
+
+    const foreignOwner = rememberAgentThreadBranch(
+      EMPTY_AGENT_THREAD_BRANCH_MEMORY,
+      { threadId: "agt-1", rootKey: ROOT, ownerId: "agent-root:other" },
+      "feature/other",
+    );
+    renderLocated(view, { memory: foreignOwner });
+    expect(token()).toEqual({ glyph: "localCheckout", label: "Local checkout" });
+  });
+
+  it("labels a worktree thread by its worktree branch, else Worktree", () => {
+    renderLocated(viewedDone());
+    expect(token()).toEqual({ glyph: "worktree", label: "Worktree" });
+    renderLocated({
+      ...viewedDone(),
+      ship: {
+        kind: "idle",
+        loadingStatus: false,
+        status: {
+          worktree: { branch: "agent/agt-1", head: "a".repeat(40), dirty: false, changeCount: 0 },
+          primary: { branch: "main", head: "b".repeat(40), dirty: false },
+          relation: { aheadOfPrimary: 1, behindPrimary: 0, fastForwardable: true },
+          remote: null,
+        },
+      },
+    });
+    expect(token()).toEqual({ glyph: "worktree", label: "agent/agt-1" });
+  });
+
+  it("names the server on line one and the server checkout on line three of a remote thread", () => {
+    const base = viewedDone();
+    const view: AgentThreadView = {
+      ...base,
+      thread: { ...base.thread, target: { isolation: "in-place", worktreePath: null } },
+      execution: {
+        kind: "remote",
+        serverId: "server-1",
+        runnerId: "runner-1",
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        latestTaskId: "task-1",
+        resume: null,
+      },
+    };
+    renderLocated(view, { servers: [{ id: "server-1", name: "build-box" }] });
+    expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("build-box · app");
+    expect(token()).toEqual({ glyph: "server", label: "Server checkout" });
+    expect(
+      host.querySelector('[role="img"][aria-label="Runs on server"]')?.getAttribute("title"),
+    ).toBe("Runs on build-box");
+
+    renderLocated(view);
+    expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("Server · app");
+    expect(host.textContent?.toLowerCase()).not.toContain("in place");
   });
 
   it("renders the mockup card: monogram, project, title, branch, relative time and a hover Settle action", () => {
@@ -343,7 +478,7 @@ describe("AgentThreadRow", () => {
     expect(row?.querySelector(".cv-card-row__title")?.textContent).toBe(
       "Extract the invoice totals",
     );
-    expect(row?.querySelector(".cv-card-row__branch")?.textContent).toBe("worktree");
+    expect(row?.querySelector(".cv-card-row__branch")?.textContent).toBe("Worktree");
     const settle = host.querySelector<HTMLButtonElement>('button[aria-label="Settle thread"]');
     expect(settle).not.toBeNull();
     act(() => settle?.click());

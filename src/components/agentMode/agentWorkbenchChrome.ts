@@ -1,4 +1,6 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
+import type { AgentThreadBranchMemoryPort } from "../../application/agentThreadBranchMemoryPort";
+import type { AgentLiveCheckoutBranches } from "./agentLiveCheckoutBranch";
 import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
 import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
@@ -140,6 +142,8 @@ export interface AgentWorkbenchChrome {
   readonly diff: AgentWorkbenchDiffChrome;
   readonly terminal: AgentWorkbenchTerminalChrome | null;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
+  readonly liveCheckoutBranches?: AgentLiveCheckoutBranches | null;
+  readonly threadBranchMemory?: AgentThreadBranchMemoryPort | null;
   readonly branchCheckout?: {
     readonly gateway: ComposerBranchGateway;
     readonly guard: (target: AgentGitHistoryTarget) => string | null;

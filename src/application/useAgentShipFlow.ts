@@ -48,6 +48,12 @@ import {
 import { reconcile } from "./agentShipPolicy";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
+import {
+  gateWorktreeRemoval,
+  removeUnderLease,
+  sharedWorktreeRefusal,
+} from "./agentSharedWorktreeRemoval";
+import type { AgentWorktreeUseRegistry } from "./agentWorktreeUseRegistry";
 
 export const AGENT_SHIP_STATUS_FRESHNESS_MS = 30_000;
 export const DIRTY_WORKTREE_REMOVE_CONFIRMATION =
@@ -85,6 +91,8 @@ export interface AgentShipFlowDependencies {
   readonly onWorktreeRemoved: (threadId: string) => void;
   readonly onShipStepCompleted?: (threadId: string) => void;
   readonly now?: () => number;
+  readonly worktreeUses?: AgentWorktreeUseRegistry;
+  readonly currentThreads?: () => ReadonlyMap<string, AgentThread>;
 }
 
 export interface AgentShipFlowSurface {
@@ -536,7 +544,9 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
     (threadId: string, mode: AgentShipIntegrationMode): Promise<void> =>
       run(threadId, "integrate", async (target) => {
         if (target.worktreePath === null) {
-          dependenciesRef.current.setNotice(warning("In-place threads have nothing to integrate."));
+          dependenciesRef.current.setNotice(
+            warning("Threads in the local checkout have nothing to integrate."),
+          );
           return;
         }
         const status = await freshStatus(threadId, target);
@@ -616,8 +626,17 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         const worktreePath = target.worktreePath;
         if (worktreePath === null) {
           dependenciesRef.current.setNotice(
-            warning("In-place threads have no worktree to remove."),
+            warning("Threads in the local checkout have no worktree to remove."),
           );
+          return;
+        }
+        const shared = sharedWorktreeRefusal(
+          liveShipThreads(dependenciesRef.current),
+          threadId,
+          worktreePath,
+        );
+        if (shared !== null) {
+          dependenciesRef.current.setNotice(warning(shared));
           return;
         }
         const before = currentState(threadId);
@@ -637,11 +656,23 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
           if (!ownsStoppedTarget(target)) return;
           if (!confirmed) return;
         }
-        apply(threadId, { kind: "removeStarted", deleteBranch: options.deleteBranch });
-        await dependenciesRef.current.gitWorktreeGateway.removeWorktree(
-          target.repositoryRoot,
+        const gate = gateWorktreeRemoval(
+          liveShipThreads(dependenciesRef.current),
+          dependenciesRef.current.worktreeUses,
+          threadId,
           worktreePath,
-          dirty,
+        );
+        if (gate.kind === "refused") {
+          dependenciesRef.current.setNotice(warning(gate.message));
+          return;
+        }
+        apply(threadId, { kind: "removeStarted", deleteBranch: options.deleteBranch });
+        await removeUnderLease(gate.lease, () =>
+          dependenciesRef.current.gitWorktreeGateway.removeWorktree(
+            target.repositoryRoot,
+            worktreePath,
+            dirty,
+          ),
         );
         if (!owns(target)) return settledWithoutOwner(threadId);
         dependenciesRef.current.onWorktreeRemoved(threadId);
@@ -813,4 +844,10 @@ function branchDeleteFailure(branch: string, error: unknown): AgentShipFailure {
 
 function unsupportedStep(step: never): never {
   throw new TypeError(`Unsupported agent ship step: ${String(step)}.`);
+}
+
+function liveShipThreads(
+  dependencies: AgentShipFlowDependencies,
+): ReadonlyMap<string, AgentThread> {
+  return dependencies.currentThreads?.() ?? dependencies.threads;
 }

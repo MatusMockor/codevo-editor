@@ -23,8 +23,8 @@ export const PRIMARY_DETACHED_REASON = "The main checkout is detached.";
 export const BEHIND_PRIMARY_REASON =
   "The branch is behind the main checkout; use Merge instead of Fast-forward.";
 export const INTEGRATE_BEFORE_DELETING_REASON = "Integrate the branch before deleting it.";
-export const IN_PLACE_INTEGRATE_REASON = "In-place threads have nothing to integrate.";
-export const IN_PLACE_REMOVE_REASON = "In-place threads have no worktree to remove.";
+export const IN_PLACE_INTEGRATE_REASON = "Threads in the local checkout have nothing to integrate.";
+export const IN_PLACE_REMOVE_REASON = "Threads in the local checkout have no worktree to remove.";
 export const SHIP_STEP_RUNNING_REASON = "Another ship step is already running.";
 export const SHIP_STATUS_UNAVAILABLE_REASON = "The branch status is not loaded yet.";
 export const NOTHING_TO_INTEGRATE_REASON = "The branch has no commits to integrate.";

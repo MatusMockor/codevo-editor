@@ -14,7 +14,7 @@ import type {
   AgentSurfaceTreeSource,
   AgentSurfaceTreeUnavailable,
 } from "./AgentSurfaceFileTree";
-import type { AgentSurfaceScope } from "./agentSurfacePolicy";
+import { agentSurfaceActivationOwnsScope, type AgentSurfaceScope } from "./agentSurfacePolicy";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { useDeferredPreviewReveal } from "./useDeferredPreviewReveal";
 
@@ -110,9 +110,7 @@ export function useAgentSurfaceScopeTree({
   const activation = chrome.workspaceActivation?.state;
   const workspaceReady =
     activation === undefined ||
-    (activation.kind === "ready" &&
-      scope.kind === "repository" &&
-      activation.rootPath === scope.rootPath);
+    (activation.kind === "ready" && agentSurfaceActivationOwnsScope(activation, scope));
   const target = useMemo(
     () =>
       agentSurfaceTreeTarget(

@@ -93,6 +93,7 @@ import {
   flattenProjectRepositories,
 } from "./agentThreadViewProjection";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
+import { createAgentWorktreeUseRegistry } from "./agentWorktreeUseRegistry";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { AgentProviderAdmissionAuthorityReader } from "./agentProviderAdmissionAuthority";
 
@@ -194,6 +195,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   });
   storeRef.current = store;
   const threads = store.state.threads;
+  const [worktreeUses] = useState(createAgentWorktreeUseRegistry);
+  const storeCurrentState = store.currentState;
+  const currentThreads = useCallback(() => storeCurrentState().threads, [storeCurrentState]);
   const durableHistory = dependencies.agentThreadStoreGateway.readAgentHistoryTurns !== undefined;
   const importGateway =
     dependencies.externalSessionImportGateway ??
@@ -252,6 +256,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     setNotice,
     onWorktreeRemovalChanged: changes.setRemoving,
     onWorktreeRemoved: changes.clear,
+    worktreeUses,
+    currentThreads,
   });
 
   const liveAgentTasksInRepository = useCallback(
@@ -287,6 +293,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     onWorktreeRemoved: markWorktreeRemoved,
     onShipStepCompleted: (threadId) => void refreshVisibleChanges(threadId),
     now: dependencies.now,
+    worktreeUses,
+    currentThreads,
   });
 
   const editor = useAgentEditorBridge({
@@ -450,6 +458,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     isWorktreeMissing,
     retainUncertainWorktree: worktrees.retainUncertainWorktree,
     onWorktreeCreated: worktrees.noteCreatedWorktree,
+    worktreeUses,
     currentCliVersion: dependencies.currentCliVersion,
     onWorktreeDispatchFailed,
     onTurnTerminal,

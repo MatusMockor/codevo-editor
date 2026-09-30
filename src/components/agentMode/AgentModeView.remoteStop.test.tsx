@@ -134,7 +134,7 @@ describe("Escape in an actual server conversation composer", () => {
       ),
     );
     act(() =>
-      host.querySelector<HTMLButtonElement>('[aria-label^="Workspace: This computer,"]')!.click(),
+      host.querySelector<HTMLButtonElement>('[aria-label="Run on: This computer"]')!.click(),
     );
     const serverOption = Array.from(
       document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),

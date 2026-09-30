@@ -106,14 +106,18 @@ export function RenameInput({
 
 export function RemoteThreadIndicator({ serverId }: { readonly serverId?: string }) {
   const remote = useRemoteRunnerContext();
-  const name = remote?.servers.find((server) => server.id === serverId)?.name;
+  const name = remote?.servers.find((server) => server.id === serverId)?.name ?? null;
+  return <RemoteServerIndicator name={name} />;
+}
+
+export function RemoteServerIndicator({ name }: { readonly name: string | null }) {
   return (
     <span
       aria-label="Runs on server"
       className="agent-row__icon"
       role="img"
       style={{ display: "inline-flex", alignSelf: "center", marginInlineEnd: 4 }}
-      title={name === undefined ? "Runs on server" : `Runs on ${name}`}
+      title={name === null ? "Runs on server" : `Runs on ${name}`}
     >
       <Server aria-hidden="true" size={13} />
     </span>

@@ -43,8 +43,8 @@ function options(
     selectedThreadId: "t1",
     activeProjectKey: "orders",
     selectThread: vi.fn(),
-    setProjectScope: vi.fn(() => true),
-    newThread: vi.fn(),
+    switchProject: vi.fn(() => true),
+    newThreadIn: vi.fn(() => true),
     scripts: {
       entries: [
         { key: "s", label: "test", detail: "vitest run", availability: { kind: "available" } },
@@ -85,20 +85,30 @@ describe("useAgentCommandPaletteProvider", () => {
 
   it("fails closed for vanished threads and projects and starts a thread in a project", () => {
     const selectThread = vi.fn();
-    const setProjectScope = vi.fn(() => true);
-    const newThread = vi.fn();
+    const switchProject = vi.fn(() => true);
+    const newThreadIn = vi.fn(() => true);
     ui = mountUi();
-    ui.render(<Harness {...options({ selectThread, setProjectScope, newThread })} />);
+    ui.render(<Harness {...options({ selectThread, switchProject, newThreadIn })} />);
     const provider = workbenchAgentPaletteProvider.current();
 
     expect(provider?.openThread("missing")).toBe(false);
     expect(provider?.openThread("t2")).toBe(false);
     expect(provider?.openThread("t1")).toBe(true);
     expect(provider?.switchProject("missing")).toBe(false);
+    expect(provider?.newThreadIn("missing")).toBe(false);
+    expect(provider?.switchProject("orders")).toBe(true);
     expect(provider?.newThreadIn("orders")).toBe(true);
     expect(selectThread).toHaveBeenCalledWith("t1");
-    expect(setProjectScope).toHaveBeenCalledWith("orders");
-    expect(newThread).toHaveBeenCalledTimes(1);
+    expect(switchProject).toHaveBeenCalledTimes(1);
+    expect(switchProject).toHaveBeenCalledWith("orders");
+    expect(newThreadIn).toHaveBeenCalledTimes(1);
+    expect(newThreadIn).toHaveBeenCalledWith("orders");
+  });
+
+  it("reports a refused project start from the palette", () => {
+    ui = mountUi();
+    ui.render(<Harness {...options({ newThreadIn: vi.fn(() => false) })} />);
+    expect(workbenchAgentPaletteProvider.current()?.newThreadIn("orders")).toBe(false);
   });
 
   it("reads the latest data at call time after a rerender", () => {

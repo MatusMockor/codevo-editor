@@ -380,13 +380,12 @@ describe("agent rail sections", () => {
     expect(model.title).toBe("Thread arc-1");
   });
 
-  it("builds a row model with the project line, branch fallback and file count", () => {
+  it("builds a row model with the project line and file count", () => {
     const model = agentThreadRowModel(view({ threadId: "agt-1" }), false);
 
     expect(model.project).toBe("app");
     expect(agentThreadRowModel(view({}), false, "app / api").project).toBe("app / api");
     expect(model.title).toBe("Thread agt-1");
-    expect(model.branch).toBe("worktree");
     expect(model.filesLabel).toBeNull();
     expect(model.provider).toBe("claudeCode");
     expect(model.status.kind).toBe("working");

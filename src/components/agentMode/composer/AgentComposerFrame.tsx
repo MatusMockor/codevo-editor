@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { AgentTaskIsolation } from "../../../domain/agentTask";
 import type { AgentWorktreeBase } from "../../../domain/agentWorktreeBase";
+import type { AgentComposerPreviousWorktree } from "../agentComposerPreviousWorktree";
 import "./agentComposerFrame.css";
 
 export type AgentComposerLayout = "dock" | "hero";
@@ -12,6 +13,7 @@ export interface AgentComposerDrawerContext {
   readonly disabled: boolean;
   readonly remote: boolean;
   readonly worktreeBase: AgentWorktreeBase;
+  readonly previousWorktree?: AgentComposerPreviousWorktree | null;
   onWorktreeBaseChange(base: AgentWorktreeBase): void;
 }
 

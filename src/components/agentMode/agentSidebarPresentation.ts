@@ -17,7 +17,7 @@ import type {
   AgentProviderPolicyRegistrationState,
   AgentProviderUpdateState,
 } from "../../domain/agentProviderHealth";
-import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import {
   agentThreadCanMarkUnread,
@@ -26,11 +26,7 @@ import {
 } from "../../domain/agentThread";
 import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSession";
 import { providerUpdateResultPresentation } from "../settings/agentProviderUpdatePresentation";
-import {
-  agentShipBranchLabel,
-  agentThreadDisplayTitle,
-  type AgentProjectGroup,
-} from "./agentModePresentation";
+import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { agentProjectUsable } from "./agentProjectMenuPresentation";
 import type { AgentRailFilter } from "./agentRailFilter";
 import {
@@ -397,7 +393,6 @@ export function agentRailProjectLabels(
 export interface AgentThreadRowModel {
   readonly project: string;
   readonly title: string;
-  readonly branch: string;
   readonly filesLabel: string | null;
   readonly provider: AgentCliKind;
   readonly status: AgentRowStatus;
@@ -417,7 +412,6 @@ export function agentThreadRowModel(
   return {
     project: projectLabel,
     title: agentThreadDisplayTitle(thread),
-    branch: agentShipBranchLabel(view.ship) ?? agentRowIsolationLabel(thread.target.isolation),
     filesLabel: agentRowFilesLabel(view),
     provider: thread.provider.kind,
     status,
@@ -430,10 +424,6 @@ export function agentRowProjectLabel(
   view: AgentThreadView,
 ): string {
   return labels.get(view.thread.owner.repositoryRoot) ?? view.repositoryLabel;
-}
-
-function agentRowIsolationLabel(isolation: AgentTaskIsolation): string {
-  return isolation === "worktree" ? "worktree" : "in place";
 }
 
 function agentRowFilesLabel(view: AgentThreadView): string | null {

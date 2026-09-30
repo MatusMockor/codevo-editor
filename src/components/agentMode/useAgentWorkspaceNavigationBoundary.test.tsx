@@ -43,7 +43,7 @@ describe("workspace navigation precedence", () => {
     root = createRoot(document.createElement("div"));
     workspaceRoot = "/a";
     projects = [a, b];
-    activation = { kind: "ready", rootPath: "/a" };
+    activation = { kind: "ready", rootPath: "/a", owner: { ownerId: "owner-a", generation: 1 } };
     adding = null;
     session.current = {
       selectedThreadId: "thread-b",
@@ -55,7 +55,7 @@ describe("workspace navigation precedence", () => {
   afterEach(() => act(() => root.unmount()));
 
   it("preserves navigation when the selected project's internal activation commits", () => {
-    activation = { kind: "pending", rootPath: "/b" };
+    activation = { kind: "pending", rootPath: "/b", owner: { ownerId: "owner-b", generation: 1 } };
     render();
     workspaceRoot = "/b";
     render();
@@ -72,7 +72,7 @@ describe("workspace navigation precedence", () => {
   it("lets an external project win over a different pending internal activation", () => {
     const c = { ...a, rootKey: "/c", rootPath: "/c" };
     projects = [a, b, c];
-    activation = { kind: "pending", rootPath: "/b" };
+    activation = { kind: "pending", rootPath: "/b", owner: { ownerId: "owner-b", generation: 1 } };
     render();
     workspaceRoot = "/c";
     render();
@@ -92,7 +92,7 @@ describe("workspace navigation precedence", () => {
   it("does not revive an old thread on external A to B to A navigation", () => {
     workspaceRoot = "/b";
     render();
-    activation = { kind: "ready", rootPath: "/b" };
+    activation = { kind: "ready", rootPath: "/b", owner: { ownerId: "owner-b", generation: 1 } };
     render();
     workspaceRoot = "/a";
     render();
@@ -116,7 +116,7 @@ describe("workspace navigation precedence", () => {
     };
     workspaceRoot = "/b";
     render();
-    activation = { kind: "ready", rootPath: "/b" };
+    activation = { kind: "ready", rootPath: "/b", owner: { ownerId: "owner-b", generation: 1 } };
     workspaceRoot = "/a";
     render();
     expect(session.current.selectedThreadId).toBe("thread-a");
@@ -139,7 +139,7 @@ describe("workspace navigation precedence", () => {
     };
     workspaceRoot = "/b";
     render();
-    activation = { kind: "ready", rootPath: "/b" };
+    activation = { kind: "ready", rootPath: "/b", owner: { ownerId: "owner-b", generation: 1 } };
     projects = [{ ...a, ownerId: "replacement" }, b];
     workspaceRoot = "/a";
     render();

@@ -16,8 +16,10 @@ import {
   AGENT_THREAD_STARTING_NOTICE,
   AGENT_THREAD_STEER_LIMIT_NOTICE,
   admitFollowUp,
+  admitStart,
   admitSteer,
   agentThreadIsSteerable,
+  reportPreflight,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import type { AgentFollowUpRequest, AgentSteerRequest, AgentTasksNotice } from "./agentThreadPorts";
@@ -427,5 +429,43 @@ describe("admitFollowUp session planning", () => {
     expect(admitFollowUp(deps, followUp(), new Set())).toBeNull();
     expect(notices[notices.length - 1]?.message).toBe(AGENT_THREAD_ARCHIVED_NOTICE);
     expect(AGENT_THREAD_ARCHIVED_NOTICE).toContain("Unarchive");
+  });
+});
+
+describe("local checkout vocabulary", () => {
+  const IN_PLACE_WORDS = /in[ -]place/i;
+
+  it("names the local checkout when a background project refuses it", () => {
+    const { deps, notices } = harness(thread(), [project({ origin: "background-tab" })]);
+
+    const admitted = admitStart(deps, {
+      projectRootKey: "/workspace",
+      repositoryRoot: "/repo",
+      prompt: "do the thing",
+      isolation: "in-place",
+      unsafeInPlaceConfirmationKey: null,
+      launch: CLAUDE_LAUNCH,
+    });
+
+    expect(admitted).toBeNull();
+    expect(notices[notices.length - 1]?.message).toBe(
+      "Local checkout is available only in the active project. Choose New worktree.",
+    );
+  });
+
+  it("names the local checkout when its preflight fails or is unsafe", () => {
+    const { deps, notices } = harness(thread());
+
+    expect(reportPreflight(deps, { kind: "status-failed", error: new Error("boom") })).toBe(false);
+    expect(notices[notices.length - 1]?.message).toBe(
+      "The repository status could not be refreshed, so the agent was not started in the local checkout.",
+    );
+    expect(
+      reportPreflight(deps, { kind: "unsafe", label: "the working tree has uncommitted changes" }),
+    ).toBe(false);
+    expect(notices[notices.length - 1]?.message).toBe(
+      "Starting in the local checkout is unsafe: the working tree has uncommitted changes.",
+    );
+    expect(notices.some((notice) => IN_PLACE_WORDS.test(notice?.message ?? ""))).toBe(false);
   });
 });

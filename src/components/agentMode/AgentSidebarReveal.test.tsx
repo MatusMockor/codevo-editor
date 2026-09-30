@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { click, mountUi, type MountedUi } from "../../ui/foundation/foundationTestSupport";
 import { AgentSidebarReveal } from "./AgentSidebarReveal";
@@ -44,7 +45,29 @@ describe("AgentSidebarReveal", () => {
     click(newThread as HTMLButtonElement);
 
     expect(onExpand).toHaveBeenCalledTimes(1);
-    expect(onNewThread).toHaveBeenCalledTimes(1);
+    expect(onNewThread).toHaveBeenCalledWith(false);
+  });
+
+  it("passes shift-click through and names the current project with several projects", () => {
+    const onNewThread = vi.fn();
+    mounted = mountUi();
+    mounted.render(
+      <AgentSidebarReveal
+        currentProjectLabel="app"
+        onExpand={vi.fn()}
+        onNewThread={onNewThread}
+        projectCount={2}
+        shortcuts={SHORTCUTS}
+      />,
+    );
+    const newThread = mounted.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="New thread"]',
+    );
+    expect(newThread?.title).toBe("New thread (⌘N)\nShift-click: new thread in app");
+    act(() => {
+      newThread?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    });
+    expect(onNewThread).toHaveBeenCalledWith(true);
   });
 
   it("appends a live detail to the expand tooltip", () => {

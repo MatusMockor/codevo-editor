@@ -6,7 +6,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
-import { surfaceRepositoryScope } from "./agentSurfaceTestFixtures";
+import { surfaceActivation, surfaceRepositoryScope } from "./agentSurfaceTestFixtures";
 import type { AgentProjectWorkspaceActivation } from "./useAgentProjectWorkspaceSync";
 
 describe("file tree selected-project action ownership", () => {
@@ -63,7 +63,10 @@ describe("file tree selected-project action ownership", () => {
   }
   async function render(
     path: string,
-    activation: AgentProjectWorkspaceActivation = { kind: "ready", rootPath: path },
+    activation: AgentProjectWorkspaceActivation = surfaceActivation(
+      "ready",
+      surfaceRepositoryScope(path),
+    ),
   ) {
     await act(async () => root.render(<Harness path={path} activation={activation} />));
   }
@@ -87,8 +90,23 @@ describe("file tree selected-project action ownership", () => {
     act(() => tree().onOpenFile(file));
     expect(open).toHaveBeenCalledExactlyOnceWith(file);
   });
+  it("does not read a root activated for another owner or generation", async () => {
+    const other = surfaceRepositoryScope("/b");
+    for (const owner of [
+      { ownerId: "agent-root:replacement", generation: other.generation },
+      { ownerId: other.ownerId, generation: other.generation + 1 },
+    ]) {
+      await render("/b", { kind: "ready", rootPath: "/b", owner });
+      expect(read).not.toHaveBeenCalled();
+      expect(tree().tree.rootPath).toBeNull();
+      expect(tree().searchFiles).toBeNull();
+    }
+    await render("/b");
+    expect(read).toHaveBeenCalledWith("/b");
+  });
+
   it("does not read or search the old workspace while activation is pending", async () => {
-    await render("/b", { kind: "pending", rootPath: "/b" });
+    await render("/b", surfaceActivation("pending", surfaceRepositoryScope("/b")));
     expect(read).not.toHaveBeenCalled();
     expect(tree().tree.rootPath).toBeNull();
     expect(tree().searchFiles).toBeNull();

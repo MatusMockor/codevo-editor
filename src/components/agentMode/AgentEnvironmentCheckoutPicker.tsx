@@ -1,44 +1,45 @@
-import { ChevronDown, Folder, GitBranch, Monitor, Server, Settings2 } from "lucide-react";
+import { ChevronDown, Folder, FolderGit, FolderGit2, History, Settings2 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
-import { MenuItem, MenuLabel, MenuSeparator } from "../../ui/foundation/MenuItem";
+import {
+  agentCheckoutLabel,
+  agentPreviousWorktreeLabel,
+  type AgentCheckoutKind,
+} from "../../domain/agentWorkspaceLocation";
+import { MenuItem, MenuSeparator } from "../../ui/foundation/MenuItem";
 import { MenuRadioItem } from "../../ui/foundation/MenuRadioItem";
-import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+import type { AgentComposerPreviousWorktreeChoice } from "./agentComposerPreviousWorktree";
 import { ComposerMenuPicker } from "./pickers/ComposerMenuPicker";
 
 export interface AgentEnvironmentCheckoutPickerProps {
   readonly disabled: boolean;
+  readonly checkout: AgentCheckoutKind;
   readonly isolation: AgentTaskIsolation;
   readonly remote: boolean;
   readonly worktreeAvailable: boolean;
   readonly worktreeOnly: boolean;
+  readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null;
   onIsolationChange(isolation: AgentTaskIsolation): void;
   onOpenEnvironmentSettings?(): void;
   onRefreshIsolation?(): void;
 }
 
 export function AgentEnvironmentCheckoutPicker({
+  checkout,
   disabled,
   isolation,
   onIsolationChange,
   onOpenEnvironmentSettings,
   onRefreshIsolation,
+  previousWorktree = null,
   remote,
   worktreeAvailable,
   worktreeOnly,
 }: AgentEnvironmentCheckoutPickerProps) {
-  const runner = useRemoteRunnerContext();
-  const selectedServerId = runner?.selectedServerId ?? null;
-  const serverName =
-    selectedServerId === null
-      ? null
-      : (runner?.servers.find((server) => server.id === selectedServerId)?.name ??
-        "Server unavailable");
-  const localLabel = remote ? "Server checkout" : "Local checkout";
-  const checkoutLabel = isolation === "worktree" ? "New worktree" : localLabel;
-  const triggerText = serverName === null ? checkoutLabel : `${serverName} · ${checkoutLabel}`;
+  const previousSelected = previousWorktree?.selected ?? false;
+  const label = agentCheckoutLabel(checkout);
   const pickIsolation = (next: AgentTaskIsolation): void => {
-    if (next === isolation) return;
+    if (next === isolation && !previousSelected) return;
     onIsolationChange(next);
   };
 
@@ -51,8 +52,9 @@ export function AgentEnvironmentCheckoutPicker({
         <button
           aria-expanded={trigger.open}
           aria-haspopup="menu"
-          aria-label={`Workspace: ${serverName ?? "This computer"}, ${checkoutLabel}`}
+          aria-label={`Workspace: ${label}`}
           className="agent-picker__trigger agent-picker__trigger--ghost"
+          data-checkout={checkout}
           data-value={isolation}
           disabled={disabled}
           id="agent-checkout"
@@ -66,69 +68,42 @@ export function AgentEnvironmentCheckoutPicker({
           ref={trigger.ref}
           type="button"
         >
-          {serverName !== null ? (
-            <Server aria-hidden="true" className="agent-picker__icon" size={14} />
-          ) : isolation === "worktree" ? (
-            <GitBranch aria-hidden="true" className="agent-picker__icon" size={14} />
-          ) : (
-            <Folder aria-hidden="true" className="agent-picker__icon" size={14} />
-          )}
-          <span className="agent-picker__value">{triggerText}</span>
+          <CheckoutGlyph checkout={checkout} className="agent-picker__icon" />
+          <span className="agent-picker__value">{label}</span>
           <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
         </button>
       )}
     >
-      <MenuLabel>Run on</MenuLabel>
       <MenuRadioItem
-        checked={selectedServerId === null}
-        icon={<Monitor size={14} />}
-        onSelect={() => runner?.selectServer(null)}
-      >
-        This computer
-      </MenuRadioItem>
-      {(runner?.servers ?? []).map((server) => (
-        <MenuRadioItem
-          checked={selectedServerId === server.id}
-          description={server.connected ? "Run on server" : "Connect in settings"}
-          disabled={!server.connected}
-          icon={<Server size={14} />}
-          key={server.id}
-          onSelect={() => runner?.selectServer(server.id)}
-        >
-          {server.name}
-        </MenuRadioItem>
-      ))}
-      {runner === null ? (
-        <MenuRadioItem
-          checked={false}
-          description="Coming soon"
-          disabled
-          icon={<Server size={14} />}
-          onSelect={() => undefined}
-        >
-          Remote server
-        </MenuRadioItem>
-      ) : null}
-      <MenuSeparator />
-      <MenuLabel>Checkout</MenuLabel>
-      <MenuRadioItem
-        checked={isolation === "in-place"}
+        checked={!previousSelected && isolation === "in-place"}
         disabled={worktreeOnly}
         icon={<Folder size={14} />}
         onSelect={() => pickIsolation("in-place")}
       >
-        {localLabel}
+        {agentCheckoutLabel(remote ? "serverCheckout" : "localCheckout")}
       </MenuRadioItem>
       {worktreeAvailable || worktreeOnly ? (
         <MenuRadioItem
-          checked={isolation === "worktree"}
+          checked={!previousSelected && isolation === "worktree"}
           description="Runs in a new git worktree from the selected branch."
-          icon={<GitBranch size={14} />}
+          icon={<FolderGit2 size={14} />}
           onSelect={() => pickIsolation("worktree")}
         >
-          New worktree
+          {agentCheckoutLabel("newWorktree")}
         </MenuRadioItem>
       ) : null}
+      {previousWorktree === null ? null : (
+        <MenuRadioItem
+          checked={previousSelected}
+          icon={<History size={14} />}
+          onSelect={() => {
+            if (previousSelected) return;
+            previousWorktree.onSelect();
+          }}
+        >
+          {agentPreviousWorktreeLabel(previousWorktree.available.branch)}
+        </MenuRadioItem>
+      )}
       {onOpenEnvironmentSettings === undefined ? null : <MenuSeparator />}
       {onOpenEnvironmentSettings === undefined ? null : (
         <MenuItem icon={<Settings2 size={14} />} onSelect={onOpenEnvironmentSettings}>
@@ -137,4 +112,26 @@ export function AgentEnvironmentCheckoutPicker({
       )}
     </ComposerMenuPicker>
   );
+}
+
+export function CheckoutGlyph({
+  checkout,
+  className,
+  size = 14,
+}: {
+  readonly checkout: AgentCheckoutKind;
+  readonly className?: string;
+  readonly size?: number;
+}) {
+  switch (checkout) {
+    case "localCheckout":
+    case "serverCheckout":
+      return <Folder aria-hidden="true" className={className} size={size} />;
+    case "newWorktree":
+      return <FolderGit2 aria-hidden="true" className={className} size={size} />;
+    case "worktree":
+      return <FolderGit aria-hidden="true" className={className} size={size} />;
+    case "previousWorktree":
+      return <History aria-hidden="true" className={className} size={size} />;
+  }
 }

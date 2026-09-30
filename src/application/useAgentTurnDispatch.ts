@@ -47,6 +47,8 @@ import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import { useAgentTurnSteer } from "./useAgentTurnSteer";
 import { compensateCreatedWorktree, createThreadWorktree } from "./agentThreadWorktreeProvisioning";
+import { admitPreviousWorktreeReuse, claimPreviousWorktree } from "./agentPreviousWorktreeReuse";
+import type { AgentWorktreeStartLease, AgentWorktreeUseRegistry } from "./agentWorktreeUseRegistry";
 import {
   admitFollowUp,
   admitStart,
@@ -118,6 +120,7 @@ export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDepende
   ) => Promise<InPlacePreflight>;
   readonly retainUncertainWorktree: (worktreePath: string) => void;
   readonly onWorktreeCreated?: (repositoryRoot: string, worktreePath: string) => void;
+  readonly worktreeUses?: AgentWorktreeUseRegistry;
   readonly currentCliVersion?: (provider: AgentCliKind) => string | null;
   readonly onWorktreeDispatchFailed?: () => void;
   readonly onTurnTerminal?: (event: AgentTaskStatusEvent) => void;
@@ -470,6 +473,10 @@ export function useAgentTurnDispatch(
       if (admitted === null) return null;
       const { authority, project, prompt, agentCliKind, providerAuthority, launch } = admitted;
       const repositoryRoot = request.repositoryRoot;
+      const reuse = request.reuseWorktree ?? null;
+      const reuseClaim =
+        reuse === null ? null : { authority, repositoryRoot, isolation: request.isolation, reuse };
+      if (reuseClaim !== null && !admitPreviousWorktreeReuse(deps, reuseClaim)) return null;
       const dispatchKey = agentDraftDispatchKey(request.projectRootKey);
       const usedIds = new Set([
         ...deps.store.state.threads.keys(),
@@ -495,6 +502,7 @@ export function useAgentTurnDispatch(
       mintedIdsRef.current.add(threadId).add(turnId);
       beginPendingTurn(agentCliKind);
       let releaseSlot: (() => void) | undefined;
+      let reuseLease: AgentWorktreeStartLease | null = null;
       try {
         const leased = await ensureLease(
           deps,
@@ -540,7 +548,7 @@ export function useAgentTurnDispatch(
           if (!reportPreflight(deps, preflight)) return null;
         }
         const createdWorktree =
-          request.isolation === "worktree"
+          request.isolation === "worktree" && reuse === null
             ? await createThreadWorktree(
                 dependenciesRef,
                 mountedRef,
@@ -550,7 +558,7 @@ export function useAgentTurnDispatch(
                 request.worktreeBase ?? HEAD_WORKTREE_BASE,
               )
             : null;
-        if (request.isolation === "worktree" && createdWorktree === null) {
+        if (request.isolation === "worktree" && reuse === null && createdWorktree === null) {
           if (
             mountedRef.current &&
             providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
@@ -573,7 +581,7 @@ export function useAgentTurnDispatch(
           }
           return null;
         }
-        const worktreePath = createdWorktree?.receipt.worktreePath ?? null;
+        const worktreePath = createdWorktree?.receipt.worktreePath ?? reuse?.worktreePath ?? null;
         if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
@@ -585,8 +593,12 @@ export function useAgentTurnDispatch(
           }
           return null;
         }
-        if (worktreePath !== null) {
-          dependenciesRef.current.onWorktreeCreated?.(repositoryRoot, worktreePath);
+        if (createdWorktree !== null) {
+          dependenciesRef.current.worktreeUses?.noteCreated(createdWorktree.receipt.worktreePath);
+          dependenciesRef.current.onWorktreeCreated?.(
+            repositoryRoot,
+            createdWorktree.receipt.worktreePath,
+          );
         }
         if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) {
           if (createdWorktree !== null) {
@@ -625,6 +637,10 @@ export function useAgentTurnDispatch(
           }
           return null;
         }
+        if (reuseClaim !== null) {
+          reuseLease = claimPreviousWorktree(dependenciesRef.current, reuseClaim);
+          if (reuseLease === null) return null;
+        }
         const now = deps.now ?? Date.now;
         attachmentThreadsRef.current.delete(dispatchKey);
         const started = await runTurnStart({
@@ -645,6 +661,7 @@ export function useAgentTurnDispatch(
           resumeSessionId: null,
           launch,
           createdWorktree,
+          reusedWorktreePath: reuse?.worktreePath ?? null,
           registration: "after-start",
           startedNotice: prepared.notice,
           onDefiniteStartRejection: () => {
@@ -687,6 +704,7 @@ export function useAgentTurnDispatch(
         }
         return started ? { threadId } : null;
       } finally {
+        reuseLease?.release();
         releaseSlot?.();
         endPendingTurn(agentCliKind);
         mintedIdsRef.current.delete(threadId);

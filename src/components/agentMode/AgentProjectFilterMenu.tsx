@@ -1,4 +1,4 @@
-import { Check, Folder, Search, Settings } from "lucide-react";
+import { Check, ChevronDown, Folder, ListFilter, Search, Settings } from "lucide-react";
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { IconButton } from "../../ui/foundation/IconButton";
 import { Menu } from "../../ui/foundation/Menu";
@@ -17,6 +17,7 @@ import "./agentSidebar.css";
 
 const MAX_PROJECT_QUERY_CHARS = 160;
 const FILTER_LABEL = "Filter threads by project";
+const TRIGGER_TITLE = "Filters the thread list only. Doesn't change where you work.";
 
 interface FilterOption {
   readonly key: string;
@@ -41,7 +42,6 @@ export function AgentProjectFilterMenu({
 }: AgentProjectFilterMenuProps) {
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const listId = useId();
-  const scopeId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
@@ -54,6 +54,7 @@ export function AgentProjectFilterMenu({
       : (entries.find((entry) => entry.projectRootKey === filter.projectRootKey) ?? null);
   const active = options.length === 0 ? -1 : Math.min(highlight, options.length - 1);
   const scopeLabel = selected === null ? ALL_PROJECTS_LABEL : selected.label;
+  const triggerLabel = selected === null ? FILTER_LABEL : `${FILTER_LABEL}: ${selected.label}`;
 
   const close = (): void => {
     setOpen(false);
@@ -96,26 +97,21 @@ export function AgentProjectFilterMenu({
   return (
     <>
       <span className="cv-sb-anchor" ref={anchorRef}>
-        <IconButton
-          aria-describedby={scopeId}
+        <button
           aria-expanded={open}
           aria-haspopup="dialog"
+          aria-label={triggerLabel}
+          className="cv-sb-filter"
+          data-open={open ? "true" : undefined}
           disabled={entries.length === 0}
-          icon={
-            selected === null ? (
-              <Folder size={16} />
-            ) : (
-              <span className="cv-favicon">{agentProjectMonogram(selected.label)}</span>
-            )
-          }
-          label={FILTER_LABEL}
           onClick={() => (open ? close() : setOpen(true))}
-          pressed={open}
-          title={scopeLabel}
-        />
-        <span className="agent-visually-hidden" id={scopeId}>
-          {`Showing ${scopeLabel}`}
-        </span>
+          title={TRIGGER_TITLE}
+          type="button"
+        >
+          <ListFilter aria-hidden="true" size={12} />
+          <span className="cv-sb-filter__name">{scopeLabel}</span>
+          <ChevronDown aria-hidden="true" size={12} />
+        </button>
       </span>
       <Popover
         anchorRef={anchorRef}

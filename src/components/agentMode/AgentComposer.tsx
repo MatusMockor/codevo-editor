@@ -35,6 +35,8 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import type { AgentComposerTarget } from "./agentComposerCheckout";
+import type { AgentComposerPreviousWorktreeChoice } from "./agentComposerPreviousWorktree";
+import type { AgentWorkspaceLocation } from "../../domain/agentWorkspaceLocation";
 import { AgentComposerAttachments } from "./AgentComposerAttachments";
 import {
   AGENT_COMPOSER_SAVE_QUEUED_LABEL,
@@ -171,6 +173,8 @@ export interface AgentComposerProps {
   readonly layout?: AgentComposerLayout;
   readonly renderDrawerEnd?: (context: AgentComposerDrawerContext) => ReactNode;
   readonly interaction?: AgentComposerInteraction | null;
+  readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null;
+  readonly threadLocation?: AgentWorkspaceLocation | null;
 }
 
 export function AgentComposer({
@@ -229,6 +233,8 @@ export function AgentComposer({
   layout,
   renderDrawerEnd,
   interaction = null,
+  previousWorktree = null,
+  threadLocation = null,
 }: AgentComposerProps) {
   const catalog = useAgentClaudeModelCatalog();
   const codexCatalog = useAgentCodexModelCatalog();
@@ -460,6 +466,8 @@ export function AgentComposer({
     ],
   );
 
+  const selectedPreviousWorktree =
+    !followUp && previousWorktree?.selected === true ? previousWorktree.available : null;
   const drawerContext = useMemo<AgentComposerDrawerContext>(
     () => ({
       repositoryRoot: target?.selectedRepositoryRoot ?? null,
@@ -468,6 +476,7 @@ export function AgentComposer({
       disabled: dispatching || allProvidersDisabled,
       remote: executionServerId !== null,
       worktreeBase,
+      previousWorktree: selectedPreviousWorktree,
       onWorktreeBaseChange,
     }),
     [
@@ -478,6 +487,7 @@ export function AgentComposer({
       allProvidersDisabled,
       executionServerId,
       worktreeBase,
+      selectedPreviousWorktree,
       onWorktreeBaseChange,
     ],
   );
@@ -858,8 +868,10 @@ export function AgentComposer({
           onOpenEnvironmentSettings={onOpenEnvironmentSettings}
           onRefreshIsolation={onRefreshIsolation}
           onSelectRepository={onSelectRepository}
+          previousWorktree={followUp ? null : previousWorktree}
           remote={executionTarget === "server"}
           target={target}
+          threadLocation={threadLocation}
           worktreeAvailable={worktreeAvailable}
           worktreeOnly={worktreeOnly}
         />

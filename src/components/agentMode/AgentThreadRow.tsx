@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Check, Pin } from "lucide-react";
+import { Check, Folder, GitBranch, Pin, Server, type LucideIcon } from "lucide-react";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
@@ -17,7 +17,7 @@ import {
 import type { ListSelectionModifiers } from "../../domain/listSelection";
 import {
   AgentThreadRowStatusSlot,
-  RemoteThreadIndicator,
+  RemoteServerIndicator,
   RenameInput,
 } from "./AgentThreadRowParts";
 import { agentShipBranchLabel } from "./agentModePresentation";
@@ -30,6 +30,8 @@ import {
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
 import { agentRowIsLive, agentRowWorkingAgents } from "./agentThreadRowStatus";
+import { useAgentThreadRowPlace } from "./agentThreadBranchMemoryContext";
+import { agentThreadRowProjectLine, type AgentThreadRowGlyph } from "./agentThreadRowLocation";
 import { useAgentRowBackgroundActivity } from "./useAgentRowBackgroundActivity";
 import { useAgentThreadRowMenu } from "./useAgentThreadRowMenu";
 
@@ -71,6 +73,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     workingAgents,
   });
   const status = model.status;
+  const place = useAgentThreadRowPlace(view);
   const importedLabel = agentThreadImportedBadgeLabel(thread.externalOrigin);
   const rowRef = useRef<HTMLDivElement | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -155,7 +158,9 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           <span aria-hidden="true" className="cv-favicon">
             {agentProjectMonogram(model.project)}
           </span>
-          <span className="cv-card-row__project">{model.project}</span>
+          <span className="cv-card-row__project">
+            {agentThreadRowProjectLine(model.project, place.serverName)}
+          </span>
           {thread.pinned && (
             <span aria-label="Pinned" className="cv-card-row__pin" role="img" title="Pinned">
               <Pin aria-hidden="true" size={12} />
@@ -174,13 +179,14 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
         ) : (
           <span className="cv-card-row__title">
             {view.execution?.kind === "remote" && (
-              <RemoteThreadIndicator serverId={view.execution.serverId} />
+              <RemoteServerIndicator name={place.connectedServerName} />
             )}
             {model.title}
           </span>
         )}
-        <span className="cv-card-row__l3">
-          <span className="cv-card-row__branch">{model.branch}</span>
+        <span className="cv-card-row__l3" title={place.location.title}>
+          <RowGlyph glyph={place.location.glyph} />
+          <span className="cv-card-row__branch">{place.location.label}</span>
           {model.filesLabel !== null && (
             <span className="cv-card-row__files">{model.filesLabel}</span>
           )}
@@ -212,6 +218,21 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     </li>
   );
 });
+
+const ROW_GLYPHS: Readonly<Record<AgentThreadRowGlyph, LucideIcon>> = {
+  localCheckout: Folder,
+  worktree: GitBranch,
+  server: Server,
+};
+
+function RowGlyph({ glyph }: { readonly glyph: AgentThreadRowGlyph }) {
+  const Icon = ROW_GLYPHS[glyph];
+  return (
+    <span aria-hidden="true" className="cv-card-row__glyph" data-glyph={glyph}>
+      <Icon size={12} />
+    </span>
+  );
+}
 
 function ImportedBadge({ label }: { readonly label: string }) {
   return (

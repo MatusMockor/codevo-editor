@@ -15,6 +15,7 @@ import {
 } from "../../domain/terminal";
 import type { ComposerScope } from "./agentComposerTarget";
 import { agentSurfaceTargetGone } from "./agentModePresentation";
+import type { AgentProjectWorkspaceActivation } from "./useAgentProjectWorkspaceSync";
 
 export const SURFACE_REMOTE_UNAVAILABLE_REASON =
   "This server panel is unavailable. Check the server connection and runner version.";
@@ -117,6 +118,60 @@ export function agentSurfaceScopeFor(
     ownerId: scope.ownerId,
     generation: scope.generation,
   };
+}
+
+export interface AgentSurfaceLocalAvailabilityInput {
+  readonly remote: boolean;
+  readonly scope: AgentSurfaceScope;
+  readonly workspaceRoot: string | null;
+  readonly thread: AgentThreadView | null;
+  readonly activation: AgentProjectWorkspaceActivation | undefined;
+}
+
+export function agentSurfaceLocalAvailable(input: AgentSurfaceLocalAvailabilityInput): boolean {
+  if (input.remote) return false;
+  const scope = input.scope;
+  if (scope.kind !== "repository") return false;
+  if (scope.rootPath !== input.workspaceRoot) return false;
+  if (input.thread !== null && input.thread.thread.owner.rootKey !== scope.projectRootKey)
+    return false;
+  const activation = input.activation;
+  if (activation === undefined) return true;
+  return activation.kind === "ready" && agentSurfaceActivationOwnsScope(activation, scope);
+}
+
+export function agentSurfaceActivationOwnsScope(
+  activation: AgentProjectWorkspaceActivation,
+  scope: AgentSurfaceScope,
+): boolean {
+  if (activation.kind === "none" || scope.kind !== "repository") return false;
+  return (
+    activation.rootPath === scope.rootPath &&
+    activation.owner.ownerId === scope.ownerId &&
+    activation.owner.generation === scope.generation
+  );
+}
+
+export type AgentSurfaceActivationNotice =
+  | { readonly kind: "opening" }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "unavailable" };
+
+export function agentSurfaceActivationNotice(
+  activation: AgentProjectWorkspaceActivation | undefined,
+  scope: AgentSurfaceScope,
+): AgentSurfaceActivationNotice {
+  if (activation === undefined || activation.kind === "none") return { kind: "unavailable" };
+  if (scope.kind === "repository" && !agentSurfaceActivationOwnsScope(activation, scope))
+    return { kind: "opening" };
+  switch (activation.kind) {
+    case "failed":
+      return { kind: "failed", message: activation.message };
+    case "pending":
+      return { kind: "opening" };
+    case "ready":
+      return { kind: "unavailable" };
+  }
 }
 
 export function agentThreadCheckoutRoot(

@@ -16,6 +16,8 @@ const A: AgentProjectWorkspaceTarget = {
   generation: 1,
   label: "A",
 };
+const OWNER_A = { ownerId: "owner-a", generation: 1 } as const;
+const OWNER_B = { ownerId: "owner-b", generation: 1 } as const;
 const B: AgentProjectWorkspaceTarget = {
   rootKey: "b",
   rootPath: "/b",
@@ -59,7 +61,7 @@ describe("project workspace synchronization", () => {
 
   it("uses the current project without reopening it", () => {
     act(() => current.select(A));
-    expect(current.state).toEqual({ kind: "ready", rootPath: "/a" });
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/a", owner: OWNER_A });
     expect(activate).not.toHaveBeenCalled();
   });
 
@@ -71,7 +73,7 @@ describe("project workspace synchronization", () => {
     act(() => current.select({ ...B }));
     expect(activate).toHaveBeenCalledTimes(1);
     await act(async () => pending.resolve(true));
-    expect(current.state).toEqual({ kind: "ready", rootPath: "/b" });
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/b", owner: OWNER_B });
   });
 
   it("issues a real return-to-A request while B is pending and ignores late B", async () => {
@@ -84,7 +86,7 @@ describe("project workspace synchronization", () => {
     expect(activate.mock.calls).toEqual([["/b"], ["/a"]]);
     await act(async () => a.resolve(true));
     await act(async () => b.resolve(true));
-    expect(current.state).toEqual({ kind: "ready", rootPath: "/a" });
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/a", owner: OWNER_A });
   });
 
   it("reports a failed activation without retry loops and allows explicit retry", async () => {
@@ -102,6 +104,39 @@ describe("project workspace synchronization", () => {
     act(() => current.select(A));
     await act(async () => current.select({ ...A, ownerId: "replacement", generation: 2 }));
     expect(activate).toHaveBeenCalledWith("/a");
+  });
+
+  it("names the exact owner of every pending, ready and failed activation", async () => {
+    const pending = deferred();
+    activate.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(false);
+    const replacement = { ...A, ownerId: "replacement", generation: 2 };
+    act(() => current.select(A));
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/a", owner: OWNER_A });
+    act(() => current.select(replacement));
+    expect(current.state).toEqual({
+      kind: "pending",
+      rootPath: "/a",
+      owner: { ownerId: "replacement", generation: 2 },
+    });
+    await act(async () => pending.resolve(true));
+    expect(current.state).toEqual({
+      kind: "ready",
+      rootPath: "/a",
+      owner: { ownerId: "replacement", generation: 2 },
+    });
+    await act(async () => current.select(B));
+    expect(current.state).toMatchObject({ kind: "failed", rootPath: "/b", owner: OWNER_B });
+  });
+
+  it("hands A back to A's owner after A to B to A", async () => {
+    const b = deferred();
+    activate.mockReturnValueOnce(b.promise).mockResolvedValueOnce(true);
+    act(() => current.select(A));
+    act(() => current.select(B));
+    expect(current.state).toEqual({ kind: "pending", rootPath: "/b", owner: OWNER_B });
+    await act(async () => current.select({ ...A }));
+    await act(async () => b.resolve(true));
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/a", owner: OWNER_A });
   });
 
   it("reconciles selection after an external workspace change", async () => {

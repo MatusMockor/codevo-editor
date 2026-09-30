@@ -10,6 +10,7 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
+import { agentWorkspaceLocationEqual } from "./agentComposerThreadLocation";
 import type { AgentComposerDrawerContext } from "./composer/AgentComposerFrame";
 import {
   AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
@@ -164,7 +165,25 @@ function agentComposerControllerPropsEqual(
     leftProps.onSelectRepository === rightProps.onSelectRepository &&
     sameComposerMode(leftProps.mode, rightProps.mode) &&
     sameComposerTarget(leftProps.target, rightProps.target) &&
+    agentWorkspaceLocationEqual(leftProps.threadLocation, rightProps.threadLocation) &&
+    samePreviousWorktree(leftProps.previousWorktree, rightProps.previousWorktree) &&
     agentLaunchOptionsEqual(leftProps.launch, rightProps.launch)
+  );
+}
+
+function samePreviousWorktree(
+  left: AgentComposerPresentation["previousWorktree"],
+  right: AgentComposerPresentation["previousWorktree"],
+): boolean {
+  const current = left ?? null;
+  const next = right ?? null;
+  if (current === null || next === null) return current === next;
+  return (
+    current.selected === next.selected &&
+    current.onSelect === next.onSelect &&
+    current.available.threadId === next.available.threadId &&
+    current.available.worktreePath === next.available.worktreePath &&
+    current.available.branch === next.available.branch
   );
 }
 

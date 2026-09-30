@@ -61,6 +61,7 @@ export interface AgentTurnStart {
   readonly launch: AgentLaunchOptions;
   readonly sessionRestart?: AgentSessionRestartPolicy;
   readonly createdWorktree: CreatedAgentWorktree | null;
+  readonly reusedWorktreePath?: string | null;
   readonly registration: AgentTurnRegistration;
   readonly register: (turn: AgentTurn) => void;
   readonly onDefiniteStartRejection?: () => void;
@@ -129,8 +130,10 @@ async function runOwnedTurnStart(
   const gateway = deps.agentTaskGateway;
   const now = deps.now ?? Date.now;
   const retainUncertain = (): void => {
-    if (start.createdWorktree === null) return;
-    deps.retainUncertainWorktree(start.createdWorktree.receipt.worktreePath);
+    const worktreePath =
+      start.createdWorktree?.receipt.worktreePath ?? start.reusedWorktreePath ?? null;
+    if (worktreePath === null) return;
+    deps.retainUncertainWorktree(worktreePath);
   };
   let turnRegistered = false;
   const stillOwned = (): boolean =>

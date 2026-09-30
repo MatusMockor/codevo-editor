@@ -1,0 +1,1258 @@
+<!doctype html>
+<html lang="en" data-cv-scheme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codevo - where am I working? (workspace location variants)</title>
+<style>
+:root, :root[data-cv-scheme="dark"] {
+  color-scheme: dark;
+  --cv-bg-page: #060607;
+  --cv-s0: #0E0F10; --cv-s1: #151616; --cv-s2: #1C1C1D; --cv-s3: #242425; --cv-s4: #2E2E2F;
+  --cv-pop-bg: #212122;
+  --cv-hair: rgba(255,255,255,.07); --cv-hair-strong: rgba(255,255,255,.12);
+  --cv-fg-strong: #F3F3F5; --cv-fg: #D8D9DA; --cv-fg-muted: #B0B1B2; --cv-fg-subtle: #999A9B;
+  --cv-accent: #4FCDB3; --cv-accent-strong: #9BEBD9; --cv-accent-fill: #4FCDB3; --cv-on-accent: #03241D;
+  --cv-accent-soft: rgba(79,205,179,.13);
+  --cv-ok: #8FD383; --cv-danger: #F48A80; --cv-warn: #EDBB4E; --cv-warn-soft: rgba(237,187,78,.12);
+  --cv-syn-num: #7EC8FF; --cv-git-mod: #6aa8f7;
+  --cv-canvas: var(--cv-s0); --cv-side: var(--cv-s1); --cv-raised: var(--cv-s2); --cv-popover: var(--cv-pop-bg);
+  --cv-tint-1: rgba(255,255,255,.03); --cv-tint-2: rgba(255,255,255,.05); --cv-tint-3: rgba(255,255,255,.07);
+  --cv-divider: rgba(255,255,255,.07);
+  --cv-row-hover: var(--cv-tint-2); --cv-row-active: var(--cv-tint-3);
+  --cv-shadow-pop: 0 0 0 1px var(--cv-hair-strong), 0 18px 40px -14px rgba(0,0,0,.55);
+  --frame-shadow: 0 0 0 1px var(--cv-hair-strong), 0 30px 80px -30px rgba(0,0,0,.8);
+  --server: var(--cv-syn-num);
+}
+:root[data-cv-scheme="light"] {
+  color-scheme: light;
+  --cv-bg-page: #D8D9DB;
+  --cv-s0: #EDEEEF; --cv-s1: #F6F7F8; --cv-s2: #FEFEFF; --cv-s3: #E9EAEB; --cv-s4: #DEDFE1;
+  --cv-pop-bg: #FEFEFF;
+  --cv-hair: rgba(22,26,32,.085); --cv-hair-strong: rgba(22,26,32,.14);
+  --cv-fg-strong: #151617; --cv-fg: #292A2B; --cv-fg-muted: #4C4D4E; --cv-fg-subtle: #5A5B5C;
+  --cv-accent: #0A7461; --cv-accent-strong: #12A087; --cv-accent-fill: #0B7A66; --cv-on-accent: #FFFFFF;
+  --cv-accent-soft: rgba(11,122,102,.11);
+  --cv-ok: #26702F; --cv-danger: #BC3328; --cv-warn: #8A5F00; --cv-warn-soft: rgba(138,95,0,.1);
+  --cv-syn-num: #0A62A6; --cv-git-mod: #2f6fd0;
+  --cv-canvas: var(--cv-s1); --cv-side: var(--cv-s0); --cv-raised: var(--cv-s2); --cv-popover: var(--cv-pop-bg);
+  --cv-tint-1: rgba(20,24,30,.035); --cv-tint-2: rgba(20,24,30,.055); --cv-tint-3: rgba(20,24,30,.09);
+  --cv-divider: rgba(20,24,30,.12);
+  --cv-row-hover: var(--cv-canvas); --cv-row-active: var(--cv-raised);
+  --cv-shadow-pop: 0 0 0 1px var(--cv-hair-strong), 0 18px 40px -14px rgba(20,24,30,.3);
+  --frame-shadow: 0 0 0 1px var(--cv-hair-strong), 0 30px 80px -30px rgba(20,24,30,.45);
+}
+:root {
+  --cv-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --cv-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --cv-t-2xs: 11px; --cv-t-xs: 12px; --cv-t-md: 13px; --cv-t-sm: 14px; --cv-t-lg: 15px; --cv-t-title: 20px;
+  --cv-r-xs: 4px; --cv-r-sm: 6px; --cv-r-control: 8px; --cv-r-card: 10px; --cv-r-group: 12px; --cv-r-composer: 22px; --cv-r-bubble: 18px; --cv-r-pill: 999px;
+  --cv-ease: cubic-bezier(.2,.8,.2,1);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--cv-bg-page); color: var(--cv-fg); font: 14px/1.5 var(--cv-font-ui); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+code, .mono { font-family: var(--cv-font-mono); font-size: 12px; }
+svg.i { flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- document chrome ---------- */
+.doc { max-width: 1320px; margin: 0 auto; padding: 32px 28px 120px; }
+.doc h1 { font-size: 24px; color: var(--cv-fg-strong); margin: 0 0 6px; font-weight: 600; letter-spacing: -.01em; }
+.doc h2 { font-size: 18px; color: var(--cv-fg-strong); margin: 0; font-weight: 600; }
+.doc h3 { font-size: 14px; color: var(--cv-fg-strong); margin: 18px 0 6px; font-weight: 600; }
+.lede { color: var(--cv-fg-muted); max-width: 900px; margin: 0 0 20px; }
+.card { background: var(--cv-s1); border-radius: var(--cv-r-group); box-shadow: inset 0 0 0 1px var(--cv-hair); padding: 18px 20px; }
+:root[data-cv-scheme="light"] .card { background: var(--cv-s2); }
+.grid2 { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
+.card ol, .card ul { margin: 6px 0 0; padding-left: 20px; }
+.card li { margin: 4px 0; color: var(--cv-fg); }
+.card li b { color: var(--cv-fg-strong); font-weight: 600; }
+.shot { display: block; max-width: 100%; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--cv-hair); }
+.muted { color: var(--cv-fg-muted); }
+.subtle { color: var(--cv-fg-subtle); }
+
+.toolbar {
+  position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 28px; background: color-mix(in srgb, var(--cv-bg-page) 88%, transparent);
+  backdrop-filter: blur(10px); box-shadow: inset 0 -1px 0 var(--cv-hair);
+}
+.toolbar .lbl { font-size: 12px; color: var(--cv-fg-subtle); }
+.seg { display: inline-flex; padding: 2px; border-radius: var(--cv-r-control); background: var(--cv-tint-2); box-shadow: inset 0 0 0 1px var(--cv-hair); }
+.seg button { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; color: var(--cv-fg-muted); }
+.seg button:hover { color: var(--cv-fg-strong); }
+.seg button[aria-pressed="true"] { background: var(--cv-s3); color: var(--cv-fg-strong); box-shadow: inset 0 0 0 1px var(--cv-hair-strong); }
+:root[data-cv-scheme="light"] .seg button[aria-pressed="true"] { background: var(--cv-s2); }
+.seg kbd { font: 10px var(--cv-font-mono); color: var(--cv-fg-subtle); margin-left: 6px; }
+.toolbar .jump { margin-left: auto; display: flex; gap: 10px; font-size: 12.5px; }
+.toolbar .jump a { color: var(--cv-fg-muted); text-decoration: none; }
+.toolbar .jump a:hover { color: var(--cv-accent); }
+
+.variant { margin-top: 44px; }
+.variant__head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.variant__tag { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--cv-accent); }
+.variant__tag.ref { color: var(--cv-fg-subtle); }
+.variant__summary { color: var(--cv-fg-muted); margin: 4px 0 14px; max-width: 980px; }
+.variant__summary div::before { content: "·"; color: var(--cv-fg-subtle); margin-right: 8px; }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+.state-note { margin-top: 10px; font-size: 13px; color: var(--cv-fg-muted); }
+.state-note b { color: var(--cv-fg-strong); font-weight: 600; }
+
+/* ---------- app frame ---------- */
+.app {
+  position: relative; display: grid; grid-template-columns: 248px minmax(0,1fr) 344px; height: 620px;
+  background: var(--cv-canvas); border-radius: 12px; overflow: hidden; box-shadow: var(--frame-shadow);
+  font-size: 13px; color: var(--cv-fg);
+}
+.sb { background: var(--cv-side); box-shadow: inset -1px 0 0 var(--cv-divider); display: flex; flex-direction: column; min-width: 0; }
+.chrome { height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 14px; }
+.lights { display: inline-flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: var(--cv-s4); display: block; }
+.lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+:root[data-cv-scheme="dark"] .lights i { filter: saturate(.75) brightness(.9); }
+
+.ibtn { width: 28px; height: 28px; display: inline-grid; place-items: center; border-radius: var(--cv-r-control); color: var(--cv-fg-muted); flex: none; }
+.ibtn:hover { background: var(--cv-tint-2); color: var(--cv-fg-strong); }
+.fav { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: var(--cv-r-xs); background: var(--cv-tint-3); color: var(--cv-fg-strong); font-size: 10px; font-weight: 600; flex: none; line-height: 1; }
+.fav.lg { width: 22px; height: 22px; font-size: 12px; border-radius: 6px; }
+.fav.srv { background: color-mix(in srgb, var(--server) 18%, transparent); color: var(--server); }
+
+.sb-search { display: flex; align-items: center; gap: 2px; padding: 0 8px 8px; }
+.sb-field { flex: 1; min-width: 0; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: var(--cv-r-control); color: var(--cv-fg-subtle); font-size: var(--cv-t-sm); }
+.sb-field:hover { background: var(--cv-tint-1); }
+.sb-sec { padding: 10px 16px 4px; font-size: 11px; font-weight: 500; color: var(--cv-fg-subtle); display: flex; align-items: center; gap: 6px; }
+.sb-list { list-style: none; margin: 0; padding: 0 8px; display: flex; flex-direction: column; gap: 2px; }
+.row { position: relative; display: block; padding: 7px 10px 8px; border-radius: var(--cv-r-card); }
+.row:hover { background: var(--cv-row-hover); }
+.row.on { background: var(--cv-row-active); }
+.row .l1 { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--cv-fg-subtle); }
+.row .l1 .p { font-weight: 500; color: var(--cv-fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .l1 .st { margin-left: auto; font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st.work { color: var(--cv-accent); } .st.done { color: var(--cv-fg-subtle); }
+.row .l2 { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 13px; font-weight: 500; color: var(--cv-fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .l2 span { overflow: hidden; text-overflow: ellipsis; }
+.row .l3 { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11.5px; color: var(--cv-fg-subtle); min-width: 0; }
+.row .l3 .br { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row .srvicon { color: var(--server); display: inline-flex; }
+.sb-foot { margin-top: auto; padding: 10px 16px 12px; font-size: 11.5px; color: var(--cv-fg-subtle); box-shadow: inset 0 1px 0 var(--cv-divider); display: flex; gap: 8px; align-items: center; }
+
+.main { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.topbar { height: 52px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; box-shadow: inset 0 -1px 0 var(--cv-divider); min-width: 0; }
+.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; font-size: 13px; overflow: hidden; }
+.crumb { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px; border-radius: var(--cv-r-sm); color: var(--cv-fg-muted); white-space: nowrap; flex: none; }
+.crumbs > .sep { flex: none; }
+.crumb:hover { background: var(--cv-tint-2); color: var(--cv-fg-strong); }
+.crumb.here { color: var(--cv-fg-strong); font-weight: 600; overflow: hidden; flex: 0 1 auto; min-width: 110px; }
+.crumb.loc-crumb { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.crumb.loc-crumb .loc { overflow: hidden; }
+.crumb.loc-crumb .loc b, .crumb.loc-crumb .loc .g, .crumb.loc-crumb .chev { flex: none; }
+.crumb.loc-crumb .loc .sfx { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.crumb.here span { overflow: hidden; text-overflow: ellipsis; }
+.crumb.dim { color: var(--cv-fg-subtle); font-weight: 400; }
+.sep { color: var(--cv-fg-subtle); opacity: .7; }
+.tb-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.btn { height: 28px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--cv-r-control); font-size: 12.5px; color: var(--cv-fg); box-shadow: inset 0 0 0 1px var(--cv-hair-strong); }
+.btn:hover { background: var(--cv-tint-2); }
+.vbar { width: 1px; height: 16px; background: var(--cv-divider); margin: 0 6px; }
+
+.conv { flex: 1; min-height: 0; overflow: hidden; padding: 22px 28px 0; display: flex; flex-direction: column; }
+.col { width: 100%; max-width: 640px; margin: 0 auto; }
+.bubble { margin-left: auto; width: fit-content; max-width: 82%; background: var(--cv-s3); color: var(--cv-fg-strong); padding: 9px 14px; border-radius: var(--cv-r-bubble); font-size: 13.5px; }
+:root[data-cv-scheme="light"] .bubble { background: var(--cv-s2); box-shadow: inset 0 0 0 1px var(--cv-hair); }
+.prose { margin: 16px 0 8px; color: var(--cv-fg); font-size: 13.5px; }
+.work { display: flex; align-items: center; gap: 8px; height: 26px; color: var(--cv-fg-muted); font-size: 12.5px; }
+.work code { color: var(--cv-fg); }
+.work .add { color: var(--cv-ok); } .work .del { color: var(--cv-danger); }
+.thinking { color: var(--cv-fg-subtle); font-size: 12.5px; margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+.shimmer { background: linear-gradient(90deg, var(--cv-fg-subtle) 0%, var(--cv-fg-strong) 50%, var(--cv-fg-subtle) 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sh 2.2s linear infinite; }
+@keyframes sh { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+.hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 0 28px 40px; }
+.hero h1 { font-size: 20px; font-weight: 500; color: var(--cv-fg-muted); margin: 0 0 18px; text-align: center; }
+.hero h1 span { color: var(--cv-fg-strong); }
+
+.dock { flex: none; padding: 10px 28px 14px; }
+.slab { background: var(--cv-raised); border-radius: var(--cv-r-composer); box-shadow: inset 0 0 0 1px var(--cv-hair-strong); padding: 12px 12px 8px 16px; }
+.ph { color: var(--cv-fg-subtle); font-size: 13.5px; height: 40px; }
+.foot { display: flex; align-items: center; gap: 4px; }
+.ctl { height: 26px; padding: 0 6px; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--cv-r-sm); color: var(--cv-fg-muted); font-size: 12.5px; }
+.ctl:hover { background: var(--cv-tint-2); color: var(--cv-fg-strong); }
+.foot .vs { width: 1px; height: 14px; background: var(--cv-divider); margin: 0 2px; }
+.foot .right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.round { width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--cv-accent-fill); color: var(--cv-on-accent); }
+.round.off { background: var(--cv-s4); color: var(--cv-fg-subtle); }
+.round.stop { background: var(--cv-fg-strong); color: var(--cv-canvas); }
+.drawer { display: flex; align-items: center; gap: 2px; padding: 6px 6px 0; min-height: 30px; }
+.drawer .end { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.tbtn { height: 24px; padding: 0 6px; display: inline-flex; align-items: center; gap: 5px; border-radius: var(--cv-r-sm); color: var(--cv-fg-subtle); font-size: 12px; white-space: nowrap; }
+.tbtn:hover { background: var(--cv-tint-2); color: var(--cv-fg-strong); }
+.tbtn.locked { color: var(--cv-fg-subtle); }
+.tbtn.locked:hover { background: none; color: var(--cv-fg-subtle); }
+.tbtn b { font-weight: 500; color: var(--cv-fg-muted); }
+
+.panel { background: var(--cv-canvas); box-shadow: inset 1px 0 0 var(--cv-divider); display: flex; flex-direction: column; min-width: 0; position: relative; }
+.ptabs { height: 52px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px; box-shadow: inset 0 -1px 0 var(--cv-divider); }
+.ptab { height: 28px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--cv-r-control); font-size: 12.5px; color: var(--cv-fg-subtle); }
+.ptab.on { background: var(--cv-tint-3); color: var(--cv-fg-strong); }
+.ptabs .sp { margin-left: auto; }
+.pbody { flex: 1; min-height: 0; overflow: hidden; padding: 10px 8px; }
+.phead { font-size: 11px; font-weight: 500; color: var(--cv-fg-subtle); padding: 2px 8px 6px; display: flex; gap: 6px; align-items: center; }
+.tree { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.tree li { height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--cv-r-sm); color: var(--cv-fg); white-space: nowrap; }
+.tree li.d { color: var(--cv-fg-muted); }
+.tree li .m { margin-left: auto; font-size: 11px; color: var(--cv-git-mod); font-weight: 600; }
+.tree li .a { margin-left: auto; font-size: 11px; color: var(--cv-ok); font-weight: 600; }
+.tree .ind1 { padding-left: 24px; } .tree .ind2 { padding-left: 40px; }
+
+/* ---------- current-state markers ---------- */
+.mk { position: absolute; z-index: 6; width: 18px; height: 18px; border-radius: 50%; background: var(--cv-warn); color: #1b1300; font: 700 11px/18px var(--cv-font-ui); text-align: center; box-shadow: 0 0 0 3px color-mix(in srgb, var(--cv-canvas) 80%, transparent); pointer-events: none; }
+:root[data-cv-scheme="light"] .mk { color: #fff; }
+.mk-inline { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--cv-warn); color: #1b1300; font: 700 11px var(--cv-font-ui); margin-right: 6px; vertical-align: -3px; }
+:root[data-cv-scheme="light"] .mk-inline { color: #fff; }
+.ring { position: relative; box-shadow: 0 0 0 1.5px var(--cv-warn) !important; border-radius: 6px; }
+.mk.tr { top: -9px; right: -9px; }
+.mk.tl { top: -9px; left: -9px; }
+
+/* ---------- shared proposal primitives ---------- */
+.loc { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
+.loc b { font-weight: 500; color: var(--cv-fg-strong); overflow: hidden; text-overflow: ellipsis; }
+.loc .sfx { color: var(--cv-fg-subtle); font-weight: 400; }
+.loc .g { display: inline-flex; color: var(--cv-fg-muted); }
+.loc--worktree .g { color: var(--cv-accent); }
+.loc--server .g { color: var(--server); }
+.loc.draft b { color: var(--cv-fg-muted); }
+.crumb.loc-crumb { gap: 6px; }
+.crumb.loc-crumb.draft { outline: 1px dashed color-mix(in srgb, var(--cv-fg-subtle) 70%, transparent); outline-offset: -1px; }
+.crumb .chev { color: var(--cv-fg-subtle); display: inline-flex; }
+.filterbtn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; margin: 0 8px 6px; border-radius: var(--cv-r-sm); font-size: 12px; color: var(--cv-fg-subtle); width: fit-content; }
+.filterbtn:hover { background: var(--cv-tint-2); color: var(--cv-fg-strong); }
+.filterbtn b { font-weight: 500; color: var(--cv-fg-muted); }
+.scopeline { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 16px; font-size: 12px; box-shadow: inset 0 -1px 0 var(--cv-divider); min-width: 0; }
+.scopeline > .loc, .scopeline > .sep { flex: none; }
+.scopeline .path { flex: 1 1 auto; text-align: right; margin-left: auto; color: var(--cv-fg-subtle); font-family: var(--cv-font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; min-width: 0; }
+.pop { position: absolute; z-index: 8; width: 330px; background: var(--cv-popover); border-radius: var(--cv-r-group); box-shadow: var(--cv-shadow-pop); padding: 6px; font-size: 12.5px; }
+.pop .hd { padding: 8px 10px 6px; display: flex; gap: 8px; align-items: center; color: var(--cv-fg-strong); font-weight: 600; }
+.pop dl { margin: 0; padding: 2px 10px 8px; display: grid; grid-template-columns: 70px 1fr; gap: 5px 10px; }
+.pop dt { color: var(--cv-fg-subtle); }
+.pop dd { margin: 0; color: var(--cv-fg); overflow-wrap: anywhere; }
+.pop dd code { font-size: 11.5px; }
+.pop .note { margin: 0 4px; padding: 8px 8px; border-radius: var(--cv-r-control); background: var(--cv-tint-2); color: var(--cv-fg-muted); font-size: 12px; }
+.pop .acts { display: flex; gap: 2px; padding: 6px 2px 2px; }
+.pop .acts .tbtn { color: var(--cv-fg-muted); }
+.pop .mi { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: var(--cv-r-sm); color: var(--cv-fg); }
+.pop .mi:hover, .pop .mi.hl { background: var(--cv-tint-3); }
+.pop .mi .k { margin-left: auto; color: var(--cv-fg-subtle); font-size: 11px; }
+.pop .lab { padding: 6px 10px 2px; font-size: 11px; color: var(--cv-fg-subtle); font-weight: 500; }
+.pop .sepl { height: 1px; background: var(--cv-divider); margin: 4px 6px; }
+
+/* variant B */
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
+.dot--inplace { background: var(--cv-fg-muted); }
+.dot--worktree { background: var(--cv-accent); }
+.dot--server { background: var(--server); }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: var(--cv-r-pill); font-size: 11.5px; color: var(--cv-fg-muted); box-shadow: inset 0 0 0 1px var(--cv-hair-strong); white-space: nowrap; flex: none; }
+.runline { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px; padding: 7px 8px 0; font-size: 12px; color: var(--cv-fg-subtle); }
+.runline .dot { margin-right: 4px; }
+.runline .w { color: var(--cv-fg-muted); }
+.runline .pk { height: 22px; padding: 0 5px; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--cv-r-sm); color: var(--cv-fg-strong); font-weight: 500; }
+.runline .pk:hover { background: var(--cv-tint-2); }
+.runline .pk .chev { color: var(--cv-fg-subtle); display: inline-flex; }
+.runline .fx { font-weight: 500; color: var(--cv-fg); }
+.runline .mid { color: var(--cv-fg-subtle); opacity: .7; }
+.consequence { padding: 2px 13px 0; font-size: 11.5px; color: var(--cv-fg-subtle); }
+.panelmatch { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 16px; font-size: 12px; color: var(--cv-fg-muted); box-shadow: inset 0 -1px 0 var(--cv-divider); white-space: nowrap; overflow: hidden; }
+.panelmatch b { color: var(--cv-fg-strong); font-weight: 500; flex: none; }
+.panelmatch .subtle { overflow: hidden; text-overflow: ellipsis; }
+
+/* variant C */
+.ws { width: calc(100% - 16px); text-align: left; margin: 0 8px 8px; display: flex; align-items: flex-start; gap: 10px; padding: 8px 8px 8px 10px; border-radius: var(--cv-r-card); background: var(--cv-tint-2); box-shadow: inset 0 0 0 1px var(--cv-hair); min-width: 0; }
+.ws:hover { background: var(--cv-tint-3); }
+.ws .t { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ws .t .top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ws .t .top .up { margin-left: auto; }
+.ws .t b { font-size: 13px; color: var(--cv-fg-strong); font-weight: 600; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws .t span { font-size: 11.5px; color: var(--cv-fg-subtle); display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; min-width: 0; }
+.ws .t span .loc b { font-size: 11.5px; font-weight: 500; color: var(--cv-fg-muted); }
+.ws .up { color: var(--cv-fg-subtle); display: inline-flex; }
+.showrow { display: flex; align-items: center; gap: 8px; padding: 0 16px 6px; font-size: 11.5px; color: var(--cv-fg-subtle); }
+.miniseg { display: inline-flex; padding: 1px; border-radius: 6px; background: var(--cv-tint-2); }
+.miniseg span { height: 20px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 5px; font-size: 11.5px; color: var(--cv-fg-subtle); }
+.miniseg span.on { background: var(--cv-s4); color: var(--cv-fg-strong); }
+:root[data-cv-scheme="light"] .miniseg span.on { background: var(--cv-s2); box-shadow: inset 0 0 0 1px var(--cv-hair-strong); }
+
+/* change pulse (location changed) */
+.pulse { animation: pulse 1.3s var(--cv-ease); }
+@keyframes pulse { 0% { background-color: var(--cv-accent-soft); box-shadow: 0 0 0 1px color-mix(in srgb, var(--cv-accent) 45%, transparent); } 100% { background-color: transparent; box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .pulse, .shimmer { animation: none; } .shimmer { color: var(--cv-fg-subtle); background: none; } }
+
+/* t3code recreation */
+.tk { position: absolute; z-index: 6; width: 18px; height: 18px; border-radius: 50%; background: var(--server); color: var(--cv-canvas); font: 700 11px/18px var(--cv-font-ui); text-align: center; box-shadow: 0 0 0 3px color-mix(in srgb, var(--cv-canvas) 80%, transparent); pointer-events: none; }
+.tk.tr { top: -9px; right: -9px; } .tk.tl { top: -9px; left: -9px; }
+.tk-inline { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--server); color: var(--cv-canvas); font: 700 11px var(--cv-font-ui); margin-right: 6px; vertical-align: -3px; }
+.tring { position: relative; box-shadow: 0 0 0 1.5px var(--server) !important; border-radius: 6px; }
+.obtn { height: 24px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border-radius: var(--cv-r-sm); font-size: 12px; color: var(--cv-fg); box-shadow: inset 0 0 0 1px var(--cv-hair-strong); white-space: nowrap; }
+.obtn:hover { background: var(--cv-tint-2); }
+.ogroup { display: inline-flex; flex: none; }
+.ogroup .obtn:first-child { border-radius: 6px 0 0 6px; }
+.ogroup .obtn:last-child { border-radius: 0 6px 6px 0; padding: 0 4px; margin-left: -1px; }
+.ogroup .obtn:only-child { border-radius: var(--cv-r-sm); padding: 0 8px; margin-left: 0; }
+.cstrip { position: relative; display: flex; align-items: center; gap: 4px; padding: 6px 6px 0; min-height: 30px; font-size: 12px; color: var(--cv-fg-subtle); min-width: 0; }
+.cctl { height: 24px; padding: 0 6px; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--cv-r-sm); color: var(--cv-fg-muted); white-space: nowrap; min-width: 0; }
+.cctl:hover { background: var(--cv-tint-2); color: var(--cv-fg-strong); }
+.cctl .chev { opacity: .5; display: inline-flex; }
+.cctl .txt, .cstatic .txt { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cstatic { height: 24px; padding: 0 7px; display: inline-flex; align-items: center; gap: 4px; color: var(--cv-fg-subtle); white-space: nowrap; min-width: 0; }
+.cstrip .vsep { width: 1px; height: 14px; background: var(--cv-divider); margin: 0 2px; flex: none; }
+.cstrip .push { margin-left: auto; }
+.cstrip .g-wt { color: var(--cv-accent); display: inline-flex; }
+.cstrip .g-srv { color: var(--server); display: inline-flex; }
+.banner { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 6px 8px 6px 12px; border-radius: var(--cv-r-card); background: var(--cv-tint-2); box-shadow: inset 0 0 0 1px var(--cv-hair); font-size: 12.5px; color: var(--cv-fg-muted); }
+.banner code { color: var(--cv-fg-strong); font-weight: 500; }
+.banner .act { margin-left: auto; white-space: nowrap; flex: none; height: 24px; padding: 0 8px; border-radius: var(--cv-r-sm); color: var(--cv-fg); display: inline-flex; align-items: center; }
+.banner .act:hover { background: var(--cv-tint-3); }
+.dhead { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; box-shadow: inset 0 -1px 0 var(--cv-divider); font-size: 12px; color: var(--cv-fg-subtle); white-space: nowrap; overflow: hidden; min-width: 0; }
+.dhead .ibtn { width: 24px; height: 24px; }
+.sbtn { height: 24px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--cv-r-sm); background: var(--cv-tint-3); color: var(--cv-fg-strong); font-size: 12px; flex: none; }
+.gbtn { height: 24px; padding: 0 6px; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--cv-r-sm); color: var(--cv-fg-muted); font-size: 12px; flex: none; }
+.gbtn:hover { background: var(--cv-tint-2); }
+.dhead .cmp { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.dhead .cmp span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.fsearch { flex: 1; min-width: 0; height: 26px; border-radius: var(--cv-r-sm); background: var(--cv-tint-2); display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--cv-fg-subtle); font-size: 12px; }
+.dlist { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.dlist li { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--cv-r-sm); color: var(--cv-fg); white-space: nowrap; }
+.dlist li .n { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dlist li .ds { margin-left: auto; font-family: var(--cv-font-mono); font-size: 11px; flex: none; }
+.add { color: var(--cv-ok); } .del { color: var(--cv-danger); }
+.row .l3 .end { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.row .l3 .dstat { font-family: var(--cv-font-mono); font-size: 10.5px; }
+.row .l3 .wtg { display: inline-flex; color: var(--cv-fg-subtle); opacity: .7; }
+.row .l3 .mach { display: inline-flex; color: var(--cv-fg-subtle); }
+.row .l3 .br.t3 { opacity: .7; }
+.st.work.t3st { display: inline-flex; align-items: center; gap: 4px; }
+.heropick { display: inline-flex; align-items: center; gap: 6px; color: var(--cv-fg-strong); border-radius: var(--cv-r-sm); padding: 0 4px; }
+.heropick:hover { background: var(--cv-tint-2); }
+.heropick .chev { color: var(--cv-fg-subtle); display: inline-flex; }
+.pieces { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row dense; align-items: start; gap: 16px; margin-top: 16px; }
+.piece.wide { grid-column: span 2; }
+@media (max-width: 1180px) { .pieces { grid-template-columns: 1fr; } .piece.wide { grid-column: auto; } }
+.piece h3 { margin-top: 0 !important; }
+.stage { position: relative; background: var(--cv-canvas); border-radius: var(--cv-r-card); box-shadow: inset 0 0 0 1px var(--cv-hair); padding: 10px; font-size: 13px; }
+.stage.side { background: var(--cv-side); }
+.stage .sb-list { padding: 0; }
+.plabel { font-size: 11px; color: var(--cv-fg-subtle); margin: 10px 0 2px; }
+.plabel:first-child { margin-top: 0; }
+.cite { margin-top: 10px; font-size: 11.5px; color: var(--cv-fg-subtle); line-height: 1.55; overflow-wrap: anywhere; }
+.cite code { font-size: 11px; color: var(--cv-fg-muted); }
+.piece p.what { margin: 8px 0 0; font-size: 12.5px; color: var(--cv-fg-muted); }
+.menu-static { background: var(--cv-popover); border-radius: var(--cv-r-group); box-shadow: var(--cv-shadow-pop); padding: 6px; font-size: 12.5px; margin-top: 6px; }
+.menu-static .mi { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: var(--cv-r-sm); color: var(--cv-fg); }
+.menu-static .mi.hl { background: var(--cv-tint-3); }
+.menu-static .mi .k { margin-left: auto; color: var(--cv-fg-subtle); font-size: 11px; }
+.menu-static .lab { padding: 6px 10px 2px; font-size: 11px; color: var(--cv-fg-subtle); font-weight: 500; }
+.menu-static .sepl { height: 1px; background: var(--cv-divider); margin: 4px 6px; }
+.pop .mi.two { height: auto; padding: 5px 10px; align-items: flex-start; }
+.pop .mi.two small, .menu-static .mi.two small { display: block; color: var(--cv-fg-subtle); font-size: 11px; }
+.menu-static .mi.two { height: auto; padding: 5px 10px; align-items: flex-start; }
+.tipbox { margin-top: 6px; background: var(--cv-popover); border-radius: var(--cv-r-card); box-shadow: var(--cv-shadow-pop); padding: 8px 10px; font-size: 12px; color: var(--cv-fg-muted); width: fit-content; }
+
+/* C + t3code deltas */
+.delta { position: absolute; z-index: 6; min-width: 20px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--cv-accent-fill); color: var(--cv-on-accent); font: 700 10.5px/18px var(--cv-font-ui); text-align: center; box-shadow: 0 0 0 3px color-mix(in srgb, var(--cv-canvas) 80%, transparent); pointer-events: none; }
+.delta.tr { top: -9px; right: -9px; } .delta.tl { top: -9px; left: -9px; }
+.delta-inline { display: inline-grid; place-items: center; min-width: 22px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--cv-accent-fill); color: var(--cv-on-accent); font: 700 10.5px var(--cv-font-ui); margin-right: 6px; vertical-align: -3px; }
+.dring { position: relative; box-shadow: 0 0 0 1.5px var(--cv-accent) !important; border-radius: 8px; }
+.ws.dring { border-radius: var(--cv-r-card); }
+.decide li { margin: 6px 0 !important; }
+
+table.cmp { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+table.cmp th, table.cmp td { text-align: left; padding: 8px 10px; box-shadow: inset 0 -1px 0 var(--cv-divider); vertical-align: top; }
+table.cmp th { color: var(--cv-fg-subtle); font-weight: 500; font-size: 12px; }
+table.cmp td:first-child { color: var(--cv-fg-strong); font-weight: 500; white-space: nowrap; }
+.rec { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cv-accent) 45%, transparent); background: color-mix(in srgb, var(--cv-accent) 6%, var(--cv-s1)); }
+:root[data-cv-scheme="light"] .rec { background: color-mix(in srgb, var(--cv-accent) 5%, var(--cv-s2)); }
+@media (max-width: 1180px) { .grid2, .notes { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-new" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a1.4 1.4 0 0 1 3 3l-9 9a2 2 0 0 1-.85.5l-2.87.85a.5.5 0 0 1-.62-.62l.84-2.88a2 2 0 0 1 .5-.85z"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-folder-git" viewBox="0 0 24 24"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5"/><circle cx="13" cy="12" r="2"/><path d="M18 19c-2.8 0-5-2.2-5-5v8"/><circle cx="20" cy="19" r="2"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+  <symbol id="i-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9z"/></symbol>
+  <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+  <symbol id="i-panel-bottom" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m16 6-8.4 8.6a2 2 0 0 0 2.8 2.8l8.4-8.6a4 4 0 1 0-5.6-5.6l-8.4 8.5a6 6 0 1 0 8.5 8.5l8.4-8.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+  <symbol id="i-diff" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M9 10h6M12 7v6M9 17h6"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 6h18M7 12h10M10 18h4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/></symbol>
+  <symbol id="i-finder" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-folder-git1" viewBox="0 0 24 24"><circle cx="12" cy="13" r="2"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M14 13h3M7 13h3"/></symbol>
+  <symbol id="i-dashed" viewBox="0 0 24 24"><path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7M21.82 10.1a9.93 9.93 0 0 1 0 3.8M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69M13.9 21.82a9.94 9.94 0 0 1-3.8 0M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7M2.18 13.9a9.93 9.93 0 0 1 0-3.8M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-arrow-r" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-scale" viewBox="0 0 24 24"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1ZM2 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+</svg>
+
+<div class="toolbar" role="toolbar" aria-label="Mockup controls">
+  <span class="lbl">State</span>
+  <div class="seg" id="stateSeg">
+    <button data-state="new" aria-pressed="true">New thread<kbd>1</kbd></button>
+    <button data-state="inplace" aria-pressed="false">Running in place<kbd>2</kbd></button>
+    <button data-state="worktree" aria-pressed="false">Running in worktree<kbd>3</kbd></button>
+    <button data-state="remote" aria-pressed="false">Remote runner<kbd>4</kbd></button>
+  </div>
+  <span class="lbl">Scheme</span>
+  <div class="seg" id="schemeSeg">
+    <button data-scheme="dark" aria-pressed="true">Dark</button>
+    <button data-scheme="light" aria-pressed="false">Light</button>
+  </div>
+  <nav class="jump" aria-label="Sections">
+    <a href="#diagnosis">Diagnosis</a><a href="#v-current">Current</a><a href="#v-a">A</a><a href="#v-b">B</a><a href="#v-c">C</a><a href="#t3">t3code</a><a href="#v-ct3">C + t3code</a><a href="#recommendation">Recommendation</a>
+  </nav>
+</div>
+
+<main class="doc">
+  <h1>Where am I working?</h1>
+  <p class="lede">Design proposal for the owner's note: <i>"I don't quite like this part. I can't tell how and when I'm in which workspace."</i> Three variants that make the working location obvious at a glance, compared against a faithful recreation of today's UI. Graphite · Teal palette, real <code>--cv-*</code> tokens. Use the state switcher above (keys 1-4). Every frame on the page follows it.</p>
+
+  <section id="diagnosis" class="grid2">
+    <div class="card">
+      <h2>What the screenshot shows</h2>
+      <p class="muted" style="margin:6px 0 12px">The sidebar header (<code>AgentRailHeader</code>): the Search field, then a 16px <b style="color:var(--cv-fg-strong)">"E"</b> monogram button, Add project (folder +) and New thread (pen). The "E" is <code>AgentProjectFilterMenu</code>, i.e. the project filter showing <i>editor</i>. Below it: "Saved conversations".</p>
+      <img class="shot" alt="Owner's screenshot: sidebar header with Search, E monogram, add project and new thread buttons" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAsAAAACoCAYAAADuF1jxAAAMTWlDQ1BJQ0MgUHJvZmlsZQAASImVVwdYU8kWnltSIQQIREBK6E0QkRJASggt9I4gKiEJEEqMCUHFjiy7gmsXEazoKkXR1RWQxYa6NhbF3hcLKsq6uC525U0IoMu+8r35vrnz33/O/HPOuXPvnQGA3sWXSnNRTQDyJPmy2GB/1uTkFBbpGaAAKkCBJTDiC+RSTnR0OIBluP17eX0NIMr2soNS65/9/7VoCUVyAQBINMTpQrkgD+KfAMBbBVJZPgBEKeTNZ+VLlXgtxDoy6CDENUqcqcKtSpyuwhcHbeJjuRA/AoCszufLMgHQ6IM8q0CQCXXoMFrgJBGKJRD7QeyTlzdDCPEiiG2gDZyTrtRnp3+lk/k3zfQRTT4/cwSrYhks5ACxXJrLn/N/puN/l7xcxfAc1rCqZ8lCYpUxw7w9ypkRpsTqEL+VpEdGQawNAIqLhYP2SszMUoQkqOxRG4GcC3MGmBBPkufG8Yb4WCE/IAxiQ4gzJLmR4UM2RRniIKUNzB9aIc7nxUOsB3GNSB4YN2RzTDYjdnjeaxkyLmeIf8qXDfqg1P+syEngqPQx7SwRb0gfcyzMik+CmApxQIE4MRJiDYgj5TlxYUM2qYVZ3MhhG5kiVhmLBcQykSTYX6WPlWfIgmKH7Ovy5MOxY8eyxLzIIXwpPys+RJUr7JGAP+g/jAXrE0k4CcM6Ivnk8OFYhKKAQFXsOFkkSYhT8bieNN8/VjUWt5PmRg/Z4/6i3GAlbwZxvLwgbnhsQT5cnCp9vESaHx2v8hOvzOaHRqv8wfeBcMAFAYAFFLCmgxkgG4g7ept64Z2qJwjwgQxkAhFwGGKGRyQN9kjgNQ4Ugt8hEgH5yDj/wV4RKID8p1GskhOPcKqrA8gY6lOq5IDHEOeBMJAL7xWDSpIRDxLBI8iI/+ERH1YBjCEXVmX/v+eH2S8MBzLhQ4xieEYWfdiSGEgMIIYQg4i2uAHug3vh4fDqB6szzsY9huP4Yk94TOgkPCBcJXQRbk4XF8lGeRkBuqB+0FB+0r/OD24FNV1xf9wbqkNlnIkbAAfcBc7DwX3hzK6Q5Q75rcwKa5T23yL46gkN2VGcKChlDMWPYjN6pIadhuuIijLXX+dH5Wv6SL65Iz2j5+d+lX0hbMNGW2LfYQew09hx7CzWijUBFnYUa8bascNKPLLiHg2uuOHZYgf9yYE6o9fMlyerzKTcqd6px+mjqi9fNDtf+TJyZ0jnyMSZWfksDvxjiFg8icBxHMvZydkNAOX/R/V5exUz+F9BmO1fuCW/AeB9dGBg4OcvXOhRAH50h5+EQ184Gzb8tagBcOaQQCErUHG48kKAXw46fPv0gTEwBzYwHmfgBryAHwgEoSAKxINkMA16nwXXuQzMAvPAYlACysBKsA5Ugi1gO6gBe8B+0ARawXHwCzgPLoKr4DZcPd3gOegDr8EHBEFICA1hIPqICWKJ2CPOCBvxQQKRcCQWSUbSkExEgiiQecgSpAxZjVQi25Ba5EfkEHIcOYt0IjeR+0gP8ifyHsVQdVQHNUKt0PEoG+WgYWg8OhXNRGeihWgxuhytQKvR3Wgjehw9j15Fu9DnaD8GMDWMiZliDhgb42JRWAqWgcmwBVgpVo5VYw1YC3zOl7EurBd7hxNxBs7CHeAKDsETcAE+E1+AL8Mr8Rq8ET+JX8bv4334ZwKNYEiwJ3gSeITJhEzCLEIJoZywk3CQcAq+S92E10QikUm0JrrDdzGZmE2cS1xG3ETcSzxG7CQ+JPaTSCR9kj3JmxRF4pPySSWkDaTdpKOkS6Ru0luyGtmE7EwOIqeQJeQicjm5jnyEfIn8hPyBokmxpHhSoihCyhzKCsoOSgvlAqWb8oGqRbWmelPjqdnUxdQKagP1FPUO9ZWampqZmodajJpYbZFahdo+tTNq99XeqWur26lz1VPVFerL1XepH1O/qf6KRqNZ0fxoKbR82nJaLe0E7R7trQZDw1GDpyHUWKhRpdGocUnjBZ1Ct6Rz6NPohfRy+gH6BXqvJkXTSpOryddcoFmleUjzuma/FkNrglaUVp7WMq06rbNaT7VJ2lbagdpC7WLt7dontB8yMIY5g8sQMJYwdjBOMbp1iDrWOjydbJ0ynT06HTp9utq6LrqJurN1q3QP63YxMaYVk8fMZa5g7mdeY74fYzSGM0Y0ZumYhjGXxrzRG6vnpyfSK9Xbq3dV770+Sz9QP0d/lX6T/l0D3MDOIMZglsFmg1MGvWN1xnqNFYwtHbt/7C1D1NDOMNZwruF2w3bDfiNjo2AjqdEGoxNGvcZMYz/jbOO1xkeMe0wYJj4mYpO1JkdNnrF0WRxWLquCdZLVZ2poGmKqMN1m2mH6wczaLMGsyGyv2V1zqjnbPMN8rXmbeZ+FiUWExTyLeotblhRLtmWW5XrL05ZvrKytkqy+tWqyemqtZ82zLrSut75jQ7PxtZlpU21zxZZoy7bNsd1ke9EOtXO1y7Krsrtgj9q72YvtN9l3jiOM8xgnGVc97rqDugPHocCh3uG+I9Mx3LHIscnxxXiL8SnjV40/Pf6zk6tTrtMOp9sTtCeETiia0DLhT2c7Z4FzlfOVibSJQRMXTmye+NLF3kXkstnlhivDNcL1W9c2109u7m4ytwa3HncL9zT3je7X2TrsaPYy9hkPgoe/x0KPVo93nm6e+Z77Pf/wcvDK8arzejrJepJo0o5JD73NvPne27y7fFg+aT5bfbp8TX35vtW+D/zM/YR+O/2ecGw52ZzdnBf+Tv4y/4P+b7ie3PncYwFYQHBAaUBHoHZgQmBl4L0gs6DMoPqgvmDX4LnBx0IIIWEhq0Ku84x4Al4try/UPXR+6Mkw9bC4sMqwB+F24bLwlgg0IjRiTcSdSMtISWRTFIjiRa2JuhttHT0z+ucYYkx0TFXM49gJsfNiT8cx4qbH1cW9jvePXxF/O8EmQZHQlkhPTE2sTXyTFJC0Oqlr8vjJ8yefTzZIFic3p5BSElN2pvRPCZyybkp3qmtqSeq1qdZTZ089O81gWu60w9Pp0/nTD6QR0pLS6tI+8qP41fz+dF76xvQ+AVewXvBc6CdcK+wReYtWi55keGesznia6Z25JrMnyzerPKtXzBVXil9mh2RvyX6TE5WzK2cgNyl3bx45Ly3vkERbkiM5OcN4xuwZnVJ7aYm0a6bnzHUz+2Rhsp1yRD5V3pyvAzf67QobxTeK+wU+BVUFb2clzjowW2u2ZHb7HLs5S+c8KQwq/GEuPlcwt22e6bzF8+7P58zftgBZkL6gbaH5wuKF3YuCF9Uspi7OWfxrkVPR6qK/liQtaSk2Kl5U/PCb4G/qSzRKZCXXv/X6dst3+Hfi7zqWTly6YennUmHpuTKnsvKyj8sEy859P+H7iu8Hlmcs71jhtmLzSuJKycprq3xX1azWWl24+uGaiDWNa1lrS9f+tW76urPlLuVb1lPXK9Z3VYRXNG+w2LByw8fKrMqrVf5Vezcably68c0m4aZLm/02N2wx2lK25f1W8dYb24K3NVZbVZdvJ24v2P54R+KO0z+wf6jdabCzbOenXZJdXTWxNSdr3Wtr6wzrVtSj9Yr6nt2puy/uCdjT3ODQsG0vc2/ZPrBPse/Zj2k/Xtsftr/tAPtAw0+WP208yDhY2og0zmnsa8pq6mpObu48FHqorcWr5eDPjj/vajVtrTqse3jFEeqR4iMDRwuP9h+THus9nnn8Ydv0ttsnJp+4cjLmZMepsFNnfgn65cRpzumjZ7zPtJ71PHvoHPtc03m3843tru0Hf3X99WCHW0fjBfcLzRc9LrZ0Tuo8csn30vHLAZd/ucK7cv5q5NXOawnXblxPvd51Q3jj6c3cmy9vFdz6cHvRHcKd0ruad8vvGd6r/s32t71dbl2H7wfcb38Q9+D2Q8HD54/kjz52Fz+mPS5/YvKk9qnz09aeoJ6Lz6Y8634uff6ht+R3rd83vrB58dMffn+0903u634peznw57JX+q92/eXyV1t/dP+913mvP7wpfav/tuYd+93p90nvn3yY9ZH0seKT7aeWz2Gf7wzkDQxI+TL+4FYAA8qjTQYAf+4CgJYMAAOeG6lTVOfDwYKozrSDCPwnrDpDDha4c2mAe/qYXri7uQ7Avh0AWEF9eioA0TQA4j0AOnHiSB0+yw2eO5WFCM8GW1M/peelg39TVGfSr/we3QKlqgsY3f4LIkaDGRrX5ssAAAAEY0lDUAwNAAFuA+PvAAAAimVYSWZNTQAqAAAACAAEARoABQAAAAEAAAA+ARsABQAAAAEAAABGASgAAwAAAAEAAgAAh2kABAAAAAEAAABOAAAAAAAAAJAAAAABAAAAkAAAAAEAA5KGAAcAAAASAAAAeKACAAQAAAABAAACwKADAAQAAAABAAAAqAAAAABBU0NJSQAAAFNjcmVlbnNob3TT7zXxAAAACXBIWXMAABYlAAAWJQFJUiTwAAAB1mlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iWE1QIENvcmUgNi4wLjAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczpleGlmPSJodHRwOi8vbnMuYWRvYmUuY29tL2V4aWYvMS4wLyI+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj4xNjg8L2V4aWY6UGl4ZWxZRGltZW5zaW9uPgogICAgICAgICA8ZXhpZjpQaXhlbFhEaW1lbnNpb24+NzA0PC9leGlmOlBpeGVsWERpbWVuc2lvbj4KICAgICAgICAgPGV4aWY6VXNlckNvbW1lbnQ+U2NyZWVuc2hvdDwvZXhpZjpVc2VyQ29tbWVudD4KICAgICAgPC9yZGY6RGVzY3JpcHRpb24+CiAgIDwvcmRmOlJERj4KPC94OnhtcG1ldGE+CqMLPSAAAAAcaURPVAAAAAIAAAAAAAAAVAAAACgAAABUAAAAVAAAGfjIWcYUAAAZxElEQVR4AeydCZRURZaGQ0RERRHQAkQQwV0WQRBEloFSFlsFRRRHXHoatI+itna7b+PS9vSZHm3oYWgVHcGFzQXBgQYEBQUFRAEB2cGFTUBQUSnWiT+Kl/0qKisrM2vJqlffPaeq8r0XES/ii4T8874bNw658KKLDhhrCxcu1B8MAhCAAAQgAAEIQAACkSZwCAI40vPL4CAAAQhAAAIQgAAEPAIIYA8IhxCAAAQgAAEIQAAC0SaAAI72/DI6CEAAAhCAAAQgAAGPAALYA8IhBCAAAQhAAAIQgEC0CSCAoz2/jA4CEIAABCAAAQhAwCOAAPaAcAgBCEAAAhCAAAQgEG0CCOBozy+jgwAEIAABCEAAAhDwCCCAPSAcQgACEIAABCAAAQhEmwACONrzy+ggAAEIQAACEIAABDwCCGAPCIcQgAAEIAABCEAAAtEmgACO9vwyOghAAAIQgAAEIAABjwAC2APCIQQgAAEIQAACEIBAtAkggKM9v4wOAhCAAAQgAAEIQMAjgAD2gHAIAQhAAAIQgAAEIBBtAgjgaM8vo4MABCAAAQhAAAIQ8AgggD0gHEIAAhCAAAQgAAEIRJsAAjja88voIAABCEAAAhCAAAQ8AghgDwiHEIAABCAAAQhAAALRJoAAjvb8MjoIQAACEIAABCAAAY8AAtgDwiEEIAABCEAAAhCAQLQJIICjPb+MDgIQgAAEIAABCEDAI4AA9oBwCAEIQAACEIAABCAQbQII4GjPL6ODAAQgAAEIQAACEPAIIIA9IBxCAAIQgAAEIAABCESbAAI42vPL6CAAAQhAAAIQgAAEPAIIYA8IhxCAAAQgAAEIQAAC0SaAAI72/DI6CEAAAhCAAAQgAAGPAALYA8IhBCAAAQhAAAIQgEC0CSCAoz2/jA4CEIAABCAAAQhAwCOAAPaAcAgBCEAAAhCAAAQgEG0CCOBozy+jgwAEIAABCEAAAhDwCCCAPSAcQgACEIAABCAAAQhEmwACONrzy+ggAAEIQAACEIAABDwCCGAPCIcQgAAEIAABCEAAAtEmgACO9vwyOghAAAIQgAAEIAABjwAC2APCIQQgAAEIQAACEIBAtAkggKM9v4wOAhCAAAQgAAEIQMAjgAD2gHAIAQhAAAIQgAAEIBBtAgjgaM8vo4MABCAAAQhAAAIQ8AgggD0gHEIAAhCAAAQgAAEIRJsAAjja88voIAABCEAAAhCAAAQ8AghgDwiHEIAABCAAAQhAAALRJoAAjvb8MjoIQAACEIAABCAAAY8AAtgDwiEEIAABCEAAAhCAQLQJIICjPb+MDgIQgAAEIAABCEDAI4AA9oBwCAEIQAACEIAABCAQbQII4GjPL6ODAAQgAAEIQAACEPAIIIA9IBxCAAIQgAAEIAABCESbAAI42vPL6CAAAQhAAAIQgAAEPAIIYA8IhxCAAAQgAAEIQAAC0SaAAI72/DI6CEAAAhCAAAQgAAGPAALYA8IhBCAAAQhAAAIQgEC0CSCAoz2/jA4CEIAABCAAAQhAwCOAAPaAcAgBCEAAAhCoyAQOO+wwU7lyZfdTqVIlU+mQQ4qEY/+BA2b//v1m79697mfPnj1Fao/KECgOAgjg4qBIGxCAAAQgAIFyTkBi9/DDD3c/RZO8BYM4YC/l5OS4H4lirPwTqFu3rmnWrLk59thjzY4dO8yiRQvNxo0by/zAKpQArlKliqlZs6abpMqVDzP79u01v/zyi/n222/Nzz//XOYniw5CAAIQgAAESoKAxO8RRxxhqljvb2nYbusF1udvWRDBJ598sjnqqKPiDvvHH380X375Zdxr5flk7dq1zfHHH1/oEA6x3v+dO3eatWvXxi3btm1bc8kll+a7NmHCBDNnzsf5zpelExVCAJ966qnmtFNPMw1Pbmjq1j0hH39N7po1q83KlSvNsmXL3D/KfIU4AQEIQAACEIgoAYnfqtb7W5q2y3qCJYIzZRK+l13Ws1AhuH79ejNu3FvlwqtZGMtDDz3U9OnTxzRp0rSwonmuv/DCsHwiuE2bNubSSy/LUy58MGTIf5dpZpEWwHLLt2rVyjS3rvmq9h93MrZ8+TIzf/58s3Tp0mSKUwYCEIAABCBQrgko5lce0JIKeygIjsIhfvrpJ5OJmOCjjz7a3H77Hc7rXVD/wue3b//ODBo0yMUwh8+Xt9d9+/ZNWfxqjL4AbtOmrRW///T8vvPOO87jK1EceIQ/+OADM3nyP8ososgK4DPOOMNccEF7o294gX311Vdmw4b1ZuvWre4fncIgatWqaeqdUM80OKmBjXuq6orKIzxr1odGk4dBAAIQgAAEokwgE97fgGemvMCdO3cx2dnZrhvz5s1zT4EP2MV6vp111tk2vrWZOz137lwzfvzbfpFyc6ywh9tuu931d9OmjWbGjBkm3pjDA4oXAuGL33C4g8o/8cSTronPP//cjB49KtxcmXodSQEs8du1a1eTlVXbwV69erVZsOCzhOENp5xyinuTt2x5rqujuKRp06bZN8j7ZWrCjjzySFO1alWzffv2Qt+4ZarjJdiZTp3+xYa21HF3mDx5smNTgrejaQhAAAKRIiBvaGX7aDwTtnffPqM429K2sCf04YcfKvDzVN7xgQNvs86yWq6L77471Wzbtq3A8v445OEuKH7WL1vSx02aNDF9+17jbiNhKoGaqiUSv2orfB0PcKp0i1heYQ+/uvhXNt431/M7Z84c8/HHH5ktW7Yk1XK7du1Mhw4djf5DyNm1y0ycNNGFRCRVuQQK6dtUW/uooVHjRuaEE04w1asf6+6yy/Ztw4YN5ptvvrGe6pkZjaMqgWGn1OQNN9xoFOctGzJkiI052pBSfQpDAAIQqMgEqlevXuRUZ+nyU4q077//Pt3qadeTEJQglD300IMJ25FTrV+/6xKWSXRR+kOe40wL4bAAHjVqpFm8eHGibue7Fha3uhj2/OrYjwkmBlhUStEUk6JJkkn8Kv5k9+7dKfWgdevzzMU9epjDbNYICczXXx/rwiZSaqQYCsvTe9VVV5nTTjs9YWvfffedee21V82mTZsSlovqRQRwVGeWcUEAAqVBoIZNX5VJ225TZ5W2pSKA1bfWrVub7t17uBRx6fR1l13sN2jwoIx4u4P+FkUAFy5+88YE++I46ENZ+hupEAh5Aa++6mq34E1hD++8MyFpz68/Kd26dXOeYJ2fPn2a/ZnuFynRYy1IuOmmm2OPXfbZBOKrVq8ymzdvtgsG9pratbNsfHOjWOoWLSJ48cUXzNdff12i/SqLjSOAy+Ks0CcIQKC8EEhFAB9zzDF2g4zEqdK0jmb37pykh18eBLAGo3E3anSyUUrVZExPcBs1auzEs8orrPK990pXS4T7ma4AjqL4FZdICWCFPpxvQxhkb7zxuvnss8/c63R+HXfccebaa6+16VGyrGd1oxk2bJhR2EFpWViAa9GeHlf4Hl7FA19xRW+jxzOyhQsXmLFjx5ZWF8vMfRDAZWYq6AgEIFAOCaQigIcNe8G0aNEy4SgfffQR54BKWCh0sbwI4FCXk34ZXhS2ePHn9rM8c4vC0hHAURW/msDICGB9IxswYIDL86tsDy+/PKLIcbHdunW3XuAO7o3+yisvu0V0Sb/ri1hQ6VmysrJcKwrBWLBgQdwWtXr37rvvcd9I5QX+05+eShjyoX+MEs7aiUfbUqZqqq97FmXjELWh8A59oUi0AjXo5z67SCKRJRLA2tVIITCJ7pOoba5BAAIQiDoBBHDiGODw/MsDLvvhhx/CpxO+fvLJP7rrirmVMytTlqoAjrL41RxERgDXqVPHrdTUoLToTTnpimqnn366ue66610zU6dOcSlDitpmsvUffviRWKzR00//l1Gcb0Gm0A9tQSjTRh7xVtSebVO5tD3/fFO/fn23v7sxWnjwg/OSf/TRbJcWrqD2JXizsy90dSXKtSpWAlhbHa5bt9Zxibebz4033hhbtDd06P8YzdH5bc93C/qOOqqai8/2U83pH+h557UxDdRPex+FfmzavMmsX7/Bzat27fPNF8A7dmw3XbpkuxR4derUtkI7x4aGfGWWLFlqPvlknl+dYwhAAAIVmkA6AnjZsi9smN6AuNxSdbCUFw+wFscHmkBOtniftfGAlEcBHHXxq3mKjAAOr9JU7O/HH38c732Y0rlaNWuZ3915p5HHct68uebtt0sv/9+AATeZk046yfV3/PjxZu7cOSn1PVxYXmx5swsyhVY8//xzzivsl5G47t27t6lW7Wj/Uux41aqVZuTIkfnq33XnXabmwdQxg23wf//+A5z3Oag4ZcpkM3PmzODQdO7c2Qnt2Anvhf5THTt2TD5PfFgAP/fcs6Zb127mpIYNvdq5h5MmTjSzZs+Ke42TEIAABCoigXQE8JIlS8z11/crFlzlRQCn6kEN4JQ3AVwRxK/mJjICuEmTpja/XV/3fks3v13wZg3+asvARx/9d6M90hfbfHmjSjGhs/IYd+zYyXVlvw0BCNKxpbpjjhJ4K5OEnWoXEvLFF0ttwu81pkaNmkYe7hNPPNHdQ4sGR4wYbsLhBvL0KrxCoQiylStX2DQu69y+4I1tWrZT7fbSwTXlWX799dddueBXWAArjllx1cpfrIV6WiCxcsVKs2TpEldcK2x79uzlXqsPa9euMStWrLDtH2XOPPNMu+gvN6ezQhleeul/jfobWFgAy0Ncs2ZNs2rVKrt/+zrrra5izjrrLOd9zi1/wO5o80LG09EEfecvBCAAgUwTQAAnFwJREQSwL37fmWAdinP+6VD0r/vZHk4+mII20ynfkvk3FRkBLJF07bW530bfeOMN+2j/02TGn7CM4kcViiCLJ/ASVi7iReVllMe0Ro0asZYUyypRqDeWRKTy3SaKbVVO5N/e/FtzaOXKLg522LDnXe7goEEJ+379+sXSrM368EMz6R+Tgsumbdu2sS0NFTowbty42DW9OMHuoHfLLbe4c3oU9Oc//0ee62EBrBCJN998I24sszzd/fv3t572Sq7+q6++aiTUw6bNLi666CJ3SttUK+1bYGEBrPu88sorltPy4LLRF5kbbrjBrcbVyUxk9Yh1hhcQgAAEyhiBdATwapuV6L777o07EjlZUrGy7AFWzG8Q71uQAA6XiTfu8uIBlma49daBsSGkI35/85v+rr6/dXKs0TL0IjICuKF95C3BKHv//ffMu+++W2TM+iYTTOYMuyPc1KlTi9xmKg0orlf3D4vgcP0fbPJw7eSycNHCPMI2KKP9uCViZW+/Pc6GceSPf5XIv+eee128sXaskYgN4nkV+qEfWXDOHYR+3XLLrW6DDp3661+fyZMvOSyAE4nOyy+/wpx7bu4OfLNteMJEG6bgm0Ss5lfe3f3795nBgwfHFjmGBbByP0+YMN6vbho3bmx+/et/c+cVJ61FjRgEIAABCBiTjgBOxK1163ML/MyIV6+sCuAg5lebUCUybUqVKCa4vAjgrjZ8sGPHjm6oqYpfVWratKm5+urifRKfiHtRr0VGAOtRvDInVKtWzT5aX2GG28f5RbX27du7xNdqR7GnCxcuLGqTKddXGIK82y1atDDarjnwkvoNKQWaPN9hofqH3//BHHvQg/zMM0+77Rv9ejq+6aabTIMGufHGqe7corzLTQ/uky4P87p162K3CAvgv/99qNtUJHYx9EICPFhZqxheZfFIxcICuKB5Uvu6j0wLCrWwEIMABCAAgfQEsJ5IbtmSf1GyePbq1TPPZ1FhjMuqAG7WrPnBEMLCRmDMmDFjzCLrjIpn5UUADxw40IYL1nXOpaee+mPsCXNhYQ/BmAvykAfXy9rfyAhggVWsq96wOTm73KIsxYGma0rTpW8yWgQmT+tLw18y8TIQpNt+OvUk7uXpVtxu48an2JRvdfM0o7ABLUaTCJbn9rHHHnfxyyokYVpQuEQQs6NyI0aMyBM+oHPyvupeuq8yOSgrhPjop1693BhilUskgJ988om4eZQVhqF+Bp7mJ554PN9iOrWdyMICWNkm1q9fn6+4vkgonlu2w+469Je//Kd7zS8IQAACFZ1AOh7girAIThtStW/fIfYUtnr1Y2w2pAbu7aLMQsqkJNPalg8//KDAbErlQQDr6epdd/3ejUdCXoJen8vKyqQddgPzPcPBef1FAIdplPJreUl7977S3fXTT+fbmNM30+6BtkPu2bOnq//JJ5/Y+Ne30m6rpCrqDXvxxRfbjTDOjN1i6NChVgB+40Tqgw8+FDuf7As/57AWkImpQiUKs0QCuCBhK8/9Aw/kLkBQajV960zVwgJ4yJAhLjbabwMB7BPhGAIQgEAuAQQwi+DatJHQvcy9IRTDvXPnj26huxxegSUSvyqDAA5IZeCvJurKK6+02Q3OcHefOPH/zOzZs1PuiTIndO7cxe4Cd7zL86fFWytXrky5ndKooG9oSpnWoEHut9JJk2yar1mznNf2scces13IjeEdM2Z0gd2RFzYIndDiOn2bleUugrvEvjrEKBPFsuXL3VbMP/2003lzf7F7m/e8rKc5xi7Yk6UjgPN6gA+Yxx9/POFGHu5G3i8EsAeEQwhAAAIpEEAAI4D79r3GCdiC3jZ+tod45RDA8aiU4jl5LC+zokzhAspMMH36dJfDN9kuSPxecsklLv2W6szIwOI3ZYBQyjCZHtdv27bNvS7oV6dOnWyGhK7ucjhbw/33P2D0CEemxW3JJu12FeyvO+74nfsSoGOlHosXUqLMG4pRlqUjgFXvvvvud/Ol14lihXU9niGA41HhHAQgAIHkCKQjgJX//Z577o57A6W91KLqZK2sxgD7/Q/HBCeK+fXrlYcQCDn9srOz83R906aNzvm3aNEit/FVnotxDhDAcaCU9ilt/CBBKO/iHhuorxx28+fPz5OhwO+T4lmbNm1m2rVrFxN98nrOmDHDTJs+zS9eoscKaVB6Mpl2W9PCtER2zTX/as4++2xXZNq0aea996a714ph1qpM2cjXXovl3HUnCvklEa4cwDItdBg0aFC+GuIrkR08IklXAF/Vx8ZuN2/u2tcXFmWMiGfdu3e3WSBq2bgk4xb8aStlGQI4Hi3OQQACEEiOQDoCOFHLjz76iN2NdUKiInmulRcBHMQEq/OJYn7zDM4elAcBrD5LBCvn/lqbh19PvRPtQOuPUccI4HhUMnBOeWM7WiF8uBW2Mom4ZcuW28Vga83WLVvNju93uC2Bld6kXr16blGZFrwFJvFbyS7+yrEiS6KsNHcPk6C812Ys0FbAMoVyfPTRR3EXsSkzRL9+1x3c3ti4Hd2+/PJLVy+8lbPieZ599tlYeIMrYH/pXjfbXMESvFrVq2wREpZVqlQxD9kYYjHQxhTKmvC9XQwYNm3UoQ07AktXAGtDDeXplSkUQ/kDgzEEbbdo0dLtSKfjNWtWmxdffDG4hACOkeAFBCAAgdQJIICTC4FInWxujfIigNMdX1APARyQKAN/lVtWi9mC3c6CLikbgn7kwfRNYQJaQLd/337nDZaAzoQI7tIl23Tp0iXWPQlC7Ua3ZesWl6IkK6u2adiwoc2f29KWyY3z1U5tw4cPj9XRi/COcort/fTTT52AlNDURhYKnwhSkH3wwUwzefLkWH3lIA4yRCg1mRYDauVrVlaW212tefNzzL69e91GG6qUrgBW3ezsC91WyHqtxXB65LLcxhxXrXq4S/8m77xEuUybYGgzjMDwAAck+AsBCEAgdQJygFTSo7UM2H77Wew7V0qjG1ovdM45Ldyt5OBJ1duZbB/D2RVKe0Mtv48lLVBLun1/PEU9jlQatHgwFEuruN7c7XDzpg0Ll1eqsxXW5b9kyeLYgrd27S4w2VaEBiJ4mvUEz7YbNZSWXWDv361bN+eFLeyeiv1VkHp4K+OgzhVX9DYtW0ooF2wa9+jRo2OL4VRSAlveZYWHxLN58+aaqofb0BHLV1YUAaz6vXpdblq1aqWXcU1fWqZOnWJmzpyZ5zoCOA8ODiAAAQikREAbPlS2T/syYXvtE8ZU16cURz/lINMmTDKttVH2JPsRU6wmJ5ueMmtTK9lbb73pwjGL9SYpNBYWqKNHj3IbaaVQvdCi4Y0wRo0aaRYvXlxonUwWiLwADuBKxEnQKb5Fb8Yjqh5h9u7b6755Kr+vYm3j5fnNtAiuX7++245Y+XeVjzdsEoRaIKdMF3PnzglfyvNa/wgVrnBe69axjA1Bgc2bN7ud8/RGVXu+ydvbq1cvU896i7WlskzZH7Q4UPftc2WfYhPA6meHDh1t3sHzXEhG0BeFZigY//33Z+TLUawyCOCAFH8hAAEIpE5AoXBVk0h1mXrLhdfYlZMT29Wz8NLFWyL82VG8LedvTTG1w+1+Apk06Z/bbrvddUGfqVrjFO9zP50+KiOVnihrIw3Z3/422GWNSqet0qpTYQRwUYCGRbAE55Qpk62neElRmky5rsSv0rJJCCsUQIJd4lXiMFnTG1SPuvSTk7PbPvLZlnR93V9hF9pkRKEUxfWPJl7fw/1UOIRWFJfk/eL1gXMQgAAEKgoB5UnXAq/SDoKQy0XZIvbs2ZMx1D169HAbaMkLXhIm77Y2lpg0aVJJNJ9ym3379rWL1XIXx6dcOckKixd/bkaNGpVk6cwVQwAnyV4iWImiZZkQwEl2k2IQgAAEIACBlAlkwgucSe9vyoAiUkHOrD59+pSYCJb4HTt2bNxwzLKGEAGcwowEqcZK2/ubQhcpCgEIQAACEEiZgELQJIKrHMw+lHIDKVbYbb2+CqcLNmFKsTrFi0hA4RB6qlyctmXLljIf9hAe7/8DAAD//ybGBDQAAAz9SURBVO3ceUxVZxrH8QcEcasyLhg30GDEKi4zLnWpGXTAMjUZHDvJSG2ng01H+6emVtqplmnNqDNuqVWrMWZqBZs21WpdxowKLuNSqyMaN+KKu1atOmoQhHmfd3JvLoKxyKt5qd+TAOfee85zn/N5L8nvvJxDWHJKSpmYJT8/X3+wIIAAAggggMBTKBAeHi5RUVH2K+wxHb8GjqKiIvtVWlr6mN6Fsgg8XCCMAPxwJLZAAAEEEEDgaRGIjIyUiIgI+6WhODysenG4tKxMNOyWlJTYr+Li4qeFkuP0WIAA7PHg0BoCCCCAAAIIIICAewECsHtTKiKAAAIIIIAAAgh4LEAA9nhwaA0BBBBAAAEEEEDAvQAB2L0pFRFAAAEEEEAAAQQ8FiAAezw4tIYAAggggAACCCDgXoAA7N6UiggggAACCCCAAAIeCxCAPR4cWkMAAQQQQAABBBBwL0AAdm9KRQQQQAABBBBAAAGPBQjAHg8OrSGAAAIIIIAAAgi4FyAAuzelIgIIIIAAAggggIDHAgRgjweH1hBAAAEEEEAAAQTcCxCA3ZtSEQEEEEAAAQQQQMBjAQKwx4NDawgggAACCCCAAALuBQjA7k2piAACCCCAAAIIIOCxAAHY48GhNQQQQAABBBBAAAH3AgRg96ZURAABBBBAAAEEEPBYgADs8eDQGgIIIIAAAggggIB7AQKwe1MqIoAAAggggAACCHgsQAD2eHBoDQEEEEAAAQQQQMC9AAHYvSkVEUAAAQQQQAABBDwWIAB7PDi0hgACCCCAAAIIIOBegADs3pSKCCCAAAIIIIAAAh4LEIA9HhxaQwABBBBAAAEEEHAvQAB2b0pFBBBAAAEEEEAAAY8FCMAeDw6tIYAAAggggAACCLgXIAC7N6UiAggggAACCCCAgMcCBGCPB4fWEEAAAQQQQAABBNwLEIDdm1IRAQQQQAABBBBAwGMBArDHg0NrCCCAAAIIIIAAAu4FCMDuTamIAAIIIIAAAggg4LEAAdjjwaE1BBBAAAEEEEAAAfcCBGD3plREAAEEEEAAAQQQ8FiAAOzx4NAaAggggAACCCCAgHsBArB7UyoigAACCCCAAAIIeCxAAPZ4cGgNAQQQQAABBBBAwL0AAdi9KRURQAABBBBAAAEEPBYgAHs8OLSGAAIIIIAAAggg4F6AAOzelIoIIIAAAggggAACHgsQgD0eHFpDAAEEEEAAAQQQcC9AAHZvSkUEEEAAAQQQQAABjwUIwB4PDq0hgAACCCCAAAIIuBcgALs3pSICCCCAAAIIIICAxwIEYI8Hh9YQQAABBBBAAAEE3AsQgN2bUhEBBBBAAAEEEEDAYwECsMeDQ2sIIIAAAggggAAC7gUIwO5NqYgAAggggAACCCDgsQAB2OPBoTUEEEAAAQQQQAAB9wIEYPemVEQAAQQQQAABBBDwWIAA7PHg0BoCCCCAAAIIIICAewECsHtTKiKAAAIIIIAAAgh4LEAA9nhwaA0BBBBAAAEEEEDAvQAB2L0pFRFAAAEEEEAAAQQ8FiAAezw4tIYAAggggAACCCDgXoAA7N6UiggggAACCCCAAAIeCxCAPR4cWkMAAQQQQAABBBBwL0AAdm9KRQQQQAABBBBAAAGPBQjAHg8OrSGAAAIIIIAAAgi4FyAAuzelIgIIIIAAAggggIDHAgRgjweH1hBAAAEEEEAAAQTcCxCA3ZtSEQEEEEAAAQQQQMBjAQKwx4NDawgggAACCCCAAALuBQjA7k2piAACCCCAAAIIIOCxAAHY48GhNQQQQAABBBBAAAH3AgRg96ZURAABBBBAAAEEEPBYgADs8eDQGgIIIIAAAggggIB7AQKwe1MqIoAAAggggAACCHgsQAD2eHBoDQEEEEAAAQQQQMC9AAHYvSkVEUAAAQQQQAABBDwWIAB7PDi0hgACCCCAAAIIIOBegADs3pSKCCCAAAIIIIAAAh4LEIA9HhxaQwABBBBAAAEEEHAvQAB2b0pFBBBAAAEEEEAAAY8FCMAeDw6tIYAAAggggAACCLgXIAC7N6UiAtUSqFu3rty5c6daNdgZAQQQQAABBB4sUGMCsIaCNm1iTTC4LefOnZN79+49+Khq+Ctdu3aVgQMH2qNYsGABYaiGj2dV2n/xxSGSlpYmR44ckRkzpldlV7ZFAAEEEEAAgR8p4HUADg8Pl6FpQ6Vnr17SrGlTkbAwe1glJSVy9swZWbFyhezfv/9HHmrN2SwpKUlGjHjFNjx27Bi5efNmzWmeTqsl8MEHH0qLFi1sjXHjxskPP1yrVj12RgABBBBAAIGKAt4G4AYNGsioUaOlY8eOwa511rdWrVrBx2VlZfLNNytl1apVous/lYUA/FMZyYrH8fbb46VVq1ZSUFAgc+Z8XGGD557rI8OGDZP8vXslZ2lOhdd5AgEEEEAAAQSqL+BtAM7IGCn9+vWzR7h16xZZt26dXLp0SaKioqRt27YyfHi6tGzZ0r4+a9ZMOXDgQPU1PKlAAPZkIB5DG++/nyWtW7eWw4cPy/Tp0x7DO1ASAQQQQAABBB4m4GUA1ksfZkyfIfXNLPDu3bvlk0/mVTgODcJTp/5N6tevLzt37pCFCxdW2KamPkEArqkj9/C+CcAPN2ILBBBAAAEEHreAlwE4Li5O3ntvgj32nOxsyc3LrdShW7fudjatqKhI1q//V4VtevfuLd27/9z+yVkvqTh79qycPn1aNm7cIFeuXAlun5qaKs92fNbeWDdn7pxKb7BLTf212aaj3C0ulnnz5kppaWlw/+YxzSU5JUUSOnSQBs88IydPnpRDhw6Z65P3yYULF4Lbha5oP8nJKaI3vDVs2FAuX74se/bsNr1tlAEDBjzyNcB68pCYmCgJCQmmnwRp2KiRFBaesj1p7du3b4e2EVxv0qSpdO3SRTokdJD4+PbWR2/E0q9Dhw4GtwusNG7cWF77w2v24eo1q+XixYvmeJLt+2otPe4dO7bLli1bArtII9PLyIyR9vEOc9Kyffv24GuBlejoaMn4Y4Z9uPXfW2XXrl2Bl6SqznpDmY7JlatXZPHixfbGQvXWz9eKFStl06a8YO1WrVpLUtIvJdbcaNksJka+//6ynDHXmefm5trPTHDDkBU9nhdeSDX7tLHX7f731i2zbaEcPHhQtm3bFrKlmPEcITHNYiS+fXv7V4xbZttT5nOiS+hxDh48WDp36izXb1yXRYsW2ddDvz2JcQp9P/086Q2ZHcxnKS4u1lxqJOb36Iz5XBTIhg3ry/0ehO7HOgIIIIAAAj4LeBmAdVZ31sxZ9qa3veZayLkmlFblGt/atWvLG2/8yYTf7pXa37h+XWZ/PNuGQt2gxy96yOg337TbVnY5RZi5+W7atOk2qH733S6ZP39+sK5ehpE5PlPq1qsXfC6wcvfuXbPf3+XEiROBp+zPyMhIGW/20SB2/1JQcMQE4T32Eg99rao3wWVkZJhLR/rfX9Y+1ktIZs/+qEIo12PQfupVcgy64+rVq+Xrr5eXq6k3aukNW7p8+uk/TEgaJLGxseW20QebN2+Wzz5bHHw+K+sv9oTk+LFjMnnK5ODzgZWBSQPlZRMWdZk4cYKcP3/erj+K86hRo6Rnz15y3vzXEO3j98OH21r6bdmyr2Tt2rX2cd++feXVV16VSPO5uX/RGy5zcnJMkN9c7qVu3bqJXqajn9XKlk2bNpn9soMBccKEiZX66L7Lly+TNWvW2DKB8dMTtMzM8eVKP8lx0jfWk7TR5jr8hJDr8EMb0jHUE8YbN26EPs06AggggAAC3gt4GYBVLfCnYl3Pz8+3M7x641DozKu+VtkyaNCvJD093b6ks1QaonWWuHPnzpKSMtgGPZ3FysrKsttERETYSy40xObl5Ul29pJyZePj400Yecc+pwFy3759dl1nAN9998+is6EXzYznP811ysePHzP/rq2N6ExebGyc/Q8Okyf/1c7wBoq+PvJ16WNCly56LaiG6usmlOvMbf/+z9tZWp0V1qUqAfill34nOputi4bob7/dad9fZz2fN3X1kpJrV69K5juZQccmTZqYY8uU6Oif2R50llhnr5s3j5E+ffoYs0Rb7/PPl5oZvw12Xb+FBmD9n7VXzSxrbm6enTnt0aOn9DL/uaNOnTqiU4YfTppkZ6F1P+1P+9Tn3xr3ln1PfT6wjBkzVjp16iSnTp2SSZP+H7Af1TkQgIvNrL3OZB49etTMzh6Qa9eu2WB90szA6qU0M83Jlp6UHDTXkS81x6nhU68zT/tNmg1/xeZERnsNzJ7r52XKlKl2RvvSpYv2JszCwtMm2LcUDdOJiV3s4ehfCnQcdGnXrp19L501b9qsmfEolC+//MK+prP/gb9IPCgAP+lx0saGDv2tDBkyRPREbsmSJeb36D92TDX8p6e/bE31JEJPJlgQQAABBBCoSQL/AwBpnpk5cFEwAAAAAElFTkSuQmCC">
+      <h3>What the app actually knows about "where"</h3>
+      <ul>
+        <li><b>Machine</b>: This computer, or a connected server by name (remote runner).</li>
+        <li><b>Project</b>: label and root folder.</li>
+        <li><b>Checkout</b>: <i>in place</i> (the project folder itself, your working copy, shared with the editor and other in-place threads) or <i>worktree</i> (<code>&lt;repo&gt;/.worktrees/&lt;task-id&gt;</code> on branch <code>agent/&lt;task-id&gt;</code>, created from the chosen base branch). On a server: server checkout or a worktree there.</li>
+        <li><b>Branch</b>: in place = the checkout's current branch (live, it changes if you switch it); worktree = <code>agent/&lt;task-id&gt;</code> with ahead/behind the primary branch from the ship status. For server threads this view doesn't know the branch today, so no variant shows one.</li>
+        <li><b>Right panel</b>: Files, Git and Terminal follow the selected thread's checkout (the worktree path for worktree threads). For a new thread they follow the chosen project. When the active workspace differs, they show "Switch".</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>What's confusing, concretely</h2>
+      <ol>
+        <li><b>One letter, no name.</b> The monogram is the first letter of the project name. <i>editor</i> and <i>eshop</i> both render "E". With "All projects" it becomes a plain folder icon that looks like the Add project button next to it.</li>
+        <li><b>It looks like a filter but does four things.</b> Picking a project in it (a) filters the list, (b) sets where New thread / ⌘N starts (visible only in a tooltip), (c) switches the active IDE workspace behind the right panel (<code>onSelectProjectEnvironment</code>) and (d) reopens that project's last thread.</li>
+        <li><b>It changes under you.</b> Clicking a thread from another project moves the filter to that project (<code>agentRailFilterFollowingProject</code>) and switches the workspace (<code>selectWorkspace</code>) with no cue. That's the "when" in the complaint.</li>
+        <li><b>The actual location is scattered and uses different words.</b> The header shows only the project. The composer footer says "Local checkout" / "Server checkout" / "New worktree", and after sending it still says <i>"New worktree"</i> for a worktree that already exists, with no branch. Sidebar rows say "in place" / "worktree" or the branch. "This computer" appears only inside a menu.</li>
+        <li><b>The right panel never says what it shows.</b> "Thread files" / "Project files" gives no folder or branch, so you can't tell your working copy from a worktree.</li>
+        <li><b>The key distinction is never stated plainly.</b> The distinction that matters most, "the agent edits my files" vs "the agent edits an isolated copy", is never said in those terms.</li>
+      </ol>
+      <h3>Shared rules in all three variants</h3>
+      <ul>
+        <li><b>Filter ≠ location.</b> The sidebar project filter only filters rows and is labelled by name. You change where you work only by selecting a thread, starting a new thread in a project, or using "Switch project" in the palette.</li>
+        <li><b>One vocabulary everywhere:</b> <i>In place</i>, <i>Worktree</i>, the server name. The machine is named only when it isn't this computer. Before sending, the machine picker appears only if a server is configured.</li>
+        <li><b>After sending, the location shows the real checkout</b> (<code>agent/agt-…</code>), never "New worktree".</li>
+        <li><b>When the location changes, the location element briefly tints</b> (1.3s, off under reduced motion). No toasts. Switch states above to see it.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="variant" id="v-current">
+    <div class="variant__head"><span class="variant__tag ref">Reference</span><h2>Current (beta.75), recreated from the code</h2></div>
+    <div class="variant__summary"><div>Sidebar filter is a monogram button; the header breadcrumb shows only project / title; the composer footer shows the checkout type; the right panel shows only "Thread files".</div><div>The filter is set to <i>editor</i> as in the screenshot. In "Remote runner" the monogram silently becomes "O" because selecting the server thread moved the filter.</div></div>
+    <div class="frame" data-variant="current"></div>
+    <div class="state-note" data-note="current"></div>
+    <div class="notes">
+      <div class="card"><h3 style="margin-top:0">Markers</h3>
+        <div style="font-size:13px;line-height:1.7">
+          <div><span class="mk-inline">1</span>Monogram only: "E" is both <i>editor</i> and <i>eshop</i>. It also silently sets the new-thread target and switches the workspace.</div>
+          <div><span class="mk-inline">2</span>The breadcrumb shows the project but not the checkout, branch or machine.</div>
+          <div><span class="mk-inline">3</span>The footer says "Local checkout" while rows say "in place". A running worktree thread still says "New worktree", and the branch is gone once locked.</div>
+          <div><span class="mk-inline">4</span>The right panel doesn't say which folder or branch it's showing.</div>
+        </div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">Sources</h3>
+        <div class="muted" style="font-size:12.5px">
+          <code>AgentRailHeader.tsx</code>, <code>AgentProjectFilterMenu.tsx</code> (<code>agentProjectMonogram</code>), <code>useAgentThreadNavigation.ts</code> (<code>selectThread</code>, <code>setProjectScope</code>), <code>AgentModeView.tsx</code> (<code>changeProjectScope</code>, <code>selectWorkspace</code> effect), <code>AgentThreadHeader.tsx</code>, <code>AgentComposerDrawerStart.tsx</code>, <code>AgentEnvironmentCheckoutPicker.tsx</code>, <code>AgentComposerControls.tsx</code> (<code>isolationLabel</code>), <code>AgentComposerBranchPicker.tsx</code> (hidden when locked), <code>agentSidebarPresentation.ts</code> (<code>agentRowIsolationLabel</code>), <code>agentSurfacePolicy.ts</code>, <code>AgentSurfaceFileTree.tsx</code>.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="variant" id="v-a">
+    <div class="variant__head"><span class="variant__tag">Variant A</span><h2>Location breadcrumb</h2></div>
+    <div class="variant__summary">
+      <div>The top bar breadcrumb becomes <b>project / checkout·branch / thread</b>. For a server thread the segment names the server. Clicking the segment opens its details.</div>
+      <div>The composer shows the location picker only before the first send. After that the header is the single source, so the footer stays empty.</div>
+      <div>The right panel repeats the same token above its content, with the folder path. The sidebar gets a labelled "All projects" filter that never switches the workspace.</div>
+    </div>
+    <div class="frame" data-variant="a"></div>
+    <div class="state-note" data-note="a"></div>
+    <div class="notes">
+      <div class="card"><h3 style="margin-top:0">What changes</h3><ul>
+        <li>The "E" monogram button is removed. Under the search field there's a text filter, "All projects ⌄" (or "editor ⌄"), that only filters rows.</li>
+        <li>Header crumb segments: <code>[E] editor</code> (click to start a new thread in any project) / <code>main · in place</code>, <code>agent/agt-… · worktree</code> or <code>build-box · server checkout</code>, each with its glyph (click for details) / title.</li>
+        <li>Before sending, the crumb shows the pending choice with a dashed outline and the composer shows the picker with the same words. Once you send, the dashed crumb turns solid.</li>
+        <li>The right panel shows a scope line with the same token and the folder path, so you can see it's the same checkout.</li>
+        <li>Sidebar row line 3 uses the same token vocabulary.</li>
+      </ul></div>
+      <div class="card"><h3 style="margin-top:0">Trade-offs</h3><ul>
+        <li>+ One quiet line at the top, where IDEs put context. It stays visible while you scroll and doesn't grow the composer. (t3code itself keeps its header to project / title and puts the checkout in a strip under the composer, see <a href="#t3">How t3code does it</a>.)</li>
+        <li>+ One source of truth plus one echo, and both use the same component.</li>
+        <li>− Long titles plus long worktree branches compete for header width. The branch truncates in the middle (<code>agent/agt-…7ede</code>) and the full value is in the popover.</li>
+        <li>− The in-place vs worktree consequence is mostly in the popover. Mitigation: B's one-line hint before the first send (see the recommendation).</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="variant" id="v-b">
+    <div class="variant__head"><span class="variant__tag">Variant B</span><h2>Run line under the composer</h2></div>
+    <div class="variant__summary">
+      <div>The composer footer becomes a readable sentence: <b>Running on This computer · editor · worktree agent/agt-… · 2 ahead of main</b>, led by a colored kind dot.</div>
+      <div>Before sending, every word is a picker, with a one-line consequence below ("Edits land in your working copy").</div>
+      <div>The header gets only a small kind pill after the title. The right panel starts with the same dot and checkout line.</div>
+    </div>
+    <div class="frame" data-variant="b"></div>
+    <div class="state-note" data-note="b"></div>
+    <div class="notes">
+      <div class="card"><h3 style="margin-top:0">What changes</h3><ul>
+        <li>The sidebar gets the same labelled filter as A.</li>
+        <li>The drawer row under the composer is replaced by the run line. It's editable before the first send and read-only afterwards, but it stays visible.</li>
+        <li>Kind dot colors: in place = neutral <code>--cv-fg-muted</code>, worktree = <code>--cv-accent</code>, server = <code>--cv-syn-num</code>. Color is always paired with a word.</li>
+        <li>The header pill ("In place" / "Worktree" / "build-box") is a compact reminder when the composer is scrolled out of focus.</li>
+      </ul></div>
+      <div class="card"><h3 style="margin-top:0">Trade-offs</h3><ul>
+        <li>+ The most explicit, and it sits exactly where you decide and type. The consequence sentence teaches the model.</li>
+        <li>− A permanent sentence under every composer. t3code also keeps a permanent strip there, but it holds only icons and two-word labels. A full sentence reads heavy in long sessions.</li>
+        <li>− The location is at the bottom while the right panel's echo is at the top, so the eye has to travel to compare them.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="variant" id="v-c">
+    <div class="variant__head"><span class="variant__tag">Variant C</span><h2>Workspace switcher in the sidebar</h2></div>
+    <div class="variant__summary">
+      <div>The screenshot area itself becomes a full workspace switcher card: project name, then checkout·branch (and the server name for a server). It's the one thing the right panel and ⌘N use.</div>
+      <div>The filter is split out into a small "This project | All" toggle. Rows carry location tokens.</div>
+      <div>The header keeps project / title plus a kind pill. The right panel starts with the same project ▸ checkout line.</div>
+    </div>
+    <div class="frame" data-variant="c"></div>
+    <div class="state-note" data-note="c"></div>
+    <div class="notes">
+      <div class="card"><h3 style="margin-top:0">What changes</h3><ul>
+        <li>The monogram button becomes a 48px card at the top of the sidebar. Clicking it opens the project switcher (the same list as today's filter menu, but choosing a project here is explicitly a switch).</li>
+        <li>The card's second line follows the selected thread's checkout, so it updates (with a tint) when you pick a thread elsewhere.</li>
+        <li>"This project | All" only filters rows.</li>
+        <li>The composer footer keeps pickers with fixed copy, and the locked state shows the real checkout.</li>
+      </ul></div>
+      <div class="card"><h3 style="margin-top:0">Trade-offs</h3><ul>
+        <li>+ Fixes the exact spot the owner pointed at, and feels familiar from VS Code / Linear workspace switchers.</li>
+        <li>− The sidebar lists threads from all projects, while the card names one project. When you browse "All", the card and the row you click disagree until you click.</li>
+        <li>− The location sits far from the conversation, which is where you look while you work. It's also hidden when the sidebar is collapsed.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="variant" id="t3">
+    <div class="variant__head"><span class="variant__tag ref">Reference</span><h2>How t3code does it</h2></div>
+    <div class="variant__summary">
+      <div>Recreated from t3code's source (<code>pingdotgg/t3code</code> main at <code>c2fa9fc</code>, 2026-09-30, one day after v0.0.44). t3code's labels and layout, drawn with Codevo tokens. Paths are relative to <code>apps/web/src/components/</code> unless noted.</div>
+      <div><b>t3code has no "active workspace".</b> Where a thread works belongs to the thread itself. The header leads with the project. Machine, checkout and branch sit in a thin strip under the composer. The sidebar's project button only filters.</div>
+      <div>Remote exists as <i>environments</i>: other machines running the T3 server, picked with "Run on". The right panel (Diff, Files) follows the thread's worktree or the project root but never says which one it shows.</div>
+    </div>
+    <div class="frame" data-variant="t3"></div>
+    <div class="state-note" data-note="t3"></div>
+    <div class="notes">
+      <div class="card"><h3 style="margin-top:0">Markers</h3>
+        <div style="font-size:13px;line-height:1.7">
+          <div><span class="tk-inline">1</span>The project button filters rows only. It stays on "All projects" in every state, because selecting a thread never moves it.</div>
+          <div><span class="tk-inline">2</span>The project always leads the header. Clicking it starts a new thread in that project. Nothing in the header names the checkout, branch or machine.</div>
+          <div><span class="tk-inline">3</span>The composer's context strip is the one place that states the location. It shows pickers before the first message, muted labels afterwards, and a branch picker that stays live.</div>
+          <div><span class="tk-inline">4</span>Diff and Files read the thread's worktree (or the project root) without naming it. Only "Branch changes" shows the head ref.</div>
+        </div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">What to take from it</h3><ul>
+        <li><b>Location is a thread property.</b> There's no workspace state that can drift away from the thread, so the "when did it change" problem can't happen.</li>
+        <li><b>One compact strip, same slot in every state.</b> It shows Run on | checkout, then the branch on the right. A strip under the composer turned out to be what t3code chose, and it stays calm.</li>
+        <li><b>The filter only filters.</b> It's persisted, never follows the selection, and "New thread" asks which project instead of guessing.</li>
+        <li><b>Gaps for Codevo:</b> the right panel never names its checkout. The words drift too: "Current checkout" before sending, "Local checkout" after, and "Local checkout" even on a remote machine.</li>
+      </ul></div>
+    </div>
+    <h3 style="margin:26px 0 0">The pieces, all states side by side</h3>
+    <div class="pieces" id="t3pieces"></div>
+  </section>
+
+  <section class="variant" id="v-ct3">
+    <div class="variant__head"><span class="variant__tag">Refinement</span><h2>C + t3code</h2></div>
+    <div class="variant__summary">
+      <div>C's card stays at the top of the sidebar, but it becomes a <b>mirror of where the selected thread (or draft) runs</b>, with a "New thread in…" menu. It never switches or filters on its own.</div>
+      <div>t3code's composer strip replaces C's footer. The filter becomes a named, persisted project filter. Rows always show the branch. The header drops the pill.</div>
+      <div>Kept for Codevo: remote runners are named everywhere, and the right panel says which checkout it shows, in the same words as the strip. <span class="delta-inline">Δ</span> marks each difference from plain C.</div>
+    </div>
+    <div class="frame" data-variant="ct3"></div>
+    <div class="state-note" data-note="ct3"></div>
+    <div class="notes">
+      <div class="card"><h3 style="margin-top:0">Differences from plain C</h3>
+        <div style="font-size:13px;line-height:1.65">
+          <div style="margin:4px 0"><span class="delta-inline">Δ1</span><b>The card mirrors the thread.</b> It shows the project, then the checkout and branch (plus the server for a server). Clicking it opens <i>New thread in…</i> and location details. Picking a project there starts a draft in that project. Nothing switches behind the right panel. (t3code: the header's project crumb and ✎ start threads, and there's no active-workspace state.)</div>
+          <div style="margin:4px 0"><span class="delta-inline">Δ2</span><b>The filter is a named project filter</b> ("All projects ⌄" / "editor ⌄"). It's persisted and never follows the selected thread. It replaces C's relative "This project | All". (t3code <code>Sidebar.tsx:2394</code>.)</div>
+          <div style="margin:4px 0"><span class="delta-inline">Δ3</span><b>Rows always show the branch</b> on line 3, with the kind glyph and +/− stats. The server is named on line 1. (t3code <code>Sidebar.tsx:1951</code>.)</div>
+          <div style="margin:4px 0"><span class="delta-inline">Δ4</span><b>The header is project / title only</b>, with no pill. The project crumb starts a new thread in that project. (t3code <code>chat/ChatHeader.tsx:407</code>.)</div>
+          <div style="margin:4px 0"><span class="delta-inline">Δ5</span><b>t3code's context strip replaces the footer.</b> The machine comes first (only when a server is configured), then the checkout, with the branch on the right. These are pickers before the first send and muted labels afterwards, with <b>the same words before and after</b>, unlike t3code.</div>
+          <div style="margin:4px 0"><span class="delta-inline">Δ6</span><b>The panel line uses the strip's exact words plus the path.</b> t3code has nothing like this. It's kept from C and aligned in wording.</div>
+          <div style="margin:4px 0"><span class="delta-inline">Δ7</span><b>Borrowed notice</b> for in-place threads whose checkout moved to another branch since the thread last ran:</div>
+          <div class="stage" style="margin-top:6px"><div class="banner" style="margin:0"><span style="display:inline-flex;color:var(--cv-fg-subtle)"><svg class="i" width="14" height="14" aria-hidden="true"><use href="#i-branch"/></svg></span><span>Branch changed · was <code>main</code>, now <code>feature/sidebar</code></span><button class="act">Restore branch</button><button class="ibtn" style="width:22px;height:22px" aria-label="Dismiss"><svg class="i" width="12" height="12" aria-hidden="true"><use href="#i-x"/></svg></button></div></div>
+          <div class="cite">t3code: <code>ChatView.tsx:6541-6572</code> (the "Branch changed" notice with "Restore branch"), <code>BranchToolbar.logic.ts:246-260</code>.</div>
+        </div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">Decisions for the owner</h3><ol class="decide">
+        <li><b>Branch after start.</b> t3code keeps the branch picker live on a started thread. Picking a ref runs <code>git switch</code> in the thread's checkout (your working copy, for in-place threads), and moving to another worktree stops the session. The mockup shows it read-only plus the Δ7 notice. Should it be live or read-only?</li>
+        <li><b>Words.</b> t3code says "Current checkout" in the picker, then "Local checkout" / "Worktree" once locked, and "New worktree" / "Previous worktree". The mockup uses <i>Local checkout · New worktree · Worktree · Server checkout</i> everywhere, dropping "In place". Is that OK?</li>
+        <li><b>New thread with several projects.</b> t3code opens a "New thread in…" picker (Shift-click creates in the current project). Codevo's ⌘N creates immediately in the card's project. Which one?</li>
+        <li><b>Filter.</b> A pinned, named project (t3code, shown) or C's relative "This project" (which changes the list whenever the card follows another thread)?</li>
+        <li><b>"Previous worktree".</b> Should the checkout picker offer t3code's "Previous worktree (branch)" to continue in the last worktree of the project?</li>
+        <li><b>The card follows the thread, even from a filtered list.</b> When you open a thread through search or the palette from another project, the card changes but the filter stays. Confirm.</li>
+      </ol></div>
+    </div>
+  </section>
+
+  <section id="recommendation" class="variant">
+    <div class="card rec">
+      <h2>Recommendation: Variant A, plus two small pieces of B</h2>
+      <p style="margin:8px 0 4px">Put the location in the header breadcrumb (<code>project / checkout·branch / thread</code>), echo it at the top of the right panel, and turn the sidebar monogram into a labelled filter that only filters. From B, keep the one-line consequence under the pre-send picker ("Edits land in your working copy" / "Creates agent/… from main in .worktrees/"). From C, keep the location tokens on sidebar rows (A already includes them).</p>
+      <p class="muted" style="margin:4px 0 0">Why: the header and the right panel sit on the same top line, so you can compare them at a glance. The location stays visible while you scroll and the composer doesn't grow. B is clearer but permanently heavier. C fixes the literal spot but creates a second source of truth that contradicts the all-projects list.</p>
+      <table class="cmp">
+        <thead><tr><th></th><th>A · Breadcrumb</th><th>B · Run line</th><th>C · Switcher</th></tr></thead>
+        <tbody>
+          <tr><td>Glanceability</td><td>High: top line, next to the panel echo</td><td>High near the composer, low from the panel</td><td>Medium: far left, hidden when the sidebar is collapsed</td></tr>
+          <tr><td>Calm</td><td>Yes</td><td>Adds a permanent line</td><td>Adds a card</td></tr>
+          <tr><td>"When did it change"</td><td>Crumb tints on change</td><td>Line tints on change</td><td>Card tints on change</td></tr>
+          <tr><td>New-thread choice</td><td>Picker plus dashed crumb</td><td>Sentence pickers plus consequence</td><td>Picker plus card</td></tr>
+          <tr><td>Code impact</td><td>Header crumb, panel scope line, filter behavior, lock copy</td><td>Composer drawer, header pill, panel line, filter</td><td>Sidebar head rewrite, filter split, panel line</td></tr>
+        </tbody>
+      </table>
+      <h3>If approved, the implementation slice would touch</h3>
+      <ul class="muted" style="font-size:13px">
+        <li><code>AgentRailHeader</code> / <code>AgentProjectFilterMenu</code>: a labelled trigger, and <code>selectProject</code> stops calling <code>onChangeScope</code> / <code>onSelectProjectEnvironment</code> (a behavior change that needs the owner's OK). The filter stops auto-following the selected thread.</li>
+        <li><code>AgentThreadHeader</code>: a location crumb segment and its details popover, built from <code>thread.target</code>, the ship status (worktree branch, ahead/behind), the composer's live current branch for in-place threads, and the remote runner's server name.</li>
+        <li><code>AgentComposerLockedCheckout</code>: the "New worktree" label after send is replaced by the actual checkout. The drawer is hidden after the first send.</li>
+        <li><code>AgentSurfacePanel</code>: a scope line under the tabs, with the same token and path (the worktree path, the project root or the server).</li>
+        <li>One shared <code>WorkspaceLocationToken</code> presenter (pure: target + ship + runner → token), so all surfaces render the same words.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var I = function (name, size) {
+    size = size || 14;
+    return '<svg class="i" width="' + size + '" height="' + size + '" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+  };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+
+  var WT_BRANCH = "agent/agt-mue1wenj-7ede";
+  var WT_SHORT = "agent/agt-…7ede";
+  var STATES = {
+    "new": { key: "new", running: false, local: true, project: "editor", mono: "E", root: "~/Developer/editor", kind: "inplace", branch: "main", title: null },
+    inplace: { key: "inplace", running: true, local: true, project: "editor", mono: "E", root: "~/Developer/editor", kind: "inplace", branch: "main", title: "Tighten the sidebar filter copy", elapsed: "1:42",
+      ask: "Make the project filter say which project it filters.", files: [["AgentRailHeader.tsx", 12, 4], ["agentSidebar.css", 6, 2]] },
+    worktree: { key: "worktree", running: true, local: true, project: "editor", mono: "E", root: "~/Developer/editor/.worktrees/agt-mue1wenj-7ede", kind: "worktree", branch: WT_BRANCH, base: "main", ahead: 2, title: "Retry provider errors from the banner", elapsed: "4:08",
+      ask: "Add a Retry action to the provider error banner.", files: [["AgentThreadErrorBanner.tsx", 38, 3], ["useAgentThreads.ts", 14, 1]] },
+    remote: { key: "remote", running: true, local: false, server: "build-box", project: "orders-api", mono: "O", root: "/srv/orders-api", kind: "server", branch: null, title: "Run migration tests against staging data", elapsed: "0:37",
+      ask: "Run the migration tests against the staging snapshot.", files: [["migrations/0042_orders_idx.sql", 9, 0]] }
+  };
+  var THREADS = [
+    { id: "inplace", project: "editor", mono: "E", title: "Tighten the sidebar filter copy", kind: "inplace", branch: "main", st: "work", stLabel: "Working 1:42" },
+    { id: "worktree", project: "editor", mono: "E", title: "Retry provider errors from the banner", kind: "worktree", branch: WT_BRANCH, st: "work", stLabel: "Working 4:08", files: "2 files" },
+    { id: "remote", project: "orders-api", mono: "O", server: "build-box", title: "Run migration tests against staging data", kind: "server", st: "work", stLabel: "Working 0:37" },
+    { id: "eshop", project: "eshop", mono: "E", title: "Upgrade Nette forms to 3.2", kind: "inplace", branch: "develop", st: "done", stLabel: "2h" }
+  ];
+
+  /* ---------- shared primitives ---------- */
+  function kindGlyph(kind, size) {
+    if (kind === "worktree") return I("branch", size);
+    if (kind === "server") return I("server", size);
+    return I("folder", size);
+  }
+  function locToken(s, opts) {
+    opts = opts || {};
+    var main, sfx;
+    if (s.kind === "server") { main = s.server; sfx = "server checkout"; }
+    else if (s.kind === "worktree") { main = opts.full ? s.branch : WT_SHORT; sfx = "worktree"; }
+    else { main = s.branch; sfx = "in place"; }
+    if (opts.draft && s.kind === "worktree") { main = "new from " + (s.base || "main"); }
+    return '<span class="loc loc--' + s.kind + (opts.draft ? " draft" : "") + '" title="' + esc(s.kind === "worktree" ? s.branch : main) + '">' +
+      '<span class="g">' + kindGlyph(s.kind, 13) + '</span><b>' + esc(main) + '</b>' + (opts.noSfx || sfx === null ? "" : '<span class="sfx">· ' + sfx + '</span>') + '</span>';
+  }
+  function rowToken(t) {
+    if (t.kind === "server") return '<span class="loc loc--server"><span class="g">' + I("server", 12) + '</span><b style="font-weight:400;color:var(--cv-fg-subtle)">' + esc(t.server) + '</b></span>';
+    if (t.kind === "worktree") return '<span class="loc loc--worktree"><span class="g">' + I("branch", 12) + '</span><b style="font-weight:400;color:var(--cv-fg-subtle)">' + esc(WT_SHORT) + '</b></span>';
+    return '<span class="loc loc--inplace"><span class="g">' + I("folder", 12) + '</span><b style="font-weight:400;color:var(--cv-fg-subtle)">in place</b></span>';
+  }
+  function lights() { return '<div class="chrome"><span class="lights"><i></i><i></i><i></i></span></div>'; }
+  function searchField() { return '<label class="sb-field">' + I("search", 16) + '<span>Search</span></label>'; }
+
+  function rows(variant, s, list) {
+    return '<ul class="sb-list">' + list.map(function (t) {
+      var on = t.id === s.key;
+      var l3;
+      if (variant === "current") {
+        var lbl = t.kind === "worktree" ? t.branch : "in place";
+        l3 = '<span class="br">' + esc(lbl) + '</span>';
+      } else {
+        l3 = '<span class="br">' + rowToken(t) + '</span>';
+      }
+      if (t.files) l3 += '<span>' + t.files + '</span>';
+      var titlePrefix = t.kind === "server" && variant === "current" ? '<span class="srvicon">' + I("server", 13) + '</span>' : "";
+      var fav = t.kind === "server" && variant !== "current" ? '<span class="fav srv">' + I("server", 10) + '</span>' : '<span class="fav">' + t.mono + '</span>';
+      var proj = t.kind === "server" && variant !== "current" ? esc(t.server) + ' · ' + esc(t.project) : esc(t.project);
+      return '<li><div class="row' + (on ? " on" : "") + '"><span class="l1">' + fav + '<span class="p">' + proj + '</span><span class="st ' + t.st + '">' + t.stLabel + '</span></span>' +
+        '<span class="l2">' + titlePrefix + '<span>' + esc(t.title) + '</span></span><span class="l3">' + l3 + '</span></div></li>';
+    }).join("") + '</ul>';
+  }
+
+  function topActions(s, extras) {
+    var thread = s.title !== null;
+    var h = '<div class="tb-actions">';
+    if (thread) h += '<button class="ibtn" title="Open in Editor">' + I("open", 15) + '</button>';
+    h += '<button class="ibtn" title="Terminal sessions">' + I("history", 15) + '</button>';
+    if (thread) h += '<button class="ibtn" title="Run script">' + I("play", 13) + '</button><button class="btn">' + I("commit", 14) + 'Commit</button><span class="vbar"></span>';
+    h += (extras || "") + '<button class="ibtn" title="Toggle bottom panel">' + I("panel-bottom", 15) + '</button><button class="ibtn" title="Toggle right panel" style="color:var(--cv-fg-strong)">' + I("panel-right", 15) + '</button></div>';
+    return h;
+  }
+
+  function transcript(s) {
+    if (!s.running) {
+      return '<div class="hero"><h1>What should we build in <span>' + esc(s.project) + '</span>?</h1></div>';
+    }
+    var files = s.files.map(function (f) {
+      return '<div class="work">' + I("file", 13) + 'Edited <code>' + esc(f[0]) + '</code><span class="add">+' + f[1] + '</span>' + (f[2] ? '<span class="del">-' + f[2] + '</span>' : "") + '</div>';
+    }).join("");
+    var lead = s.kind === "server" ? 'Running the migration suite on the server against the staging snapshot.' : 'Reading the current implementation first, then I will make the change.';
+    return '<div class="conv"><div class="col"><div class="bubble">' + esc(s.ask) + '</div>' +
+      '<p class="prose">' + lead + '</p>' +
+      '<div class="work">' + I("search", 13) + 'Searched for <code>' + (s.kind === "server" ? "migrate" : "filter") + '</code> · 6 results</div>' + files +
+      '<div class="thinking"><span class="shimmer">Working for ' + s.elapsed + '</span></div></div></div>';
+  }
+
+  function slab(s) {
+    var right = s.running
+      ? '<button class="ibtn" title="Attach files">' + I("clip", 15) + '</button><button class="round stop" aria-label="Stop"><svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg></button>'
+      : '<button class="ibtn" title="Attach files">' + I("clip", 15) + '</button><button class="round off" aria-label="Send"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3L8 13M8 3L4 7M8 3L12 7"/></svg></button>';
+    return '<div class="slab"><div class="ph">' + (s.running ? "Ask anything, or / for commands" : "Ask for changes, send follow-ups, or attach images") + '</div>' +
+      '<div class="foot"><button class="ctl">Opus 5.5' + I("chev-d", 13) + '</button><span class="vs"></span><button class="ctl">High' + I("chev-d", 13) + '</button><span class="vs"></span><button class="ctl">' + I("lock", 13) + 'Full access' + I("chev-d", 13) + '</button><div class="right">' + right + '</div></div></div>';
+  }
+
+  function tree(s) {
+    var head;
+    var items;
+    if (s.kind === "server") {
+      items = [["d", "migrations", ""], ["f ind1", "0042_orders_idx.sql", "M"], ["d", "src", ""], ["d", "test", ""], ["f", "package.json", ""], ["f", "README.md", ""]];
+    } else if (s.kind === "worktree") {
+      items = [["d", "docs", ""], ["d", "src", ""], ["d ind1", "components/agentMode", ""], ["f ind2", "AgentThreadErrorBanner.tsx", "M"], ["d ind1", "application", ""], ["f ind2", "useAgentThreads.ts", "M"], ["d", "src-tauri", ""], ["f", "package.json", ""], ["f", "CLAUDE.md", ""]];
+    } else if (s.key === "inplace") {
+      items = [["d", "docs", ""], ["d", "src", ""], ["d ind1", "components/agentMode", ""], ["f ind2", "AgentRailHeader.tsx", "M"], ["f ind2", "agentSidebar.css", "M"], ["d", "src-tauri", ""], ["f", "package.json", ""], ["f", "CLAUDE.md", ""]];
+    } else {
+      items = [["d", "docs", ""], ["d", "src", ""], ["d", "src-tauri", ""], ["f", "package.json", ""], ["f", "CLAUDE.md", ""], ["f", "README.md", ""]];
+    }
+    return '<ul class="tree">' + items.map(function (it) {
+      var cls = it[0];
+      var isDir = cls.indexOf("d") === 0;
+      return '<li class="' + cls + '">' + (isDir ? I("folder", 13) : I("file", 13)) + '<span>' + esc(it[1]) + '</span>' + (it[2] ? '<span class="m">' + it[2] + '</span>' : "") + '</li>';
+    }).join("") + '</ul>';
+  }
+
+  function panelTabs(extra) {
+    return '<div class="ptabs"><span class="ptab on">' + I("folder", 13) + 'Files</span><span class="ptab">' + I("diff", 13) + 'Diff</span><span class="ptab">' + I("branch", 13) + 'Git</span><span class="sp"></span>' + (extra || "") + '<button class="ibtn" title="Add panel">' + I("plus", 14) + '</button></div>';
+  }
+
+  /* ---------- CURRENT ---------- */
+  function currentFrame(s) {
+    var filterProject = s.kind === "server" ? "orders-api" : "editor";
+    var list = THREADS.filter(function (t) { return t.project === filterProject; });
+    var mono = s.kind === "server" ? "O" : "E";
+    var sb = '<aside class="sb">' + lights() +
+      '<div class="sb-search">' + searchField() +
+      '<button class="ibtn ring" title="' + filterProject + '"><span class="fav">' + mono + '</span><span class="mk tr">1</span></button>' +
+      '<button class="ibtn" title="Add project">' + I("folder-plus", 16) + '</button><button class="ibtn" title="New thread in ' + filterProject + ' (⌘N)">' + I("new", 16) + '</button></div>' +
+      rows("current", s, list) +
+      '<div class="sb-sec" style="margin-top:10px">Saved conversations</div>' +
+      '<div class="sb-foot">' + I("server", 13) + 'Servers</div>' +
+      '</aside>';
+
+    var title = s.title === null ? "New thread" : s.title;
+    var crumbs = '<nav class="crumbs" style="overflow:visible"><span class="crumb ring"><span class="fav">' + s.mono + '</span>' + esc(s.project) + '<span class="mk tr">2</span></span><span class="sep">/</span>' +
+      '<span class="crumb here"><span>' + esc(title) + '</span>' + (s.title ? '<span class="chev">' + I("chev-d", 13) + '</span>' : "") + '</span>' +
+      (s.kind === "server" ? '<span class="srvicon" style="color:var(--server);display:inline-flex" title="Runs on build-box">' + I("server", 13) + '</span>' : "") + '</nav>';
+
+    var drawer;
+    if (!s.running) {
+      drawer = '<div class="drawer ring"><span class="mk tl">3</span><button class="tbtn">' + I("folder", 13) + 'Local checkout' + I("chev-d", 12) + '</button><span class="end"><button class="tbtn">' + I("branch", 13) + 'main' + I("chev-d", 12) + '</button></span></div>';
+    } else if (s.kind === "worktree") {
+      drawer = '<div class="drawer ring"><span class="mk tl">3</span><span class="tbtn locked">' + I("folder-git", 12) + 'New worktree</span></div>';
+    } else if (s.kind === "server") {
+      drawer = '<div class="drawer ring"><span class="mk tl">3</span><span class="tbtn locked">' + I("server", 12) + 'build-box <span>·</span>' + I("folder", 12) + 'Server checkout</span></div>';
+    } else {
+      drawer = '<div class="drawer ring"><span class="mk tl">3</span><span class="tbtn locked">' + I("folder", 12) + 'Local checkout</span></div>';
+    }
+    var main = '<section class="main"><div class="topbar">' + crumbs + topActions(s) + '</div>' + transcript(s) +
+      '<div class="dock"><div class="col">' + slab(s) + drawer + '</div></div>' +
+      '</section>';
+
+    var phead = s.title === null ? "Project files" : "Thread files";
+    var panel = '<aside class="panel">' + panelTabs() + '<div class="pbody"><div class="phead ring" style="width:fit-content">' + phead + '<span class="mk tr">4</span></div>' + tree(s) + '</div>' +
+      '</aside>';
+    return '<div class="app">' + sb + main + panel + '</div>';
+  }
+
+  /* ---------- A: breadcrumb ---------- */
+  function sidebarLabelledFilter(s) {
+    return '<aside class="sb">' + lights() +
+      '<div class="sb-search">' + searchField() + '<button class="ibtn" title="Add project">' + I("folder-plus", 16) + '</button><button class="ibtn" title="New thread in ' + esc(s.project) + ' (⌘N)">' + I("new", 16) + '</button></div>' +
+      '<button class="filterbtn" title="Filter threads by project. Doesn\'t change where you work.">' + I("filter", 13) + '<b>All projects</b>' + I("chev-d", 12) + '</button>' +
+      rows("a", s, THREADS) +
+      '<div class="sb-sec" style="margin-top:10px">Saved conversations</div>' +
+      '<div class="sb-foot">' + I("server", 13) + 'Servers</div></aside>';
+  }
+
+  function aFrame(s) {
+    var title = s.title === null ? "New thread" : s.title;
+    var segs = "";
+    segs += '<span class="crumb"><span class="fav">' + s.mono + '</span>' + esc(s.project) + '</span><span class="sep">/</span>';
+    segs += '<button class="crumb loc-crumb' + (s.running ? "" : " draft") + '" data-loc title="Where this thread works">' + locToken(s, {}) + '<span class="chev">' + I("chev-d", 12) + '</span></button><span class="sep">/</span>';
+    segs += '<span class="crumb here' + (s.title === null ? " dim" : "") + '"><span>' + esc(title) + '</span>' + (s.title ? '<span class="chev">' + I("chev-d", 13) + '</span>' : "") + '</span>';
+    var crumbs = '<nav class="crumbs">' + segs + '</nav>';
+
+    var drawer = "";
+    if (!s.running) {
+      drawer = '<div class="drawer"><button class="tbtn">' + I("folder", 13) + '<b>In place</b>' + I("chev-d", 12) + '</button><span class="end"><button class="tbtn">' + I("branch", 13) + '<b>main</b>' + I("chev-d", 12) + '</button></span></div>' +
+        '<div class="consequence">Edits land in your working copy at ~/Developer/editor.</div>';
+    }
+    var pop = "";
+    if (s.kind === "worktree") {
+      pop = '<div class="pop" style="left:150px;top:46px">' +
+        '<div class="hd"><span class="loc loc--worktree"><span class="g">' + I("branch", 14) + '</span></span>Worktree on this computer</div>' +
+        '<dl><dt>Branch</dt><dd><code>' + WT_BRANCH + '</code></dd><dt>From</dt><dd>main · 2 ahead</dd><dt>Folder</dt><dd><code>~/Developer/editor/.worktrees/agt-mue1wenj-7ede</code></dd></dl>' +
+        '<div class="note">An isolated copy. Your working copy in ~/Developer/editor is untouched. Files, Git and Terminal on the right show this worktree.</div>' +
+        '<div class="acts"><button class="tbtn">' + I("copy", 12) + 'Copy path</button><button class="tbtn">' + I("finder", 12) + 'Reveal in Finder</button><button class="tbtn">' + I("branch", 12) + 'Open in Git</button></div></div>';
+    }
+    var main = '<section class="main"><div class="topbar">' + crumbs + topActions(s) + '</div>' + transcript(s) +
+      '<div class="dock"><div class="col">' + slab(s) + drawer + '</div></div>' + pop + '</section>';
+
+    var scope = '<div class="scopeline" data-loc>' + (s.kind === "server" ? '<span class="loc"><b>orders-api</b></span><span class="sep">/</span>' : '<span class="loc"><b>' + esc(s.project) + '</b></span><span class="sep">/</span>') +
+      locToken(s, {}) + '<span class="path" title="' + esc(s.root) + '">&lrm;' + esc(s.root) + '&lrm;</span></div>';
+    var panel = '<aside class="panel">' + panelTabs() + scope + '<div class="pbody">' + tree(s) + '</div></aside>';
+    return '<div class="app">' + sidebarLabelledFilter(s) + main + panel + '</div>';
+  }
+
+  /* ---------- B: run line ---------- */
+  function runLine(s) {
+    var dot = '<span class="dot dot--' + s.kind + '"></span>';
+    var mid = '<span class="mid">·</span>';
+    if (!s.running) {
+      return '<div class="runline" data-loc>' + dot + '<span class="w">Run on</span><button class="pk">This computer<span class="chev">' + I("chev-d", 11) + '</span></button>' + mid +
+        '<button class="pk">editor<span class="chev">' + I("chev-d", 11) + '</span></button>' + mid +
+        '<button class="pk">In place<span class="chev">' + I("chev-d", 11) + '</span></button><span class="w">on</span>' +
+        '<button class="pk">main<span class="chev">' + I("chev-d", 11) + '</span></button></div>' +
+        '<div class="consequence">Edits land in your working copy at ~/Developer/editor. Pick <i>New worktree</i> to work on an isolated agent/… branch from main instead.</div>';
+    }
+    var h = '<div class="runline" data-loc>' + dot + '<span class="w">Running on</span>';
+    if (s.kind === "server") {
+      h += '<span class="fx">build-box</span>' + mid + '<span class="fx">orders-api</span>' + mid + '<span class="fx">server checkout</span>';
+    } else if (s.kind === "worktree") {
+      h += '<span class="fx">This computer</span>' + mid + '<span class="fx">editor</span>' + mid + '<span class="w">worktree</span><span class="fx mono" title="' + WT_BRANCH + '">' + WT_BRANCH + '</span>' + mid + '<span class="w">2 ahead of main</span>';
+    } else {
+      h += '<span class="fx">This computer</span>' + mid + '<span class="fx">editor</span>' + mid + '<span class="fx">in place</span><span class="w">on</span><span class="fx">main</span>' + mid + '<span class="w">edits your working copy</span>';
+    }
+    return h + '</div>';
+  }
+  function bFrame(s) {
+    var title = s.title === null ? "New thread" : s.title;
+    var pillTxt = s.kind === "server" ? "build-box" : s.kind === "worktree" ? "Worktree" : "In place";
+    var crumbs = '<nav class="crumbs"><span class="crumb"><span class="fav">' + s.mono + '</span>' + esc(s.project) + '</span><span class="sep">/</span>' +
+      '<span class="crumb here' + (s.title === null ? " dim" : "") + '"><span>' + esc(title) + '</span>' + (s.title ? '<span class="chev">' + I("chev-d", 13) + '</span>' : "") + '</span>' +
+      (s.running ? '<span class="pill" data-loc><span class="dot dot--' + s.kind + '"></span>' + pillTxt + '</span>' : "") + '</nav>';
+    var main = '<section class="main"><div class="topbar">' + crumbs + topActions(s) + '</div>' + transcript(s) +
+      '<div class="dock"><div class="col">' + slab(s) + runLine(s) + '</div></div></section>';
+    var what;
+    if (s.kind === "server") what = '<span class="dot dot--server"></span><b>build-box</b><span class="subtle">· server checkout · /srv/orders-api</span>';
+    else if (s.kind === "worktree") what = '<span class="dot dot--worktree"></span><b class="mono">' + WT_SHORT + '</b><span class="subtle">· worktree, same as the thread</span>';
+    else if (s.running) what = '<span class="dot dot--inplace"></span><b>editor</b><span class="subtle">· main · your working copy</span>';
+    else what = '<span class="dot dot--inplace"></span><b>editor</b><span class="subtle">· ~/Developer/editor</span>';
+    var panel = '<aside class="panel">' + panelTabs() + '<div class="panelmatch" data-loc>' + what + '</div><div class="pbody">' + tree(s) + '</div></aside>';
+    return '<div class="app">' + sidebarLabelledFilter(s) + main + panel + '</div>';
+  }
+
+  /* ---------- C: workspace switcher ---------- */
+  function cFrame(s) {
+    var fav = s.kind === "server" ? '<span class="fav lg srv">' + I("server", 12) + '</span>' : '<span class="fav lg">' + s.mono + '</span>';
+    var second;
+    if (s.kind === "server") second = '<span class="loc loc--server"><b>build-box</b></span>·<span>server checkout</span>';
+    else second = locToken(s, {});
+    var sb = '<aside class="sb">' + lights() +
+      '<button class="ws" data-loc title="Active workspace: the right panel and ⌘N use it">' + fav + '<span class="t"><span class="top"><b>' + esc(s.project) + '</b><span class="up">' + I("updown", 13) + '</span></span><span>' + second + '</span></span></button>' +
+      '<div class="sb-search">' + searchField() + '<button class="ibtn" title="Add project">' + I("folder-plus", 16) + '</button><button class="ibtn" title="New thread in ' + esc(s.project) + ' (⌘N)">' + I("new", 16) + '</button></div>' +
+      '<div class="showrow">Show<span class="miniseg"><span>This project</span><span class="on">All</span></span></div>' +
+      rows("c", s, THREADS) +
+      '<div class="sb-sec" style="margin-top:10px">Saved conversations</div>' +
+      '<div class="sb-foot">' + I("server", 13) + 'Servers</div></aside>';
+
+    var title = s.title === null ? "New thread" : s.title;
+    var pillTxt = s.kind === "server" ? "build-box" : s.kind === "worktree" ? "Worktree" : "In place";
+    var crumbs = '<nav class="crumbs"><span class="crumb"><span class="fav">' + s.mono + '</span>' + esc(s.project) + '</span><span class="sep">/</span>' +
+      '<span class="crumb here' + (s.title === null ? " dim" : "") + '"><span>' + esc(title) + '</span>' + (s.title ? '<span class="chev">' + I("chev-d", 13) + '</span>' : "") + '</span>' +
+      (s.running ? '<span class="pill"><span class="g" style="display:inline-flex;color:' + (s.kind === "worktree" ? "var(--cv-accent)" : s.kind === "server" ? "var(--server)" : "var(--cv-fg-muted)") + '">' + kindGlyph(s.kind, 12) + '</span>' + pillTxt + '</span>' : "") + '</nav>';
+
+    var drawer;
+    if (!s.running) {
+      drawer = '<div class="drawer"><button class="tbtn">' + I("folder", 13) + '<b>In place</b>' + I("chev-d", 12) + '</button><span class="end"><button class="tbtn">' + I("branch", 13) + '<b>main</b>' + I("chev-d", 12) + '</button></span></div>';
+    } else if (s.kind === "worktree") {
+      drawer = '<div class="drawer"><span class="tbtn locked">' + I("branch", 12) + 'Worktree · <span class="mono" style="font-size:11.5px">' + WT_BRANCH + '</span></span></div>';
+    } else if (s.kind === "server") {
+      drawer = '<div class="drawer"><span class="tbtn locked">' + I("server", 12) + 'build-box · Server checkout</span></div>';
+    } else {
+      drawer = '<div class="drawer"><span class="tbtn locked">' + I("folder", 12) + 'In place · main</span></div>';
+    }
+    var main = '<section class="main"><div class="topbar">' + crumbs + topActions(s) + '</div>' + transcript(s) +
+      '<div class="dock"><div class="col">' + slab(s) + drawer + '</div></div></section>';
+    var line = '<div class="scopeline" data-loc><span class="loc"><b>' + esc(s.project) + '</b></span><span class="sep">' + I("chev-r", 11) + '</span>' + locToken(s, {}) + '</div>';
+    var panel = '<aside class="panel">' + panelTabs() + line + '<div class="pbody">' + tree(s) + '</div></aside>';
+    return '<div class="app">' + sb + main + panel + '</div>';
+  }
+
+  /* ---------- t3code recreation ---------- */
+  var T3_WT = "t3code/retry-provider-error-banner";
+  var T3_ROWS = [
+    { id: "inplace", project: "editor", mono: "E", title: "Tighten the sidebar filter copy", wt: false, branch: "main", remote: false, st: "work", stLabel: "Working 1:42", diff: [18, 6] },
+    { id: "worktree", project: "editor", mono: "E", title: "Retry provider errors from the banner", wt: true, branch: T3_WT, remote: false, st: "work", stLabel: "Working 4:08", diff: [52, 4] },
+    { id: "remote", project: "orders-api", mono: "O", title: "Run migration tests against staging data", wt: false, branch: "main", remote: true, st: "work", stLabel: "Working 0:37", diff: [9, 0] },
+    { id: "eshop", project: "eshop", mono: "E", title: "Upgrade Nette forms to 3.2", wt: false, branch: "develop", remote: false, st: "done", stLabel: "2h", diff: null }
+  ];
+  function midTrunc(v, n) {
+    if (v.length <= n) return v;
+    var head = Math.ceil((n - 1) / 2);
+    var tail = Math.floor((n - 1) / 2);
+    return v.slice(0, head) + "…" + v.slice(v.length - tail);
+  }
+  function tk(n, pos) { return '<span class="tk ' + (pos || "tr") + '">' + n + '</span>'; }
+  function dl(n, pos) { return '<span class="delta ' + (pos || "tr") + '">Δ' + n + '</span>'; }
+  function chevSm() { return '<span class="chev">' + I("chev-d", 12) + '</span>'; }
+
+  function t3Row(t, activeKey) {
+    var on = t.id === activeKey;
+    var status = t.st === "work"
+      ? '<span class="st work t3st">' + I("dashed", 12) + esc(t.stLabel) + '</span>'
+      : '<span class="st done">' + esc(t.stLabel) + '</span>';
+    var branch = (t.wt ? '<span class="wtg" title="Worktree: t3code-5f3a9c21 (' + esc(t.branch) + ')">' + I("folder-git", 12) + '</span>' : "") +
+      '<span class="br t3">' + esc(midTrunc(t.branch, 25)) + '</span>';
+    var end = (t.diff ? '<span class="dstat"><span class="add">+' + t.diff[0] + '</span> <span class="del">−' + t.diff[1] + '</span></span>' : "") +
+      (t.remote ? '<span class="mach" title="build-box">' + I("server", 12) + '</span>' : "");
+    return '<li><div class="row' + (on ? " on" : "") + '"><span class="l1"><span class="fav">' + t.mono + '</span><span class="p">' + esc(t.project) + '</span>' + status + '</span>' +
+      '<span class="l2"><span>' + esc(t.title) + '</span></span><span class="l3">' + branch + '<span class="end">' + end + '</span></span></div></li>';
+  }
+  function t3SidebarHead(marker) {
+    return '<div class="sb-search">' + searchField() +
+      '<button class="ibtn' + (marker ? " tring" : "") + '" title="Filter threads by project">' + I("folder", 16) + (marker ? tk(1) : "") + '</button>' +
+      '<button class="ibtn" title="New project">' + I("folder-plus", 16) + '</button>' +
+      '<button class="ibtn" title="New thread. New thread in current project: Shift+click">' + I("new", 16) + '</button></div>';
+  }
+  function t3Sidebar(s) {
+    return '<aside class="sb">' + lights() + t3SidebarHead(true) +
+      '<ul class="sb-list">' + T3_ROWS.map(function (t) { return t3Row(t, s.key); }).join("") + '</ul>' +
+      '<div class="sb-sec" style="margin-top:10px">' + I("chev-r", 11) + 'Settled</div></aside>';
+  }
+  function t3Crumbs(s, marker) {
+    var title = s.title === null ? "New thread" : s.title;
+    return '<nav class="crumbs" style="overflow:visible"><span class="crumb' + (marker ? " tring" : "") + '" title="New thread in ' + esc(s.project) + '"><span class="fav">' + s.mono + '</span>' + esc(s.project) + (marker ? tk(2) : "") + '</span><span class="sep">/</span>' +
+      '<span class="crumb here' + (s.title === null ? " dim" : "") + '"><span>' + esc(title) + '</span>' + (s.title ? '<span class="chev" style="opacity:.5">' + I("chev-d", 13) + '</span>' : "") + '</span></nav>';
+  }
+  function t3HeaderActions() {
+    return '<div class="tb-actions" style="gap:6px">' +
+      '<span class="ogroup"><button class="obtn" title="Run dev">' + I("play", 10) + 'dev</button><button class="obtn" aria-label="Script actions">' + I("chev-d", 13) + '</button></span>' +
+      '<span class="ogroup"><button class="obtn" title="Open in VS Code">' + I("code", 13) + 'Open</button><button class="obtn" aria-label="Choose editor">' + I("chev-d", 13) + '</button></span>' +
+      '<span class="ogroup"><button class="obtn">' + I("commit", 13) + 'Commit</button><button class="obtn" aria-label="Git actions">' + I("chev-d", 13) + '</button></span>' +
+      '<span class="vbar"></span><button class="ibtn" title="Toggle terminal drawer">' + I("panel-bottom", 15) + '</button><button class="ibtn" title="Toggle right panel" style="color:var(--cv-fg-strong)">' + I("panel-right", 15) + '</button></div>';
+  }
+  function t3Strip(kind, marker) {
+    var sep = '<span class="vsep"></span>';
+    var inner;
+    if (kind === "draft-local") inner = '<button class="cctl">' + I("folder", 12) + '<span class="txt">Current checkout</span>' + chevSm() + '</button><button class="cctl push">' + I("branch", 12) + '<span class="txt">main</span>' + chevSm() + '</button>';
+    else if (kind === "draft-worktree") inner = '<button class="cctl">' + I("folder-git", 12) + '<span class="txt">New worktree</span>' + chevSm() + '</button><button class="cctl push">' + I("branch", 12) + '<span class="txt">From main</span>' + chevSm() + '</button>';
+    else if (kind === "draft-envs") inner = '<button class="cctl">' + I("monitor", 12) + '<span class="txt">This device</span>' + chevSm() + '</button>' + sep + '<button class="cctl">' + I("folder", 12) + '<span class="txt">Current checkout</span>' + chevSm() + '</button><button class="cctl push">' + I("branch", 12) + '<span class="txt">main</span>' + chevSm() + '</button>';
+    else if (kind === "draft-auto") inner = '<button class="cctl">' + I("scale", 12) + '<span class="txt">Auto balance</span>' + chevSm() + '</button>' + sep + '<button class="cctl">' + I("folder-git", 12) + '<span class="txt">New worktree</span>' + chevSm() + '</button><button class="cctl push">' + I("branch", 12) + '<span class="txt">From main</span>' + chevSm() + '</button>';
+    else if (kind === "sent-local") inner = '<span class="cstatic">' + I("folder", 12) + '<span class="txt">Local checkout</span></span><button class="cctl push">' + I("branch", 12) + '<span class="txt">main</span>' + chevSm() + '</button>';
+    else if (kind === "sent-worktree") inner = '<span class="cstatic">' + I("folder-git1", 12) + '<span class="txt">Worktree</span></span><button class="cctl push">' + I("branch", 12) + '<span class="txt">' + esc(midTrunc(T3_WT, 30)) + '</span>' + chevSm() + '</button>';
+    else inner = '<span class="cstatic">' + I("server", 12) + '<span class="txt">build-box</span></span>' + sep + '<span class="cstatic">' + I("folder", 12) + '<span class="txt">Local checkout</span></span><button class="cctl push">' + I("branch", 12) + '<span class="txt">main</span>' + chevSm() + '</button>';
+    return '<div class="cstrip' + (marker ? " tring" : "") + '">' + (marker ? tk(3, "tl") : "") + inner + '</div>';
+  }
+  function t3StripKind(s) {
+    if (!s.running) return "draft-local";
+    if (s.kind === "worktree") return "sent-worktree";
+    if (s.kind === "server") return "sent-remote";
+    return "sent-local";
+  }
+  function diffList(files) {
+    return '<ul class="dlist">' + files.map(function (f) {
+      return '<li>' + I("file", 13) + '<span class="n">' + esc(f[0]) + '</span><span class="ds"><span class="add">+' + f[1] + '</span> <span class="del">−' + f[2] + '</span></span></li>';
+    }).join("") + '</ul>';
+  }
+  function t3DiffHead(scope, marker) {
+    var ring = marker ? " tring" : "";
+    if (scope === "branch") {
+      return '<div class="dhead"><button class="sbtn' + ring + '">Branch changes' + I("chev-d", 12) + (marker ? tk(4, "tl") : "") + '</button><span class="cmp"><span>' + esc(midTrunc(T3_WT, 26)) + '</span>' + I("arrow-r", 12) + '</span><button class="gbtn">main' + I("chev-d", 12) + '</button></div>';
+    }
+    return '<div class="dhead"><button class="sbtn' + ring + '">Working tree' + I("chev-d", 12) + (marker ? tk(4) : "") + '</button></div>';
+  }
+  function t3FilesHead(project, marker) {
+    return '<div class="dhead"><button class="ibtn" title="Refresh workspace files">' + I("refresh", 13) + '</button><span class="fsearch' + (marker ? " tring" : "") + '">' + I("search", 12) + 'Search ' + esc(project) + ' files' + (marker ? tk(4) : "") + '</span><button class="ibtn" title="Expand all folders">' + I("updown", 13) + '</button></div>';
+  }
+  function t3Panel(s) {
+    if (!s.running) {
+      return '<aside class="panel"><div class="ptabs"><span class="ptab on">' + I("folder", 13) + 'Files</span><span class="sp"></span><button class="ibtn" title="Open a surface">' + I("plus", 14) + '</button></div>' +
+        t3FilesHead(s.project, true) + '<div class="pbody">' + tree(s) + '</div></aside>';
+    }
+    return '<aside class="panel"><div class="ptabs"><span class="ptab on">' + I("diff", 13) + 'Diff</span><span class="ptab">' + I("folder", 13) + 'Files</span><span class="sp"></span><button class="ibtn" title="Open a surface">' + I("plus", 14) + '</button></div>' +
+      t3DiffHead(s.kind === "worktree" ? "branch" : "unstaged", true) + '<div class="pbody">' + diffList(s.files) + '</div></aside>';
+  }
+  function t3Frame(s) {
+    var body = s.running ? transcript(s)
+      : '<div class="hero"><h1>What should we build in <button class="heropick"><span class="fav">E</span>editor<span class="chev">' + I("chev-d", 14) + '</span></button>?</h1></div>';
+    var pop = "";
+    if (!s.running) {
+      pop = '<div class="pop" style="left:34px;bottom:50px;width:268px"><div class="lab">Workspace</div>' +
+        '<div class="mi hl">' + I("folder", 13) + 'Current checkout<span class="k">' + I("check", 13) + '</span></div>' +
+        '<div class="mi">' + I("folder-git", 13) + 'New worktree</div>' +
+        '<div class="mi two">' + I("history", 13) + '<span>Previous worktree<small>' + esc(midTrunc(T3_WT, 30)) + '</small></span></div></div>';
+    }
+    var main = '<section class="main"><div class="topbar">' + t3Crumbs(s, true) + t3HeaderActions() + '</div>' + body +
+      '<div class="dock"><div class="col">' + slab(s) + t3Strip(t3StripKind(s), true) + '</div></div>' + pop + '</section>';
+    return '<div class="app">' + t3Sidebar(s) + main + t3Panel(s) + '</div>';
+  }
+
+  function piece(title, stage, what, cite, side, wide) {
+    return '<div class="card piece' + (wide ? " wide" : "") + '"><h3>' + title + '</h3><div class="stage' + (side ? " side" : "") + '">' + stage + '</div>' +
+      (what ? '<p class="what">' + what + '</p>' : "") + '<div class="cite">' + cite + '</div></div>';
+  }
+  function t3Pieces() {
+    var p = [];
+    p.push(piece("1 · Sidebar header: a filter, nothing else",
+      t3SidebarHead(false) +
+      '<div class="menu-static" style="width:260px"><div class="lab" style="display:flex;gap:6px;align-items:center">' + I("search", 12) + 'Search projects...</div>' +
+      '<div class="mi hl">' + I("folder", 13) + 'All projects</div>' +
+      '<div class="mi"><span class="fav">E</span>editor</div><div class="mi"><span class="fav">E</span>eshop</div>' +
+      '<div class="mi"><span class="fav">O</span>orders-api<span class="k">' + I("server", 12) + '</span></div></div>',
+      'The same layout as Codevo\'s current header, and where the "E" monogram came from. In t3code the button <b>only</b> filters. Its label is "Filter threads by project: editor" and it shows the project favicon. The choice is persisted, and nothing else writes to it except the row menu\'s "Filter by editor" / "Show all projects". ✎ opens "New thread in…" when there are several projects, and Shift-click creates the thread in the current project. The default sidebar is a flat list across projects. Per-project trees are a legacy setting.',
+      '<code>Sidebar.tsx:2394-2412</code> (scope items, "All projects"), <code>:4460-4500</code> (trigger label), <code>:4404-4428</code> (new thread → palette), <code>sidebar/SidebarThreadHeader.tsx:126-155</code>, <code>threadActionMenu.logic.ts:128-138</code>, <code>../uiStateStore.ts:30</code> (persisted), <code>settings/SettingsPanels.tsx:2126</code> ("Restore per-project thread trees instead of the default flat sidebar").', true));
+    p.push(piece("2 · Thread row: branch always, worktree and machine as glyphs",
+      '<ul class="sb-list">' + T3_ROWS.slice(0, 3).map(function (t) { return t3Row(t, "worktree"); }).join("") + '</ul>' +
+      '<div class="tipbox">' + I("folder-git", 11) + ' Worktree: t3code-5f3a9c21 (' + esc(T3_WT) + ')</div>',
+      'Line 3 is "always the branch", middle-truncated. A worktree adds a faint folder-git glyph whose tooltip gives the folder. A thread on another machine gets a machine icon at the end. A local-checkout thread has no glyph at all. The hover card adds project, machine and branch, and warns <i>"You\'re currently checked out on another branch."</i> if the checkout moved.',
+      '<code>Sidebar.tsx:1788-1990</code> (row, line 3 at <code>:1951</code>, remote icon at <code>:1976</code>), <code>ThreadStatusIndicators.tsx:411-443</code>, <code>Sidebar.tsx:319-387</code> (hover card), <code>../worktreeCleanup.ts:35</code> (folder name only).', true));
+    p.push(piece("3 · Chat header: project / title, then actions",
+      '<div class="topbar" style="padding:0 4px;box-shadow:none;height:40px">' + t3Crumbs(STATES.worktree, false) + '<div class="tb-actions" style="gap:6px">' +
+      '<span class="ogroup"><button class="obtn">' + I("play", 10) + 'dev</button><button class="obtn">' + I("chev-d", 13) + '</button></span>' +
+      '<span class="ogroup"><button class="obtn">' + I("code", 13) + 'Open</button><button class="obtn">' + I("chev-d", 13) + '</button></span>' +
+      '<span class="ogroup"><button class="obtn">' + I("commit", 13) + 'Commit</button><button class="obtn">' + I("chev-d", 13) + '</button></span></div></div>',
+      '"The project always leads the header". Clicking the project starts a new thread in it, and clicking the title opens the thread menu. There\'s no checkout, branch or machine here. <b>Open</b> (editor) and the Git quick action run in <code>worktreePath ?? project root</code> without saying so. For a remote machine, Open uses editor deep links, or it\'s disabled.',
+      '<code>chat/ChatHeader.tsx:403-485</code> (breadcrumb), <code>:354-397</code> (scripts, Open, Git), <code>:107-124</code> (Open on remote), <code>ChatView.tsx:3626-3631</code> (<code>gitCwd</code>), <code>chat/OpenInPicker.tsx:353-386</code>, <code>ProjectScriptsControl.tsx</code>, <code>GitActionsControl.logic.ts:127-305</code>.', false, true));
+    p.push(piece("4 · Composer context strip: the location, every state",
+      '<div class="plabel">New thread · one machine</div>' + t3Strip("draft-local") +
+      '<div class="plabel">New thread · New worktree picked</div>' + t3Strip("draft-worktree") +
+      '<div class="plabel">New thread · project on 2+ machines</div>' + t3Strip("draft-envs") +
+      '<div class="plabel">New thread · load balancing on</div>' + t3Strip("draft-auto") +
+      '<div class="plabel">Started · local checkout (checkout locked, branch still a picker)</div>' + t3Strip("sent-local") +
+      '<div class="plabel">Started · worktree</div>' + t3Strip("sent-worktree") +
+      '<div class="plabel">Started · on another machine (always shown, even if it\'s the only one)</div>' + t3Strip("sent-remote"),
+      'It lives under the composer, not in the header. "Run on" appears when the project exists on 2+ machines, or when the thread\'s machine isn\'t this one ("This device" is the default name of the local one). The checkout locks once the thread has a message or a live session. It locks earlier if the thread already has a worktree. The branch reads "From main" for a worktree that doesn\'t exist yet. Worktree branches start as <code>t3code/&lt;8 hex&gt;</code> and are renamed from the first message. Labels collapse to icons when the strip is narrow.',
+      '<code>ChatView.tsx:10127-10166</code> (strip under composer), <code>:2627-2631</code> (<code>envLocked</code>), <code>BranchToolbar.tsx:546-550</code>, <code>:654-725</code>, <code>BranchToolbar.logic.ts:44-64</code>, <code>:93-115</code> (labels), <code>:212-237</code> ("From …"), <code>BranchToolbarEnvModeSelector.tsx:59-175</code>, <code>BranchToolbarEnvironmentSelector.tsx:61-160</code>, <code>packages/shared/src/git.ts:13</code>, <code>apps/server/src/orchestration/Layers/ProviderCommandReactor.ts:909-956</code>.', false, true));
+    p.push(piece("5 · Workspace menu and \"Previous worktree\"",
+      '<div class="menu-static" style="width:270px;margin-top:0"><div class="lab">Run on</div><div class="mi">' + I("scale", 13) + 'Auto balance</div><div class="mi hl">' + I("monitor", 13) + 'This device<span class="k">' + I("check", 12) + '</span></div><div class="mi">' + I("server", 13) + 'build-box</div>' +
+      '<div class="sepl"></div><div class="lab">Workspace</div><div class="mi hl">' + I("folder", 13) + 'Current checkout<span class="k">' + I("check", 12) + '</span></div><div class="mi">' + I("folder-git", 13) + 'New worktree</div>' +
+      '<div class="mi two">' + I("history", 13) + '<span>Previous worktree<small>' + esc(midTrunc(T3_WT, 30)) + '</small></span></div></div>',
+      'On a narrow composer, "Run on" and "Workspace" merge into one menu. "Previous worktree" puts a draft into the project\'s most recently used worktree. Only drafts can do this, because started threads keep their workspace. When the draft already sits in a worktree, "Current checkout" becomes "Current worktree".',
+      '<code>BranchToolbar.tsx:112-313</code> (combined menu), <code>:552-585</code> (previous worktree), <code>BranchToolbar.logic.ts:103-105</code>, <code>:127-162</code>, <code>PreviousWorktreeItemContent.tsx</code>, <code>docs/user/remote-access.md:66-81</code> (Auto balance).'));
+    p.push(piece("6 · The branch can change later, and says so",
+      '<div class="banner" style="margin:0"><span style="display:inline-flex;color:var(--cv-fg-subtle)">' + I("branch", 14) + '</span><span><span class="subtle">Branch changed &mdash; was</span> <code>main</code></span><button class="act">Restore branch</button><button class="ibtn" style="width:22px;height:22px" aria-label="Dismiss branch change notice">' + I("x", 12) + '</button></div>',
+      'The branch picker isn\'t disabled on a started thread. Picking a ref runs a switch in the thread\'s checkout and saves it as the thread\'s branch. Moving the thread to another worktree stops its session. If a local-checkout thread\'s branch no longer matches the checkout, this notice appears above the composer (tooltip: <i>"This thread last ran on main. Sending will continue on feature/x."</i>).',
+      '<code>BranchToolbarBranchSelector.tsx:176-215</code> (<code>setThreadBranch</code>), <code>:808-827</code> (trigger only disabled while loading), <code>BranchToolbar.logic.ts:246-260</code>, <code>ChatView.tsx:5855-5866</code>, <code>:6541-6572</code>.'));
+    p.push(piece("7 · Right panel: follows the checkout, never names it",
+      '<div class="plabel">Diff · default scope</div>' + t3DiffHead("unstaged", false) +
+      '<div class="plabel">Diff · Branch changes (the only place a ref shows)</div>' + t3DiffHead("branch", false) +
+      '<div class="menu-static" style="width:200px"><div class="mi hl">Working tree</div><div class="mi">Branch changes</div><div class="mi">Latest turn</div><div class="mi">Turn<span class="k">' + I("chev-r", 12) + '</span></div></div>' +
+      '<div class="plabel">Files</div>' + t3FilesHead("editor", false),
+      'Diff and Files both read <code>thread.worktreePath ?? project.workspaceRoot</code>. The panel names the project ("Search editor files") but not the checkout, and there\'s no path. A worktree thread and a local thread in the same project look identical until you pick "Branch changes".',
+      '<code>DiffPanel.tsx:167</code> (<code>activeCwd</code>), <code>:232-239</code>, <code>:672-760</code>, <code>../diffPanelStore.ts:13</code> (default "Working tree"), <code>ChatView.tsx:3707</code>, <code>:9653-9660</code>, <code>files/FileBrowserPanel.tsx:490-500</code>, <code>RightPanelTabs.tsx:344-407</code>.'));
+    p.push(piece("8 · New thread: the project is picked in the hero",
+      '<div style="text-align:center;font-size:17px;color:var(--cv-fg-muted);padding:14px 0">What should we build in <button class="heropick"><span class="fav">E</span>editor<span class="chev">' + I("chev-d", 13) + '</span></button>?</div>',
+      'A draft picks or changes its project right in the headline. If the new project isn\'t on the draft\'s machine, it moves to one that has it. Remote isn\'t missing: it\'s "environments", meaning other machines running the T3 server, paired over T3 Connect, Tailscale or SSH. A project that exists on several machines is grouped into one logical project.',
+      '<code>chat/DraftHeroHeadline.tsx:239-250</code>, <code>docs/user/thread-sidebar.md:3-14</code>, <code>docs/user/remote-access.md</code>, <code>ProjectEnvironmentBadge.tsx</code>, <code>EnvironmentMachineIcon.tsx</code>.'));
+    return p.join("");
+  }
+
+  /* ---------- C + t3code ---------- */
+  function ct3Token(s, opts) {
+    opts = opts || {};
+    if (s.kind === "server") return '<span class="loc loc--server"><span class="g">' + I("server", 12) + '</span><b>build-box</b><span class="sfx">· Server checkout</span></span>';
+    if (s.kind === "worktree" && s.running) return '<span class="loc loc--worktree"><span class="g">' + I("branch", 12) + '</span><b>Worktree</b><span class="sfx">· ' + esc(WT_SHORT) + '</span></span>';
+    return '<span class="loc loc--inplace' + (s.running ? "" : " draft") + '"><span class="g">' + I("folder", 12) + '</span><b>Local checkout</b><span class="sfx">· main</span></span>';
+  }
+  function ct3Row(t, activeKey, mark) {
+    var on = t.id === activeKey;
+    var fav = t.kind === "server" ? '<span class="fav srv">' + I("server", 10) + '</span>' : '<span class="fav">' + t.mono + '</span>';
+    var proj = t.kind === "server" ? esc(t.server) + ' · ' + esc(t.project) : esc(t.project);
+    var glyph, label;
+    if (t.kind === "server") { glyph = '<span class="g" style="display:inline-flex;color:var(--server)">' + I("server", 12) + '</span>'; label = "Server checkout"; }
+    else if (t.kind === "worktree") { glyph = '<span class="g" style="display:inline-flex;color:var(--cv-accent)">' + I("branch", 12) + '</span>'; label = WT_SHORT; }
+    else { glyph = '<span class="g" style="display:inline-flex">' + I("folder", 12) + '</span>'; label = t.branch; }
+    var stat = t.id === "worktree" ? '<span class="dstat"><span class="add">+52</span> <span class="del">−4</span></span>' : t.id === "inplace" ? '<span class="dstat"><span class="add">+18</span> <span class="del">−6</span></span>' : "";
+    return '<li><div class="row' + (on ? " on" : "") + (mark ? " dring" : "") + '">' + (mark ? dl(3) : "") + '<span class="l1">' + fav + '<span class="p">' + proj + '</span><span class="st ' + t.st + '">' + t.stLabel + '</span></span>' +
+      '<span class="l2"><span>' + esc(t.title) + '</span></span><span class="l3">' + glyph + '<span class="br">' + esc(label) + '</span><span class="end">' + stat + '</span></span></div></li>';
+  }
+  function ct3Strip(s) {
+    var sep = '<span class="vsep"></span>';
+    var inner;
+    if (!s.running) {
+      inner = '<button class="cctl">' + I("monitor", 12) + '<span class="txt">This computer</span>' + chevSm() + '</button>' + sep +
+        '<button class="cctl">' + I("folder", 12) + '<span class="txt">Local checkout</span>' + chevSm() + '</button><button class="cctl push">' + I("branch", 12) + '<span class="txt">main</span>' + chevSm() + '</button>';
+    } else if (s.kind === "worktree") {
+      inner = '<span class="cstatic"><span class="g-wt">' + I("branch", 12) + '</span><span class="txt">Worktree</span></span><span class="cstatic push">' + I("branch", 12) + '<span class="txt mono" style="font-size:11px">' + esc(WT_BRANCH) + '</span><span>· 2 ahead of main</span></span>';
+    } else if (s.kind === "server") {
+      inner = '<span class="cstatic"><span class="g-srv">' + I("server", 12) + '</span><span class="txt">build-box</span></span>' + sep + '<span class="cstatic">' + I("folder", 12) + '<span class="txt">Server checkout</span></span>';
+    } else {
+      inner = '<span class="cstatic">' + I("folder", 12) + '<span class="txt">Local checkout</span></span><span class="cstatic push">' + I("branch", 12) + '<span class="txt">main</span></span>';
+    }
+    return '<div class="cstrip dring" data-loc>' + dl(5, "tl") + inner + '</div>';
+  }
+  function ct3Frame(s) {
+    var fav = s.kind === "server" ? '<span class="fav lg srv">' + I("server", 12) + '</span>' : '<span class="fav lg">' + s.mono + '</span>';
+    var sb = '<aside class="sb">' + lights() +
+      '<button class="ws dring" data-loc title="Where the selected thread runs. Click for New thread in… and details">' + dl(1) + fav + '<span class="t"><span class="top"><b>' + esc(s.project) + '</b><span class="up">' + I("chev-d", 13) + '</span></span><span>' + ct3Token(s) + '</span></span></button>' +
+      '<div class="sb-search">' + searchField() + '<button class="ibtn" title="Add project">' + I("folder-plus", 16) + '</button><button class="ibtn" title="New thread in ' + esc(s.project) + ' (⌘N)">' + I("new", 16) + '</button></div>' +
+      '<div class="showrow" style="padding-top:2px">Show<button class="filterbtn dring" style="margin:0;position:relative" title="Filters rows only. Never follows the selected thread.">' + dl(2) + I("filter", 12) + '<b>All projects</b>' + I("chev-d", 12) + '</button></div>' +
+      '<ul class="sb-list">' + THREADS.map(function (t, i) { return ct3Row(t, s.key, i === 1); }).join("") + '</ul>' +
+      '<div class="sb-sec" style="margin-top:10px">Saved conversations</div>' +
+      '<div class="sb-foot">' + I("server", 13) + 'Servers</div></aside>';
+    var title = s.title === null ? "New thread" : s.title;
+    var crumbs = '<nav class="crumbs" style="overflow:visible"><span class="crumb" title="New thread in ' + esc(s.project) + '"><span class="fav">' + s.mono + '</span>' + esc(s.project) + '</span><span class="sep">/</span>' +
+      '<span class="crumb here dring' + (s.title === null ? " dim" : "") + '" style="overflow:visible">' + dl(4) + '<span>' + esc(title) + '</span>' + (s.title ? '<span class="chev">' + I("chev-d", 13) + '</span>' : "") + '</span></nav>';
+    var pop = "";
+    if (!s.running) {
+      pop = '<div class="pop" style="left:240px;top:50px;width:280px">' +
+        '<div class="lab">New thread in</div>' +
+        '<div class="mi hl"><span class="fav">E</span>editor<span class="k">' + I("check", 12) + '</span></div>' +
+        '<div class="mi"><span class="fav">E</span>eshop</div>' +
+        '<div class="mi"><span class="fav srv">' + I("server", 10) + '</span>orders-api<span class="k">build-box</span></div>' +
+        '<div class="sepl"></div><div class="lab">This draft</div>' +
+        '<div class="mi">' + I("copy", 13) + 'Copy path<span class="k">~/Developer/editor</span></div>' +
+        '<div class="mi">' + I("finder", 13) + 'Reveal in Finder</div></div>';
+    }
+    var main = '<section class="main"><div class="topbar">' + crumbs + topActions(s) + '</div>' + transcript(s) +
+      '<div class="dock"><div class="col">' + slab(s) + ct3Strip(s) + '</div></div></section>';
+    var line = '<div class="scopeline dring" data-loc style="border-radius:0">' + dl(6, "tl") + '<span class="loc"><b>' + esc(s.project) + '</b></span><span class="sep">' + I("chev-r", 11) + '</span>' + ct3Token(s) +
+      '<span class="path" title="' + esc(s.root) + '">&lrm;' + esc(s.root) + '&lrm;</span></div>';
+    var panel = '<aside class="panel">' + panelTabs() + line + '<div class="pbody">' + tree(s) + '</div></aside>';
+    return '<div class="app">' + sb + main + panel + pop + '</div>';
+  }
+
+  var NOTES = {
+    t3: {
+      "new": "<b>New thread.</b> The hero asks <i>What should we build in editor ⌄?</i>, and the project is picked right there. The strip under the composer reads <i>Current checkout ⌄ … main ⌄</i>. The Workspace menu (shown open) offers New worktree and Previous worktree. There's no Run on picker because this project exists on only one machine. Files shows the project root without saying so.",
+      inplace: "<b>Running in place.</b> The strip locks to a muted <i>Local checkout</i>. The branch at the right stays a live picker. Diff defaults to <i>Working tree</i>. Nothing on screen says the agent is editing the files you have open. The header is still just <i>editor / title</i>.",
+      worktree: "<b>Running in a worktree.</b> The strip says <i>Worktree</i> plus the renamed branch <i>t3code/retry-provider-error-banner</i>. The row has a faint worktree glyph. The Diff panel shows the branch only because its scope was switched to <i>Branch changes</i> (the default is Working tree). The folder path appears only in the row glyph's tooltip.",
+      remote: "<b>Remote.</b> t3code has it as environments. The strip leads with the machine (<i>build-box</i>), always shown for a non-local machine even when it's the only one, then <i>Local checkout</i>, t3code's word even on the remote machine. The row gets a machine icon. The header shows nothing extra, and Open switches to editor deep links."
+    },
+    ct3: {
+      "new": "<b>New thread.</b> The card shows the draft's location (dashed: pending), and its menu is shown open: <i>New thread in…</i> plus details. The strip reads <i>This computer | Local checkout … main</i> as pickers, with the machine shown because a server is configured. The panel line repeats <i>editor ▸ Local checkout · main</i> with the path.",
+      inplace: "<b>Running in place.</b> The card and the panel line read <i>Local checkout · main</i>. The strip holds the same two words as muted labels. The header is plain <i>editor / title</i>. If the checkout's branch moves later, the Δ7 notice appears above the composer.",
+      worktree: "<b>Running in a worktree.</b> The card and the panel line read <i>Worktree · agent/agt-…7ede</i>. The strip gives the full branch and <i>2 ahead of main</i> on the right, t3code's position. The row shows the branch with an accent glyph.",
+      remote: "<b>Remote runner.</b> The card switches to a server glyph (<i>orders-api · build-box · Server checkout</i>). The strip leads with <i>build-box</i> and has no branch, because Codevo doesn't know it for server threads. The panel line names the server and <i>/srv/orders-api</i>. The filter still says <i>All projects</i>: selecting the thread didn't move it."
+    },
+    current: {
+      "new": "<b>New thread.</b> \"E\" sets the target, but the only hint of it is the tooltip \"New thread in editor (⌘N)\". The footer says \"Local checkout\" and \"main\". \"This computer\" appears only inside the Workspace menu.",
+      inplace: "<b>Running in place.</b> The footer is locked to \"Local checkout\" and the branch picker disappears. The row says \"in place\". Nothing says the agent is editing the same files you have open.",
+      worktree: "<b>Running in a worktree.</b> The footer still reads \"New worktree\" although it already exists, and the branch appears only on the sidebar row. The right panel says \"Thread files\" without saying which folder.",
+      remote: "<b>Remote runner.</b> Selecting the server thread moved the filter to orders-api, so the monogram silently turned into \"O\" and the editor threads disappeared from the list. The server shows up only as a small icon after the title and in the footer."
+    },
+    a: {
+      "new": "<b>New thread.</b> The crumb shows the pending choice with a dashed outline (<i>main · in place</i>). The footer picker uses the same words, plus one consequence line. The right panel shows the project root.",
+      inplace: "<b>Running in place.</b> The crumb is solid, <i>main · in place</i>, and the footer picker is gone. The panel line repeats <i>editor / main · in place</i> with the path. The branch is the checkout's live branch.",
+      worktree: "<b>Running in a worktree.</b> The crumb reads <i>agent/agt-…7ede · worktree</i>. The details popover (shown open) has the full branch, base, folder and what the right panel shows. The panel line has the worktree path.",
+      remote: "<b>Remote runner.</b> The location segment names the machine: <i>orders-api / build-box · server checkout / title</i>, with a server glyph. The panel line repeats it with the server path. The machine appears only because it isn't this computer."
+    },
+    b: {
+      "new": "<b>New thread.</b> The sentence is the picker: <i>Run on This computer · editor · In place on main</i>, with the consequence below. The header has no pill yet because nothing is running.",
+      inplace: "<b>Running in place.</b> The line reads <i>Running on This computer · editor · in place on main · edits your working copy</i>. The header pill says In place and the panel line says <i>editor · main · your working copy</i>.",
+      worktree: "<b>Running in a worktree.</b> An accent dot plus <i>worktree agent/agt-mue1wenj-7ede · 2 ahead of main</i>. The panel line says <i>agent/agt-…7ede · worktree, same as the thread</i>.",
+      remote: "<b>Remote runner.</b> A blue dot plus <i>Running on build-box · orders-api · server checkout</i>. The header pill shows the server name and the panel line says <i>build-box · server checkout · /srv/orders-api</i>."
+    },
+    c: {
+      "new": "<b>New thread.</b> The card says <i>editor · main · in place</i>. It's the project ⌘N uses and the one the right panel shows. The filter is a separate \"This project | All\" toggle.",
+      inplace: "<b>Running in place.</b> The card's second line follows the selected thread. The locked footer reads <i>In place · main</i>. The header pill and the panel line agree.",
+      worktree: "<b>Running in a worktree.</b> The card shows <i>agent/agt-…7ede · worktree</i>. The machine is named only for servers. The locked footer shows the real branch instead of \"New worktree\".",
+      remote: "<b>Remote runner.</b> The card switches to a server glyph: <i>orders-api · build-box · server checkout</i>. Rows show the server name on line 1."
+    }
+  };
+
+  var RENDER = { current: currentFrame, a: aFrame, b: bFrame, c: cFrame, t3: t3Frame, ct3: ct3Frame };
+  var state = "new";
+
+  function render(pulse) {
+    var s = STATES[state];
+    document.querySelectorAll(".frame").forEach(function (el) {
+      var v = el.getAttribute("data-variant");
+      el.innerHTML = RENDER[v](s);
+      if (pulse && v !== "current" && v !== "t3") {
+        el.querySelectorAll("[data-loc]").forEach(function (n) {
+          n.classList.remove("pulse");
+          void n.offsetWidth;
+          n.classList.add("pulse");
+        });
+      }
+    });
+    document.querySelectorAll("[data-note]").forEach(function (el) {
+      el.innerHTML = NOTES[el.getAttribute("data-note")][state];
+    });
+    document.querySelectorAll("#stateSeg button").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-state") === state));
+    });
+  }
+  function setState(next) {
+    if (!STATES[next] || next === state) return;
+    state = next;
+    render(true);
+  }
+  document.getElementById("stateSeg").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (b) setState(b.getAttribute("data-state"));
+  });
+  document.getElementById("schemeSeg").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    var scheme = b.getAttribute("data-scheme");
+    document.documentElement.setAttribute("data-cv-scheme", scheme);
+    document.querySelectorAll("#schemeSeg button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var map = { "1": "new", "2": "inplace", "3": "worktree", "4": "remote" };
+    if (map[e.key]) setState(map[e.key]);
+  });
+  var piecesEl = document.getElementById("t3pieces");
+  if (piecesEl) piecesEl.innerHTML = t3Pieces();
+  render(false);
+})();
+</script>
+</body>
+</html>

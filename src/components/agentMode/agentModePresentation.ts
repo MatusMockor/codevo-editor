@@ -292,7 +292,7 @@ export function agentIsolationBadgeLabel(isolation: AgentTaskIsolation): string 
     case "worktree":
       return "Worktree";
     case "in-place":
-      return "In place";
+      return "Local checkout";
     default:
       return unsupportedIsolation(isolation);
   }
@@ -653,8 +653,10 @@ export const AGENT_SHIP_BLOCKED_PRIMARY_DIRTY = "The main checkout has uncommitt
 export const AGENT_SHIP_BLOCKED_PRIMARY_DETACHED = "The main checkout is detached.";
 export const AGENT_SHIP_BLOCKED_NOT_FAST_FORWARDABLE =
   "The branch is behind the main checkout; use Merge instead of Fast-forward.";
-export const AGENT_SHIP_BLOCKED_IN_PLACE = "In-place threads have nothing to integrate.";
-export const AGENT_SHIP_BLOCKED_IN_PLACE_WORKTREE = "In-place threads have no worktree to remove.";
+export const AGENT_SHIP_BLOCKED_IN_PLACE =
+  "Threads in the local checkout have nothing to integrate.";
+export const AGENT_SHIP_BLOCKED_IN_PLACE_WORKTREE =
+  "Threads in the local checkout have no worktree to remove.";
 export const AGENT_SHIP_BLOCKED_DELETE_BRANCH = "Integrate the branch before deleting it.";
 export const AGENT_SHIP_BLOCKED_NOTHING_TO_INTEGRATE = "The branch has no commits to integrate.";
 export const AGENT_SHIP_BLOCKED_EMPTY_MESSAGE = "Write a commit message first.";

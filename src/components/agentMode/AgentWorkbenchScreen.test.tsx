@@ -11,6 +11,7 @@ import { WorkspaceTrustDialogHost } from "../projects/WorkspaceTrustDialogHost";
 import { WorkspaceTrustPromptCoordinator } from "../../application/workspaceTrustPrompt";
 import type { WorkspaceTrustOrigin } from "../../domain/trust";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -140,9 +141,7 @@ describe("AgentWorkbenchScreen", () => {
     await act(async () => {});
     expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
     expect(next.openWorkspaceRootWithReceipt).not.toHaveBeenCalled();
-    expect(host.querySelector('button[aria-label="New thread"]')?.getAttribute("title")).toContain(
-      project(ROOT_B).label,
-    );
+    expect(currentPaletteProjectLabel()).toBe(project(ROOT_B).label);
   });
 
   it("projects the workbench scripts and keymap onto the thread header controls", () => {
@@ -169,7 +168,7 @@ describe("AgentWorkbenchScreen", () => {
     const openSettingsSection = vi.fn();
     render(createWorkbench(ROOT_A, { openSettingsSection }));
 
-    click('button[aria-label^="Workspace: This computer,"]');
+    click('button[aria-label^="Workspace: "]');
     const manage = [
       ...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'),
     ].find((button) => button.textContent === "Manage environments");
@@ -691,9 +690,7 @@ describe("AgentWorkbenchScreen", () => {
           },
         },
       });
-      expect(
-        host.querySelector('button[aria-label="New thread"]')?.getAttribute("title"),
-      ).toContain("api");
+      expect(currentPaletteProjectLabel()).toBe("api");
     },
   );
 
@@ -1778,4 +1775,9 @@ function editorReveals(layout: RecordedAgentWorkbenchLayout): number {
   return layout.actions.filter(
     (action) => action.kind === "openSurface" && action.surface === "editor",
   ).length;
+}
+
+function currentPaletteProjectLabel(): string | null {
+  const palette = workbenchAgentPaletteProvider.current();
+  return palette?.projects.find((entry) => entry.current)?.label ?? null;
 }

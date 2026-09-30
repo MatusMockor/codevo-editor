@@ -62,12 +62,7 @@ describe("AgentComposer", () => {
     render();
 
     expect(host.querySelector(".cv-composer__foot .agent-picker__prefix")).toBeNull();
-    expect(workspaceRowLabels()).toEqual([
-      "This computer",
-      "Remote server",
-      "Local checkout",
-      "New worktree",
-    ]);
+    expect(workspaceRowLabels()).toEqual(["Local checkout", "New worktree"]);
     expect(pickerOptionLabels(REPOSITORY_ID)).toEqual(["app", "packages/api"]);
     expect(pickerGroupHeadings(REPOSITORY_ID)).toEqual(["Run in repository"]);
     const selectedOptions = pickerOptions(REPOSITORY_ID).filter(
@@ -80,12 +75,7 @@ describe("AgentComposer", () => {
     render({ target: { ...target(), repositoryOptions: [] } });
 
     expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
-    expect(workspaceRowLabels()).toEqual([
-      "This computer",
-      "Remote server",
-      "Local checkout",
-      "New worktree",
-    ]);
+    expect(workspaceRowLabels()).toEqual(["Local checkout", "New worktree"]);
   });
 
   it("offers both server checkout modes and labels the server checkout truthfully", () => {
@@ -103,7 +93,9 @@ describe("AgentComposer", () => {
       mode: { kind: "followUp", blockedReason: null },
       isolation: "in-place",
     });
-    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Server checkout");
+    expect(
+      [...host.querySelectorAll(".agent-composer__lock")].map((lock) => lock.textContent),
+    ).toEqual(["Runs on:Server", "Checkout:Server checkout"]);
   });
 
   it("changes the repository of the next thread from the repository picker and names it", () => {
@@ -136,7 +128,7 @@ describe("AgentComposer", () => {
     const onIsolationChange = vi.fn();
     render({ onIsolationChange, worktreeAvailable: false });
 
-    expect(workspaceRowLabels()).toEqual(["This computer", "Remote server", "Local checkout"]);
+    expect(workspaceRowLabels()).toEqual(["Local checkout"]);
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
 
     render({ onIsolationChange, prompt: "Fix it", worktreeAvailable: false });
@@ -249,9 +241,9 @@ describe("AgentComposer", () => {
     expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
-  it("lets a plain project folder start a thread and states that it runs in place", () => {
+  it("lets a plain project folder start a thread and states that it runs in the local checkout", () => {
     render({
-      isolationReason: "Not a Git repository · runs in place",
+      isolationReason: "Not a Git repository · Local checkout only",
       prompt: "Fix it",
       target: { ...target(), repositoryOptions: [] },
       worktreeAvailable: false,
@@ -259,10 +251,10 @@ describe("AgentComposer", () => {
 
     expect(submitButton().disabled).toBe(false);
     expect(host.querySelector(".agent-composer__reason")?.textContent).toBe(
-      "Not a Git repository · runs in place",
+      "Not a Git repository · Local checkout only",
     );
     expect(host.textContent).not.toContain("uncommitted");
-    expect(workspaceRowLabels().slice(2)).toEqual(["Local checkout"]);
+    expect(workspaceRowLabels()).toEqual(["Local checkout"]);
   });
 
   it("picks the checkout in the context strip below the prompt box", () => {
@@ -290,15 +282,11 @@ describe("AgentComposer", () => {
 
     const footer = host.querySelector(".agent-composer__footer");
     const environment = footer?.querySelector<HTMLButtonElement>(`#${CHECKOUT_ID}`);
-    expect(environment?.getAttribute("aria-label")).toBe(
-      "Workspace: This computer, Local checkout",
-    );
+    expect(environment?.getAttribute("aria-label")).toBe("Workspace: Local checkout");
     expect(footer?.firstElementChild?.contains(environment ?? null)).toBe(true);
+    expect(footer?.querySelector("#agent-run-on")).toBeNull();
     act(() => environment?.click());
-    const remote = workspaceRow("Remote server");
-    expect(remote?.getAttribute("aria-disabled")).toBe("true");
-    act(() => remote?.click());
-    expect(environment?.getAttribute("aria-label")).toContain("This computer");
+    expect(workspaceRow("Local checkout")?.getAttribute("aria-checked")).toBe("true");
     expect(onSubmit).not.toHaveBeenCalled();
     act(() =>
       document.querySelector<HTMLButtonElement>('[role="menu"] [role="menuitem"]')?.click(),
@@ -366,7 +354,7 @@ describe("AgentComposer", () => {
     expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
     expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     const lock = host.querySelector(".agent-composer__lock");
-    expect(lock?.textContent).toContain("New worktree");
+    expect(lock?.textContent).toBe("Checkout:Worktree");
     expect(lock?.querySelector("button")).toBeNull();
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.contains(lock)).toBe(true);
@@ -476,7 +464,7 @@ describe("AgentComposer", () => {
       mode: { kind: "followUp", blockedReason: null },
     });
 
-    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("New worktree");
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toBe("Checkout:Worktree");
     expect(host.querySelector("#agent-launch-model")).not.toBeNull();
   });
 

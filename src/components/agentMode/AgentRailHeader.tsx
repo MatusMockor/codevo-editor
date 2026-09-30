@@ -1,4 +1,4 @@
-import { useCallback, type KeyboardEvent, type RefObject } from "react";
+import { useCallback, type KeyboardEvent, type MouseEvent, type RefObject } from "react";
 import { FolderPlus, Search, SquarePen, X } from "lucide-react";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import { MAX_THREAD_SEARCH_QUERY_CHARS } from "../../domain/agentThreadSearch";
@@ -12,12 +12,12 @@ import {
   type AgentProjectMenuCommand,
   type AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
+import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 import { ALL_PROJECTS_FILTER, type AgentRailFilter } from "./agentRailFilter";
 import {
   agentRailDetachedThreadCount,
   agentRailNewThreadTarget,
   agentRailOrphanCount,
-  agentRailScopeFromEntry,
   agentRailScopeLabel,
   type AgentRailScope,
   type AgentRailScopeEntry,
@@ -35,8 +35,7 @@ export interface AgentRailHeaderProps {
   readonly searchActiveDescendant: string | null;
   onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void;
   onChangeFilter(filter: AgentRailFilter): void;
-  onChangeScope(scope: AgentRailScope): void;
-  onNewThread(projectRootKey: string, repositoryRoot: string): void;
+  onNewThread(shiftKey: boolean): void;
   onAddProject(): void;
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
@@ -46,7 +45,6 @@ export function AgentRailHeader({
   groups,
   onAddProject,
   onChangeFilter,
-  onChangeScope,
   onNewThread,
   onProjectCommand,
   onSearchKeyDown,
@@ -68,11 +66,14 @@ export function AgentRailHeader({
   const filteredState = headerScopeState(filteredEntry);
 
   const selectProject = useCallback(
-    (entry: AgentRailScopeEntry) => {
-      onChangeFilter({ kind: "project", projectRootKey: entry.projectRootKey });
-      onChangeScope(agentRailScopeFromEntry(entry));
-    },
-    [onChangeFilter, onChangeScope],
+    (entry: AgentRailScopeEntry) =>
+      onChangeFilter({ kind: "project", projectRootKey: entry.projectRootKey }),
+    [onChangeFilter],
+  );
+  const newThreadTitle = agentNewThreadTooltip(
+    NEW_THREAD_TOOLTIP,
+    scopeEntries.length,
+    scope === null ? null : agentRailScopeLabel(scope, scopeEntries),
   );
 
   const selectAll = useCallback(() => onChangeFilter(ALL_PROJECTS_FILTER), [onChangeFilter]);
@@ -126,13 +127,6 @@ export function AgentRailHeader({
             />
           )}
         </label>
-        <AgentProjectFilterMenu
-          entries={scopeEntries}
-          filter={railFilter}
-          onProjectCommand={onProjectCommand}
-          onSelectAll={selectAll}
-          onSelectProject={selectProject}
-        />
         <IconButton
           disabled={!addProjectAvailable}
           icon={<FolderPlus size={16} />}
@@ -143,15 +137,18 @@ export function AgentRailHeader({
           disabled={newThreadTarget === null}
           icon={<SquarePen size={16} />}
           label="New thread"
-          onClick={() =>
-            newThreadTarget !== null &&
-            onNewThread(newThreadTarget.projectRootKey, newThreadTarget.repositoryRoot)
-          }
-          title={
-            scope === null
-              ? "New thread (⌘N)"
-              : `New thread in ${agentRailScopeLabel(scope, scopeEntries)} (⌘N)`
-          }
+          onClick={(event: MouseEvent<HTMLButtonElement>) => onNewThread(event.shiftKey)}
+          title={newThreadTitle}
+        />
+      </div>
+      <div className="cv-sb-show">
+        <span aria-hidden="true">Show</span>
+        <AgentProjectFilterMenu
+          entries={scopeEntries}
+          filter={railFilter}
+          onProjectCommand={onProjectCommand}
+          onSelectAll={selectAll}
+          onSelectProject={selectProject}
         />
       </div>
       {filteredEntry !== null && filteredState !== null && (
@@ -182,6 +179,8 @@ export function AgentRailHeader({
     </div>
   );
 }
+
+const NEW_THREAD_TOOLTIP = "New thread (⌘N)";
 
 function headerScopeState(entry: AgentRailScopeEntry | null) {
   const state = agentRailScopeState(entry);

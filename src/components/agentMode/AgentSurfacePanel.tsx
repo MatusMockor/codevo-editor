@@ -41,6 +41,8 @@ import {
   type AgentSurfaceActivation,
 } from "../../domain/agentSurfaceActivation";
 import { remoteSurfaceCapabilities, type AgentRemoteSurface } from "./agentRemoteSurface";
+import { HIDDEN_AGENT_SURFACE_LOCATION, type AgentSurfaceLocation } from "./agentSurfaceLocation";
+import { AgentSurfaceLocationLine } from "./AgentSurfaceLocationLine";
 
 const RemoteFilesPanel = lazy(() =>
   import("../remoteRunner/RemoteFilesPanel").then((module) => ({
@@ -87,6 +89,7 @@ export interface AgentSurfacePanelProps {
   readonly history?: AgentSurfaceHistoryProps | null;
   readonly agentsPanel?: ReactNode;
   readonly editorDocuments?: AgentRightPanelEditorDocuments | null;
+  readonly location?: AgentSurfaceLocation;
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
@@ -108,6 +111,7 @@ export function AgentSurfacePanel({
   hidden,
   history = null,
   layout,
+  location = HIDDEN_AGENT_SURFACE_LOCATION,
   layoutControls,
   leadingControls = null,
   onActivateSurface,
@@ -211,6 +215,7 @@ export function AgentSurfacePanel({
           tabPanelsRendered={unavailable === null}
         />
       </TopBar>
+      <AgentSurfaceLocationLine location={location} />
       <div className="agent-surface__body" data-agent-surface-body>
         {unavailable}
         {unavailable === null && chooserShown && (

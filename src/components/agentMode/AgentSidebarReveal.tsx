@@ -1,3 +1,4 @@
+import type { MouseEvent } from "react";
 import { PanelLeftOpen, SquarePen } from "lucide-react";
 import { IconButton } from "../../ui/foundation/IconButton";
 import { TopBarSeparator } from "../../ui/shell/TopBar";
@@ -6,6 +7,7 @@ import {
   defaultAgentPanelLayoutShortcuts,
   type AgentPanelLayoutShortcuts,
 } from "./agentThreadHeaderPresentation";
+import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 
 export const EXPAND_SIDEBAR_LABEL = "Expand sidebar";
 export const COLLAPSE_SIDEBAR_LABEL = "Collapse sidebar";
@@ -14,14 +16,18 @@ export const NEW_THREAD_LABEL = "New thread";
 export interface AgentSidebarRevealProps {
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
   readonly detail?: string | null;
+  readonly projectCount?: number;
+  readonly currentProjectLabel?: string | null;
   onExpand(): void;
-  onNewThread(): void;
+  onNewThread(shiftKey: boolean): void;
 }
 
 export function AgentSidebarReveal({
+  currentProjectLabel = null,
   detail = null,
   onExpand,
   onNewThread,
+  projectCount = 1,
   shortcuts,
 }: AgentSidebarRevealProps) {
   const chords = shortcuts ?? defaultAgentPanelLayoutShortcuts();
@@ -38,8 +44,12 @@ export function AgentSidebarReveal({
       <IconButton
         icon={<SquarePen size={16} />}
         label={NEW_THREAD_LABEL}
-        onClick={onNewThread}
-        title={agentControlTooltip(NEW_THREAD_LABEL, chords.newThread)}
+        onClick={(event: MouseEvent<HTMLButtonElement>) => onNewThread(event.shiftKey)}
+        title={agentNewThreadTooltip(
+          agentControlTooltip(NEW_THREAD_LABEL, chords.newThread),
+          projectCount,
+          currentProjectLabel,
+        )}
       />
       <TopBarSeparator />
     </>

@@ -36,6 +36,7 @@ import {
 } from "./agentThreadHeaderPresentation";
 import { AgentRailCloneRow } from "./remoteAddProject/AgentRailCloneRow";
 import { AgentRailHeader } from "./AgentRailHeader";
+import { AgentRowServerNamesContext, useAgentRowServerNames } from "./agentRowServerNamesContext";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
@@ -114,10 +115,9 @@ export interface AgentThreadsSidebarProps {
   readonly footerActivity?: ReactNode;
   onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
-  onChangeScope(scope: AgentRailScope): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
   onThreadBulkCommand?(command: AgentThreadBulkCommand): void;
-  onNewThread(projectRootKey: string, repositoryRoot: string): void;
+  onNewThread(shiftKey: boolean): void;
   onAddProject(): void;
   readonly railFilter: AgentRailFilter;
   readonly pendingInteractions?: ReadonlyMap<string, AgentPendingInteraction>;
@@ -133,7 +133,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onAddProject,
   onCancelPendingClone,
   onChangeFilter,
-  onChangeScope,
   onCollapseSidebar,
   collapseShortcut = null,
   footerActivity = null,
@@ -181,6 +180,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const togglePin = useStableCallback(onTogglePin);
   const menuCommand = useStableCallback(onThreadMenuCommand);
 
+  const serverNames = useAgentRowServerNames();
   const views = useMemo(() => agentRailViews(groups), [groups]);
   const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
 
@@ -430,7 +430,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         groups={groups}
         onAddProject={onAddProject}
         onChangeFilter={onChangeFilter}
-        onChangeScope={onChangeScope}
         onNewThread={onNewThread}
         onProjectCommand={onProjectCommand}
         overflowRootPaths={overflowRootPaths}
@@ -482,23 +481,25 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             truncated={search.result?.truncated ?? false}
           />
         ) : (
-          <AgentThreadList
-            settledExpanded={settledExpanded}
-            snoozedExpanded={snoozedExpanded}
-            onToggleSettled={toggleSettled}
-            onToggleSnoozed={toggleSnoozed}
-            empty={empty}
-            evidenceOf={evidenceOf}
-            focusedThreadId={focusedThreadId}
-            jumpLabels={jumpLabels}
-            markedThreadIds={selection.selectedIds}
-            onSelectThread={rowSelect}
-            onThreadMenuCommand={menuCommand}
-            pendingInteractions={pendingInteractions}
-            projectLabels={projectLabels}
-            sections={sections}
-            selectedThreadId={selectedThreadId}
-          />
+          <AgentRowServerNamesContext.Provider value={serverNames}>
+            <AgentThreadList
+              settledExpanded={settledExpanded}
+              snoozedExpanded={snoozedExpanded}
+              onToggleSettled={toggleSettled}
+              onToggleSnoozed={toggleSnoozed}
+              empty={empty}
+              evidenceOf={evidenceOf}
+              focusedThreadId={focusedThreadId}
+              jumpLabels={jumpLabels}
+              markedThreadIds={selection.selectedIds}
+              onSelectThread={rowSelect}
+              onThreadMenuCommand={menuCommand}
+              pendingInteractions={pendingInteractions}
+              projectLabels={projectLabels}
+              sections={sections}
+              selectedThreadId={selectedThreadId}
+            />
+          </AgentRowServerNamesContext.Provider>
         )}
       </div>
       <AgentProviderRailFooter

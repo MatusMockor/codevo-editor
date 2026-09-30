@@ -503,7 +503,7 @@ describe("agentModePresentation", () => {
 
   it("describes both isolation modes truthfully", () => {
     expect(agentIsolationBadgeLabel("worktree")).toBe("Worktree");
-    expect(agentIsolationBadgeLabel("in-place")).toBe("In place");
+    expect(agentIsolationBadgeLabel("in-place")).toBe("Local checkout");
     expect(agentIsolationBadgeReason("worktree")).toContain("dedicated Git worktree");
     expect(agentIsolationBadgeReason("in-place")).toContain("directly in your checkout");
   });

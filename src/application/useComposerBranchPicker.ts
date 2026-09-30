@@ -34,18 +34,38 @@ export interface ComposerBranchPicker {
   create(name: string): Promise<boolean>;
   load(): void;
   switchTo(item: ComposerBranchItem): Promise<boolean>;
+  switchToLocal(name: string): Promise<ComposerBranchSwitchResult>;
 }
+
+export type ComposerBranchSwitchResult =
+  | { readonly kind: "switched" }
+  | { readonly kind: "refused"; readonly reason: string }
+  | { readonly kind: "superseded" };
 
 export interface ComposerBranchPickerOptions {
   readonly gateway: ComposerBranchGateway | null;
   readonly guard: (target: AgentGitHistoryTarget) => string | null;
   readonly target: ComposerBranchTarget | null;
+  readonly onCheckedOut?: (current: string | null) => void;
+}
+
+interface BranchOwner {
+  readonly gateway: ComposerBranchGateway | null;
+  readonly ownerKey: string | null;
+  readonly repositoryRoot: string | null;
+}
+
+interface OwnedBranchList {
+  readonly owner: BranchOwner;
+  readonly list: ComposerBranchList;
 }
 
 type BranchOperation = (git: ComposerBranchGateway, root: string) => Promise<unknown>;
 
 const MAX_ERROR_LENGTH = 500;
 const IDLE_LIST: ComposerBranchList = { kind: "idle" };
+const SWITCHED: ComposerBranchSwitchResult = { kind: "switched" };
+const SUPERSEDED: ComposerBranchSwitchResult = { kind: "superseded" };
 export const STALE_BRANCH_ERROR = "This branch is no longer available. Refresh the branch list.";
 export const BRANCH_OPERATION_IN_FLIGHT_ERROR =
   "A branch change is still running in this repository. Wait for it to finish.";
@@ -53,11 +73,12 @@ export const BRANCH_OPERATION_IN_FLIGHT_ERROR =
 export function useComposerBranchPicker({
   gateway,
   guard,
+  onCheckedOut,
   target,
 }: ComposerBranchPickerOptions): ComposerBranchPicker {
   const repositoryRoot = target?.repositoryRoot ?? null;
   const ownerKey = target?.ownerKey ?? null;
-  const identity = useMemo(
+  const identity = useMemo<BranchOwner>(
     () => ({ gateway, ownerKey, repositoryRoot }),
     [gateway, ownerKey, repositoryRoot],
   );
@@ -67,19 +88,27 @@ export function useComposerBranchPicker({
   const inFlightRootsRef = useRef(new Set<string>());
   const refreshSequenceRef = useRef(0);
   const guardRef = useRef(guard);
+  const checkedOutRef = useRef(onCheckedOut);
   const listRef = useRef<ComposerBranchList>(IDLE_LIST);
-  const [list, setListState] = useState<ComposerBranchList>(IDLE_LIST);
+  const [listState, setListState] = useState<OwnedBranchList>(() => ({
+    owner: identity,
+    list: IDLE_LIST,
+  }));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const setList = useCallback((next: ComposerBranchList): void => {
     listRef.current = next;
-    setListState(next);
+    setListState({ owner: ownerRef.current, list: next });
   }, []);
 
   useLayoutEffect(() => {
     guardRef.current = guard;
   }, [guard]);
+
+  useLayoutEffect(() => {
+    checkedOutRef.current = onCheckedOut;
+  }, [onCheckedOut]);
 
   useLayoutEffect(() => {
     ownerRef.current = identity;
@@ -110,6 +139,8 @@ export function useComposerBranchPicker({
     try {
       const branches = await git.getBranches(root);
       if (!owns()) return;
+      const current = listRef.current;
+      if (current.kind === "ready" && sameBranches(current.branches, branches)) return;
       setList({ kind: "ready", branches });
     } catch (failure: unknown) {
       if (!owns()) return;
@@ -122,41 +153,44 @@ export function useComposerBranchPicker({
   }, [refresh]);
 
   const runGuarded = useCallback(
-    async (operation: BranchOperation): Promise<boolean> => {
+    async (
+      operation: BranchOperation,
+      report: (message: string | null) => void,
+    ): Promise<ComposerBranchSwitchResult> => {
       const { gateway: git, ownerKey: key, repositoryRoot: root } = ownerRef.current;
-      if (git === null || root === null || key === null || pendingRef.current) return false;
+      if (git === null || root === null || key === null || pendingRef.current) return SUPERSEDED;
       const owns = capture();
       const blocked = guardRef.current({ rootPath: root, ownerKey: key });
-      if (!owns()) return false;
-      if (blocked !== null) {
-        setError(blocked);
-        return false;
-      }
+      if (!owns()) return SUPERSEDED;
+      if (blocked !== null) return refused(blocked, report);
       const inFlight = inFlightRootsRef.current;
-      if (inFlight.has(root)) {
-        setError(BRANCH_OPERATION_IN_FLIGHT_ERROR);
-        return false;
-      }
+      if (inFlight.has(root)) return refused(BRANCH_OPERATION_IN_FLIGHT_ERROR, report);
       inFlight.add(root);
       pendingRef.current = true;
       setPending(true);
-      setError(null);
+      report(null);
       try {
         await operation(git, root);
         inFlight.delete(root);
-        if (!owns()) return false;
+        if (!owns()) return SUPERSEDED;
         pendingRef.current = false;
         setPending(false);
         await refresh();
-        return owns();
+        if (!owns()) return SUPERSEDED;
+        const settled = listRef.current;
+        if (settled.kind === "ready") checkedOutRef.current?.(settled.branches.current);
+        return SWITCHED;
       } catch (failure: unknown) {
         inFlight.delete(root);
-        if (!owns()) return false;
+        if (!owns()) return SUPERSEDED;
         pendingRef.current = false;
         setPending(false);
-        setError(failureMessage(failure, "Could not switch branches. Refresh and try again."));
+        const result = refused(
+          failureMessage(failure, "Could not switch branches. Refresh and try again."),
+          report,
+        );
         await refresh();
-        return false;
+        return result;
       }
     },
     [capture, refresh],
@@ -176,7 +210,19 @@ export function useComposerBranchPicker({
           return Promise.reject(new Error("Switching to a remote branch is unavailable."));
         }
         return git.checkoutRemoteBranch(root, item.name);
-      });
+      }, setError).then(switched);
+    },
+    [runGuarded],
+  );
+
+  const switchToLocal = useCallback(
+    (name: string): Promise<ComposerBranchSwitchResult> => {
+      const current = listRef.current;
+      if (current.kind !== "ready" || !current.branches.local.includes(name)) {
+        return Promise.resolve({ kind: "refused", reason: STALE_BRANCH_ERROR });
+      }
+      if (current.branches.current === name) return Promise.resolve(SWITCHED);
+      return runGuarded((git, root) => git.switchBranch(root, name), ignoreReport);
     },
     [runGuarded],
   );
@@ -191,12 +237,44 @@ export function useComposerBranchPicker({
       return runGuarded(async (git, root) => {
         await git.createBranch(root, validated.name);
         await git.switchBranch(root, validated.name);
-      });
+      }, setError).then(switched);
     },
     [runGuarded],
   );
 
-  return { create, error, list, load, pending, switchTo };
+  const list = listState.owner === identity ? listState.list : IDLE_LIST;
+  return useMemo(
+    () => ({ create, error, list, load, pending, switchTo, switchToLocal }),
+    [create, error, list, load, pending, switchTo, switchToLocal],
+  );
+}
+
+function refused(
+  reason: string,
+  report: (message: string | null) => void,
+): ComposerBranchSwitchResult {
+  report(reason);
+  return { kind: "refused", reason };
+}
+
+function switched(result: ComposerBranchSwitchResult): boolean {
+  return result.kind === "switched";
+}
+
+function ignoreReport(): void {}
+
+function sameBranches(left: GitBranches, right: GitBranches): boolean {
+  if (left.current !== right.current || !sameNames(left.local, right.local)) return false;
+  const leftRemotes = Object.entries(left.remotes);
+  if (leftRemotes.length !== Object.keys(right.remotes).length) return false;
+  return leftRemotes.every(([remote, names]) => {
+    const other = right.remotes[remote];
+    return other !== undefined && sameNames(names, other);
+  });
+}
+
+function sameNames(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+  return left.length === right.length && left.every((name, index) => name === right[index]);
 }
 
 function branchListContains(branches: GitBranches, item: ComposerBranchItem): boolean {

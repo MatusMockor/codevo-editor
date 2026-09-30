@@ -21,8 +21,10 @@ import {
   SURFACE_NO_PROJECT_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   SURFACE_WORKTREE_GONE_REASON,
+  agentSurfaceActivationOwnsScope,
   agentSurfaceBlockedReason,
   agentSurfaceFilesDescription,
+  agentSurfaceLocalAvailable,
   agentSurfaceForeignRootMessage,
   agentSurfaceScopeFor,
   agentSurfaceTerminalLaunchTargetFor,
@@ -32,6 +34,8 @@ import {
 import {
   SURFACE_FIXTURE_ROOT,
   SURFACE_FIXTURE_WORKTREE,
+  surfaceActivation,
+  surfaceRepositoryScope,
   surfaceThreadView,
 } from "./agentSurfaceTestFixtures";
 import { projectFixture } from "./agentThreadsSurfaceTestFixtures";
@@ -465,5 +469,58 @@ describe("editor surface blocked reason", () => {
     expect(
       agentSurfaceBlockedReason("editor", surfaceThreadView(), false, "/workspace/other"),
     ).toBeNull();
+  });
+});
+
+describe("local surface availability follows the exact activated owner", () => {
+  const scope = surfaceRepositoryScope();
+  const input = {
+    remote: false,
+    scope,
+    workspaceRoot: scope.rootPath,
+    thread: null,
+  } as const;
+
+  it("is available only once the scope's own owner is activated", () => {
+    expect(agentSurfaceLocalAvailable({ ...input, activation: surfaceActivation("ready") })).toBe(
+      true,
+    );
+    expect(agentSurfaceLocalAvailable({ ...input, activation: surfaceActivation("pending") })).toBe(
+      false,
+    );
+    expect(agentSurfaceLocalAvailable({ ...input, activation: undefined })).toBe(true);
+  });
+
+  it("never accepts another owner or generation activated at the same root path", () => {
+    const sameRoot = [
+      { ownerId: "agent-root:replacement", generation: scope.generation },
+      { ownerId: scope.ownerId, generation: scope.generation + 1 },
+    ];
+    for (const owner of sameRoot) {
+      const activation = { kind: "ready" as const, rootPath: scope.rootPath, owner };
+      expect(agentSurfaceLocalAvailable({ ...input, activation })).toBe(false);
+      expect(agentSurfaceActivationOwnsScope(activation, scope)).toBe(false);
+    }
+    expect(agentSurfaceActivationOwnsScope(surfaceActivation("ready"), scope)).toBe(true);
+    expect(agentSurfaceActivationOwnsScope({ kind: "none", rootPath: null }, scope)).toBe(false);
+  });
+
+  it("treats A after B as a fresh activation of A's exact owner", () => {
+    const a = surfaceRepositoryScope("/a");
+    const b = surfaceRepositoryScope("/b");
+    const available = (current: typeof a, activated: typeof a) =>
+      agentSurfaceLocalAvailable({
+        remote: false,
+        scope: current,
+        workspaceRoot: current.rootPath,
+        thread: null,
+        activation: surfaceActivation("ready", activated),
+      });
+    expect(available(a, a)).toBe(true);
+    expect(available(b, a)).toBe(false);
+    expect(available(b, b)).toBe(true);
+    expect(available(a, b)).toBe(false);
+    expect(available(surfaceRepositoryScope("/a", 2), a)).toBe(false);
+    expect(available(surfaceRepositoryScope("/a", 2), surfaceRepositoryScope("/a", 2))).toBe(true);
   });
 });

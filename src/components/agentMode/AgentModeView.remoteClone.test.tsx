@@ -136,7 +136,7 @@ describe("agent workbench remote clone adoption", () => {
       ),
     );
 
-    click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
+    click(host.querySelector('[aria-label="Run on: This computer"]')!);
     await waitForReact(() =>
       expect(document.querySelector('[role="menuitemradio"]')?.textContent).toContain(
         "This computer",

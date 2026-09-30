@@ -1,4 +1,13 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
+import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
+import { BrowserAgentRailFilterPreference } from "../../infrastructure/browserAgentRailFilterPreference";
+import type { AgentRailFilterPreferencePort } from "../../application/agentRailFilterPreferencePort";
+import {
+  commandPaletteNewThreadPicker,
+  type AgentNewThreadPicker,
+} from "../../application/agentNewThreadPicker";
+import { workbenchCommandPaletteLaunch } from "../../application/commandPalette/commandPaletteLaunch";
+import { agentLiveCheckoutBranches } from "./agentLiveCheckoutBranch";
 import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
 import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
@@ -162,6 +171,8 @@ export interface AgentWorkbenchScreenProps {
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
+  readonly railFilterPreference?: AgentRailFilterPreferencePort | null;
+  readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly revealPathGateway?: RevealPathGateway;
   readonly directoryListingGateway?: DirectoryListingGateway;
   readonly localCloneGateway?: LocalProjectCloneGateway | null;
@@ -183,6 +194,9 @@ const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
 const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
 const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
+const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
+const DEFAULT_RAIL_FILTER_PREFERENCE = new BrowserAgentRailFilterPreference();
+const SHOW_COMMAND_PALETTE = "commands.show";
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
     Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>
@@ -211,6 +225,8 @@ export function AgentWorkbenchScreen({
   terminalGateway,
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
+  railFilterPreference = DEFAULT_RAIL_FILTER_PREFERENCE,
+  newThreadPicker: injectedNewThreadPicker,
   workbench,
 }: AgentWorkbenchScreenProps) {
   const navigationSession = useRef<AgentNavigationSession["current"]>({
@@ -560,6 +576,21 @@ export function AgentWorkbenchScreen({
       },
     };
   }, [checkoutDirtyRevision, gitBranchGateway, workbench]);
+  const runCommand = workbench.runCommand;
+  const defaultNewThreadPicker = useMemo(
+    () =>
+      commandPaletteNewThreadPicker(
+        workbenchCommandPaletteLaunch,
+        () => runCommand(SHOW_COMMAND_PALETTE) === "executed",
+      ),
+    [runCommand],
+  );
+  const newThreadPicker =
+    injectedNewThreadPicker === undefined ? defaultNewThreadPicker : injectedNewThreadPicker;
+  const liveCheckoutBranches = useMemo(
+    () => agentLiveCheckoutBranches(workbench.gitRepositoryStatuses ?? []),
+    [workbench.gitRepositoryStatuses],
+  );
   const rightPanelGateways = useMemo(
     () => injectedRightPanelGateways ?? createDefaultAgentRightPanelGateways(fileSearch),
     [fileSearch, injectedRightPanelGateways],
@@ -595,6 +626,8 @@ export function AgentWorkbenchScreen({
       workspaceTrusted,
       gitHistoryGateway,
       branchCheckout,
+      liveCheckoutBranches,
+      threadBranchMemory: DEFAULT_THREAD_BRANCH_MEMORY,
       worktreeSync:
         workbench.agentWorktreeFileSync === undefined || worktreeFileChanges === null
           ? null
@@ -657,6 +690,7 @@ export function AgentWorkbenchScreen({
       files,
       gitHistoryGateway,
       branchCheckout,
+      liveCheckoutBranches,
       workbench.agentWorktreeFileSync,
       workbench.workspaceRoot,
       worktreeFileChanges,
@@ -714,6 +748,8 @@ export function AgentWorkbenchScreen({
         projects={projects.projects}
         projectsLoaded={projects.projectsLoaded}
         textClipboard={textClipboard}
+        railFilterPreference={railFilterPreference}
+        newThreadPicker={newThreadPicker}
         viewCommands={workbenchAgentViewCommandBridge}
         workspaceRoot={workspaceRoot}
       />

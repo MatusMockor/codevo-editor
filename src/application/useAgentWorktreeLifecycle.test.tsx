@@ -14,6 +14,11 @@ import {
   type AgentWorktreeLifecycleDependencies,
   type AgentWorktreeLifecycleSurface,
 } from "./useAgentWorktreeLifecycle";
+import {
+  createAgentWorktreeUseRegistry,
+  type AgentWorktreeUseRegistry,
+} from "./agentWorktreeUseRegistry";
+import { WORKTREE_STARTING_NOTICE, sharedWorktreeNotice } from "./agentSharedWorktreeRemoval";
 
 const ROOT_KEY = "/workspace/app";
 const OWNER_ID = "agent-root:0123456789abcdef";
@@ -117,6 +122,7 @@ interface Environment {
   worktrees: ReadonlyArray<GitWorktreeDescriptor>;
   changeCount: number;
   confirmResult: boolean;
+  worktreeUses?: AgentWorktreeUseRegistry;
 }
 
 function renderLifecycle(overrides: Partial<Environment> = {}) {
@@ -158,6 +164,8 @@ function renderLifecycle(overrides: Partial<Environment> = {}) {
     setNotice,
     onWorktreeRemovalChanged,
     onWorktreeRemoved,
+    worktreeUses: environment.worktreeUses,
+    currentThreads: () => environment.threads,
   });
 
   const host = document.createElement("div");
@@ -173,6 +181,7 @@ function renderLifecycle(overrides: Partial<Environment> = {}) {
   render();
 
   return {
+    environment,
     gitWorktreeGateway,
     gitGateway,
     prompter,
@@ -642,6 +651,143 @@ describe("useAgentWorktreeLifecycle markWorktreeRemoved", () => {
     await waitForReact(() => {
       expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalledTimes(2);
     });
+    harness.unmount();
+  });
+});
+
+describe("useAgentWorktreeLifecycle shared worktrees", () => {
+  const source = thread();
+  const reuser = thread({
+    threadId: "agt-2-0a1b",
+    title: "Continue the parser",
+    updatedAtEpochMs: 20,
+  });
+
+  it("refuses to remove a worktree another live thread still uses", async () => {
+    const harness = renderLifecycle({
+      threads: new Map([
+        [source.threadId, source],
+        [reuser.threadId, reuser],
+      ]),
+    });
+
+    await act(async () => {
+      await harness.hook().removeWorktree(source.threadId);
+    });
+
+    expect(harness.gitGateway.getStatus).not.toHaveBeenCalled();
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.onWorktreeRemovalChanged).not.toHaveBeenCalled();
+    expect(harness.setNotice).toHaveBeenCalledWith({
+      kind: "warning",
+      message: sharedWorktreeNotice(reuser),
+      action: null,
+    });
+    expect(sharedWorktreeNotice(reuser)).toContain("Continue the parser");
+    harness.unmount();
+  });
+
+  it("removes a worktree whose only other user is archived", async () => {
+    const archived = { ...reuser, archived: true };
+    const harness = renderLifecycle({
+      threads: new Map([
+        [source.threadId, source],
+        [archived.threadId, archived],
+      ]),
+    });
+
+    await act(async () => {
+      await harness.hook().removeWorktree(source.threadId);
+    });
+
+    expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledWith(
+      REPOSITORY_ROOT,
+      OWNED_WORKTREE,
+      false,
+    );
+    harness.unmount();
+  });
+
+  it("refuses when another thread starts using the worktree during the dirty confirmation", async () => {
+    const harness = renderLifecycle({ changeCount: 1 });
+    harness.prompter.confirm.mockImplementationOnce(() => {
+      harness.environment.threads = new Map([
+        [source.threadId, source],
+        [reuser.threadId, reuser],
+      ]);
+      return true;
+    });
+
+    await act(async () => {
+      await harness.hook().removeWorktree(source.threadId);
+    });
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.onWorktreeRemovalChanged).toHaveBeenLastCalledWith(source.threadId, false);
+    expect(harness.setNotice).toHaveBeenLastCalledWith({
+      kind: "warning",
+      message: sharedWorktreeNotice(reuser),
+      action: null,
+    });
+    harness.unmount();
+  });
+
+  it("refuses while a new thread is starting in the worktree and retires it once removed", async () => {
+    const worktreeUses = createAgentWorktreeUseRegistry();
+    const harness = renderLifecycle({ worktreeUses });
+    const start = worktreeUses.claimStart(OWNED_WORKTREE);
+
+    await act(async () => {
+      await harness.hook().removeWorktree(source.threadId);
+    });
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.onWorktreeRemovalChanged).toHaveBeenLastCalledWith(source.threadId, false);
+    expect(harness.setNotice).toHaveBeenLastCalledWith({
+      kind: "warning",
+      message: WORKTREE_STARTING_NOTICE,
+      action: null,
+    });
+
+    start?.release();
+    await act(async () => {
+      await harness.hook().removeWorktree(source.threadId);
+    });
+
+    expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledTimes(1);
+    expect(worktreeUses.claimStart(OWNED_WORKTREE)).toBeNull();
+    harness.unmount();
+  });
+
+  it("keeps the worktree available to new threads when git refuses the removal", async () => {
+    const worktreeUses = createAgentWorktreeUseRegistry();
+    const harness = renderLifecycle({ worktreeUses });
+    harness.gitWorktreeGateway.removeWorktree.mockRejectedValueOnce(new Error("locked"));
+
+    await act(async () => {
+      await harness.hook().removeWorktree(source.threadId);
+    });
+
+    expect(harness.setNotice).toHaveBeenLastCalledWith({
+      kind: "error",
+      message: "The worktree could not be removed.",
+      action: null,
+    });
+    expect(worktreeUses.claimStart(OWNED_WORKTREE)).not.toBeNull();
+    harness.unmount();
+  });
+
+  it("does not report a worktree as orphaned while any thread still targets it", async () => {
+    const harness = renderLifecycle({
+      threads: new Map([[reuser.threadId, reuser]]),
+      worktrees: [worktree(OWNED_WORKTREE), worktree(ORPHAN_WORKTREE)],
+    });
+
+    await waitForReact(() => {
+      expect(harness.hook().orphanedWorktrees).toHaveLength(1);
+    });
+
+    expect(harness.hook().orphanedWorktrees[0]?.worktreePath).toBe(ORPHAN_WORKTREE);
     harness.unmount();
   });
 });

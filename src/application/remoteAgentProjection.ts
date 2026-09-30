@@ -31,6 +31,23 @@ export function remoteAgentProjectKey(
 ): string {
   return `remote:${encodeURIComponent(serverId)}:${encodeURIComponent(runnerId)}:${encodeURIComponent(projectId)}`;
 }
+export function remoteAgentProjectServerId(projectKey: string): string | null {
+  const parts = projectKey.split(":");
+  if (parts.length !== 4) return null;
+  const decoded = decodedKeyParts(parts.slice(1));
+  if (decoded === null) return null;
+  const [serverId, runnerId, projectId] = decoded;
+  if (serverId === undefined || runnerId === undefined || projectId === undefined) return null;
+  if (serverId === "") return null;
+  return remoteAgentProjectKey(serverId, runnerId, projectId) === projectKey ? serverId : null;
+}
+function decodedKeyParts(parts: ReadonlyArray<string>): ReadonlyArray<string> | null {
+  try {
+    return parts.map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+}
 export function remoteAgentThreadKey(
   serverId: string,
   runnerId: string,

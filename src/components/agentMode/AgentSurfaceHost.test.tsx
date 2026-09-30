@@ -12,6 +12,7 @@ import { NO_AGENT_SURFACE_SCOPE, type AgentSurfaceScope } from "./agentSurfacePo
 import {
   SURFACE_FIXTURE_ROOT,
   SURFACE_FIXTURE_WORKTREE,
+  surfaceActivation,
   surfaceRepositoryScope,
   surfaceThreadView,
 } from "./agentSurfaceTestFixtures";
@@ -340,7 +341,7 @@ describe("AgentSurfaceHost", () => {
         chrome: {
           ...base,
           workspaceActivation: {
-            state: { kind: "pending", rootPath: SURFACE_FIXTURE_ROOT },
+            state: surfaceActivation("pending"),
             select: vi.fn(),
             retry,
           },
@@ -359,7 +360,11 @@ describe("AgentSurfaceHost", () => {
       chrome: {
         ...base,
         workspaceActivation: {
-          state: { kind: "failed", rootPath: SURFACE_FIXTURE_ROOT, message: "Could not open app." },
+          state: {
+            ...surfaceActivation("pending"),
+            kind: "failed",
+            message: "Could not open app.",
+          },
           select: vi.fn(),
           retry,
         },

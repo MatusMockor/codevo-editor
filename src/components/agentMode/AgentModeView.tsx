@@ -47,6 +47,13 @@ import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
+import type { AgentNewThreadPicker } from "../../application/agentNewThreadPicker";
+import type { AgentRailFilterPreferencePort } from "../../application/agentRailFilterPreferencePort";
+import { useAgentThreadBranchMemory } from "../../application/useAgentThreadBranchMemory";
+import { useAgentThreadBranchRecorder } from "../../application/useAgentThreadBranchRecorder";
+import { AgentThreadBranchMemoryContext } from "./agentThreadBranchMemoryContext";
+import { useAgentRailFilter } from "./useAgentRailFilter";
+import { useAgentProjectThreadCommands } from "./useAgentProjectThreadCommands";
 import { useAgentResumeCompactionOffer } from "../../application/useAgentResumeCompactionOffer";
 import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
 import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLoss";
@@ -96,7 +103,8 @@ import { AgentClockProvider } from "./agentClock";
 import { agentProjectGroups } from "./agentModePresentation";
 import {
   agentProjectTerminalSessionsTarget,
-  type AgentRailScope,
+  agentRailScopeEntries,
+  agentRailScopeLabel,
 } from "./agentSidebarPresentation";
 import {
   agentSurfaceScopeFor,
@@ -108,6 +116,7 @@ import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
+import { agentComposerThreadLocation } from "./agentComposerThreadLocation";
 import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
 import {
   queuedEditImageOwner,
@@ -153,6 +162,8 @@ export interface AgentModeViewProps {
   readonly viewCommands?: AgentViewCommandBridge | null;
   readonly chrome: AgentWorkbenchChrome;
   readonly textClipboard?: TextClipboardGateway | null;
+  readonly railFilterPreference?: AgentRailFilterPreferencePort | null;
+  readonly newThreadPicker?: AgentNewThreadPicker | null;
   onOpenSourceControl?(): void;
   onOpenEnvironmentSettings?(): void;
   onOpenUsageSettings?(): void;
@@ -246,6 +257,8 @@ function LocalAgentModeView({
   artifactLoader = null,
   artifactPreview = null,
   textClipboard = null,
+  railFilterPreference = null,
+  newThreadPicker = null,
   viewCommands = null,
   workspaceRoot,
   onSelectedThreadChange,
@@ -294,6 +307,14 @@ function LocalAgentModeView({
     (turnId) => agentTurnLogEvidence(agents.turnLog?.factsOf(turnId) ?? null),
     [agents.turnLog],
   );
+  const railScopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
+  const railFilter = useAgentRailFilter({
+    preference: railFilterPreference,
+    entries: railScopeEntries,
+    projectsLoaded,
+    authoritativeRemoteProjectKeys,
+  });
+  const threadBranchMemory = useAgentThreadBranchMemory(chrome.threadBranchMemory ?? null);
   const navigation = useAgentThreadNavigation({
     agents,
     evidenceOf: turnEvidenceOf,
@@ -303,6 +324,7 @@ function LocalAgentModeView({
     projects,
     session: navigationSession,
     authoritativeRemoteProjectKeys,
+    railFilter: railFilter.filter,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
   const contextThread = sessionThread?.thread ?? null;
@@ -440,6 +462,15 @@ function LocalAgentModeView({
     setProjectSelectionIntent((current) => current + 1);
     composer.composerProps.onSelectRepository(repositoryRoot);
   });
+  const composerThreadLocation = useMemo(
+    () =>
+      agentComposerThreadLocation(
+        selectedThread,
+        remoteContext?.servers ?? NO_REMOTE_SERVERS,
+        chrome.liveCheckoutBranches,
+      ),
+    [chrome.liveCheckoutBranches, remoteContext?.servers, selectedThread],
+  );
   const composerProps = {
     ...composer.composerProps,
     immediateBlockedReason:
@@ -461,6 +492,7 @@ function LocalAgentModeView({
           isolation: "worktree" as const,
         }
       : {}),
+    threadLocation: composerThreadLocation,
     onIsolationChange: changeIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearComposer,
@@ -599,35 +631,20 @@ function LocalAgentModeView({
   const threadBulkCommand = useAgentLatestCallback(menu.handleThreadBulkCommand);
   const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
   const newThread = useAgentLatestCallback(startNewThread);
-  const changeProjectScope = useAgentLatestCallback((scope: AgentRailScope) => {
-    chrome.addProject?.cancelSelection?.();
-    setProjectSelectionIntent((current) => current + 1);
-    if (!navigation.setProjectScope(scope.projectRootKey)) return;
-    if (
-      !groups.some(
-        (group) =>
-          group.projectRootKey === scope.projectRootKey &&
-          group.memberProjectRootKeys !== undefined,
-      )
-    )
-      onSelectProjectEnvironment(scope.projectRootKey);
-    composer.clearDraftTarget();
+  const projectThreads = useAgentProjectThreadCommands({
+    navigation,
+    groups,
+    composer,
+    picker: newThreadPicker,
+    onBeforeProjectChange: () => {
+      chrome.addProject?.cancelSelection?.();
+      setProjectSelectionIntent((current) => current + 1);
+    },
+    onSelectProjectEnvironment,
   });
-  const newProjectThread = useAgentLatestCallback(() => {
-    chrome.addProject?.cancelSelection?.();
-    setProjectSelectionIntent((current) => current + 1);
-    const target = navigation.newThreadTarget();
-    if (target === null) return;
-    if (
-      !groups.some(
-        (group) =>
-          group.projectRootKey === target.projectRootKey &&
-          group.memberProjectRootKeys !== undefined,
-      )
-    )
-      onSelectProjectEnvironment(target.projectRootKey);
-    composer.clearSelection();
-  });
+  const requestNewThread = projectThreads.requestNewThread;
+  const railScopeLabel =
+    railScope === null ? null : agentRailScopeLabel(railScope, railScopeEntries);
   const sectionRef = useRef<HTMLElement | null>(null);
   useSidebarFocusHandoff(layout.rail, sectionRef);
   const { attention, attentionExplanation, capacity, live } = useMemo(
@@ -660,13 +677,22 @@ function LocalAgentModeView({
   const sidebarReveal = useMemo(
     () => (
       <AgentSidebarReveal
+        currentProjectLabel={railScopeLabel}
         detail={sidebarRevealDetail}
         onExpand={toggleRail}
-        onNewThread={newProjectThread}
+        onNewThread={requestNewThread}
+        projectCount={railScopeEntries.length}
         shortcuts={chrome.shortcuts}
       />
     ),
-    [chrome.shortcuts, newProjectThread, sidebarRevealDetail, toggleRail],
+    [
+      chrome.shortcuts,
+      railScopeEntries.length,
+      railScopeLabel,
+      requestNewThread,
+      sidebarRevealDetail,
+      toggleRail,
+    ],
   );
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
   const closeSurfaceTab = useAgentLatestCallback((kind: AgentSurfaceKind) => {
@@ -695,7 +721,7 @@ function LocalAgentModeView({
   const commandHandlers = useMemo<AgentViewCommandHandlers>(
     () => ({
       ...navigationCommands,
-      newThread: newProjectThread,
+      newThread: () => requestNewThread(false),
       runPreferredScript: () => {
         if (scripts.preferred === null) return;
         scripts.runScript(scripts.preferred.key);
@@ -716,7 +742,7 @@ function LocalAgentModeView({
       navigationCommands,
       scripts,
       selectedThreadId,
-      newProjectThread,
+      requestNewThread,
       openSurfaceCommand,
       surfaceBlocked,
       toggleResponsivePanel,
@@ -730,8 +756,8 @@ function LocalAgentModeView({
     activeProjectKey: navigation.railScope?.projectRootKey ?? null,
     scripts,
     selectThread: navigation.selectThread,
-    setProjectScope: navigation.setProjectScope,
-    newThread: newProjectThread,
+    switchProject: projectThreads.switchProject,
+    newThreadIn: projectThreads.newThreadInProject,
   });
 
   const notice = localNotice ?? agents.notice;
@@ -868,7 +894,12 @@ function LocalAgentModeView({
       agents.turnChangesRevision,
     ],
   );
-  const composerExtras = useAgentComposerDrawerExtras(chrome.branchCheckout, agents.accountUsage);
+  useAgentThreadBranchRecorder(agents.threads, chrome.liveCheckoutBranches, threadBranchMemory);
+  const composerExtras = useAgentComposerDrawerExtras(chrome.branchCheckout, agents.accountUsage, {
+    thread: selectedThread,
+    branchMemory: threadBranchMemory,
+    liveCheckoutBranches: chrome.liveCheckoutBranches,
+  });
   return (
     <AgentAgentsPanelProvider
       isOpen={surface.isSurfaceOpen("agents")}
@@ -884,41 +915,42 @@ function LocalAgentModeView({
         <AgentClockProvider nowTickMs={nowTickMs}>
           <div className="agent-mode__grid">
             {layout.rail === "collapsed" ? null : (
-              <AgentThreadsSidebar
-                catalog={agents.catalog}
-                collapseShortcut={chrome.shortcuts?.sidebar ?? null}
-                footerActivity={footerActivity}
-                addProjectAvailable={chrome.addProject !== null}
-                evidenceOf={turnEvidenceOf}
-                groups={groups}
-                onAddProject={openAddProject}
-                onCancelPendingClone={cancelPendingClone}
-                onDismissPendingClone={dismissPendingClone}
-                pendingClones={creation.pendingClones}
-                onOpenPendingClone={openPendingClone}
-                onChangeScope={changeProjectScope}
-                onCollapseSidebar={toggleRail}
-                onNewThread={newProjectThread}
-                onOpenProviderSettings={agents.configureAgentCli}
-                onOpenSourceControl={onOpenSourceControl}
-                onOpenUsage={onOpenUsageSettings}
-                onProjectCommand={projectMenuCommand}
-                onChangeFilter={navigation.setRailFilter}
-                onSelectThread={navigation.selectThread}
-                onThreadBulkCommand={threadBulkCommand}
-                onThreadMenuCommand={threadMenuCommand}
-                onTogglePin={togglePin}
-                overflowRootPaths={overflowRootPaths}
-                pendingInteractions={pendingInteractions}
-                railFilter={navigation.railFilter}
-                providerEnabled={effectiveProviderEnabled}
-                providerManagement={agents.providerManagement}
-                scope={railScope}
-                scopeEntries={navigation.scopeEntries}
-                search={navigation.search}
-                selectedThreadId={selectedThread?.thread.threadId ?? null}
-                turnLog={agents.turnLog ?? null}
-              />
+              <AgentThreadBranchMemoryContext.Provider value={threadBranchMemory.memory}>
+                <AgentThreadsSidebar
+                  catalog={agents.catalog}
+                  collapseShortcut={chrome.shortcuts?.sidebar ?? null}
+                  footerActivity={footerActivity}
+                  addProjectAvailable={chrome.addProject !== null}
+                  evidenceOf={turnEvidenceOf}
+                  groups={groups}
+                  onAddProject={openAddProject}
+                  onCancelPendingClone={cancelPendingClone}
+                  onDismissPendingClone={dismissPendingClone}
+                  pendingClones={creation.pendingClones}
+                  onOpenPendingClone={openPendingClone}
+                  onCollapseSidebar={toggleRail}
+                  onNewThread={requestNewThread}
+                  onOpenProviderSettings={agents.configureAgentCli}
+                  onOpenSourceControl={onOpenSourceControl}
+                  onOpenUsage={onOpenUsageSettings}
+                  onProjectCommand={projectMenuCommand}
+                  onChangeFilter={railFilter.setFilter}
+                  onSelectThread={navigation.selectThread}
+                  onThreadBulkCommand={threadBulkCommand}
+                  onThreadMenuCommand={threadMenuCommand}
+                  onTogglePin={togglePin}
+                  overflowRootPaths={overflowRootPaths}
+                  pendingInteractions={pendingInteractions}
+                  railFilter={railFilter.filter}
+                  providerEnabled={effectiveProviderEnabled}
+                  providerManagement={agents.providerManagement}
+                  scope={railScope}
+                  scopeEntries={navigation.scopeEntries}
+                  search={navigation.search}
+                  selectedThreadId={selectedThread?.thread.threadId ?? null}
+                  turnLog={agents.turnLog ?? null}
+                />
+              </AgentThreadBranchMemoryContext.Provider>
             )}
             {layout.rail === "expanded" && (
               <AgentRailResizeHandle
@@ -1226,6 +1258,12 @@ function LocalAgentModeView({
       </section>
       {surface.surfaceHost.mounted && (
         <AgentSurfaceHost
+          draftIsolation={composer.composerProps.isolation}
+          draftPreviousWorktree={
+            composer.composerProps.previousWorktree?.selected === true
+              ? composer.composerProps.previousWorktree.available
+              : null
+          }
           agents={surfaceAgents}
           agentsPanel={AGENTS_PANEL_SURFACE}
           diffScope={diffScopes.scope}

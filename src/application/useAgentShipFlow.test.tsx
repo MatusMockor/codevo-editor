@@ -20,6 +20,11 @@ import {
   type AgentShipFlowDependencies,
   type AgentShipFlowSurface,
 } from "./useAgentShipFlow";
+import {
+  createAgentWorktreeUseRegistry,
+  type AgentWorktreeUseRegistry,
+} from "./agentWorktreeUseRegistry";
+import { WORKTREE_STARTING_NOTICE, sharedWorktreeNotice } from "./agentSharedWorktreeRemoval";
 
 const ROOT_KEY = "/workspace/app";
 const OWNER_ID = "agent-root:0123456789abcdef";
@@ -146,6 +151,7 @@ interface Environment {
   confirmResult: boolean | Promise<boolean>;
   now: number;
   withOpener: boolean;
+  worktreeUses?: AgentWorktreeUseRegistry;
 }
 
 function renderFlow(overrides: Partial<Environment> = {}) {
@@ -216,6 +222,8 @@ function renderFlow(overrides: Partial<Environment> = {}) {
     onWorktreeRemoved,
     onShipStepCompleted,
     now: () => environment.now,
+    worktreeUses: environment.worktreeUses,
+    currentThreads: () => environment.threads,
   });
 
   const host = document.createElement("div");
@@ -231,6 +239,7 @@ function renderFlow(overrides: Partial<Environment> = {}) {
   render();
 
   return {
+    environment,
     gitGateway,
     gitIntegrationGateway,
     gitWorktreeGateway,
@@ -599,7 +608,9 @@ describe("useAgentShipFlow failures", () => {
     await act(() => harness.hook().integrate(THREAD_ID, "fastForward"));
     expect(harness.gitIntegrationGateway.integrateWorktreeBranch).not.toHaveBeenCalled();
     expect(harness.setNotice).toHaveBeenLastCalledWith(
-      expect.objectContaining({ message: "In-place threads have nothing to integrate." }),
+      expect.objectContaining({
+        message: "Threads in the local checkout have nothing to integrate.",
+      }),
     );
     harness.unmount();
   });
@@ -1077,6 +1088,80 @@ describe("useAgentShipFlow authority and concurrency", () => {
     expect(harness.state()).toBeDefined();
     act(() => harness.hook().clear(THREAD_ID));
     expect(harness.state()).toBeUndefined();
+    harness.unmount();
+  });
+});
+
+describe("useAgentShipFlow shared worktrees", () => {
+  const reuser = thread({ threadId: "agt-2-0a1b", title: "Continue the parser" });
+
+  it.each([true, false])(
+    "refuses to remove a worktree another live thread still uses (delete branch: %s)",
+    async (deleteBranch) => {
+      const harness = renderFlow({
+        threads: new Map([
+          [THREAD_ID, thread()],
+          [reuser.threadId, reuser],
+        ]),
+      });
+
+      await act(() => harness.hook().removeWorktree(THREAD_ID, { deleteBranch }));
+
+      expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+      expect(harness.gitGateway.deleteBranch).not.toHaveBeenCalled();
+      expect(harness.prompter.confirm).not.toHaveBeenCalled();
+      expect(harness.onWorktreeRemoved).not.toHaveBeenCalled();
+      expect(harness.setNotice).toHaveBeenLastCalledWith({
+        kind: "warning",
+        message: sharedWorktreeNotice(reuser),
+        action: null,
+      });
+      expect(harness.state()?.kind).not.toBe("removingWorktree");
+      harness.unmount();
+    },
+  );
+
+  it("refuses when another thread starts using the worktree during the dirty confirmation", async () => {
+    const harness = renderFlow();
+    harness.prompter.confirm.mockImplementationOnce(() => {
+      harness.environment.threads = new Map([
+        [THREAD_ID, harness.environment.threads.get(THREAD_ID) ?? thread()],
+        [reuser.threadId, reuser],
+      ]);
+      return true;
+    });
+
+    await act(() => harness.hook().removeWorktree(THREAD_ID, { deleteBranch: false }));
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.setNotice).toHaveBeenLastCalledWith({
+      kind: "warning",
+      message: sharedWorktreeNotice(reuser),
+      action: null,
+    });
+    harness.unmount();
+  });
+
+  it("refuses while a new thread is starting there and retires the path once removed", async () => {
+    const worktreeUses = createAgentWorktreeUseRegistry();
+    const harness = renderFlow({ worktreeUses });
+    const start = worktreeUses.claimStart(WORKTREE);
+
+    await act(() => harness.hook().removeWorktree(THREAD_ID, { deleteBranch: false }));
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.setNotice).toHaveBeenLastCalledWith({
+      kind: "warning",
+      message: WORKTREE_STARTING_NOTICE,
+      action: null,
+    });
+
+    start?.release();
+    await act(() => harness.hook().removeWorktree(THREAD_ID, { deleteBranch: false }));
+
+    expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.state()).toEqual({ kind: "worktreeRemoved", branchDeleted: false });
+    expect(worktreeUses.claimStart(WORKTREE)).toBeNull();
     harness.unmount();
   });
 });

@@ -1,6 +1,7 @@
 import { useAgentWorktreeFileChanges } from "../../application/useAgentWorktreeFileChanges";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import type { AgentTaskIsolation } from "../../domain/agentTask";
 import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { agentHistoryRepositories } from "./agentHistoryRepositories";
 import { memo, useContext, useMemo, type ReactNode } from "react";
@@ -20,6 +21,8 @@ import {
   type AgentSurfaceTerminalPanelProps,
 } from "./AgentSurfacePanel";
 import {
+  agentSurfaceActivationNotice,
+  agentSurfaceLocalAvailable,
   isRemoteAgentSurfaceThread,
   SURFACE_REMOTE_UNAVAILABLE_REASON,
   SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
@@ -29,6 +32,9 @@ import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 import { EditorPanelDocumentsContext } from "../editorPanel/EditorPanelDocumentsContext";
+import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+import { agentSurfaceLocation } from "./agentSurfaceLocation";
+import type { AgentComposerPreviousWorktree } from "./agentComposerPreviousWorktree";
 
 export type AgentSurfaceHostAgents = Pick<
   AgentThreadsSurface,
@@ -49,6 +55,8 @@ export interface AgentSurfaceHostProps {
   readonly layout: AgentSurfacePanelLayout;
   readonly thread: AgentThreadView | null;
   readonly remoteDraft?: boolean;
+  readonly draftIsolation?: AgentTaskIsolation;
+  readonly draftPreviousWorktree?: AgentComposerPreviousWorktree | null;
   readonly remoteSurface?: AgentRemoteSurface | null;
   readonly threadRootPath: string | null;
   readonly scope: AgentSurfaceScope;
@@ -76,6 +84,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   agentsPanel = null,
   chooserAutoFocus,
   diffScope,
+  draftIsolation = "in-place",
+  draftPreviousWorktree = null,
   onDiffScopeChange = ignoreDiffScope,
   shipActions = null,
   scripts = null,
@@ -129,13 +139,14 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     layout.activeSurface !== null &&
     isAgentRemoteSurfaceKind(layout.activeSurface) &&
     remoteSurfaceSupports(remoteContext, layout.activeSurface);
-  const available =
-    !remote &&
-    scope.kind === "repository" &&
-    scope.rootPath === workspaceRoot &&
-    (thread === null || thread.thread.owner.rootKey === scope.projectRootKey) &&
-    (activation === undefined ||
-      (activation.state.kind === "ready" && activation.state.rootPath === scope.rootPath));
+  const available = agentSurfaceLocalAvailable({
+    remote,
+    scope,
+    workspaceRoot,
+    thread,
+    activation: activation?.state,
+  });
+  const activationNotice = agentSurfaceActivationNotice(activation?.state, scope);
   const unavailable =
     available ||
     remoteActiveAvailable ||
@@ -147,18 +158,56 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
           ? thread === null && layout.activeSurface === "diff"
             ? SURFACE_REMOTE_NO_THREAD_DESCRIPTION
             : SURFACE_REMOTE_UNAVAILABLE_REASON
-          : activation?.state.kind === "failed"
-            ? activation.state.message
-            : activation?.state.kind === "pending"
+          : activationNotice.kind === "failed"
+            ? activationNotice.message
+            : activationNotice.kind === "opening"
               ? "Opening project…"
               : "Select an available project to use this panel."}
-        {!remote && activation?.state.kind === "failed" && (
+        {!remote && activation !== undefined && activationNotice.kind === "failed" && (
           <button className="agent-linkbutton" onClick={activation.retry} type="button">
             Retry
           </button>
         )}
       </div>
     );
+  const remoteServers = useRemoteRunnerContext()?.servers;
+  const remoteServerId = remoteContext?.scope.serverId ?? null;
+  const remoteServerName =
+    remoteServerId === null
+      ? null
+      : (remoteServers?.find((server) => server.id === remoteServerId)?.name ?? null);
+  const liveCheckoutBranches = chrome.liveCheckoutBranches;
+  const location = useMemo(
+    () =>
+      agentSurfaceLocation({
+        thread,
+        threadRootPath,
+        scope,
+        workspaceRoot,
+        activation: activation?.state,
+        projects,
+        liveBranches: liveCheckoutBranches,
+        draftIsolation,
+        draftPreviousWorktree,
+        remote: remote
+          ? { scope: remoteContext?.scope ?? null, serverName: remoteServerName }
+          : null,
+      }),
+    [
+      activation?.state,
+      draftIsolation,
+      draftPreviousWorktree,
+      liveCheckoutBranches,
+      projects,
+      remote,
+      remoteContext?.scope,
+      remoteServerName,
+      scope,
+      thread,
+      threadRootPath,
+      workspaceRoot,
+    ],
+  );
   const stableThread = useStableAgentRightPanelThread(thread);
   const fileTree = useAgentSurfaceScopeTree({
     chrome,
@@ -325,6 +374,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
           layout={layout}
           layoutControls={layoutControls}
           leadingControls={leadingControls}
+          location={location}
           onActivateSurface={onActivateSurface}
           onCloseSurfaceTab={onCloseSurfaceTab}
           onOpenSurface={onOpenSurface}

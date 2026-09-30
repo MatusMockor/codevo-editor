@@ -1,13 +1,20 @@
-import { memo, useMemo, type ReactNode } from "react";
-import { Folder, FolderGit2, Server } from "lucide-react";
-import type { AgentTaskIsolation } from "../../domain/agentTask";
+import { memo, useMemo } from "react";
+import { Folder, FolderGit2 } from "lucide-react";
+import {
+  agentCheckoutLabel,
+  agentMachineLabel,
+  type AgentCheckoutKind,
+  type AgentMachine,
+} from "../../domain/agentWorkspaceLocation";
 import {
   agentComposerCheckoutChoice,
   agentComposerRepositoryOptions,
   agentComposerRepositoryValue,
   type AgentComposerTarget,
 } from "./agentComposerCheckout";
+import { CheckoutGlyph } from "./AgentEnvironmentCheckoutPicker";
 import { AgentPickerMenu } from "./AgentPickerMenu";
+import { MachineGlyph } from "./AgentRunOnPicker";
 import "./pickers/agentPickers.css";
 
 const REPOSITORY_ID = "agent-repository";
@@ -78,42 +85,30 @@ export const AgentRepositoryPicker = memo(function AgentRepositoryPicker({
   );
 });
 
-export function AgentComposerLockedCheckout({
-  executionServerName = null,
-  isolation,
-  remote = false,
-}: {
-  readonly executionServerName?: string | null;
-  readonly isolation: AgentTaskIsolation;
-  readonly remote?: boolean;
-}) {
+export function AgentComposerLockedMachine({ machine }: { readonly machine: AgentMachine }) {
   return (
     <span className="agent-composer__lock">
-      {executionServerName === null ? null : (
-        <>
-          <span aria-hidden="true" className="agent-composer__lock-glyph">
-            <Server size={12} />
-          </span>
-          <span className="agent-visually-hidden">Runs on:</span>
-          {executionServerName}
-          <span aria-hidden="true">·</span>
-        </>
-      )}
       <span aria-hidden="true" className="agent-composer__lock-glyph">
-        {isolationGlyph(isolation)}
+        <MachineGlyph machine={machine} size={12} />
       </span>
-      <span className="agent-visually-hidden">Checkout:</span>
-      {isolationLabel(isolation, remote)}
+      <span className="agent-visually-hidden">Runs on:</span>
+      {agentMachineLabel(machine)}
     </span>
   );
 }
 
-function isolationGlyph(isolation: AgentTaskIsolation): ReactNode {
-  if (isolation === "worktree") return <FolderGit2 size={12} />;
-  return <Folder size={12} />;
-}
-
-function isolationLabel(isolation: AgentTaskIsolation, remote: boolean): string {
-  if (isolation === "worktree") return "New worktree";
-  return remote ? "Server checkout" : "Local checkout";
+export function AgentComposerLockedCheckout({
+  checkout,
+}: {
+  readonly checkout: AgentCheckoutKind;
+}) {
+  return (
+    <span className="agent-composer__lock">
+      <span aria-hidden="true" className="agent-composer__lock-glyph">
+        <CheckoutGlyph checkout={checkout} size={12} />
+      </span>
+      <span className="agent-visually-hidden">Checkout:</span>
+      {agentCheckoutLabel(checkout)}
+    </span>
+  );
 }

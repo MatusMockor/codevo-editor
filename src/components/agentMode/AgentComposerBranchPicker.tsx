@@ -38,10 +38,29 @@ export function AgentComposerBranchPicker({
     load();
   }, [gateway, hidden, load, repositoryRoot]);
   if (hidden) return null;
-  return <BranchPickerControl context={context} picker={picker} />;
+  return <AgentComposerBranchPickerControl context={context} picker={picker} />;
 }
 
-function BranchPickerControl({
+export function AgentComposerBranchLabel({
+  branch,
+  detail = null,
+}: {
+  readonly branch: string;
+  readonly detail?: string | null;
+}) {
+  return (
+    <span className="agent-composer__branch-label">
+      <span aria-hidden="true" className="agent-composer__lock-glyph">
+        <GitBranch size={12} />
+      </span>
+      <span className="agent-visually-hidden">Branch:</span>
+      <span className="agent-composer__branch-name">{branch}</span>
+      {detail === null ? null : <span className="agent-composer__branch-detail">· {detail}</span>}
+    </span>
+  );
+}
+
+export function AgentComposerBranchPickerControl({
   context,
   picker,
 }: {

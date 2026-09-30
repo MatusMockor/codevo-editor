@@ -34,6 +34,11 @@ import {
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
+  useAgentComposerPreviousWorktree,
+  type AgentComposerPreviousWorktreeScope,
+} from "./useAgentComposerPreviousWorktree";
+import type { AgentComposerPreviousWorktreeChoice } from "./agentComposerPreviousWorktree";
+import {
   useAgentComposerRepositoryPreference,
   type ComposerRepositoryPreferenceStorage,
 } from "./useAgentComposerRepositoryPreference";
@@ -84,7 +89,7 @@ import {
   type AgentProjectGroup,
 } from "./agentModePresentation";
 
-export const NOT_REPOSITORY_COMPOSER_CAPTION = "Not a Git repository · runs in place";
+export const NOT_REPOSITORY_COMPOSER_CAPTION = "Not a Git repository · Local checkout only";
 export const NOT_REPOSITORY_WORKTREE_ONLY_CAPTION =
   "This folder is not a Git repository, so it cannot run in an isolated worktree. Choose a repository from the checkout menu.";
 
@@ -104,6 +109,7 @@ export type AgentComposerSurface = Pick<
   | "startThread"
   | "steer"
 > &
+  Partial<Pick<AgentThreadsSurface, "threads">> &
   AgentComposerStopSurface &
   AgentSessionRestartSurface;
 
@@ -148,12 +154,13 @@ export type AgentComposerControllerProps = Omit<
 > & {
   readonly recovery?: AgentComposerRecovery | null;
   readonly draftKey: string | null;
+  readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null;
 };
 
 export type AgentComposerPromptProps = Omit<
   AgentComposerProps,
   "onOpenProviderSettings" | "onOpenEnvironmentSettings" | "providerEnabled"
->;
+> & { readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null };
 
 export interface AgentComposerControllerState {
   readonly target: ComposerTarget | null;
@@ -322,6 +329,28 @@ export function useAgentComposerControllerState({
         : worktreeAvailable
           ? chosen
           : "in-place";
+  const previousWorktreeScope = useMemo<AgentComposerPreviousWorktreeScope | null>(
+    () =>
+      selectedThread !== null ||
+      remoteExecution ||
+      !worktreeAvailable ||
+      composerProject === null ||
+      composerRoot === null
+        ? null
+        : { project: composerProject, repositoryRoot: composerRoot },
+    [composerProject, composerRoot, remoteExecution, selectedThread, worktreeAvailable],
+  );
+  const selectPreviousWorktreeIsolation = useCallback(() => {
+    if (composerRoot === null) return;
+    setIsolationChoice({ repositoryRoot: composerRoot, isolation: "worktree" });
+  }, [composerRoot]);
+  const previousWorktree = useAgentComposerPreviousWorktree(
+    agents.threads,
+    previousWorktreeScope,
+    selectPreviousWorktreeIsolation,
+  );
+  const reuseWorktree = isolation === "worktree" ? previousWorktree.reuse : null;
+  const clearPreviousWorktree = previousWorktree.clear;
   const guard = probeSettled ? (preview?.inPlaceGuard ?? { kind: "safe" as const }) : SAFE_GUARD;
   const confirmationKey = preview?.confirmationKey ?? null;
   const unsafeInPlaceConfirmationKey =
@@ -569,6 +598,7 @@ export function useAgentComposerControllerState({
               prompt,
               isolation,
               worktreeBase,
+              ...(reuseWorktree === null ? {} : { reuseWorktree }),
               unsafeInPlaceConfirmationKey,
               launch: submission.launch,
               dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
@@ -594,6 +624,7 @@ export function useAgentComposerControllerState({
       unsafeInPlaceConfirmationKey,
       isolation,
       worktreeBase,
+      reuseWorktree,
       onThreadStarted,
       sendFollowUp,
       startThread,
@@ -640,9 +671,10 @@ export function useAgentComposerControllerState({
     (next: AgentTaskIsolation) => {
       if (composerRoot === null) return;
       if (next === "worktree" && !worktreeAvailable) return;
+      clearPreviousWorktree();
       setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
     },
-    [composerRoot, worktreeAvailable],
+    [clearPreviousWorktree, composerRoot, worktreeAvailable],
   );
 
   const changeWorktreeBase = useCallback(
@@ -679,6 +711,7 @@ export function useAgentComposerControllerState({
     mode: composerMode,
     onIsolationChange: changeIsolation,
     onWorktreeBaseChange: changeWorktreeBase,
+    previousWorktree: previousWorktree.choice,
     onRefreshIsolation: refreshIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,

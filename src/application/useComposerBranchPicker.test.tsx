@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitBranches } from "../domain/git";
 import {
   BRANCH_OPERATION_IN_FLIGHT_ERROR,
+  STALE_BRANCH_ERROR,
   useComposerBranchPicker,
   type ComposerBranchGateway,
   type ComposerBranchItem,
   type ComposerBranchPicker,
+  type ComposerBranchSwitchResult,
 } from "./useComposerBranchPicker";
 
 function deferred<T>() {
@@ -54,10 +56,12 @@ describe("useComposerBranchPicker", () => {
     gateway: ComposerBranchGateway;
     repositoryRoot: string;
     guard?: () => string | null;
+    onCheckedOut?: (current: string | null) => void;
   }) {
     picker = useComposerBranchPicker({
       gateway: props.gateway,
       guard: props.guard ?? (() => null),
+      onCheckedOut: props.onCheckedOut,
       target: { ownerKey: props.repositoryRoot, repositoryRoot: props.repositoryRoot },
     });
     return null;
@@ -285,5 +289,116 @@ describe("useComposerBranchPicker", () => {
     expect(picker?.error?.startsWith("bad")).toBe(true);
     expect(picker?.error).not.toMatch(/[\u0000-\u001f]/u);
     expect(picker?.error?.length).toBeLessThanOrEqual(500);
+  });
+  it("switches back to a named local branch only from a fresh list and reports the new checkout", async () => {
+    const onCheckedOut = vi.fn();
+    const getBranches = vi.fn(async () => branchesA);
+    const git = gateway({
+      getBranches,
+      switchBranch: vi.fn(async () => {
+        getBranches.mockImplementation(async () => ({ ...branchesA, current: "feat/a" }));
+      }),
+    });
+    act(() =>
+      root.render(<Harness gateway={git} onCheckedOut={onCheckedOut} repositoryRoot="/a" />),
+    );
+    let early: ComposerBranchSwitchResult | undefined;
+    await act(async () => {
+      early = await picker?.switchToLocal("feat/a");
+    });
+    expect(early).toEqual({ kind: "refused", reason: STALE_BRANCH_ERROR });
+    expect(picker?.error).toBeNull();
+    await act(async () => picker?.load());
+    let gone: ComposerBranchSwitchResult | undefined;
+    await act(async () => {
+      gone = await picker?.switchToLocal("feat/gone");
+    });
+    expect(gone).toEqual({ kind: "refused", reason: STALE_BRANCH_ERROR });
+    expect(picker?.error).toBeNull();
+    expect(git.switchBranch).not.toHaveBeenCalled();
+    let restored: ComposerBranchSwitchResult | undefined;
+    await act(async () => {
+      restored = await picker?.switchToLocal("feat/a");
+    });
+    expect(restored).toEqual({ kind: "switched" });
+    expect(git.switchBranch).toHaveBeenCalledWith("/a", "feat/a");
+    expect(onCheckedOut).toHaveBeenCalledExactlyOnceWith("feat/a");
+    expect(picker?.error).toBeNull();
+  });
+
+  it("surfaces the guard reason for a named switch and never reports a checkout", async () => {
+    const onCheckedOut = vi.fn();
+    const git = gateway();
+    act(() =>
+      root.render(
+        <Harness
+          gateway={git}
+          guard={() => "Save or discard your changes first."}
+          onCheckedOut={onCheckedOut}
+          repositoryRoot="/a"
+        />,
+      ),
+    );
+    await act(async () => picker?.load());
+    let blocked: ComposerBranchSwitchResult | undefined;
+    await act(async () => {
+      blocked = await picker?.switchToLocal("feat/a");
+    });
+    expect(git.switchBranch).not.toHaveBeenCalled();
+    expect(onCheckedOut).not.toHaveBeenCalled();
+    expect(blocked).toEqual({ kind: "refused", reason: "Save or discard your changes first." });
+    expect(picker?.error).toBeNull();
+  });
+
+  it("never reports a checkout that settles after the owner changed", async () => {
+    const onCheckedOut = vi.fn();
+    const lateSwitch = deferred<void>();
+    const git = gateway({ switchBranch: vi.fn(() => lateSwitch.promise) });
+    act(() =>
+      root.render(<Harness gateway={git} onCheckedOut={onCheckedOut} repositoryRoot="/a" />),
+    );
+    await act(async () => picker?.load());
+    let switching: Promise<ComposerBranchSwitchResult> | undefined;
+    act(() => {
+      switching = picker?.switchToLocal("feat/a");
+    });
+    act(() =>
+      root.render(<Harness gateway={git} onCheckedOut={onCheckedOut} repositoryRoot="/b" />),
+    );
+    let settled: ComposerBranchSwitchResult | undefined;
+    await act(async () => {
+      lateSwitch.resolve();
+      settled = await switching;
+    });
+    expect(settled).toEqual({ kind: "superseded" });
+    expect(onCheckedOut).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same ready list when a reload returns identical branches", async () => {
+    const git = gateway({ getBranches: vi.fn(async () => ({ ...branchesA })) });
+    act(() => root.render(<Harness gateway={git} repositoryRoot="/a" />));
+    await act(async () => picker?.load());
+    const first = picker?.list;
+    await act(async () => picker?.load());
+    expect(picker?.list).toBe(first);
+  });
+  it("never exposes the previous owner's list in the render that changes the owner", async () => {
+    const seen: Array<{ root: string; kind: string }> = [];
+    function Probe(props: { gateway: ComposerBranchGateway; repositoryRoot: string }) {
+      const probe = useComposerBranchPicker({
+        gateway: props.gateway,
+        guard: () => null,
+        target: { ownerKey: props.repositoryRoot, repositoryRoot: props.repositoryRoot },
+      });
+      picker = probe;
+      seen.push({ root: props.repositoryRoot, kind: probe.list.kind });
+      return null;
+    }
+    const git = gateway();
+    act(() => root.render(<Probe gateway={git} repositoryRoot="/a" />));
+    await act(async () => picker?.load());
+    seen.length = 0;
+    act(() => root.render(<Probe gateway={git} repositoryRoot="/b" />));
+    expect(seen.filter((entry) => entry.root === "/b" && entry.kind === "ready")).toEqual([]);
   });
 });

@@ -105,6 +105,11 @@ import {
   type AgentTurnDispatchDependencies,
   type AgentTurnDispatchSurface,
 } from "./useAgentTurnDispatch";
+import {
+  createAgentWorktreeUseRegistry,
+  type AgentWorktreeUseRegistry,
+} from "./agentWorktreeUseRegistry";
+import { PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE } from "./agentPreviousWorktreeReuse";
 
 function concreteLaunch(provider: AgentCliKind): AgentLaunchOptions {
   if (provider === "codex") return { provider: "codex", model: "default", mode: "workspaceWrite" };
@@ -147,6 +152,7 @@ interface Environment {
   preflight: InPlacePreflight;
   currentCliVersion: Record<AgentCliKind, string | null>;
   outputSubscriptionGate: Promise<void> | null;
+  worktreeUses?: AgentWorktreeUseRegistry;
 }
 
 function createDeferred<T>() {
@@ -862,7 +868,7 @@ describe("useAgentTurnDispatch startThread", () => {
 
     expect(result).toBeNull();
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-    expect(harness.notice()?.message).toContain("Running in place is unsafe");
+    expect(harness.notice()?.message).toContain("Starting in the local checkout is unsafe");
     harness.unmount();
   });
 
@@ -2475,6 +2481,247 @@ describe("useAgentTurnDispatch stop and project release", () => {
   });
 });
 
+describe("useAgentTurnDispatch previous worktree", () => {
+  async function settledWorktreeThread(harness: ReturnType<typeof renderDispatch>) {
+    const threadId = await harness.startThread();
+    await act(async () => {
+      harness.emitStatus(harness.turnIdOf(threadId, 0), 1, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() =>
+      expect(harness.turn(threadId, 0).status).toMatchObject({ kind: "exited" }),
+    );
+    harness.worktree.addAgentWorktree.mockClear();
+    harness.onWorktreeCreated.mockClear();
+    return { threadId, worktreePath: `${ROOT_A}/.worktrees/${threadId}` };
+  }
+
+  function reuseRequest(source: { threadId: string; worktreePath: string }) {
+    return startRequest({
+      prompt: "Continue in the same worktree",
+      reuseWorktree: { worktreePath: source.worktreePath },
+    });
+  }
+
+  it("starts a new thread in the source worktree without creating one", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    const source = await settledWorktreeThread(harness);
+
+    const result = await act(() => harness.hook().startThread(reuseRequest(source)));
+
+    expect(result).not.toBeNull();
+    expect(result?.threadId).not.toBe(source.threadId);
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    expect(harness.onWorktreeCreated).not.toHaveBeenCalled();
+    const started = harness.startedRequests[1];
+    expect(started?.cwd).toBe(source.worktreePath);
+    expect(started?.isolation).toBe("worktree");
+    expect(started?.repositoryRoot).toBe(ROOT_A);
+    expect(harness.thread(result?.threadId ?? "").target).toEqual({
+      isolation: "worktree",
+      worktreePath: source.worktreePath,
+    });
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("never removes or retains the reused worktree when the start is rejected", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    const source = await settledWorktreeThread(harness);
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError("Another agent is already running in this folder."),
+    );
+
+    const result = await act(() => harness.hook().startThread(reuseRequest(source)));
+
+    expect(result).toBeNull();
+    expect(harness.notice()?.message).toBe("Another agent is already running in this folder.");
+    expect(harness.worktree.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("retains but never removes the reused worktree when the start result is uncertain", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    const source = await settledWorktreeThread(harness);
+    harness.agent.startAgentTask.mockRejectedValueOnce(new Error("connection lost"));
+
+    const result = await act(() => harness.hook().startThread(reuseRequest(source)));
+
+    expect(result).toBeNull();
+    expect(harness.worktree.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.retainUncertainWorktree).toHaveBeenCalledWith(source.worktreePath);
+    harness.unmount();
+  });
+
+  it("keeps using a worktree whose first thread was archived while another thread still uses it", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    const source = await settledWorktreeThread(harness);
+    const reuser = await act(() => harness.hook().startThread(reuseRequest(source)));
+    expect(reuser).not.toBeNull();
+    harness.dispatchAction({ kind: "archived", threadId: source.threadId });
+
+    const result = await act(() => harness.hook().startThread(reuseRequest(source)));
+
+    expect(result).not.toBeNull();
+    expect(harness.startedRequests[2]?.cwd).toBe(source.worktreePath);
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it.each([
+    ["archived", "archive"],
+    ["deleted", "drop"],
+  ] as const)(
+    "fails closed when the source thread is %s while the start is pending",
+    async (_label, change) => {
+      const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+      const source = await settledWorktreeThread(harness);
+      const lease = createDeferred<boolean>();
+      harness.environment.leaseToken = null;
+      harness.environment.ensureProjectLease = vi.fn(async () => lease.promise);
+      harness.rerender();
+
+      let result: AgentThreadStartResult | null = null;
+      await act(async () => {
+        const starting = harness.hook().startThread(reuseRequest(source));
+        await waitForReact(() =>
+          expect(harness.environment.ensureProjectLease).toHaveBeenCalledWith(ROOT_A),
+        );
+        if (change === "archive") {
+          harness.dispatchAction({ kind: "archived", threadId: source.threadId });
+        }
+        if (change === "drop") harness.dropThread(source.threadId);
+        lease.resolve(true);
+        result = await starting;
+      });
+
+      expect(result).toBeNull();
+      expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+      expect(harness.startedRequests).toHaveLength(1);
+      expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+      expect(harness.worktree.removeWorktree).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
+
+  it("fails closed when the worktree is removed while the start is pending", async () => {
+    const worktreeUses = createAgentWorktreeUseRegistry();
+    const harness = renderDispatch({ worktreeUses });
+    const source = await settledWorktreeThread(harness);
+    const lease = createDeferred<boolean>();
+    harness.environment.leaseToken = null;
+    harness.environment.ensureProjectLease = vi.fn(async () => lease.promise);
+    harness.rerender();
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(reuseRequest(source));
+      await waitForReact(() =>
+        expect(harness.environment.ensureProjectLease).toHaveBeenCalledWith(ROOT_A),
+      );
+      worktreeUses.claimRemoval(source.worktreePath)?.settle("removed");
+      lease.resolve(true);
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("holds the worktree against removal until the start settles", async () => {
+    const worktreeUses = createAgentWorktreeUseRegistry();
+    const harness = renderDispatch({ worktreeUses });
+    const source = await settledWorktreeThread(harness);
+    const gate = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      harness.startedRequests.push(payload);
+      return gate.promise;
+    });
+
+    await act(async () => {
+      const starting = harness.hook().startThread(reuseRequest(source));
+      await harness.waitForStartedRequests(2);
+      expect(worktreeUses.claimRemoval(source.worktreePath)).toBeNull();
+      gate.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      await starting;
+    });
+
+    const removal = worktreeUses.claimRemoval(source.worktreePath);
+    expect(removal).not.toBeNull();
+    removal?.settle("kept");
+    harness.unmount();
+  });
+
+  it("refuses to start in a worktree no thread of the project uses", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    await settledWorktreeThread(harness);
+
+    const result = await act(() =>
+      harness
+        .hook()
+        .startThread(
+          startRequest({ reuseWorktree: { worktreePath: `${ROOT_A}/.worktrees/agt-other` } }),
+        ),
+    );
+
+    expect(result).toBeNull();
+    expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("refuses a source thread owned by another project after an A to B switch", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    const source = await settledWorktreeThread(harness);
+    harness.switchToProject(ROOT_B, OWNER_B);
+    harness.environment.repositoryRoot = ROOT_B;
+    harness.rerender();
+
+    const result = await act(() =>
+      harness.hook().startThread(
+        startRequest({
+          projectRootKey: ROOT_B,
+          repositoryRoot: ROOT_B,
+          reuseWorktree: { worktreePath: source.worktreePath },
+        }),
+      ),
+    );
+
+    expect(result).toBeNull();
+    expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("refuses a missing source worktree, an in-place reuse, and a missing registry", async () => {
+    const harness = renderDispatch({ worktreeUses: createAgentWorktreeUseRegistry() });
+    const source = await settledWorktreeThread(harness);
+
+    harness.environment.worktreeMissing = true;
+    expect(await act(() => harness.hook().startThread(reuseRequest(source)))).toBeNull();
+    expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+    harness.environment.worktreeMissing = false;
+
+    expect(
+      await act(() =>
+        harness.hook().startThread({ ...reuseRequest(source), isolation: "in-place" }),
+      ),
+    ).toBeNull();
+    expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+
+    harness.environment.worktreeUses = undefined;
+    harness.rerender();
+    expect(await act(() => harness.hook().startThread(reuseRequest(source)))).toBeNull();
+    expect(harness.notice()?.message).toBe(PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE);
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.preflightInPlace).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+});
+
 function startRequest(
   overrides: Partial<Parameters<AgentTurnDispatchSurface["startThread"]>[0]> = {},
 ) {
@@ -2754,6 +3001,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       isWorktreeMissing: () => environment.worktreeMissing,
       retainUncertainWorktree,
       onWorktreeCreated,
+      worktreeUses: environment.worktreeUses,
       currentCliVersion: (provider) => environment.currentCliVersion[provider],
       onTurnTerminal,
       onAccountUsageObserved,

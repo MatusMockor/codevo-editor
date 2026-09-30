@@ -3,7 +3,6 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   ALL_PROJECTS_FILTER,
   agentProjectMonogram,
-  agentRailFilterFollowingProject,
   agentRailFilterKey,
   agentRailFilterLabel,
   agentThreadsInFilter,
@@ -66,18 +65,6 @@ describe("agentRailFilter", () => {
     expect(reconcileAgentRailFilter(orders, [entry("/web", "web-dashboard")])).toBe(
       ALL_PROJECTS_FILTER,
     );
-  });
-
-  it("follows the active project only when a single project is filtered", () => {
-    expect(agentRailFilterFollowingProject(ALL_PROJECTS_FILTER, "/web", entries)).toBe(
-      ALL_PROJECTS_FILTER,
-    );
-    expect(agentRailFilterFollowingProject(orders, "/web/packages/ui", entries)).toEqual({
-      kind: "project",
-      projectRootKey: "/web",
-    });
-    expect(agentRailFilterFollowingProject(orders, "/orders", entries)).toBe(orders);
-    expect(agentRailFilterFollowingProject(orders, "/unknown", entries)).toBe(orders);
   });
 
   it("labels, keys and monograms", () => {

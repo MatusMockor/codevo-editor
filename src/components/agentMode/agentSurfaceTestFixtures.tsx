@@ -6,6 +6,7 @@ import {
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
 import type { AgentSurfaceScope } from "./agentSurfacePolicy";
+import type { AgentProjectWorkspaceActivation } from "./useAgentProjectWorkspaceSync";
 
 export const SURFACE_FIXTURE_ROOT = "/workspace/app";
 export const SURFACE_FIXTURE_WORKTREE = `${SURFACE_FIXTURE_ROOT}/.worktrees/agt-1`;
@@ -21,6 +22,17 @@ export function surfaceRepositoryScope(
     rootPath: repositoryRoot,
     ownerId: `agent-root:${repositoryRoot}`,
     generation,
+  };
+}
+
+export function surfaceActivation(
+  kind: "ready" | "pending",
+  scope: Extract<AgentSurfaceScope, { kind: "repository" }> = surfaceRepositoryScope(),
+): Extract<AgentProjectWorkspaceActivation, { readonly kind: "ready" | "pending" }> {
+  return {
+    kind,
+    rootPath: scope.rootPath,
+    owner: { ownerId: scope.ownerId, generation: scope.generation },
   };
 }
 

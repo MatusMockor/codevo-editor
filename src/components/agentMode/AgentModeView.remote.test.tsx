@@ -12,6 +12,7 @@ import { remoteAgentThreadKey } from "../../application/remoteAgentProjection";
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
+import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 import { AgentModeView } from "./AgentModeView";
 import { surfaceThreadView, SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
@@ -175,7 +176,7 @@ describe("original agent workbench with remote execution", () => {
         click(host.querySelector('[role="dialog"] button[data-provider="claudeCode"]')!);
         click(host.querySelector('[role="option"][data-value="claude-opus-5"]')!);
       }
-      click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
+      click(host.querySelector('[aria-label="Run on: This computer"]')!);
       click(
         [...document.querySelectorAll('[role="menuitemradio"]')].find((entry) =>
           entry.textContent?.includes("Linux server"),
@@ -251,22 +252,22 @@ describe("original agent workbench with remote execution", () => {
     );
     await waitForReact(() => expect(gateway.listProjects).toHaveBeenCalled());
     const chooseProject = (name: string) => {
-      click(host.querySelector('button[aria-label="Filter threads by project"]')!);
-      const row = [...document.querySelectorAll('.cv-filter [role="option"]')].find(
-        (entry) => entry.querySelector(".cv-filter__label")?.textContent === name,
-      );
-      expect(row).toBeDefined();
-      click(row!);
+      const palette = workbenchAgentPaletteProvider.current();
+      const project = palette?.projects.find((entry) => entry.label === name);
+      expect(project).toBeDefined();
+      act(() => {
+        palette?.switchProject(project!.key);
+      });
     };
     chooseProject("Server app");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label^="Workspace: Linux server,"]')).not.toBeNull(),
+      expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull(),
     );
     click(host.querySelector(`[data-thread-id="${remoteThreadId}"]`)!);
     await waitForReact(() => expect(host.textContent).toContain("First remote prompt"));
     chooseProject("app");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label^="Workspace: This computer,"]')).not.toBeNull(),
+      expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull(),
     );
     expect(railScopeTitle(host)).toContain("app");
     expect(railScopeTitle(host)).not.toContain("Server app");
@@ -340,7 +341,10 @@ describe("original agent workbench with remote execution", () => {
     const originalComposer = host.querySelector(".agent-composer");
     expect(originalSidebar).not.toBeNull();
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
-    click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
+    await waitForReact(() =>
+      expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull(),
+    );
+    click(host.querySelector('[aria-label="Run on: This computer"]')!);
     await waitForReact(() =>
       expect(document.querySelector('[role="menuitemradio"]')?.textContent).toContain(
         "This computer",
@@ -447,7 +451,7 @@ describe("original agent workbench with remote execution", () => {
       ),
     ).toBe(true);
     click(host.querySelector('[aria-label="New thread in app"]')!);
-    click(host.querySelector('[aria-label^="Workspace: Linux server,"]')!);
+    click(host.querySelector('[aria-label="Run on: Linux server"]')!);
     click(
       Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
         entry.textContent?.includes("This computer"),
@@ -537,7 +541,7 @@ describe("original agent workbench with remote execution", () => {
           "claude-opus-5",
         );
       }
-      click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
+      click(host.querySelector('[aria-label="Run on: This computer"]')!);
       click(
         Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
           entry.textContent?.includes("Linux server"),
@@ -614,7 +618,7 @@ describe("original agent workbench with remote execution", () => {
       ),
     );
     await waitForReact(() => expect(gateway.listProjects).toHaveBeenCalled());
-    expect(host.querySelector('[aria-label^="Workspace: This computer,"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Run on: This computer"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="New thread in Server app"]')).toBeNull();
     expect(host.querySelector(".agent-composer")?.textContent).not.toContain(
       "Server threads run in an isolated worktree.",
@@ -632,7 +636,7 @@ describe("original agent workbench with remote execution", () => {
     ).toBe(true);
     expect(gateway.createTask).not.toHaveBeenCalled();
     expect(startThread).not.toHaveBeenCalled();
-    click(host.querySelector('[aria-label^="Workspace: This computer,"]')!);
+    click(host.querySelector('[aria-label="Run on: This computer"]')!);
     click(
       Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
         entry.textContent?.includes("Linux server"),
@@ -641,14 +645,16 @@ describe("original agent workbench with remote execution", () => {
     await waitForReact(() =>
       expect(host.querySelector('[aria-label="New thread in Server app"]')).not.toBeNull(),
     );
-    expect(host.querySelector('[aria-label^="Workspace: Linux server,"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull();
     expect(
       host.querySelector<HTMLButtonElement>('.agent-composer button[type="submit"]')?.disabled,
     ).toBe(false);
   });
 });
 function railScopeTitle(host: HTMLElement): string | null | undefined {
-  return host.querySelector('button[aria-label="New thread"]')?.getAttribute("title");
+  expect(host).toBeInstanceOf(HTMLElement);
+  const palette = workbenchAgentPaletteProvider.current();
+  return palette?.projects.find((project) => project.current)?.label;
 }
 
 function click(element: Element) {

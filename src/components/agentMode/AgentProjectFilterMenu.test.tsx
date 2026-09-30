@@ -42,7 +42,7 @@ afterEach(() => {
 
 function openFilter(): void {
   const trigger = host.querySelector<HTMLButtonElement>(
-    'button[aria-label="Filter threads by project"]',
+    'button[aria-label^="Filter threads by project"]',
   );
   expect(trigger).not.toBeNull();
   act(() => trigger?.click());
@@ -67,7 +67,7 @@ function searchInput(): HTMLInputElement {
 }
 
 describe("AgentProjectFilterMenu", () => {
-  it("exposes the current scope on the closed trigger without opening the popover", () => {
+  it("names the current filter on the closed trigger without opening the popover", () => {
     const renderFilter = (filter: { kind: "all" } | { kind: "project"; projectRootKey: string }) =>
       act(() =>
         root.render(
@@ -80,24 +80,38 @@ describe("AgentProjectFilterMenu", () => {
           />,
         ),
       );
-    const scopeText = (): string | null | undefined => {
-      const trigger = host.querySelector<HTMLButtonElement>(
-        'button[aria-label="Filter threads by project"]',
-      );
-      const describedBy = trigger?.getAttribute("aria-describedby");
-      expect(describedBy).toBeTruthy();
-      return document.getElementById(describedBy ?? "")?.textContent;
+    const trigger = (): HTMLButtonElement => {
+      const button = host.querySelector<HTMLButtonElement>(".cv-sb-filter");
+      expect(button).not.toBeNull();
+      return button as HTMLButtonElement;
     };
 
     renderFilter({ kind: "all" });
     expect(document.querySelector('[role="listbox"]')).toBeNull();
-    expect(host.querySelector("button svg")).not.toBeNull();
-    expect(scopeText()).toBe("Showing All projects");
+    expect(trigger().getAttribute("aria-label")).toBe("Filter threads by project");
+    expect(trigger().textContent).toBe("All projects");
+    expect(trigger().querySelectorAll("svg")).toHaveLength(2);
+    expect(trigger().getAttribute("aria-haspopup")).toBe("dialog");
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
 
     renderFilter({ kind: "project", projectRootKey: "/orders" });
-    expect(host.querySelector(".cv-favicon")?.textContent).toBe("O");
-    expect(scopeText()).toBe("Showing orders-api");
+    expect(trigger().getAttribute("aria-label")).toBe("Filter threads by project: orders-api");
+    expect(trigger().textContent).toBe("orders-api");
+    expect(host.querySelector(".cv-favicon")).toBeNull();
     expect(document.querySelector('[role="listbox"]')).toBeNull();
+
+    act(() =>
+      root.render(
+        <AgentProjectFilterMenu
+          entries={[]}
+          filter={{ kind: "all" }}
+          onProjectCommand={vi.fn()}
+          onSelectAll={vi.fn()}
+          onSelectProject={vi.fn()}
+        />,
+      ),
+    );
+    expect(trigger().disabled).toBe(true);
   });
 
   it("lists All projects and every project, marks the current one and picks by click", () => {
@@ -145,7 +159,7 @@ describe("AgentProjectFilterMenu", () => {
         />,
       ),
     );
-    expect(host.querySelector(".cv-favicon")?.textContent).toBe("O");
+    expect(host.querySelector(".cv-sb-filter")?.textContent).toBe("orders-api");
     openFilter();
     const input = searchInput();
     type(input, "web");

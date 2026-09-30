@@ -320,12 +320,17 @@ export interface AgentAttachmentIntentOwner {
   readonly workspaceId: string;
 }
 
+export interface AgentThreadWorktreeReuse {
+  readonly worktreePath: string;
+}
+
 export interface AgentThreadStartRequest extends AgentTurnAttachmentRequest {
   readonly projectRootKey: string;
   readonly repositoryRoot: string;
   readonly prompt: string;
   readonly isolation: AgentTaskIsolation;
   readonly worktreeBase?: AgentWorktreeBase;
+  readonly reuseWorktree?: AgentThreadWorktreeReuse;
   readonly unsafeInPlaceConfirmationKey: string | null;
   readonly launch: AgentLaunchOptions;
   readonly dangerousLaunchConfirmed?: boolean;

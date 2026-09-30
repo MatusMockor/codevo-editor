@@ -6,10 +6,24 @@ export type AgentProjectWorkspaceTarget = Pick<
   "rootKey" | "rootPath" | "ownerId" | "generation" | "label"
 >;
 
+export interface AgentProjectWorkspaceOwner {
+  readonly ownerId: string;
+  readonly generation: number;
+}
+
 export type AgentProjectWorkspaceActivation =
   | { readonly kind: "none"; readonly rootPath: null }
-  | { readonly kind: "ready" | "pending"; readonly rootPath: string }
-  | { readonly kind: "failed"; readonly rootPath: string; readonly message: string };
+  | {
+      readonly kind: "ready" | "pending";
+      readonly rootPath: string;
+      readonly owner: AgentProjectWorkspaceOwner;
+    }
+  | {
+      readonly kind: "failed";
+      readonly rootPath: string;
+      readonly owner: AgentProjectWorkspaceOwner;
+      readonly message: string;
+    };
 
 export interface AgentProjectWorkspaceSync {
   readonly state: AgentProjectWorkspaceActivation;
@@ -23,6 +37,10 @@ export interface AgentProjectWorkspaceSyncOptions {
 }
 
 const NONE: AgentProjectWorkspaceActivation = { kind: "none", rootPath: null };
+
+function targetOwner(target: AgentProjectWorkspaceTarget): AgentProjectWorkspaceOwner {
+  return { ownerId: target.ownerId, generation: target.generation };
+}
 
 function targetKey(target: AgentProjectWorkspaceTarget | null): string {
   if (target === null) return "";
@@ -81,11 +99,11 @@ export function useAgentProjectWorkspaceSync({
       return;
     }
     if (!pending && !replaced && current.current.workspaceRoot === target.rootPath) {
-      setState({ kind: "ready", rootPath: target.rootPath });
+      setState({ kind: "ready", rootPath: target.rootPath, owner: targetOwner(target) });
       return;
     }
     authority.pending = true;
-    setState({ kind: "pending", rootPath: target.rootPath });
+    setState({ kind: "pending", rootPath: target.rootPath, owner: targetOwner(target) });
     const isCurrent = () => owner.current.mounted && owner.current.epoch === epoch;
     const failed = () => {
       if (!isCurrent()) return;
@@ -94,6 +112,7 @@ export function useAgentProjectWorkspaceSync({
       setState({
         kind: "failed",
         rootPath: target.rootPath,
+        owner: targetOwner(target),
         message: `Could not open ${target.label}. Try again or reopen the project.`,
       });
     };
@@ -104,7 +123,7 @@ export function useAgentProjectWorkspaceSync({
         return;
       }
       owner.current.pending = false;
-      setState({ kind: "ready", rootPath: target.rootPath });
+      setState({ kind: "ready", rootPath: target.rootPath, owner: targetOwner(target) });
     }, failed);
   }, []);
   const select = useCallback(

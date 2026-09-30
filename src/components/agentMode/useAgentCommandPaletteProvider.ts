@@ -19,8 +19,8 @@ export interface AgentCommandPaletteProviderOptions {
   readonly activeProjectKey: string | null;
   readonly scripts: Pick<AgentThreadScriptsSurface, "entries" | "truncated" | "runScript">;
   selectThread(threadId: string): void;
-  setProjectScope(projectRootKey: string): boolean;
-  newThread(): void;
+  switchProject(projectRootKey: string): boolean;
+  newThreadIn(projectRootKey: string): boolean;
 }
 
 interface PaletteSnapshotData {
@@ -103,13 +103,11 @@ function paletteSnapshot(
     },
     switchProject(projectKey) {
       if (!knownProject(projectKey)) return false;
-      return latest.current.setProjectScope(projectKey);
+      return latest.current.switchProject(projectKey);
     },
     newThreadIn(projectKey) {
       if (!knownProject(projectKey)) return false;
-      if (!latest.current.setProjectScope(projectKey)) return false;
-      latest.current.newThread();
-      return true;
+      return latest.current.newThreadIn(projectKey);
     },
     runScript(scriptKey) {
       return latest.current.scripts.runScript(scriptKey);

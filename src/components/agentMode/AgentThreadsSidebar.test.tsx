@@ -22,6 +22,11 @@ import { agentThreadBulkCandidates } from "./useAgentThreadMenuCommands";
 import { __resetKeymapPlatformCacheForTests } from "../../domain/keymap";
 import { createAgentTurnLogFactsStore } from "../../application/agentTurnLogStatusStore";
 import { AgentClockProvider } from "./agentClock";
+import type { RemoteRunnerGateway } from "../../domain/remoteRunner";
+import {
+  RemoteRunnerContext,
+  type RemoteRunnerContextValue,
+} from "../remoteRunner/remoteRunnerContext";
 import { readStyleSheet } from "../cssContractTestSupport";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
@@ -490,13 +495,67 @@ describe("AgentThreadsSidebar", () => {
     expect(card.querySelector(".cv-card-row__when")?.textContent).toBe("2m");
   });
 
+  it("names the server of a remote row from the connected servers", () => {
+    const base = settled("agt-remote", "Remote one");
+    const remote: AgentThreadView = {
+      ...base,
+      execution: {
+        kind: "remote",
+        serverId: "linux",
+        runnerId: "runner",
+        projectId: "project",
+        conversationId: "conversation",
+        latestTaskId: "task",
+        resume: null,
+      },
+    };
+    const servers = [
+      { id: "linux", name: "build-box", host: "linux", username: "u", port: 22, connected: true },
+    ];
+    const context = (selectedServerId: string | null): RemoteRunnerContextValue => ({
+      gateway: {} as RemoteRunnerGateway,
+      servers,
+      status: "ready",
+      error: null,
+      refresh: async () => undefined,
+      connect: async () => null,
+      disconnect: async () => undefined,
+      remove: async () => undefined,
+      selectedServerId,
+      selectServer: () => undefined,
+    });
+    const groups = [group(ROOT, "app", [remote])];
+    const renderWith = (selectedServerId: string | null) =>
+      act(() =>
+        root.render(
+          <RemoteRunnerContext.Provider value={context(selectedServerId)}>
+            <AgentClockProvider nowTickMs={1000}>
+              <AgentThreadsSidebar {...sidebarProps({ groups })} />
+            </AgentClockProvider>
+          </RemoteRunnerContext.Provider>,
+        ),
+      );
+
+    renderWith(null);
+    expect(row("agt-remote").querySelector(".cv-card-row__project")?.textContent).toBe(
+      "build-box · app",
+    );
+    renderWith("linux");
+    expect(row("agt-remote").querySelector(".cv-card-row__project")?.textContent).toBe(
+      "build-box · app",
+    );
+    expect(row("agt-remote").querySelector(".cv-card-row__glyph")?.getAttribute("data-glyph")).toBe(
+      "server",
+    );
+  });
+
   it("prefixes the repository with the project label only for multi-repository projects", () => {
     render({
       groups: [{ ...group(ROOT, "app", [settled("agt-1", "One")]), singleRepo: false }],
     });
 
     expect(row("agt-1").querySelector(".cv-card-row__project")?.textContent).toBe("app / app");
-    expect(row("agt-1").querySelector(".cv-card-row__branch")?.textContent).toBe("worktree");
+    expect(row("agt-1").querySelector(".cv-card-row__branch")?.textContent).toBe("Worktree");
   });
 
   it("labels every row of a nested-checkout project, including the scoped repository", () => {
@@ -1010,13 +1069,13 @@ describe("AgentThreadsSidebar", () => {
     ]);
   });
 
-  it("lists threads from every project under All projects and narrows through the filter", () => {
+  it("lists threads from every project under All projects and narrows through the filter only", () => {
     const onChangeFilter = vi.fn();
-    const onChangeScope = vi.fn();
+    const onNewThread = vi.fn();
     const appThread = settled("agt-1", "One");
     const apiThread = settled("agt-api", "Api", { repositoryRoot: OTHER });
     const groups = [group(ROOT, "app", [appThread]), group(OTHER, "api", [apiThread])];
-    render({ groups, railFilter: { kind: "all" }, onChangeFilter, onChangeScope });
+    render({ groups, railFilter: { kind: "all" }, onChangeFilter, onNewThread });
     expect(rowIds()).toEqual(expect.arrayContaining(["agt-1", "agt-api"]));
     click('button[aria-label="Filter threads by project"]');
     const api = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
@@ -1024,10 +1083,14 @@ describe("AgentThreadsSidebar", () => {
     );
     expect(api).toBeDefined();
     act(() => api?.click());
+    expect(onChangeFilter).toHaveBeenCalledTimes(1);
     expect(onChangeFilter).toHaveBeenCalledWith({ kind: "project", projectRootKey: OTHER });
-    expect(onChangeScope).toHaveBeenCalledWith(expect.objectContaining({ projectRootKey: OTHER }));
+    expect(onNewThread).not.toHaveBeenCalled();
     render({ groups, railFilter: { kind: "project", projectRootKey: OTHER } });
     expect(rowIds()).toEqual(["agt-api"]);
+    const trigger = host.querySelector<HTMLButtonElement>(".cv-sb-show button");
+    expect(trigger?.getAttribute("aria-label")).toBe("Filter threads by project: api");
+    expect(trigger?.textContent).toBe("api");
   });
 
   it("routes Trust and Release through the project actions of the filter", () => {
@@ -1113,16 +1176,24 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).toContain("No threads in app yet");
   });
 
-  it("starts a new thread in the scoped repository and fails closed when untrusted", () => {
+  it("requests a new thread with the shift state and fails closed without a project", () => {
     const onNewThread = vi.fn();
     const groups = [group(ROOT, "app", [], { trust: "untrusted" }), group(OTHER, "api", [])];
     render({ groups, onNewThread, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
 
-    expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
-      "New thread in api (⌘N)",
-    );
+    const button = host.querySelector<HTMLButtonElement>('[aria-label="New thread"]');
+    expect(button?.title).toBe("New thread (⌘N)\nShift-click: new thread in api");
     click('[aria-label="New thread"]');
-    expect(onNewThread).toHaveBeenCalledWith(OTHER, OTHER);
+    expect(onNewThread).toHaveBeenLastCalledWith(false);
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    });
+    expect(onNewThread).toHaveBeenLastCalledWith(true);
+
+    render({ groups: [group(OTHER, "api", [])], onNewThread });
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
+      "New thread (⌘N)",
+    );
 
     render({ groups, onNewThread });
     expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.disabled).toBe(true);
@@ -1617,8 +1688,21 @@ describe("AgentThreadsSidebar", () => {
   });
 
   function render(overrides: Partial<AgentThreadsSidebarProps> = {}): void {
+    const props = sidebarProps(overrides);
+    act(() => {
+      root.render(
+        <AgentClockProvider nowTickMs={1000}>
+          <AgentThreadsSidebar {...props} />
+        </AgentClockProvider>,
+      );
+    });
+  }
+
+  function sidebarProps(
+    overrides: Partial<AgentThreadsSidebarProps> = {},
+  ): AgentThreadsSidebarProps {
     const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
-    const props: AgentThreadsSidebarProps = {
+    return {
       addProjectAvailable: true,
       groups,
       search: searchSurface(""),
@@ -1632,7 +1716,6 @@ describe("AgentThreadsSidebar", () => {
       onOpenSourceControl: vi.fn(),
       onSelectThread: vi.fn(),
       onTogglePin: vi.fn(),
-      onChangeScope: vi.fn(),
       onThreadMenuCommand: vi.fn(),
       onNewThread: vi.fn(),
       onAddProject: vi.fn(),
@@ -1642,13 +1725,6 @@ describe("AgentThreadsSidebar", () => {
       collapseShortcut: "Cmd+B",
       ...overrides,
     };
-    act(() => {
-      root.render(
-        <AgentClockProvider nowTickMs={1000}>
-          <AgentThreadsSidebar {...props} />
-        </AgentClockProvider>,
-      );
-    });
   }
 
   function row(threadId: string): HTMLElement {

@@ -2,9 +2,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TauriRemoteRunnerGateway } from "../../infrastructure/tauriRemoteRunnerGateway";
-import { RemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
-import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import {
   AgentEnvironmentCheckoutPicker,
@@ -32,6 +29,7 @@ describe("AgentEnvironmentCheckoutPicker", () => {
     overrides: Partial<AgentEnvironmentCheckoutPickerProps> = {},
   ): AgentEnvironmentCheckoutPickerProps {
     return {
+      checkout: overrides.isolation === "worktree" ? "newWorktree" : "localCheckout",
       disabled: false,
       isolation: "in-place",
       onIsolationChange: vi.fn(),
@@ -75,23 +73,20 @@ describe("AgentEnvironmentCheckoutPicker", () => {
     });
   }
 
-  it("shows the checkout on the trigger and groups Run on and Checkout", () => {
+  it("shows only the checkout on the trigger and lists checkout choices", () => {
     render();
     expect(trigger().textContent).toBe("Local checkout");
-    expect(trigger().getAttribute("aria-label")).toBe("Workspace: This computer, Local checkout");
+    expect(trigger().getAttribute("aria-label")).toBe("Workspace: Local checkout");
     act(() => trigger().click());
-    const labels = [...(menu()?.querySelectorAll(".cv-menu__label") ?? [])].map(
-      (node) => node.textContent,
-    );
-    expect(labels).toEqual(["Run on", "Checkout"]);
+    expect(menu()?.querySelectorAll(".cv-menu__label")).toHaveLength(0);
+    expect(
+      rows().map((node) => node.querySelector(".cv-menu__text")?.firstChild?.textContent),
+    ).toEqual(["Local checkout", "New worktree"]);
     const checked = rows()
       .filter((node) => node.getAttribute("aria-checked") === "true")
       .map((node) => node.textContent);
-    expect(checked).toEqual([
-      expect.stringContaining("This computer"),
-      expect.stringContaining("Local checkout"),
-    ]);
-    expect(row("Remote server")?.getAttribute("aria-disabled")).toBe("true");
+    expect(checked).toEqual([expect.stringContaining("Local checkout")]);
+    expect(document.body.textContent).not.toContain("This computer");
   });
 
   it("switches to a new worktree and offers Manage environments", () => {
@@ -109,6 +104,40 @@ describe("AgentEnvironmentCheckoutPicker", () => {
     act(() => manage?.click());
     expect(worktree.onOpenEnvironmentSettings).toHaveBeenCalledOnce();
     expect(menu()).toBeNull();
+  });
+
+  it("labels the server checkout on a server", () => {
+    render({ remote: true, checkout: "serverCheckout" });
+    expect(trigger().textContent).toBe("Server checkout");
+    act(() => trigger().click());
+    expect(row("Server checkout")?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("offers the previous worktree with its branch and leaves it for a fresh checkout", () => {
+    const onSelect = vi.fn();
+    const available = { threadId: "agt-9", worktreePath: "/wt/agt-9", branch: "agent/retry" };
+    const current = render({
+      previousWorktree: { available, selected: false, onSelect },
+    });
+    act(() => trigger().click());
+    const previous = row("Previous worktree");
+    expect(previous?.querySelector(".cv-menu__text")?.textContent).toBe(
+      "Previous worktree (agent/retry)",
+    );
+    expect(previous?.querySelector(".cv-menu__description")).toBeNull();
+    act(() => row("Previous worktree")?.click());
+    expect(onSelect).toHaveBeenCalledOnce();
+    const chosen = render({
+      checkout: "worktree",
+      isolation: "worktree",
+      previousWorktree: { available, selected: true, onSelect },
+    });
+    expect(trigger().textContent).toBe("Worktree");
+    act(() => trigger().click());
+    expect(row("Previous worktree")?.getAttribute("aria-checked")).toBe("true");
+    act(() => row("New worktree")?.click());
+    expect(chosen.onIsolationChange).toHaveBeenCalledExactlyOnceWith("worktree");
+    expect(current.onIsolationChange).not.toHaveBeenCalled();
   });
 
   it("refreshes isolation when it opens and omits settings without a handler", () => {
@@ -134,13 +163,25 @@ describe("AgentEnvironmentCheckoutPicker", () => {
     expect(row("New worktree")).toBeUndefined();
   });
 
+  it("names the previous worktree without a branch when it has none", () => {
+    render({
+      previousWorktree: {
+        available: { threadId: "agt-9", worktreePath: "/wt/agt-9", branch: null },
+        selected: false,
+        onSelect: vi.fn(),
+      },
+    });
+    act(() => trigger().click());
+    expect(row("Previous worktree")?.querySelector(".cv-menu__text")?.textContent).toBe(
+      "Previous worktree",
+    );
+  });
+
   it("is keyboard operable: arrow opens, rows rove, Enter selects, Escape restores focus", () => {
     const current = render();
     trigger().focus();
     press(trigger(), "ArrowDown");
     expect(menu()).not.toBeNull();
-    expect(document.activeElement).toBe(row("This computer"));
-    press(menu(), "ArrowDown");
     expect(document.activeElement).toBe(row("Local checkout"));
     press(menu(), "ArrowDown");
     expect(document.activeElement).toBe(row("New worktree"));
@@ -181,79 +222,5 @@ describe("AgentEnvironmentCheckoutPicker", () => {
     render({ disabled: true });
     expect(menu()).toBeNull();
     expect(trigger().disabled).toBe(true);
-  });
-
-  it("selects a connected server through shared context and returns to this computer", async () => {
-    const gateway = new TauriRemoteRunnerGateway(
-      vi.fn().mockResolvedValue([
-        {
-          id: "linux",
-          name: "Linux server",
-          host: "192.168.1.110",
-          username: "codex",
-          port: 22,
-          connected: true,
-        },
-        {
-          id: "offline",
-          name: "Offline server",
-          host: "192.168.1.111",
-          username: "codex",
-          port: 22,
-          connected: false,
-        },
-      ]),
-    );
-    await act(async () =>
-      root.render(
-        <RemoteRunnerProvider gateway={gateway}>
-          <AgentEnvironmentCheckoutPicker {...props()} />
-        </RemoteRunnerProvider>,
-      ),
-    );
-    act(() => trigger().click());
-    expect(row("Remote server")).toBeUndefined();
-    const offline = row("Offline server");
-    expect(offline?.getAttribute("aria-disabled")).toBe("true");
-    act(() => offline?.click());
-    expect(menu()).not.toBeNull();
-    act(() => row("Linux server")?.click());
-    expect(menu()).toBeNull();
-    expect(trigger().getAttribute("aria-label")).toBe("Workspace: Linux server, Local checkout");
-    expect(trigger().textContent).toBe("Linux server · Local checkout");
-    act(() => trigger().click());
-    expect(row("Linux server")?.getAttribute("aria-checked")).toBe("true");
-    act(() => row("This computer")?.click());
-    expect(trigger().getAttribute("aria-label")).toBe("Workspace: This computer, Local checkout");
-  });
-
-  it("never presents a missing selected server as this computer", () => {
-    const selectServer = vi.fn();
-    act(() =>
-      root.render(
-        <RemoteRunnerContext.Provider
-          value={{
-            gateway: new TauriRemoteRunnerGateway(vi.fn()),
-            servers: [],
-            status: "ready",
-            error: null,
-            selectedServerId: "removed-server",
-            selectServer,
-            refresh: vi.fn(),
-            connect: vi.fn(),
-            disconnect: vi.fn(),
-            remove: vi.fn(),
-          }}
-        >
-          <AgentEnvironmentCheckoutPicker {...props({ remote: true })} />
-        </RemoteRunnerContext.Provider>,
-      ),
-    );
-    expect(trigger().textContent).toBe("Server unavailable · Server checkout");
-    expect(trigger().querySelector(".lucide-server")).not.toBeNull();
-    act(() => trigger().click());
-    expect(row("This computer")?.getAttribute("aria-checked")).toBe("false");
-    act(() => row("This computer")?.click());
-    expect(selectServer).toHaveBeenCalledExactlyOnceWith(null);
   });
 });

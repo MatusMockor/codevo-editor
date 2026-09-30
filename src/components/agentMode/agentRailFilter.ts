@@ -1,10 +1,9 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import { ALL_PROJECTS_FILTER, type AgentRailFilter } from "../../domain/agentRailFilter";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
-export type AgentRailFilter =
-  { readonly kind: "all" } | { readonly kind: "project"; readonly projectRootKey: string };
+export { ALL_PROJECTS_FILTER, type AgentRailFilter };
 
-export const ALL_PROJECTS_FILTER: AgentRailFilter = Object.freeze({ kind: "all" });
 export const ALL_PROJECTS_LABEL = "All projects";
 
 export function agentRailFilterKey(filter: AgentRailFilter): string {
@@ -30,17 +29,6 @@ export function reconcileAgentRailFilter(
   if (filter.kind === "all") return filter;
   if (entries.some((entry) => entry.projectRootKey === filter.projectRootKey)) return filter;
   return ALL_PROJECTS_FILTER;
-}
-
-export function agentRailFilterFollowingProject(
-  filter: AgentRailFilter,
-  projectRootKey: string,
-  entries: ReadonlyArray<AgentRailScopeEntry>,
-): AgentRailFilter {
-  if (filter.kind === "all") return filter;
-  const owner = owningEntry(entries, projectRootKey);
-  if (owner === null || owner.projectRootKey === filter.projectRootKey) return filter;
-  return { kind: "project", projectRootKey: owner.projectRootKey };
 }
 
 export function agentRailFilterLabel(

@@ -147,7 +147,9 @@ export function admitStart(
     return null;
   }
   if (project.origin !== "active-tab" && request.isolation === "in-place") {
-    deps.setNotice(warning("In-place agents can run only in the active project. Use a worktree."));
+    deps.setNotice(
+      warning("Local checkout is available only in the active project. Choose New worktree."),
+    );
     return null;
   }
   const prompt = admitPrompt(deps, request.prompt, hasAttachments(request));
@@ -467,12 +469,12 @@ export function reportPreflight(deps: AdmissionDependencies, preflight: InPlaceP
       deps.reportError(AGENT_TASKS_SOURCE, preflight.error);
       deps.setNotice(
         warning(
-          "The repository status could not be refreshed, so an in-place agent was not started.",
+          "The repository status could not be refreshed, so the agent was not started in the local checkout.",
         ),
       );
       return false;
     case "unsafe":
-      deps.setNotice(warning(`Running in place is unsafe: ${preflight.label}.`));
+      deps.setNotice(warning(`Starting in the local checkout is unsafe: ${preflight.label}.`));
       return false;
     default:
       return unsupportedPreflight(preflight);

@@ -882,3 +882,57 @@
   color: var(--cv-fg-subtle);
   font-size: var(--cv-t-xs);
 }
+
+.agent-composer__branch-label {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 320px;
+  height: 28px;
+  flex: 0 1 auto;
+  align-items: center;
+  padding: 0 10px;
+  overflow: hidden;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-md);
+  gap: var(--cv-space-3);
+  white-space: nowrap;
+}
+
+.agent-composer__branch-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+  text-overflow: ellipsis;
+}
+
+.agent-composer__branch-detail {
+  flex: none;
+  color: var(--cv-fg-subtle);
+}
+
+.agent-branch-changed {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--cv-space-2);
+}
+
+.agent-branch-changed__lead {
+  flex: none;
+  color: var(--cv-fg-muted);
+}
+
+.agent-branch-changed__branch {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cv-fg-strong);
+  font-family: var(--cv-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-branch-changed__error {
+  display: block;
+  color: var(--cv-fg-muted);
+}

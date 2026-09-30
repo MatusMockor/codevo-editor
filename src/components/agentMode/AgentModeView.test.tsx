@@ -20,6 +20,7 @@ import type { GitChangedFile } from "../../domain/git";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentTurnEvent } from "../../domain/agentThread";
 import { workbenchAgentThreadOpener } from "../../application/agentThreadOpener";
+import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
 import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
@@ -33,7 +34,7 @@ import {
   reduceRecordedLayout,
 } from "./agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../../test/reactTestLifecycle";
-import { agentCompactTimeLabel, agentRailScopeValue } from "./agentSidebarPresentation";
+import { agentCompactTimeLabel } from "./agentSidebarPresentation";
 import {
   attachmentImagesSurfaceFixture,
   composerAttachmentsSurfaceFixture,
@@ -2272,7 +2273,10 @@ describe("AgentModeView", () => {
   it("shows a neutral scope only when no project is registered", () => {
     render({ projects: [] });
 
-    expect(activeProjectLabel()).toBe("New thread (⌘N)");
+    expect(activeProjectLabel()).toBe("");
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="New thread"]')?.title).toBe(
+      "New thread (⌘N)",
+    );
     expect(
       host.querySelector<HTMLButtonElement>('button[aria-label="Filter threads by project"]')
         ?.disabled,
@@ -3879,7 +3883,7 @@ describe("AgentModeView", () => {
 
   function openProjectFilter(): void {
     if (document.querySelector(".cv-filter") !== null) return;
-    click('button[aria-label="Filter threads by project"]');
+    click('button[aria-label^="Filter threads by project"]');
   }
 
   function closeProjectFilter(): void {
@@ -3906,7 +3910,8 @@ describe("AgentModeView", () => {
   }
 
   function activeProjectLabel(): string {
-    return host.querySelector<HTMLButtonElement>('button[aria-label="New thread"]')?.title ?? "";
+    const palette = workbenchAgentPaletteProvider.current();
+    return palette?.projects.find((project) => project.current)?.label ?? "";
   }
 
   function projectStateLabel(label: string): string | null {
@@ -3967,12 +3972,11 @@ describe("AgentModeView", () => {
   }
 
   function chooseScope(projectRootKey: string): void {
-    openProjectFilter();
-    const option = document.querySelector<HTMLElement>(
-      `.cv-filter [role="option"][data-value="${agentRailScopeValue(projectRootKey)}"]`,
-    );
-    expect(option).not.toBeNull();
-    act(() => option?.click());
+    const palette = workbenchAgentPaletteProvider.current();
+    expect(palette).not.toBeNull();
+    act(() => {
+      palette?.switchProject(projectRootKey);
+    });
   }
 
   function closeProjectFromRow(label: string): void {
