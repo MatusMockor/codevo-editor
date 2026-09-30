@@ -900,6 +900,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     getTurnChanges: turnChanges.getTurnChanges,
     getTurnFileDiff: turnChanges.getTurnFileDiff,
     threads: threadViews,
+    loadedProjectRootKeys: store.loadedRootKeys,
     attachments,
     questionAttachments,
     attachmentImages,

@@ -80,6 +80,85 @@ export function agentTranscriptAnchorDrift(
   return null;
 }
 
+export interface AgentTranscriptTurnOffset {
+  readonly turnId: string;
+  readonly offsetPx: number;
+}
+
+export type AgentTranscriptTurnMeasure =
+  | { readonly kind: "measured"; readonly offsetPx: number }
+  | { readonly kind: "missing" }
+  | { readonly kind: "unmeasured" };
+
+export function agentTranscriptTurnMeasure(
+  container: HTMLElement,
+  turnId: string,
+): AgentTranscriptTurnMeasure {
+  const turn = findTurn(container, turnId);
+  if (turn === null) return { kind: "missing" };
+  const offsetPx = turnOffset(container, turn);
+  if (offsetPx === null) return { kind: "unmeasured" };
+  return { kind: "measured", offsetPx };
+}
+
+export function agentTranscriptAnchorTurn(
+  container: HTMLElement,
+  anchor: AgentTranscriptAnchor,
+): AgentTranscriptTurnOffset | null {
+  const turn =
+    turnInAnchor(container, anchor) ??
+    turnBeforeAnchor(container, anchor) ??
+    container.querySelector(TURN_SELECTOR);
+  if (turn === null) return null;
+  const turnId = turn.getAttribute(TURN_ATTRIBUTE);
+  if (turnId === null || turnId === "") return null;
+  const offsetPx = turnOffset(container, turn);
+  if (offsetPx === null) return null;
+  return { turnId, offsetPx };
+}
+
+const TURN_ATTRIBUTE = "data-agent-turn";
+const TURN_SELECTOR = `[${TURN_ATTRIBUTE}]`;
+const MAX_TURN_SIBLING_PROBE = 8;
+
+function findTurn(container: HTMLElement, turnId: string): Element | null {
+  for (const candidate of container.querySelectorAll(TURN_SELECTOR)) {
+    if (candidate.getAttribute(TURN_ATTRIBUTE) === turnId) return candidate;
+  }
+  return null;
+}
+
+function turnOffset(container: HTMLElement, turn: Element): number | null {
+  if (container.clientHeight <= 0) return null;
+  const rect = renderedRect(turn);
+  if (rect === null) return null;
+  return rect.top - viewportTop(container);
+}
+
+function liveAnchorElements(container: HTMLElement, anchor: AgentTranscriptAnchor): Element[] {
+  return anchor
+    .map((entry) => entry.element)
+    .filter((element) => element.isConnected && container.contains(element));
+}
+
+function turnInAnchor(container: HTMLElement, anchor: AgentTranscriptAnchor): Element | null {
+  return (
+    liveAnchorElements(container, anchor).find((element) => element.hasAttribute(TURN_ATTRIBUTE)) ??
+    null
+  );
+}
+
+function turnBeforeAnchor(container: HTMLElement, anchor: AgentTranscriptAnchor): Element | null {
+  for (const element of liveAnchorElements(container, anchor)) {
+    let sibling = element.previousElementSibling;
+    for (let probe = 0; sibling !== null && probe < MAX_TURN_SIBLING_PROBE; probe += 1) {
+      if (sibling.hasAttribute(TURN_ATTRIBUTE)) return sibling;
+      sibling = sibling.previousElementSibling;
+    }
+  }
+  return null;
+}
+
 function viewportTop(container: HTMLElement): number {
   return container.getBoundingClientRect().top + container.clientTop;
 }

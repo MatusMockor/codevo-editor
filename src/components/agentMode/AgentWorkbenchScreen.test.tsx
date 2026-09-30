@@ -1,4 +1,5 @@
 import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
+import { DISABLED_AGENT_SESSION_RESTORE } from "./useAgentSessionRestore";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
 import type { RemoteRunnerCloneJob, RemoteRunnerGateway } from "../../domain/remoteRunner";
 import type {
@@ -1373,6 +1374,7 @@ function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScre
       writeInput: async () => undefined,
     },
     terminalTheme: classicTerminalTheme("classicDark"),
+    sessionRestore: DISABLED_AGENT_SESSION_RESTORE,
     workbench,
   };
 }

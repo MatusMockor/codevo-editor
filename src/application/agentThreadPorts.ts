@@ -385,6 +385,7 @@ export interface AgentThreadsSurface {
     loadEarlier?(threadId: string): Promise<void>;
   };
   readonly threads: ReadonlyArray<AgentThreadView>;
+  readonly loadedProjectRootKeys?: ReadonlySet<string>;
   readonly repositories: ReadonlyArray<ResolvedGitRepository>;
   readonly orphanedWorktrees: ReadonlyArray<OrphanedWorktreeView>;
   readonly notice: AgentTasksNotice | null;

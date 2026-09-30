@@ -14,6 +14,7 @@ import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway"
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
 import packageMetadata from "../package.json";
+import { sessionRestoreFlushRegistry } from "./application/sessionRestorePersistence";
 import {
   CODEVO_APP_VERSION,
   createWorkbenchComposition,
@@ -78,6 +79,40 @@ describe("workbench live-document runtime composition", () => {
     expect(updaterBridge.invoke).toHaveBeenCalledWith("app_update_install_mode");
     expect(update.install).toHaveBeenCalledOnce();
     expect(updaterBridge.relaunch).not.toHaveBeenCalled();
+    await gateway.dispose();
+  });
+
+  it("writes pending session-restore state before relaunching into an installed update", async () => {
+    updaterBridge.invoke.mockResolvedValueOnce("prepareBeforeRestart").mockResolvedValueOnce({
+      kind: "available",
+      rid: 5,
+      currentVersion: packageMetadata.version,
+      version: "9.0.1",
+      date: null,
+      body: null,
+      rawJson: { version: "9.0.1" },
+    });
+    updaterBridge.construct.mockReturnValueOnce({
+      currentVersion: packageMetadata.version,
+      version: "9.0.1",
+      download: vi.fn(async () => undefined),
+      install: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    });
+    const order: string[] = [];
+    const unregister = sessionRestoreFlushRegistry.register(() => order.push("flush"));
+    updaterBridge.relaunch.mockImplementationOnce(async () => {
+      order.push("relaunch");
+    });
+    const gateway = createWorkbenchComposition().appUpdater.appUpdaterGateway;
+    const result = await gateway.check();
+    expect(result.kind).toBe("available");
+    if (result.kind !== "available") return;
+
+    await gateway.installAndRestart(result.candidate.candidateRevision);
+
+    unregister();
+    expect(order).toEqual(["flush", "relaunch"]);
     await gateway.dispose();
   });
 

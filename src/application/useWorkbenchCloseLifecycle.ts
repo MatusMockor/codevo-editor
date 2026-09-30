@@ -20,6 +20,7 @@ import type { CloseCompletion } from "../domain/dirtyClose";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS } from "./agentTurnLogPorts";
 import { CloseCoordinator } from "./closeCoordinator";
+import { flushSessionRestore } from "./sessionRestorePersistence";
 import type { DocumentSaveLease, RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import {
   createDirtyCloseDocumentDescriptor,
@@ -391,6 +392,7 @@ export function useWorkbenchCloseLifecycle(
 
   const prepareShutdownWhileWindowIsAlive = useCallback(
     async (scopeIsCurrent: CloseScopeGuard): Promise<boolean> => {
+      flushSessionRestore();
       await prepareAgentQuitWithinBudget();
       if (!scopeIsCurrent()) {
         return false;
@@ -408,6 +410,7 @@ export function useWorkbenchCloseLifecycle(
         return false;
       }
 
+      flushSessionRestore();
       await invoke("confirm_native_shutdown", { kind });
       return true;
     },
@@ -939,6 +942,7 @@ export function useWorkbenchCloseLifecycle(
         return false;
       }
 
+      flushSessionRestore();
       await invoke("quit_application");
       return true;
     }, "Application");

@@ -8,8 +8,11 @@ import {
   type RefObject,
 } from "react";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
+import type { AgentTranscriptPositionMemory } from "../../application/agentTranscriptPositionMemory";
 import type { AgentTurn } from "../../domain/agentThread";
 import { AgentTranscriptFollowController } from "./agentTranscriptFollowController";
+import { useAgentTranscriptPositionMemoryContext } from "./agentTranscriptPositionMemoryContext";
+import { useAgentTranscriptPositionSync } from "./useAgentTranscriptPositionSync";
 
 export const AGENT_USER_SENT_TURN_WINDOW_MS = 15_000;
 
@@ -22,6 +25,7 @@ export interface AgentThreadFollowSource {
   readonly queuedPrompts: ReadonlyArray<string>;
   readonly viewport: AgentMarkdownViewport | null;
   readonly now?: () => number;
+  readonly positionMemory?: AgentTranscriptPositionMemory | null;
 }
 
 export interface AgentThreadFollow {
@@ -50,7 +54,13 @@ export function useAgentThreadFollow({
   queuedPrompts,
   viewport,
   now = Date.now,
+  positionMemory,
 }: AgentThreadFollowSource): AgentThreadFollow {
+  const contextPositionMemory = useAgentTranscriptPositionMemoryContext();
+  const positionSync = useAgentTranscriptPositionSync(
+    positionMemory === undefined ? contextPositionMemory : positionMemory,
+    now,
+  );
   const pinnedRef = useRef(true);
   const [atLatest, setAtLatest] = useState(true);
   const [unseenActivity, setUnseenActivity] = useState(false);
@@ -78,40 +88,70 @@ export function useAgentThreadFollow({
     const controller = controllerFor();
     if (controller === null) return;
     controller.follow();
+    positionSync.record(controller);
     viewport?.remeasure();
-  }, [controllerFor, viewport]);
+  }, [controllerFor, positionSync, viewport]);
 
-  const release = useCallback(() => controllerFor()?.release(), [controllerFor]);
+  const release = useCallback(() => {
+    const controller = controllerFor();
+    if (controller === null) return;
+    controller.release();
+    positionSync.record(controller);
+  }, [controllerFor, positionSync]);
+
+  const settleRestored = useCallback(
+    (controller: AgentTranscriptFollowController) => {
+      setUnseenActivity(false);
+      positionSync.record(controller);
+      viewport?.remeasure();
+    },
+    [positionSync, viewport],
+  );
 
   useEffect(() => {
     const controller = controllerFor();
     if (controller === null) return;
     const container = controller.container;
-    const onScroll = () => controller.handleScroll();
-    const onWheel = (event: WheelEvent) =>
+    const onScroll = () => {
+      controller.handleScroll();
+      positionSync.record(controller);
+    };
+    const onWheel = (event: WheelEvent) => {
+      positionSync.cancel();
       controller.handleWheel(event.deltaX, event.deltaY, event.target);
+      positionSync.record(controller);
+    };
     const onClick = (event: MouseEvent) => controller.handleClick(event.target);
+    const onUserIntent = () => positionSync.cancel();
     container.addEventListener("scroll", onScroll, { passive: true });
     container.addEventListener("wheel", onWheel, { passive: true });
     container.addEventListener("click", onClick, { capture: true });
+    container.addEventListener("pointerdown", onUserIntent, { passive: true });
+    container.addEventListener("keydown", onUserIntent);
     return () => {
       container.removeEventListener("scroll", onScroll);
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("click", onClick, { capture: true });
+      container.removeEventListener("pointerdown", onUserIntent);
+      container.removeEventListener("keydown", onUserIntent);
     };
-  }, [controllerFor, threadId]);
+  }, [controllerFor, positionSync, threadId]);
 
   useEffect(() => {
     const controller = controllerFor();
     if (controller === null) return;
     if (typeof ResizeObserver === "undefined") return;
     const container = controller.container;
-    const observer = new ResizeObserver(() => controller.handleLayout());
+    const observer = new ResizeObserver(() => {
+      if (positionSync.retry(controller) === "restored") settleRestored(controller);
+      controller.handleLayout();
+      positionSync.record(controller);
+    });
     observer.observe(container);
     const content = container.firstElementChild;
     if (content !== null) observer.observe(content);
     return () => observer.disconnect();
-  }, [controllerFor, threadId]);
+  }, [controllerFor, positionSync, settleRestored, threadId]);
 
   useLayoutEffect(() => {
     const controller = controllerFor();
@@ -125,7 +165,13 @@ export function useAgentThreadFollow({
       contentRevision,
       queuedPrompts: new Set(queuedPrompts),
     };
-    const replaced = previous.threadId !== threadId || previous.pageKey !== pageKey;
+    const restore = positionSync.settle(controller, threadId);
+    if (restore === "restored") {
+      settleRestored(controller);
+      return;
+    }
+    const replaced =
+      restore === "missing" || previous.threadId !== threadId || previous.pageKey !== pageKey;
     const newTurn = previous.turnId !== turnId;
     const sentByUser = newTurn && turnSentByUser(lastTurn, previous.queuedPrompts, now());
     if (!replaced && !sentByUser && !controller.isFollowing) {
@@ -133,9 +179,21 @@ export function useAgentThreadFollow({
       return;
     }
     const moved = replaced || sentByUser ? controller.follow() : controller.followIfFollowing();
+    positionSync.record(controller);
     if (!moved) return;
     viewport?.remeasure();
-  }, [contentRevision, controllerFor, lastTurn, now, pageKey, queuedPrompts, threadId, viewport]);
+  }, [
+    contentRevision,
+    controllerFor,
+    lastTurn,
+    now,
+    pageKey,
+    positionSync,
+    queuedPrompts,
+    settleRestored,
+    threadId,
+    viewport,
+  ]);
 
   return { pinnedRef, atLatest, unseenActivity, followLatest, jumpToLatest, release };
 }

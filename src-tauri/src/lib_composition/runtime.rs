@@ -140,7 +140,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(window_geometry::window_geometry_plugin())
         .setup(move |app| {
+            window_geometry::restore_main_window_geometry(app.handle());
             startup_window_reveal::schedule_startup_reveal_fallback(app.handle());
             crate::claude_model_manifest::initialize(app.handle().clone(), app.path().app_data_dir()?);
             app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);

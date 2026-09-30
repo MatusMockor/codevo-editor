@@ -1,20 +1,28 @@
-import { MAX_AGENT_TASK_PROMPT_BYTES } from "../domain/agentTask";
+import {
+  isAgentComposerDraftTextRetainable,
+  MAX_AGENT_COMPOSER_DRAFT_TEXT_BYTES,
+  type AgentComposerDraftEntry,
+} from "../domain/agentComposerDraftSnapshot";
 
 export const MAX_AGENT_COMPOSER_DRAFTS = 64;
-export const MAX_AGENT_COMPOSER_DRAFT_BYTES = 2 * MAX_AGENT_TASK_PROMPT_BYTES;
+export const MAX_AGENT_COMPOSER_DRAFT_BYTES = MAX_AGENT_COMPOSER_DRAFT_TEXT_BYTES;
 
 export interface AgentComposerDraftStore {
   readDraft(key: string): string;
   writeDraft(key: string, text: string): void;
   clearDraft(key: string): void;
   reset(): void;
+  snapshot(): readonly AgentComposerDraftEntry[];
+  hydrate(entries: readonly AgentComposerDraftEntry[]): void;
+  subscribe(listener: () => void): () => void;
 }
 
-const MAX_UTF8_BYTES_PER_UNIT = 3;
-const ENCODER = new TextEncoder();
-
 export function createAgentComposerDraftStore(): AgentComposerDraftStore {
-  const drafts = new Map<string, string>();
+  let drafts = new Map<string, string>();
+  const listeners = new Set<() => void>();
+  const notify = (): void => {
+    for (const listener of [...listeners]) listener();
+  };
   const evictOverflow = (): void => {
     while (drafts.size > MAX_AGENT_COMPOSER_DRAFTS) {
       const oldest = drafts.keys().next();
@@ -22,37 +30,62 @@ export function createAgentComposerDraftStore(): AgentComposerDraftStore {
       drafts.delete(oldest.value);
     }
   };
+  const remove = (key: string): void => {
+    if (!drafts.delete(key)) return;
+    notify();
+  };
+  const isNewest = (key: string): boolean => {
+    let newest: string | null = null;
+    for (const candidate of drafts.keys()) newest = candidate;
+    return newest === key;
+  };
   return {
     readDraft(key: string): string {
       return drafts.get(key) ?? "";
     },
     writeDraft(key: string, text: string): void {
       if (key === "") return;
-      if (text === "") {
-        drafts.delete(key);
+      if (!isAgentComposerDraftTextRetainable(text)) {
+        remove(key);
         return;
       }
-      if (!retainableDraft(text)) {
-        drafts.delete(key);
-        return;
-      }
+      if (drafts.get(key) === text && isNewest(key)) return;
       drafts.delete(key);
       drafts.set(key, text);
       evictOverflow();
+      notify();
     },
     clearDraft(key: string): void {
-      drafts.delete(key);
+      remove(key);
     },
     reset(): void {
+      if (drafts.size === 0) return;
       drafts.clear();
+      notify();
+    },
+    snapshot(): readonly AgentComposerDraftEntry[] {
+      return [...drafts.entries()];
+    },
+    hydrate(entries: readonly AgentComposerDraftEntry[]): void {
+      const restored = new Map<string, string>();
+      for (const [key, text] of entries) {
+        if (key === "" || drafts.has(key)) continue;
+        if (!isAgentComposerDraftTextRetainable(text)) continue;
+        restored.delete(key);
+        restored.set(key, text);
+      }
+      if (restored.size === 0) return;
+      drafts = new Map([...restored, ...drafts]);
+      evictOverflow();
+    },
+    subscribe(listener: () => void): () => void {
+      const entry = (): void => listener();
+      listeners.add(entry);
+      return () => {
+        listeners.delete(entry);
+      };
     },
   };
 }
 
 export const agentComposerDraftStore = createAgentComposerDraftStore();
-
-function retainableDraft(text: string): boolean {
-  if (text.length > MAX_AGENT_COMPOSER_DRAFT_BYTES) return false;
-  if (text.length * MAX_UTF8_BYTES_PER_UNIT <= MAX_AGENT_COMPOSER_DRAFT_BYTES) return true;
-  return ENCODER.encode(text).length <= MAX_AGENT_COMPOSER_DRAFT_BYTES;
-}

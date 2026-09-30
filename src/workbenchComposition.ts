@@ -90,6 +90,7 @@ import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway"
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { createAppUpdateCheck } from "./infrastructure/tauriAppUpdateCheck";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { flushSessionRestore } from "./application/sessionRestorePersistence";
 import { invoke } from "@tauri-apps/api/core";
 import packageMetadata from "../package.json";
 
@@ -112,7 +113,10 @@ export function createWorkbenchComposition() {
   const appUpdaterGateway = new TauriAppUpdaterGateway(
     {
       check: createAppUpdateCheck((command) => invoke(command)),
-      relaunch,
+      relaunch: () => {
+        flushSessionRestore();
+        return relaunch();
+      },
       getInstallMode: () => invoke("app_update_install_mode"),
     },
     CODEVO_APP_VERSION,

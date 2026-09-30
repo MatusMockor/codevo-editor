@@ -14,6 +14,7 @@ import {
   type WorkbenchCloseLifecycleDependencies,
 } from "./useWorkbenchCloseLifecycle";
 import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS } from "./agentTurnLogPorts";
+import { sessionRestoreFlushRegistry } from "./sessionRestorePersistence";
 import { workspaceIdentityStateCacheKey } from "./useWorkspaceStateCache";
 import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
 import type {
@@ -2480,6 +2481,27 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
       kind: "close",
     });
+    harness.unmount();
+  });
+
+  it("flushes pending session-restore writes before confirming a native quit", async () => {
+    const order: string[] = [];
+    const unregister = sessionRestoreFlushRegistry.register(() => order.push("flush"));
+    tauriMocks.invoke.mockImplementation(async (command: string) => {
+      order.push(command);
+    });
+    const harness = renderLifecycle();
+
+    await act(async () => {
+      requestNativeClose("quit");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    unregister();
+    const confirmIndex = order.indexOf("confirm_native_shutdown");
+    expect(order.indexOf("flush")).toBeGreaterThanOrEqual(0);
+    expect(order[confirmIndex - 1]).toBe("flush");
     harness.unmount();
   });
 

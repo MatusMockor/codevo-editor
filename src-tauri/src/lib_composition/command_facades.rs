@@ -51,6 +51,8 @@ mod repository_lookup_commands;
 mod startup_metrics;
 #[path = "../startup_window_reveal.rs"]
 mod startup_window_reveal;
+#[path = "../window_geometry.rs"]
+mod window_geometry;
 #[path = "workspace_facade.rs"]
 mod workspace_facade;
 #[path = "workspace_services.rs"]

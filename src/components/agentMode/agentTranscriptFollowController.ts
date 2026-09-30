@@ -1,12 +1,29 @@
 import {
+  agentTranscriptTurnPosition,
+  type AgentTranscriptPosition,
+} from "../../domain/agentTranscriptPosition";
+import {
+  AGENT_AT_BOTTOM_EPSILON_PX,
   AGENT_PINNED_DISTANCE_PX,
   agentDistanceFromBottom,
   agentFollowsAfterScroll,
   agentTranscriptAnchorAt,
   agentTranscriptAnchorDrift,
+  agentTranscriptAnchorTurn,
+  agentTranscriptTurnMeasure,
   selectAgentTranscriptAnchor,
   type AgentTranscriptAnchor,
 } from "./agentTranscriptAnchor";
+
+export type AgentTranscriptReading =
+  | { readonly kind: "latest" }
+  | { readonly kind: "position"; readonly position: AgentTranscriptPosition }
+  | { readonly kind: "unmeasured" };
+
+export type AgentTranscriptRestore = "restored" | "missing" | "unmeasured" | "short";
+
+const LATEST_READING: AgentTranscriptReading = Object.freeze({ kind: "latest" });
+const UNMEASURED_READING: AgentTranscriptReading = Object.freeze({ kind: "unmeasured" });
 
 export const AGENT_DISCLOSURE_HOLD_MS = 1_000;
 const DISCLOSURE_SELECTOR = "[aria-expanded], summary";
@@ -53,6 +70,30 @@ export class AgentTranscriptFollowController {
     this.hold = null;
     this.setFollowing(false);
     this.anchor = selectAgentTranscriptAnchor(this.container);
+  }
+
+  readPosition(): AgentTranscriptReading {
+    if (this.following) return LATEST_READING;
+    const turn = agentTranscriptAnchorTurn(this.container, this.anchor);
+    if (turn === null) return UNMEASURED_READING;
+    const position = agentTranscriptTurnPosition(turn.turnId, turn.offsetPx);
+    if (position === null) return UNMEASURED_READING;
+    return { kind: "position", position };
+  }
+
+  restorePosition(position: AgentTranscriptPosition): AgentTranscriptRestore {
+    const measure = agentTranscriptTurnMeasure(this.container, position.turnId);
+    if (measure.kind !== "measured") return measure.kind;
+    const target = this.container.scrollTop + measure.offsetPx - position.offsetPx;
+    const maxTop = this.container.scrollHeight - this.container.clientHeight;
+    if (target > maxTop + AGENT_AT_BOTTOM_EPSILON_PX) return "short";
+    this.scrollTo(target);
+    if (agentDistanceFromBottom(this.container) <= AGENT_AT_BOTTOM_EPSILON_PX) {
+      this.follow();
+      return "restored";
+    }
+    this.release();
+    return "restored";
   }
 
   handleScroll(): void {

@@ -46,6 +46,8 @@ import {
   restorableProjectThread,
   type AgentProjectSelectionMemory,
 } from "./agentProjectSelectionMemory";
+import type { AgentNavigationRestoreLedger } from "./agentNavigationRestoreLedger";
+import { useAgentPendingThreadRestore } from "./useAgentPendingThreadRestore";
 
 export type AgentNavigationCommandHandlers = Pick<
   AgentViewCommandHandlers,
@@ -61,7 +63,7 @@ export type AgentNavigationCommandHandlers = Pick<
 export interface AgentThreadNavigationOptions {
   readonly agents: Pick<
     AgentThreadsSurface,
-    "threads" | "markThreadViewed" | "historySearch" | "turnLog"
+    "threads" | "markThreadViewed" | "historySearch" | "turnLog" | "loadedProjectRootKeys"
   >;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly presentationThreads: ReadonlyArray<AgentThreadView>;
@@ -145,6 +147,7 @@ export interface AgentNavigationSession {
     readonly selectedThreadOwnerKey: string | null;
     readonly scopeState: AgentNavigationScopeState;
   };
+  readonly restore?: AgentNavigationRestoreLedger;
 }
 
 export function useAgentThreadNavigation({
@@ -243,6 +246,39 @@ export function useAgentThreadNavigation({
   }, [threadViews]);
   const selectedThread =
     threadViews.find((view) => view.thread.threadId === selectedThreadId) ?? null;
+  const selectThreadRef = useRef<(threadId: string) => void>(() => undefined);
+  const restoreLedger = session?.restore ?? null;
+  const restoreSelectThread = useCallback(
+    (threadId: string) => selectThreadRef.current(threadId),
+    [],
+  );
+  const storedScopeProjectKey = storedScopeState.railScope?.projectRootKey ?? null;
+  const restoreScopeMembers =
+    storedScopeProjectKey === null
+      ? undefined
+      : agentRailScopeEntryFor(scopeEntries, storedScopeProjectKey)?.memberProjectRootKeys;
+  const restoreScope = useMemo(
+    () =>
+      storedScopeProjectKey === null
+        ? null
+        : {
+            projectRootKey: storedScopeProjectKey,
+            memberProjectRootKeys: restoreScopeMembers ?? [],
+          },
+    [restoreScopeMembers, storedScopeProjectKey],
+  );
+  const scopeProjectKeyRef = useRef(storedScopeProjectKey);
+  scopeProjectKeyRef.current = storedScopeProjectKey;
+  const pendingRestore = useAgentPendingThreadRestore({
+    ledger: restoreLedger,
+    scope: restoreScope,
+    threads: threadViews,
+    projects,
+    loadedProjectRootKeys: agents.loadedProjectRootKeys,
+    selectedThreadId,
+    select: restoreSelectThread,
+  });
+  const pendingRestoreProjectKey = pendingRestore.projectRootKey;
   const selectedProjectRootKey =
     selectedThread === null
       ? null
@@ -271,24 +307,38 @@ export function useAgentThreadNavigation({
       (project) =>
         project.rootKey === (selectedProjectRootKey ?? scopeState.railScope?.projectRootKey),
     );
-    if (selectedProject !== undefined && (selectedThread !== null || selectedThreadId === null)) {
+    if (
+      selectedProject !== undefined &&
+      selectedProject.rootKey !== pendingRestoreProjectKey &&
+      (selectedThread !== null || selectedThreadId === null)
+    ) {
+      const rememberedThreadId =
+        selectedThread !== null &&
+        (selectedThread.thread.archived ||
+          !projects.some(
+            (member) =>
+              (member.rootKey === selectedProject.rootKey ||
+                scopeEntries
+                  .find((entry) => entry.projectRootKey === selectedProject.rootKey)
+                  ?.memberProjectRootKeys?.includes(member.rootKey)) &&
+              projectOwnsRememberedThread(member, selectedThread),
+          ))
+          ? null
+          : selectedThreadId;
       rememberProjectSelection(
         projectSelections.current,
         selectedProject,
-        selectedThread !== null &&
-          (selectedThread.thread.archived ||
-            !projects.some(
-              (member) =>
-                (member.rootKey === selectedProject.rootKey ||
-                  scopeEntries
-                    .find((entry) => entry.projectRootKey === selectedProject.rootKey)
-                    ?.memberProjectRootKeys?.includes(member.rootKey)) &&
-                projectOwnsRememberedThread(member, selectedThread),
-            ))
-          ? null
-          : selectedThreadId,
+        rememberedThreadId,
         selectedThread === null ? null : JSON.stringify(selectedThread.thread.owner),
       );
+      restoreLedger?.remember({
+        projectRootKey: selectedProject.rootKey,
+        threadId: rememberedThreadId,
+        repositoryRoot:
+          rememberedThreadId === null
+            ? null
+            : (selectedThread?.thread.owner.repositoryRoot ?? null),
+      });
     }
     if (session === undefined) return;
     session.current = {
@@ -301,7 +351,9 @@ export function useAgentThreadNavigation({
       scopeState,
     };
   }, [
+    pendingRestoreProjectKey,
     projects,
+    restoreLedger,
     scopeEntries,
     selectedProjectRootKey,
     scopeState,
@@ -376,19 +428,25 @@ export function useAgentThreadNavigation({
     setSelectedThreadId(threadId);
   }, []);
 
+  const cancelPendingRestore = pendingRestore.cancel;
   const clearSelectedThread = useCallback(() => {
+    cancelPendingRestore(scopeProjectKeyRef.current);
     pendingRemoteSelection.current = null;
     setPendingSearchReveal(null);
     setSelectedThreadId(null);
-  }, []);
+  }, [cancelPendingRestore]);
 
-  const forgetThread = useCallback((threadId: string) => {
-    for (const [key, selection] of projectSelections.current) {
-      if (selection.threadId === threadId) projectSelections.current.delete(key);
-    }
-    if (pendingRemoteSelection.current?.id === threadId) pendingRemoteSelection.current = null;
-    setSelectedThreadId((current) => (current === threadId ? null : current));
-  }, []);
+  const forgetThread = useCallback(
+    (threadId: string) => {
+      for (const [key, selection] of projectSelections.current) {
+        if (selection.threadId === threadId) projectSelections.current.delete(key);
+      }
+      restoreLedger?.forgetThread(threadId);
+      if (pendingRemoteSelection.current?.id === threadId) pendingRemoteSelection.current = null;
+      setSelectedThreadId((current) => (current === threadId ? null : current));
+    },
+    [restoreLedger],
+  );
 
   useEffect(() => {
     if (pendingSearchReveal === null) return;
@@ -438,9 +496,12 @@ export function useAgentThreadNavigation({
     },
     [closeFind, selectedThreadId, scopeEntries, projects],
   );
+  selectThreadRef.current = selectThread;
 
   const setRailScope = useCallback(
     (scope: AgentRailScope) => {
+      cancelPendingRestore();
+      scopeProjectKeyRef.current = scope.projectRootKey;
       setScopeState((current) => ({
         intent: "explicit",
         railScope: scope,
@@ -448,7 +509,7 @@ export function useAgentThreadNavigation({
         order: current.order,
       }));
     },
-    [projects],
+    [cancelPendingRestore, projects],
   );
 
   const setProjectScope = useCallback(
@@ -465,7 +526,9 @@ export function useAgentThreadNavigation({
           : agentRailScopeFromEntry(entry);
       const authority = captureScopeAuthority(railScope, currentProjectsRef.current);
       if (authority === null) return false;
+      scopeProjectKeyRef.current = railScope.projectRootKey;
       if (storedScopeState.railScope?.projectRootKey !== projectRootKey) {
+        cancelPendingRestore();
         const retained = restorableProjectThread(
           recalledProjectSelection(projectSelections.current, live),
           live,
@@ -489,6 +552,7 @@ export function useAgentThreadNavigation({
     },
     [
       authoritativeRemoteProjectKeys,
+      cancelPendingRestore,
       projects,
       scopeEntries,
       storedScopeState.railScope?.projectRootKey,

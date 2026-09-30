@@ -120,3 +120,100 @@ describe("agentComposerDrafts", () => {
     agentComposerDraftStore.clearDraft("agt-isolated");
   });
 });
+
+describe("agentComposerDrafts persistence surface", () => {
+  it("snapshots drafts oldest-first in write recency order", () => {
+    const store = createAgentComposerDraftStore();
+    store.writeDraft("agt-1", "one");
+    store.writeDraft("agt-2", "two");
+    store.writeDraft("agt-1", "one again");
+
+    expect(store.snapshot()).toEqual([
+      ["agt-2", "two"],
+      ["agt-1", "one again"],
+    ]);
+  });
+
+  it("hydrates only absent keys and never overrides live text", () => {
+    const store = createAgentComposerDraftStore();
+    store.writeDraft("agt-live", "typed after launch");
+
+    store.hydrate([
+      ["agt-live", "stale persisted text"],
+      ["agt-restored", "restored"],
+      ["new:/workspace/app", "restored new thread"],
+    ]);
+
+    expect(store.readDraft("agt-live")).toBe("typed after launch");
+    expect(store.readDraft("agt-restored")).toBe("restored");
+    expect(store.readDraft("new:/workspace/app")).toBe("restored new thread");
+    expect(store.snapshot()).toEqual([
+      ["agt-restored", "restored"],
+      ["new:/workspace/app", "restored new thread"],
+      ["agt-live", "typed after launch"],
+    ]);
+  });
+
+  it("hydrates within the existing caps and evicts restored drafts before live ones", () => {
+    const store = createAgentComposerDraftStore();
+    store.writeDraft("agt-live", "live");
+    const restored = Array.from(
+      { length: MAX_AGENT_COMPOSER_DRAFTS },
+      (_, index) => [`agt-${index}`, `draft ${index}`] as const,
+    );
+
+    store.hydrate([
+      ...restored,
+      ["", "empty key"],
+      ["agt-empty", ""],
+      ["agt-oversize", "a".repeat(MAX_AGENT_COMPOSER_DRAFT_BYTES + 1)],
+    ]);
+
+    const snapshot = store.snapshot();
+    expect(snapshot).toHaveLength(MAX_AGENT_COMPOSER_DRAFTS);
+    expect(snapshot[snapshot.length - 1]).toEqual(["agt-live", "live"]);
+    expect(store.readDraft("agt-0")).toBe("");
+    expect(store.readDraft(`agt-${MAX_AGENT_COMPOSER_DRAFTS - 1}`)).toBe(
+      `draft ${MAX_AGENT_COMPOSER_DRAFTS - 1}`,
+    );
+    expect(store.readDraft("agt-oversize")).toBe("");
+    expect(store.readDraft("")).toBe("");
+  });
+
+  it("notifies subscribers only when a write, clear or reset changes state", () => {
+    const store = createAgentComposerDraftStore();
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifications += 1;
+    });
+
+    store.writeDraft("agt-1", "one");
+    expect(notifications).toBe(1);
+    store.writeDraft("agt-1", "one");
+    expect(notifications).toBe(1);
+    store.writeDraft("agt-2", "two");
+    expect(notifications).toBe(2);
+    store.writeDraft("agt-1", "one");
+    expect(notifications).toBe(3);
+    store.writeDraft("agt-1", "changed");
+    expect(notifications).toBe(4);
+    store.clearDraft("agt-missing");
+    store.writeDraft("agt-missing", "");
+    store.writeDraft("", "nowhere");
+    expect(notifications).toBe(4);
+    store.clearDraft("agt-1");
+    expect(notifications).toBe(5);
+    store.writeDraft("agt-2", "");
+    expect(notifications).toBe(6);
+    store.hydrate([["agt-restored", "restored"]]);
+    expect(notifications).toBe(6);
+    store.reset();
+    expect(notifications).toBe(7);
+    store.reset();
+    expect(notifications).toBe(7);
+
+    unsubscribe();
+    store.writeDraft("agt-3", "after unsubscribe");
+    expect(notifications).toBe(7);
+  });
+});

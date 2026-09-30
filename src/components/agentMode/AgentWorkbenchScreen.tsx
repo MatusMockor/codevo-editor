@@ -36,7 +36,12 @@ import {
   type AgentRightPanelGateways,
 } from "./rightPanel/agentRightPanelGateways";
 import { useAgentRightPanelChrome } from "./rightPanel/useAgentRightPanelChrome";
-import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
+import { AgentTranscriptPositionProvider } from "./AgentTranscriptPositionContext";
+import {
+  browserAgentSessionRestorePorts,
+  useAgentSessionRestore,
+  type AgentSessionRestorePorts,
+} from "./useAgentSessionRestore";
 import {
   useAgentProjectWorkspaceSync,
   type AgentProjectWorkspaceTarget,
@@ -172,6 +177,7 @@ export interface AgentWorkbenchScreenProps {
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly railFilterPreference?: AgentRailFilterPreferencePort | null;
+  readonly sessionRestore?: AgentSessionRestorePorts;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly revealPathGateway?: RevealPathGateway;
   readonly directoryListingGateway?: DirectoryListingGateway;
@@ -196,6 +202,7 @@ const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
 const DEFAULT_RAIL_FILTER_PREFERENCE = new BrowserAgentRailFilterPreference();
+const DEFAULT_SESSION_RESTORE = browserAgentSessionRestorePorts();
 const SHOW_COMMAND_PALETTE = "commands.show";
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
@@ -226,14 +233,12 @@ export function AgentWorkbenchScreen({
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
   railFilterPreference = DEFAULT_RAIL_FILTER_PREFERENCE,
+  sessionRestore = DEFAULT_SESSION_RESTORE,
   newThreadPicker: injectedNewThreadPicker,
   workbench,
 }: AgentWorkbenchScreenProps) {
-  const navigationSession = useRef<AgentNavigationSession["current"]>({
-    selectedThreadId: null,
-    selectedThreadOwnerKey: null,
-    scopeState: NO_SCOPE_STATE,
-  });
+  const restoredSession = useAgentSessionRestore(sessionRestore);
+  const { navigationSession } = restoredSession;
   const addProjectPending = useRef<AgentPendingProjectOpen | null>(null);
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const projects = workbench.agents.agentProjects;
@@ -721,38 +726,43 @@ export function AgentWorkbenchScreen({
 
   return (
     <AgentArtifactSupportProvider value={artifactSupport}>
-      <AgentModeView
-        monacoTheme={monacoTheme}
-        followUpBehavior={appSettings.agentFollowUpBehavior}
-        questionGateway={DEFAULT_QUESTION_GATEWAY}
-        artifactLoader={DEFAULT_ARTIFACT_LOADER}
-        artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
-        imageSurface={DEFAULT_IMAGE_SURFACE}
-        agents={agents}
-        chrome={chrome}
-        key={navigationBoundary.key}
-        navigationSession={navigationSession}
-        modelFavoritesPersistence={modelFavoritesPersistence}
-        onOpenSourceControl={openSourceControl}
-        onOpenEnvironmentSettings={
-          openSettingsSection === undefined ? undefined : openEnvironmentSettings
-        }
-        onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
-        onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
-        onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
-        onTrustProject={(projectRootKey, origin) =>
-          void (projects.grantProjectTrust ?? projects.trustProject)(projectRootKey, origin ?? null)
-        }
-        overflowRootPaths={projects.overflowRootPaths}
-        providerEnabled={providerEnabled}
-        projects={projects.projects}
-        projectsLoaded={projects.projectsLoaded}
-        textClipboard={textClipboard}
-        railFilterPreference={railFilterPreference}
-        newThreadPicker={newThreadPicker}
-        viewCommands={workbenchAgentViewCommandBridge}
-        workspaceRoot={workspaceRoot}
-      />
+      <AgentTranscriptPositionProvider value={restoredSession.transcriptPositions}>
+        <AgentModeView
+          monacoTheme={monacoTheme}
+          followUpBehavior={appSettings.agentFollowUpBehavior}
+          questionGateway={DEFAULT_QUESTION_GATEWAY}
+          artifactLoader={DEFAULT_ARTIFACT_LOADER}
+          artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
+          imageSurface={DEFAULT_IMAGE_SURFACE}
+          agents={agents}
+          chrome={chrome}
+          key={navigationBoundary.key}
+          navigationSession={navigationSession}
+          modelFavoritesPersistence={modelFavoritesPersistence}
+          onOpenSourceControl={openSourceControl}
+          onOpenEnvironmentSettings={
+            openSettingsSection === undefined ? undefined : openEnvironmentSettings
+          }
+          onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
+          onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
+          onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
+          onTrustProject={(projectRootKey, origin) =>
+            void (projects.grantProjectTrust ?? projects.trustProject)(
+              projectRootKey,
+              origin ?? null,
+            )
+          }
+          overflowRootPaths={projects.overflowRootPaths}
+          providerEnabled={providerEnabled}
+          projects={projects.projects}
+          projectsLoaded={projects.projectsLoaded}
+          textClipboard={textClipboard}
+          railFilterPreference={railFilterPreference}
+          newThreadPicker={newThreadPicker}
+          viewCommands={workbenchAgentViewCommandBridge}
+          workspaceRoot={workspaceRoot}
+        />
+      </AgentTranscriptPositionProvider>
     </AgentArtifactSupportProvider>
   );
 }
