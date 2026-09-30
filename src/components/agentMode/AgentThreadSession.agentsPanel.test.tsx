@@ -179,11 +179,11 @@ describe("thread Agents panel", () => {
     expect(regions()[0]?.getAttribute("aria-live")).toBe("polite");
     expect(regions()[0]?.textContent).toBe("");
     act(() => vi.advanceTimersByTime(AGENT_SUBAGENT_ANNOUNCE_DELAY_MS));
-    expect(regions()[0]?.textContent).toBe("2 agents working");
+    expect(regions()[0]?.textContent).toBe("2 agents running");
 
     render(view("thread-a", [...LIVE, completed("a")]));
     render(view("thread-a", [...LIVE, completed("a"), completed("b")]));
-    expect(regions()[0]?.textContent).toBe("2 agents working");
+    expect(regions()[0]?.textContent).toBe("2 agents running");
     act(() => vi.advanceTimersByTime(AGENT_SUBAGENT_ANNOUNCE_DELAY_MS));
     expect(regions()[0]?.textContent).toBe("All agents finished");
     expect(regions()).toHaveLength(1);

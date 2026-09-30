@@ -7,7 +7,7 @@ import {
   type AgentRuntimeSubagents,
 } from "../../domain/agentRuntimeSubagent";
 import type { AgentCliKind } from "../../domain/agentTask";
-import { agentAgentsWorkingLabel } from "./agentAgentsPanelPresentation";
+import { agentAgentsRunningCountLabel } from "./agentAgentsPanelPresentation";
 import { agentRuntimeSubagentFirstLine } from "./agentRuntimeSubagentPresentation";
 
 export type AgentBackgroundIndicator =
@@ -68,7 +68,7 @@ function agentsIndicator(
   return {
     kind: "agents",
     label: [
-      agentAgentsWorkingLabel(working, subagents.truncated),
+      agentAgentsRunningCountLabel(working, subagents.truncated),
       otherTasks === 0 ? null : countLabel(otherTasks, "background task"),
     ]
       .filter((value): value is string => value !== null)

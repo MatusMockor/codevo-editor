@@ -76,7 +76,9 @@ export function AgentAgentsPanel({
           )}
         </AgentElapsedTickerContext.Provider>
       </div>
-      {model.working + model.idle + model.settled > 0 && <AgentsPanelFooter model={model} />}
+      {model.working + model.idle + model.unknown + model.settled > 0 && (
+        <AgentsPanelFooter model={model} />
+      )}
     </section>
   );
 }
@@ -91,6 +93,9 @@ function AgentsPanelFooter({ model }: { readonly model: AgentAgentsPanelModel })
         {model.idle > 0 && <span className="cv-agents__count">{`${model.idle} idle`}</span>}
         {model.settled > 0 && (
           <span className="cv-agents__count">{`${model.settled} settled`}</span>
+        )}
+        {model.unknown > 0 && (
+          <span className="cv-agents__count">{`${model.unknown} status unknown`}</span>
         )}
       </span>
       <span className="cv-agents__total">{`Σ ${agentTokenCountLabel(model.totalTokens)} tok`}</span>

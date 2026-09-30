@@ -320,4 +320,17 @@ describe("AgentAgentsPanel", () => {
     expect(model.totalTokens).toBe(128);
     expect(model.current[model.current.length - 1]?.key).toBe("t3:a31");
   });
+
+  it("counts subagents Codevo stopped following as status unknown, not settled", () => {
+    const groups = [
+      group("t1", [
+        source({ id: "a", title: "sleep_agent_1", observedState: "unknown" }),
+        source({ id: "b", title: "sleep_agent_2", observedState: "unknown" }),
+      ]),
+    ];
+    act(() => root.render(<AgentAgentsPanel groups={groups} />));
+    expect(
+      [...host.querySelectorAll(".cv-agents__count")].map((count) => count.textContent),
+    ).toEqual(["2 status unknown"]);
+  });
 });

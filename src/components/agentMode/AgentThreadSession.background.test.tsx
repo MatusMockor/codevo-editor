@@ -224,7 +224,7 @@ describe("thread background activity visibility", () => {
   it("shows live agents while the Claude lead is still working and opens the Agents panel", () => {
     render(claudeAgents);
     expect(host.querySelector(".cv-live-row__action .cv-live-row__label")?.textContent).toBe(
-      "2 agents working",
+      "2 agents running",
     );
     expect(host.querySelector(".cv-agents")).toBeNull();
 
@@ -235,7 +235,7 @@ describe("thread background activity visibility", () => {
   it("shows live agents while the Codex lead is still working", () => {
     render(codexAgents, { kind: "running" }, "Delegate", "codex");
     expect(host.querySelector(".cv-live-row__action .cv-live-row__label")?.textContent).toBe(
-      "1 agent working",
+      "1 agent running",
     );
     act(() => host.querySelector<HTMLButtonElement>(".cv-spawn__open")?.click());
     expect(host.querySelector(".cv-agents-row__name")?.textContent).toBe("explorer");

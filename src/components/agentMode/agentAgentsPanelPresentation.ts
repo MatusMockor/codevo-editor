@@ -32,6 +32,7 @@ export interface AgentAgentsPanelModel {
   readonly truncated: boolean;
   readonly working: number;
   readonly idle: number;
+  readonly unknown: number;
   readonly settled: number;
   readonly totalTokens: number;
 }
@@ -59,6 +60,7 @@ export function agentAgentsPanelModel(
     .filter((group) => group.rows.length > 0);
   const working = all.filter((row) => row.agent.status === "working").length;
   const idle = all.filter((row) => row.agent.status === "idle").length;
+  const unknown = all.filter((row) => row.agent.status === "unknown").length;
   const truncated = groups.some((group) => group.subagents.truncated);
   return {
     current,
@@ -67,7 +69,8 @@ export function agentAgentsPanelModel(
     truncated,
     working,
     idle,
-    settled: all.length - working - idle,
+    unknown,
+    settled: all.length - working - idle - unknown,
     totalTokens: all.reduce((total, row) => total + (row.agent.totalTokens ?? 0), 0),
   };
 }
@@ -125,9 +128,9 @@ function panelNotice(shown: number, total: number, truncated: boolean): string |
   return `Showing the first ${shown} agent${shown === 1 ? "" : "s"}`;
 }
 
-export function agentAgentsWorkingLabel(working: number, truncated: boolean): string {
+export function agentAgentsRunningCountLabel(running: number, truncated: boolean): string {
   const bound = truncated ? "at least " : "";
-  return `${bound}${working} agent${working === 1 ? "" : "s"} working`;
+  return `${bound}${running} agent${running === 1 ? "" : "s"} running`;
 }
 
 export type AgentSubagentStatusCounts = Readonly<Record<AgentRuntimeSubagentStatus, number>>;
@@ -139,12 +142,12 @@ export function agentSubagentAnnouncement(
 ): string | null {
   const { working } = counts;
   if (previousWorking === working) return null;
-  if (working > 0) return capitalized(agentAgentsWorkingLabel(working, truncated));
+  if (working > 0) return capitalized(agentAgentsRunningCountLabel(working, truncated));
   if (previousWorking === null || previousWorking === 0) return null;
-  return settledAnnouncement(counts.failed, counts.stopped);
+  return settledAnnouncement(counts.failed, counts.stopped, counts.unknown);
 }
 
-function settledAnnouncement(failed: number, stopped: number): string {
+function settledAnnouncement(failed: number, stopped: number, unknown: number): string {
   const failedLabel = failed === 0 ? null : `${failed} agent${failed === 1 ? "" : "s"} failed`;
   const stoppedPlural = stopped === 1 ? "" : "s";
   const stoppedLabel =
@@ -153,8 +156,14 @@ function settledAnnouncement(failed: number, stopped: number): string {
       : failedLabel === null
         ? `${stopped} agent${stoppedPlural} stopped`
         : `${stopped} stopped`;
-  const parts = [failedLabel, stoppedLabel].filter((part): part is string => part !== null);
+  const unknownLabel =
+    unknown === 0 ? null : `status of ${unknown} agent${unknown === 1 ? "" : "s"} unknown`;
+  const parts = [failedLabel, stoppedLabel, unknownLabel].filter(
+    (part): part is string => part !== null,
+  );
   if (parts.length === 0) return "All agents finished";
+  if (failedLabel === null && stoppedLabel === null && unknownLabel !== null)
+    return capitalized(unknownLabel);
   return parts.join(", ");
 }
 

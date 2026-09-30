@@ -7,7 +7,7 @@ import {
 import {
   MAX_AGENTS_PANEL_ROWS,
   agentAgentsPanelModel,
-  agentAgentsWorkingLabel,
+  agentAgentsRunningCountLabel,
   agentSubagentAnnouncement,
 } from "./agentAgentsPanelPresentation";
 
@@ -60,21 +60,21 @@ describe("agentAgentsPanelModel notice", () => {
 
 describe("subagent announcements", () => {
   it("bounds the working label truthfully", () => {
-    expect(agentAgentsWorkingLabel(1, false)).toBe("1 agent working");
-    expect(agentAgentsWorkingLabel(32, true)).toBe("at least 32 agents working");
+    expect(agentAgentsRunningCountLabel(1, false)).toBe("1 agent running");
+    expect(agentAgentsRunningCountLabel(32, true)).toBe("at least 32 agents running");
   });
 
   it("announces only count changes and the final settle", () => {
     expect(agentSubagentAnnouncement(null, counts({}), false)).toBeNull();
-    expect(agentSubagentAnnouncement(null, counts({ working: 2 }), false)).toBe("2 agents working");
+    expect(agentSubagentAnnouncement(null, counts({ working: 2 }), false)).toBe("2 agents running");
     expect(agentSubagentAnnouncement(2, counts({ working: 2 }), false)).toBeNull();
-    expect(agentSubagentAnnouncement(2, counts({ working: 1 }), false)).toBe("1 agent working");
+    expect(agentSubagentAnnouncement(2, counts({ working: 1 }), false)).toBe("1 agent running");
     expect(agentSubagentAnnouncement(1, counts({ completed: 3 }), false)).toBe(
       "All agents finished",
     );
     expect(agentSubagentAnnouncement(0, counts({}), false)).toBeNull();
     expect(agentSubagentAnnouncement(31, counts({ working: 32 }), true)).toBe(
-      "At least 32 agents working",
+      "At least 32 agents running",
     );
   });
 

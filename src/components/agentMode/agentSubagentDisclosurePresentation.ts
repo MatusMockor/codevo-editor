@@ -18,6 +18,9 @@ export interface AgentSubagentDisclosureEntry extends Omit<AgentSubagentEntry, "
 
 const MAX_DETAIL_CHARACTERS = 2_000;
 
+export const AGENT_SUBAGENT_UNFOLLOWED_NOTE =
+  "Still running when its turn ended. Codevo can't follow it after that.";
+
 export function agentSubagentDisclosureEntries(
   events: ReadonlyArray<AgentTurnEvent>,
   lifecycle?: AgentSubagentLifecycle,
@@ -107,11 +110,11 @@ function settleEntries(
   settlement: "running" | "settled" | "stopped",
 ): ReadonlyArray<AgentSubagentDisclosureEntry> {
   if (settlement === "running") return entries;
-  return entries.map((entry) =>
-    entry.state === "running"
-      ? { ...entry, state: settlement === "stopped" ? "interrupted" : "unknown" }
-      : entry,
-  );
+  return entries.map((entry) => {
+    if (entry.state !== "running") return entry;
+    if (settlement === "stopped") return { ...entry, state: "interrupted" };
+    return { ...entry, state: "unknown", detail: entry.detail ?? AGENT_SUBAGENT_UNFOLLOWED_NOTE };
+  });
 }
 
 function boundedDetail(text: string): string {

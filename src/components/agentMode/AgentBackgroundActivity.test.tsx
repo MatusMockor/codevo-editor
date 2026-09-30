@@ -45,11 +45,11 @@ describe("AgentBackgroundActivity agents indicator", () => {
 
     expect(agentBackgroundIndicator(INACTIVE, exact, "claudeCode")).toMatchObject({
       kind: "agents",
-      label: "2 agents working",
+      label: "2 agents running",
     });
     expect(agentBackgroundIndicator(INACTIVE, bounded, "claudeCode")).toMatchObject({
       kind: "agents",
-      label: "at least 2 agents working",
+      label: "at least 2 agents running",
     });
   });
 
@@ -66,7 +66,7 @@ describe("AgentBackgroundActivity agents indicator", () => {
 
     expect(host.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(0);
     const action = host.querySelector<HTMLButtonElement>(".cv-live-row__action");
-    expect(action?.getAttribute("aria-label")).toBe("1 agent working. Open Agents panel");
+    expect(action?.getAttribute("aria-label")).toBe("1 agent running. Open Agents panel");
     act(() => action?.click());
     expect(onOpenAgents).toHaveBeenCalledTimes(1);
   });
