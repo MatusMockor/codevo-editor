@@ -1,5 +1,7 @@
 import { Suspense, type ComponentProps, type ReactNode } from "react";
+import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import { AgentFrameFallback } from "./AgentFrameFallback";
+import { AppUpdaterContext } from "./appUpdaterContext";
 import { DeferredSurfaceHost } from "./DeferredSurfaceHost";
 import {
   EditorPanelDocumentsContext,
@@ -132,21 +134,25 @@ export const LazyWorkbenchSettingsHost = retryableLazy<
 
 export function LazyAgentWorkbenchHost({
   active,
+  appUpdater,
   editorPanelDocuments,
   ...props
 }: ComponentProps<typeof LazyAgentWorkbenchScreen> & {
   readonly active: boolean;
+  readonly appUpdater: AppUpdaterSurface | null;
   readonly editorPanelDocuments: EditorPanelDocumentsValue | null;
 }) {
   return (
     <EditorPanelDocumentsContext.Provider value={editorPanelDocuments}>
-      <StickyLazySurfaceHost
-        active={active}
-        fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
-        label={AGENT_WORKSPACE_LABEL}
-      >
-        <LazyAgentWorkbenchScreen {...props} />
-      </StickyLazySurfaceHost>
+      <AppUpdaterContext.Provider value={appUpdater}>
+        <StickyLazySurfaceHost
+          active={active}
+          fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
+          label={AGENT_WORKSPACE_LABEL}
+        >
+          <LazyAgentWorkbenchScreen {...props} />
+        </StickyLazySurfaceHost>
+      </AppUpdaterContext.Provider>
     </EditorPanelDocumentsContext.Provider>
   );
 }

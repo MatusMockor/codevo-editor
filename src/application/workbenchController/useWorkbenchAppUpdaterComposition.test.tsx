@@ -33,7 +33,7 @@ describe("useWorkbenchAppUpdaterComposition", () => {
           appUpdaterPreferencesGateway,
           appVersion: "0.2.0-beta.1",
         },
-        vi.fn(async () => undefined),
+        { persistAppUpdaterSkippedVersion: vi.fn(async () => undefined) },
       );
       return null;
     }

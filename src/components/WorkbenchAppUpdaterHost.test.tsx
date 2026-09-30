@@ -7,7 +7,10 @@ import type {
   AgentProviderManagementSurface,
   AgentProviderManagementToast,
 } from "../application/useAgentProviderManagement";
-import type { WorkbenchAppUpdaterComposition } from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
+import {
+  useWorkbenchAppUpdaterComposition,
+  type WorkbenchAppUpdaterComposition,
+} from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
 import {
   createWorkbenchNotice,
   languageServerCrashNoticeGroupKey,
@@ -18,6 +21,8 @@ import type { AgentProviderHealthState } from "../domain/agentProviderHealth";
 import { defaultAgentCliDiscoveryResult, type AgentCliKind } from "../domain/agentSettings";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
+import { AgentProviderRailFooter } from "./agentMode/AgentProviderRailFooter";
+import { AppUpdaterContext } from "./appUpdaterContext";
 import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
 import {
   WorkbenchAppUpdaterHost,
@@ -220,6 +225,26 @@ describe("WorkbenchAppUpdaterHost", () => {
     expect(host.querySelector(".toast-update-row__to")?.textContent).toBe("v0.150.2");
   });
 
+  it("shows the existing app update toast once when the rail refresh finds a Codevo release", async () => {
+    const gateway = updaterGateway();
+    gateway.check.mockResolvedValueOnce({ kind: "upToDate", currentVersion: "0.1.0" });
+    await render(hostProps({ gateway }), true);
+    await waitForReact(() => expect(gateway.check).toHaveBeenCalledOnce());
+    await act(async () => Promise.resolve());
+    expect(host.textContent).not.toContain("Update available: Codevo");
+
+    const refresh = host.querySelector<HTMLButtonElement>('button[aria-label="Check for updates"]');
+    expect(refresh).not.toBeNull();
+    await act(async () => refresh?.click());
+
+    await waitForReact(() => {
+      expect(host.textContent).toContain("Update available: Codevo v0.2.0");
+    });
+    expect(gateway.check).toHaveBeenCalledTimes(2);
+    expect(host.textContent?.split("Update available: Codevo v0.2.0")).toHaveLength(2);
+    expect(host.querySelector('[data-pill="app-update"]')).toBeNull();
+  });
+
   it("keeps a failed startup check silent", async () => {
     const gateway = updaterGateway();
     gateway.check.mockRejectedValue(new Error("offline"));
@@ -258,9 +283,9 @@ describe("WorkbenchAppUpdaterHost", () => {
     expect(last(mocks.settingsContainers)).toBe(container);
   });
 
-  async function render(props: WorkbenchAppUpdaterHostProps): Promise<void> {
+  async function render(props: HostFixture, withRailFooter = false): Promise<void> {
     await act(async () => {
-      root.render(<WorkbenchAppUpdaterHost {...props} />);
+      root.render(<HostHarness {...props} withRailFooter={withRailFooter} />);
     });
   }
 
@@ -288,7 +313,7 @@ function hostProps(overrides: {
   readonly settingsContainer?: HTMLElement | null;
   readonly settingsOpen?: boolean;
   readonly workspaceRoot?: string;
-}): WorkbenchAppUpdaterHostProps {
+}): HostFixture {
   const composition: WorkbenchAppUpdaterComposition = {
     appUpdaterGateway: overrides.gateway ?? upToDateGateway(),
     appUpdaterPreferencesGateway: { loadSkippedVersion: async () => null },
@@ -296,6 +321,7 @@ function hostProps(overrides: {
   };
   return {
     composition,
+    persistAppUpdaterSkippedVersion: vi.fn(async () => undefined),
     settingsContainer: overrides.settingsContainer ?? null,
     onOpenAgentSettings: overrides.configureAgentCli ?? vi.fn(),
     onOpenRuntimePanel: vi.fn(),
@@ -312,7 +338,6 @@ function hostProps(overrides: {
       notices: overrides.notices ?? [],
       openNodeLaunchConfigurations: vi.fn(),
       openJavaScriptTypeScriptServiceLog: vi.fn(async () => undefined),
-      persistAppUpdaterSkippedVersion: vi.fn(async () => undefined),
       phpTools: null,
       restartJavaScriptTypeScriptService: vi.fn(async () => undefined),
       saveWorkbenchSettings: vi.fn(async () => undefined),
@@ -329,6 +354,37 @@ function hostProps(overrides: {
     workspaceFiles: fileGateway(),
     workspaceTrusted: false,
   };
+}
+
+type HostFixture = Omit<WorkbenchAppUpdaterHostProps, "appUpdater"> & {
+  readonly composition: WorkbenchAppUpdaterComposition;
+  readonly persistAppUpdaterSkippedVersion: (version: string) => Promise<void>;
+};
+
+function HostHarness({
+  composition,
+  persistAppUpdaterSkippedVersion,
+  withRailFooter,
+  ...props
+}: HostFixture & { readonly withRailFooter: boolean }) {
+  const appUpdater = useWorkbenchAppUpdaterComposition(composition, {
+    persistAppUpdaterSkippedVersion,
+  });
+  return (
+    <>
+      <WorkbenchAppUpdaterHost {...props} appUpdater={appUpdater} />
+      {withRailFooter ? (
+        <AppUpdaterContext.Provider value={appUpdater}>
+          <AgentProviderRailFooter
+            management={props.providerManagement}
+            onOpenSettings={vi.fn()}
+            onOpenSourceControl={vi.fn()}
+            providerEnabled={{ claudeCode: false, codex: false }}
+          />
+        </AppUpdaterContext.Provider>
+      ) : null}
+    </>
+  );
 }
 
 function upToDateGateway(): AppUpdaterGateway {

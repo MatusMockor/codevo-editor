@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -170,7 +170,7 @@ describe("AgentProviderRailFooter", () => {
     expect(host.textContent).not.toContain("Installing");
     expect(host.textContent).not.toContain("Check failed");
 
-    act(() => button("Check CLI updates").click());
+    act(() => button("Check for updates").click());
     expect(surface.refreshAll).toHaveBeenCalledOnce();
     expect(surface.refresh).not.toHaveBeenCalled();
   });
@@ -337,7 +337,7 @@ describe("AgentProviderRailFooter", () => {
     );
     expect(button("Open Source Control")).not.toBeNull();
     expect(button("Open Usage")).not.toBeNull();
-    expect(button("Check CLI updates")).not.toBeNull();
+    expect(button("Check for updates")).not.toBeNull();
   });
 
   it("renders no provider row while both providers are healthy and registered", () => {
@@ -357,7 +357,7 @@ describe("AgentProviderRailFooter", () => {
 
     expect(host.querySelector(".agent-provider-footer__pill")).toBeNull();
     expect(host.querySelector(".agent-provider-footer__providers")?.childElementCount).toBe(0);
-    expect(button("Check CLI updates")).not.toBeNull();
+    expect(button("Check for updates")).not.toBeNull();
   });
 
   it("guards refresh against a second click while the probes are in flight", async () => {
@@ -369,14 +369,14 @@ describe("AgentProviderRailFooter", () => {
     render({ ...management(), refreshAll: refresh });
 
     act(() => {
-      button("Check CLI updates").click();
-      button("Check CLI updates").click();
+      button("Check for updates").click();
+      button("Check for updates").click();
     });
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(button("Check CLI updates").disabled).toBe(true);
-    expect(button("Check CLI updates").getAttribute("aria-busy")).toBe("true");
+    expect(button("Check for updates").disabled).toBe(true);
+    expect(button("Check for updates").getAttribute("aria-busy")).toBe("true");
 
-    act(() => button("Check CLI updates").click());
+    act(() => button("Check for updates").click());
     expect(refresh).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -384,9 +384,9 @@ describe("AgentProviderRailFooter", () => {
       await pending;
     });
 
-    expect(button("Check CLI updates").disabled).toBe(false);
-    expect(button("Check CLI updates").getAttribute("aria-busy")).toBe("false");
-    act(() => button("Check CLI updates").click());
+    expect(button("Check for updates").disabled).toBe(false);
+    expect(button("Check for updates").getAttribute("aria-busy")).toBe("false");
+    act(() => button("Check for updates").click());
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
@@ -395,13 +395,13 @@ describe("AgentProviderRailFooter", () => {
       throw new Error("Refresh failed");
     });
     render({ ...management(), refreshAll });
-    await act(async () => button("Check CLI updates").click());
-    expect(button("Check CLI updates").disabled).toBe(false);
-    await act(async () => button("Check CLI updates").click());
+    await act(async () => button("Check for updates").click());
+    expect(button("Check for updates").disabled).toBe(false);
+    await act(async () => button("Check for updates").click());
     expect(refreshAll).toHaveBeenCalledTimes(2);
   });
 
-  it("orders the navigation settings, source control, usage, refresh", () => {
+  it("orders the navigation settings, source control, usage and pins refresh as the last control", () => {
     render(management());
     const labels = [
       ...host.querySelectorAll<HTMLButtonElement>(
@@ -409,12 +409,20 @@ describe("AgentProviderRailFooter", () => {
       ),
     ].map((element) => element.getAttribute("aria-label"));
 
-    expect(labels).toEqual([
-      "Open provider settings",
-      "Open Source Control",
-      "Open Usage",
-      "Check CLI updates",
-    ]);
+    expect(labels).toEqual(["Open provider settings", "Open Source Control", "Open Usage"]);
+    const footer = host.querySelector(".agent-provider-footer");
+    expect(footer?.lastElementChild).toBe(button("Check for updates"));
+  });
+
+  it("keeps the refresh after the thread activity so the activity never pushes it off the edge", () => {
+    render(management(), vi.fn(), vi.fn(), vi.fn(), <div className="agent-thread-activity" />);
+    const footer = host.querySelector(".agent-provider-footer");
+    const children = [...(footer?.children ?? [])];
+    const activity = host.querySelector(".agent-thread-activity");
+
+    expect(activity).not.toBeNull();
+    expect(children.indexOf(button("Check for updates"))).toBe(children.length - 1);
+    expect(children.indexOf(activity as Element)).toBe(children.length - 2);
   });
 
   it.each(["claudeCode", "codex"] as const)(
@@ -510,7 +518,7 @@ describe("AgentProviderRailFooter", () => {
     expect(button("Register Claude Code policy — retry registration")).not.toBeNull();
     expect(button("Register Codex policy — retry registration")).not.toBeNull();
 
-    act(() => button("Check CLI updates").click());
+    act(() => button("Check for updates").click());
     expect(surface.refreshAll).toHaveBeenCalledOnce();
     expect(surface.refresh).not.toHaveBeenCalled();
   });
@@ -520,10 +528,12 @@ describe("AgentProviderRailFooter", () => {
     onOpenSettings = vi.fn(),
     onOpenSourceControl = vi.fn(),
     onOpenUsage: (() => void) | null = vi.fn(),
+    activity: ReactNode = null,
   ): void {
     act(() =>
       root.render(
         <AgentProviderRailFooter
+          activity={activity}
           management={surface}
           onOpenSourceControl={onOpenSourceControl}
           onOpenSettings={onOpenSettings}

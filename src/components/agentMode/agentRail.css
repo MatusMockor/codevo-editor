@@ -274,7 +274,7 @@ button.agent-provider-footer__pill:disabled {
 
 .agent-provider-footer__navigation {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   align-items: center;
   gap: 2px;
 }
@@ -285,7 +285,25 @@ button.agent-provider-footer__pill:disabled {
 }
 
 .agent-provider-footer__refresh {
+  flex: none;
+  width: 28px;
+  height: 28px;
   margin-left: auto;
+}
+
+.agent-provider-footer__app-status {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  order: -1;
+}
+
+.agent-provider-footer__app-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .agent-thread-palette {

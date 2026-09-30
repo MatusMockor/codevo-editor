@@ -15,6 +15,12 @@ import type {
   AgentProviderManagementSurface,
   AgentProviderManagementView,
 } from "../../application/useAgentProviderManagement";
+import {
+  useCombinedUpdateCheck,
+  type CombinedUpdateCheck,
+} from "../../application/useCombinedUpdateCheck";
+import type { ManualAppUpdateCheckOutcome } from "../../domain/appUpdateCheck";
+import { useAppUpdaterSurface } from "../appUpdaterContext";
 import type { AgentProviderUpdateState } from "../../domain/agentProviderHealth";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
@@ -49,27 +55,10 @@ export function AgentProviderRailFooter({
   providerEnabled,
 }: AgentProviderRailFooterProps) {
   const enabled = PROVIDERS.filter((provider) => providerEnabled[provider]);
-  const [refreshing, setRefreshing] = useState(false);
-  const mounted = useRef(true);
-  const refreshPending = useRef(false);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const refreshAll = (): void => {
-    if (refreshPending.current || enabled.length === 0) return;
-    refreshPending.current = true;
-    setRefreshing(true);
-    void Promise.allSettled([management.refreshAll()]).then(() => {
-      refreshPending.current = false;
-      if (!mounted.current) return;
-      setRefreshing(false);
-    });
-  };
+  const updates = useCombinedUpdateCheck({
+    appUpdater: useAppUpdaterSurface(),
+    refreshProviders: enabled.length === 0 ? null : management.refreshAll,
+  });
 
   return (
     <footer className="agent-provider-footer">
@@ -113,24 +102,62 @@ export function AgentProviderRailFooter({
             <BarChart3 aria-hidden="true" size={16} />
           </button>
         )}
-        <button
-          aria-busy={refreshing}
-          aria-label="Check CLI updates"
-          className="agent-iconbutton agent-provider-footer__refresh"
-          disabled={refreshing || enabled.length === 0}
-          onClick={refreshAll}
-          title={refreshing ? "Checking CLI updates…" : "Check CLI updates"}
-          type="button"
-        >
-          <RefreshCw
-            aria-hidden="true"
-            className={refreshing ? "agent-provider-spin" : undefined}
-            size={16}
-          />
-        </button>
       </nav>
+      <AppUpdateCheckStatus outcome={updates.appOutcome} />
       {activity}
+      <button
+        aria-busy={updates.checking}
+        aria-label="Check for updates"
+        className="agent-iconbutton agent-provider-footer__refresh"
+        disabled={updates.checking || !updates.available}
+        onClick={updates.checkAll}
+        title={updateCheckTitle(updates, enabled.length > 0)}
+        type="button"
+      >
+        <RefreshCw
+          aria-hidden="true"
+          className={updates.checking ? "agent-provider-spin" : undefined}
+          size={16}
+        />
+      </button>
     </footer>
+  );
+}
+
+function updateCheckTitle(updates: CombinedUpdateCheck, providers: boolean): string {
+  if (updates.checking) return "Checking for updates…";
+  if (updates.appCheckable && providers) return "Check for Codevo and CLI updates";
+  if (updates.appCheckable) return "Check for Codevo updates";
+  if (providers) return "Check CLI updates";
+  return updates.appBlockedReason ?? "Check CLI updates";
+}
+
+function AppUpdateCheckStatus({
+  outcome,
+}: {
+  readonly outcome: ManualAppUpdateCheckOutcome | null;
+}) {
+  return (
+    <div aria-live="polite" className="agent-provider-footer__app-status" role="status">
+      <AppUpdateCheckPill outcome={outcome} />
+    </div>
+  );
+}
+
+function AppUpdateCheckPill({ outcome }: { readonly outcome: ManualAppUpdateCheckOutcome | null }) {
+  if (outcome === null) return null;
+  if (outcome.kind !== "upToDate" && outcome.kind !== "failed") return null;
+  const upToDate = outcome.kind === "upToDate";
+  const Glyph = upToDate ? Check : TriangleAlert;
+  return (
+    <span
+      className={`agent-provider-footer__pill agent-provider-footer__pill--${upToDate ? "success" : "danger"}`}
+      data-pill="app-update"
+      title={outcome.title}
+    >
+      <Glyph aria-hidden="true" className="agent-provider-footer__pill-glyph" size={14} />
+      <span className="agent-provider-footer__pill-label">{outcome.label}</span>
+    </span>
   );
 }
 

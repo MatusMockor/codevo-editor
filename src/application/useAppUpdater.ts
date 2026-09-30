@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  appUpdateCheckFailureMessage,
+  appUpdateCheckFailureReason,
+} from "../domain/appUpdateCheck";
 import {
   isSkippedAppUpdateVersion,
   initialAppUpdaterState,
@@ -94,7 +98,7 @@ export function useAppUpdater({
         }
         if (result.kind !== "upToDate") candidateRef.current = result.candidate;
         publish({ kind: "checkSettled", generation, result });
-      } catch {
+      } catch (error) {
         if (!ownsRequest(owner, generation, authorityRef, generationRef, mountedRef)) return;
         if (intent === "startup") {
           publish({ kind: "dismissed" });
@@ -105,7 +109,7 @@ export function useAppUpdater({
           kind: "failed",
           generation,
           operation: "check",
-          message: "Unable to check for application updates.",
+          message: appUpdateCheckFailureMessage(appUpdateCheckFailureReason(error)),
         });
       }
     },
@@ -267,7 +271,10 @@ export function useAppUpdater({
     }
   }, [publish]);
 
-  return { state, check, dismiss, download, installAndRestart, skipVersion };
+  return useMemo(
+    () => ({ state, check, dismiss, download, installAndRestart, skipVersion }),
+    [state, check, dismiss, download, installAndRestart, skipVersion],
+  );
 }
 
 type Authority = Pick<UseAppUpdaterOptions, "currentVersion" | "gateway" | "preferencesGateway">;

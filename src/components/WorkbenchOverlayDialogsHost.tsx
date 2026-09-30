@@ -1,3 +1,4 @@
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { LanguageServerPlan } from "../domain/languageServer";
 import { LanguageServerSetup } from "./LanguageServerSetup";
 import {
@@ -7,9 +8,13 @@ import {
 
 export interface WorkbenchOverlayDialogsHostProps extends Omit<
   WorkbenchAppUpdaterHostProps,
-  "workbench"
+  "onOpenAgentSettings" | "providerManagement" | "workbench" | "workspaceTrusted"
 > {
   readonly workbench: WorkbenchAppUpdaterHostProps["workbench"] & {
+    readonly agents: {
+      readonly configureAgentCli: () => void;
+      readonly providerManagement: AgentProviderManagementSurface;
+    };
     readonly languageServerPlan: LanguageServerPlan | null;
     readonly languageServerSetupOpen: boolean;
   };
@@ -28,7 +33,13 @@ export function WorkbenchOverlayDialogsHost({
         onInstallManagedPhpactor={workbench.installManagedPhpactor}
         plan={workbench.languageServerPlan}
       />
-      <WorkbenchAppUpdaterHost {...updaterProps} workbench={workbench} />
+      <WorkbenchAppUpdaterHost
+        {...updaterProps}
+        onOpenAgentSettings={workbench.agents.configureAgentCli}
+        providerManagement={workbench.agents.providerManagement}
+        workbench={workbench}
+        workspaceTrusted={workbench.workspaceTrust?.trusted === true}
+      />
     </>
   );
 }

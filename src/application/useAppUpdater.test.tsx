@@ -277,8 +277,22 @@ describe("useAppUpdater", () => {
       kind: "failed",
       currentVersion: "0.1.0",
       operation: "check",
-      message: "Unable to check for application updates.",
+      message: "Unable to check for Codevo updates.",
       release: null,
+    });
+  });
+
+  it("names a closed backend failure reason on a manual check", async () => {
+    const gateway = gatewayWithUpdate();
+    gateway.check.mockRejectedValue("timeout");
+    render(gateway);
+
+    await act(async () => surface?.check());
+
+    expect(surface?.state).toMatchObject({
+      kind: "failed",
+      operation: "check",
+      message: "Unable to check for Codevo updates: the update server did not respond in time.",
     });
   });
 

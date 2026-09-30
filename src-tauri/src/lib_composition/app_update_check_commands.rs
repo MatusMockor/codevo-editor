@@ -1,7 +1,11 @@
+use std::time::Duration;
+
 use serde::Serialize;
 use tauri::{Manager, ResourceId, Webview};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
 use time::format_description::well_known::Rfc3339;
+
+const APP_UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,13 +25,50 @@ pub(crate) enum AppUpdateCheckOutcome {
     UpToDate,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AppUpdateCheckFailure {
+    Timeout,
+    Offline,
+    InvalidRelease,
+    Unavailable,
+}
+
+impl AppUpdateCheckFailure {
+    fn code(self) -> String {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Offline => "offline",
+            Self::InvalidRelease => "invalidRelease",
+            Self::Unavailable => "unavailable",
+        }
+        .to_string()
+    }
+}
+
+fn classify_check_failure(error: &UpdaterError) -> AppUpdateCheckFailure {
+    match error {
+        UpdaterError::Reqwest(error) if error.is_timeout() => AppUpdateCheckFailure::Timeout,
+        UpdaterError::Reqwest(error) if error.is_connect() => AppUpdateCheckFailure::Offline,
+        UpdaterError::Reqwest(error) if error.is_decode() => AppUpdateCheckFailure::InvalidRelease,
+        UpdaterError::Serialization(_)
+        | UpdaterError::Semver(_)
+        | UpdaterError::TargetNotFound(_)
+        | UpdaterError::TargetsNotFound(_) => AppUpdateCheckFailure::InvalidRelease,
+        _ => AppUpdateCheckFailure::Unavailable,
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn app_update_check(webview: Webview) -> Result<AppUpdateCheckOutcome, String> {
     let updater = webview
         .updater_builder()
+        .timeout(APP_UPDATE_CHECK_TIMEOUT)
         .build()
-        .map_err(|error| error.to_string())?;
-    let update = updater.check().await.map_err(|error| error.to_string())?;
+        .map_err(|error| classify_check_failure(&error).code())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| classify_check_failure(&error).code())?;
     let Some(update) = update else {
         return Ok(AppUpdateCheckOutcome::UpToDate);
     };
@@ -35,7 +76,7 @@ pub(crate) async fn app_update_check(webview: Webview) -> Result<AppUpdateCheckO
         .date
         .map(|date| date.format(&Rfc3339))
         .transpose()
-        .map_err(|_| "The update release date is invalid.".to_string())?;
+        .map_err(|_| AppUpdateCheckFailure::InvalidRelease.code())?;
     let metadata = AppUpdateMetadata {
         current_version: update.current_version.clone(),
         version: update.version.clone(),
@@ -68,6 +109,31 @@ mod tests {
         assert_eq!(url.scheme(), "https");
         assert_eq!(url.host_str(), Some("github.com"));
         assert!(url.path().ends_with("/latest.json"));
+    }
+
+    #[test]
+    fn check_failures_cross_the_boundary_as_closed_codes_without_details() {
+        let malformed = serde_json::from_str::<serde_json::Value>("{").expect_err("malformed");
+        assert_eq!(
+            classify_check_failure(&UpdaterError::Serialization(malformed)).code(),
+            "invalidRelease"
+        );
+        assert_eq!(
+            classify_check_failure(&UpdaterError::TargetNotFound("secret".to_string())).code(),
+            "invalidRelease"
+        );
+        assert_eq!(
+            classify_check_failure(&UpdaterError::ReleaseNotFound).code(),
+            "unavailable"
+        );
+        assert_eq!(
+            classify_check_failure(&UpdaterError::Network("https://secret".to_string())).code(),
+            "unavailable"
+        );
+        assert_eq!(
+            classify_check_failure(&UpdaterError::EmptyEndpoints).code(),
+            "unavailable"
+        );
     }
 
     #[test]

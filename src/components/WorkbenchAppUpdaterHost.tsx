@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
-import {
-  useWorkbenchAppUpdaterComposition,
-  type WorkbenchAppUpdaterComposition,
-} from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
+import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import { presentAppUpdateToast } from "../domain/appUpdater";
 import type { SystemFontGateway } from "../domain/systemFonts";
@@ -21,7 +18,7 @@ import type { WorkbenchSettingsModel } from "./WorkbenchSettingsHost";
 import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
 
 export interface WorkbenchAppUpdaterHostProps {
-  readonly composition: WorkbenchAppUpdaterComposition;
+  readonly appUpdater: AppUpdaterSurface;
   readonly onOpenAgentSettings: () => void;
   readonly onOpenRuntimePanel: () => void;
   readonly providerManagement: AgentProviderManagementSurface;
@@ -32,7 +29,6 @@ export interface WorkbenchAppUpdaterHostProps {
     readonly installingManagedPhpactor: boolean;
     readonly intelligenceMode: IntelligenceMode;
     readonly notices: WorkbenchNotice[];
-    readonly persistAppUpdaterSkippedVersion: (version: string) => Promise<void>;
     readonly setLanguageServerSetupOpen: (open: boolean) => void;
   };
   readonly workspaceFiles: NodeLaunchConfigurationFileGateway;
@@ -40,7 +36,7 @@ export interface WorkbenchAppUpdaterHostProps {
 }
 
 export function WorkbenchAppUpdaterHost({
-  composition,
+  appUpdater: updater,
   onOpenAgentSettings,
   onOpenRuntimePanel,
   providerManagement,
@@ -50,10 +46,6 @@ export function WorkbenchAppUpdaterHost({
   workspaceFiles,
   workspaceTrusted,
 }: WorkbenchAppUpdaterHostProps) {
-  const updater = useWorkbenchAppUpdaterComposition(
-    composition,
-    workbench.persistAppUpdaterSkippedVersion,
-  );
   const { authority, providers, toast } = providerManagement;
   const [updateRefusal, setUpdateRefusal] = useState<AgentProviderUpdateRefusalRecord | null>(null);
   useEffect(() => {

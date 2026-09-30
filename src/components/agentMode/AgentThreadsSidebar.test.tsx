@@ -364,13 +364,38 @@ describe("AgentThreadsSidebar", () => {
     expect(cssRule(".agent-provider-footer__navigation .agent-iconbutton {")).toContain(
       "width: 28px",
     );
-    expect(cssRule(".agent-provider-footer__refresh {")).toContain("margin-left: auto");
     expect(cssRule(".agent-provider-footer__providers:empty {")).toContain("display: none");
     expect(AGENT_MODE_CSS).not.toContain("@container (max-width: 280px)");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__label");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__glyph");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__action");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__provider {");
+  });
+
+  it("pins the update check flush right and centred, never pushed inward by the activity", () => {
+    const footer = cssRule("\n.agent-provider-footer {");
+    expect(footer).toContain("align-items: center");
+    expect(footer).toContain("padding: 8px 2px 0");
+    const navigation = cssRule(".agent-provider-footer__navigation {");
+    expect(navigation).toContain("flex: 0 1 auto");
+    expect(navigation).not.toContain("flex: 1 1 auto");
+    const refresh = cssRule(".agent-provider-footer__refresh {");
+    expect(refresh).toContain("flex: none");
+    expect(refresh).toContain("margin-left: auto");
+    expect(refresh).toContain("width: 28px");
+    expect(refresh).toContain("height: 28px");
+    expect(refresh).not.toContain("margin-right");
+    const status = cssRule(".agent-provider-footer__app-status {");
+    expect(status).toContain("flex: 1 1 100%");
+    expect(status).toContain("order: -1");
+    const idle = cssRule(".agent-provider-footer__app-status:empty {");
+    expect(idle).toContain("position: absolute");
+    expect(idle).toContain("width: 1px");
+    expect(idle).toContain("height: 1px");
+    expect(idle).toContain("overflow: hidden");
+    expect(idle).toContain("clip-path: inset(50%)");
+    expect(idle).not.toContain("display: none");
+    expect(idle).not.toContain("visibility: hidden");
   });
 
   it("stacks the provider recovery actions as full-width soft-tinted pills", () => {

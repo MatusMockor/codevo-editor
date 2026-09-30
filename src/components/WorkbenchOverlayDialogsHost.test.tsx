@@ -4,9 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
-import type { WorkbenchAppUpdaterComposition } from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
-import type { AppUpdaterGateway } from "../domain/appUpdater";
 import type { LanguageServerPlan } from "../domain/languageServer";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
@@ -67,19 +66,24 @@ describe("WorkbenchOverlayDialogsHost", () => {
 });
 
 function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHostProps {
-  const composition: WorkbenchAppUpdaterComposition = {
-    appUpdaterGateway: idleGateway(),
-    appUpdaterPreferencesGateway: { loadSkippedVersion: async () => null },
-    appVersion: "0.1.0",
-  };
   return {
-    composition,
-    onOpenAgentSettings: vi.fn(),
+    appUpdater: {
+      state: { kind: "idle", currentVersion: "0.1.0" },
+      check: vi.fn(async () => undefined),
+      dismiss: vi.fn(),
+      download: vi.fn(async () => undefined),
+      installAndRestart: vi.fn(async () => undefined),
+      skipVersion: vi.fn(async () => undefined),
+    },
     onOpenRuntimePanel: vi.fn(),
-    providerManagement: providerManagement(),
     settingsContainer: null,
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
     workbench: {
+      agents: {
+        configureAgentCli: vi.fn(),
+        providerManagement: providerManagement(),
+        providerSignIn: {} as AgentProviderSignInSurface,
+      },
       appSettings: defaultAppSettings(),
       closeNodeLaunchConfigurations: vi.fn(),
       gitRepositoryMappings: [],
@@ -92,7 +96,6 @@ function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHos
       notices: [],
       openNodeLaunchConfigurations: vi.fn(),
       openJavaScriptTypeScriptServiceLog: vi.fn(async () => undefined),
-      persistAppUpdaterSkippedVersion: vi.fn(async () => undefined),
       phpTools: null,
       restartJavaScriptTypeScriptService: vi.fn(async () => undefined),
       saveWorkbenchSettings: vi.fn(async () => undefined),
@@ -107,7 +110,6 @@ function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHos
       workspaceTrust: null,
     },
     workspaceFiles: fileGateway(),
-    workspaceTrusted: false,
   };
 }
 
@@ -118,15 +120,6 @@ function setupPlan(): LanguageServerPlan {
     message: "Phpactor is not installed.",
     command: null,
     initializeRequest: null,
-  };
-}
-
-function idleGateway(): AppUpdaterGateway {
-  return {
-    check: async () => ({ kind: "upToDate", currentVersion: "0.1.0" }),
-    dispose: async () => undefined,
-    download: async () => "readyToInstall",
-    installAndRestart: async () => undefined,
   };
 }
 

@@ -7,14 +7,18 @@ export interface WorkbenchAppUpdaterComposition {
   readonly appVersion: string;
 }
 
+export interface WorkbenchAppUpdaterOwner {
+  readonly persistAppUpdaterSkippedVersion: (version: string) => Promise<void>;
+}
+
 export function useWorkbenchAppUpdaterComposition(
   composition: WorkbenchAppUpdaterComposition,
-  persistSkippedVersion: (version: string) => Promise<void>,
+  owner: WorkbenchAppUpdaterOwner,
 ): AppUpdaterSurface {
   return useAppUpdater({
     currentVersion: composition.appVersion,
     gateway: composition.appUpdaterGateway,
     preferencesGateway: composition.appUpdaterPreferencesGateway,
-    persistSkippedVersion,
+    persistSkippedVersion: owner.persistAppUpdaterSkippedVersion,
   });
 }

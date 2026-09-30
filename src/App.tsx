@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
+import { useWorkbenchAppUpdaterComposition } from "./application/workbenchController/useWorkbenchAppUpdaterComposition";
 import {
   EMPTY_EDITOR_CHANGE_HUNKS,
   useEditorActiveLiveDocumentChangeHunksController,
@@ -460,6 +461,7 @@ function App() {
     showGoToLine,
   });
   const [settingsContainer, setSettingsContainer] = useState<HTMLDivElement | null>(null);
+  const appUpdater = useWorkbenchAppUpdaterComposition(workbenchComposition.appUpdater, workbench);
   const trustWorkspace = useCallback(() => {
     void runCommand("workspace.trust");
   }, [runCommand]);
@@ -885,6 +887,7 @@ function App() {
         agent={
           <LazyAgentWorkbenchHost
             active={workbench.agentModeActive}
+            appUpdater={appUpdater}
             activeFileRevealSignal={activeFileRevealSignal}
             editorPanelDocuments={editorPanelDocuments}
             fileStatusesByPath={fileStatusesByPath}
@@ -1176,15 +1179,12 @@ function App() {
       />
 
       <WorkbenchOverlayDialogsHost
-        composition={workbenchComposition.appUpdater}
-        onOpenAgentSettings={workbench.agents.configureAgentCli}
+        appUpdater={appUpdater}
         onOpenRuntimePanel={openRuntimePanel}
-        providerManagement={workbench.agents.providerManagement}
         settingsContainer={settingsContainer}
         systemFontGateway={systemFontGateway}
         workbench={workbench}
         workspaceFiles={workspaceGateways.files}
-        workspaceTrusted={workspaceTrusted}
       />
     </AppShellRoot>
   );

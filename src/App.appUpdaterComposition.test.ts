@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("application updater composition", () => {
-  it("always mounts the updater host instead of gating it behind the lazy settings surface", () => {
+  it("owns one updater in App and shares it with the toast host and the agent rail", () => {
     const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
     const host = readFileSync(
       new URL("./components/WorkbenchAppUpdaterHost.tsx", import.meta.url),
@@ -12,12 +12,21 @@ describe("application updater composition", () => {
       new URL("./components/WorkbenchOverlayDialogsHost.tsx", import.meta.url),
       "utf8",
     );
+    const lazySurfaces = readFileSync(
+      new URL("./components/appLazySurfaces.tsx", import.meta.url),
+      "utf8",
+    );
     expect(source).toContain("<WorkbenchOverlayDialogsHost");
     expect(overlays).toContain("<WorkbenchAppUpdaterHost");
-    expect(source).toContain("composition={workbenchComposition.appUpdater}");
+    expect(source).toContain(
+      "useWorkbenchAppUpdaterComposition(workbenchComposition.appUpdater, workbench)",
+    );
+    expect(source.match(/useWorkbenchAppUpdaterComposition\(/gu)).toHaveLength(1);
+    expect(source.match(/appUpdater=\{appUpdater\}/gu)).toHaveLength(2);
     expect(source).not.toContain("appUpdaterComposition=");
-    expect(host).toContain("useWorkbenchAppUpdaterComposition(");
-    expect(host).toContain("workbench.persistAppUpdaterSkippedVersion");
+    expect(host).not.toContain("useWorkbenchAppUpdaterComposition(");
+    expect(host).not.toContain("useAppUpdater(");
+    expect(lazySurfaces).toContain("<AppUpdaterContext.Provider value={appUpdater}>");
     expect(host).toMatch(
       /<NoticeToastHost\s+notices=\{notices\}\s+renderNotice=\{renderNotice\}\s*\/>/u,
     );
