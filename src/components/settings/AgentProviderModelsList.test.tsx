@@ -60,7 +60,9 @@ describe("AgentProviderModelsList", () => {
   });
 
   it("marks new and default models with badges", () => {
-    const rows = agentModelRows("claudeCode");
+    const rows = agentModelRows("claudeCode", null, null, undefined, undefined, {
+      isNew: (_provider, model) => model === "claude-opus-5-5",
+    });
     act(() =>
       root.render(
         <AgentProviderModelsList favoriteKeys={new Set()} onToggleFavorite={vi.fn()} rows={rows} />,

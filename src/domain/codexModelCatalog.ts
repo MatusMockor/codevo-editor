@@ -6,6 +6,7 @@ import {
   type CodexModelId,
 } from "./agentLaunch";
 import bundledCatalog from "./codexModelManifest.json";
+import { isModelReleaseDate } from "./modelNewness";
 
 export interface CodexCatalogModel {
   readonly id: CodexModelId;
@@ -16,6 +17,7 @@ export interface CodexCatalogModel {
   readonly efforts: ReadonlyArray<CodexEffortLevel>;
   readonly defaultEffort: CodexEffortLevel | null;
   readonly upgradeTo: CodexModelId | null;
+  readonly releaseDate?: string;
 }
 
 export interface CodexModelCatalog {
@@ -72,7 +74,13 @@ export function parseCodexModelCatalog(
 
 function parseModel(value: unknown, path: string): CodexCatalogModel {
   const model = record(value, path);
-  exactKeys(model, MODEL_KEYS, path);
+  exactKeys(
+    model,
+    [...MODEL_KEYS, ...(model.releaseDate === undefined ? [] : ["releaseDate"])],
+    path,
+  );
+  if (model.releaseDate !== undefined && !isModelReleaseDate(model.releaseDate))
+    invalid(`${path}.releaseDate`);
   if (!isCodexModelId(model.id)) invalid(`${path}.id`);
   const efforts = array(model.efforts, EFFORT_LEVELS.length, `${path}.efforts`).map((effort) =>
     member(effort, EFFORT_LEVELS, `${path}.efforts`),
@@ -94,6 +102,7 @@ function parseModel(value: unknown, path: string): CodexCatalogModel {
     efforts: Object.freeze(efforts),
     defaultEffort,
     upgradeTo,
+    ...(model.releaseDate === undefined ? {} : { releaseDate: model.releaseDate }),
   });
 }
 
@@ -103,6 +112,14 @@ export function resolveCodexCatalogModel(
 ): CodexCatalogModel | null {
   if (model === "default") return codexCatalogDefault(catalog);
   return catalog.models.find((entry) => entry.id === model) ?? null;
+}
+
+export function codexModelReleaseDate(model: {
+  readonly id: string;
+  readonly releaseDate?: string;
+}): string | undefined {
+  if (model.releaseDate !== undefined) return model.releaseDate;
+  return BUNDLED_CODEX_MODEL_CATALOG.models.find((entry) => entry.id === model.id)?.releaseDate;
 }
 
 export function codexCatalogDefault(catalog: CodexModelCatalog): CodexCatalogModel {

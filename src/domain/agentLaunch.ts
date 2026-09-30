@@ -79,10 +79,6 @@ export const CODEX_EFFORT_CHOICES = [
 export type CodexEffortChoice = (typeof CODEX_EFFORT_CHOICES)[number];
 export type CodexEffortLevel = Exclude<CodexEffortChoice, "default">;
 
-export const CODEX_NEW_MODEL_IDS: ReadonlySet<string> = new Set(["gpt-6.1-sol"]);
-
-export const CLAUDE_NEW_MODEL_IDS: ReadonlySet<string> = new Set(["claude-fable-5-1"]);
-
 export const CODEX_EXECUTION_MODES = [
   "default",
   "readOnly",

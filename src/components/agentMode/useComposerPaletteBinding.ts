@@ -20,6 +20,7 @@ import {
   configuredProviderVersion,
   providerIsEnabled,
 } from "./agentModelProviderState";
+import { useAgentModelNewness } from "./useAgentModelNewness";
 
 const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 
@@ -44,6 +45,7 @@ export function useComposerPaletteBinding(options: ComposerPaletteBindingOptions
     providerManagement,
     providerSwitchable,
   } = options;
+  const newness = useAgentModelNewness();
   const select = useRef(options.selectModel);
   select.current = options.selectModel;
   const rows = useMemo(
@@ -57,12 +59,14 @@ export function useComposerPaletteBinding(options: ComposerPaletteBindingOptions
             configuredProviderVersion(providerManagement, provider),
             catalog,
             codexCatalog,
+            newness,
           ).filter((row) => row.isLegacy !== true),
         ),
     [
       catalog,
       codexCatalog,
       launch.provider,
+      newness,
       providerEnabled,
       providerManagement,
       providerSwitchable,

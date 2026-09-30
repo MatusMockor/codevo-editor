@@ -1,4 +1,5 @@
 use super::*;
+use crate::claude_model_manifest_domain::CatalogSource;
 // Snapshot of https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json
 // Retrieved 2026-09-22. Deliberately local: compatibility tests never require a network.
 const UPSTREAM: &[u8] = include_bytes!("../tests/fixtures/t3-model-manifest.json");
@@ -160,4 +161,25 @@ fn rejects_oversized_payloads_collections_strings_and_bad_timestamps() {
     let mut input = synthetic();
     input["updatedAt"] = json!("2026-02-30T00:00:00Z");
     assert!(parse(&input).is_err());
+}
+#[test]
+fn keeps_upstream_newness_and_never_invents_descriptions() {
+    let catalog = parse_t3_manifest(UPSTREAM).unwrap();
+    assert_eq!(catalog.source, Some(CatalogSource::Live));
+    assert!(catalog
+        .claude_code
+        .iter()
+        .all(|model| model.description.is_none() && model.is_new.is_some()));
+    let flagged: Vec<_> = catalog
+        .claude_code
+        .iter()
+        .filter(|model| model.is_new == Some(true))
+        .map(|model| model.choice.as_str())
+        .collect();
+    assert_eq!(flagged, ["claude-opus-5-5"]);
+    let mut value = synthetic();
+    value["providers"]["claudeAgent"]["models"][0]["badge"] = json!("new");
+    assert_eq!(parse(&value).unwrap().claude_code[0].is_new, Some(true));
+    value["providers"]["claudeAgent"]["models"][0]["badge"] = json!("hot");
+    assert!(parse(&value).is_err());
 }

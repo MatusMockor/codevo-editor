@@ -11,7 +11,8 @@
       "isDefault": true,
       "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "defaultEffort": "low",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-09-29"
     },
     {
       "id": "gpt-6-astra",
@@ -21,7 +22,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "defaultEffort": "medium",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-09-04"
     },
     {
       "id": "gpt-6-sol",
@@ -31,7 +33,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "defaultEffort": "medium",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-09-22"
     },
     {
       "id": "gpt-6-luna",
@@ -41,7 +44,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh", "max"],
       "defaultEffort": "medium",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-09-22"
     },
     {
       "id": "gpt-5.6-sol",
@@ -51,7 +55,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "defaultEffort": "low",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-07-09"
     },
     {
       "id": "gpt-5.6-terra",
@@ -61,7 +66,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "defaultEffort": "medium",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-07-09"
     },
     {
       "id": "gpt-5.6-luna",
@@ -71,7 +77,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh", "max"],
       "defaultEffort": "medium",
-      "upgradeTo": null
+      "upgradeTo": null,
+      "releaseDate": "2026-07-09"
     },
     {
       "id": "gpt-5.5",
@@ -81,7 +88,8 @@
       "isDefault": false,
       "efforts": ["low", "medium", "high", "xhigh"],
       "defaultEffort": "medium",
-      "upgradeTo": "gpt-5.6-sol"
+      "upgradeTo": "gpt-5.6-sol",
+      "releaseDate": "2026-04-23"
     }
   ]
 }

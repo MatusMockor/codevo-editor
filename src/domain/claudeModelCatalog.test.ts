@@ -4,7 +4,11 @@ import {
   parseStoredAgentLaunchOptions,
   serializeAgentLaunchOptions,
 } from "./agentLaunch";
-import { BUNDLED_CLAUDE_MODEL_MANIFEST, parseClaudeModelManifest } from "./claudeModelCatalog";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  claudeModelDescription,
+  parseClaudeModelManifest,
+} from "./claudeModelCatalog";
 import bundledManifest from "./claudeModelManifest.json";
 
 const model = { ...bundledManifest.claudeCode[0], isDefault: true };
@@ -179,14 +183,55 @@ describe("Claude model manifest", () => {
 });
 
 describe("Claude model manifest schema", () => {
-  it("rejects an unknown isNew key so NEW stays a client-side flag", () => {
-    const [first, ...rest] = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode;
-    expect(first).toBeDefined();
-    expect(() =>
-      parseClaudeModelManifest({
-        ...BUNDLED_CLAUDE_MODEL_MANIFEST,
-        claudeCode: [{ ...first, isNew: true }, ...rest],
+  it("accepts live newness, release date and a missing description as closed optional metadata", () => {
+    const { description: _description, ...withoutDescription } = model;
+    const parsed = parseClaudeModelManifest(
+      manifest({
+        source: "live",
+        claudeCode: [{ ...withoutDescription, isNew: true, releaseDate: "2026-09-22" }],
       }),
-    ).toThrow();
+    );
+    expect(parsed.source).toBe("live");
+    expect(parsed.claudeCode[0]).toMatchObject({ isNew: true, releaseDate: "2026-09-22" });
+    expect(parsed.claudeCode[0].description).toBeUndefined();
+  });
+
+  it("rejects malformed newness metadata", () => {
+    for (const patch of [
+      { isNew: "yes" },
+      { releaseDate: "2026-02-30" },
+      { releaseDate: "22.09.2026" },
+      { description: "" },
+    ]) {
+      expect(() =>
+        parseClaudeModelManifest(manifest({ claudeCode: [{ ...model, ...patch }] })),
+      ).toThrow(TypeError);
+    }
+    expect(() => parseClaudeModelManifest(manifest({ source: "bundled" }))).toThrow(TypeError);
+  });
+
+  it("dates every bundled model and never ships a label-echo description", () => {
+    for (const entry of BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode) {
+      expect(entry.releaseDate, entry.choice).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(claudeModelDescription(entry) ?? "", entry.choice).not.toMatch(
+        new RegExp(`^(Legacy )?${entry.label}( model)?\\.$`),
+      );
+    }
+  });
+
+  it("falls back to the bundled description for a live model and to none otherwise", () => {
+    const { description: _description, ...live } = model;
+    const parsed = parseClaudeModelManifest(
+      manifest({
+        claudeCode: [
+          live,
+          { ...live, isDefault: false, choice: "claude-future-6", runtimeIds: ["claude-future-6"] },
+        ],
+      }),
+    );
+    expect(claudeModelDescription(parsed.claudeCode[0])).toBe(
+      BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode[0].description,
+    );
+    expect(claudeModelDescription(parsed.claudeCode[1])).toBeNull();
   });
 });

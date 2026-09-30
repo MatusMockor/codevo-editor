@@ -3,7 +3,6 @@ import {
   CLAUDE_EFFORT_CHOICES,
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
-  CLAUDE_NEW_MODEL_IDS,
   agentLaunchIsDangerous,
   type AgentExecutionTarget,
   type AgentLaunchOptions,
@@ -16,8 +15,10 @@ import {
   type CodexModelChoice,
 } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
+import { NO_MODEL_NEWNESS, type ModelNewness } from "../../application/modelNewness";
 import {
   BUNDLED_CLAUDE_MODEL_MANIFEST,
+  claudeModelDescription,
   type ClaudeManifestModel,
   type ClaudeModelManifest,
 } from "../../domain/claudeModelCatalog";
@@ -42,7 +43,7 @@ export type AgentModelChoice = ClaudeModelChoice | CodexModelChoice;
 export interface AgentModelRow {
   readonly value: AgentModelChoice;
   readonly label: string;
-  readonly hint: string;
+  readonly hint: string | null;
   readonly provider: AgentCliKind;
   readonly providerName: string;
   readonly favoriteKey: string;
@@ -203,7 +204,7 @@ export function agentLaunchModelChoices(
     return catalog.claudeCode.map((entry) => ({
       value: entry.choice,
       label: entry.label,
-      hint: entry.description,
+      hint: claudeModelDescription(entry) ?? "",
       tone: null,
     }));
   }
@@ -221,6 +222,7 @@ export function agentModelRows(
   providerVersion: string | null = null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
   codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
+  newness: ModelNewness = NO_MODEL_NEWNESS,
 ): ReadonlyArray<AgentModelRow> {
   if (provider === "claudeCode") {
     const providerName = agentModelProviderName(provider);
@@ -231,25 +233,27 @@ export function agentModelRows(
       .map((entry) => ({
         value: entry.choice,
         label: entry.label,
-        hint: entry.description,
+        hint: claudeModelDescription(entry),
         provider,
         providerName,
         favoriteKey: agentModelFavoriteKey(provider, entry.choice),
         isLegacy: entry.status === "legacy",
-        isNew: CLAUDE_NEW_MODEL_IDS.has(entry.choice),
+        isNew: newness.isNew(provider, entry.choice),
         isDefault: entry.isDefault === true,
       }));
   }
   const providerName = agentModelProviderName(provider);
-  return codexModelRows(configuredModel, codexCatalog).map(({ ownsDefaultFavorite, ...row }) => ({
-    ...row,
-    provider,
-    providerName,
-    favoriteKey: agentModelFavoriteKey(provider, row.value),
-    ...(ownsDefaultFavorite
-      ? { legacyFavoriteKey: agentModelFavoriteKey(provider, "default") }
-      : {}),
-  }));
+  return codexModelRows(configuredModel, codexCatalog, newness).map(
+    ({ ownsDefaultFavorite, ...row }) => ({
+      ...row,
+      provider,
+      providerName,
+      favoriteKey: agentModelFavoriteKey(provider, row.value),
+      ...(ownsDefaultFavorite
+        ? { legacyFavoriteKey: agentModelFavoriteKey(provider, "default") }
+        : {}),
+    }),
+  );
 }
 
 export function agentLegacyModelsSummary(rows: ReadonlyArray<AgentModelRow>): string {
@@ -574,7 +578,7 @@ export function agentLaunchModelHint(
   configuredModel: string | null = null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
   codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
-): string {
+): string | null {
   if (launch.provider === "codex") {
     if (launch.model === "default") return codexDefaultModelHint(configuredModel, codexCatalog);
     return codexModelText(launch.model, codexCatalog).hint;
@@ -582,10 +586,13 @@ export function agentLaunchModelHint(
   if (launch.model === "default") {
     const configured = configuredModelEntry(configuredModel, catalog);
     if (configured !== null) {
-      return `${configured.description} Selected by your ${agentModelProviderName(launch.provider)} configuration.`;
+      return withDescription(
+        configured,
+        `Selected by your ${agentModelProviderName(launch.provider)} configuration.`,
+      );
     }
     const fallback = catalog.claudeCode.find((entry) => entry.isDefault) ?? catalog.claudeCode[0];
-    return `${fallback.description} Selected by the Claude model catalog.`;
+    return withDescription(fallback, "Selected by the Claude model catalog.");
   }
   return modelText(launch, catalog).hint;
 }
@@ -706,11 +713,17 @@ export function agentLaunchDangerConfirmLabel(launch: AgentLaunchOptions): strin
   return "Run this turn without the sandbox and accept the risk";
 }
 
+interface ModelText {
+  readonly label: string;
+  readonly meta: string;
+  readonly hint: string | null;
+}
+
 function modelText(
   launch: AgentLaunchOptions,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
   codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
-): LaunchText {
+): ModelText {
   if (launch.provider === "claudeCode") {
     if (launch.model === "default")
       return {
@@ -722,10 +735,15 @@ function modelText(
     return {
       label: entry?.label ?? launch.model,
       meta: launch.model.replace(/^claude-/, ""),
-      hint: entry?.description ?? `Runs the session on ${launch.model}.`,
+      hint: entry === null ? `Runs the session on ${launch.model}.` : claudeModelDescription(entry),
     };
   }
   return codexModelText(launch.model, codexCatalog);
+}
+
+function withDescription(entry: ClaudeManifestModel, note: string): string {
+  const description = claudeModelDescription(entry);
+  return description === null ? note : `${description} ${note}`;
 }
 
 function modeText(launch: AgentLaunchOptions): LaunchText {
@@ -738,21 +756,13 @@ function effortText(launch: AgentLaunchOptions): LaunchText {
   return CLAUDE_EFFORT_TEXT[launch.effort];
 }
 
-interface ManifestModel {
-  readonly choice: AgentModelChoice;
-  readonly label: string;
-  readonly runtimeIds: ReadonlyArray<string>;
-  readonly description: string;
-  readonly isDefault?: boolean;
-}
-
 function manifestClaudeModel(
   model: ClaudeModelChoice,
   configuredModel: string | null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ClaudeManifestModel | null {
   if (model === "default") {
-    return configuredModelEntry(configuredModel, catalog) as ClaudeManifestModel | null;
+    return configuredModelEntry(configuredModel, catalog);
   }
   return (
     catalog.claudeCode.find(
@@ -777,7 +787,7 @@ function explicitConfiguredClaudeModel(
 function configuredModelEntry(
   configuredModel: string | null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
-): ManifestModel | null {
+): ClaudeManifestModel | null {
   if (configuredModel === null) return null;
   const base = configuredModel.replace(/\[[^\]]+\]$/, "");
   return (

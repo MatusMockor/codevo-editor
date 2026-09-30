@@ -17,6 +17,12 @@ const EFFORTS: &[&str] = &[
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClaudeModelManifest {
     pub version: u32,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source: Option<CatalogSource>,
     pub updated_at: String,
     pub claude_code: Vec<ClaudeModel>,
 }
@@ -27,7 +33,24 @@ pub struct ClaudeModel {
     pub choice: String,
     pub label: String,
     pub runtime_ids: Vec<String>,
-    pub description: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub description: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub release_date: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub is_new: Option<bool>,
     pub status: ModelStatus,
     #[serde(
         default,
@@ -74,6 +97,12 @@ where
     D: serde::Deserializer<'de>,
 {
     Option::<String>::deserialize(deserializer)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogSource {
+    Live,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -148,6 +177,9 @@ pub fn parse_version(value: &str) -> Option<[u32; 3]> {
     }
     Some(version)
 }
+pub fn is_release_date(value: &str) -> bool {
+    value.len() == 10 && timestamp(&format!("{value}T00:00:00Z"))
+}
 fn timestamp(value: &str) -> bool {
     let b = value.as_bytes();
     if b.len() != 20
@@ -209,7 +241,14 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<ClaudeModelManifest, String> {
             || !valid_choice(&model.choice)
             || !choices.insert(&model.choice)
             || !bounded_text(&model.label, 128)
-            || !bounded_text(&model.description, 1024)
+            || model
+                .description
+                .as_deref()
+                .is_some_and(|value| !bounded_text(value, 1024))
+            || model
+                .release_date
+                .as_deref()
+                .is_some_and(|value| !is_release_date(value))
             || model.runtime_ids.is_empty()
             || model.runtime_ids.len() > 16
             || !unique(&model.runtime_ids)
@@ -314,6 +353,48 @@ mod tests {
             data["claudeCode"][0]["effortMap"] = mapping;
             assert!(parse_manifest(&serde_json::to_vec(&data).unwrap()).is_err());
         }
+    }
+
+    #[test]
+    fn accepts_optional_newness_metadata_and_rejects_malformed_values() {
+        let mut data: serde_json::Value = serde_json::from_slice(BUNDLE).unwrap();
+        data["source"] = serde_json::json!("live");
+        data["claudeCode"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("description");
+        data["claudeCode"][0]["isNew"] = serde_json::json!(true);
+        let parsed = parse_manifest(&serde_json::to_vec(&data).unwrap()).unwrap();
+        assert_eq!(parsed.source, Some(CatalogSource::Live));
+        assert_eq!(parsed.claude_code[0].description, None);
+        assert_eq!(parsed.claude_code[0].is_new, Some(true));
+        let round_trip = serde_json::to_value(&parsed).unwrap();
+        assert!(round_trip["claudeCode"][0].get("description").is_none());
+        for (field, value) in [
+            ("releaseDate", serde_json::json!("2026-02-30")),
+            ("releaseDate", serde_json::json!("2026-09-01T00:00:00Z")),
+            ("isNew", serde_json::json!("yes")),
+            ("description", serde_json::json!("")),
+        ] {
+            let mut data: serde_json::Value = serde_json::from_slice(BUNDLE).unwrap();
+            data["claudeCode"][0][field] = value;
+            assert!(parse_manifest(&serde_json::to_vec(&data).unwrap()).is_err());
+        }
+        let mut data: serde_json::Value = serde_json::from_slice(BUNDLE).unwrap();
+        data["source"] = serde_json::json!("bundled");
+        assert!(parse_manifest(&serde_json::to_vec(&data).unwrap()).is_err());
+    }
+
+    #[test]
+    fn bundled_models_are_dated() {
+        let catalog = parse_manifest(BUNDLE).unwrap();
+        assert!(catalog
+            .claude_code
+            .iter()
+            .all(|model| model.release_date.is_some()));
+        assert!(is_release_date("2024-02-29"));
+        assert!(!is_release_date("2026-9-01"));
+        assert!(!is_release_date("1999-01-01"));
     }
 
     #[test]

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
+use crate::claude_model_manifest_domain::is_release_date;
+
 pub const MAX_MODEL_LIST_BYTES: usize = 256 * 1024;
 pub const MAX_UPSTREAM_MODELS: usize = 128;
 pub const MAX_CATALOG_MODELS: usize = 64;
@@ -76,12 +78,26 @@ pub struct CodexCatalogModel {
     pub default_effort: Option<CodexEffort>,
     #[serde(deserialize_with = "nullable")]
     pub upgrade_to: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub release_date: Option<String>,
 }
 
 impl CodexCatalogModel {
     pub fn supports(&self, effort: CodexEffort) -> bool {
         self.efforts.contains(&effort)
     }
+}
+
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 fn nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -119,6 +135,7 @@ fn valid_model(model: &CodexCatalogModel) -> bool {
             .default_effort
             .is_none_or(|effort| model.efforts.contains(&effort))
         && model.upgrade_to.as_deref().is_none_or(is_valid_model_id)
+        && model.release_date.as_deref().is_none_or(is_release_date)
 }
 
 pub fn validate_catalog(catalog: &CodexModelCatalog) -> Result<(), String> {
@@ -358,6 +375,7 @@ fn adapt_visible_model(entry: UpstreamModel) -> Result<CodexCatalogModel, String
         efforts,
         default_effort,
         upgrade_to,
+        release_date: None,
     };
     if !valid_model(&model) {
         return Err("Codex model list has an invalid model.".into());

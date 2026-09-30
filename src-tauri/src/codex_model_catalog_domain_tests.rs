@@ -309,6 +309,10 @@ fn bundled_catalog_is_valid() {
     assert_eq!(catalog.revision, 0);
     assert!(catalog.models.iter().any(|model| model.id == "gpt-6-astra"));
     assert!(!catalog.models.iter().any(|model| model.id == "gpt-5.4"));
+    assert!(catalog
+        .models
+        .iter()
+        .all(|model| model.release_date.is_some()));
 }
 
 #[test]

@@ -220,10 +220,7 @@ pub fn parse_t3_manifest(bytes: &[u8]) -> Result<ClaudeModelManifest, String> {
         aliases.extend(model.aliases.unwrap_or_default());
         object.insert("choice".into(), json!(model.slug));
         object.insert("label".into(), json!(model.name));
-        object.insert(
-            "description".into(),
-            json!(format!("{} model.", model.name)),
-        );
+        object.insert("isNew".into(), json!(model.badge.is_some()));
         object.insert("runtimeIds".into(), json!(aliases));
         object.insert("status".into(), json!(model.status));
         object.insert(
@@ -240,7 +237,7 @@ pub fn parse_t3_manifest(bytes: &[u8]) -> Result<ClaudeModelManifest, String> {
         }
         models.push(converted);
     }
-    let result = json!({"version": 1, "updatedAt": envelope.updated_at, "claudeCode": models});
+    let result = json!({"version": 1, "source": "live", "updatedAt": envelope.updated_at, "claudeCode": models});
     parse_manifest(&serde_json::to_vec(&result).map_err(|_| ERROR)?)
 }
 #[cfg(test)]

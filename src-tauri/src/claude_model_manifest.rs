@@ -18,6 +18,8 @@ const TTL: Duration = Duration::from_secs(3600);
 const RETRY: Duration = Duration::from_secs(300);
 const TIMEOUT: Duration = Duration::from_secs(10);
 const EVENT: &str = "claude-model-manifest-updated";
+const CACHE_FILE: &str = "claude-model-manifest-t3-v2.json";
+const RETIRED_CACHE_FILE: &str = "claude-model-manifest-t3-v1.json";
 const BUNDLE: &[u8] = include_bytes!("../../src/domain/claudeModelManifest.json");
 static SERVICE: OnceLock<Result<Arc<CatalogService>, String>> = OnceLock::new();
 
@@ -102,7 +104,8 @@ pub fn initialize(app: tauri::AppHandle, data_dir: PathBuf) {
     let Ok(service) = service() else {
         return;
     };
-    let path = data_dir.join("claude-model-manifest-t3-v1.json");
+    let retired = data_dir.join(RETIRED_CACHE_FILE);
+    let path = data_dir.join(CACHE_FILE);
     {
         let Ok(mut state) = service.state.lock() else {
             return;
@@ -113,7 +116,11 @@ pub fn initialize(app: tauri::AppHandle, data_dir: PathBuf) {
         state.cache_path = Some(path.clone());
     }
     tauri::async_runtime::spawn(async move {
-        let cached = tauri::async_runtime::spawn_blocking(move || cache::read(&path)).await;
+        let cached = tauri::async_runtime::spawn_blocking(move || {
+            cache::remove_retired(&retired);
+            cache::read(&path)
+        })
+        .await;
         if let Ok(Ok(cached)) = cached {
             let remaining = cached.remaining_ttl(cache::epoch_ms(), TTL);
             let cache_current = service

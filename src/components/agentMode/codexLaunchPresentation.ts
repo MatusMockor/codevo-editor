@@ -1,6 +1,5 @@
 import {
   CODEX_EFFORT_CHOICES,
-  CODEX_NEW_MODEL_IDS,
   isCodexModelChoice,
   type CodexEffortChoice,
   type CodexEffortLevel,
@@ -8,6 +7,7 @@ import {
   type CodexModelChoice,
   type CodexModelId,
 } from "../../domain/agentLaunch";
+import type { ModelNewness } from "../../application/modelNewness";
 import {
   codexCatalogDefault,
   resolveCodexCatalogModel,
@@ -75,6 +75,7 @@ export const CODEX_EFFORT_TEXT: Readonly<Record<CodexEffortChoice, CodexLaunchTe
 export function codexModelRows(
   configuredModel: string | null,
   catalog: CodexModelCatalog,
+  newness: ModelNewness,
 ): ReadonlyArray<CodexModelRowModel> {
   const configured = codexConfiguredEntry(configuredModel, catalog);
   const effectiveDefault = codexDefaultEntry(configuredModel, catalog);
@@ -86,7 +87,7 @@ export function codexModelRows(
         ? `${entry.description} ${CODEX_CONFIGURATION_NOTE}`
         : entry.description,
     isLegacy: entry.status === "legacy",
-    isNew: CODEX_NEW_MODEL_IDS.has(entry.id),
+    isNew: newness.isNew("codex", entry.id),
     isDefault: entry.isDefault,
     ownsDefaultFavorite: entry.id === effectiveDefault?.id,
   }));

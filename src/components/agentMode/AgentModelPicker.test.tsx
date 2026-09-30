@@ -9,9 +9,18 @@ import { defaultAgentProviderPreferences } from "../../domain/agentProviderSetti
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { readStyleSheet } from "../cssContractTestSupport";
+import { createModelNewness, newModelSignature } from "../../application/modelNewness";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  parseClaudeModelManifest,
+} from "../../domain/claudeModelCatalog";
+import { BUNDLED_CODEX_MODEL_CATALOG } from "../../domain/codexModelCatalog";
+import { EMPTY_MODEL_FIRST_SEEN_LEDGER } from "../../domain/modelNewness";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { agentModelRows, type AgentModelChoice } from "./agentLaunchPresentation";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
+import { ClaudeModelCatalogContext } from "./useAgentClaudeModelCatalog";
+import { ModelNewnessContext } from "./useAgentModelNewness";
 
 const CLAUDE: AgentLaunchOptions = {
   provider: "claudeCode",
@@ -76,15 +85,77 @@ describe("AgentModelPicker", () => {
     expect(legacyToggle().textContent).toContain("Fable 5, Opus 4.8 and 5 more");
   });
 
-  it("shows the NEW badge only on new models", () => {
+  it("shows no NEW badge without newness evidence", () => {
     render(CLAUDE);
+    open();
+
+    expect(host.querySelector(".agent-model-picker__new")).toBeNull();
+  });
+
+  it("badges only the model the live catalog marks new and never invents a subtitle", () => {
+    const live = parseClaudeModelManifest({
+      version: 1,
+      source: "live",
+      updatedAt: "2026-09-29T20:20:00Z",
+      claudeCode: [
+        ...BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.map(
+          ({ description: _description, ...entry }) => ({
+            ...entry,
+            isNew: entry.choice === "claude-opus-5-5",
+          }),
+        ),
+        {
+          ...BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode[0],
+          description: undefined,
+          releaseDate: "2026-09-28",
+          choice: "claude-sonnet-5-5",
+          label: "Claude Sonnet 5.5",
+          runtimeIds: ["claude-sonnet-5-5"],
+          isDefault: false,
+          isNew: true,
+        },
+      ],
+    });
+    const newness = createModelNewness(
+      newModelSignature(
+        live,
+        BUNDLED_CODEX_MODEL_CATALOG,
+        EMPTY_MODEL_FIRST_SEEN_LEDGER,
+        Date.parse("2026-09-30T12:00:00Z"),
+      ),
+    );
+    act(() =>
+      root.render(
+        <ClaudeModelCatalogContext.Provider value={live}>
+          <ModelNewnessContext.Provider value={newness}>
+            <Harness
+              disabled={false}
+              launch={CLAUDE}
+              onSelect={() => undefined}
+              providerEnabled={null}
+              providerManagement={null}
+              providerSwitchable={false}
+            />
+          </ModelNewnessContext.Provider>
+        </ClaudeModelCatalogContext.Provider>,
+      ),
+    );
     open();
 
     const badged = [...host.querySelectorAll('[role="option"]')]
       .filter((node) => node.querySelector(".agent-model-picker__new") !== null)
       .map((node) => node.getAttribute("data-value"));
-    expect(badged).toEqual(["claude-fable-5-1"]);
+    expect(badged).toEqual(["claude-opus-5-5", "claude-sonnet-5-5"]);
     expect(host.querySelector(".agent-model-picker__new")?.textContent).toBe("NEW");
+    const description = (value: string) =>
+      host
+        .querySelector(`[role="option"][data-value="${value}"]`)
+        ?.querySelector(".agent-model-picker__description")?.textContent ?? null;
+    expect(description("claude-fable-5-1")).toBe(
+      "For demanding reasoning and long-horizon agentic work.",
+    );
+    expect(description("claude-sonnet-5-5")).toBeNull();
+    expect(host.textContent).not.toMatch(/Claude [A-Za-z]+ [\d.]+ model\./u);
   });
 
   it("marks the current provider active and disables the other one with a truthful reason", () => {

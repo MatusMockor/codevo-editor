@@ -8,6 +8,7 @@ import {
 } from "./agentLaunch";
 import {
   BUNDLED_CODEX_MODEL_CATALOG,
+  codexModelReleaseDate,
   parseCodexModelCatalog,
   resolveCodexCatalogModel,
 } from "./codexModelCatalog";
@@ -24,6 +25,17 @@ describe("Codex model catalog", () => {
       expect(Object.isFrozen(parsed.models[0])).toBe(true);
       expect(Object.isFrozen(parsed.models[0].efforts)).toBe(true);
     }
+  });
+
+  it("dates every bundled model with a verified release date", () => {
+    for (const entry of BUNDLED_CODEX_MODEL_CATALOG.models) {
+      expect(entry.releaseDate, entry.id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    expect(codexModelReleaseDate({ id: "gpt-6.1-sol" })).toBe("2026-09-29");
+    expect(codexModelReleaseDate({ id: "gpt-future" })).toBeUndefined();
+    expect(codexModelReleaseDate({ id: "gpt-future", releaseDate: "2026-10-01" })).toBe(
+      "2026-10-01",
+    );
   });
 
   it("rejects every malformed catalog in the shared wire contract", () => {

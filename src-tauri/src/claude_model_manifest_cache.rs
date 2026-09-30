@@ -79,9 +79,32 @@ pub(super) fn write(path: &Path, catalog: &ClaudeModelManifest) -> std::io::Resu
     file.sync_all()?;
     std::fs::rename(&owned.0, path)
 }
+pub(super) fn remove_retired(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| !meta.is_dir())
+        && std::fs::remove_file(path).is_ok()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn removes_a_retired_cache_file_once_and_never_a_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "codevo-manifest-retired-{}-{}",
+            std::process::id(),
+            epoch_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let retired = dir.join("claude-model-manifest-t3-v1.json");
+        std::fs::write(&retired, b"{}").unwrap();
+        assert!(remove_retired(&retired));
+        assert!(!retired.exists());
+        assert!(!remove_retired(&retired));
+        let nested = dir.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert!(!remove_retired(&nested));
+        assert!(nested.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn cache_roundtrip_corruption_and_size_bound() {
         let dir = std::env::temp_dir().join(format!(

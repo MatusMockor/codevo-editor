@@ -14,12 +14,9 @@ import {
   parseStoredAgentLaunchOptions,
   serializeAgentLaunchOptions,
   CLAUDE_EFFORT_CHOICES,
-  CLAUDE_NEW_MODEL_IDS,
-  CODEX_NEW_MODEL_IDS,
   type AgentLaunchOptions,
   type ClaudeLaunchOptions,
 } from "./agentLaunch";
-import { BUNDLED_CLAUDE_MODEL_MANIFEST } from "./claudeModelCatalog";
 import { BUNDLED_CODEX_MODEL_CATALOG, resolveCodexCatalogModel } from "./codexModelCatalog";
 
 const CODEX_MODEL_CHOICES = [
@@ -367,21 +364,5 @@ describe("agentLaunch", () => {
         "launch",
       ),
     ).toThrow(TypeError);
-  });
-});
-
-describe("new model badges", () => {
-  it("only marks Claude models that the bundled manifest offers", () => {
-    const manifestChoices = new Set<string>(
-      BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.map(({ choice }) => choice),
-    );
-    expect(CLAUDE_NEW_MODEL_IDS.size).toBeGreaterThan(0);
-    expect([...CLAUDE_NEW_MODEL_IDS].filter((id) => !manifestChoices.has(id))).toEqual([]);
-  });
-
-  it("only marks Codex models that the bundled catalog offers", () => {
-    const codexChoices = new Set<string>(CODEX_MODEL_CHOICES);
-    expect(CODEX_NEW_MODEL_IDS.size).toBeGreaterThan(0);
-    expect([...CODEX_NEW_MODEL_IDS].filter((id) => !codexChoices.has(id))).toEqual([]);
   });
 });

@@ -7,11 +7,14 @@ import {
   type ClaudeModelChoice,
 } from "./agentLaunch";
 import bundledManifest from "./claudeModelManifest.json";
+import { isModelReleaseDate } from "./modelNewness";
 
 export interface ClaudeManifestModel {
   readonly choice: ClaudeModelChoice;
   readonly label: string;
-  readonly description: string;
+  readonly description?: string;
+  readonly releaseDate?: string;
+  readonly isNew?: boolean;
   readonly runtimeIds: ReadonlyArray<string>;
   readonly status: "current" | "legacy";
   readonly isDefault?: boolean;
@@ -35,6 +38,7 @@ export interface ClaudeManifestModel {
 
 export interface ClaudeModelManifest {
   readonly version: 1;
+  readonly source?: "live";
   readonly updatedAt: string;
   readonly claudeCode: ReadonlyArray<ClaudeManifestModel>;
 }
@@ -42,7 +46,6 @@ export interface ClaudeModelManifest {
 const MODEL_KEYS = [
   "choice",
   "label",
-  "description",
   "runtimeIds",
   "status",
   "efforts",
@@ -52,15 +55,24 @@ const MODEL_KEYS = [
   "fastMode",
   "thinkingMode",
 ];
-const OPTIONAL_KEYS = ["isDefault", "minVersion", "maxVersionExclusive", "effortMap"];
+const OPTIONAL_KEYS = [
+  "description",
+  "releaseDate",
+  "isNew",
+  "isDefault",
+  "minVersion",
+  "maxVersionExclusive",
+  "effortMap",
+];
 
 export function parseClaudeModelManifest(
   value: unknown,
   path = "claudeModelManifest",
 ): ClaudeModelManifest {
   const manifest = record(value, path);
-  exactKeys(manifest, ["version", "updatedAt", "claudeCode"], [], path);
+  exactKeys(manifest, ["version", "updatedAt", "claudeCode"], ["source"], path);
   if (manifest.version !== 1) invalid(`${path}.version`);
+  if (manifest.source !== undefined && manifest.source !== "live") invalid(`${path}.source`);
   const updatedAt = string(manifest.updatedAt, 20, `${path}.updatedAt`);
   const timestamp = Date.parse(updatedAt);
   if (
@@ -83,7 +95,12 @@ export function parseClaudeModelManifest(
       identifiers.add(id);
     }
   }
-  return Object.freeze({ version: 1, updatedAt, claudeCode: Object.freeze(models) });
+  return Object.freeze({
+    version: 1,
+    ...(manifest.source === "live" ? { source: "live" as const } : {}),
+    updatedAt,
+    claudeCode: Object.freeze(models),
+  });
 }
 
 function parseModel(value: unknown, path: string): ClaudeManifestModel {
@@ -136,7 +153,13 @@ function parseModel(value: unknown, path: string): ClaudeManifestModel {
   return Object.freeze({
     choice,
     label: string(model.label, 128, `${path}.label`),
-    description: string(model.description, 1024, `${path}.description`),
+    ...(model.description === undefined
+      ? {}
+      : { description: string(model.description, 1024, `${path}.description`) }),
+    ...(model.releaseDate === undefined
+      ? {}
+      : { releaseDate: releaseDate(model.releaseDate, `${path}.releaseDate`) }),
+    ...(model.isNew === undefined ? {} : { isNew: boolean(model.isNew, `${path}.isNew`) }),
     runtimeIds: Object.freeze(runtimeIds),
     status: member(model.status, ["current", "legacy"] as const, `${path}.status`),
     ...(model.isDefault === undefined
@@ -178,6 +201,11 @@ function parseEffortMap(
     }
   }
   return Object.freeze(result);
+}
+
+function releaseDate(value: unknown, path: string): string {
+  if (!isModelReleaseDate(value)) invalid(path);
+  return value;
 }
 
 function version(value: unknown, path: string): string {
@@ -242,3 +270,17 @@ function invalid(path: string): never {
 }
 
 export const BUNDLED_CLAUDE_MODEL_MANIFEST = parseClaudeModelManifest(bundledManifest);
+
+export function claudeModelDescription(model: ClaudeManifestModel): string | null {
+  if (model.description !== undefined) return model.description;
+  const bundled = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
+    (entry) => entry.choice === model.choice,
+  );
+  return bundled?.description ?? null;
+}
+
+export function claudeModelReleaseDate(model: ClaudeManifestModel): string | undefined {
+  if (model.releaseDate !== undefined) return model.releaseDate;
+  return BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find((entry) => entry.choice === model.choice)
+    ?.releaseDate;
+}

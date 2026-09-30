@@ -57,6 +57,27 @@
           }
         ]
       }
+    },
+    {
+      "name": "bundledModelWithReleaseDate",
+      "value": {
+        "version": 1,
+        "source": "bundled",
+        "revision": 0,
+        "models": [
+          {
+            "id": "gpt-6.1-sol",
+            "label": "GPT-6.1-Sol",
+            "description": "Latest workhorse model for coding and everyday work.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["low", "medium"],
+            "defaultEffort": "low",
+            "upgradeTo": null,
+            "releaseDate": "2026-09-29"
+          }
+        ]
+      }
     }
   ],
   "rejectedCatalogs": [
@@ -253,6 +274,48 @@
             "efforts": [],
             "defaultEffort": null,
             "upgradeTo": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "impossibleReleaseDate",
+      "value": {
+        "version": 1,
+        "source": "bundled",
+        "revision": 0,
+        "models": [
+          {
+            "id": "gpt-6.1-sol",
+            "label": "GPT-6.1-Sol",
+            "description": "Latest workhorse model for coding and everyday work.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["low"],
+            "defaultEffort": "low",
+            "upgradeTo": null,
+            "releaseDate": "2026-02-30"
+          }
+        ]
+      }
+    },
+    {
+      "name": "releaseDateBefore2020",
+      "value": {
+        "version": 1,
+        "source": "bundled",
+        "revision": 0,
+        "models": [
+          {
+            "id": "gpt-6.1-sol",
+            "label": "GPT-6.1-Sol",
+            "description": "Latest workhorse model for coding and everyday work.",
+            "status": "current",
+            "isDefault": true,
+            "efforts": ["low"],
+            "defaultEffort": "low",
+            "upgradeTo": null,
+            "releaseDate": "1999-01-01"
           }
         ]
       }

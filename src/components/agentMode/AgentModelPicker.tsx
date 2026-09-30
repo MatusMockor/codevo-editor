@@ -1,5 +1,6 @@
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
+import { useAgentModelNewness } from "./useAgentModelNewness";
 import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import {
   Fragment,
@@ -82,6 +83,7 @@ export function AgentModelPicker({
 }: AgentModelPickerProps) {
   const catalog = useAgentClaudeModelCatalog();
   const codexCatalog = useAgentCodexModelCatalog();
+  const newness = useAgentModelNewness();
   const selectedProviderEnabled = providerIsEnabled(providerEnabled, launch.provider);
   const providerUnavailableReason = providerAvailabilityReason(
     providerManagement,
@@ -114,6 +116,7 @@ export function AgentModelPicker({
             configuredProviderVersion(providerManagement, provider),
             catalog,
             codexCatalog,
+            newness,
           ),
         );
     }
@@ -124,6 +127,7 @@ export function AgentModelPicker({
           configuredProviderVersion(providerManagement, displayProvider),
           catalog,
           codexCatalog,
+          newness,
         )
       : [];
   }, [
@@ -132,6 +136,7 @@ export function AgentModelPicker({
     displayProvider,
     filter,
     launch.provider,
+    newness,
     providerEnabled,
     providerManagement,
     providers,
@@ -273,7 +278,8 @@ export function AgentModelPicker({
             configuredProviderModel(providerManagement, launch.provider),
             catalog,
             codexCatalog,
-          )
+          ) ??
+          undefined
         }
         type="button"
       >
@@ -374,7 +380,7 @@ export function AgentModelPicker({
                       onClick={() => choose(row)}
                       onMouseEnter={() => setActiveIndex(index)}
                       role="option"
-                      title={row.hint}
+                      title={row.hint ?? undefined}
                     >
                       <span aria-hidden="true" className="agent-model-picker__glyph">
                         <AgentProviderGlyph kind={row.provider} />
@@ -384,7 +390,9 @@ export function AgentModelPicker({
                           {row.label}
                           {row.isNew ? <span className="agent-model-picker__new">NEW</span> : null}
                         </span>
-                        <span className="agent-model-picker__description">{row.hint}</span>
+                        {row.hint === null ? null : (
+                          <span className="agent-model-picker__description">{row.hint}</span>
+                        )}
                       </span>
                       {index < MAX_SHORTCUT_ROWS && (
                         <kbd className="agent-model-picker__kbd agent-num">

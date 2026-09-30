@@ -13,6 +13,7 @@ import {
 } from "../../domain/agentSettings";
 import { useAgentClaudeModelCatalog } from "../agentMode/useAgentClaudeModelCatalog";
 import { useAgentCodexModelCatalog } from "../agentMode/useAgentCodexModelCatalog";
+import { useAgentModelNewness } from "../agentMode/useAgentModelNewness";
 import { agentModelRows } from "../agentMode/agentLaunchPresentation";
 import {
   configuredProviderModel,
@@ -91,6 +92,7 @@ export function AgentProviderCard({
   const elementRef = useSettingsRowTarget(rowId);
   const catalog = useAgentClaudeModelCatalog();
   const codexCatalog = useAgentCodexModelCatalog();
+  const newness = useAgentModelNewness();
 
   const label = providerLabel(provider);
   const view = management.providers[provider];
@@ -289,6 +291,7 @@ export function AgentProviderCard({
                 configuredProviderVersion(management, provider),
                 catalog,
                 codexCatalog,
+                newness,
               )}
             />
           }

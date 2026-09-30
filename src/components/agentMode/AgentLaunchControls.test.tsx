@@ -200,7 +200,7 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "GPT-6.1-SolNEW",
+      "GPT-6.1-Sol",
       "GPT-6-Astra",
       "GPT-6-Sol",
       "GPT-6-Luna",
@@ -251,6 +251,20 @@ describe("AgentLaunchControls", () => {
     expect(host.querySelector(`#${modelHint}`)?.textContent).toContain("Claude model catalog");
     expect(host.querySelector(`#${modeHint}`)?.textContent).toContain("Asks before commands");
     expect(host.querySelector(`#${modeHint}`)?.className).toBe("agent-visually-hidden");
+  });
+
+  it("gives a model without a description no title and no accessible description", () => {
+    renderControls({
+      provider: "claudeCode",
+      model: "claude-opus-4-8",
+      mode: "supervised",
+      effort: "default",
+    });
+
+    expect(trigger("agent-launch-model").hasAttribute("aria-describedby")).toBe(false);
+    expect(trigger("agent-launch-model").hasAttribute("title")).toBe(false);
+    expect(host.querySelector("#agent-launch-model-hint")).toBeNull();
+    expect(trigger("agent-launch-mode").getAttribute("aria-describedby")).not.toBeNull();
   });
 
   it("reports the picked model and mode as a whole launch value", () => {

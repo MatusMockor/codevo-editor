@@ -128,12 +128,13 @@ export function AgentLaunchControls({
       />
     </>
   );
+  const modelHint = agentLaunchModelHint(launch, configuredModel, catalog, codexCatalog);
   return (
     <div className="agent-composer__launch" data-presentation={presentation.kind}>
       <AgentModelPicker
         onOpenRequestHandled={onOpenRequestHandled}
         openRequest={openRequest?.kind === "model" ? openRequest : null}
-        describedBy={`${MODEL_ID}-hint`}
+        describedBy={modelHint === null ? null : `${MODEL_ID}-hint`}
         disabled={disabled}
         favorites={favorites}
         id={MODEL_ID}
@@ -144,9 +145,11 @@ export function AgentLaunchControls({
         providerManagement={providerManagement}
         providerSwitchable={providerSwitchable}
       />
-      <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
-        {agentLaunchModelHint(launch, configuredModel, catalog, codexCatalog)}
-      </span>
+      {modelHint === null ? null : (
+        <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
+          {modelHint}
+        </span>
+      )}
 
       {presentation.kind === "compact" ? (
         <AgentComposerCompactMenu

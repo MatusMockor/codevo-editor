@@ -145,18 +145,23 @@ describe("agentLaunchPresentation", () => {
     ]);
   });
 
-  it("gives every choice a label and a one-line hint", () => {
-    const choices = [
-      ...agentLaunchModelChoices("claudeCode"),
+  it("gives every mode a one-line hint and never pads a model with a label echo", () => {
+    for (const choice of [
       ...agentLaunchModeChoices("claudeCode"),
-      ...agentLaunchModelChoices("codex"),
       ...agentLaunchModeChoices("codex"),
-    ];
-
-    for (const choice of choices) {
+    ]) {
       expect(choice.label.length).toBeGreaterThan(0);
       expect(choice.hint.length).toBeGreaterThan(0);
       expect(choice.hint).not.toContain("\n");
+    }
+    for (const choice of [
+      ...agentLaunchModelChoices("claudeCode"),
+      ...agentLaunchModelChoices("codex"),
+    ]) {
+      expect(choice.label.length).toBeGreaterThan(0);
+      expect(choice.hint).not.toContain("\n");
+      expect(choice.hint).not.toBe(`${choice.label} model.`);
+      expect(choice.hint).not.toBe(`${choice.label}.`);
     }
   });
 
@@ -627,6 +632,18 @@ describe("remote Claude model presentation", () => {
     ],
   };
 
+  it("returns no model hint for a known model without a description", () => {
+    const { description: _description, ...undescribed } = catalog.claudeCode[0];
+    const bare = { ...catalog, claudeCode: [undescribed] };
+    const explicit: AgentLaunchOptions = { ...launch, model: "claude-new-model-99" };
+    expect(agentLaunchModelHint(explicit, null, bare)).toBeNull();
+    expect(agentModelRows("claudeCode", null, null, bare)[0].hint).toBeNull();
+    expect(agentLaunchModelHint(launch, null, bare)).toBe("Selected by the Claude model catalog.");
+    expect(agentLaunchModelHint({ ...launch, model: "claude-unlisted-1" }, null, bare)).toBe(
+      "Runs the session on claude-unlisted-1.",
+    );
+  });
+
   it("uses a new model consistently for rows, configured aliases, labels and dispatch", () => {
     expect(agentModelRows("claudeCode", null, "2.1.100", catalog)[0]).toMatchObject({
       value: "claude-new-model-99",
@@ -716,13 +733,20 @@ describe("remote Claude model presentation", () => {
 
 describe("agent model row badges", () => {
   it("marks new and default models and summarizes legacy models", () => {
-    const claude = agentModelRows("claudeCode");
-    expect(claude.filter((row) => row.isNew).map((row) => row.value)).toEqual(["claude-fable-5-1"]);
+    const newness = {
+      isNew: (provider: string, model: string) =>
+        `${provider}/${model}` === "claudeCode/claude-opus-5-5" ||
+        `${provider}/${model}` === "codex/gpt-6-sol",
+    };
+    expect(agentModelRows("claudeCode").some((row) => row.isNew)).toBe(false);
+    expect(agentModelRows("codex").some((row) => row.isNew)).toBe(false);
+    const claude = agentModelRows("claudeCode", null, null, undefined, undefined, newness);
+    expect(claude.filter((row) => row.isNew).map((row) => row.value)).toEqual(["claude-opus-5-5"]);
     expect(claude.filter((row) => row.isDefault).map((row) => row.value)).toEqual([
       "claude-sonnet-5",
     ]);
-    const codex = agentModelRows("codex");
-    expect(codex.filter((row) => row.isNew).map((row) => row.value)).toEqual(["gpt-6.1-sol"]);
+    const codex = agentModelRows("codex", null, null, undefined, undefined, newness);
+    expect(codex.filter((row) => row.isNew).map((row) => row.value)).toEqual(["gpt-6-sol"]);
     expect(codex.filter((row) => row.isDefault).map((row) => row.value)).toEqual(["gpt-6.1-sol"]);
     expect(codex.filter((row) => row.isLegacy).map((row) => row.value)).toEqual(["gpt-5.5"]);
     const legacy = claude.filter((row) => row.isLegacy === true);

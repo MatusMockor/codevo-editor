@@ -64,10 +64,10 @@ describe("Codex model picker rows", () => {
 
   it("adds the configuration hint only to the configured model", () => {
     const rows = agentModelRows("codex", "gpt-6-astra", null, undefined, live);
-    const hinted = rows.filter((row) => row.hint.includes("Selected by your Codex configuration"));
+    const hinted = rows.filter((row) => row.hint?.includes("Selected by your Codex configuration"));
     expect(hinted.map((row) => row.value)).toEqual(["gpt-6-astra"]);
     expect(hinted[0].hint).toBe("gpt-6-astra description. Selected by your Codex configuration.");
-    expect(rows.every((row) => !row.hint.startsWith("Runs the session on"))).toBe(true);
+    expect(rows.every((row) => !row.hint?.startsWith("Runs the session on"))).toBe(true);
   });
 
   it("falls back to the bundled catalog without hidden or internal models", () => {
@@ -76,7 +76,9 @@ describe("Codex model picker rows", () => {
       BUNDLED_CODEX_MODEL_CATALOG.models.map((model) => model.id),
     );
     expect(rows.map((row) => row.value)).not.toContain("codex-auto-review");
-    expect(rows.every((row) => row.hint.length > 0 && !row.hint.includes("\n"))).toBe(true);
+    expect(
+      rows.every((row) => row.hint !== null && row.hint.length > 0 && !row.hint.includes("\n")),
+    ).toBe(true);
   });
 });
 
