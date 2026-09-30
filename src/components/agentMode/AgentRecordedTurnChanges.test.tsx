@@ -112,6 +112,22 @@ it("never invents live changes when the snapshot is unavailable", async () => {
   expect(host.textContent).toContain("Snapshot expired");
   expect(host.textContent).not.toContain("Open diff");
 });
+it.each([
+  "No snapshot is available for this turn.",
+  "No snapshot was recorded before this turn.",
+  "No completed snapshot is available for this turn.",
+])("renders nothing inline when the turn simply has no snapshot: %s", async (reason) => {
+  const getTurnChanges = vi.fn(async (_: string, turnId: string) => ({
+    turnId,
+    state: "unavailable" as const,
+    files: [],
+    truncated: false,
+    reason,
+  }));
+  await render({ getTurnChanges });
+  await vi.waitFor(() => expect(getTurnChanges).toHaveBeenCalled());
+  expect(host.innerHTML).toBe("");
+});
 it("rereads on availability generation changes", async () => {
   const getTurnChanges = vi.fn(async (_: string, id: string) => summary(id));
   const props = await render({ getTurnChanges, revision: {} });

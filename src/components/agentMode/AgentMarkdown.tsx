@@ -16,7 +16,12 @@ import {
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentMarkdownCodeBlock } from "./AgentMarkdownCodeBlock";
 import { AgentMarkdownCodeBody } from "./AgentMarkdownCodeBody";
-import type { AgentMarkdownLinkEvent } from "./agentMarkdownLinks";
+import { agentLocalFileLinkFailureMessage } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
+import {
+  agentLocalFileLinkKey,
+  type AgentMarkdownLinkEvent,
+  type AgentUnavailableLinks,
+} from "./agentMarkdownLinks";
 import {
   MAX_AGENT_PATH_LINKS_PER_BLOCK,
   MAX_AGENT_PATH_SCAN_CHARS_PER_BLOCK,
@@ -25,6 +30,7 @@ import {
 import { HighlightRun } from "./agentThreadHighlight";
 
 const PATH_LINK_MODIFIER = "agent-md__path-link";
+const UNAVAILABLE_MODIFIER = "agent-md__link--unavailable";
 
 export type AgentMarkdownLinkActivation = (
   event: AgentMarkdownLinkEvent,
@@ -37,6 +43,7 @@ interface BlockRenderContext {
   readonly current: number | null;
   readonly textClipboard: TextClipboardGateway | null;
   readonly pathLinks: AgentMarkdownPathLinks | null;
+  readonly unavailableLinks: AgentUnavailableLinks | null;
   nextHitIndex: number;
   pathLinkBudget: number;
   pathScanBudget: number;
@@ -51,6 +58,7 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
   pathLinks = null,
   query,
   textClipboard,
+  unavailableLinks = null,
 }: {
   readonly block: AgentMarkdownBlock;
   readonly current: number | null;
@@ -59,6 +67,7 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
   readonly pathLinks?: AgentMarkdownPathLinks | null;
   readonly query: string;
   readonly textClipboard: TextClipboardGateway | null;
+  readonly unavailableLinks?: AgentUnavailableLinks | null;
 }) {
   const context: BlockRenderContext = {
     onActivateLink,
@@ -66,6 +75,7 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
     current,
     textClipboard,
     pathLinks,
+    unavailableLinks,
     nextHitIndex: hitOffset,
     pathLinkBudget: MAX_AGENT_PATH_LINKS_PER_BLOCK,
     pathScanBudget: MAX_AGENT_PATH_SCAN_CHARS_PER_BLOCK,
@@ -384,14 +394,21 @@ function renderLink(
 ): ReactNode {
   const activate = (event: AgentMarkdownLinkEvent): void => context.onActivateLink(event, link);
   const scripted = link.kind === "localFile";
+  const unavailable = unavailableLinkMessage(link, context.unavailableLinks);
   const activateByKey = (event: KeyboardEvent<HTMLAnchorElement>): void => {
     if (event.key !== "Enter") return;
     activate(event);
   };
+  const classes = [
+    "agent-md__link",
+    modifier,
+    unavailable === null ? undefined : UNAVAILABLE_MODIFIER,
+  ];
   return (
     <a
-      className={modifier === undefined ? "agent-md__link" : `agent-md__link ${modifier}`}
+      className={classes.filter((name) => name !== undefined).join(" ")}
       data-agent-link={link.kind}
+      data-agent-link-state={unavailable === null ? undefined : "unavailable"}
       href={agentMarkdownLinkHref(link)}
       key={key}
       onAuxClick={activate}
@@ -400,10 +417,20 @@ function renderLink(
       rel="noopener"
       role={scripted ? "link" : undefined}
       tabIndex={scripted ? 0 : undefined}
+      title={unavailable ?? undefined}
     >
       {children}
     </a>
   );
+}
+
+function unavailableLinkMessage(
+  link: AgentMarkdownLink,
+  unavailableLinks: AgentUnavailableLinks | null,
+): string | null {
+  if (link.kind !== "localFile" || unavailableLinks === null) return null;
+  const failure = unavailableLinks.get(agentLocalFileLinkKey(link));
+  return failure === undefined ? null : agentLocalFileLinkFailureMessage(failure);
 }
 
 function agentMarkdownLinkHref(link: AgentMarkdownLink): string | undefined {

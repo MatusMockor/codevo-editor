@@ -140,6 +140,12 @@
   color: inherit;
 }
 
+.agent-md__link.agent-md__link--unavailable {
+  color: var(--cv-fg-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .agent-md__image {
   max-width: 100%;
   border-radius: var(--cv-r-card);

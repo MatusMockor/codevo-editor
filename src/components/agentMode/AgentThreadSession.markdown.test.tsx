@@ -11,6 +11,7 @@ import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agent
 import { findInThread, type AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
+import type { AgentLocalFileLinkPort } from "./agentMarkdownLinks";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
@@ -387,10 +388,10 @@ describe("AgentThreadSession markdown", () => {
     expect(event.defaultPrevented).toBe(button !== 2);
   });
 
-  it("opens local file links through the injected editor port and keeps http external", () => {
+  it("opens local file links through the injected editor port and keeps http external", async () => {
     const openExternalLink = vi.fn(async () => undefined);
-    const open = vi.fn();
-    const reject = vi.fn();
+    const open = vi.fn<AgentLocalFileLinkPort["open"]>(async () => "opened");
+    const report = vi.fn<AgentLocalFileLinkPort["report"]>();
     render({
       thread: view(
         SETTLED,
@@ -402,7 +403,7 @@ describe("AgentThreadSession markdown", () => {
         ].join(" "),
       ),
       openExternalLink,
-      localFileLinks: { open, reject },
+      localFileLinks: { open, report },
     });
 
     const links = [...host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")];
@@ -422,16 +423,29 @@ describe("AgentThreadSession markdown", () => {
 
     expect(clickAt(0).defaultPrevented).toBe(true);
     expect(open).toHaveBeenLastCalledWith({
-      path: `${ROOT}/odovzdávky/prepis ž.txt`,
-      line: 12,
-      column: 4,
+      location: { path: `${ROOT}/odovzdávky/prepis ž.txt`, line: 12, column: 4 },
+      root: ROOT,
     });
     clickAt(1);
-    expect(open).toHaveBeenLastCalledWith({ path: `${ROOT}/src/server.ts`, line: 7, column: null });
+    expect(open).toHaveBeenLastCalledWith({
+      location: { path: `${ROOT}/src/server.ts`, line: 7, column: null },
+      root: ROOT,
+    });
 
     expect(clickAt(2).defaultPrevented).toBe(true);
+    await act(async () => undefined);
     expect(open).toHaveBeenCalledTimes(2);
-    expect(reject).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenCalledExactlyOnceWith({
+      kind: "outsideProject",
+      path: "/etc/passwd",
+      place: { kind: "project", label: "app" },
+    });
+    const refused = host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")[2];
+    expect(refused?.getAttribute("data-agent-link-state")).toBe("unavailable");
+    expect(refused?.title).toBe("/etc/passwd is outside this project (app), so it wasn't opened.");
+    expect(
+      host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")[1]?.hasAttribute("title"),
+    ).toBe(false);
 
     clickAt(3);
     expect(openExternalLink).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");

@@ -2,26 +2,35 @@ import type { KeyboardEvent, MouseEvent } from "react";
 import type { AgentTasksNotice } from "../../application/agentThreadPorts";
 import { parseAgentArtifactPath } from "../../domain/agentArtifact";
 import {
+  agentLocalFileLinkDisplayPath,
+  agentLocalFileLinkFailure,
+  agentLocalFileLinkFailureMessage,
+  agentLocalFileLinkPlace,
+  type AgentLocalFileLinkFailure,
+  type AgentLocalFileLinkPlace,
+  type AgentLocalFileOpenOutcome,
+} from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
+import {
   resolveAgentLocalFilePath,
   type AgentLocalFileLink,
   type AgentLocalFileLocation,
   type AgentMarkdownLink,
 } from "../../domain/agentMarkdown/agentMarkdownLink";
-import {
-  AGENT_REVEAL_BLOCKED_REASON,
-  agentRevealRootForPath,
-} from "./agentThreadHeaderPresentation";
+import { agentRevealRootForPath } from "./agentThreadHeaderPresentation";
 
 export type AgentMarkdownLinkEvent =
   MouseEvent<HTMLAnchorElement> | KeyboardEvent<HTMLAnchorElement>;
 
 export type AgentExternalLinkOpener = (url: string) => Promise<void>;
 
-export type AgentLocalFileLinkRejection = "outsideRoots" | "remoteThread";
+export interface AgentLocalFileOpenRequest {
+  readonly location: AgentLocalFileLocation;
+  readonly root: string;
+}
 
 export interface AgentLocalFileLinkPort {
-  open(location: AgentLocalFileLocation): void;
-  reject(reason: AgentLocalFileLinkRejection): void;
+  open(request: AgentLocalFileOpenRequest): Promise<AgentLocalFileOpenOutcome>;
+  report(failure: AgentLocalFileLinkFailure): void;
 }
 
 export type AgentLocalFileLinkScope =
@@ -30,12 +39,21 @@ export type AgentLocalFileLinkScope =
       readonly port: AgentLocalFileLinkPort;
       readonly base: string | null;
       readonly roots: ReadonlyArray<string>;
+      readonly repositoryRoot: string;
     }
   | { readonly kind: "remote"; readonly port: AgentLocalFileLinkPort };
+
+export interface AgentLocalFileLinkMemory {
+  failureFor(link: AgentLocalFileLink): AgentLocalFileLinkFailure | null;
+  remember(link: AgentLocalFileLink, failure: AgentLocalFileLinkFailure | null): void;
+}
+
+export type AgentUnavailableLinks = ReadonlyMap<string, AgentLocalFileLinkFailure>;
 
 export interface AgentMarkdownLinkPorts {
   readonly openExternal: AgentExternalLinkOpener;
   readonly localFiles: AgentLocalFileLinkScope | null;
+  readonly memory?: AgentLocalFileLinkMemory | null;
 }
 
 export interface AgentLocalFileLinkThread {
@@ -44,23 +62,13 @@ export interface AgentLocalFileLinkThread {
   readonly worktreePath: string | null;
 }
 
-export const AGENT_LOCAL_FILE_LINK_BLOCKED_NOTICE: AgentTasksNotice = Object.freeze({
-  kind: "warning",
-  message: AGENT_REVEAL_BLOCKED_REASON,
-  action: null,
-});
+export function agentLocalFileLinkNotice(failure: AgentLocalFileLinkFailure): AgentTasksNotice {
+  return { kind: "info", message: agentLocalFileLinkFailureMessage(failure), action: null };
+}
 
-export const AGENT_LOCAL_FILE_LINK_REMOTE_NOTICE: AgentTasksNotice = Object.freeze({
-  kind: "warning",
-  message: "File links are not available for remote threads.",
-  action: null,
-});
-
-export const AGENT_LOCAL_FILE_LINK_FAILED_NOTICE: AgentTasksNotice = Object.freeze({
-  kind: "error",
-  message: "The linked file could not be opened.",
-  action: null,
-});
+export function agentLocalFileLinkKey(link: AgentLocalFileLink): string {
+  return `${link.anchor}:${link.location.path}`;
+}
 
 export function agentLocalFileLinkScope(
   port: AgentLocalFileLinkPort | null,
@@ -71,7 +79,13 @@ export function agentLocalFileLinkScope(
   const roots = [thread.worktreePath, thread.repositoryRoot].filter(
     (root): root is string => root !== null && root !== "",
   );
-  return { kind: "local", port, base: roots[0] ?? null, roots };
+  return {
+    kind: "local",
+    port,
+    base: roots[0] ?? null,
+    roots,
+    repositoryRoot: thread.repositoryRoot,
+  };
 }
 
 export function activateAgentMarkdownLink(
@@ -89,7 +103,7 @@ export function activateAgentMarkdownLink(
       return;
     case "localFile":
       event.preventDefault();
-      openLocalFileLink(event.currentTarget, link, ports.localFiles);
+      openLocalFileLink(event.currentTarget, link, ports.localFiles, ports.memory ?? null);
       return;
     default:
       unsupportedLink(link);
@@ -100,19 +114,41 @@ function openLocalFileLink(
   anchor: Element,
   link: AgentLocalFileLink,
   scope: AgentLocalFileLinkScope | null,
+  memory: AgentLocalFileLinkMemory | null,
 ): void {
   if (link.anchor === "relative" && revealAgentArtifactForLink(anchor, link.location.path)) return;
   if (scope === null) return;
-  if (scope.kind === "remote") {
-    scope.port.reject("remoteThread");
-    return;
-  }
+  const known = memory?.failureFor(link) ?? null;
+  void attemptLocalFileLink(link, scope).then((failure) => {
+    memory?.remember(link, failure);
+    if (failure === null || known?.kind === failure.kind) return;
+    scope.port.report(failure);
+  });
+}
+
+async function attemptLocalFileLink(
+  link: AgentLocalFileLink,
+  scope: AgentLocalFileLinkScope,
+): Promise<AgentLocalFileLinkFailure | null> {
+  const written = link.location.path;
+  if (scope.kind === "remote") return agentLocalFileLinkFailure("remoteThread", written, null);
   const path = resolveAgentLocalFilePath(link, scope.base);
-  if (path === null || agentRevealRootForPath(path, scope.roots) === null) {
-    scope.port.reject("outsideRoots");
-    return;
+  const root = path === null ? null : agentRevealRootForPath(path, scope.roots);
+  if (path === null || root === null) {
+    const project = agentLocalFileLinkPlace("project", scope.repositoryRoot);
+    return agentLocalFileLinkFailure("outsideProject", written, project);
   }
-  scope.port.open({ ...link.location, path });
+  const outcome = await scope.port
+    .open({ location: { ...link.location, path }, root })
+    .catch((): AgentLocalFileOpenOutcome => "failed");
+  if (outcome === "opened") return null;
+  const display = agentLocalFileLinkDisplayPath(written, path, root);
+  return agentLocalFileLinkFailure(outcome, display, placeOfRoot(root, scope.repositoryRoot));
+}
+
+function placeOfRoot(root: string, repositoryRoot: string): AgentLocalFileLinkPlace {
+  const kind = root === repositoryRoot.replace(/\/+$/, "") ? "project" : "worktree";
+  return agentLocalFileLinkPlace(kind, root);
 }
 
 function agentArtifactDisclosureForLink(link: Element, path: string): HTMLElement | null {

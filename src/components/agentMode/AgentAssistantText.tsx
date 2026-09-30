@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import { highlightOccurrences } from "../../domain/agentThreadHighlight";
 import {
@@ -8,16 +8,13 @@ import {
   type AgentMarkdownPresentation,
 } from "../../domain/agentMarkdown/agentMarkdownTree";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
-import { AgentMarkdownBlockView, type AgentMarkdownLinkActivation } from "./AgentMarkdown";
+import { AgentMarkdownBlockView } from "./AgentMarkdown";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { agentTextParagraphs } from "./agentModePresentation";
-import {
-  activateAgentMarkdownLink,
-  type AgentExternalLinkOpener,
-  type AgentLocalFileLinkScope,
-} from "./agentMarkdownLinks";
+import type { AgentExternalLinkOpener, AgentLocalFileLinkScope } from "./agentMarkdownLinks";
 import { agentMarkdownPathLinks } from "./agentMarkdownPathLinks";
 import { HighlightRun } from "./agentThreadHighlight";
+import { useAgentMarkdownLinkActivation } from "./useAgentMarkdownLinkActivation";
 import {
   useAgentMarkdown,
   useAgentMarkdownGate,
@@ -71,9 +68,9 @@ export const AgentAssistantText = memo(function AgentAssistantText({
   const parsed = presentation.kind === "rendered";
   const onParsed = prose.onParsed;
   const { openExternalLink: openExternal, localFiles } = prose;
-  const activateLink = useCallback<AgentMarkdownLinkActivation>(
-    (event, link) => activateAgentMarkdownLink(event, link, { openExternal, localFiles }),
-    [localFiles, openExternal],
+  const { activateLink, unavailableLinks } = useAgentMarkdownLinkActivation(
+    openExternal,
+    localFiles,
   );
   const pathLinks = useMemo(() => agentMarkdownPathLinks(localFiles), [localFiles]);
 
@@ -141,6 +138,7 @@ export const AgentAssistantText = memo(function AgentAssistantText({
           pathLinks={pathLinks}
           query={query}
           textClipboard={textClipboard}
+          unavailableLinks={unavailableLinks}
         />
       ))}
       {(presentation.sourceBlockCount ?? 0) > 0 && (

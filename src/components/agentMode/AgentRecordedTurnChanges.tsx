@@ -5,6 +5,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
 import {
+  isMissingAgentTurnSnapshot,
   unsupportedAgentTurnChanges,
   type AgentTurnChangeSummary,
 } from "../../domain/agentTurnChanges";
@@ -45,6 +46,7 @@ export function AgentRecordedTurnChanges(props: AgentRecordedTurnChangesProps) {
   }, [identity, getTurnChanges, threadId, turnId]);
   if (result?.identity !== identity) return null;
   if (result.summary.state === "unsupported") return null;
+  if (isMissingAgentTurnSnapshot(result.summary)) return null;
   return (
     <>
       <AgentTurnChangesRow

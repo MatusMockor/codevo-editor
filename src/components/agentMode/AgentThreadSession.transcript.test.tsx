@@ -154,9 +154,9 @@ describe("AgentThreadSession transcript", () => {
   });
 
   it("opens workspace-relative paths mentioned in prose and inline code", () => {
-    const open = vi.fn();
-    const reject = vi.fn();
-    const port: AgentLocalFileLinkPort = { open, reject };
+    const open = vi.fn<AgentLocalFileLinkPort["open"]>(async () => "opened");
+    const report = vi.fn<AgentLocalFileLinkPort["report"]>();
+    const port: AgentLocalFileLinkPort = { open, report };
     render({
       localFileLinks: port,
       thread: view([
@@ -169,19 +169,21 @@ describe("AgentThreadSession transcript", () => {
     expect(links.map((link) => link.textContent)).toEqual(["src/app.ts:12", "package.json"]);
 
     act(() => links[0]?.click());
-    expect(open).toHaveBeenCalledWith({ path: `${ROOT}/src/app.ts`, line: 12, column: null });
+    expect(open).toHaveBeenCalledWith({
+      location: { path: `${ROOT}/src/app.ts`, line: 12, column: null },
+      root: ROOT,
+    });
     act(() => links[1]?.click());
     expect(open).toHaveBeenLastCalledWith({
-      path: `${ROOT}/package.json`,
-      line: null,
-      column: null,
+      location: { path: `${ROOT}/package.json`, line: null, column: null },
+      root: ROOT,
     });
-    expect(reject).not.toHaveBeenCalled();
+    expect(report).not.toHaveBeenCalled();
   });
 
   it("does not link paths for remote threads", () => {
     render({
-      localFileLinks: { open: vi.fn(), reject: vi.fn() },
+      localFileLinks: { open: vi.fn(), report: vi.fn() },
       thread: view(
         [
           turn("t1", "Where?", { kind: "exited", exitCode: 0 }, [

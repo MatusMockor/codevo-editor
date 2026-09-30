@@ -4,14 +4,18 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { AgentTasksNotice } from "../../application/agentThreadPorts";
 import {
-  AGENT_LOCAL_FILE_LINK_BLOCKED_NOTICE,
-  AGENT_LOCAL_FILE_LINK_FAILED_NOTICE,
-  AGENT_LOCAL_FILE_LINK_REMOTE_NOTICE,
-  type AgentLocalFileLinkPort,
-} from "./agentMarkdownLinks";
+  agentLocalFileLinkFailure,
+  agentLocalFileLinkPlace,
+} from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
+import type { AgentLocalFileLinkPort } from "./agentMarkdownLinks";
 import { useAgentLocalFileLinks, type AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 
-const LOCATION = { path: "/workspace/app/src/a.ts", line: 3, column: null };
+const EDITOR = agentLocalFileLinkPlace("project", "/Users/me/Developer/editor");
+
+const REQUEST = {
+  location: { path: "/workspace/app/src/a.ts", line: 3, column: null },
+  root: "/workspace/app",
+};
 
 function probe(
   opener: AgentFileLocationOpener | undefined,
@@ -34,30 +38,35 @@ it("has no port without an editor opener", () => {
   view.unmount();
 });
 
-it("opens through the editor opener and reports rejections and failed opens", async () => {
+it("passes the open outcome through without reporting anything itself", async () => {
   const notices: AgentTasksNotice[] = [];
-  const opener = vi.fn<AgentFileLocationOpener>().mockResolvedValueOnce(true);
-  opener.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error("gone"));
+  const opener = vi.fn<AgentFileLocationOpener>().mockResolvedValueOnce("notFound");
   const view = probe(opener, notices);
-  expect(view.port).not.toBeNull();
 
-  await act(async () => view.port?.open(LOCATION));
-  expect(opener).toHaveBeenCalledWith(LOCATION);
+  await expect(view.port?.open(REQUEST)).resolves.toBe("notFound");
+  expect(opener).toHaveBeenCalledExactlyOnceWith(REQUEST);
   expect(notices).toEqual([]);
+  view.unmount();
+});
 
-  await act(async () => view.port?.open(LOCATION));
-  await act(async () => view.port?.open(LOCATION));
+it("reports each failure as a calm, specific, dismissible notice", () => {
+  const notices: AgentTasksNotice[] = [];
+  const view = probe(vi.fn<AgentFileLocationOpener>(), notices);
+
+  act(() => view.port?.report(agentLocalFileLinkFailure("notFound", "src/env.ts", EDITOR)));
+  act(() => view.port?.report(agentLocalFileLinkFailure("outsideProject", "/etc/hosts", EDITOR)));
+  act(() => view.port?.report(agentLocalFileLinkFailure("unreadable", "src/key.pem", EDITOR)));
+  act(() => view.port?.report(agentLocalFileLinkFailure("remoteThread", "src/a.ts", null)));
+
   expect(notices).toEqual([
-    AGENT_LOCAL_FILE_LINK_FAILED_NOTICE,
-    AGENT_LOCAL_FILE_LINK_FAILED_NOTICE,
+    { kind: "info", message: "src/env.ts isn't in this project (editor).", action: null },
+    {
+      kind: "info",
+      message: "/etc/hosts is outside this project (editor), so it wasn't opened.",
+      action: null,
+    },
+    { kind: "info", message: "src/key.pem exists but couldn't be read.", action: null },
+    { kind: "info", message: "File links are not available for remote threads.", action: null },
   ]);
-
-  act(() => view.port?.reject("outsideRoots"));
-  expect(notices[notices.length - 1]).toEqual(AGENT_LOCAL_FILE_LINK_BLOCKED_NOTICE);
-  act(() => view.port?.reject("remoteThread"));
-  expect(notices[notices.length - 1]).toEqual(AGENT_LOCAL_FILE_LINK_REMOTE_NOTICE);
-  expect(AGENT_LOCAL_FILE_LINK_REMOTE_NOTICE.message).toBe(
-    "File links are not available for remote threads.",
-  );
   view.unmount();
 });

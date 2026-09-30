@@ -96,6 +96,7 @@ import {
 } from "./agentWorkbenchChrome";
 import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 import { openThenRevealFiles } from "./openThenRevealFiles";
+import { openOrClassifyLinkedFile } from "../../application/agentLinkedFileProbe";
 import { revealingFileOpeners } from "../editorPanel/revealingFileOpeners";
 import { useEditorSurfaceReveal } from "../editorPanel/useEditorSurfaceReveal";
 
@@ -464,21 +465,23 @@ export function AgentWorkbenchScreen({
   );
 
   const openFileLocation = useCallback<AgentFileLocationOpener>(
-    (location) => {
+    ({ location, root }) => {
       const position = { column: location.column ?? 1, lineNumber: location.line ?? 1 };
-      return openThenRevealFiles(
-        () =>
-          openProblemNotice({
-            id: `agent-link:${location.path}:${position.lineNumber}:${position.column}`,
-            message: location.path,
-            navigationTarget: { path: location.path, range: { end: position, start: position } },
-            severity: "info",
-            source: "Agent",
-          }),
-        revealEditorSurface,
-      );
+      const open = () =>
+        openThenRevealFiles(
+          () =>
+            openProblemNotice({
+              id: `agent-link:${location.path}:${position.lineNumber}:${position.column}`,
+              message: location.path,
+              navigationTarget: { path: location.path, range: { end: position, start: position } },
+              severity: "info",
+              source: "Agent",
+            }),
+          revealEditorSurface,
+        );
+      return openOrClassifyLinkedFile(open, location.path, root, files);
     },
-    [openProblemNotice, revealEditorSurface],
+    [files, openProblemNotice, revealEditorSurface],
   );
 
   const localCloneSession = useRef<LocalProjectCloneSession["current"]>(null);

@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 import type { KeyboardEvent, MouseEvent } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type {
+  AgentLocalFileLinkFailure,
+  AgentLocalFileOpenOutcome,
+} from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
 import { parseAgentMarkdownLink } from "../../domain/agentMarkdown/agentMarkdownLink";
 import {
   activateAgentMarkdownLink,
+  agentLocalFileLinkNotice,
   agentLocalFileLinkScope,
+  type AgentLocalFileLinkMemory,
   type AgentLocalFileLinkPort,
   type AgentMarkdownLinkPorts,
 } from "./agentMarkdownLinks";
@@ -39,10 +45,28 @@ function click(link: HTMLAnchorElement, button = 0) {
   return { event, preventDefault };
 }
 
-function localPort() {
-  const open = vi.fn<AgentLocalFileLinkPort["open"]>();
-  const reject = vi.fn<AgentLocalFileLinkPort["reject"]>();
-  return { open, reject, port: { open, reject } };
+function localPort(outcome: AgentLocalFileOpenOutcome = "opened") {
+  const open = vi.fn<AgentLocalFileLinkPort["open"]>(async () => outcome);
+  const report = vi.fn<AgentLocalFileLinkPort["report"]>();
+  return { open, report, port: { open, report } };
+}
+
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function memory(): AgentLocalFileLinkMemory & {
+  readonly failures: Map<string, AgentLocalFileLinkFailure>;
+} {
+  const failures = new Map<string, AgentLocalFileLinkFailure>();
+  return {
+    failures,
+    failureFor: (link) => failures.get(link.location.path) ?? null,
+    remember: (link, failure) => {
+      failures.delete(link.location.path);
+      if (failure !== null) failures.set(link.location.path, failure);
+    },
+  };
 }
 
 function ports(
@@ -88,7 +112,10 @@ describe("activateAgentMarkdownLink", () => {
     const openExternal = vi.fn().mockResolvedValue(undefined);
     const local = localPort();
     activate(`${ROOT}/src/server.ts:12:3`, ports(local.port, openExternal));
-    expect(local.open).toHaveBeenCalledWith({ path: `${ROOT}/src/server.ts`, line: 12, column: 3 });
+    expect(local.open).toHaveBeenCalledWith({
+      location: { path: `${ROOT}/src/server.ts`, line: 12, column: 3 },
+      root: ROOT,
+    });
     expect(openExternal).not.toHaveBeenCalled();
   });
 
@@ -105,33 +132,119 @@ describe("activateAgentMarkdownLink", () => {
       localFiles: scope,
     });
     expect(local.open).toHaveBeenCalledWith({
-      path: `${ROOT}/.worktrees/agt-1/src/a.ts`,
-      line: 7,
-      column: null,
+      location: { path: `${ROOT}/.worktrees/agt-1/src/a.ts`, line: 7, column: null },
+      root: `${ROOT}/.worktrees/agt-1`,
     });
   });
 
-  it("rejects visibly and never opens a local file outside every thread root", () => {
+  it("refuses visibly and never opens a local file outside every thread root", async () => {
     const openExternal = vi.fn().mockResolvedValue(undefined);
     const local = localPort();
     const preventDefault = activate("/etc/passwd", ports(local.port, openExternal));
+    await settle();
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(local.open).not.toHaveBeenCalled();
-    expect(local.reject).toHaveBeenCalledExactlyOnceWith("outsideRoots");
+    expect(local.report).toHaveBeenCalledExactlyOnceWith({
+      kind: "outsideProject",
+      path: "/etc/passwd",
+      place: { kind: "project", label: "app" },
+    });
+    expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0])).toEqual({
+      kind: "info",
+      message: "/etc/passwd is outside this project (app), so it wasn't opened.",
+      action: null,
+    });
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("rejects a sibling-prefix path and a normalized traversal out of the root", () => {
+  it("refuses a sibling-prefix path and a normalized traversal out of the root", async () => {
     const local = localPort();
     activate("/workspace/app-docs/readme.md", ports(local.port));
     activate(`${ROOT}/src/../../secret.txt`, ports(local.port));
+    await settle();
     expect(local.open).not.toHaveBeenCalled();
-    expect(local.reject.mock.calls).toEqual([["outsideRoots"], ["outsideRoots"]]);
+    expect(local.report.mock.calls.map(([failure]) => failure.kind)).toEqual([
+      "outsideProject",
+      "outsideProject",
+    ]);
+  });
+
+  it.each<[AgentLocalFileOpenOutcome, string]>([
+    ["notFound", "src/environment.prod.ts isn't in this project (app)."],
+    ["unreadable", "src/environment.prod.ts exists but couldn't be read."],
+    ["failed", "src/environment.prod.ts couldn't be opened."],
+  ])("reports a %s open with the project-relative path", async (outcome, message) => {
+    const local = localPort(outcome);
+    activate(`${ROOT}/src/environment.prod.ts`, ports(local.port));
+    await settle();
+    expect(local.report).toHaveBeenCalledOnce();
+    expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toBe(message);
+  });
+
+  it("names the worktree, not the repository, when the link resolved inside a worktree", async () => {
+    const local = localPort("notFound");
+    const scope = agentLocalFileLinkScope(local.port, {
+      remote: false,
+      repositoryRoot: ROOT,
+      worktreePath: `${ROOT}/.worktrees/agt-1`,
+    });
+    const { event } = click(turn("src/a.ts", null));
+    activateAgentMarkdownLink(event, parseAgentMarkdownLink("src/a.ts"), {
+      openExternal: vi.fn(),
+      localFiles: scope,
+    });
+    await settle();
+    expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toBe(
+      "src/a.ts isn't in this worktree (agt-1).",
+    );
+  });
+
+  it("treats a rejected opener as a failed open", async () => {
+    const local = localPort();
+    local.open.mockRejectedValueOnce(new Error("boom"));
+    activate("src/a.ts", ports(local.port));
+    await settle();
+    expect(local.report).toHaveBeenCalledExactlyOnceWith({
+      kind: "failed",
+      path: "src/a.ts",
+      place: { kind: "project", label: "app" },
+    });
+  });
+
+  it("bounds a very long path in the failure", async () => {
+    const local = localPort("notFound");
+    const long = `src/${"deep/".repeat(60)}file.ts`;
+    activate(long, ports(local.port));
+    await settle();
+    const failure = local.report.mock.calls[0]![0];
+    expect(Array.from(failure.path).length).toBeLessThanOrEqual(96);
+    expect(failure.path.startsWith("src/deep/")).toBe(true);
+    expect(failure.path.endsWith("file.ts")).toBe(true);
+    expect(failure.path).toContain("…");
+  });
+
+  it("remembers a failed link and does not repeat the same notice, but forgets it once it opens", async () => {
+    const local = localPort("notFound");
+    const remembered = memory();
+    const linkPorts = { ...ports(local.port), memory: remembered };
+    activate("src/gone.ts", linkPorts);
+    await settle();
+    expect(remembered.failures.get("src/gone.ts")?.kind).toBe("notFound");
+    activate("src/gone.ts", linkPorts);
+    await settle();
+    expect(local.open).toHaveBeenCalledTimes(2);
+    expect(local.report).toHaveBeenCalledOnce();
+
+    local.open.mockResolvedValueOnce("opened");
+    activate("src/gone.ts", linkPorts);
+    await settle();
+    expect(remembered.failures.has("src/gone.ts")).toBe(false);
+    expect(local.report).toHaveBeenCalledOnce();
   });
 
   it.each([`${ROOT}/a.ts`, "src/a.ts", "/etc/passwd"])(
     "rejects local link %s of a remote thread with the remote reason",
-    (href) => {
+    async (href) => {
       const local = localPort();
       const scope = agentLocalFileLinkScope(local.port, {
         remote: true,
@@ -143,8 +256,12 @@ describe("activateAgentMarkdownLink", () => {
         openExternal: vi.fn(),
         localFiles: scope,
       });
+      await settle();
       expect(local.open).not.toHaveBeenCalled();
-      expect(local.reject).toHaveBeenCalledExactlyOnceWith("remoteThread");
+      expect(local.report.mock.calls.map(([failure]) => failure.kind)).toEqual(["remoteThread"]);
+      expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toBe(
+        "File links are not available for remote threads.",
+      );
     },
   );
 
@@ -160,17 +277,21 @@ describe("activateAgentMarkdownLink", () => {
     } as unknown as KeyboardEvent<HTMLAnchorElement>;
     activateAgentMarkdownLink(event, parseAgentMarkdownLink("src/a.ts:4"), ports(local.port));
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(local.open).toHaveBeenCalledWith({ path: `${ROOT}/src/a.ts`, line: 4, column: null });
+    expect(local.open).toHaveBeenCalledWith({
+      location: { path: `${ROOT}/src/a.ts`, line: 4, column: null },
+      root: ROOT,
+    });
   });
 
-  it("ignores unsafe links without preventing or opening anything", () => {
+  it("ignores unsafe links without preventing or opening anything", async () => {
     const openExternal = vi.fn().mockResolvedValue(undefined);
     const local = localPort();
     const preventDefault = activate("javascript:alert(1)", ports(local.port, openExternal));
+    await settle();
     expect(preventDefault).not.toHaveBeenCalled();
     expect(openExternal).not.toHaveBeenCalled();
     expect(local.open).not.toHaveBeenCalled();
-    expect(local.reject).not.toHaveBeenCalled();
+    expect(local.report).not.toHaveBeenCalled();
   });
 
   it("ignores secondary-button clicks", () => {
@@ -220,9 +341,8 @@ describe("activateAgentMarkdownLink", () => {
     const preventDefault = activate("docs/design/page.html", ports(local.port), "docs/other.html");
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(local.open).toHaveBeenCalledWith({
-      path: `${ROOT}/docs/design/page.html`,
-      line: null,
-      column: null,
+      location: { path: `${ROOT}/docs/design/page.html`, line: null, column: null },
+      root: ROOT,
     });
   });
 

@@ -1,4 +1,4 @@
-import { memo, useCallback, useId, useMemo } from "react";
+import { memo, useId, useMemo } from "react";
 import { Brain, ChevronRight } from "lucide-react";
 import {
   agentThoughtPreview,
@@ -7,16 +7,16 @@ import {
 import { agentMarkdownPlainReasonLabel } from "../../domain/agentMarkdown/agentMarkdownTree";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { AgentProseContext } from "./AgentAssistantText";
-import { AgentMarkdownBlockView, type AgentMarkdownLinkActivation } from "./AgentMarkdown";
+import { AgentMarkdownBlockView } from "./AgentMarkdown";
 import { useAgentToolDisclosure } from "./AgentToolDisclosure";
 import {
   agentThoughtDisclosureKey,
   type AgentActivityThought,
   type AgentThoughtPresentation,
 } from "./agentActivityGrouping";
-import { activateAgentMarkdownLink } from "./agentMarkdownLinks";
 import { agentTextParagraphs } from "./agentModePresentation";
 import { useAgentMarkdown } from "./useAgentMarkdown";
+import { useAgentMarkdownLinkActivation } from "./useAgentMarkdownLinkActivation";
 
 interface AgentThoughtProps {
   readonly item: AgentActivityThought;
@@ -107,9 +107,9 @@ function AgentThoughtBody({
 }) {
   const presentation = useAgentMarkdown(prose.markdown, text, live, "", "parse");
   const { openExternalLink: openExternal, localFiles } = prose;
-  const activateLink = useCallback<AgentMarkdownLinkActivation>(
-    (event, link) => activateAgentMarkdownLink(event, link, { openExternal, localFiles }),
-    [localFiles, openExternal],
+  const { activateLink, unavailableLinks } = useAgentMarkdownLinkActivation(
+    openExternal,
+    localFiles,
   );
 
   if (presentation.kind === "rendered")
@@ -124,6 +124,7 @@ function AgentThoughtBody({
             onActivateLink={activateLink}
             query=""
             textClipboard={textClipboard}
+            unavailableLinks={unavailableLinks}
           />
         ))}
       </div>

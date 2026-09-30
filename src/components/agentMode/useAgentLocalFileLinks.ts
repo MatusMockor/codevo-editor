@@ -1,15 +1,15 @@
 import { useMemo } from "react";
 import type { AgentTasksNotice } from "../../application/agentThreadPorts";
-import type { AgentLocalFileLocation } from "../../domain/agentMarkdown/agentMarkdownLink";
+import type { AgentLocalFileOpenOutcome } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
 import {
-  AGENT_LOCAL_FILE_LINK_BLOCKED_NOTICE,
-  AGENT_LOCAL_FILE_LINK_FAILED_NOTICE,
-  AGENT_LOCAL_FILE_LINK_REMOTE_NOTICE,
+  agentLocalFileLinkNotice,
   type AgentLocalFileLinkPort,
-  type AgentLocalFileLinkRejection,
+  type AgentLocalFileOpenRequest,
 } from "./agentMarkdownLinks";
 
-export type AgentFileLocationOpener = (location: AgentLocalFileLocation) => Promise<boolean>;
+export type AgentFileLocationOpener = (
+  request: AgentLocalFileOpenRequest,
+) => Promise<AgentLocalFileOpenOutcome>;
 
 export function useAgentLocalFileLinks(
   openFileLocation: AgentFileLocationOpener | undefined,
@@ -17,29 +17,9 @@ export function useAgentLocalFileLinks(
 ): AgentLocalFileLinkPort | null {
   return useMemo(() => {
     if (openFileLocation === undefined) return null;
-    const reportFailure = (): void => reportNotice(AGENT_LOCAL_FILE_LINK_FAILED_NOTICE);
     return {
-      open: (location) => {
-        void openFileLocation(location).then((opened) => {
-          if (!opened) reportFailure();
-        }, reportFailure);
-      },
-      reject: (reason) => reportNotice(rejectionNotice(reason)),
+      open: openFileLocation,
+      report: (failure) => reportNotice(agentLocalFileLinkNotice(failure)),
     };
   }, [openFileLocation, reportNotice]);
-}
-
-function rejectionNotice(reason: AgentLocalFileLinkRejection): AgentTasksNotice {
-  switch (reason) {
-    case "outsideRoots":
-      return AGENT_LOCAL_FILE_LINK_BLOCKED_NOTICE;
-    case "remoteThread":
-      return AGENT_LOCAL_FILE_LINK_REMOTE_NOTICE;
-    default:
-      return unsupportedRejection(reason);
-  }
-}
-
-function unsupportedRejection(reason: never): never {
-  throw new Error(`Unsupported local file link rejection: ${String(reason)}`);
 }

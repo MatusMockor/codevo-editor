@@ -101,6 +101,20 @@ export function unsupportedAgentTurnChanges(
   return { turnId, state: "unsupported", files: [], truncated: false, reason };
 }
 
+const MISSING_SNAPSHOT_REASONS: ReadonlySet<string> = new Set([
+  "No snapshot is available for this turn.",
+  "No snapshot was recorded before this turn.",
+  "No completed snapshot is available for this turn.",
+]);
+
+export function isMissingAgentTurnSnapshot(summary: AgentTurnChangeSummary): boolean {
+  return (
+    summary.state === "unavailable" &&
+    summary.reason !== null &&
+    MISSING_SNAPSHOT_REASONS.has(summary.reason)
+  );
+}
+
 function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid turn changes response.");
