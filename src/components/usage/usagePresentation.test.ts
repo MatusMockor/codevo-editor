@@ -10,6 +10,11 @@ import {
 
 const NOW = Date.UTC(2026, 8, 24, 12, 0, 0);
 const HOUR = 3_600_000;
+const CLOCK = { locale: "en-GB", timeZone: "Europe/Bratislava" } as const;
+
+function model(value: AgentAccountUsageWindow, nowEpochMs: number = NOW) {
+  return usageLimitBarModel(value, nowEpochMs, CLOCK);
+}
 
 function window(overrides: Partial<AgentAccountUsageWindow>): AgentAccountUsageWindow {
   return {
@@ -25,25 +30,54 @@ function window(overrides: Partial<AgentAccountUsageWindow>): AgentAccountUsageW
 
 describe("usageLimitBarModel", () => {
   it("places the pace line at the elapsed share and flags spending ahead of pace", () => {
-    const model = usageLimitBarModel(window({ usedPercent: 72 }), NOW);
-    expect(model.elapsedPercent).toBe(60);
-    expect(model.aheadOfPace).toBe(true);
-    expect(model.hot).toBe(false);
-    expect(model.usedLabel).toBe("72% used");
-    expect(model.resetsLabel).toBe("Resets in 2h 0m");
+    const bar = model(window({ usedPercent: 72 }));
+    expect(bar.elapsedPercent).toBe(60);
+    expect(bar.aheadOfPace).toBe(true);
+    expect(bar.hot).toBe(false);
+    expect(bar.usedLabel).toBe("72% used");
+    expect(bar.resetsLabel).toBe("Resets 16:00");
+    expect(bar.resetsTitle).toBe("Thursday, 24 September 2026 at 16:00 · in 2h 0m");
+  });
+
+  it("names the concrete reset day", () => {
+    expect(model(window({ resetsAtEpochMs: Date.UTC(2026, 8, 25, 6, 0) })).resetsLabel).toBe(
+      "Resets tomorrow at 08:00",
+    );
+    const weekly = model(window({ resetsAtEpochMs: Date.UTC(2026, 8, 29, 6, 0) }));
+    expect(weekly.resetsLabel).toBe("Resets Tue 29 Sept 08:00");
+    expect(weekly.resetsTitle).toBe("Tuesday, 29 September 2026 at 08:00 · in 4d 18h");
+    expect(model(window({ resetsAtEpochMs: Date.UTC(2027, 0, 2, 7, 0) })).resetsLabel).toBe(
+      "Resets Sat, 2 Jan 2027 08:00",
+    );
+  });
+
+  it("switches today to tomorrow at local midnight", () => {
+    const reset = window({ resetsAtEpochMs: Date.UTC(2026, 8, 25, 6, 0) });
+    expect(model(reset, Date.UTC(2026, 8, 24, 21, 59)).resetsLabel).toBe(
+      "Resets tomorrow at 08:00",
+    );
+    expect(model(reset, Date.UTC(2026, 8, 24, 22, 0)).resetsLabel).toBe("Resets 08:00");
+  });
+
+  it("reads the concrete day out of a Claude reset label", () => {
+    const bar = model(
+      window({ resetsAtEpochMs: null, resetsLabel: "Sep 28 at 8am (Europe/Bratislava)" }),
+    );
+    expect(bar.resetsLabel).toBe("Resets Mon 28 Sept 08:00");
+    expect(bar.resetsTitle).toBe("Monday, 28 September 2026 at 08:00 · in 3d 18h");
+    expect(
+      model(window({ resetsAtEpochMs: null, resetsLabel: "4:20pm (Europe/Bratislava)" }))
+        .resetsLabel,
+    ).toBe("Resets 16:20");
   });
 
   it("omits the pace line when the reset time is only a label (Claude)", () => {
-    const model = usageLimitBarModel(
-      window({ resetsAtEpochMs: null, resetsLabel: "Sep 28 at 8am (Europe/Bratislava)" }),
-      NOW,
-    );
-    expect(model.elapsedPercent).toBeNull();
-    expect(model.aheadOfPace).toBe(false);
-    expect(model.resetsLabel).toBe("Resets Sep 28 at 8am (Europe/Bratislava)");
-    expect(model.ariaLabel).toBe(
-      "5-hour limit: 38% used, resets Sep 28 at 8am (Europe/Bratislava)",
-    );
+    const bar = model(window({ resetsAtEpochMs: null, resetsLabel: "Sep 28, 8ish" }));
+    expect(bar.elapsedPercent).toBeNull();
+    expect(bar.aheadOfPace).toBe(false);
+    expect(bar.resetsLabel).toBe("Resets Sep 28, 8ish");
+    expect(bar.resetsTitle).toBeNull();
+    expect(bar.ariaLabel).toBe("5-hour limit: 38% used, resets Sep 28, 8ish");
   });
 
   it.each([
@@ -62,10 +96,10 @@ describe("usageLimitBarModel", () => {
       label: "0% used",
     },
   ])("clamps the $name bar to 0-100", ({ usedPercent, width, hot, label }) => {
-    const model = usageLimitBarModel(window({ usedPercent }), NOW);
-    expect(model.usedPercent).toBe(width);
-    expect(model.hot).toBe(hot);
-    expect(model.usedLabel).toBe(label);
+    const bar = model(window({ usedPercent }));
+    expect(bar.usedPercent).toBe(width);
+    expect(bar.hot).toBe(hot);
+    expect(bar.usedLabel).toBe(label);
   });
 
   it.each([
@@ -79,19 +113,19 @@ describe("usageLimitBarModel", () => {
       name: "unknown window length",
       overrides: { windowDurationMinutes: null },
       elapsed: null,
-      reset: "Resets in 2h 0m",
+      reset: "Resets 16:00",
     },
     {
       name: "zero window length",
       overrides: { windowDurationMinutes: 0 },
       elapsed: null,
-      reset: "Resets in 2h 0m",
+      reset: "Resets 16:00",
     },
     {
       name: "reset further away than the window",
       overrides: { resetsAtEpochMs: NOW + 10 * HOUR },
       elapsed: 0,
-      reset: "Resets in 10h 0m",
+      reset: "Resets tomorrow at 00:00",
     },
     {
       name: "reset time beyond the representable date range",
@@ -112,15 +146,15 @@ describe("usageLimitBarModel", () => {
       reset: "Reset unavailable",
     },
   ])("handles $name", ({ overrides, elapsed, reset }) => {
-    const model = usageLimitBarModel(window(overrides), NOW);
-    expect(model.elapsedPercent).toBe(elapsed);
-    expect(model.resetsLabel).toBe(reset);
-    expect(model.aheadOfPace).toBe(elapsed !== null && model.usedPercent > elapsed + 5);
+    const bar = model(window(overrides));
+    expect(bar.elapsedPercent).toBe(elapsed);
+    expect(bar.resetsLabel).toBe(reset);
+    expect(bar.aheadOfPace).toBe(elapsed !== null && bar.usedPercent > elapsed + 5);
   });
 
   it("describes the bar for assistive technology", () => {
-    expect(usageLimitBarModel(window({}), NOW).ariaLabel).toBe(
-      "5-hour limit: 38% used, 60% of the window elapsed, resets in 2h 0m",
+    expect(model(window({})).ariaLabel).toBe(
+      "5-hour limit: 38% used, 60% of the window elapsed, resets 16:00",
     );
   });
 });

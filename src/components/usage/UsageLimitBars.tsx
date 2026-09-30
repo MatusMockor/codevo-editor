@@ -51,7 +51,7 @@ export function UsageLimitBars({
                 <span className="cv-usage-bar__pace" style={{ left: `${model.elapsedPercent}%` }} />
               )}
             </div>
-            <span className="cv-usage-limits__reset">
+            <span className="cv-usage-limits__reset" title={model.resetsTitle ?? undefined}>
               {model.aheadOfPace ? (
                 <TrendingUp aria-label="Ahead of pace" role="img" size={14} />
               ) : null}

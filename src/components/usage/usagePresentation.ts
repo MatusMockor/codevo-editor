@@ -3,6 +3,12 @@ import type {
   AgentAccountUsageWindow,
 } from "../../domain/agentAccountUsage";
 import type { AgentUsageProvider } from "../../domain/agentUsage";
+import {
+  calendarDateTime,
+  type CalendarClock,
+  type CalendarDateTime,
+} from "../../domain/calendarDateTime";
+import { claudeUsageResetEpochMs } from "../../domain/claudeUsageResetLabel";
 
 export type UsageProviderKind = AgentUsageProvider["provider"];
 
@@ -15,6 +21,7 @@ export interface UsageLimitBarModel {
   readonly usedLabel: string;
   readonly elapsedPercent: number | null;
   readonly resetsLabel: string;
+  readonly resetsTitle: string | null;
   readonly hot: boolean;
   readonly aheadOfPace: boolean;
   readonly ariaLabel: string;
@@ -49,18 +56,18 @@ const PACE_TOLERANCE_PERCENT = 5;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const MAX_DATE_EPOCH_MS = 8.64e15;
 
+export type UsageResetClock = Omit<CalendarClock, "nowEpochMs">;
+
 export function usageLimitBarModel(
   window: AgentAccountUsageWindow,
   nowEpochMs: number,
+  clock: UsageResetClock = {},
 ): UsageLimitBarModel {
   const usedPercent = clampPercent(window.usedPercent);
   const elapsedPercent = elapsedShare(window, nowEpochMs);
   const usedLabel = `${formatPercent(usedPercent)} used`;
-  const resetsLabel = resetLabel(
-    representableResetEpochMs(window.resetsAtEpochMs),
-    window.resetsLabel,
-    nowEpochMs,
-  );
+  const reset = resetText(window, { ...clock, nowEpochMs });
+  const resetsLabel = reset.label;
   const elapsedText =
     elapsedPercent === null ? "" : `, ${Math.round(elapsedPercent)}% of the window elapsed`;
   return {
@@ -70,6 +77,7 @@ export function usageLimitBarModel(
     usedLabel,
     elapsedPercent,
     resetsLabel,
+    resetsTitle: reset.title,
     hot: usedPercent >= USAGE_HOT_PERCENT,
     aheadOfPace: elapsedPercent !== null && usedPercent > elapsedPercent + PACE_TOLERANCE_PERCENT,
     ariaLabel: `${window.label}: ${usedLabel}${elapsedText}, ${lowerFirst(resetsLabel)}`,
@@ -239,21 +247,53 @@ function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-function resetLabel(epochMs: number | null, label: string | null, nowEpochMs: number): string {
-  if (epochMs === null) return label === null ? "Reset unavailable" : `Resets ${label}`;
-  const remainingMs = epochMs - nowEpochMs;
-  if (remainingMs <= 0) return "Reset passed";
-  if (remainingMs < DAY_MS) {
-    const totalMinutes = Math.ceil(remainingMs / 60_000);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return `Resets in ${hours > 0 ? `${hours}h ` : ""}${minutes}m`;
+interface ResetText {
+  readonly label: string;
+  readonly title: string | null;
+}
+
+function resetText(window: AgentAccountUsageWindow, clock: CalendarClock): ResetText {
+  const label = window.resetsLabel;
+  const epochMs =
+    representableResetEpochMs(window.resetsAtEpochMs) ??
+    (label === null ? null : claudeUsageResetEpochMs(label, clock.nowEpochMs));
+  const unparsed = {
+    label: label === null ? "Reset unavailable" : `Resets ${label}`,
+    title: null,
+  };
+  if (epochMs === null) return unparsed;
+  const remainingMs = epochMs - clock.nowEpochMs;
+  if (remainingMs <= 0) return { label: "Reset passed", title: null };
+  const at = calendarDateTime(epochMs, clock);
+  if (at === null) return unparsed;
+  return {
+    label: `Resets ${upcomingDayTime(at)}`,
+    title: `${at.title} · in ${countdown(remainingMs)}`,
+  };
+}
+
+function upcomingDayTime(at: CalendarDateTime): string {
+  switch (at.relation) {
+    case "today":
+      return at.time;
+    case "yesterday":
+    case "tomorrow":
+      return `${at.day} at ${at.time}`;
+    case "sameYear":
+    case "otherYear":
+      return `${at.day} ${at.time}`;
+    default:
+      return at.relation satisfies never;
   }
-  return `Resets ${new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(epochMs)}`;
+}
+
+function countdown(remainingMs: number): string {
+  const days = Math.floor(remainingMs / DAY_MS);
+  const hours = Math.floor((remainingMs % DAY_MS) / 3_600_000);
+  const minutes = Math.floor((remainingMs % 3_600_000) / 60_000);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function lowerFirst(value: string): string {
