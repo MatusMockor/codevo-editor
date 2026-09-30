@@ -359,6 +359,35 @@ describe("FileTree", () => {
     }
   });
 
+  it("dims gitignored entries like VS Code while keeping them visible and openable", () => {
+    const onOpenFile = vi.fn();
+    renderTree({
+      onOpenFile,
+      entriesByDirectory: {
+        "/workspace": [
+          { ...fileEntry("/workspace/dist", "dist", "directory"), ignored: true },
+          { ...fileEntry("/workspace/environment.ts", "environment.ts", "file"), ignored: true },
+          { ...fileEntry("/workspace/index.ts", "index.ts", "file"), ignored: false },
+        ],
+      },
+    });
+
+    const row = (name: string) =>
+      [...host.querySelectorAll<HTMLButtonElement>(".tree-row")].find(
+        (candidate) => candidate.textContent?.includes(name) === true,
+      );
+    const environment = row("environment.ts");
+    expect(environment?.classList.contains("is-git-ignored")).toBe(true);
+    expect(environment?.title).toBe("/workspace/environment.ts (Ignored)");
+    expect(row("dist")?.classList.contains("is-git-ignored")).toBe(true);
+    expect(row("index.ts")?.classList.contains("is-git-ignored")).toBe(false);
+
+    act(() => {
+      environment?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(onOpenFile).toHaveBeenCalledWith(expect.objectContaining({ name: "environment.ts" }));
+  });
+
   it("does not re-render when the parent re-renders with identical props", async () => {
     // The component calls `expandedDirectories.has(entry.path)` for every
     // rendered row, so spying on that method counts how often the memoized

@@ -10,6 +10,7 @@ export interface FileEntry {
   name: string;
   path: string;
   kind: FileEntryKind;
+  ignored?: boolean;
 }
 
 export interface FileSearchResult {

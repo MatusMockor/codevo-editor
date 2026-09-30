@@ -9,7 +9,10 @@ import {
 describe("workspace directory IPC contract", () => {
   it("invokes the exact command and decodes a bounded listing", async () => {
     const invoke = vi.fn().mockResolvedValue({
-      entries: [{ name: "src", relativePath: "src", kind: "directory" }],
+      entries: [
+        { name: "src", relativePath: "src", kind: "directory", ignored: false },
+        { name: "dist", relativePath: "dist", kind: "directory", ignored: true },
+      ],
       truncated: true,
     });
     await expect(
@@ -19,7 +22,10 @@ describe("workspace directory IPC contract", () => {
         maxEntries: 10,
       }),
     ).resolves.toEqual({
-      entries: [{ name: "src", relativePath: "src", kind: "directory" }],
+      entries: [
+        { name: "src", relativePath: "src", kind: "directory", ignored: false },
+        { name: "dist", relativePath: "dist", kind: "directory", ignored: true },
+      ],
       truncated: true,
     });
     expect(invoke).toHaveBeenCalledWith("workspace_read_directory_bounded", {
@@ -58,7 +64,7 @@ describe("workspace directory IPC contract", () => {
     await expect(
       invokeWorkspaceDirectoryIpc(
         vi.fn().mockResolvedValue({
-          entries: [{ name: "bad", relativePath: "../bad", kind: "file" }],
+          entries: [{ name: "bad", relativePath: "../bad", kind: "file", ignored: false }],
           truncated: false,
         }),
         { workspaceId: "ws-1", relativePath: "", maxEntries: 1 },
@@ -66,13 +72,31 @@ describe("workspace directory IPC contract", () => {
     ).rejects.toThrow("descendant path");
   });
 
+  it("rejects a missing or non-boolean gitignore decoration", async () => {
+    for (const entry of [
+      { name: "env.ts", relativePath: "env.ts", kind: "file" },
+      { name: "env.ts", relativePath: "env.ts", kind: "file", ignored: "yes" },
+    ]) {
+      await expect(
+        invokeWorkspaceDirectoryIpc(
+          vi.fn().mockResolvedValue({ entries: [entry], truncated: false }),
+          {
+            workspaceId: "ws-1",
+            relativePath: "",
+            maxEntries: 1,
+          },
+        ),
+      ).rejects.toThrow("ignored: expected a boolean");
+    }
+  });
+
   it("rejects a native result larger than the requested bound", async () => {
     await expect(
       invokeWorkspaceDirectoryIpc(
         vi.fn().mockResolvedValue({
           entries: [
-            { name: "one", relativePath: "one", kind: "file" },
-            { name: "two", relativePath: "two", kind: "file" },
+            { name: "one", relativePath: "one", kind: "file", ignored: false },
+            { name: "two", relativePath: "two", kind: "file", ignored: false },
           ],
           truncated: true,
         }),
@@ -101,6 +125,7 @@ describe("workspace directory IPC contract", () => {
             name,
             relativePath: name,
             kind: "file",
+            ignored: false,
           })),
           truncated: true,
         }),

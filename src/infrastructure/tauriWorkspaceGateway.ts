@@ -256,6 +256,7 @@ export class TauriWorkspaceGateway
         name: entry.name,
         kind: entry.kind,
         path: joinWorkspacePath(path, entry.relativePath),
+        ignored: entry.ignored,
       })),
       truncated: result.truncated,
     }));

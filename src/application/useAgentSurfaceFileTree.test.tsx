@@ -138,6 +138,39 @@ describe("useAgentSurfaceFileTree", () => {
     harness.unmount();
   });
 
+  it("hides VS Code's default files.exclude entries but keeps gitignored ones", async () => {
+    const harness = renderTree({
+      listings: {
+        [WORKTREE]: {
+          entries: [
+            directory(`${WORKTREE}/.svn`),
+            directory(`${WORKTREE}/.hg`),
+            directory(`${WORKTREE}/CVS`),
+            directory(`${WORKTREE}/.idea`),
+            { ...directory(`${WORKTREE}/node_modules`), ignored: true },
+            file(`${WORKTREE}/.DS_Store`),
+            file(`${WORKTREE}/Thumbs.db`),
+            file(`${WORKTREE}/.gitignore`),
+            { ...file(`${WORKTREE}/environment.ts`), ignored: true },
+          ],
+          truncated: false,
+        },
+      },
+    });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    expect(harness.hook().entriesByDirectory[WORKTREE]?.map((entry) => entry.name)).toEqual([
+      ".idea",
+      "node_modules",
+      ".gitignore",
+      "environment.ts",
+    ]);
+    expect(
+      harness.hook().entriesByDirectory[WORKTREE]?.find((entry) => entry.name === "environment.ts")
+        ?.ignored,
+    ).toBe(true);
+    harness.unmount();
+  });
+
   it("expands a directory with one read, collapses without re-reading and refuses foreign paths", async () => {
     const harness = renderTree({
       listings: {

@@ -13,6 +13,7 @@ export interface WorkspaceDirectoryDescriptorEntry {
   readonly name: string;
   readonly relativePath: string;
   readonly kind: "directory" | "file";
+  readonly ignored: boolean;
 }
 
 export interface BoundedWorkspaceDirectoryRead {
@@ -78,10 +79,12 @@ export async function invokeWorkspaceDirectoryIpc(
   const entries = output.entries.map((value, index) => {
     const path = `workspace_read_directory_bounded result.entries[${index}]`;
     const entry = record(value, path);
-    exactKeys(entry, ["name", "relativePath", "kind"], path);
+    exactKeys(entry, ["name", "relativePath", "kind", "ignored"], path);
     if (entry.kind !== "directory" && entry.kind !== "file")
       invalid(`${path}.kind`, '"directory" or "file"');
     const kind: "directory" | "file" = entry.kind;
+    if (typeof entry.ignored !== "boolean") invalid(`${path}.ignored`, "a boolean");
+    const ignored: boolean = entry.ignored;
     const name = boundedString(
       entry.name,
       `${path}.name`,
@@ -106,6 +109,7 @@ export async function invokeWorkspaceDirectoryIpc(
       name,
       relativePath: relativePath(entryRelativePath, `${path}.relativePath`, false),
       kind,
+      ignored,
     };
   });
   return { entries, truncated: output.truncated };

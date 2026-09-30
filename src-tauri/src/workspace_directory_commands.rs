@@ -1,5 +1,4 @@
 use crate::workspace::FileEntryKind;
-use crate::workspace_file_commands::DescriptorFileEntry;
 use crate::workspace_registry::{validate_relative_path, WorkspaceId, WorkspaceRegistry};
 use serde::Serialize;
 use std::{
@@ -14,7 +13,15 @@ use tauri::{AppHandle, Manager};
 #[path = "workspace_directory_commands/admission.rs"]
 mod admission;
 
+#[path = "workspace_directory_commands/ignore_decoration.rs"]
+mod ignore_decoration;
+
+#[cfg(test)]
+#[path = "workspace_directory_commands/explorer_listing_tests.rs"]
+mod explorer_listing_tests;
+
 use admission::reserve_directory_read;
+use ignore_decoration::{DirectoryIgnoreRules, IgnoreRuleFiles, PatternCase};
 
 pub const WORKSPACE_DIRECTORY_ENTRY_LIMIT: usize = 50_000;
 pub const WORKSPACE_DIRECTORY_NAME_BYTE_LIMIT: usize = 1_024;
@@ -24,8 +31,17 @@ pub const WORKSPACE_DIRECTORY_WORKSPACE_ID_BYTE_LIMIT: usize = 1_024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExplorerDirectoryEntry {
+    pub name: String,
+    pub relative_path: String,
+    pub kind: FileEntryKind,
+    pub ignored: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BoundedDirectoryEntries {
-    pub entries: Vec<DescriptorFileEntry>,
+    pub entries: Vec<ExplorerDirectoryEntry>,
     pub truncated: bool,
 }
 
@@ -50,7 +66,43 @@ pub fn read_directory_bounded(
     } else {
         registry.open_directory_descendant(id, path)?
     };
-    read_open_directory_bounded(directory, max_entries)
+    let listing = read_open_directory_bounded(directory, max_entries)?;
+    Ok(decorate_ignored(
+        listing,
+        &RegistryIgnoreRuleFiles { registry, id },
+        path,
+    ))
+}
+
+struct RegistryIgnoreRuleFiles<'a> {
+    registry: &'a WorkspaceRegistry,
+    id: &'a WorkspaceId,
+}
+
+impl IgnoreRuleFiles for RegistryIgnoreRuleFiles<'_> {
+    fn open(&self, relative_path: &Path) -> io::Result<File> {
+        self.registry.open_descendant(self.id, relative_path)
+    }
+
+    fn pattern_case(&self) -> PatternCase {
+        match self.registry.descriptor(self.id) {
+            Ok(descriptor) if descriptor.case_sensitive == Some(false) => PatternCase::Insensitive,
+            _ => PatternCase::Sensitive,
+        }
+    }
+}
+
+fn decorate_ignored(
+    mut listing: BoundedDirectoryEntries,
+    files: &dyn IgnoreRuleFiles,
+    directory: &Path,
+) -> BoundedDirectoryEntries {
+    let rules = DirectoryIgnoreRules::load(files, directory);
+    for entry in &mut listing.entries {
+        entry.ignored =
+            rules.is_ignored(&entry.name, matches!(entry.kind, FileEntryKind::Directory));
+    }
+    listing
 }
 
 fn read_open_directory_bounded(
@@ -81,7 +133,10 @@ fn reopen_directory(directory: &File) -> io::Result<File> {
     }
 }
 
-fn enumerate(directory: &File, max_entries: usize) -> io::Result<(Vec<DescriptorFileEntry>, bool)> {
+fn enumerate(
+    directory: &File,
+    max_entries: usize,
+) -> io::Result<(Vec<ExplorerDirectoryEntry>, bool)> {
     let stream = unsafe { libc::fdopendir(directory.try_clone()?.into_raw_fd()) };
     if stream.is_null() {
         return Err(io::Error::last_os_error());
@@ -145,10 +200,11 @@ fn enumerate(directory: &File, max_entries: usize) -> io::Result<(Vec<Descriptor
             return Ok((entries, true));
         }
         total_bytes += projected_bytes;
-        entries.push(DescriptorFileEntry {
+        entries.push(ExplorerDirectoryEntry {
             relative_path: name.clone(),
             name,
             kind,
+            ignored: false,
         });
     }
 }
@@ -214,7 +270,13 @@ pub(crate) async fn workspace_read_directory_bounded(
             registry.open_directory_descendant(&workspace_id, Path::new(&relative_path))
         }
         .map_err(|error| error.to_string())?;
-        read_open_directory_bounded(directory, max_entries).map_err(|error| error.to_string())
+        let listing = read_open_directory_bounded(directory, max_entries)
+            .map_err(|error| error.to_string())?;
+        let files = RegistryIgnoreRuleFiles {
+            registry: &registry,
+            id: &workspace_id,
+        };
+        Ok(decorate_ignored(listing, &files, Path::new(&relative_path)))
     })
     .await
     .map_err(|error| format!("Workspace directory worker failed: {error}"))?

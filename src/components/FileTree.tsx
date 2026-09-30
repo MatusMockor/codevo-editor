@@ -430,7 +430,7 @@ const TreeRow = memo(function TreeRow({
   const isDirectory = entry.kind === "directory";
   const isExpandable = isDirectory;
   const showLoadFailure = loadFailed && !isLoading;
-  const title = status ? `${entry.path} (${gitStatusTitle(status)})` : entry.path;
+  const title = treeRowTitle(entry, status);
 
   return (
     <div
@@ -448,6 +448,7 @@ const TreeRow = memo(function TreeRow({
         className={[
           "tree-row tree-row-virtual",
           isActive ? "active" : "",
+          entry.ignored === true ? "is-git-ignored" : "",
           showLoadFailure ? "has-load-failure" : "",
         ]
           .filter(Boolean)
@@ -539,6 +540,12 @@ const TreeRow = memo(function TreeRow({
     </div>
   );
 });
+
+function treeRowTitle(entry: FileEntry, status: GitChangeStatus | undefined): string {
+  if (status) return `${entry.path} (${gitStatusTitle(status)})`;
+  if (entry.ignored === true) return `${entry.path} (Ignored)`;
+  return entry.path;
+}
 
 function copyText(value: string) {
   const write = navigator.clipboard?.writeText(value);

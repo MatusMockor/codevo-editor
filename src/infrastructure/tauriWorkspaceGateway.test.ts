@@ -671,13 +671,24 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
 
   it("uses the strict bounded directory contract and preserves the selected alias", async () => {
     invoke.mockResolvedValue({
-      entries: [{ name: "App.php", relativePath: "App.php", kind: "file" }],
+      entries: [
+        { name: "App.php", relativePath: "App.php", kind: "file", ignored: false },
+        { name: "environment.ts", relativePath: "environment.ts", kind: "file", ignored: true },
+      ],
       truncated: true,
     });
     await expect(
       trustedGateway().readDirectoryBounded("/selected/project/src", 20_000),
     ).resolves.toEqual({
-      entries: [{ name: "App.php", path: "/selected/project/src/App.php", kind: "file" }],
+      entries: [
+        { name: "App.php", path: "/selected/project/src/App.php", kind: "file", ignored: false },
+        {
+          name: "environment.ts",
+          path: "/selected/project/src/environment.ts",
+          kind: "file",
+          ignored: true,
+        },
+      ],
       truncated: true,
     });
     expect(invoke).toHaveBeenCalledWith("workspace_read_directory_bounded", {

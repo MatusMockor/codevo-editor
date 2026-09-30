@@ -421,6 +421,11 @@ button {
   color: var(--cv-fg-strong);
 }
 
+.tree-row.is-git-ignored:not(.active),
+.tree-row.is-git-ignored:not(.active) .tree-entry-icon {
+  color: var(--cv-fg-subtle);
+}
+
 .tree-virtual-content {
   position: relative;
   box-sizing: border-box;

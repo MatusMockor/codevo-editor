@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { withoutExplorerExcludedEntries } from "../domain/explorerFilesExclude";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
 import type {
   WorkspaceFileChangeEvent,
@@ -246,12 +247,17 @@ export function useAgentSurfaceFileTree(
       const gateway = filesRef.current;
       if (gateway.readDirectoryBounded !== undefined) {
         const result = await gateway.readDirectoryBounded(path, MAX_AGENT_SURFACE_TREE_ENTRIES);
-        return { entries: orderAgentSurfaceEntries(result.entries), truncated: result.truncated };
+        return {
+          entries: orderAgentSurfaceEntries(withoutExplorerExcludedEntries(result.entries)),
+          truncated: result.truncated,
+        };
       }
       const entries = await gateway.readDirectory(path);
       const truncated = entries.length > MAX_AGENT_SURFACE_TREE_ENTRIES;
       return {
-        entries: orderAgentSurfaceEntries(entries.slice(0, MAX_AGENT_SURFACE_TREE_ENTRIES)),
+        entries: orderAgentSurfaceEntries(
+          withoutExplorerExcludedEntries(entries.slice(0, MAX_AGENT_SURFACE_TREE_ENTRIES)),
+        ),
         truncated,
       };
     },
