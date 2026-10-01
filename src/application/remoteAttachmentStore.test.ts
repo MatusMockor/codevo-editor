@@ -158,13 +158,7 @@ describe("RemoteAttachmentStore", () => {
     ])
       await expect(store.stageAgentAttachmentBytes({ ...input(), ...change })).rejects.toThrow();
     await expect(
-      store.stageAgentAttachmentFromPath({
-        workspaceId: "workspace",
-        kind: "image",
-        name: "x.png",
-        mime: "image/png",
-        path: "/tmp/x.png",
-      }),
+      store.inspectAgentAttachmentCandidate({ workspaceId: "workspace", path: "/tmp/x.png" }),
     ).rejects.toThrow("local file paths");
     const turn = await request(store);
     await expect(

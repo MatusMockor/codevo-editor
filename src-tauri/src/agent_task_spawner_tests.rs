@@ -1088,13 +1088,24 @@ fn the_turn_image_budget_is_enforced_before_the_frame_is_built() {
         AgentCliInvocation::ClaudeCode,
         "do it",
         vec![
-            inline_image(&vec![0u8; (MAX_AGENT_TURN_IMAGE_BYTES / 2 + 1) as usize]),
-            inline_image(&vec![0u8; (MAX_AGENT_TURN_IMAGE_BYTES / 2 + 1) as usize]),
+            inline_image(&vec![
+                0u8;
+                (MAX_AGENT_TURN_SEND_IMAGE_BYTES / 2 + 1) as usize
+            ]),
+            inline_image(&vec![
+                0u8;
+                (MAX_AGENT_TURN_SEND_IMAGE_BYTES / 2 + 1) as usize
+            ]),
         ],
     )
     .expect_err("the aggregate turn budget is enforced before spawning");
 
     assert_eq!(oversized, AGENT_TURN_IMAGE_BUDGET_ERROR);
+    assert_eq!(MAX_AGENT_TURN_SEND_IMAGE_BYTES, 20 * 1024 * 1024);
+    assert_eq!(
+        AGENT_TURN_IMAGE_BUDGET_ERROR,
+        "Images in this message exceed 20 MiB."
+    );
 }
 
 #[test]

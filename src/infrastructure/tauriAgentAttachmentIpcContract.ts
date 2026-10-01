@@ -19,14 +19,11 @@ import type {
   ClaimAgentAttachmentsRequest,
   ClaimedAgentAttachment,
   StageAgentAttachmentBytesRequest,
-  StageAgentAttachmentFromPathRequest,
   StagedAgentAttachment,
   StoredAgentAttachmentRequest,
 } from "../application/agentAttachmentPorts";
 
 export const STAGE_AGENT_ATTACHMENT_BYTES_IPC_COMMAND = "stage_agent_attachment_bytes" as const;
-export const STAGE_AGENT_ATTACHMENT_FROM_PATH_IPC_COMMAND =
-  "stage_agent_attachment_from_path" as const;
 export const INSPECT_AGENT_ATTACHMENT_CANDIDATE_IPC_COMMAND =
   "inspect_agent_attachment_candidate" as const;
 export const READ_AGENT_ATTACHMENT_CANDIDATE_IPC_COMMAND =
@@ -80,22 +77,6 @@ export async function invokeStageAgentAttachmentBytesIpc(
   const body = stagedBody(request);
   return parseStagedAgentAttachment(
     await invokeRaw(STAGE_AGENT_ATTACHMENT_BYTES_IPC_COMMAND, body, headers),
-  );
-}
-
-export async function invokeStageAgentAttachmentFromPathIpc(
-  invokeCommand: InvokeAgentAttachmentCommand,
-  request: StageAgentAttachmentFromPathRequest,
-): Promise<StagedAgentAttachment> {
-  const validated = {
-    workspaceId: workspaceId(request.workspaceId, "request.workspaceId"),
-    kind: imageKind(request.kind, "request.kind"),
-    name: attachmentName(request.name, "request.name"),
-    mime: imageMime(request.mime, "request.mime"),
-    path: attachmentPath(request.path, "request.path"),
-  };
-  return parseStagedAgentAttachment(
-    await invokeCommand(STAGE_AGENT_ATTACHMENT_FROM_PATH_IPC_COMMAND, { request: validated }),
   );
 }
 
@@ -293,11 +274,6 @@ function asciiJson(value: Record<string, unknown>): string {
 
 function stagedKind(value: unknown, path: string): "image" | "file" {
   if (value !== "image" && value !== "file") invalid(path, "image or file");
-  return value;
-}
-
-function imageKind(value: unknown, path: string): "image" {
-  if (value !== "image") invalid(path, "image");
   return value;
 }
 

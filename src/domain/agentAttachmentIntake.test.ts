@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_IMAGE_MAX_MODEL_BYTES,
   MAX_AGENT_FILE_BYTES,
   MAX_AGENT_IMAGE_BYTES,
   MAX_AGENT_TURN_ATTACHMENTS,
   MAX_AGENT_TURN_IMAGE_BYTES,
+  MAX_AGENT_TURN_SEND_IMAGE_BYTES,
   type AgentAttachment,
 } from "./agentAttachment";
 import {
@@ -186,21 +188,33 @@ describe("admitAgentAttachmentToTurn", () => {
     expect(admitAgentAttachmentToTurn(existing.slice(1), REFERENCE)).toEqual({ kind: "accepted" });
   });
 
-  it("refuses an image over the per-image cap", () => {
+  it("refuses an image over the model byte cap", () => {
     expect(
       admitAgentAttachmentToTurn([], { kind: "image", bytes: MAX_AGENT_IMAGE_BYTES + 1 }),
     ).toEqual({ kind: "refused", reason: AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL });
+    expect(
+      admitAgentAttachmentToTurn([], { kind: "image", bytes: AGENT_IMAGE_MAX_MODEL_BYTES + 1 }),
+    ).toEqual({ kind: "refused", reason: AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL });
+    expect(
+      admitAgentAttachmentToTurn([], { kind: "image", bytes: AGENT_IMAGE_MAX_MODEL_BYTES }),
+    ).toEqual({ kind: "accepted" });
+    expect(AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL).toBe("Image cannot be shrunk to 3.75 MB.");
   });
 
-  it("refuses an image that pushes the turn over the aggregate image cap", () => {
-    const existing = Array.from({ length: 4 }, () => ({
+  it("refuses an image that pushes the turn over the send image budget", () => {
+    const existing = Array.from({ length: 5 }, () => ({
       kind: "image" as const,
-      bytes: MAX_AGENT_IMAGE_BYTES,
+      bytes: AGENT_IMAGE_MAX_MODEL_BYTES,
     }));
     expect(
-      admitAgentAttachmentToTurn(existing, { kind: "image", bytes: MAX_AGENT_IMAGE_BYTES }),
+      admitAgentAttachmentToTurn(existing, { kind: "image", bytes: AGENT_IMAGE_MAX_MODEL_BYTES }),
     ).toEqual({ kind: "refused", reason: AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL });
+    expect(admitAgentAttachmentToTurn(existing, { kind: "image", bytes: 1 })).toEqual({
+      kind: "accepted",
+    });
+    expect(MAX_AGENT_TURN_SEND_IMAGE_BYTES).toBe(20 * 1_024 * 1_024);
     expect(MAX_AGENT_TURN_IMAGE_BYTES).toBe(40 * 1_024 * 1_024);
+    expect(AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL).toBe("Images in this message exceed 20 MiB.");
   });
 
   it("ignores non-image bytes in the aggregate image cap", () => {
@@ -209,7 +223,7 @@ describe("admitAgentAttachmentToTurn", () => {
       { kind: "reference" as const, bytes: MAX_AGENT_FILE_BYTES },
     ];
     expect(
-      admitAgentAttachmentToTurn(existing, { kind: "image", bytes: MAX_AGENT_IMAGE_BYTES }),
+      admitAgentAttachmentToTurn(existing, { kind: "image", bytes: AGENT_IMAGE_MAX_MODEL_BYTES }),
     ).toEqual({ kind: "accepted" });
   });
 });

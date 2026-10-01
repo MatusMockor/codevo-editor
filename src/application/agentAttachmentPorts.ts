@@ -13,13 +13,6 @@ export interface StageAgentAttachmentBytesRequest extends AgentAttachmentWorkspa
   readonly bytes: ArrayBuffer;
 }
 
-export interface StageAgentAttachmentFromPathRequest extends AgentAttachmentWorkspaceRequest {
-  readonly kind: "image";
-  readonly name: string;
-  readonly mime: AgentImageMime;
-  readonly path: string;
-}
-
 export interface AgentAttachmentCandidateRequest extends AgentAttachmentWorkspaceRequest {
   readonly path: string;
 }
@@ -63,9 +56,6 @@ export interface StoredAgentAttachmentRequest extends AgentAttachmentWorkspaceRe
 export interface AgentAttachmentGateway {
   stageAgentAttachmentBytes(
     request: StageAgentAttachmentBytesRequest,
-  ): Promise<StagedAgentAttachment>;
-  stageAgentAttachmentFromPath(
-    request: StageAgentAttachmentFromPathRequest,
   ): Promise<StagedAgentAttachment>;
   inspectAgentAttachmentCandidate(
     request: AgentAttachmentCandidateRequest,

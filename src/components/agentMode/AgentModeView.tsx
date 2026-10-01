@@ -1030,7 +1030,11 @@ function LocalAgentModeView({
                 thread={selectedThread}
                 trailingExtras={AGENTS_TOGGLE_BUTTON}
               />
-              <AgentThreadErrorBanner agents={agents} view={sessionThread} />
+              <AgentThreadErrorBanner
+                agents={agents}
+                recovery={composer.composerProps.recovery ?? null}
+                view={sessionThread}
+              />
               {projects.length === 0 &&
               creation.pendingClones.length === 0 &&
               selectedServerId === null &&

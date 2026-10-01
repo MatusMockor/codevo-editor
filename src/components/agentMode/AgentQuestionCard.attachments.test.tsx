@@ -67,11 +67,10 @@ function fakeGateway() {
       name,
       mime,
       bytes: bytes.byteLength,
-      width,
-      height,
+      width: width ?? 64,
+      height: height ?? 32,
       promptLineBytesMax: 160,
     })),
-    stageAgentAttachmentFromPath: vi.fn(),
     inspectAgentAttachmentCandidate: vi.fn(),
     readAgentAttachmentCandidate: vi.fn(),
     claimAgentAttachments: vi.fn(async ({ attachmentIds }: { attachmentIds: readonly string[] }) =>

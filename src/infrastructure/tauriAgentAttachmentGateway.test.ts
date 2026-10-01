@@ -64,13 +64,6 @@ describe("TauriAgentAttachmentGateway", () => {
       height: 4,
       bytes: new Uint8Array([1, 2]).buffer,
     });
-    await port.stageAgentAttachmentFromPath({
-      workspaceId: "ws-1",
-      kind: "image",
-      name: "shot.png",
-      mime: "image/png",
-      path: "/Users/dev/shot.png",
-    });
     await port.inspectAgentAttachmentCandidate({
       workspaceId: "ws-1",
       path: "/Users/dev/shot.png",
@@ -97,7 +90,6 @@ describe("TauriAgentAttachmentGateway", () => {
       "stage_agent_attachment_bytes",
     ]);
     expect(invokeCommand.mock.calls.map((call) => call[0])).toEqual([
-      "stage_agent_attachment_from_path",
       "inspect_agent_attachment_candidate",
       "read_agent_attachment_candidate",
       "claim_agent_attachments",

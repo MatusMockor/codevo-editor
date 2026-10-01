@@ -1,4 +1,8 @@
-import { useAgentComposerRecovery, type AgentComposerRecovery } from "./useAgentComposerRecovery";
+import {
+  carryAgentDraftIntoRecovery,
+  useAgentComposerRecovery,
+  type AgentComposerRecovery,
+} from "./useAgentComposerRecovery";
 import { useAgentComposerLaunchChoices } from "./useAgentComposerLaunchChoices";
 import {
   useAgentSessionRestartDismissal,
@@ -145,6 +149,7 @@ export type AgentComposerControllerProps = Omit<
   | "onOpenProviderSettings"
   | "onOpenEnvironmentSettings"
   | "onRecoverDraft"
+  | "recoveryReason"
   | "onPromptChange"
   | "onSubmit"
   | "prompt"
@@ -939,8 +944,9 @@ export function useAgentComposerPromptState(
   const recoveryOwner = promptOwnerRef.current;
   return {
     ...composerProps,
+    recoveryReason: recovery?.reason,
     onRecoverDraft:
-      recovery == null
+      recovery == null || recovery.reason === "conversationImagesTooLarge"
         ? undefined
         : () => {
             if (
@@ -948,14 +954,11 @@ export function useAgentComposerPromptState(
               promptOwnerRef.current !== recoveryOwner
             )
               return "unavailable";
-            const existing = drafts.readDraft(recovery.draftKey);
-            const merged = mergeRestoredPrompt(existing, prompt);
-            if (agentPromptByteLength(merged) > MAX_AGENT_COMPOSER_DRAFT_BYTES)
-              return "draftTooLarge";
-            if (!recovery.activate()) return "unavailable";
-            drafts.writeDraft(recovery.draftKey, merged);
-            focusAgentComposerPrompt(merged.length);
-            return "started";
+            const outcome = carryAgentDraftIntoRecovery(drafts, recovery, prompt);
+            if (outcome === "started") {
+              focusAgentComposerPrompt(drafts.readDraft(recovery.draftKey).length);
+            }
+            return outcome;
           },
     promptRevision: promptRevisionRef.current,
     onPromptChange: changePrompt,
@@ -973,7 +976,7 @@ function restoredDraftText(current: string, restored: string): string {
 
 export const AGENT_COMPOSER_PROMPT_ID = "agent-prompt";
 
-function focusAgentComposerPrompt(caret: number): void {
+export function focusAgentComposerPrompt(caret: number): void {
   if (typeof document === "undefined") return;
   const node = document.getElementById(AGENT_COMPOSER_PROMPT_ID);
   if (!(node instanceof HTMLTextAreaElement)) return;

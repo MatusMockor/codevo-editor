@@ -478,7 +478,7 @@ describe("AgentComposer attachments", () => {
     render({ attachments: surface({ drafts: [failedDraft()], blocked: true }) });
 
     expect(host.querySelector(".agent-composer-attachment__failure")?.textContent).toBe(
-      "Image cannot be shrunk to 10 MiB.",
+      "Image cannot be shrunk to 3.75 MB.",
     );
   });
 
@@ -871,7 +871,7 @@ function failedDraft(): AgentComposerAttachmentDraft {
     kind: "image",
     state: "failed",
     name: "huge.png",
-    failure: "Image cannot be shrunk to 10 MiB.",
+    failure: "Image cannot be shrunk to 3.75 MB.",
   });
 }
 

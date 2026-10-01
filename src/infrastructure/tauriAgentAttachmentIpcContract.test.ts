@@ -8,7 +8,6 @@ import {
   RELEASE_AGENT_ATTACHMENT_IPC_COMMAND,
   REVEAL_AGENT_ATTACHMENT_IPC_COMMAND,
   STAGE_AGENT_ATTACHMENT_BYTES_IPC_COMMAND,
-  STAGE_AGENT_ATTACHMENT_FROM_PATH_IPC_COMMAND,
   agentAttachmentRequestHeaders,
   invokeClaimAgentAttachmentsIpc,
   invokeInspectAgentAttachmentCandidateIpc,
@@ -16,7 +15,6 @@ import {
   invokeReleaseAgentAttachmentIpc,
   invokeRevealAgentAttachmentIpc,
   invokeStageAgentAttachmentBytesIpc,
-  invokeStageAgentAttachmentFromPathIpc,
   parseStagedAgentAttachment,
   type InvokeAgentAttachmentRawCommand,
 } from "./tauriAgentAttachmentIpcContract";
@@ -39,9 +37,8 @@ function stagedResult(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("agent attachment IPC command names", () => {
-  it("pins the eight snake_case commands and the raw-body header", () => {
+  it("pins the seven snake_case commands and the raw-body header", () => {
     expect(STAGE_AGENT_ATTACHMENT_BYTES_IPC_COMMAND).toBe("stage_agent_attachment_bytes");
-    expect(STAGE_AGENT_ATTACHMENT_FROM_PATH_IPC_COMMAND).toBe("stage_agent_attachment_from_path");
     expect(INSPECT_AGENT_ATTACHMENT_CANDIDATE_IPC_COMMAND).toBe(
       "inspect_agent_attachment_candidate",
     );
@@ -113,39 +110,6 @@ describe("stage_agent_attachment_bytes", () => {
       }),
     ).rejects.toThrow(/request\.bytes/);
     expect(invokeRaw).not.toHaveBeenCalled();
-  });
-});
-
-describe("stage_agent_attachment_from_path", () => {
-  it("sends a bounded absolute path and rejects a relative one", async () => {
-    const invokeCommand = vi.fn(async () => stagedResult());
-
-    await invokeStageAgentAttachmentFromPathIpc(invokeCommand, {
-      workspaceId: "ws-1",
-      kind: "image",
-      name: "shot.png",
-      mime: "image/png",
-      path: "/Users/dev/shot.png",
-    });
-
-    expect(invokeCommand).toHaveBeenCalledWith("stage_agent_attachment_from_path", {
-      request: {
-        workspaceId: "ws-1",
-        kind: "image",
-        name: "shot.png",
-        mime: "image/png",
-        path: "/Users/dev/shot.png",
-      },
-    });
-    await expect(
-      invokeStageAgentAttachmentFromPathIpc(invokeCommand, {
-        workspaceId: "ws-1",
-        kind: "image",
-        name: "shot.png",
-        mime: "image/png",
-        path: "shot.png",
-      }),
-    ).rejects.toThrow(/request\.path/);
   });
 });
 

@@ -7,8 +7,22 @@ import {
   RETRY_FAILED_MESSAGE,
   RETRY_NOT_STARTED_MESSAGE,
 } from "../../application/useAgentTurnRetry";
+import {
+  createAgentComposerDraftStore,
+  MAX_AGENT_COMPOSER_DRAFT_BYTES,
+  type AgentComposerDraftStore,
+} from "../../application/agentComposerDrafts";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import { AgentThreadErrorBanner, RETRY_CONFIRM_DELAY_MS } from "./AgentThreadErrorBanner";
+import { waitForReact } from "../../test/reactTestLifecycle";
+import type { AgentComposerProjectOption } from "./agentComposerTarget";
+import {
+  AgentThreadErrorBanner,
+  NEW_THREAD_DRAFT_TOO_LARGE_MESSAGE,
+  NEW_THREAD_HINT,
+  RETRY_CONFIRM_DELAY_MS,
+} from "./AgentThreadErrorBanner";
+import { AGENT_COMPOSER_PROMPT_ID } from "./useAgentComposerState";
+import { useAgentComposerRecovery } from "./useAgentComposerRecovery";
 
 type SendFollowUp = (request: AgentFollowUpRequest) => Promise<boolean>;
 
@@ -52,6 +66,64 @@ function surface(
   lastUsed: AgentLaunchOptions | null = null,
 ) {
   return { threads: [view], sendFollowUp, lastUsedLaunch: () => lastUsed };
+}
+
+const IMAGES_NOTICE =
+  "API Error: an image in the conversation could not be processed and was removed. Re-read the file with a different approach if you still need it.";
+const PROJECT: AgentComposerProjectOption = {
+  projectRootKey: "/r",
+  ownerId: "w",
+  generation: 1,
+  label: "orders",
+  origin: "active-tab",
+  rootPath: "/r",
+  repositories: [{ repositoryRoot: "/r", label: "orders" }],
+};
+
+function imagesFailed(): AgentThreadView {
+  const view = failed("t1");
+  return {
+    ...view,
+    thread: {
+      ...view.thread,
+      turns: [
+        {
+          ...view.thread.turns[0]!,
+          status: { kind: "exited", exitCode: 1 },
+          events: [{ kind: "assistantText", text: IMAGES_NOTICE }],
+        },
+      ],
+    },
+  };
+}
+
+function RecoveringBanner(props: {
+  readonly view: AgentThreadView;
+  readonly drafts: AgentComposerDraftStore;
+  readonly sendFollowUp: SendFollowUp;
+  startNewThread(projectRootKey: string, repositoryRoot: string): void;
+  selectEnvironment(projectRootKey: string): void;
+}) {
+  const recovery = useAgentComposerRecovery({
+    selectedThread: props.view,
+    projects: [PROJECT],
+    startNewThread: props.startNewThread,
+    selectEnvironment: props.selectEnvironment,
+  });
+  return (
+    <AgentThreadErrorBanner
+      agents={surface(props.view, props.sendFollowUp)}
+      drafts={props.drafts}
+      recovery={recovery}
+      view={props.view}
+    />
+  );
+}
+
+function newThreadButton(): HTMLButtonElement | undefined {
+  return [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Start new thread",
+  );
 }
 
 function retryButton(): HTMLButtonElement | undefined {
@@ -213,6 +285,107 @@ describe("AgentThreadErrorBanner", () => {
     );
     expect(retryButton()?.disabled).toBe(true);
     expect(host.textContent).toContain("Send it again from the composer.");
+  });
+
+  it("starts a new thread in the same project and carries the composer draft", async () => {
+    const drafts = createAgentComposerDraftStore();
+    drafts.writeDraft("agt-1", "Compare the two dashboards");
+    drafts.writeDraft("new:/r", "Earlier idea");
+    const startNewThread = vi.fn();
+    const selectEnvironment = vi.fn();
+    const sendFollowUp = vi.fn<SendFollowUp>(async () => true);
+    const view = imagesFailed();
+    const prompt = document.createElement("textarea");
+    prompt.id = AGENT_COMPOSER_PROMPT_ID;
+    document.body.append(prompt);
+    act(() =>
+      root.render(
+        <RecoveringBanner
+          drafts={drafts}
+          selectEnvironment={selectEnvironment}
+          sendFollowUp={sendFollowUp}
+          startNewThread={startNewThread}
+          view={view}
+        />,
+      ),
+    );
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(NEW_THREAD_HINT);
+    const hintId = newThreadButton()?.getAttribute("aria-describedby") ?? "";
+    expect(document.getElementById(hintId)?.textContent).toBe(NEW_THREAD_HINT);
+    expect(alert?.textContent).toContain(
+      "This conversation contains images larger than the API allows.",
+    );
+    expect(alert?.textContent).toContain("Start a new thread to continue.");
+    expect(retryButton()).toBeUndefined();
+    await act(async () => {
+      newThreadButton()?.click();
+    });
+    await waitForReact(() => expect(startNewThread).toHaveBeenCalledTimes(1));
+    expect(startNewThread).toHaveBeenCalledWith("/r", "/r");
+    expect(selectEnvironment).toHaveBeenCalledWith("/r");
+    expect(drafts.readDraft("new:/r")).toBe("Earlier idea\n\nCompare the two dashboards");
+    expect(drafts.readDraft("agt-1")).toBe("Compare the two dashboards");
+    expect(sendFollowUp).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(prompt);
+    prompt.remove();
+  });
+
+  it("keeps both drafts and explains when the combined draft is too large", async () => {
+    const drafts = createAgentComposerDraftStore();
+    const half = "x".repeat(MAX_AGENT_COMPOSER_DRAFT_BYTES / 2 + 1);
+    drafts.writeDraft("agt-1", half);
+    drafts.writeDraft("new:/r", half);
+    const startNewThread = vi.fn();
+    const view = imagesFailed();
+    act(() =>
+      root.render(
+        <RecoveringBanner
+          drafts={drafts}
+          selectEnvironment={vi.fn()}
+          sendFollowUp={vi.fn<SendFollowUp>()}
+          startNewThread={startNewThread}
+          view={view}
+        />,
+      ),
+    );
+    await act(async () => {
+      newThreadButton()?.click();
+    });
+    expect(host.textContent).toContain(NEW_THREAD_DRAFT_TOO_LARGE_MESSAGE);
+    expect(startNewThread).not.toHaveBeenCalled();
+    expect(drafts.readDraft("new:/r")).toBe(half);
+    expect(drafts.readDraft("agt-1")).toBe(half);
+    const other = failed("t9");
+    const otherView = { ...other, thread: { ...other.thread, threadId: "agt-2" } };
+    for (const next of [otherView, view]) {
+      act(() =>
+        root.render(
+          <RecoveringBanner
+            drafts={drafts}
+            selectEnvironment={vi.fn()}
+            sendFollowUp={vi.fn<SendFollowUp>()}
+            startNewThread={startNewThread}
+            view={next}
+          />,
+        ),
+      );
+    }
+    expect(host.textContent).not.toContain(NEW_THREAD_DRAFT_TOO_LARGE_MESSAGE);
+  });
+
+  it("never offers Retry and hides the action when no new thread can be started", () => {
+    const view = imagesFailed();
+    act(() =>
+      root.render(
+        <AgentThreadErrorBanner agents={surface(view, vi.fn<SendFollowUp>())} view={view} />,
+      ),
+    );
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      "Start a new thread to continue.",
+    );
+    expect(retryButton()).toBeUndefined();
+    expect(newThreadButton()).toBeUndefined();
   });
 
   it("renders nothing without a failed last turn", () => {

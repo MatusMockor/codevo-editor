@@ -1,6 +1,7 @@
 use super::agent_attachment_commands::agent_attachment_store::{
-    agent_attachment_image::agent_image_media_type, prompt_line, AgentAttachmentKind,
-    AgentAttachmentOwner, AgentAttachmentStore, ResolvedTurnAttachment,
+    agent_attachment_image::{agent_image_media_type, ensure_agent_model_image},
+    prompt_line, AgentAttachmentKind, AgentAttachmentOwner, AgentAttachmentStore,
+    ResolvedTurnAttachment,
 };
 use super::agent_attachment_commands::agent_thread_store::{
     MAX_AGENT_ATTACHMENT_NAME_BYTES, MAX_AGENT_ATTACHMENT_PATH_BYTES, MAX_AGENT_TURN_ATTACHMENTS,
@@ -24,7 +25,7 @@ use crate::agent_task_spawner::claude_session_turn::ClaudeSessionAuthority;
 use crate::agent_task_spawner::{
     claude_user_frame, plan_agent_invocation_with_authority, AgentCliInvocation,
     AgentImageAttachment, AgentInvocationRequest, AgentTaskSpawnPlan,
-    AGENT_TURN_IMAGE_BUDGET_ERROR, MAX_AGENT_PROMPT_BYTES, MAX_AGENT_TURN_IMAGE_BYTES,
+    AGENT_TURN_IMAGE_BUDGET_ERROR, MAX_AGENT_PROMPT_BYTES, MAX_AGENT_TURN_SEND_IMAGE_BYTES,
 };
 use crate::agent_task_supervisor::agent_task_pending_stops::AGENT_TASK_STOPPED_BEFORE_START_ERROR;
 use crate::agent_task_supervisor::{
@@ -420,7 +421,7 @@ fn agent_image_attachments(
     let total = images.iter().fold(0u64, |total, attachment| {
         total.saturating_add(attachment.bytes)
     });
-    if total > MAX_AGENT_TURN_IMAGE_BYTES {
+    if total > MAX_AGENT_TURN_SEND_IMAGE_BYTES {
         return Err(AGENT_TURN_IMAGE_BUDGET_ERROR.to_string());
     }
     images
@@ -433,9 +434,11 @@ fn agent_image_attachments(
                 let mime = attachment
                     .mime
                     .ok_or_else(|| AGENT_PROMPT_ATTACHMENT_MISMATCH_ERROR.to_string())?;
+                let data = store.read_turn_image(attachment)?;
+                ensure_agent_model_image(mime, &data)?;
                 Ok(AgentImageAttachment::Inline {
                     media_type: agent_image_media_type(mime).to_string(),
-                    data: store.read_turn_image(attachment)?,
+                    data,
                 })
             }
         })

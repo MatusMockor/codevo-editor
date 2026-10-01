@@ -196,6 +196,56 @@ describe("thread error banner model", () => {
     expect(detail).not.toContain("second line");
   });
 
+  it("asks for a new thread when the conversation holds images the API rejects", () => {
+    const notice =
+      "API Error: an image in the conversation could not be processed and was removed. Re-read the file with a different approach if you still need it.";
+    const model = agentThreadErrorBannerModel(
+      view({ kind: "exited", exitCode: 1 }, "claudeCode", [
+        { kind: "assistantText", text: notice },
+      ]),
+      null,
+    );
+    expect(model).toMatchObject({
+      title: "This conversation contains images larger than the API allows.",
+      detail: "Start a new thread to continue.",
+      remedy: "startNewThread",
+    });
+  });
+
+  it("asks for a new thread on the wrapped many-image dimension error, local or remote", () => {
+    const message = `API Error: 400 ${JSON.stringify({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "messages.154.content.1.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels",
+      },
+      request_id: "req_1",
+    })}`;
+    for (const remote of [false, true]) {
+      expect(
+        agentThreadErrorBannerModel(
+          view({ kind: "failed", message }, "claudeCode", [], remote),
+          null,
+        ),
+      ).toMatchObject({
+        title: "This conversation contains images larger than the API allows.",
+        detail: "Start a new thread to continue.",
+        remedy: "startNewThread",
+      });
+    }
+  });
+
+  it("keeps Retry as the remedy for every other failure", () => {
+    expect(
+      agentThreadErrorBannerModel(view({ kind: "failed", message: "authentication_failed" }), null)
+        ?.remedy,
+    ).toBe("retry");
+    expect(agentThreadErrorBannerModel(view({ kind: "exited", exitCode: 1 }), null)?.remedy).toBe(
+      "retry",
+    );
+  });
+
   it("returns null when nothing failed", () => {
     expect(agentThreadErrorBannerModel(view({ kind: "exited", exitCode: 0 }), null)).toBeNull();
     expect(agentThreadErrorBannerModel(view({ kind: "running" }), null)).toBeNull();

@@ -85,6 +85,11 @@ import type { AgentComposerInteraction } from "./composer/agentComposerInteracti
 import { AgentComposerQuestionPanel } from "./composer/AgentComposerQuestionPanel";
 import { useAgentComposerFocusReturn } from "./composer/useAgentComposerInteractionFocus";
 import {
+  agentComposerRecoveryCaption,
+  type AgentComposerRecoveryOutcome,
+  type AgentComposerRecoveryReason,
+} from "./useAgentComposerRecovery";
+import {
   AgentComposerFrame,
   type AgentComposerDrawerContext,
   type AgentComposerLayout,
@@ -165,7 +170,8 @@ export interface AgentComposerProps {
   onStopNow?(): void;
   readonly stopConfirmation?: AgentStopConfirmationView | null;
   readonly sessionRestartConfirmation?: AgentSessionRestartConfirmation | null;
-  onRecoverDraft?(): "started" | "unavailable" | "draftTooLarge";
+  onRecoverDraft?(): AgentComposerRecoveryOutcome;
+  readonly recoveryReason?: AgentComposerRecoveryReason;
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void | Promise<boolean>;
   readonly banners?: ReactNode;
@@ -213,6 +219,7 @@ export function AgentComposer({
   stopConfirmation = null,
   sessionRestartConfirmation = null,
   onRecoverDraft,
+  recoveryReason = "sessionUnavailable",
   onSubmit,
   onCompactContext,
   prompt,
@@ -716,10 +723,7 @@ export function AgentComposer({
         <div className="cv-composer__notes" hidden={interactionActive}>
           {onRecoverDraft !== undefined && (
             <div className="agent-composer__caption">
-              <p>
-                This session cannot be resumed. Start a new thread to keep writing. Your unsent text
-                will be copied; the previous conversation is not carried over.
-              </p>
+              <p>{agentComposerRecoveryCaption(recoveryReason)}</p>
               <button
                 className="agent-composer__alternate"
                 type="button"

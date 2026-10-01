@@ -2875,7 +2875,6 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
   const releasedAttachments: string[] = [];
   const attachmentGateway = {
     stageAgentAttachmentBytes: vi.fn(),
-    stageAgentAttachmentFromPath: vi.fn(),
     inspectAgentAttachmentCandidate: vi.fn(),
     readAgentAttachmentCandidate: vi.fn(),
     claimAgentAttachments: vi.fn(

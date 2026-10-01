@@ -431,3 +431,79 @@ describe("temporary capacity problems", () => {
     ).toEqual({ kind: "unknown" });
   });
 });
+
+describe("conversation images too large", () => {
+  const removedNotice =
+    "API Error: an image in the conversation could not be processed and was removed. Re-read the file with a different approach if you still need it.";
+  const dimensionMessage =
+    "messages.154.content.1.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels";
+  const payload = JSON.stringify({
+    type: "error",
+    error: { type: "invalid_request_error", message: dimensionMessage },
+    request_id: "req_011CabcDEF",
+  });
+  const tooLarge = { kind: "conversationImagesTooLarge", provider: "claudeCode" };
+
+  it("recognizes the Claude notice that an image was removed from the conversation", () => {
+    const error = classifyAgentProviderError(removedNotice, "claudeCode");
+
+    expect(error.detail).toEqual(tooLarge);
+    expect(error.signature).toBe("conversationImagesTooLarge:claudeCode");
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "This conversation contains images larger than the API allows.",
+    );
+  });
+
+  it("recognizes the many-image dimension limit as plain text", () => {
+    expect(classifyAgentProviderError(dimensionMessage, "claudeCode").detail).toEqual(tooLarge);
+  });
+
+  it("recognizes the many-image dimension limit inside a JSON payload", () => {
+    const error = classifyAgentProviderError(payload, "claudeCode");
+
+    expect(error.detail).toEqual(tooLarge);
+    expect(error.message).toBe(dimensionMessage);
+  });
+
+  it("unwraps a JSON payload behind an API Error status prefix", () => {
+    for (const raw of [`API Error: 400 ${payload}`, `400 ${payload}`, `API Error: ${payload}`]) {
+      const error = classifyAgentProviderError(raw, "claudeCode");
+
+      expect(error.detail).toEqual(tooLarge);
+      expect(error.message).toBe(dimensionMessage);
+    }
+  });
+
+  it("treats every variant as one repeated error", () => {
+    const notice = classifyAgentProviderError(removedNotice, "claudeCode");
+    const wrapped = classifyAgentProviderError(`API Error: 400 ${payload}`, "claudeCode");
+
+    expect(sameAgentProviderError(notice, wrapped)).toBe(true);
+  });
+
+  it("keeps an unrelated image error unknown", () => {
+    for (const raw of [
+      "API Error: 400 messages.3.content.0.image.source.base64: image exceeds 5 MB maximum",
+      "Could not process image",
+      "The assistant said an image in the conversation could not be processed and was removed.",
+      "The docs say image dimensions exceed max allowed size for many-image requests above 20 images.",
+    ]) {
+      expect(classifyAgentProviderError(raw, "claudeCode").detail).toEqual({ kind: "unknown" });
+    }
+  });
+
+  it("does not attribute the Claude image limits to a Codex thread", () => {
+    expect(classifyAgentProviderError(removedNotice, "codex").detail).toEqual({
+      kind: "unknown",
+    });
+    expect(classifyAgentProviderError(`API Error: 400 ${payload}`, "codex").detail).toEqual({
+      kind: "unknown",
+    });
+  });
+
+  it("does not strip a status prefix that is not followed by a JSON payload", () => {
+    const raw = "API Error: 400 Bad Request {not json";
+
+    expect(classifyAgentProviderError(raw, "claudeCode").message).toBe(raw);
+  });
+});

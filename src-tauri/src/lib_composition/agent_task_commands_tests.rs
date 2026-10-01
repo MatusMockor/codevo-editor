@@ -1100,7 +1100,7 @@ fn a_start_refuses_the_turn_image_budget_before_any_image_is_read() {
         mime: Some(
             super::super::agent_attachment_commands::agent_thread_store::AgentImageMime::Png,
         ),
-        bytes: MAX_AGENT_TURN_IMAGE_BYTES + 1,
+        bytes: MAX_AGENT_TURN_SEND_IMAGE_BYTES + 1,
         path: PathBuf::from("/store/missing.png"),
         stored_path: "/store/missing.png".to_string(),
         name: Some("missing.png".to_string()),
@@ -1195,10 +1195,104 @@ fn a_refused_start_can_retry_attachments_only_with_the_same_thread_owner() {
 }
 
 #[test]
-fn the_transport_turn_image_budget_matches_the_stored_turn_image_budget() {
+fn the_send_turn_image_budget_fits_inside_the_stored_turn_image_budget() {
+    let send = crate::agent_task_spawner::MAX_AGENT_TURN_SEND_IMAGE_BYTES;
+    let stored =
+        super::super::agent_attachment_commands::agent_thread_store::MAX_AGENT_TURN_IMAGE_BYTES;
+    assert_eq!(send, 20 * 1024 * 1024);
+    assert_eq!(stored, 40 * 1024 * 1024);
+}
+
+fn png_header_file(
+    workspace: &TempWorkspace,
+    name: &str,
+    width: u32,
+    height: u32,
+    size: usize,
+) -> ResolvedTurnAttachment {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend_from_slice(&13u32.to_be_bytes());
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    bytes.resize(size.max(bytes.len()), 0);
+    let path = workspace.root.join(name);
+    fs::write(&path, &bytes).expect("write test png");
+    ResolvedTurnAttachment {
+        attachment_id: "0".repeat(32),
+        kind: AgentAttachmentKind::Image,
+        mime: Some(
+            super::super::agent_attachment_commands::agent_thread_store::AgentImageMime::Png,
+        ),
+        bytes: bytes.len() as u64,
+        stored_path: path.to_string_lossy().into_owned(),
+        path,
+        name: Some(name.to_string()),
+    }
+}
+
+#[test]
+fn a_claude_turn_refuses_a_stored_image_larger_than_the_model_limits() {
+    let workspace = TempWorkspace::create("claude-image-limits");
+    let store = test_attachment_store(&workspace);
+    let retina = png_header_file(&workspace, "retina.png", 2_742, 1_416, 0);
+    let portrait = png_header_file(&workspace, "portrait.png", 1_626, 2_544, 0);
+    let heavy = png_header_file(&workspace, "heavy.png", 800, 600, 3_750_001);
     assert_eq!(
-        crate::agent_task_spawner::MAX_AGENT_TURN_IMAGE_BYTES,
-        super::super::agent_attachment_commands::agent_thread_store::MAX_AGENT_TURN_IMAGE_BYTES
+        super::super::agent_attachment_commands::agent_attachment_store::agent_attachment_image::AGENT_MODEL_IMAGE_LIMIT_ERROR,
+        "An attached image is larger than Codevo sends to Claude (1568 px long edge, 3.75 MB). Remove it and attach it again so Codevo can shrink it."
+    );
+
+    for oversized in [&retina, &portrait, &heavy] {
+        let refused = agent_image_attachments(
+            AgentCliInvocation::ClaudeCode,
+            &store,
+            std::slice::from_ref(oversized),
+        )
+        .expect_err("an image above the model limits is refused before sending");
+        assert_eq!(
+            refused,
+            super::super::agent_attachment_commands::agent_attachment_store::agent_attachment_image::AGENT_MODEL_IMAGE_LIMIT_ERROR
+        );
+    }
+}
+
+#[test]
+fn a_claude_turn_sends_a_stored_image_within_the_model_limits() {
+    let workspace = TempWorkspace::create("claude-image-fits");
+    let store = test_attachment_store(&workspace);
+    let edge = png_header_file(&workspace, "edge.png", 1_568, 810, 3_750_000);
+
+    let images = agent_image_attachments(
+        AgentCliInvocation::ClaudeCode,
+        &store,
+        std::slice::from_ref(&edge),
+    )
+    .expect("an image at the model edge and byte cap is sent");
+
+    assert!(matches!(
+        images.as_slice(),
+        [AgentImageAttachment::Inline { media_type, data }]
+            if media_type == "image/png" && data.len() == 3_750_000
+    ));
+}
+
+#[test]
+fn a_codex_turn_keeps_passing_the_stored_image_path() {
+    let workspace = TempWorkspace::create("codex-image-path");
+    let store = test_attachment_store(&workspace);
+    let retina = png_header_file(&workspace, "retina.png", 2_742, 1_416, 0);
+
+    let images = agent_image_attachments(
+        AgentCliInvocation::CodexExec,
+        &store,
+        std::slice::from_ref(&retina),
+    )
+    .expect("codex receives the stored path");
+
+    assert!(
+        matches!(images.as_slice(), [AgentImageAttachment::Path(path)] if *path == retina.path)
     );
 }
 

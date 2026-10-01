@@ -1,10 +1,10 @@
 import {
+  AGENT_IMAGE_MAX_MODEL_BYTES,
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,
   MAX_AGENT_FILE_BYTES,
-  MAX_AGENT_IMAGE_BYTES,
   MAX_AGENT_TURN_ATTACHMENTS,
-  MAX_AGENT_TURN_IMAGE_BYTES,
+  MAX_AGENT_TURN_SEND_IMAGE_BYTES,
   isAgentImageMime,
   type AgentAttachment,
   type AgentAttachmentKind,
@@ -15,13 +15,16 @@ import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
 export const MAX_AGENT_IMAGE_SOURCE_BYTES = 50 * 1_024 * 1_024;
 
 export const AGENT_ATTACHMENT_COUNT_REFUSAL = "Up to 8 attachments per message.";
-export const AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL = "Images in this message exceed 40 MiB.";
-export const AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL = "Image cannot be shrunk to 10 MiB.";
+export const AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL = "Images in this message exceed 20 MiB.";
+export const AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL = "Image cannot be shrunk to 3.75 MB.";
 export const AGENT_ATTACHMENT_FILE_BYTES_REFUSAL = "File is larger than 50 MiB.";
 export const AGENT_ATTACHMENT_IMAGE_SOURCE_BYTES_REFUSAL = "Image is larger than 50 MiB.";
+export const AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL = "Image is larger than 16384 px.";
 export const AGENT_ATTACHMENT_PATH_REFUSAL = "Path is not attachable.";
 export const AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE =
   "Too large to attach as an image, inserted as a path";
+export const AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE =
+  "Could not be read as an image, inserted as a path";
 
 export const FALLBACK_AGENT_ATTACHMENT_NAME = "attachment";
 
@@ -120,10 +123,10 @@ export function admitAgentAttachmentToTurn(
   const counted = admitAgentAttachmentCount(existing);
   if (counted.kind === "refused") return counted;
   if (next.kind !== "image") return { kind: "accepted" };
-  if (next.bytes > MAX_AGENT_IMAGE_BYTES) {
+  if (next.bytes > AGENT_IMAGE_MAX_MODEL_BYTES) {
     return { kind: "refused", reason: AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL };
   }
-  if (agentAttachmentImageBytes(existing) + next.bytes > MAX_AGENT_TURN_IMAGE_BYTES) {
+  if (agentAttachmentImageBytes(existing) + next.bytes > MAX_AGENT_TURN_SEND_IMAGE_BYTES) {
     return { kind: "refused", reason: AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL };
   }
   return { kind: "accepted" };

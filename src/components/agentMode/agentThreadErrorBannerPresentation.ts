@@ -1,11 +1,8 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import type { AgentCliKind } from "../../domain/agentTask";
-import type { AgentTurn } from "../../domain/agentThread";
 import {
   agentProviderDisplayName,
   agentProviderErrorHeadline,
-  classifyAgentProviderError,
   type AgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
 import { normalizeStoredAgentLaunch } from "../../domain/agentStoredLaunch";
@@ -15,6 +12,7 @@ import {
   type AgentTurnRetryPlan,
   type AgentTurnRetryReadyPlan,
 } from "../../domain/agentTurnRetry";
+import { agentTurnFailureError } from "../../domain/agentTurnFailure";
 import {
   agentLaunchModeHint,
   agentLaunchModeLabel,
@@ -28,17 +26,21 @@ import {
 const MAX_DETAIL_CHARACTERS = 240;
 const KEY_SEPARATOR = "\u0001";
 
+export type AgentThreadErrorRemedy = "retry" | "startNewThread";
+
 export interface AgentThreadErrorBannerModel {
   readonly key: string;
   readonly failedTurnId: string;
   readonly title: string;
   readonly detail: string;
+  readonly remedy: AgentThreadErrorRemedy;
   readonly retry: AgentTurnRetryPlan;
 }
 
 interface BannerText {
   readonly title: string;
   readonly detail: string;
+  readonly remedy: AgentThreadErrorRemedy;
 }
 
 export function agentThreadErrorBannerModel(
@@ -58,18 +60,15 @@ export function agentThreadErrorBannerModel(
   };
   const generic = `${agentProviderDisplayName(provider)} could not complete this run.`;
   const target: AgentProviderErrorTarget = view.execution === undefined ? "local" : "remote";
-  if (failed.status.kind === "exited") {
-    const reported = reportedFailure(failed, provider);
-    if (reported !== null) return { ...base, ...failureText(reported, generic, target) };
-    return {
-      ...base,
-      title: generic,
-      detail: `The agent process exited with code ${failed.status.exitCode}.`,
-    };
-  }
-  if (failed.status.kind !== "failed") return null;
-  const error = classifyAgentProviderError(failed.status.message, provider);
-  return { ...base, ...failureText(error, generic, target) };
+  const error = agentTurnFailureError(failed, provider);
+  if (error !== null) return { ...base, ...failureText(error, generic, target) };
+  if (failed.status.kind !== "exited") return null;
+  return {
+    ...base,
+    title: generic,
+    detail: `The agent process exited with code ${failed.status.exitCode}.`,
+    remedy: "retry",
+  };
 }
 
 export function agentRetryModeLabel(plan: AgentTurnRetryReadyPlan): string {
@@ -86,24 +85,6 @@ export function agentRetryLaunchNote(plan: AgentTurnRetryReadyPlan): string | nu
   return `Retries with ${mode}: ${agentLaunchModeHint(launch)}`;
 }
 
-function reportedFailure(turn: AgentTurn, provider: AgentCliKind): AgentProviderError | null {
-  for (let index = turn.events.length - 1; index >= 0; index -= 1) {
-    const event = turn.events[index];
-    if (event?.kind === "result") {
-      return event.isError ? recognized(classifyAgentProviderError(event.text, provider)) : null;
-    }
-    if (event?.kind === "assistantText" || event?.kind === "toolCall") return null;
-    if (event?.kind !== "error") continue;
-    const error = classifyAgentProviderError(event.message, provider);
-    if (error.detail.kind !== "advisory") return recognized(error);
-  }
-  return null;
-}
-
-function recognized(error: AgentProviderError): AgentProviderError | null {
-  return error.detail.kind === "unknown" ? null : error;
-}
-
 function failureText(
   error: AgentProviderError,
   generic: string,
@@ -118,15 +99,23 @@ function failureText(
       return {
         title: agentProviderErrorHeadline(error, null),
         detail: agentProviderErrorAdvice(error, target) ?? "",
+        remedy: "retry",
+      };
+    case "conversationImagesTooLarge":
+      return {
+        title: agentProviderErrorHeadline(error, null),
+        detail: agentProviderErrorAdvice(error, target) ?? "",
+        remedy: "startNewThread",
       };
     case "unsupportedModelForCliVersion":
       return {
         title: agentProviderErrorHeadline(error, null),
         detail: "Pick another model in the composer, or update the provider CLI.",
+        remedy: "retry",
       };
     case "advisory":
     case "unknown":
-      return { title: generic, detail: firstLine(error.message) };
+      return { title: generic, detail: firstLine(error.message), remedy: "retry" };
     default:
       return unsupportedDetail(detail);
   }

@@ -240,11 +240,6 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
     if (this.entries.get(entry.metadata.attachmentId) === entry) upload.complete = true;
   }
 
-  async stageAgentAttachmentFromPath(
-    _request: Parameters<AgentAttachmentGateway["stageAgentAttachmentFromPath"]>[0],
-  ): Promise<never> {
-    return unsupported();
-  }
   async inspectAgentAttachmentCandidate(
     _request: Parameters<AgentAttachmentGateway["inspectAgentAttachmentCandidate"]>[0],
   ): Promise<never> {

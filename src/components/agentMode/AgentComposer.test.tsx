@@ -1386,6 +1386,20 @@ describe("AgentComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("explains a fresh draft for a conversation with oversized images", () => {
+    render({
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "Unsent correction",
+      onRecoverDraft: vi.fn(),
+      recoveryReason: "conversationImagesTooLarge",
+    });
+    expect(host.textContent).toContain(
+      "This conversation contains images larger than the API allows.",
+    );
+    expect(host.textContent).not.toContain("This session cannot be resumed");
+    expect(host.textContent).toContain("attachments and the previous conversation");
+  });
+
   it("reports oversized recovery without submitting or hiding the editable draft", () => {
     render({
       mode: { kind: "followUp", blockedReason: "This session cannot be resumed." },

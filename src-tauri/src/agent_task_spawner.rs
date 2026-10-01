@@ -50,11 +50,10 @@ pub const CLAUDE_CLI_BINARY_UNAVAILABLE_ERROR: &str =
     "The Claude CLI binary is missing or not executable (it may be updating). Retry in a moment.";
 pub const CODEX_CLI_BINARY_UNAVAILABLE_ERROR: &str =
     "The Codex CLI binary is missing or not executable (it may be updating). Retry in a moment.";
-pub const MAX_AGENT_TURN_IMAGE_BYTES: u64 = 40 * 1024 * 1024;
+pub const MAX_AGENT_TURN_SEND_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 pub const AGENT_IMAGE_TRANSPORT_MISMATCH_ERROR: &str =
     "Agent image attachments do not match the provider transport.";
-pub const AGENT_TURN_IMAGE_BUDGET_ERROR: &str =
-    "Images in this message exceed the supported size for one turn.";
+pub const AGENT_TURN_IMAGE_BUDGET_ERROR: &str = "Images in this message exceed 20 MiB.";
 pub const AGENT_STDIN_FRAME_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[path = "agent_launch.rs"]
@@ -425,7 +424,7 @@ fn agent_prompt_transport(
             return Err(AGENT_IMAGE_TRANSPORT_MISMATCH_ERROR.to_string());
         };
         total = total.saturating_add(data.len() as u64);
-        if total > MAX_AGENT_TURN_IMAGE_BYTES {
+        if total > MAX_AGENT_TURN_SEND_IMAGE_BYTES {
             return Err(AGENT_TURN_IMAGE_BUDGET_ERROR.to_string());
         }
         images.push((media_type, data));

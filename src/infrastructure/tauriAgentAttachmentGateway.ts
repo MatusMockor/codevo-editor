@@ -7,7 +7,6 @@ import type {
   ClaimAgentAttachmentsRequest,
   ClaimedAgentAttachment,
   StageAgentAttachmentBytesRequest,
-  StageAgentAttachmentFromPathRequest,
   StagedAgentAttachment,
   StoredAgentAttachmentRequest,
 } from "../application/agentAttachmentPorts";
@@ -19,7 +18,6 @@ import {
   invokeReleaseAgentAttachmentIpc,
   invokeRevealAgentAttachmentIpc,
   invokeStageAgentAttachmentBytesIpc,
-  invokeStageAgentAttachmentFromPathIpc,
   type InvokeAgentAttachmentCommand,
   type InvokeAgentAttachmentRawCommand,
 } from "./tauriAgentAttachmentIpcContract";
@@ -47,13 +45,6 @@ export class TauriAgentAttachmentGateway implements AgentAttachmentGateway {
   ): Promise<StagedAgentAttachment> {
     this.requireRuntime();
     return invokeStageAgentAttachmentBytesIpc(this.invokeRawCommand, request);
-  }
-
-  async stageAgentAttachmentFromPath(
-    request: StageAgentAttachmentFromPathRequest,
-  ): Promise<StagedAgentAttachment> {
-    this.requireRuntime();
-    return invokeStageAgentAttachmentFromPathIpc(this.invokeCommand, request);
   }
 
   async inspectAgentAttachmentCandidate(

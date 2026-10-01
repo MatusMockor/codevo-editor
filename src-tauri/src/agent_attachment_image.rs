@@ -8,6 +8,10 @@ pub const AGENT_ATTACHMENT_MAGIC_ERROR: &str =
 pub const AGENT_ATTACHMENT_UNDECODABLE_ERROR: &str =
     "The attachment image could not be decoded as a supported image.";
 
+pub const MAX_AGENT_MODEL_IMAGE_EDGE: u32 = 1_568;
+pub const MAX_AGENT_MODEL_IMAGE_BYTES: u64 = 3_750_000;
+pub const AGENT_MODEL_IMAGE_LIMIT_ERROR: &str = "An attached image is larger than Codevo sends to Claude (1568 px long edge, 3.75 MB). Remove it and attach it again so Codevo can shrink it.";
+
 const MAX_JPEG_SEGMENTS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +64,17 @@ pub fn verify_agent_image_bytes(
     .ok_or_else(|| AGENT_ATTACHMENT_UNDECODABLE_ERROR.to_string())?;
     ensure_agent_image_dimensions(dimensions)?;
     Ok(dimensions)
+}
+
+pub fn ensure_agent_model_image(mime: AgentImageMime, bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() as u64 > MAX_AGENT_MODEL_IMAGE_BYTES {
+        return Err(AGENT_MODEL_IMAGE_LIMIT_ERROR.to_string());
+    }
+    let dimensions = verify_agent_image_bytes(mime, bytes)?;
+    if dimensions.width.max(dimensions.height) > MAX_AGENT_MODEL_IMAGE_EDGE {
+        return Err(AGENT_MODEL_IMAGE_LIMIT_ERROR.to_string());
+    }
+    Ok(())
 }
 
 pub fn ensure_agent_image_dimensions(dimensions: AgentImageDimensions) -> Result<(), String> {

@@ -73,7 +73,6 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
   const imagesGateway = useMemo<AgentAttachmentGateway>(
     () => ({
       stageAgentAttachmentBytes: (request) => store.stageAgentAttachmentBytes(request),
-      stageAgentAttachmentFromPath: (request) => store.stageAgentAttachmentFromPath(request),
       inspectAgentAttachmentCandidate: (request) => store.inspectAgentAttachmentCandidate(request),
       readAgentAttachmentCandidate: (request) => store.readAgentAttachmentCandidate(request),
       claimAgentAttachments: (request) => store.claimAgentAttachments(request),

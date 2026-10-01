@@ -1,5 +1,7 @@
 import {
+  AGENT_IMAGE_MAX_MODEL_BYTES,
   AGENT_IMAGE_MIMES,
+  MAX_AGENT_IMAGE_DIMENSION,
   isAgentImageDimension,
   isAgentImageMime,
   type AgentImageMime,
@@ -7,14 +9,14 @@ import {
 import { MAX_AGENT_IMAGE_SOURCE_BYTES } from "./agentAttachmentIntake";
 
 export const AGENT_IMAGE_MAX_EDGE = 1_568;
-export const AGENT_IMAGE_MAX_MODEL_BYTES = 3_750_000;
+export const AGENT_IMAGE_LOSSLESS_MAX_BYTES = 1_500_000;
 export const AGENT_IMAGE_LOSSLESS_QUALITY = 1;
 export const AGENT_IMAGE_QUALITY_LADDER: ReadonlyArray<number> = [0.92, 0.85, 0.78, 0.68];
 export const AGENT_IMAGE_SCALE_LADDER: ReadonlyArray<number> = [1, 0.75, 0.55];
 
 export type AgentImageEncodeMime = "image/png" | "image/webp" | "image/jpeg";
 
-const LOSSLESS_SOURCE_MIMES: ReadonlyArray<string> = ["image/png", "image/gif"];
+const LOSSLESS_SOURCE_MIMES: ReadonlyArray<string> = ["image/png", "image/gif", "image/webp"];
 
 export interface AgentImageSource {
   readonly width: number;
@@ -57,7 +59,9 @@ export type AgentImageShrinkOutcome =
       readonly height: number;
       readonly reencoded: boolean;
     }
-  | { readonly kind: "refused"; readonly reason: "unreadable" | "too-large" };
+  | { readonly kind: "refused"; readonly reason: AgentImageShrinkRefusal };
+
+export type AgentImageShrinkRefusal = "unreadable" | "too-large" | "oversized";
 
 export async function shrinkAgentImageToFit(
   request: AgentImageShrinkRequest,
@@ -70,7 +74,7 @@ export async function shrinkAgentImageToFit(
   if (decoded === null) return refused("unreadable");
   try {
     if (!isAgentImageDimension(decoded.width) || !isAgentImageDimension(decoded.height)) {
-      return refused("unreadable");
+      return refused(exceedsAgentImageDimensions(decoded) ? "oversized" : "unreadable");
     }
     const limits = modelImageLimits(policy);
     if (
@@ -125,6 +129,7 @@ interface EncodePass {
   readonly height: number;
   readonly mime: AgentImageEncodeMime;
   readonly quality: number;
+  readonly maxBytes: number;
 }
 
 function modelImageLimits(policy?: AgentImageOutputPolicy): ModelImageLimits {
@@ -153,7 +158,7 @@ async function reencodeAgentImage(
     const bytes = await encodeOrNull(surface, decoded, pass);
     if (bytes === null) continue;
     encoded = true;
-    if (bytes.byteLength === 0 || bytes.byteLength > limits.maxBytes) continue;
+    if (bytes.byteLength === 0 || bytes.byteLength > pass.maxBytes) continue;
     return {
       kind: "ready",
       name: agentShrunkAttachmentName(request.name, pass.mime),
@@ -175,7 +180,14 @@ function encodePasses(
 ): ReadonlyArray<EncodePass> {
   const lossless: EncodePass[] =
     LOSSLESS_SOURCE_MIMES.includes(sourceMime) && limits.acceptedMimes.includes("image/png")
-      ? [{ ...base, mime: "image/png", quality: AGENT_IMAGE_LOSSLESS_QUALITY }]
+      ? [
+          {
+            ...base,
+            mime: "image/png",
+            quality: AGENT_IMAGE_LOSSLESS_QUALITY,
+            maxBytes: Math.min(limits.maxBytes, AGENT_IMAGE_LOSSLESS_MAX_BYTES),
+          },
+        ]
       : [];
   const lossy = AGENT_IMAGE_SCALE_LADDER.flatMap((scale) =>
     AGENT_IMAGE_QUALITY_LADDER.map((quality) => ({
@@ -183,6 +195,7 @@ function encodePasses(
       height: scaledEdge(base.height, scale),
       mime: lossyMime,
       quality,
+      maxBytes: limits.maxBytes,
     })),
   );
   return [...lossless, ...lossy];
@@ -242,6 +255,10 @@ function scaledEdge(edge: number, ratio: number): number {
   return Math.max(1, Math.round(edge * ratio));
 }
 
-function refused(reason: "unreadable" | "too-large"): AgentImageShrinkOutcome {
+function exceedsAgentImageDimensions(decoded: AgentImageSource): boolean {
+  return decoded.width > MAX_AGENT_IMAGE_DIMENSION || decoded.height > MAX_AGENT_IMAGE_DIMENSION;
+}
+
+function refused(reason: AgentImageShrinkRefusal): AgentImageShrinkOutcome {
   return { kind: "refused", reason };
 }

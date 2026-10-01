@@ -46,6 +46,11 @@ const CLAUDE_CAPACITY_PATTERNS: ReadonlyArray<CapacityPattern> = [
 const CODEX_CAPACITY_PATTERNS: ReadonlyArray<CapacityPattern> = [
   { pattern: /^Selected model is at capacity\b/u, scope: "model" },
 ];
+const CLAUDE_CONVERSATION_IMAGE_PATTERNS: ReadonlyArray<RegExp> = [
+  /^(?:API Error:\s*)?an image in the conversation could not be processed and was removed\b/iu,
+  /^(?:API Error:\s{0,8})?(?:\d{3}\s{1,8})?(?:messages\.\d{1,6}\.content\.\d{1,6}\.image\.source\.base64(?:\.data)?:\s{0,8})?At least one of the image dimensions exceed max allowed size for many-image requests\b/iu,
+];
+const API_ERROR_PAYLOAD_PREFIX = /^(?:API Error:[ \t]{0,8})?(?:\d{3}[ \t]{1,8})?(?=\{)/u;
 const CLAUDE_RESET_PATTERN = /\s·\s*resets\s+(.+)$/u;
 const CODEX_RESET_PATTERN = /\btry again (at|in)\s+(.+)$/iu;
 const RESET_TRAILING_PUNCTUATION = /[\s.!]+$/u;
@@ -92,6 +97,7 @@ export type AgentProviderErrorDetail =
       readonly resetsAt: string | null;
     }
   | { readonly kind: "protocolFailure"; readonly provider: AgentCliKind }
+  | { readonly kind: "conversationImagesTooLarge"; readonly provider: "claudeCode" }
   | { readonly kind: "advisory"; readonly provider: AgentCliKind; readonly text: string }
   | { readonly kind: "unknown" };
 
@@ -111,6 +117,7 @@ export function classifyAgentProviderError(
     unsupportedModelDetail(message, provider) ??
     launchFailureDetail(message, provider) ??
     usageLimitDetail(message, provider) ??
+    conversationImageDetail(message, provider) ??
     capacityDetail(message, provider) ?? { kind: "unknown" };
 
   return {
@@ -140,6 +147,8 @@ export function agentProviderErrorHeadline(
     return `${agentProviderDisplayName(detail.provider)} is temporarily over capacity.`;
   if (detail.kind === "protocolFailure")
     return `${agentProviderDisplayName(detail.provider)} could not complete this run.`;
+  if (detail.kind === "conversationImagesTooLarge")
+    return "This conversation contains images larger than the API allows.";
   if (detail.kind === "advisory") return detail.text;
   if (detail.kind === "unknown") return error.message;
 
@@ -176,10 +185,13 @@ function unwrappedMessage(raw: string): string {
 }
 
 function jsonErrorMessage(text: string): string | null {
-  if (!text.startsWith("{")) return null;
   if (text.length > MAX_AGENT_PROVIDER_ERROR_PAYLOAD_CHARS) return null;
 
-  const value = jsonObject(text);
+  const payload = text.replace(API_ERROR_PAYLOAD_PREFIX, "");
+
+  if (!payload.startsWith("{")) return null;
+
+  const value = jsonObject(payload);
 
   if (value === null) return null;
 
@@ -227,6 +239,19 @@ function capacityDetail(message: string, provider: AgentCliKind): AgentProviderE
   if (match === undefined) return null;
 
   return { kind: "temporarilyOverCapacity", provider, scope: match.scope };
+}
+
+function conversationImageDetail(
+  message: string,
+  provider: AgentCliKind,
+): AgentProviderErrorDetail | null {
+  if (provider !== "claudeCode") return null;
+
+  const line = firstLine(message);
+
+  if (!CLAUDE_CONVERSATION_IMAGE_PATTERNS.some((pattern) => pattern.test(line))) return null;
+
+  return { kind: "conversationImagesTooLarge", provider };
 }
 
 function usageLimitReset(line: string, provider: AgentCliKind): string | null {
@@ -335,7 +360,9 @@ function errorSignature(detail: AgentProviderErrorDetail, message: string): stri
   if (detail.kind === "temporarilyOverCapacity") {
     return `${detail.kind}:${detail.provider}:${detail.scope}`;
   }
-  if (detail.kind === "protocolFailure") return `${detail.kind}:${detail.provider}`;
+  if (detail.kind === "protocolFailure" || detail.kind === "conversationImagesTooLarge") {
+    return `${detail.kind}:${detail.provider}`;
+  }
   if (detail.kind === "advisory") {
     return `advisory:${detail.provider}:${normalizedMessage(detail.text)}`;
   }

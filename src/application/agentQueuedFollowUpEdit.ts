@@ -1,6 +1,6 @@
 import {
   MAX_AGENT_TURN_ATTACHMENTS,
-  MAX_AGENT_TURN_IMAGE_BYTES,
+  MAX_AGENT_TURN_SEND_IMAGE_BYTES,
   agentTurnImageBytes,
   type AgentAttachment,
 } from "../domain/agentAttachment";
@@ -80,7 +80,7 @@ export function admitQueuedEdit(
   if (kept.length + added.length > MAX_AGENT_TURN_ATTACHMENTS) {
     return { kind: "refused", reason: AGENT_ATTACHMENT_COUNT_REFUSAL };
   }
-  if (agentTurnImageBytes(kept) + addedImageBytes(added) > MAX_AGENT_TURN_IMAGE_BYTES) {
+  if (agentTurnImageBytes(kept) + addedImageBytes(added) > MAX_AGENT_TURN_SEND_IMAGE_BYTES) {
     return { kind: "refused", reason: AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL };
   }
   return { kind: "accepted", prompt };

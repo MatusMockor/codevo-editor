@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type AgentAttachmentKind, type AgentImageMime } from "../domain/agentAttachment";
 import {
   AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL,
+  AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL,
   AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
   AGENT_ATTACHMENT_PATH_REFUSAL,
+  AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE,
   admitAgentAttachmentCount,
   admitAgentAttachmentToTurn,
   agentAttachmentPromptLine,
@@ -17,6 +19,8 @@ import {
 import {
   shrinkAgentImageToFit,
   type AgentImageOutputPolicy,
+  type AgentImageShrinkOutcome,
+  type AgentImageShrinkRefusal,
   type AgentImageSurfacePort,
 } from "../domain/agentImageShrink";
 import type { AgentAttachmentGateway, StagedAgentAttachment } from "./agentAttachmentPorts";
@@ -554,14 +558,14 @@ async function stageImageDraft(
     settleDraft(context, pending, refusedImageDraft(pending, candidate, source, shrunk.reason));
     return;
   }
+  const declared = declaredImageDimensions(shrunk, context.deps().imageOutputPolicy);
   const staged = await attempt(() =>
     context.gateway.stageAgentAttachmentBytes({
       workspaceId: owner.workspaceId,
       kind: "image",
       name: shrunk.name,
       mime: shrunk.mime,
-      width: shrunk.width,
-      height: shrunk.height,
+      ...declared,
       bytes: shrunk.bytes,
     }),
   );
@@ -782,22 +786,50 @@ function markReferenceMissing(context: DraftCoordinator, draftId: string, missin
   context.publish();
 }
 
+function declaredImageDimensions(
+  shrunk: Extract<AgentImageShrinkOutcome, { kind: "ready" }>,
+  policy: AgentImageOutputPolicy | undefined,
+): { readonly width: number | null; readonly height: number | null } {
+  if (shrunk.reencoded || policy !== undefined) {
+    return { width: shrunk.width, height: shrunk.height };
+  }
+  return { width: null, height: null };
+}
+
 function refusedImageDraft(
   pending: AttachmentDraft,
   candidate: AgentAttachmentCandidate,
   source: AgentAttachmentSource,
-  reason: "unreadable" | "too-large",
+  reason: AgentImageShrinkRefusal,
 ): AttachmentDraft {
-  if (reason === "unreadable" && source.kind === "path") {
-    return referenceDraft(
-      pending,
-      candidate.bytes,
-      source.path,
-      AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
-    );
+  switch (reason) {
+    case "unreadable":
+      return source.kind === "path"
+        ? referenceDraft(
+            pending,
+            candidate.bytes,
+            source.path,
+            AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE,
+          )
+        : failed(pending, AGENT_ATTACHMENT_UNREADABLE_REFUSAL);
+    case "oversized":
+      return source.kind === "path"
+        ? referenceDraft(
+            pending,
+            candidate.bytes,
+            source.path,
+            AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
+          )
+        : failed(pending, AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL);
+    case "too-large":
+      return failed(pending, AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL);
+    default:
+      return unsupportedImageRefusal(reason);
   }
-  if (reason === "too-large") return failed(pending, AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL);
-  return failed(pending, AGENT_ATTACHMENT_UNREADABLE_REFUSAL);
+}
+
+function unsupportedImageRefusal(reason: never): never {
+  throw new TypeError(`Unsupported image refusal: ${String(reason)}.`);
 }
 
 function referenceDraft(

@@ -67,7 +67,6 @@ function owner(overrides: Partial<AgentTurnAttachmentAuthority> = {}) {
 function gateway(overrides: Partial<AgentAttachmentGateway> = {}): AgentAttachmentGateway {
   return {
     stageAgentAttachmentBytes: vi.fn(),
-    stageAgentAttachmentFromPath: vi.fn(),
     inspectAgentAttachmentCandidate: vi.fn(),
     readAgentAttachmentCandidate: vi.fn(),
     claimAgentAttachments: vi.fn(

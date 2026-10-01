@@ -113,7 +113,7 @@ describe("agentQueuedFollowUpEdit", () => {
       admitQueuedEdit(
         "heavy",
         [IMAGE],
-        Array.from({ length: 4 }, (_, index) => staged(index, 10 * 1_024 * 1_024)),
+        Array.from({ length: 2 }, (_, index) => staged(index, 10 * 1_024 * 1_024)),
       ),
     ).toEqual({ kind: "refused", reason: AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL });
   });

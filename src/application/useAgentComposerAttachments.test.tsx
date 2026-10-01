@@ -3,12 +3,14 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { MAX_AGENT_IMAGE_BYTES } from "../domain/agentAttachment";
+import { AGENT_IMAGE_MAX_MODEL_BYTES, MAX_AGENT_IMAGE_BYTES } from "../domain/agentAttachment";
 import {
   AGENT_ATTACHMENT_COUNT_REFUSAL,
   AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL,
+  AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL,
   AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
   AGENT_ATTACHMENT_PATH_REFUSAL,
+  AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE,
 } from "../domain/agentAttachmentIntake";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
@@ -79,22 +81,9 @@ function renderAttachments(environment: Environment) {
         name,
         mime,
         bytes: 512,
-        width,
-        height,
+        width: width ?? environment.imageWidth,
+        height: height ?? environment.imageHeight,
         promptLineBytesMax: 120,
-      };
-    }),
-    stageAgentAttachmentFromPath: vi.fn(async ({ name, mime }) => {
-      environment.onStage?.();
-      if (environment.stageError !== null) throw environment.stageError;
-      return {
-        attachmentId: IMAGE_ID,
-        name,
-        mime,
-        bytes: 4_096,
-        width: 100,
-        height: 50,
-        promptLineBytesMax: 140,
       };
     }),
     inspectAgentAttachmentCandidate: vi.fn(async () => ({
@@ -259,7 +248,6 @@ describe("useAgentComposerAttachments staging", () => {
 
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
 
-    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     expect(harness.gateway.stageAgentAttachmentBytes).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: "ws-a",
@@ -286,7 +274,7 @@ describe("useAgentComposerAttachments staging", () => {
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
 
     expect(harness.gateway.stageAgentAttachmentBytes).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "shot.png", mime: "image/png", width: 800, height: 400 }),
+      expect.objectContaining({ name: "shot.png", mime: "image/png", width: null, height: null }),
     );
     const staged = vi.mocked(harness.gateway.stageAgentAttachmentBytes).mock.calls[0]?.[0];
     expect(staged?.bytes.byteLength).toBe(4_096);
@@ -308,7 +296,6 @@ describe("useAgentComposerAttachments staging", () => {
       previewUrl: null,
     });
     expect(harness.gateway.stageAgentAttachmentBytes).not.toHaveBeenCalled();
-    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -338,7 +325,6 @@ describe("useAgentComposerAttachments staging", () => {
       path: "/Users/dev/clip.mp4",
       notice: null,
     });
-    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     expect(harness.hook().promptLineBytes).toBe(53);
     harness.unmount();
   });
@@ -357,8 +343,41 @@ describe("useAgentComposerAttachments staging", () => {
     expect(harness.hook().drafts[0]).toMatchObject({
       kind: "reference",
       state: "ready",
-      notice: AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
+      notice: AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE,
       path: "/Users/dev/photo.heic",
+    });
+    harness.unmount();
+  });
+
+  it("inserts a dropped image above the supported dimensions as a path", async () => {
+    const harness = renderAttachments(environment({ imageWidth: 20_000, imageHeight: 100 }));
+
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/poster.png" }]));
+
+    expect(harness.hook().drafts[0]).toMatchObject({
+      kind: "reference",
+      state: "ready",
+      notice: AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
+      path: "/Users/dev/poster.png",
+    });
+    expect(harness.gateway.stageAgentAttachmentBytes).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("refuses a pasted image above the supported dimensions", async () => {
+    const harness = renderAttachments(environment({ imageWidth: 20_000, imageHeight: 100 }));
+
+    await act(() =>
+      harness
+        .hook()
+        .add(ROOT_A, [
+          { kind: "bytes", name: "poster.png", mime: "image/png", bytes: new ArrayBuffer(64) },
+        ]),
+    );
+
+    expect(harness.hook().drafts[0]).toMatchObject({
+      state: "failed",
+      failure: AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL,
     });
     harness.unmount();
   });
@@ -493,7 +512,6 @@ describe("useAgentComposerAttachments conversation drafts", () => {
     await act(() => intake([{ kind: "path", path: "/Users/dev/late.png" }]));
     expect(scope("thread-a").drafts).toEqual([]);
     expect(scope("thread-b").drafts).toEqual([]);
-    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -538,7 +556,6 @@ describe("useAgentComposerAttachments conversation drafts", () => {
       await pending;
     });
     expect(harness.hook().forDraft!("a").drafts).toEqual([]);
-    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -569,7 +586,6 @@ describe("useAgentComposerAttachments conversation drafts", () => {
       await pending;
     });
     expect(harness.hook().forDraft!("pending").drafts).toEqual([]);
-    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -579,12 +595,12 @@ describe("useAgentComposerAttachments conversation drafts", () => {
       attachmentId: IMAGE_ID,
       name,
       mime,
-      bytes: 5 * 1024 * 1024,
+      bytes: AGENT_IMAGE_MAX_MODEL_BYTES,
       width,
       height,
       promptLineBytesMax: 100,
     }));
-    for (let index = 0; index < 9; index++) {
+    for (let index = 0; index < 12; index++) {
       await act(() =>
         harness.hook().forDraft!(`bytes-${index}`).add(ROOT_A, [
           { kind: "path", path: `/Users/dev/${index}.png` },
@@ -592,8 +608,9 @@ describe("useAgentComposerAttachments conversation drafts", () => {
       );
     }
     expect(harness.hook().forDraft!("bytes-0").drafts).toHaveLength(1);
-    expect(harness.hook().forDraft!("bytes-8").drafts).toEqual([]);
-    expect(harness.hook().forDraft!("bytes-8").refusal).toContain("storage is full");
+    expect(harness.hook().forDraft!("bytes-10").drafts).toHaveLength(1);
+    expect(harness.hook().forDraft!("bytes-11").drafts).toEqual([]);
+    expect(harness.hook().forDraft!("bytes-11").refusal).toContain("storage is full");
     expect(harness.released).toEqual([IMAGE_ID]);
     harness.unmount();
   });

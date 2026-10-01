@@ -58,6 +58,39 @@ function recoverable(): AgentThreadView {
   };
 }
 
+function oversizedImagesThread(
+  text = "API Error: an image in the conversation could not be processed and was removed. Re-read the file with a different approach if you still need it.",
+  provider: "claudeCode" | "codex" = "claudeCode",
+): AgentThreadView {
+  const base = surfaceThreadView();
+  return {
+    ...base,
+    lifecycle: "settled",
+    execution: undefined,
+    thread: {
+      ...base.thread,
+      threadId: "agt-images",
+      owner: { rootKey: "/orders", ownerId: "workspace", repositoryRoot: "/orders" },
+      provider: { kind: provider, sessionId: "session" },
+      turns: [
+        {
+          turnId: "task",
+          prompt: "Compare the screenshots",
+          status: { kind: "exited", exitCode: 1 },
+          startedAtEpochMs: 1,
+          endedAtEpochMs: 2,
+          events: [{ kind: "assistantText", text }],
+          eventsTruncated: false,
+          lastStatusSequence: 0,
+          lastOutputSequence: 0,
+          launch: null,
+          cliVersion: null,
+        },
+      ],
+    },
+  };
+}
+
 describe("useAgentComposerRecovery", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -189,6 +222,47 @@ describe("useAgentComposerRecovery", () => {
     act(() => expect(stale.activate()).toBe(false));
     expect(startNewThread).not.toHaveBeenCalled();
     expect(selectEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("names the unavailable session as the reason", () => {
+    render();
+    expect(recovery().reason).toBe("sessionUnavailable");
+  });
+
+  it("recovers a local Claude thread whose conversation holds oversized images", () => {
+    const local: AgentComposerProjectOption = {
+      ...PROJECT,
+      projectRootKey: "/orders",
+      ownerId: "workspace",
+      rootPath: "/orders",
+      origin: "active-tab",
+      repositories: [{ repositoryRoot: "/orders", label: "orders" }],
+    };
+    render(oversizedImagesThread(), [local]);
+    const action = recovery();
+    expect(action).toMatchObject({
+      reason: "conversationImagesTooLarge",
+      threadId: "agt-images",
+      draftKey: "new:/orders",
+    });
+    act(() => expect(action.activate()).toBe(true));
+    expect(selectEnvironment).toHaveBeenCalledExactlyOnceWith("/orders");
+    expect(startNewThread).toHaveBeenCalledExactlyOnceWith("/orders", "/orders");
+  });
+
+  it("does not offer a new thread for another failure, a Codex thread, or an unknown project", () => {
+    const local: AgentComposerProjectOption = {
+      ...PROJECT,
+      projectRootKey: "/orders",
+      rootPath: "/orders",
+      repositories: [],
+    };
+    render(oversizedImagesThread("API Error: Repeated 529 Overloaded errors"), [local]);
+    expect(captured).toBeNull();
+    render(oversizedImagesThread(undefined, "codex"), [local]);
+    expect(captured).toBeNull();
+    render(oversizedImagesThread(), [PROJECT]);
+    expect(captured).toBeNull();
   });
 
   it("rejects activation after unmount", () => {

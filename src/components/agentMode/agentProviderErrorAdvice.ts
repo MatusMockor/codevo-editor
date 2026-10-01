@@ -9,6 +9,7 @@ import {
 export type AgentProviderErrorTarget = "local" | "remote";
 
 const USAGE_LIMIT_ADVICE = "Wait for the limit to reset, or switch to another model or provider.";
+const CONVERSATION_IMAGES_ADVICE = "Start a new thread to continue.";
 
 export function agentProviderErrorAdvice(
   error: AgentProviderError,
@@ -26,6 +27,8 @@ export function agentProviderErrorAdvice(
       return target === "remote"
         ? "The server could not continue the provider session. Check the runner on that server and try again."
         : "The provider session could not continue. Check the provider CLI and try again.";
+    case "conversationImagesTooLarge":
+      return CONVERSATION_IMAGES_ADVICE;
     case "unsupportedModelForCliVersion":
       return target === "remote"
         ? "Update the CLI on the server running this thread, then try again."

@@ -57,7 +57,6 @@ function attachmentGateway(released: string[]): AgentAttachmentGateway {
       height,
       promptLineBytesMax: 120,
     })),
-    stageAgentAttachmentFromPath: vi.fn(),
     inspectAgentAttachmentCandidate: vi.fn(),
     readAgentAttachmentCandidate: vi.fn(),
     claimAgentAttachments: vi.fn(),

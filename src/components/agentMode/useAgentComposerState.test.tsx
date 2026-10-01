@@ -1220,6 +1220,32 @@ describe("useAgentComposerState", () => {
     },
   );
 
+  it("leaves the oversized-image recovery to the thread banner instead of the composer", () => {
+    const base = surfaceThreadView();
+    const failed: AgentThreadView = {
+      ...base,
+      lifecycle: "settled",
+      thread: {
+        ...base.thread,
+        turns: [
+          {
+            ...steerableThreadView().thread.turns[0]!,
+            status: {
+              kind: "failed",
+              message:
+                'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.154.content.1.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels"}}',
+            },
+          },
+        ],
+      },
+    };
+    render(threadsSurfaceFixture({ threads: [failed] }));
+    act(() => current().navigation.selectThread("agt-1"));
+
+    expect(current().composer.composerProps.recoveryReason).toBe("conversationImagesTooLarge");
+    expect(current().composer.composerProps.onRecoverDraft).toBeUndefined();
+  });
+
   it.each(["claudeCode", "codex"] as const)(
     "preserves explicit immediate submission for %s",
     async (provider) => {

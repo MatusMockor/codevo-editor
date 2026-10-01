@@ -22,7 +22,6 @@ describe("merged remote image ownership", () => {
     const read = vi.fn(async () => new Uint8Array([1, 2, 3]).buffer);
     const gateway: AgentAttachmentGateway = {
       stageAgentAttachmentBytes: vi.fn(),
-      stageAgentAttachmentFromPath: vi.fn(),
       inspectAgentAttachmentCandidate: vi.fn(),
       readAgentAttachmentCandidate: vi.fn(),
       claimAgentAttachments: vi.fn(),

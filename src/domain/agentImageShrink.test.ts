@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { MAX_AGENT_IMAGE_BYTES } from "./agentAttachment";
+import { AGENT_IMAGE_MAX_MODEL_BYTES, MAX_AGENT_IMAGE_BYTES } from "./agentAttachment";
 import { MAX_AGENT_IMAGE_SOURCE_BYTES } from "./agentAttachmentIntake";
 import {
+  AGENT_IMAGE_LOSSLESS_MAX_BYTES,
   AGENT_IMAGE_MAX_EDGE,
-  AGENT_IMAGE_MAX_MODEL_BYTES,
   agentImageFitBox,
   agentShrunkAttachmentName,
   shrinkAgentImageToFit,
@@ -91,14 +91,14 @@ describe("shrinkAgentImageToFit", () => {
   });
 
   it("reencodes unsupported target formats and dimensions even below its byte budget", async () => {
-    for (const [mime, width] of [
-      ["image/webp", 800],
-      ["image/jpeg", 9000],
+    for (const [mime, width, encoded] of [
+      ["image/webp", 800, "image/png"],
+      ["image/jpeg", 9000, "image/jpeg"],
     ] as const) {
       const { port } = surface({ width });
       expect(
         await shrinkAgentImageToFit({ name: "shot", mime, bytes: bytes(1024) }, port, policy),
-      ).toMatchObject({ kind: "ready", mime: "image/jpeg", reencoded: true });
+      ).toMatchObject({ kind: "ready", mime: encoded, reencoded: true });
     }
   });
 
@@ -250,10 +250,46 @@ describe("shrinkAgentImageToFit", () => {
         port,
       ),
     ).toEqual({ kind: "refused", reason: "too-large" });
-    expect(calls.length).toBeLessThanOrEqual(13);
+    expect(calls).toHaveLength(13);
     expect(Math.max(...calls.map((call) => Math.max(call.width, call.height)))).toBe(
       AGENT_IMAGE_MAX_EDGE,
     );
+  });
+
+  it("rejects a lossless png pass above the lossless budget and uses the lossy ladder", async () => {
+    const { calls, port } = surface({
+      width: 2_742,
+      height: 1_416,
+      encodedBytes: (quality) => (quality === 1 ? AGENT_IMAGE_LOSSLESS_MAX_BYTES + 1 : 400_000),
+    });
+
+    const outcome = await shrinkAgentImageToFit(
+      { name: "photo.png", mime: "image/png", bytes: bytes(424_097) },
+      port,
+    );
+
+    expect(AGENT_IMAGE_LOSSLESS_MAX_BYTES).toBeLessThan(AGENT_IMAGE_MAX_MODEL_BYTES);
+    expect(outcome).toMatchObject({ kind: "ready", mime: "image/webp", width: 1_568 });
+    expect(calls.map((call) => call.mime)).toEqual(["image/png", "image/webp"]);
+  });
+
+  it.each([
+    ["anim.gif", "image/gif"],
+    ["capture.webp", "image/webp"],
+  ])("re-encodes an oversized %s losslessly as png", async (name, mime) => {
+    const { calls, port } = surface({ width: 2_544, height: 1_626 });
+
+    const outcome = await shrinkAgentImageToFit({ name, mime, bytes: bytes(322_528) }, port);
+
+    expect(outcome).toMatchObject({
+      kind: "ready",
+      mime: "image/png",
+      width: 1_568,
+      height: 1_002,
+      reencoded: true,
+    });
+    expect(outcome.kind === "ready" && outcome.name.endsWith(".png")).toBe(true);
+    expect(calls).toEqual([{ width: 1_568, height: 1_002, mime: "image/png", quality: 1 }]);
   });
 
   it("keeps the model edge even when a policy allows larger dimensions", async () => {
@@ -303,12 +339,27 @@ describe("shrinkAgentImageToFit", () => {
     ).toEqual({ kind: "refused", reason: "unreadable" });
   });
 
-  it("refuses dimensions outside the supported range as undecodable", async () => {
-    const { port } = surface({ width: 20_000, height: 10 });
+  it("refuses dimensions above the supported range as oversized", async () => {
+    const { calls, port } = surface({ width: 20_000, height: 10 });
 
     expect(
       await shrinkAgentImageToFit({ name: "wide.png", mime: "image/png", bytes: bytes(16) }, port),
+    ).toEqual({ kind: "refused", reason: "oversized" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses an empty decoded dimension as undecodable", async () => {
+    const { port } = surface({ width: 0, height: 10 });
+
+    expect(
+      await shrinkAgentImageToFit({ name: "empty.png", mime: "image/png", bytes: bytes(16) }, port),
     ).toEqual({ kind: "refused", reason: "unreadable" });
+  });
+
+  it("pins the model limits Codevo sends to Claude and Codex", () => {
+    expect(AGENT_IMAGE_MAX_EDGE).toBe(1_568);
+    expect(AGENT_IMAGE_MAX_MODEL_BYTES).toBe(3_750_000);
+    expect(AGENT_IMAGE_LOSSLESS_MAX_BYTES).toBe(1_500_000);
   });
 
   it("refuses above the decode guard without decoding", async () => {
