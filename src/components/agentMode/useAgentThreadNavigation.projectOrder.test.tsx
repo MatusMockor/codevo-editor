@@ -12,7 +12,7 @@ import {
   projectFixture,
   threadsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
-import type { AgentRailFilter } from "./agentRailFilter";
+import type { AgentRailProjectDisclosureState } from "./agentRailProjectLayout";
 import {
   useAgentThreadNavigation,
   type AgentNavigationSession,
@@ -47,15 +47,21 @@ function viewIn(threadId: string, rootKey: string, updatedAtEpochMs: number): Ag
 
 const ordersProject = project(ORDERS, "orders-api");
 const webProject = project(WEB, "web-dashboard");
-const threads = [viewIn("o1", ORDERS, 3), viewIn("o2", ORDERS, 2), viewIn("w1", WEB, 1)];
+const threads = [viewIn("w1", WEB, 3), viewIn("o1", ORDERS, 2), viewIn("o2", ORDERS, 1)];
+
+function disclosure(collapsed: ReadonlyArray<string>): AgentRailProjectDisclosureState {
+  return { collapsed: new Set(collapsed), showingAll: new Set() };
+}
+
+const revealed: string[] = [];
 
 interface ProbeOptions {
   readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
   readonly session?: AgentNavigationSession;
-  readonly railFilter?: AgentRailFilter;
+  readonly projectDisclosure?: AgentRailProjectDisclosureState;
 }
 
-describe("all-projects thread list", () => {
+describe("thread navigation across project groups", () => {
   let host: HTMLDivElement;
   let root: Root;
   let latest: AgentThreadNavigation | null;
@@ -67,6 +73,7 @@ describe("all-projects thread list", () => {
     document.body.append(host);
     root = createRoot(host);
     latest = null;
+    revealed.length = 0;
   });
 
   afterEach(() => {
@@ -76,7 +83,7 @@ describe("all-projects thread list", () => {
 
   function Probe({
     projects,
-    railFilter,
+    projectDisclosure,
     session,
   }: Required<Pick<ProbeOptions, "projects">> & ProbeOptions) {
     const groups = useMemo(
@@ -88,7 +95,8 @@ describe("all-projects thread list", () => {
       groups,
       presentationThreads: agents.threads,
       projects,
-      railFilter,
+      projectDisclosure,
+      revealProject: (projectRootKey) => revealed.push(projectRootKey),
       session,
     });
     return null;
@@ -99,7 +107,7 @@ describe("all-projects thread list", () => {
       root.render(
         <Probe
           projects={options.projects ?? [ordersProject, webProject]}
-          railFilter={options.railFilter}
+          projectDisclosure={options.projectDisclosure}
           session={options.session}
         />,
       ),
@@ -111,31 +119,47 @@ describe("all-projects thread list", () => {
     return latest as AgentThreadNavigation;
   }
 
-  it("searches and jumps across every project under All projects", () => {
+  it("searches every project and jumps in project-group order", () => {
     render();
     act(() => navigation().commands.jumpToThread(3));
     expect(navigation().selectedThreadId).toBe("w1");
+    act(() => navigation().commands.jumpToThread(1));
+    expect(navigation().selectedThreadId).toBe("o1");
     act(() => navigation().commands.searchThreads());
     expect([...navigation().palette.titles.keys()].sort()).toEqual(["o1", "o2", "w1"]);
   });
 
-  it("narrows next/previous to the filtered project and keeps the active project separate", () => {
+  it("steps next and previous through the visible rows of each project in order", () => {
     render();
-    expect(navigation().railScope?.projectRootKey).toBe(ORDERS);
-    render({ railFilter: { kind: "project", projectRootKey: WEB } });
-    expect(navigation().railScope?.projectRootKey).toBe(ORDERS);
+    act(() => navigation().commands.nextThread());
+    expect(navigation().selectedThreadId).toBe("o1");
+    act(() => navigation().commands.nextThread());
+    expect(navigation().selectedThreadId).toBe("o2");
     act(() => navigation().commands.nextThread());
     expect(navigation().selectedThreadId).toBe("w1");
     expect(navigation().railScope?.projectRootKey).toBe(WEB);
+    act(() => navigation().commands.previousThread());
+    expect(navigation().selectedThreadId).toBe("o2");
   });
 
-  it("narrows the search palette to the filtered project", () => {
-    render({ railFilter: { kind: "project", projectRootKey: ORDERS } });
-    act(() => navigation().commands.searchThreads());
-    expect([...navigation().palette.titles.keys()].sort()).toEqual(["o1", "o2"]);
+  it("skips the rows of a collapsed project when jumping", () => {
+    render({ projectDisclosure: disclosure([ORDERS]) });
+    act(() => navigation().commands.jumpToThread(1));
+    expect(navigation().selectedThreadId).toBe("w1");
+    act(() => navigation().commands.nextThread());
+    expect(navigation().selectedThreadId).toBe("w1");
   });
 
-  it("selects a thread from another project without touching the filter or the session", () => {
+  it("keeps the selected thread of a collapsed project in the order", () => {
+    render({ projectDisclosure: disclosure([ORDERS]) });
+    act(() => navigation().selectThread("o2"));
+    act(() => navigation().commands.nextThread());
+    expect(navigation().selectedThreadId).toBe("w1");
+    act(() => navigation().commands.previousThread());
+    expect(navigation().selectedThreadId).toBe("w1");
+  });
+
+  it("switches the active project when a thread from another project is selected", () => {
     const session: AgentNavigationSession = {
       current: {
         selectedThreadId: null,
@@ -148,20 +172,12 @@ describe("all-projects thread list", () => {
         },
       },
     };
-    render({ railFilter: { kind: "project", projectRootKey: WEB }, session });
-    act(() => navigation().selectThread("o1"));
-    expect(navigation().selectedThreadId).toBe("o1");
-    expect(navigation().railScope?.projectRootKey).toBe(ORDERS);
-    expect(Object.keys(session.current)).not.toContain("railFilter");
-  });
-
-  it("switches the active project without a filter side effect", () => {
-    render({ railFilter: { kind: "project", projectRootKey: ORDERS } });
-    act(() => {
-      navigation().setProjectScope(WEB);
-    });
+    render({ session });
+    act(() => navigation().selectThread("w1"));
+    expect(navigation().selectedThreadId).toBe("w1");
     expect(navigation().railScope?.projectRootKey).toBe(WEB);
-    expect(Object.keys(navigation())).not.toContain("railFilter");
-    expect(Object.keys(navigation())).not.toContain("setRailFilter");
+    act(() => navigation().selectThread("o1"));
+    expect(navigation().railScope?.projectRootKey).toBe(ORDERS);
+    expect(revealed).toEqual([WEB, ORDERS]);
   });
 });

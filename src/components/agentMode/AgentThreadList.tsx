@@ -7,6 +7,8 @@ import type { ListSelectionModifiers } from "../../domain/listSelection";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentThreadDropSection } from "../../domain/agentThreadOrganization";
 import { AgentThreadRow } from "./AgentThreadRow";
+import { AgentRailProjectGroup, type AgentRailProjectGroupActions } from "./AgentRailProjectGroup";
+import type { AgentRailProjectSection } from "./agentRailProjectLayout";
 import {
   agentRowProjectLabel,
   type AgentRailEmptyState,
@@ -15,10 +17,16 @@ import {
 } from "./agentSidebarPresentation";
 
 const NO_PENDING_INTERACTIONS: ReadonlyMap<string, AgentPendingInteraction> = new Map();
+const NO_REPOSITORY_LABELS: ReadonlyMap<string, string> = new Map();
+const PINNED_HEADING_ID = "agent-rail-pinned-heading";
 
 export interface AgentThreadListProps {
   readonly sections: AgentRailSections;
+  readonly projects: ReadonlyArray<AgentRailProjectSection>;
+  readonly currentProjectRootKey: string | null;
+  readonly projectActions: AgentRailProjectGroupActions;
   readonly projectLabels: ReadonlyMap<string, string>;
+  readonly repositoryLabels?: ReadonlyMap<string, string>;
   readonly selectedThreadId: string | null;
   readonly markedThreadIds: ReadonlySet<string>;
   readonly focusedThreadId: string | null;
@@ -35,6 +43,7 @@ export interface AgentThreadListProps {
 }
 
 export const AgentThreadList = memo(function AgentThreadList({
+  currentProjectRootKey,
   empty,
   evidenceOf,
   focusedThreadId,
@@ -45,15 +54,22 @@ export const AgentThreadList = memo(function AgentThreadList({
   onToggleSettled,
   onToggleSnoozed,
   pendingInteractions = NO_PENDING_INTERACTIONS,
+  projectActions,
   projectLabels,
+  projects,
+  repositoryLabels = NO_REPOSITORY_LABELS,
   sections,
   selectedThreadId,
   settledExpanded,
   snoozedExpanded,
 }: AgentThreadListProps) {
   const drag = useAgentThreadDrag(sections, onThreadMenuCommand);
-  const renderRows = (rows: ReadonlyArray<AgentThreadView>) => {
-    const neighbors = threadNeighbors(rows);
+  const renderRows = (
+    rows: ReadonlyArray<AgentThreadView>,
+    grouped = false,
+    order: ReadonlyArray<AgentThreadView> = rows,
+  ) => {
+    const neighbors = threadNeighbors(order);
     return rows.map((view) => {
       const threadId = view.thread.threadId;
       const adjacent = neighbors.get(threadId);
@@ -64,6 +80,8 @@ export const AgentThreadList = memo(function AgentThreadList({
           reorderable
           evidenceOf={evidenceOf}
           focused={focusedThreadId === threadId}
+          grouped={grouped}
+          repositoryLabel={repositoryLabels.get(view.thread.owner.repositoryRoot) ?? null}
           jumpLabel={jumpLabels.get(threadId) ?? null}
           key={threadId}
           on={selectedThreadId === threadId}
@@ -88,10 +106,34 @@ export const AgentThreadList = memo(function AgentThreadList({
       role="listbox"
       {...drag.handlers}
     >
+      {sections.pinned.length > 0 && (
+        <li className="cv-sb-heading" id={PINNED_HEADING_ID} role="none">
+          Pinned
+        </li>
+      )}
       {drag.marker("pinned", "Pins")}
-      {renderRows(sections.pinned)}
+      {sections.pinned.length > 0 && (
+        <li className="cv-sb-pinned" role="none">
+          <ul aria-labelledby={PINNED_HEADING_ID} className="cv-sb-pinned__rows" role="group">
+            {renderRows(sections.pinned)}
+          </ul>
+        </li>
+      )}
+      <li className="cv-sb-heading" role="none">
+        Projects
+      </li>
       {drag.marker("active", "Active")}
-      {renderRows(sections.active)}
+      {projects.map((project) => (
+        <AgentRailProjectGroup
+          actions={projectActions}
+          current={project.entry.projectRootKey === currentProjectRootKey}
+          key={project.entry.projectRootKey}
+          pendingInteractions={pendingInteractions}
+          project={project}
+        >
+          {renderRows(project.rows, true, project.threads)}
+        </AgentRailProjectGroup>
+      ))}
       {(sections.snoozed?.length ?? 0) > 0 && (
         <Shelf
           count={sections.snoozed?.length ?? 0}
@@ -144,9 +186,16 @@ function Shelf({
 }
 
 function EmptyState({ state }: { readonly state: NonNullable<AgentRailEmptyState> }) {
-  if (state.kind === "noProjects") return <div className="cv-sb-empty">No projects yet</div>;
-  if (state.scopeLabel === null) return <div className="cv-sb-empty">No threads yet</div>;
-  return <div className="cv-sb-empty">{`No threads in ${state.scopeLabel} yet`}</div>;
+  switch (state.kind) {
+    case "noProjects":
+      return <div className="cv-sb-empty">No projects yet</div>;
+    default:
+      return unsupportedEmptyState(state.kind);
+  }
+}
+
+function unsupportedEmptyState(kind: never): never {
+  throw new TypeError(`Unsupported rail empty state: ${String(kind)}`);
 }
 
 function threadNeighbors(

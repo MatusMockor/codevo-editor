@@ -7,6 +7,11 @@
   min-width: 0;
 }
 
+.agent-history-catalog__toggle {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
 .agent-history-catalog > header,
 .agent-history-catalog > ul,
 .agent-history-catalog > p,

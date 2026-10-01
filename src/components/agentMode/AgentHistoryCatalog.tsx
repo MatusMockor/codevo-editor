@@ -1,13 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import type { AgentHistoryCatalogSurface } from "../../application/useAgentHistoryCatalog";
+import { ChevronDown } from "lucide-react";
 import { Button } from "../../ui/foundation/Button";
 import {
   AgentHistoryCatalogRow,
   SAVED_CONVERSATION_ROW_SELECTOR,
   type AgentHistoryCatalogRowActions,
 } from "./AgentHistoryCatalogRow";
-import { agentProjectMonogram } from "./agentRailFilter";
+import { agentProjectMonogram } from "./agentProjectMonogram";
 import { boundedSavedConversationTitle } from "../../domain/agentSavedConversationTitle";
+import "./agentSidebar.css";
 import "./agentHistoryCatalog.css";
 
 export function AgentHistoryCatalog({
@@ -64,17 +66,23 @@ export function AgentHistoryCatalog({
   const deleting = catalog.rows.find((row) => row.threadId === page?.deletingThreadId);
   return (
     <section aria-label="Saved conversations" className="agent-history-catalog">
-      <Button
+      <button
         aria-expanded={page !== null}
+        className="cv-sb-shelf agent-history-catalog__toggle"
+        data-shelf="saved-conversations"
         onClick={() => {
-          if (page) catalog.close();
-          else void catalog.choose(catalog.projects[0].rootKey);
+          if (page) {
+            catalog.close();
+            return;
+          }
+          void catalog.choose(catalog.projects[0].rootKey);
         }}
-        size="sm"
-        variant="ghost"
+        type="button"
       >
         Saved conversations
-      </Button>
+        <span aria-hidden="true" className="cv-sb-shelf__rule" />
+        <ChevronDown aria-hidden="true" className="cv-sb-shelf__chevron" size={12} />
+      </button>
       {page && (
         <>
           <header className="agent-history-catalog__header">

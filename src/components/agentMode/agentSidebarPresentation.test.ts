@@ -346,12 +346,13 @@ describe("agent rail sections", () => {
   });
 
   it("assigns jump slots to the first nine visible cards only when more than one exists", () => {
-    const many = Array.from({ length: 12 }, (_, index) => view({ threadId: `t-${index}` }));
-    const slots = agentJumpSlots(agentRailSections(many));
+    const many = Array.from({ length: 12 }, (_, index) => `t-${index}`);
+    const slots = agentJumpSlots(many);
 
     expect(slots.size).toBe(9);
     expect(slots.get("t-0")).toBe(1);
-    expect(agentJumpSlots(agentRailSections([view({})])).size).toBe(0);
+    expect(slots.get("t-8")).toBe(9);
+    expect(agentJumpSlots(["only"]).size).toBe(0);
   });
 
   it("flattens groups and labels projects only when several exist", () => {
@@ -409,15 +410,9 @@ describe("agent rail sections", () => {
     const entries = agentRailScopeEntries(groups);
     const sections = agentRailSections([]);
 
-    expect(agentRailEmptyState([], sections, null)).toEqual({ kind: "noProjects" });
-    expect(agentRailEmptyState(groups, sections, null)).toEqual({
-      kind: "noThreads",
-      scopeLabel: null,
-    });
-    expect(agentRailEmptyState(groups, sections, entries[0]?.label ?? null)).toEqual({
-      kind: "noThreads",
-      scopeLabel: "app",
-    });
+    expect(sections.active).toEqual([]);
+    expect(agentRailEmptyState([])).toEqual({ kind: "noProjects" });
+    expect(agentRailEmptyState(entries)).toBeNull();
   });
 });
 

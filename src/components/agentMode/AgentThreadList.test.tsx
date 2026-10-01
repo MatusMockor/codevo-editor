@@ -22,13 +22,6 @@ describe("AgentThreadList empty state", () => {
     host.remove();
   });
 
-  it("states the scoped no-threads wording without any import action", () => {
-    render({ empty: { kind: "noThreads", scopeLabel: "app" } });
-
-    expect(host.textContent).toBe("No threads in app yet");
-    expect(host.querySelector("button")).toBeNull();
-  });
-
   it("states the no-projects wording without any import action", () => {
     render({ empty: { kind: "noProjects" } });
 
@@ -36,14 +29,11 @@ describe("AgentThreadList empty state", () => {
     expect(host.querySelector("button")).toBeNull();
   });
 
-  it("states the all-projects and single-project empty wording without any import action", () => {
-    render({ empty: { kind: "noThreads", scopeLabel: null } });
+  it("labels the project section even when no project holds a thread", () => {
+    render({ empty: null });
 
-    expect(host.textContent).toBe("No threads yet");
-    expect(host.querySelector("button")).toBeNull();
-
-    render({ empty: { kind: "noThreads", scopeLabel: "app" } });
-    expect(host.textContent).toBe("No threads in app yet");
+    expect(host.querySelector(".cv-sb-heading")?.textContent).toBe("Projects");
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
   });
 
   function render(overrides: Partial<AgentThreadListProps> & { empty: AgentRailEmptyState }) {
@@ -54,6 +44,14 @@ describe("AgentThreadList empty state", () => {
 function defaults(): AgentThreadListProps {
   return {
     sections: { pinned: [], active: [] },
+    projects: [],
+    currentProjectRootKey: null,
+    projectActions: {
+      onToggleCollapsed: () => undefined,
+      onToggleShowingAll: () => undefined,
+      onNewThread: () => undefined,
+      onProjectCommand: () => undefined,
+    },
     projectLabels: new Map(),
     selectedThreadId: null,
     markedThreadIds: new Set<string>(),
@@ -61,7 +59,7 @@ function defaults(): AgentThreadListProps {
     jumpLabels: new Map(),
     settledExpanded: false,
     snoozedExpanded: false,
-    empty: { kind: "noThreads", scopeLabel: "app" },
+    empty: { kind: "noProjects" },
     onToggleSettled: () => undefined,
     onToggleSnoozed: () => undefined,
     onSelectThread: () => undefined,

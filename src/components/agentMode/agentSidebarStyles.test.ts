@@ -37,8 +37,23 @@ describe("sidebar styles", () => {
 
   it("mirrors the mockup geometry", () => {
     expect(declaration(".cv-sb-search__field", "height")).toBe("32px");
-    expect(declaration(".cv-filter__option", "height")).toBe("32px");
     expect(declaration(".cv-favicon", "width")).toBe("16px");
+  });
+
+  it("keeps project groups compact and their hover actions out of the way until needed", () => {
+    expect(declaration(".cv-sb-project__toggle", "height")).toBe("30px");
+    expect(declaration(".cv-card-row.is-grouped", "height")).toBe("56px");
+    expect(declaration(".cv-sb-project__actions", "opacity")).toBe("0");
+    expect(declaration(".cv-sb-project__head:hover .cv-sb-project__actions", "opacity")).toBe("1");
+    expect(
+      declaration(".cv-sb-project__head:focus-within .cv-sb-project__actions", "opacity"),
+    ).toBe("1");
+    expect(
+      declaration(
+        '.cv-sb-project__toggle[aria-expanded="true"] .cv-sb-project__chevron',
+        "transform",
+      ),
+    ).toBe("rotate(90deg)");
   });
 
   it("keeps the t3code card row geometry", () => {

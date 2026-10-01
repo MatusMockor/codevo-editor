@@ -55,6 +55,16 @@ export function agentThreadRowProjectLine(projectLabel: string, serverName: stri
   return serverName === null ? projectLabel : `${serverName}${SEPARATOR}${projectLabel}`;
 }
 
+export function agentThreadRowGroupedContext(
+  repositoryLabel: string | null,
+  serverName: string | null,
+): string | null {
+  const parts = [serverName, repositoryLabel].filter(
+    (part): part is string => part !== null && part !== "",
+  );
+  return parts.length === 0 ? null : parts.join(SEPARATOR);
+}
+
 function knownBranch(view: AgentThreadView, input: AgentThreadRowLocationInput): string | null {
   if (input.serverName !== null) return null;
   if (view.thread.target.isolation === "worktree") return agentShipBranchLabel(view.ship);

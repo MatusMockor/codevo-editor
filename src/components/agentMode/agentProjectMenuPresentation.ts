@@ -30,6 +30,14 @@ export function agentRailScopeState(entry: AgentRailScopeEntry | null): AgentRai
   return null;
 }
 
+export function agentRailProjectState(entry: AgentRailScopeEntry): string | null {
+  const state = agentRailScopeState(entry);
+  if (state === null) return null;
+  if (entry.trust !== "trusted") return state.label;
+  if (entry.origin === "closed-tab-live-tasks") return state.label;
+  return null;
+}
+
 export function agentProjectMenuTarget(entry: AgentRailScopeEntry): AgentProjectMenuTarget {
   return {
     projectRootKey: entry.projectRootKey,

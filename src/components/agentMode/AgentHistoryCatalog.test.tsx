@@ -216,9 +216,18 @@ describe("saved conversations UI", () => {
     );
   });
 
-  it("renders its controls with the palette-aware foundation Button", () => {
+  it("heads the section with a shelf toggle that shows its open state with a chevron", () => {
     render(surface());
-    for (const label of ["Saved conversations", "Older conversations", "Back to newest"]) {
+    const toggle = button("Saved conversations");
+    expect(toggle.classList.contains("cv-sb-shelf")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.querySelector(".cv-sb-shelf__chevron")).not.toBeNull();
+    expect(toggle.querySelector(".cv-sb-shelf__rule")).not.toBeNull();
+  });
+
+  it("renders its paging controls with the palette-aware foundation Button", () => {
+    render(surface());
+    for (const label of ["Older conversations", "Back to newest"]) {
       expect(button(label)?.classList.contains("cv-button"), label).toBe(true);
       expect(button(label)?.classList.contains("cv-button--ghost"), label).toBe(true);
     }
@@ -235,7 +244,7 @@ describe("saved conversations UI", () => {
     ].join("\n");
     document.head.append(style);
     render(surface());
-    for (const label of ["Saved conversations", "Older conversations", "Back to newest"]) {
+    for (const label of ["Older conversations", "Back to newest"]) {
       const computed = getComputedStyle(button(label));
       expect(computed.getPropertyValue("background"), label).toBe("transparent");
       expect(computed.getPropertyValue("color"), label).toBe("var(--cv-fg-muted)");

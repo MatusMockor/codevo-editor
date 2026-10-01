@@ -5,7 +5,7 @@ import {
   type AgentThreadSearchRange,
 } from "../../domain/agentThreadSearch";
 import { AgentCompactRelativeTime } from "./agentClock";
-import { agentProjectMonogram } from "./agentRailFilter";
+import { agentProjectMonogram } from "./agentProjectMonogram";
 import {
   agentThreadRevealForMatch,
   type AgentThreadRevealRequest,

@@ -48,11 +48,11 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { AgentNewThreadPicker } from "../../application/agentNewThreadPicker";
-import type { AgentRailFilterPreferencePort } from "../../application/agentRailFilterPreferencePort";
+import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
 import { useAgentThreadBranchMemory } from "../../application/useAgentThreadBranchMemory";
 import { useAgentThreadBranchRecorder } from "../../application/useAgentThreadBranchRecorder";
 import { AgentThreadBranchMemoryContext } from "./agentThreadBranchMemoryContext";
-import { useAgentRailFilter } from "./useAgentRailFilter";
+import { useAgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
 import { useAgentProjectThreadCommands } from "./useAgentProjectThreadCommands";
 import { useAgentResumeCompactionOffer } from "../../application/useAgentResumeCompactionOffer";
 import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
@@ -120,7 +120,6 @@ import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
 import { agentComposerThreadLocation } from "./agentComposerThreadLocation";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
-import { useAgentWorkspaceCardSlot } from "./useAgentWorkspaceCardSlot";
 import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
 import {
   queuedEditImageOwner,
@@ -166,7 +165,7 @@ export interface AgentModeViewProps {
   readonly viewCommands?: AgentViewCommandBridge | null;
   readonly chrome: AgentWorkbenchChrome;
   readonly textClipboard?: TextClipboardGateway | null;
-  readonly railFilterPreference?: AgentRailFilterPreferencePort | null;
+  readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly threadNotifications?: AgentThreadNotificationCenter | null;
   onOpenSourceControl?(): void;
@@ -262,7 +261,7 @@ function LocalAgentModeView({
   artifactLoader = null,
   artifactPreview = null,
   textClipboard = null,
-  railFilterPreference = null,
+  projectCollapsePreference = null,
   newThreadPicker = null,
   threadNotifications = null,
   viewCommands = null,
@@ -314,12 +313,7 @@ function LocalAgentModeView({
     [agents.turnLog],
   );
   const railScopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
-  const railFilter = useAgentRailFilter({
-    preference: railFilterPreference,
-    entries: railScopeEntries,
-    projectsLoaded,
-    authoritativeRemoteProjectKeys,
-  });
+  const projectDisclosure = useAgentRailProjectDisclosure(projectCollapsePreference);
   const threadBranchMemory = useAgentThreadBranchMemory(chrome.threadBranchMemory ?? null);
   const navigation = useAgentThreadNavigation({
     agents,
@@ -330,7 +324,8 @@ function LocalAgentModeView({
     projects,
     session: navigationSession,
     authoritativeRemoteProjectKeys,
-    railFilter: railFilter.filter,
+    projectDisclosure: projectDisclosure.state,
+    revealProject: projectDisclosure.expand,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
   const contextThread = sessionThread?.thread ?? null;
@@ -652,6 +647,9 @@ function LocalAgentModeView({
     onSelectProjectEnvironment,
   });
   const requestNewThread = projectThreads.requestNewThread;
+  const newThreadInProject = useAgentLatestCallback((projectRootKey: string) => {
+    projectThreads.newThreadInProject(projectRootKey);
+  });
   const sectionRef = useRef<HTMLElement | null>(null);
   useSidebarFocusHandoff(layout.rail, sectionRef);
   const { attention, attentionExplanation, capacity, live } = useMemo(
@@ -850,29 +848,6 @@ function LocalAgentModeView({
     projectLabel: headerProject?.label ?? null,
     projectCount: railScopeEntries.length,
   });
-  const revealWorkspacePath = useAgentLatestCallback((path: string) => {
-    void chrome.revealPath(path).catch(revealFailed);
-  });
-  const workspaceCard = useAgentWorkspaceCardSlot(
-    {
-      project: headerProject,
-      thread: selectedThread,
-      draftIsolation: composer.composerProps.isolation,
-      draftPreviousWorktree:
-        composer.composerProps.previousWorktree?.selected === true
-          ? composer.composerProps.previousWorktree.available
-          : null,
-      draftServerId: selectedThread === null ? selectedServerId : null,
-      servers: remoteContext?.servers ?? NO_REMOTE_SERVERS,
-      liveBranches: chrome.liveCheckoutBranches,
-      branchMemory: threadBranchMemory.memory,
-    },
-    {
-      newThreadInShortcut,
-      onNewThreadIn: projectThreads.openNewThreadPicker,
-      onReveal: revealWorkspacePath,
-    },
-  );
   const sidebarReveal = useMemo(
     () => (
       <AgentSidebarReveal
@@ -976,19 +951,18 @@ function LocalAgentModeView({
                   onCollapseSidebar={toggleRail}
                   onNewThread={requestNewThread}
                   newThreadTitle={newThreadTitle}
-                  workspaceCard={workspaceCard}
+                  onNewThreadInProject={newThreadInProject}
+                  projectDisclosure={projectDisclosure}
                   onOpenProviderSettings={agents.configureAgentCli}
                   onOpenSourceControl={onOpenSourceControl}
                   onOpenUsage={onOpenUsageSettings}
                   onProjectCommand={projectMenuCommand}
-                  onChangeFilter={railFilter.setFilter}
                   onSelectThread={navigation.selectThread}
                   onThreadBulkCommand={threadBulkCommand}
                   onThreadMenuCommand={threadMenuCommand}
                   onTogglePin={togglePin}
                   overflowRootPaths={overflowRootPaths}
                   pendingInteractions={pendingInteractions}
-                  railFilter={railFilter.filter}
                   providerEnabled={effectiveProviderEnabled}
                   providerManagement={agents.providerManagement}
                   scope={railScope}

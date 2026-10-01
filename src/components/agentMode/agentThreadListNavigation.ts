@@ -1,4 +1,4 @@
-import { agentJumpSlots, type AgentRailSections } from "./agentSidebarPresentation";
+import { agentJumpSlots } from "./agentSidebarPresentation";
 
 export function rovingThreadId(
   request: string | null,
@@ -19,11 +19,11 @@ export function nextThreadIndex(key: string, index: number, length: number): num
 }
 
 export function jumpLabelsFor(
-  sections: AgentRailSections,
+  order: ReadonlyArray<string>,
   glyph: string,
 ): ReadonlyMap<string, string> {
   const labels = new Map<string, string>();
-  for (const [threadId, slot] of agentJumpSlots(sections)) labels.set(threadId, `${glyph}${slot}`);
+  for (const [threadId, slot] of agentJumpSlots(order)) labels.set(threadId, `${glyph}${slot}`);
   return labels;
 }
 

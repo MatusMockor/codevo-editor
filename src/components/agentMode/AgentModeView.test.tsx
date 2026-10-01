@@ -2003,17 +2003,13 @@ describe("AgentModeView", () => {
     expect(onOpenUsageSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("lists every registered root in the scope picker with the active tab first", () => {
+  it("lists every registered root as a sidebar project with the active tab first", () => {
     render({ projects: [activeProject(), backgroundProject()] });
 
     expect(host.querySelector('section[aria-label^="Project "]')).toBeNull();
     expect(scopeOptionLabels()).toEqual(["app", "api-service"]);
-    openProjectFilter();
-    expect(
-      [...document.querySelectorAll(".cv-filter .cv-filter__state")].map(
-        (element) => element.textContent,
-      ),
-    ).toEqual(["Background"]);
+    expect(projectStateLabel("app")).toBeNull();
+    expect(projectStateLabel("api-service")).toBeNull();
   });
 
   it("restores each project thread from the project chooser and respects New thread", () => {
@@ -2257,10 +2253,7 @@ describe("AgentModeView", () => {
     });
 
     expect(activeProjectLabel()).toContain("api-service");
-    expect(
-      host.querySelector<HTMLButtonElement>('button[aria-label="Filter threads by project"]')
-        ?.disabled,
-    ).toBe(false);
+    expect(scopeOptionLabels()).toEqual(["api-service"]);
     expect(host.querySelector('[data-thread-id="agt-live"]')).not.toBeNull();
     expect(projectStateLabel("api-service")).toBe("Tab closed");
 
@@ -2277,10 +2270,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector<HTMLButtonElement>('button[aria-label="New thread"]')?.title).toBe(
       "New thread (⇧⌘N)",
     );
-    expect(
-      host.querySelector<HTMLButtonElement>('button[aria-label="Filter threads by project"]')
-        ?.disabled,
-    ).toBe(true);
+    expect(host.querySelector(".agent-rail .cv-sb-project")).toBeNull();
   });
 
   it("does not flash the no-projects hero before projects are loaded", () => {
@@ -3597,8 +3587,8 @@ describe("AgentModeView", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
     render({ agents: surface({ externalSessions }) });
 
-    const empty = host.querySelector(".cv-sb-empty");
-    expect(empty).not.toBeNull();
+    const empty = host.querySelector(".cv-sb-project__empty");
+    expect(empty?.textContent).toBe("No threads yet");
     expect(empty?.querySelector("button")).toBeNull();
     expect(host.querySelector(".agent-rail__empty-import")).toBeNull();
   });
@@ -3881,26 +3871,18 @@ describe("AgentModeView", () => {
     });
   }
 
-  function openProjectFilter(): void {
-    if (document.querySelector(".cv-filter") !== null) return;
-    click('button[aria-label^="Filter threads by project"]');
-  }
-
-  function closeProjectFilter(): void {
-    const input = document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
-    if (input === null) return;
-    act(() => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
+  function railProject(label: string): HTMLElement | undefined {
+    return [...host.querySelectorAll<HTMLElement>(".agent-rail .cv-sb-project")].find(
+      (candidate) => candidate.querySelector(".cv-sb-project__name")?.textContent === label,
+    );
   }
 
   function openProjectMenu(label: string): void {
-    openProjectFilter();
-    const gear = document.querySelector<HTMLButtonElement>(
-      `button[aria-label="Project settings for ${label}"]`,
+    const actions = railProject(label)?.querySelector<HTMLButtonElement>(
+      `button[aria-label="Project actions for ${label}"]`,
     );
-    expect(gear).not.toBeNull();
-    act(() => gear?.click());
+    expect(actions).toBeDefined();
+    act(() => actions?.click());
   }
 
   function projectMenuLabels(): readonly string[] {
@@ -3915,13 +3897,7 @@ describe("AgentModeView", () => {
   }
 
   function projectStateLabel(label: string): string | null {
-    openProjectFilter();
-    const option = [...document.querySelectorAll<HTMLElement>('.cv-filter [role="option"]')].find(
-      (candidate) => candidate.querySelector(".cv-filter__label")?.textContent === label,
-    );
-    const state = option?.querySelector(".cv-filter__state")?.textContent ?? null;
-    closeProjectFilter();
-    return state;
+    return railProject(label)?.querySelector(".cv-sb-project__state")?.textContent ?? null;
   }
 
   function clickDialogButton(label: string): void {
@@ -3961,14 +3937,9 @@ describe("AgentModeView", () => {
   }
 
   function scopeOptionLabels(): readonly string[] {
-    openProjectFilter();
-    const labels = [
-      ...document.querySelectorAll(
-        '.cv-filter [role="option"]:not([data-value="all"]) .cv-filter__label',
-      ),
-    ].map((element) => element.textContent ?? "");
-    closeProjectFilter();
-    return labels;
+    return [...host.querySelectorAll(".agent-rail .cv-sb-project__name")].map(
+      (element) => element.textContent ?? "",
+    );
   }
 
   function chooseScope(projectRootKey: string): void {

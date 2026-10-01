@@ -3,12 +3,11 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentNewThreadPicker } from "../../application/agentNewThreadPicker";
-import type { AgentRailFilterPreferencePort } from "../../application/agentRailFilterPreferencePort";
+import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import type { AgentRailFilter } from "../../domain/agentRailFilter";
 import type { RemoteRunnerGateway } from "../../domain/remoteRunner";
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
 import {
@@ -51,17 +50,17 @@ function threadIn(threadId: string, rootKey: string, label: string): AgentThread
   });
 }
 
-class MemoryRailFilterPreference implements AgentRailFilterPreferencePort {
-  readonly saved: AgentRailFilter[] = [];
-  constructor(private stored: AgentRailFilter = { kind: "all" }) {}
+class MemoryCollapsePreference implements AgentRailProjectCollapsePreferencePort {
+  readonly saved: Array<ReadonlyArray<string>> = [];
+  constructor(private stored: ReadonlyArray<string> = []) {}
 
-  load(): AgentRailFilter {
+  load(): ReadonlyArray<string> {
     return this.stored;
   }
 
-  save(filter: AgentRailFilter): void {
-    this.stored = filter;
-    this.saved.push(filter);
+  save(collapsed: ReadonlyArray<string>): void {
+    this.stored = collapsed;
+    this.saved.push(collapsed);
   }
 }
 
@@ -80,7 +79,7 @@ function remoteContext(selectServer: (serverId: string | null) => void): RemoteR
   };
 }
 
-describe("agent sidebar project filter and New thread picker", () => {
+describe("agent sidebar project groups and New thread picker", () => {
   let host: HTMLDivElement;
   let root: Root;
   const selectWorkspace = vi.fn<(project: AgentProjectDescriptor | null) => void>();
@@ -136,21 +135,24 @@ describe("agent sidebar project filter and New thread picker", () => {
     );
   }
 
-  function filterTrigger(): HTMLButtonElement {
-    const trigger = host.querySelector<HTMLButtonElement>(
-      'button[aria-label^="Filter threads by project"]',
+  function projectGroup(label: string): HTMLElement {
+    const group = [...host.querySelectorAll<HTMLElement>(".agent-rail .cv-sb-project")].find(
+      (candidate) => candidate.querySelector(".cv-sb-project__name")?.textContent === label,
     );
-    expect(trigger).not.toBeNull();
-    return trigger as HTMLButtonElement;
+    expect(group).toBeDefined();
+    return group as HTMLElement;
   }
 
-  function chooseFilter(label: string): void {
-    act(() => filterTrigger().click());
-    const option = [...document.querySelectorAll<HTMLElement>('.cv-filter [role="option"]')].find(
-      (candidate) => candidate.querySelector(".cv-filter__label")?.textContent === label,
+  function projectToggle(label: string): HTMLButtonElement {
+    const toggle = projectGroup(label).querySelector<HTMLButtonElement>(".cv-sb-project__toggle");
+    expect(toggle).not.toBeNull();
+    return toggle as HTMLButtonElement;
+  }
+
+  function projectThreadIds(label: string): ReadonlyArray<string> {
+    return [...projectGroup(label).querySelectorAll<HTMLElement>("[data-thread-id]")].map(
+      (row) => row.dataset.threadId ?? "",
     );
-    expect(option).toBeDefined();
-    act(() => option?.click());
   }
 
   function railThreadIds(): ReadonlyArray<string> {
@@ -182,103 +184,97 @@ describe("agent sidebar project filter and New thread picker", () => {
     return selectWorkspace.mock.calls.map(([selected]) => selected?.rootKey ?? null);
   }
 
-  it("filters rows only: it keeps the selected thread, the workspace and the server", () => {
-    const preference = new MemoryRailFilterPreference();
-    render(<AgentModeView {...props({ railFilterPreference: preference })} />);
-    expect(filterTrigger().textContent).toContain("All projects");
-    expect(filterTrigger().getAttribute("aria-label")).toBe("Filter threads by project");
+  it("shows every open project as a group without a filter or a workspace card", () => {
+    render(<AgentModeView {...props()} />);
 
+    expect(
+      [...host.querySelectorAll(".agent-rail .cv-sb-project__name")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["app", "api-service"]);
+    expect(projectThreadIds("app")).toEqual(["a1"]);
+    expect(projectThreadIds("api-service")).toEqual(["b1"]);
+    expect(host.querySelector('button[aria-label^="Filter threads by project"]')).toBeNull();
+    expect(host.querySelector(".cv-sb-ws")).toBeNull();
+  });
+
+  it("switches the active project and workspace when a row from another project opens", () => {
+    render(<AgentModeView {...props()} />);
     clickRow("a1");
     expect(selectedSession()).toBe("a1");
     selectWorkspace.mockClear();
-    selectServer.mockClear();
 
-    chooseFilter("api-service");
+    clickRow("b1");
 
-    expect(railThreadIds()).toEqual(["b1"]);
-    expect(selectedSession()).toBe("a1");
-    expect(selectedWorkspaceRoots()).not.toContain(API);
+    expect(selectedSession()).toBe("b1");
+    expect(new Set(selectedWorkspaceRoots())).toEqual(new Set([API]));
     expect(selectServer).not.toHaveBeenCalled();
-    expect(filterTrigger().getAttribute("aria-label")).toBe(
-      "Filter threads by project: api-service",
-    );
-    expect(filterTrigger().textContent).toContain("api-service");
-    expect(preference.saved).toEqual([{ kind: "project", projectRootKey: API }]);
+    expect(railThreadIds()).toEqual(["a1", "b1"]);
+    expect(projectGroup("api-service").dataset.current).toBe("true");
+    expect(projectGroup("app").dataset.current).toBeUndefined();
   });
 
-  it("never follows a thread selected from another project", () => {
-    render(
-      <AgentModeView
-        {...props({
-          railFilterPreference: new MemoryRailFilterPreference({
-            kind: "project",
-            projectRootKey: API,
-          }),
-        })}
-      />,
-    );
-    expect(railThreadIds()).toEqual(["b1"]);
+  it("persists a collapsed project and restores it after a remount", () => {
+    const preference = new MemoryCollapsePreference();
+    render(<AgentModeView {...props({ projectCollapsePreference: preference })} />);
 
-    act(() => {
-      workbenchAgentPaletteProvider.current()?.openThread("a1");
-    });
+    act(() => projectToggle("api-service").click());
+    expect(projectThreadIds("api-service")).toEqual([]);
+    expect(preference.saved).toEqual([[API]]);
 
-    expect(selectedSession()).toBe("a1");
-    expect(railThreadIds()).toEqual(["b1"]);
-    expect(filterTrigger().getAttribute("aria-label")).toBe(
-      "Filter threads by project: api-service",
-    );
-  });
-
-  it("keeps the palette Switch project from moving the filter", () => {
-    render(
-      <AgentModeView {...props({ railFilterPreference: new MemoryRailFilterPreference() })} />,
-    );
-    act(() => {
-      workbenchAgentPaletteProvider.current()?.switchProject(API);
-    });
-    expect(filterTrigger().getAttribute("aria-label")).toBe("Filter threads by project");
-    expect(railThreadIds()).toEqual(expect.arrayContaining(["a1", "b1"]));
-  });
-
-  it("restores the filter from the persisted preference after a remount", () => {
-    const preference = new MemoryRailFilterPreference();
-    render(<AgentModeView {...props({ railFilterPreference: preference })} />);
-    chooseFilter("api-service");
     act(() => root.unmount());
     root = createRoot(host);
+    render(<AgentModeView {...props({ projectCollapsePreference: preference })} />);
 
-    render(<AgentModeView {...props({ railFilterPreference: preference })} />);
-
-    expect(filterTrigger().getAttribute("aria-label")).toBe(
-      "Filter threads by project: api-service",
-    );
-    expect(railThreadIds()).toEqual(["b1"]);
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("false");
+    expect(railThreadIds()).toEqual(["a1"]);
   });
 
-  it("falls back from a vanished project to All projects only once projects have loaded", () => {
-    const preference = new MemoryRailFilterPreference({
-      kind: "project",
-      projectRootKey: "/workspace/gone",
+  it("keeps the selected thread's collapsed project collapsed across a remount", () => {
+    const preference = new MemoryCollapsePreference();
+    render(<AgentModeView {...props({ projectCollapsePreference: preference })} />);
+    clickRow("b1");
+    act(() => projectToggle("api-service").click());
+    expect(projectThreadIds("api-service")).toEqual(["b1"]);
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    render(<AgentModeView {...props({ projectCollapsePreference: preference })} />);
+
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("false");
+    expect(preference.load()).toEqual([API]);
+  });
+
+  it("expands the project of a thread selected from elsewhere", () => {
+    const preference = new MemoryCollapsePreference([API]);
+    render(<AgentModeView {...props({ projectCollapsePreference: preference })} />);
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("false");
+
+    act(() => {
+      workbenchAgentPaletteProvider.current()?.openThread("b1");
     });
-    render(
-      <AgentModeView
-        {...props({ railFilterPreference: preference, projects: [], projectsLoaded: false })}
-      />,
-    );
-    render(
-      <AgentModeView {...props({ railFilterPreference: preference, projectsLoaded: false })} />,
-    );
-    expect(filterTrigger().getAttribute("aria-label")).toBe("Filter threads by project");
-    expect(preference.saved).toEqual([]);
-    expect(preference.load()).toEqual({ kind: "project", projectRootKey: "/workspace/gone" });
 
-    render(
-      <AgentModeView {...props({ railFilterPreference: preference, projectsLoaded: true })} />,
-    );
+    expect(selectedSession()).toBe("b1");
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("true");
+    expect(preference.saved).toEqual([[]]);
+  });
 
-    expect(preference.saved).toEqual([{ kind: "all" }]);
-    expect(filterTrigger().getAttribute("aria-label")).toBe("Filter threads by project");
+  it("starts a thread in a project from its hover button without touching the other project", () => {
+    const picker: AgentNewThreadPicker = { open: vi.fn(() => true) };
+    render(<AgentModeView {...props({ newThreadPicker: picker })} />);
+    clickRow("a1");
+
+    const button = host.querySelector<HTMLButtonElement>(
+      '.agent-rail button[aria-label="Create new thread in api-service"]',
+    );
+    expect(button).not.toBeNull();
+    expect(host.querySelector('[aria-label="New thread in api-service"]')).toBeNull();
+    act(() => button?.click());
+
+    expect(picker.open).not.toHaveBeenCalled();
+    expect(selectedSession()).toBeNull();
+    expect(host.querySelector('[aria-label="New thread in api-service"]')).not.toBeNull();
+    expect(projectGroup("api-service").dataset.current).toBe("true");
   });
 
   it("creates directly in the active project from the button and Shift+Cmd+N with several projects", () => {

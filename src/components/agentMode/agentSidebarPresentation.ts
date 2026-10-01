@@ -28,7 +28,6 @@ import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSess
 import { providerUpdateResultPresentation } from "../settings/agentProviderUpdatePresentation";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { agentProjectUsable } from "./agentProjectMenuPresentation";
-import type { AgentRailFilter } from "./agentRailFilter";
 import {
   NO_ROW_SIGNALS,
   agentRowIsLive,
@@ -248,10 +247,7 @@ function compareManualOrder(left: AgentThreadView, right: AgentThreadView): numb
   return compareAgentThreadOrder(left.thread, right.thread);
 }
 
-export type AgentRailEmptyState =
-  | { readonly kind: "noProjects" }
-  | { readonly kind: "noThreads"; readonly scopeLabel: string | null }
-  | null;
+export type AgentRailEmptyState = { readonly kind: "noProjects" } | null;
 
 export function agentRailViews(
   groups: ReadonlyArray<AgentProjectGroup>,
@@ -265,32 +261,20 @@ export function agentRailViews(
   return views;
 }
 
-export function agentRailOrphanCount(
-  groups: ReadonlyArray<AgentProjectGroup>,
-  filter: AgentRailFilter,
-): number {
+export function agentRailOrphanCount(groups: ReadonlyArray<AgentProjectGroup>): number {
   let count = 0;
   for (const group of groups) {
     if (group.kind !== "project") continue;
-    if (filter.kind === "project" && group.projectRootKey !== filter.projectRootKey) continue;
     for (const repo of group.repos) count += repo.orphans.length;
   }
   return count;
 }
 
 export function agentRailEmptyState(
-  groups: ReadonlyArray<AgentProjectGroup>,
-  sections: AgentRailSections,
-  scopeLabel: string | null,
+  entries: ReadonlyArray<AgentRailScopeEntry>,
 ): AgentRailEmptyState {
-  if (groups.length === 0) return { kind: "noProjects" };
-  const total =
-    sections.pinned.length +
-    sections.active.length +
-    (sections.snoozed?.length ?? 0) +
-    (sections.settled?.length ?? 0);
-  if (total > 0) return null;
-  return { kind: "noThreads", scopeLabel };
+  if (entries.length > 0) return null;
+  return { kind: "noProjects" };
 }
 
 export function agentRailDetachedThreadCount(groups: ReadonlyArray<AgentProjectGroup>): number {
@@ -324,13 +308,12 @@ export function agentProjectTerminalSessionsTarget(
   return { projectRootKey: project.projectRootKey, repositoryRoot: project.repositoryRoot };
 }
 
-export function agentJumpSlots(sections: AgentRailSections): ReadonlyMap<string, number> {
+export function agentJumpSlots(order: ReadonlyArray<string>): ReadonlyMap<string, number> {
   const slots = new Map<string, number>();
-  const ordered = [...sections.pinned, ...sections.active];
-  if (ordered.length < 2) return slots;
-  for (const [index, view] of ordered.entries()) {
+  if (order.length < 2) return slots;
+  for (const [index, threadId] of order.entries()) {
     if (index >= MAX_AGENT_THREAD_JUMP_SLOTS) break;
-    slots.set(view.thread.threadId, index + 1);
+    slots.set(threadId, index + 1);
   }
   return slots;
 }
@@ -390,6 +373,17 @@ export function agentRailProjectLabels(
   return labels;
 }
 
+export function agentRailRepositoryLabels(
+  groups: ReadonlyArray<AgentProjectGroup>,
+): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  for (const group of groups) {
+    if (group.singleRepo) continue;
+    for (const repo of group.repos) labels.set(repo.repositoryRoot, repo.label);
+  }
+  return labels;
+}
+
 export interface AgentThreadRowModel {
   readonly project: string;
   readonly title: string;
@@ -434,6 +428,7 @@ function agentRowFilesLabel(view: AgentThreadView): string | null {
 }
 
 export interface AgentRowClassNameModel {
+  readonly grouped?: boolean;
   readonly on: boolean;
   readonly marked: boolean;
   readonly recede: boolean;
@@ -443,6 +438,7 @@ export interface AgentRowClassNameModel {
 
 export function agentRowClassName(model: AgentRowClassNameModel): string {
   const classes = ["cv-card-row"];
+  if (model.grouped === true) classes.push("is-grouped");
   if (model.on) classes.push("is-current");
   if (model.marked) classes.push("is-marked");
   if (model.recede) classes.push("is-recede");

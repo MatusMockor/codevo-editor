@@ -1,7 +1,7 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
 import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
-import { BrowserAgentRailFilterPreference } from "../../infrastructure/browserAgentRailFilterPreference";
-import type { AgentRailFilterPreferencePort } from "../../application/agentRailFilterPreferencePort";
+import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
+import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
 import {
   commandPaletteNewThreadPicker,
   type AgentNewThreadPicker,
@@ -182,7 +182,7 @@ export interface AgentWorkbenchScreenProps {
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
-  readonly railFilterPreference?: AgentRailFilterPreferencePort | null;
+  readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
   readonly sessionRestore?: AgentSessionRestorePorts;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly revealPathGateway?: RevealPathGateway;
@@ -207,7 +207,7 @@ const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
 const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
-const DEFAULT_RAIL_FILTER_PREFERENCE = new BrowserAgentRailFilterPreference();
+const DEFAULT_PROJECT_COLLAPSE_PREFERENCE = new BrowserAgentRailProjectCollapsePreference();
 const DEFAULT_SESSION_RESTORE = browserAgentSessionRestorePorts();
 const defaultThreadNotificationPorts = (): AgentThreadNotificationCenterPorts => ({
   focus: createDocumentAppFocusPort(),
@@ -242,7 +242,7 @@ export function AgentWorkbenchScreen({
   terminalGateway,
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
-  railFilterPreference = DEFAULT_RAIL_FILTER_PREFERENCE,
+  projectCollapsePreference = DEFAULT_PROJECT_COLLAPSE_PREFERENCE,
   sessionRestore = DEFAULT_SESSION_RESTORE,
   newThreadPicker: injectedNewThreadPicker,
   workbench,
@@ -775,7 +775,7 @@ export function AgentWorkbenchScreen({
           projects={projects.projects}
           projectsLoaded={projects.projectsLoaded}
           textClipboard={textClipboard}
-          railFilterPreference={railFilterPreference}
+          projectCollapsePreference={projectCollapsePreference}
           newThreadPicker={newThreadPicker}
           viewCommands={workbenchAgentViewCommandBridge}
           threadNotifications={threadNotifications}

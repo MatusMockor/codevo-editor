@@ -4,17 +4,9 @@ import type { AgentThreadSearchSurface } from "../../application/agentThreadPort
 import { MAX_THREAD_SEARCH_QUERY_CHARS } from "../../domain/agentThreadSearch";
 import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
 import { IconButton } from "../../ui/foundation/IconButton";
-import { AgentProjectFilterMenu } from "./AgentProjectFilterMenu";
 import type { AgentProjectGroup } from "./agentModePresentation";
-import {
-  agentProjectMenuTarget,
-  agentRailScopeState,
-  type AgentProjectMenuCommand,
-  type AgentProjectMenuTarget,
-} from "./agentProjectMenuPresentation";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
-import { ALL_PROJECTS_FILTER, type AgentRailFilter } from "./agentRailFilter";
 import {
   agentRailDetachedThreadCount,
   agentRailNewThreadTarget,
@@ -31,15 +23,12 @@ export interface AgentRailHeaderProps {
   readonly searchRef: RefObject<HTMLInputElement | null>;
   readonly scope: AgentRailScope | null;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
-  readonly railFilter: AgentRailFilter;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly searchActiveDescendant: string | null;
   readonly newThreadTitle?: string;
   onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void;
-  onChangeFilter(filter: AgentRailFilter): void;
   onNewThread(shiftKey: boolean): void;
   onAddProject(): void;
-  onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
 export function AgentRailHeader({
@@ -47,12 +36,9 @@ export function AgentRailHeader({
   groups,
   newThreadTitle,
   onAddProject,
-  onChangeFilter,
   onNewThread,
-  onProjectCommand,
   onSearchKeyDown,
   overflowRootPaths,
-  railFilter,
   scope,
   scopeEntries,
   search,
@@ -60,19 +46,8 @@ export function AgentRailHeader({
   searchRef,
 }: AgentRailHeaderProps) {
   const newThreadTarget = agentRailNewThreadTarget(scope, scopeEntries);
-  const orphanCount = agentRailOrphanCount(groups, railFilter);
+  const orphanCount = agentRailOrphanCount(groups);
   const detachedCount = agentRailDetachedThreadCount(groups);
-  const filteredEntry =
-    railFilter.kind === "project"
-      ? (scopeEntries.find((entry) => entry.projectRootKey === railFilter.projectRootKey) ?? null)
-      : null;
-  const filteredState = headerScopeState(filteredEntry);
-
-  const selectProject = useCallback(
-    (entry: AgentRailScopeEntry) =>
-      onChangeFilter({ kind: "project", projectRootKey: entry.projectRootKey }),
-    [onChangeFilter],
-  );
   const defaultShortcuts = defaultAgentPanelLayoutShortcuts();
   const fallbackNewThreadTitle = agentNewThreadTooltip({
     shortcut: defaultShortcuts.newThread,
@@ -83,8 +58,6 @@ export function AgentRailHeader({
         : (agentRailScopeEntryFor(scopeEntries, scope.projectRootKey)?.label ?? null),
     projectCount: scopeEntries.length,
   });
-
-  const selectAll = useCallback(() => onChangeFilter(ALL_PROJECTS_FILTER), [onChangeFilter]);
 
   const handleSearchKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -149,34 +122,6 @@ export function AgentRailHeader({
           title={newThreadTitle ?? fallbackNewThreadTitle}
         />
       </div>
-      <div className="cv-sb-show">
-        <span aria-hidden="true">Show</span>
-        <AgentProjectFilterMenu
-          entries={scopeEntries}
-          filter={railFilter}
-          onProjectCommand={onProjectCommand}
-          onSelectAll={selectAll}
-          onSelectProject={selectProject}
-        />
-      </div>
-      {filteredEntry !== null && filteredState !== null && (
-        <p className="cv-sb-note cv-sb-state">
-          {filteredState.label}
-          {filteredState.action === "release" && (
-            <>
-              {" · "}
-              <button
-                aria-label={`Release project ${filteredEntry.label}`}
-                className="cv-sb-state__action"
-                onClick={() => onProjectCommand(agentProjectMenuTarget(filteredEntry), "release")}
-                type="button"
-              >
-                Release
-              </button>
-            </>
-          )}
-        </p>
-      )}
       {orphanCount > 0 && <p className="cv-sb-note">{orphanLabel(orphanCount)}</p>}
       {detachedCount > 0 && <p className="cv-sb-note">{detachedLabel(detachedCount)}</p>}
       {overflowRootPaths.length > 0 && (
@@ -186,13 +131,6 @@ export function AgentRailHeader({
       )}
     </div>
   );
-}
-
-function headerScopeState(entry: AgentRailScopeEntry | null) {
-  const state = agentRailScopeState(entry);
-  if (entry === null || state === null) return null;
-  if (state.action === "release" || entry.trust === "untrusted") return state;
-  return null;
 }
 
 function orphanLabel(count: number): string {

@@ -21,7 +21,7 @@ import {
   RenameInput,
 } from "./AgentThreadRowParts";
 import { agentShipBranchLabel } from "./agentModePresentation";
-import { agentProjectMonogram } from "./agentRailFilter";
+import { agentProjectMonogram } from "./agentProjectMonogram";
 import {
   agentRowClassName,
   agentThreadImportedBadgeLabel,
@@ -31,7 +31,11 @@ import {
 } from "./agentSidebarPresentation";
 import { agentRowIsLive, agentRowWorkingAgents } from "./agentThreadRowStatus";
 import { useAgentThreadRowPlace } from "./agentThreadBranchMemoryContext";
-import { agentThreadRowProjectLine, type AgentThreadRowGlyph } from "./agentThreadRowLocation";
+import {
+  agentThreadRowGroupedContext,
+  agentThreadRowProjectLine,
+  type AgentThreadRowGlyph,
+} from "./agentThreadRowLocation";
 import { useAgentRowBackgroundActivity } from "./useAgentRowBackgroundActivity";
 import { useAgentThreadRowMenu } from "./useAgentThreadRowMenu";
 
@@ -45,6 +49,8 @@ export interface AgentThreadRowProps {
   readonly moveUpId?: string;
   readonly moveDownId?: string;
   readonly reorderable?: boolean;
+  readonly grouped?: boolean;
+  readonly repositoryLabel?: string | null;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly pending: AgentPendingInteraction | null;
   onSelect(threadId: string, modifiers: ListSelectionModifiers): void;
@@ -55,6 +61,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   const {
     evidenceOf = NO_AGENT_TURN_LOG_EVIDENCE,
     focused,
+    grouped = false,
     jumpLabel,
     on,
     onMenuCommand,
@@ -122,6 +129,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   };
 
   const rowClass = agentRowClassName({
+    grouped,
     on,
     marked: selected,
     recede: model.recede,
@@ -138,6 +146,33 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   const menuNode = menu.overlays;
 
   const canSettle = !agentRowIsLive(status) && thread.settledAt == null && !renaming;
+  const groupedContext = grouped
+    ? agentThreadRowGroupedContext(props.repositoryLabel ?? null, place.serverName)
+    : null;
+  const pinNode = thread.pinned && (
+    <span aria-label="Pinned" className="cv-card-row__pin" role="img" title="Pinned">
+      <Pin aria-hidden="true" size={12} />
+    </span>
+  );
+  const slotNode = (
+    <span className="cv-card-row__slot">
+      <AgentThreadRowStatusSlot status={status} updatedAtEpochMs={thread.updatedAtEpochMs} />
+    </span>
+  );
+  const titleNode = renaming ? (
+    <RenameInput
+      initial={thread.title}
+      onCancel={() => setRenaming(false)}
+      onCommit={commitRename}
+    />
+  ) : (
+    <span className="cv-card-row__title">
+      {view.execution?.kind === "remote" && (
+        <RemoteServerIndicator name={place.connectedServerName} />
+      )}
+      {model.title}
+    </span>
+  );
   return (
     <li className="cv-sb-item" data-menu-open={menu.open ? "true" : undefined} role="none">
       <div
@@ -154,37 +189,31 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
         role="option"
         tabIndex={focused ? 0 : -1}
       >
-        <span className="cv-card-row__l1">
-          <span aria-hidden="true" className="cv-favicon">
-            {agentProjectMonogram(model.project)}
+        {grouped ? (
+          <span className="cv-card-row__head">
+            {titleNode}
+            {pinNode}
+            {slotNode}
           </span>
-          <span className="cv-card-row__project">
-            {agentThreadRowProjectLine(model.project, place.serverName)}
-          </span>
-          {thread.pinned && (
-            <span aria-label="Pinned" className="cv-card-row__pin" role="img" title="Pinned">
-              <Pin aria-hidden="true" size={12} />
-            </span>
-          )}
-          <span className="cv-card-row__slot">
-            <AgentThreadRowStatusSlot status={status} updatedAtEpochMs={thread.updatedAtEpochMs} />
-          </span>
-        </span>
-        {renaming ? (
-          <RenameInput
-            initial={thread.title}
-            onCancel={() => setRenaming(false)}
-            onCommit={commitRename}
-          />
         ) : (
-          <span className="cv-card-row__title">
-            {view.execution?.kind === "remote" && (
-              <RemoteServerIndicator name={place.connectedServerName} />
-            )}
-            {model.title}
-          </span>
+          <>
+            <span className="cv-card-row__l1">
+              <span aria-hidden="true" className="cv-favicon">
+                {agentProjectMonogram(model.project)}
+              </span>
+              <span className="cv-card-row__project">
+                {agentThreadRowProjectLine(model.project, place.serverName)}
+              </span>
+              {pinNode}
+              {slotNode}
+            </span>
+            {titleNode}
+          </>
         )}
         <span className="cv-card-row__l3" title={place.location.title}>
+          {groupedContext !== null && (
+            <span className="cv-card-row__context">{groupedContext}</span>
+          )}
           <RowGlyph glyph={place.location.glyph} />
           <span className="cv-card-row__branch">{place.location.label}</span>
           {model.filesLabel !== null && (

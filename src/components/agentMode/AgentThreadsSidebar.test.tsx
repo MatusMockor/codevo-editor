@@ -32,6 +32,7 @@ import { readStyleSheet } from "../cssContractTestSupport";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
+import { useAgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS, agentRailScopeEntries } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
@@ -40,6 +41,14 @@ const NOW = 1_700_000_600_000;
 const AGENT_MODE_CSS = readAgentModeStyles();
 const SIDEBAR_CSS = readStyleSheet("components/agentMode/agentSidebar.css").source;
 const ROOT_OWNER = agentThreadBulkOwnerKey({ rootKey: ROOT, ownerId: `agent-root:${ROOT}` });
+
+type SidebarHarnessProps = Omit<AgentThreadsSidebarProps, "projectDisclosure"> &
+  Partial<Pick<AgentThreadsSidebarProps, "projectDisclosure">>;
+
+function SidebarHarness({ projectDisclosure, ...props }: SidebarHarnessProps) {
+  const disclosure = useAgentRailProjectDisclosure(null);
+  return <AgentThreadsSidebar {...props} projectDisclosure={projectDisclosure ?? disclosure} />;
+}
 
 describe("AgentThreadsSidebar", () => {
   let host: HTMLDivElement;
@@ -273,7 +282,7 @@ describe("AgentThreadsSidebar", () => {
       host.querySelector('input[role="combobox"][aria-label="Search threads"]'),
     ).not.toBeNull();
     expect(host.querySelector('[aria-label="New thread"]')).not.toBeNull();
-    expect(host.querySelector('[aria-label="Filter threads by project"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label^="Filter threads by project"]')).toBeNull();
     expect(host.querySelector('[aria-label="Add project"]')).not.toBeNull();
     expect(host.querySelector(".agent-rail__title")).toBeNull();
     expect(host.querySelector(".agent-rail__filters")).toBeNull();
@@ -290,16 +299,24 @@ describe("AgentThreadsSidebar", () => {
         return Promise.resolve();
       },
     };
-    const views = Array.from({ length: 12 }, (_unused, index) =>
+    const views = Array.from({ length: 6 }, (_unused, index) =>
       settled(`agt-${index}`, `Thread ${index}`, { updatedAtEpochMs: NOW - index * 60_000 }),
     );
+    const others = Array.from({ length: 6 }, (_unused, index) =>
+      settled(`api-${index}`, `Api ${index}`, {
+        repositoryRoot: OTHER,
+        updatedAtEpochMs: NOW - index * 60_000,
+      }),
+    );
 
-    render({ groups: [group(ROOT, "app", views)], turnLog });
+    render({ groups: [group(ROOT, "app", views), group(OTHER, "api", others)], turnLog });
 
     expect(asked).toHaveLength(8);
-    expect(asked.map((entry) => entry.threadId)).toEqual(
-      views.slice(0, 8).map((view) => view.thread.threadId),
-    );
+    expect(asked.map((entry) => entry.threadId)).toEqual([
+      ...views.map((view) => view.thread.threadId),
+      "api-0",
+      "api-1",
+    ]);
     expect(asked[0]?.turnIds).toEqual(["agt-0-t1"]);
   });
 
@@ -490,7 +507,7 @@ describe("AgentThreadsSidebar", () => {
     expect(document.activeElement).toBe(host.querySelector('button[aria-label="Expand sidebar"]'));
   });
 
-  it("lists every thread as one flat recency-sorted card list", () => {
+  it("lists a project's threads as one recency-sorted card list under its owner", () => {
     render({
       groups: [
         group(ROOT, "app", [
@@ -502,23 +519,50 @@ describe("AgentThreadsSidebar", () => {
     });
 
     expect(rowIds()).toEqual(["agt-new", "agt-mid", "agt-old"]);
+    expect(projectRowIds("app")).toEqual(["agt-new", "agt-mid", "agt-old"]);
+    expect(projectRowIds("api")).toEqual([]);
     expect(host.querySelector("section")).toBeNull();
     expect(host.querySelector(".agent-band")).toBeNull();
     expect(host.textContent).not.toContain("NEEDS ATTENTION");
     expect(host.textContent).not.toContain("+ New thread");
   });
 
-  it("renders the card lines: monogram, project, title, branch and time", () => {
+  it("renders project rows as title, time and branch, leaving the project to the group", () => {
     render({
       groups: [group(ROOT, "app", [settled("agt-1", "Fix the parser", { branch: "main" })])],
     });
 
     const card = row("agt-1");
+    expect(card.classList.contains("is-grouped")).toBe(true);
+    expect(card.querySelector(".cv-favicon")).toBeNull();
+    expect(card.querySelector(".cv-card-row__project")).toBeNull();
+    expect(card.querySelector(".cv-card-row__head .cv-card-row__title")?.textContent).toBe(
+      "Fix the parser",
+    );
+    expect(card.querySelector(".cv-card-row__head .cv-card-row__when")?.textContent).toBe("2m");
+    expect(card.querySelector(".cv-card-row__branch")?.textContent).toBe("main");
+    expect(card.querySelector(".cv-card-row__context")).toBeNull();
+  });
+
+  it("renders pinned cards with the monogram, project, title, branch and time", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [settled("agt-1", "Fix the parser", { branch: "main", pinned: true })]),
+      ],
+    });
+
+    const card = row("agt-1");
+    expect(card.classList.contains("is-grouped")).toBe(false);
     expect(card.querySelector(".cv-favicon")?.textContent).toBe("A");
     expect(card.querySelector(".cv-card-row__project")?.textContent).toBe("app");
     expect(card.querySelector(".cv-card-row__title")?.textContent).toBe("Fix the parser");
     expect(card.querySelector(".cv-card-row__branch")?.textContent).toBe("main");
     expect(card.querySelector(".cv-card-row__when")?.textContent).toBe("2m");
+    expect(projectRowIds("app")).toEqual([]);
+    expect([...host.querySelectorAll(".cv-sb-heading")].map((node) => node.textContent)).toEqual([
+      "Pinned",
+      "Projects",
+    ]);
   });
 
   it("names the server of a remote row from the connected servers", () => {
@@ -556,31 +600,27 @@ describe("AgentThreadsSidebar", () => {
         root.render(
           <RemoteRunnerContext.Provider value={context(selectedServerId)}>
             <AgentClockProvider nowTickMs={1000}>
-              <AgentThreadsSidebar {...sidebarProps({ groups })} />
+              <SidebarHarness {...sidebarProps({ groups })} />
             </AgentClockProvider>
           </RemoteRunnerContext.Provider>,
         ),
       );
 
     renderWith(null);
-    expect(row("agt-remote").querySelector(".cv-card-row__project")?.textContent).toBe(
-      "build-box · app",
-    );
+    expect(row("agt-remote").querySelector(".cv-card-row__context")?.textContent).toBe("build-box");
     renderWith("linux");
-    expect(row("agt-remote").querySelector(".cv-card-row__project")?.textContent).toBe(
-      "build-box · app",
-    );
+    expect(row("agt-remote").querySelector(".cv-card-row__context")?.textContent).toBe("build-box");
     expect(row("agt-remote").querySelector(".cv-card-row__glyph")?.getAttribute("data-glyph")).toBe(
       "server",
     );
   });
 
-  it("prefixes the repository with the project label only for multi-repository projects", () => {
+  it("names the repository on project rows only for multi-repository projects", () => {
     render({
       groups: [{ ...group(ROOT, "app", [settled("agt-1", "One")]), singleRepo: false }],
     });
 
-    expect(row("agt-1").querySelector(".cv-card-row__project")?.textContent).toBe("app / app");
+    expect(row("agt-1").querySelector(".cv-card-row__context")?.textContent).toBe("app");
     expect(row("agt-1").querySelector(".cv-card-row__branch")?.textContent).toBe("Worktree");
   });
 
@@ -609,10 +649,8 @@ describe("AgentThreadsSidebar", () => {
       ],
     });
 
-    expect(row("agt-1").querySelector(".cv-card-row__project")?.textContent).toBe("app / app");
-    expect(row("agt-2").querySelector(".cv-card-row__project")?.textContent).toBe(
-      "app / packages/api",
-    );
+    expect(row("agt-1").querySelector(".cv-card-row__context")?.textContent).toBe("app");
+    expect(row("agt-2").querySelector(".cv-card-row__context")?.textContent).toBe("packages/api");
   });
 
   it("replaces the time with Working plus a live duration while a turn runs", () => {
@@ -727,7 +765,7 @@ describe("AgentThreadsSidebar", () => {
     });
 
     expect(host.querySelector('[data-thread-id="arc-1"]')).toBeNull();
-    expect(host.querySelector(".cv-sb-empty")).not.toBeNull();
+    expect(host.querySelector(".cv-sb-project__empty")?.textContent).toBe("No threads yet");
   });
 
   it("opens the thread context menu in the mockup order and dispatches commands", () => {
@@ -980,6 +1018,44 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".cv-card-row__jump")).toBeNull();
   });
 
+  it("numbers jumps and arrows across pins then projects, skipping collapsed projects", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const groups = [
+      group(ROOT, "app", [
+        settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
+        settled("agt-2", "Two", { pinned: true }),
+      ]),
+      group(OTHER, "api", [settled("api-1", "Api", { repositoryRoot: OTHER })]),
+    ];
+    render({ groups });
+    const badges = () => {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+        vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+      });
+      const labels = Object.fromEntries(
+        [...host.querySelectorAll<HTMLElement>("[data-thread-id]")].map((element) => [
+          element.dataset.threadId,
+          element.querySelector(".cv-card-row__jump")?.textContent ?? null,
+        ]),
+      );
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" }));
+      });
+      return labels;
+    };
+
+    expect(rowIds()).toEqual(["agt-2", "agt-1", "api-1"]);
+    expect(badges()).toEqual({ "agt-2": "⌘1", "agt-1": "⌘2", "api-1": "⌘3" });
+
+    act(() => projectToggle("app").click());
+    expect(badges()).toEqual({ "agt-2": "⌘1", "api-1": "⌘2" });
+
+    act(() => row("agt-2").focus());
+    key(row("agt-2"), "ArrowDown");
+    expect(document.activeElement).toBe(row("api-1"));
+  });
+
   it("uses Control and the Ctrl glyph off macOS and clears hints when the tab hides", () => {
     withUserAgent("Mozilla/5.0 (X11; Linux x86_64)");
     render({ groups: [group(ROOT, "app", [settled("agt-1", "One"), settled("agt-2", "Two")])] });
@@ -1095,31 +1171,70 @@ describe("AgentThreadsSidebar", () => {
     ]);
   });
 
-  it("lists threads from every project under All projects and narrows through the filter only", () => {
-    const onChangeFilter = vi.fn();
-    const onNewThread = vi.fn();
+  it("nests every project's threads under a collapsible project header", () => {
     const appThread = settled("agt-1", "One");
     const apiThread = settled("agt-api", "Api", { repositoryRoot: OTHER });
     const groups = [group(ROOT, "app", [appThread]), group(OTHER, "api", [apiThread])];
-    render({ groups, railFilter: { kind: "all" }, onChangeFilter, onNewThread });
-    expect(rowIds()).toEqual(expect.arrayContaining(["agt-1", "agt-api"]));
-    click('button[aria-label="Filter threads by project"]');
-    const api = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (option) => option.querySelector(".cv-filter__label")?.textContent === "api",
-    );
-    expect(api).toBeDefined();
-    act(() => api?.click());
-    expect(onChangeFilter).toHaveBeenCalledTimes(1);
-    expect(onChangeFilter).toHaveBeenCalledWith({ kind: "project", projectRootKey: OTHER });
-    expect(onNewThread).not.toHaveBeenCalled();
-    render({ groups, railFilter: { kind: "project", projectRootKey: OTHER } });
+    render({ groups });
+
+    expect(projectNames()).toEqual(["app", "api"]);
+    expect(projectRowIds("app")).toEqual(["agt-1"]);
+    expect(projectRowIds("api")).toEqual(["agt-api"]);
+    expect(host.querySelector('button[aria-label^="Filter threads by project"]')).toBeNull();
+    expect(host.querySelector(".cv-sb-show")).toBeNull();
+
+    act(() => projectToggle("app").click());
+    expect(projectToggle("app").getAttribute("aria-expanded")).toBe("false");
+    expect(projectRowIds("app")).toEqual([]);
     expect(rowIds()).toEqual(["agt-api"]);
-    const trigger = host.querySelector<HTMLButtonElement>(".cv-sb-show button");
-    expect(trigger?.getAttribute("aria-label")).toBe("Filter threads by project: api");
-    expect(trigger?.textContent).toBe("api");
+
+    act(() => projectToggle("app").click());
+    expect(projectToggle("app").getAttribute("aria-expanded")).toBe("true");
+    expect(projectRowIds("app")).toEqual(["agt-1"]);
   });
 
-  it("routes Trust and Release through the project actions of the filter", () => {
+  it("keeps the selected thread visible inside a collapsed project", () => {
+    const groups = [group(ROOT, "app", threeThreads())];
+    render({ groups, selectedThreadId: "agt-2" });
+
+    act(() => projectToggle("app").click());
+
+    expect(projectRowIds("app")).toEqual(["agt-2"]);
+  });
+
+  it("previews six threads per project behind Show more and Show less", () => {
+    const many = Array.from({ length: 8 }, (_, index) =>
+      settled(`agt-${index}`, `Thread ${index}`, { updatedAtEpochMs: NOW - index * 1000 }),
+    );
+    render({ groups: [group(ROOT, "app", many)] });
+
+    expect(projectRowIds("app")).toHaveLength(6);
+    click('button[aria-label="Show 2 more threads in app"]');
+    expect(projectRowIds("app")).toHaveLength(8);
+    click('button[aria-label="Show fewer threads in app"]');
+    expect(projectRowIds("app")).toHaveLength(6);
+  });
+
+  it("starts a thread in the hovered project and fails closed for one that cannot be used", () => {
+    const onNewThreadInProject = vi.fn();
+    const onNewThread = vi.fn();
+    const groups = [
+      group(ROOT, "app", [settled("agt-1", "One")]),
+      group(OTHER, "api", [], { trust: "untrusted" }),
+    ];
+    render({ groups, onNewThread, onNewThreadInProject });
+
+    click('button[aria-label="Create new thread in app"]');
+    expect(onNewThreadInProject).toHaveBeenCalledWith(ROOT);
+    expect(onNewThread).not.toHaveBeenCalled();
+    expect(
+      host.querySelector<HTMLButtonElement>('button[aria-label="Create new thread in api"]')
+        ?.disabled,
+    ).toBe(true);
+    expect(projectToggle("app").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("routes Trust and Release through the project actions menu and shows the project state", () => {
     const onProjectCommand = vi.fn();
     const groups = [
       group(ROOT, "app", [settled("agt-1", "One")], { origin: "closed-tab-live-tasks" }),
@@ -1128,17 +1243,10 @@ describe("AgentThreadsSidebar", () => {
       }),
     ];
     render({ groups, onProjectCommand });
-    click('button[aria-label="Filter threads by project"]');
-    const labels = [...document.querySelectorAll<HTMLElement>('.cv-filter [role="option"]')].map(
-      (option) => option.textContent,
-    );
-    expect(labels.find((label) => label?.includes("api"))).toContain("Not trusted");
-    expect(labels.find((label) => label?.includes("app"))).toContain("Tab closed");
-    act(() =>
-      document
-        .querySelector<HTMLButtonElement>('button[aria-label="Project settings for api"]')
-        ?.click(),
-    );
+    expect(projectState("api")).toBe("Not trusted");
+    expect(projectState("app")).toBe("Tab closed");
+
+    click('button[aria-label="Project actions for api"]');
     const trust = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
       (item) => item.textContent === "Trust project…",
     );
@@ -1147,12 +1255,11 @@ describe("AgentThreadsSidebar", () => {
       { projectRootKey: OTHER, repositoryRoot: OTHER, rootPath: OTHER },
       "trust",
     );
-    click('button[aria-label="Filter threads by project"]');
-    act(() =>
-      document
-        .querySelector<HTMLButtonElement>('button[aria-label="Project settings for app"]')
-        ?.click(),
-    );
+
+    const appToggle = projectToggle("app");
+    act(() => {
+      appToggle.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
     const release = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
       (item) => item.textContent === "Release project",
     );
@@ -1161,81 +1268,59 @@ describe("AgentThreadsSidebar", () => {
       { projectRootKey: ROOT, repositoryRoot: ROOT, rootPath: ROOT },
       "release",
     );
+    expect(projectToggle("app").getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("shows a compact state for the filtered project and releases a closed tab from it", () => {
-    const onProjectCommand = vi.fn();
-    const groups = [
-      group(ROOT, "app", [settled("agt-1", "One")], { origin: "closed-tab-live-tasks" }),
-      group(OTHER, "api", [settled("agt-2", "Two", { repositoryRoot: OTHER })], {
-        trust: "untrusted",
-      }),
-    ];
-    const state = () => host.querySelector<HTMLElement>(".cv-sb-state");
-    render({ groups, onProjectCommand });
-    expect(state()).toBeNull();
+  it("signals live work in a collapsed project", () => {
+    const groups = [group(ROOT, "app", [running("agt-1", "Busy")])];
+    render({ groups });
+    expect(host.querySelector(".cv-sb-project__signal")).toBeNull();
 
-    render({ groups, onProjectCommand, railFilter: { kind: "project", projectRootKey: ROOT } });
-    expect(state()?.textContent).toContain("Tab closed");
-    act(() =>
-      state()
-        ?.querySelector<HTMLButtonElement>('button[aria-label="Release project app"]')
-        ?.click(),
+    act(() => projectToggle("app").click());
+
+    expect(host.querySelector(".cv-sb-project__signal")?.getAttribute("aria-label")).toBe(
+      "1 thread working",
     );
-    expect(onProjectCommand).toHaveBeenCalledWith(
-      { projectRootKey: ROOT, repositoryRoot: ROOT, rootPath: ROOT },
-      "release",
-    );
-
-    render({ groups, onProjectCommand, railFilter: { kind: "project", projectRootKey: OTHER } });
-    expect(state()?.textContent).toBe("Not trusted");
-    expect(state()?.querySelector("button")).toBeNull();
   });
 
-  it("says No threads yet for an empty All projects list and names the project otherwise", () => {
-    render({ groups: [group(ROOT, "app", [])], railFilter: { kind: "all" } });
-    expect(host.textContent).toContain("No threads yet");
+  it("says No threads yet inside an empty project and No active threads when all are pinned", () => {
     render({
-      groups: [group(ROOT, "app", [])],
-      railFilter: { kind: "project", projectRootKey: ROOT },
+      groups: [
+        group(ROOT, "app", [settled("agt-1", "Pinned", { pinned: true })]),
+        group(OTHER, "api", []),
+      ],
     });
-    expect(host.textContent).toContain("No threads in app yet");
-  });
-
-  it("renders the workspace card slot above search and uses the given New thread title", () => {
-    render({
-      workspaceCard: (
-        <button className="cv-sb-ws" type="button">
-          card
-        </button>
-      ),
-      newThreadTitle: "New thread in app (⇧⌘N) · ⌘N: choose project",
-    });
-
-    const card = host.querySelector(".cv-sb-ws");
-    const search = host.querySelector(".cv-sb-search");
-    expect(card).not.toBeNull();
     expect(
-      card !== null &&
-        search !== null &&
-        (card.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-    ).toBe(true);
+      [...host.querySelectorAll(".cv-sb-project__empty")].map((node) => node.textContent),
+    ).toEqual(["No active threads", "No threads yet"]);
+    expect(
+      host.querySelector('[role="group"][aria-labelledby] [data-thread-id="agt-1"]'),
+    ).not.toBeNull();
+  });
+
+  it("keeps Search, Add project and New thread in one row with the given New thread title", () => {
+    render({ newThreadTitle: "New thread in app (⇧⌘N) · ⌘N: choose project" });
+
+    const row = host.querySelector(".cv-sb-search");
+    expect(
+      [...(row?.querySelectorAll<HTMLElement>("[aria-label]") ?? [])].map((node) =>
+        node.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Search threads", "Add project", "New thread"]);
+    expect(host.querySelector(".cv-sb-ws")).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
       "New thread in app (⇧⌘N) · ⌘N: choose project",
     );
   });
 
-  it("does not re-render the thread list when only the workspace card changes", () => {
+  it("does not re-render the thread list when only the New thread title changes", () => {
     const pendingInteractions = new CountingMap<string, AgentPendingInteraction>();
-    const props = sidebarProps({
-      pendingInteractions,
-      workspaceCard: <span className="cv-sb-ws">Local checkout · main</span>,
-    });
-    const renderWith = (next: AgentThreadsSidebarProps): void =>
+    const props = sidebarProps({ pendingInteractions, newThreadTitle: "New thread (⇧⌘N)" });
+    const renderWith = (next: SidebarHarnessProps): void =>
       act(() => {
         root.render(
           <AgentClockProvider nowTickMs={1000}>
-            <AgentThreadsSidebar {...next} />
+            <SidebarHarness {...next} />
           </AgentClockProvider>,
         );
       });
@@ -1243,9 +1328,11 @@ describe("AgentThreadsSidebar", () => {
     const listReads = pendingInteractions.reads;
     expect(listReads).toBeGreaterThan(0);
 
-    renderWith({ ...props, workspaceCard: <span className="cv-sb-ws">Worktree · agent/x</span> });
+    renderWith({ ...props, newThreadTitle: "New thread in app (⇧⌘N)" });
 
-    expect(host.querySelector(".cv-sb-ws")?.textContent).toBe("Worktree · agent/x");
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
+      "New thread in app (⇧⌘N)",
+    );
     expect(pendingInteractions.reads).toBe(listReads);
   });
 
@@ -1277,7 +1364,8 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".cv-sb-empty")?.textContent).toBe("No projects yet");
 
     render({ groups: [group(ROOT, "app", [])], overflowRootPaths: ["/workspace/nine"] });
-    expect(host.querySelector(".cv-sb-empty")?.textContent).toBe("No threads yet");
+    expect(host.querySelector(".cv-sb-empty")).toBeNull();
+    expect(host.querySelector(".cv-sb-project__empty")?.textContent).toBe("No threads yet");
     expect(host.querySelector(".cv-sb-note")?.textContent).toBe(
       "1 more project is not shown (limit 64)",
     );
@@ -1635,11 +1723,11 @@ describe("AgentThreadsSidebar", () => {
     expect(markedIds()).toEqual(["agt-2", "agt-3"]);
   });
 
-  it("drops the selection when the rail filter changes", () => {
+  it("drops rows of a collapsed project from the selection", () => {
     withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     const groups = [
       group(ROOT, "app", threeThreads()),
-      group(OTHER, "api", [settled("agt-x", "X")]),
+      group(OTHER, "api", [settled("agt-x", "X", { repositoryRoot: OTHER })]),
     ];
     render({ groups });
 
@@ -1647,10 +1735,7 @@ describe("AgentThreadsSidebar", () => {
     clickRow("agt-2", { metaKey: true });
     expect(markedIds()).toEqual(["agt-1", "agt-2"]);
 
-    render({ groups, railFilter: { kind: "project", projectRootKey: OTHER } });
-    expect(markedIds()).toEqual([]);
-
-    render({ groups, railFilter: { kind: "all" } });
+    act(() => projectToggle("app").click());
     expect(markedIds()).toEqual([]);
     expect(selectionBar()).toBeNull();
   });
@@ -1700,6 +1785,7 @@ describe("AgentThreadsSidebar", () => {
       });
     });
     render({ groups: [group(ROOT, "app", views)] });
+    click('button[aria-label="Show 194 more threads in app"]');
 
     expect(host.querySelectorAll("[data-thread-id]")).toHaveLength(200);
     const before = counters.get("agt-5")?.count ?? 0;
@@ -1765,15 +1851,13 @@ describe("AgentThreadsSidebar", () => {
     act(() => {
       root.render(
         <AgentClockProvider nowTickMs={1000}>
-          <AgentThreadsSidebar {...props} />
+          <SidebarHarness {...props} />
         </AgentClockProvider>,
       );
     });
   }
 
-  function sidebarProps(
-    overrides: Partial<AgentThreadsSidebarProps> = {},
-  ): AgentThreadsSidebarProps {
+  function sidebarProps(overrides: Partial<AgentThreadsSidebarProps> = {}): SidebarHarnessProps {
     const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
     return {
       addProjectAvailable: true,
@@ -1793,8 +1877,7 @@ describe("AgentThreadsSidebar", () => {
       onNewThread: vi.fn(),
       onAddProject: vi.fn(),
       onProjectCommand: vi.fn(),
-      railFilter: { kind: "all" },
-      onChangeFilter: vi.fn(),
+      onNewThreadInProject: vi.fn(),
       collapseShortcut: "Cmd+B",
       ...overrides,
     };
@@ -1839,6 +1922,34 @@ describe("AgentThreadsSidebar", () => {
         }),
       );
     });
+  }
+
+  function projectGroup(label: string): HTMLElement {
+    const groupElement = [...host.querySelectorAll<HTMLElement>(".cv-sb-project")].find(
+      (candidate) => candidate.querySelector(".cv-sb-project__name")?.textContent === label,
+    );
+    expect(groupElement).toBeDefined();
+    return groupElement as HTMLElement;
+  }
+
+  function projectNames(): ReadonlyArray<string> {
+    return [...host.querySelectorAll(".cv-sb-project__name")].map((node) => node.textContent ?? "");
+  }
+
+  function projectToggle(label: string): HTMLButtonElement {
+    const toggle = projectGroup(label).querySelector<HTMLButtonElement>(".cv-sb-project__toggle");
+    expect(toggle).not.toBeNull();
+    return toggle as HTMLButtonElement;
+  }
+
+  function projectRowIds(label: string): ReadonlyArray<string> {
+    return [...projectGroup(label).querySelectorAll<HTMLElement>("[data-thread-id]")].map(
+      (element) => element.dataset.threadId ?? "",
+    );
+  }
+
+  function projectState(label: string): string | null {
+    return projectGroup(label).querySelector(".cv-sb-project__state")?.textContent ?? null;
   }
 
   function rowIds(): ReadonlyArray<string> {

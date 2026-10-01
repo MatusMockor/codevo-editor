@@ -42,7 +42,14 @@ interval. Use separate worktrees when each conversation needs its own files and 
 existing thread to send a follow-up; follow-ups stay on that thread's original checkout and
 provider. Use **New thread** to leave follow-up mode.
 
-The rail groups pinned, active, and archived threads. A thread menu can start another thread, pin,
+The sidebar lists pinned threads first, then every open project (local and server projects) as a
+collapsible group with its active threads nested below it. A project shows its first six threads
+and **Show more** for the rest; the open thread always stays visible, even in a collapsed project.
+Collapsed projects are remembered. Hover a project to start a thread in it or open its menu
+(trust, release, close, terminal sessions, reveal in Finder, copy path). Snoozed and settled
+threads sit in their own shelves below the projects, followed by **Saved conversations**.
+Previous / next thread and **Cmd+1** through **Cmd+9** follow the sidebar order: pins, then each
+expanded project's visible threads. A thread menu can start another thread, pin,
 rename, mark unread, copy its path/branch/ID, stop it, archive it, or delete it. Pinning protects the
 thread record from eviction, but does not protect its oldest turns from the 64-turn limit. Each
 project root retains at most 64 threads and 16 MiB of thread data; older eligible records can be
