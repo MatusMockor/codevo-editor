@@ -139,3 +139,8 @@ Items that were reviewed and knowingly deferred. Handle in P10 or a dedicated sl
 - QA build window title still reads "Codevo Editor" (P3, QA-only).
 - In-memory turn retention protects only user messages; long live sessions can drop main replies from memory before a save (the turn log restores them after relaunch). Protect main replies in `agentTurnEventRetention.ts` (P2).
 - Agent file tree: the backend reports a poisoned read-admission lock with the same `WORKSPACE_DIRECTORY_BUSY` code, so it is retried as busy (P3).
+
+## Found in beta.81 QA (2026-10-02)
+- Usage: Codex limit names are truncated ("gpt-reserve · Wee…", "Codex · Weekly li…") even on a wide card (P3).
+- Links in agent answers still have the native right-click "Open Link", which could load the page inside the app window; add a Rust-side navigation guard (P2).
+- Usage: exact per-turn Claude cost needs the router's `codevo_process_total_cost_usd` stored per result (persisted turn contract change in TS and Rust) (P3).
