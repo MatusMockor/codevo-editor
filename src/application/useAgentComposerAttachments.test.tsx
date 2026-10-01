@@ -16,6 +16,7 @@ import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 import {
   AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE,
   AGENT_ATTACHMENT_STAGE_FAILURE_PREFIX,
+  AGENT_ATTACHMENT_UNREADABLE_REFUSAL,
   agentAttachmentDuplicateRefusal,
   useAgentComposerAttachments,
   type AgentAttachmentOwner,
@@ -41,6 +42,8 @@ interface Environment {
   stageError: Error | null;
   decodable: boolean;
   encodedBytes: number;
+  imageWidth: number;
+  imageHeight: number;
   onStage: (() => void) | null;
 }
 
@@ -56,7 +59,7 @@ function imageSurface(environment: Environment): AgentImageSurfacePort {
   return {
     decode: async () => {
       if (!environment.decodable) throw new Error("undecodable");
-      return { width: 4_096, height: 2_048 };
+      return { width: environment.imageWidth, height: environment.imageHeight };
     },
     encodeMime: async () => "image/webp",
     encode: async () => new ArrayBuffer(environment.encodedBytes),
@@ -157,6 +160,8 @@ function environment(overrides: Partial<Environment> = {}): Environment {
     stageError: null,
     decodable: true,
     encodedBytes: 512,
+    imageWidth: 4_096,
+    imageHeight: 2_048,
     onStage: null,
     ...overrides,
   };
@@ -239,8 +244,8 @@ describe("useAgentComposerAttachments staging", () => {
     expect(draft).toMatchObject({
       kind: "image",
       state: "ready",
-      name: "shot.webp",
-      mime: "image/webp",
+      name: "shot.png",
+      mime: "image/png",
       attachmentId: IMAGE_ID,
       bytes: 512,
     });
@@ -249,33 +254,47 @@ describe("useAgentComposerAttachments staging", () => {
     harness.unmount();
   });
 
-  it("stages a path-backed image within budget through the store copy", async () => {
-    const harness = renderAttachments(environment());
+  it("stages a dropped retina screenshot downscaled to the model edge", async () => {
+    const harness = renderAttachments(environment({ imageWidth: 2_742, imageHeight: 1_416 }));
 
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
 
-    expect(harness.gateway.stageAgentAttachmentFromPath).toHaveBeenCalledWith({
-      workspaceId: "ws-a",
-      kind: "image",
-      name: "shot.png",
-      mime: "image/png",
-      path: "/Users/dev/shot.png",
-    });
-    expect(harness.gateway.readAgentAttachmentCandidate).toHaveBeenCalledWith({
-      workspaceId: "ws-a",
-      path: "/Users/dev/shot.png",
-    });
+    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
+    expect(harness.gateway.stageAgentAttachmentBytes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-a",
+        kind: "image",
+        name: "shot.png",
+        mime: "image/png",
+        width: 1_568,
+        height: 810,
+      }),
+    );
     expect(harness.hook().drafts[0]).toMatchObject({
       kind: "image",
       state: "ready",
       path: "/Users/dev/shot.png",
       previewUrl: "blob:preview-1",
     });
+    expect(harness.issued).toEqual([{ url: "blob:preview-1", bytes: 512, mime: "image/png" }]);
+    harness.unmount();
+  });
+
+  it("stages a small dropped image with its original bytes", async () => {
+    const harness = renderAttachments(environment({ imageWidth: 800, imageHeight: 400 }));
+
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+
+    expect(harness.gateway.stageAgentAttachmentBytes).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "shot.png", mime: "image/png", width: 800, height: 400 }),
+    );
+    const staged = vi.mocked(harness.gateway.stageAgentAttachmentBytes).mock.calls[0]?.[0];
+    expect(staged?.bytes.byteLength).toBe(4_096);
     expect(harness.issued).toEqual([{ url: "blob:preview-1", bytes: 4_096, mime: "image/png" }]);
     harness.unmount();
   });
 
-  it("keeps the glyph when the preview bytes of a staged path image cannot be read", async () => {
+  it("refuses a dropped image whose bytes cannot be read", async () => {
     const harness = renderAttachments(environment());
     harness.gateway.readAgentAttachmentCandidate = vi.fn(async () => {
       throw new Error("moved");
@@ -283,8 +302,13 @@ describe("useAgentComposerAttachments staging", () => {
 
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
 
-    expect(harness.hook().drafts[0]).toMatchObject({ state: "ready", previewUrl: null });
-    expect(harness.issued).toEqual([]);
+    expect(harness.hook().drafts[0]).toMatchObject({
+      state: "failed",
+      failure: AGENT_ATTACHMENT_UNREADABLE_REFUSAL,
+      previewUrl: null,
+    });
+    expect(harness.gateway.stageAgentAttachmentBytes).not.toHaveBeenCalled();
+    expect(harness.gateway.stageAgentAttachmentFromPath).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -551,13 +575,13 @@ describe("useAgentComposerAttachments conversation drafts", () => {
 
   it("bounds retained image bytes across conversations without deleting earlier images", async () => {
     const harness = renderAttachments(environment());
-    harness.gateway.stageAgentAttachmentFromPath = vi.fn(async ({ name, mime }) => ({
+    harness.gateway.stageAgentAttachmentBytes = vi.fn(async ({ name, mime, width, height }) => ({
       attachmentId: IMAGE_ID,
       name,
       mime,
       bytes: 5 * 1024 * 1024,
-      width: 100,
-      height: 50,
+      width,
+      height,
       promptLineBytesMax: 100,
     }));
     for (let index = 0; index < 9; index++) {
@@ -626,10 +650,10 @@ describe("useAgentComposerAttachments ownership", () => {
         kind: "staged",
         attachmentId: IMAGE_ID,
         name: "other.png",
-        bytes: 4_096,
+        bytes: 512,
         mime: "image/png",
-        width: 100,
-        height: 50,
+        width: 1_568,
+        height: 784,
       },
     ]);
     harness.unmount();
@@ -837,7 +861,7 @@ describe("useAgentComposerAttachments previews", () => {
 
     await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
 
-    expect(harness.issued).toEqual([{ url: "blob:preview-1", bytes: 512, mime: "image/webp" }]);
+    expect(harness.issued).toEqual([{ url: "blob:preview-1", bytes: 512, mime: "image/png" }]);
     expect(harness.hook().drafts[0]).toMatchObject({
       kind: "image",
       state: "ready",

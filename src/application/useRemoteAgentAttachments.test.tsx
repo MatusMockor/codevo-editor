@@ -10,7 +10,7 @@ describe("remote attachment image normalization", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it.each([1024, 5 * 1024 * 1024 + 1, 10 * 1024 * 1024 + 1])(
-    "stages a %i-byte PNG using the runner's size and format limits",
+    "stages a %i-byte retina PNG within the runner and model limits",
     async (size) => {
       vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
       const createObjectURL = vi.fn(() => "blob:remote-preview");
@@ -56,22 +56,15 @@ describe("remote attachment image normalization", () => {
           ]);
         });
         expect(result!.attachments.drafts).toMatchObject([
-          {
-            state: "ready",
-            name: size === 1024 ? "large.png" : "large.jpg",
-            mime: size === 1024 ? "image/png" : "image/jpeg",
-            bytes: 1024,
-          },
+          { state: "ready", name: "large.png", mime: "image/png", bytes: 1024 },
         ]);
-        if (size === 1024) expect(encode).not.toHaveBeenCalled();
-        else
-          expect(encode.mock.calls[0]).toEqual([
-            { width: 4096, height: 2048 },
-            2048,
-            1024,
-            "image/jpeg",
-            0.92,
-          ]);
+        expect(encode.mock.calls[0]).toEqual([
+          { width: 4096, height: 2048 },
+          1568,
+          784,
+          "image/png",
+          1,
+        ]);
         expect(imageSurface.encodeMime).not.toHaveBeenCalled();
         expect(reportError).not.toHaveBeenCalled();
       } finally {

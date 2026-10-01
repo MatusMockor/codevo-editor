@@ -1,10 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import {
-  MAX_AGENT_IMAGE_BYTES,
-  isAgentImageMime,
-  type AgentAttachmentKind,
-  type AgentImageMime,
-} from "../domain/agentAttachment";
+import { type AgentAttachmentKind, type AgentImageMime } from "../domain/agentAttachment";
 import {
   AGENT_ATTACHMENT_IMAGE_BYTES_REFUSAL,
   AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
@@ -536,26 +531,6 @@ async function stageImageDraft(
   source: AgentAttachmentSource,
 ): Promise<void> {
   const owner = pending.owner;
-  if (
-    source.kind === "path" &&
-    context.deps().imageOutputPolicy === undefined &&
-    candidate.bytes <= MAX_AGENT_IMAGE_BYTES &&
-    isAgentImageMime(candidate.mime)
-  ) {
-    const staged = await attempt(() =>
-      context.gateway.stageAgentAttachmentFromPath({
-        workspaceId: owner.workspaceId,
-        kind: "image",
-        name: candidate.name,
-        mime: candidate.mime as AgentImageMime,
-        path: source.path,
-      }),
-    );
-    settleStaged(context, pending, staged, "image");
-    if (!staged.ok) return;
-    await previewStagedPathImage(context, pending, candidate.mime as AgentImageMime, source);
-    return;
-  }
   const bytes = await readImageBytes(context, owner, source);
   if (!context.ownerIsCurrent(owner)) {
     discardDraft(context, pending.draftId);
@@ -596,25 +571,6 @@ async function stageImageDraft(
   }
   const previewUrl = context.previews.issue(shrunk.bytes, shrunk.mime);
   settleStaged(context, { ...pending, name: shrunk.name, previewUrl }, staged, "image");
-}
-
-async function previewStagedPathImage(
-  context: DraftCoordinator,
-  pending: AttachmentDraft,
-  mime: AgentImageMime,
-  source: AgentAttachmentSource,
-): Promise<void> {
-  const current = context.store.drafts.get(pending.draftId);
-  if (current === undefined || current.state !== "ready") return;
-  const bytes = await readImageBytes(context, pending.owner, source);
-  if (bytes === null) return;
-  const latest = context.store.drafts.get(pending.draftId);
-  if (!context.ownerIsCurrent(pending.owner) || latest === undefined || latest.state !== "ready") {
-    return;
-  }
-  const previewUrl = context.previews.issue(bytes, mime);
-  if (replaceDraft(context, { ...latest, previewUrl })) return;
-  context.previews.revoke(previewUrl);
 }
 
 async function prepareAgentTurnAttachments(

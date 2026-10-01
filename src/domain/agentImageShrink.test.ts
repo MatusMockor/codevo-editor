@@ -3,6 +3,7 @@ import { MAX_AGENT_IMAGE_BYTES } from "./agentAttachment";
 import { MAX_AGENT_IMAGE_SOURCE_BYTES } from "./agentAttachmentIntake";
 import {
   AGENT_IMAGE_MAX_EDGE,
+  AGENT_IMAGE_MAX_MODEL_BYTES,
   agentImageFitBox,
   agentShrunkAttachmentName,
   shrinkAgentImageToFit,
@@ -66,7 +67,7 @@ describe("shrinkAgentImageToFit", () => {
       const { calls, port } = surface();
       const probe = vi.spyOn(port, "encodeMime");
       const outcome = await shrinkAgentImageToFit(
-        { name: "shot.png", mime: "image/png", bytes: bytes(size) },
+        { name: "shot.jpg", mime: "image/jpeg", bytes: bytes(size) },
         port,
         policy,
       );
@@ -85,14 +86,14 @@ describe("shrinkAgentImageToFit", () => {
       port,
       policy,
     );
-    expect(outcome.kind).toBe("ready");
-    expect(calls).toHaveLength(2);
+    expect(outcome).toMatchObject({ kind: "ready", mime: "image/jpeg" });
+    expect(calls.map((call) => call.mime)).toEqual(["image/png", "image/jpeg", "image/jpeg"]);
   });
 
   it("reencodes unsupported target formats and dimensions even below its byte budget", async () => {
     for (const [mime, width] of [
       ["image/webp", 800],
-      ["image/png", 9000],
+      ["image/jpeg", 9000],
     ] as const) {
       const { port } = surface({ width });
       expect(
@@ -123,7 +124,7 @@ describe("shrinkAgentImageToFit", () => {
     expect(released).toHaveLength(1);
   });
 
-  it("re-encodes an oversized image down the quality ladder at the 2048 edge", async () => {
+  it("re-encodes an oversized image down the quality ladder at the model edge", async () => {
     const { calls, port } = surface({
       width: 4_096,
       height: 2_048,
@@ -131,7 +132,7 @@ describe("shrinkAgentImageToFit", () => {
     });
 
     const outcome = await shrinkAgentImageToFit(
-      { name: "shot.png", mime: "image/png", bytes: bytes(MAX_AGENT_IMAGE_BYTES + 1) },
+      { name: "shot.jpg", mime: "image/jpeg", bytes: bytes(MAX_AGENT_IMAGE_BYTES + 1) },
       port,
     );
 
@@ -140,7 +141,7 @@ describe("shrinkAgentImageToFit", () => {
       name: "shot.webp",
       mime: "image/webp",
       width: AGENT_IMAGE_MAX_EDGE,
-      height: 1_024,
+      height: 784,
       reencoded: true,
     });
     expect(calls.map((call) => call.quality)).toEqual([0.92, 0.85]);
@@ -159,8 +160,112 @@ describe("shrinkAgentImageToFit", () => {
       port,
     );
 
-    expect(outcome).toMatchObject({ kind: "ready", width: 1_536, height: 768, reencoded: true });
-    expect(calls.map((call) => call.width)).toEqual([2_048, 2_048, 2_048, 2_048, 1_536]);
+    expect(outcome).toMatchObject({ kind: "ready", width: 1_176, height: 588, reencoded: true });
+    expect(calls.map((call) => call.width)).toEqual([1_568, 1_568, 1_568, 1_568, 1_176]);
+  });
+
+  it("downscales a retina screenshot that fits every byte budget to the model edge as png", async () => {
+    const { calls, port } = surface({ width: 2_742, height: 1_416 });
+
+    const outcome = await shrinkAgentImageToFit(
+      { name: "shot.png", mime: "image/png", bytes: bytes(424_097) },
+      port,
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "ready",
+      name: "shot.png",
+      mime: "image/png",
+      width: 1_568,
+      height: 810,
+      reencoded: true,
+    });
+    expect(calls).toEqual([{ width: 1_568, height: 810, mime: "image/png", quality: 1 }]);
+  });
+
+  it("downscales a portrait retina screenshot along its long edge", async () => {
+    const { port } = surface({ width: 1_626, height: 2_544 });
+
+    expect(
+      await shrinkAgentImageToFit(
+        { name: "tall.png", mime: "image/png", bytes: bytes(322_528) },
+        port,
+      ),
+    ).toMatchObject({ kind: "ready", width: 1_002, height: 1_568, mime: "image/png" });
+  });
+
+  it("keeps an image at exactly the model edge untouched", async () => {
+    const { calls, port } = surface({ width: AGENT_IMAGE_MAX_EDGE, height: 900 });
+
+    expect(
+      await shrinkAgentImageToFit(
+        { name: "edge.png", mime: "image/png", bytes: bytes(2_048) },
+        port,
+      ),
+    ).toMatchObject({ kind: "ready", reencoded: false, width: AGENT_IMAGE_MAX_EDGE });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("re-encodes a small image whose bytes exceed the model byte budget", async () => {
+    const { calls, port } = surface({ width: 800, height: 600 });
+
+    const outcome = await shrinkAgentImageToFit(
+      { name: "noisy.png", mime: "image/png", bytes: bytes(AGENT_IMAGE_MAX_MODEL_BYTES + 1) },
+      port,
+    );
+
+    expect(outcome).toMatchObject({ kind: "ready", mime: "image/png", width: 800, height: 600 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("falls back to the lossy encoder when the png re-encode exceeds the byte budget", async () => {
+    const { calls, port } = surface({
+      width: 2_742,
+      height: 1_416,
+      encodedBytes: (quality) => (quality === 1 ? AGENT_IMAGE_MAX_MODEL_BYTES + 1 : 900_000),
+    });
+
+    const outcome = await shrinkAgentImageToFit(
+      { name: "photo.png", mime: "image/png", bytes: bytes(8_000_000) },
+      port,
+    );
+
+    expect(outcome).toMatchObject({ kind: "ready", mime: "image/webp", name: "photo.webp" });
+    expect(calls.map((call) => call.mime)).toEqual(["image/png", "image/webp"]);
+    expect(outcome.kind === "ready" && outcome.bytes.byteLength).toBeLessThanOrEqual(
+      AGENT_IMAGE_MAX_MODEL_BYTES,
+    );
+  });
+
+  it("never returns more bytes than the model budget and bounds the encode attempts", async () => {
+    const { calls, port } = surface({
+      width: 2_742,
+      height: 1_416,
+      encodedBytes: () => AGENT_IMAGE_MAX_MODEL_BYTES + 1,
+    });
+
+    expect(
+      await shrinkAgentImageToFit(
+        { name: "shot.png", mime: "image/png", bytes: bytes(424_097) },
+        port,
+      ),
+    ).toEqual({ kind: "refused", reason: "too-large" });
+    expect(calls.length).toBeLessThanOrEqual(13);
+    expect(Math.max(...calls.map((call) => Math.max(call.width, call.height)))).toBe(
+      AGENT_IMAGE_MAX_EDGE,
+    );
+  });
+
+  it("keeps the model edge even when a policy allows larger dimensions", async () => {
+    const { port } = surface({ width: 2_544, height: 1_626 });
+
+    expect(
+      await shrinkAgentImageToFit(
+        { name: "shot.png", mime: "image/png", bytes: bytes(322_528) },
+        port,
+        policy,
+      ),
+    ).toMatchObject({ kind: "ready", mime: "image/png", width: 1_568, height: 1_002 });
   });
 
   it("reports too-large when every pass overflows", async () => {
@@ -224,7 +329,7 @@ describe("shrinkAgentImageToFit", () => {
 
     expect(
       await shrinkAgentImageToFit(
-        { name: "shot.png", mime: "image/png", bytes: bytes(MAX_AGENT_IMAGE_BYTES + 1) },
+        { name: "shot.jpg", mime: "image/jpeg", bytes: bytes(MAX_AGENT_IMAGE_BYTES + 1) },
         port,
       ),
     ).toMatchObject({ kind: "ready", name: "shot.jpg", mime: "image/jpeg" });
