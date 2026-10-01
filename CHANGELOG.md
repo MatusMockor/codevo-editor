@@ -7,6 +7,38 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.79] - 2026-10-01
+
+### Added
+
+- A toast tells you when a thread you are not looking at finishes, fails or needs your
+  approval or input, including threads in other projects; Open jumps to that thread.
+  While Codevo is in the background a macOS notification and a Dock badge are shown
+  instead. Turn it off in Settings > Providers > Notifications.
+- A card at the top of the agent sidebar shows where the selected thread runs, with New
+  thread in..., location details and Reveal in Finder.
+- Saved conversations can be opened, renamed, archived and deleted like threads.
+
+### Changed
+
+- Cmd+N opens New thread in... to choose a project; Shift+Cmd+N creates a thread directly
+  in the active project.
+- The interactive debugger (launch configurations, breakpoints, stepping, Debug Console)
+  has been removed; agents handle debugging.
+
+### Fixed
+
+- Your follow-up messages and the agent's replies are kept when a long thread is saved,
+  so they are no longer missing after a relaunch; threads saved earlier get them back
+  from the turn log when opened.
+- Replies that arrive in the background are never dropped, and the "newer replies
+  arrived" notice is gone.
+- The agent file tree no longer shows "The project's files could not be read." when a
+  folder is briefly busy; it retries and keeps the expanded tree.
+- Image attachments use safer size budgets, and a thread that cannot continue because of
+  an image can be continued in a new thread.
+- Help texts point to Settings > Providers, the page's real name.
+
 ## [0.2.0-beta.78] - 2026-10-01
 
 ### Fixed
