@@ -55,6 +55,22 @@ describe("AppUpdateToast", () => {
     expect(handlers.onDismiss).toHaveBeenCalledOnce();
   });
 
+  it("shows the current app icon asset instead of drawn artwork", () => {
+    render({
+      kind: "available",
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      date: null,
+      notesSpan: { kind: "single", notes: "Beta update" },
+    });
+
+    const mark = host.querySelector(".toast-notification__mark");
+    const icon = mark?.querySelector("img");
+    expect(icon?.getAttribute("src")).toMatch(/app-icon\.png$/);
+    expect(icon?.getAttribute("alt")).toBe("");
+    expect(mark?.querySelector(":scope > svg")).toBeNull();
+  });
+
   it("summarises a multi-release span without spelling out every note", () => {
     render({
       kind: "available",

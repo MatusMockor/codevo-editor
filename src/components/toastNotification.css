@@ -20,7 +20,6 @@
   --toast-primary-foreground: var(--cv-on-accent);
   --toast-primary-soft: var(--cv-accent-soft);
   --toast-update: var(--cv-accent);
-  --toast-brand: var(--cv-accent);
   --toast-success: var(--cv-ok);
   --toast-success-soft: var(--cv-ok-soft);
   --toast-error: var(--cv-danger);
@@ -144,6 +143,14 @@
   justify-content: center;
   width: 16px;
   height: 16px;
+}
+
+.toast-notification__app-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  user-select: none;
 }
 
 .toast-notification__badge {

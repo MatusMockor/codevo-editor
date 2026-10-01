@@ -3,6 +3,8 @@ import { appUpdateNotesSpanSummary } from "../domain/appUpdateNotes";
 import { appUpdateToastTitle, type AppUpdateToastPresentation } from "../domain/appUpdater";
 import { ToastMark, ToastNotification, type ToastNotificationAction } from "./ToastNotification";
 
+const APP_ICON_URL = `${import.meta.env.BASE_URL}app-icon.png`;
+
 export interface AppUpdateToastProps {
   readonly onDismiss: () => void;
   readonly onDownload: () => void;
@@ -149,27 +151,14 @@ function laterAction(onDismiss: () => void): ToastNotificationAction {
 
 function AppMark(): ReactElement {
   return (
-    <svg aria-hidden="true" height={16} viewBox="0 0 16 16" width={16}>
-      <rect
-        fill="none"
-        height="13.2"
-        rx="3.6"
-        stroke="var(--toast-brand, currentColor)"
-        strokeWidth="1.5"
-        width="13.2"
-        x="1.4"
-        y="1.4"
-      />
-      <rect fill="currentColor" height="7.6" opacity="0.65" rx="0.5" width="1.8" x="4" y="4.2" />
-      <path
-        d="M8.4 4.9 10.6 8l-2.2 3.1"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-    </svg>
+    <img
+      alt=""
+      className="toast-notification__app-icon"
+      draggable={false}
+      height={16}
+      src={APP_ICON_URL}
+      width={16}
+    />
   );
 }
 
