@@ -333,7 +333,7 @@ describe("AgentProviderRailFooter", () => {
     expect(host.querySelector(".agent-provider-footer__glyph")).toBeNull();
     expect(host.textContent).not.toContain("v2.2.0");
     expect(button("Open provider settings").title).toBe(
-      "Settings > Agents \u00b7 Claude Code v2.2.0 \u00b7 Codex Not registered",
+      "Settings > Providers \u00b7 Claude Code v2.2.0 \u00b7 Codex Not registered",
     );
     expect(button("Open Source Control")).not.toBeNull();
     expect(button("Open Usage")).not.toBeNull();

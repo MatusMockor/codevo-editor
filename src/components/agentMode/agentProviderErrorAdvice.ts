@@ -32,7 +32,7 @@ export function agentProviderErrorAdvice(
     case "unsupportedModelForCliVersion":
       return target === "remote"
         ? "Update the CLI on the server running this thread, then try again."
-        : "Open Settings > Agents to update it.";
+        : "Open Settings > Providers to update it.";
     case "advisory":
     case "unknown":
       return null;

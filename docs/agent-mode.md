@@ -54,7 +54,7 @@ shows a notification naming the thread and its project, with **Open** to jump st
 including threads in other projects. Its sidebar row keeps the Done, Failed, Approval, or Input
 marker until you open it. While Codevo is in the background, it sends a macOS notification
 instead and the Dock badge counts the threads waiting for you. When you come back, the badge
-clears and the notifications appear in the app. Turn this off under **Settings > Agents >
+clears and the notifications appear in the app. Turn this off under **Settings > Providers >
 Notifications**. Focus modes and macOS notification settings still apply.
 
 ## Composer commands
@@ -89,7 +89,7 @@ surface, or copy its path. The right-panel surface controls expose four surfaces
 
 The standard editor remains available by expanding the editor. Its tabs, navigation, file and
 local history, Git history, Source Control, and bottom terminal continue to work normally. The
-agent rail footer opens Source Control, Usage, and **Settings > Agents** directly.
+agent rail footer opens Source Control, Usage, and **Settings > Providers** directly.
 
 Search the rail to find saved thread titles and retained turn content. Search indexes the newest
 eligible content first and is bounded to 128 thread documents or 4 MiB; the results say when some
@@ -117,7 +117,7 @@ without integrating** is destructive and is kept separate from the normal ship p
 
 ## Providers, sign-in, and updates
 
-Open **Settings > Agents** (or use the rail footer). The CLI path defaults to empty, which means
+Open **Settings > Providers** (or use the rail footer). The CLI path defaults to empty, which means
 **Auto**: Codevo discovers Claude Code and Codex from the login-shell path and bounded well-known
 installation directories. A discovered provider is shown as **`Detected at <path>`**, followed by
 **`(v<version>)`** when its version can be read. No CLI path is required during normal setup.

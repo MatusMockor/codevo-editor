@@ -748,7 +748,7 @@ describe("AgentThreadSession", () => {
       "Codex 0.149.1 cannot run gpt-6-astra. Update Codex and try again.",
     );
     expect(blocks[0]?.querySelector(".agent-note")?.textContent).toBe(
-      "Open Settings > Agents to update it.",
+      "Open Settings > Providers to update it.",
     );
     expect(blocks[0]?.querySelector(".agent-finale__body")?.textContent).not.toContain(
       "invalid_request_error",
@@ -1019,7 +1019,7 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain(
       "Update the CLI on the server running this thread, then try again.",
     );
-    expect(host.textContent).not.toContain("Open Settings > Agents");
+    expect(host.textContent).not.toContain("Open Settings > Providers");
     expect(host.textContent).not.toContain("provider_reported_failure");
   });
 

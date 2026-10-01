@@ -690,12 +690,12 @@ export function providerSettingsTitle(
   management: AgentProviderManagementSurface,
   enabled: ReadonlyArray<AgentCliKind>,
 ): string {
-  if (enabled.length === 0) return "Settings > Agents";
+  if (enabled.length === 0) return "Settings > Providers";
   const parts = enabled.map((provider) => {
     const view = management.providers[provider];
     return `${agentProviderLabel(provider)} ${providerFooterLabel(view.policy, view.health)}`;
   });
-  return `Settings > Agents · ${parts.join(" · ")}`;
+  return `Settings > Providers · ${parts.join(" · ")}`;
 }
 
 function updateLanded(health: AgentProviderHealthState): boolean {
