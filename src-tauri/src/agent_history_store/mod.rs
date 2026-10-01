@@ -308,7 +308,7 @@ fn upsert(connection: &Connection, thread: &AgentThread) -> Result<(), String> {
         sql(connection.execute("INSERT OR IGNORE INTO import_identity(thread_id,provider,session_id,repository_root) VALUES(?1,?2,?3,?4)",rusqlite::params![thread.thread_id,provider,origin.session_id,thread.owner.repository_root]))?;
     }
     sql(connection.execute("INSERT INTO threads(thread_id,payload,updated_at) VALUES (?1,?2,?3) ON CONFLICT(thread_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",rusqlite::params![thread.thread_id,payload,thread.updated_at_epoch_ms as i64]))?;
-    for turn in &thread.turns {
+    for (index, turn) in thread.turns.iter().enumerate() {
         let previous: Option<String> = sql(connection
             .query_row(
                 "SELECT payload FROM turns WHERE thread_id=?1 AND turn_id=?2",
@@ -337,11 +337,7 @@ fn upsert(connection: &Connection, thread: &AgentThread) -> Result<(), String> {
             .optional())?;
         let ordinal = match existing {
             Some(value) => value,
-            None => sql(connection.query_row(
-                "SELECT COALESCE(MAX(ordinal),0)+1 FROM turns WHERE thread_id=?1",
-                [&thread.thread_id],
-                |r| r.get(0),
-            ))?,
+            None => new_turn_ordinal(connection, &thread.thread_id, turn, &thread.turns[..index])?,
         };
         let payload = serde_json::to_string(turn).map_err(|e| e.to_string())?;
         if payload.len() > MAX_PAGE_BYTES - 65536 {
@@ -350,6 +346,42 @@ fn upsert(connection: &Connection, thread: &AgentThread) -> Result<(), String> {
         sql(connection.execute("INSERT INTO turns(thread_id,turn_id,ordinal,payload) VALUES (?1,?2,?3,?4) ON CONFLICT(thread_id,turn_id) DO UPDATE SET payload=excluded.payload",rusqlite::params![thread.thread_id,turn.turn_id,ordinal,payload]))?;
     }
     Ok(())
+}
+fn new_turn_ordinal(
+    connection: &Connection,
+    thread_id: &str,
+    turn: &AgentTurn,
+    earlier_in_batch: &[AgentTurn],
+) -> Result<i64, String> {
+    let last: Option<(i64, String, String)> = sql(connection
+        .query_row(
+            "SELECT ordinal,turn_id,json_extract(payload,'$.status') FROM turns WHERE thread_id=?1 ORDER BY ordinal DESC LIMIT 1",
+            [thread_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional())?;
+    let Some((ordinal, last_turn_id, status)) = last else {
+        return Ok(1);
+    };
+    if !turn.status.is_terminal() {
+        return Ok(ordinal + 1);
+    }
+    if earlier_in_batch
+        .iter()
+        .any(|earlier| earlier.turn_id == last_turn_id)
+    {
+        return Ok(ordinal + 1);
+    }
+    let status: legacy::AgentTurnStatus = serde_json::from_str(&status)
+        .map_err(|_| "The saved turn status is invalid.".to_string())?;
+    if status.is_terminal() {
+        return Ok(ordinal + 1);
+    }
+    sql(connection.execute(
+        "UPDATE turns SET ordinal=?3 WHERE thread_id=?1 AND ordinal=?2",
+        rusqlite::params![thread_id, ordinal, ordinal + 1],
+    ))?;
+    Ok(ordinal)
 }
 #[cfg(test)]
 mod tests;

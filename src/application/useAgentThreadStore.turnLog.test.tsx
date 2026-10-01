@@ -760,6 +760,80 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     harness.unmount();
   });
 
+  it("logs and seals a background turn recorded during a running turn and keeps the running log open", async () => {
+    const harness = renderStore();
+    await settle();
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    act(() =>
+      harness.hook().dispatchAction({ kind: "turnStarted", threadId: THREAD_ID, turn: turn() }),
+    );
+    await settle();
+    const replies = ["first-finished", "second-finished"];
+    for (const [index, text] of replies.entries()) {
+      act(() =>
+        harness.hook().dispatchAction({
+          kind: "backgroundTurnRecorded",
+          threadId: THREAD_ID,
+          workspaceId: OWNER_ID,
+          turn: agentBackgroundTurn(
+            `agt-bg-000${index + 1}`,
+            parseAgentBackgroundTurn({
+              output: `${JSON.stringify({
+                type: "assistant",
+                parent_tool_use_id: null,
+                message: { content: [{ type: "text", text }] },
+              })}\n`,
+              truncated: false,
+              complete: true,
+            }),
+            60 + index,
+          ),
+        }),
+      );
+    }
+    await settle();
+    await settle();
+
+    expect(harness.seams).toEqual([
+      `openTurn:${TURN_ID}`,
+      "openTurn:agt-bg-0001",
+      "recordEvents:agt-bg-0001:1",
+      "sealTurn:agt-bg-0001",
+      "openTurn:agt-bg-0002",
+      "recordEvents:agt-bg-0002:1",
+      "sealTurn:agt-bg-0002",
+    ]);
+    expect(harness.turnLog.writer.status(TURN_ID)).not.toBeNull();
+    const backgroundSeals = harness.logGateway.appends.filter((append) => append.seal);
+    expect(backgroundSeals.map((append) => append.ops.map((entry) => entry.event))).toEqual(
+      replies.map((text) => [say(text)]),
+    );
+    const order = ["agt-bg-0001", "agt-bg-0002", TURN_ID];
+    const saved = harness.saved[harness.saved.length - 1]?.thread as AgentThread;
+    expect(saved.turns.map((candidate) => candidate.turnId)).toEqual(order);
+    const reloaded = parseAgentThread(JSON.parse(JSON.stringify(serializeAgentThread(saved))));
+    expect(reloaded.turns.map((candidate) => [candidate.turnId, candidate.origin])).toEqual([
+      ["agt-bg-0001", "background"],
+      ["agt-bg-0002", "background"],
+      [TURN_ID, undefined],
+    ]);
+
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "taskStatusEvent",
+        threadId: THREAD_ID,
+        event: statusEvent(1, { kind: "exited", exitCode: 0 }),
+        nowEpochMs: 90,
+      }),
+    );
+    await settle();
+
+    expect(harness.seams[harness.seams.length - 1]).toBe(`sealTurn:${TURN_ID}`);
+    const settledThread = harness.saved[harness.saved.length - 1]?.thread as AgentThread;
+    expect(settledThread.turns.map((candidate) => candidate.turnId)).toEqual(order);
+    harness.unmount();
+  });
+
   it("sends every event of a 5000 event turn to the log while both windows stay bounded", async () => {
     const harness = renderStore();
     await settle();

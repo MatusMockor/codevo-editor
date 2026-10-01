@@ -4,24 +4,26 @@ import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import {
   MAX_AGENT_TURNS_PER_THREAD,
   agentThreadsReducer,
+  runningTurn,
   type AgentThread,
   type AgentThreadsAction,
   type AgentTurn,
 } from "../domain/agentThread";
 import type { AgentSessionBackgroundTurnEvent } from "../domain/agentThreadSession";
 import {
-  AgentBackgroundTurnRecorder,
-  MAX_HELD_BACKGROUND_TURN_BYTES_PER_THREAD,
-  MAX_HELD_BACKGROUND_TURNS_PER_THREAD,
+  recordAgentBackgroundTurn,
   type AgentBackgroundTurnRecording,
 } from "./agentBackgroundTurnRecorder";
 
 const THREAD_ID = "agt-mue1wenj-7ede";
 const OWNER_ID = "ws-1";
+const LEAD_TURN_ID = "agt-munzwbwl-bdcb";
+const INCOMPLETE_INDEX = 7;
+const TRUNCATED_INDEX = 13;
 
-function turn(status: AgentTurn["status"]): AgentTurn {
+function turn(status: AgentTurn["status"], turnId = LEAD_TURN_ID): AgentTurn {
   return {
-    turnId: "agt-munzwbwl-bdcb",
+    turnId,
     prompt: "co bezi, dal som stop running background na agenta",
     status,
     startedAtEpochMs: 1,
@@ -35,20 +37,10 @@ function turn(status: AgentTurn["status"]): AgentTurn {
   };
 }
 
-function thread(status: AgentTurn["status"]): AgentThread {
-  const base = surfaceThreadView().thread;
-  return {
-    ...base,
-    threadId: THREAD_ID,
-    title: "su tam dve veci",
-    archived: false,
-    owner: { ...base.owner, ownerId: OWNER_ID },
-    provider: { kind: "claudeCode", sessionId: "sess-fixture-0001" },
-    turns: [turn(status)],
-  };
-}
-
-function reply(text: string): AgentSessionBackgroundTurnEvent {
+function reply(
+  text: string,
+  flags: Partial<Pick<AgentSessionBackgroundTurnEvent, "complete" | "truncated">> = {},
+): AgentSessionBackgroundTurnEvent {
   const output = [
     { type: "system", subtype: "init", session_id: "sess-fixture-0001" },
     { type: "assistant", parent_tool_use_id: null, message: { content: [{ type: "text", text }] } },
@@ -63,42 +55,67 @@ function reply(text: string): AgentSessionBackgroundTurnEvent {
   ]
     .map((line) => `${JSON.stringify(line)}\n`)
     .join("");
-  return { workspaceId: OWNER_ID, threadId: THREAD_ID, output, truncated: false, complete: true };
+  return {
+    workspaceId: OWNER_ID,
+    threadId: THREAD_ID,
+    output,
+    truncated: false,
+    complete: true,
+    ...flags,
+  };
 }
 
 function harness(earlierTurns = 0) {
-  const earlier = Array.from({ length: earlierTurns }, (_, index) => ({
-    ...turn({ kind: "exited", exitCode: 0 }),
-    turnId: `agt-old-${index}`,
-  }));
+  const base = surfaceThreadView().thread;
+  const earlier = Array.from({ length: earlierTurns }, (_, index) =>
+    turn({ kind: "exited", exitCode: 0 }, `agt-old-${index}`),
+  );
   let current: AgentThread = {
-    ...thread({ kind: "running" }),
+    ...base,
+    threadId: THREAD_ID,
+    title: "su tam dve veci",
+    archived: false,
+    owner: { ...base.owner, ownerId: OWNER_ID },
+    provider: { kind: "claudeCode", sessionId: "sess-fixture-0001" },
     turns: [...earlier, turn({ kind: "running" })],
   };
   let minted = 0;
   const setNotice = vi.fn();
+  const dispatch = (action: AgentThreadsAction) => {
+    const state = { threads: new Map([[THREAD_ID, current]]) };
+    current = agentThreadsReducer(state, action).threads.get(THREAD_ID) ?? current;
+  };
   const recording: AgentBackgroundTurnRecording = {
     readThread: (threadId) => (threadId === THREAD_ID ? current : undefined),
     setNotice,
     ports: {
-      mintTurnId: () => `agt-bg-${(minted += 1)}`,
-      now: () => 10,
-      dispatch: (action: AgentThreadsAction) => {
-        const state = { threads: new Map([[THREAD_ID, current]]) };
-        current = agentThreadsReducer(state, action).threads.get(THREAD_ID) ?? current;
-      },
+      mintTurnId: () => `agt-bg-${String((minted += 1)).padStart(4, "0")}`,
+      now: () => 10 + minted,
+      dispatch,
     },
   };
   return {
     recording,
     setNotice,
+    dispatch,
     thread: () => current,
-    settle: () => {
-      current = {
-        ...current,
-        turns: [...current.turns.slice(0, -1), turn({ kind: "exited", exitCode: 0 })],
-      };
-    },
+    receive: (event: AgentSessionBackgroundTurnEvent) =>
+      recordAgentBackgroundTurn(recording, current, event),
+    settle: () =>
+      dispatch({
+        kind: "taskStatusEvent",
+        threadId: THREAD_ID,
+        event: {
+          taskId: LEAD_TURN_ID,
+          workspaceId: OWNER_ID,
+          repositoryRoot: current.owner.repositoryRoot,
+          isolation: current.target.isolation,
+          worktreePath: current.target.worktreePath,
+          sequence: 2,
+          status: { kind: "exited", exitCode: 0 },
+        },
+        nowEpochMs: 500,
+      }),
   };
 }
 
@@ -108,73 +125,125 @@ function recordedReplies(value: AgentThread): ReadonlyArray<string> {
   );
 }
 
-describe("AgentBackgroundTurnRecorder", () => {
-  it("keeps every background reply that arrives during one long running turn", () => {
-    const recorder = new AgentBackgroundTurnRecorder();
-    const scene = harness();
-    const replies = [
-      "Integration gate passed.",
-      "Review označenia „NEW“ našlo jednu vážnu chybu (P1).",
-      "Adversarial review of stop_task is clean.",
-      "TS stop UI is ready for review.",
-    ];
-
-    for (const text of replies) recorder.receive(scene.recording, scene.thread(), reply(text));
-    scene.settle();
-    recorder.flush(scene.recording);
-
-    expect(scene.setNotice).not.toHaveBeenCalled();
-    expect(recordedReplies(scene.thread())).toEqual(replies);
+function arrivals(): ReadonlyArray<AgentSessionBackgroundTurnEvent> {
+  return Array.from({ length: 25 }, (_, index) => {
+    if (index === INCOMPLETE_INDEX) return reply(`reply ${index}`, { complete: false });
+    if (index === TRUNCATED_INDEX) return reply(`reply ${index}`, { truncated: true });
+    return reply(`reply ${index}`);
   });
+}
 
-  it("surfaces the oldest held reply once the per-thread count bound is exceeded", () => {
-    const recorder = new AgentBackgroundTurnRecorder();
+describe("recordAgentBackgroundTurn", () => {
+  it("records 25 replies that arrive during one long running turn at once and in order", () => {
     const scene = harness();
-    const replies = Array.from(
-      { length: MAX_HELD_BACKGROUND_TURNS_PER_THREAD + 1 },
-      (_, index) => `reply ${index}`,
-    );
+    const events = arrivals();
 
-    for (const text of replies) recorder.receive(scene.recording, scene.thread(), reply(text));
-
-    expect(scene.setNotice).toHaveBeenCalledTimes(1);
-    expect(scene.setNotice.mock.calls[0]?.[0]).toMatchObject({
-      message: expect.stringContaining(
-        'newer replies arrived before it could be added to the thread: "reply 0"',
-      ),
+    events.forEach((event, index) => {
+      scene.receive(event);
+      expect(scene.thread().turns).toHaveLength(index + 2);
+      expect(scene.thread().turns[index]?.origin).toBe("background");
     });
+
+    const turns = scene.thread().turns;
+    expect(scene.setNotice).not.toHaveBeenCalled();
+    expect(turns.slice(0, -1).map((recorded) => recorded.origin)).toEqual(
+      events.map(() => "background"),
+    );
+    expect(recordedReplies(scene.thread())).toEqual(events.map((_, index) => `reply ${index}`));
+    expect(turns[turns.length - 1]?.turnId).toBe(LEAD_TURN_ID);
+    expect(runningTurn(scene.thread())?.turnId).toBe(LEAD_TURN_ID);
+    expect(turns[INCOMPLETE_INDEX]?.status).toEqual({ kind: "interrupted" });
+    expect(turns[INCOMPLETE_INDEX]?.eventsTruncated).toBe(true);
+    expect(turns[TRUNCATED_INDEX]?.eventsTruncated).toBe(true);
+    expect(turns[TRUNCATED_INDEX]?.streamMetrics?.complete).toBe(false);
+
     scene.settle();
-    recorder.flush(scene.recording);
-    expect(recordedReplies(scene.thread())).toEqual(replies.slice(1));
+
+    const settled = scene.thread().turns;
+    expect(settled).toHaveLength(26);
+    expect(settled[settled.length - 1]).toMatchObject({
+      turnId: LEAD_TURN_ID,
+      status: { kind: "exited", exitCode: 0 },
+    });
+    expect(runningTurn(scene.thread())).toBeNull();
+    expect(scene.setNotice).not.toHaveBeenCalled();
   });
 
-  it("surfaces the oldest held replies once the per-thread byte bound is exceeded", () => {
-    const recorder = new AgentBackgroundTurnRecorder();
+  it("keeps steering and stop aimed at the running turn while replies arrive", () => {
     const scene = harness();
-    const large = "x".repeat(MAX_HELD_BACKGROUND_TURN_BYTES_PER_THREAD / 8);
+    for (const event of arrivals().slice(0, 3)) scene.receive(event);
 
-    for (const prefix of ["a", "b", "c", "d"]) {
-      recorder.receive(scene.recording, scene.thread(), reply(`${prefix}${large}`));
-    }
+    scene.dispatch({
+      kind: "turnSteered",
+      threadId: THREAD_ID,
+      turnId: LEAD_TURN_ID,
+      event: { kind: "userMessage", text: "also run the tests" },
+    });
+    scene.dispatch({
+      kind: "turnHaltRequested",
+      threadId: THREAD_ID,
+      ownerId: OWNER_ID,
+      turnId: LEAD_TURN_ID,
+    });
+    scene.receive(reply("after the stop request"));
+
+    const lead = scene.thread().turns[scene.thread().turns.length - 1];
+    expect(lead?.turnId).toBe(LEAD_TURN_ID);
+    expect(lead?.haltRequested).toBe(true);
+    expect(lead?.events).toContainEqual({ kind: "userMessage", text: "also run the tests" });
+    expect(scene.thread().turns.filter((recorded) => recorded.haltRequested === true)).toHaveLength(
+      1,
+    );
+    expect(scene.setNotice).not.toHaveBeenCalled();
+  });
+
+  it("appends a reply after the turn once it has settled", () => {
+    const scene = harness();
+    scene.receive(reply("during"));
+    scene.settle();
+    scene.receive(reply("after"));
+
+    expect(recordedReplies(scene.thread())).toEqual(["during", "after"]);
+    expect(scene.thread().turns.map((recorded) => recorded.turnId)).toEqual([
+      "agt-bg-0001",
+      LEAD_TURN_ID,
+      "agt-bg-0002",
+    ]);
+  });
+
+  it("never evicts the running turn when replies fill the turn cap", () => {
+    const scene = harness(MAX_AGENT_TURNS_PER_THREAD - 1);
+    const events = Array.from({ length: 25 }, (_, index) => reply(`capped ${index}`));
+
+    for (const event of events) scene.receive(event);
+
+    const turns = scene.thread().turns;
+    expect(scene.setNotice).not.toHaveBeenCalled();
+    expect(turns).toHaveLength(MAX_AGENT_TURNS_PER_THREAD);
+    expect(turns[turns.length - 1]?.turnId).toBe(LEAD_TURN_ID);
+    expect(runningTurn(scene.thread())?.turnId).toBe(LEAD_TURN_ID);
+    expect(turns[0]?.turnId).toBe("agt-old-25");
+    expect(recordedReplies(scene.thread())).toEqual(events.map((_, index) => `capped ${index}`));
+    expect(scene.thread().turnsTruncated).toBe(true);
+  });
+
+  it("tells the user with a preview when the reducer rejects the reply", () => {
+    const scene = harness();
+    const archived = { ...scene.thread(), archived: true };
+    const recording: AgentBackgroundTurnRecording = {
+      ...scene.recording,
+      readThread: () => archived,
+      ports: { ...scene.recording.ports, dispatch: () => undefined },
+    };
+
+    recordAgentBackgroundTurn(recording, archived, reply("lost reply"));
 
     expect(scene.setNotice).toHaveBeenCalledTimes(1);
-    scene.settle();
-    recorder.flush(scene.recording);
-    expect(recordedReplies(scene.thread()).map((text) => text[0])).toEqual(["b", "c", "d"]);
-  });
-
-  it("marks the thread truncated when recording held replies evicts its oldest turns", () => {
-    const recorder = new AgentBackgroundTurnRecorder();
-    const scene = harness(MAX_AGENT_TURNS_PER_THREAD - 1);
-    const replies = ["first finished", "second finished", "third finished"];
-
-    for (const text of replies) recorder.receive(scene.recording, scene.thread(), reply(text));
-    scene.settle();
-    recorder.flush(scene.recording);
-
-    expect(scene.setNotice).not.toHaveBeenCalled();
-    expect(scene.thread().turns).toHaveLength(MAX_AGENT_TURNS_PER_THREAD);
-    expect(scene.thread().turnsTruncated).toBe(true);
-    expect(recordedReplies(scene.thread())).toEqual(replies);
+    expect(scene.setNotice.mock.calls[0]?.[0]).toEqual({
+      kind: "info",
+      message:
+        'Claude replied in "su tam dve veci" after background work finished, but the reply could not be added to the thread: "lost reply"',
+      action: null,
+    });
   });
 });

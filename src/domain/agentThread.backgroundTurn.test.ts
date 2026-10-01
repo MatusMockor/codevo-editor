@@ -123,14 +123,16 @@ describe("agentThreadsReducer backgroundTurnRecorded", () => {
     expect(saved === undefined ? null : runningTurn(saved)).toBeNull();
   });
 
-  it("fails closed for a foreign owner, a running turn, an archived thread or a duplicate id", () => {
+  it("fails closed for a foreign owner, an unknown or archived thread or a duplicate id", () => {
     const running = thread({
       turns: [userTurn({ status: { kind: "running" }, endedAtEpochMs: null })],
     });
     const cases: ReadonlyArray<readonly [AgentThreadsState, AgentThreadsAction]> = [
       [stateOf(thread()), recorded(backgroundTurn(), { workspaceId: "ws-other" })],
       [stateOf(thread()), recorded(backgroundTurn(), { threadId: "agt-9-9999" })],
-      [stateOf(running), recorded(backgroundTurn())],
+      [stateOf(running), recorded(backgroundTurn(), { workspaceId: "ws-other" })],
+      [stateOf(running), recorded(backgroundTurn("agt-1-0a1c"))],
+      [stateOf({ ...running, archived: true }), recorded(backgroundTurn())],
       [stateOf(thread({ archived: true })), recorded(backgroundTurn())],
       [stateOf(thread()), recorded(backgroundTurn("agt-1-0a1c"))],
       [stateOf(thread()), recorded(userTurn({ turnId: "agt-bg-0009" }))],
@@ -158,6 +160,102 @@ describe("agentThreadsReducer backgroundTurnRecorded", () => {
     expect(saved?.turns).toHaveLength(MAX_AGENT_TURNS_PER_THREAD);
     expect(saved?.turns[0]?.turnId).toBe("agt-1-0001");
     expect(saved?.turnsTruncated).toBe(true);
+  });
+
+  it("inserts replies that arrive during a running turn before it, in arrival order", () => {
+    const running = userTurn({
+      turnId: "agt-1-0a1d",
+      prompt: "keep working on the release",
+      status: { kind: "running" },
+      endedAtEpochMs: null,
+      lastStatusSequence: 1,
+    });
+    let state = stateOf(thread({ turns: [userTurn(), running] }));
+    for (const turnId of ["agt-bg-0001", "agt-bg-0002", "agt-bg-0003"]) {
+      state = agentThreadsReducer(state, recorded(backgroundTurn(turnId)));
+    }
+    const saved = state.threads.get(THREAD_ID);
+
+    expect(saved?.turns.map((turn) => turn.turnId)).toEqual([
+      "agt-1-0a1c",
+      "agt-bg-0001",
+      "agt-bg-0002",
+      "agt-bg-0003",
+      "agt-1-0a1d",
+    ]);
+    expect(saved === undefined ? null : runningTurn(saved)?.turnId).toBe("agt-1-0a1d");
+    expect(saved?.updatedAtEpochMs).toBe(NOW);
+  });
+
+  it("keeps steering, halting and settling aimed at the running turn after insertion", () => {
+    const running = userTurn({
+      turnId: "agt-1-0a1d",
+      status: { kind: "running" },
+      endedAtEpochMs: null,
+      lastStatusSequence: 1,
+    });
+    let state = stateOf(thread({ turns: [userTurn(), running] }));
+    state = agentThreadsReducer(state, recorded(backgroundTurn("agt-bg-0001")));
+    state = agentThreadsReducer(state, {
+      kind: "turnSteered",
+      threadId: THREAD_ID,
+      turnId: "agt-1-0a1d",
+      event: { kind: "userMessage", text: "also run the tests" },
+    });
+    state = agentThreadsReducer(state, {
+      kind: "turnHaltRequested",
+      threadId: THREAD_ID,
+      ownerId: OWNER.ownerId,
+      turnId: "agt-1-0a1d",
+    });
+    const steered = state.threads.get(THREAD_ID);
+    expect(steered?.turns[2]?.events).toContainEqual({
+      kind: "userMessage",
+      text: "also run the tests",
+    });
+    expect(steered?.turns[2]?.haltRequested).toBe(true);
+    expect(steered?.turns[1]?.haltRequested).toBeUndefined();
+
+    state = agentThreadsReducer(state, {
+      kind: "turnInterrupted",
+      turnId: "agt-1-0a1d",
+      nowEpochMs: 90,
+    });
+    const settled = state.threads.get(THREAD_ID);
+    expect(settled?.turns.map((turn) => [turn.turnId, turn.status.kind])).toEqual([
+      ["agt-1-0a1c", "exited"],
+      ["agt-bg-0001", "exited"],
+      ["agt-1-0a1d", "interrupted"],
+    ]);
+    expect(settled === undefined ? null : runningTurn(settled)).toBeNull();
+  });
+
+  it("never evicts the running turn at the turn cap and evicts the oldest settled turns", () => {
+    const settledTurns = Array.from({ length: MAX_AGENT_TURNS_PER_THREAD - 1 }, (_, index) =>
+      userTurn({ turnId: `agt-1-${index.toString(16).padStart(4, "0")}` }),
+    );
+    const running = userTurn({
+      turnId: "agt-2-live",
+      status: { kind: "running" },
+      endedAtEpochMs: null,
+    });
+    let state = stateOf(thread({ turns: [...settledTurns, running] }));
+    const arrivals = Array.from(
+      { length: MAX_AGENT_TURNS_PER_THREAD + 6 },
+      (_, index) => `agt-bg-${index.toString(16).padStart(4, "0")}`,
+    );
+    for (const turnId of arrivals) {
+      state = agentThreadsReducer(state, recorded(backgroundTurn(turnId)));
+    }
+    const saved = state.threads.get(THREAD_ID);
+
+    expect(saved?.turns).toHaveLength(MAX_AGENT_TURNS_PER_THREAD);
+    expect(saved?.turns[MAX_AGENT_TURNS_PER_THREAD - 1]?.turnId).toBe("agt-2-live");
+    expect(saved?.turns.slice(0, -1).map((turn) => turn.turnId)).toEqual(
+      arrivals.slice(-(MAX_AGENT_TURNS_PER_THREAD - 1)),
+    );
+    expect(saved?.turnsTruncated).toBe(true);
+    expect(saved === undefined ? null : runningTurn(saved)?.turnId).toBe("agt-2-live");
   });
 
   it("keeps the truncation marker of an incomplete background turn", () => {
@@ -235,6 +333,41 @@ describe("background turn persistence", () => {
     ]);
     expect(v1.turns[2]).toEqual(unprompted);
     expect(history[2]).toEqual(unprompted);
+  });
+
+  it("reloads background turns inserted before a running turn in the same order", () => {
+    const running = userTurn({
+      turnId: "agt-1-0a1d",
+      status: { kind: "running" },
+      endedAtEpochMs: null,
+    });
+    let state = stateOf(thread({ turns: [userTurn(), running] }));
+    state = agentThreadsReducer(state, recorded(backgroundTurn("agt-bg-0001")));
+    state = agentThreadsReducer(
+      state,
+      recorded(backgroundTurn("agt-bg-0002", { truncated: true, complete: true })),
+    );
+    const value = state.threads.get(THREAD_ID);
+    expect(value).toBeDefined();
+    const live = value as AgentThread;
+    const v1 = parseAgentThread(JSON.parse(JSON.stringify(serializeAgentThread(live))));
+    const historyDocument = serializeAgentHistoryThread(live) as {
+      readonly turns: ReadonlyArray<unknown>;
+    };
+    const history = historyDocument.turns.map((turn) =>
+      parseAgentHistoryTurn(JSON.parse(JSON.stringify(turn))),
+    );
+    const order = ["agt-1-0a1c", "agt-bg-0001", "agt-bg-0002", "agt-1-0a1d"];
+
+    expect(v1.turns.map((turn) => turn.turnId)).toEqual(order);
+    expect(v1.turns.map((turn) => turn.origin)).toEqual([
+      undefined,
+      "background",
+      "background",
+      undefined,
+    ]);
+    expect(runningTurn(v1)?.turnId).toBe("agt-1-0a1d");
+    expect(history.map((turn) => turn.turnId)).toEqual(order);
   });
 
   it("keeps a user turn that only repeats the marker text a user turn", () => {

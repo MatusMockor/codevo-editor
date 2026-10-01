@@ -19,12 +19,11 @@ import type {
 import { AGENT_BACKGROUND_TURN_LABEL } from "../domain/agentTurnOrigin";
 import { surfaceThreadView } from "../components/agentMode/agentSurfaceTestFixtures";
 import { waitForReact } from "../test/reactTestLifecycle";
-import { MAX_HELD_BACKGROUND_TURNS_PER_THREAD } from "./agentBackgroundTurnRecorder";
+import type { AgentThreadRecovery } from "./agentEvictedThreadRecovery";
+import { MAX_QUEUED_REPLIES_PER_RECOVERING_ROOT } from "./agentThreadRecoveryQueue";
 import { useAgentThreadSessionLifecycle } from "./useAgentThreadSessionLifecycle";
 
 const THREAD_ID = "agt-1-0a1c";
-const RELEASED_NOTICE =
-  'Claude replied in "Nightly build" after background work finished, but Codevo stopped tracking the thread before the reply could be added: "background-finished"';
 const OWNER_ID = "ws-1";
 const NOW = 1_800_000_000_000;
 
@@ -129,16 +128,20 @@ afterEach(() => {
   cleanups.splice(0).forEach((cleanup) => cleanup());
 });
 
-function render(initial: AgentThread | undefined, fake: AgentThreadSessionGateway) {
+type RecoverThread = (threadId: string, workspaceId: string) => Promise<AgentThreadRecovery>;
+
+function render(
+  initial: AgentThread | undefined,
+  fake: AgentThreadSessionGateway,
+  recoverThread?: RecoverThread,
+) {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const scenario: {
     current: AgentThread | undefined;
     mintedIds: Array<string | null>;
-    revision: object;
   } = {
     current: initial,
     mintedIds: ["agt-bg-0001"],
-    revision: {},
   };
   const setNotice = vi.fn();
   const reportError = vi.fn();
@@ -160,12 +163,20 @@ function render(initial: AgentThread | undefined, fake: AgentThreadSessionGatewa
       resumeSessionId: (candidate) => candidate.provider.sessionId,
       setNotice,
       reportError,
-      stateRevision: scenario.revision,
       backgroundTurns: {
         mintTurnId: () => scenario.mintedIds.shift() ?? null,
         dispatch,
         now: () => NOW,
       },
+      ...(recoverThread === undefined
+        ? {}
+        : {
+            evictedThreads: {
+              rootKeyOf: (workspaceId: string) =>
+                workspaceId === OWNER_ID ? "/workspace/app" : null,
+              recover: recoverThread,
+            },
+          }),
     });
     return null;
   }
@@ -180,12 +191,7 @@ function render(initial: AgentThread | undefined, fake: AgentThreadSessionGatewa
     act(() => root.unmount());
   };
   cleanups.push(unmount);
-  const update = (next: AgentThread | undefined) => {
-    scenario.current = next;
-    scenario.revision = {};
-    act(() => root.render(createElement(Harness)));
-  };
-  return { scenario, setNotice, reportError, dispatch, dispatched, unmount, update };
+  return { scenario, setNotice, reportError, dispatch, dispatched, unmount };
 }
 
 function runningTurn(turnId: string, prompt = "start the build in the background"): AgentTurn {
@@ -256,170 +262,64 @@ describe("useAgentThreadSessionLifecycle background turns", () => {
     }
   });
 
-  it("records a reply that arrives before the previous turn settles after that turn", async () => {
+  it("records a reply that arrives while a turn runs at once, before that running turn", async () => {
     const { fake, emit } = gateway();
-    const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
+    const harness = render(
+      thread({ turns: [settledTurn(), runningTurn("agt-1-t2", "next")] }),
+      fake,
+    );
     await subscribed(fake);
 
     emit(event());
-
-    expect(harness.dispatch).not.toHaveBeenCalled();
-    expect(harness.setNotice).not.toHaveBeenCalled();
-
-    harness.update(thread({ turns: [settledTurn()] }));
 
     expect(harness.dispatch).toHaveBeenCalledTimes(1);
     expect(harness.scenario.current?.turns.map((turn) => [turn.turnId, turn.origin])).toEqual([
       ["agt-1-t1", undefined],
       ["agt-bg-0001", "background"],
+      ["agt-1-t2", undefined],
     ]);
     expect(harness.scenario.current?.turns[1]?.events).toContainEqual({
       kind: "assistantText",
       text: "background-finished",
     });
     expect(harness.setNotice).not.toHaveBeenCalled();
-
-    harness.update(harness.scenario.current);
-    expect(harness.dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps waiting while the exact previous turn is still running", async () => {
+  it("records 25 replies during one long running turn without any notice", async () => {
     const { fake, emit } = gateway();
     const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
+    const replies = Array.from({ length: 25 }, (_, index) => `reply ${index}`);
+    harness.scenario.mintedIds.push(
+      ...replies.slice(1).map((_, index) => `agt-bg-${String(index + 2).padStart(4, "0")}`),
+    );
     await subscribed(fake);
 
-    emit(event());
-    harness.update(thread({ title: "Renamed", turns: [runningTurn("agt-1-t1")] }));
+    replies.forEach((text, index) => {
+      const flags = index === 7 ? { complete: false } : index === 13 ? { truncated: true } : {};
+      emit(event({ output: output(text), ...flags }));
+      expect(harness.scenario.current?.turns).toHaveLength(index + 2);
+    });
 
-    expect(harness.dispatch).not.toHaveBeenCalled();
+    const turns = harness.scenario.current?.turns ?? [];
+    expect(turns[turns.length - 1]?.turnId).toBe("agt-1-t1");
+    expect(
+      turns.slice(0, -1).map((turn) => turn.events.find((item) => item.kind === "result")),
+    ).toEqual(replies.map((text) => expect.objectContaining({ text })));
+    expect(turns[7]?.status).toEqual({ kind: "interrupted" });
+    expect(turns[13]?.eventsTruncated).toBe(true);
     expect(harness.setNotice).not.toHaveBeenCalled();
-  });
-
-  it("shows a bounded preview only when a newer message is already running", async () => {
-    const { fake, emit } = gateway();
-    const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-    await subscribed(fake);
-
-    emit(event({ output: output(`All tests passed.\n${"x".repeat(1_000)}`) }));
-    harness.update(thread({ turns: [settledTurn(), runningTurn("agt-1-t2", "next message")] }));
-
-    expect(harness.dispatch).not.toHaveBeenCalled();
-    expect(harness.scenario.current?.turns.map((turn) => turn.turnId)).toEqual([
-      "agt-1-t1",
-      "agt-1-t2",
-    ]);
-    expect(harness.setNotice).toHaveBeenCalledTimes(1);
-    const notice = harness.setNotice.mock.calls[0]?.[0] as { kind: string; message: string };
-    expect(notice.kind).toBe("info");
-    expect(notice.message).toContain('"Nightly build" after background work finished');
-    expect(notice.message).toContain("was not added to the thread");
-    expect(notice.message).toContain("All tests passed. xxx");
-    expect(notice.message.length).toBeLessThan(600);
   });
 
   it("names an unprompted reply without claiming background work finished", async () => {
     const { fake, emit } = gateway();
-    const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
+    const harness = render(thread({ archived: true }), fake);
     await subscribed(fake);
 
     emit(event({ output: output("side reply", null) }));
-    harness.update(thread({ turns: [settledTurn(), runningTurn("agt-1-t2", "next message")] }));
 
     expect(noticeMessages(harness.setNotice)).toEqual([
-      'Claude replied in "Nightly build" without a new message, but the reply was not added to the thread because your next message is running: "side reply"',
+      'Claude replied in "Nightly build" without a new message, but the reply could not be added to the thread: "side reply"',
     ]);
-  });
-
-  it("tells the user with a preview when the owner changes or the thread is removed while a reply is held", async () => {
-    for (const next of [
-      thread({ owner: { ...thread().owner, ownerId: "ws-2" }, turns: [settledTurn()] }),
-      undefined,
-    ]) {
-      const { fake, emit } = gateway();
-      const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-      await subscribed(fake);
-      emit(event());
-      harness.update(next);
-      harness.update(thread({ turns: [settledTurn()] }));
-      expect(harness.dispatch).not.toHaveBeenCalled();
-      expect(noticeMessages(harness.setNotice)).toEqual([RELEASED_NOTICE]);
-      harness.unmount();
-      expect(harness.setNotice).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it("records a held reply at once on unmount when its owner is still valid and its turn settled", async () => {
-    const { fake, emit } = gateway();
-    const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-    await subscribed(fake);
-    emit(event());
-    harness.scenario.current = thread({ turns: [settledTurn()] });
-
-    harness.unmount();
-
-    expect(harness.dispatch).toHaveBeenCalledTimes(1);
-    expect(harness.scenario.current?.turns.map((turn) => [turn.turnId, turn.origin])).toEqual([
-      ["agt-1-t1", undefined],
-      ["agt-bg-0001", "background"],
-    ]);
-    expect(harness.setNotice).not.toHaveBeenCalled();
-  });
-
-  it("shows a preview on unmount when the held reply cannot be recorded yet", async () => {
-    const { fake, emit } = gateway();
-    const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-    await subscribed(fake);
-    emit(event());
-
-    harness.unmount();
-
-    expect(harness.dispatch).not.toHaveBeenCalled();
-    expect(noticeMessages(harness.setNotice)).toEqual([RELEASED_NOTICE]);
-  });
-
-  it("shows a preview on unmount when the owner changed before the held reply settled", async () => {
-    for (const next of [
-      thread({ owner: { ...thread().owner, ownerId: "ws-2" }, turns: [settledTurn()] }),
-      undefined,
-    ]) {
-      const { fake, emit } = gateway();
-      const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-      await subscribed(fake);
-      emit(event());
-      harness.scenario.current = next;
-
-      harness.unmount();
-
-      expect(harness.dispatch).not.toHaveBeenCalled();
-      expect(noticeMessages(harness.setNotice)).toEqual([RELEASED_NOTICE]);
-    }
-  });
-
-  it("holds a bounded number of replies per thread and surfaces the oldest instead of dropping it", async () => {
-    const { fake, emit } = gateway();
-    const harness = render(thread({ turns: [runningTurn("agt-1-t1")] }), fake);
-    const replies = Array.from(
-      { length: MAX_HELD_BACKGROUND_TURNS_PER_THREAD + 1 },
-      (_, index) => `reply ${index}`,
-    );
-    harness.scenario.mintedIds.push(
-      ...replies.slice(2).map((_, index) => `agt-bg-${String(index + 2).padStart(4, "0")}`),
-    );
-    await subscribed(fake);
-
-    for (const text of replies) emit(event({ output: output(text) }));
-
-    expect(noticeMessages(harness.setNotice)).toEqual([
-      'Claude replied in "Nightly build" after background work finished, but newer replies arrived before it could be added to the thread: "reply 0"',
-    ]);
-
-    harness.update(thread({ turns: [settledTurn()] }));
-
-    const recorded = harness.scenario.current?.turns.slice(1) ?? [];
-    expect(recorded.map((turn) => turn.events.find((item) => item.kind === "result"))).toEqual(
-      replies.slice(1).map((text) => expect.objectContaining({ text })),
-    );
-    expect(harness.setNotice).toHaveBeenCalledTimes(1);
   });
 
   it("records truncated or incomplete output with the truncation marker", async () => {
@@ -518,5 +418,184 @@ describe("useAgentThreadSessionLifecycle background turns", () => {
 
     expect(unsubscribeBackground).toHaveBeenCalledTimes(1);
     expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+});
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+describe("useAgentThreadSessionLifecycle background turns for threads evicted from memory", () => {
+  it("reopens the saved thread and records the reply into it", async () => {
+    const { fake, emit } = gateway();
+    const reopen = vi.fn<RecoverThread>(async () => {
+      harness.scenario.current = thread();
+      return { kind: "restored" };
+    });
+    const harness = render(undefined, fake, reopen);
+    await subscribed(fake);
+
+    emit(event());
+
+    await waitForReact(() => expect(harness.scenario.current?.turns).toHaveLength(2));
+    expect(reopen).toHaveBeenCalledWith(THREAD_ID, OWNER_ID);
+    expect(harness.scenario.current?.turns[1]).toMatchObject({
+      turnId: "agt-bg-0001",
+      origin: "background",
+    });
+    expect(harness.setNotice).not.toHaveBeenCalled();
+  });
+
+  it("keeps replies for the same evicted thread in arrival order while it reopens", async () => {
+    const { fake, emit } = gateway();
+    const reopening = deferred<AgentThreadRecovery>();
+    const reopen = vi.fn<RecoverThread>(() => reopening.promise);
+    const harness = render(undefined, fake, reopen);
+    harness.scenario.mintedIds.push("agt-bg-0002");
+    await subscribed(fake);
+
+    emit(event({ output: output("first") }));
+    emit(event({ output: output("second") }));
+    await waitForReact(() => expect(reopen).toHaveBeenCalledTimes(1));
+    expect(harness.dispatch).not.toHaveBeenCalled();
+    harness.scenario.current = thread();
+    await act(async () => reopening.resolve({ kind: "restored" }));
+
+    await waitForReact(() => expect(harness.scenario.current?.turns).toHaveLength(3));
+    expect(reopen).toHaveBeenCalledTimes(1);
+    expect(
+      harness.scenario.current?.turns
+        .slice(1)
+        .map((turn) => turn.events.find((item) => item.kind === "result")),
+    ).toEqual([
+      expect.objectContaining({ text: "first" }),
+      expect.objectContaining({ text: "second" }),
+    ]);
+    expect(harness.setNotice).not.toHaveBeenCalled();
+  });
+
+  it("names the saved thread when it cannot be reopened", async () => {
+    const { fake, emit } = gateway();
+    const harness = render(undefined, fake, async () => ({
+      kind: "notRestored",
+      title: "Nightly build",
+    }));
+    await subscribed(fake);
+
+    emit(event());
+
+    await waitForReact(() =>
+      expect(noticeMessages(harness.setNotice)).toEqual([
+        'Claude replied in "Nightly build" after background work finished, but the reply could not be added to the thread: "background-finished"',
+      ]),
+    );
+    expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("says the thread is not open when the saved thread cannot be found", async () => {
+    const { fake, emit } = gateway();
+    const harness = render(undefined, fake, async () => ({ kind: "notRestored", title: null }));
+    await subscribed(fake);
+
+    emit(event({ output: output("side reply", null) }));
+
+    await waitForReact(() =>
+      expect(noticeMessages(harness.setNotice)).toEqual([
+        'Claude replied in a thread that is not open without a new message, but the reply could not be added to the thread: "side reply"',
+      ]),
+    );
+  });
+
+  it("stays silent for foreign workspaces and never reopens remote threads", async () => {
+    const { fake, emit } = gateway();
+    const reopen = vi.fn<RecoverThread>(async () => ({ kind: "foreign" }));
+    const harness = render(undefined, fake, reopen);
+    await subscribed(fake);
+
+    emit(event({ workspaceId: "ws-other" }));
+    emit(event({ threadId: "remote-thread:server-1:runner-1:conv-1" }));
+    emit(event());
+
+    await waitForReact(() => expect(reopen).toHaveBeenCalledTimes(1));
+    await act(async () => Promise.resolve());
+    expect(reopen).toHaveBeenCalledWith(THREAD_ID, OWNER_ID);
+    expect(harness.dispatch).not.toHaveBeenCalled();
+    expect(harness.setNotice).not.toHaveBeenCalled();
+  });
+
+  it("reopens one evicted thread of a project root at a time", async () => {
+    const { fake, emit } = gateway();
+    const first = deferred<AgentThreadRecovery>();
+    const reopen = vi.fn<RecoverThread>((threadId) =>
+      threadId === THREAD_ID
+        ? first.promise
+        : Promise.resolve({ kind: "notRestored", title: "Other" }),
+    );
+    const harness = render(undefined, fake, reopen);
+    await subscribed(fake);
+
+    emit(event());
+    emit(event({ threadId: "agt-2-0b2d", output: output("other reply") }));
+    await waitForReact(() => expect(reopen).toHaveBeenCalledTimes(1));
+    await act(async () => Promise.resolve());
+    expect(reopen).toHaveBeenCalledTimes(1);
+
+    await act(async () => first.resolve({ kind: "notRestored", title: "Nightly build" }));
+
+    await waitForReact(() => expect(reopen).toHaveBeenCalledTimes(2));
+    expect(reopen.mock.calls.map(([threadId]) => threadId)).toEqual([THREAD_ID, "agt-2-0b2d"]);
+    await waitForReact(() => expect(harness.setNotice).toHaveBeenCalledTimes(2));
+  });
+
+  it("records into the thread when the user opened it while the reopening failed", async () => {
+    const { fake, emit } = gateway();
+    const harness = render(undefined, fake, async () => {
+      harness.scenario.current = thread();
+      return { kind: "notRestored", title: "Nightly build" };
+    });
+    await subscribed(fake);
+
+    emit(event());
+
+    await waitForReact(() => expect(harness.scenario.current?.turns).toHaveLength(2));
+    expect(harness.scenario.current?.turns[1]?.origin).toBe("background");
+    expect(harness.setNotice).not.toHaveBeenCalled();
+  });
+
+  it("tells the user at once when too many replies wait for one thread to reopen", async () => {
+    const { fake, emit } = gateway();
+    const reopening = deferred<AgentThreadRecovery>();
+    const harness = render(undefined, fake, () => reopening.promise);
+    await subscribed(fake);
+
+    for (let index = 0; index <= MAX_QUEUED_REPLIES_PER_RECOVERING_ROOT; index += 1) {
+      emit(event({ output: output(`reply ${index}`) }));
+    }
+
+    expect(noticeMessages(harness.setNotice)).toEqual([
+      `Claude replied in a thread that is not open after background work finished, but the reply could not be added to the thread: "reply ${MAX_QUEUED_REPLIES_PER_RECOVERING_ROOT}"`,
+    ]);
+    await act(async () => reopening.resolve({ kind: "foreign" }));
+    expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("drops a reopening that settles after unmount", async () => {
+    const { fake, emit } = gateway();
+    const reopening = deferred<AgentThreadRecovery>();
+    const harness = render(undefined, fake, () => reopening.promise);
+    await subscribed(fake);
+
+    emit(event());
+    await act(async () => Promise.resolve());
+    harness.unmount();
+    harness.scenario.current = thread();
+    await act(async () => reopening.resolve({ kind: "notRestored", title: "Nightly build" }));
+
+    expect(harness.dispatch).not.toHaveBeenCalled();
+    expect(harness.setNotice).not.toHaveBeenCalled();
   });
 });

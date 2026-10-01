@@ -784,7 +784,10 @@ function recordBackgroundTurn(
   if (thread === undefined || thread.owner.ownerId !== action.workspaceId) return state;
   const { turn } = action;
   if (turn.origin !== "background" || !isTerminalAgentTurnStatus(turn.status)) return state;
-  return appendTurn(state, thread, turn, turn.endedAtEpochMs ?? turn.startedAtEpochMs);
+  const atEpochMs = turn.endedAtEpochMs ?? turn.startedAtEpochMs;
+  const running = runningTurn(thread);
+  if (running === null) return appendTurn(state, thread, turn, atEpochMs);
+  return insertTurnBefore(state, thread, running, turn, atEpochMs);
 }
 
 function appendTurn(
@@ -793,8 +796,31 @@ function appendTurn(
   turn: AgentTurn,
   atEpochMs: number,
 ): AgentThreadsState {
-  if (thread.archived) return state;
   if (runningTurn(thread) !== null) return state;
+  return placeTurn(state, thread, turn, atEpochMs, (turns, placed) => [...turns, placed]);
+}
+
+function insertTurnBefore(
+  state: AgentThreadsState,
+  thread: AgentThread,
+  anchor: AgentTurn,
+  turn: AgentTurn,
+  atEpochMs: number,
+): AgentThreadsState {
+  return placeTurn(state, thread, turn, atEpochMs, (turns, placed) => {
+    const index = turns.findIndex((candidate) => candidate.turnId === anchor.turnId);
+    return [...turns.slice(0, index), placed, ...turns.slice(index)];
+  });
+}
+
+function placeTurn(
+  state: AgentThreadsState,
+  thread: AgentThread,
+  turn: AgentTurn,
+  atEpochMs: number,
+  place: (turns: ReadonlyArray<AgentTurn>, placed: AgentTurn) => ReadonlyArray<AgentTurn>,
+): AgentThreadsState {
+  if (thread.archived) return state;
   if (findTurn(state, turn.turnId) !== null) return state;
   const retained = retainTurnsForNewTurn(thread);
   if (retained === null) return state;
@@ -802,7 +828,7 @@ function appendTurn(
     ...thread,
     ...(thread.snoozedUntil != null ? { snoozedUntil: null } : {}),
     ...(thread.settledAt != null ? { settledAt: null } : {}),
-    turns: [...retained.turns, boundAgentTurnEvents(turn)],
+    turns: place(retained.turns, boundAgentTurnEvents(turn)),
     turnsTruncated: thread.turnsTruncated || retained.evicted,
     updatedAtEpochMs: Math.max(thread.updatedAtEpochMs, atEpochMs),
   });
@@ -814,9 +840,12 @@ function retainTurnsForNewTurn(
   if (thread.turns.length < MAX_AGENT_TURNS_PER_THREAD) {
     return { turns: thread.turns, evicted: false };
   }
-  const oldest = thread.turns[0];
-  if (oldest === undefined || !isTerminalAgentTurnStatus(oldest.status)) return null;
-  return { turns: thread.turns.slice(1), evicted: true };
+  const oldest = thread.turns.findIndex((turn) => isTerminalAgentTurnStatus(turn.status));
+  if (oldest < 0) return null;
+  return {
+    turns: [...thread.turns.slice(0, oldest), ...thread.turns.slice(oldest + 1)],
+    evicted: true,
+  };
 }
 
 function applyTurnStatusEvent(

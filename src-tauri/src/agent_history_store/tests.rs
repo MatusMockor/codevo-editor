@@ -341,6 +341,8 @@ fn committed_save_with_lost_receipt_can_only_replay_the_exact_payload() {
 
 #[path = "management_tests.rs"]
 mod management_tests;
+#[path = "ordering_tests.rs"]
+mod ordering_tests;
 
 fn artifact_turn(
     index: usize,
@@ -677,4 +679,66 @@ fn artifact_facts_for_an_unknown_root_do_not_create_a_history_database() {
         None
     );
     assert!(!connection::database_path(&fixture.base, other).exists());
+}
+fn running_turn(index: usize) -> AgentTurn {
+    serde_json::from_value(json!({"turnId":format!("agt-turn-{index:04}"),"prompt":"lead","status":{"kind":"running"},"startedAtEpochMs":1,"endedAtEpochMs":null,"events":[],"eventsTruncated":false,"lastStatusSequence":1,"lastOutputSequence":0,"launch":null,"cliVersion":null})).unwrap()
+}
+fn saved_order(store: &AgentHistoryStore, thread_id: &str) -> Vec<String> {
+    store
+        .read_turns(ROOT, &owner(), thread_id, None)
+        .unwrap()
+        .turns
+        .into_iter()
+        .map(|turn| turn.turn_id)
+        .collect()
+}
+#[test]
+fn settled_turns_saved_while_the_last_turn_runs_are_ordered_before_it() {
+    let fixture = Fixture::new();
+    let mut saved = thread();
+    let mut revision = 0;
+    let mut save = |turns: Vec<AgentTurn>| {
+        saved.turns = turns;
+        fixture
+            .store
+            .save(ROOT, &owner(), &saved, revision)
+            .unwrap();
+        revision += 1;
+    };
+    save(vec![turn(0)]);
+    save(vec![running_turn(1)]);
+    for index in 2..27 {
+        save(vec![turn(index)]);
+    }
+    let mut expected: Vec<String> = std::iter::once(0)
+        .chain(2..27)
+        .chain(std::iter::once(1))
+        .map(|index| format!("agt-turn-{index:04}"))
+        .collect();
+    let reopened = AgentHistoryStore::new(fixture.base.clone());
+    let mut all = Vec::new();
+    let mut before = None;
+    loop {
+        let page = reopened
+            .read_turns(ROOT, &owner(), "agt-thread-0001", before.as_deref())
+            .unwrap();
+        let mut ids: Vec<String> = page.turns.iter().map(|turn| turn.turn_id.clone()).collect();
+        ids.extend(all);
+        all = ids;
+        if !page.has_earlier {
+            break;
+        }
+        before = page.before_turn_id;
+    }
+    assert_eq!(all, expected);
+    let mut settled = running_turn(1);
+    settled.status = legacy::AgentTurnStatus::Exited { exit_code: 0 };
+    save(vec![settled]);
+    save(vec![turn(27)]);
+    save(vec![running_turn(28)]);
+    save(vec![turn(29)]);
+    expected.extend((27..30).map(|index| format!("agt-turn-{index:04}")));
+    expected.swap(28, 29);
+    let reloaded = saved_order(&reopened, "agt-thread-0001");
+    assert_eq!(reloaded, expected[expected.len() - reloaded.len()..]);
 }

@@ -410,7 +410,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     gateway: dependencies.agentThreadSessionGateway,
     projects,
     store,
-    stateRevision: threads,
+    historyCatalog: durableHistory ? defaultHistoryCatalogGateway : undefined,
     dispatch: sessionDispatchRef,
     setNotice,
     reportError,

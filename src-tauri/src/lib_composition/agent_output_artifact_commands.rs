@@ -147,20 +147,26 @@ fn source_mtime_bound(turns: &[ArtifactTurnFact], turn_id: &str) -> SourceMtimeB
     let Some(index) = turns.iter().position(|turn| turn.turn_id == turn_id) else {
         return SourceMtimeBound::Unverifiable;
     };
-    let Some(successor) = turns[index + 1..]
+    let own_start = turns[index].started_at_epoch_ms;
+    let mut successors = turns[index + 1..]
         .iter()
-        .find(|turn| !matches!(turn.status, AgentTurnStatus::Pending))
-    else {
+        .filter(|turn| !matches!(turn.status, AgentTurnStatus::Pending))
+        .peekable();
+    if successors.peek().is_none() {
         return SourceMtimeBound::Unconstrained;
-    };
+    }
     let Some(ended) = turns[index].ended_at_epoch_ms else {
         return SourceMtimeBound::Unverifiable;
     };
     let skewed = ended.saturating_add(TURN_END_MTIME_SKEW_MS);
-    if successor.started_at_epoch_ms == 0 {
+    let Some(earliest) = successors
+        .map(|turn| turn.started_at_epoch_ms)
+        .filter(|started| *started != 0 && *started >= own_start)
+        .min()
+    else {
         return SourceMtimeBound::AtMostEpochMs(skewed);
-    }
-    SourceMtimeBound::AtMostEpochMs(skewed.min(successor.started_at_epoch_ms))
+    };
+    SourceMtimeBound::AtMostEpochMs(skewed.min(earliest))
 }
 fn source_mtime_limit(turns: &[ArtifactTurnFact], turn_id: &str) -> Result<Option<u64>, String> {
     match source_mtime_bound(turns, turn_id) {
@@ -592,6 +598,154 @@ mod tests {
         );
         assert_eq!(
             source_mtime_bound(&turns, "turn-missing"),
+            SourceMtimeBound::Unverifiable
+        );
+    }
+
+    fn finished_between(turn_id: &str, started_at: u64, ended_at: u64) -> ArtifactTurnFact {
+        ArtifactTurnFact {
+            started_at_epoch_ms: started_at,
+            ..ended(turn_id, Some(ended_at))
+        }
+    }
+
+    const LEAD_STARTED_AT: u64 = 1_700_000_000_000;
+    const REPLY_AT: u64 = LEAD_STARTED_AT + 45_000;
+
+    #[test]
+    fn a_background_reply_before_an_earlier_started_running_turn_is_bounded_by_its_own_end() {
+        let turns = [
+            finished_between(
+                "turn-one",
+                LEAD_STARTED_AT - 60_000,
+                LEAD_STARTED_AT - 50_000,
+            ),
+            finished_between("turn-background", REPLY_AT, REPLY_AT),
+            started("turn-lead", AgentTurnStatus::Running, LEAD_STARTED_AT),
+        ];
+        assert!(is_newest_terminal_turn(&turns, "turn-background"));
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-background"),
+            SourceMtimeBound::AtMostEpochMs(REPLY_AT + TURN_END_MTIME_SKEW_MS)
+        );
+        assert_eq!(
+            source_mtime_limit(&turns, "turn-background"),
+            Ok(Some(REPLY_AT + TURN_END_MTIME_SKEW_MS))
+        );
+    }
+
+    #[test]
+    fn a_successor_whose_clock_stepped_back_keeps_the_turn_end_bound() {
+        let turns = [
+            finished_between("turn-one", REPLY_AT, REPLY_AT + 1_000),
+            started("turn-two", AgentTurnStatus::Running, REPLY_AT - 30_000),
+        ];
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-one"),
+            SourceMtimeBound::AtMostEpochMs(REPLY_AT + 1_000 + TURN_END_MTIME_SKEW_MS)
+        );
+    }
+
+    #[test]
+    fn a_pending_then_running_tail_is_bounded_by_the_running_start() {
+        let turns = [
+            finished_between("turn-one", REPLY_AT, REPLY_AT + 1_000),
+            started("turn-queued", AgentTurnStatus::Pending, REPLY_AT + 1_100),
+            started("turn-two", AgentTurnStatus::Running, REPLY_AT + 1_500),
+        ];
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-one"),
+            SourceMtimeBound::AtMostEpochMs(REPLY_AT + 1_500)
+        );
+        let pending_only = [
+            finished_between("turn-one", REPLY_AT, REPLY_AT + 1_000),
+            started("turn-queued", AgentTurnStatus::Pending, REPLY_AT + 1_100),
+        ];
+        assert_eq!(
+            source_mtime_bound(&pending_only, "turn-one"),
+            SourceMtimeBound::Unconstrained
+        );
+    }
+
+    #[test]
+    fn a_turn_started_after_the_background_reply_still_bounds_it() {
+        let turns = [
+            finished_between("turn-background", REPLY_AT, REPLY_AT),
+            finished_between("turn-lead", LEAD_STARTED_AT, REPLY_AT + 20_000),
+            started("turn-next", AgentTurnStatus::Running, REPLY_AT + 500),
+        ];
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-background"),
+            SourceMtimeBound::AtMostEpochMs(REPLY_AT + 500)
+        );
+    }
+
+    #[test]
+    fn an_older_turn_is_bounded_by_the_earliest_later_start_not_the_next_row() {
+        let turns = [
+            finished_between(
+                "turn-one",
+                LEAD_STARTED_AT - 60_000,
+                LEAD_STARTED_AT - 5_000,
+            ),
+            finished_between("turn-background", REPLY_AT, REPLY_AT),
+            started("turn-lead", AgentTurnStatus::Running, LEAD_STARTED_AT),
+        ];
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-one"),
+            SourceMtimeBound::AtMostEpochMs(LEAD_STARTED_AT - 5_000 + TURN_END_MTIME_SKEW_MS)
+        );
+        let tight = [
+            finished_between("turn-one", LEAD_STARTED_AT - 60_000, LEAD_STARTED_AT - 100),
+            finished_between("turn-background", REPLY_AT, REPLY_AT),
+            started("turn-lead", AgentTurnStatus::Running, LEAD_STARTED_AT),
+        ];
+        assert_eq!(
+            source_mtime_bound(&tight, "turn-one"),
+            SourceMtimeBound::AtMostEpochMs(LEAD_STARTED_AT)
+        );
+    }
+
+    #[test]
+    fn sequential_turns_with_recorded_starts_keep_the_next_turn_start_bound() {
+        let first_ended = LEAD_STARTED_AT - 30_000;
+        let turns = [
+            finished_between("turn-one", LEAD_STARTED_AT - 90_000, first_ended),
+            started("turn-two", AgentTurnStatus::Running, first_ended + 400),
+        ];
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-one"),
+            SourceMtimeBound::AtMostEpochMs(first_ended + 400)
+        );
+        let settled = [
+            finished_between("turn-one", LEAD_STARTED_AT - 90_000, first_ended),
+            finished_between("turn-two", first_ended + 400, first_ended + 9_000),
+        ];
+        assert_eq!(
+            source_mtime_bound(&settled, "turn-two"),
+            SourceMtimeBound::Unconstrained
+        );
+    }
+
+    #[test]
+    fn a_later_turn_without_a_recorded_start_is_never_skipped() {
+        let turns = [
+            finished_between("turn-one", REPLY_AT, REPLY_AT + 1_000),
+            started("turn-two", AgentTurnStatus::Running, 0),
+        ];
+        assert_eq!(
+            source_mtime_bound(&turns, "turn-one"),
+            SourceMtimeBound::AtMostEpochMs(REPLY_AT + 1_000 + TURN_END_MTIME_SKEW_MS)
+        );
+        let unrecorded_end = [
+            ArtifactTurnFact {
+                started_at_epoch_ms: REPLY_AT,
+                ..ended("turn-one", None)
+            },
+            started("turn-two", AgentTurnStatus::Running, LEAD_STARTED_AT),
+        ];
+        assert_eq!(
+            source_mtime_bound(&unrecorded_end, "turn-one"),
             SourceMtimeBound::Unverifiable
         );
     }

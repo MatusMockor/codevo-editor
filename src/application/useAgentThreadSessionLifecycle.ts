@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { runningTurn, type AgentThread, type AgentThreadOwner } from "../domain/agentThread";
 import {
@@ -12,10 +12,12 @@ import {
 import type { AgentTurnHaltRequest } from "../domain/agentTurnHaltRequest";
 import { latestPromptedAgentLaunch } from "../domain/agentTurnOrigin";
 import {
-  AgentBackgroundTurnRecorder,
+  recordAgentBackgroundTurn,
+  reportUnrecordedAgentBackgroundTurn,
   type AgentBackgroundTurnPorts,
   type AgentBackgroundTurnRecording,
 } from "./agentBackgroundTurnRecorder";
+import type { AgentEvictedThreadPort, AgentThreadRecovery } from "./agentEvictedThreadRecovery";
 import { AGENT_TASKS_SOURCE, attempt, warning } from "./agentProjectAuthority";
 import type {
   AgentSessionBackgroundInspection,
@@ -24,6 +26,7 @@ import type {
   AgentSessionTaskStopResult,
   AgentTasksNotice,
 } from "./agentThreadPorts";
+import { AgentThreadRecoveryQueue } from "./agentThreadRecoveryQueue";
 import { isRemoteAgentIdentity } from "./remoteAgentSurface";
 import {
   useAgentSessionEventSubscription,
@@ -39,7 +42,7 @@ export interface AgentThreadSessionLifecycleOptions {
   readonly setNotice: (notice: AgentTasksNotice) => void;
   readonly reportError: (source: string, error: unknown) => void;
   readonly backgroundTurns?: AgentBackgroundTurnPorts;
-  readonly stateRevision?: unknown;
+  readonly evictedThreads?: AgentEvictedThreadPort;
 }
 
 export interface AgentThreadSessionLifecycle {
@@ -53,6 +56,12 @@ export interface AgentThreadSessionLifecycle {
 interface ThreadAuthority {
   readonly threadId: string;
   readonly ownerId: string;
+}
+
+interface BackgroundTurnReceiver {
+  readonly options: () => AgentThreadSessionLifecycleOptions;
+  readonly mounted: () => boolean;
+  readonly recoveries: AgentThreadRecoveryQueue;
 }
 
 const subscribeSessionEnded: AgentSessionEventSubscription<AgentSessionEndedEvent> = (
@@ -69,7 +78,7 @@ export function useAgentThreadSessionLifecycle(
 ): AgentThreadSessionLifecycle {
   const optionsRef = useRef(options);
   const mountedRef = useRef(false);
-  const [recorder] = useState(() => new AgentBackgroundTurnRecorder());
+  const receiverRef = useRef<BackgroundTurnReceiver | null>(null);
   useLayoutEffect(() => {
     optionsRef.current = options;
   });
@@ -77,15 +86,8 @@ export function useAgentThreadSessionLifecycle(
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      recorder.clear(backgroundTurnRecording(optionsRef.current));
     };
-  }, [recorder]);
-  const { stateRevision } = options;
-  useEffect(() => {
-    const recording = backgroundTurnRecording(optionsRef.current);
-    if (recording === null) return;
-    recorder.flush(recording);
-  }, [recorder, stateRevision]);
+  }, []);
 
   const isCurrent = useCallback((authority: ThreadAuthority): boolean => {
     if (!mountedRef.current) return false;
@@ -99,7 +101,16 @@ export function useAgentThreadSessionLifecycle(
     onFailure: (error) => options.reportError(AGENT_TASKS_SOURCE, error),
   });
   useAgentSessionEventSubscription(options.gateway, subscribeSessionBackgroundTurn, {
-    onEvent: (event) => recordSessionBackgroundTurn(options, recorder, event),
+    onEvent: (event) => {
+      receiverRef.current ??= {
+        options: () => optionsRef.current,
+        mounted: () => mountedRef.current,
+        recoveries: new AgentThreadRecoveryQueue((error) =>
+          optionsRef.current.reportError(AGENT_TASKS_SOURCE, error),
+        ),
+      };
+      receiveSessionBackgroundTurn(receiverRef.current, event);
+    },
     onFailure: (error) => options.reportError(AGENT_TASKS_SOURCE, error),
   });
 
@@ -231,17 +242,75 @@ function announceSessionEnded(
   options.setNotice(warning(message));
 }
 
-function recordSessionBackgroundTurn(
+function receiveSessionBackgroundTurn(
+  receiver: BackgroundTurnReceiver,
+  event: AgentSessionBackgroundTurnEvent,
+): void {
+  const options = receiver.options();
+  if (backgroundTurnRecording(options) === null) return;
+  if (isRemoteAgentIdentity(event.threadId)) return;
+  const thread = options.readThread(event.threadId);
+  if (thread !== undefined && !receiver.recoveries.isRecovering(thread.owner.rootKey)) {
+    recordLoadedBackgroundTurn(options, thread, event);
+    return;
+  }
+  const rootKey = options.evictedThreads?.rootKeyOf(event.workspaceId) ?? null;
+  if (rootKey === null) return;
+  const queued = receiver.recoveries.enqueue(rootKey, () =>
+    recordRecoveredBackgroundTurn(receiver, event),
+  );
+  if (queued) return;
+  reportUnrecordedAgentBackgroundTurn(options.setNotice, null, event);
+}
+
+async function recordRecoveredBackgroundTurn(
+  receiver: BackgroundTurnReceiver,
+  event: AgentSessionBackgroundTurnEvent,
+): Promise<void> {
+  if (!receiver.mounted()) return;
+  const loaded = receiver.options().readThread(event.threadId);
+  if (loaded !== undefined) {
+    recordLoadedBackgroundTurn(receiver.options(), loaded, event);
+    return;
+  }
+  const evicted = receiver.options().evictedThreads;
+  if (evicted === undefined) return;
+  const recovery = await evicted.recover(event.threadId, event.workspaceId);
+  if (!receiver.mounted() || recovery.kind === "foreign") return;
+  const options = receiver.options();
+  const reopened = options.readThread(event.threadId);
+  if (reopened !== undefined) {
+    recordLoadedBackgroundTurn(options, reopened, event);
+    return;
+  }
+  reportUnrecordedAgentBackgroundTurn(options.setNotice, recoveredTitle(recovery), event);
+}
+
+function recordLoadedBackgroundTurn(
   options: AgentThreadSessionLifecycleOptions,
-  recorder: AgentBackgroundTurnRecorder,
+  thread: AgentThread,
   event: AgentSessionBackgroundTurnEvent,
 ): void {
   const recording = backgroundTurnRecording(options);
-  if (recording === null) return;
-  const thread = options.readThread(event.threadId);
-  if (thread === undefined || !isLocalClaudeThread(thread)) return;
+  if (recording === null || !isLocalClaudeThread(thread)) return;
   if (thread.owner.ownerId !== event.workspaceId) return;
-  recorder.receive(recording, thread, event);
+  recordAgentBackgroundTurn(recording, thread, event);
+}
+
+function recoveredTitle(recovery: AgentThreadRecovery): string | null {
+  switch (recovery.kind) {
+    case "notRestored":
+      return recovery.title;
+    case "restored":
+    case "foreign":
+      return null;
+    default:
+      return unsupportedRecovery(recovery);
+  }
+}
+
+function unsupportedRecovery(recovery: never): never {
+  throw new TypeError(`Unsupported agent thread recovery: ${String(recovery)}.`);
 }
 
 function backgroundTurnRecording(

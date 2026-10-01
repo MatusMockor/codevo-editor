@@ -1,7 +1,12 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { agentProjectOwnsOwner, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentThread, AgentThreadsState } from "../domain/agentThread";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
+import {
+  recoverEvictedAgentThread,
+  type AgentEvictedThreadPort,
+  type AgentRecoveryProject,
+} from "./agentEvictedThreadRecovery";
 import type {
   AgentSessionEndResult,
   AgentTasksNotice,
@@ -11,6 +16,7 @@ import {
   useAgentThreadSessionLifecycle,
   type AgentThreadSessionLifecycle,
 } from "./useAgentThreadSessionLifecycle";
+import type { AgentHistoryCatalogGateway } from "./useAgentHistoryCatalog";
 
 export interface AgentThreadSessionDispatchPorts {
   resumeSessionIdFor(thread: AgentThread): string | null;
@@ -20,8 +26,11 @@ export interface AgentThreadSessionDispatchPorts {
 export interface AgentThreadSessionsOptions {
   readonly gateway: AgentThreadSessionGateway | undefined;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
-  readonly store: Pick<AgentThreadStoreSurface, "currentState" | "dispatchAction">;
-  readonly stateRevision: unknown;
+  readonly store: Pick<
+    AgentThreadStoreSurface,
+    "currentState" | "dispatchAction" | "restoreThread"
+  >;
+  readonly historyCatalog: AgentHistoryCatalogGateway | undefined;
   readonly dispatch: { readonly current: AgentThreadSessionDispatchPorts | null };
   readonly setNotice: (notice: AgentTasksNotice) => void;
   readonly reportError: (source: string, error: unknown) => void;
@@ -38,6 +47,7 @@ export interface AgentThreadSessions extends Pick<
 
 export function useAgentThreadSessions(options: AgentThreadSessionsOptions): AgentThreadSessions {
   const { projects, store, dispatch } = options;
+  const evictedThreads = useEvictedThreadRecovery(options);
   const lifecycle = useAgentThreadSessionLifecycle({
     gateway: options.gateway,
     readThread: (threadId) => ownedThread(projects, store.currentState(), threadId),
@@ -46,12 +56,12 @@ export function useAgentThreadSessions(options: AgentThreadSessionsOptions): Age
     resumeSessionId: (thread) => dispatch.current?.resumeSessionIdFor(thread) ?? null,
     setNotice: options.setNotice,
     reportError: options.reportError,
-    stateRevision: options.stateRevision,
     backgroundTurns: {
       mintTurnId: () => dispatch.current?.mintUnreservedTurnId() ?? null,
       dispatch: store.dispatchAction,
       now: () => (options.now ?? Date.now)(),
     },
+    evictedThreads,
   });
   const {
     endSession: endLifecycleSession,
@@ -90,6 +100,39 @@ export function useAgentThreadSessions(options: AgentThreadSessionsOptions): Age
       stopBackgroundTask,
     ],
   );
+}
+
+function useEvictedThreadRecovery(options: AgentThreadSessionsOptions): AgentEvictedThreadPort {
+  const optionsRef = useRef(options);
+  useLayoutEffect(() => {
+    optionsRef.current = options;
+  });
+  return useMemo(
+    () => ({
+      rootKeyOf: (workspaceId) =>
+        workspaceProject(optionsRef.current.projects, workspaceId)?.rootKey ?? null,
+      recover: (threadId, workspaceId) =>
+        recoverEvictedAgentThread(
+          {
+            catalog: optionsRef.current.historyCatalog,
+            project: (candidate) => workspaceProject(optionsRef.current.projects, candidate),
+            restoreThread: (thread) =>
+              optionsRef.current.store.restoreThread?.(thread) ?? Promise.resolve(false),
+            reportError: (source, error) => optionsRef.current.reportError(source, error),
+          },
+          threadId,
+          workspaceId,
+        ),
+    }),
+    [],
+  );
+}
+
+function workspaceProject(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  workspaceId: string,
+): AgentRecoveryProject | undefined {
+  return projects.find((project) => project.ownerId === workspaceId);
 }
 
 function ownedThread(
