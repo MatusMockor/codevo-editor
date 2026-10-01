@@ -68,9 +68,11 @@ import {
 import {
   MAX_PERSISTED_AGENT_EVENTS_PER_TURN,
   MAX_PERSISTED_AGENT_THREAD_FILE_BYTES,
+  MAX_PERSISTED_HISTORY_TURN_EVENT_BYTES,
   MAX_PERSISTED_THREAD_EVENT_BYTES,
   PERSISTED_AGENT_THREAD_FILE_MARGIN_BYTES,
   capAgentThreadForPersistence,
+  capTurnTail,
 } from "./agentThreadTailCap";
 import {
   GIT_REMOTE_NAME_PATTERN,
@@ -101,28 +103,8 @@ export function serializeAgentThread(
   return document;
 }
 
-/** SQLite stores independent turn snapshots; only the event projection is bounded. */
 export function serializeAgentHistoryThread(thread: AgentThread): Record<string, unknown> {
-  const bounded = {
-    ...thread,
-    turns: thread.turns.map((turn) => {
-      let bytes = 2;
-      let start = turn.events.length;
-      while (start > 0 && turn.events.length - start < MAX_PERSISTED_AGENT_EVENTS_PER_TURN) {
-        const eventBytes =
-          UTF8_ENCODER.encode(JSON.stringify(serializeTurnEvent(turn.events[start - 1])))
-            .byteLength + 1;
-        if (bytes + eventBytes > 512 * 1_024) break;
-        bytes += eventBytes;
-        start -= 1;
-      }
-      return {
-        ...turn,
-        events: turn.events.slice(start),
-        eventsTruncated: turn.eventsTruncated || start > 0,
-      };
-    }),
-  };
+  const bounded = { ...thread, turns: thread.turns.map(capAgentHistoryTurn) };
   const document = serializeThreadDocument(bounded);
   document.turns = bounded.turns.map((turn) => ({
     ...serializeTurn(turn),
@@ -131,6 +113,18 @@ export function serializeAgentHistoryThread(thread: AgentThread): Record<string,
   }));
   return document;
 }
+
+function capAgentHistoryTurn(turn: AgentTurn): AgentTurn {
+  const events = capTurnTail(
+    turn.events,
+    MAX_PERSISTED_AGENT_EVENTS_PER_TURN,
+    MAX_PERSISTED_HISTORY_TURN_EVENT_BYTES - HISTORY_EVENT_ARRAY_BRACKET_BYTES,
+  );
+  if (events === turn.events) return turn;
+  return { ...turn, events, eventsTruncated: true };
+}
+
+const HISTORY_EVENT_ARRAY_BRACKET_BYTES = 2;
 
 export function parseAgentHistoryTurn(value: unknown, path = "turn"): AgentTurn {
   return parseTurn(value, path);

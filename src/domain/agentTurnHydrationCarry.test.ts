@@ -9,6 +9,12 @@ import { MAX_AGENT_EVENTS_PER_TURN, mergeTurnEvents, type AgentTurnEvent } from 
 import { projectAgentBackgroundActivity } from "./agentBackgroundActivity";
 import { retainAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { MAX_PERSISTED_AGENT_EVENTS_PER_TURN, capTurnTail } from "./agentThreadTailCap";
+import { isAgentMainReply } from "./agentTurnTailSelection";
+import {
+  agentTurnConversationChunk,
+  agentTurnHydratedEvents,
+  isAgentTurnConversationEvent,
+} from "./agentTurnConversationCore";
 import { emptyAgentTurnDigest } from "./agentTurnDigest";
 import {
   MAX_CARRIED_AGENT_TURN_SNAPSHOTS,
@@ -26,6 +32,7 @@ interface ReplayedTurn {
   readonly live: ReadonlyArray<AgentTurnEvent>;
   readonly jsonTail: ReadonlyArray<AgentTurnEvent>;
   readonly logRange: ReadonlyArray<AgentTurnEvent>;
+  readonly conversation: ReadonlyArray<AgentTurnEvent>;
 }
 
 function replayTurn(stream: ReadonlyArray<AgentTurnEvent>): ReplayedTurn {
@@ -48,15 +55,28 @@ function replayTurn(stream: ReadonlyArray<AgentTurnEvent>): ReplayedTurn {
     }
   }
   const seqs = [...rows.keys()].sort((left, right) => left - right);
-  const logRange = seqs
-    .slice(-HYDRATED_LOG_ROWS)
+  const logged = seqs
     .map((seq) => rows.get(seq))
     .filter((event): event is AgentTurnEvent => event !== undefined);
+  const logRange = logged.slice(-HYDRATED_LOG_ROWS);
+  const first = logRange[0];
+  const earlier = logged.slice(0, logged.length - logRange.length);
   return {
     live,
     jsonTail: capTurnTail(live, MAX_PERSISTED_AGENT_EVENTS_PER_TURN, Number.POSITIVE_INFINITY),
     logRange,
+    conversation:
+      first === undefined
+        ? []
+        : agentTurnConversationChunk(earlier, isAgentMainReply(first)).events,
   };
+}
+
+function hydrate(replay: ReplayedTurn): ReadonlyArray<AgentTurnEvent> {
+  return mergeTurnEvents(
+    [],
+    agentTurnHydratedEvents(replay.jsonTail, replay.conversation, replay.logRange).events,
+  ).events;
 }
 
 function identities(events: ReadonlyArray<AgentTurnEvent>): ReadonlySet<string> {
@@ -78,34 +98,69 @@ function containsAll(superset: ReadonlySet<string>, subset: ReadonlySet<string>)
   return [...subset].filter((value) => !superset.has(value));
 }
 
+function shownByJsonTail(replay: ReplayedTurn): ReadonlySet<string> {
+  const logged = identities(replay.logRange);
+  return identities(
+    replay.jsonTail.filter((event, index) => {
+      const next = replay.jsonTail[index + 1];
+      if (next === undefined || !isAgentMainReply(next)) return true;
+      return isAgentTurnConversationEvent(event) || logged.has(JSON.stringify(event));
+    }),
+  );
+}
+
+function conversationOf(events: ReadonlyArray<AgentTurnEvent>): ReadonlySet<string> {
+  return identities(events.filter(isAgentTurnConversationEvent));
+}
+
 describe("hydration carries what the JSON tail was already showing", () => {
-  const generators = [
+  const fitting = [
     ["realistic", realisticAgentTurnStream],
     ["long running", longRunningAgentTurnStream],
-    ["hostile", hostileAgentTurnStream],
   ] as const;
+  const generators = [...fitting, ["hostile", hostileAgentTurnStream]] as const;
 
-  for (const [name, generate] of generators) {
+  for (const [name, generate] of fitting) {
     it.each(SEEDS)(
       `never loses an event of the ${name} JSON tail when the log window starts later (seed %i)`,
       (seed) => {
         const replay = replayTurn(generate(seed, 5_000));
-        const planned = planHydratedAgentTurnEvents(replay.jsonTail, replay.logRange);
-        const hydrated = mergeTurnEvents([], planned).events;
+        const hydrated = hydrate(replay);
         expect({
           seed,
-          missing: containsAll(identities(hydrated), identities(replay.jsonTail)),
+          missing: containsAll(identities(hydrated), shownByJsonTail(replay)),
         }).toEqual({ seed, missing: [] });
       },
     );
 
     it.each(SEEDS)(
+      `never drops a user message or main reply of the persisted ${name} tail through hydration (seed %i)`,
+      (seed) => {
+        const replay = replayTurn(generate(seed, 5_000));
+        const persistedAfter = capTurnTail(
+          hydrate(replay),
+          MAX_PERSISTED_AGENT_EVENTS_PER_TURN,
+          Number.POSITIVE_INFINITY,
+        );
+        expect({
+          seed,
+          dropped: containsAll(identities(persistedAfter), conversationOf(replay.jsonTail)),
+          newest: persistedAfter[persistedAfter.length - 1],
+        }).toEqual({ seed, dropped: [], newest: replay.jsonTail[replay.jsonTail.length - 1] });
+      },
+    );
+  }
+
+  for (const [name, generate] of generators) {
+    it.each(SEEDS)(
       `never makes a ${name} consumer projection less complete than the JSON tail (seed %i)`,
       (seed) => {
         const replay = replayTurn(generate(seed, 5_000));
-        const planned = planHydratedAgentTurnEvents(replay.jsonTail, replay.logRange);
-        const hydrated = mergeTurnEvents([], planned).events;
-        const withoutCarry = mergeTurnEvents([], replay.logRange).events;
+        const hydrated = hydrate(replay);
+        const withoutCarry = mergeTurnEvents(
+          [],
+          agentTurnHydratedEvents([], replay.conversation, replay.logRange).events,
+        ).events;
         const lostTasks = containsAll(
           backgroundTaskIds(hydrated),
           backgroundTaskIds(replay.jsonTail),
@@ -126,25 +181,24 @@ describe("hydration carries what the JSON tail was already showing", () => {
         }).toEqual({ seed, tasks: [], subagents: [] });
       },
     );
-
-    it.each(SEEDS)(
-      `never narrows the persisted ${name} tail through hydration (seed %i)`,
-      (seed) => {
-        const replay = replayTurn(generate(seed, 5_000));
-        const planned = planHydratedAgentTurnEvents(replay.jsonTail, replay.logRange);
-        const hydrated = mergeTurnEvents([], planned).events;
-        const persistedAfter = capTurnTail(
-          hydrated,
-          MAX_PERSISTED_AGENT_EVENTS_PER_TURN,
-          Number.POSITIVE_INFINITY,
-        );
-        expect({
-          seed,
-          dropped: containsAll(identities(persistedAfter), identities(replay.jsonTail)),
-        }).toEqual({ seed, dropped: [] });
-      },
-    );
   }
+
+  it.each(SEEDS)(
+    "keeps the newest conversation of a hostile turn whose conversation overflows every cap (seed %i)",
+    (seed) => {
+      const replay = replayTurn(hostileAgentTurnStream(seed, 5_000));
+      const hydrated = hydrate(replay);
+      const persistedAfter = capTurnTail(
+        hydrated,
+        MAX_PERSISTED_AGENT_EVENTS_PER_TURN,
+        Number.POSITIVE_INFINITY,
+      );
+      const conversation = replay.jsonTail.filter(isAgentTurnConversationEvent);
+      expect(hydrated.length).toBeLessThanOrEqual(MAX_AGENT_EVENTS_PER_TURN);
+      expect(persistedAfter.length).toBeLessThanOrEqual(MAX_PERSISTED_AGENT_EVENTS_PER_TURN);
+      expect(persistedAfter).toContainEqual(conversation[conversation.length - 1]);
+    },
+  );
 
   it("carries a bounded number of events on top of the hydrated range", () => {
     const replay = replayTurn(realisticAgentTurnStream(1, 5_000));

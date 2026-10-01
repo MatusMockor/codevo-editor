@@ -135,7 +135,14 @@ describe("app-server domain persistence", () => {
       durationMs: 1,
       isError: false,
     }));
-    expect(() => parseAgentThread(serializeAgentThread(thread(many)))).toThrow(/32/);
+    const stored = serializeAgentThread(thread(many)) as {
+      readonly turns: ReadonlyArray<Record<string, unknown>>;
+    };
+    expect(() =>
+      parseAgentThread({ ...stored, turns: [{ ...stored.turns[0], events: many }] }),
+    ).toThrow(/32/);
+    expect(parseAgentThread(stored).turns[0].events).toHaveLength(32);
+    expect(parseAgentThread(stored).turns[0].eventsTruncated).toBe(true);
     const state = agentThreadsReducer(emptyAgentThreadsState(), {
       kind: "threadCreated",
       thread: thread(many),

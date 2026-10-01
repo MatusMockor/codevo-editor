@@ -26,6 +26,7 @@ import {
   MAX_CARRIED_AGENT_TURN_STEERS,
   carriedAgentTurnSteers,
 } from "../domain/agentTurnHydrationCarry";
+import { MAX_AGENT_TURN_CONVERSATION_SCAN_PAGES } from "./agentTurnLogConversationScan";
 import {
   MAX_AGENT_TURN_HYDRATION_PAGES,
   MAX_HYDRATED_AGENT_THREADS,
@@ -121,14 +122,13 @@ describe("agent turn log hydration after a restart", () => {
       lost: false,
       window: "savedNotShown",
     });
-    expect(harness.logGateway.reads.length).toBeLessThanOrEqual(MAX_AGENT_TURN_HYDRATION_PAGES);
+    expect(harness.logGateway.reads.length).toBeLessThanOrEqual(
+      MAX_AGENT_TURN_HYDRATION_PAGES + MAX_AGENT_TURN_CONVERSATION_SCAN_PAGES,
+    );
     expect(harness.logGateway.reads.map((read) => read.anchor.at)).toEqual([
       "tail",
-      "before",
-      "before",
-      "before",
-      "before",
-      "before",
+      ...Array.from({ length: 5 }, () => "before"),
+      ...Array.from({ length: 20 }, () => "before"),
     ]);
     await harness.unmount();
   });

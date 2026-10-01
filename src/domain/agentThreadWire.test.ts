@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_EFFORT_CHOICES } from "./agentLaunch";
-import type { AgentTurnEvent } from "./agentThread";
+import { mergeTurnEvents, type AgentTurnEvent } from "./agentThread";
 import {
   parseAgentThread,
   serializeAgentHistoryThread,
@@ -770,5 +770,119 @@ describe("agentThreadWire shared event kind fixture", () => {
     const events = [...Object.values(fixture.kinds), ...fixture.variants];
 
     expect(serializedEvents(events)).toEqual(events);
+  });
+});
+
+describe("agentThreadWire history cap keeps the conversation", () => {
+  const HISTORY_EVENT_LIMIT = 512;
+  const HISTORY_EVENT_BYTES = 512 * 1_024;
+
+  function historyEvents(events: ReadonlyArray<AgentTurnEvent>): {
+    readonly events: ReadonlyArray<AgentTurnEvent>;
+    readonly eventsTruncated: boolean;
+    readonly bytes: number;
+  } {
+    const thread = parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null }));
+    const document = serializeAgentHistoryThread({
+      ...thread,
+      turns: [{ ...thread.turns[0], events }],
+    });
+    const turn = parseAgentThread(document).turns[0];
+    const stored = (document.turns as ReadonlyArray<{ readonly events: unknown }>)[0].events;
+    return {
+      events: turn.events,
+      eventsTruncated: turn.eventsTruncated,
+      bytes: new TextEncoder().encode(JSON.stringify(stored)).byteLength,
+    };
+  }
+
+  function conversation(length: number): ReadonlyArray<AgentTurnEvent> {
+    return Array.from({ length }, (_unused, index) =>
+      index % 2 === 0
+        ? { kind: "userMessage", text: `follow-up ${index}` }
+        : { kind: "assistantText", text: `reply ${index}` },
+    );
+  }
+
+  function subagentNoise(length: number): ReadonlyArray<AgentTurnEvent> {
+    return Array.from({ length }, (_unused, index) => ({
+      kind: "toolResult",
+      toolId: `toolu_${index}`,
+      outputSummary: `subagent output ${index} ${"x".repeat(160)}`,
+      isError: false,
+      parentToolId: "toolu_agent",
+    }));
+  }
+
+  it("keeps every user message and main reply ahead of 1,500 subagent events", () => {
+    const core = conversation(20);
+    const stored = historyEvents([...core, ...subagentNoise(1_500)]);
+
+    expect(stored.events.slice(0, 20)).toEqual(core);
+    expect(stored.events.length).toBeLessThanOrEqual(HISTORY_EVENT_LIMIT);
+    expect(stored.bytes).toBeLessThanOrEqual(HISTORY_EVENT_BYTES);
+    expect(stored.eventsTruncated).toBe(true);
+  });
+
+  it("keeps the newest subagent events in their original order after the conversation", () => {
+    const noise = subagentNoise(1_500);
+    const stored = historyEvents([...conversation(20), ...noise]);
+    const kept = stored.events.slice(20);
+
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept).toEqual(noise.slice(noise.length - kept.length));
+  });
+
+  it("keeps two main replies apart so a reload never fuses them into one", () => {
+    const first: AgentTurnEvent = { kind: "assistantText", text: "first reply" };
+    const second: AgentTurnEvent = { kind: "assistantText", text: "second reply" };
+    const stored = historyEvents([first, ...subagentNoise(800), second, ...subagentNoise(800)]);
+    const replies = mergeTurnEvents([], stored.events).events.filter(
+      (event) => event.kind === "assistantText" && event.parentToolId === undefined,
+    );
+
+    expect(replies).toEqual([first, second]);
+  });
+
+  it("drops a single event larger than the byte cap instead of exceeding it", () => {
+    const giant: AgentTurnEvent = { kind: "userMessage", text: "g".repeat(600 * 1_024) };
+    const answer: AgentTurnEvent = { kind: "assistantText", text: "answer" };
+    const stored = historyEvents([
+      { kind: "userMessage", text: "small ask" },
+      giant,
+      ...subagentNoise(600),
+      answer,
+    ]);
+
+    expect(stored.events[0]).toEqual({ kind: "userMessage", text: "small ask" });
+    expect(stored.events).not.toContainEqual(giant);
+    expect(stored.events[stored.events.length - 1]).toEqual(answer);
+    expect(stored.bytes).toBeLessThanOrEqual(HISTORY_EVENT_BYTES);
+    expect(stored.eventsTruncated).toBe(true);
+  });
+
+  it("keeps the newest user messages and the final answer when messages alone exceed the bytes", () => {
+    const asks: ReadonlyArray<AgentTurnEvent> = Array.from({ length: 40 }, (_unused, index) => ({
+      kind: "userMessage",
+      text: `${index}:${"m".repeat(16_000)}`,
+    }));
+    const answer: AgentTurnEvent = { kind: "assistantText", text: "final answer" };
+    const closing: AgentTurnEvent = { kind: "result", text: "done", isError: false, usage: null };
+    const stored = historyEvents([...asks, answer, closing]);
+    const kept = stored.events.filter((event) => event.kind === "userMessage");
+
+    expect(stored.bytes).toBeLessThanOrEqual(HISTORY_EVENT_BYTES);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept).toEqual(asks.slice(asks.length - kept.length));
+    expect(stored.events.slice(-2)).toEqual([answer, closing]);
+    expect(stored.eventsTruncated).toBe(true);
+  });
+
+  it("keeps a turn that already fits unchanged and untruncated", () => {
+    const events = [...conversation(6), ...subagentNoise(10)];
+    const stored = historyEvents(events);
+
+    expect(stored.events).toEqual(events);
+    expect(stored.eventsTruncated).toBe(false);
   });
 });

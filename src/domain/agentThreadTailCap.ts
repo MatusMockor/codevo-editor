@@ -6,6 +6,7 @@ import {
 } from "./agentPromptClipping";
 import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { compactPersistedAgentSubagentLifecycle } from "./agentLifecyclePersistence";
+import { agentTurnTailFits, selectAgentTurnTail } from "./agentTurnTailSelection";
 import {
   isTerminalAgentTurnStatus,
   type AgentSubagentContentEvent,
@@ -15,6 +16,7 @@ import {
 } from "./agentThread";
 
 export const MAX_PERSISTED_AGENT_EVENTS_PER_TURN = 512;
+export const MAX_PERSISTED_HISTORY_TURN_EVENT_BYTES = 512 * 1_024;
 export const MAX_PERSISTED_AGENT_THREAD_FILE_BYTES = 1_024 * 1_024;
 export const PERSISTED_AGENT_THREAD_FILE_MARGIN_BYTES = 64 * 1_024;
 export const PERSISTED_AGENT_THREAD_FIT_SLACK_BYTES = 32 * 1_024;
@@ -201,29 +203,9 @@ export function capTurnTail(
   maxEvents: number,
   maxBytes: number,
 ): ReadonlyArray<AgentTurnEvent> {
-  if (events.length <= maxEvents && persistedAgentEventsBytes(events) <= maxBytes) return events;
-  const kept = new Set<number>();
-  let bytes = 0;
-  const take = (index: number): boolean => {
-    if (kept.has(index)) return true;
-    if (kept.size >= maxEvents) return false;
-    const size = persistedAgentEventBytes(events[index]!);
-    if (kept.size > 0 && bytes + size > maxBytes) return false;
-    kept.add(index);
-    bytes += size;
-    return true;
-  };
-  const closing = lastIndexOfKind(events, "result");
-  if (closing !== null) take(closing);
-  const answer = lastIndexOfKind(events, "assistantText");
-  if (answer !== null) take(answer);
-  for (let index = events.length - 1; index >= 0 && kept.size < maxEvents; index -= 1) {
-    if (events[index]?.kind !== "userMessage") continue;
-    take(index);
-  }
-  for (let index = events.length - 1; index >= 0 && kept.size < maxEvents; index -= 1) {
-    take(index);
-  }
+  const budget = { maxEvents, maxBytes, eventBytes: persistedAgentEventBytes };
+  if (agentTurnTailFits(events, budget)) return events;
+  const kept = selectAgentTurnTail(events, budget);
   return events.filter((_event, index) => kept.has(index));
 }
 

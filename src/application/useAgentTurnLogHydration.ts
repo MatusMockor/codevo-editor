@@ -19,7 +19,10 @@ import {
   agentTurnLogProvablyComplete,
   type AgentTurnLogHydration,
 } from "../domain/agentTurnContentLoss";
-import { planHydratedAgentTurnEvents } from "../domain/agentTurnHydrationCarry";
+import {
+  agentTurnConversationPreserved,
+  agentTurnHydratedEvents,
+} from "../domain/agentTurnConversationCore";
 import {
   agentThreadNeedsLoggedLifecycles,
   planAgentTurnLifecycleRestore,
@@ -37,6 +40,10 @@ import {
   settledAgentTurnPriorLoss,
   type SettledAgentTurnHistory,
 } from "./agentTurnLifecycleMigration";
+import {
+  scanAgentTurnLogConversation,
+  type AgentTurnLogConversationScan,
+} from "./agentTurnLogConversationScan";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
 import type { AgentTurnLogIntegration } from "./useAgentTurnLogging";
 
@@ -102,7 +109,10 @@ type PagesOutcome =
       readonly kind: "read";
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly hasEarlier: boolean;
+      readonly firstSeq: number;
     };
+
+const NO_CONVERSATION: AgentTurnLogConversationScan = { kind: "read", events: [] };
 
 export function useAgentTurnLogHydration(
   ports: AgentTurnLogHydrationPorts,
@@ -245,17 +255,13 @@ export function createAgentTurnLogHydrator(
     turnLog: AgentTurnLogHydrationSource,
     authority: TurnAuthority,
   ): Promise<PagesOutcome> => {
-    const scope: AgentTurnLogScope = {
-      rootKey: authority.rootKey,
-      ownerId: agentRootOwnerId(authority.rootKey),
-      threadId: authority.threadId,
-      turnId: authority.turnId,
-    };
+    const scope = turnLogScope(authority);
     const pages: Array<ReadonlyArray<AgentTurnEvent>> = [];
     let anchor: AgentTurnLogAnchor = { at: "tail" };
     let count = 0;
     let bytes = 0;
     let hasEarlier = false;
+    let firstSeq = 0;
     for (let index = 0; index < MAX_AGENT_TURN_HYDRATION_PAGES; index += 1) {
       const maxEvents = Math.min(
         AGENT_TURN_LOG_LIMITS.pageEvents,
@@ -273,12 +279,42 @@ export function createAgentTurnLogHydrator(
       count += events.length;
       bytes += events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0);
       hasEarlier = page.hasEarlier;
+      firstSeq = page.firstSeq;
       if (!page.hasEarlier) break;
       if (count >= MAX_AGENT_EVENTS_PER_TURN) break;
       if (bytes >= MAX_AGENT_EVENT_BYTES_PER_TURN) break;
       anchor = { at: "before", seq: page.firstSeq };
     }
-    return { kind: "read", events: pages.flat(), hasEarlier };
+    return { kind: "read", events: pages.flat(), hasEarlier, firstSeq };
+  };
+
+  const readConversation = async (
+    turnLog: AgentTurnLogHydrationSource,
+    authority: TurnAuthority,
+    window: Extract<PagesOutcome, { kind: "read" }>,
+  ): Promise<AgentTurnLogConversationScan> => {
+    const firstEvent = window.events[0];
+    if (!window.hasEarlier || firstEvent === undefined) return NO_CONVERSATION;
+    const scope = turnLogScope(authority);
+    return scanAgentTurnLogConversation(
+      {
+        read: async (anchor) => {
+          const maxEvents = AGENT_TURN_LOG_LIMITS.pageEvents;
+          const read = await attempt(() =>
+            turnLog.readPage({
+              scope,
+              anchor,
+              maxEvents,
+              maxBytes: AGENT_TURN_LOG_LIMITS.pageBytes,
+            }),
+          );
+          if (!read.ok || !acceptablePage(read.value, anchor, maxEvents)) return null;
+          return read.value;
+        },
+        owns: () => currentTurn(authority) !== null,
+      },
+      { beforeSeq: window.firstSeq, firstEvent },
+    );
   };
 
   const hydrateTurn = async (
@@ -290,15 +326,21 @@ export function createAgentTurnLogHydrator(
     const outcome = await readPages(turnLog, authority);
     if (outcome.kind === "dropped") return settle(turnLog, authority, "notAttempted");
     if (outcome.kind === "failed") return settle(turnLog, authority, "failed");
-    const planned = planHydratedAgentTurnEvents(authority.events, outcome.events);
-    const merged = mergeTurnEvents([], planned);
+    const conversation = await readConversation(turnLog, authority, outcome);
+    if (conversation.kind === "dropped") return settle(turnLog, authority, "notAttempted");
+    const earlier = conversation.kind === "read" ? conversation.events : [];
+    const planned = agentTurnHydratedEvents(authority.events, earlier, outcome.events);
+    const merged = mergeTurnEvents([], planned.events);
+    if (!agentTurnConversationPreserved(authority.events, merged.events)) {
+      return settle(turnLog, authority, "failed");
+    }
     if (currentTurn(authority) === null) return settle(turnLog, authority, "notAttempted");
     ports.publish({
       kind: "turnHydrated",
       threadId: authority.threadId,
       turnId: authority.turnId,
       events: merged.events,
-      hasEarlier: outcome.hasEarlier || merged.truncated,
+      hasEarlier: outcome.hasEarlier || planned.truncated || merged.truncated,
     });
     const published = ports
       .currentState()
@@ -520,6 +562,15 @@ export function createAgentTurnLogHydrator(
       hydrated.clear();
       lifecycleChecked.clear();
     },
+  };
+}
+
+function turnLogScope(authority: TurnAuthority): AgentTurnLogScope {
+  return {
+    rootKey: authority.rootKey,
+    ownerId: agentRootOwnerId(authority.rootKey),
+    threadId: authority.threadId,
+    turnId: authority.turnId,
   };
 }
 

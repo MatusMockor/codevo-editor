@@ -346,3 +346,51 @@ it("does not let an old owner's rejection clear a newer owner's pending write", 
   expect(invoke.mock.calls[3][1]).toEqual(invoke.mock.calls[2][1]);
   expect(invoke).toHaveBeenCalledTimes(5);
 });
+
+it("keeps every follow-up and main reply of a long turn through a save and a reload", async () => {
+  const stored = new Map<string, Record<string, unknown>>();
+  let document: Record<string, unknown> | null = null;
+  let revision = 0;
+  const invoke = vi
+    .fn<InvokeAgentThreadStoreCommand>()
+    .mockImplementation(async (command, args) => {
+      if (command === "save_agent_history_thread") {
+        const thread = (args.request as { thread: Record<string, unknown> }).thread;
+        for (const turn of thread.turns as ReadonlyArray<Record<string, unknown>>) {
+          stored.set(turn.turnId as string, turn);
+        }
+        document = thread;
+        revision += 1;
+        return { revision };
+      }
+      const threadId = (document as Record<string, unknown>).threadId as string;
+      return {
+        threads: [{ ...document, turns: [...stored.values()] }],
+        unreadable: [],
+        evicted: 0,
+        revisions: { [threadId]: revision },
+      };
+    });
+  const conversation = Array.from({ length: 20 }, (_, index) =>
+    index % 2 === 0
+      ? { kind: "userMessage" as const, text: `follow-up ${index}` }
+      : { kind: "assistantText" as const, text: `main reply ${index}` },
+  );
+  const subagentOutput = Array.from({ length: 1_500 }, (_, index) => ({
+    kind: "toolResult" as const,
+    toolId: `toolu_${index}`,
+    outputSummary: `subagent output ${index}`,
+    isError: false,
+    parentToolId: "toolu_agent",
+  }));
+  const gateway = new TauriAgentHistoryGateway(invoke, () => true);
+  const save = request([logTurn({ events: [...conversation, ...subagentOutput] })]);
+
+  await gateway.saveAgentThread(save);
+  const loaded = await gateway.loadAgentThreads(save);
+
+  const turn = loaded.threads[0]?.turns[0];
+  expect(turn?.events.slice(0, conversation.length)).toEqual(conversation);
+  expect(turn?.events.length).toBeLessThanOrEqual(512);
+  expect(turn?.eventsTruncated).toBe(true);
+});
