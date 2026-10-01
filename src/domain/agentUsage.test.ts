@@ -663,9 +663,9 @@ describe("aggregateAgentUsage", () => {
     const result = aggregateAgentUsage(
       [
         thread("claudeCode", "project-a", [
-          turn("prompted", NOW - 20_000, EXITED, NOW - 19_000, costed(0.25)),
+          turn("prompted", NOW - 20_000, EXITED, NOW - 19_000, costed(0.5)),
           {
-            ...turn("background", NOW - 10_000, EXITED, NOW - 10_000, costed(0.5)),
+            ...turn("background", NOW - 10_000, EXITED, NOW - 10_000, costed(0.25)),
             origin: "background",
           },
         ]),
@@ -685,6 +685,73 @@ describe("aggregateAgentUsage", () => {
       costUsd: 0.75,
       costMeasuredTurns: 2,
     });
+  });
+
+  it("does not sum the session total Claude restores into a resumed process's first result", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("claudeCode", "project-a", [
+          turn("first", NOW - 40_000, EXITED, NOW - 39_000, costedUsage(0.5)),
+          turn("same-process", NOW - 30_000, EXITED, NOW - 29_000, costedUsage(0.25)),
+          turn("resumed", NOW - 20_000, EXITED, NOW - 19_000, costedUsage(1.15)),
+          turn("after-resume", NOW - 10_000, EXITED, NOW - 9_000, costedUsage(0.1)),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.claudeCode.total.cliUsage.costUsd).toBeCloseTo(1.25, 9);
+    expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
+      measuredTurns: 4,
+      eligibleTurns: 4,
+      costMeasuredTurns: 4,
+    });
+    expect(result.providers.claudeCode.projects[0]?.metrics.cliUsage.costUsd).toBeCloseTo(1.25, 9);
+  });
+
+  it("does not attribute the first Claude cost when earlier session turns are not saved", () => {
+    const evicted = {
+      ...thread("claudeCode", "project-a", [
+        turn("first-retained", NOW - 20_000, EXITED, NOW - 19_000, costedUsage(2_437.14)),
+        turn("next", NOW - 10_000, EXITED, NOW - 9_000, costedUsage(1.5)),
+      ]),
+      turnsTruncated: true,
+    };
+    const imported = {
+      ...thread("claudeCode", "project-b", [
+        turn("first-after-import", NOW - 20_000, EXITED, NOW - 19_000, costedUsage(30)),
+      ]),
+      externalOrigin: { provider: "claudeCode" as const, sessionId: "s-1", importedAtEpochMs: 1 },
+    };
+
+    const result = aggregateAgentUsage([evicted, imported], "today", NOW);
+
+    expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
+      costUsd: 1.5,
+      costMeasuredTurns: 1,
+      eligibleTurns: 3,
+    });
+  });
+
+  it("counts background continuations separately from started turns", () => {
+    const result = aggregateAgentUsage(
+      [
+        thread("claudeCode", "project-a", [
+          turn("prompted", NOW - 20_000, EXITED, NOW - 19_000),
+          { ...turn("background", NOW - 10_000, EXITED, NOW - 10_000), origin: "background" },
+          { ...turn("background-2", NOW - 5_000, EXITED, NOW - 5_000), origin: "background" },
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.claudeCode.total).toMatchObject({
+      turnsStarted: 1,
+      turnsBackground: 2,
+    });
+    expect(result.providers.claudeCode.projects[0]?.metrics.turnsBackground).toBe(2);
   });
 
   it("keeps Claude usage per turn even when older turns outside the period were ambiguous", () => {
@@ -770,6 +837,15 @@ function usage(inputTokens: number, outputTokens: number): AgentTurnEvent {
 }
 
 const EXITED: AgentTurnStatus = { kind: "exited", exitCode: 0 };
+
+function costedUsage(costUsd: number): AgentTurnEvent {
+  return {
+    kind: "result",
+    text: "",
+    isError: false,
+    usage: { inputTokens: 3, outputTokens: 2, contextTokens: 3, costUsd },
+  };
+}
 
 function appServerUsage(totalInput: number, totalOutput: number): AgentTurnEvent {
   const breakdown = (inputTokens: number, outputTokens: number) => ({

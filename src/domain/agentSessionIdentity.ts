@@ -1,5 +1,5 @@
 import { isAgentSessionId, type AgentCliKind } from "./agentTask";
-import type { AgentProviderSession } from "./agentThread";
+import type { AgentProviderSession, AgentTurnEvent } from "./agentThread";
 
 export type AgentFreshSessionReason = "noSession" | "sessionLost";
 
@@ -97,6 +97,20 @@ export function isAgentSessionNotFoundText(provider: AgentCliKind, text: string)
       : text;
   const normalized = bounded.toLowerCase();
   return sessionNotFoundMarkers(provider).some((marker) => normalized.includes(marker));
+}
+
+export function agentEventReportsSessionNotFound(
+  provider: AgentCliKind,
+  event: AgentTurnEvent,
+): boolean {
+  switch (event.kind) {
+    case "error":
+      return isAgentSessionNotFoundText(provider, event.message);
+    case "unknownLine":
+      return event.stream === "stderr" && isAgentSessionNotFoundText(provider, event.raw);
+    default:
+      return false;
+  }
 }
 
 function sessionNotFoundMarkers(provider: AgentCliKind): ReadonlyArray<string> {

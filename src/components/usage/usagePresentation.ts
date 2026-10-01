@@ -32,26 +32,7 @@ export interface VisibleUsageWindows {
   readonly hiddenCount: number;
 }
 
-export interface LocalSpendSummary {
-  readonly costUsd: number | null;
-  readonly tokens: number | null;
-  readonly completedTurns: number;
-  readonly costMeasuredTurns: number;
-  readonly costEligibleTurns: number;
-}
-
-export interface UsageProjectRow {
-  readonly key: string;
-  readonly provider: UsageProviderKind;
-  readonly label: string;
-  readonly turnsStarted: number;
-  readonly tokens: number | null;
-  readonly wallTimeMs: number | null;
-  readonly costUsd: number | null;
-}
-
 export const USAGE_HOT_PERCENT = 90;
-export const USAGE_PROJECT_ROWS_VISIBLE = 5;
 const PACE_TOLERANCE_PERCENT = 5;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const MAX_DATE_EPOCH_MS = 8.64e15;
@@ -132,17 +113,6 @@ export function updatedLabel(observedAtEpochMs: number, nowEpochMs: number): str
   return `Updated ${Math.floor(hours / 24)}d ago`;
 }
 
-export function durationLabel(totalMs: number | null): string {
-  if (totalMs === null) return "Unavailable";
-  if (totalMs < 1_000) return `${totalMs} ms`;
-  const totalSeconds = Math.floor(totalMs / 1_000);
-  if (totalSeconds < 60) return `${totalSeconds} s`;
-  const hours = Math.floor(totalSeconds / 3_600);
-  const minutes = Math.floor((totalSeconds % 3_600) / 60);
-  if (hours === 0) return `${minutes} min`;
-  return `${hours} h ${minutes} min`;
-}
-
 export function formatInteger(value: number): string {
   return new Intl.NumberFormat().format(value);
 }
@@ -158,73 +128,6 @@ export function formatUsd(value: number): string {
     minimumFractionDigits: value < 0.01 ? 4 : 2,
     maximumFractionDigits: value < 0.01 ? 4 : 2,
   }).format(value);
-}
-
-export function localSpendSummary(
-  providers: Readonly<Record<UsageProviderKind, AgentUsageProvider>>,
-): LocalSpendSummary {
-  let costUsd = 0;
-  let tokens = 0;
-  let hasTokens = false;
-  let completedTurns = 0;
-  let costMeasuredTurns = 0;
-  let costEligibleTurns = 0;
-  for (const provider of Object.values(providers)) {
-    const metrics = provider.total;
-    const cli = metrics.cliUsage;
-    completedTurns += metrics.turnsCompleted;
-    costMeasuredTurns += cli.costMeasuredTurns;
-    costEligibleTurns += cli.eligibleTurns;
-    if (cli.costUsd !== null) costUsd += cli.costUsd;
-    if (cli.measuredTurns > 0 && cli.inputTokens !== null && cli.outputTokens !== null) {
-      tokens += cli.inputTokens + cli.outputTokens;
-      hasTokens = true;
-    }
-  }
-  return {
-    costUsd: costMeasuredTurns === 0 ? null : costUsd,
-    tokens: hasTokens ? tokens : null,
-    completedTurns,
-    costMeasuredTurns,
-    costEligibleTurns,
-  };
-}
-
-export function usageProjectRows(
-  providers: Readonly<Record<UsageProviderKind, AgentUsageProvider>>,
-  labelOf: (rootKey: string) => string,
-): ReadonlyArray<UsageProjectRow> {
-  return Object.values(providers)
-    .flatMap((provider) =>
-      provider.projects.map((project) => {
-        const metrics = project.metrics;
-        const cli = metrics.cliUsage;
-        return {
-          key: JSON.stringify([provider.provider, project.rootKey]),
-          provider: provider.provider,
-          label: labelOf(project.rootKey),
-          turnsStarted: metrics.turnsStarted,
-          tokens:
-            cli.measuredTurns === 0 || cli.inputTokens === null || cli.outputTokens === null
-              ? null
-              : cli.inputTokens + cli.outputTokens,
-          wallTimeMs: metrics.wallTime.totalMs,
-          costUsd: cli.costMeasuredTurns === 0 ? null : cli.costUsd,
-        };
-      }),
-    )
-    .filter((row) => row.turnsStarted > 0)
-    .sort(
-      (left, right) =>
-        right.turnsStarted - left.turnsStarted ||
-        left.label.localeCompare(right.label) ||
-        left.key.localeCompare(right.key),
-    );
-}
-
-export function projectLabelFromRootKey(rootKey: string): string {
-  const segments = rootKey.split(/[\\/]/u).filter((segment) => segment.length > 0);
-  return segments[segments.length - 1] ?? rootKey;
 }
 
 function elapsedShare(window: AgentAccountUsageWindow, nowEpochMs: number): number | null {

@@ -142,6 +142,16 @@ describe("UsageSettingsPage", () => {
     return section?.textContent ?? "";
   }
 
+  function bodyRows(group: string): ReadonlyArray<Element> {
+    return [
+      ...host.querySelectorAll(`[role="rowgroup"][aria-label="${group}"] [role="row"]`),
+    ].filter((row) => row.querySelector('[role="rowheader"]') !== null);
+  }
+
+  function cellsOf(row: Element | undefined): ReadonlyArray<string | null> {
+    return [...(row?.querySelectorAll('[role="cell"]') ?? [])].map((cell) => cell.textContent);
+  }
+
   it("renders one limits section per provider with bars or a reason", () => {
     render(activity());
     const titles = [...host.querySelectorAll(".settings-section__title")].map(
@@ -235,8 +245,9 @@ describe("UsageSettingsPage", () => {
     const local = sectionText("Local activity");
     expect(local).toContain("Estimated cost—");
     expect(local).toContain("Processed tokens—");
-    expect(local).toContain("Completed turns0");
-    expect(local).toContain("Saved threads and turns on this device, not subscription billing.");
+    expect(local).toContain("Turns0");
+    expect(local).not.toContain("Completed turns");
+    expect(local).toContain("Saved threads on this device, not subscription billing.");
   });
 
   it("explains when agent data is not loaded and keeps the search anchors", () => {
@@ -351,14 +362,13 @@ describe("UsageSettingsPage", () => {
       }),
       [project("/work/orders-api", "Orders API")],
     );
-    const rows = [...host.querySelectorAll('[aria-label="Projects"] .settings-row')];
-    expect(rows.map((row) => row.querySelector(".settings-row__title")?.textContent)).toEqual([
+    const rows = bodyRows("By project");
+    expect(rows.map((row) => row.querySelector('[role="rowheader"]')?.textContent)).toEqual([
       "Orders API",
       "billing",
     ]);
-    expect(rows[0]?.textContent).toContain("3 turns");
-    expect(rows[0]?.textContent).toContain("36 tokens");
-    expect(rows[1]?.textContent).toContain("1 turn");
+    expect(cellsOf(rows[0])).toEqual(["3", "36", "3 s", "—"]);
+    expect(cellsOf(rows[1])).toEqual(["1", "12", "1 s", "—"]);
     expect(host.textContent).not.toContain("more project");
   });
 
@@ -367,9 +377,9 @@ describe("UsageSettingsPage", () => {
       savedThread("codex", `/work/project-${index}`, 8 - index),
     );
     render(activity({ threads }));
-    const rowsOf = () => [...host.querySelectorAll('[aria-label="Projects"] .settings-row')];
+    const rowsOf = () => bodyRows("By project");
     expect(rowsOf()).toHaveLength(5);
-    expect(rowsOf()[0]?.querySelector(".settings-row__title")?.textContent).toBe("project-0");
+    expect(rowsOf()[0]?.querySelector('[role="rowheader"]')?.textContent).toBe("project-0");
     const more = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Show 3 more projects",
     );
@@ -381,7 +391,51 @@ describe("UsageSettingsPage", () => {
 
   it("omits the project breakdown when there is no saved activity", () => {
     render(activity());
-    expect(host.querySelector('[aria-label="Projects"]')).toBeNull();
+    expect(host.querySelector('[role="rowgroup"][aria-label="By project"]')).toBeNull();
+    expect(bodyRows("By provider")).toHaveLength(2);
+  });
+
+  it("separates provider and project rows into labelled groups with one column set", () => {
+    render(activity({ threads: [savedThread("claudeCode", "/work/orders-api", 2)] }), [
+      project("/work/orders-api", "Orders API"),
+    ]);
+    const table = host.querySelector('[role="table"]');
+    expect(table?.getAttribute("aria-label")).toBe("Local activity breakdown");
+    const groups = [...host.querySelectorAll('[role="rowgroup"]')];
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
+      "By provider",
+      "By project",
+    ]);
+    for (const group of groups) {
+      expect(
+        [...group.querySelectorAll('[role="columnheader"]')].map((header) => header.textContent),
+      ).toEqual([group.getAttribute("aria-label"), "Turns", "Tokens", "Time", "Cost"]);
+    }
+    const providers = bodyRows("By provider");
+    expect(providers.map((row) => row.querySelector('[role="rowheader"]')?.textContent)).toEqual([
+      "Claude Code",
+      "Codex",
+    ]);
+    expect(cellsOf(providers[0])).toEqual(["2", "24", "2 s", "—"]);
+    expect(cellsOf(providers[1])).toEqual(["0", "—", "—", "—"]);
+    expect(sectionText("Local activity")).not.toContain("0 ms");
+  });
+
+  it("matches the header turn count to the provider rows", () => {
+    render(
+      activity({
+        threads: [
+          savedThread("claudeCode", "/work/orders-api", 3),
+          savedThread("codex", "/work/billing", 2),
+        ],
+      }),
+    );
+    const providerTurns = bodyRows("By provider").reduce(
+      (sum, row) => sum + Number(cellsOf(row)[0]),
+      0,
+    );
+    expect(sectionText("Local activity")).toContain(`Turns${providerTurns}`);
+    expect(providerTurns).toBe(5);
   });
 
   it("renders no top bar action without agent data", () => {

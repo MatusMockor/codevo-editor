@@ -636,7 +636,7 @@ export const SETTINGS_ROW_TABLE = [
     "usage.localActivity",
     "usage",
     "Local activity",
-    "Saved threads and turns on this device, not subscription billing.",
+    "Saved threads on this device, not subscription billing.",
     ["cost", "tokens", "turns", "activity", "spend"],
   ),
   row(

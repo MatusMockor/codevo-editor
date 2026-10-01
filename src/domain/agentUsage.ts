@@ -33,6 +33,7 @@ export interface AgentUsageCliTokens {
   readonly eligibleTurns: number;
   readonly costUsd: number | null;
   readonly costMeasuredTurns: number;
+  readonly costInferredTurns: number;
   readonly source: AgentCliUsageSource;
   readonly incomplete: boolean;
 }
@@ -51,6 +52,7 @@ export interface AgentUsageMetrics {
   readonly turnsFailed: number;
   readonly turnsStoppedOrInterrupted: number;
   readonly turnsActive: number;
+  readonly turnsBackground: number;
   readonly wallTime: AgentUsageWallTime;
   readonly cliUsage: AgentUsageCliTokens;
   readonly streamOutput: AgentUsageStreamOutput;
@@ -88,6 +90,7 @@ interface MutableCliTokens {
   eligibleTurns: number;
   costUsd: number | null;
   costMeasuredTurns: number;
+  costInferredTurns: number;
   readonly source: AgentCliUsageSource;
   incomplete: boolean;
 }
@@ -106,6 +109,7 @@ interface MutableMetrics {
   turnsFailed: number;
   turnsStoppedOrInterrupted: number;
   turnsActive: number;
+  turnsBackground: number;
   readonly wallTime: MutableWallTime;
   readonly cliUsage: MutableCliTokens;
   readonly streamOutput: MutableStreamOutput;
@@ -153,7 +157,7 @@ export function aggregateAgentUsage(
     const measure = agentTurnTokenMeasurer(
       thread.provider.kind,
       turns,
-      thread.turnsTruncated,
+      earlierSessionTurnsMissing(thread),
       startEpochMs,
     );
     for (const [index, turn] of turns.entries()) {
@@ -198,6 +202,7 @@ function mutableMetrics(provider: AgentCliKind): MutableMetrics {
     turnsFailed: 0,
     turnsStoppedOrInterrupted: 0,
     turnsActive: 0,
+    turnsBackground: 0,
     wallTime: { totalMs: 0, measuredTurns: 0, eligibleTurns: 0 },
     cliUsage: {
       inputTokens: 0,
@@ -206,6 +211,7 @@ function mutableMetrics(provider: AgentCliKind): MutableMetrics {
       eligibleTurns: 0,
       costUsd: 0,
       costMeasuredTurns: 0,
+      costInferredTurns: 0,
       source: usageSource(provider),
       incomplete: false,
     },
@@ -217,6 +223,11 @@ function mutableMetrics(provider: AgentCliKind): MutableMetrics {
       incomplete: false,
     },
   };
+}
+
+function earlierSessionTurnsMissing(thread: AgentThread): boolean {
+  if (thread.turnsTruncated) return true;
+  return thread.provider.kind === "claudeCode" && thread.externalOrigin !== null;
 }
 
 function projectMetrics(provider: MutableProvider, rootKey: string): MutableMetrics {
@@ -244,7 +255,10 @@ function addTurn(
 ): void {
   addCliUsage(metrics.cliUsage, turn, contentLost, measurement);
   addStreamOutput(metrics.streamOutput, turn);
-  if (isAgentBackgroundTurn(turn)) return;
+  if (isAgentBackgroundTurn(turn)) {
+    metrics.turnsBackground += 1;
+    return;
+  }
   metrics.turnsStarted += 1;
   classifyStatus(metrics, turn.status);
   addWallTime(metrics.wallTime, turn, windowEndEpochMs);
@@ -309,6 +323,7 @@ function addCliUsage(
   if (tokens.costUsd !== null) {
     cliUsage.costUsd = safeFiniteSum(cliUsage.costUsd, tokens.costUsd);
     cliUsage.costMeasuredTurns += 1;
+    if (tokens.costInferred) cliUsage.costInferredTurns += 1;
   }
   if (cliUsage.inputTokens === null || cliUsage.outputTokens === null) {
     cliUsage.incomplete = true;
@@ -390,6 +405,7 @@ function freezeMetrics(metrics: MutableMetrics): AgentUsageMetrics {
     turnsFailed: metrics.turnsFailed,
     turnsStoppedOrInterrupted: metrics.turnsStoppedOrInterrupted,
     turnsActive: metrics.turnsActive,
+    turnsBackground: metrics.turnsBackground,
     wallTime: { ...metrics.wallTime },
     cliUsage: { ...metrics.cliUsage },
     streamOutput: {

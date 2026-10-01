@@ -3,31 +3,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentAccountUsageRefreshOutcome } from "../../../application/agentAccountUsageRefresh";
 import { useAgentTurnLogThreadEvidence } from "../../../application/agentTurnLogStatusStore";
 import type { AgentAccountUsageLoadState } from "../../../domain/agentAccountUsage";
-import {
-  aggregateAgentUsage,
-  type AgentUsagePeriod,
-  type AgentUsageProvider,
-} from "../../../domain/agentUsage";
+import { aggregateAgentUsage, type AgentUsagePeriod } from "../../../domain/agentUsage";
 import { IconButton } from "../../../ui/foundation/IconButton";
 import { SegmentedControl } from "../../../ui/foundation/SegmentedControl";
 import { useNowMs } from "../../../ui/foundation/useNowMs";
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
-import { Button } from "../../../ui/foundation/Button";
 import { AgentProviderGlyph } from "../../agentMode/AgentProviderGlyph";
+import { UsageBreakdownTable } from "../../usage/UsageBreakdownTable";
 import { UsageLimitBars } from "../../usage/UsageLimitBars";
 import {
-  durationLabel,
+  localActivityNote,
+  localSpendSummary,
+  projectLabelFromRootKey,
+  usageProjectRows,
+  usageProviderRows,
+} from "../../usage/usageActivityPresentation";
+import {
   formatInteger,
   formatUsd,
   latestUsageFetch,
-  localSpendSummary,
-  projectLabelFromRootKey,
   updatedLabel,
-  USAGE_PROJECT_ROWS_VISIBLE,
-  usageProjectRows,
   usageProviderLabel,
   usageProviderLimitsNotice,
-  type UsageProjectRow,
 } from "../../usage/usagePresentation";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 import type {
@@ -236,6 +233,7 @@ function LocalActivity({
     [evidence, nowEpochMs, period, threads],
   );
   const spend = useMemo(() => localSpendSummary(usage.providers), [usage.providers]);
+  const providerRows = useMemo(() => usageProviderRows(usage.providers), [usage.providers]);
   const projectRows = useMemo(() => {
     const labels = new Map(projects.map((project) => [project.rootKey, project.label]));
     return usageProjectRows(
@@ -266,80 +264,14 @@ function LocalActivity({
             label="Processed tokens"
             value={spend.tokens === null ? "—" : formatInteger(spend.tokens)}
           />
-          <Total label="Completed turns" value={formatInteger(spend.completedTurns)} />
+          <Total label="Turns" value={formatInteger(spend.turns)} />
         </div>
         <p className="settings-row__description">
-          Saved threads and turns on this device, not subscription billing. Provider-reported API
-          equivalent for {spend.costMeasuredTurns} of {spend.costEligibleTurns} completed turns.
-          {usage.savedHistoryIncomplete
-            ? " Saved history is incomplete because older turns were evicted."
-            : ""}
+          {localActivityNote(spend, usage.savedHistoryIncomplete)}
         </p>
       </div>
-      {PROVIDERS.map((provider) => (
-        <ProviderActivityRow key={provider} usage={usage.providers[provider]} />
-      ))}
-      <ProjectBreakdown rows={projectRows} />
+      <UsageBreakdownTable projectRows={projectRows} providerRows={providerRows} />
     </SettingsSectionHeading>
-  );
-}
-
-function ProviderActivityRow({ usage }: { readonly usage: AgentUsageProvider }) {
-  const metrics = usage.total;
-  const cli = metrics.cliUsage;
-  const tokens =
-    cli.measuredTurns === 0 || cli.inputTokens === null || cli.outputTokens === null
-      ? null
-      : cli.inputTokens + cli.outputTokens;
-  return (
-    <div className="settings-row">
-      <span className="settings-usage-provider">
-        <AgentProviderGlyph decorative kind={usage.provider} />
-        <span className="settings-row__title">{usageProviderLabel(usage.provider)}</span>
-      </span>
-      <span className="cv-usage-provider-row">
-        <span>{formatInteger(metrics.turnsStarted)} turns</span>
-        <span>{tokens === null ? "—" : `${formatInteger(tokens)} tokens`}</span>
-        <span>{durationLabel(metrics.wallTime.totalMs)}</span>
-        <strong>
-          {cli.costMeasuredTurns === 0 || cli.costUsd === null ? "—" : formatUsd(cli.costUsd)}
-        </strong>
-      </span>
-    </div>
-  );
-}
-
-function ProjectBreakdown({ rows }: { readonly rows: ReadonlyArray<UsageProjectRow> }) {
-  const [expanded, setExpanded] = useState(false);
-  if (rows.length === 0) return null;
-  const visible = expanded ? rows : rows.slice(0, USAGE_PROJECT_ROWS_VISIBLE);
-  const hidden = rows.length - visible.length;
-  return (
-    <div aria-label="Projects" className="cv-usage-projects" role="group">
-      {visible.map((row) => (
-        <div className="settings-row" key={row.key}>
-          <span className="settings-usage-provider">
-            <AgentProviderGlyph decorative kind={row.provider} />
-            <span className="settings-row__title">{row.label}</span>
-          </span>
-          <span className="cv-usage-provider-row">
-            <span>
-              {formatInteger(row.turnsStarted)} {row.turnsStarted === 1 ? "turn" : "turns"}
-            </span>
-            <span>{row.tokens === null ? "—" : `${formatInteger(row.tokens)} tokens`}</span>
-            <span>{durationLabel(row.wallTimeMs)}</span>
-            <strong>{row.costUsd === null ? "—" : formatUsd(row.costUsd)}</strong>
-          </span>
-        </div>
-      ))}
-      {hidden <= 0 ? null : (
-        <div className="cv-usage-projects__more">
-          <Button onClick={() => setExpanded(true)} size="sm" variant="ghost">
-            {`Show ${hidden} more ${hidden === 1 ? "project" : "projects"}`}
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }
 

@@ -1,10 +1,12 @@
 import type { AgentCliKind } from "./agentTask";
 import type { AgentAppServerTokenBreakdown, AgentTurn, AgentTurnUsage } from "./agentThread";
+import { attributeClaudeTurnCosts, type ClaudeTurnCost } from "./claudeTurnCostAttribution";
 
 export interface AgentTurnTokens {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly costUsd: number | null;
+  readonly costInferred: boolean;
 }
 
 export type AgentTurnTokenMeasurement =
@@ -47,7 +49,10 @@ export function agentTurnTokenMeasurer(
   earlierTurnsMissing: boolean,
   periodStartEpochMs: number,
 ): AgentTurnTokenMeasurer {
-  if (provider !== "codex") return measureAgentTurnTokensPerTurn;
+  if (provider !== "codex") {
+    const costs = attributeClaudeTurnCosts(turns, earlierTurnsMissing);
+    return (turn, index) => withAttributedCost(measureAgentTurnTokensPerTurn(turn), costs[index]);
+  }
   const measurements = measureAgentTurnTokens(turns, earlierTurnsMissing, periodStartEpochMs);
   return (_turn, index) => measurements[index] ?? AMBIGUOUS;
 }
@@ -106,6 +111,20 @@ function withinPeriod(
     return measurement;
   }
   return CARRIED_ACROSS_PERIOD;
+}
+
+function withAttributedCost(
+  measurement: AgentTurnTokenMeasurement,
+  cost: ClaudeTurnCost | undefined,
+): AgentTurnTokenMeasurement {
+  if (measurement.kind !== "measured") return measurement;
+  if (cost?.kind !== "attributed") {
+    return { kind: "measured", tokens: { ...measurement.tokens, costUsd: null } };
+  }
+  return {
+    kind: "measured",
+    tokens: { ...measurement.tokens, costUsd: cost.costUsd, costInferred: cost.inferred },
+  };
 }
 
 function reportedUsages(turn: AgentTurn): ReadonlyArray<AgentTurnUsage> {
@@ -188,7 +207,7 @@ function measured(
   outputTokens: number,
   costUsd: number | null,
 ): AgentTurnTokenMeasurement {
-  return { kind: "measured", tokens: { inputTokens, outputTokens, costUsd } };
+  return { kind: "measured", tokens: { inputTokens, outputTokens, costUsd, costInferred: false } };
 }
 
 function unsupportedBaseline(baseline: never): never {

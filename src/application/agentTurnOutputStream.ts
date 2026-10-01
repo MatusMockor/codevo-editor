@@ -23,7 +23,7 @@ import {
   type AgentSessionFallback,
 } from "../domain/agentThread";
 import { EMPTY_PENDING_LINE } from "../domain/agentOutput/lineSplitter";
-import { isAgentSessionNotFoundText } from "../domain/agentSessionIdentity";
+import { agentEventReportsSessionNotFound } from "../domain/agentSessionIdentity";
 import { warning } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 
@@ -249,7 +249,7 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
   stream.pendingAccountUsage.push(...result.accountUsage);
   for (const event of result.events) {
     if (event.kind === "result") stream.sawResult = true;
-    if (stream.resumed && reportsSessionNotFound(stream.parser.kind, event)) {
+    if (stream.resumed && agentEventReportsSessionNotFound(stream.parser.kind, event)) {
       stream.sessionNotFound = true;
     }
   }
@@ -279,17 +279,6 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
     result.sessionFallback.previousThreadId === stream.resumedSessionId
   ) {
     stream.pendingSessionFallback = result.sessionFallback;
-  }
-}
-
-function reportsSessionNotFound(provider: AgentCliKind, event: AgentTurnEvent): boolean {
-  switch (event.kind) {
-    case "error":
-      return isAgentSessionNotFoundText(provider, event.message);
-    case "unknownLine":
-      return event.stream === "stderr" && isAgentSessionNotFoundText(provider, event.raw);
-    default:
-      return false;
   }
 }
 
