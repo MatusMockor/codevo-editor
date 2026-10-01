@@ -7,6 +7,17 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.80] - 2026-10-01
+
+### Fixed
+
+- Quitting Codevo during a Claude turn no longer leaves an "Unsupported Claude stream
+  frame: command_lifecycle" Raw output block in the transcript, including in threads
+  saved earlier. Unknown frame types from newer Claude Code versions are no longer
+  shown as Raw output.
+- Clicking a transcript row such as "1 command" no longer draws a teal box around it;
+  keyboard focus shows a subtle underline on the row title instead.
+
 ## [0.2.0-beta.79] - 2026-10-01
 
 ### Added
