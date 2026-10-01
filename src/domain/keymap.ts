@@ -898,6 +898,12 @@ export const keymapCommands = [
   },
   {
     category: "Agent",
+    defaultShortcut: "Cmd+Shift+N",
+    id: "agent.newThreadIn",
+    label: "New Thread in…",
+  },
+  {
+    category: "Agent",
     defaultShortcut: "Cmd+Shift+[",
     id: "agent.previousThread",
     label: "Previous Thread",

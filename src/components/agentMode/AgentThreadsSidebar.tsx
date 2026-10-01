@@ -113,6 +113,8 @@ export interface AgentThreadsSidebarProps {
   onCollapseSidebar?(): void;
   readonly collapseShortcut?: string | null;
   readonly footerActivity?: ReactNode;
+  readonly workspaceCard?: ReactNode;
+  readonly newThreadTitle?: string;
   onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -136,6 +138,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onCollapseSidebar,
   collapseShortcut = null,
   footerActivity = null,
+  workspaceCard = null,
+  newThreadTitle,
   onDismissPendingClone,
   onNewThread,
   onProjectCommand,
@@ -425,8 +429,10 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
           />
         }
       />
+      {workspaceCard}
       <AgentRailHeader
         addProjectAvailable={addProjectAvailable}
+        newThreadTitle={newThreadTitle}
         groups={groups}
         onAddProject={onAddProject}
         onChangeFilter={onChangeFilter}

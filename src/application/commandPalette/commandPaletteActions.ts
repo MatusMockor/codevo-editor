@@ -64,7 +64,7 @@ export const PALETTE_ACTIONS: readonly PaletteActionDefinition[] = [
     title: "New thread in…",
     glyph: "newThread",
     keywords: ["project"],
-    shortcutCommandId: null,
+    shortcutCommandId: "agent.newThreadIn",
     target: page("newThreadIn", "agentProvider"),
   },
   {

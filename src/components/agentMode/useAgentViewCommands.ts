@@ -19,6 +19,7 @@ export function useAgentViewCommands(
     if (bridge === null) return;
     return bridge.bind({
       newThread: () => ref.current.newThread(),
+      newThreadIn: () => ref.current.newThreadIn?.(),
       previousThread: () => ref.current.previousThread(),
       nextThread: () => ref.current.nextThread(),
       jumpToThread: (slot) => ref.current.jumpToThread(slot),

@@ -104,8 +104,8 @@ import { agentProjectGroups } from "./agentModePresentation";
 import {
   agentProjectTerminalSessionsTarget,
   agentRailScopeEntries,
-  agentRailScopeLabel,
 } from "./agentSidebarPresentation";
+import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import {
   agentSurfaceScopeFor,
   agentThreadCheckoutRoot,
@@ -117,6 +117,8 @@ import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
 import { agentComposerThreadLocation } from "./agentComposerThreadLocation";
+import { agentNewThreadTooltip } from "./agentNewThreadRequest";
+import { useAgentWorkspaceCardSlot } from "./useAgentWorkspaceCardSlot";
 import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
 import {
   queuedEditImageOwner,
@@ -631,11 +633,13 @@ function LocalAgentModeView({
   const threadBulkCommand = useAgentLatestCallback(menu.handleThreadBulkCommand);
   const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
   const newThread = useAgentLatestCallback(startNewThread);
+  const activeProjectRootKeyRef = useRef<string | null>(null);
   const projectThreads = useAgentProjectThreadCommands({
     navigation,
     groups,
     composer,
     picker: newThreadPicker,
+    activeProjectRootKey: () => activeProjectRootKeyRef.current,
     onBeforeProjectChange: () => {
       chrome.addProject?.cancelSelection?.();
       setProjectSelectionIntent((current) => current + 1);
@@ -643,8 +647,6 @@ function LocalAgentModeView({
     onSelectProjectEnvironment,
   });
   const requestNewThread = projectThreads.requestNewThread;
-  const railScopeLabel =
-    railScope === null ? null : agentRailScopeLabel(railScope, railScopeEntries);
   const sectionRef = useRef<HTMLElement | null>(null);
   useSidebarFocusHandoff(layout.rail, sectionRef);
   const { attention, attentionExplanation, capacity, live } = useMemo(
@@ -674,26 +676,6 @@ function LocalAgentModeView({
     [attentionVisible, changeAttentionVisible, threadActivitySummary, workspaceRoot],
   );
   const sidebarRevealDetail = agentThreadActivityDetail(threadActivitySummary, attentionVisible);
-  const sidebarReveal = useMemo(
-    () => (
-      <AgentSidebarReveal
-        currentProjectLabel={railScopeLabel}
-        detail={sidebarRevealDetail}
-        onExpand={toggleRail}
-        onNewThread={requestNewThread}
-        projectCount={railScopeEntries.length}
-        shortcuts={chrome.shortcuts}
-      />
-    ),
-    [
-      chrome.shortcuts,
-      railScopeEntries.length,
-      railScopeLabel,
-      requestNewThread,
-      sidebarRevealDetail,
-      toggleRail,
-    ],
-  );
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
   const closeSurfaceTab = useAgentLatestCallback((kind: AgentSurfaceKind) => {
     if (kind === "diff") diffScopes.resetScope();
@@ -722,6 +704,7 @@ function LocalAgentModeView({
     () => ({
       ...navigationCommands,
       newThread: () => requestNewThread(false),
+      newThreadIn: projectThreads.openNewThreadPicker,
       runPreferredScript: () => {
         if (scripts.preferred === null) return;
         scripts.runScript(scripts.preferred.key);
@@ -743,6 +726,7 @@ function LocalAgentModeView({
       scripts,
       selectedThreadId,
       requestNewThread,
+      projectThreads.openNewThreadPicker,
       openSurfaceCommand,
       surfaceBlocked,
       toggleResponsivePanel,
@@ -848,6 +832,62 @@ function LocalAgentModeView({
     );
     return group ? { ...header, label: group.label } : header;
   }, [groups, executionGroups, headerFallback, projects, selectedThread]);
+  const activeProjectRootKey = headerProject?.projectRootKey ?? null;
+  useLayoutEffect(() => {
+    activeProjectRootKeyRef.current = activeProjectRootKey;
+  }, [activeProjectRootKey]);
+  const panelShortcuts = chrome.shortcuts ?? defaultAgentPanelLayoutShortcuts();
+  const newThreadInShortcut =
+    panelShortcuts.newThreadIn ?? defaultAgentPanelLayoutShortcuts().newThreadIn ?? "";
+  const newThreadTitle = agentNewThreadTooltip({
+    shortcut: panelShortcuts.newThread,
+    pickerShortcut: newThreadInShortcut,
+    projectLabel: headerProject?.label ?? null,
+    projectCount: railScopeEntries.length,
+  });
+  const revealWorkspacePath = useAgentLatestCallback((path: string) => {
+    void chrome.revealPath(path).catch(revealFailed);
+  });
+  const workspaceCard = useAgentWorkspaceCardSlot(
+    {
+      project: headerProject,
+      thread: selectedThread,
+      draftIsolation: composer.composerProps.isolation,
+      draftPreviousWorktree:
+        composer.composerProps.previousWorktree?.selected === true
+          ? composer.composerProps.previousWorktree.available
+          : null,
+      draftServerId: selectedThread === null ? selectedServerId : null,
+      servers: remoteContext?.servers ?? NO_REMOTE_SERVERS,
+      liveBranches: chrome.liveCheckoutBranches,
+      branchMemory: threadBranchMemory.memory,
+    },
+    {
+      newThreadInShortcut,
+      onNewThreadIn: projectThreads.openNewThreadPicker,
+      onReveal: revealWorkspacePath,
+    },
+  );
+  const sidebarReveal = useMemo(
+    () => (
+      <AgentSidebarReveal
+        currentProjectLabel={headerProject?.label ?? null}
+        detail={sidebarRevealDetail}
+        onExpand={toggleRail}
+        onNewThread={requestNewThread}
+        projectCount={railScopeEntries.length}
+        shortcuts={chrome.shortcuts}
+      />
+    ),
+    [
+      chrome.shortcuts,
+      headerProject?.label,
+      railScopeEntries.length,
+      requestNewThread,
+      sidebarRevealDetail,
+      toggleRail,
+    ],
+  );
   const scopeEntries = navigation.scopeEntries;
   const headerTerminalSessionsTarget = useMemo(() => {
     if (headerProject === null) return railTerminalSessionsTarget;
@@ -930,6 +970,8 @@ function LocalAgentModeView({
                   onOpenPendingClone={openPendingClone}
                   onCollapseSidebar={toggleRail}
                   onNewThread={requestNewThread}
+                  newThreadTitle={newThreadTitle}
+                  workspaceCard={workspaceCard}
                   onOpenProviderSettings={agents.configureAgentCli}
                   onOpenSourceControl={onOpenSourceControl}
                   onOpenUsage={onOpenUsageSettings}

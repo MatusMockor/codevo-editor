@@ -32,6 +32,16 @@ describe("createAgentViewCommandBridge", () => {
     expect(addProject).toHaveBeenCalledTimes(1);
   });
 
+  it("dispatches agent.newThreadIn to the bound picker handler", () => {
+    const bridge = createAgentViewCommandBridge();
+    const newThreadIn = vi.fn();
+    const handlers = { ...boundHandlers(), newThreadIn };
+    bridge.bind(handlers);
+    bridge.run("agent.newThreadIn");
+    expect(newThreadIn).toHaveBeenCalledTimes(1);
+    expect(handlers.newThread).not.toHaveBeenCalled();
+  });
+
   it("reports project.add unavailable for a view without the handler", () => {
     const bridge = createAgentViewCommandBridge();
     bridge.bind(boundHandlers());

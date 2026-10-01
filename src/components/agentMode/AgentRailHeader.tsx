@@ -13,12 +13,13 @@ import {
   type AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
+import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import { ALL_PROJECTS_FILTER, type AgentRailFilter } from "./agentRailFilter";
 import {
   agentRailDetachedThreadCount,
   agentRailNewThreadTarget,
   agentRailOrphanCount,
-  agentRailScopeLabel,
+  agentRailScopeEntryFor,
   type AgentRailScope,
   type AgentRailScopeEntry,
 } from "./agentSidebarPresentation";
@@ -33,6 +34,7 @@ export interface AgentRailHeaderProps {
   readonly railFilter: AgentRailFilter;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly searchActiveDescendant: string | null;
+  readonly newThreadTitle?: string;
   onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void;
   onChangeFilter(filter: AgentRailFilter): void;
   onNewThread(shiftKey: boolean): void;
@@ -43,6 +45,7 @@ export interface AgentRailHeaderProps {
 export function AgentRailHeader({
   addProjectAvailable,
   groups,
+  newThreadTitle,
   onAddProject,
   onChangeFilter,
   onNewThread,
@@ -70,11 +73,16 @@ export function AgentRailHeader({
       onChangeFilter({ kind: "project", projectRootKey: entry.projectRootKey }),
     [onChangeFilter],
   );
-  const newThreadTitle = agentNewThreadTooltip(
-    NEW_THREAD_TOOLTIP,
-    scopeEntries.length,
-    scope === null ? null : agentRailScopeLabel(scope, scopeEntries),
-  );
+  const defaultShortcuts = defaultAgentPanelLayoutShortcuts();
+  const fallbackNewThreadTitle = agentNewThreadTooltip({
+    shortcut: defaultShortcuts.newThread,
+    pickerShortcut: defaultShortcuts.newThreadIn ?? "",
+    projectLabel:
+      scope === null
+        ? null
+        : (agentRailScopeEntryFor(scopeEntries, scope.projectRootKey)?.label ?? null),
+    projectCount: scopeEntries.length,
+  });
 
   const selectAll = useCallback(() => onChangeFilter(ALL_PROJECTS_FILTER), [onChangeFilter]);
 
@@ -138,7 +146,7 @@ export function AgentRailHeader({
           icon={<SquarePen size={16} />}
           label="New thread"
           onClick={(event: MouseEvent<HTMLButtonElement>) => onNewThread(event.shiftKey)}
-          title={newThreadTitle}
+          title={newThreadTitle ?? fallbackNewThreadTitle}
         />
       </div>
       <div className="cv-sb-show">
@@ -179,8 +187,6 @@ export function AgentRailHeader({
     </div>
   );
 }
-
-const NEW_THREAD_TOOLTIP = "New thread (⌘N)";
 
 function headerScopeState(entry: AgentRailScopeEntry | null) {
   const state = agentRailScopeState(entry);

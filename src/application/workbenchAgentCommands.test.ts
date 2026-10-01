@@ -30,6 +30,7 @@ const enabledContext: CommandContext = {
 
 const VIEW_COMMAND_IDS = [
   "agent.newThread",
+  "agent.newThreadIn",
   "agent.previousThread",
   "agent.nextThread",
   "agent.jumpToThread.1",

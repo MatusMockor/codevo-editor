@@ -281,35 +281,42 @@ describe("agent sidebar project filter and New thread picker", () => {
     expect(filterTrigger().getAttribute("aria-label")).toBe("Filter threads by project");
   });
 
-  it("opens the New thread in picker from the button and Cmd+N with several projects", () => {
+  it("creates directly in the active project from the button and Cmd+N with several projects", () => {
     const picker: AgentNewThreadPicker = { open: vi.fn(() => true) };
     const bridge = createAgentViewCommandBridge();
     render(<AgentModeView {...props({ newThreadPicker: picker, viewCommands: bridge })} />);
     clickRow("a1");
 
-    expect(newThreadButton().title).toBe("New thread (⌘N)\nShift-click: new thread in app");
+    expect(newThreadButton().title).toBe("New thread in app (⌘N) · ⇧⌘N: choose project");
     act(() => newThreadButton().click());
-    expect(picker.open).toHaveBeenCalledTimes(1);
-    expect(selectedSession()).toBe("a1");
+    expect(picker.open).not.toHaveBeenCalled();
+    expect(selectedSession()).toBeNull();
+    expect(host.querySelector('[aria-label="New thread in app"]')).not.toBeNull();
 
+    clickRow("b1");
     act(() => bridge.run("agent.newThread"));
-    expect(picker.open).toHaveBeenCalledTimes(2);
-    expect(selectedSession()).toBe("a1");
+    expect(picker.open).not.toHaveBeenCalled();
+    expect(selectedSession()).toBeNull();
+    expect(host.querySelector('[aria-label="New thread in api-service"]')).not.toBeNull();
   });
 
-  it("creates directly in the current project on shift-click", () => {
+  it("opens the New thread in picker on shift-click and Shift+Cmd+N", () => {
     const picker: AgentNewThreadPicker = { open: vi.fn(() => true) };
-    render(<AgentModeView {...props({ newThreadPicker: picker })} />);
+    const bridge = createAgentViewCommandBridge();
+    render(<AgentModeView {...props({ newThreadPicker: picker, viewCommands: bridge })} />);
     clickRow("b1");
     selectServer.mockClear();
 
     act(() =>
       newThreadButton().dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })),
     );
+    expect(picker.open).toHaveBeenCalledTimes(1);
+    expect(selectedSession()).toBe("b1");
 
-    expect(picker.open).not.toHaveBeenCalled();
-    expect(selectedSession()).toBeNull();
-    expect(host.querySelector('[aria-label="New thread in api-service"]')).not.toBeNull();
+    act(() => bridge.run("agent.newThreadIn"));
+    expect(picker.open).toHaveBeenCalledTimes(2);
+    expect(selectedSession()).toBe("b1");
+    expect(selectServer).not.toHaveBeenCalled();
   });
 
   it("creates directly when there is only one project", () => {
@@ -325,9 +332,11 @@ describe("agent sidebar project filter and New thread picker", () => {
       />,
     );
     clickRow("a1");
-    expect(newThreadButton().title).toBe("New thread (⌘N)");
+    expect(newThreadButton().title).toBe("New thread in app (⌘N)");
 
-    act(() => newThreadButton().click());
+    act(() =>
+      newThreadButton().dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })),
+    );
     expect(selectedSession()).toBeNull();
     clickRow("a1");
     act(() => bridge.run("agent.newThread"));
@@ -337,10 +346,11 @@ describe("agent sidebar project filter and New thread picker", () => {
 
   it("falls back to creating directly when the picker cannot open", () => {
     const picker: AgentNewThreadPicker = { open: vi.fn(() => false) };
-    render(<AgentModeView {...props({ newThreadPicker: picker })} />);
+    const bridge = createAgentViewCommandBridge();
+    render(<AgentModeView {...props({ newThreadPicker: picker, viewCommands: bridge })} />);
     clickRow("a1");
 
-    act(() => newThreadButton().click());
+    act(() => bridge.run("agent.newThreadIn"));
 
     expect(picker.open).toHaveBeenCalledTimes(1);
     expect(selectedSession()).toBeNull();

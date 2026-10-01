@@ -896,5 +896,6 @@ function layoutShortcuts(keymap: KeymapSettings): AgentPanelLayoutShortcuts {
     rightPanel: shortcutForCommand(keymap, "agent.toggleRightPanel") ?? "",
     sidebar: shortcutForCommand(keymap, "agent.toggleSidebar") ?? "",
     newThread: shortcutForCommand(keymap, "agent.newThread") ?? "",
+    newThreadIn: shortcutForCommand(keymap, "agent.newThreadIn") ?? "",
   };
 }

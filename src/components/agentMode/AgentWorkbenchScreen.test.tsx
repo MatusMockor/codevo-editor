@@ -169,7 +169,7 @@ describe("AgentWorkbenchScreen", () => {
     const openSettingsSection = vi.fn();
     render(createWorkbench(ROOT_A, { openSettingsSection }));
 
-    click('button[aria-label^="Workspace: "]');
+    click('button[aria-label^="Workspace: "]:not(.cv-sb-ws)');
     const manage = [
       ...document.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]'),
     ].find((button) => button.textContent === "Manage environments");

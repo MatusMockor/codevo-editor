@@ -13,6 +13,7 @@ import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
 import type { AgentThreadBulkCommand } from "../../domain/agentThreadBulkAction";
+import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import {
   AGENT_THREAD_BULK_CONFIRM_DELAY_MS,
   agentThreadBulkOwnerKey,
@@ -1201,13 +1202,60 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).toContain("No threads in app yet");
   });
 
+  it("renders the workspace card slot above search and uses the given New thread title", () => {
+    render({
+      workspaceCard: (
+        <button className="cv-sb-ws" type="button">
+          card
+        </button>
+      ),
+      newThreadTitle: "New thread in app (⌘N) · ⇧⌘N: choose project",
+    });
+
+    const card = host.querySelector(".cv-sb-ws");
+    const search = host.querySelector(".cv-sb-search");
+    expect(card).not.toBeNull();
+    expect(
+      card !== null &&
+        search !== null &&
+        (card.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    ).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
+      "New thread in app (⌘N) · ⇧⌘N: choose project",
+    );
+  });
+
+  it("does not re-render the thread list when only the workspace card changes", () => {
+    const pendingInteractions = new CountingMap<string, AgentPendingInteraction>();
+    const props = sidebarProps({
+      pendingInteractions,
+      workspaceCard: <span className="cv-sb-ws">Local checkout · main</span>,
+    });
+    const renderWith = (next: AgentThreadsSidebarProps): void =>
+      act(() => {
+        root.render(
+          <AgentClockProvider nowTickMs={1000}>
+            <AgentThreadsSidebar {...next} />
+          </AgentClockProvider>,
+        );
+      });
+    renderWith(props);
+    const listReads = pendingInteractions.reads;
+    expect(listReads).toBeGreaterThan(0);
+
+    renderWith({ ...props, workspaceCard: <span className="cv-sb-ws">Worktree · agent/x</span> });
+
+    expect(host.querySelector(".cv-sb-ws")?.textContent).toBe("Worktree · agent/x");
+    expect(pendingInteractions.reads).toBe(listReads);
+  });
+
   it("requests a new thread with the shift state and fails closed without a project", () => {
     const onNewThread = vi.fn();
     const groups = [group(ROOT, "app", [], { trust: "untrusted" }), group(OTHER, "api", [])];
     render({ groups, onNewThread, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
 
     const button = host.querySelector<HTMLButtonElement>('[aria-label="New thread"]');
-    expect(button?.title).toBe("New thread (⌘N)\nShift-click: new thread in api");
+    expect(button?.title).toBe("New thread in api (⌘N) · ⇧⌘N: choose project");
     click('[aria-label="New thread"]');
     expect(onNewThread).toHaveBeenLastCalledWith(false);
     act(() => {
@@ -1927,6 +1975,15 @@ function withVisibility(state: DocumentVisibilityState, run: () => void): void {
   } finally {
     if (saved === undefined) Reflect.deleteProperty(document, "visibilityState");
     if (saved !== undefined) Object.defineProperty(document, "visibilityState", saved);
+  }
+}
+
+class CountingMap<Key, Value> extends Map<Key, Value> {
+  reads = 0;
+
+  override get(key: Key): Value | undefined {
+    this.reads += 1;
+    return super.get(key);
   }
 }
 

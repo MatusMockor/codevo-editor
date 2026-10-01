@@ -1,30 +1,90 @@
 import { describe, expect, it } from "vitest";
-import {
-  agentNewThreadTooltip,
-  shouldCreateNewThreadInCurrentProject,
-} from "./agentNewThreadRequest";
+import { agentNewThreadRoute, agentNewThreadTooltip } from "./agentNewThreadRequest";
 
-describe("shouldCreateNewThreadInCurrentProject", () => {
-  it("creates directly with at most one project or on shift-click", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 0)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(false, 1)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(true, 2)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(false, 2)).toBe(false);
+describe("agentNewThreadRoute", () => {
+  it("creates directly in the active project on a plain request", () => {
+    expect(
+      agentNewThreadRoute({ shiftKey: false, activeProjectRootKey: "/app", projectCount: 2 }),
+    ).toEqual({
+      kind: "create",
+      projectRootKey: "/app",
+    });
+    expect(
+      agentNewThreadRoute({ shiftKey: false, activeProjectRootKey: "/app", projectCount: 1 }),
+    ).toEqual({
+      kind: "create",
+      projectRootKey: "/app",
+    });
+  });
+
+  it("opens the picker without an active project", () => {
+    expect(
+      agentNewThreadRoute({ shiftKey: false, activeProjectRootKey: null, projectCount: 2 }),
+    ).toEqual({
+      kind: "picker",
+    });
+  });
+
+  it("opens the picker on shift with several projects", () => {
+    expect(
+      agentNewThreadRoute({ shiftKey: true, activeProjectRootKey: "/app", projectCount: 2 }),
+    ).toEqual({
+      kind: "picker",
+    });
+  });
+
+  it("keeps creating directly on shift when there is nothing to choose from", () => {
+    expect(
+      agentNewThreadRoute({ shiftKey: true, activeProjectRootKey: "/app", projectCount: 1 }),
+    ).toEqual({
+      kind: "create",
+      projectRootKey: "/app",
+    });
   });
 });
 
 describe("agentNewThreadTooltip", () => {
-  it("names only the shortcut with one project", () => {
-    expect(agentNewThreadTooltip("New thread (⌘N)", 1, "app")).toBe("New thread (⌘N)");
+  it("names the active project and the picker chord with several projects", () => {
+    expect(
+      agentNewThreadTooltip({
+        shortcut: "Cmd+N",
+        pickerShortcut: "Cmd+Shift+N",
+        projectLabel: "app",
+        projectCount: 2,
+      }),
+    ).toBe("New thread in app (⌘N) · ⇧⌘N: choose project");
   });
 
-  it("adds the shift-click line for the current project with several projects", () => {
-    expect(agentNewThreadTooltip("New thread (⌘N)", 2, "app")).toBe(
-      "New thread (⌘N)\nShift-click: new thread in app",
-    );
+  it("omits the picker chord with a single project", () => {
+    expect(
+      agentNewThreadTooltip({
+        shortcut: "Cmd+N",
+        pickerShortcut: "Cmd+Shift+N",
+        projectLabel: "app",
+        projectCount: 1,
+      }),
+    ).toBe("New thread in app (⌘N)");
   });
 
-  it("omits the shift-click line when there is no current project", () => {
-    expect(agentNewThreadTooltip("New thread (⌘N)", 3, null)).toBe("New thread (⌘N)");
+  it("falls back to the plain label without an active project", () => {
+    expect(
+      agentNewThreadTooltip({
+        shortcut: "Cmd+N",
+        pickerShortcut: "Cmd+Shift+N",
+        projectLabel: null,
+        projectCount: 3,
+      }),
+    ).toBe("New thread (⌘N)");
+  });
+
+  it("omits unbound chords", () => {
+    expect(
+      agentNewThreadTooltip({
+        shortcut: "",
+        pickerShortcut: "",
+        projectLabel: "app",
+        projectCount: 2,
+      }),
+    ).toBe("New thread in app");
   });
 });

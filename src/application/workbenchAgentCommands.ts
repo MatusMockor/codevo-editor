@@ -86,6 +86,7 @@ export function workbenchAgentCommands({
 
   return [
     viewCommand("agent.newThread", "New Thread"),
+    viewCommand("agent.newThreadIn", "New Thread in…"),
     viewCommand("agent.previousThread", "Previous Thread"),
     viewCommand("agent.nextThread", "Next Thread"),
     ...AGENT_JUMP_SLOTS.map((slot) =>

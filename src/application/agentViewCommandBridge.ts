@@ -6,6 +6,7 @@ export type AgentJumpSlot = (typeof AGENT_JUMP_SLOTS)[number];
 
 export type AgentViewCommandId =
   | "agent.newThread"
+  | "agent.newThreadIn"
   | "agent.previousThread"
   | "agent.nextThread"
   | "agent.searchThreads"
@@ -20,6 +21,7 @@ export type AgentViewCommandId =
 export interface AgentViewCommandHandlers {
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
   newThread(): void;
+  newThreadIn?(): void;
   previousThread(): void;
   nextThread(): void;
   jumpToThread(slot: AgentJumpSlot): void;
@@ -81,6 +83,9 @@ function dispatch(handlers: AgentViewCommandHandlers, commandId: AgentViewComman
   switch (commandId) {
     case "agent.newThread":
       handlers.newThread();
+      return;
+    case "agent.newThreadIn":
+      handlers.newThreadIn?.();
       return;
     case "agent.previousThread":
       handlers.previousThread();

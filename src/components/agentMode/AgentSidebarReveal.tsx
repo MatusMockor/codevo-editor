@@ -45,11 +45,13 @@ export function AgentSidebarReveal({
         icon={<SquarePen size={16} />}
         label={NEW_THREAD_LABEL}
         onClick={(event: MouseEvent<HTMLButtonElement>) => onNewThread(event.shiftKey)}
-        title={agentNewThreadTooltip(
-          agentControlTooltip(NEW_THREAD_LABEL, chords.newThread),
+        title={agentNewThreadTooltip({
+          shortcut: chords.newThread,
+          pickerShortcut:
+            chords.newThreadIn ?? defaultAgentPanelLayoutShortcuts().newThreadIn ?? "",
+          projectLabel: currentProjectLabel,
           projectCount,
-          currentProjectLabel,
-        )}
+        })}
       />
       <TopBarSeparator />
     </>

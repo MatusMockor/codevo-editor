@@ -16,6 +16,7 @@ export interface AgentPanelLayoutShortcuts {
   readonly rightPanel: string;
   readonly sidebar: string;
   readonly newThread: string;
+  readonly newThreadIn?: string;
 }
 
 export interface AgentOpenTarget {
@@ -91,6 +92,7 @@ export function defaultAgentPanelLayoutShortcuts(): AgentPanelLayoutShortcuts {
     rightPanel: defaultShortcutForCommand("agent.toggleRightPanel"),
     sidebar: defaultShortcutForCommand("agent.toggleSidebar"),
     newThread: defaultShortcutForCommand("agent.newThread"),
+    newThreadIn: defaultShortcutForCommand("agent.newThreadIn"),
   };
 }
 

@@ -48,7 +48,7 @@ describe("AgentSidebarReveal", () => {
     expect(onNewThread).toHaveBeenCalledWith(false);
   });
 
-  it("passes shift-click through and names the current project with several projects", () => {
+  it("passes shift-click through and names the active project with several projects", () => {
     const onNewThread = vi.fn();
     mounted = mountUi();
     mounted.render(
@@ -63,7 +63,7 @@ describe("AgentSidebarReveal", () => {
     const newThread = mounted.host.querySelector<HTMLButtonElement>(
       'button[aria-label="New thread"]',
     );
-    expect(newThread?.title).toBe("New thread (⌘N)\nShift-click: new thread in app");
+    expect(newThread?.title).toBe("New thread in app (⌘N) · ⇧⌘N: choose project");
     act(() => {
       newThread?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
     });
