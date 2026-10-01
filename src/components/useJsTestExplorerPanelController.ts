@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useJsTestExplorer } from "../application/useJsTestExplorer";
 import { useJsTestCoverage } from "../application/useJsTestCoverage";
-import { useJsTestExplorerDebug } from "../application/useJsTestExplorerDebug";
 import { detectJsTestRunnerContext } from "../application/jsTestRunnerDetection";
 import { createJsTestExecutionRootResolver } from "../application/jsTestExecutionRootResolver";
 import { useJsTestExplorerScopeRunnerPort } from "../application/useJsTestExplorerScopeRunnerPort";
 import type { JsTestExplorerScopeRunnerPort } from "../application/useJsTestRunSelectionCommands";
-import type { DebugLaunchTarget } from "../domain/debug";
 import type { JsTestWatchCommand, JsTestWatchGateway } from "../domain/jsTestCommand";
 import type { JsTestCoverageGateway } from "../domain/jsTestCoverage";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
@@ -33,13 +31,10 @@ interface UseJsTestExplorerPanelControllerOptions {
   readonly coverageInvalidationVersion: number;
   readonly continuousRunVersion?: number;
   readonly discoveryVersion: number;
-  readonly debugStartBlocked: boolean;
-  readonly isDebugStartBlocked: () => boolean;
   readonly isOpen: boolean;
   readonly openedFilesSnapshot?: JsTestExplorerOpenedFilesSnapshot | null;
   readonly outputClipboard?: TextClipboardGateway | null;
   readonly onOpenLocation: (path: string, lineNumber: number) => void;
-  readonly openDebugPanel: () => void;
   readonly rootPath: string | null;
   readonly runGateway: JsTestGateway;
   readonly taskGateway?: JsTestTaskGateway | null;
@@ -47,7 +42,6 @@ interface UseJsTestExplorerPanelControllerOptions {
   readonly runRequestVersion: number;
   readonly workspaceId: string | null;
   readonly workspaceTrusted: boolean;
-  readonly startDebug: (launch: DebugLaunchTarget) => Promise<void>;
 }
 
 export type JsTestExplorerPanelController = JsTestExplorerPanelProps & {
@@ -70,13 +64,10 @@ export function useJsTestExplorerPanelController({
   continuousRunVersion = 0,
   discoveryGateway,
   discoveryVersion,
-  debugStartBlocked,
-  isDebugStartBlocked,
   isOpen,
   openedFilesSnapshot = null,
   outputClipboard = null,
   onOpenLocation,
-  openDebugPanel,
   rootPath,
   runGateway,
   runRequestVersion,
@@ -84,7 +75,6 @@ export function useJsTestExplorerPanelController({
   watchGateway = null,
   workspaceId,
   workspaceTrusted,
-  startDebug,
 }: UseJsTestExplorerPanelControllerOptions): JsTestExplorerPanelController {
   const [query, setQuery] = useState("");
   const continuousRunWatchAuthority = useMemo(
@@ -101,7 +91,7 @@ export function useJsTestExplorerPanelController({
   const continuousRunAvailable =
     continuousRunWatchCommandState?.authority === continuousRunWatchAuthority &&
     continuousRunWatchCommandState.available;
-  const competingStartRef = useRef<"continuous" | "coverage" | "debug" | null>(null);
+  const competingStartRef = useRef<"continuous" | "coverage" | null>(null);
   const resolveExecutionRoot = useMemo(
     () =>
       rootPath
@@ -193,23 +183,9 @@ export function useJsTestExplorerPanelController({
     workspaceId,
     workspaceTrusted,
   });
-  const selectedDebug = useJsTestExplorerDebug({
-    debugStartBlocked,
-    discoveryGateway,
-    isDebugStartBlocked,
-    openDebugPanel,
-    rootPath,
-    startDebug,
-    workspaceId,
-    workspaceTrusted,
-  });
   const explorer = useJsTestExplorer({
     batchGateway,
-    continuousRunBlocked:
-      !continuousRunAvailable ||
-      coverage.isRunning ||
-      selectedDebug.isDebugging ||
-      debugStartBlocked,
+    continuousRunBlocked: !continuousRunAvailable || coverage.isRunning,
     continuousRunVersion,
     continuousRunWatchCommand: workspaceTrusted ? continuousRunWatchCommand : null,
     discoveryGateway,
@@ -228,8 +204,6 @@ export function useJsTestExplorerPanelController({
   const scopeRunner = useJsTestExplorerScopeRunnerPort(explorer);
   if (coverage.isRunning) {
     competingStartRef.current = "coverage";
-  } else if (selectedDebug.isDebugging) {
-    competingStartRef.current = "debug";
   } else if (explorer.continuousRunEnabled || explorer.continuousRunStopping) {
     competingStartRef.current = "continuous";
   } else {
@@ -252,10 +226,6 @@ export function useJsTestExplorerPanelController({
     coverageRunning: coverage.isRunning,
     coverageUnavailable: coverage.unavailable,
     currentFileIdentity: activeDocumentIdentity,
-    debugError: selectedDebug.error,
-    debugging: selectedDebug.isDebugging,
-    debugStartBlocked: selectedDebug.blocked,
-    debugUnavailable: selectedDebug.unavailable ?? selectedDebug.blockedReason,
     error: explorer.error,
     executionStartBlocked: !workspaceTrusted,
     failedRunCompleted: explorer.failedRunCompleted,
@@ -283,23 +253,6 @@ export function useJsTestExplorerPanelController({
       const path = safeJsTestNavigationPath(rootPath, file.path);
       if (path) onOpenLocation(path, file.firstUncoveredLine);
     },
-    onDebugNode: async (node) => {
-      if (
-        competingStartRef.current !== null ||
-        coverage.isRunning ||
-        explorer.continuousRunEnabled ||
-        explorer.continuousRunStopping ||
-        isDebugStartBlocked()
-      ) {
-        return;
-      }
-      competingStartRef.current = "debug";
-      try {
-        await selectedDebug.debug(node);
-      } finally {
-        if (!selectedDebug.isDebugging) competingStartRef.current = null;
-      }
-    },
     openedFilesSnapshot,
     output,
     onQueryChange: setQuery,
@@ -310,9 +263,7 @@ export function useJsTestExplorerPanelController({
       if (
         competingStartRef.current !== null ||
         explorer.continuousRunEnabled ||
-        explorer.continuousRunStopping ||
-        selectedDebug.isDebugging ||
-        isDebugStartBlocked()
+        explorer.continuousRunStopping
       ) {
         return;
       }
@@ -322,12 +273,7 @@ export function useJsTestExplorerPanelController({
       });
     },
     onStartContinuousRun: () => {
-      if (
-        competingStartRef.current !== null ||
-        coverage.isRunning ||
-        selectedDebug.isDebugging ||
-        isDebugStartBlocked()
-      ) {
+      if (competingStartRef.current !== null || coverage.isRunning) {
         return;
       }
       competingStartRef.current = "continuous";

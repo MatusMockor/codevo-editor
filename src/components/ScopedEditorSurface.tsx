@@ -8,20 +8,14 @@ import type { EditorGroup, EditorGroupId } from "../domain/editorGroups";
 import { editorGroupVisiblePaths } from "../domain/editorGroups";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
-import type { DebugWatchAtCursorCaptureReader } from "../domain/debugWatchAtCursorCapture";
-import type { DebugEvaluateInConsoleCaptureReader } from "../domain/debugEvaluateInConsoleCapture";
-import type { DebugBreakpointNavigationCaptureReader } from "../domain/debugBreakpointNavigationCapture";
-import type { DebugInlineBreakpointCaptureReader } from "../domain/debugInlineBreakpointCapture";
+import type { EditorCursorCaptureReader } from "../domain/editorCursorCapture";
 import { EditorSurface, type EditorSurfaceProps } from "./EditorSurface";
 
 type RunnerProps =
   | "onEditorMenuCommandRunnerChange"
   | "onEditorSurfaceBufferFixRunnerChange"
   | "onEditorSurfaceCommandRunnerChange"
-  | "onDebugWatchAtCursorCaptureReaderChange"
-  | "onDebugEvaluateInConsoleCaptureReaderChange"
-  | "onDebugBreakpointNavigationCaptureReaderChange"
-  | "onDebugInlineBreakpointCaptureReaderChange"
+  | "onEditorCursorCaptureReaderChange"
   | "onEditorSurfaceEslintDisableRunnerChange"
   | "onEditorSurfacePhpstanIgnoreRunnerChange"
   | "runtimeMembership";
@@ -34,21 +28,9 @@ interface ScopedEditorSurfaceProps extends Omit<EditorSurfaceProps, RunnerProps>
     runner: EditorSurfaceBufferFixRunner | null,
   ): void;
   onCommandRunnerChange(groupId: EditorGroupId, runner: EditorSurfaceCommandRunner | null): void;
-  onDebugWatchAtCursorCaptureReaderChange(
+  onCursorCaptureReaderChange(
     groupId: EditorGroupId,
-    reader: DebugWatchAtCursorCaptureReader | null,
-  ): void;
-  onDebugEvaluateInConsoleCaptureReaderChange(
-    groupId: EditorGroupId,
-    reader: DebugEvaluateInConsoleCaptureReader | null,
-  ): void;
-  onDebugBreakpointNavigationCaptureReaderChange(
-    groupId: EditorGroupId,
-    reader: DebugBreakpointNavigationCaptureReader | null,
-  ): void;
-  onDebugInlineBreakpointCaptureReaderChange(
-    groupId: EditorGroupId,
-    reader: DebugInlineBreakpointCaptureReader | null,
+    reader: EditorCursorCaptureReader | null,
   ): void;
   onEslintDisableRunnerChange(
     groupId: EditorGroupId,
@@ -66,10 +48,7 @@ export const ScopedEditorSurface = memo(function ScopedEditorSurface({
   groupId,
   onBufferFixRunnerChange,
   onCommandRunnerChange,
-  onDebugWatchAtCursorCaptureReaderChange,
-  onDebugEvaluateInConsoleCaptureReaderChange,
-  onDebugBreakpointNavigationCaptureReaderChange,
-  onDebugInlineBreakpointCaptureReaderChange,
+  onCursorCaptureReaderChange,
   onEslintDisableRunnerChange,
   onMenuCommandRunnerChange,
   onPhpstanIgnoreRunnerChange,
@@ -90,25 +69,9 @@ export const ScopedEditorSurface = memo(function ScopedEditorSurface({
     (runner: EditorSurfaceCommandRunner | null) => onCommandRunnerChange(groupId, runner),
     [groupId, onCommandRunnerChange],
   );
-  const updateDebugWatchAtCursorCaptureReader = useCallback(
-    (reader: DebugWatchAtCursorCaptureReader | null) =>
-      onDebugWatchAtCursorCaptureReaderChange(groupId, reader),
-    [groupId, onDebugWatchAtCursorCaptureReaderChange],
-  );
-  const updateDebugEvaluateInConsoleCaptureReader = useCallback(
-    (reader: DebugEvaluateInConsoleCaptureReader | null) =>
-      onDebugEvaluateInConsoleCaptureReaderChange(groupId, reader),
-    [groupId, onDebugEvaluateInConsoleCaptureReaderChange],
-  );
-  const updateDebugBreakpointNavigationCaptureReader = useCallback(
-    (reader: DebugBreakpointNavigationCaptureReader | null) =>
-      onDebugBreakpointNavigationCaptureReaderChange(groupId, reader),
-    [groupId, onDebugBreakpointNavigationCaptureReaderChange],
-  );
-  const updateDebugInlineBreakpointCaptureReader = useCallback(
-    (reader: DebugInlineBreakpointCaptureReader | null) =>
-      onDebugInlineBreakpointCaptureReaderChange(groupId, reader),
-    [groupId, onDebugInlineBreakpointCaptureReaderChange],
+  const updateCursorCaptureReader = useCallback(
+    (reader: EditorCursorCaptureReader | null) => onCursorCaptureReaderChange(groupId, reader),
+    [groupId, onCursorCaptureReaderChange],
   );
   const updateEslintDisableRunner = useCallback(
     (runner: EditorSurfaceEslintDisableRunner | null) =>
@@ -131,10 +94,7 @@ export const ScopedEditorSurface = memo(function ScopedEditorSurface({
       onEditorMenuCommandRunnerChange={updateMenuCommandRunner}
       onEditorSurfaceBufferFixRunnerChange={updateBufferFixRunner}
       onEditorSurfaceCommandRunnerChange={updateCommandRunner}
-      onDebugWatchAtCursorCaptureReaderChange={updateDebugWatchAtCursorCaptureReader}
-      onDebugEvaluateInConsoleCaptureReaderChange={updateDebugEvaluateInConsoleCaptureReader}
-      onDebugBreakpointNavigationCaptureReaderChange={updateDebugBreakpointNavigationCaptureReader}
-      onDebugInlineBreakpointCaptureReaderChange={updateDebugInlineBreakpointCaptureReader}
+      onEditorCursorCaptureReaderChange={updateCursorCaptureReader}
       onEditorSurfaceEslintDisableRunnerChange={updateEslintDisableRunner}
       onEditorSurfacePhpstanIgnoreRunnerChange={updatePhpstanIgnoreRunner}
       runtimeMembership={runtimeMembership}

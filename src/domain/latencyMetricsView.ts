@@ -27,8 +27,6 @@ const LATENCY_BUDGETS: Record<LatencyOperationKind, LatencyBudget> = {
   references: { warn: 100, error: 200 },
   rename: { warn: 100, error: 200 },
   folderExpand: { warn: 200, error: 400 },
-  "debug-variables-render": { warn: 50, error: 100 },
-  "debug-console-append": { warn: 50, error: 100 },
 };
 
 export interface LatencyMetricRow {

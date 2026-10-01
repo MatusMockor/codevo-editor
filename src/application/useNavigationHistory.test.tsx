@@ -25,7 +25,6 @@ import {
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 
@@ -964,7 +963,7 @@ describe("useNavigationHistory", () => {
 
     const pending = harness.navigation().navigateBackward();
 
-    harness.setWorkspaceRuntimeOwner(transferWorkspaceRuntimeOwner(owner, `${ROOT}/alias`));
+    harness.setWorkspaceRuntimeOwner(createWorkspaceRuntimeOwner(owner.ownerKey, `${ROOT}/alias`));
     resolveOpen();
     await act(async () => {
       await pending;

@@ -303,7 +303,6 @@ describe("documentSessionState", () => {
 
   it("persists transient bottom panel views as problems", () => {
     expect(persistedBottomPanelView("terminal")).toBe("problems");
-    expect(persistedBottomPanelView("debug")).toBe("problems");
     expect(persistedBottomPanelView("expressRoutes")).toBe("problems");
     expect(persistedBottomPanelView("packages")).toBe("problems");
     expect(persistedBottomPanelView("nette")).toBe("problems");

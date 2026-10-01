@@ -4,9 +4,8 @@ use super::{
 use crate::workspace_registry::unregister::{WorkspaceAdmissionAdoption, WorkspaceOwnerScope};
 use crate::workspace_registry::{RegistrationOwner, WorkspaceId, WorkspaceRegistry};
 use crate::workspace_runtime::{
-    DebugSessionDisposer, LanguageServerDisposer, TerminalSessionDisposer,
-    WorkspaceIndexLifecycleDisposer, WorkspaceProcessDisposer, WorkspaceRuntimeDisposal,
-    WorkspaceWatchDisposer,
+    LanguageServerDisposer, TerminalSessionDisposer, WorkspaceIndexLifecycleDisposer,
+    WorkspaceProcessDisposer, WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
 };
 use std::{
     fs,
@@ -33,10 +32,6 @@ impl LanguageServerDisposer for CountingRuntime {
 
 impl WorkspaceIndexLifecycleDisposer for CountingRuntime {
     fn cancel_workspace_index_lifecycle(&self, _root_path: &str) {}
-}
-
-impl DebugSessionDisposer for CountingRuntime {
-    fn stop_debug_session(&self, _root_path: &str) {}
 }
 
 impl WorkspaceProcessDisposer for CountingRuntime {
@@ -78,7 +73,6 @@ fn close_at(
             javascript_typescript_watch_registry: runtime,
             workspace_file_change_watch_registry: runtime,
             php_language_servers: runtime,
-            debug_sessions: runtime,
             eslint_processes: runtime,
             terminal_sessions: runtime,
         },

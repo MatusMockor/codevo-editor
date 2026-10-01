@@ -225,7 +225,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
         ?.bottomPanel,
     ).toBe(true);
 
-    harness.rerender({ bottomPanelView: "debug" });
+    harness.rerender({ bottomPanelView: "problems" });
     await harness.settle();
     expect(
       harness.persisted()[harness.persisted().length - 1]?.settings.session.agentWorkbench

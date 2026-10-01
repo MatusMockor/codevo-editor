@@ -1,13 +1,7 @@
 import type * as Monaco from "monaco-editor";
-import type { DebugInlineValueContext } from "../application/debugInlineValueContext";
 import type { JsTestExplorerCurrentFileIdentity } from "../domain/jsTestExplorerFilter";
 import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type { EditorDocument } from "../domain/workspace";
-import { useDebugInlineValueDecorations } from "./useDebugInlineValueDecorations";
-import {
-  useDebugStoppedLineDecoration,
-  type DebugStoppedLocation,
-} from "./useDebugStoppedLineDecoration";
 import {
   useEditorSurfaceCoverageDecorations,
   type EditorSurfaceCoverageProps,
@@ -18,8 +12,6 @@ export interface EditorRuntimeDecorationOptions extends EditorSurfaceCoveragePro
   readonly activeDocument: EditorDocument | null;
   readonly currentFileIdentity: JsTestExplorerCurrentFileIdentity | null;
   readonly currentModel: Monaco.editor.ITextModel | null;
-  readonly debugInlineValueContext: DebugInlineValueContext | null;
-  readonly debugStoppedLocation: DebugStoppedLocation | null;
   readonly editor: Monaco.editor.IStandaloneCodeEditor | null;
   readonly monaco: typeof Monaco | null;
   readonly problemSnapshot: JsTestProblemsSnapshot | null;
@@ -32,8 +24,6 @@ export function useEditorRuntimeDecorations({
   activeDocument,
   currentFileIdentity,
   currentModel,
-  debugInlineValueContext,
-  debugStoppedLocation,
   editor,
   jsTestCoverageReport = null,
   monaco,
@@ -43,21 +33,6 @@ export function useEditorRuntimeDecorations({
   rootPath,
   workspaceId,
 }: EditorRuntimeDecorationOptions): void {
-  useDebugStoppedLineDecoration({
-    activeDocumentPath: activeDocument?.path,
-    editor,
-    location: debugStoppedLocation,
-    model: currentModel,
-    monaco,
-  });
-  useDebugInlineValueDecorations({
-    activeDocument,
-    context: debugInlineValueContext,
-    editor,
-    model: currentModel,
-    monaco,
-    workspaceRoot: rootPath,
-  });
   useJsTestProblemEditorDecorations({
     activeDocument,
     currentFileIdentity,

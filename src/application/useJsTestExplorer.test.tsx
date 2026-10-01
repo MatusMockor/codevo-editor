@@ -1239,7 +1239,7 @@ describe("useJsTestExplorer", () => {
     harness.unmount();
   });
 
-  it("disarms Continuous Run when an external coverage or debug lifecycle blocks admission", async () => {
+  it("disarms Continuous Run when an external coverage lifecycle blocks admission", async () => {
     const pending = deferred<ReturnType<typeof taskEnvelope>>();
     const stopTask = vi.fn(async () => true);
     const harness = renderExplorer({

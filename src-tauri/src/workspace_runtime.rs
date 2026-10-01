@@ -1,4 +1,3 @@
-use crate::debug_adapter::DebugSessionRegistry;
 use crate::eslint::EslintProcessRegistry;
 use crate::job_scheduler::WorkspaceIndexLifecycle;
 use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
@@ -30,17 +29,12 @@ pub trait WorkspaceProcessDisposer {
     fn stop_workspace_processes(&self, root_path: &Path);
 }
 
-pub trait DebugSessionDisposer {
-    fn stop_debug_session(&self, root_path: &str);
-}
-
 pub struct WorkspaceRuntimeDisposal<'a> {
     pub index_lifecycle: &'a dyn WorkspaceIndexLifecycleDisposer,
     pub javascript_typescript_language_servers: &'a dyn LanguageServerDisposer,
     pub javascript_typescript_watch_registry: &'a dyn WorkspaceWatchDisposer,
     pub workspace_file_change_watch_registry: &'a dyn WorkspaceWatchDisposer,
     pub php_language_servers: &'a dyn LanguageServerDisposer,
-    pub debug_sessions: &'a dyn DebugSessionDisposer,
     pub eslint_processes: &'a dyn WorkspaceProcessDisposer,
     pub terminal_sessions: &'a dyn TerminalSessionDisposer,
 }
@@ -64,7 +58,6 @@ pub fn dispose_workspace_root(
         .javascript_typescript_language_servers
         .stop_language_server(&root_key);
     runtime.php_language_servers.stop_language_server(&root_key);
-    runtime.debug_sessions.stop_debug_session(&root_key);
     runtime.eslint_processes.stop_workspace_processes(root_path);
     runtime.terminal_sessions.stop_terminal_sessions(root_path)
 }
@@ -161,12 +154,6 @@ impl TerminalSessionDisposer for TerminalSupervisor {
     }
 }
 
-impl DebugSessionDisposer for DebugSessionRegistry {
-    fn stop_debug_session(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
 impl WorkspaceProcessDisposer for EslintProcessRegistry {
     fn stop_workspace_processes(&self, root_path: &Path) {
         self.stop_root(root_path);
@@ -176,19 +163,14 @@ impl WorkspaceProcessDisposer for EslintProcessRegistry {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispose_workspace_root, DebugSessionDisposer, LanguageServerDisposer,
-        TerminalSessionDisposer, WorkspaceIndexLifecycleDisposer, WorkspaceProcessDisposer,
-        WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
-    };
-    use crate::debug_adapter::{
-        DebugAdapter, DebugBreakpoint, DebugEvent, DebugEventSink, DebugScopeInfo,
-        DebugSessionRegistry, DebugStackFrame, DebugVariableInfo, StepKind,
+        dispose_workspace_root, LanguageServerDisposer, TerminalSessionDisposer,
+        WorkspaceIndexLifecycleDisposer, WorkspaceProcessDisposer, WorkspaceRuntimeDisposal,
+        WorkspaceWatchDisposer,
     };
     use std::{
         collections::HashSet,
         fs,
         path::{Path, PathBuf},
-        sync::atomic::{AtomicBool, Ordering},
         sync::{Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -206,7 +188,6 @@ mod tests {
             RecordingRootDisposer::new("file-watch", [&root_a_key, &root_b_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_a_key, &root_b_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_a_key, &root_b_key], &calls);
-        let debug = RecordingRootDisposer::new("debug", [&root_a_key, &root_b_key], &calls);
         let eslint = RecordingTerminalDisposer::new("eslint", [&root_a, &root_b], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&root_a, &root_b], &calls);
 
@@ -218,7 +199,6 @@ mod tests {
                 javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
-                debug_sessions: &debug,
                 eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
@@ -235,8 +215,6 @@ mod tests {
         assert!(js_lsp.contains(&root_b_key));
         assert!(!php_lsp.contains(&root_a_key));
         assert!(php_lsp.contains(&root_b_key));
-        assert!(!debug.contains(&root_a_key));
-        assert!(debug.contains(&root_b_key));
         assert!(!eslint.contains(&root_a));
         assert!(eslint.contains(&root_b));
         assert!(!terminals.contains(&root_a));
@@ -249,7 +227,6 @@ mod tests {
                 "file-watch:/workspace-a",
                 "js-lsp:/workspace-a",
                 "php-lsp:/workspace-a",
-                "debug:/workspace-a",
                 "eslint:/workspace-a",
                 "terminal:/workspace-a",
             ]
@@ -266,7 +243,6 @@ mod tests {
         let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
-        let debug = RecordingRootDisposer::new("debug", [&root_key], &calls);
         let eslint = RecordingTerminalDisposer::new("eslint", [&root], &calls);
         let terminals =
             RecordingTerminalDisposer::failing("terminal", [&root], &calls, "terminal lock failed");
@@ -279,7 +255,6 @@ mod tests {
                 javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
-                debug_sessions: &debug,
                 eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
@@ -292,7 +267,6 @@ mod tests {
         assert!(!file_watch.contains(&root_key));
         assert!(!js_lsp.contains(&root_key));
         assert!(!php_lsp.contains(&root_key));
-        assert!(!debug.contains(&root_key));
     }
 
     #[test]
@@ -305,7 +279,6 @@ mod tests {
         let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
-        let debug = RecordingRootDisposer::new("debug", [&root_key], &calls);
         let eslint = RecordingTerminalDisposer::new("eslint", [&root], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&root], &calls);
 
@@ -317,7 +290,6 @@ mod tests {
                 javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
-                debug_sessions: &debug,
                 eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
@@ -332,7 +304,6 @@ mod tests {
                 "file-watch:/missing-workspace",
                 "js-lsp:/missing-workspace",
                 "php-lsp:/missing-workspace",
-                "debug:/missing-workspace",
                 "eslint:/missing-workspace",
                 "terminal:/missing-workspace",
             ]
@@ -358,7 +329,6 @@ mod tests {
         let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
-        let debug = RecordingRootDisposer::new("debug", [&root_key], &calls);
         let eslint = RecordingTerminalDisposer::new("eslint", [&alias_root], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&alias_root], &calls);
 
@@ -372,7 +342,6 @@ mod tests {
                 javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
-                debug_sessions: &debug,
                 eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
@@ -384,7 +353,6 @@ mod tests {
         assert!(!file_watch.contains(&root_key));
         assert!(!js_lsp.contains(&root_key));
         assert!(!php_lsp.contains(&root_key));
-        assert!(!debug.contains(&root_key));
         assert!(!eslint.contains(&alias_root));
         assert!(!terminals.contains(&alias_root));
         assert_eq!(
@@ -395,125 +363,10 @@ mod tests {
                 format!("file-watch:{root_key}"),
                 format!("js-lsp:{root_key}"),
                 format!("php-lsp:{root_key}"),
-                format!("debug:{root_key}"),
                 format!("eslint:{}", alias_root.to_string_lossy()),
                 format!("terminal:{}", alias_root.to_string_lossy()),
             ]
         );
-    }
-
-    #[test]
-    fn disposal_terminates_debug_session_for_requested_root_only() {
-        let root_a = PathBuf::from("/workspace-a");
-        let root_b = PathBuf::from("/workspace-b");
-        let root_a_key = root_key(&root_a);
-        let root_b_key = root_key(&root_b);
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let registry = DebugSessionRegistry::new();
-        let terminated_a = start_inert_debug_session(&registry, &root_a_key);
-        let terminated_b = start_inert_debug_session(&registry, &root_b_key);
-        let index = RecordingRootDisposer::new("index", [&root_a_key], &calls);
-        let watch = RecordingRootDisposer::new("watch", [&root_a_key], &calls);
-        let file_watch = RecordingRootDisposer::new("file-watch", [&root_a_key], &calls);
-        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_a_key], &calls);
-        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_a_key], &calls);
-        let eslint = RecordingTerminalDisposer::new("eslint", [&root_a], &calls);
-        let terminals = RecordingTerminalDisposer::new("terminal", [&root_a], &calls);
-
-        dispose_workspace_root(
-            &root_a,
-            WorkspaceRuntimeDisposal {
-                index_lifecycle: &index,
-                javascript_typescript_language_servers: &js_lsp,
-                javascript_typescript_watch_registry: &watch,
-                workspace_file_change_watch_registry: &file_watch,
-                php_language_servers: &php_lsp,
-                debug_sessions: &registry,
-                eslint_processes: &eslint,
-                terminal_sessions: &terminals,
-            },
-        )
-        .expect("dispose workspace root");
-
-        assert!(terminated_a.load(Ordering::SeqCst));
-        assert!(!terminated_b.load(Ordering::SeqCst));
-        assert_eq!(registry.session_id_for_root(&root_a_key), None);
-        assert!(registry.session_id_for_root(&root_b_key).is_some());
-    }
-
-    fn start_inert_debug_session(
-        registry: &DebugSessionRegistry,
-        root_key: &str,
-    ) -> Arc<AtomicBool> {
-        let terminated = Arc::new(AtomicBool::new(false));
-        let adapter_terminated = Arc::clone(&terminated);
-        registry
-            .start_session(root_key, Arc::new(NullDebugEventSink), move |_emitter| {
-                Ok(Box::new(InertDebugAdapter {
-                    terminated: adapter_terminated,
-                }))
-            })
-            .expect("start debug session");
-        terminated
-    }
-
-    struct NullDebugEventSink;
-
-    impl DebugEventSink for NullDebugEventSink {
-        fn emit(&self, _event: DebugEvent) {}
-    }
-
-    struct InertDebugAdapter {
-        terminated: Arc<AtomicBool>,
-    }
-
-    impl DebugAdapter for InertDebugAdapter {
-        fn set_exception_pause(
-            &mut self,
-            _mode: crate::debug_adapter::DebugExceptionPauseMode,
-        ) -> Result<(), String> {
-            Err("Exception pause modes are unavailable for this debug session.".to_string())
-        }
-
-        fn set_breakpoints(
-            &mut self,
-            _file_path: &str,
-            _breakpoints: &[DebugBreakpoint],
-        ) -> Result<Vec<DebugBreakpoint>, String> {
-            Ok(Vec::new())
-        }
-
-        fn step(&mut self, _kind: StepKind) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn pause(&mut self) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn stack_trace(&mut self) -> Result<Vec<DebugStackFrame>, String> {
-            Ok(Vec::new())
-        }
-
-        fn scopes(&mut self, _frame_id: u64) -> Result<Vec<DebugScopeInfo>, String> {
-            Ok(Vec::new())
-        }
-
-        fn variables(&mut self, _reference: u64) -> Result<Vec<DebugVariableInfo>, String> {
-            Ok(Vec::new())
-        }
-
-        fn evaluate(
-            &mut self,
-            _frame_id: u64,
-            _expression: &str,
-        ) -> Result<DebugVariableInfo, String> {
-            Err("Evaluation is not supported by the inert adapter.".to_string())
-        }
-
-        fn terminate(&mut self) {
-            self.terminated.store(true, Ordering::SeqCst);
-        }
     }
 
     struct RecordingRootDisposer {
@@ -562,12 +415,6 @@ mod tests {
 
     impl LanguageServerDisposer for RecordingRootDisposer {
         fn stop_language_server(&self, root_path: &str) {
-            self.stop(root_path);
-        }
-    }
-
-    impl DebugSessionDisposer for RecordingRootDisposer {
-        fn stop_debug_session(&self, root_path: &str) {
             self.stop(root_path);
         }
     }

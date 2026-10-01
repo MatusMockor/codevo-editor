@@ -22,9 +22,9 @@ import {
 } from "./useWorkbenchGitCoordinator";
 import { useWorkbenchSmartModeCoordinator } from "./useWorkbenchLanguageRuntimeCoordinator";
 import {
-  useWorkbenchTaskDebugCoordinator,
-  useWorkbenchTaskDebugNavigationCoordinator,
-} from "./useWorkbenchTaskDebugCoordinator";
+  useWorkbenchTaskCoordinator,
+  useWorkbenchTaskNavigationCoordinator,
+} from "./useWorkbenchTaskCoordinator";
 import { useWorkbenchLanguageNavigation } from "../useWorkbenchLanguageNavigation";
 import type { useEditorSessionState } from "../useEditorSessionState";
 import type { WorkbenchControllerOptions } from "../workbenchControllerContracts";
@@ -40,8 +40,8 @@ type EditorDocumentFlat = EditorDocumentInput["activeEditing"] &
   EditorDocumentInput["phpCodeAction"] &
   EditorDocumentInput["testNavigation"] &
   Pick<EditorDocumentInput, "openSymbolPanelNavigationTargetRef">;
-type TaskDebug = Parameters<typeof useWorkbenchTaskDebugCoordinator>[0];
-type TaskNavigation = Parameters<typeof useWorkbenchTaskDebugNavigationCoordinator>[0];
+type Tasks = Parameters<typeof useWorkbenchTaskCoordinator>[0];
+type TaskNavigation = Parameters<typeof useWorkbenchTaskNavigationCoordinator>[0];
 type Bookmarks = Parameters<typeof useBookmarks>[0];
 type GitHistoryInput = Parameters<typeof useWorkbenchGitHistoryCoordinator>[0];
 type GitHistoryFlat = GitHistoryInput["fileHistory"] &
@@ -118,7 +118,7 @@ interface DocumentSaveClose {
 type DocumentSaveCloseInput = Parameters<typeof useWorkbenchDocumentSaveCloseCoordinator>[0];
 
 type WorkspaceFacet = Pick<
-  TaskDebug,
+  Tasks,
   | "currentEditorSessionOwnerKeyRef"
   | "currentWorkspaceRootRef"
   | "editorSessionOwnerKey"
@@ -264,15 +264,10 @@ type GitFacet = Pick<
   Pick<GitPanelsFlat, "prompter">;
 
 type TasksFacet = Pick<
-  TaskDebug,
-  | "debugGateway"
-  | "invalidateJsTestCoverageAndResults"
-  | "isActiveDocumentJsTest"
-  | "isActiveDocumentPhpTest"
-  | "openDocuments"
-  | "terminalGateway"
+  Tasks,
+  "invalidateJsTestCoverageAndResults" | "openDocuments" | "terminalGateway"
 > & {
-  readonly options: TaskDebug["options"];
+  readonly options: Tasks["options"];
   readonly revealPathGateway: TaskNavigation["revealPathGateway"];
 };
 
@@ -298,24 +293,11 @@ interface WorkbenchEditorNavigationCoordinatorDependencies {
 
 export function editorNavigationTaskOptionsFor(
   options: WorkbenchControllerOptions,
-): TaskDebug["options"] {
+): Tasks["options"] {
   return {
-    debugAddToWatchCommands: options.debugAddToWatchCommands,
-    debugBreakpointNavigationCaptureReader: options.debugBreakpointNavigationCaptureReader,
-    debugBreakpointStorage: options.debugBreakpointStorage,
-    debugCopyEvaluatePathOnce: options.debugCopyEvaluatePathOnce,
-    debugCopyValueCommands: options.debugCopyValueCommands,
-    debugEvaluateInConsoleCaptureReader: options.debugEvaluateInConsoleCaptureReader,
-    debugInlineBreakpointCaptureReader: options.debugInlineBreakpointCaptureReader,
-    debugSetVariableCommands: options.debugSetVariableCommands,
-    debugTextClipboard: options.debugTextClipboard,
-    debugWatchAtCursorCaptureReader: options.debugWatchAtCursorCaptureReader,
+    editorCursorCaptureReader: options.editorCursorCaptureReader,
     jsTestExplorerScopeRunner: options.jsTestExplorerScopeRunner,
-    nodeDebugAttachCandidateGateway: options.nodeDebugAttachCandidateGateway,
-    nodeDebugAttachCandidateStart: options.nodeDebugAttachCandidateStart,
     nodePackageScriptsGateway: options.nodePackageScriptsGateway,
-    nodeRunTaskGateway: options.nodeRunTaskGateway,
-    serverReadyExternalUrlOpener: options.serverReadyExternalUrlOpener,
     vscodeProcessTasksGateway: options.vscodeProcessTasksGateway,
     workspaceSourceDiscoveryGateway: options.workspaceSourceDiscoveryGateway,
   };
@@ -484,10 +466,7 @@ export function useWorkbenchEditorNavigationCoordinator({
   } = persistence;
   const { gitGateway, prompter, refreshGitStatus, resolveGitRepositoryTarget } = git;
   const {
-    debugGateway,
     invalidateJsTestCoverageAndResults,
-    isActiveDocumentJsTest,
-    isActiveDocumentPhpTest,
     openDocuments,
     options: taskOptions,
     revealPathGateway,
@@ -673,46 +652,21 @@ export function useWorkbenchEditorNavigationCoordinator({
     openNodePackageScript,
     nodePackageScripts,
     vscodeProcessTaskComposition,
-    attachNodeDebug,
-    debugCopyStackTrace,
-    debugSession,
-    debugStoppedLocation,
-    nodeDebugAttachProcessPicker,
-    openDebugLocation,
-    openDebugPanel,
-    startOrContinueDebug,
-    startPhpListenDebug,
-    toggleDebugBreakpointAtCursor,
-    debugWatchAtCursor,
-    jsTestDebugAtCursor,
     jsTestRunSelection,
-    debugEvaluateInConsole,
-    debugBreakpointNavigation,
-    debugCallStackNavigation,
-    debugRestartFrame,
-    debugInlineBreakpoint,
-    nodeRunWithoutDebugging,
-    nodeLaunchConfigurationsSurface,
-  } = useWorkbenchTaskDebugCoordinator({
-    activeDocument,
+    openSourceLocation,
+  } = useWorkbenchTaskCoordinator({
     activeDocumentRef,
     activeEditorPositionRef,
     currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
-    debugGateway,
     editorSessionOwnerKey,
     invalidateJsTestCoverageAndResults,
-    isActiveDocumentJsTest,
-    isActiveDocumentPhpTest,
-    isEditorGroupDocumentSessionAuthorityCurrent,
     isWorkspaceTrusted: documentSaveClose.documentLifecycle.isWorkspaceTrusted,
     openDocuments,
     openFile: editorFile.documentTabs.openFile,
     openNavigationTarget,
     options: taskOptions,
-    prompter,
     readTestFileIfExists,
-    resolveActiveDocumentSessionAuthority,
     reportErrorForActiveWorkspaceRoot: reportErrorForActiveWorkspaceRootResolved,
     setBottomPanelView,
     setBottomPanelVisible,
@@ -740,7 +694,7 @@ export function useWorkbenchEditorNavigationCoordinator({
     openPhpTestCase,
     openArtisanController,
     revealEntry,
-  } = useWorkbenchTaskDebugNavigationCoordinator({
+  } = useWorkbenchTaskNavigationCoordinator({
     activeDocumentRef,
     currentWorkspaceRootRef,
     openNavigationTarget,
@@ -1199,16 +1153,7 @@ export function useWorkbenchEditorNavigationCoordinator({
       goToSuperMethod,
       goToNextProblem,
       goToPreviousProblem,
-      debugInlineBreakpoint,
-      debugCopyStackTrace,
-      debugRestartFrame,
-      nodeDebugAttachProcessPicker,
-      nodeRunWithoutDebugging,
-      debugStoppedLocation,
-      openDebugLocation,
-      openDebugPanel,
-      startOrContinueDebug,
-      startPhpListenDebug,
+      openSourceLocation,
       registerActiveTerminalSession,
       runTestAt,
       openMarkdownPreview,
@@ -1344,7 +1289,7 @@ export function useWorkbenchEditorNavigationCoordinator({
       revertActiveEditorChangeHunk,
       updateActiveDocument,
     },
-    taskDebug: {
+    tasks: {
       hideBottomPanel,
       registerActiveTerminalSession,
       runAllJsTestsForActiveDocument,
@@ -1358,28 +1303,9 @@ export function useWorkbenchEditorNavigationCoordinator({
       openNodePackageScript,
       nodePackageScripts,
       vscodeProcessTaskComposition,
-      attachNodeDebug,
-      debugCopyStackTrace,
-      debugSession,
-      debugStoppedLocation,
-      nodeDebugAttachProcessPicker,
-      openDebugLocation,
-      openDebugPanel,
-      startOrContinueDebug,
-      startPhpListenDebug,
-      toggleDebugBreakpointAtCursor,
-      debugWatchAtCursor,
-      jsTestDebugAtCursor,
       jsTestRunSelection,
-      debugEvaluateInConsole,
-      debugBreakpointNavigation,
-      debugCallStackNavigation,
-      debugRestartFrame,
-      debugInlineBreakpoint,
-      nodeRunWithoutDebugging,
-      nodeLaunchConfigurationsSurface,
     },
-    taskDebugNavigation: {
+    taskNavigation: {
       openEntryInTerminal,
       openArtisanRoutesPanel,
       openExpressRoutesPanel,

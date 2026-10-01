@@ -34,7 +34,7 @@ export interface JsTestGateway {
 export type JsTestRunnableExplorerNode =
   JsTestExplorerFileNode | JsTestExplorerSuiteNode | JsTestExplorerTestNode;
 
-/** Canonical mapping shared by Run and Debug actions in the test explorer. */
+/** Canonical mapping shared by Run actions in the test explorer. */
 export function jsTestRunScopeForExplorerNode(
   rootPath: string,
   node: JsTestRunnableExplorerNode,

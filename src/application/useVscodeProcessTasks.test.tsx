@@ -105,24 +105,6 @@ describe("useVscodeProcessTasks", () => {
     harness.unmount();
   });
 
-  it("offers an owner-bound start-and-wait seam over the same visible task lifecycle", async () => {
-    const gateway = gatewayHarness();
-    const harness = renderHook({ gateway: gateway.gateway });
-    await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    let waiting!: Promise<unknown>;
-    act(() => {
-      waiting = harness.hook().startAndWait(rootTask("Build"));
-    });
-    await waitForReact(() => expect(gateway.start).toHaveBeenCalledOnce());
-    const owner = gateway.start.mock.calls[0]![0];
-    await waitForReact(() => expect(harness.hook().running).toBe(true));
-    act(() => gateway.emit({ kind: "status", owner, sequence: 1, status: "exited", exitCode: 0 }));
-
-    await expect(waiting).resolves.toEqual({ status: "exited", exitCode: 0 });
-    expect(harness.hook()).toMatchObject({ running: false, status: "exited" });
-    harness.unmount();
-  });
-
   it("owns Problems by the exact configured-task run and clears them across A-B-A", async () => {
     const gateway = gatewayHarness();
     const harness = renderHook({ gateway: gateway.gateway });
@@ -187,60 +169,6 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
     expect(harness.hook().problems).toBeNull();
     expect(harness.hook().problemNotices).toEqual([]);
-    harness.unmount();
-  });
-
-  it("exposes an opaque cancellation capability that cannot retarget a later same-label run", async () => {
-    const gateway = gatewayHarness();
-    const harness = renderHook({ gateway: gateway.gateway });
-    await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    let oldOwnership: { readonly cancel: () => Promise<boolean> } | undefined;
-    let firstWaiting!: Promise<unknown>;
-    act(() => {
-      firstWaiting = harness.hook().startAndWait(rootTask("Build"), (ownership) => {
-        oldOwnership = ownership;
-      });
-    });
-    await waitForReact(() => expect(oldOwnership).toBeDefined());
-    const firstOwner = gateway.start.mock.calls[0]![0];
-    act(() =>
-      gateway.emit({
-        kind: "status",
-        owner: firstOwner,
-        sequence: 1,
-        status: "exited",
-        exitCode: 0,
-      }),
-    );
-    await firstWaiting;
-
-    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
-    expect(gateway.start.mock.calls[1]![0]).toMatchObject({
-      label: '["v1",".","Build"]',
-      runId: "run-2",
-    });
-    await expect(oldOwnership!.cancel()).resolves.toBe(false);
-    expect(gateway.stop).not.toHaveBeenCalled();
-    expect(harness.hook().running).toBe(true);
-    harness.unmount();
-  });
-
-  it("refreshes discovery before an owner-bound start-and-wait admission", async () => {
-    const gateway = gatewayHarness();
-    const harness = renderHook({ gateway: gateway.gateway });
-    await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    expect(gateway.discover).toHaveBeenCalledTimes(1);
-
-    let waiting!: Promise<unknown>;
-    act(() => {
-      waiting = harness.hook().startAndWait(rootTask("Build"));
-    });
-    await waitForReact(() => expect(gateway.discover).toHaveBeenCalledTimes(2));
-    await waitForReact(() => expect(gateway.start).toHaveBeenCalledOnce());
-    const owner = gateway.start.mock.calls[0]![0];
-    act(() => gateway.emit({ kind: "status", owner, sequence: 1, status: "exited", exitCode: 0 }));
-
-    await expect(waiting).resolves.toEqual({ status: "exited", exitCode: 0 });
     harness.unmount();
   });
 

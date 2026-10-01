@@ -3,10 +3,6 @@ import type {
   EditorCursorAuthority,
   EditorCursorStorePort,
 } from "../../application/editorCursorStore";
-import type { NodeRunStatusPresentation } from "../../application/nodeRunWithoutDebuggingPresentation";
-
-export type EditorDebugEntry =
-  "start" | "runWithoutDebugging" | "launchConfigurations" | "attach" | "showViews";
 
 export interface EditorChromeActivity {
   readonly kind: "busy" | "problem";
@@ -27,8 +23,6 @@ export interface EditorChromeShortcuts {
   readonly problems: string;
   readonly find: string;
   readonly split: string;
-  readonly debugStart: string;
-  readonly runWithoutDebugging: string;
 }
 
 export interface EditorChrome {
@@ -39,8 +33,6 @@ export interface EditorChrome {
   readonly cursorStore: EditorCursorStorePort | null;
   readonly cursorAuthority: EditorCursorAuthority | null;
   readonly activity: EditorChromeActivity | null;
-  readonly nodeRun: NodeRunStatusPresentation | null;
-  readonly debugToolbarVisible: boolean;
   readonly statusRows: ReadonlyArray<EditorStatusRow>;
   readonly ideModeOn: boolean;
   readonly trustNeeded: boolean;
@@ -48,14 +40,12 @@ export interface EditorChrome {
   toggleProblems(): void;
   showGoToLine(): void;
   openRuntimeView(): void;
-  stopNodeRun(): void;
   splitRight(): void;
   splitDown(): void;
   toggleIdeMode(): void;
   trustWorkspace(): void;
   revealInFiles(): void;
   openBranches(): void;
-  runDebugEntry(entry: EditorDebugEntry): void;
 }
 
 export const EditorChromeContext = createContext<EditorChrome | null>(null);

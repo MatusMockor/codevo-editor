@@ -278,7 +278,7 @@ describe("BottomPanel terminal links", () => {
     expect(onRevealDirectoryInTree).toHaveBeenCalledWith("/workspace/src");
   });
 
-  it("renders only the terminal: no view tabs, Problems or Debug", async () => {
+  it("renders only the terminal: no view tabs or Problems", async () => {
     await renderPanel(
       root,
       "/workspace",
@@ -293,7 +293,6 @@ describe("BottomPanel terminal links", () => {
     expect(host.querySelector('.bottom-panel-header [aria-label="New Terminal"]')).not.toBeNull();
     expect(host.querySelector(".bottom-panel-body > .terminal-tabs-toolbar")).toBeNull();
     expect(host.querySelector('[aria-label="Problems"]')).toBeNull();
-    expect(host.querySelector('[aria-label="Debug"]')).toBeNull();
     expect(activeTerminalProps().isActive).toBe(true);
   });
 });

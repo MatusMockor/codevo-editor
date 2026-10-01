@@ -55,7 +55,6 @@ function problemsPackageAuthority(
 
 export interface WorkbenchPanelProps {
   activeView: WorkbenchBottomPanelView;
-  debug?: ReactNode;
   search?: ReactNode;
   artisanRoutes?: ArtisanRoute[];
   artisanRoutesError?: string | null;
@@ -128,7 +127,6 @@ export interface WorkbenchPanelProps {
 
 export interface WorkbenchPanelViewContentProps {
   activeView: WorkbenchBottomPanelView;
-  debug?: ReactNode;
   search?: ReactNode;
   phpTree?: ReactNode;
   artisanRoutes: ArtisanRoute[];
@@ -203,7 +201,6 @@ const splitTestResultsStyles = {
 
 export function WorkbenchPanelViewContent({
   activeView,
-  debug,
   phpTree,
   artisanRoutes,
   artisanRoutesError,
@@ -285,14 +282,6 @@ export function WorkbenchPanelViewContent({
     return hasExpressRoutes && expressRoutesPanel ? (
       <ExpressRoutesPanel {...expressRoutesPanel} />
     ) : null;
-  }
-
-  if (activeView === "debug") {
-    if (!debug) {
-      return null;
-    }
-
-    return debug;
   }
 
   if (activeView === "testResults") {

@@ -19,7 +19,7 @@ import type {
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
-import type { NodeRunTaskGateway } from "../domain/nodeRunTask";
+import type { EditorCursorCaptureReader } from "../domain/editorCursorCapture";
 import type { PrettierFormattingGateway } from "../domain/prettierFormatting";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
 import type {
@@ -39,7 +39,7 @@ import type { DirtyCloseDecisionPort } from "./dirtyCloseDecisionPort";
 import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import type { NpmOpenScriptNavigationGatewayBinder } from "./useNpmOpenScriptNavigation";
 import type { NodePackageScriptsWorkbenchGateway } from "./useNodePackageScriptWorkbench";
-import type { WorkbenchDebugControllerOptions } from "./workbenchDebugControllerOptions";
+import type { JsTestExplorerCommandRunnerPort } from "./jsTestRerunLastRunCommands";
 import type { EditorSurfaceEslintDisableRunner } from "./workbenchEslintDisableCommand";
 import type {
   EditorSurfaceBufferFixRunner,
@@ -64,7 +64,7 @@ export interface WorkbenchWorkspaceGateways {
   textSearch: TextSearchGateway;
 }
 
-export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {
+export interface WorkbenchControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
   agentCliDiscoveryGateway?: AgentCliDiscoveryGateway;
   agentProviderGateway?: AgentProviderPolicyGateway &
@@ -83,6 +83,8 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
   gitWorktreeGateway?: GitWorktreeGateway;
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway?: IncrementalLanguageServerDocumentSyncGateway;
   editorCursorStore?: EditorCursorStorePort;
+  editorCursorCaptureReader?: EditorCursorCaptureReader | null;
+  jsTestExplorerScopeRunner?: JsTestExplorerCommandRunnerPort;
   cancelJavaScriptTypeScriptLanguageServerRequest?(
     rootPath: string,
     sessionId: number,
@@ -105,7 +107,6 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
   onDidCloseEditorPaths?: (paths: readonly string[]) => void;
   prettierFormattingGateway?: PrettierFormattingGateway;
   nodePackageScriptsGateway?: NodePackageScriptsWorkbenchGateway;
-  nodeRunTaskGateway?: NodeRunTaskGateway;
   vscodeProcessTasksGateway?: VscodeProcessTasksGateway;
   workspaceSourceDiscoveryGateway?: WorkspaceSourceDiscoveryGateway &
     NpmOpenScriptNavigationGatewayBinder;

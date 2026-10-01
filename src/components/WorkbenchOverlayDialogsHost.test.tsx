@@ -8,7 +8,6 @@ import type { AgentProviderSignInSurface } from "../application/useAgentProvider
 import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import type { LanguageServerPlan } from "../domain/languageServer";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
-import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
 import {
   WorkbenchOverlayDialogsHost,
   type WorkbenchOverlayDialogsHostProps,
@@ -85,16 +84,13 @@ function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHos
         providerSignIn: {} as AgentProviderSignInSurface,
       },
       appSettings: defaultAppSettings(),
-      closeNodeLaunchConfigurations: vi.fn(),
       gitRepositoryMappings: [],
       installManagedPhpactor: vi.fn(),
       installingManagedPhpactor: false,
       intelligenceMode: "basic",
       languageServerPlan: setupPlan(),
       languageServerSetupOpen,
-      nodeLaunchConfigurationsOpen: false,
       notices: [],
-      openNodeLaunchConfigurations: vi.fn(),
       openJavaScriptTypeScriptServiceLog: vi.fn(async () => undefined),
       phpTools: null,
       restartJavaScriptTypeScriptService: vi.fn(async () => undefined),
@@ -109,7 +105,6 @@ function hostProps(languageServerSetupOpen: boolean): WorkbenchOverlayDialogsHos
       workspaceSettings: defaultWorkspaceSettings(),
       workspaceTrust: null,
     },
-    workspaceFiles: fileGateway(),
   };
 }
 
@@ -158,15 +153,5 @@ function providerManagement(): AgentProviderManagementSurface {
     save: async () => false,
     saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),
     update: async () => "policyUnavailable",
-  };
-}
-
-function fileGateway(): NodeLaunchConfigurationFileGateway {
-  return {
-    createDirectoryForWorkspace: async () => undefined,
-    createTextFileWithContentForWorkspace: async () => ({ status: "success", revision: null }),
-    readDirectory: async () => [],
-    readTextFileSnapshot: async () => ({ content: "", revision: null }),
-    writeTextFileForWorkspace: async () => ({ status: "success", revision: null }),
   };
 }

@@ -44,23 +44,17 @@ function input(overrides: Partial<EditorChromeInput> = {}): EditorChromeInput {
     workspaceTrustLabel: "Trusted",
     workspaceRoot: "/w",
     workspaceTrusted: true,
-    nodeRun: null,
-    debugToolbarVisible: false,
     cursorStore: null,
     cursorAuthority: null,
     shortcuts: {
       problems: "⇧⌘M",
       find: "⌘F",
       split: "⌘\\",
-      debugStart: "F5",
-      runWithoutDebugging: "⌃F5",
     },
     actions: {
       showBottomPanelView: vi.fn(),
       hideBottomPanel: vi.fn(),
-      maximizePanel: vi.fn(),
       showGoToLine: vi.fn(),
-      stopNodeRun: vi.fn(),
       runCommand: vi.fn(),
       toggleIdeMode: vi.fn(),
       trustWorkspace: vi.fn(),
@@ -225,33 +219,12 @@ describe("useEditorChromeValue", () => {
     expect(results[1]?.trustNeeded).toBe(false);
   });
 
-  it("maps debug entries to workbench commands and shows debug views in focus mode", () => {
-    const value = input();
-    render(value);
-    results[0]?.runDebugEntry("start");
-    results[0]?.runDebugEntry("runWithoutDebugging");
-    results[0]?.runDebugEntry("launchConfigurations");
-    results[0]?.runDebugEntry("attach");
-    results[0]?.runDebugEntry("showViews");
-
-    expect(value.actions.runCommand).toHaveBeenNthCalledWith(1, "debug.start");
-    expect(value.actions.runCommand).toHaveBeenNthCalledWith(2, "debug.runWithoutDebugging");
-    expect(value.actions.runCommand).toHaveBeenNthCalledWith(
-      3,
-      "debug.configureNodeLaunchConfigurations",
-    );
-    expect(value.actions.runCommand).toHaveBeenNthCalledWith(4, "debug.attachNode");
-    expect(value.actions.showBottomPanelView).toHaveBeenCalledWith("debug");
-    expect(value.actions.maximizePanel).toHaveBeenCalledTimes(1);
-  });
-
-  it("routes split, runtime, node stop, IDE mode, trust and reveal to the actions", () => {
+  it("routes split, runtime, IDE mode, trust and reveal to the actions", () => {
     const value = input();
     render(value);
     results[0]?.splitRight();
     results[0]?.splitDown();
     results[0]?.openRuntimeView();
-    results[0]?.stopNodeRun();
     results[0]?.toggleIdeMode();
     results[0]?.trustWorkspace();
     results[0]?.revealInFiles();
@@ -259,7 +232,6 @@ describe("useEditorChromeValue", () => {
     expect(value.actions.runCommand).toHaveBeenNthCalledWith(1, "editor.splitRight");
     expect(value.actions.runCommand).toHaveBeenNthCalledWith(2, "editor.splitDown");
     expect(value.actions.showBottomPanelView).toHaveBeenCalledWith("runtime");
-    expect(value.actions.stopNodeRun).toHaveBeenCalledTimes(1);
     expect(value.actions.toggleIdeMode).toHaveBeenCalledTimes(1);
     expect(value.actions.trustWorkspace).toHaveBeenCalledTimes(1);
     expect(value.actions.revealInFiles).toHaveBeenCalledTimes(1);

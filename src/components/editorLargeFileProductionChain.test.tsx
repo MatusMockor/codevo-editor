@@ -33,10 +33,6 @@ vi.mock("./typescriptJavascriptDefaults", async (importOriginal) => ({
   ...(await importOriginal()),
   configureTypescriptJavascriptDefaultsOnce: providerMocks.configure,
 }));
-vi.mock("./debugHoverMonacoProvider", async (importOriginal) => ({
-  ...(await importOriginal()),
-  registerDebugHoverMonacoProviders: providerMocks.register,
-}));
 
 const MIB = 1024 * 1024;
 const LSP_INITIAL_TEXT_LIMIT = 2 * MIB;

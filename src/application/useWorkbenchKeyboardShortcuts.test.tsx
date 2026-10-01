@@ -131,21 +131,21 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     },
   );
 
-  it("runs the Debug Test at Cursor chord exactly once in the same Monaco editor", () => {
+  it("runs the Run Test at Cursor chord exactly once in the same Monaco editor", () => {
     const run = vi.fn();
     const registry = new CommandRegistry();
     registry.register({
       category: "Test",
-      id: "testing.debugAtCursor",
+      id: "testing.runAtCursor",
       isEnabled: () => true,
       run,
-      title: "Debug Test at Cursor",
+      title: "Run Test at Cursor",
     });
     const appSettings = defaultAppSettings();
     const harness = renderHook({
       appSettings: {
         ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
       },
       commandRegistry: registry,
     });
@@ -163,21 +163,21 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
-  it("consumes the global testing prefix without dispatching Debug at Cursor outside Monaco", () => {
+  it("consumes the global testing prefix without dispatching Run Test at Cursor outside Monaco", () => {
     const run = vi.fn();
     const registry = new CommandRegistry();
     registry.register({
       category: "Test",
-      id: "testing.debugAtCursor",
+      id: "testing.runAtCursor",
       isEnabled: () => true,
       run,
-      title: "Debug Test at Cursor",
+      title: "Run Test at Cursor",
     });
     const appSettings = defaultAppSettings();
     const harness = renderHook({
       appSettings: {
         ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
       },
       commandRegistry: registry,
     });
@@ -379,16 +379,16 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     const registry = new CommandRegistry();
     registry.register({
       category: "Test",
-      id: "testing.debugAtCursor",
+      id: "testing.runAtCursor",
       isEnabled: () => true,
       run,
-      title: "Debug Test at Cursor",
+      title: "Run Test at Cursor",
     });
     const appSettings = defaultAppSettings();
     const harness = renderHook({
       appSettings: {
         ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
       },
       commandRegistry: registry,
     });
@@ -416,16 +416,16 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     const registry = new CommandRegistry();
     registry.register({
       category: "Test",
-      id: "testing.debugAtCursor",
+      id: "testing.runAtCursor",
       isEnabled: () => true,
       run,
-      title: "Debug Test at Cursor",
+      title: "Run Test at Cursor",
     });
     const appSettings = defaultAppSettings();
     const harness = renderHook({
       appSettings: {
         ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
       },
       commandRegistry: registry,
     });
@@ -451,16 +451,16 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     const registry = new CommandRegistry();
     registry.register({
       category: "Test",
-      id: "testing.debugAtCursor",
+      id: "testing.runAtCursor",
       isEnabled: () => true,
       run,
-      title: "Debug Test at Cursor",
+      title: "Run Test at Cursor",
     });
     const settingsA = defaultAppSettings();
-    settingsA.keymap["testing.debugAtCursor"] = "Cmd+; Cmd+C";
+    settingsA.keymap["testing.runAtCursor"] = "Cmd+; Cmd+C";
     const settingsB = {
       ...settingsA,
-      keymap: { ...settingsA.keymap, "testing.debugAtCursor": "Cmd+K Cmd+C" },
+      keymap: { ...settingsA.keymap, "testing.runAtCursor": "Cmd+K Cmd+C" },
     };
     const identityA = {};
     const identityB = {};

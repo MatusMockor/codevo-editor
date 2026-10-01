@@ -27,12 +27,6 @@ describe("workbenchJsTestCommands", () => {
         visibleInCommandPalette: true,
       },
       {
-        id: "testing.debugAtCursor",
-        title: "Debug Test at Cursor",
-        category: "Test",
-        visibleInCommandPalette: undefined,
-      },
-      {
         id: "testing.runCurrentFile",
         title: "Run Tests in Current File",
         category: "Test",
@@ -166,53 +160,6 @@ describe("workbenchJsTestCommands", () => {
     expect(rerun.isEnabled(context({ hasActiveDocument: false, hasWorkspace: true }))).toBe(false);
   });
 
-  it("enables debug at cursor only for a clean active JS test and live coordinator", () => {
-    const enabled = createCommands({ canDebugAtCursor: () => true });
-    const disabledCoordinator = createCommands({ canDebugAtCursor: () => false });
-    const dirty = context({
-      activeDocumentDirty: true,
-      hasActiveDocument: true,
-      hasWorkspace: true,
-    });
-    const ready = context({
-      activeDocumentDirty: false,
-      hasActiveDocument: true,
-      hasWorkspace: true,
-    });
-
-    expect(command(enabled, "testing.debugAtCursor").isEnabled(ready)).toBe(true);
-    expect(command(enabled, "testing.debugAtCursor").isEnabled(dirty)).toBe(false);
-    expect(command(disabledCoordinator, "testing.debugAtCursor").isEnabled(ready)).toBe(false);
-    expect(
-      command(createCommands({ hasJsWorkspace: false }), "testing.debugAtCursor").isEnabled(ready),
-    ).toBe(false);
-    expect(
-      command(createCommands({ isActiveDocumentJsTest: false }), "testing.debugAtCursor").isEnabled(
-        ready,
-      ),
-    ).toBe(false);
-    expect(
-      command(enabled, "testing.debugAtCursor").isEnabled(
-        context({ hasActiveDocument: false, hasWorkspace: true }),
-      ),
-    ).toBe(false);
-    expect(
-      command(enabled, "testing.debugAtCursor").isEnabled(
-        context({ hasActiveDocument: true, hasWorkspace: false }),
-      ),
-    ).toBe(false);
-  });
-
-  it("reads debug-at-cursor capability live without rebuilding the command list", () => {
-    let available = true;
-    const commands = createCommands({ canDebugAtCursor: () => available });
-    const ready = context({ hasActiveDocument: true, hasWorkspace: true });
-
-    expect(command(commands, "testing.debugAtCursor").isEnabled(ready)).toBe(true);
-    available = false;
-    expect(command(commands, "testing.debugAtCursor").isEnabled(ready)).toBe(false);
-  });
-
   it.each(["testing.runAtCursor", "testing.runCurrentFile"])(
     "enables %s only for a clean active JS test and live coordinator",
     (id) => {
@@ -291,7 +238,6 @@ describe("workbenchJsTestCommands", () => {
   });
 
   it("wires the run callbacks", () => {
-    const debugAtCursor = vi.fn();
     const cancelTestRun = vi.fn(async () => true);
     const rerunFailedTests = vi.fn(async () => true);
     const runAtCursor = vi.fn();
@@ -301,14 +247,12 @@ describe("workbenchJsTestCommands", () => {
     const runAllTestsForActiveDocument = vi.fn();
     const openTestResultsPanel = vi.fn();
     const commands = workbenchJsTestCommands({
-      canDebugAtCursor: () => true,
       canCancelTestRun: () => true,
       canRerunFailedTests: () => true,
       canRunAtCursor: () => true,
       canRunCurrentFile: () => true,
       canRerunLastRun: () => true,
       cancelTestRun,
-      debugAtCursor,
       hasJsWorkspace: true,
       isActiveDocumentJsTest: true,
       runTestForActiveDocument,
@@ -321,7 +265,6 @@ describe("workbenchJsTestCommands", () => {
     });
 
     command(commands, "testing.runAtCursor").run();
-    command(commands, "testing.debugAtCursor").run();
     command(commands, "testing.runCurrentFile").run();
     command(commands, "testing.reRunFailTests").run();
     command(commands, "testing.reRunLastRun").run();
@@ -330,7 +273,6 @@ describe("workbenchJsTestCommands", () => {
     command(commands, "js.runTestFile").run();
     command(commands, "js.runTestsWithResultsPanel").run();
 
-    expect(debugAtCursor).toHaveBeenCalledTimes(1);
     expect(runAtCursor).toHaveBeenCalledTimes(1);
     expect(runCurrentFile).toHaveBeenCalledTimes(1);
     expect(rerunFailedTests).toHaveBeenCalledTimes(1);
@@ -347,11 +289,9 @@ function createCommands(
 ): Command[] {
   return workbenchJsTestCommands({
     canCancelTestRun: () => true,
-    canDebugAtCursor: () => true,
     canRerunFailedTests: () => true,
     canRunAtCursor: () => true,
     canRunCurrentFile: () => true,
-    debugAtCursor: vi.fn(),
     hasJsWorkspace: true,
     isActiveDocumentJsTest: true,
     runTestForActiveDocument: vi.fn(),

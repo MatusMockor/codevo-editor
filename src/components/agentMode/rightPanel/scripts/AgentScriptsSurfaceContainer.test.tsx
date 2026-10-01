@@ -79,7 +79,6 @@ function processTasks(): VscodeProcessTasksPanelProps {
     unavailable: null,
     discover: vi.fn(async () => true),
     start: vi.fn(async () => true),
-    startAndWait: vi.fn(async () => null),
     stop: vi.fn(async () => true),
     configurationAction: "open",
     configuring: false,

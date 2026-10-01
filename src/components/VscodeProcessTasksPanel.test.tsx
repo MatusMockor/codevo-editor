@@ -445,7 +445,6 @@ describe("VscodeProcessTasksPanel", () => {
       problems: null,
       running: false,
       start,
-      startAndWait: vi.fn(async () => ({ status: "exited" as const, exitCode: 0 })),
       status: null,
       stop,
       stopping: false,

@@ -11,7 +11,6 @@ import {
 import type * as Monaco from "monaco-editor";
 import type { EditorDocument } from "../domain/workspace";
 import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
-import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvaluation";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
 import type { LiveDocumentRuntime } from "../application/liveDocumentRuntime";
 import type {
@@ -71,7 +70,6 @@ import {
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import { configureTypescriptJavascriptDefaultsOnce } from "./typescriptJavascriptDefaults";
-import { registerDebugHoverMonacoProviders } from "./debugHoverMonacoProvider";
 import {
   EditorModelContentSyncCoordinator,
   type EditorModelLiveRevision,
@@ -106,7 +104,6 @@ export function EditorRuntimeHost({
   activeGroupId = null,
   attachEditorGroupLiveDocument,
   children,
-  debugHover,
   documentSessionAuthorityRevision,
   isEditorGroupDocumentSessionAuthorityCurrent,
   javaScriptTypeScriptIncrementalSync,
@@ -119,7 +116,6 @@ export function EditorRuntimeHost({
   activeGroupId?: string | null;
   attachEditorGroupLiveDocument?: AttachEditorGroupLiveDocument | null;
   children: ReactNode;
-  debugHover?: DebugHoverEvaluationPort | null;
   documentSessionAuthorityRevision?: unknown;
   isEditorGroupDocumentSessionAuthorityCurrent?: (
     authority: EditorGroupDocumentSessionAuthority,
@@ -1098,23 +1094,6 @@ export function EditorRuntimeHost({
     javaScriptTypeScriptWorkspaceEditGateway,
     routedJavaScriptTypeScriptContext,
   ]);
-
-  useEffect(() => {
-    const monacoApi = activeRegistration?.monacoApi;
-    if (!monacoApi || !debugHover) return;
-    return registerDebugHoverMonacoProviders(monacoApi, {
-      debugHover,
-      getAdmittedWorkspaceRoot: () => admittedWorkspaceRootRef.current,
-      resolveDocumentForModel: (model) =>
-        resolveRuntimeDocumentForModel(
-          [...registrationsRef.current.values()].filter((registration) =>
-            registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
-          ),
-          model,
-          focusedGroupRef.current,
-        ),
-    }).dispose;
-  }, [activeRegistration?.monacoApi, activeRegistration?.workspaceRoot, debugHover]);
 
   const hasTypescriptJavascriptDefaults =
     configurationRegistration?.typescriptJavascriptDefaults !== undefined;

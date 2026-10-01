@@ -1,5 +1,5 @@
 use crate::{
-    debug_support::DebugProcessHandle,
+    process_group_termination::terminate_process_group,
     trust::WorkspaceTrustService,
     workspace_registry::{opened_root_path, WorkspaceId, WorkspaceRegistry},
 };
@@ -479,7 +479,7 @@ fn run_console_with_binary(
     let deadline = Instant::now() + timeout;
     let status = loop {
         if overflowed.load(Ordering::Acquire) {
-            DebugProcessHandle::from_process_id(child.id()).terminate();
+            terminate_process_group(child.id());
             let _ = child.wait();
             break Err("Symfony Console output exceeded the safety limit.".to_string());
         }
@@ -487,7 +487,7 @@ fn run_console_with_binary(
             Ok(Some(status)) => break Ok(status),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
             Ok(None) => {
-                DebugProcessHandle::from_process_id(child.id()).terminate();
+                terminate_process_group(child.id());
                 let _ = child.wait();
                 break Err(format!(
                     "Symfony Console timed out after {} seconds.",
@@ -495,7 +495,7 @@ fn run_console_with_binary(
                 ));
             }
             Err(error) => {
-                DebugProcessHandle::from_process_id(child.id()).terminate();
+                terminate_process_group(child.id());
                 let _ = child.wait();
                 break Err(format!("Failed to inspect Symfony Console: {error}"));
             }

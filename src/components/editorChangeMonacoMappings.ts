@@ -1,7 +1,5 @@
 import type { CSSProperties } from "react";
 import type * as Monaco from "monaco-editor";
-import type { Breakpoint } from "../domain/debug";
-import { formatBreakpointHitCondition } from "../domain/debugBreakpointHitCondition";
 import type { EditorChangeHunk, EditorChangeKind } from "../domain/editorChangeMarkers";
 import { gitBlameAnnotation, type GitBlameLine } from "../domain/git";
 
@@ -69,62 +67,6 @@ export function toBookmarkDecoration(
     },
     range: new monaco.Range(lineNumber, 1, lineNumber, 1),
   };
-}
-
-export function toBreakpointDecoration(
-  monaco: typeof Monaco,
-  breakpoint: Breakpoint,
-): Monaco.editor.IModelDeltaDecoration {
-  if (breakpoint.columnNumber !== undefined) {
-    const kindClass = breakpoint.logMessage
-      ? " inline-breakpoint-marker-logpoint"
-      : breakpoint.condition || breakpoint.hitCondition
-        ? " inline-breakpoint-marker-conditional"
-        : "";
-    return {
-      options: {
-        after: {
-          content: "●",
-          inlineClassName: `inline-breakpoint-marker${kindClass} ${breakpointGlyphStateClassName(breakpoint)}`,
-        },
-        hoverMessage: { value: breakpointHoverMessage(breakpoint) },
-        stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-        zIndex: 31,
-      },
-      range: new monaco.Range(
-        breakpoint.lineNumber,
-        breakpoint.columnNumber,
-        breakpoint.lineNumber,
-        breakpoint.columnNumber,
-      ),
-    };
-  }
-
-  return {
-    options: {
-      glyphMargin: {
-        position: monaco.editor.GlyphMarginLane.Left,
-      },
-      glyphMarginClassName: `breakpoint-glyph${breakpoint.logMessage ? " breakpoint-glyph-logpoint" : breakpoint.condition || breakpoint.hitCondition ? " breakpoint-glyph-conditional" : ""} ${breakpointGlyphStateClassName(breakpoint)}`,
-      glyphMarginHoverMessage: {
-        value: breakpointHoverMessage(breakpoint),
-      },
-      isWholeLine: false,
-      stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-      zIndex: 30,
-    },
-    range: new monaco.Range(breakpoint.lineNumber, 1, breakpoint.lineNumber, 1),
-  };
-}
-
-export function breakpointHoverMessage(breakpoint: Breakpoint): string {
-  const details: string[] = [];
-  if (breakpoint.logMessage) details.push(`Log message: ${breakpoint.logMessage}`);
-  if (breakpoint.condition) details.push(`Condition: ${breakpoint.condition}`);
-  if (breakpoint.hitCondition)
-    details.push(`Hit count: ${formatBreakpointHitCondition(breakpoint.hitCondition)}`);
-  const kind = breakpoint.logMessage ? "Logpoint" : "Breakpoint";
-  return details.length > 0 ? `${kind} — ${details.join("; ")}` : kind;
 }
 
 export function toGitBlameDecoration(
@@ -210,12 +152,6 @@ export function changePreviewText(hunk: EditorChangeHunk): string {
 
 export function clampNumber(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
-}
-
-function breakpointGlyphStateClassName(breakpoint: Breakpoint): string {
-  if (!breakpoint.enabled) return "breakpoint-glyph-disabled";
-  if (breakpoint.verified === false) return "breakpoint-glyph-unverified";
-  return "breakpoint-glyph-verified";
 }
 
 function editorChangeColor(kind: EditorChangeKind): Monaco.editor.ThemeColor {

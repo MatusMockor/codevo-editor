@@ -158,21 +158,16 @@ describe("shortcutSequence", () => {
     expect(findKeymapSequenceConflicts(keymap, "default", "mac")).toEqual([]);
   });
 
-  it("resolves the official Debug Test at Cursor chord on each platform", () => {
+  it("resolves the official Run Test at Cursor chord on each platform", () => {
     const linuxKeymap = defaultKeymapSettings("linux");
     expect(
-      lookupKeymapShortcutSequence(
-        linuxKeymap,
-        "Ctrl+; Ctrl+C",
-        ["testing.debugAtCursor"],
-        "linux",
-      ),
-    ).toEqual({ exact: ["testing.debugAtCursor"], prefix: [] });
+      lookupKeymapShortcutSequence(linuxKeymap, "Ctrl+; C", ["testing.runAtCursor"], "linux"),
+    ).toEqual({ exact: ["testing.runAtCursor"], prefix: [] });
 
     const macKeymap = defaultKeymapSettings("mac");
     expect(
-      lookupKeymapShortcutSequence(macKeymap, "Cmd+; Cmd+C", ["testing.debugAtCursor"], "mac"),
-    ).toEqual({ exact: ["testing.debugAtCursor"], prefix: [] });
+      lookupKeymapShortcutSequence(macKeymap, "Cmd+; C", ["testing.runAtCursor"], "mac"),
+    ).toEqual({ exact: ["testing.runAtCursor"], prefix: [] });
   });
 
   it("keeps a bare first stroke reachable through the keydown prefilter", () => {

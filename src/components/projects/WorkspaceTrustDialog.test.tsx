@@ -55,7 +55,7 @@ describe("WorkspaceTrustDialogHost", () => {
     expect(dialog?.textContent).toContain("/Users/dev/code/web-dashboard");
     expect(dialog?.textContent).toContain("Cloned from github.com/acme/web-dashboard");
     expect(dialog?.textContent).toContain("Agents run commands and edit files in this folder");
-    expect(dialog?.textContent).toContain("Package scripts, tasks, tests and the debugger can run");
+    expect(dialog?.textContent).toContain("Package scripts, tasks and tests can run");
     expect(dialog?.textContent).toContain("Language servers start from the project's own binaries");
     expect(dialog?.textContent).toContain("You can revoke trust any time in project settings.");
     expect(document.activeElement).toBe(button("Not now"));

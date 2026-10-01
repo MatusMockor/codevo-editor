@@ -4,7 +4,6 @@ export type BottomPanelView =
   | "history"
   | "terminal"
   | "runtime"
-  | "debug"
   | "search"
   | "expressRoutes"
   | "packages"
@@ -26,10 +25,6 @@ export function bottomPanelLabel(view: BottomPanelView): string {
 
   if (view === "runtime") {
     return "Runtime";
-  }
-
-  if (view === "debug") {
-    return "Debug";
   }
 
   if (view === "search") {

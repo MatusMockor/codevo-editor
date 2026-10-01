@@ -6,7 +6,6 @@ import {
 } from "../../../domain/largeDocumentPolicy";
 import { settingsIgnorePatternsFromText, type WorkspaceSettings } from "../../../domain/settings";
 import { nullableInputValue } from "../../settingsDialogValues";
-import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsNumberField } from "../primitives/SettingsNumberField";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
@@ -78,18 +77,6 @@ export function IndexLanguagesSettingsPage(props: SettingsPageProps) {
       <JavaScriptTypeScriptRows {...props} />
 
       <SettingsSectionHeading title="Node, ESLint and Prettier">
-        <SettingsRow rowId="index.nodeLaunchConfigurations">
-          <SettingsButton
-            disabled={disabled}
-            label="Edit Node launch configurations"
-            onClick={env.onOpenNodeLaunchConfigurations}
-            size="compact"
-            variant="outline"
-          >
-            Edit
-          </SettingsButton>
-        </SettingsRow>
-
         <SettingsRow rowId="index.eslintPath">
           <SettingsTextField
             disabled={disabled}

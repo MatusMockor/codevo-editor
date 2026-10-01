@@ -14,10 +14,6 @@ export type VscodeProcessTaskStartOutcome =
   | { readonly status: "rejected" | "stale" }
   | { readonly status: "error" };
 
-export type VscodeProcessTaskCompletion =
-  | { readonly status: "exited"; readonly exitCode: number | null }
-  | { readonly status: "failed" | "stopped" | "stale" };
-
 export interface VscodeProcessTaskCoordinatorSnapshot {
   readonly activation: number | null;
   readonly owner: VscodeProcessTaskOwner | null;
@@ -29,14 +25,12 @@ export interface VscodeProcessTaskCoordinatorSnapshot {
 
 export interface VscodeProcessTaskCoordinator {
   cancel(): Promise<boolean>;
-  cancelExact(owner: VscodeProcessTaskOwner): Promise<boolean>;
   invalidate(): Promise<boolean>;
   snapshot(): VscodeProcessTaskCoordinatorSnapshot;
   start(request: {
     readonly activation: number;
     readonly owner: VscodeProcessTaskOwner;
   }): Promise<VscodeProcessTaskStartOutcome>;
-  waitForTerminal(owner: VscodeProcessTaskOwner): Promise<VscodeProcessTaskCompletion>;
 }
 
 export type VscodeProcessTaskPublicationScheduler = (publish: () => void) => () => void;
@@ -53,8 +47,6 @@ interface ActiveTask {
   stopFlight: Promise<boolean> | null;
   stopping: boolean;
   unsubscribe: (() => void) | null;
-  readonly completion: Promise<VscodeProcessTaskCompletion>;
-  readonly resolveCompletion: (completion: VscodeProcessTaskCompletion) => void;
 }
 
 const EMPTY_SNAPSHOT: VscodeProcessTaskCoordinatorSnapshot = Object.freeze({
@@ -179,7 +171,6 @@ export function createVscodeProcessTaskCoordinator(options: {
             state: candidate.state,
           })
         : null;
-    candidate.resolveCompletion(completionFromState(candidate.state));
     publishNow();
   };
 
@@ -221,17 +212,8 @@ export function createVscodeProcessTaskCoordinator(options: {
     }
   };
 
-  const stop = async (
-    invalidated: boolean,
-    expectedOwner: VscodeProcessTaskOwner | null = null,
-  ): Promise<boolean> => {
+  const stop = async (invalidated: boolean): Promise<boolean> => {
     const candidate = active;
-    if (
-      expectedOwner &&
-      (!candidate || !vscodeProcessTaskOwnersEqual(candidate.owner, expectedOwner))
-    ) {
-      return false;
-    }
     if (!candidate) {
       if (invalidated) {
         retained = null;
@@ -264,7 +246,6 @@ export function createVscodeProcessTaskCoordinator(options: {
 
   return Object.freeze({
     cancel: () => stop(false),
-    cancelExact: (owner: VscodeProcessTaskOwner) => stop(false, owner),
     invalidate: () => stop(true),
     snapshot,
     start: async ({
@@ -298,7 +279,6 @@ export function createVscodeProcessTaskCoordinator(options: {
         stopFlight: null,
         stopping: false,
         unsubscribe: null,
-        ...completionDeferred(),
       };
       active = candidate;
       publishNow();
@@ -355,45 +335,7 @@ export function createVscodeProcessTaskCoordinator(options: {
         return outcome("error");
       }
     },
-    waitForTerminal: async (
-      owner: VscodeProcessTaskOwner,
-    ): Promise<VscodeProcessTaskCompletion> => {
-      if (active && vscodeProcessTaskOwnersEqual(active.owner, owner)) {
-        return active.completion;
-      }
-      if (retained && vscodeProcessTaskOwnersEqual(retained.state.owner, owner)) {
-        return completionFromState(retained.state);
-      }
-      return completion("stale");
-    },
   });
-}
-
-function completionFromState(state: VscodeProcessTaskState): VscodeProcessTaskCompletion {
-  if (state.status === "exited") {
-    return Object.freeze({ status: "exited", exitCode: state.exitCode });
-  }
-  if (state.status === "failed" || state.status === "stopped") {
-    return completion(state.status);
-  }
-  return completion("stale");
-}
-
-function completionDeferred(): {
-  readonly completion: Promise<VscodeProcessTaskCompletion>;
-  readonly resolveCompletion: (completion: VscodeProcessTaskCompletion) => void;
-} {
-  let resolveCompletion!: (completion: VscodeProcessTaskCompletion) => void;
-  const taskCompletion = new Promise<VscodeProcessTaskCompletion>((resolve) => {
-    resolveCompletion = resolve;
-  });
-  return { completion: taskCompletion, resolveCompletion };
-}
-
-function completion<T extends VscodeProcessTaskCompletion["status"]>(
-  status: T,
-): Extract<VscodeProcessTaskCompletion, { status: T }> {
-  return Object.freeze({ status }) as Extract<VscodeProcessTaskCompletion, { status: T }>;
 }
 
 function defaultPublicationScheduler(publish: () => void): () => void {

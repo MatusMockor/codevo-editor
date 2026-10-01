@@ -2,13 +2,12 @@ use crate::{
     agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry,
     agent_task_spawner::claude_session_registry::ClaudeSessionRegistry,
     agent_task_supervisor::AgentTaskRegistry,
-    debug_adapter::DebugSessionRegistry,
     eslint,
     job_scheduler::WorkspaceIndexLifecycle,
     js_test_run, js_test_tasks, js_test_watch,
     js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry,
     lsp_session::{JavaScriptTypeScriptLanguageServerRegistry, PhpLanguageServerRegistry},
-    node_package_tasks, node_run_tasks,
+    node_package_tasks,
     terminal_session::TerminalSupervisor,
     vscode_process_task_commands::VscodeProcessTaskCommandService,
     workspace_file_watcher::WorkspaceFileChangeWatchRegistry,
@@ -31,7 +30,6 @@ pub(crate) trait RuntimeTaskLifecycleExt {
 impl RuntimeTaskLifecycleExt for AppHandle {
     fn request_stop_all_tasks(&self, js_test_batches: &js_test_run::batch::JsTestBatchRegistry) {
         node_package_tasks::request_stop_all_in_app(self);
-        node_run_tasks::request_stop_all_in_app(self);
         js_test_tasks::request_stop_all_in_app(self);
         js_test_watch::request_stop_all_in_app(self);
         js_test_batches.stop_all();
@@ -46,7 +44,6 @@ impl RuntimeTaskLifecycleExt for AppHandle {
         js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
     ) {
         node_package_tasks::request_stop_workspace_in_app(self, workspace_id);
-        node_run_tasks::request_stop_workspace_in_app(self, workspace_id);
         js_test_tasks::request_stop_workspace_in_app(self, workspace_id);
         js_test_watch::request_stop_workspace_in_app(self, workspace_id);
         js_test_batches.request_stop_workspace(workspace_id);
@@ -121,9 +118,6 @@ pub(crate) fn shutdown_runtime_processes(
     }
     if let Some(registry) = app.try_state::<JavaScriptTypeScriptLanguageServerRegistry>() {
         let _ = registry.stop_all();
-    }
-    if let Some(registry) = app.try_state::<Arc<DebugSessionRegistry>>() {
-        registry.stop_all();
     }
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
         supervisor.stop_all();

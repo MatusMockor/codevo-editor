@@ -30,17 +30,12 @@ import {
 import { currentEditorModelForPath } from "./editorSurfaceLiveModelContentAuthority";
 import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { EditorCursorStorePort } from "../application/editorCursorStore";
-import type { DebugWatchAtCursorCaptureReader } from "../domain/debugWatchAtCursorCapture";
-import type { DebugBreakpointNavigationCaptureReader } from "../domain/debugBreakpointNavigationCapture";
-import type { DebugInlineBreakpointCaptureReader } from "../domain/debugInlineBreakpointCapture";
-import type { DebugEvaluateInConsoleCaptureReader } from "../domain/debugEvaluateInConsoleCapture";
+import type { EditorCursorCaptureReader } from "../domain/editorCursorCapture";
 import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
 } from "../application/useWorkbenchCodeQualityDiagnostics";
 import type { EditorSurfaceEslintDisableRunner } from "../application/workbenchEslintDisableCommand";
-import type { DebugInlineValueContext } from "../application/debugInlineValueContext";
-import type { DebugBreakpointManagement } from "../application/useDebugBreakpointManagement";
 import type { JsTestExplorerCurrentFileIdentity } from "../domain/jsTestExplorerFilter";
 import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type {
@@ -68,7 +63,6 @@ import {
 } from "../domain/largeDocumentPolicy";
 import { useEditorCursorPublication } from "./useEditorCursorPublication";
 import type { HippieSession } from "../domain/hippieCompletion";
-import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { GitBlameLine } from "../domain/git";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
@@ -128,7 +122,6 @@ import {
 
 import { clampNumber } from "./editorChangeMonacoMappings";
 import type { EditorSurfaceCoverageProps } from "./useEditorSurfaceCoverageDecorations";
-import { useEditorBreakpointDecorations } from "./useEditorBreakpointDecorations";
 import { useEditorRuntimeDecorations } from "./useEditorRuntimeDecorations";
 import { isLargeSmartModel } from "./editorSurfaceModelGuards";
 import type { EditorRuntimeMembershipInput } from "./editorRuntimeMembership";
@@ -151,7 +144,6 @@ import { type SurroundWithRequest } from "./editorSurfaceCore/editorCommands";
 import {
   EMPTY_BOOKMARK_LINES,
   EMPTY_BREADCRUMB_SYMBOLS,
-  EMPTY_BREAKPOINTS,
   EMPTY_PATHS,
   EMPTY_USER_SNIPPETS,
   noopLocalPhpDiagnosticsChange,
@@ -161,7 +153,7 @@ import { useEditorPresentationBindings } from "./editorSurfaceCore/useEditorPres
 import { useBackgroundTokenizationLifecycle } from "./editorSurfaceCore/useBackgroundTokenizationLifecycle";
 import { useEditorModelViewStateLifecycle } from "./editorSurfaceCore/useEditorModelViewStateLifecycle";
 import { useEditorSurfaceCommandPublications } from "./editorSurfaceCore/useEditorSurfaceCommandPublications";
-import { useEditorDebugCaptureReaders } from "./editorSurfaceCore/useEditorDebugCaptureReaders";
+import { useEditorCursorCaptureReader } from "./editorSurfaceCore/useEditorCursorCaptureReader";
 import { useEditorDiagnosticFixRunners } from "./editorSurfaceCore/useEditorDiagnosticFixRunners";
 import { useEditorSourceControlDecorations } from "./editorSurfaceCore/useEditorSourceControlDecorations";
 import { useEditorGutterDecorations } from "./editorSurfaceCore/useEditorGutterDecorations";
@@ -210,12 +202,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   ): Promise<WorkspaceEditApplicationDecision>;
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
-  breakpoints?: readonly Breakpoint[];
-  breakpointActions?: Partial<DebugBreakpointManagement>;
-  onBreakpointMutationError?: (error: unknown) => void;
   changeHunks: readonly EditorChangeHunk[];
-  debugStoppedLocation?: { filePath: string; lineNumber: number } | null;
-  debugInlineValueContext?: DebugInlineValueContext | null;
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingJavaScriptTypeScriptLanguageServerDocument?(path: string): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
@@ -268,16 +255,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   onEditorViewStateChange?(path: string, viewState: WorkspaceSessionViewState): void;
   onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
   onEditorSurfaceCommandRunnerChange?(runner: EditorSurfaceCommandRunner | null): void;
-  onDebugWatchAtCursorCaptureReaderChange?(reader: DebugWatchAtCursorCaptureReader | null): void;
-  onDebugEvaluateInConsoleCaptureReaderChange?(
-    reader: DebugEvaluateInConsoleCaptureReader | null,
-  ): void;
-  onDebugBreakpointNavigationCaptureReaderChange?(
-    reader: DebugBreakpointNavigationCaptureReader | null,
-  ): void;
-  onDebugInlineBreakpointCaptureReaderChange?(
-    reader: DebugInlineBreakpointCaptureReader | null,
-  ): void;
+  onEditorCursorCaptureReaderChange?(reader: EditorCursorCaptureReader | null): void;
   onEditorSurfaceBufferFixRunnerChange?(runner: EditorSurfaceBufferFixRunner | null): void;
   onEditorSurfaceEslintDisableRunnerChange?(runner: EditorSurfaceEslintDisableRunner | null): void;
   onEditorSurfacePhpstanIgnoreRunnerChange?(runner: EditorSurfacePhpstanIgnoreRunner | null): void;
@@ -289,7 +267,6 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   onCloseFloatingSurface?(): boolean;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
-  onToggleBreakpoint?(filePath: string, lineNumber: number): void | Promise<void>;
   onToggleGitBlame?(): void;
   onRevealGitBlameCommit?(path: string, sha: string): void;
   provideGitBlame?(path: string): Promise<GitBlameLine[]>;
@@ -389,12 +366,7 @@ function EditorSurfaceComponent({
   applyPhpLanguageServerWorkspaceEdit = async () => ({ kind: "accepted" }),
   clearLanguageServerDiagnosticsForPath = () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
-  breakpoints = EMPTY_BREAKPOINTS,
-  breakpointActions,
-  onBreakpointMutationError,
   changeHunks,
-  debugStoppedLocation = null,
-  debugInlineValueContext = null,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
@@ -446,10 +418,7 @@ function EditorSurfaceComponent({
   onEditorViewStateChange,
   onEditorMenuCommandRunnerChange,
   onEditorSurfaceCommandRunnerChange,
-  onDebugWatchAtCursorCaptureReaderChange,
-  onDebugEvaluateInConsoleCaptureReaderChange,
-  onDebugBreakpointNavigationCaptureReaderChange,
-  onDebugInlineBreakpointCaptureReaderChange,
+  onEditorCursorCaptureReaderChange,
   onEditorSurfaceBufferFixRunnerChange,
   onEditorSurfaceEslintDisableRunnerChange,
   onEditorSurfacePhpstanIgnoreRunnerChange,
@@ -461,7 +430,6 @@ function EditorSurfaceComponent({
   onCloseFloatingSurface,
   onRunTestAt,
   onToggleBookmarkAtLine,
-  onToggleBreakpoint,
   onToggleGitBlame,
   onRevealGitBlameCommit,
   provideGitBlame,
@@ -518,41 +486,15 @@ function EditorSurfaceComponent({
         : null,
     [workspaceIdentityDescriptor, workspaceRoot],
   );
-  const currentBreakpointModel = currentEditorModelForPath(
+  const currentActiveModel = currentEditorModelForPath(
     editorApi,
     workspaceRoot,
     activeDocumentPath,
   );
-  const toggleBreakpointAction = breakpointActions?.toggleBreakpoint ?? onToggleBreakpoint;
-  const reportBreakpointMutationError = useCallback(
-    (error: unknown) => {
-      try {
-        onBreakpointMutationError?.(error);
-      } catch {
-        // Error reporting must not create another unhandled rejection.
-      }
-    },
-    [onBreakpointMutationError],
-  );
-  useEditorBreakpointDecorations(
-    editorApi,
-    monacoApi,
-    activeDocumentPath,
-    currentBreakpointModel,
-    breakpoints,
-    {
-      authoritativeContent: activeDocumentContent,
-      relocateBreakpoint: breakpointActions?.relocateBreakpoint,
-      workspaceOwnerKey: workspaceIdentityDescriptor?.workspaceId,
-      workspaceRoot,
-    },
-  );
   useEditorRuntimeDecorations({
     activeDocument,
     currentFileIdentity: jsTestProblemCurrentFileIdentity,
-    currentModel: currentBreakpointModel,
-    debugInlineValueContext,
-    debugStoppedLocation,
+    currentModel: currentActiveModel,
     editor: editorApi,
     jsTestCoverageReport,
     monaco: monacoApi,
@@ -1021,15 +963,12 @@ function EditorSurfaceComponent({
     workspaceRoot,
   });
 
-  useEditorDebugCaptureReaders({
+  useEditorCursorCaptureReader({
     activeDocumentPath,
     activeDocumentRef,
     editor: editorApi,
     editorSessionOwnerKey,
-    onDebugBreakpointNavigationCaptureReaderChange,
-    onDebugEvaluateInConsoleCaptureReaderChange,
-    onDebugInlineBreakpointCaptureReaderChange,
-    onDebugWatchAtCursorCaptureReaderChange,
+    onEditorCursorCaptureReaderChange,
     workspaceRoot,
     workspaceRootRef,
   });
@@ -1455,10 +1394,8 @@ function EditorSurfaceComponent({
     onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,
-    reportBreakpointMutationError,
     setChangePreview,
     testGutterTargetsRef,
-    toggleBreakpointAction,
   });
 
   useEditorChangeDecorations({
@@ -1955,8 +1892,6 @@ function EditorSurfaceComponent({
     activeDocumentIsLargeSmart,
     activeDocumentLargeSmartMode,
     beforeMountTheme: monacoTheme,
-    breakpointActions,
-    breakpoints,
     breadcrumbSymbols,
     changeHunksRef,
     changePreview,
@@ -1974,17 +1909,14 @@ function EditorSurfaceComponent({
     handleMount,
     isOpeningFile,
     minimapEnabled,
-    modelIdentity: currentBreakpointModel,
     monaco: monacoApi,
     monacoFontLigatures,
-    onMutationError: reportBreakpointMutationError,
     onRevertChangeHunk,
     runtime,
     runtimeMembershipGroupId: runtimeMembership?.groupId,
     setChangePreview,
     setSurroundWithRequest,
     surroundWithRequest,
-    toggleBreakpointFallback: onToggleBreakpoint,
     wordWrapEnabled,
     workspaceRoot,
   });

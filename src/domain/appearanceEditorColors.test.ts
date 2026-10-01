@@ -18,7 +18,6 @@ describe("EDITOR_EXTRA_COLORS", () => {
     const colors = EDITOR_EXTRA_COLORS[scheme];
 
     expect(block).toContain(`--cv-git-mod: ${colors.gitModified};`);
-    expect(block).toContain(`--cv-breakpoint: ${colors.breakpoint};`);
     expect(block).toContain(`--cv-match: ${colors.match};`);
     expect(block).toContain(`--cv-match-current: ${colors.matchCurrent};`);
   });

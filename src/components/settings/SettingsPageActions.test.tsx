@@ -135,7 +135,6 @@ function environment(): SettingsEnvironment {
     hasWorkspace: true,
     onCopyInstallCommand: () => undefined,
     onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-    onOpenNodeLaunchConfigurations: () => undefined,
     onRestartJavaScriptTypeScriptService: async () => undefined,
     phpTools: null,
     providerManagement: null,

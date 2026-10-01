@@ -1,11 +1,10 @@
-import { Bug, Play } from "lucide-react";
+import { Play } from "lucide-react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { jsTestRunScopeForExplorerNode, type JsTestRunScope } from "../domain/jsTestRunScope";
 import type {
   JsTestExplorerNode,
   JsTestExplorerStatus,
   JsTestExplorerTestNode,
-  JsTestExplorerWorkspaceNode,
 } from "../domain/jsTestExplorerTree";
 import type { FlatJsTestExplorerRow } from "./jsTestExplorerPanelProjection";
 
@@ -47,11 +46,7 @@ const styles: Record<string, CSSProperties> = {
 export interface JsTestExplorerTreeRowProps {
   readonly active: boolean;
   readonly collapsed: boolean;
-  readonly debugDisabled: boolean;
   readonly disabled: boolean;
-  readonly onDebugNode: (
-    node: Exclude<JsTestExplorerNode, JsTestExplorerWorkspaceNode>,
-  ) => Promise<void>;
   readonly onFocus: () => void;
   readonly onKeyDown: (event: KeyboardEvent<HTMLLIElement>) => void;
   readonly onOpenTest: (test: JsTestExplorerTestNode) => void;
@@ -65,9 +60,7 @@ export interface JsTestExplorerTreeRowProps {
 export function JsTestExplorerTreeRow({
   active,
   collapsed,
-  debugDisabled,
   disabled,
-  onDebugNode,
   onFocus,
   onKeyDown,
   onOpenTest,
@@ -125,18 +118,6 @@ export function JsTestExplorerTreeRow({
           <Play aria-hidden="true" size={12} />
           Run
         </button>
-        {node.kind !== "workspace" ? (
-          <button
-            aria-label={debugButtonLabel(node, fullName, scope)}
-            disabled={debugDisabled}
-            onClick={() => void onDebugNode(node)}
-            style={styles.action}
-            type="button"
-          >
-            <Bug aria-hidden="true" size={12} />
-            Debug
-          </button>
-        ) : null}
       </div>
     </li>
   );
@@ -169,16 +150,6 @@ function runButtonLabel(node: JsTestExplorerNode, fullName: string, scope: JsTes
   if (scope.kind === "file") return `Run tests in ${fileName(node.filePath)}`;
   if (node.kind === "suite") return `Run suite ${fullName}`;
   return `Run test ${fullName}`;
-}
-
-function debugButtonLabel(
-  node: Exclude<JsTestExplorerNode, JsTestExplorerWorkspaceNode>,
-  fullName: string,
-  scope: JsTestRunScope,
-): string {
-  if (scope.kind === "file") return `Debug tests in ${fileName(node.filePath)}`;
-  if (node.kind === "suite") return `Debug suite ${fullName}`;
-  return `Debug test ${fullName}`;
 }
 
 function nodeKindLabel(kind: JsTestExplorerNode["kind"]): string {

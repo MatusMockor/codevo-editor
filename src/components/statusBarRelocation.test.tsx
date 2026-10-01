@@ -89,7 +89,6 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
     visibilityKeys: ["index", "languageServer"],
     homes: ["editorSubheader"],
   },
-  { item: "node run", source: "editor", visibilityKeys: [], homes: ["editorSubheader"] },
   {
     item: "trust",
     source: "editor",
@@ -153,7 +152,6 @@ describe("status bar removal inventory", () => {
     const chrome = chromeFixture({
       diagnostics: { errors: 1, warnings: 4 },
       activity: { kind: "problem", text: "Indexing failed", title: "Indexing failed\ndisk full" },
-      nodeRun: { canStop: true, label: "Running dev", phase: "running", stopLabel: "Stop dev" },
       statusRows: editorStatusRows({
         activeLanguage: "TypeScript",
         workspaceLabel: "orders-api · TS 5.8",
@@ -181,7 +179,6 @@ describe("status bar removal inventory", () => {
 
     expect(subheader?.textContent).toContain("src");
     expect(subheader?.textContent).toContain("app.ts");
-    expect(subheader?.textContent).toContain("Running dev");
     expect(
       subheader?.querySelector('button[aria-label="1 error, 4 warnings. Show problems"]'),
     ).not.toBeNull();

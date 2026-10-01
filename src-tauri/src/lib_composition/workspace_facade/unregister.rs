@@ -7,8 +7,7 @@ use crate::workspace_file_watcher::{
 use crate::workspace_registry::unregister::{WorkspaceOwnerRelease, WorkspaceOwnerScope};
 use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use crate::workspace_runtime::{
-    dispose_workspace_root as dispose_workspace_runtime_root, DebugSessionDisposer,
-    WorkspaceRuntimeDisposal,
+    dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
 };
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -95,20 +94,6 @@ where
     Ok(WorkspaceOwnerCloseOutcome::Released(errors))
 }
 
-pub(super) struct NoopDebugSessionDisposer;
-
-impl DebugSessionDisposer for NoopDebugSessionDisposer {
-    fn stop_debug_session(&self, _root_path: &str) {}
-}
-
-struct DebugRootDeactivator<'a>(&'a super::DebugSessionRegistry);
-
-impl DebugSessionDisposer for DebugRootDeactivator<'_> {
-    fn stop_debug_session(&self, root_path: &str) {
-        self.0.deactivate_root(root_path);
-    }
-}
-
 pub(super) enum ExactWorkspaceTeardownOutcome {
     Closed,
     UnknownWorkspace,
@@ -119,7 +104,6 @@ pub(super) enum ExactWorkspaceTeardownOutcome {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RegisteredWorkspaceTeardownStep {
-    NodeAttachCandidates,
     AgentTasks,
     FileSearch,
     JavascriptTasks,
@@ -129,8 +113,7 @@ pub(super) enum RegisteredWorkspaceTeardownStep {
     LocalHistory,
 }
 
-const REGISTERED_WORKSPACE_TEARDOWN_STEPS: [RegisteredWorkspaceTeardownStep; 8] = [
-    RegisteredWorkspaceTeardownStep::NodeAttachCandidates,
+const REGISTERED_WORKSPACE_TEARDOWN_STEPS: [RegisteredWorkspaceTeardownStep; 7] = [
     RegisteredWorkspaceTeardownStep::AgentTasks,
     RegisteredWorkspaceTeardownStep::FileSearch,
     RegisteredWorkspaceTeardownStep::JavascriptTasks,
@@ -256,13 +239,7 @@ fn dispose_registered_workspace_blocking(
             watch_disposal.stop_watches_before_arrival();
             let root = &descriptor.canonical_root_path;
             let root_key = root.to_string_lossy().into_owned();
-            let debug_sessions = DebugRootDeactivator(&state.debug_sessions);
             execute_registered_workspace_teardown(|step| match step {
-                RegisteredWorkspaceTeardownStep::NodeAttachCandidates => state
-                    .node_attach_candidates
-                    .invalidate_listings()
-                    .err()
-                    .map(|_| "Node attach candidate invalidation failed.".to_string()),
                 RegisteredWorkspaceTeardownStep::AgentTasks => {
                     end_sessions_for_workspace(app, descriptor.workspace_id.as_str());
                     stop_agent_tasks_on_dispose(app, None, root);
@@ -296,7 +273,6 @@ fn dispose_registered_workspace_blocking(
                             .javascript_typescript_watch_registry,
                         workspace_file_change_watch_registry: watch_disposal,
                         php_language_servers: &*state.php_language_servers,
-                        debug_sessions: &debug_sessions,
                         eslint_processes: &**state.eslint_processes,
                         terminal_sessions: &*state.terminal_sessions,
                     },

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { EditorDrawerView } from "../../domain/editorDrawer";
 import { dockedTextSearchProps } from "../dockedTextSearchProps";
 import { PhpTreePanel } from "../PhpTreePanel";
@@ -11,11 +10,9 @@ import { WorkbenchEditorDrawer } from "./WorkbenchEditorDrawer";
 export interface WorkbenchEditorDrawerHostProps extends WorkbenchBottomPanelHostProps {
   readonly view: EditorDrawerView;
   readonly frame: EditorDrawerFrame;
-  readonly consoleHeader: ReactNode;
 }
 
 export function WorkbenchEditorDrawerHost({
-  consoleHeader,
   frame,
   onSetDockedTextSearchOpen,
   view,
@@ -43,13 +40,5 @@ export function WorkbenchEditorDrawerHost({
         tree={workbench.phpTree}
       />
     ) : null;
-  return (
-    <WorkbenchEditorDrawer
-      consoleHeader={consoleHeader}
-      frame={frame}
-      panel={panel}
-      phpTree={phpTree}
-      view={view}
-    />
-  );
+  return <WorkbenchEditorDrawer frame={frame} panel={panel} phpTree={phpTree} view={view} />;
 }

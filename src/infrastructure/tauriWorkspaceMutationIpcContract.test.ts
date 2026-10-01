@@ -22,13 +22,13 @@ describe("workspace mutation IPC contract", () => {
     await expect(
       invokeCreateWorkspaceTextWithContent(invokeCommand, {
         workspaceId: "ws-a",
-        relativePath: ".codevo/launch.json",
+        relativePath: ".codevo/settings.json",
         content: "{}\n",
       }),
     ).resolves.toEqual({ status: "success", revision: REVISION });
     expect(invokeCommand).toHaveBeenCalledWith("workspace_create_text_file_with_content", {
       workspaceId: "ws-a",
-      relativePath: ".codevo/launch.json",
+      relativePath: ".codevo/settings.json",
       content: "{}\n",
     });
   });
@@ -43,12 +43,12 @@ describe("workspace mutation IPC contract", () => {
     await expect(
       invokeCreateWorkspaceTextWithContent(
         vi.fn<InvokeWorkspaceMutationCommand>().mockResolvedValue(wire),
-        { workspaceId: "ws-a", relativePath: "launch.json", content: "{}" },
+        { workspaceId: "ws-a", relativePath: "settings.json", content: "{}" },
       ),
     ).rejects.toThrow("Invalid workspace mutation IPC value");
   });
 
-  it.each(["../launch.json", "/launch.json", "a//launch.json", "C:/launch.json"])(
+  it.each(["../settings.json", "/settings.json", "a//settings.json", "C:/settings.json"])(
     "rejects unsafe owner-relative path %s before invocation",
     async (relativePath) => {
       const invokeCommand = vi.fn<InvokeWorkspaceMutationCommand>();

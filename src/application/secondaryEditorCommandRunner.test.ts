@@ -45,21 +45,16 @@ describe("secondary editor command runner", () => {
     ]);
   });
 
-  it.each([
-    "bookmark.toggle",
-    "debug.runToCursor",
-    "debug.toggleBreakpoint",
-    "editor.debug.action.toggleInlineBreakpoint",
-    "testing.debugAtCursor",
-    "testing.runAtCursor",
-    "testing.runCurrentFile",
-  ])("disables the main-editor cursor command %s without running it", (commandId) => {
-    const runCommand = vi.fn<(id: string, context?: CommandContext) => CommandExecutionOutcome>(
-      () => "executed",
-    );
-    const run = createSecondaryEditorCommandRunner(runCommand, () => true);
+  it.each(["bookmark.toggle", "testing.runAtCursor", "testing.runCurrentFile"])(
+    "disables the main-editor cursor command %s without running it",
+    (commandId) => {
+      const runCommand = vi.fn<(id: string, context?: CommandContext) => CommandExecutionOutcome>(
+        () => "executed",
+      );
+      const run = createSecondaryEditorCommandRunner(runCommand, () => true);
 
-    expect(run(commandId)).toBe("disabled");
-    expect(runCommand).not.toHaveBeenCalled();
-  });
+      expect(run(commandId)).toBe("disabled");
+      expect(runCommand).not.toHaveBeenCalled();
+    },
+  );
 });

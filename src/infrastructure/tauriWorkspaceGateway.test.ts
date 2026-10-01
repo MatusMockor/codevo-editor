@@ -451,7 +451,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     await expect(
       gateway.createTextFileWithContentForWorkspace(
         "ws-1",
-        "/selected/project/.codevo/launch.json",
+        "/selected/project/.codevo/settings.json",
         "{}\n",
       ),
     ).resolves.toEqual({ status: "success", revision: revision() });
@@ -462,7 +462,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
     expect(invoke).toHaveBeenNthCalledWith(2, "workspace_create_text_file_with_content", {
       workspaceId: "ws-1",
-      relativePath: ".codevo/launch.json",
+      relativePath: ".codevo/settings.json",
       content: "{}\n",
     });
   });
@@ -660,11 +660,11 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
   it("uses the strict bounded workspace read contract", async () => {
     invoke.mockResolvedValue({ status: "tooLarge" });
     await expect(
-      trustedGateway().readTextFileBounded("/selected/project/.codevo/launch.json", 262_144),
+      trustedGateway().readTextFileBounded("/selected/project/.codevo/settings.json", 262_144),
     ).resolves.toEqual({ status: "tooLarge" });
     expect(invoke).toHaveBeenCalledWith("workspace_read_text_file_bounded", {
       workspaceId: "ws-1",
-      relativePath: ".codevo/launch.json",
+      relativePath: ".codevo/settings.json",
       maxBytes: 262_144,
     });
   });

@@ -140,10 +140,7 @@ describe("ArchiveSettingsPage", () => {
       systemFontGateway: { listMonospaceFontFamilies: async () => [] },
       workbench: {
         appSettings: defaultAppSettings(),
-        closeNodeLaunchConfigurations: vi.fn(),
         gitRepositoryMappings: [],
-        nodeLaunchConfigurationsOpen: false,
-        openNodeLaunchConfigurations: vi.fn(),
         openJavaScriptTypeScriptServiceLog: vi.fn(async () => undefined),
         phpTools: null,
         restartJavaScriptTypeScriptService: vi.fn(async () => undefined),

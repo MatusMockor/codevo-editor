@@ -211,8 +211,22 @@ describe("workbench live-document runtime composition", () => {
     const first = createWorkbenchComposition();
     const second = createWorkbenchComposition();
 
-    expect(first.debugTextClipboard).toBeInstanceOf(BrowserTextClipboardGateway);
-    expect(first.debugTextClipboard).toBe(first.debugTextClipboard);
-    expect(first.debugTextClipboard).not.toBe(second.debugTextClipboard);
+    expect(first.textClipboard).toBeInstanceOf(BrowserTextClipboardGateway);
+    expect(first.textClipboard).toBe(first.textClipboard);
+    expect(first.textClipboard).not.toBe(second.textClipboard);
+  });
+
+  it("purges stored state of the removed debugger when the composition module loads", async () => {
+    window.localStorage.setItem("mockor.debug.breakpoints./workspace", "[]");
+    window.localStorage.setItem("mockor.debug.watch./workspace", "[]");
+    window.localStorage.setItem("mockor.settings.keep", "{}");
+    vi.resetModules();
+
+    await import("./workbenchComposition");
+
+    expect(window.localStorage.getItem("mockor.debug.breakpoints./workspace")).toBeNull();
+    expect(window.localStorage.getItem("mockor.debug.watch./workspace")).toBeNull();
+    expect(window.localStorage.getItem("mockor.settings.keep")).toBe("{}");
+    window.localStorage.removeItem("mockor.settings.keep");
   });
 });

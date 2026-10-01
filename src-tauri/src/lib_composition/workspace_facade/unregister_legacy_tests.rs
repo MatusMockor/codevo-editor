@@ -5,9 +5,8 @@ use crate::workspace_registry::unregister::WorkspaceOwnerScope;
 use crate::workspace_registry::RegistrationOwner;
 use crate::workspace_registry::WorkspaceRegistry;
 use crate::workspace_runtime::{
-    DebugSessionDisposer, LanguageServerDisposer, TerminalSessionDisposer,
-    WorkspaceIndexLifecycleDisposer, WorkspaceProcessDisposer, WorkspaceRuntimeDisposal,
-    WorkspaceWatchDisposer,
+    LanguageServerDisposer, TerminalSessionDisposer, WorkspaceIndexLifecycleDisposer,
+    WorkspaceProcessDisposer, WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
 };
 use std::{
     collections::BTreeSet,
@@ -81,12 +80,6 @@ impl WorkspaceIndexLifecycleDisposer for RecordingDisposer {
     }
 }
 
-impl DebugSessionDisposer for RecordingDisposer {
-    fn stop_debug_session(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
 impl WorkspaceProcessDisposer for RecordingDisposer {
     fn stop_workspace_processes(&self, root_path: &Path) {
         self.stop(&root_path.to_string_lossy());
@@ -129,7 +122,6 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
     let javascript_typescript =
         RecordingDisposer::new("js-lsp", [root_a_key.clone(), root_b_key.clone()], &calls);
     let php = RecordingDisposer::new("php-lsp", [root_a_key.clone(), root_b_key.clone()], &calls);
-    let debug = RecordingDisposer::new("debug", [root_a_key.clone(), root_b_key.clone()], &calls);
     let eslint = RecordingDisposer::new("eslint", [root_a_key.clone(), root_b_key.clone()], &calls);
     let terminal = RecordingDisposer::failing_terminal(
         "terminal",
@@ -154,7 +146,6 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
             javascript_typescript_watch_registry: &watcher,
             workspace_file_change_watch_registry: &file_watcher,
             php_language_servers: &php,
-            debug_sessions: &debug,
             eslint_processes: &eslint,
             terminal_sessions: &terminal,
         },
@@ -193,8 +184,6 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
     assert!(javascript_typescript.contains(&root_b_key));
     assert!(!php.contains(&root_a_key));
     assert!(php.contains(&root_b_key));
-    assert!(!debug.contains(&root_a_key));
-    assert!(debug.contains(&root_b_key));
     assert!(!eslint.contains(&root_a_key));
     assert!(eslint.contains(&root_b_key));
     assert!(!terminal.contains(&root_a_key));
@@ -215,7 +204,6 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
             javascript_typescript_watch_registry: &watcher,
             workspace_file_change_watch_registry: &file_watcher,
             php_language_servers: &php,
-            debug_sessions: &debug,
             eslint_processes: &eslint,
             terminal_sessions: &terminal,
         },
@@ -233,7 +221,6 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
             format!("file-watch:{root_a_key}"),
             format!("js-lsp:{root_a_key}"),
             format!("php-lsp:{root_a_key}"),
-            format!("debug:{root_a_key}"),
             format!("eslint:{root_a_key}"),
             format!("terminal:{root_a_key}"),
             format!("after:{root_a_key}"),

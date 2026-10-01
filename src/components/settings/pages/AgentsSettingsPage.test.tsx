@@ -702,7 +702,6 @@ describe("AgentsSettingsPage", () => {
         workspaceRoot: "/tmp/project",
         onCopyInstallCommand: (command) => options.onCopyInstallCommand?.(command),
         onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-        onOpenNodeLaunchConfigurations: () => undefined,
         onRestartJavaScriptTypeScriptService: async () => undefined,
       };
 

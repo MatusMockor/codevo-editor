@@ -12,7 +12,7 @@ import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottom
 import { usePerfScenarioBridgeInstall } from "./components/usePerfScenarioBridgeInstall";
 import { useAppWindowTitle } from "./application/useAppBootEffects";
 import { usePrefersLightTheme } from "./application/usePrefersLightTheme";
-import { useDebugCommandBridges } from "./application/useDebugCommandBridges";
+import { useJsTestExplorerScopeRunnerBridge } from "./application/useJsTestExplorerScopeRunnerBridge";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
 import { useGitHistoryDiffDocuments } from "./application/useGitHistoryDiffDocuments";
@@ -34,7 +34,7 @@ import { useAgentPanelResizeCommit } from "./application/useAgentPanelResizeComm
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
 import { editorChangeHunksStatus } from "./components/editorChangeHunksStatus";
 import { phpTestBottomPanelProps } from "./components/phpTestBottomPanelProps";
-import { useAppTestDebugPanels } from "./components/useAppTestDebugPanels";
+import { useAppTestPanels } from "./components/useAppTestPanels";
 import { usePhpCoverageEditorSurfaceProps } from "./components/usePhpCoverageEditorSurfaceProps";
 import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps";
 import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
@@ -57,8 +57,6 @@ import { MarkdownPreview } from "./components/MarkdownPreview";
 import { FileStructure } from "./components/FileStructure";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImplementationChooser } from "./components/ImplementationChooser";
-import { NodeRunConfigurationPickerHost } from "./components/NodeRunConfigurationPickerHost";
-import { NodeDebugAttachProcessPickerHost } from "./components/NodeDebugAttachProcessPickerHost";
 import { PhpChangeSignatureDialog } from "./components/PhpChangeSignatureDialog";
 import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
 import { RecentLocationsPanel } from "./components/RecentLocationsPanel";
@@ -105,8 +103,6 @@ const {
   artisanRoutesGateway,
   cancelJavaScriptTypeScriptLanguageServerRequest,
   cursorStore,
-  debugGateway,
-  debugTextClipboard,
   dirtyCloseDecisionCoordinator,
   editorChangeHunksGateway,
   gitGateway,
@@ -136,10 +132,7 @@ const {
   netteWorkspacePresentersGateway,
   netteWorkspaceRoutesGateway,
   netteWorkspaceServicesGateway,
-  nodeDebugAttachCandidateGateway,
-  nodeDebugAttachCandidateStart,
   nodePackageScriptsGateway,
-  nodeRunTaskGateway,
   packageOperationsGateway,
   phpFileOutlineGateway,
   phpLanguageServerWorkspaceEditGateway,
@@ -148,12 +141,12 @@ const {
   phpTestGateway,
   phpTreeGateway,
   runtimeObservabilityGateway,
-  serverReadyExternalUrlOpener,
   settingsGateway,
   smartModeGateway,
   systemFontGateway,
   symfonyWorkspaceIntelligenceGateway,
   terminalGateway,
+  textClipboard,
   vscodeProcessTasksGateway,
   workbenchPrompter,
   workspaceGateways,
@@ -164,7 +157,7 @@ const {
 } = workbenchComposition;
 
 function App() {
-  const debugCommandBridges = useDebugCommandBridges();
+  const jsTestExplorerScopeRunnerBridge = useJsTestExplorerScopeRunnerBridge();
   const prefersLightTheme = usePrefersLightTheme();
   const { editorGroupFocusRunner, updateEditorGroupFocusRunner } =
     useWorkbenchEditorGroupFocusRunner();
@@ -174,10 +167,7 @@ function App() {
     focusGroup: focusRunnerGroup,
     updateBufferFix: updateEditorSurfaceBufferFixRunner,
     updateCommand: updateEditorSurfaceCommandRunner,
-    updateDebugWatchAtCursorCapture: updateDebugWatchAtCursorCaptureReader,
-    updateDebugEvaluateInConsoleCapture: updateDebugEvaluateInConsoleCaptureReader,
-    updateDebugBreakpointNavigationCapture: updateDebugBreakpointNavigationCaptureReader,
-    updateDebugInlineBreakpointCapture: updateDebugInlineBreakpointCaptureReader,
+    updateCursorCapture: updateEditorCursorCaptureReader,
     updateEslintDisable: updateEditorSurfaceEslintDisableRunner,
     updateMenu: updateEditorMenuCommandRunner,
     updatePhpstanIgnore: updateEditorSurfacePhpstanIgnoreRunner,
@@ -185,10 +175,7 @@ function App() {
   const {
     bufferFix: editorSurfaceBufferFixRunner,
     command: editorSurfaceCommandRunner,
-    debugWatchAtCursorCapture: debugWatchAtCursorCaptureReader,
-    debugEvaluateInConsoleCapture: debugEvaluateInConsoleCaptureReader,
-    debugBreakpointNavigationCapture: debugBreakpointNavigationCaptureReader,
-    debugInlineBreakpointCapture: debugInlineBreakpointCaptureReader,
+    cursorCapture: editorCursorCaptureReader,
     eslintDisable: editorSurfaceEslintDisableRunner,
     menu: editorMenuCommandRunner,
     phpstanIgnore: editorSurfacePhpstanIgnoreRunner,
@@ -231,23 +218,14 @@ function App() {
       javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
       editorSurfaceBufferFixRunner,
       editorSurfaceCommandRunner,
-      debugWatchAtCursorCaptureReader,
-      debugEvaluateInConsoleCaptureReader,
-      debugBreakpointNavigationCaptureReader,
-      debugInlineBreakpointCaptureReader,
+      editorCursorCaptureReader,
       editorSurfaceEslintDisableRunner,
       editorSurfacePhpstanIgnoreRunner,
       editorGroupFocusRunner,
       dirtyCloseDecisionPort: dirtyCloseDecisionCoordinator,
       onDidCloseEditorPaths: handleClosedEditorPaths,
-      debugGateway,
-      serverReadyExternalUrlOpener,
-      debugTextClipboard,
-      ...debugCommandBridges.controllerOptions,
-      nodeDebugAttachCandidateGateway,
-      nodeDebugAttachCandidateStart,
+      ...jsTestExplorerScopeRunnerBridge.controllerOptions,
       nodePackageScriptsGateway,
-      nodeRunTaskGateway,
       vscodeProcessTasksGateway,
       workspaceSourceDiscoveryGateway,
     },
@@ -285,7 +263,7 @@ function App() {
     discoveryVersion: workbench.expressRouteDiscoveryVersion,
     hasJavaScriptTypeScriptWorkspace: !!workbench.workspaceDescriptor?.javaScriptTypeScript,
     isPanelOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes",
-    onOpenLocation: workbench.openDebugLocation,
+    onOpenLocation: workbench.openSourceLocation,
     openDocuments: workbench.openDocuments,
     packageDiscovery: workbench.workspacePackageDiscovery,
     rootPath: workbench.workspaceRoot,
@@ -302,19 +280,18 @@ function App() {
     workspaceTrusted,
   });
 
-  const { debugPanel, jsTestExplorerPanel, phpCloverCoverage, phpTestResults } =
-    useAppTestDebugPanels({
-      ...debugCommandBridges.panelOptions,
-      debugTextClipboard,
-      jsTestCoverageGateway,
-      jsTestGateway,
-      jsTestWatchGateway,
-      phpCloverCoveragePort,
-      phpTestGateway,
-      workbench,
-      workspaceTestDiscoveryGateway,
-      workspaceTrusted,
-    });
+  const { jsTestExplorerPanel, phpCloverCoverage, phpTestResults } = useAppTestPanels({
+    ...jsTestExplorerScopeRunnerBridge.panelOptions,
+    jsTestCoverageGateway,
+    jsTestGateway,
+    jsTestWatchGateway,
+    phpCloverCoveragePort,
+    phpTestGateway,
+    textClipboard,
+    workbench,
+    workspaceTestDiscoveryGateway,
+    workspaceTrusted,
+  });
   const jsTestEditorSurfaceSource = useStableJsTestEditorSurfaceSource(jsTestExplorerPanel);
   const phpCoverageEditorSurfaceProps = usePhpCoverageEditorSurfaceProps({
     report: phpCloverCoverage.report,
@@ -455,7 +432,6 @@ function App() {
     activeGroupId: editorGroupsState.activeGroupId,
     cursorAuthority,
     cursorStore,
-    debugToolbarVisible: debugPanel.toolbar !== null,
     largeDocumentStatus: activeEditorDegradedStatus,
     markActiveFileReveal: markActiveFileRevealSignal,
     showGoToLine,
@@ -590,11 +566,6 @@ function App() {
             applyPhpLanguageServerWorkspaceEdit={workbench.applyPhpLanguageServerWorkspaceEdit}
             clearLanguageServerDiagnosticsForPath={workbench.clearLanguageServerDiagnosticsForPath}
             bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
-            breakpoints={workbench.breakpoints}
-            breakpointActions={workbench.breakpointActions}
-            onBreakpointMutationError={workbench.reportCommandError}
-            debugStoppedLocation={workbench.debugStoppedLocation}
-            debugInlineValueContext={workbench.debugInlineValueContext}
             changeHunks={groupIsActive ? activeEditorChangeHunks : EMPTY_EDITOR_CHANGE_HUNKS}
             editorRevealTarget={groupIsActive ? workbench.editorRevealTarget : null}
             flushPendingLanguageServerDocument={workbench.flushPendingLanguageServerDocument}
@@ -659,12 +630,7 @@ function App() {
             groupId={groupId}
             onBufferFixRunnerChange={updateEditorSurfaceBufferFixRunner}
             onCommandRunnerChange={updateEditorSurfaceCommandRunner}
-            onDebugWatchAtCursorCaptureReaderChange={updateDebugWatchAtCursorCaptureReader}
-            onDebugEvaluateInConsoleCaptureReaderChange={updateDebugEvaluateInConsoleCaptureReader}
-            onDebugBreakpointNavigationCaptureReaderChange={
-              updateDebugBreakpointNavigationCaptureReader
-            }
-            onDebugInlineBreakpointCaptureReaderChange={updateDebugInlineBreakpointCaptureReader}
+            onCursorCaptureReaderChange={updateEditorCursorCaptureReader}
             onEslintDisableRunnerChange={updateEditorSurfaceEslintDisableRunner}
             onMenuCommandRunnerChange={updateEditorMenuCommandRunner}
             onPhpstanIgnoreRunnerChange={updateEditorSurfacePhpstanIgnoreRunner}
@@ -757,10 +723,7 @@ function App() {
       updateEditorMenuCommandRunner,
       updateEditorSurfaceBufferFixRunner,
       updateEditorSurfaceCommandRunner,
-      updateDebugWatchAtCursorCaptureReader,
-      updateDebugEvaluateInConsoleCaptureReader,
-      updateDebugBreakpointNavigationCaptureReader,
-      updateDebugInlineBreakpointCaptureReader,
+      updateEditorCursorCaptureReader,
       updateEditorSurfaceEslintDisableRunner,
       updateEditorSurfacePhpstanIgnoreRunner,
       workspaceTrusted,
@@ -856,7 +819,6 @@ function App() {
   });
   const panelHostProps = {
     artisanRoutes,
-    debugPanel,
     expressRoutesPanel,
     frameworkBottomPanels,
     gateways: { gitHistoryGateway, runtimeObservabilityGateway, terminalGateway },
@@ -953,10 +915,6 @@ function App() {
       />
 
       <WorkbenchOverlayHosts composition={workbenchComposition} workbench={workbench} />
-      <NodeRunConfigurationPickerHost
-        launcher={workbench.nodeRunWithoutDebugging.configurationLauncher}
-      />
-      <NodeDebugAttachProcessPickerHost controller={workbench.nodeDebugAttachProcessPicker} />
       <PhpChangeSignatureDialog
         onAdd={phpChangeSignature.addRow}
         onApply={phpChangeSignature.apply}
@@ -1184,7 +1142,6 @@ function App() {
         settingsContainer={settingsContainer}
         systemFontGateway={systemFontGateway}
         workbench={workbench}
-        workspaceFiles={workspaceGateways.files}
       />
     </AppShellRoot>
   );

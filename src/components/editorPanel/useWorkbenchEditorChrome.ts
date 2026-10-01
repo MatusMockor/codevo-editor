@@ -5,7 +5,6 @@ import type {
 } from "../../application/editorCursorStore";
 import type { EditorOwnerDirtyCountProjection } from "../../application/editorSessionDirtyProjection";
 import { useEditorOwnerDirtyCountSnapshot } from "../../application/useEditorSessionDirtyProjection";
-import { presentOptionalNodeRunWithoutDebugging } from "../../application/nodeRunWithoutDebuggingPresentation";
 import type { useWorkbenchController } from "../../application/useWorkbenchController";
 import { detectKeymapPlatform, shortcutForCommand } from "../../domain/keymap";
 import { shortcutSequenceForPlatform } from "../../domain/shortcutSequence";
@@ -35,7 +34,6 @@ export type EditorChromeWorkbench = EditorStatusWorkbench &
     | "gitStatus"
     | "hideBottomPanel"
     | "intelligenceMode"
-    | "nodeRunWithoutDebugging"
     | "openGitBranchPanel"
     | "runCommand"
     | "showBottomPanelView"
@@ -49,7 +47,6 @@ export interface WorkbenchEditorChromeOptions {
   readonly largeDocumentStatus: LargeSmartDocumentStatus | null;
   readonly cursorStore: EditorCursorStorePort | null;
   readonly cursorAuthority: EditorCursorAuthority | null;
-  readonly debugToolbarVisible: boolean;
   showGoToLine(): void;
   markActiveFileReveal(): void;
 }
@@ -66,8 +63,6 @@ export function useWorkbenchEditorChrome(
       problems: shortcutForCommand(keymap, "panel.showProblems"),
       find: shortcutSequenceForPlatform(FIND_SHORTCUT, detectKeymapPlatform()),
       split: shortcutForCommand(keymap, "editor.splitRight"),
-      debugStart: shortcutForCommand(keymap, "debug.start"),
-      runWithoutDebugging: shortcutForCommand(keymap, "debug.runWithoutDebugging"),
     }),
     [keymap],
   );
@@ -75,9 +70,7 @@ export function useWorkbenchEditorChrome(
   const actions: EditorChromeActions = {
     showBottomPanelView: workbench.showBottomPanelView,
     hideBottomPanel: workbench.hideBottomPanel,
-    maximizePanel: () => dispatch({ kind: "maximizeRightPanel" }),
     showGoToLine: options.showGoToLine,
-    stopNodeRun: workbench.nodeRunWithoutDebugging.stop,
     runCommand: (id) => void workbench.runCommand(id),
     toggleIdeMode: () => void workbench.runCommand("smart.toggle"),
     trustWorkspace: () => void workbench.runCommand("workspace.trust"),
@@ -87,11 +80,6 @@ export function useWorkbenchEditorChrome(
     },
     openBranches: workbench.openGitBranchPanel,
   };
-  const nodeRunState = workbench.nodeRunWithoutDebugging.state;
-  const nodeRun = useMemo(
-    () => presentOptionalNodeRunWithoutDebugging(nodeRunState),
-    [nodeRunState],
-  );
   const workspaceRoot = workbench.workspaceRoot;
   const workspaceTrusted = workbench.workspaceTrust?.trusted === true;
   const activeLanguage = workbench.activeDocument?.language ?? null;
@@ -116,8 +104,6 @@ export function useWorkbenchEditorChrome(
     workspaceTrustLabel: workspaceTrustLabel(workspaceRoot, workspaceTrusted),
     workspaceRoot,
     workspaceTrusted,
-    nodeRun,
-    debugToolbarVisible: options.debugToolbarVisible,
     cursorStore: options.cursorStore,
     cursorAuthority: options.cursorAuthority,
     shortcuts,

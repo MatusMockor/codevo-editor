@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useEditorChrome } from "./EditorChromeContext";
-import { EditorDebugToolbarSlot } from "./EditorDebugToolbarContext";
 import { EditorPathCrumbs } from "./EditorPathCrumbs";
 import { EditorSubheaderActions } from "./EditorSubheaderActions";
 import "./editorPanel.css";
@@ -21,10 +20,8 @@ export function EditorSubheader({
   symbols,
 }: EditorSubheaderProps) {
   const chrome = useEditorChrome();
-  const active = chrome !== null && chrome.activeGroupId === groupId;
-  const debugOn = active && chrome.debugToolbarVisible;
   return (
-    <div className="cv-esub" data-debug={debugOn ? "on" : "off"}>
+    <div className="cv-esub">
       <nav aria-label="Breadcrumbs" className="cv-esub__crumbs">
         <EditorPathCrumbs
           documentPath={documentPath}
@@ -33,11 +30,7 @@ export function EditorSubheader({
         />
         {symbols}
       </nav>
-      {debugOn ? (
-        <EditorDebugToolbarSlot />
-      ) : (
-        <EditorSubheaderActions groupId={groupId} onFind={onFind} />
-      )}
+      <EditorSubheaderActions groupId={groupId} onFind={onFind} />
     </div>
   );
 }

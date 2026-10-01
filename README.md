@@ -3,8 +3,7 @@
 A native desktop IDE with an integrated agent workspace for **JavaScript,
 TypeScript, Node.js, and Express** development.
 
-Codevo brings together a Monaco-based editor, language tooling, a Node debugger,
-and project-scoped conversations with Claude Code and Codex. Edit code yourself,
+Codevo brings together a Monaco-based editor, language tooling, and project-scoped conversations with Claude Code and Codex. Edit code yourself,
 work with an agent in a local checkout or isolated Git worktree, then review and
 commit the changes in the same app.
 
@@ -28,12 +27,10 @@ Built with **Tauri 2 · React · TypeScript · Rust · Monaco**.
 - Search across a workspace, including supported searches in unsaved documents.
 - Use integrated terminals, Git diffs, Source Control, and repository history.
 
-### Run, test, and debug
+### Run and test
 
 - Discover package scripts and work with package and monorepo structure.
 - Run tasks and Jest/Vitest tests, inspect coverage, and navigate Problems.
-- Debug Node.js with launch configurations, breakpoints, stepping, call stacks,
-  scopes, variables, Watch, and the Debug Console.
 - Explore Express routes alongside the code that implements them.
 
 ### Work with agents
@@ -107,8 +104,8 @@ PHP and framework-specific tooling remain secondary capabilities.
 
 - Language features depend on the running language server and its advertised
   capabilities.
-- The Node debugger focuses on single-process workflows; arbitrary debug adapters
-  and full VS Code debugger parity are outside the current scope.
+- There is no interactive debugger (no launch configurations, breakpoints, or
+  Debug Console); debugging is done through the agents.
 - Codevo does not support the VS Code extension marketplace or claim full
   remote-development or container parity. Remote agent execution has its own
   [supported workflows and prerequisites](docs/remote-runner-editor.md).

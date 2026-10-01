@@ -25,7 +25,6 @@ import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGa
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
-import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
 import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
 import { TauriGitGateway, TauriGitHistoryGateway } from "./infrastructure/tauriGitGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
@@ -60,10 +59,7 @@ import {
   TauriLanguageServerWorkspaceEditGateway,
 } from "./infrastructure/tauriLanguageServerWorkspaceEditGateway";
 import { TauriLocalHistoryGateway } from "./infrastructure/tauriLocalHistoryGateway";
-import { TauriNodeDebugAttachCandidateGateway } from "./infrastructure/tauriNodeDebugAttachCandidateGateway";
-import { TauriNodeDebugAttachStartGateway } from "./infrastructure/tauriNodeDebugAttachStartGateway";
 import { TauriNodePackageScriptsGateway } from "./infrastructure/tauriNodePackageScriptsGateway";
-import { TauriNodeRunTaskGateway } from "./infrastructure/tauriNodeRunTaskGateway";
 import { TauriPackageOperationsGateway } from "./infrastructure/tauriPackageOperationsGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
@@ -72,7 +68,6 @@ import { TauriPhpCloverCoveragePort } from "./infrastructure/tauriPhpCloverCover
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
 import { TauriRuntimeObservabilityGateway } from "./infrastructure/tauriRuntimeObservabilityGateway";
-import { TauriServerReadyExternalUrlOpener } from "./infrastructure/tauriServerReadyExternalUrlOpener";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriSystemFontGateway } from "./infrastructure/tauriSystemFontGateway";
 import { createTauriNativeWindow } from "./infrastructure/tauriNativeWindow";
@@ -92,6 +87,7 @@ import { createAppUpdateCheck } from "./infrastructure/tauriAppUpdateCheck";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { flushSessionRestore } from "./application/sessionRestorePersistence";
 import { invoke } from "@tauri-apps/api/core";
+import { purgeRemovedDebuggerStorage } from "./domain/removedDebuggerStorage";
 import packageMetadata from "../package.json";
 
 export const CODEVO_APP_VERSION = packageMetadata.version;
@@ -156,8 +152,6 @@ export function createWorkbenchComposition() {
     cursorStore: new EditorCursorStore(),
     artisanRoutesGateway: new TauriArtisanRoutesGateway(),
     cancelJavaScriptTypeScriptLanguageServerRequest,
-    debugGateway: new TauriDebugGateway(),
-    debugTextClipboard: new BrowserTextClipboardGateway(),
     dirtyCloseDecisionCoordinator: new DirtyCloseDecisionCoordinator(),
     editorChangeHunksGateway: new BrowserEditorChangeHunksGateway(),
     gitGateway,
@@ -213,10 +207,7 @@ export function createWorkbenchComposition() {
     languageServerRuntimeGateway: new TauriLanguageServerRuntimeGateway(),
     liveDocumentRuntime: new LiveDocumentRuntime(),
     localHistoryGateway: new TauriLocalHistoryGateway(),
-    nodeDebugAttachCandidateGateway: new TauriNodeDebugAttachCandidateGateway(),
-    nodeDebugAttachCandidateStart: new TauriNodeDebugAttachStartGateway(),
     nodePackageScriptsGateway: new TauriNodePackageScriptsGateway(workspaceIdentityGateway),
-    nodeRunTaskGateway: new TauriNodeRunTaskGateway(),
     netteWorkspaceServicesGateway: new WorkspaceNetteServicesGateway(workspaceGateway),
     netteWorkspacePresentersGateway: new WorkspaceNettePresentersGateway(workspaceGateway),
     netteWorkspaceRoutesGateway: new WorkspaceNetteRoutesGateway(workspaceGateway),
@@ -230,13 +221,13 @@ export function createWorkbenchComposition() {
     runtimeObservabilityGateway: new TauriRuntimeObservabilityGateway(),
     quickInputCoordinator,
     workspaceTrustPrompt,
-    serverReadyExternalUrlOpener: new TauriServerReadyExternalUrlOpener(),
     settingsGateway,
     smartModeGateway: new TauriSmartModeGateway(),
     systemFontGateway: new TauriSystemFontGateway(),
     nativeWindow: createTauriNativeWindow(),
     symfonyWorkspaceIntelligenceGateway: new TauriSymfonyWorkspaceIntelligenceGateway(),
     terminalGateway: new TauriTerminalGateway(),
+    textClipboard: new BrowserTextClipboardGateway(),
     vscodeProcessTasksGateway: new TauriVscodeProcessTasksGateway(),
     workbenchPrompter: new BrowserWorkbenchPrompter(quickInputCoordinator),
     workspaceGateways: {
@@ -264,5 +255,16 @@ export function createWorkbenchComposition() {
 }
 
 export type WorkbenchComposition = ReturnType<typeof createWorkbenchComposition>;
+
+function browserLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+purgeRemovedDebuggerStorage(browserLocalStorage());
 
 export const workbenchComposition = createWorkbenchComposition();

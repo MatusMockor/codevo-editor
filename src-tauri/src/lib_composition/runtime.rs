@@ -113,18 +113,11 @@ pub fn run() {
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
         .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
-        .manage(Arc::new(DebugSessionRegistry::new()))
-        .manage(Arc::new(
-            debug_cdp::NodeAttachCandidatePublicationRegistry::new(),
-        ))
         .manage(Arc::new(eslint::EslintProcessRegistry::default()))
         .manage(TerminalSupervisor::new())
         .manage(node_package_tasks::NodePackageTaskRegistry::with_admission(
             Arc::clone(&terminal_task_admission),
         ))
-        .manage(node_run_tasks::NodeRunTaskRegistry::new(Arc::clone(
-            &terminal_task_admission,
-        )))
         .manage(js_test_tasks::JsTestTaskRegistry::new())
         .manage(Arc::clone(&js_test_batch_registry))
         .manage(Arc::new(js_test_watch::JsTestWatchRegistry::new()))
@@ -342,9 +335,6 @@ pub fn run() {
             js_test_watch::workspace_start_js_test_watch,
             js_test_watch::workspace_acknowledge_js_test_watch_start,
             js_test_watch::workspace_stop_js_test_watch,
-            node_run_tasks::workspace_start_node_run_task,
-            node_run_tasks::workspace_acknowledge_node_run_task_start,
-            node_run_tasks::workspace_stop_node_run_task,
             vscode_tasks_discovery_command::workspace_discover_vscode_process_tasks,
             vscode_process_task_tauri::workspace_start_vscode_process_task,
             vscode_process_task_tauri::workspace_acknowledge_vscode_process_task_start,
@@ -377,29 +367,6 @@ pub fn run() {
             workspace_commands::workspace_create_directory,
             workspace_commands::workspace_delete_path,
             workspace_commands::workspace_rename_path,
-            debug_evaluate,
-            debug_node_attach_list_command::debug_list_node_attach_candidates,
-            debug_node_attach_start_command::debug_start_node_attach_candidate,
-            debug_completions,
-            debug_disconnect,
-            debug_pause,
-            debug_restart_frame,
-            debug_run_to_location,
-            debug_scopes,
-            debug_set_breakpoints,
-            debug_set_breakpoints_active,
-            debug_set_function_breakpoints,
-            debug_set_exception_pause,
-            debug_set_variable,
-            debug_set_expression,
-            debug_stack_trace,
-            debug_node_env_file::debug_start,
-            debug_node_watch_start_command::debug_start_native_node_watch,
-            debug_node_watch_start_command::debug_confirm_native_node_watch,
-            debug_start_compound,
-            debug_step,
-            debug_stop,
-            debug_variables,
             detect_git_repositories,
             project_commands::detect_php_tools,
             project_commands::detect_workspace,

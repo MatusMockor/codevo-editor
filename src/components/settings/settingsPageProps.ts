@@ -54,7 +54,6 @@ export interface SettingsEnvironment {
   readonly workspaceRoot: string | null;
   onCopyInstallCommand(command: string): void;
   onOpenJavaScriptTypeScriptServiceLog(): Promise<void>;
-  onOpenNodeLaunchConfigurations(): void;
   onRestartJavaScriptTypeScriptService(): Promise<void>;
 }
 

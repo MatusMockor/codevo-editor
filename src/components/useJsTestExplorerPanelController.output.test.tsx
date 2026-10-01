@@ -7,7 +7,6 @@ import type { TextClipboardGateway } from "../domain/textClipboard";
 
 const mocks = vi.hoisted(() => ({
   coverageRun: vi.fn(async () => true),
-  debugging: false,
   outputSnapshot: {
     generation: 3,
     output: {
@@ -56,16 +55,6 @@ vi.mock("../application/useJsTestCoverage", () => ({
     unavailable: null,
   })),
 }));
-vi.mock("../application/useJsTestExplorerDebug", () => ({
-  useJsTestExplorerDebug: vi.fn(() => ({
-    blocked: false,
-    blockedReason: null,
-    debug: vi.fn(),
-    error: null,
-    isDebugging: mocks.debugging,
-    unavailable: null,
-  })),
-}));
 vi.mock("../application/useJsTestExplorerScopeRunnerPort", () => ({
   useJsTestExplorerScopeRunnerPort: vi.fn(() => ({})),
 }));
@@ -80,7 +69,6 @@ describe("useJsTestExplorerPanelController output composition", () => {
   let latest: ReturnType<typeof useJsTestExplorerPanelController>;
 
   beforeEach(() => {
-    mocks.debugging = false;
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -154,27 +142,11 @@ describe("useJsTestExplorerPanelController output composition", () => {
     expect(mocks.coverageRun).toHaveBeenCalledOnce();
   });
 
-  it.each(["selected", "external"] as const)(
-    "rejects coverage while %s debugging is active",
-    async (debugOwner) => {
-      mocks.debugging = debugOwner === "selected";
-      await render(null, () => debugOwner === "external");
-
-      act(() => latest.onRunCoverage());
-
-      expect(mocks.coverageRun).not.toHaveBeenCalled();
-    },
-  );
-
-  async function render(
-    outputClipboard: TextClipboardGateway | null,
-    isDebugStartBlocked: () => boolean = () => false,
-  ) {
+  async function render(outputClipboard: TextClipboardGateway | null) {
     await act(async () => {
       root.render(
         <Harness
           outputClipboard={outputClipboard}
-          isDebugStartBlocked={isDebugStartBlocked}
           onReady={(controller) => {
             latest = controller;
           }}
@@ -185,29 +157,23 @@ describe("useJsTestExplorerPanelController output composition", () => {
 });
 
 function Harness({
-  isDebugStartBlocked,
   onReady,
   outputClipboard,
 }: {
-  readonly isDebugStartBlocked: () => boolean;
   readonly onReady: (controller: ReturnType<typeof useJsTestExplorerPanelController>) => void;
   readonly outputClipboard: TextClipboardGateway | null;
 }) {
   const controller = useJsTestExplorerPanelController({
     coverageGateway: {} as never,
     coverageInvalidationVersion: 0,
-    debugStartBlocked: false,
     discoveryGateway: {} as never,
     discoveryVersion: 0,
-    isDebugStartBlocked,
     isOpen: true,
     onOpenLocation: vi.fn(),
-    openDebugPanel: vi.fn(),
     outputClipboard,
     rootPath: "/workspace",
     runGateway: {} as never,
     runRequestVersion: 0,
-    startDebug: vi.fn(async () => undefined),
     workspaceId: "workspace-id",
     workspaceTrusted: true,
   });

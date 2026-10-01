@@ -75,10 +75,6 @@ vi.mock("./typescriptJavascriptDefaults", async (importOriginal) => ({
   ...(await importOriginal()),
   configureTypescriptJavascriptDefaultsOnce: providerMocks.configure,
 }));
-vi.mock("./debugHoverMonacoProvider", async (importOriginal) => ({
-  ...(await importOriginal()),
-  registerDebugHoverMonacoProviders: providerMocks.register,
-}));
 
 describe("actual EditorSurface large-file production chain", () => {
   let container: HTMLDivElement;

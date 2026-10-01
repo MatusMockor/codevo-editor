@@ -23,7 +23,6 @@ describe("domain dependency direction", () => {
     "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentHistoryCatalogGateway",
     "workbenchDefaultGateways.ts -> ../infrastructure/tauriExternalSessionImportGateway",
     "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentTurnLogGateway",
-    "workbenchDefaultGateways.ts -> ../infrastructure/tauriDebugGateway",
     "workbenchDefaultGateways.ts -> ../infrastructure/tauriEslintDiagnosticsGateway",
     "workbenchDefaultGateways.ts -> ../infrastructure/tauriExternalSessionGateway",
     "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitIntegrationGateway",

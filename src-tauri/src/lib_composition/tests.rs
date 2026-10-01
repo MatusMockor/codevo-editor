@@ -26,13 +26,7 @@ use super::{
 };
 use crate::application_commands::enumerate_monospace_font_families;
 use crate::artisan::ArtisanRoutesResponse;
-use crate::debug_adapter::{
-    DebugEvent, DebugEventSink, DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse,
-};
-use crate::debug_commands::{
-    debug_evaluate_with_trust, debug_start_with_trust, stop_debug_session_blocking,
-};
-use crate::eslint::{EslintAnalysisResponse, EslintProcessRegistry};
+use crate::eslint::EslintAnalysisResponse;
 use crate::file_uri_path::path_from_file_uri;
 use crate::git_commands::{get_git_blame, get_git_file_history, get_git_status};
 use crate::local_history::LocalHistoryStore;

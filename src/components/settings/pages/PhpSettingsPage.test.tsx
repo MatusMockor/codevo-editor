@@ -28,7 +28,6 @@ const baseEnv: SettingsEnvironment = {
   workspaceRoot: "/workspace",
   onCopyInstallCommand: () => undefined,
   onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-  onOpenNodeLaunchConfigurations: () => undefined,
   onRestartJavaScriptTypeScriptService: async () => undefined,
 };
 

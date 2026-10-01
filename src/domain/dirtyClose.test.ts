@@ -7,10 +7,7 @@ import {
   type DirtyCloseDocumentMembership,
 } from "./dirtyClose";
 import type { EditorDocument, WorkspaceFileRevision } from "./workspace";
-import {
-  createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
-} from "./workspaceRuntimeOwner";
+import { createWorkspaceRuntimeOwner } from "./workspaceRuntimeOwner";
 
 function document(
   path: string,
@@ -33,18 +30,16 @@ function document(
 describe("isDirtyCloseDocument", () => {
   it("accepts only dirty writable persistable documents", () => {
     expect(isDirtyCloseDocument(document("/project/src/a.ts"))).toBe(true);
-    expect(
-      isDirtyCloseDocument(document("/project/src/a.ts", "saved", "saved")),
-    ).toBe(false);
-    expect(
-      isDirtyCloseDocument(document("/project/src/a.ts", "edited", "saved", true)),
-    ).toBe(false);
-    expect(
-      isDirtyCloseDocument(document("mockor-git-diff:worktree:/project/src/a.ts")),
-    ).toBe(false);
-    expect(
-      isDirtyCloseDocument(document("mockor-markdown-preview:/project/readme.md")),
-    ).toBe(false);
+    expect(isDirtyCloseDocument(document("/project/src/a.ts", "saved", "saved"))).toBe(false);
+    expect(isDirtyCloseDocument(document("/project/src/a.ts", "edited", "saved", true))).toBe(
+      false,
+    );
+    expect(isDirtyCloseDocument(document("mockor-git-diff:worktree:/project/src/a.ts"))).toBe(
+      false,
+    );
+    expect(isDirtyCloseDocument(document("mockor-markdown-preview:/project/readme.md"))).toBe(
+      false,
+    );
   });
 });
 
@@ -73,7 +68,7 @@ describe("collectDirtyCloseTargets", () => {
 
   it("deduplicates equivalent snapshots across workspace aliases", () => {
     const owner = createWorkspaceRuntimeOwner("project-a", "/real/project");
-    const aliasOwner = transferWorkspaceRuntimeOwner(owner, "/alias/project");
+    const aliasOwner = createWorkspaceRuntimeOwner(owner.ownerKey, "/alias/project");
     const dirty = document("/real/project/src/a.ts");
 
     const targets = collectDirtyCloseTargets([
@@ -97,13 +92,7 @@ describe("collectDirtyCloseTargets", () => {
   it("normalizes optional writable and revision defaults during deduplication", () => {
     const owner = createWorkspaceRuntimeOwner("project-a", "/project");
     const implicitDefaults = document("/project/src/a.ts");
-    const explicitDefaults = document(
-      "/project/src/a.ts",
-      "edited",
-      "saved",
-      false,
-      null,
-    );
+    const explicitDefaults = document("/project/src/a.ts", "edited", "saved", false, null);
 
     const targets = collectDirtyCloseTargets([
       {
@@ -161,7 +150,7 @@ describe("collectDirtyCloseTargets", () => {
 
   it("preserves divergent paths and filesystem revisions for one identity", () => {
     const owner = createWorkspaceRuntimeOwner("project-a", "/real/project");
-    const aliasOwner = transferWorkspaceRuntimeOwner(owner, "/alias/project");
+    const aliasOwner = createWorkspaceRuntimeOwner(owner.ownerKey, "/alias/project");
     const revision = {
       contentHash: "1",
       device: "2",
@@ -175,35 +164,20 @@ describe("collectDirtyCloseTargets", () => {
       {
         owner,
         documentIdentity: "src/a.ts",
-        document: document(
-          "/real/project/src/a.ts",
-          "edited",
-          "saved",
-          false,
-          revision,
-        ),
+        document: document("/real/project/src/a.ts", "edited", "saved", false, revision),
       },
       {
         owner: aliasOwner,
         documentIdentity: "src/a.ts",
-        document: document(
-          "/alias/project/src/a.ts",
-          "edited",
-          "saved",
-          false,
-          revision,
-        ),
+        document: document("/alias/project/src/a.ts", "edited", "saved", false, revision),
       },
       {
         owner,
         documentIdentity: "src/a.ts",
-        document: document(
-          "/real/project/src/a.ts",
-          "edited",
-          "saved",
-          false,
-          { ...revision, contentHash: "7" },
-        ),
+        document: document("/real/project/src/a.ts", "edited", "saved", false, {
+          ...revision,
+          contentHash: "7",
+        }),
       },
     ]);
 
@@ -232,10 +206,7 @@ describe("collectDirtyCloseTargets", () => {
       },
     ]);
 
-    expect(targets.map((target) => target.ownerKey)).toEqual([
-      ownerA.ownerKey,
-      ownerB.ownerKey,
-    ]);
+    expect(targets.map((target) => target.ownerKey)).toEqual([ownerA.ownerKey, ownerB.ownerKey]);
   });
 
   it("skips empty identities and ineligible documents", () => {
@@ -262,7 +233,7 @@ describe("collectDirtyCloseTargets", () => {
 describe("collectWorkspaceDirtyCloseTargets", () => {
   it("deduplicates repeated memberships but preserves divergent alias buffers", () => {
     const owner = createWorkspaceRuntimeOwner("project-a", "/real/project");
-    const aliasOwner = transferWorkspaceRuntimeOwner(owner, "/alias/project");
+    const aliasOwner = createWorkspaceRuntimeOwner(owner.ownerKey, "/alias/project");
     const realDocument = document("/real/project/src/a.ts");
     const aliasDocument = document("/alias/project/src/a.ts");
 

@@ -82,66 +82,6 @@ impl PackageToolContext {
         Ok(Some(resolved))
     }
 
-    pub fn validated_ancestor_directory(&self, path: &str) -> Result<PathBuf, String> {
-        let requested = Path::new(path);
-        let candidate = if requested.is_absolute() {
-            requested.to_path_buf()
-        } else {
-            self.root.join(requested)
-        };
-        let directory = candidate
-            .canonicalize()
-            .map_err(|error| format!("Failed to resolve package tool root: {error}"))?;
-        if !directory.is_dir()
-            || directory.strip_prefix(&self.root).is_err()
-            || self.target.strip_prefix(&directory).is_err()
-        {
-            return Err(
-                "Package tool root must be an ancestor of the target inside the workspace."
-                    .to_string(),
-            );
-        }
-        Ok(directory)
-    }
-
-    pub fn nearest_file_from(
-        &self,
-        start: &Path,
-        relative_path: &Path,
-    ) -> Result<Option<PathBuf>, String> {
-        if start.strip_prefix(&self.root).is_err()
-            || self.target.strip_prefix(start).is_err()
-            || relative_path.is_absolute()
-            || !relative_path
-                .components()
-                .all(|component| matches!(component, Component::Normal(_)))
-        {
-            return Err("Package dependency lookup is outside its safe context.".to_string());
-        }
-
-        for directory in start.ancestors() {
-            if directory.strip_prefix(&self.root).is_err() {
-                break;
-            }
-            let candidate = directory.join(relative_path);
-            if candidate.is_file() {
-                let resolved = candidate.canonicalize().map_err(|error| {
-                    format!("Failed to resolve package dependency entry: {error}")
-                })?;
-                if resolved.strip_prefix(&self.root).is_err() {
-                    return Err(
-                        "Resolved package dependency entry escapes the workspace.".to_string()
-                    );
-                }
-                return Ok(Some(resolved));
-            }
-            if directory == self.root {
-                break;
-            }
-        }
-        Ok(None)
-    }
-
     pub fn target_relative_to(&self, directory: &Path) -> Result<PathBuf, String> {
         self.target
             .strip_prefix(directory)

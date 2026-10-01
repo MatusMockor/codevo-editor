@@ -12,8 +12,6 @@ import {
 } from "react";
 import type * as Monaco from "monaco-editor";
 import { breadcrumbPathFromCursorAndSymbols } from "../../domain/breadcrumbs";
-import type { Breakpoint } from "../../domain/debug";
-import type { DebugBreakpointManagement } from "../../application/useDebugBreakpointManagement";
 import type { EditorSessionOwnerKey } from "../../domain/editorSessionOwnerKey";
 import type {
   EditorPosition,
@@ -28,10 +26,6 @@ import {
 import { Breadcrumbs } from "../Breadcrumbs";
 import { CursorAwareBreadcrumbs } from "../CursorAwareBreadcrumbs";
 import { EditorSubheader } from "../editorPanel/EditorSubheader";
-import {
-  EditorBreakpointGutterMenu,
-  type EditorBreakpointGutterActions,
-} from "../EditorBreakpointGutterMenu";
 import { type EditorRuntimeContextValue } from "../editorRuntimeContext";
 import {
   editorSurfaceControlledValue,
@@ -79,8 +73,6 @@ interface EditorSurfacePresentationOptions {
   readonly activeDocumentIsLargeSmart: boolean;
   readonly activeDocumentLargeSmartMode?: LargeSmartDocumentPresentationMode;
   readonly beforeMountTheme: MonacoAppTheme;
-  readonly breakpointActions?: Partial<DebugBreakpointManagement>;
-  readonly breakpoints: readonly Breakpoint[];
   readonly breadcrumbSymbols: LanguageServerDocumentSymbol[];
   readonly changeHunksRef: MutableRefObject<
     readonly import("../../domain/editorChangeMarkers").EditorChangeHunk[]
@@ -99,10 +91,8 @@ interface EditorSurfacePresentationOptions {
   readonly handleMount: OnMount;
   readonly isOpeningFile: boolean;
   readonly minimapEnabled: boolean;
-  readonly modelIdentity: Monaco.editor.ITextModel | null;
   readonly monaco: typeof Monaco | null;
   readonly monacoFontLigatures: boolean | string;
-  readonly onMutationError: (error: unknown) => void;
   readonly onRevertChangeHunk: (
     hunk: import("../../domain/editorChangeMarkers").EditorChangeHunk,
   ) => void;
@@ -112,7 +102,6 @@ interface EditorSurfacePresentationOptions {
   readonly setChangePreview: Dispatch<SetStateAction<EditorChangePreviewState | null>>;
   readonly setSurroundWithRequest: Dispatch<SetStateAction<SurroundWithRequest | null>>;
   readonly surroundWithRequest: SurroundWithRequest | null;
-  readonly toggleBreakpointFallback?: EditorBreakpointGutterActions["toggleBreakpoint"];
   readonly wordWrapEnabled: boolean;
   readonly workspaceRoot: string | null;
 }
@@ -220,8 +209,6 @@ export function useEditorSurfacePresentation({
     ? "large-non-javascript-typescript"
     : "eligible",
   beforeMountTheme,
-  breakpointActions,
-  breakpoints,
   breadcrumbSymbols,
   changeHunksRef,
   changePreview,
@@ -239,17 +226,14 @@ export function useEditorSurfacePresentation({
   handleMount,
   isOpeningFile,
   minimapEnabled,
-  modelIdentity,
   monaco,
   monacoFontLigatures,
-  onMutationError,
   onRevertChangeHunk,
   runtime,
   runtimeMembershipGroupId,
   setChangePreview,
   setSurroundWithRequest,
   surroundWithRequest,
-  toggleBreakpointFallback,
   wordWrapEnabled,
   workspaceRoot,
 }: EditorSurfacePresentationOptions): ReactElement {
@@ -471,17 +455,6 @@ export function useEditorSurfacePresentation({
         />
       </Suspense>
       {overlay}
-      <EditorBreakpointGutterMenu
-        actions={breakpointActions}
-        activeDocumentPath={activeDocumentPath}
-        breakpoints={breakpoints}
-        editor={editor}
-        modelIdentity={modelIdentity}
-        monaco={monaco}
-        onMutationError={onMutationError}
-        toggleBreakpointFallback={toggleBreakpointFallback}
-        workspaceRoot={workspaceRoot}
-      />
       {activeDocument && changePreview ? (
         <div
           aria-label="Local change preview"

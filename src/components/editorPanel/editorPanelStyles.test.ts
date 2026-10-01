@@ -55,13 +55,10 @@ describe("editor panel style contract", () => {
     expect(tabs).toMatch(/\.editor-tab-status-deleted[^{]*\{[^}]*var\(--cv-danger\)/);
   });
 
-  it("paints the gutter and debug decorations with the editor tokens", () => {
-    const gutter = sheet("editorGutter.css");
-
-    expect(gutter).toMatch(/\.editor-change-line-modified \{[^}]*var\(--cv-git-mod\)/);
-    expect(gutter).toMatch(/\.breakpoint-glyph-verified::before \{[^}]*var\(--cv-breakpoint\)/);
-    expect(gutter).toMatch(/\.debug-stopped-line \{[^}]*var\(--cv-warn-soft\)/);
-    expect(gutter).toMatch(/\.debug-inline-value \{[^}]*var\(--cv-fg-subtle\)/);
+  it("paints the gutter decorations with the editor tokens", () => {
+    expect(sheet("editorGutter.css")).toMatch(
+      /\.editor-change-line-modified \{[^}]*var\(--cv-git-mod\)/,
+    );
   });
 
   it("respects reduced motion for every transition", () => {
@@ -78,10 +75,6 @@ describe("editor panel style contract", () => {
       ".tab-main",
       ".tab-close",
       ".dirty-dot",
-      ".breakpoint-glyph",
-      ".inline-breakpoint-marker",
-      ".debug-inline-value",
-      ".debug-stopped-line",
       ".editor-change-glyph",
       ".editor-change-line",
       ".bookmark-gutter-glyph",
@@ -100,7 +93,7 @@ describe("editor panel style contract", () => {
   });
 });
 
-const DRAWER_SHEETS = ["editorDrawer.css", "../debug/debug.css"];
+const DRAWER_SHEETS = ["editorDrawer.css"];
 const drawerSheets = new Map(
   DRAWER_SHEETS.map((name) => [name, readFileSync(resolve(dir, name), "utf8")]),
 );
@@ -109,7 +102,7 @@ function drawerSheet(name: string): string {
   return drawerSheets.get(name) ?? "";
 }
 
-describe("editor drawer, Problems and debug style contract", () => {
+describe("editor drawer and Problems style contract", () => {
   it.each(DRAWER_SHEETS)("uses tokens only in %s: no colour literals", (name) => {
     expect(drawerSheet(name)).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     expect(drawerSheet(name)).not.toMatch(/\b(rgb|rgba|hsl|hsla)\(/);
@@ -121,9 +114,8 @@ describe("editor drawer, Problems and debug style contract", () => {
     expect(references.filter((reference) => !reference?.startsWith("--cv-"))).toEqual([]);
   });
 
-  it("keeps the mockup drawer, tab, row and side column sizes", () => {
+  it("keeps the mockup drawer, tab and row sizes", () => {
     const drawer = drawerSheet("editorDrawer.css");
-    const debug = drawerSheet("../debug/debug.css");
 
     expect(drawer).toMatch(/\.cv-edrawer__head \{[^}]*height: 36px;/);
     expect(drawer).toMatch(/\.cv-edrawer__tab \{[^}]*height: 24px;/);
@@ -132,42 +124,12 @@ describe("editor drawer, Problems and debug style contract", () => {
       /\.cv-problems__item \{[^}]*height: 26px;[^}]*padding: 0 var\(--cv-space-4\) 0 28px;/,
     );
     expect(drawer).toMatch(/\.cv-problems__item\[aria-current="true"\] \{[^}]*var\(--cv-tint-2\)/);
-    expect(debug).toMatch(/\.cv-dside \{[^}]*width: 304px;/);
-    expect(debug).toMatch(/\.cv-dside__head \{[^}]*height: 30px;/);
-    expect(debug).toMatch(/\.cv-dside__dot \{[^}]*var\(--cv-breakpoint\)/);
   });
 
-  it("sizes the drawer 224px, or 236px while debugging", async () => {
+  it("sizes the drawer 224px", async () => {
     const sizes = await import("./editorDrawerSize");
 
     expect(sizes.DEFAULT_EDITOR_DRAWER_HEIGHT).toBe(224);
-    expect(sizes.DEBUG_EDITOR_DRAWER_HEIGHT).toBe(236);
-  });
-
-  it("respects reduced motion in the debug side column", () => {
-    const debug = drawerSheet("../debug/debug.css");
-
-    expect(debug).toContain("transition:");
-    expect(debug).toContain("prefers-reduced-motion: reduce");
-  });
-
-  it("keeps legacy inline colour variables out of the debug components", () => {
-    const sources = [
-      "../DebugPanel.tsx",
-      "../DebugConsolePanel.tsx",
-      "../DebugVariableTree.tsx",
-      "../DebugWatchesPanel.tsx",
-      "../debug/DebugBreakpoints.tsx",
-      "../debug/DebugCallStack.tsx",
-      "../debug/DebugConsoleRegion.tsx",
-      "../debug/DebugSectionsRegion.tsx",
-      "../debug/DebugToolbarRegion.tsx",
-    ];
-    for (const source of sources) {
-      expect(readFileSync(resolve(dir, source), "utf8"), source).not.toMatch(
-        /var\(--(border-subtle|text-muted|background-active|status-error|panel-bg|surface-raised|selection-bg)/,
-      );
-    }
   });
 
   it("leaves no migrated Problems or panel-tab rule behind in App.css", () => {

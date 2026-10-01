@@ -711,14 +711,13 @@
 }
 
 .cv-sb-ws[data-state="draft"] {
-  box-shadow: none;
-  outline: 1px dashed color-mix(in srgb, var(--cv-fg-subtle) 70%, transparent);
-  outline-offset: -1px;
+  background: transparent;
+  box-shadow: var(--cv-ring-hair-strong);
 }
 
-.cv-sb-ws[data-state="draft"]:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+.cv-sb-ws[data-state="draft"]:hover,
+.cv-sb-ws[data-state="draft"][data-open="true"] {
+  background: var(--cv-tint-2);
 }
 
 .cv-favicon--lg {

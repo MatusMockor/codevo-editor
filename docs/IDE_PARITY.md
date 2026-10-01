@@ -11,14 +11,20 @@ arbitrary DAP adapters, remote/container development, and unsupported platforms 
 product-sized capabilities, not hidden checklist items. Parity claims are made per
 workflow and require automated acceptance evidence.
 
+> **Debugger removed (2026-10-01).** By owner decision the interactive debugger was
+> removed completely: Node CDP and PHP Xdebug/DBGP debugging, launch configurations,
+> Run Without Debugging, breakpoints, Watch, Debug Console and related commands. AI
+> agents handle debugging. Debugger entries further down this document are historical
+> and no longer describe shipped capability.
+
 ## Strong today
 
 - Workbench: multi-tab/split editing, workspace persistence, MRU switching,
   search/navigation, command palette/keymap, Problems, terminal, settings, and Git
   workflows.
 - Language platform: isolated per-workspace PHP and TypeScript language-server sessions, document sync, diagnostics, completion, navigation, symbols, references, rename, code actions, formatting, semantic tokens, inlay hints and hierarchies.
-- TypeScript/Node: managed TypeScript server, workspace TypeScript selection, auto-import preferences, ESLint, Prettier, package scripts, strict project-scoped launch configurations, a workspace JavaScript Test Explorer, workspace-wide static Express route navigation, Jest/Vitest execution and CDP debugging with source maps.
-- PHP: PHPactor/Intelephense, Composer/PSR-4 indexing, PHPStan, Pint, PHPUnit/Pest workflows with Clover coverage and active-editor gutters, Xdebug/DBGP, refactors and Laravel/Nette/Blade/Latte/NEON intelligence.
+- TypeScript/Node: managed TypeScript server, workspace TypeScript selection, auto-import preferences, ESLint, Prettier, package scripts, a workspace JavaScript Test Explorer, workspace-wide static Express route navigation, and Jest/Vitest execution.
+- PHP: PHPactor/Intelephense, Composer/PSR-4 indexing, PHPStan, Pint, PHPUnit/Pest workflows with Clover coverage and active-editor gutters, refactors and Laravel/Nette/Blade/Latte/NEON intelligence.
 - VCS: file/hunk staging and revert, commits, push, history, blame, branches, remotes, stash, cherry-pick and nested repositories.
 
 ## Material gaps
@@ -484,9 +490,7 @@ The dynamic source-map registry foundation is independently clean and fail-close
 Prioritize measured editing responsiveness and the next audit-ranked
 JavaScript/TypeScript daily-workflow gaps: completion, navigation, refactoring,
 Problems, formatting, Quick Open/search latency, package ownership, and model/provider
-retention. Keep child/multi-process debugging, `tsx --watch`, nodemon, npm watch,
-Windows native watch, and generic `restart: true` outside the active slice until their
-distinct ownership and platform strategies are proven. Keep the deferred Nette
+retention. The interactive debugger was removed and is not a parity target. Keep the deferred Nette
 quick-fix outside the active plan unless the user explicitly reprioritizes it;
 completing the JS/TS/Node phase never resumes it automatically. If explicitly requested
 later, use only a synchronous renderer-owned template/owner Monaco lease.

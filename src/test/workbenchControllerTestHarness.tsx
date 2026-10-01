@@ -92,8 +92,6 @@ export interface RenderControllerOptions {
   agentTaskGateway?: WorkbenchControllerOptions["agentTaskGateway"];
   gitWorktreeGateway?: WorkbenchControllerOptions["gitWorktreeGateway"];
   appSettings?: ReturnType<typeof defaultAppSettings>;
-  debugBreakpointStorage?: WorkbenchControllerOptions["debugBreakpointStorage"];
-  debugGateway?: WorkbenchControllerOptions["debugGateway"];
   dirtyTextSearchGateway?: DirtyTextSearchComputationGateway;
   editorGroupFocusRunner?: WorkbenchControllerOptions["editorGroupFocusRunner"];
   gitGateway?: GitGateway;
@@ -203,8 +201,6 @@ export function setupWorkbenchControllerTestHarness() {
     agentTaskGateway,
     gitWorktreeGateway,
     appSettings = defaultAppSettings(),
-    debugBreakpointStorage,
-    debugGateway,
     dirtyTextSearchGateway,
     editorGroupFocusRunner,
     gitGateway,
@@ -311,8 +307,6 @@ export function setupWorkbenchControllerTestHarness() {
       activeLiveDocumentSaveCoordinator;
     dependencies.controllerOptions.editorGroupFocusRunner = editorGroupFocusRunner;
     dependencies.controllerOptions.prettierFormattingGateway = prettierFormattingGateway;
-    dependencies.controllerOptions.debugBreakpointStorage = debugBreakpointStorage;
-    dependencies.controllerOptions.debugGateway = debugGateway;
     dependencies.controllerOptions.agentRootLeaseGateway = agentRootLeaseGateway;
     dependencies.controllerOptions.agentProviderGateway = agentProviderGateway;
     dependencies.controllerOptions.agentTaskGateway = agentTaskGateway;
@@ -870,8 +864,6 @@ function createControllerDependencies(
   } & Omit<
       RenderControllerOptions,
       | "appSettings"
-      | "debugBreakpointStorage"
-      | "debugGateway"
       | "editorGroupFocusRunner"
       | "javaScriptTypeScriptInitialRuntimeStatus"
       | "markdownPreviewRenderer"

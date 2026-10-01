@@ -3,10 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  DebugWatchAtCursorCapture,
-  DebugWatchAtCursorCaptureReader,
-} from "../domain/debugWatchAtCursorCapture";
+import type { EditorCursorCapture, EditorCursorCaptureReader } from "../domain/editorCursorCapture";
 import type { EditorDocument } from "../domain/workspace";
 import {
   MAX_JS_TEST_RUN_SELECTION_SOURCE_BYTES,
@@ -29,7 +26,7 @@ describe("useJsTestRunSelectionCommands", () => {
   let host: HTMLDivElement;
   let reactRoot: Root;
   let latest: JsTestRunSelectionCommands;
-  let capture: DebugWatchAtCursorCapture | null;
+  let capture: EditorCursorCapture | null;
   let document: EditorDocument | null;
   let options: UseJsTestRunSelectionCommandsOptions;
   let runner: JsTestExplorerScopeRunnerPort;
@@ -365,13 +362,11 @@ function scopeRunner(
   };
 }
 
-function reader(read: () => DebugWatchAtCursorCapture | null): DebugWatchAtCursorCaptureReader {
-  return { readDebugWatchAtCursorCapture: read };
+function reader(read: () => EditorCursorCapture | null): EditorCursorCaptureReader {
+  return { readEditorCursorCapture: read };
 }
 
-function editorCapture(
-  overrides: Partial<DebugWatchAtCursorCapture> = {},
-): DebugWatchAtCursorCapture {
+function editorCapture(overrides: Partial<EditorCursorCapture> = {}): EditorCursorCapture {
   return {
     content: SOURCE,
     documentPath: FILE,

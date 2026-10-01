@@ -3,13 +3,13 @@ mod repository_target;
 use crate::{
     agent_cli_discovery::AgentCliDiscovery,
     canonicalize_workspace_root,
-    debug_session_registry::{retain_workspace_root, RetainedDebugWorkspaceRoot},
     effective_executable_environment::EffectiveExecutablePath,
     git_worktree::{
         agent_worktree_path, ensure_worktree_path_in_base, safe_agent_task_id,
         WORKTREE_BASE_DIR_NAME,
     },
     node_package_tasks::NodePackageTaskRegistry,
+    retained_workspace_root::{retain_workspace_root, RetainedWorkspaceRoot},
     terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize},
     terminal_session::{
         LocalTerminalProfileProvider, PortablePtySpawner, TerminalLaunchRoots,
@@ -92,7 +92,7 @@ fn resolve_agent_worktree_launch_root(
 
 fn open_terminal_launch_directory(
     registry: &WorkspaceRegistry,
-    retained_workspace: &RetainedDebugWorkspaceRoot,
+    retained_workspace: &RetainedWorkspaceRoot,
     workspace_root: &Path,
     target: &TerminalLaunchTarget,
 ) -> Result<TerminalLaunchDirectory, String> {
@@ -150,7 +150,7 @@ fn open_agent_worktree_directory(
 fn retain_terminal_launch_workspace(
     registry: &WorkspaceRegistry,
     root: &Path,
-) -> Result<crate::debug_session_registry::RetainedDebugWorkspaceRoot, String> {
+) -> Result<RetainedWorkspaceRoot, String> {
     let retained_workspace = retain_workspace_root(registry, &root.to_string_lossy())?;
     if retained_workspace.live_path()? != root {
         return Err("Terminal workspace identity changed before launch.".to_string());
@@ -202,14 +202,12 @@ pub(crate) fn start_terminal_session(
             .transpose()
             .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
         let profile_provider = LocalTerminalProfileProvider;
-        let workspace_authority = retained_workspace.authority.clone();
         let result = supervisor.start_descriptor_bound_with_effective_path(
             TerminalLaunchRoots {
                 workspace_root: root.clone(),
                 cwd: launch_directory.cwd,
             },
             launch_directory.directory,
-            workspace_authority,
             TerminalStartOptions {
                 effective_path,
                 #[cfg(test)]
@@ -486,11 +484,7 @@ mod tests {
             .expect("unchanged registered root should retain");
         assert_eq!(
             retained.authority,
-            crate::debug_session_registry::retained_workspace_authority(
-                &registry,
-                root.to_str().expect("UTF-8 fixture")
-            )
-            .expect("registered authority")
+            crate::retained_workspace_root::WorkspaceAuthority::from_descriptor(&descriptor)
         );
         drop(retained);
 

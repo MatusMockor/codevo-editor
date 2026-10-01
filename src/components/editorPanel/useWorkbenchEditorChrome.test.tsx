@@ -60,7 +60,6 @@ function fakeWorkbench(overrides: Partial<EditorChromeWorkbench> = {}): EditorCh
     gitStatus: { branch: "main" },
     hideBottomPanel: vi.fn(),
     intelligenceMode: "fullSmart",
-    nodeRunWithoutDebugging: { state: null, stop: vi.fn() },
     openGitBranchPanel: vi.fn(),
     runCommand: vi.fn(),
     showBottomPanelView: vi.fn(),
@@ -78,7 +77,6 @@ function options(overrides: Partial<WorkbenchEditorChromeOptions> = {}) {
     largeDocumentStatus: null,
     cursorStore: null,
     cursorAuthority: null,
-    debugToolbarVisible: false,
     showGoToLine: vi.fn(),
     markActiveFileReveal: vi.fn(),
     ...overrides,
@@ -135,15 +133,12 @@ describe("useWorkbenchEditorChrome", () => {
     expect(value.markActiveFileReveal).toHaveBeenCalledTimes(1);
   });
 
-  it("maximizes the panel for Show debug views and routes mode and trust commands", () => {
+  it("routes mode and trust commands", () => {
     const workbench = fakeWorkbench();
     const chrome = render(workbench, options());
-    chrome?.runDebugEntry("showViews");
     chrome?.toggleIdeMode();
     chrome?.trustWorkspace();
 
-    expect(workbench.showBottomPanelView).toHaveBeenCalledWith("debug");
-    expect(workbench.agentWorkbench.dispatch).toHaveBeenCalledWith({ kind: "maximizeRightPanel" });
     expect(workbench.runCommand).toHaveBeenCalledWith("smart.toggle");
     expect(workbench.runCommand).toHaveBeenCalledWith("workspace.trust");
   });

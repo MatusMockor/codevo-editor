@@ -24,7 +24,7 @@ export interface EditorDrawerTab {
 
 const HIDDEN: WorkbenchPanelPlacement = Object.freeze({ terminal: false, drawer: null });
 const TERMINAL: WorkbenchPanelPlacement = Object.freeze({ terminal: true, drawer: null });
-const PRIMARY_VIEWS: ReadonlyArray<EditorDrawerView> = ["problems", "debug"];
+const PRIMARY_VIEWS: ReadonlyArray<EditorDrawerView> = ["problems"];
 const SECONDARY_VIEWS: ReadonlyArray<EditorDrawerView> = [
   "search",
   "testResults",
@@ -52,8 +52,6 @@ export function editorDrawerViewLabel(view: EditorDrawerView): string {
   switch (view) {
     case "problems":
       return "Problems";
-    case "debug":
-      return "Debug console";
     case "search":
       return "Search";
     case "testResults":
@@ -87,7 +85,6 @@ export function editorDrawerViewAvailable(
 ): boolean {
   switch (view) {
     case "problems":
-    case "debug":
     case "search":
     case "index":
     case "runtime":

@@ -1,8 +1,8 @@
 use super::{TerminalLaunchDirectory, TerminalLaunchTarget};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use crate::debug_session_registry::DebugWorkspaceAuthority;
-use crate::debug_session_registry::RetainedDebugWorkspaceRoot;
 use crate::git_worktree::{safe_agent_task_id, WORKTREE_BASE_DIR_NAME};
+use crate::retained_workspace_root::RetainedWorkspaceRoot;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::retained_workspace_root::WorkspaceAuthority;
 use crate::workspace_registry::WorkspaceRegistry;
 use std::path::{Path, PathBuf};
 
@@ -35,7 +35,7 @@ pub(super) fn resolve(
 
 pub(super) fn open(
     registry: &WorkspaceRegistry,
-    retained_workspace: &RetainedDebugWorkspaceRoot,
+    retained_workspace: &RetainedWorkspaceRoot,
     workspace_root: &Path,
     target: &TerminalLaunchTarget,
 ) -> Option<Result<TerminalLaunchDirectory, String>> {
@@ -63,7 +63,7 @@ pub(super) fn open(
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn open_repository(
     registry: &WorkspaceRegistry,
-    retained_workspace: &RetainedDebugWorkspaceRoot,
+    retained_workspace: &RetainedWorkspaceRoot,
     workspace_root: &Path,
     repository: &str,
     thread_id: Option<&str>,
@@ -72,7 +72,7 @@ fn open_repository(
     let descriptor = registry
         .descriptor_for_registered_path(workspace_root)
         .map_err(|error| error.to_string())?;
-    let expected_authority = DebugWorkspaceAuthority::RetainedWorkspace {
+    let expected_authority = WorkspaceAuthority {
         workspace_id: descriptor.workspace_id.as_str().to_string(),
         canonical_root: workspace_root.to_string_lossy().into_owned(),
     };
@@ -94,7 +94,7 @@ fn open_repository(
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn open_repository(
     _registry: &WorkspaceRegistry,
-    _retained_workspace: &RetainedDebugWorkspaceRoot,
+    _retained_workspace: &RetainedWorkspaceRoot,
     _workspace_root: &Path,
     _repository: &str,
     _thread_id: Option<&str>,
@@ -114,7 +114,7 @@ mod tests {
         repository: &str,
         thread_id: Option<&str>,
     ) -> Result<TerminalLaunchDirectory, String> {
-        let retained = crate::debug_session_registry::retain_workspace_root(
+        let retained = crate::retained_workspace_root::retain_workspace_root(
             registry,
             &root.to_string_lossy(),
         )?;
@@ -229,7 +229,7 @@ mod tests {
         let registry = WorkspaceRegistry::new();
         let descriptor = registry.register(fixture.path()).unwrap();
         let root = descriptor.canonical_root_path;
-        let retained = crate::debug_session_registry::retain_workspace_root(
+        let retained = crate::retained_workspace_root::retain_workspace_root(
             &registry,
             &root.to_string_lossy(),
         )

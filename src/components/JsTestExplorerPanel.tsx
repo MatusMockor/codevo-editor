@@ -17,7 +17,6 @@ import {
 import type { JsTestRunScope } from "../domain/jsTestRunScope";
 import {
   filterJsTestExplorerTree,
-  type JsTestExplorerNode,
   type JsTestExplorerTestNode,
   type JsTestExplorerWorkspaceNode,
 } from "../domain/jsTestExplorerTree";
@@ -40,10 +39,6 @@ export interface JsTestExplorerPanelProps {
   readonly coverageRunning: boolean;
   readonly coverageUnavailable: string | null;
   readonly currentFileIdentity?: JsTestExplorerCurrentFileIdentity | null;
-  readonly debugError: string | null;
-  readonly debugging: boolean;
-  readonly debugStartBlocked: boolean;
-  readonly debugUnavailable: string | null;
   readonly error: string | null;
   readonly executionStartBlocked: boolean;
   readonly failedRunCompleted: number;
@@ -54,9 +49,6 @@ export interface JsTestExplorerPanelProps {
   readonly onCancelTestRun: () => void;
   readonly onClearCoverage: () => void;
   readonly onCopyOutput?: () => boolean | Promise<boolean>;
-  readonly onDebugNode: (
-    node: Exclude<JsTestExplorerNode, JsTestExplorerWorkspaceNode>,
-  ) => Promise<void>;
   readonly onOpenCoverageFile: (file: JsTestFileCoverage) => void;
   readonly onOpenTest: (test: JsTestExplorerTestNode) => void;
   readonly onQueryChange: (query: string) => void;
@@ -155,10 +147,6 @@ export function JsTestExplorerPanel({
   coverageRunning,
   coverageUnavailable,
   currentFileIdentity = null,
-  debugError,
-  debugging,
-  debugStartBlocked,
-  debugUnavailable,
   error,
   executionStartBlocked,
   failedRunCompleted,
@@ -169,7 +157,6 @@ export function JsTestExplorerPanel({
   onCancelTestRun,
   onClearCoverage,
   onCopyOutput = () => false,
-  onDebugNode,
   onOpenCoverageFile,
   onOpenTest,
   onQueryChange,
@@ -253,7 +240,7 @@ export function JsTestExplorerPanel({
   };
   const failedRunBusy = failedRunPhase !== "idle";
   const showCancel = failedRunBusy || (running && canCancelTestRun);
-  const busy = loading || running || coverageRunning || debugging || failedRunBusy;
+  const busy = loading || running || coverageRunning || failedRunBusy;
   const canRun = Boolean(tree?.children.length) && !busy && !executionStartBlocked;
   const canRerunFailed = canRerunFailedTests && !busy && !executionStartBlocked;
   const continuousRunActive = continuousRunEnabled || continuousRunStopping;
@@ -439,21 +426,6 @@ export function JsTestExplorerPanel({
               Running JavaScript test coverage…
             </div>
           ) : null}
-          {!loading && !running && !failedRunBusy && !coverageRunning && debugging ? (
-            <div role="status" style={styles.message}>
-              Starting selected JavaScript test debug…
-            </div>
-          ) : null}
-          {!debugging && debugUnavailable ? (
-            <div role="status" style={styles.message}>
-              {debugUnavailable}
-            </div>
-          ) : null}
-          {!debugging && !debugUnavailable && debugError ? (
-            <div role="alert" style={styles.message}>
-              {debugError}
-            </div>
-          ) : null}
           {!coverageRunning && coverageUnavailable ? (
             <div role="status" style={styles.message}>
               {coverageUnavailable}
@@ -514,10 +486,8 @@ export function JsTestExplorerPanel({
 
           {showTree && filteredTree ? (
             <JsTestExplorerVirtualizedTree
-              debugDisabled={busy || debugStartBlocked}
               disabled={!canRun}
               onOpenTest={onOpenTest}
-              onDebugNode={onDebugNode}
               onRunScope={runScope}
               root={filteredTree}
               rootPath={tree?.rootPath ?? filteredTree.rootPath}

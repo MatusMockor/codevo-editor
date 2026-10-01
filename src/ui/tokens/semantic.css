@@ -87,7 +87,6 @@
   --cv-shadow-dialog: 0 0 0 1px var(--cv-hair-strong), 0 28px 70px -24px rgba(0, 0, 0, 0.65);
   --cv-shadow-toast: 0 0 0 1px var(--cv-hair-strong), 0 12px 32px -16px rgba(0, 0, 0, 0.5);
   --cv-git-mod: #6aa8f7;
-  --cv-breakpoint: #e5534b;
   --cv-match: rgba(237, 187, 78, 0.16);
   --cv-match-current: rgba(237, 187, 78, 0.38);
   color-scheme: dark;
@@ -144,7 +143,6 @@
   --cv-shadow-dialog: 0 0 0 1px var(--cv-hair-strong), 0 28px 70px -28px rgba(20, 24, 30, 0.35);
   --cv-shadow-toast: 0 0 0 1px var(--cv-hair-strong), 0 12px 32px -16px rgba(20, 24, 30, 0.3);
   --cv-git-mod: #2f6bd1;
-  --cv-breakpoint: #d1242f;
   --cv-match: rgba(180, 120, 0, 0.14);
   --cv-match-current: rgba(180, 120, 0, 0.32);
   color-scheme: light;

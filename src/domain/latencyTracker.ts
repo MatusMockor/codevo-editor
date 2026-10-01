@@ -1,7 +1,7 @@
 // Lightweight, allocation-frugal latency instrumentation for the key
 // interactive operations of the workbench. It records recent per-operation
 // latencies (a bounded ring of samples) and exposes summary stats for a
-// runtime/debug panel so real latencies are observable instead of guessed.
+// runtime panel so real latencies are observable instead of guessed.
 //
 // Design constraints:
 //   - Zero hot-path overhead beyond two timestamps + one array push: no logging,
@@ -18,8 +18,6 @@ export const LATENCY_OPERATION_KINDS = [
   "references",
   "rename",
   "folderExpand",
-  "debug-variables-render",
-  "debug-console-append",
 ] as const;
 
 export type LatencyOperationKind = (typeof LATENCY_OPERATION_KINDS)[number];
@@ -56,7 +54,7 @@ const KIND_ORDER = new Map<LatencyOperationKind, number>(
   LATENCY_OPERATION_KINDS.map((kind, index) => [kind, index]),
 );
 
-export type LatencyClock = () => number;
+type LatencyClock = () => number;
 
 const OPERATION_LABELS: Record<LatencyOperationKind, string> = {
   quickOpen: "Quick Open",
@@ -66,8 +64,6 @@ const OPERATION_LABELS: Record<LatencyOperationKind, string> = {
   references: "References",
   rename: "Rename",
   folderExpand: "Folder Expand",
-  "debug-variables-render": "Debug Variables Render",
-  "debug-console-append": "Debug Console Append",
 };
 
 export function latencyOperationLabel(kind: LatencyOperationKind): string {

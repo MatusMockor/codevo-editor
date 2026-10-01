@@ -1,5 +1,5 @@
 use crate::{
-    debug_support::DebugProcessHandle,
+    process_group_termination::terminate_process_group,
     trust::WorkspaceTrustService,
     workspace_registry::{opened_root_path, WorkspaceId, WorkspaceRegistry},
 };
@@ -409,7 +409,7 @@ fn execute_process(
             Ok(Some(status)) => break Ok(status),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             Ok(None) => {
-                DebugProcessHandle::from_process_id(child.id()).terminate();
+                terminate_process_group(child.id());
                 let _ = child.wait();
                 break Err(format!(
                     "Package operation timed out after {} seconds.",
@@ -417,7 +417,7 @@ fn execute_process(
                 ));
             }
             Err(error) => {
-                DebugProcessHandle::from_process_id(child.id()).terminate();
+                terminate_process_group(child.id());
                 let _ = child.wait();
                 break Err(format!("Failed to inspect package manager: {error}"));
             }

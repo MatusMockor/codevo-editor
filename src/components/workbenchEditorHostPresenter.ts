@@ -14,7 +14,6 @@ import type { JsTestEditorSurfaceSource } from "./jsTestEditorSurfaceProps";
 import type { WorkbenchEditorHost } from "./WorkbenchEditorHost";
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
-type DebugSession = Workbench["debugSession"];
 type FrameworkProviders = NonNullable<Workbench["frameworkIntelligenceProviders"]>;
 type AnyCallback = (...args: never[]) => unknown;
 type FunctionPropertyName<T> = {
@@ -90,20 +89,6 @@ const WORKBENCH_ACTION_KEYS = [
   "updateEditorViewState",
   "updateLocalPhpDiagnostics",
 ] as const satisfies readonly FunctionPropertyName<Workbench>[];
-const BREAKPOINT_ACTION_KEYS = [
-  "addInlineBreakpoint",
-  "disableAllBreakpoints",
-  "enableAllBreakpoints",
-  "relocateBreakpoint",
-  "removeAllBreakpoints",
-  "removeBreakpoint",
-  "restoreBreakpoints",
-  "setBreakpointCondition",
-  "setBreakpointEnabled",
-  "setBreakpointHitCondition",
-  "setBreakpointLogMessage",
-  "toggleBreakpoint",
-] as const satisfies readonly FunctionPropertyName<DebugSession>[];
 const FRAMEWORK_PROVIDER_KEYS = [
   "provideBladeCodeActions",
   "provideBladeCompletions",
@@ -151,18 +136,12 @@ export function useWorkbenchEditorHostPresenter(
     [htmlPreviewGateway, workbench.workspaceIdentityDescriptor],
   );
   const workbenchRef = useRef(workbench);
-  const debugSessionRef = useRef(workbench.debugSession);
   const frameworkProvidersRef = useRef(workbench.frameworkIntelligenceProviders);
   useLayoutEffect(() => {
     workbenchRef.current = workbench;
-    debugSessionRef.current = workbench.debugSession;
     frameworkProvidersRef.current = workbench.frameworkIntelligenceProviders;
   }, [workbench]);
   const actions = useMemo(() => createStableMethodAdapter(workbenchRef, WORKBENCH_ACTION_KEYS), []);
-  const breakpointActions = useMemo(
-    () => createStableMethodAdapter(debugSessionRef, BREAKPOINT_ACTION_KEYS),
-    [],
-  );
   const frameworkIntelligenceProviders = useMemo(
     () => createStableMethodAdapter(frameworkProvidersRef, FRAMEWORK_PROVIDER_KEYS),
     [],
@@ -184,10 +163,6 @@ export function useWorkbenchEditorHostPresenter(
       activeEditorConfig,
       htmlPreview,
       appSettings: workbench.appSettings,
-      breakpoints: workbench.debugSession.breakpoints,
-      debugHover: workbench.debugSession.debugHover,
-      debugInlineValueContext: workbench.debugSession.inlineValueContext,
-      debugStoppedLocation: workbench.debugStoppedLocation,
       documentSessionAuthorityRevision: workbench.documentSessionAuthorityRevision,
       editorRevealTarget: workbench.editorRevealTarget,
       frameworkIntelligenceProviders,
@@ -218,10 +193,6 @@ export function useWorkbenchEditorHostPresenter(
       restoredEditorViewStates,
       restoredEditorViewStatesByGroup,
       workbench.appSettings,
-      workbench.debugSession.breakpoints,
-      workbench.debugSession.debugHover,
-      workbench.debugSession.inlineValueContext,
-      workbench.debugStoppedLocation,
       workbench.documentSessionAuthorityRevision,
       workbench.editorRevealTarget,
       workbench.gitDiffDocuments,
@@ -246,14 +217,10 @@ export function useWorkbenchEditorHostPresenter(
     () =>
       createRevisionToken(
         actions,
-        breakpointActions,
         frameworkIntelligenceProviders,
         restoredEditorViewStates,
         restoredEditorViewStatesByGroup,
         workbench.appSettings,
-        workbench.debugSession.breakpoints,
-        workbench.debugSession.inlineValueContext,
-        workbench.debugStoppedLocation,
         workbench.gitDiffDocuments,
         workbench.gitOperationLoading,
         workbench.isOpeningFile,
@@ -269,14 +236,10 @@ export function useWorkbenchEditorHostPresenter(
       ),
     [
       actions,
-      breakpointActions,
       frameworkIntelligenceProviders,
       restoredEditorViewStates,
       restoredEditorViewStatesByGroup,
       workbench.appSettings,
-      workbench.debugSession.breakpoints,
-      workbench.debugSession.inlineValueContext,
-      workbench.debugStoppedLocation,
       workbench.gitDiffDocuments,
       workbench.gitOperationLoading,
       workbench.isOpeningFile,
@@ -316,10 +279,9 @@ export function useWorkbenchEditorHostPresenter(
       ...actions,
       ...data,
       activeContentRevision,
-      breakpointActions,
       inactiveContentRevision,
     }),
-    [actions, activeContentRevision, breakpointActions, data, inactiveContentRevision],
+    [actions, activeContentRevision, data, inactiveContentRevision],
   );
 }
 
@@ -458,7 +420,6 @@ export function workbenchEditorHostProps({
     htmlPreview: editorHost.htmlPreview,
     attachEditorGroupLiveDocument: editorHost.attachEditorGroupLiveDocument,
     javaScriptTypeScriptIncrementalSync: editorHost.javaScriptTypeScriptIncrementalSync,
-    debugHover: editorHost.debugHover,
     documentSessionAuthorityRevision: editorHost.documentSessionAuthorityRevision,
     isEditorGroupDocumentSessionAuthorityCurrent:
       editorHost.isEditorGroupDocumentSessionAuthorityCurrent,

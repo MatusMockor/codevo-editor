@@ -10,7 +10,6 @@ import {
 } from "react";
 import type { JsTestRunScope } from "../domain/jsTestRunScope";
 import type {
-  JsTestExplorerNode,
   JsTestExplorerTestNode,
   JsTestExplorerWorkspaceNode,
 } from "../domain/jsTestExplorerTree";
@@ -26,11 +25,7 @@ const ROW_HEIGHT = 26;
 const WINDOWING_THRESHOLD = 80;
 
 interface JsTestExplorerVirtualizedTreeProps {
-  readonly debugDisabled: boolean;
   readonly disabled: boolean;
-  readonly onDebugNode: (
-    node: Exclude<JsTestExplorerNode, JsTestExplorerWorkspaceNode>,
-  ) => Promise<void>;
   readonly onOpenTest: (test: JsTestExplorerTestNode) => void;
   readonly onRunScope: (scope: JsTestRunScope) => void;
   readonly root: JsTestExplorerWorkspaceNode;
@@ -56,9 +51,7 @@ export function JsTestExplorerVirtualizedTree({
 }
 
 function OwnedJsTestExplorerVirtualizedTree({
-  debugDisabled,
   disabled,
-  onDebugNode,
   onOpenTest,
   onRunScope,
   root,
@@ -167,10 +160,8 @@ function OwnedJsTestExplorerVirtualizedTree({
             <JsTestExplorerTreeRow
               active={row.node.id === activeId}
               collapsed={collapsedIds.has(row.node.id)}
-              debugDisabled={debugDisabled}
               disabled={disabled}
               key={row.node.id}
-              onDebugNode={onDebugNode}
               onFocus={() => setActiveId(row.node.id)}
               onKeyDown={(event) => onTreeKeyDown(event, row)}
               onOpenTest={onOpenTest}

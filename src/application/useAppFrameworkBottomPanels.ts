@@ -44,7 +44,7 @@ export function useAppFrameworkBottomPanels({
     descriptor: workbench.workspaceDescriptor,
     documents: workbench.openDocuments,
     gateway: workspaceSourceDiscoveryGateway,
-    onOpenLocation: workbench.openDebugLocation,
+    onOpenLocation: workbench.openSourceLocation,
     onRefresh: workbench.refreshWorkspace,
     operationsGateway: packageOperationsGateway,
     rootPath: workbench.workspaceRoot,
@@ -79,7 +79,7 @@ export function useAppFrameworkBottomPanels({
           })
         : Promise.resolve(false),
     onOpenSource: (source, shouldCommit) =>
-      workbench.openDebugLocation(source.path, source.lineNumber, source.column, shouldCommit),
+      workbench.openSourceLocation(source.path, source.lineNumber, source.column, shouldCommit),
     overlays: netteOverlays,
     rootPath: workbench.workspaceRoot,
   });
@@ -88,21 +88,21 @@ export function useAppFrameworkBottomPanels({
     enabled: nettePanelActive && (netteSection === "presenters" || netteSection === "routes"),
     gateway: netteWorkspacePresentersGateway,
     onOpenMethod: (method, shouldCommit) =>
-      workbench.openDebugLocation(
+      workbench.openSourceLocation(
         method.source.path,
         method.source.lineNumber,
         method.source.column,
         shouldCommit,
       ),
     onOpenPresenter: (presenter, shouldCommit) =>
-      workbench.openDebugLocation(
+      workbench.openSourceLocation(
         presenter.source.path,
         presenter.source.lineNumber,
         presenter.source.column,
         shouldCommit,
       ),
     onOpenTemplate: (template, shouldCommit) =>
-      workbench.openDebugLocation(
+      workbench.openSourceLocation(
         template.path,
         template.lineNumber,
         template.column,
@@ -116,11 +116,11 @@ export function useAppFrameworkBottomPanels({
     enabled: nettePanelActive && netteSection === "routes",
     gateway: netteWorkspaceRoutesGateway,
     onOpenDefinition: (source, shouldCommit) =>
-      workbench.openDebugLocation(source.path, source.lineNumber, source.column, shouldCommit),
+      workbench.openSourceLocation(source.path, source.lineNumber, source.column, shouldCommit),
     onOpenTarget: (target, shouldCommit) => {
       const source = netteRouteTargetNavigationSource(target, nettePresentersPanel.presenters);
       return source
-        ? workbench.openDebugLocation(source.path, source.lineNumber, source.column, shouldCommit)
+        ? workbench.openSourceLocation(source.path, source.lineNumber, source.column, shouldCommit)
         : Promise.resolve(false);
     },
     overlays: netteRouteOverlays,

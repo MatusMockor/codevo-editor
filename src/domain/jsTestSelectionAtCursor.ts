@@ -9,12 +9,12 @@ import { computeLineStartOffsets } from "./sourceLineOffsets";
 import { isWellFormedUnicode } from "./unicodeText";
 
 export const MAX_JS_TEST_AT_CURSOR_SOURCE_BYTES = 512 * 1024;
-export const MAX_JS_TEST_AT_CURSOR_SOURCE_LINES = 20_000;
-export const MAX_JS_TEST_AT_CURSOR_DECLARATIONS = 512;
+const MAX_JS_TEST_AT_CURSOR_SOURCE_LINES = 20_000;
+const MAX_JS_TEST_AT_CURSOR_DECLARATIONS = 512;
 
-export type JsTestAtCursorMatch = "containing" | "preceding";
+type JsTestAtCursorMatch = "containing" | "preceding";
 
-export interface JsTestAtCursorSelection {
+interface JsTestAtCursorSelection {
   readonly fullName: string;
   readonly kind: "suite" | "test";
   readonly match: JsTestAtCursorMatch;

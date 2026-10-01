@@ -37,7 +37,7 @@ describe("createMonacoLinkOpener", () => {
     const openUrl = vi.fn(async () => undefined);
 
     await expect(
-      createMonacoLinkOpener(openUrl).open(uri("command:debug.hover.copyEvaluatePath")),
+      createMonacoLinkOpener(openUrl).open(uri("command:editor.action.showHover")),
     ).resolves.toBe(false);
 
     expect(openUrl).not.toHaveBeenCalled();

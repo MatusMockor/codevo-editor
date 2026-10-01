@@ -41,28 +41,12 @@ function item(menu: HTMLElement | null, prefix: string): HTMLElement {
 }
 
 describe("EditorMoreMenu", () => {
-  it("offers every debug entry point with its shortcut", () => {
-    const { chrome, menu } = openMenu();
+  it("offers no debugger entry points", () => {
+    const { menu } = openMenu();
 
-    expect(item(menu, "Start debugging").textContent).toContain("F5");
-    expect(item(menu, "Run without debugging").textContent).toContain("⌃F5");
-    item(menu, "Launch configurations");
-    item(menu, "Attach to Node process");
-    item(menu, "Show debug views");
-    click(item(menu, "Start debugging"));
-    expect(chrome.runDebugEntry).toHaveBeenCalledWith("start");
-  });
-
-  it.each([
-    ["Run without debugging", "runWithoutDebugging"],
-    ["Launch configurations", "launchConfigurations"],
-    ["Attach to Node process", "attach"],
-    ["Show debug views", "showViews"],
-  ] as const)("maps %s to the %s debug entry", (label, entry) => {
-    const { chrome, menu } = openMenu();
-    click(item(menu, label));
-
-    expect(chrome.runDebugEntry).toHaveBeenCalledWith(entry);
+    for (const label of ["debug", "Run without", "Launch configurations", "Attach to Node"]) {
+      expect(menu?.textContent).not.toContain(label);
+    }
   });
 
   it("splits the editor right and down", () => {

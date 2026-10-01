@@ -52,7 +52,7 @@ import {
   useWorkbenchEditorNavigationCoordinator,
 } from "./workbenchController/useWorkbenchEditorNavigationCoordinator";
 import { useWorkbenchGitDiscoveryCoordinator } from "./workbenchController/useWorkbenchGitCoordinator";
-import { createWorkbenchRevealPathPort } from "./workbenchController/useWorkbenchTaskDebugCoordinator";
+import { createWorkbenchRevealPathPort } from "./workbenchController/useWorkbenchTaskCoordinator";
 import { useWorkbenchLanguageDocumentSyncCoordinator } from "./workbenchController/useWorkbenchLanguageDocumentSyncCoordinator";
 import {
   useWorkbenchJavaScriptTypeScriptRuntimeSurfacesCoordinator,
@@ -150,7 +150,6 @@ import {
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import {
-  defaultDebugGateway,
   defaultPrettierFormattingGateway,
   eslintDiagnosticsGateway,
   phpLocalSyntaxDiagnosticsGateway,
@@ -2234,10 +2233,7 @@ export function useWorkbenchController(
     },
     git: { gitGateway, prompter, refreshGitStatus, resolveGitRepositoryTarget },
     tasks: {
-      debugGateway: options.debugGateway ?? defaultDebugGateway,
       invalidateJsTestCoverageAndResults,
-      isActiveDocumentJsTest: isActiveDocumentJsTest,
-      isActiveDocumentPhpTest: isActiveDocumentPhpTest,
       openDocuments: openDocuments,
       terminalGateway,
       options: editorNavigationTaskOptionsFor(options),
@@ -2257,8 +2253,8 @@ export function useWorkbenchController(
     navigationHistory: navigationHistoryActions,
     publicSurface: editorNavigationSurface,
     smartMode: smartModeActions,
-    taskDebug,
-    taskDebugNavigation,
+    tasks,
+    taskNavigation,
     todos,
   } = editorNavigation;
 
@@ -2407,8 +2403,8 @@ export function useWorkbenchController(
       jsTestExplorerScopeRunner,
       refreshGitStatus,
       selectedGitChange,
-      taskDebug,
-      taskDebugNavigation,
+      tasks,
+      taskNavigation,
       todos,
     },
     commandIntegrationServices: {
@@ -2434,7 +2430,6 @@ export function useWorkbenchController(
       documentsRef,
       editorGroups,
       openDocumentPaths: editorPresentation.openDocumentPaths,
-      openDocuments: openDocuments,
     },
     workspaceIdentity: {
       workspaceRoot,
@@ -2678,10 +2673,6 @@ export function useWorkbenchController(
     isLanguageServerDocumentSynced,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
-    debugSession: {
-      ...taskDebug.debugSession,
-      latencyTracker: workspaceRoot ? latencyTrackerForRoot(workspaceRoot) : undefined,
-    },
     clearEditorRevealTarget: navigationState.clearEditorRevealTarget,
     closeFloatingSurface: commandEffects.closeFloatingSurface,
     bottomPanelVisible,
@@ -2788,7 +2779,6 @@ export function useWorkbenchController(
     clearNotices: presentation.clearNotices,
     notices: commandEffects.effectiveNotices,
     replaceJavaScriptTestProblemNotices,
-    ...taskDebug.nodeLaunchConfigurationsSurface,
     navigationHistory: navigationHistory,
     clearLatencyMetrics: latencyReporting.clearLatencyMetrics,
     getLatencySnapshot: latencyReporting.getLatencySnapshot,

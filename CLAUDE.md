@@ -15,12 +15,13 @@ Focus on workflows developers actually use:
 - editing, navigation, diagnostics, completion, rename, references, and code actions;
 - project and monorepo awareness;
 - package scripts, tasks, Jest/Vitest, coverage, and Problems integration;
-- launch configurations and reliable Node debugging;
-- breakpoints, exception policies, call stacks, scopes, variables, Watch, evaluation,
-  mutation, Debug Console, hover/inline values, restart, attach, and native Node watch;
 - Express routes and server-oriented project intelligence.
 
-Do not claim parity with VS Code's extension ecosystem, arbitrary DAP adapters, remote
+The interactive debugger (launch configurations, breakpoints, stepping, Debug Console)
+was removed by owner decision; AI agents handle debugging. Do not reintroduce it unless
+the user explicitly asks.
+
+Do not claim parity with VS Code's extension ecosystem, debugging, remote
 development, containers, or unsupported platforms. Report implemented capability and
 remaining gaps separately.
 
@@ -143,7 +144,7 @@ These patterns define boundaries between larger parts of the system:
 - **Gateway** — a typed boundary to IPC or another external subsystem.
 - **Repository** — access to persisted workspace-scoped state behind a narrow contract.
 - **Presenter / View Model** — converts domain state into safe bounded UI data.
-- **Reducer / State Machine** — lifecycle-heavy React and debugger state transitions.
+- **Reducer / State Machine** — lifecycle-heavy React and runtime state transitions.
 - **Facade** — exposes a deliberately small surface over a complex subsystem.
 - **Dependency Injection** — pass ports explicitly through composition roots; avoid
   service locators.
@@ -163,7 +164,7 @@ React-specific guidance:
 These patterns structure collaboration inside a layer:
 
 - **Strategy** — replaceable parsing, launch, filtering, replay, or matching policy.
-- **State** — explicit debugger/task/watch lifecycle behavior by state.
+- **State** — explicit task/watch lifecycle behavior by state.
 - **Command** — typed user or IPC intentions with bounded validated payloads.
 - **Adapter** — translate an external API into an internal port.
 - **Factory / Abstract Factory** — construct validated runtime/session families without
@@ -192,7 +193,7 @@ TypeScript and Rust should also use functional techniques:
 
 Per-project isolation is a critical invariant.
 
-- No runtime process, LSP response, debugger event, index, diagnostic, completion,
+- No runtime process, LSP response, agent event, index, diagnostic, completion,
   watcher, terminal, task, or cached result may leak between workspace tabs.
 - Capture the exact workspace root, registered identity, session, generation, epoch,
   and owner before starting asynchronous work.
@@ -266,7 +267,7 @@ typing, scrolling, navigation, or the window is not complete.
 - Cap decorations, diagnostics, inline values, tree nodes, retained console output,
   events, and cached documents. Eviction must be deterministic.
 - Keep frequently updated state local. Avoid rerendering the whole workbench for cursor,
-  scroll, terminal-output, debugger-event, or single-document changes.
+  scroll, terminal-output, agent-event, or single-document changes.
 - Batch related state changes and IPC/event delivery without hiding intermediate
   ownership or failure states.
 - Use fast-path checks before expensive canonicalization, parsing, indexing, or runtime

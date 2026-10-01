@@ -24,22 +24,14 @@
         "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
         "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx"
       ],
-      "rawLines": 71087,
-      "structuralTokens": 334049
+      "rawLines": 70668,
+      "structuralTokens": 331807
     }
   },
   "files": {
-    "src-tauri/src/debug_cdp.rs": {
-      "rawLines": 1458,
-      "structuralTokens": 8709
-    },
-    "src-tauri/src/debug_dbgp.rs": {
-      "rawLines": 2623,
-      "structuralTokens": 15582
-    },
     "src-tauri/src/git.rs": { "rawLines": 6421, "structuralTokens": 40639 },
     "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
-    "src-tauri/src/lib.rs": { "rawLines": 207, "structuralTokens": 781 },
+    "src-tauri/src/lib.rs": { "rawLines": 184, "structuralTokens": 723 },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 1260,
       "structuralTokens": 7379
@@ -53,7 +45,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1193, "structuralTokens": 5818 },
+    "src/App.tsx": { "rawLines": 1150, "structuralTokens": 5653 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300
@@ -64,11 +56,11 @@
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 2848,
-      "structuralTokens": 9854
+      "structuralTokens": 9802
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 2010,
-      "structuralTokens": 7921
+      "rawLines": 1942,
+      "structuralTokens": 7647
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
       "rawLines": 2192,

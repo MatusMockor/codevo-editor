@@ -23,7 +23,6 @@ import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings
 import { waitForReact } from "../test/reactTestLifecycle";
 import { AgentProviderRailFooter } from "./agentMode/AgentProviderRailFooter";
 import { AppUpdaterContext } from "./appUpdaterContext";
-import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
 import {
   WorkbenchAppUpdaterHost,
   type WorkbenchAppUpdaterHostProps,
@@ -329,14 +328,11 @@ function hostProps(overrides: {
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
     workbench: {
       appSettings: defaultAppSettings(),
-      closeNodeLaunchConfigurations: vi.fn(),
       gitRepositoryMappings: [],
       installManagedPhpactor: vi.fn(),
       installingManagedPhpactor: false,
       intelligenceMode: "basic",
-      nodeLaunchConfigurationsOpen: false,
       notices: overrides.notices ?? [],
-      openNodeLaunchConfigurations: vi.fn(),
       openJavaScriptTypeScriptServiceLog: vi.fn(async () => undefined),
       phpTools: null,
       restartJavaScriptTypeScriptService: vi.fn(async () => undefined),
@@ -351,7 +347,6 @@ function hostProps(overrides: {
       workspaceSettings: defaultWorkspaceSettings(),
       workspaceTrust: null,
     },
-    workspaceFiles: fileGateway(),
     workspaceTrusted: false,
   };
 }
@@ -411,16 +406,6 @@ function updaterGateway() {
     download: vi.fn<AppUpdaterGateway["download"]>(async () => "readyToInstall"),
     installAndRestart: vi.fn<AppUpdaterGateway["installAndRestart"]>(async () => undefined),
     dispose: vi.fn<AppUpdaterGateway["dispose"]>(async () => undefined),
-  };
-}
-
-function fileGateway(): NodeLaunchConfigurationFileGateway {
-  return {
-    createDirectoryForWorkspace: async () => undefined,
-    createTextFileWithContentForWorkspace: async () => ({ status: "success", revision: null }),
-    readDirectory: async () => [],
-    readTextFileSnapshot: async () => ({ content: "", revision: null }),
-    writeTextFileForWorkspace: async () => ({ status: "success", revision: null }),
   };
 }
 

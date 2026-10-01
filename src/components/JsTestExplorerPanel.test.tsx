@@ -36,8 +36,7 @@ describe("JsTestExplorerPanel", () => {
 
   it("renders the accessible nested tree and emits exact run scopes", async () => {
     const onRunScope = vi.fn();
-    const onDebugNode = vi.fn();
-    await render({ onDebugNode, onRunScope });
+    await render({ onRunScope });
 
     expect(host.querySelector('ul[aria-label="JavaScript tests"]')).not.toBeNull();
     expect(host.querySelector('[role="tree"]')).not.toBeNull();
@@ -88,20 +87,7 @@ describe("JsTestExplorerPanel", () => {
         relativeFilePath: "src/payment.test.ts",
       },
     ]);
-    expect(host.querySelector('[aria-label^="Debug workspace"]')).toBeNull();
-    expect(button("Debug tests in payment.test.ts").type).toBe("button");
-    await click("Debug tests in payment.test.ts");
-    await clickNth("Debug tests in payment.test.ts", 1);
-    await click("Debug suite checkout card");
-    await click("Debug test checkout card charges card");
-    await click("Debug test top level works");
-    expect(onDebugNode.mock.calls.map(([node]) => [node.kind, node.label])).toEqual([
-      ["file", "payment.test.ts"],
-      ["suite", "(root)"],
-      ["suite", "card"],
-      ["test", "charges card"],
-      ["test", "top level works"],
-    ]);
+    expect(host.querySelector('[aria-label^="Debug"]')).toBeNull();
   });
 
   it("opens a clicked test node and reports controlled query changes", async () => {
@@ -475,7 +461,6 @@ describe("JsTestExplorerPanel", () => {
     { canStartContinuousRun: true, loading: true },
     { canStartContinuousRun: true, running: true },
     { canStartContinuousRun: true, coverageRunning: true },
-    { canStartContinuousRun: true, debugging: true },
     {
       canStartContinuousRun: true,
       failedRunPhase: "running" as const,
@@ -612,7 +597,6 @@ describe("JsTestExplorerPanel", () => {
     { canRerunFailedTests: true, failedRunTotal: 1, loading: true },
     { canRerunFailedTests: true, failedRunTotal: 1, running: true },
     { canRerunFailedTests: true, coverageRunning: true, failedRunTotal: 1 },
-    { canRerunFailedTests: true, debugging: true, failedRunTotal: 1 },
     {
       canRerunFailedTests: true,
       executionStartBlocked: true,
@@ -728,44 +712,21 @@ describe("JsTestExplorerPanel", () => {
     expect(button("Run test checkout card charges card").disabled).toBe(true);
     expect(button("Refresh JavaScript tests").disabled).toBe(true);
     expect(button("Run JavaScript test coverage").disabled).toBe(true);
-    expect(button("Debug test checkout card charges card").disabled).toBe(true);
 
     await click("Run all JavaScript tests");
     expect(onRunScope).not.toHaveBeenCalled();
-  });
-
-  it("coordinates selected debug busy, blocked, unavailable, and error states", async () => {
-    await render({ debugging: true });
-    expect(host.textContent).toContain("Starting selected JavaScript test debug");
-    expect(button("Run test checkout card charges card").disabled).toBe(true);
-    expect(button("Run JavaScript test coverage").disabled).toBe(true);
-    expect(button("Debug test checkout card charges card").disabled).toBe(true);
-
-    await render({ debugging: false, debugStartBlocked: true });
-    expect(button("Run test checkout card charges card").disabled).toBe(false);
-    expect(button("Run JavaScript test coverage").disabled).toBe(false);
-    expect(button("Refresh JavaScript tests").disabled).toBe(false);
-    expect(button("Debug test checkout card charges card").disabled).toBe(true);
-
-    await render({ debugStartBlocked: false, debugUnavailable: "No selected-test runner" });
-    expect(host.querySelector('[role="status"]')?.textContent).toContain("No selected-test runner");
-    await render({ debugUnavailable: null, debugError: "Selected debug failed" });
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Selected debug failed");
   });
 
   it("blocks executable actions in an untrusted workspace but keeps local actions available", async () => {
     await render({
       coverageReport,
       coverageUnavailable: "Trust this workspace to run JavaScript test coverage.",
-      debugStartBlocked: true,
-      debugUnavailable: "Trust this workspace to debug selected tests.",
       executionStartBlocked: true,
     });
     expect(host.textContent).toContain("Trust this workspace");
     expect(button("Run all JavaScript tests").disabled).toBe(true);
     expect(button("Run test checkout card charges card").disabled).toBe(true);
     expect(button("Run JavaScript test coverage").disabled).toBe(true);
-    expect(button("Debug test checkout card charges card").disabled).toBe(true);
     expect(button("Clear JavaScript test coverage").disabled).toBe(false);
     expect(button("Refresh JavaScript tests").disabled).toBe(false);
   });
@@ -879,10 +840,6 @@ describe("JsTestExplorerPanel", () => {
           coverageRunning={overrides.coverageRunning ?? false}
           coverageUnavailable={overrides.coverageUnavailable ?? null}
           currentFileIdentity={overrides.currentFileIdentity ?? null}
-          debugError={overrides.debugError ?? null}
-          debugging={overrides.debugging ?? false}
-          debugStartBlocked={overrides.debugStartBlocked ?? false}
-          debugUnavailable={overrides.debugUnavailable ?? null}
           error={overrides.error ?? null}
           executionStartBlocked={overrides.executionStartBlocked ?? false}
           failedRunCompleted={overrides.failedRunCompleted ?? 0}
@@ -893,7 +850,6 @@ describe("JsTestExplorerPanel", () => {
           onCancelTestRun={overrides.onCancelTestRun ?? vi.fn()}
           onClearCoverage={overrides.onClearCoverage ?? vi.fn()}
           onCopyOutput={overrides.onCopyOutput ?? vi.fn(async () => false)}
-          onDebugNode={overrides.onDebugNode ?? vi.fn()}
           onOpenCoverageFile={overrides.onOpenCoverageFile ?? vi.fn()}
           onOpenTest={overrides.onOpenTest ?? vi.fn()}
           onQueryChange={overrides.onQueryChange ?? vi.fn()}

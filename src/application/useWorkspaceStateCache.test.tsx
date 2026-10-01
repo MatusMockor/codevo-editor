@@ -4,7 +4,6 @@ import { act, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { Bookmark } from "../domain/bookmarks";
-import type { Breakpoint } from "../domain/debug";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import { createInitialEditorGroupsState, editorGroupsReducer } from "../domain/editorGroups";
 import {
@@ -123,7 +122,6 @@ interface HarnessStateView {
   bookmarks: Bookmark[];
   bottomPanelView: BottomPanelView;
   bottomPanelVisible: boolean;
-  debugBreakpoints: Breakpoint[];
   expandedDirectories: Set<string>;
   indexProgress: IndexProgressState;
   navigationHistory: NavigationHistory;
@@ -137,7 +135,6 @@ interface HarnessSetters {
   setBookmarks: (bookmarks: Bookmark[]) => void;
   setBottomPanelView: (view: BottomPanelView) => void;
   setBottomPanelVisible: (visible: boolean) => void;
-  setDebugBreakpoints: (breakpoints: Breakpoint[]) => void;
   setExpandedDirectories: (directories: Set<string>) => void;
   setIndexProgress: (progress: IndexProgressState) => void;
   setNavigationHistory: (history: NavigationHistory) => void;
@@ -160,11 +157,6 @@ function renderWorkspaceStateCacheHarness() {
   function Harness() {
     const editorSession = useEditorSessionState();
     const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
-    const [debugBreakpoints, setDebugBreakpoints] = useState<Breakpoint[]>([]);
-    const restoreBreakpoints = useCallback(
-      (breakpoints: Breakpoint[]) => setDebugBreakpoints(breakpoints),
-      [],
-    );
     const [bottomPanelView, setBottomPanelView] = useState<BottomPanelView>("problems");
     const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
     const [entriesByDirectory, setEntriesByDirectory] = useState<Record<string, FileEntry[]>>({});
@@ -196,7 +188,6 @@ function renderWorkspaceStateCacheHarness() {
       bookmarks,
       bottomPanelView,
       bottomPanelVisible,
-      breakpoints: debugBreakpoints,
       entriesByDirectory,
       expandedDirectories,
       indexHealthLogs,
@@ -205,7 +196,6 @@ function renderWorkspaceStateCacheHarness() {
       navigationHistory,
       recentFiles,
       recentLocations,
-      restoreBreakpoints,
       restoreCachedIndexState,
       restoreEditorSurface: editorSession.restoreEditorSurface,
       restoreHistory,
@@ -228,7 +218,6 @@ function renderWorkspaceStateCacheHarness() {
       setBookmarks,
       setBottomPanelView,
       setBottomPanelVisible,
-      setDebugBreakpoints,
       setExpandedDirectories,
       setIndexProgress,
       setNavigationHistory,
@@ -241,7 +230,6 @@ function renderWorkspaceStateCacheHarness() {
       bookmarks,
       bottomPanelView,
       bottomPanelVisible,
-      debugBreakpoints,
       expandedDirectories,
       indexProgress,
       navigationHistory,
@@ -583,36 +571,6 @@ describe("useWorkspaceStateCache", () => {
     expect(harness.state().navigationHistory).toEqual(createNavigationHistory());
     expect(harness.state().recentFiles).toEqual([]);
     expect(harness.state().recentLocations).toEqual([]);
-    harness.unmount();
-  });
-
-  it("captures and restores debug breakpoints with the workspace state", () => {
-    const harness = renderWorkspaceStateCacheHarness();
-    const breakpoint: Breakpoint = {
-      id: "bp-1",
-      filePath: `${ROOT_A}/src/a.ts`,
-      lineNumber: 5,
-      enabled: true,
-    };
-
-    seedWorkspaceA(harness);
-    act(() => {
-      harness.setters().setDebugBreakpoints([breakpoint]);
-    });
-    harness.api().cacheCurrentWorkspaceState(ROOT_A);
-    act(() => {
-      harness.setters().setDebugBreakpoints([]);
-    });
-
-    const cached = harness.api().resolveCachedWorkspaceState(ROOT_A);
-    expect(cached).not.toBeNull();
-    expect(cached?.breakpoints).toEqual([breakpoint]);
-
-    act(() => {
-      harness.api().restoreCachedWorkspaceState(ROOT_A, cached as CachedWorkspaceWorkbenchState);
-    });
-
-    expect(harness.state().debugBreakpoints).toEqual([breakpoint]);
     harness.unmount();
   });
 

@@ -12,7 +12,6 @@ import { EditorActivityIndicator } from "./EditorActivityIndicator";
 import { useEditorChrome } from "./EditorChromeContext";
 import { EditorCursorPosition } from "./EditorCursorPosition";
 import { EditorMoreMenu } from "./EditorMoreMenu";
-import { EditorNodeRunChip } from "./EditorNodeRunChip";
 
 export interface EditorSubheaderActionsProps {
   readonly groupId: string | null;
@@ -31,9 +30,6 @@ export function EditorSubheaderActions({ groupId, onFind }: EditorSubheaderActio
     <div
       className={cx("cv-esub__acts", (chrome.problemsOpen || moreOpen) && "cv-esub__acts--pinned")}
     >
-      {chrome.nodeRun === null ? null : (
-        <EditorNodeRunChip nodeRun={chrome.nodeRun} onStop={chrome.stopNodeRun} />
-      )}
       {chrome.activity === null ? null : (
         <EditorActivityIndicator activity={chrome.activity} onOpen={chrome.openRuntimeView} />
       )}

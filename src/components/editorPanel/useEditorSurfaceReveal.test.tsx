@@ -29,7 +29,7 @@ describe("useEditorDrawerReveal", () => {
     mounted = mountUi();
     mounted.render(<DrawerProbe drawerView={null} ownerKey="/a" reveal={reveal} />);
     mounted.render(<DrawerProbe drawerView="problems" ownerKey="/a" reveal={reveal} />);
-    mounted.render(<DrawerProbe drawerView="debug" ownerKey="/a" reveal={reveal} />);
+    mounted.render(<DrawerProbe drawerView="testResults" ownerKey="/a" reveal={reveal} />);
     mounted.render(<DrawerProbe drawerView={null} ownerKey="/a" reveal={reveal} />);
     mounted.render(<DrawerProbe drawerView="search" ownerKey="/a" reveal={reveal} />);
 

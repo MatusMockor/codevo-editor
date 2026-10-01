@@ -1,6 +1,5 @@
 import { act } from "react";
 import { expect, vi } from "vitest";
-import type { DebugEvent, DebugGateway } from "../../domain/debug";
 import { emptyGitStatus, type GitGateway } from "../../domain/git";
 import type { LanguageServerPlan, PhpLanguageServerPlanOptions } from "../../domain/languageServer";
 import type { EditorPosition, LanguageServerRange } from "../../domain/languageServerFeatures";
@@ -19,9 +18,6 @@ import {
 
 // Shared test-only dependency surface for split controller suites.
 export * from "../../domain/callHierarchy";
-export * from "../../domain/debug";
-export * from "../../domain/debugBreakpointPersistence";
-export * from "../../domain/debugBreakpoints";
 export * from "../../domain/editorGroups";
 export * from "../../domain/git";
 export type { IndexProgressGateway, MetadataScanCompletionEvent } from "../../domain/indexProgress";
@@ -204,62 +200,6 @@ export function phpProjectDescriptor(
       },
     ],
     ...overrides,
-  };
-}
-
-export interface DebugGatewayHarness {
-  gateway: DebugGateway;
-  emit(event: DebugEvent): void;
-  start: ReturnType<typeof vi.fn<DebugGateway["start"]>>;
-}
-
-export function createDebugGatewayHarness(): DebugGatewayHarness {
-  const handlers = new Set<(event: DebugEvent) => void>();
-  const noop = vi.fn(async () => undefined);
-  const start = vi.fn<DebugGateway["start"]>().mockResolvedValue({ kind: "ok", sessionId: 7 });
-
-  return {
-    gateway: {
-      start,
-      stop: noop,
-      disconnect: noop,
-      setBreakpoints: vi.fn<DebugGateway["setBreakpoints"]>().mockResolvedValue([]),
-      step: noop,
-      pause: noop,
-      restartFrame: noop,
-      runToLocation: noop,
-      setExceptionPause: noop,
-      stackTrace: async () => [],
-      scopesAtPause: vi.fn(),
-      variablesPage: vi.fn(),
-      setVariable: vi.fn(),
-      setExpression: vi.fn(),
-      evaluate: async () => null,
-      subscribe(handler) {
-        handlers.add(handler);
-        return () => handlers.delete(handler);
-      },
-    },
-    emit(event) {
-      for (const handler of handlers) {
-        handler(event);
-      }
-    },
-    start,
-  };
-}
-
-export function inMemoryBreakpointStorage(seed: Record<string, string> = {}) {
-  const values = new Map(Object.entries(seed));
-
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    removeItem: (key: string) => {
-      values.delete(key);
-    },
-    setItem: (key: string, value: string) => {
-      values.set(key, value);
-    },
   };
 }
 

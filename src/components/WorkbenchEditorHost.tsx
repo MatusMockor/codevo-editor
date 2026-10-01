@@ -1,5 +1,4 @@
 import { memo, useCallback } from "react";
-import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvaluation";
 import type { LiveDocumentRuntime } from "../application/liveDocumentRuntime";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
 import type { EditorGroupDocumentSessionAuthority } from "../application/useEditorSessionState";
@@ -20,7 +19,6 @@ interface WorkbenchEditorHostProps {
   activeTabsInStrip: boolean;
   attachEditorGroupLiveDocument: AttachEditorGroupLiveDocument;
   contentRevisionForGroup?(groupId: EditorGroupId): unknown;
-  debugHover?: DebugHoverEvaluationPort | null;
   documentSessionAuthorityRevision: unknown;
   documents: readonly EditorGroupDocument[];
   editorSessionOwnerKey: EditorSessionOwnerKey | null;
@@ -60,7 +58,6 @@ export const WorkbenchEditorHost = memo(function WorkbenchEditorHost({
   activeGroupId,
   activeTabsInStrip,
   attachEditorGroupLiveDocument,
-  debugHover,
   contentRevisionForGroup,
   documents,
   documentSessionAuthorityRevision,
@@ -124,7 +121,6 @@ export const WorkbenchEditorHost = memo(function WorkbenchEditorHost({
     <EditorRuntimeHost
       activeGroupId={activeGroupId}
       attachEditorGroupLiveDocument={attachEditorGroupLiveDocument}
-      debugHover={debugHover}
       documentSessionAuthorityRevision={documentSessionAuthorityRevision}
       isEditorGroupDocumentSessionAuthorityCurrent={isEditorGroupDocumentSessionAuthorityCurrent}
       javaScriptTypeScriptIncrementalSync={javaScriptTypeScriptIncrementalSync}

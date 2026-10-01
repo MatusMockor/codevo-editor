@@ -6,7 +6,6 @@ use crate::terminal_session_events::{spawn_terminal_reader, TerminalStartGate};
 mod unpublished_child;
 use crate::terminal_task_process::{terminate_task_process_groups, TerminalTaskOwnership};
 use crate::{
-    debug_session_registry::DebugWorkspaceAuthority,
     effective_executable_environment::EffectiveExecutablePath,
     terminal::{TerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize},
 };
@@ -154,7 +153,6 @@ struct RunningTerminalSession {
     task_process_groups: HashMap<u64, TerminalTaskOwnership>,
     waiter: Option<JoinHandle<()>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    workspace_authority: Option<DebugWorkspaceAuthority>,
 }
 
 fn ensure_workspace_root_terminal(
@@ -165,22 +163,6 @@ fn ensure_workspace_root_terminal(
         return Err("The target terminal does not belong to this workspace.".to_string());
     }
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) enum TerminalOwnedProcessGroupSource {
-    Shell,
-    Task,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) struct TerminalOwnedProcessGroup {
-    pub(crate) process_group_id: i32,
-    pub(crate) session_id: u64,
-    pub(crate) source: TerminalOwnedProcessGroupSource,
-    pub(crate) workspace_authority: Option<DebugWorkspaceAuthority>,
 }
 
 const TERMINAL_THREAD_JOIN_TIMEOUT: Duration = Duration::from_millis(250);
@@ -213,7 +195,6 @@ impl TerminalSupervisor {
     ) -> Result<TerminalRuntimeStatus, String> {
         self.start_with_options(
             TerminalLaunchRoots::workspace_root(cwd),
-            None,
             None,
             TerminalStartOptions {
                 effective_path,
@@ -335,52 +316,6 @@ impl TerminalSupervisor {
         }
     }
 
-    /// Copies process-group ownership for live terminals whose already-canonical
-    /// workspace root exactly matches `expected_workspace_root`.
-    ///
-    /// This method intentionally performs no filesystem or process I/O. Callers
-    /// must release this snapshot from the registry before validating the live
-    /// process identities with platform APIs.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn owned_process_groups(
-        &self,
-        expected_workspace_root: &Path,
-    ) -> Result<Vec<TerminalOwnedProcessGroup>, String> {
-        let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-        let mut groups = Vec::new();
-        for (session_id, session) in sessions.iter() {
-            if session.workspace_root != expected_workspace_root {
-                continue;
-            }
-            if let Some(process_group_id) =
-                positive_process_group_id(session.process_tree_terminator.process_group_id())
-            {
-                groups.push(TerminalOwnedProcessGroup {
-                    process_group_id,
-                    session_id: *session_id,
-                    source: TerminalOwnedProcessGroupSource::Shell,
-                    workspace_authority: session.workspace_authority.clone(),
-                });
-            }
-            groups.extend(
-                session
-                    .task_process_groups
-                    .values()
-                    .filter_map(|ownership| {
-                        positive_process_group_id(ownership.active_process_group_id()).map(
-                            |process_group_id| TerminalOwnedProcessGroup {
-                                process_group_id,
-                                session_id: *session_id,
-                                source: TerminalOwnedProcessGroupSource::Task,
-                                workspace_authority: session.workspace_authority.clone(),
-                            },
-                        )
-                    }),
-            );
-        }
-        Ok(groups)
-    }
-
     pub fn resize(&self, session_id: u64, size: TerminalSize) -> Result<(), String> {
         let size = size.normalized();
         let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
@@ -420,17 +355,6 @@ impl TerminalSupervisor {
         }
     }
 
-    #[cfg(test)]
-    fn insert_session(
-        &self,
-        session_id: u64,
-        session: RunningTerminalSession,
-    ) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-        sessions.insert(session_id, session);
-        Ok(())
-    }
-
     fn session_writer(&self, session_id: u64) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
         self.sessions
             .lock()
@@ -442,11 +366,6 @@ impl TerminalSupervisor {
     fn take_session(&self, session_id: u64) -> Option<RunningTerminalSession> {
         self.sessions.lock().ok()?.remove(&session_id)
     }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn positive_process_group_id(process_group_id: Option<i32>) -> Option<i32> {
-    process_group_id.filter(|process_group_id| *process_group_id > 0)
 }
 
 impl Default for TerminalSupervisor {
@@ -825,8 +744,7 @@ mod tests {
     use super::{
         command_builder, finish_portable_spawn, prepare_shell_integration, EffectiveExecutablePath,
         LocalTerminalProfileProvider, PortablePtySpawner, ProcessGroupSignalSender,
-        ProcessTreeTerminator, SpawnedTerminal, TerminalChild, TerminalExitStatus, TerminalKiller,
-        TerminalLaunchRequest, TerminalOwnedProcessGroup, TerminalOwnedProcessGroupSource,
+        SpawnedTerminal, TerminalChild, TerminalExitStatus, TerminalKiller, TerminalLaunchRequest,
         TerminalProfileProvider, TerminalPtySpawner, TerminalResizer, TerminalSupervisor,
     };
     use crate::terminal::{

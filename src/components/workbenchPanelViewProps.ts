@@ -52,7 +52,6 @@ export function workbenchPanelViewContentProps(
   const flags = workbenchPanelFlags(panel, view);
   return {
     activeView: view,
-    debug: panel.debug,
     phpTree,
     artisanRoutes: panel.artisanRoutes ?? [],
     artisanRoutesError: panel.artisanRoutesError ?? null,

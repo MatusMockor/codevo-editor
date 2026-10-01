@@ -190,8 +190,6 @@ describe("latencyOperationLabel", () => {
       "references",
       "rename",
       "folderExpand",
-      "debug-variables-render",
-      "debug-console-append",
     ]);
   });
 

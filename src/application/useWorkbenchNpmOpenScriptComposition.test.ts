@@ -5,7 +5,7 @@ describe("workbench npm open-script composition", () => {
   it("injects the source gateway, binds it to controller authority, and exposes navigation", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const controller = readFileSync(
-      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
+      new URL("./workbenchController/useWorkbenchTaskCoordinator.ts", import.meta.url),
       "utf8",
     );
     const editorNavigationCoordinator = readFileSync(
@@ -20,9 +20,7 @@ describe("workbench npm open-script composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
-    const rootBindingEnd = editorNavigationCoordinator.indexOf(
-      "} = useWorkbenchTaskDebugCoordinator({",
-    );
+    const rootBindingEnd = editorNavigationCoordinator.indexOf("} = useWorkbenchTaskCoordinator({");
     const rootBinding = editorNavigationCoordinator.slice(
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
@@ -36,8 +34,8 @@ describe("workbench npm open-script composition", () => {
     expect(controller).toContain("openNodePackageScript,");
     expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
     expect(rootController).toContain("publicSurface: editorNavigationSurface,");
-    expect(rootController).toContain("taskDebug,");
-    expect(editorNavigationCoordinator).toContain("taskDebug: {");
+    expect(rootController).toContain("tasks,");
+    expect(editorNavigationCoordinator).toContain("tasks: {");
     expect(rootBinding).toMatch(/^ {4}openNodePackageScript,$/mu);
     expect(publicSurface).toMatch(/^ {6}openNodePackageScript,$/mu);
     expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);

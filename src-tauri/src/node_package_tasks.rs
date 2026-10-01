@@ -1485,18 +1485,18 @@ mod tests {
     }
 
     #[test]
-    fn node_run_and_package_tasks_share_the_same_session_admission() {
+    fn other_terminal_tasks_and_package_tasks_share_the_same_session_admission() {
         let admission = Arc::new(TerminalTaskAdmissionRegistry::new());
         let registry = NodePackageTaskRegistry::with_admission(Arc::clone(&admission));
         let workspace_id: WorkspaceId = serde_json::from_value(serde_json::json!("ws-a")).unwrap();
-        let node_run = admission.reserve(&workspace_id, 77).unwrap();
+        let other_task = admission.reserve(&workspace_id, 77).unwrap();
         assert_eq!(
             registry
                 .reserve(metadata_for_session("package", "ws-a", 77))
                 .unwrap_err(),
             SESSION_LIMIT_ERROR
         );
-        drop(node_run);
+        drop(other_task);
         assert!(registry
             .reserve(metadata_for_session("package", "ws-a", 77))
             .is_ok());

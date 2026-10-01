@@ -26,7 +26,10 @@ describe("workbenchPanelPlacement", () => {
       terminal: false,
       drawer: "problems",
     });
-    expect(workbenchPanelPlacement("debug", true)).toEqual({ terminal: false, drawer: "debug" });
+    expect(workbenchPanelPlacement("runtime", true)).toEqual({
+      terminal: false,
+      drawer: "runtime",
+    });
   });
 
   it("shows nothing while the panel is hidden", () => {
@@ -36,28 +39,21 @@ describe("workbenchPanelPlacement", () => {
 });
 
 describe("editorDrawerTabs", () => {
-  it("always shows Problems and Debug console, in that order", () => {
-    expect(editorDrawerTabs("problems", NOTHING).map((tab) => tab.label)).toEqual([
-      "Problems",
-      "Debug console",
-    ]);
+  it("always shows Problems as the only primary tab", () => {
+    expect(editorDrawerTabs("problems", NOTHING).map((tab) => tab.label)).toEqual(["Problems"]);
   });
 
-  it("adds the active secondary view as a transient third tab", () => {
+  it("adds the active secondary view as a transient second tab", () => {
     const tabs = editorDrawerTabs("search", JS);
 
     expect(tabs.map((tab) => [tab.view, tab.transient])).toEqual([
       ["problems", false],
-      ["debug", false],
       ["search", true],
     ]);
   });
 
   it("falls back to Problems when the active view is not available in this workspace", () => {
-    expect(editorDrawerTabs("symfony", NOTHING).map((tab) => tab.view)).toEqual([
-      "problems",
-      "debug",
-    ]);
+    expect(editorDrawerTabs("symfony", NOTHING).map((tab) => tab.view)).toEqual(["problems"]);
   });
 });
 
@@ -90,17 +86,15 @@ describe("editorDrawerMoreViews", () => {
 });
 
 describe("editorDrawerViewLabel", () => {
-  it("names every view the way the old bottom panel did, with the new console and PHP labels", () => {
-    expect(editorDrawerViewLabel("debug")).toBe("Debug console");
+  it("names every view the way the old bottom panel did, with the new PHP labels", () => {
     expect(editorDrawerViewLabel("testResults")).toBe("Tests");
     expect(editorDrawerViewLabel("routes")).toBe("Routes");
     expect(editorDrawerViewLabel("expressRoutes")).toBe("Express routes");
     expect(editorDrawerViewLabel("phpTree")).toBe("PHP structure");
   });
 
-  it("treats Problems and Debug console as always available", () => {
+  it("treats Problems as always available", () => {
     expect(editorDrawerViewAvailable("problems", NOTHING)).toBe(true);
-    expect(editorDrawerViewAvailable("debug", NOTHING)).toBe(true);
     expect(editorDrawerViewAvailable("nette", NOTHING)).toBe(false);
   });
 });

@@ -16,15 +16,11 @@ import {
 import {
   createLegacyWorkspaceRuntimeOwner,
   createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
 } from "./workspaceRuntimeOwner";
 
 describe("workspace runtime owner", () => {
   it("separates stable ownership from the selected execution root", () => {
-    const admitted = createWorkspaceRuntimeOwner(
-      "workspace-a",
-      "/links/workspace-a",
-    );
+    const admitted = createWorkspaceRuntimeOwner("workspace-a", "/links/workspace-a");
     const legacy = createLegacyWorkspaceRuntimeOwner("/workspace-a/");
 
     expect(admitted).toEqual({
@@ -51,9 +47,7 @@ describe("normalizedWorkspaceRootKey", () => {
 
 describe("languageServerRuntimeStatusWithRoot", () => {
   it("adds the workspace root to runtime statuses", () => {
-    expect(
-      languageServerRuntimeStatusWithRoot(stopped(), "/workspace"),
-    ).toEqual({
+    expect(languageServerRuntimeStatusWithRoot(stopped(), "/workspace")).toEqual({
       kind: "stopped",
       rootPath: "/workspace",
     });
@@ -66,9 +60,7 @@ describe("languageServerRuntimeStatusWithRoot", () => {
       sessionId: 4,
     };
 
-    expect(languageServerRuntimeStatusWithRoot(status, "/workspace")).toBe(
-      status,
-    );
+    expect(languageServerRuntimeStatusWithRoot(status, "/workspace")).toBe(status);
   });
 
   it("keeps the same object when the root only differs by trailing separators", () => {
@@ -78,31 +70,21 @@ describe("languageServerRuntimeStatusWithRoot", () => {
       sessionId: 4,
     };
 
-    expect(languageServerRuntimeStatusWithRoot(status, "/workspace")).toBe(
-      status,
-    );
+    expect(languageServerRuntimeStatusWithRoot(status, "/workspace")).toBe(status);
   });
 });
 
 describe("runtime status cache", () => {
   it("collapses selected-path aliases that have the same admitted owner", () => {
     const cache: LanguageServerRuntimeStatusByOwner = {};
-    const firstAlias = createWorkspaceRuntimeOwner(
-      "workspace-a",
-      "/links/workspace-a",
-    );
-    const secondAlias = createWorkspaceRuntimeOwner(
-      "workspace-a",
-      "/workspaces/workspace-a",
-    );
+    const firstAlias = createWorkspaceRuntimeOwner("workspace-a", "/links/workspace-a");
+    const secondAlias = createWorkspaceRuntimeOwner("workspace-a", "/workspaces/workspace-a");
 
     cacheLanguageServerRuntimeStatusForOwner(cache, firstAlias, stopped());
     cacheLanguageServerRuntimeStatusForOwner(cache, secondAlias, running(9));
 
     expect(Object.keys(cache)).toEqual(["workspace-a"]);
-    expect(
-      cachedLanguageServerRuntimeStatusForOwner(cache, secondAlias),
-    ).toEqual({
+    expect(cachedLanguageServerRuntimeStatusForOwner(cache, secondAlias)).toEqual({
       capabilities: expect.any(Object),
       kind: "running",
       rootPath: "/workspaces/workspace-a",
@@ -113,39 +95,23 @@ describe("runtime status cache", () => {
   it("isolates distinct admitted owners that select the same execution root", () => {
     const cache: LanguageServerRuntimeStatusByOwner = {};
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", "/workspace");
-    const secondOwner = createWorkspaceRuntimeOwner(
-      "workspace-b",
-      "/workspace",
-    );
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", "/workspace");
 
     cacheLanguageServerRuntimeStatusForOwner(cache, firstOwner, stopped());
     cacheLanguageServerRuntimeStatusForOwner(cache, secondOwner, running(12));
 
-    expect(
-      cachedLanguageServerRuntimeStatusForOwner(cache, firstOwner)?.kind,
-    ).toBe("stopped");
-    expect(
-      cachedLanguageServerRuntimeStatusForOwner(cache, secondOwner)?.kind,
-    ).toBe("running");
+    expect(cachedLanguageServerRuntimeStatusForOwner(cache, firstOwner)?.kind).toBe("stopped");
+    expect(cachedLanguageServerRuntimeStatusForOwner(cache, secondOwner)?.kind).toBe("running");
   });
 
   it("transfers a cached status to the owner's selected execution root", () => {
     const cache: LanguageServerRuntimeStatusByOwner = {};
-    const owner = createWorkspaceRuntimeOwner(
-      "workspace-a",
-      "/links/workspace-a",
-    );
-    const transferredOwner = transferWorkspaceRuntimeOwner(
-      owner,
-      "/workspaces/workspace-a",
-    );
+    const owner = createWorkspaceRuntimeOwner("workspace-a", "/links/workspace-a");
+    const transferredOwner = createWorkspaceRuntimeOwner(owner.ownerKey, "/workspaces/workspace-a");
 
     cacheLanguageServerRuntimeStatusForOwner(cache, owner, running(14));
 
-    const transferred = cachedLanguageServerRuntimeStatusForOwner(
-      cache,
-      transferredOwner,
-    );
+    const transferred = cachedLanguageServerRuntimeStatusForOwner(cache, transferredOwner);
     expect(transferred).toEqual({
       capabilities: expect.any(Object),
       kind: "running",
@@ -157,26 +123,16 @@ describe("runtime status cache", () => {
 
   it("forgets one owner without removing another owner", () => {
     const cache: LanguageServerRuntimeStatusByOwner = {};
-    const firstOwner = createWorkspaceRuntimeOwner(
-      "workspace-a",
-      "/workspace-a",
-    );
-    const secondOwner = createWorkspaceRuntimeOwner(
-      "workspace-b",
-      "/workspace-b",
-    );
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", "/workspace-a");
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", "/workspace-b");
 
     cacheLanguageServerRuntimeStatusForOwner(cache, firstOwner, stopped());
     cacheLanguageServerRuntimeStatusForOwner(cache, secondOwner, running(16));
 
     forgetCachedLanguageServerRuntimeStatus(cache, firstOwner);
 
-    expect(
-      cachedLanguageServerRuntimeStatusForOwner(cache, firstOwner),
-    ).toBeNull();
-    expect(
-      cachedLanguageServerRuntimeStatusForOwner(cache, secondOwner)?.kind,
-    ).toBe("running");
+    expect(cachedLanguageServerRuntimeStatusForOwner(cache, firstOwner)).toBeNull();
+    expect(cachedLanguageServerRuntimeStatusForOwner(cache, secondOwner)?.kind).toBe("running");
   });
 
   it("clears all owners while keeping the cache object stable", () => {
@@ -206,23 +162,17 @@ describe("runtime status cache", () => {
     cacheLanguageServerRuntimeStatus(cache, "/workspace/api", stopped());
     cacheLanguageServerRuntimeStatus(cache, "/workspace/web", running(9));
 
-    expect(
-      cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/api"),
-    ).toEqual({
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/api")).toEqual({
       kind: "stopped",
       rootPath: "/workspace/api",
     });
-    expect(
-      cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/web"),
-    ).toEqual({
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/web")).toEqual({
       kind: "running",
       rootPath: "/workspace/web",
       sessionId: 9,
       capabilities: expect.any(Object),
     });
-    expect(
-      cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/other"),
-    ).toBeNull();
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/other")).toBeNull();
   });
 
   it("removes closed workspace statuses", () => {
@@ -232,9 +182,7 @@ describe("runtime status cache", () => {
 
     removeCachedLanguageServerRuntimeStatus(cache, "/workspace/api");
 
-    expect(
-      cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/api"),
-    ).toBeNull();
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/api")).toBeNull();
   });
 
   it("uses normalized workspace root keys for trailing slash variants", () => {
@@ -242,9 +190,7 @@ describe("runtime status cache", () => {
 
     cacheLanguageServerRuntimeStatus(cache, "/workspace-a/", running(11));
 
-    expect(
-      cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace-a"),
-    ).toEqual({
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace-a")).toEqual({
       capabilities: expect.any(Object),
       kind: "running",
       rootPath: "/workspace-a/",
@@ -253,9 +199,7 @@ describe("runtime status cache", () => {
 
     removeCachedLanguageServerRuntimeStatus(cache, "/workspace-a");
 
-    expect(
-      cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace-a/"),
-    ).toBeNull();
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace-a/")).toBeNull();
   });
 });
 

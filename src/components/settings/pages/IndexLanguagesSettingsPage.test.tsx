@@ -28,7 +28,6 @@ const baseEnv: SettingsEnvironment = {
   workspaceRoot: "/workspace",
   onCopyInstallCommand: () => undefined,
   onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-  onOpenNodeLaunchConfigurations: () => undefined,
   onRestartJavaScriptTypeScriptService: async () => undefined,
 };
 
@@ -227,17 +226,6 @@ describe("IndexLanguagesSettingsPage", () => {
 
     expect(switchIn("index.javaScriptTypeScriptAutomaticTypeAcquisition").disabled).toBe(true);
     expect(inputIn("index.eslintPath").disabled).toBe(true);
-    expect(buttonIn("index.nodeLaunchConfigurations", "Edit").disabled).toBe(true);
-  });
-
-  it("opens the Node launch configurations editor", async () => {
-    const onOpenNodeLaunchConfigurations = vi.fn();
-
-    await render({}, undefined, { onOpenNodeLaunchConfigurations });
-
-    await click(buttonIn("index.nodeLaunchConfigurations", "Edit"));
-
-    expect(onOpenNodeLaunchConfigurations).toHaveBeenCalledOnce();
   });
 
   it("edits and normalizes the ESLint binary path", async () => {

@@ -3,13 +3,11 @@ import type { Command } from "./commandRegistry";
 
 interface WorkbenchJsTestCommandsOptions {
   canCancelTestRun?: () => boolean;
-  canDebugAtCursor?: () => boolean;
   canRerunFailedTests?: () => boolean;
   canRerunLastRun?: () => boolean;
   canRunAtCursor?: () => boolean;
   canRunCurrentFile?: () => boolean;
   cancelTestRun?: () => boolean | Promise<boolean>;
-  debugAtCursor?: Command["run"];
   hasJsWorkspace: boolean;
   isActiveDocumentJsTest: boolean;
   runAtCursor?: Command["run"];
@@ -24,13 +22,11 @@ interface WorkbenchJsTestCommandsOptions {
 
 export function workbenchJsTestCommands({
   canCancelTestRun = () => false,
-  canDebugAtCursor = () => false,
   canRerunFailedTests = () => false,
   canRerunLastRun = () => false,
   canRunAtCursor = () => false,
   canRunCurrentFile = () => false,
   cancelTestRun = () => false,
-  debugAtCursor = () => undefined,
   hasJsWorkspace,
   isActiveDocumentJsTest,
   runAtCursor = () => undefined,
@@ -57,19 +53,6 @@ export function workbenchJsTestCommands({
         isActiveDocumentJsTest &&
         canRunAtCursor(),
       run: runAtCursor,
-    },
-    {
-      id: "testing.debugAtCursor",
-      title: "Debug Test at Cursor",
-      category: "Test",
-      isEnabled: (context) =>
-        context.hasWorkspace &&
-        hasJsWorkspace &&
-        context.hasActiveDocument &&
-        !context.activeDocumentDirty &&
-        isActiveDocumentJsTest &&
-        canDebugAtCursor(),
-      run: debugAtCursor,
     },
     {
       id: "testing.runCurrentFile",

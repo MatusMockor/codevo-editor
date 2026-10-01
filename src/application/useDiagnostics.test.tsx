@@ -18,10 +18,7 @@ import { createWorkbenchNotice } from "./workbenchNotice";
 import { createWorkspaceSettingsByRootSnapshot } from "./workspaceSettingsForRoot";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { Dispatch, SetStateAction } from "react";
-import {
-  createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
-} from "../domain/workspaceRuntimeOwner";
+import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -328,7 +325,7 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
     const selectedAlias = `${ROOT}-selected-alias`;
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, selectedAlias);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, selectedAlias);
     const aliasPath = `${selectedAlias}/app/Alias.php`;
     harness.lsStatusByRootRef.current = {
       [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
@@ -379,7 +376,10 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
   it("does not let an old-alias async result revive a closed owner", async () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, `${ROOT}-selected-alias`);
+    const transferredOwner = createWorkspaceRuntimeOwner(
+      firstOwner.ownerKey,
+      `${ROOT}-selected-alias`,
+    );
     harness.lsStatusByRootRef.current = {
       [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
     };
@@ -1129,7 +1129,7 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
     const selectedAlias = `${ROOT}-selected-alias`;
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, selectedAlias);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, selectedAlias);
     const distinctOwner = createWorkspaceRuntimeOwner("workspace-b", selectedAlias);
     const aliasPath = `${selectedAlias}/src/index.ts`;
     harness.currentRootRef.current = selectedAlias;

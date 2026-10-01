@@ -5,7 +5,7 @@ describe("VS Code process-task workbench composition", () => {
   it("keeps gateway construction, controller authority, and scripts surface presentation separated", () => {
     const app = source("../App.tsx");
     const composition = source("../workbenchComposition.ts");
-    const controller = source("./workbenchController/useWorkbenchTaskDebugCoordinator.ts");
+    const controller = source("./workbenchController/useWorkbenchTaskCoordinator.ts");
     const editorNavigationCoordinator = source(
       "./workbenchController/useWorkbenchEditorNavigationCoordinator.ts",
     );
@@ -14,9 +14,7 @@ describe("VS Code process-task workbench composition", () => {
     const agentWorkbenchScreen = source("../components/agentMode/AgentWorkbenchScreen.tsx");
     const rootController = source("./useWorkbenchController.ts");
     const commandEffects = source("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts");
-    const rootBindingEnd = editorNavigationCoordinator.indexOf(
-      "} = useWorkbenchTaskDebugCoordinator({",
-    );
+    const rootBindingEnd = editorNavigationCoordinator.indexOf("} = useWorkbenchTaskCoordinator({");
     const rootBinding = editorNavigationCoordinator.slice(
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
@@ -43,7 +41,6 @@ describe("VS Code process-task workbench composition", () => {
     expect(controller).toContain("workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,");
     expect(controller).toContain("requestTerminalSession: terminal.requestActiveTerminalSession,");
     expect(controller).toContain("setNotices,");
-    expect(controller).toContain("vscodeProcessTasks: vscodeProcessTaskComposition.state,");
     expect(taskComposition).toContain("new Promise<number | null>");
     expect(taskComposition).toContain("requestTerminalSession(resolve);");
     expect(taskComposition).toContain(
@@ -55,11 +52,11 @@ describe("VS Code process-task workbench composition", () => {
     expect(controller).not.toContain("VscodeProcessTasksPanel");
     expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
     expect(rootController).toContain("publicSurface: editorNavigationSurface,");
-    expect(rootController).toContain("taskDebug,");
-    expect(editorNavigationCoordinator).toContain("taskDebug: {");
+    expect(rootController).toContain("tasks,");
+    expect(editorNavigationCoordinator).toContain("tasks: {");
     expect(rootBinding).toMatch(/^ {4}vscodeProcessTaskComposition,$/mu);
     expect(commands).toMatch(
-      /^ {4}vscodeProcessTasksWorkbench: taskDebug\.vscodeProcessTaskComposition\.commands,$/mu,
+      /^ {4}vscodeProcessTasksWorkbench: tasks\.vscodeProcessTaskComposition\.commands,$/mu,
     );
     expect(publicSurface).toMatch(
       /^ {6}vscodeProcessTasks: vscodeProcessTaskComposition\.state,$/mu,

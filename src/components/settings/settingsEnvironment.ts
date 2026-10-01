@@ -32,7 +32,6 @@ export function settingsEnvironment({
     hasWorkspace: Boolean(workbench.workspaceRoot),
     onCopyInstallCommand: writeClipboardText,
     onOpenJavaScriptTypeScriptServiceLog: workbench.openJavaScriptTypeScriptServiceLog,
-    onOpenNodeLaunchConfigurations: workbench.openNodeLaunchConfigurations,
     onRestartJavaScriptTypeScriptService: workbench.restartJavaScriptTypeScriptService,
     phpTools: workbench.phpTools,
     providerManagement,

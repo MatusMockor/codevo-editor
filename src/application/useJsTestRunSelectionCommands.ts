@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
-  debugWatchAtCursorCapturesEqual,
-  type DebugWatchAtCursorCapture,
-  type DebugWatchAtCursorCaptureReader,
-} from "../domain/debugWatchAtCursorCapture";
+  editorCursorCapturesEqual,
+  type EditorCursorCapture,
+  type EditorCursorCaptureReader,
+} from "../domain/editorCursorCapture";
 import {
   jsTestRunScopeAtCursor,
   jsTestRunScopeForFile,
@@ -47,7 +47,7 @@ export interface JsTestRunSelectionCommands {
 export interface UseJsTestRunSelectionCommandsOptions {
   readonly activationEpoch: () => number;
   readonly activeDocument: () => EditorDocument | null;
-  readonly captureReader?: DebugWatchAtCursorCaptureReader | null;
+  readonly captureReader?: EditorCursorCaptureReader | null;
   readonly isWorkspaceCurrent: (workspaceRoot: string, workspaceOwnerKey: string) => boolean;
   readonly isWorkspaceTrusted: () => boolean;
   readonly readTextFileBounded: (
@@ -63,7 +63,7 @@ export interface UseJsTestRunSelectionCommandsOptions {
 type RunKind = "cursor" | "file";
 
 interface RunCandidate {
-  readonly capture: DebugWatchAtCursorCapture;
+  readonly capture: EditorCursorCapture;
   readonly scope: JsTestRunnableScope;
 }
 
@@ -192,7 +192,7 @@ function readCandidate(
 function validCapture(
   options: UseJsTestRunSelectionCommandsOptions,
   boundary: RuntimeBoundary,
-  capture: DebugWatchAtCursorCapture,
+  capture: EditorCursorCapture,
 ): boolean {
   const document = safeActiveDocument(options);
   const capturePath = conservativeWorkspacePath(capture.workspaceRoot, capture.documentPath);
@@ -250,11 +250,9 @@ function requestIsCurrent(
   return candidate !== null && candidatesEqual(request.candidate, candidate);
 }
 
-function safeCapture(
-  options: UseJsTestRunSelectionCommandsOptions,
-): DebugWatchAtCursorCapture | null {
+function safeCapture(options: UseJsTestRunSelectionCommandsOptions): EditorCursorCapture | null {
   try {
-    return options.captureReader?.readDebugWatchAtCursorCapture() ?? null;
+    return options.captureReader?.readEditorCursorCapture() ?? null;
   } catch {
     return null;
   }
@@ -329,8 +327,7 @@ function conservativeWorkspacePath(workspaceRoot: string, path: string): Workspa
 
 function candidatesEqual(left: RunCandidate, right: RunCandidate): boolean {
   return (
-    debugWatchAtCursorCapturesEqual(left.capture, right.capture) &&
-    scopesEqual(left.scope, right.scope)
+    editorCursorCapturesEqual(left.capture, right.capture) && scopesEqual(left.scope, right.scope)
   );
 }
 

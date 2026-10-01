@@ -1,7 +1,6 @@
 use super::agent_task_commands::claude_session_composition::reap_sessions_in_worktree;
 use super::{canonicalize_workspace_root, trusted_for, GitTrustState};
 use crate::agent_task_supervisor::AgentTaskRegistry;
-use crate::debug_adapter::DebugSessionRegistry;
 use crate::eslint::EslintProcessRegistry;
 use crate::git_worktree::git_branch_worktree::add_branch_worktree;
 use crate::git_worktree::git_worktree_start_point::WorktreeStartPointWire;
@@ -161,7 +160,6 @@ impl WorktreeRemovalHooks for AppWorktreeRemovalHooks<'_> {
         let workspace_file_change_watch_registry =
             self.app.state::<WorkspaceFileChangeWatchRegistry>();
         let php_language_servers = self.app.state::<PhpLanguageServerRegistry>();
-        let debug_sessions = self.app.state::<Arc<DebugSessionRegistry>>();
         let eslint_processes = self.app.state::<Arc<EslintProcessRegistry>>();
         let terminal_sessions = self.app.state::<TerminalSupervisor>();
 
@@ -173,7 +171,6 @@ impl WorktreeRemovalHooks for AppWorktreeRemovalHooks<'_> {
                 javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
                 workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
                 php_language_servers: &*php_language_servers,
-                debug_sessions: &**debug_sessions,
                 eslint_processes: &**eslint_processes,
                 terminal_sessions: &*terminal_sessions,
             },

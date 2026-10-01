@@ -11,7 +11,6 @@ import type {
 import {
   createLegacyWorkspaceRuntimeOwner,
   createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 import {
@@ -1066,7 +1065,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("continues a retained TS stop reconciliation across an alias transfer", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const pendingStart = deferred<LanguageServerRuntimeStatus>();
     const pendingReconciliation = deferred<LanguageServerRuntimeStatus>();
     const tsGateway = runtimeGateway();
@@ -1735,7 +1734,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("does not autostart PHP or TS twice when one owner transfers aliases", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const secondOwner = createWorkspaceRuntimeOwner("workspace-b", "/workspace-b");
     const workspaceSettings = {
       ...defaultWorkspaceSettings(),
@@ -1775,7 +1774,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("keeps pending PHP and TS autostart leases across an exact-owner alias transfer", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
     const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
     const phpGateway = runtimeGateway();
@@ -1826,7 +1825,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("keeps an alias-transferred TS start over an older transferred snapshot", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const pendingStart = deferred<LanguageServerRuntimeStatus>();
     const pendingTransferredSnapshot = deferred<LanguageServerRuntimeStatus>();
     const tsGateway = runtimeGateway();
@@ -1865,7 +1864,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("cancels retained alias autostarts when the transferred owner disables prerequisites", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
     const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
     const phpGateway = runtimeGateway();
@@ -1929,7 +1928,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("isolates a manual PHP stop from another owner", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const secondOwner = createWorkspaceRuntimeOwner("workspace-b", SECOND_ROOT);
     const harness = renderLifecycle(firstOwner);
     harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
@@ -1950,7 +1949,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("keys status and cleanup by owner while gateways use execution roots", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const secondOwner = createWorkspaceRuntimeOwner("workspace-b", SECOND_ROOT);
     const harness = renderLifecycle(firstOwner);
     harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
@@ -2041,7 +2040,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("stops an inactive admitted owner without creating a legacy duplicate", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const secondOwner = createWorkspaceRuntimeOwner("workspace-b", "/workspace-b");
     const harness = renderLifecycle(firstOwner);
     harness.dependencies.appSettingsRef.current.workspaceTabs = [
@@ -2263,7 +2262,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("remaps retained PHP and TS creation aliases only for the transferred owner", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(firstOwner.ownerKey, SECOND_ROOT);
     const secondOwner = createWorkspaceRuntimeOwner("workspace-b", SECOND_ROOT);
     const harness = renderLifecycle(firstOwner);
     await flushEffects();
@@ -2395,7 +2394,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("rejects a retained PHP and TS alias after the owner generation changes", async () => {
     const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(owner, SECOND_ROOT);
+    const transferredOwner = createWorkspaceRuntimeOwner(owner.ownerKey, SECOND_ROOT);
     const harness = renderLifecycle(owner);
     await flushEffects();
     harness.rerender(transferredOwner);

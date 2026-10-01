@@ -5,28 +5,6 @@ mod artifact_preview;
 mod artisan;
 mod blocking_command;
 pub mod composer;
-mod debug_adapter;
-mod debug_breakpoint_policy;
-mod debug_cdp;
-mod debug_cdp_breakpoints;
-mod debug_cdp_function_breakpoints;
-mod debug_commands;
-mod debug_dbgp;
-mod debug_exception_type_filter;
-mod debug_hit_condition;
-mod debug_inspector_attach;
-mod debug_inspector_discovery;
-mod debug_inspector_startup;
-mod debug_logpoint;
-mod debug_node_attach_list_command;
-mod debug_node_attach_start_command;
-mod debug_node_env_file;
-mod debug_node_launch;
-mod debug_node_process;
-mod debug_node_watch_start_command;
-mod debug_session_registry;
-mod debug_source_map;
-mod debug_support;
 mod effective_executable_environment;
 mod eslint;
 mod file_fuzzy_matcher;
@@ -66,7 +44,6 @@ mod managed_phpactor;
 mod node_package_problem_matcher;
 mod node_package_scripts;
 mod node_package_tasks;
-mod node_run_tasks;
 mod package_commands;
 mod package_tool_context;
 mod perf_capture;
@@ -78,6 +55,7 @@ pub mod php_tree;
 mod phpstan;
 mod pint;
 mod prettier;
+mod process_group_termination;
 #[cfg_attr(test, allow(dead_code))]
 mod process_task_plan;
 mod process_task_resolver;
@@ -87,6 +65,7 @@ mod project;
 mod project_commands;
 mod quality_commands;
 mod remote_runner;
+mod retained_workspace_root;
 mod runtime_commands;
 mod runtime_observability;
 mod runtime_task_lifecycle;
@@ -129,7 +108,6 @@ mod workspace_typescript;
 #[cfg(target_os = "macos")]
 use crate::application_menu::application_menu;
 pub(crate) use crate::blocking_command::run_blocking_command;
-use crate::debug_commands::*;
 use crate::runtime_task_lifecycle::shutdown_runtime_processes;
 use crate::settings_fonts::cached_monospace_font_families;
 
@@ -138,7 +116,6 @@ use crate::application_commands::{
     set_native_close_listener_ready, NativeCloseListenerState,
 };
 
-use crate::debug_adapter::DebugSessionRegistry;
 use crate::git_commands::{
     cherry_pick_git_commit, detect_git_repositories, get_git_blame, get_git_branches,
     get_git_commit_details, get_git_commit_diff, get_git_commit_files, get_git_commit_graph_page,

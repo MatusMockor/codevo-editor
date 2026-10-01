@@ -48,7 +48,7 @@ describe("Tauri IPC contract architecture (static command literals and named map
 
   it("parses module-qualified Rust handlers and rejects unsupported entries", () => {
     expect(
-      parseRegisteredTauriCommands("tauri::generate_handler![open_file, debug::start_session,]"),
+      parseRegisteredTauriCommands("tauri::generate_handler![open_file, terminal::start_session,]"),
     ).toEqual(["open_file", "start_session"]);
     expect(() => parseRegisteredTauriCommands("tauri::generate_handler![make_handler()]")).toThrow(
       "Unsupported generate_handler entry",
@@ -114,8 +114,8 @@ describe("Tauri IPC contract architecture (static command literals and named map
         const COMMANDS = { kind: "tsserver", open: "open_workspace" };
         const EVENTS = { open: "workspace_opened" };
         invoke("save_workspace", {});
-        this.invokeDebugCommand("debug_start", {});
-        invokeDebugIpc(transport, "debug_stop", { sessionId: 1 });
+        this.invokeTaskCommand("task_start", {});
+        invokeTaskIpc(transport, "task_stop", { sessionId: 1 });
         runCommand("editor_action", {});
       `,
       "fixture.ts",
@@ -124,8 +124,8 @@ describe("Tauri IPC contract architecture (static command literals and named map
     expect(references.map(({ command }) => command)).toEqual([
       "open_workspace",
       "save_workspace",
-      "debug_start",
-      "debug_stop",
+      "task_start",
+      "task_stop",
     ]);
   });
 });

@@ -506,7 +506,7 @@ fn execute_runner_with_timeout_policy(
         }
         if timeout.has_expired(started_at) {
             #[cfg(unix)]
-            crate::debug_support::DebugProcessHandle::from_process_id(child.id()).terminate();
+            crate::process_group_termination::terminate_process_group(child.id());
             #[cfg(not(unix))]
             let _ = child.kill();
             let _ = child.wait();

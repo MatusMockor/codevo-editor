@@ -12,7 +12,6 @@ import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime
 import type { EditorDocument } from "../domain/workspace";
 import {
   createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 import {
@@ -806,7 +805,7 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
       (_rootPath: string, _command: unknown, sessionId: number) =>
         Object.assign(
           Promise.resolve().then(() => {
-            currentOwner = transferWorkspaceRuntimeOwner(owner, "/workspace-alias");
+            currentOwner = createWorkspaceRuntimeOwner(owner.ownerKey, "/workspace-alias");
             return Object.assign([referenceRow(`${ROOT}/src/Target.ts`).location], {
               isIncomplete: true,
               totalCount: 5,

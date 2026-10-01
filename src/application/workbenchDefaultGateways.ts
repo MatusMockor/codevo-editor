@@ -4,7 +4,6 @@ import { TauriAgentHistoryGateway } from "../infrastructure/tauriAgentHistoryGat
 import { TauriExternalSessionImportGateway } from "../infrastructure/tauriExternalSessionImportGateway";
 import { TauriAgentHistoryCatalogGateway } from "../infrastructure/tauriAgentHistoryCatalogGateway";
 import { TauriAgentTurnLogGateway } from "../infrastructure/tauriAgentTurnLogGateway";
-import { TauriDebugGateway } from "../infrastructure/tauriDebugGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriExternalSessionGateway } from "../infrastructure/tauriExternalSessionGateway";
 import {
@@ -30,7 +29,6 @@ export function createDefaultAgentThreadStoreGateway(
   return new TauriAgentHistoryGateway(undefined, undefined, evidenceOf);
 }
 export const defaultAgentTurnLogGateway = new TauriAgentTurnLogGateway();
-export const defaultDebugGateway = new TauriDebugGateway();
 export const defaultExternalSessionGateway = new TauriExternalSessionGateway();
 export const defaultGitWorktreeGateway = new TauriGitWorktreeGateway();
 export const defaultGitIntegrationGateway = new TauriGitIntegrationGateway();

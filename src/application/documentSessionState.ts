@@ -272,13 +272,7 @@ export function persistedBottomPanelView(
     return "problems";
   }
 
-  if (
-    view === "debug" ||
-    view === "expressRoutes" ||
-    view === "nette" ||
-    view === "packages" ||
-    view === "symfony"
-  ) {
+  if (view === "expressRoutes" || view === "nette" || view === "packages" || view === "symfony") {
     return "problems";
   }
 

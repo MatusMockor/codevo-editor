@@ -47,26 +47,24 @@ function menuItems(): Element[] {
 }
 
 describe("EditorDrawer", () => {
-  it("shows Problems with its count and Debug console, Problems selected", () => {
+  it("shows Problems with its count, Problems selected", () => {
     const { host } = renderDrawer();
     const tabs = [...host.querySelectorAll('[role="tab"]')];
 
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Problems3", "Debug console"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Problems3"]);
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
     expect(
       host.querySelector('[role="tabpanel"][aria-label="Problems"] [data-testid="body"]'),
     ).not.toBeNull();
   });
 
-  it("selects a view, lists the other views in More views, and closes", () => {
+  it("lists the other views in More views, selects one, and closes", () => {
     const { host, props } = renderDrawer();
-    click(host.querySelectorAll('[role="tab"]')[1] as Element);
     click(host.querySelector('button[aria-label="More views"]') as Element);
     const labels = menuItems().map((item) => item.textContent);
     click(menuItems().find((item) => item.textContent === "Search") as Element);
     click(host.querySelector('button[aria-label="Close panel views"]') as Element);
 
-    expect(props.onSelectView).toHaveBeenNthCalledWith(1, "debug");
     expect(labels).toEqual([
       "Search",
       "Tests",
@@ -76,26 +74,25 @@ describe("EditorDrawer", () => {
       "Express routes",
       "Packages",
     ]);
-    expect(props.onSelectView).toHaveBeenNthCalledWith(2, "search");
+    expect(props.onSelectView).toHaveBeenNthCalledWith(1, "search");
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("adds the active secondary view as a third tab and uses the given height", () => {
+  it("adds the active secondary view as a second tab and uses the given height", () => {
     const { host } = renderDrawer({ view: "search" });
 
     expect([...host.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual([
       "Problems3",
-      "Debug console",
       "Search",
     ]);
     expect((host.querySelector(".cv-edrawer") as HTMLElement).style.height).toBe("224px");
   });
 
   it("moves between tabs with the arrow keys", () => {
-    const { host, props } = renderDrawer();
+    const { host, props } = renderDrawer({ view: "search" });
     press(host.querySelector('[role="tab"]') as Element, "ArrowRight");
 
-    expect(props.onSelectView).toHaveBeenLastCalledWith("debug");
+    expect(props.onSelectView).toHaveBeenLastCalledWith("problems");
   });
 
   it("resizes from its top edge", () => {

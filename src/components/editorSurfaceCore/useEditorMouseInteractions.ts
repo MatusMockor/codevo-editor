@@ -2,7 +2,6 @@ import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } 
 import type * as Monaco from "monaco-editor";
 import type { CommandExecutionRunner } from "../../application/commandRegistry";
 import { runRegisteredCommand } from "../../application/commandChain";
-import type { EditorBreakpointGutterActions } from "../../application/useEditorBreakpointGutterMenu";
 import type { EditorChangeHunk } from "../../domain/editorChangeMarkers";
 import type { GitBlameLine } from "../../domain/git";
 import type { EditorPosition } from "../../domain/languageServerFeatures";
@@ -34,10 +33,8 @@ interface EditorMouseInteractionsOptions {
   readonly onRevealGitBlameCommit?: (path: string, sha: string) => void;
   readonly onRunTestAt?: (target: PhpTestGutterTarget) => void;
   readonly onToggleBookmarkAtLine?: (lineNumber: number) => void;
-  readonly reportBreakpointMutationError: (error: unknown) => void;
   readonly setChangePreview: Dispatch<SetStateAction<EditorChangePreviewState | null>>;
   readonly testGutterTargetsRef: MutableRefObject<Map<number, PhpTestGutterTarget>>;
-  readonly toggleBreakpointAction?: EditorBreakpointGutterActions["toggleBreakpoint"];
 }
 
 /**
@@ -59,10 +56,8 @@ export function useEditorMouseInteractions({
   onRevealGitBlameCommit,
   onRunTestAt,
   onToggleBookmarkAtLine,
-  reportBreakpointMutationError,
   setChangePreview,
   testGutterTargetsRef,
-  toggleBreakpointAction,
 }: EditorMouseInteractionsOptions): void {
   useEffect(() => {
     if (!editor || !monaco) {
@@ -131,29 +126,6 @@ export function useEditorMouseInteractions({
         return;
       }
 
-      if (targetType === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
-        const lineNumber = event.target.position?.lineNumber;
-        const path = activeDocumentRef.current?.path;
-        const isPlainLeftClick =
-          event.event.leftButton === true &&
-          event.event.ctrlKey !== true &&
-          event.event.metaKey !== true &&
-          event.event.shiftKey !== true &&
-          event.event.altKey !== true;
-        if (!toggleBreakpointAction || !isPlainLeftClick || !lineNumber || !path) {
-          return;
-        }
-
-        try {
-          void Promise.resolve(toggleBreakpointAction(path, lineNumber)).catch(
-            reportBreakpointMutationError,
-          );
-        } catch (error) {
-          reportBreakpointMutationError(error);
-        }
-        return;
-      }
-
       if (event.event.rightButton) {
         return;
       }
@@ -207,7 +179,7 @@ export function useEditorMouseInteractions({
 
       const target = implementationGutterTargetsRef.current.get(lineNumber);
 
-      if (target && lane !== monaco.editor.GlyphMarginLane.Left) {
+      if (target) {
         event.event.preventDefault();
         event.event.stopPropagation();
         editor.setPosition(target);
@@ -233,10 +205,8 @@ export function useEditorMouseInteractions({
     onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,
-    reportBreakpointMutationError,
     setChangePreview,
     testGutterTargetsRef,
-    toggleBreakpointAction,
   ]);
 }
 

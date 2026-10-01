@@ -751,7 +751,7 @@ fn execute_prepared_package(
         Ok(process_group_id) => process_group_id,
         Err(_) => {
             #[cfg(unix)]
-            crate::debug_support::DebugProcessHandle::from_process_id(child.id()).terminate();
+            crate::process_group_termination::terminate_process_group(child.id());
             #[cfg(not(unix))]
             let _ = child.kill();
             let _ = child.wait();

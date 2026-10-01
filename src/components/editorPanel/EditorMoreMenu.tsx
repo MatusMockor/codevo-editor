@@ -1,13 +1,4 @@
-import {
-  Bug,
-  Columns2,
-  PanelRightOpen,
-  Play,
-  Rows2,
-  Settings2,
-  ShieldCheck,
-  Unplug,
-} from "lucide-react";
+import { Columns2, Rows2, ShieldCheck } from "lucide-react";
 import type { RefObject } from "react";
 import { Menu } from "../../ui/foundation/Menu";
 import { MenuItem, MenuLabel, MenuSeparator } from "../../ui/foundation/MenuItem";
@@ -31,36 +22,6 @@ export function EditorMoreMenu({ anchorRef, chrome, onClose, open }: EditorMoreM
       open={open}
       placement="bottom-end"
     >
-      <MenuItem
-        icon={<Bug size={14} />}
-        onSelect={() => chrome.runDebugEntry("start")}
-        shortcut={optionalShortcut(shortcuts.debugStart)}
-      >
-        Start debugging
-      </MenuItem>
-      <MenuItem
-        icon={<Play size={14} />}
-        onSelect={() => chrome.runDebugEntry("runWithoutDebugging")}
-        shortcut={optionalShortcut(shortcuts.runWithoutDebugging)}
-      >
-        Run without debugging
-      </MenuItem>
-      <MenuItem
-        icon={<Settings2 size={14} />}
-        onSelect={() => chrome.runDebugEntry("launchConfigurations")}
-      >
-        Launch configurations
-      </MenuItem>
-      <MenuItem icon={<Unplug size={14} />} onSelect={() => chrome.runDebugEntry("attach")}>
-        Attach to Node process
-      </MenuItem>
-      <MenuItem
-        icon={<PanelRightOpen size={14} />}
-        onSelect={() => chrome.runDebugEntry("showViews")}
-      >
-        Show debug views
-      </MenuItem>
-      <MenuSeparator />
       <MenuItem
         icon={<Columns2 size={14} />}
         onSelect={chrome.splitRight}

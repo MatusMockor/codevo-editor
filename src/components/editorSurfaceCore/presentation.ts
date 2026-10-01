@@ -1,6 +1,5 @@
 import { createElement } from "react";
 import type * as Monaco from "monaco-editor";
-import type { Breakpoint } from "../../domain/debug";
 import type { LanguageServerDocumentSymbol } from "../../domain/languageServerFeatures";
 import type { UserSnippet } from "../../domain/snippets";
 import type { MonacoAppTheme } from "../../domain/settings";
@@ -13,7 +12,6 @@ import { setupEmmet } from "../../infrastructure/emmetSetup";
 
 export const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 export const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
-export const EMPTY_BREAKPOINTS: readonly Breakpoint[] = Object.freeze([]);
 export const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
 export const noopLocalPhpDiagnosticsChange = () => undefined;
 export const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];

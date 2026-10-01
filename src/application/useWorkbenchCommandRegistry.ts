@@ -25,16 +25,8 @@ import type { EditorGroupsState, EditorSplitDirection } from "../domain/editorGr
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { StepKind } from "../domain/debug";
-import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { CommandRegistry, type Command, type CommandContext } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
-import {
-  hasDebuggableNodeWorkspace,
-  isDebuggableNodeScriptPath,
-  isDebuggablePhpScriptPath,
-  workbenchDebugCommands,
-} from "./workbenchDebugCommands";
 import { workbenchAgentViewCommandBridge } from "./agentViewCommandBridge";
 import {
   workbenchAgentCommands,
@@ -72,7 +64,6 @@ import { workbenchPintCommands } from "./workbenchPintCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
 import { workbenchScriptCommands } from "./workbenchScriptCommands";
 import { workbenchNodePackageScriptCommands } from "./workbenchNodePackageScriptCommands";
-import { workbenchNodeRunCommands } from "./workbenchNodeRunCommands";
 import {
   workbenchVscodeProcessTaskCommands,
   type WorkbenchVscodeProcessTaskCommandsOptions,
@@ -93,7 +84,6 @@ type NavigationRun = () => unknown;
 
 interface UseWorkbenchCommandRegistryOptions {
   activeDocument: EditorDocument | null;
-  openDocuments?: readonly EditorDocument[];
   captureNavigationCommandScope(): EditorSurfaceCommandInvocationScope;
   activeEslintBufferClean: boolean;
   activeEslintFixes: readonly unknown[];
@@ -108,19 +98,6 @@ interface UseWorkbenchCommandRegistryOptions {
       capture: NonNullable<CommandContext["npmRunSelectedScriptCapture"]>,
     ): boolean;
     run(script: NodePackageScript): void;
-    stop(): void;
-  };
-  nodeRunWithoutDebugging: {
-    readonly canRun: boolean;
-    readonly canStop: boolean;
-    readonly configurationLauncher: {
-      readonly busy: boolean;
-      readonly pickerOpen: boolean;
-      canOpenPicker(): boolean;
-      openPicker(): void;
-    };
-    readonly pending: boolean;
-    run(): void;
     stop(): void;
   };
   vscodeProcessTasksWorkbench: WorkbenchVscodeProcessTaskCommandsOptions;
@@ -140,64 +117,6 @@ interface UseWorkbenchCommandRegistryOptions {
   createDirectory: CommandRun;
   createFile: CommandRun;
   createGitBranch: CommandRun;
-  configureNodeLaunchConfigurations: CommandRun;
-  debugState: {
-    breakpointBulkMutationPending: boolean;
-    breakpointCounts: {
-      readonly disabled: number;
-      readonly enabled: number;
-    };
-    canRestartDebug(): boolean;
-    canRunToCursor: boolean;
-    canToggleBreakpointsActivated(): boolean;
-    consoleSurface: {
-      readonly canClear: boolean;
-      clear(): void;
-      focus(): void;
-    };
-    configurationLauncher: {
-      readonly busy: boolean;
-      readonly pickerOpen: boolean;
-      canOpenPicker(): boolean;
-      openPicker(): void;
-    };
-    copyValue: {
-      canCopyEvaluatePath(): boolean;
-      canCopyValue(): boolean;
-      copyEvaluatePath(): Promise<boolean>;
-      copyValue(): Promise<boolean>;
-    };
-    addToWatch: {
-      canAddToWatch(): boolean;
-      addToWatch(): boolean;
-    };
-    setValue: {
-      canBeginEdit(): boolean;
-      beginEdit(): boolean;
-    };
-    debugRestartPending: boolean;
-    debugCompoundStartPending: boolean;
-    debugControlPending: boolean;
-    debugStopPending: boolean;
-    debugSessionAttached: boolean;
-    disconnectDebug: CommandRun;
-    debugStartPending: boolean;
-    disableAllBreakpoints: CommandRun;
-    enableAllBreakpoints: CommandRun;
-    toggleBreakpointsActivated(): Promise<boolean>;
-    removeAllBreakpoints: CommandRun;
-    restartDebug: CommandRun;
-    runToCursor: CommandRun;
-    snapshot: DebuggerSessionSnapshot;
-  };
-  debugWatchAtCursor: {
-    addToWatchAtCursor(): boolean;
-    canAddAtCursor(): boolean;
-  };
-  jsTestDebugAtCursor: {
-    canDebugAtCursor(): boolean;
-    debugAtCursor(): Promise<boolean>;
-  };
   jsTestRerunLastRun: {
     canCancelTestRun(): boolean;
     canRerunFailedTests(): boolean;
@@ -212,45 +131,8 @@ interface UseWorkbenchCommandRegistryOptions {
     canRunCurrentFile(): boolean;
     runCurrentFile(): Promise<boolean>;
   };
-  debugEvaluateInConsole: {
-    canEvaluateInConsole(): boolean;
-    evaluateInConsole(): boolean;
-  };
-  debugBreakpointNavigation: {
-    canGoToNextBreakpoint(): boolean;
-    canGoToPreviousBreakpoint(): boolean;
-    goToNextBreakpoint(): boolean;
-    goToPreviousBreakpoint(): boolean;
-  };
-  debugInlineBreakpoint: {
-    addInlineBreakpoint(): boolean;
-    canAddInlineBreakpoint(): boolean;
-  };
-  debugCopyStackTrace: {
-    canCopyStackTrace(): boolean;
-    copyStackTrace(): boolean;
-  };
-  debugCallStackNavigation: {
-    canSelectCallStackFrame(): boolean;
-    selectCallStackTop(): boolean;
-    selectCallStackBottom(): boolean;
-    selectCallStackUp(): boolean;
-    selectCallStackDown(): boolean;
-  };
-  debugRestartFrame: {
-    canRestartFrame(): boolean;
-    restartFrame(): boolean;
-  };
   deleteActiveDocument: CommandRun;
   disableEslintRuleAtCursor: CommandRun;
-  openDebugPanel: CommandRun;
-  attachNodeDebug: CommandRun;
-  pauseDebug: CommandRun;
-  startOrContinueDebug: CommandRun;
-  startPhpListenDebug: CommandRun;
-  stepDebug(kind: StepKind): void | Promise<void>;
-  stopDebug: CommandRun;
-  toggleDebugBreakpointAtCursor: CommandRun;
   editorGroups: EditorGroupsState;
   editorMenuCommandRunner?: EditorMenuCommandRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
@@ -378,7 +260,6 @@ export function useWorkbenchCommandRegistry(
 ): CommandRegistry {
   const {
     activeDocument,
-    openDocuments = [],
     captureNavigationCommandScope,
     activeEslintBufferClean,
     activeEslintFixes,
@@ -386,7 +267,6 @@ export function useWorkbenchCommandRegistry(
     activeMarkdownPreview,
     activePackageScripts,
     nodePackageScriptsWorkbench,
-    nodeRunWithoutDebugging,
     vscodeProcessTasksWorkbench,
     activePhpstanBufferClean,
     activateWorkspaceTab,
@@ -403,28 +283,10 @@ export function useWorkbenchCommandRegistry(
     createDirectory,
     createFile,
     createGitBranch,
-    configureNodeLaunchConfigurations,
-    debugState,
-    debugWatchAtCursor,
-    jsTestDebugAtCursor,
     jsTestRerunLastRun,
     jsTestRunSelection,
-    debugEvaluateInConsole,
-    debugBreakpointNavigation,
-    debugInlineBreakpoint,
-    debugCopyStackTrace,
-    debugCallStackNavigation,
-    debugRestartFrame,
     deleteActiveDocument,
     disableEslintRuleAtCursor,
-    openDebugPanel,
-    attachNodeDebug,
-    pauseDebug,
-    startOrContinueDebug,
-    startPhpListenDebug,
-    stepDebug,
-    stopDebug,
-    toggleDebugBreakpointAtCursor,
     editorGroups,
     editorMenuCommandRunner,
     editorSurfaceCommandRunner,
@@ -617,14 +479,10 @@ export function useWorkbenchCommandRegistry(
 
     workbenchJsTestCommands({
       canCancelTestRun: jsTestRerunLastRun.canCancelTestRun,
-      canDebugAtCursor: jsTestDebugAtCursor.canDebugAtCursor,
       canRerunFailedTests: jsTestRerunLastRun.canRerunFailedTests,
       canRerunLastRun: jsTestRerunLastRun.canRerunLastRun,
       canRunAtCursor: jsTestRunSelection.canRunAtCursor,
       canRunCurrentFile: jsTestRunSelection.canRunCurrentFile,
-      debugAtCursor: async () => {
-        await jsTestDebugAtCursor.debugAtCursor();
-      },
       cancelTestRun: jsTestRerunLastRun.cancelTestRun,
       hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
       isActiveDocumentJsTest,
@@ -640,79 +498,6 @@ export function useWorkbenchCommandRegistry(
       rerunFailedTests: jsTestRerunLastRun.rerunFailedTests,
       rerunLastRun: jsTestRerunLastRun.rerunLastRun,
       shortcut,
-    }).forEach((command) => registry.register(command));
-
-    const hasJsDebugWorkspace = hasDebuggableNodeWorkspace({
-      activeDocument,
-      detectedJavaScriptTypeScript: Boolean(workspaceDescriptor?.javaScriptTypeScript),
-      openedDocuments: openDocuments,
-      workspaceRoot,
-    });
-
-    workbenchDebugCommands({
-      attachNodeDebug,
-      breakpointBulkMutationPending: debugState.breakpointBulkMutationPending,
-      breakpointCounts: debugState.breakpointCounts,
-      configurationLauncher: debugState.configurationLauncher,
-      configureNodeLaunchConfigurations,
-      canRestartDebug: debugState.canRestartDebug(),
-      canRunToCursor: debugState.canRunToCursor,
-      canToggleBreakpointsActivated: debugState.canToggleBreakpointsActivated(),
-      canClearDebugConsole: debugState.consoleSurface.canClear,
-      debugRestartPending: debugState.debugRestartPending,
-      debugCompoundStartPending: debugState.debugCompoundStartPending,
-      debugControlPending: debugState.debugControlPending,
-      debugStopPending: debugState.debugStopPending,
-      debugSessionAttached: debugState.debugSessionAttached,
-      debugStartPending: debugState.debugStartPending,
-      debugWatchAtCursor,
-      debugEvaluateInConsole,
-      debugBreakpointNavigation,
-      debugInlineBreakpoint,
-      debugCopyValue: debugState.copyValue,
-      debugAddToWatch: debugState.addToWatch,
-      debugCopyStackTrace,
-      debugCallStackNavigation,
-      debugRestartFrame,
-      debugSetVariable: debugState.setValue,
-      disableAllBreakpoints: debugState.disableAllBreakpoints,
-      enableAllBreakpoints: debugState.enableAllBreakpoints,
-      toggleBreakpointsActivated: async () => {
-        await debugState.toggleBreakpointsActivated();
-      },
-      shortcut,
-      hasJsWorkspace: hasJsDebugWorkspace,
-      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
-      isActiveDocumentDebuggable:
-        (hasJsDebugWorkspace &&
-          (isActiveDocumentJsTest || isDebuggableNodeScriptPath(activeDocument?.path ?? ""))) ||
-        (Boolean(workspaceDescriptor?.php) &&
-          isDebuggablePhpScriptPath(activeDocument?.path ?? "")),
-      isWorkspaceTrusted: workspaceTrust?.trusted === true,
-      snapshot: debugState.snapshot,
-      openDebugPanel,
-      clearDebugConsole: debugState.consoleSurface.clear,
-      focusDebugConsole: debugState.consoleSurface.focus,
-      pauseDebug,
-      restartDebug: debugState.restartDebug,
-      runToCursor: debugState.runToCursor,
-      removeAllBreakpoints: debugState.removeAllBreakpoints,
-      startOrContinueDebug,
-      startPhpListenDebug,
-      stepDebug,
-      stopDebug,
-      disconnectDebug: debugState.disconnectDebug,
-      toggleBreakpointAtCursor: toggleDebugBreakpointAtCursor,
-    }).forEach((command) => registry.register(command));
-
-    workbenchNodeRunCommands({
-      canRun: nodeRunWithoutDebugging.canRun,
-      canStop: nodeRunWithoutDebugging.canStop,
-      configurationLauncher: nodeRunWithoutDebugging.configurationLauncher,
-      pending: nodeRunWithoutDebugging.pending,
-      run: nodeRunWithoutDebugging.run,
-      shortcut,
-      stop: nodeRunWithoutDebugging.stop,
     }).forEach((command) => registry.register(command));
 
     workbenchPhpstanCommands({
@@ -1027,13 +812,11 @@ export function useWorkbenchCommandRegistry(
     return registry;
   }, [
     activeDocument,
-    openDocuments,
     captureNavigationCommandScope,
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
     nodePackageScriptsWorkbench,
-    nodeRunWithoutDebugging,
     vscodeProcessTasksWorkbench,
     openArtisanMakePalette,
     openArtisanRoutesPanel,
@@ -1048,32 +831,14 @@ export function useWorkbenchCommandRegistry(
     canShowSymfony,
     closeActiveEditorGroup,
     closeActiveEditorGroupSurface,
-    debugState,
-    debugWatchAtCursor,
-    jsTestDebugAtCursor,
     jsTestRerunLastRun,
     jsTestRunSelection,
-    debugEvaluateInConsole,
-    debugBreakpointNavigation,
-    debugInlineBreakpoint,
-    debugCopyStackTrace,
-    debugCallStackNavigation,
-    debugRestartFrame,
-    openDebugPanel,
-    attachNodeDebug,
-    pauseDebug,
-    startOrContinueDebug,
-    startPhpListenDebug,
-    stepDebug,
-    stopDebug,
-    toggleDebugBreakpointAtCursor,
     editorGroups,
     focusAdjacentEditorGroup,
     moveActiveTabToAdjacentGroup,
     splitActiveEditorGroup,
     createDirectory,
     createFile,
-    configureNodeLaunchConfigurations,
     deleteActiveDocument,
     generateTestForActiveDocument,
     goToTestForActiveDocument,

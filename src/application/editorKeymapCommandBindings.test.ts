@@ -34,9 +34,9 @@ describe("planEditorKeymapCommandBindings", () => {
   it("keeps shared shortcuts in the workbench conflict-priority order", () => {
     const bindings = planEditorKeymapCommandBindings(defaultKeymapSettings("mac"), "mac", NONE);
 
-    expect(bindingFor(bindings, "Shift+F5")?.commandIds).toEqual([
-      "workbench.action.debug.disconnect",
-      "debug.stop",
+    expect(bindingFor(bindings, "Cmd+Shift+K")?.commandIds).toEqual([
+      "agent.searchThreads",
+      "editor.deleteLine",
     ]);
   });
 
@@ -48,7 +48,6 @@ describe("planEditorKeymapCommandBindings", () => {
     expect(commandIds).not.toContain("palette.shortcuts");
     expect(commandIds).not.toContain("agent.toggleSidebar");
     expect(commandIds).not.toContain("agent.findInThread");
-    expect(commandIds).not.toContain("debug.setVariable");
     expect(bindingFor(bindings, "Cmd+/")).toBeUndefined();
     expect(bindingFor(bindings, "Cmd+F")).toBeUndefined();
     expect(bindingFor(bindings, "Enter")).toBeUndefined();

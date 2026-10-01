@@ -16,7 +16,7 @@ export interface WindowedRowsInput {
   readonly preserveScrollAnchor?: boolean;
 }
 
-export interface WindowedRow {
+interface WindowedRow {
   readonly index: number;
   readonly offsetTop: number;
   readonly pinned: boolean;

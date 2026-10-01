@@ -15,7 +15,6 @@ impl TerminalSupervisor {
         self.start_with_options(
             TerminalLaunchRoots::workspace_root(cwd),
             None,
-            None,
             TerminalStartOptions {
                 effective_path,
                 #[cfg(test)]
@@ -34,19 +33,11 @@ impl TerminalSupervisor {
         &self,
         roots: TerminalLaunchRoots,
         cwd_directory: fs::File,
-        workspace_authority: DebugWorkspaceAuthority,
         options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
-        self.start_with_options(
-            roots,
-            Some(Arc::new(cwd_directory)),
-            Some(workspace_authority),
-            options,
-            spawner,
-            sink,
-        )
+        self.start_with_options(roots, Some(Arc::new(cwd_directory)), options, spawner, sink)
     }
 
     #[cfg(unix)]
@@ -54,34 +45,23 @@ impl TerminalSupervisor {
         &self,
         roots: TerminalLaunchRoots,
         cwd_directory: fs::File,
-        workspace_authority: DebugWorkspaceAuthority,
         options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
-        self.start_with_options(
-            roots,
-            Some(Arc::new(cwd_directory)),
-            Some(workspace_authority),
-            options,
-            spawner,
-            sink,
-        )
+        self.start_with_options(roots, Some(Arc::new(cwd_directory)), options, spawner, sink)
     }
 
     #[cfg(all(test, not(unix)))]
-    /// Preserve pathname-based terminal startup on platforms without `fchdir`,
-    /// but never publish retained workspace authority for that weaker launch.
     pub(crate) fn start_descriptor_bound(
         &self,
         roots: TerminalLaunchRoots,
         _cwd_directory: fs::File,
-        _workspace_authority: DebugWorkspaceAuthority,
         options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
-        self.start_with_options(roots, None, None, options, spawner, sink)
+        self.start_with_options(roots, None, options, spawner, sink)
     }
 
     #[cfg(not(unix))]
@@ -89,19 +69,17 @@ impl TerminalSupervisor {
         &self,
         roots: TerminalLaunchRoots,
         _cwd_directory: fs::File,
-        _workspace_authority: DebugWorkspaceAuthority,
         options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
-        self.start_with_options(roots, None, None, options, spawner, sink)
+        self.start_with_options(roots, None, options, spawner, sink)
     }
 
     pub(super) fn start_with_options(
         &self,
         roots: TerminalLaunchRoots,
         cwd_directory: Option<Arc<fs::File>>,
-        workspace_authority: Option<DebugWorkspaceAuthority>,
         options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
@@ -211,7 +189,6 @@ impl TerminalSupervisor {
             task_process_groups: HashMap::new(),
             waiter: Some(waiter),
             writer,
-            workspace_authority,
         };
         #[cfg(test)]
         if fault == Some(TerminalStartFault::AfterWaiterAcceptance) {

@@ -465,14 +465,6 @@ export const SETTINGS_ROW_TABLE = [
     "workspace",
   ),
   row(
-    "index.nodeLaunchConfigurations",
-    "index",
-    "Node launch configurations",
-    "Edit the launch configurations used by the Node debugger.",
-    ["node", "launch", "debug", "configuration"],
-    "workspace",
-  ),
-  row(
     "index.eslintPath",
     "index",
     "ESLint path",

@@ -203,13 +203,6 @@ export const keymapCommands = [
   },
   {
     category: "Test",
-    // VS Code's editorTextFocus-scoped Debug Test at Cursor key chord.
-    defaultShortcut: "Cmd+; Cmd+C",
-    id: "testing.debugAtCursor",
-    label: "Debug Test at Cursor",
-  },
-  {
-    category: "Test",
     // VS Code's editorTextFocus-scoped Run Tests in Current File key chord.
     defaultShortcut: "Cmd+; F",
     id: "testing.runCurrentFile",
@@ -753,132 +746,6 @@ export const keymapCommands = [
     label: "Run Script",
   },
   {
-    category: "Debug",
-    defaultShortcut: "F5",
-    id: "debug.start",
-    label: "Debug: Start or Continue",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Ctrl+F5",
-    id: "debug.runWithoutDebugging",
-    label: "Run: Start Without Debugging",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Shift+Cmd+F5",
-    id: "debug.restart",
-    label: "Debug: Restart",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Ctrl+F10",
-    id: "debug.runToCursor",
-    label: "Debug: Run to Cursor",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Shift+F5",
-    id: "debug.stop",
-    label: "Debug: Stop",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Shift+F5",
-    id: "workbench.action.debug.disconnect",
-    label: "Debug: Disconnect",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "F9",
-    id: "debug.toggleBreakpoint",
-    label: "Debug: Toggle Breakpoint",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Ctrl+F9",
-    id: "workbench.debug.viewlet.action.toggleBreakpointsActivatedAction",
-    label: "Debug: Toggle Activate Breakpoints",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Shift+F9",
-    id: "editor.debug.action.toggleInlineBreakpoint",
-    label: "Debug: Inline Breakpoint",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "workbench.action.debug.callStackTop",
-    label: "Debug: Navigate to Top of Call Stack",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "workbench.action.debug.callStackBottom",
-    label: "Debug: Navigate to Bottom of Call Stack",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "workbench.action.debug.callStackUp",
-    label: "Debug: Navigate Up Call Stack",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "workbench.action.debug.callStackDown",
-    label: "Debug: Navigate Down Call Stack",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "workbench.action.debug.restartFrame",
-    label: "Restart Frame",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "F2",
-    id: "debug.setVariable",
-    label: "Set Value",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "debug.addToWatchExpressions",
-    label: "Add to Watch",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "F10",
-    id: "debug.stepOver",
-    label: "Debug: Step Over",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "F11",
-    id: "debug.stepInto",
-    label: "Debug: Step Into",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Shift+F11",
-    id: "debug.stepOut",
-    label: "Debug: Step Out",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "Shift+Cmd+Y",
-    id: "debug.focusConsole",
-    label: "Debug: Focus Debug Console",
-  },
-  {
-    category: "Debug",
-    defaultShortcut: "",
-    id: "debug.clearConsole",
-    label: "Debug: Clear Console",
-  },
-  {
     category: "Terminal",
     defaultShortcut: "Ctrl+`",
     id: "terminal.show",
@@ -1197,17 +1064,7 @@ export function defaultShortcutForCommand(
     return "";
   }
 
-  if (commandId === "debug.setVariable") {
-    return debugSetVariableShortcut(platform);
-  }
-
   return shortcutForPlatform(command.defaultShortcut, platform);
-}
-
-export function debugSetVariableShortcut(platform: KeymapPlatform): string {
-  if (platform === "mac") return "Enter";
-  if (platform === "linux" || platform === "windows") return "F2";
-  return "";
 }
 
 export function normalizeKeymapSettings(
@@ -1425,7 +1282,7 @@ interface KeymapModifierEvent {
 
 /**
  * Builds the set of normalized keys for keymap shortcuts that require NO
- * modifier at all (e.g. the F8 "Next Problem" and F11 "Toggle Bookmark"
+ * modifier at all (e.g. the F8 "Next Problem" and F2 "Rename Symbol"
  * defaults). These are the only fully bare events that can match a command, so
  * the keydown hot path can skip the ~35-iteration matching loop for any other
  * bare keystroke (held ArrowUp/ArrowDown, plain letters, etc.).

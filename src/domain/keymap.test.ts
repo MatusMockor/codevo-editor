@@ -4,7 +4,6 @@ import {
   collectBareKeyShortcutKeys,
   defaultKeymapSettings,
   defaultShortcutForCommand,
-  debugSetVariableShortcut,
   detectKeymapPlatform,
   eventCanMatchKeymapShortcut,
   findKeymapConflicts,
@@ -27,20 +26,15 @@ function defaultShortcutsWithoutIntentionalCollisions(
 ): string[] {
   return Object.entries(defaultKeymapSettings(platform))
     .filter(
-      ([id, shortcut]) =>
-        shortcut &&
-        id !== "workbench.action.debug.disconnect" &&
-        id !== "agent.searchThreads" &&
-        id !== "agent.toggleSidebar" &&
-        !(id === "debug.setVariable" && platform !== "mac"),
+      ([id, shortcut]) => shortcut && id !== "agent.searchThreads" && id !== "agent.toggleSidebar",
     )
     .map(([, shortcut]) => shortcut);
 }
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(164);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(162);
+    expect(keymapCommands).toHaveLength(142);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(140);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -176,25 +170,6 @@ describe("keymap", () => {
           "editor.action.organizeImports",
           platform,
         ),
-      ).toEqual([]);
-    }
-  });
-
-  it("registers the official editor-scoped Debug Test at Cursor chord", () => {
-    expect(keymapCommands.find(({ id }) => id === "testing.debugAtCursor")).toEqual({
-      category: "Test",
-      defaultShortcut: "Cmd+; Cmd+C",
-      id: "testing.debugAtCursor",
-      label: "Debug Test at Cursor",
-    });
-    for (const [platform, shortcut] of [
-      ["mac", "Cmd+; Cmd+C"],
-      ["linux", "Ctrl+; Ctrl+C"],
-      ["windows", "Ctrl+; Ctrl+C"],
-    ] as const) {
-      expect(defaultShortcutForCommand("testing.debugAtCursor", platform)).toBe(shortcut);
-      expect(
-        findKeymapConflicts(defaultKeymapSettings(platform), "testing.debugAtCursor", platform),
       ).toEqual([]);
     }
   });
@@ -341,67 +316,6 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["markdown.openPreview"]).toBe("Cmd+Shift+V");
   });
 
-  it("registers the official Inline Breakpoint command on Shift+F9 without collisions", () => {
-    const inlineBreakpoint = keymapCommands.find(
-      (command) => command.id === "editor.debug.action.toggleInlineBreakpoint",
-    );
-
-    expect(inlineBreakpoint).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "Shift+F9",
-      label: "Debug: Inline Breakpoint",
-    });
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      const keymap = defaultKeymapSettings(platform);
-      expect(
-        defaultShortcutForCommand("editor.debug.action.toggleInlineBreakpoint", platform),
-      ).toBe("Shift+F9");
-      expect(keymapCommandIdsForShortcut(keymap, "Shift+F9", platform)).toEqual([
-        "editor.debug.action.toggleInlineBreakpoint",
-      ]);
-      expect(
-        findKeymapConflicts(keymap, "editor.debug.action.toggleInlineBreakpoint", platform),
-      ).toEqual([]);
-    }
-  });
-
-  it("registers the official Call Stack navigation ids without default shortcuts or collisions", () => {
-    const expected = [
-      ["workbench.action.debug.callStackTop", "Debug: Navigate to Top of Call Stack"],
-      ["workbench.action.debug.callStackBottom", "Debug: Navigate to Bottom of Call Stack"],
-      ["workbench.action.debug.callStackUp", "Debug: Navigate Up Call Stack"],
-      ["workbench.action.debug.callStackDown", "Debug: Navigate Down Call Stack"],
-    ] as const;
-
-    for (const [id, label] of expected) {
-      expect(keymapCommands.find((command) => command.id === id)).toMatchObject({
-        category: "Debug",
-        defaultShortcut: "",
-        label,
-      });
-      for (const platform of ["mac", "linux", "windows"] as const) {
-        expect(defaultShortcutForCommand(id, platform)).toBe("");
-        expect(findKeymapConflicts(defaultKeymapSettings(platform), id, platform)).toEqual([]);
-      }
-    }
-  });
-
-  it("registers Restart Frame without a default shortcut or collision", () => {
-    expect(
-      keymapCommands.find((command) => command.id === "workbench.action.debug.restartFrame"),
-    ).toMatchObject({ category: "Debug", defaultShortcut: "", label: "Restart Frame" });
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      expect(defaultShortcutForCommand("workbench.action.debug.restartFrame", platform)).toBe("");
-      expect(
-        findKeymapConflicts(
-          defaultKeymapSettings(platform),
-          "workbench.action.debug.restartFrame",
-          platform,
-        ),
-      ).toEqual([]);
-    }
-  });
-
   it("registers the git stash commands without shortcut collisions", () => {
     const stashChanges = keymapCommands.find((command) => command.id === "git.stashChanges");
     const showStashes = keymapCommands.find((command) => command.id === "git.showStashes");
@@ -510,149 +424,6 @@ describe("keymap", () => {
       label: "Go to Previous Change",
       defaultShortcut: "Shift+Alt+F5",
     });
-  });
-
-  it("registers Debug: Restart with the VS Code platform shortcut and no conflicts", () => {
-    expect(keymapCommands.find((command) => command.id === "debug.restart")).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "Shift+Cmd+F5",
-      label: "Debug: Restart",
-    });
-    expect(defaultShortcutForCommand("debug.restart", "mac")).toBe("Shift+Cmd+F5");
-    expect(defaultShortcutForCommand("debug.restart", "linux")).toBe("Shift+Ctrl+F5");
-    expect(defaultShortcutForCommand("debug.restart", "windows")).toBe("Shift+Ctrl+F5");
-
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      const defaults = defaultKeymapSettings(platform);
-      const restartShortcut = defaults["debug.restart"];
-
-      expect(findKeymapConflicts(defaults, "debug.restart", platform)).toEqual([]);
-      expect(
-        Object.entries(defaults).filter(([, shortcut]) => shortcut === restartShortcut),
-      ).toEqual([["debug.restart", restartShortcut]]);
-    }
-  });
-
-  it("binds Set Value to Enter on macOS and F2 only on Windows/Linux", () => {
-    expect(keymapCommands.find((command) => command.id === "debug.setVariable")).toMatchObject({
-      category: "Debug",
-      label: "Set Value",
-    });
-    expect(debugSetVariableShortcut("mac")).toBe("Enter");
-    expect(debugSetVariableShortcut("linux")).toBe("F2");
-    expect(debugSetVariableShortcut("windows")).toBe("F2");
-    expect(debugSetVariableShortcut("other")).toBe("");
-    expect(defaultShortcutForCommand("debug.setVariable", "mac")).toBe("Enter");
-    expect(defaultShortcutForCommand("debug.setVariable", "linux")).toBe("F2");
-    expect(defaultShortcutForCommand("debug.setVariable", "windows")).toBe("F2");
-    expect(keymapCommandIdsForShortcut(defaultKeymapSettings("mac"), "Enter", "mac")).toEqual([
-      "debug.setVariable",
-    ]);
-    expect(keymapCommandIdsForShortcut(defaultKeymapSettings("linux"), "F2", "linux")).toEqual([
-      "debug.setVariable",
-      "editor.rename",
-    ]);
-  });
-
-  it("registers Add to Watch under its official id without a shortcut", () => {
-    expect(
-      keymapCommands.find((command) => command.id === "debug.addToWatchExpressions"),
-    ).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "",
-      label: "Add to Watch",
-    });
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      expect(defaultShortcutForCommand("debug.addToWatchExpressions", platform)).toBe("");
-    }
-  });
-
-  it("registers Debug: Run to Cursor with Ctrl+F10 on every platform and no conflicts", () => {
-    expect(keymapCommands.find((command) => command.id === "debug.runToCursor")).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "Ctrl+F10",
-      label: "Debug: Run to Cursor",
-    });
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      expect(defaultShortcutForCommand("debug.runToCursor", platform)).toBe("Ctrl+F10");
-      const defaults = defaultKeymapSettings(platform);
-      expect(findKeymapConflicts(defaults, "debug.runToCursor", platform)).toEqual([]);
-    }
-  });
-
-  it("registers Run Without Debugging with Ctrl+F5 on every platform and no conflicts", () => {
-    expect(
-      keymapCommands.find((command) => command.id === "debug.runWithoutDebugging"),
-    ).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "Ctrl+F5",
-      label: "Run: Start Without Debugging",
-    });
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      expect(defaultShortcutForCommand("debug.runWithoutDebugging", platform)).toBe("Ctrl+F5");
-      const defaults = defaultKeymapSettings(platform);
-      expect(findKeymapConflicts(defaults, "debug.runWithoutDebugging", platform)).toEqual([]);
-    }
-  });
-
-  it("registers VS Code stepping shortcuts on every platform without disturbing debug bindings", () => {
-    expect(keymapCommands.find((command) => command.id === "debug.stepInto")).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "F11",
-      label: "Debug: Step Into",
-    });
-    expect(keymapCommands.find((command) => command.id === "debug.stepOut")).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "Shift+F11",
-      label: "Debug: Step Out",
-    });
-
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      const defaults = defaultKeymapSettings(platform);
-
-      expect(defaultShortcutForCommand("debug.stepInto", platform)).toBe("F11");
-      expect(defaultShortcutForCommand("debug.stepOut", platform)).toBe("Shift+F11");
-      expect(defaultShortcutForCommand("debug.stepOver", platform)).toBe("F10");
-      expect(defaultShortcutForCommand("debug.runToCursor", platform)).toBe("Ctrl+F10");
-      expect(findKeymapConflicts(defaults, "debug.stepInto", platform)).toEqual([]);
-      expect(findKeymapConflicts(defaults, "debug.stepOut", platform)).toEqual([]);
-    }
-  });
-
-  it("registers Debug Console focus and clear with VS Code platform defaults", () => {
-    expect(keymapCommands.find((command) => command.id === "debug.focusConsole")).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "Shift+Cmd+Y",
-      label: "Debug: Focus Debug Console",
-    });
-    expect(keymapCommands.find((command) => command.id === "debug.clearConsole")).toMatchObject({
-      category: "Debug",
-      defaultShortcut: "",
-      label: "Debug: Clear Console",
-    });
-
-    expect(defaultShortcutForCommand("debug.focusConsole", "mac")).toBe("Shift+Cmd+Y");
-    expect(defaultShortcutForCommand("debug.focusConsole", "linux")).toBe("Shift+Ctrl+Y");
-    expect(defaultShortcutForCommand("debug.focusConsole", "windows")).toBe("Shift+Ctrl+Y");
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      const defaults = defaultKeymapSettings(platform);
-      expect(defaultShortcutForCommand("debug.clearConsole", platform)).toBe("");
-      expect(findKeymapConflicts(defaults, "debug.focusConsole", platform)).toEqual([]);
-      expect(findKeymapConflicts(defaults, "debug.clearConsole", platform)).toEqual([]);
-      expect(keymapCommandIdsForShortcut(defaults, "", platform)).toEqual([]);
-    }
-  });
-
-  it("reserves the one intentional VS Code Stop/Disconnect context collision", () => {
-    for (const platform of ["mac", "linux", "windows"] as const) {
-      const defaults = defaultKeymapSettings(platform);
-      expect(defaults["debug.stop"]).toBe("Shift+F5");
-      expect(defaults["workbench.action.debug.disconnect"]).toBe("Shift+F5");
-      expect(keymapCommandIdsForShortcut(defaults, "Shift+F5", platform)).toEqual([
-        "workbench.action.debug.disconnect",
-        "debug.stop",
-      ]);
-    }
   });
 
   it("registers the agent thread commands with their T3 parity defaults", () => {
@@ -928,19 +699,12 @@ describe("keymap", () => {
     });
   });
 
-  it("shares F2 only with the Variables-scoped Set Value command off macOS", () => {
+  it("assigns F2 only to Rename Symbol", () => {
     for (const platform of ["mac", "linux", "windows"] as const) {
       const defaults = defaultKeymapSettings(platform);
       const owners = Object.entries(defaults).filter(([, shortcut]) => shortcut === "F2");
 
-      expect(owners).toEqual(
-        platform === "mac"
-          ? [["editor.rename", "F2"]]
-          : [
-              ["editor.rename", "F2"],
-              ["debug.setVariable", "F2"],
-            ],
-      );
+      expect(owners).toEqual([["editor.rename", "F2"]]);
     }
   });
 
@@ -1349,10 +1113,10 @@ describe("keymap", () => {
     it("collects the bare-key (modifier-less) command keys from a keymap", () => {
       const keys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
 
-      // F8 (Go to Next Problem) and F11 (Debug: Step Into) are bare-key defaults.
+      // F8 (Go to Next Problem) and F2 (Rename Symbol) are bare-key defaults.
       expect(keys.has("f8")).toBe(true);
-      expect(keys.has("f11")).toBe(true);
-      // Shift+F8 / Shift+F11 require Shift, so they are not bare-key keys.
+      expect(keys.has("f2")).toBe(true);
+      // Shift+F8 requires Shift, so it is not a bare-key key.
       // Modifier shortcuts contribute nothing to the bare-key set.
       expect(keys.has("s")).toBe(false);
       expect(keys.has("arrowup")).toBe(false);
@@ -1366,11 +1130,11 @@ describe("keymap", () => {
       expect(eventCanMatchKeymapShortcut(keyEvent({ key: "a" }), bareKeys)).toBe(false);
     });
 
-    it("still matches bare-key commands like F8 and debug Step Into on F11", () => {
+    it("still matches bare-key commands like F8 and Rename Symbol on F2", () => {
       const bareKeys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
 
       expect(eventCanMatchKeymapShortcut(keyEvent({ key: "F8" }), bareKeys)).toBe(true);
-      expect(eventCanMatchKeymapShortcut(keyEvent({ key: "F11" }), bareKeys)).toBe(true);
+      expect(eventCanMatchKeymapShortcut(keyEvent({ key: "F2" }), bareKeys)).toBe(true);
     });
 
     it("always allows matching when any non-shift modifier is held", () => {

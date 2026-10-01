@@ -364,8 +364,6 @@ describe("RuntimeObservabilityPanel", () => {
     tracker.record("quickOpen", 12);
     tracker.record("quickOpen", 18);
     tracker.record("definition", 300);
-    tracker.record("debug-variables-render", 8);
-    tracker.record("debug-console-append", 4);
 
     act(() => {
       root.render(
@@ -382,14 +380,6 @@ describe("RuntimeObservabilityPanel", () => {
     expect(host.textContent).toContain("Operation latency");
     expect(host.textContent).toContain("Quick Open");
     expect(host.textContent).toContain("Go to Definition");
-    expect(host.textContent).toContain("Debug Variables Render");
-    expect(host.textContent).toContain("Debug Console Append");
-    expect(host.querySelector('[data-testid="latency-row-debug-variables-render"]')).not.toBeNull();
-    expect(
-      host
-        .querySelector('[data-testid="latency-row-debug-console-append"]')
-        ?.getAttribute("data-tone"),
-    ).toBe("ok");
 
     // Quick Open median (15ms) is within budget -> ok tone.
     expect(

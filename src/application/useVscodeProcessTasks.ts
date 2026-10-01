@@ -18,7 +18,6 @@ import type { WorkbenchNotice } from "../domain/workbenchNotice";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
 import {
   createVscodeProcessTaskCoordinator,
-  type VscodeProcessTaskCompletion,
   type VscodeProcessTaskCoordinatorSnapshot,
 } from "./vscodeProcessTaskCoordinator";
 
@@ -51,20 +50,7 @@ export interface VscodeProcessTasksState {
   readonly unavailable: string | null;
   discover(): Promise<boolean>;
   start(identity: VscodeProcessTaskIdentity | string): Promise<boolean>;
-  startAndWait(
-    identity: VscodeProcessTaskIdentity | string,
-    onOwned?: (ownership: VscodeProcessTaskRunOwnership) => void,
-  ): Promise<VscodeProcessTaskCompletion | null>;
   stop(): Promise<boolean>;
-}
-
-/**
- * Capability for one exact process-task run. It deliberately exposes neither
- * the backend owner nor its run id, so consumers can cancel only the run they
- * were admitted to and cannot forge or retarget ownership.
- */
-export interface VscodeProcessTaskRunOwnership {
-  cancel(): Promise<boolean>;
 }
 
 interface ActivationBoundary {
@@ -324,38 +310,6 @@ export function useVscodeProcessTasks({
     return coordinator.cancel();
   }, [coordinator]);
 
-  const startAndWait = useCallback(
-    async (
-      identity: VscodeProcessTaskIdentity | string,
-      onOwned?: (ownership: VscodeProcessTaskRunOwnership) => void,
-    ): Promise<VscodeProcessTaskCompletion | null> => {
-      const requested = typeof identity === "string" ? identity : Object.freeze({ ...identity });
-      if (!(await discover())) return null;
-      if (!(await start(requested))) return null;
-      const owner = coordinator.snapshot().owner;
-      if (
-        !owner ||
-        (typeof requested === "string"
-          ? decodeVscodeProcessTaskOwnerLabel(owner.label)?.label !== requested
-          : encodeVscodeProcessTaskOwnerLabel(requested) !== owner.label)
-      ) {
-        return Object.freeze({ status: "stale" });
-      }
-      if (onOwned) {
-        const ownership: VscodeProcessTaskRunOwnership = Object.freeze({
-          cancel: () => coordinator.cancelExact(owner),
-        });
-        try {
-          onOwned(ownership);
-        } catch {
-          // Ownership observers do not own the process lifecycle.
-        }
-      }
-      return coordinator.waitForTerminal(owner);
-    },
-    [coordinator, discover, start],
-  );
-
   useEffect(() => {
     discoverySequenceRef.current += 1;
     startAdmissionRef.current = null;
@@ -417,7 +371,6 @@ export function useVscodeProcessTasks({
     problems,
     running: currentPending !== null || currentExecution.running,
     start,
-    startAndWait,
     status: currentPending ? "pending" : (currentExecution.task?.status ?? null),
     stop,
     stopping: execution.stopping,

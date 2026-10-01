@@ -61,7 +61,7 @@ const UNRELATED_CHANGE_STABLE_OUTPUT_KEYS = [
   "openArtisanController",
   "openBookmark",
   "openClassSearchResult",
-  "openDebugLocation",
+  "openSourceLocation",
   "openFile",
   "openImplementationTarget",
   "openNodePackageScript",

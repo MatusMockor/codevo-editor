@@ -3,24 +3,10 @@ import { defaultKeymapSettings, type KeymapPlatform } from "../../../domain/keym
 import { keybindingCategories, keybindingWhenLabel } from "./keybindingsPresentation";
 
 const PRE_EXISTING_CONTEXT_RESOLVED_PAIRS: Readonly<Record<KeymapPlatform, readonly string[]>> = {
-  mac: [
-    "agent.searchThreads <> editor.deleteLine",
-    "debug.stop <> workbench.action.debug.disconnect",
-  ],
-  windows: [
-    "agent.searchThreads <> editor.deleteLine",
-    "debug.setVariable <> editor.rename",
-    "debug.stop <> workbench.action.debug.disconnect",
-  ],
-  linux: [
-    "agent.searchThreads <> editor.deleteLine",
-    "debug.setVariable <> editor.rename",
-    "debug.stop <> workbench.action.debug.disconnect",
-  ],
-  other: [
-    "agent.searchThreads <> editor.deleteLine",
-    "debug.stop <> workbench.action.debug.disconnect",
-  ],
+  mac: ["agent.searchThreads <> editor.deleteLine"],
+  windows: ["agent.searchThreads <> editor.deleteLine"],
+  linux: ["agent.searchThreads <> editor.deleteLine"],
+  other: ["agent.searchThreads <> editor.deleteLine"],
 };
 
 function conflictingPairs(platform: KeymapPlatform): readonly string[] {

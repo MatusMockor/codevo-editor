@@ -222,7 +222,6 @@ function DockedTextSearchHarness({
     ),
     bottomPanelVisible
       ? createElement(WorkbenchEditorDrawer, {
-          consoleHeader: null,
           frame: DRAWER_FRAME,
           phpTree: null,
           view: bottomPanelView === "terminal" ? "problems" : bottomPanelView,

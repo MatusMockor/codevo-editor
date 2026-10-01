@@ -3,7 +3,7 @@ import { createDiagnosticsCoalescer } from "../../domain/diagnosticsCoalescer";
 import type { WorkspaceHomeReference } from "../../domain/workspaceRootEligibility";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { executeCommandAndReport, type CommandExecutionRunner } from "../commandRegistry";
-import { createJsTestRerunLastRunCommands } from "../workbenchDebugControllerOptions";
+import { createJsTestRerunLastRunCommands } from "../jsTestRerunLastRunCommands";
 import { useFloatingSurfaces } from "../useFloatingSurfaces";
 import { useWorkbenchCommandRegistry } from "../useWorkbenchCommandRegistry";
 import { bottomPanelToggle } from "../workbenchPanelCommands";
@@ -142,7 +142,6 @@ type FlatCommandEffectsDependencies = Pick<
   Pick<
     Omit<
       Parameters<typeof useWorkbenchCommandRegistry>[0],
-      | "attachNodeDebug"
       | "canRewordSelectedGitCommit"
       | "canShowNette"
       | "canShowSymfony"
@@ -151,18 +150,9 @@ type FlatCommandEffectsDependencies = Pick<
       | "closeActiveEditorGroup"
       | "closeActiveEditorGroupSurface"
       | "closeDocument"
-      | "configureNodeLaunchConfigurations"
       | "createDirectory"
       | "createFile"
       | "createGitBranch"
-      | "debugBreakpointNavigation"
-      | "debugCallStackNavigation"
-      | "debugCopyStackTrace"
-      | "debugEvaluateInConsole"
-      | "debugInlineBreakpoint"
-      | "debugRestartFrame"
-      | "debugState"
-      | "debugWatchAtCursor"
       | "deleteActiveDocument"
       | "formatActiveFileWithPint"
       | "formatChangedFilesWithPint"
@@ -180,16 +170,13 @@ type FlatCommandEffectsDependencies = Pick<
       | "goToTypeDefinition"
       | "installManagedPhpactor"
       | "isNavigationCommandScopeCurrent"
-      | "jsTestDebugAtCursor"
       | "jsTestRerunLastRun"
       | "jsTestRunSelection"
       | "navigateBackward"
       | "navigateForwardInHistory"
       | "nodePackageScriptsWorkbench"
-      | "nodeRunWithoutDebugging"
       | "openAppearanceSettingsPanel"
       | "openArtisanRoutesPanel"
-      | "openDebugPanel"
       | "openExpressRoutesPanel"
       | "openFileHistory"
       | "openGitBranchPanel"
@@ -201,7 +188,6 @@ type FlatCommandEffectsDependencies = Pick<
       | "openSearchEverywhere"
       | "openSettingsPanel"
       | "openWorkspaceSymbols"
-      | "pauseDebug"
       | "pintRunning"
       | "refreshWorkspaceTodos"
       | "renameActiveDocument"
@@ -214,14 +200,9 @@ type FlatCommandEffectsDependencies = Pick<
       | "runJsTestForActiveDocument"
       | "runTestForActiveDocument"
       | "showBottomPanelView"
-      | "startOrContinueDebug"
-      | "startPhpListenDebug"
-      | "stepDebug"
-      | "stopDebug"
       | "toggleBookmarkAtCursor"
       | "toggleBookmarksPanel"
       | "toggleBottomPanel"
-      | "toggleDebugBreakpointAtCursor"
       | "toggleGitBlame"
       | "toggleSmartMode"
       | "toggleTodoPanel"
@@ -268,7 +249,6 @@ type FlatCommandEffectsDependencies = Pick<
     | "navigationHistory"
     | "openArtisanMakePalette"
     | "openCallHierarchy"
-    | "openDocuments"
     | "openFileReferencesPanel"
     | "openFileStructure"
     | "openRecentFilesSwitcher"
@@ -490,8 +470,8 @@ interface CommandEffectsCompositionDependencies {
   readonly subscribeChangedDocuments: RuntimeEffectsDependencies["changedDocumentSync"]["subscribeChangedDocuments"];
   readonly syncOpenDocument: RuntimeEffectsDependencies["php"]["syncOpenDocument"];
   readonly syncOpenJavaScriptTypeScriptDocument: RuntimeEffectsDependencies["javaScriptTypeScript"]["syncOpenDocument"];
-  readonly taskDebug: EditorNavigation["taskDebug"];
-  readonly taskDebugNavigation: EditorNavigation["taskDebugNavigation"];
+  readonly tasks: EditorNavigation["tasks"];
+  readonly taskNavigation: EditorNavigation["taskNavigation"];
   readonly todos: EditorNavigation["todos"];
   readonly workspaceFileChangeGateway: Parameters<
     typeof useWorkbenchWorkspaceFileChangeSubscription
@@ -513,7 +493,6 @@ type GroupedCommandEffectsDependency =
   | "documentsRef"
   | "editorGroups"
   | "openDocumentPaths"
-  | "openDocuments"
   | "workspaceRoot"
   | "workspaceDescriptor"
   | "workspaceIdentityDescriptor"
@@ -738,8 +717,8 @@ type GroupedCommandEffectsDependency =
   | "stopLanguageServerRuntime"
   | "stopProjectLanguageServersAfterTrustRevocation"
   | "subscribeChangedDocuments"
-  | "taskDebug"
-  | "taskDebugNavigation"
+  | "tasks"
+  | "taskNavigation"
   | "todos"
   | "toggleEditorFontLigatures"
   | "workspaceCloseGenerationByRootRef"
@@ -761,7 +740,7 @@ interface CommandEffectsDependencies extends Omit<
     "activeDocument" | "activeImage" | "activeMarkdownPreview" | "activePath"
   >;
   readonly editorSessionState: CommandEffectsFacet<
-    "documents" | "documentsRef" | "editorGroups" | "openDocumentPaths" | "openDocuments"
+    "documents" | "documentsRef" | "editorGroups" | "openDocumentPaths"
   >;
   readonly workspaceIdentity: CommandEffectsFacet<
     | "workspaceRoot"
@@ -1017,8 +996,8 @@ interface CommandEffectsDependencies extends Omit<
     | "jsTestExplorerScopeRunner"
     | "refreshGitStatus"
     | "selectedGitChange"
-    | "taskDebug"
-    | "taskDebugNavigation"
+    | "tasks"
+    | "taskNavigation"
     | "todos"
   >;
   readonly commandIntegrationServices: CommandEffectsFacet<
@@ -1214,8 +1193,8 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     jsTestExplorerScopeRunner,
     refreshGitStatus,
     selectedGitChange,
-    taskDebug,
-    taskDebugNavigation,
+    tasks,
+    taskNavigation,
     todos,
   } = taskGitServices;
   const {
@@ -1236,8 +1215,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     reportError,
   } = commandIntegrationServices;
   const { activeDocument, activeImage, activeMarkdownPreview, activePath } = editorDocumentState;
-  const { documents, documentsRef, editorGroups, openDocumentPaths, openDocuments } =
-    editorSessionState;
+  const { documents, documentsRef, editorGroups, openDocumentPaths } = editorSessionState;
   const {
     workspaceRoot,
     workspaceDescriptor,
@@ -1475,34 +1453,31 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     openWorkspaceSymbolsSurface,
     openCommandPaletteWithInitialQuery,
   );
-  const { showBottomPanelView: showTaskDebugPanelView, toggleBottomPanel: toggleTaskDebugPanel } =
-    taskDebug;
+  const { showBottomPanelView: showTaskPanelView, toggleBottomPanel: toggleTaskPanel } = tasks;
   const { agentModeActive } = agents;
   const toggleBottomPanel = useMemo(
     () =>
       bottomPanelToggle({
         agentModeActive,
-        showBottomPanelView: showTaskDebugPanelView,
-        toggleBottomPanel: toggleTaskDebugPanel,
+        showBottomPanelView: showTaskPanelView,
+        toggleBottomPanel: toggleTaskPanel,
         view: bottomPanelView,
       }),
-    [agentModeActive, bottomPanelView, showTaskDebugPanelView, toggleTaskDebugPanel],
+    [agentModeActive, bottomPanelView, showTaskPanelView, toggleTaskPanel],
   );
 
   const commandRegistry = useWorkbenchCommandRegistry({
     canShowNette: hasNetteApplicationFramework,
     canShowSymfony: hasSymfonyFramework,
     activeDocument,
-    openDocuments,
     captureNavigationCommandScope: editorDocument.captureNavigationCommandScope,
     activeEslintBufferClean,
     activeEslintFixes,
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
-    nodePackageScriptsWorkbench: taskDebug.nodePackageScripts,
-    vscodeProcessTasksWorkbench: taskDebug.vscodeProcessTaskComposition.commands,
-    nodeRunWithoutDebugging: taskDebug.nodeRunWithoutDebugging,
+    nodePackageScriptsWorkbench: tasks.nodePackageScripts,
+    vscodeProcessTasksWorkbench: tasks.vscodeProcessTaskComposition.commands,
     activePhpstanBufferClean,
     activateWorkspaceTab,
     appSettings,
@@ -1517,29 +1492,10 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     createDirectory: fileOperations.createDirectory,
     createFile: fileOperations.createFile,
     createGitBranch: gitPanels.createGitBranch,
-    configureNodeLaunchConfigurations:
-      taskDebug.nodeLaunchConfigurationsSurface.openNodeLaunchConfigurations,
-    debugState: taskDebug.debugSession,
-    debugCallStackNavigation: taskDebug.debugCallStackNavigation,
-    debugRestartFrame: taskDebug.debugRestartFrame,
-    debugBreakpointNavigation: taskDebug.debugBreakpointNavigation,
-    debugInlineBreakpoint: taskDebug.debugInlineBreakpoint,
-    debugCopyStackTrace: taskDebug.debugCopyStackTrace,
-    debugEvaluateInConsole: taskDebug.debugEvaluateInConsole,
-    debugWatchAtCursor: taskDebug.debugWatchAtCursor,
-    jsTestDebugAtCursor: taskDebug.jsTestDebugAtCursor,
     jsTestRerunLastRun: createJsTestRerunLastRunCommands(jsTestExplorerScopeRunner),
-    jsTestRunSelection: taskDebug.jsTestRunSelection,
+    jsTestRunSelection: tasks.jsTestRunSelection,
     deleteActiveDocument: fileOperations.deleteActiveDocument,
     disableEslintRuleAtCursor,
-    openDebugPanel: taskDebug.openDebugPanel,
-    attachNodeDebug: taskDebug.attachNodeDebug,
-    pauseDebug: taskDebug.debugSession.pauseDebug,
-    startOrContinueDebug: taskDebug.startOrContinueDebug,
-    startPhpListenDebug: taskDebug.startPhpListenDebug,
-    stepDebug: taskDebug.debugSession.stepDebug,
-    stopDebug: taskDebug.debugSession.stopDebug,
-    toggleDebugBreakpointAtCursor: taskDebug.toggleDebugBreakpointAtCursor,
     editorGroups,
     editorSurfaceCommandRunner,
     editorMenuCommandRunner,
@@ -1584,8 +1540,8 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     navigationHistory,
     openAppearanceSettingsPanel,
     openArtisanMakePalette,
-    openArtisanRoutesPanel: taskDebugNavigation.openArtisanRoutesPanel,
-    openExpressRoutesPanel: taskDebugNavigation.openExpressRoutesPanel,
+    openArtisanRoutesPanel: taskNavigation.openArtisanRoutesPanel,
+    openExpressRoutesPanel: taskNavigation.openExpressRoutesPanel,
     openCallHierarchy,
     openFileHistory: gitHistory.openFileHistory,
     openFileReferencesPanel,
@@ -1593,9 +1549,9 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     openGitBranchPanel: gitPanels.openGitBranchPanel,
     openGitStashPanel: gitPanels.openGitStashPanel,
     openLocalHistory: localHistory.openLocalHistory,
-    openJsTestResultsPanel: taskDebugNavigation.openJsTestResultsPanel,
+    openJsTestResultsPanel: taskNavigation.openJsTestResultsPanel,
     openMarkdownPreview: editorDocument.openMarkdownPreview,
-    openPhpTestResultsPanel: taskDebugNavigation.openPhpTestResultsPanel,
+    openPhpTestResultsPanel: taskNavigation.openPhpTestResultsPanel,
     openRecentFilesSwitcher,
     openRecentLocationsPanel,
     openReferencesPanel,
@@ -1618,13 +1574,13 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     resetEditorFontSize,
     revertSelectedGitCommit: gitHistory.revertSelectedGitCommit,
     rewordSelectedGitCommit: gitHistory.rewordSelectedGitCommit,
-    runAllJsTestsForActiveDocument: taskDebug.runAllJsTestsForActiveDocument,
-    runAllTestsForActiveDocument: taskDebug.runAllTestsForActiveDocument,
+    runAllJsTestsForActiveDocument: tasks.runAllJsTestsForActiveDocument,
+    runAllTestsForActiveDocument: tasks.runAllTestsForActiveDocument,
     runEslintAnalysis,
-    runInActiveTerminal: taskDebug.runInActiveTerminal,
-    runJsTestForActiveDocument: taskDebug.runJsTestForActiveDocument,
+    runInActiveTerminal: tasks.runInActiveTerminal,
+    runJsTestForActiveDocument: tasks.runJsTestForActiveDocument,
     runPhpstanAnalysis,
-    runTestForActiveDocument: taskDebug.runTestForActiveDocument,
+    runTestForActiveDocument: tasks.runTestForActiveDocument,
     saveActiveDocument,
     selectedGitChange,
     setClassOpenOpen,
@@ -1635,7 +1591,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     setSidebarView,
     setTextSearchOpen,
     setWorkspaceSymbolsOpen,
-    showBottomPanelView: taskDebug.showBottomPanelView,
+    showBottomPanelView: tasks.showBottomPanelView,
     splitActiveEditorGroup,
     startHardReindex,
     startIndexScan,

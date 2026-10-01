@@ -39,9 +39,7 @@ describe("large JavaScript test and coverage projections", () => {
     await act(async () => {
       root.render(
         <JsTestExplorerVirtualizedTree
-          debugDisabled={false}
           disabled={false}
-          onDebugNode={vi.fn()}
           onOpenTest={vi.fn()}
           onRunScope={vi.fn()}
           root={tree}
@@ -122,9 +120,7 @@ describe("large JavaScript test and coverage projections", () => {
       await act(async () => {
         root.render(
           <JsTestExplorerVirtualizedTree
-            debugDisabled={false}
             disabled={false}
-            onDebugNode={vi.fn()}
             onOpenTest={vi.fn()}
             onRunScope={vi.fn()}
             root={tree}

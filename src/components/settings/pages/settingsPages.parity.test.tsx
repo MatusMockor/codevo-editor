@@ -40,7 +40,6 @@ const env: SettingsEnvironment = {
   workspaceRoot: "/tmp/project",
   onCopyInstallCommand: () => undefined,
   onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-  onOpenNodeLaunchConfigurations: () => undefined,
   onRestartJavaScriptTypeScriptService: async () => undefined,
 };
 

@@ -65,47 +65,23 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     const event = keyboardEvent({ key: "c", metaKey: true });
     const commandRegistry = registry({
       "editor.save": command({ id: "editor.save", run: vi.fn() }),
-      "testing.debugAtCursor": command({ id: "testing.debugAtCursor", run: vi.fn() }),
+      "testing.runAtCursor": command({ id: "testing.runAtCursor", run: vi.fn() }),
     });
 
     expect(
       dispatchResolvedWorkbenchShortcutCommands({
         commandContext,
-        commandIds: ["testing.debugAtCursor", "editor.save", "testing.debugAtCursor"],
+        commandIds: ["testing.runAtCursor", "editor.save", "testing.runAtCursor"],
         commandRegistry,
         event,
         runCommand,
       }),
     ).toBe(true);
     expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
-      "testing.debugAtCursor",
+      "testing.runAtCursor",
       "editor.save",
     ]);
     expect(event.preventDefault).toHaveBeenCalledOnce();
-  });
-
-  it("does not consume macOS Enter when Set Value has no focused Variables capability", () => {
-    const beginEdit = vi.fn();
-    const event = keyboardEvent({ key: "Enter" });
-    const commandRegistry = registry({
-      "debug.setVariable": command({
-        enabled: false,
-        id: "debug.setVariable",
-        run: beginEdit,
-      }),
-    });
-
-    expect(
-      dispatchWorkbenchShortcutCommand({
-        commandContext,
-        commandRegistry,
-        event,
-        keymap: defaultKeymapSettings("mac"),
-        runCommand: registryRunner(commandRegistry),
-      }),
-    ).toBe(false);
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(beginEdit).not.toHaveBeenCalled();
   });
 
   it("does not consume Cmd+F when the selected agent thread does not own focus", () => {
@@ -135,34 +111,6 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     ).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(openFind).not.toHaveBeenCalled();
-  });
-
-  it("routes F2 to focused Set Value first and otherwise falls through to Rename", () => {
-    for (const setValueEnabled of [true, false]) {
-      const setValue = vi.fn();
-      const rename = vi.fn();
-      const event = keyboardEvent({ key: "F2" });
-      const commandRegistry = registry({
-        "editor.rename": command({ id: "editor.rename", run: rename }),
-        "debug.setVariable": command({
-          enabled: setValueEnabled,
-          id: "debug.setVariable",
-          run: setValue,
-        }),
-      });
-
-      expect(
-        dispatchWorkbenchShortcutCommand({
-          commandContext,
-          commandRegistry,
-          event,
-          keymap: defaultKeymapSettings("windows"),
-          runCommand: registryRunner(commandRegistry),
-        }),
-      ).toBe(true);
-      expect(setValue).toHaveBeenCalledTimes(setValueEnabled ? 1 : 0);
-      expect(rename).toHaveBeenCalledTimes(setValueEnabled ? 0 : 1);
-    }
   });
 
   it("runs the enabled command whose shortcut matches first", () => {
@@ -217,84 +165,6 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("lets the later F11 debug command win over the legacy bookmark binding", () => {
-    const bookmark = vi.fn();
-    const step = vi.fn();
-    const event = keyboardEvent({ key: "F11" });
-    const commandRegistry = registry({
-      "bookmark.toggle": command({ id: "bookmark.toggle", run: bookmark }),
-      "debug.stepInto": command({ id: "debug.stepInto", run: step }),
-    });
-
-    const handled = dispatchWorkbenchShortcutCommand({
-      commandContext,
-      commandIds: ["bookmark.toggle", "debug.stepInto"],
-      commandRegistry,
-      event,
-      keymap: {
-        ...defaultKeymapSettings("mac"),
-        "bookmark.toggle": "F11",
-      },
-      runCommand: registryRunner(commandRegistry),
-    });
-
-    expect(handled).toBe(true);
-    expect(event.preventDefault).toHaveBeenCalledOnce();
-    expect(step).toHaveBeenCalledOnce();
-    expect(bookmark).not.toHaveBeenCalled();
-  });
-
-  it("falls back from a disabled F11 debug command to the legacy bookmark binding", () => {
-    const bookmark = vi.fn();
-    const step = vi.fn();
-    const event = keyboardEvent({ key: "F11" });
-    const commandRegistry = registry({
-      "bookmark.toggle": command({ id: "bookmark.toggle", run: bookmark }),
-      "debug.stepInto": command({ enabled: false, id: "debug.stepInto", run: step }),
-    });
-
-    const handled = dispatchWorkbenchShortcutCommand({
-      commandContext,
-      commandIds: ["bookmark.toggle", "debug.stepInto"],
-      commandRegistry,
-      event,
-      keymap: {
-        ...defaultKeymapSettings("mac"),
-        "bookmark.toggle": "F11",
-      },
-      runCommand: registryRunner(commandRegistry),
-    });
-
-    expect(handled).toBe(true);
-    expect(step).not.toHaveBeenCalled();
-    expect(bookmark).toHaveBeenCalledOnce();
-  });
-
-  it("resolves Shift+F11 independently from the unmodified F11 chain", () => {
-    const showBookmarks = vi.fn();
-    const step = vi.fn();
-    const event = keyboardEvent({ key: "F11", shiftKey: true });
-    const commandRegistry = registry({
-      "bookmark.showPanel": command({ id: "bookmark.showPanel", run: showBookmarks }),
-      "debug.stepOut": command({ id: "debug.stepOut", run: step }),
-    });
-
-    dispatchWorkbenchShortcutCommand({
-      commandContext,
-      commandIds: ["bookmark.showPanel", "debug.stepOut"],
-      commandRegistry,
-      event,
-      keymap: {
-        ...defaultKeymapSettings("mac"),
-        "bookmark.showPanel": "Shift+F11",
-      },
-      runCommand: registryRunner(commandRegistry),
-    });
-
-    expect(step).toHaveBeenCalledOnce();
-    expect(showBookmarks).not.toHaveBeenCalled();
-  });
-
   it("uses reverse catalog order for arbitrary custom shortcut collisions", () => {
     const first = vi.fn();
     const second = vi.fn();
@@ -328,39 +198,6 @@ describe("dispatchWorkbenchShortcutCommand", () => {
       "panel.toggle",
     ]);
   });
-
-  it.each([
-    ["attach", "workbench.action.debug.disconnect", ["workbench.action.debug.disconnect"]],
-    ["launch", "debug.stop", ["workbench.action.debug.disconnect", "debug.stop"]],
-    ["disabled", null, ["workbench.action.debug.disconnect", "debug.stop"]],
-  ] as const)(
-    "routes the intentional Shift+F5 collision for %s state",
-    (_state, executed, calls) => {
-      const event = keyboardEvent({ key: "F5", shiftKey: true });
-      const commandRegistry = registry({
-        "debug.stop": command({ id: "debug.stop", run: vi.fn() }),
-        "workbench.action.debug.disconnect": command({
-          id: "workbench.action.debug.disconnect",
-          run: vi.fn(),
-        }),
-      });
-      const runCommand = vi.fn<CommandExecutionRunner>((commandId) =>
-        commandId === executed ? "executed" : "disabled",
-      );
-
-      expect(
-        dispatchWorkbenchShortcutCommand({
-          commandContext,
-          commandRegistry,
-          event,
-          keymap: defaultKeymapSettings("mac"),
-          runCommand,
-        }),
-      ).toBe(true);
-      expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual(calls);
-      expect(event.preventDefault).toHaveBeenCalledOnce();
-    },
-  );
 
   it("consumes an all-disabled collision after trying each candidate once", () => {
     const runCommand = vi.fn<CommandExecutionRunner>(() => "disabled");

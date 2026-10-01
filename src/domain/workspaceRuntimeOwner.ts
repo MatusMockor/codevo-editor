@@ -24,32 +24,13 @@ export function createWorkspaceRuntimeOwner(
 }
 
 /** Creates a path-owned runtime for callers that predate identity admission. */
-export function createLegacyWorkspaceRuntimeOwner(
-  executionRoot: string,
-): WorkspaceRuntimeOwner {
+export function createLegacyWorkspaceRuntimeOwner(executionRoot: string): WorkspaceRuntimeOwner {
   requireValue(executionRoot, "Workspace runtime execution root");
 
   return runtimeOwner(normalizedWorkspaceRootKey(executionRoot), executionRoot);
 }
 
-/** Selects a new execution path without changing the stable runtime owner. */
-export function transferWorkspaceRuntimeOwner(
-  owner: WorkspaceRuntimeOwner,
-  executionRoot: string,
-): WorkspaceRuntimeOwner {
-  requireValue(executionRoot, "Workspace runtime execution root");
-
-  if (owner.executionRoot === executionRoot) {
-    return owner;
-  }
-
-  return runtimeOwner(owner.ownerKey, executionRoot);
-}
-
-function runtimeOwner(
-  ownerKey: string,
-  executionRoot: string,
-): WorkspaceRuntimeOwner {
+function runtimeOwner(ownerKey: string, executionRoot: string): WorkspaceRuntimeOwner {
   return Object.freeze({
     ownerKey: ownerKey as WorkspaceRuntimeOwnerKey,
     executionRoot,

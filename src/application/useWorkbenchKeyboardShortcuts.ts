@@ -34,7 +34,6 @@ const GO_TO_DEFINITION_DEFAULT_ALIAS = "F12";
 const KEY_CHORD_TIMEOUT_MS = 2_000;
 const EDITOR_TEXT_FOCUS_COMMAND_IDS: ReadonlySet<KeymapCommandId> = new Set([
   "editor.action.refactor",
-  "testing.debugAtCursor",
   "testing.runAtCursor",
   "testing.runCurrentFile",
 ]);

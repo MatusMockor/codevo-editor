@@ -433,8 +433,7 @@ fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_hist
                     RegisteredWorkspaceTeardownStep::Runtime => {
                         Some("terminal cleanup failed".to_string())
                     }
-                    RegisteredWorkspaceTeardownStep::NodeAttachCandidates
-                    | RegisteredWorkspaceTeardownStep::AgentTasks
+                    RegisteredWorkspaceTeardownStep::AgentTasks
                     | RegisteredWorkspaceTeardownStep::FileSearch
                     | RegisteredWorkspaceTeardownStep::JavascriptTasks
                     | RegisteredWorkspaceTeardownStep::SmartMode
@@ -487,7 +486,6 @@ fn exact_teardown_request_rejects_unknown_fields() {
 
 fn complete_teardown_order() -> Vec<RegisteredWorkspaceTeardownStep> {
     vec![
-        RegisteredWorkspaceTeardownStep::NodeAttachCandidates,
         RegisteredWorkspaceTeardownStep::AgentTasks,
         RegisteredWorkspaceTeardownStep::FileSearch,
         RegisteredWorkspaceTeardownStep::JavascriptTasks,

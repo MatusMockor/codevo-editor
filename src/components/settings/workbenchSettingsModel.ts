@@ -13,10 +13,7 @@ import type { PhpToolAvailability, WorkspaceDescriptor } from "../../domain/work
 
 export interface WorkbenchSettingsModel {
   readonly appSettings: AppSettings;
-  readonly closeNodeLaunchConfigurations: () => void;
   readonly gitRepositoryMappings: readonly { readonly rootRelativePath: string }[];
-  readonly nodeLaunchConfigurationsOpen: boolean;
-  readonly openNodeLaunchConfigurations: () => void;
   readonly openJavaScriptTypeScriptServiceLog: () => Promise<void>;
   readonly phpTools: PhpToolAvailability | null;
   readonly restartJavaScriptTypeScriptService: () => Promise<void>;

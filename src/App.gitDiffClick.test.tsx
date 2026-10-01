@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAgentWorkbenchLayout } from "./domain/agentWorkbenchLayout";
 import type { GitChangedFile, GitFileDiff } from "./domain/git";
 import { unconfiguredAgentProviderManagement } from "./test/agentProviderManagementFixture";
-import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 
 const appGitDiffClickMocks = vi.hoisted(() => ({
   changes: [] as GitChangedFile[],
@@ -368,15 +367,6 @@ function createWorkbench(overrides: Record<string, unknown>) {
       commandContext: {},
       commands: [],
       diagnosticsSummary: { errors: 0, warnings: 0 },
-      debugSession: {
-        canRestartDebug: () => false,
-        debugRestartPending: false,
-        debugStopPending: false,
-        isDebugStartBlocked: () => false,
-        snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
-        restartDebug: vi.fn(async () => undefined),
-        watches: createEmptyDebugWatches(),
-      },
       dirtyCount: 0,
       fileHistoryPanelOpen: false,
       fileStructureOpen: false,

@@ -5,13 +5,13 @@ import type { useWorkbenchController } from "../application/useWorkbenchControll
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { TerminalTheme } from "../domain/settings";
 import type { phpTestBottomPanelProps } from "./phpTestBottomPanelProps";
-import type { useAppTestDebugPanels } from "./useAppTestDebugPanels";
+import type { useAppTestPanels } from "./useAppTestPanels";
 import type { WorkbenchPanelProps } from "./workbenchPanelViews";
 
 export type BottomPanelHostProps = WorkbenchPanelProps;
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
-type TestDebugPanels = ReturnType<typeof useAppTestDebugPanels>;
+type TestPanels = ReturnType<typeof useAppTestPanels>;
 
 export type BottomPanelHostWorkbench = Pick<
   Workbench,
@@ -46,13 +46,12 @@ export interface BottomPanelHostGateways {
 
 export interface BottomPanelHostInput {
   readonly artisanRoutes: ReturnType<typeof useArtisanRoutes>;
-  readonly debugPanel: TestDebugPanels["debugPanel"];
   readonly expressRoutesPanel: BottomPanelHostProps["expressRoutesPanel"];
   readonly frameworkBottomPanels: ReturnType<typeof useAppFrameworkBottomPanels>;
   readonly gateways: BottomPanelHostGateways;
-  readonly jsTestExplorerPanel: TestDebugPanels["jsTestExplorerPanel"];
+  readonly jsTestExplorerPanel: TestPanels["jsTestExplorerPanel"];
   readonly phpTestPanel: ReturnType<typeof phpTestBottomPanelProps>;
-  readonly phpTestResults: TestDebugPanels["phpTestResults"];
+  readonly phpTestResults: TestPanels["phpTestResults"];
   readonly search: ReactNode;
   readonly terminalOwnerKey: string | null;
   readonly terminalTheme: TerminalTheme;
@@ -78,7 +77,6 @@ export function workbenchBottomPanelHostProps(input: BottomPanelHostInput): Bott
     artisanRoutesQuery: artisanRoutes.query,
     artisanRoutesTotal: artisanRoutes.total,
     artisanRoutesUnavailable: artisanRoutes.unavailable,
-    debug: input.debugPanel.regions.console,
     expressRoutesPanel: input.expressRoutesPanel,
     getLatencySnapshot: workbench.getLatencySnapshot,
     gitHistoryGateway: gateways.gitHistoryGateway,

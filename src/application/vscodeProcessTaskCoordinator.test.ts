@@ -193,26 +193,6 @@ describe("createVscodeProcessTaskCoordinator", () => {
     expect(calls).toEqual(["subscribe", "start", "ack", "unsubscribe"]);
   });
 
-  it("waits for the exact owner terminal result without missing an early terminal event", async () => {
-    const harness = gatewayHarness();
-    const coordinator = createVscodeProcessTaskCoordinator({
-      getGateway: () => harness.gateway,
-      isCurrent: () => true,
-    });
-    await coordinator.start({ activation: 1, owner });
-    const waiting = coordinator.waitForTerminal(owner);
-    harness.emit({ kind: "status", owner, sequence: 1, status: "exited", exitCode: 0 });
-
-    await expect(waiting).resolves.toEqual({ status: "exited", exitCode: 0 });
-    await expect(coordinator.waitForTerminal(owner)).resolves.toEqual({
-      status: "exited",
-      exitCode: 0,
-    });
-    await expect(coordinator.waitForTerminal({ ...owner, runId: "foreign" })).resolves.toEqual({
-      status: "stale",
-    });
-  });
-
   it("accepts exact terminal completion flushed before acknowledgement returns", async () => {
     let emit: (event: VscodeProcessTaskEvent) => void = () => undefined;
     const harness = gatewayHarness({
@@ -235,13 +215,12 @@ describe("createVscodeProcessTaskCoordinator", () => {
     await expect(coordinator.start({ activation: 1, owner })).resolves.toEqual({
       status: "started",
     });
-    await expect(coordinator.waitForTerminal(owner)).resolves.toEqual({
-      status: "exited",
-      exitCode: 0,
-    });
+    expect(coordinator.snapshot()).toMatchObject({ owner, running: false, stopping: false });
     expect(coordinator.snapshot().task).toMatchObject({
       currentStep: { label: "Build", index: 1, total: 1 },
+      exitCode: 0,
       output: { truncated: false },
+      status: "exited",
     });
     expect(taskOutput(coordinator, "stdout")).toBe("\n--- Step 1 of 1: Build ---\nfast output");
     expect(taskOutput(coordinator, "stderr")).toBe("\n--- Step 1 of 1: Build ---\n");
@@ -360,20 +339,6 @@ describe("createVscodeProcessTaskCoordinator", () => {
 
     harness.emit({ kind: "status", owner, sequence: 1, status: "stopped" });
     expect(coordinator.snapshot()).toMatchObject({ running: false, stopping: false });
-  });
-
-  it("rejects cancellation from a foreign or stale owner without touching the active run", async () => {
-    const harness = gatewayHarness();
-    const coordinator = createVscodeProcessTaskCoordinator({
-      getGateway: () => harness.gateway,
-      isCurrent: () => true,
-    });
-    await coordinator.start({ activation: 1, owner });
-
-    await expect(coordinator.cancelExact({ ...owner, runId: "stale-run" })).resolves.toBe(false);
-
-    expect(harness.gateway.stopVscodeProcessTask).not.toHaveBeenCalled();
-    expect(coordinator.snapshot()).toMatchObject({ owner, running: true, stopping: false });
   });
 
   it("clears exact-owner Problems when a local stop settles before backend events", async () => {

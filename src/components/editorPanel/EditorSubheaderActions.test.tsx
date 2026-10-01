@@ -195,17 +195,6 @@ describe("EditorSubheaderActions", () => {
     expect(activity?.querySelector(".cv-spinner")).toBeNull();
   });
 
-  it("shows a running Node program with Stop", () => {
-    const chrome = chromeFixture({
-      nodeRun: { canStop: true, label: "Running dev", phase: "running", stopLabel: "Stop dev" },
-    });
-    const host = renderActions(chrome);
-    click(host.querySelector('button[aria-label="Stop dev"]') as Element);
-
-    expect(host.textContent).toContain("Running dev");
-    expect(chrome.stopNodeRun).toHaveBeenCalledTimes(1);
-  });
-
   it("finds in the file and splits the editor", () => {
     const onFind = vi.fn();
     const chrome = chromeFixture();

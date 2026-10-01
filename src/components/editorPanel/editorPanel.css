@@ -144,43 +144,6 @@
   text-overflow: ellipsis;
 }
 
-.cv-esub__run {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 4px 0 6px;
-  color: var(--cv-fg-muted);
-  font: var(--cv-t-xs) / 1 var(--cv-font-ui);
-  white-space: nowrap;
-}
-
-.cv-esub__run-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--cv-ok);
-}
-
-.cv-esub__run-stop {
-  height: 22px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--cv-r-sm);
-  background: transparent;
-  color: var(--cv-danger);
-  font: inherit;
-  cursor: pointer;
-}
-
-.cv-esub__run-stop:hover {
-  background: var(--cv-tint-2);
-}
-
-.cv-esub__run-stop:disabled {
-  color: var(--cv-fg-disabled);
-  cursor: default;
-}
-
 .cv-esub-notice {
   display: flex;
   flex: none;

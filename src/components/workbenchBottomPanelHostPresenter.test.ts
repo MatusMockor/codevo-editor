@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   workbenchBottomPanelHostProps,
@@ -96,17 +95,6 @@ function createInput(overrides: Partial<Workbench> = {}): BottomPanelHostInput &
 
   return {
     artisanRoutes,
-    debugPanel: {
-      regions: {
-        console: createElement("div", { "data-region": "console" }),
-        consoleHeader: createElement("div"),
-        sections: createElement("div"),
-        toolbar: createElement("div"),
-      },
-      sessionActive: false,
-      sessionId: null,
-      toolbar: null,
-    },
     expressRoutesPanel: undefined,
     frameworkBottomPanels: {} as BottomPanelHostInput["frameworkBottomPanels"],
     gateways: {

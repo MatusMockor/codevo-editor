@@ -254,22 +254,9 @@ function workbench(overrides: Partial<WorkbenchInput> = {}, base?: WorkbenchInpu
     }) as WorkbenchInput;
   }
   const callable = vi.fn();
-  const debugSession = new Proxy(
-    {
-      breakpoints: [],
-      debugHover: null,
-      inlineValueContext: null,
-    },
-    {
-      get(target, property, receiver) {
-        return Reflect.has(target, property) ? Reflect.get(target, property, receiver) : callable;
-      },
-    },
-  );
   const values = {
     activeEditorConfig: {},
     appSettings: {},
-    debugSession,
     documentSessionAuthorityRevision: TEST_DOCUMENT_SESSION_AUTHORITY_REVISION,
     frameworkIntelligenceProviders: null,
     gitDiffDocuments: {},

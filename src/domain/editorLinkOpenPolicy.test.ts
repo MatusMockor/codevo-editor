@@ -12,7 +12,7 @@ describe("decideEditorLinkOpen", () => {
   });
 
   it("delegates command links to Monaco's allowlisted command opener", () => {
-    expect(decideEditorLinkOpen("command:debug.hover.copyEvaluatePath")).toEqual({
+    expect(decideEditorLinkOpen("command:editor.action.showHover")).toEqual({
       kind: "delegate-command",
     });
   });

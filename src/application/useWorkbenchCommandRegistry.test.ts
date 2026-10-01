@@ -11,7 +11,7 @@ import {
 const ownerA = createLegacyEditorSessionOwnerKey("/project-a");
 const ownerB = createLegacyEditorSessionOwnerKey("/project-b");
 
-describe("debug command registration", () => {
+describe("workbench command registration", () => {
   it("projects the private Explorer bridge into verb-only rerun commands", () => {
     const root = readFileSync(new URL("./useWorkbenchController.ts", import.meta.url), "utf8");
     const source = readFileSync(
@@ -37,13 +37,11 @@ describe("debug command registration", () => {
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
-    expect(registration).toContain("canDebugAtCursor: jsTestDebugAtCursor.canDebugAtCursor,");
     expect(registration).toContain("canRunAtCursor: jsTestRunSelection.canRunAtCursor,");
     expect(registration).toContain("canRunCurrentFile: jsTestRunSelection.canRunCurrentFile,");
     expect(registration).toContain("canCancelTestRun: jsTestRerunLastRun.canCancelTestRun,");
     expect(registration).toContain("canRerunFailedTests: jsTestRerunLastRun.canRerunFailedTests,");
     expect(registration).toContain("canRerunLastRun: jsTestRerunLastRun.canRerunLastRun,");
-    expect(registration).toContain("await jsTestDebugAtCursor.debugAtCursor();");
     expect(registration).toContain("await jsTestRunSelection.runAtCursor();");
     expect(registration).toContain("await jsTestRunSelection.runCurrentFile();");
     expect(registration).toContain("cancelTestRun: jsTestRerunLastRun.cancelTestRun,");
@@ -56,74 +54,6 @@ describe("debug command registration", () => {
     expect(registration).toContain("shortcut,");
     expect(registration).not.toContain("runTestForActiveDocument: runAtCursor");
     expect(registration).not.toContain("runAllTestsForActiveDocument: runCurrentFile");
-  });
-
-  it("forwards the exact debug session capabilities", () => {
-    const source = readFileSync(
-      new URL("./useWorkbenchCommandRegistry.ts", import.meta.url),
-      "utf8",
-    );
-    const start = source.indexOf("workbenchDebugCommands({");
-    const end = source.indexOf("}).forEach((command) => registry.register(command));", start);
-    const registration = source.slice(start, end);
-
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(registration).toContain("canRestartDebug: debugState.canRestartDebug(),");
-    expect(registration).toContain("canRunToCursor: debugState.canRunToCursor,");
-    expect(registration).toContain("canClearDebugConsole: debugState.consoleSurface.canClear,");
-    expect(registration).toContain(
-      "breakpointBulkMutationPending: debugState.breakpointBulkMutationPending,",
-    );
-    expect(registration).toContain("breakpointCounts: debugState.breakpointCounts,");
-    expect(registration).toContain("configurationLauncher: debugState.configurationLauncher,");
-    expect(registration).toContain("configureNodeLaunchConfigurations,");
-    expect(registration).toContain("debugRestartPending: debugState.debugRestartPending,");
-    expect(registration).toContain("debugControlPending: debugState.debugControlPending,");
-    expect(registration).toContain("debugStopPending: debugState.debugStopPending,");
-    expect(registration).toContain("debugStartPending: debugState.debugStartPending,");
-    expect(registration).toContain("debugEvaluateInConsole,");
-    expect(registration).toContain("debugBreakpointNavigation,");
-    expect(registration).toContain("debugCallStackNavigation,");
-    expect(registration).toContain("debugRestartFrame,");
-    expect(registration).toContain("debugSetVariable: debugState.setValue,");
-    expect(registration).toContain("debugCopyValue: debugState.copyValue,");
-    expect(registration).toContain("debugCopyStackTrace,");
-    expect(registration).toContain("debugWatchAtCursor,");
-    expect(registration).toContain("disableAllBreakpoints: debugState.disableAllBreakpoints,");
-    expect(registration).toContain("enableAllBreakpoints: debugState.enableAllBreakpoints,");
-    expect(registration).toContain("removeAllBreakpoints: debugState.removeAllBreakpoints,");
-    expect(registration).toContain("restartDebug: debugState.restartDebug,");
-    expect(registration).toContain("runToCursor: debugState.runToCursor,");
-    expect(registration).toContain("clearDebugConsole: debugState.consoleSurface.clear,");
-    expect(registration).toContain("focusDebugConsole: debugState.consoleSurface.focus,");
-    expect(registration).toContain("snapshot: debugState.snapshot,");
-    expect(source).toContain("const hasJsDebugWorkspace = hasDebuggableNodeWorkspace({");
-    expect(source).toContain("openedDocuments: openDocuments,");
-    expect(source).toContain("hasJsWorkspace: hasJsDebugWorkspace,");
-    expect(source).toContain("(hasJsDebugWorkspace &&");
-  });
-
-  it("projects Run Without Debugging only through the owner-safe lifecycle capability", () => {
-    const source = readFileSync(
-      new URL("./useWorkbenchCommandRegistry.ts", import.meta.url),
-      "utf8",
-    );
-    const start = source.indexOf("workbenchNodeRunCommands({");
-    const end = source.indexOf("}).forEach((command) => registry.register(command));", start);
-    const registration = source.slice(start, end);
-
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    expect(registration).toContain("canRun: nodeRunWithoutDebugging.canRun,");
-    expect(registration).toContain("canStop: nodeRunWithoutDebugging.canStop,");
-    expect(registration).toContain(
-      "configurationLauncher: nodeRunWithoutDebugging.configurationLauncher,",
-    );
-    expect(registration).toContain("pending: nodeRunWithoutDebugging.pending,");
-    expect(registration).toContain("run: nodeRunWithoutDebugging.run,");
-    expect(registration).toContain("shortcut,");
-    expect(registration).toContain("stop: nodeRunWithoutDebugging.stop,");
   });
 
   it("routes the agent view commands through the shared view command bridge", () => {

@@ -19,7 +19,6 @@ import type { TestGutterTarget } from "../../domain/testGutterTargets";
 import { defaultTextSearchOptions, type TextSearchResult } from "../../domain/workspace";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { useWorkspacePackageGraph } from "../../application/useWorkspacePackageGraph";
-import { DebugPanel } from "../DebugPanel";
 import { TextSearch } from "../TextSearch";
 import type { WorkbenchPanelProps } from "../workbenchPanelViews";
 import { WorkbenchEditorDrawer } from "./WorkbenchEditorDrawer";
@@ -634,19 +633,6 @@ describe("WorkbenchEditorDrawer views", () => {
     expect(onClearPhpTestCoverage).toHaveBeenCalledOnce();
   });
 
-  it("always shows the Debug tab", async () => {
-    await renderPanel(
-      root,
-      "/workspace",
-      vi.fn(async () => true),
-      undefined,
-      { hasArtisan: false, hasJsWorkspace: false, hasPhpWorkspace: false },
-    );
-    const labels = viewLabels(host);
-
-    expect(labels).toContain("Debug console");
-  });
-
   it("renders the persistent search view in the panel", async () => {
     await renderPanel(
       root,
@@ -663,92 +649,6 @@ describe("WorkbenchEditorDrawer views", () => {
     expect(host.querySelector('[aria-label="Persistent workspace search"]')?.textContent).toBe(
       "results",
     );
-  });
-
-  it("renders the debug panel with pass-through props for the debug view", async () => {
-    const onStep = vi.fn();
-    await renderPanel(
-      root,
-      "/workspace",
-      vi.fn(async () => true),
-      undefined,
-      {
-        activeView: "debug",
-        debug: (
-          <DebugPanel
-            {...{
-              breakpoints: [],
-              console: {
-                state: {
-                  owner: { sessionId: 1, pauseGeneration: 1 },
-                  entries: [],
-                  history: [],
-                  pendingRequestIds: [],
-                  nextSequence: 1,
-                  totalBytes: 0,
-                },
-                clear: vi.fn(),
-                submit: vi.fn().mockResolvedValue(undefined),
-              },
-              debugAdapterKind: null,
-              exceptionPauseError: null,
-              exceptionPauseMode: "none",
-              exceptionPausePending: false,
-              hasJavaScriptTypeScriptWorkspace: true,
-              lastStartError: null,
-              onDisconnect: vi.fn(),
-              onLoadVariables: vi.fn(),
-              onNavigateToBreakpoint: vi.fn(),
-              onNavigateToFrame: vi.fn(),
-              onPause: vi.fn(),
-              onRemoveBreakpoint: vi.fn(),
-              onSelectFrame: vi.fn(),
-              onSetBreakpointCondition: vi.fn(),
-              onSetBreakpointHitCondition: vi.fn(),
-              onSetBreakpointLogMessage: vi.fn(),
-              onSetBreakpointEnabled: vi.fn(),
-              onSetExceptionPauseMode: vi.fn(),
-              onStep,
-              onStop: vi.fn(),
-              rootPath: "/workspace",
-              scopeLoadState: { kind: "unavailable" },
-              scopes: [],
-              selectedFrameId: null,
-              snapshot: {
-                state: {
-                  kind: "stopped",
-                  sessionId: 1,
-                  reason: "breakpoint",
-                  frames: [],
-                  topFrame: null,
-                },
-                lastSeq: 1,
-              },
-              variablesByReference: {},
-              watches: {
-                definitions: [],
-                evaluations: {},
-                pendingIds: [],
-                onAdd: vi.fn(),
-                onClear: vi.fn(),
-                onRemove: vi.fn(),
-                onSetEnabled: vi.fn(),
-                onUpdate: vi.fn(),
-              },
-              workspaceTrusted: true,
-            }}
-          />
-        ),
-      },
-    );
-
-    expect(host.querySelector('[aria-label="Debug"]')).not.toBeNull();
-
-    act(() => {
-      (host.querySelector('[aria-label="Continue"]') as HTMLButtonElement).click();
-    });
-
-    expect(onStep).toHaveBeenCalledWith("continue");
   });
 
   it("offers Clear problems in the drawer header only for a non-empty Problems view", async () => {
@@ -782,7 +682,6 @@ describe("WorkbenchEditorDrawer views", () => {
     await act(async () => {
       root.render(
         <WorkbenchEditorDrawer
-          consoleHeader={null}
           frame={FRAME}
           panel={{ ...basePanelProps(), hasPhpWorkspace: true }}
           phpTree={<div aria-label="PHP tree" />}
@@ -798,7 +697,6 @@ describe("WorkbenchEditorDrawer views", () => {
     await act(async () => {
       root.render(
         <WorkbenchEditorDrawer
-          consoleHeader={null}
           frame={FRAME}
           panel={basePanelProps()}
           phpTree={<div aria-label="PHP tree" />}
@@ -808,37 +706,6 @@ describe("WorkbenchEditorDrawer views", () => {
     });
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Problems");
     expect(host.querySelector('[aria-label="PHP tree"]')).toBeNull();
-  });
-
-  it("shows the console header only for the Debug console view", async () => {
-    const render = (view: "debug" | "problems") =>
-      act(async () => {
-        root.render(
-          <WorkbenchEditorDrawer
-            consoleHeader={<button aria-label="Clear console" type="button" />}
-            frame={FRAME}
-            panel={basePanelProps()}
-            phpTree={null}
-            view={view}
-          />,
-        );
-      });
-    await render("debug");
-    expect(host.querySelector('.cv-edrawer__head [aria-label="Clear console"]')).not.toBeNull();
-    await render("problems");
-    expect(host.querySelector('[aria-label="Clear console"]')).toBeNull();
-  });
-
-  it("renders no debug panel when debug props are not wired", async () => {
-    await renderPanel(
-      root,
-      "/workspace",
-      vi.fn(async () => true),
-      undefined,
-      { activeView: "debug" },
-    );
-
-    expect(host.querySelector('[aria-label="Debug"]')).toBeNull();
   });
 
   it("forwards JavaScript explorer run, refresh, query, and navigation props", async () => {
@@ -1142,15 +1009,7 @@ function packageDiscoveryGateway(): WorkspaceSourceDiscoveryGateway {
 
 function DrawerHarness(props: WorkbenchPanelProps) {
   const view = props.activeView === "terminal" ? "problems" : props.activeView;
-  return (
-    <WorkbenchEditorDrawer
-      consoleHeader={null}
-      frame={FRAME}
-      panel={props}
-      phpTree={null}
-      view={view}
-    />
-  );
+  return <WorkbenchEditorDrawer frame={FRAME} panel={props} phpTree={null} view={view} />;
 }
 
 const FRAME = { height: 224, onResize: () => undefined };
@@ -1259,10 +1118,6 @@ function jsExplorerProps(
     coverageReport: null,
     coverageRunning: false,
     coverageUnavailable: null,
-    debugError: null,
-    debugging: false,
-    debugStartBlocked: false,
-    debugUnavailable: null,
     error: null,
     executionStartBlocked: false,
     failedRunCompleted: 0,
@@ -1272,7 +1127,6 @@ function jsExplorerProps(
     onCancelTestRun: vi.fn(),
     onOpenTest: vi.fn(),
     onClearCoverage: vi.fn(),
-    onDebugNode: vi.fn(),
     onOpenCoverageFile: vi.fn(),
     onQueryChange: vi.fn(),
     onRefresh: vi.fn(),

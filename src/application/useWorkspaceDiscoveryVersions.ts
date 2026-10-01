@@ -19,11 +19,6 @@ interface WorkspaceDiscoveryVersionsOptions {
 
 const VSCODE_TASKS_DIRECTORY = ".vscode";
 const VSCODE_TASKS_FILE = ".vscode/tasks.json";
-const NODE_LAUNCH_CONFIGURATION_DIRECTORIES: readonly string[] = [".codevo", ".vscode"];
-const NODE_LAUNCH_CONFIGURATION_FILES: readonly string[] = [
-  ".codevo/launch.json",
-  ".vscode/launch.json",
-];
 
 export function useWorkspaceDiscoveryVersions({
   phpProject = null,
@@ -34,7 +29,6 @@ export function useWorkspaceDiscoveryVersions({
   const [jsTestCoverageVersion, setJsTestCoverageVersion] = useState(0);
   const [jsTestDiscoveryVersion, setJsTestDiscoveryVersion] = useState(0);
   const [netteDiscoveryVersion, setNetteDiscoveryVersion] = useState(0);
-  const [nodeLaunchConfigurationVersion, setNodeLaunchConfigurationVersion] = useState(0);
   const [nodePackageScriptDiscoveryVersion, setNodePackageScriptDiscoveryVersion] = useState(0);
   const [workspacePackageDiscoveryVersion, setWorkspacePackageDiscoveryVersion] = useState(0);
   const [phpTestCoverageInvalidationStore] = useState(createPhpTestCoverageInvalidationStore);
@@ -65,9 +59,6 @@ export function useWorkspaceDiscoveryVersions({
       if (workspaceFileChangeInvalidatesPackageDiscovery(event)) {
         setWorkspacePackageDiscoveryVersion((version) => version + 1);
       }
-      if (workspaceFileChangeInvalidatesNodeLaunchConfigurations(event)) {
-        setNodeLaunchConfigurationVersion((version) => version + 1);
-      }
       if (workspaceFileChangeInvalidatesVscodeProcessTasks(event)) {
         setVscodeProcessTasksVersion((version) => version + 1);
       }
@@ -90,28 +81,12 @@ export function useWorkspaceDiscoveryVersions({
     jsTestCoverageVersion,
     jsTestDiscoveryVersion,
     netteDiscoveryVersion,
-    nodeLaunchConfigurationVersion,
     nodePackageScriptDiscoveryVersion,
     phpTestCoverageInvalidationStore,
     symfonyDiscoveryVersion,
     vscodeProcessTasksVersion,
     workspacePackageDiscoveryVersion,
   };
-}
-
-function workspaceFileChangeInvalidatesNodeLaunchConfigurations(
-  event: WorkspaceFileChangeEvent,
-): boolean {
-  if (event.kind === "rescanRequired") return true;
-  const paths = watcherRelativePaths(event);
-
-  if (event.fileKind === "directory") {
-    return (
-      (event.kind === "created" || event.kind === "deleted" || event.kind === "renamed") &&
-      paths.some((path) => NODE_LAUNCH_CONFIGURATION_DIRECTORIES.includes(path))
-    );
-  }
-  return paths.some((path) => NODE_LAUNCH_CONFIGURATION_FILES.includes(path));
 }
 
 function workspaceFileChangeInvalidatesVscodeProcessTasks(

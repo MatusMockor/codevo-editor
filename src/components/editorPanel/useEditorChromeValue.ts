@@ -3,7 +3,6 @@ import type {
   EditorCursorAuthority,
   EditorCursorStorePort,
 } from "../../application/editorCursorStore";
-import type { NodeRunStatusPresentation } from "../../application/nodeRunWithoutDebuggingPresentation";
 import type { WorkbenchBottomPanelView } from "../../domain/artisanRoutes";
 import { workbenchPanelPlacement } from "../../domain/editorDrawer";
 import type { LargeSmartDocumentStatus } from "../../domain/largeDocumentPolicy";
@@ -14,7 +13,6 @@ import type {
   EditorChrome,
   EditorChromeActivity,
   EditorChromeShortcuts,
-  EditorDebugEntry,
   EditorStatusRow,
 } from "./EditorChromeContext";
 import { editorStatusRows, type EditorStatusRowsInput } from "./editorStatusRows";
@@ -22,9 +20,7 @@ import { editorStatusRows, type EditorStatusRowsInput } from "./editorStatusRows
 export interface EditorChromeActions {
   showBottomPanelView(view: WorkbenchBottomPanelView): void;
   hideBottomPanel(): void;
-  maximizePanel(): void;
   showGoToLine(): void;
-  stopNodeRun(): void;
   runCommand(id: string): void;
   toggleIdeMode(): void;
   trustWorkspace(): void;
@@ -48,22 +44,11 @@ export interface EditorChromeInput {
   readonly workspaceTrustLabel: string | null;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
-  readonly nodeRun: NodeRunStatusPresentation | null;
-  readonly debugToolbarVisible: boolean;
   readonly cursorStore: EditorCursorStorePort | null;
   readonly cursorAuthority: EditorCursorAuthority | null;
   readonly shortcuts: EditorChromeShortcuts;
   readonly actions: EditorChromeActions;
 }
-
-type EditorDebugCommandEntry = Exclude<EditorDebugEntry, "showViews">;
-
-const DEBUG_COMMANDS: Readonly<Record<EditorDebugCommandEntry, string>> = {
-  start: "debug.start",
-  runWithoutDebugging: "debug.runWithoutDebugging",
-  launchConfigurations: "debug.configureNodeLaunchConfigurations",
-  attach: "debug.attachNode",
-};
 
 export function useEditorChromeValue(input: EditorChromeInput): EditorChrome {
   const actionsRef = useRef(input.actions);
@@ -87,9 +72,7 @@ export function useEditorChromeValue(input: EditorChromeInput): EditorChrome {
     activeGroupId,
     cursorAuthority,
     cursorStore,
-    debugToolbarVisible,
     intelligenceMode,
-    nodeRun,
     workspaceRoot,
     workspaceTrusted,
   } = input;
@@ -103,8 +86,6 @@ export function useEditorChromeValue(input: EditorChromeInput): EditorChrome {
       cursorStore,
       cursorAuthority,
       activity,
-      nodeRun,
-      debugToolbarVisible,
       statusRows,
       ideModeOn: intelligenceMode === "fullSmart",
       trustNeeded: workspaceRoot !== null && !workspaceTrusted,
@@ -118,14 +99,12 @@ export function useEditorChromeValue(input: EditorChromeInput): EditorChrome {
       },
       showGoToLine: () => actionsRef.current.showGoToLine(),
       openRuntimeView: () => actionsRef.current.showBottomPanelView("runtime"),
-      stopNodeRun: () => actionsRef.current.stopNodeRun(),
       splitRight: () => actionsRef.current.runCommand("editor.splitRight"),
       splitDown: () => actionsRef.current.runCommand("editor.splitDown"),
       toggleIdeMode: () => actionsRef.current.toggleIdeMode(),
       trustWorkspace: () => actionsRef.current.trustWorkspace(),
       revealInFiles: () => actionsRef.current.revealInFiles(),
       openBranches: () => actionsRef.current.openBranches(),
-      runDebugEntry: (entry) => runDebugEntry(actionsRef.current, entry),
     }),
     [
       activeGroupId,
@@ -133,10 +112,8 @@ export function useEditorChromeValue(input: EditorChromeInput): EditorChrome {
       cursorAuthority,
       cursorStore,
       cursorVisible,
-      debugToolbarVisible,
       errors,
       intelligenceMode,
-      nodeRun,
       problemsOpen,
       shortcuts,
       statusRows,
@@ -163,11 +140,8 @@ function useStableActivity(
 }
 
 function useStableShortcuts(shortcuts: EditorChromeShortcuts): EditorChromeShortcuts {
-  const { debugStart, find, problems, runWithoutDebugging, split } = shortcuts;
-  return useMemo(
-    () => ({ debugStart, find, problems, runWithoutDebugging, split }),
-    [debugStart, find, problems, runWithoutDebugging, split],
-  );
+  const { find, problems, split } = shortcuts;
+  return useMemo(() => ({ find, problems, split }), [find, problems, split]);
 }
 
 function useStableStatusRows(rowsInput: EditorStatusRowsInput): ReadonlyArray<EditorStatusRow> {
@@ -205,13 +179,4 @@ function useStableStatusRows(rowsInput: EditorStatusRowsInput): ReadonlyArray<Ed
       workspaceTrustLabel,
     ],
   );
-}
-
-function runDebugEntry(actions: EditorChromeActions, entry: EditorDebugEntry): void {
-  if (entry === "showViews") {
-    actions.showBottomPanelView("debug");
-    actions.maximizePanel();
-    return;
-  }
-  actions.runCommand(DEBUG_COMMANDS[entry]);
 }

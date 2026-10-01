@@ -7,8 +7,6 @@ import type { JsTestCoverageGateway } from "../domain/jsTestCoverage";
 import type { JsTestWatchGateway } from "../domain/jsTestCommand";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { JsTestGateway } from "../domain/jsTestRunScope";
-import type { DebugLaunchTarget } from "../domain/debug";
-import type { JsTestExplorerSuiteNode } from "../domain/jsTestExplorerTree";
 import type {
   JsTestExplorerCurrentFileIdentity,
   JsTestExplorerOpenedFilesSnapshot,
@@ -37,8 +35,6 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
   let root: Root;
   let latest: ReturnType<typeof useJsTestExplorerPanelController>;
   const onOpenLocation = vi.fn();
-  const openDebugPanel = vi.fn();
-  const startDebug = vi.fn(async (_launch: DebugLaunchTarget) => undefined);
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -46,8 +42,6 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
     document.body.append(host);
     root = createRoot(host);
     onOpenLocation.mockClear();
-    openDebugPanel.mockClear();
-    startDebug.mockClear();
   });
   afterEach(() => {
     act(() => root.unmount());
@@ -73,28 +67,6 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
     act(() => latest.onOpenCoverageFile({ ...navigable, firstUncoveredLine: null }));
     act(() => latest.onOpenCoverageFile({ ...navigable, path: "../outside.ts" }));
     expect(onOpenLocation).toHaveBeenCalledExactlyOnceWith("/workspace/src/example.ts", 9);
-  });
-
-  it("routes selected debug through the application coordinator", async () => {
-    await render(createCoverageGateway());
-    const suite: JsTestExplorerSuiteNode = {
-      children: [],
-      filePath: "/workspace/src/example.test.ts",
-      id: "suite",
-      kind: "suite",
-      label: "math",
-      status: "idle",
-      suitePath: ["math"],
-    };
-    await act(async () => latest.onDebugNode(suite));
-    expect(openDebugPanel).toHaveBeenCalledOnce();
-    expect(startDebug).toHaveBeenCalledExactlyOnceWith({
-      kind: "js-test-selection",
-      runner: "vitest",
-      filePath: suite.filePath,
-      packageRootPath: "/workspace",
-      selection: { kind: "suite", fullName: "math" },
-    });
   });
 
   it("projects the failed-run lifecycle as panel state and void handlers", async () => {
@@ -233,8 +205,6 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
           coverageGateway={coverageGateway}
           onOpenLocation={onOpenLocation}
           openedFilesSnapshot={openedFilesSnapshot}
-          openDebugPanel={openDebugPanel}
-          startDebug={startDebug}
           testDiscoveryGateway={testDiscoveryGateway}
           watchGateway={watchGateway}
           workspaceTrusted={workspaceTrusted}
@@ -252,8 +222,6 @@ function Harness({
   coverageGateway,
   onOpenLocation,
   openedFilesSnapshot,
-  openDebugPanel,
-  startDebug,
   testDiscoveryGateway,
   watchGateway,
   workspaceTrusted,
@@ -263,8 +231,6 @@ function Harness({
   coverageGateway: JsTestCoverageGateway;
   onOpenLocation: (path: string, lineNumber: number) => void;
   openedFilesSnapshot?: JsTestExplorerOpenedFilesSnapshot;
-  openDebugPanel: () => void;
-  startDebug: (launch: DebugLaunchTarget) => Promise<void>;
   testDiscoveryGateway?: WorkspaceTestDiscoveryGateway;
   watchGateway?: JsTestWatchGateway;
   workspaceTrusted?: boolean;
@@ -280,18 +246,14 @@ function Harness({
     coverageInvalidationVersion: 0,
     discoveryGateway: stableDiscoveryGateway,
     discoveryVersion: 0,
-    debugStartBlocked: false,
-    isDebugStartBlocked: () => false,
     isOpen: false,
     openedFilesSnapshot,
     onOpenLocation,
-    openDebugPanel,
     rootPath: "/workspace",
     runGateway: runGateway(),
     runRequestVersion: 0,
     workspaceId: "workspace-id",
     workspaceTrusted: workspaceTrusted ?? true,
-    startDebug,
     watchGateway,
   });
   onReady(model);

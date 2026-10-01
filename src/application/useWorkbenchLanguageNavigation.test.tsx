@@ -14,7 +14,6 @@ import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import {
   createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 import {
@@ -1566,7 +1565,7 @@ describe("useWorkbenchLanguageNavigation owner alias transfer", () => {
     let currentOwner: WorkspaceRuntimeOwner = owner;
     const gateway = languageServerGateway();
     vi.mocked(gateway.definition).mockImplementation(async () => {
-      currentOwner = transferWorkspaceRuntimeOwner(owner, "/workspace-alias");
+      currentOwner = createWorkspaceRuntimeOwner(owner.ownerKey, "/workspace-alias");
       return [navigationLocation(`${ROOT}/src/Target.php`)];
     });
     const isSessionActive = vi.fn(() => true);

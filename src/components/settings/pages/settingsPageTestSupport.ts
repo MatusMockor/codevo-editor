@@ -30,7 +30,6 @@ export function settingsPagePropsFixture(
       hasWorkspace: false,
       onCopyInstallCommand: vi.fn(),
       onOpenJavaScriptTypeScriptServiceLog: vi.fn(async () => undefined),
-      onOpenNodeLaunchConfigurations: vi.fn(),
       onRestartJavaScriptTypeScriptService: vi.fn(async () => undefined),
       phpTools: null,
       providerManagement: null,

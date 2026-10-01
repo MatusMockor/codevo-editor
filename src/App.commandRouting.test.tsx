@@ -14,7 +14,6 @@ import { initialIndexProgress } from "./domain/indexProgress";
 import type { EditorDocument } from "./domain/workspace";
 import { buildJsTestExplorerTree, type JsTestExplorerTestNode } from "./domain/jsTestExplorerTree";
 import type { TestGutterTarget } from "./domain/testGutterTargets";
-import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 import { workbenchComposition } from "./workbenchComposition";
 import { defaultAgentCliDiscoveryResult } from "./domain/agentSettings";
 
@@ -91,7 +90,7 @@ const mocks = vi.hoisted(() => ({
     query: "",
     tree: [],
   },
-  openDebugLocation: vi.fn(),
+  openSourceLocation: vi.fn(),
   openGitBranchPanel: vi.fn(),
   optionalSurfaceModuleLoads: [] as string[],
   phpClear: vi.fn(),
@@ -445,7 +444,7 @@ describe("App command routing", () => {
     mocks.expressPanelProps.onOpenRoute.mockReset();
     mocks.expressPanelProps.onQueryChange.mockReset();
     mocks.expressPanelProps.onRefresh.mockReset();
-    mocks.openDebugLocation.mockReset();
+    mocks.openSourceLocation.mockReset();
     mocks.openGitBranchPanel.mockReset();
     mocks.bottomPanelProps = null;
     mocks.terminalPanelMounts = 0;
@@ -627,7 +626,7 @@ describe("App command routing", () => {
           },
         ],
         discoveryVersion: 4,
-        onOpenLocation: mocks.openDebugLocation,
+        onOpenLocation: mocks.openSourceLocation,
         rootPath: "/workspace",
         workspaceId: "workspace-1",
       }),
@@ -744,7 +743,7 @@ describe("App command routing", () => {
     expect(mocks.packagePanelOptions).toEqual(
       expect.objectContaining({
         documents: [dirtyManifest],
-        onOpenLocation: mocks.openDebugLocation,
+        onOpenLocation: mocks.openSourceLocation,
         packageManager: "pnpm",
         packages: [packageDescriptor],
         rootPath: "/workspace",
@@ -778,7 +777,7 @@ describe("App command routing", () => {
     mocks.workbenchOverrides = {
       bottomPanelView: "testResults",
       hideBottomPanel: mocks.hideBottomPanel,
-      openDebugLocation: mocks.openDebugLocation,
+      openSourceLocation: mocks.openSourceLocation,
       workspaceDescriptor: {
         javaScriptTypeScript: { frameworks: [] },
         php: null,
@@ -798,9 +797,6 @@ describe("App command routing", () => {
     });
 
     let explorer = mocks.bottomPanelProps?.jsTestExplorer as {
-      debugStartBlocked: boolean;
-      debugging: boolean;
-      onDebugNode(test: JsTestExplorerTestNode): void;
       onOpenTest(test: JsTestExplorerTestNode): void;
       onClearCoverage(): void;
       onOpenCoverageFile(file: { firstUncoveredLine: number | null; path: string }): void;
@@ -812,9 +808,7 @@ describe("App command routing", () => {
       tree: unknown;
     };
     const testNode = explorerTestNode(explorerTree);
-    expect(explorer.debugStartBlocked).toBe(false);
-    expect(explorer.debugging).toBe(false);
-    expect(explorer.onDebugNode).toEqual(expect.any(Function));
+    expect(explorer).not.toHaveProperty("onDebugNode");
 
     act(() => {
       explorer.onRunScope({ kind: "all" });
@@ -835,9 +829,9 @@ describe("App command routing", () => {
     expect(mocks.jsExplorerRefresh).toHaveBeenCalledOnce();
     expect(mocks.jsCoverageRun).toHaveBeenCalledOnce();
     expect(mocks.jsCoverageClear).toHaveBeenCalledOnce();
-    expect(mocks.openDebugLocation).toHaveBeenCalledWith("/workspace/src/payment.test.ts", 7);
-    expect(mocks.openDebugLocation).toHaveBeenCalledWith("/workspace/src/payment.ts", 11);
-    expect(mocks.openDebugLocation).toHaveBeenCalledTimes(2);
+    expect(mocks.openSourceLocation).toHaveBeenCalledWith("/workspace/src/payment.test.ts", 7);
+    expect(mocks.openSourceLocation).toHaveBeenCalledWith("/workspace/src/payment.ts", 11);
+    expect(mocks.openSourceLocation).toHaveBeenCalledTimes(2);
     explorer = mocks.bottomPanelProps?.jsTestExplorer as typeof explorer;
     expect(explorer.query).toBe("charges");
 
@@ -1306,16 +1300,6 @@ function createWorkbench() {
       commandContext: {},
       commands: [],
       diagnosticsSummary: { errors: 1, warnings: 0 },
-      debugSession: {
-        canRestartDebug: () => false,
-        debugRestartPending: false,
-        debugStopPending: false,
-        isDebugStartBlocked: () => false,
-        snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
-        restartDebug: vi.fn(async () => undefined),
-        startDebug: vi.fn(async () => undefined),
-        watches: createEmptyDebugWatches(),
-      },
       dirtyCount: 0,
       entriesByDirectory: {},
       expandedDirectories: new Set<string>(),
@@ -1349,7 +1333,7 @@ function createWorkbench() {
       message: "",
       navigationHistory: { backStack: [], forwardStack: [] },
       notices: [],
-      openDebugLocation: mocks.openDebugLocation,
+      openSourceLocation: mocks.openSourceLocation,
       openDocuments: [],
       openGitBranchPanel: mocks.openGitBranchPanel,
       openTabs: [],

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
-export interface ContextMenuItem {
+interface ContextMenuItem {
   readonly id: string;
   readonly label: string;
   onSelect(): void;

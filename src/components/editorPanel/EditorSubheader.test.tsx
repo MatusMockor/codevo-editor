@@ -3,7 +3,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { click, mountUi, type MountedUi } from "../../ui/foundation/foundationTestSupport";
 import { EditorChromeContext, type EditorChrome } from "./EditorChromeContext";
-import { EditorDebugToolbarContext } from "./EditorDebugToolbarContext";
 import { chromeFixture } from "./editorChromeTestSupport";
 import { EditorSubheader } from "./EditorSubheader";
 
@@ -16,21 +15,17 @@ afterEach(() => {
   mounted = null;
 });
 
-const DEBUG_TOOLBAR = <div aria-label="Debug session" role="toolbar" />;
-
 function renderSubheader(chrome: EditorChrome | null, groupId: string | null = "editor-main") {
   mounted = mountUi();
   mounted.render(
     <EditorChromeContext.Provider value={chrome}>
-      <EditorDebugToolbarContext.Provider value={DEBUG_TOOLBAR}>
-        <EditorSubheader
-          documentPath="/w/orders-api/src/routes/orders.ts"
-          groupId={groupId}
-          onFind={vi.fn()}
-          rootPath="/w/orders-api"
-          symbols={<span data-testid="symbols">router.post("/orders")</span>}
-        />
-      </EditorDebugToolbarContext.Provider>
+      <EditorSubheader
+        documentPath="/w/orders-api/src/routes/orders.ts"
+        groupId={groupId}
+        onFind={vi.fn()}
+        rootPath="/w/orders-api"
+        symbols={<span data-testid="symbols">router.post("/orders")</span>}
+      />
     </EditorChromeContext.Provider>,
   );
   return mounted.host;
@@ -54,7 +49,6 @@ describe("EditorSubheader", () => {
     ]);
     expect(host.querySelector(".cv-esub__crumb--current")?.textContent).toBe("orders.ts");
     expect(crumbs?.querySelector('[data-testid="symbols"]')).not.toBeNull();
-    expect(host.querySelector(".cv-esub")?.getAttribute("data-debug")).toBe("off");
   });
 
   it("reveals the file in the Files surface from a crumb", () => {
@@ -67,20 +61,11 @@ describe("EditorSubheader", () => {
     expect(chrome.revealInFiles).toHaveBeenCalledTimes(1);
   });
 
-  it("replaces the hover actions with the debug toolbar while a session exists", () => {
-    const host = renderSubheader(chromeFixture({ debugToolbarVisible: true }));
+  it("shows the hover actions only on the active group", () => {
+    expect(renderSubheader(chromeFixture()).querySelector(".cv-esub__acts")).not.toBeNull();
+    mounted?.unmount();
 
-    expect(host.querySelector('[role="toolbar"][aria-label="Debug session"]')).not.toBeNull();
-    expect(host.querySelector('[aria-label="Find in file"]')).toBeNull();
-    expect(host.querySelector(".cv-esub")?.getAttribute("data-debug")).toBe("on");
-  });
-
-  it("keeps the debug toolbar and the actions off a group that is not active", () => {
-    const host = renderSubheader(chromeFixture({ debugToolbarVisible: true }), "editor-2");
-
-    expect(host.querySelector('[role="toolbar"]')).toBeNull();
-    expect(host.querySelector(".cv-esub__acts")).toBeNull();
-    expect(host.querySelector(".cv-esub")?.getAttribute("data-debug")).toBe("off");
+    expect(renderSubheader(chromeFixture(), "editor-2").querySelector(".cv-esub__acts")).toBeNull();
   });
 
   it("still renders inert crumbs without a chrome provider", () => {

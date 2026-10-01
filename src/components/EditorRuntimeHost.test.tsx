@@ -35,11 +35,6 @@ import { EditorLiveDocumentBindingCoordinator } from "./editorLiveDocumentBindin
 import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./editorSurfaceLanguageProviderOptions";
 
 const runtimeMocks = vi.hoisted(() => ({
-  debugHoverContext: null as {
-    getAdmittedWorkspaceRoot(): string | null;
-    resolveDocumentForModel(model: Monaco.editor.ITextModel): EditorDocument | null;
-  } | null,
-  debugHoverDispose: vi.fn(),
   javaScriptContext: null as {
     getActiveDocument(): EditorDocument | null;
     getActiveJavaScriptTypeScriptOwnerEpoch(): number;
@@ -58,10 +53,6 @@ const runtimeMocks = vi.hoisted(() => ({
   registerJavaScriptTypeScript: vi.fn((_monaco, context) => {
     runtimeMocks.javaScriptContext = context;
     return { dispose: vi.fn() };
-  }),
-  registerDebugHover: vi.fn((_monaco, context) => {
-    runtimeMocks.debugHoverContext = context;
-    return { dispose: runtimeMocks.debugHoverDispose };
   }),
   configureTypescriptJavascriptDefaultsOnce: vi.fn(),
 }));
@@ -86,10 +77,6 @@ vi.mock("./javascriptTypescriptLanguageServerMonacoProviders", async (importOrig
 vi.mock("./typescriptJavascriptDefaults", async (importOriginal) => ({
   ...(await importOriginal()),
   configureTypescriptJavascriptDefaultsOnce: runtimeMocks.configureTypescriptJavascriptDefaultsOnce,
-}));
-vi.mock("./debugHoverMonacoProvider", async (importOriginal) => ({
-  ...(await importOriginal()),
-  registerDebugHoverMonacoProviders: runtimeMocks.registerDebugHover,
 }));
 
 describe("EditorRuntimeHost", () => {
@@ -768,7 +755,6 @@ describe("EditorRuntimeHost", () => {
     root = createRoot(container);
     runtimeMocks.javaScriptContext = null;
     runtimeMocks.providerContext = null;
-    runtimeMocks.debugHoverContext = null;
     vi.clearAllMocks();
   });
 
@@ -868,37 +854,6 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerIdentity()).toBe(
       initialIdentity,
     );
-  });
-
-  it("registers debug hover against the admitted workspace model resolver", async () => {
-    const fixture = runtimeFixture();
-    const debugHover = {
-      copyEvaluatePath: vi.fn(async () => false),
-      evaluate: vi.fn(),
-      getOwner: vi.fn(() => null),
-      getOwnerEpoch: vi.fn(() => 0),
-      registerCopyEvaluatePath: vi.fn(() => null),
-      revokeCopyEvaluatePath: vi.fn(),
-    };
-
-    await act(async () => {
-      root.render(
-        <EditorRuntimeHost debugHover={debugHover}>
-          <RuntimeSurface {...fixture} groupId="left" name="left.ts" />
-        </EditorRuntimeHost>,
-      );
-    });
-
-    expect(runtimeMocks.registerDebugHover).toHaveBeenCalledOnce();
-    expect(runtimeMocks.debugHoverContext?.getAdmittedWorkspaceRoot()).toBe("/workspace");
-    expect(runtimeMocks.debugHoverContext?.resolveDocumentForModel(fixture.model)?.name).toBe(
-      "left.ts",
-    );
-
-    await act(async () =>
-      root.render(<EditorRuntimeHost debugHover={debugHover}>{null}</EditorRuntimeHost>),
-    );
-    expect(runtimeMocks.debugHoverDispose).toHaveBeenCalledOnce();
   });
 
   it("routes PHP code actions by source when the focused group is different", async () => {

@@ -16,23 +16,16 @@ export interface WorkbenchEditorDrawerProps {
   readonly panel: WorkbenchPanelProps;
   readonly view: EditorDrawerView;
   readonly frame: EditorDrawerFrame;
-  readonly consoleHeader: ReactNode;
   readonly phpTree: ReactNode;
 }
 
-export function WorkbenchEditorDrawer({
-  consoleHeader,
-  frame,
-  panel,
-  phpTree,
-  view,
-}: WorkbenchEditorDrawerProps) {
+export function WorkbenchEditorDrawer({ frame, panel, phpTree, view }: WorkbenchEditorDrawerProps) {
   const availability = editorDrawerAvailabilityFromPanel(panel, view);
   const effectiveView = effectiveEditorDrawerView(view, availability);
   return (
     <EditorDrawer
       availability={availability}
-      headerExtras={drawerHeaderExtras(panel, effectiveView, consoleHeader)}
+      headerExtras={drawerHeaderExtras(panel, effectiveView)}
       height={frame.height}
       onClose={panel.onClose}
       onResize={frame.onResize}
@@ -52,12 +45,7 @@ export function WorkbenchEditorDrawer({
   );
 }
 
-function drawerHeaderExtras(
-  panel: WorkbenchPanelProps,
-  view: EditorDrawerView,
-  consoleHeader: ReactNode,
-): ReactNode {
-  if (view === "debug") return consoleHeader;
+function drawerHeaderExtras(panel: WorkbenchPanelProps, view: EditorDrawerView): ReactNode {
   if (view === "problems" && panel.notices.length > 0) {
     return (
       <IconButton

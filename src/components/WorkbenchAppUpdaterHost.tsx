@@ -15,7 +15,6 @@ import { NoticeToastHost } from "./NoticeToastHost";
 import { composeToastNotices } from "./updateToastNotices";
 import { useNoticeToastRenderers } from "./useNoticeToastRenderers";
 import type { WorkbenchSettingsModel } from "./WorkbenchSettingsHost";
-import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
 
 export interface WorkbenchAppUpdaterHostProps {
   readonly appUpdater: AppUpdaterSurface;
@@ -31,7 +30,6 @@ export interface WorkbenchAppUpdaterHostProps {
     readonly notices: WorkbenchNotice[];
     readonly setLanguageServerSetupOpen: (open: boolean) => void;
   };
-  readonly workspaceFiles: NodeLaunchConfigurationFileGateway;
   readonly workspaceTrusted: boolean;
 }
 
@@ -43,7 +41,6 @@ export function WorkbenchAppUpdaterHost({
   settingsContainer,
   systemFontGateway,
   workbench,
-  workspaceFiles,
   workspaceTrusted,
 }: WorkbenchAppUpdaterHostProps) {
   const { authority, providers, toast } = providerManagement;
@@ -86,17 +83,13 @@ export function WorkbenchAppUpdaterHost({
   return (
     <>
       <NoticeToastHost notices={notices} renderNotice={renderNotice} />
-      <LazySurfaceHost
-        active={workbench.settingsOpen || workbench.nodeLaunchConfigurationsOpen}
-        label="settings"
-      >
+      <LazySurfaceHost active={workbench.settingsOpen} label="settings">
         <LazyWorkbenchSettingsHost
           appUpdater={updater}
           container={settingsContainer}
           providerManagement={providerManagement}
           systemFontGateway={systemFontGateway}
           workbench={workbench}
-          workspaceFiles={workspaceFiles}
         />
       </LazySurfaceHost>
     </>

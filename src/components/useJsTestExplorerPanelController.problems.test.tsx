@@ -57,16 +57,6 @@ vi.mock("../application/useJsTestCoverage", () => ({
     unavailable: null,
   }),
 }));
-vi.mock("../application/useJsTestExplorerDebug", () => ({
-  useJsTestExplorerDebug: () => ({
-    blocked: false,
-    blockedReason: null,
-    debug: vi.fn(),
-    error: null,
-    isDebugging: false,
-    unavailable: null,
-  }),
-}));
 
 import { useJsTestExplorerPanelController } from "./useJsTestExplorerPanelController";
 
@@ -78,17 +68,13 @@ describe("useJsTestExplorerPanelController problem integration", () => {
       latest = useJsTestExplorerPanelController({
         coverageGateway: { run: vi.fn() },
         coverageInvalidationVersion: 17,
-        debugStartBlocked: false,
         discoveryGateway: {} as never,
         discoveryVersion: 3,
-        isDebugStartBlocked: () => false,
         isOpen: false,
         onOpenLocation: vi.fn(),
-        openDebugPanel: vi.fn(),
         rootPath: "/workspace",
         runGateway: {} as never,
         runRequestVersion: 5,
-        startDebug: vi.fn(),
         workspaceId: "workspace-id",
         workspaceTrusted: true,
       });

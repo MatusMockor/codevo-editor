@@ -47,7 +47,7 @@ export function WorkspaceTrustDialog({ request, onDecide }: WorkspaceTrustDialog
         </li>
         <li>
           <SquareTerminal aria-hidden="true" size={14} />
-          Package scripts, tasks, tests and the debugger can run
+          Package scripts, tasks and tests can run
         </li>
         <li>
           <Code aria-hidden="true" size={14} />

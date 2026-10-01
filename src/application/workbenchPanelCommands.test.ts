@@ -239,7 +239,7 @@ describe("workbenchPanelCommands", () => {
     expect(refreshWorkspaceTodos).toHaveBeenCalledTimes(1);
   });
 
-  it.each<BottomPanelView>(["terminal", "problems", "debug", "search"])(
+  it.each<BottomPanelView>(["terminal", "problems", "runtime", "search"])(
     "panel.toggle closes the visible panel regardless of its view (%s)",
     async (view) => {
       const panel = panelHarness({ agentModeActive: false, view, visible: true });

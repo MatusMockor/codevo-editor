@@ -7,7 +7,6 @@ import {
   findChangeHunkAtLine,
   jumpToChangeHunk,
   navigateChangeHunkFromPopover,
-  toBreakpointDecoration,
   toEditorChangeDecoration,
 } from "./editorChangeMonacoMappings";
 
@@ -61,7 +60,7 @@ function editorAt(lineNumber: number, withModel = true) {
 }
 
 describe("editor change Monaco mappings", () => {
-  it("maps change and breakpoint state to stable Monaco decorations", () => {
+  it("maps change state to stable Monaco decorations", () => {
     expect(toEditorChangeDecoration(monaco, hunks[1])).toMatchObject({
       options: {
         linesDecorationsClassName: "editor-change-line editor-change-line-added",
@@ -69,124 +68,9 @@ describe("editor change Monaco mappings", () => {
       },
       range: new FakeRange(3, 1, 4, 1),
     });
-
-    expect(
-      toBreakpointDecoration(monaco, {
-        enabled: true,
-        filePath: "/workspace/app.ts",
-        id: "bp",
-        lineNumber: 12,
-        verified: false,
-      }),
-    ).toMatchObject({
-      options: {
-        glyphMarginClassName: "breakpoint-glyph breakpoint-glyph-unverified",
-        glyphMarginHoverMessage: { value: "Breakpoint" },
-      },
-      range: new FakeRange(12, 1, 12, 1),
-    });
-
-    expect(
-      toBreakpointDecoration(monaco, {
-        condition: "count > 3",
-        enabled: true,
-        filePath: "/workspace/app.ts",
-        id: "conditional",
-        lineNumber: 14,
-        verified: true,
-      }),
-    ).toMatchObject({
-      options: {
-        glyphMarginClassName:
-          "breakpoint-glyph breakpoint-glyph-conditional breakpoint-glyph-verified",
-        glyphMarginHoverMessage: { value: "Breakpoint — Condition: count > 3" },
-      },
-    });
-
-    expect(
-      toBreakpointDecoration(monaco, {
-        condition: "ready",
-        enabled: true,
-        filePath: "/workspace/app.ts",
-        hitCondition: { count: 5, kind: "greaterOrEqual" },
-        id: "composed",
-        lineNumber: 15,
-      }),
-    ).toMatchObject({
-      options: {
-        glyphMarginClassName: expect.stringContaining("breakpoint-glyph-conditional"),
-        glyphMarginHoverMessage: {
-          value: "Breakpoint — Condition: ready; Hit count: >=5",
-        },
-      },
-    });
-
-    expect(
-      toBreakpointDecoration(monaco, {
-        condition: "ready",
-        enabled: true,
-        filePath: "/workspace/app.ts",
-        hitCondition: { count: 3, kind: "multiple" },
-        id: "logpoint",
-        lineNumber: 16,
-        logMessage: "value={value}",
-      }),
-    ).toMatchObject({
-      options: {
-        glyphMarginClassName: expect.stringContaining("breakpoint-glyph-logpoint"),
-        glyphMarginHoverMessage: {
-          value: "Logpoint — Log message: value={value}; Condition: ready; Hit count: %3",
-        },
-      },
-    });
-
-    expect(
-      toBreakpointDecoration(monaco, {
-        columnNumber: 7,
-        condition: "ready",
-        enabled: false,
-        filePath: "/workspace/app.ts",
-        hitCondition: { count: 2, kind: "greaterOrEqual" },
-        id: "inline-conditional",
-        lineNumber: 18,
-        verified: false,
-      }),
-    ).toMatchObject({
-      options: {
-        after: {
-          content: "●",
-          inlineClassName: expect.stringMatching(
-            /inline-breakpoint-marker-conditional.*breakpoint-glyph-disabled/,
-          ),
-        },
-        hoverMessage: {
-          value: "Breakpoint — Condition: ready; Hit count: >=2",
-        },
-      },
-      range: new FakeRange(18, 7, 18, 7),
-    });
-
-    expect(
-      toBreakpointDecoration(monaco, {
-        columnNumber: 11,
-        enabled: true,
-        filePath: "/workspace/app.ts",
-        id: "inline-logpoint",
-        lineNumber: 18,
-        logMessage: "value={value}",
-      }),
-    ).toMatchObject({
-      options: {
-        after: {
-          inlineClassName: expect.stringContaining("inline-breakpoint-marker-logpoint"),
-        },
-        hoverMessage: { value: "Logpoint — Log message: value={value}" },
-      },
-      range: new FakeRange(18, 11, 18, 11),
-    });
   });
 
-  it("draws change hunks as a line-decorations bar, leaving the glyph margin to breakpoints", () => {
+  it("draws change hunks as a line-decorations bar, leaving the glyph margin free", () => {
     const decoration = toEditorChangeDecoration(monaco, hunks[0]);
 
     expect(decoration.options.glyphMarginClassName).toBeUndefined();

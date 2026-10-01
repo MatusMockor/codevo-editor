@@ -109,10 +109,7 @@ impl ProcessTreeTerminator {
         wait_for_child(child, self.force_timeout);
     }
 
-    /// Returns the process group claimed by the terminal child without probing
-    /// the operating system. Callers must perform any live-process validation
-    /// after releasing the terminal session registry lock.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn process_group_id(&self) -> Option<i32> {
         self.process_group_id
     }
