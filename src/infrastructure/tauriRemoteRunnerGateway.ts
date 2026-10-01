@@ -6,6 +6,9 @@ import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
 import { watchRemoteRunnerInventory } from "./watchRemoteRunnerInventory";
 import { validateRemoteHistorySearchPage } from "../domain/remoteRunnerHistorySearch";
 
+const INVALID_INPUT_MESSAGE =
+  "The server runner rejected this request as invalid (HTTP 400). If it is older than this editor, update the runner on the server.";
+
 export type InvokeRemoteRunnerCommand = (
   command: string,
   args?: Readonly<{ request: unknown; onEvent?: Channel<unknown> }>,
@@ -78,7 +81,10 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
     } catch (error) {
       const message =
         typeof error === "string" ? error : error instanceof Error ? error.message : "";
-      if (/^Runner request failed \(HTTP (400|404|409|413|422)\)\.$/.test(message))
+      if (
+        message === INVALID_INPUT_MESSAGE ||
+        /^Runner request failed \(HTTP (400|404|409|413|422)\)\.$/.test(message)
+      )
         throw new RemoteRunnerRequestRejectedError(message);
       throw error;
     }

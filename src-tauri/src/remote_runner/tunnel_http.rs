@@ -116,6 +116,24 @@ async fn execute(
     }
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        if status == 400 {
+            let fallback = "Runner request failed (HTTP 400).";
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| fallback)? {
+                if chunk.len() > 1024_usize.saturating_sub(body.len()) {
+                    return Err(fallback.into());
+                }
+                body.extend_from_slice(&chunk);
+            }
+            if serde_json::from_slice::<Value>(&body)
+                .ok()
+                .is_some_and(|value| {
+                    value.get("error").and_then(Value::as_str) == Some("invalid_input")
+                })
+            {
+                return Err("The server runner rejected this request as invalid (HTTP 400). If it is older than this editor, update the runner on the server.".into());
+            }
+        }
         if status == 409 && prepared.path.ends_with("/steer") {
             let mut body = Vec::new();
             while let Some(chunk) = response
@@ -311,7 +329,7 @@ mod tests {
 
     #[cfg(unix)]
     fn test_server(
-        responses: Vec<(u16, &'static str)>,
+        responses: Vec<(u16, &str)>,
     ) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
         test_server_with_media(
             responses
@@ -322,7 +340,7 @@ mod tests {
     }
     #[cfg(unix)]
     fn test_server_with_media(
-        responses: Vec<(u16, &'static str, &'static str)>,
+        responses: Vec<(u16, &str, &str)>,
     ) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
         use std::os::unix::net::UnixListener;
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -334,6 +352,10 @@ mod tests {
         ));
         let listener = UnixListener::bind(&path).unwrap();
         let saved = path.clone();
+        let responses: Vec<_> = responses
+            .into_iter()
+            .map(|(status, media, body)| (status, media.to_owned(), body.to_owned()))
+            .collect();
         let thread = std::thread::spawn(move || {
             let mut requests = Vec::new();
             for (status, media, body) in responses {
@@ -430,6 +452,63 @@ mod tests {
         });
         assert_eq!(result.unwrap_err(), "Runner request failed (HTTP 409).");
         server.join().unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn invalid_input_has_a_bounded_fixed_message_only_for_bad_requests() {
+        let mapped = "The server runner rejected this request as invalid (HTTP 400). If it is older than this editor, update the runner on the server.";
+        let oversized = format!(
+            "{{\"error\":\"invalid_input\",\"padding\":\"{}\"}}",
+            "x".repeat(1024)
+        );
+        let boundary = format!("{{\"error\":\"invalid_input\"}}{}", " ".repeat(999));
+        assert_eq!(boundary.len(), 1024);
+        for (status, body, expected) in [
+            (400, "{\"error\":\"invalid_input\"}", mapped),
+            (400, boundary.as_str(), mapped),
+            (
+                400,
+                "{\"error\":\"other\"}",
+                "Runner request failed (HTTP 400).",
+            ),
+            (400, "{}", "Runner request failed (HTTP 400)."),
+            (400, "{\"error\":", "Runner request failed (HTTP 400)."),
+            (400, oversized.as_str(), "Runner request failed (HTTP 400)."),
+            (
+                401,
+                "{\"error\":\"invalid_input\"}",
+                "Runner request failed (HTTP 401).",
+            ),
+            (
+                404,
+                "{\"error\":\"invalid_input\"}",
+                "Runner request failed (HTTP 404).",
+            ),
+            (
+                409,
+                "{\"error\":\"invalid_input\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+        ] {
+            let (path, server) = test_server(vec![(status, body)]);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(path)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare("POST", "/v1/tasks", None, vec![]).unwrap(),
+                    4096,
+                )
+                .await
+            });
+            assert_eq!(result.unwrap_err(), expected);
+            server.join().unwrap();
+        }
     }
     #[cfg(unix)]
     #[test]

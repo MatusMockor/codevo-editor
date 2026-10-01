@@ -439,6 +439,8 @@ describe("remote conversation continuation boundary", () => {
 });
 
 describe("continuation rejection certainty", () => {
+  const invalidInputMessage =
+    "The server runner rejected this request as invalid (HTTP 400). If it is older than this editor, update the runner on the server.";
   const request = {
     serverId: "linux",
     taskId: id,
@@ -455,11 +457,24 @@ describe("continuation rejection certainty", () => {
       expect(isRemoteRunnerRequestRejectedError(error)).toBe(true);
     },
   );
+  it.each([invalidInputMessage, new Error(invalidInputMessage)])(
+    "classifies the mapped invalid input rejection %s",
+    async (failure) => {
+      const gateway = new TauriRemoteRunnerGateway(vi.fn().mockRejectedValue(failure));
+      const error = await gateway.continueTask(request).catch((error) => error);
+      expect(isRemoteRunnerRequestRejectedError(error)).toBe(true);
+      expect(error.message).toBe(invalidInputMessage);
+    },
+  );
   it.each([
     "Runner request failed (HTTP 500).",
     "Runner request failed (HTTP 408).",
     "Connection lost",
     "prefix Runner request failed (HTTP 409).",
+    "Runner request failed (HTTP 409). suffix",
+    `prefix ${invalidInputMessage}`,
+    `${invalidInputMessage} suffix`,
+    `${invalidInputMessage}\n`,
   ])("retains uncertainty for %s", async (failure) => {
     const gateway = new TauriRemoteRunnerGateway(vi.fn().mockRejectedValue(failure));
     expect(await gateway.continueTask(request).catch((error) => error)).toBe(failure);
