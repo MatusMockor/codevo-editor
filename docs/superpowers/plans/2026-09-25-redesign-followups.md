@@ -132,3 +132,10 @@ Items that were reviewed and knowingly deferred. Handle in P10 or a dedicated sl
 - Notifications start once the agent workspace has mounted (the agent surface is lazy). In production the agent layout is always active, so this only matters if that changes.
 - A remote thread that briefly drops out of the runner inventory keeps its last known state and its toast (bounded by the 1,024-thread cap). If you press Open while it is missing, Codevo says it is no longer available, even if it comes back after reconnecting.
 - Approval and input requests are polled for at most 8 running local threads. A thread outside that set keeps its last known state until it is polled again, so a new request there is reported late. Remote threads report only finished and failed turns.
+
+## Found in beta.79 QA (2026-10-01)
+- Sidebar: the collapsed "Saved conversations" header has no clear expand indicator and the regular thread list under it has no heading of its own, so it is unclear which section a row belongs to (P2).
+- Console shows `NotAllowedError: The request is not allowed by the user agent...` four times from a shared vendor chunk (LocalHistoryPanel / FileHistoryPanel group); source not identified, not from the notification gateway (P3).
+- QA build window title still reads "Codevo Editor" (P3, QA-only).
+- In-memory turn retention protects only user messages; long live sessions can drop main replies from memory before a save (the turn log restores them after relaunch). Protect main replies in `agentTurnEventRetention.ts` (P2).
+- Agent file tree: the backend reports a poisoned read-admission lock with the same `WORKSPACE_DIRECTORY_BUSY` code, so it is retried as busy (P3).
