@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.78] - 2026-10-01
+
+### Fixed
+
+- Screenshots and other image attachments are scaled down before sending, so long
+  threads with many images no longer fail with "an image in the conversation could not
+  be processed".
+
 ## [0.2.0-beta.77] - 2026-09-30
 
 ### Added
