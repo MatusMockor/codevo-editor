@@ -10,12 +10,36 @@ export function headTailOmissionMarker(omittedBytes: number): string {
   return `\n${ELLIPSIS} ${omittedBytes} bytes omitted ${ELLIPSIS}\n`;
 }
 
+const ELIDED_PATTERN = /(?:\n|\\n)… (\d{1,15}) bytes omitted …(?:\n|\\n)/gu;
+
+interface Elision {
+  readonly start: number;
+  readonly end: number;
+  readonly omittedBytes: number;
+}
+
+type ElisionFinder = (text: string) => ReadonlyArray<Elision>;
+
 export function clipHeadTail(text: string, maxBytes: number): BoundedUtf8Text {
+  return clipAccountingFor(text, maxBytes, () => []);
+}
+
+export function clipHeadTailCountingElisions(text: string, maxBytes: number): BoundedUtf8Text {
+  return clipAccountingFor(text, maxBytes, elisions);
+}
+
+function clipAccountingFor(
+  text: string,
+  maxBytes: number,
+  findElisions: ElisionFinder,
+): BoundedUtf8Text {
   const safe = text.includes("\0") ? text.split("\0").join("") : text;
   const nulStripped = safe.length !== text.length;
   const totalBytes = utf8ByteLength(safe);
   if (totalBytes <= maxBytes) return { text: safe, clipped: nulStripped };
-  const reserved = utf8ByteLength(headTailOmissionMarker(totalBytes));
+  const found = findElisions(safe);
+  const elided = found.reduce((sum, elision) => sum + hiddenBytes(elision, 0, totalBytes), 0);
+  const reserved = utf8ByteLength(headTailOmissionMarker(totalBytes + elided));
   if (reserved >= maxBytes) return { text: boundUtf8Text(safe, maxBytes).text, clipped: true };
   const bytes = UTF8_ENCODER.encode(safe);
   const available = maxBytes - reserved;
@@ -23,10 +47,34 @@ export function clipHeadTail(text: string, maxBytes: number): BoundedUtf8Text {
   const tailStart = ceilBoundary(bytes, bytes.length - (available - headEnd));
   const head = UTF8_DECODER.decode(bytes.subarray(0, headEnd));
   const tail = UTF8_DECODER.decode(bytes.subarray(tailStart));
+  const omitted = found.reduce(
+    (sum, elision) => sum + hiddenBytes(elision, headEnd, tailStart),
+    tailStart - headEnd,
+  );
   return {
-    text: `${head}${headTailOmissionMarker(tailStart - headEnd)}${tail}`,
+    text: `${head}${headTailOmissionMarker(omitted)}${tail}`,
     clipped: true,
   };
+}
+
+function elisions(text: string): ReadonlyArray<Elision> {
+  const found: Elision[] = [];
+  let cursor = 0;
+  let offset = 0;
+  for (const match of text.matchAll(ELIDED_PATTERN)) {
+    offset += utf8ByteLength(text.slice(cursor, match.index));
+    const markerBytes = utf8ByteLength(match[0]);
+    found.push({ start: offset, end: offset + markerBytes, omittedBytes: Number(match[1]) });
+    offset += markerBytes;
+    cursor = match.index + match[0].length;
+  }
+  return found;
+}
+
+function hiddenBytes(elision: Elision, start: number, end: number): number {
+  const overlap = Math.min(elision.end, end) - Math.max(elision.start, start);
+  if (overlap <= 0) return 0;
+  return elision.omittedBytes - overlap;
 }
 
 function isContinuation(byte: number | undefined): boolean {

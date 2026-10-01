@@ -10,6 +10,8 @@ use crate::effective_executable_environment::EffectiveExecutablePath;
 
 #[path = "agent_provider.rs"]
 pub mod agent_provider;
+#[path = "claude_background_line.rs"]
+mod claude_background_line;
 #[path = "claude_session_policy.rs"]
 pub mod claude_session_policy;
 #[path = "claude_session_registry.rs"]

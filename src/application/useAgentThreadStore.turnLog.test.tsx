@@ -760,6 +760,58 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     harness.unmount();
   });
 
+  it("logs a background reply cut short by the next message as sealed without a loss", async () => {
+    const harness = renderStore();
+    await settle();
+    const settled = turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 20 });
+    act(() =>
+      harness
+        .hook()
+        .dispatchAction({ kind: "threadCreated", thread: thread({ turns: [settled] }) }),
+    );
+    await settle();
+    const background = agentBackgroundTurn(
+      "agt-bg-0001",
+      parseAgentBackgroundTurn({
+        output: `${JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: { content: [{ type: "text", text: "background-started" }] },
+        })}\n`,
+        truncated: false,
+        complete: false,
+      }),
+      60,
+    );
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "backgroundTurnRecorded",
+        threadId: THREAD_ID,
+        workspaceId: OWNER_ID,
+        turn: background,
+      }),
+    );
+    await settle();
+    await settle();
+
+    expect(harness.seams).toEqual([
+      "openTurn:agt-bg-0001",
+      "recordEvents:agt-bg-0001:1",
+      "sealTurn:agt-bg-0001",
+    ]);
+    const sealed = lastAppend(harness.logGateway.appends);
+    expect(sealed?.seal).toBe(true);
+    expect(sealed?.loss).toEqual({ kind: "none" });
+    expect(sealed?.ops.map((entry) => entry.event)).toEqual([say("background-started")]);
+    const saved = harness.saved[harness.saved.length - 1]?.thread;
+    expect(saved?.turns[1]).toMatchObject({
+      origin: "background",
+      status: { kind: "interrupted" },
+      eventsTruncated: false,
+    });
+    harness.unmount();
+  });
+
   it("logs and seals a background turn recorded during a running turn and keeps the running log open", async () => {
     const harness = renderStore();
     await settle();

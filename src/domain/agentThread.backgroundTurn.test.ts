@@ -258,14 +258,14 @@ describe("agentThreadsReducer backgroundTurnRecorded", () => {
     expect(saved === undefined ? null : runningTurn(saved)?.turnId).toBe("agt-2-live");
   });
 
-  it("keeps the truncation marker of an incomplete background turn", () => {
+  it("records an incomplete background turn as interrupted without a truncation marker", () => {
     const next = agentThreadsReducer(
       stateOf(thread()),
       recorded(backgroundTurn("agt-bg-0002", { truncated: false, complete: false })),
     );
     const saved = next.threads.get(THREAD_ID)?.turns[1];
 
-    expect(saved?.eventsTruncated).toBe(true);
+    expect(saved?.eventsTruncated).toBe(false);
     expect(saved?.status).toEqual({ kind: "interrupted" });
   });
 

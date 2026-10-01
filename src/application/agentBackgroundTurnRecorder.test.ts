@@ -153,7 +153,7 @@ describe("recordAgentBackgroundTurn", () => {
     expect(turns[turns.length - 1]?.turnId).toBe(LEAD_TURN_ID);
     expect(runningTurn(scene.thread())?.turnId).toBe(LEAD_TURN_ID);
     expect(turns[INCOMPLETE_INDEX]?.status).toEqual({ kind: "interrupted" });
-    expect(turns[INCOMPLETE_INDEX]?.eventsTruncated).toBe(true);
+    expect(turns[INCOMPLETE_INDEX]?.eventsTruncated).toBe(false);
     expect(turns[TRUNCATED_INDEX]?.eventsTruncated).toBe(true);
     expect(turns[TRUNCATED_INDEX]?.streamMetrics?.complete).toBe(false);
 

@@ -40,7 +40,7 @@ export function parseAgentBackgroundTurn(
   const complete = source.complete && !source.truncated;
   return {
     events: merged.events,
-    eventsTruncated: merged.truncated || !complete,
+    eventsTruncated: merged.truncated || source.truncated,
     receivedUtf8Bytes: UTF8_ENCODER.encode(source.output).byteLength,
     ended: source.complete,
     complete,

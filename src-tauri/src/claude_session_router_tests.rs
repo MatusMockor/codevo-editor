@@ -1123,3 +1123,6 @@ mod resume;
 
 #[path = "claude_session_router_task_stop_tests.rs"]
 mod task_stop;
+
+#[path = "claude_session_router_compaction_tests.rs"]
+mod compaction;

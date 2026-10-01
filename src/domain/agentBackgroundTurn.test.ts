@@ -72,15 +72,28 @@ describe("parseAgentBackgroundTurn", () => {
     );
   });
 
-  it("marks truncated or incomplete output as truncated and never complete", () => {
-    for (const flags of [
-      { truncated: true, complete: true },
-      { truncated: false, complete: false },
-    ]) {
-      const content = parseAgentBackgroundTurn({ output: reply("partial"), ...flags });
-      expect(content.eventsTruncated).toBe(true);
-      expect(content.complete).toBe(false);
-    }
+  it("marks output the supervisor dropped as truncated and never complete", () => {
+    const content = parseAgentBackgroundTurn({
+      output: reply("partial"),
+      truncated: true,
+      complete: true,
+    });
+
+    expect(content.eventsTruncated).toBe(true);
+    expect(content.complete).toBe(false);
+  });
+
+  it("keeps every received event of a reply that ended early without a truncation marker", () => {
+    const content = parseAgentBackgroundTurn({
+      output: reply("cut short"),
+      truncated: false,
+      complete: false,
+    });
+
+    expect(content.eventsTruncated).toBe(false);
+    expect(content.complete).toBe(false);
+    expect(content.ended).toBe(false);
+    expect(content.events).toContainEqual({ kind: "assistantText", text: "cut short" });
   });
 });
 
@@ -141,7 +154,7 @@ describe("agentBackgroundTurn", () => {
     expect(labelOf("not json\n")).toBe(AGENT_UNPROMPTED_TURN_LABEL);
   });
 
-  it("records an incomplete turn as interrupted with the truncation marker", () => {
+  it("records an incomplete turn as interrupted without claiming lost activity", () => {
     const content = parseAgentBackgroundTurn({
       output: reply("cut"),
       truncated: false,
@@ -150,7 +163,7 @@ describe("agentBackgroundTurn", () => {
     const turn = agentBackgroundTurn("agt-bg-0002", content, NOW);
 
     expect(turn.status).toEqual({ kind: "interrupted" });
-    expect(turn.eventsTruncated).toBe(true);
+    expect(turn.eventsTruncated).toBe(false);
     expect(turn.streamMetrics?.complete).toBe(false);
   });
 

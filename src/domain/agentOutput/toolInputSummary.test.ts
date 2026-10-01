@@ -135,4 +135,47 @@ describe("summarizeToolOutput", () => {
     expect(summary.endsWith("FAIL src/a.test.ts")).toBe(true);
     expect(summary).toMatch(/\n… \d+ bytes omitted …\n/u);
   });
+
+  it("counts the bytes the supervisor already elided so a compacted output reads like the original", () => {
+    const original = `start\n${"noise line\n".repeat(4_000)}FAIL src/a.test.ts`;
+    const compacted = supervisorCompacted(original);
+    const image = [{ type: "image", source: { type: "base64", data: "iVBOR".repeat(40_000) } }];
+    const compactedImage = [
+      {
+        type: "image",
+        source: { type: "base64", data: supervisorCompacted(image[0].source.data) },
+      },
+    ];
+
+    expect(utf8ByteLength(compacted)).toBeLessThan(utf8ByteLength(original) / 10);
+    expect(summarizeToolOutput(compacted)).toBe(summarizeToolOutput(original));
+    expect(summarizeToolOutput([{ type: "text", text: compacted }])).toBe(
+      summarizeToolOutput([{ type: "text", text: original }]),
+    );
+    expect(summarizeToolOutput(compactedImage)).toBe(summarizeToolOutput(image));
+    expect(summarizeToolOutput(compacted)).toContain(
+      `… ${utf8ByteLength(original) - utf8ByteLength(summarizeToolOutput(original)) + omissionMarkerBytes(summarizeToolOutput(original))} bytes omitted …`,
+    );
+  });
+
+  it("keeps a short output that mentions an omission verbatim", () => {
+    const short = "kept\n… 900000 bytes omitted …\nkept";
+
+    expect(summarizeToolOutput(short)).toBe(short);
+  });
 });
+
+const SUPERVISOR_EDGE_BYTES = 512;
+
+function supervisorCompacted(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  const decoder = new TextDecoder();
+  const head = decoder.decode(bytes.subarray(0, SUPERVISOR_EDGE_BYTES));
+  const tail = decoder.decode(bytes.subarray(bytes.length - SUPERVISOR_EDGE_BYTES));
+  return `${head}\n… ${bytes.length - 2 * SUPERVISOR_EDGE_BYTES} bytes omitted …\n${tail}`;
+}
+
+function omissionMarkerBytes(summary: string): number {
+  const marker = /\n… \d+ bytes omitted …\n/u.exec(summary)?.[0] ?? "";
+  return utf8ByteLength(marker);
+}

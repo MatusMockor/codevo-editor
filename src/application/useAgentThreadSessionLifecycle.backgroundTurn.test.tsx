@@ -322,7 +322,7 @@ describe("useAgentThreadSessionLifecycle background turns", () => {
     ]);
   });
 
-  it("records truncated or incomplete output with the truncation marker", async () => {
+  it("marks only dropped output as truncated and an early end as interrupted", async () => {
     const { fake, emit } = gateway();
     const harness = render(thread(), fake);
     harness.scenario.mintedIds.push("agt-bg-0002");
@@ -334,7 +334,7 @@ describe("useAgentThreadSessionLifecycle background turns", () => {
     const [truncated, incomplete] = harness.scenario.current?.turns.slice(1) ?? [];
     expect(truncated?.eventsTruncated).toBe(true);
     expect(truncated?.streamMetrics?.complete).toBe(false);
-    expect(incomplete?.eventsTruncated).toBe(true);
+    expect(incomplete?.eventsTruncated).toBe(false);
     expect(incomplete?.status).toEqual({ kind: "interrupted" });
   });
 

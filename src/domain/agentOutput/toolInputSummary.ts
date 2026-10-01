@@ -1,5 +1,5 @@
 import { MAX_AGENT_TOOL_SUMMARY_BYTES } from "../agentThread";
-import { clipHeadTail } from "./clipHeadTail";
+import { clipHeadTailCountingElisions } from "./clipHeadTail";
 import { boundUtf8Text, utf8ByteLength } from "./utf8Text";
 
 const ELLIPSIS = "…";
@@ -44,7 +44,7 @@ export function summarizeToolInput(name: string, input: unknown): string {
 }
 
 export function summarizeToolOutput(content: unknown): string {
-  return clipHeadTail(toolOutputText(content), MAX_AGENT_TOOL_SUMMARY_BYTES).text;
+  return clipHeadTailCountingElisions(toolOutputText(content), MAX_AGENT_TOOL_SUMMARY_BYTES).text;
 }
 
 function fieldSummary(name: string, input: unknown): string | null {

@@ -1,4 +1,5 @@
 use super::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
+use super::claude_background_line::compact_background_frame;
 use super::claude_session_task_stop::{PendingTaskStops, TaskStopReply};
 use crate::agent_task_supervisor::agent_task_result_detector::{
     failed_result, lifecycle_candidate, ResultLineDetector, ResultSettlePolicy,
@@ -310,10 +311,12 @@ impl ClaudeSessionRouter {
         let mut step = RouterStep::default();
         let partial = std::mem::take(&mut self.line);
         let mode = std::mem::replace(&mut self.mode, LineMode::Buffering);
+        let dangling = !partial.is_empty();
         if mode == LineMode::Buffering && self.owned() {
             step.turn_output = partial;
         }
-        if let Some(active) = self.unsolicited.take() {
+        if let Some(mut active) = self.unsolicited.take() {
+            active.truncated |= dangling;
             step.background_turns.push(active.finish(false));
         }
         step
@@ -401,6 +404,12 @@ impl ClaudeSessionRouter {
         };
         let closing = root_result(&message);
         let ends_unsolicited = destination == Destination::Unsolicited && closing;
+        let line = match destination {
+            Destination::Unsolicited => {
+                compact_background_frame(&message, line.len()).unwrap_or(line)
+            }
+            _ => line,
+        };
         let (line, process_total) = self.normalize_cost(destination, message, line);
         let accepted = self.deliver(destination, line, closing, step);
         if let (true, Some(total)) = (accepted, process_total) {
