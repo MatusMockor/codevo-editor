@@ -24,8 +24,16 @@
 }
 
 .cv-changes-row:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+  background: var(--cv-tint-2);
+}
+
+.cv-changes-row:focus-visible > .cv-changes-row__count {
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .cv-changes-row__count {
@@ -154,8 +162,17 @@
 
 .cv-changes__toggle:focus-visible,
 .cv-changes__file:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+  color: var(--cv-fg-strong);
+}
+
+.cv-changes__toggle:focus-visible,
+.cv-changes__file:focus-visible > .cv-changes__path {
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .cv-changes__path {

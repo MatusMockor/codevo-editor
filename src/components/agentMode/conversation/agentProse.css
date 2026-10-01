@@ -366,6 +366,17 @@
   color: var(--cv-fg-strong);
 }
 
+.agent-raw__toggle:focus-visible,
+.agent-compaction-event__label:focus-visible {
+  outline: none;
+  box-shadow: none;
+  color: var(--cv-fg-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 .agent-raw__lines {
   max-height: 320px;
   margin: var(--cv-space-2) 0 0;

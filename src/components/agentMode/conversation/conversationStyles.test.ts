@@ -278,6 +278,58 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(COMPOSER, ".cv-composer__controls", "min-width")).toBe("0");
   });
 
+  it.each([
+    [WORK_ROWS, ".cv-work-row:focus-visible"],
+    [CHANGES, ".cv-changes-row:focus-visible"],
+    [CHANGES, ".cv-changes__toggle:focus-visible"],
+    [CHANGES, ".cv-changes__file:focus-visible"],
+    [PROSE, ".agent-raw__toggle:focus-visible"],
+    [PROSE, ".agent-compaction-event__label:focus-visible"],
+  ])("never paints an accent box for keyboard focus on %s %s", (sheet, selector) => {
+    expect(declaredValue(sheet, selector, "outline")).toBe("none");
+    expect(declaredValue(sheet, selector, "box-shadow")).toBe("none");
+  });
+
+  it.each([
+    [WORK_ROWS, ".cv-work-row:focus-visible > .cv-work-row__icon + *"],
+    [WORK_ROWS, ".agent-work__summary:focus-visible > .agent-work__title"],
+    [CHANGES, ".cv-changes-row:focus-visible > .cv-changes-row__count"],
+    [CHANGES, ".cv-changes__toggle:focus-visible"],
+    [CHANGES, ".cv-changes__file:focus-visible > .cv-changes__path"],
+    [PROSE, ".agent-raw__toggle:focus-visible"],
+    [PROSE, ".agent-compaction-event__label:focus-visible"],
+  ])("underlines only the title for keyboard focus on %s %s", (sheet, selector) => {
+    expect(declaredValue(sheet, selector, "text-decoration")).toBe("underline");
+    expect(declaredValue(sheet, selector, "text-decoration-color")).toBe("var(--cv-focus)");
+    expect(declaredValue(sheet, selector, "text-decoration-thickness")).toBe("2px");
+  });
+
+  it("keeps hover distinct from keyboard focus by never underlining on hover", () => {
+    expect(declaredValue(WORK_ROWS, ".cv-work-row:hover", "text-decoration")).toBeUndefined();
+    expect(
+      declaredValue(WORK_ROWS, ".cv-work-row:focus-visible", "text-decoration"),
+    ).toBeUndefined();
+  });
+
+  it("keeps the work summary hairline while the summary has keyboard focus", () => {
+    expect(declaredValue(WORK_ROWS, ".agent-work__summary:focus-visible", "box-shadow")).toBe(
+      "var(--cv-edge-bottom-hair)",
+    );
+  });
+
+  it("never paints an accent box when a transcript row is hovered", () => {
+    const offenders = parsed.rules
+      .filter((rule) => [WORK_ROWS, CHANGES, PROSE].includes(rule.sheet))
+      .filter((rule) => selectorParts(rule.selector).some((part) => part.endsWith(":hover")))
+      .flatMap((rule) =>
+        rule.declarations
+          .filter((declaration) => /^(outline|box-shadow|border)/.test(declaration.property))
+          .map((declaration) => `${rule.selector} ${declaration.property}`),
+      );
+
+    expect(offenders).toEqual([]);
+  });
+
   it("shows turn metadata only on hover or focus", () => {
     expect(declaredValue(CONVERSATION, ".cv-turn-meta", "opacity")).toBe("0");
     expect(declaredValue(CONVERSATION, ".cv-turn-meta", "height")).toBe("20px");

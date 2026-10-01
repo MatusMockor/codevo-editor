@@ -88,13 +88,24 @@ describe("agent subagent styles", () => {
     );
   });
 
-  it("shows keyboard focus with the shared focus ring", () => {
+  it("shows keyboard focus as a 2px accent underline on the title instead of a ring", () => {
     for (const selector of [
       ".cv-spawn__head:focus-visible",
       ".cv-spawn-member__head:focus-visible",
       ".cv-spawn__open:focus-visible",
     ]) {
-      expect(declaration(selector, "box-shadow"), selector).toBe("var(--cv-ring-focus)");
+      expect(declaration(selector, "box-shadow"), selector).toBe("none");
+      expect(declaration(selector, "outline"), selector).toBe("none");
     }
+    for (const selector of [
+      ".cv-spawn__head:focus-visible > .cv-spawn__lead",
+      ".cv-spawn-member__head:focus-visible > .cv-spawn-member__title",
+      ".cv-spawn__open:focus-visible",
+    ]) {
+      expect(declaration(selector, "text-decoration"), selector).toBe("underline");
+      expect(declaration(selector, "text-decoration-color"), selector).toBe("var(--cv-focus)");
+      expect(declaration(selector, "text-decoration-thickness"), selector).toBe("2px");
+    }
+    expect(declaration(".cv-spawn__head:hover", "text-decoration")).toBeUndefined();
   });
 });

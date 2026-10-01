@@ -1,5 +1,6 @@
 import { Minimize2 } from "lucide-react";
 import type { AgentTurnItem } from "./agentModePresentation";
+import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 
 export function AgentCompactionActivity() {
   return (
@@ -33,7 +34,10 @@ export function AgentCompactionBoundary({
         </span>
       ) : (
         <details className="agent-compaction-event__details">
-          <summary className="agent-compaction-event__label">
+          <summary
+            className="agent-compaction-event__label"
+            onMouseDown={releaseFocusAfterPointerPress}
+          >
             <Minimize2 size={14} aria-hidden="true" />
             Conversation compacted
           </summary>

@@ -196,6 +196,72 @@ describe("remote grouped activity", () => {
     expect(failed?.textContent).toContain("check-2");
     expect(failed?.closest(".agent-activity-group")).toBe(group?.closest(".agent-activity-group"));
   });
+  it("hands focus from a pressed work summary to the transcript while it still toggles", () => {
+    const events = remote("codex", [
+      {
+        type: "item.completed",
+        item: {
+          id: "c-sleep",
+          type: "command_execution",
+          command: "sleep 20",
+          aggregated_output: "",
+          exit_code: 0,
+          status: "completed",
+        },
+      },
+      {
+        type: "item.completed",
+        item: { id: "answer", type: "agent_message", text: "DONE" },
+      },
+    ]);
+    render(events, { kind: "exited", exitCode: 0 }, "Sleep", "codex");
+    const details = host.querySelector<HTMLDetailsElement>("details.agent-work");
+    const summary = details?.querySelector<HTMLElement>(".agent-work__summary");
+    expect(summary).not.toBeNull();
+    const wasOpen = details?.open;
+    const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+
+    act(() => {
+      summary?.dispatchEvent(press);
+      summary?.focus();
+      summary?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      summary?.click();
+    });
+
+    expect(press.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(host.querySelector(".agent-session__scroll"));
+    expect(details?.open).toBe(!wasOpen);
+  });
+
+  it("leaves keyboard focus on the work summary", () => {
+    const events = remote("codex", [
+      {
+        type: "item.completed",
+        item: {
+          id: "c-ls",
+          type: "command_execution",
+          command: "ls",
+          aggregated_output: "",
+          exit_code: 0,
+          status: "completed",
+        },
+      },
+      {
+        type: "item.completed",
+        item: { id: "answer", type: "agent_message", text: "DONE" },
+      },
+    ]);
+    render(events, { kind: "exited", exitCode: 0 }, "List", "codex");
+    const summary = host.querySelector<HTMLElement>(".agent-work__summary");
+    expect(summary).not.toBeNull();
+
+    act(() => {
+      summary?.focus();
+      summary?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    });
+
+    expect(document.activeElement).toBe(summary);
+  });
   function renderMcpCalls(status: string | undefined): void {
     const events = remote(
       "codex",

@@ -38,6 +38,7 @@ import { AgentTurnOriginLabel, AgentTurnPrompt } from "./AgentTurnParts";
 import { AgentTurnMeta } from "./conversation/AgentTurnMeta";
 import { AgentLiveRow } from "./conversation/AgentLiveRow";
 import { AgentTurnWork } from "./conversation/AgentTurnWork";
+import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 import {
   AgentTurnEarlierControl,
   AgentTurnLaterControl,
@@ -539,7 +540,9 @@ function AgentTurnLogNotices({
 function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine> }) {
   return (
     <details className="agent-raw" open>
-      <summary className="agent-raw__toggle">Raw output</summary>
+      <summary className="agent-raw__toggle" onMouseDown={releaseFocusAfterPointerPress}>
+        Raw output
+      </summary>
       <pre className="agent-raw__lines">{lines.map((line) => line.raw).join("\n")}</pre>
     </details>
   );

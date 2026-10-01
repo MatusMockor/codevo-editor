@@ -23,8 +23,17 @@
 }
 
 .cv-work-row:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+  color: var(--cv-fg-strong);
+}
+
+.cv-work-row:focus-visible > .cv-work-row__icon + *,
+.agent-work__summary:focus-visible > .agent-work__title {
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .cv-work-row__icon {
@@ -177,6 +186,10 @@
   border-radius: 0;
   box-shadow: var(--cv-edge-bottom-hair);
   list-style: none;
+}
+
+.agent-work__summary:focus-visible {
+  box-shadow: var(--cv-edge-bottom-hair);
 }
 
 .agent-work__summary::-webkit-details-marker {

@@ -53,8 +53,18 @@
 .cv-spawn__head:focus-visible,
 .cv-spawn-member__head:focus-visible,
 .cv-spawn__open:focus-visible {
-  box-shadow: var(--cv-ring-focus);
+  box-shadow: none;
   outline: none;
+  color: var(--cv-fg-strong);
+}
+
+.cv-spawn__head:focus-visible > .cv-spawn__lead,
+.cv-spawn-member__head:focus-visible > .cv-spawn-member__title,
+.cv-spawn__open:focus-visible {
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .cv-spawn__icon {

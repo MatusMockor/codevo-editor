@@ -6,6 +6,7 @@ import { AgentActivityItems } from "../AgentActivityItems";
 import type { AgentProseContext, AgentProseStream } from "../AgentAssistantText";
 import type { AgentTurnAttachmentImageViewer } from "../AgentTurnAttachments";
 import { AgentTurnItemView } from "../AgentTurnItemView";
+import { releaseFocusAfterPointerPress } from "./releasePointerFocus";
 import { AgentWorkingDuration } from "../agentClock";
 import type { AgentTurnErrorContext } from "../agentTurnErrorPresentation";
 import { itemHighlight, type AgentTurnHighlight } from "../agentTurnHighlightModel";
@@ -54,7 +55,10 @@ export function AgentTurnWork({
   const eventOffset = normalizeAgentTurnEventOffset(turn.firstEventOffset);
   return (
     <details className="agent-work" open={autoOpen || undefined}>
-      <summary className="agent-work__summary cv-work-row">
+      <summary
+        className="agent-work__summary cv-work-row"
+        onMouseDown={releaseFocusAfterPointerPress}
+      >
         <span className="agent-work__title cv-work-row__label">
           <AgentTurnWorkTitle
             backgroundTitle={backgroundTitle}

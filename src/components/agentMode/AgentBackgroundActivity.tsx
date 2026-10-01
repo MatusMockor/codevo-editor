@@ -2,6 +2,7 @@ import { Activity, Radar } from "lucide-react";
 import { memo } from "react";
 import type { AgentBackgroundIndicator } from "./agentBackgroundIndicatorPresentation";
 import { AgentLiveRow } from "./conversation/AgentLiveRow";
+import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 
 export const AgentBackgroundActivity = memo(function AgentBackgroundActivity({
   indicator,
@@ -24,7 +25,7 @@ export const AgentBackgroundActivity = memo(function AgentBackgroundActivity({
   const Icon = indicator.monitoring ? Radar : Activity;
   return (
     <details className="agent-background-activity cv-work-disclosure">
-      <summary className="cv-work-row">
+      <summary className="cv-work-row" onMouseDown={releaseFocusAfterPointerPress}>
         <span aria-hidden="true" className="cv-work-row__icon">
           <Icon size={14} aria-hidden="true" />
         </span>

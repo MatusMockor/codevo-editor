@@ -17,6 +17,7 @@ import { AgentThought } from "./AgentThought";
 import { isAgentQuestionTool } from "../../domain/agentQuestionTranscript";
 import { AgentQuestionToolRow } from "./AgentQuestionToolRow";
 import { AgentToolRow } from "./AgentToolRow";
+import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 import { AgentTurnPrompt } from "./AgentTurnParts";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import type { AgentThoughtPresentation } from "./agentActivityGrouping";
@@ -226,7 +227,9 @@ export function AgentProviderErrorHint({
     <>
       <p className="agent-note">{hint}</p>
       <details className="agent-raw">
-        <summary className="agent-raw__toggle">Provider message</summary>
+        <summary className="agent-raw__toggle" onMouseDown={releaseFocusAfterPointerPress}>
+          Provider message
+        </summary>
         <pre className="agent-raw__lines">{error.raw}</pre>
       </details>
     </>
