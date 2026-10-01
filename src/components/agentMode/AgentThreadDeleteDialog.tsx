@@ -1,6 +1,13 @@
 import type { RefObject } from "react";
+import {
+  boundedSavedConversationTitle,
+  savedConversationTitle,
+} from "../../domain/agentSavedConversationTitle";
 import { Button } from "../../ui/foundation/Button";
 import { Dialog } from "../../ui/foundation/Dialog";
+import "./agentThreadDeleteDialog.css";
+
+const MAX_DIALOG_TITLE_CHARS = 60;
 
 export interface AgentThreadDeleteDialogProps {
   readonly open: boolean;
@@ -19,7 +26,6 @@ export function AgentThreadDeleteDialog({
 }: AgentThreadDeleteDialogProps) {
   return (
     <Dialog
-      description={`“${title}” and its saved history are removed from Codevo. This cannot be undone.`}
       footer={
         <>
           <Button onClick={onCancel} type="button">
@@ -35,6 +41,13 @@ export function AgentThreadDeleteDialog({
       returnFocusRef={returnFocusRef}
       title="Delete thread?"
       width="sm"
-    />
+    >
+      <p className="agent-delete-dialog__name" title={savedConversationTitle(title)}>
+        {boundedSavedConversationTitle(title, MAX_DIALOG_TITLE_CHARS)}
+      </p>
+      <p className="agent-delete-dialog__copy">
+        Its saved history will be removed from Codevo. This can&apos;t be undone.
+      </p>
+    </Dialog>
   );
 }

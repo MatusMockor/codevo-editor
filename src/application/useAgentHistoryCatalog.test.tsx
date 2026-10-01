@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { catalogProject, catalogThread } from "../test/agentHistoryCatalogFixtures";
 import type { AgentHistoryThreadPage } from "../domain/agentHistoryCatalog";
 import type { AgentHistoryTurnPage } from "../domain/agentHistory";
+import { MAX_AGENT_THREADS_PER_ROOT, runningTurn, type AgentThread } from "../domain/agentThread";
+import { AgentThreadCleanupIncompleteError } from "./agentThreadPorts";
 import { useAgentHistoryCatalog, type AgentHistoryCatalogSurface } from "./useAgentHistoryCatalog";
 let root: Root;
 afterEach(() => {
@@ -20,15 +22,38 @@ function setup() {
   const turns = vi
     .fn<(request: unknown) => Promise<AgentHistoryTurnPage>>()
     .mockResolvedValue({ turns: [], beforeTurnId: null, hasEarlier: false, revision: 7 });
-  const restore = vi.fn().mockResolvedValue(true);
+  const loaded = new Map<string, AgentThread>();
+  const restore = vi.fn(async (thread: AgentThread) => {
+    loaded.set(thread.threadId, thread);
+    return true;
+  });
+  const renameThread = vi.fn((threadId: string, title: string) => {
+    const thread = loaded.get(threadId);
+    if (thread) loaded.set(threadId, { ...thread, title });
+  });
+  const setArchived = (archived: boolean) => (threadId: string) => {
+    const thread = loaded.get(threadId);
+    if (!thread || (archived && runningTurn(thread) !== null)) return false;
+    loaded.set(threadId, { ...thread, archived });
+    return true;
+  };
+  const archiveThread = vi.fn(setArchived(true));
+  const unarchiveThread = vi.fn(setArchived(false));
+  const removeThread = vi.fn((threadId: string) => loaded.delete(threadId));
+  const deleteSavedThread = vi.fn<(thread: AgentThread) => Promise<void>>().mockResolvedValue();
   const report = vi.fn();
   let surface: AgentHistoryCatalogSurface;
   function Harness() {
     surface = useAgentHistoryCatalog({
       projects,
       gateway: { readAgentHistoryThreads: read, readAgentHistoryTurns: turns },
-      currentState: () => ({ threads: new Map() }),
+      currentState: () => ({ threads: loaded }),
       restoreThread: restore,
+      renameThread,
+      archiveThread,
+      unarchiveThread,
+      removeThread,
+      deleteSavedThread,
       reportError: report,
     });
     return null;
@@ -39,6 +64,12 @@ function setup() {
     read,
     turns,
     restore,
+    loaded,
+    renameThread,
+    archiveThread,
+    unarchiveThread,
+    removeThread,
+    deleteSavedThread,
     report,
     get surface() {
       return surface;
@@ -201,5 +232,249 @@ describe("saved conversation browsing", () => {
     expect(h.surface.page?.error).toBeNull();
     act(() => h.surface.close());
     expect(h.surface.page).toBeNull();
+  });
+});
+
+const runningTurnFixture = {
+  turnId: "agt-1-0a1c",
+  prompt: "work",
+  status: { kind: "running" },
+  startedAtEpochMs: 1,
+  endedAtEpochMs: null,
+  events: [],
+  eventsTruncated: false,
+  lastStatusSequence: 1,
+  lastOutputSequence: 1,
+  streamMetrics: null,
+  launch: null,
+  cliVersion: null,
+} as unknown as AgentThread["turns"][number];
+
+describe("saved conversation actions", () => {
+  const rowIds = (h: ReturnType<typeof setup>) => h.surface.rows.map((row) => row.threadId);
+
+  it("opens a conversation that is already loaded without a stale revision refusal", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.loaded.set(catalogThread().threadId, { ...catalogThread(), historyRevision: 99 });
+    await act(async () => {
+      expect(await h.surface.open(catalogThread().threadId)).toBe(true);
+    });
+    expect(h.turns).not.toHaveBeenCalled();
+    expect(h.surface.page?.error).toBeNull();
+  });
+
+  it("deletes an unloaded conversation through the saved delete path with the runtime owner", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.read.mockResolvedValueOnce({ threads: [], beforeThreadId: null, hasEarlier: false });
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(true);
+    });
+    expect(h.deleteSavedThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: catalogThread().threadId,
+        owner: expect.objectContaining({ ownerId: catalogProject.ownerId }),
+      }),
+    );
+    expect(h.removeThread).not.toHaveBeenCalled();
+    expect(rowIds(h)).toEqual([]);
+  });
+
+  it("deletes a loaded conversation through the live thread delete path", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.read.mockResolvedValueOnce({ threads: [], beforeThreadId: null, hasEarlier: false });
+    h.loaded.set(catalogThread().threadId, catalogThread());
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(true);
+    });
+    expect(h.removeThread).toHaveBeenCalledWith(catalogThread().threadId);
+    expect(h.deleteSavedThread).not.toHaveBeenCalled();
+    expect(rowIds(h)).toEqual([]);
+  });
+
+  it("refuses to delete a running conversation and says why", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.loaded.set(catalogThread().threadId, { ...catalogThread(), turns: [runningTurnFixture] });
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(false);
+    });
+    expect(h.removeThread).not.toHaveBeenCalled();
+    expect(h.deleteSavedThread).not.toHaveBeenCalled();
+    expect(h.surface.page?.error).toBe("Stop the agent before deleting this conversation.");
+    expect(h.surface.rows[0]?.running).toBe(true);
+    expect(rowIds(h)).toEqual([catalogThread().threadId]);
+  });
+
+  it("keeps the row and shows the backend reason when delete fails", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.deleteSavedThread.mockRejectedValueOnce(new Error("Attachments could not be removed."));
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(false);
+    });
+    expect(h.surface.page?.error).toBe(
+      "Could not delete this conversation: Attachments could not be removed.",
+    );
+    expect(h.surface.page?.loading).toBe(false);
+    expect(h.report).toHaveBeenCalledOnce();
+    expect(rowIds(h)).toEqual([catalogThread().threadId]);
+  });
+
+  it("does not publish a delete result after the project changes", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    let finish!: () => void;
+    h.deleteSavedThread.mockReturnValueOnce(
+      new Promise<void>((done) => {
+        finish = done;
+      }),
+    );
+    let removing!: Promise<boolean>;
+    act(() => {
+      removing = h.surface.remove(catalogThread().threadId);
+    });
+    h.replace([{ ...catalogProject, generation: 2 }]);
+    await act(async () => {
+      finish();
+      await removing;
+    });
+    expect(h.surface.page).toBeNull();
+  });
+
+  it("renames by restoring the conversation and updating its row", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    await act(async () => {
+      expect(await h.surface.rename(catalogThread().threadId, "  Telekom phone  ")).toBe(true);
+    });
+    expect(h.restore).toHaveBeenCalledOnce();
+    expect(h.renameThread).toHaveBeenCalledWith(catalogThread().threadId, "Telekom phone");
+    expect(h.surface.rows[0]?.title).toBe("Telekom phone");
+    await act(async () => {
+      expect(await h.surface.rename(catalogThread().threadId, "   ")).toBe(false);
+    });
+    expect(h.renameThread).toHaveBeenCalledOnce();
+  });
+
+  it("archives and unarchives through the thread store and reflects it in the row", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    await act(async () => {
+      expect(await h.surface.setArchived(catalogThread().threadId, true)).toBe(true);
+    });
+    expect(h.surface.rows[0]?.archived).toBe(true);
+    await act(async () => {
+      expect(await h.surface.setArchived(catalogThread().threadId, false)).toBe(true);
+    });
+    expect(h.unarchiveThread).toHaveBeenCalledWith(catalogThread().threadId);
+    expect(h.surface.rows[0]?.archived).toBe(false);
+  });
+
+  it("reports a refused archive instead of pretending it worked", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.loaded.set(catalogThread().threadId, { ...catalogThread(), turns: [runningTurnFixture] });
+    await act(async () => {
+      expect(await h.surface.setArchived(catalogThread().threadId, true)).toBe(false);
+    });
+    expect(h.surface.page?.error).toContain("Stop the agent first");
+    expect(h.surface.rows[0]?.archived).toBe(false);
+  });
+
+  it("keeps the paging cursor on a row that still exists after deleting the last row", async () => {
+    const h = setup();
+    h.read.mockResolvedValueOnce({
+      threads: [catalogThread(), catalogThread("agt-2-0a1b")],
+      beforeThreadId: "agt-2-0a1b",
+      hasEarlier: true,
+    });
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    await act(async () => {
+      expect(await h.surface.remove("agt-2-0a1b")).toBe(true);
+    });
+    expect(h.surface.page?.beforeThreadId).toBe(catalogThread().threadId);
+    expect(h.surface.page?.hasEarlier).toBe(true);
+    h.read.mockResolvedValueOnce({
+      threads: [catalogThread("agt-3-0a1b")],
+      beforeThreadId: "agt-3-0a1b",
+      hasEarlier: false,
+    });
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(true);
+    });
+    expect(h.read).toHaveBeenLastCalledWith(expect.objectContaining({ beforeThreadId: null }));
+    expect(h.surface.rows.map((row) => row.threadId)).toEqual(["agt-3-0a1b"]);
+  });
+
+  it("drops the row and warns when history is gone but attachment cleanup failed", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.read.mockResolvedValueOnce({ threads: [], beforeThreadId: null, hasEarlier: false });
+    h.deleteSavedThread.mockRejectedValueOnce(
+      new AgentThreadCleanupIncompleteError(
+        "The saved thread was deleted but its attachments could not be removed: EACCES",
+      ),
+    );
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(true);
+    });
+    expect(h.surface.rows).toEqual([]);
+    expect(h.surface.page?.error).toBeNull();
+    expect(h.surface.page?.notice).toContain("attachments could not be removed");
+  });
+
+  it("marks the row as deleting instead of loading while the delete is pending", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    let finish!: () => void;
+    h.deleteSavedThread.mockReturnValueOnce(
+      new Promise<void>((done) => {
+        finish = done;
+      }),
+    );
+    let removing!: Promise<boolean>;
+    act(() => {
+      removing = h.surface.remove(catalogThread().threadId);
+    });
+    expect(h.surface.page?.deletingThreadId).toBe(catalogThread().threadId);
+    expect(h.surface.page?.loading).toBe(false);
+    await act(async () => {
+      expect(await h.surface.open(catalogThread().threadId)).toBe(false);
+      finish();
+      await removing;
+    });
+    expect(h.surface.page?.deletingThreadId).toBeNull();
+  });
+
+  it("does not evict another thread to rename or archive, and says which action failed", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    for (let index = 0; index < MAX_AGENT_THREADS_PER_ROOT; index += 1) {
+      const thread = catalogThread(`agt-${100 + index}-0a1b`);
+      h.loaded.set(thread.threadId, thread);
+    }
+    await act(async () => {
+      expect(await h.surface.rename(catalogThread().threadId, "New name")).toBe(false);
+    });
+    expect(h.restore).not.toHaveBeenCalled();
+    expect(h.surface.page?.error).toContain("Could not rename this conversation");
+    await act(async () => {
+      expect(await h.surface.setArchived(catalogThread().threadId, true)).toBe(false);
+    });
+    expect(h.restore).not.toHaveBeenCalled();
+    expect(h.surface.page?.error).toContain("Could not archive this conversation");
+  });
+
+  it("names the action when restoring for a rename fails", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.restore.mockResolvedValueOnce(false);
+    await act(async () => {
+      expect(await h.surface.rename(catalogThread().threadId, "New name")).toBe(false);
+    });
+    expect(h.surface.page?.error).toContain("Could not rename this conversation");
   });
 });

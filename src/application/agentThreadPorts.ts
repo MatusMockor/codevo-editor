@@ -177,6 +177,13 @@ export interface AgentThreadStoreGateway {
 
 export type AgentThreadMutationResult = boolean | Promise<boolean>;
 
+export class AgentThreadCleanupIncompleteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentThreadCleanupIncompleteError";
+  }
+}
+
 export interface AgentThreadStoreSurface {
   readonly state: AgentThreadsState;
   readonly loadedRootKeys: ReadonlySet<string>;
@@ -185,6 +192,7 @@ export interface AgentThreadStoreSurface {
   flushThread?(threadId: string): Promise<boolean>;
   hydrateThread?(threadId: string): void;
   restoreThread?(thread: AgentThread): Promise<boolean>;
+  deleteSavedThread?(thread: AgentThread): Promise<void>;
   /** Reserve a display slot after durably saving any evicted conversation. Release on cancellation. */
   reserveThreadSlot?(threadId: string, owner: AgentThreadOwner): Promise<(() => void) | null>;
   saveRunningThreadsNow(): void;

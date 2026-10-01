@@ -1,0 +1,17 @@
+.agent-delete-dialog__name {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border-radius: var(--cv-r-control);
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-delete-dialog__copy {
+  margin: 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-sm);
+}

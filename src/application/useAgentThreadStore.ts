@@ -48,11 +48,12 @@ import {
   warning,
   type AgentProjectAuthority,
 } from "./agentProjectAuthority";
-import type {
-  AgentTasksNotice,
-  AgentThreadStoreGateway,
-  AgentThreadStoreSurface,
-  DeleteAgentThreadRequest,
+import {
+  AgentThreadCleanupIncompleteError,
+  type AgentTasksNotice,
+  type AgentThreadStoreGateway,
+  type AgentThreadStoreSurface,
+  type DeleteAgentThreadRequest,
 } from "./agentThreadPorts";
 
 export const LEGACY_AGENT_THREAD_PIN_STORAGE_KEY_PREFIX = "mockor.agents.threadPins.";
@@ -62,6 +63,16 @@ export const MAX_SEALED_INTERRUPTED_TURN_LOGS_PER_THREAD = 16;
 
 export const PERSIST_FAILURE_NOTICE = "Some agent conversations could not be saved.";
 export const MAX_PERSIST_FAILURE_REASON_CHARS = 180;
+export const SAVED_DELETE_PROJECT_UNAVAILABLE =
+  "This conversation's project is no longer open, so it was not deleted.";
+export const SAVED_DELETE_THREAD_OPEN =
+  "This conversation is open in the thread list; delete it from there.";
+export const SAVED_DELETE_IN_PROGRESS = "This conversation is already being deleted.";
+export const SAVED_DELETE_OPENING = "This conversation is opening; try again in a moment.";
+export const SAVED_DELETE_PROJECT_LOADING =
+  "Saved threads are still loading for this project; try again in a moment.";
+const HISTORY_DELETED_CLEANUP_FAILED_PREFIX = "The saved thread was deleted but";
+
 export const TURN_LOG_DELETE_FAILURE_NOTICE =
   "The saved transcript of a removed thread could not be deleted from this computer.";
 const STORE_FULL_NOTICE =
@@ -134,6 +145,7 @@ export function useAgentThreadStore(
   const slotsRef = useRef<Map<string, ThreadPersistSlot>>(new Map());
   const dirtyRef = useRef<Map<string, PersistUrgency>>(new Map());
   const deleteQueueRef = useRef<ThreadRemoval[]>([]);
+  const loadingRootsRef = useRef<Map<string, number>>(new Map());
   const persistFailureNoticeShownRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
@@ -279,19 +291,12 @@ export function useAgentThreadStore(
     });
   }, [dependencies.turnLog?.facts]);
 
-  const runDelete = useCallback(
-    async ({ request, logged }: ThreadRemoval): Promise<void> => {
-      const project = projectByRootKey(dependenciesRef.current.projects, request.rootKey);
-      const authority = project === undefined ? null : projectAuthority(project);
-      const settled = slotsRef.current.get(request.threadId)?.settled;
-      if (settled !== undefined && settled !== null) await settled;
-      const removed = await attempt(() =>
-        dependenciesRef.current.agentThreadStoreGateway.deleteAgentThread(request),
-      );
-      if (!removed.ok) {
-        notePersistFailure(removed.error);
-        return;
-      }
+  const deleteTurnLog = useCallback(
+    async (
+      request: DeleteAgentThreadRequest,
+      logged: boolean,
+      authority: AgentProjectAuthority | null,
+    ): Promise<void> => {
       const turnLog = dependenciesRef.current.turnLog;
       if (!logged || turnLog === undefined || authority === null) return;
       if (!mountedRef.current) return;
@@ -303,7 +308,60 @@ export function useAgentThreadStore(
       if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
       dependenciesRef.current.setNotice(warning(TURN_LOG_DELETE_FAILURE_NOTICE));
     },
-    [notePersistFailure],
+    [],
+  );
+
+  const deletePersisted = useCallback(
+    async ({ request, logged }: ThreadRemoval): Promise<void> => {
+      const project = projectByRootKey(dependenciesRef.current.projects, request.rootKey);
+      const authority = project === undefined ? null : projectAuthority(project);
+      const settled = slotsRef.current.get(request.threadId)?.settled;
+      if (settled !== undefined && settled !== null) await settled;
+      const removed = await attempt(() =>
+        dependenciesRef.current.agentThreadStoreGateway.deleteAgentThread(request),
+      );
+      const cleanupFailure = removed.ok ? null : historyDeletedCleanupFailure(removed.error);
+      if (!removed.ok && cleanupFailure === null) throw removed.error;
+      await deleteTurnLog(request, logged, authority);
+      if (cleanupFailure !== null) throw new AgentThreadCleanupIncompleteError(cleanupFailure);
+    },
+    [deleteTurnLog],
+  );
+
+  const runDelete = useCallback(
+    async (removal: ThreadRemoval): Promise<void> => {
+      const removed = await attempt(() => deletePersisted(removal));
+      if (!removed.ok) notePersistFailure(removed.error);
+    },
+    [deletePersisted, notePersistFailure],
+  );
+
+  const deletingRef = useRef<Set<string>>(new Set());
+  const restoringRef = useRef<Set<string>>(new Set());
+  const deleteSavedThread = useCallback(
+    async (thread: AgentThread): Promise<void> => {
+      if (threadAuthority(dependenciesRef.current.projects, thread) === null)
+        throw new Error(SAVED_DELETE_PROJECT_UNAVAILABLE);
+      if (stateRef.current.threads.has(thread.threadId)) throw new Error(SAVED_DELETE_THREAD_OPEN);
+      if (deletingRef.current.has(thread.threadId)) throw new Error(SAVED_DELETE_IN_PROGRESS);
+      if (restoringRef.current.has(thread.threadId)) throw new Error(SAVED_DELETE_OPENING);
+      if (loadingRootsRef.current.has(thread.owner.rootKey))
+        throw new Error(SAVED_DELETE_PROJECT_LOADING);
+      deletingRef.current.add(thread.threadId);
+      try {
+        await deletePersisted({
+          request: {
+            rootKey: thread.owner.rootKey,
+            ownerId: agentRootOwnerId(thread.owner.rootKey),
+            threadId: thread.threadId,
+          },
+          logged: isLoggedAgentThread(thread),
+        });
+      } finally {
+        deletingRef.current.delete(thread.threadId);
+      }
+    },
+    [deletePersisted],
   );
 
   const flushPersistQueue = useCallback((): void => {
@@ -486,12 +544,14 @@ export function useAgentThreadStore(
         authority.rootKey,
       );
 
+      const loading = loadingRootsRef.current;
+      loading.set(authority.rootKey, (loading.get(authority.rootKey) ?? 0) + 1);
       const loaded = await attempt(() =>
         dependenciesRef.current.agentThreadStoreGateway.loadAgentThreads({
           rootKey: authority.rootKey,
           ownerId: agentRootOwnerId(authority.rootKey),
         }),
-      );
+      ).finally(() => releaseLoading(loading, authority.rootKey));
       if (!mountedRef.current) return;
       if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
       if (loadKeysRef.current.get(authority.rootKey) !== key) return;
@@ -642,15 +702,22 @@ export function useAgentThreadStore(
       const authority = threadAuthority(dependenciesRef.current.projects, thread);
       if (authority === null) return false;
       if (stateRef.current.threads.has(thread.threadId)) return true;
-      const release = await reserveThreadSlot(thread.threadId, thread.owner);
-      if (release === null) return false;
+      if (deletingRef.current.has(thread.threadId)) return false;
+      if (restoringRef.current.has(thread.threadId)) return false;
+      restoringRef.current.add(thread.threadId);
       try {
-        if (!mountedRef.current || !ownsProjectRoot(dependenciesRef.current.projects, authority))
-          return false;
-        dispatchAction({ kind: "historyThreadOpened", thread, evictThreadId: null });
-        return stateRef.current.threads.has(thread.threadId);
+        const release = await reserveThreadSlot(thread.threadId, thread.owner);
+        if (release === null) return false;
+        try {
+          if (!mountedRef.current || !ownsProjectRoot(dependenciesRef.current.projects, authority))
+            return false;
+          dispatchAction({ kind: "historyThreadOpened", thread, evictThreadId: null });
+          return stateRef.current.threads.has(thread.threadId);
+        } finally {
+          release();
+        }
       } finally {
-        release();
+        restoringRef.current.delete(thread.threadId);
       }
     },
     [dispatchAction, reserveThreadSlot],
@@ -665,6 +732,7 @@ export function useAgentThreadStore(
       currentState,
       flushThread,
       restoreThread,
+      deleteSavedThread,
       reserveThreadSlot,
       hydrateThread,
       saveRunningThreadsNow,
@@ -678,6 +746,7 @@ export function useAgentThreadStore(
     [
       archive,
       currentState,
+      deleteSavedThread,
       flushThread,
       restoreThread,
       reserveThreadSlot,
@@ -1054,6 +1123,20 @@ function removeIntent(state: AgentThreadsState, threadId: string): PersistIntent
       threadId,
     },
   };
+}
+
+function historyDeletedCleanupFailure(error: unknown): string | null {
+  const message = errorMessageOf(error);
+  return message.startsWith(HISTORY_DELETED_CLEANUP_FAILED_PREFIX) ? message : null;
+}
+
+function releaseLoading(loading: Map<string, number>, rootKey: string): void {
+  const remaining = (loading.get(rootKey) ?? 1) - 1;
+  if (remaining > 0) {
+    loading.set(rootKey, remaining);
+    return;
+  }
+  loading.delete(rootKey);
 }
 
 function persistFailureMessage(error: unknown): string {

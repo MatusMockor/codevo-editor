@@ -219,13 +219,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     reportError,
     turnLog,
   });
-  const catalog = useAgentHistoryCatalog({
-    projects,
-    gateway: defaultHistoryCatalogGateway,
-    currentState: store.currentState,
-    restoreThread: (thread) => store.restoreThread?.(thread) ?? Promise.resolve(false),
-    reportError,
-  });
   const externalHistory = useImportedThreadHistory({
     projects,
     threads,
@@ -615,6 +608,27 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     },
     [currentState, projects, renameInStore],
   );
+
+  const catalog = useAgentHistoryCatalog({
+    projects,
+    gateway: defaultHistoryCatalogGateway,
+    currentState: store.currentState,
+    restoreThread: (thread) => store.restoreThread?.(thread) ?? Promise.resolve(false),
+    renameThread,
+    archiveThread: archive,
+    unarchiveThread: unarchive,
+    removeThread: remove,
+    deleteSavedThread: async (thread) => {
+      const deleteSaved = store.deleteSavedThread;
+      if (deleteSaved === undefined) throw new Error("Saved conversations cannot be deleted here.");
+      try {
+        await deleteSaved(thread);
+      } finally {
+        void refreshOrphanedWorktrees();
+      }
+    },
+    reportError,
+  });
 
   const {
     getAgentCliKind,
