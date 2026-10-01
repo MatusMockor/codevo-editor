@@ -43,6 +43,7 @@ url = "2"
 time = { version = "0.3", features = ["formatting"] }
 sha2 = "0.10"
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "=2.4.0"
 tauri-plugin-process = "=2.3.1"
 tauri-plugin-updater = "=2.10.1"
 tauri-plugin-window-state = "=2.4.1"

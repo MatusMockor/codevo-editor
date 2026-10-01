@@ -19,7 +19,7 @@ import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
-import { useAgentPendingInteractions } from "../../application/useAgentPendingInteractions";
+import { useAgentPendingInteractionObservations } from "../../application/useAgentPendingInteractions";
 import type {
   AgentArtifactLoader,
   AgentArtifactPreviewPort,
@@ -95,6 +95,8 @@ import { AgentAgentsToggleButton } from "./agents/AgentAgentsToggleButton";
 import { AgentTerminalSessionsPalette } from "./AgentTerminalSessionsPalette";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
+import { AgentThreadNotifications } from "./AgentThreadNotifications";
+import type { AgentThreadNotificationCenter } from "../../application/agentThreadNotificationCenter";
 import { useAgentSessionBackgroundControls } from "./useAgentSessionBackgroundControls";
 import { usePreloadAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
@@ -166,6 +168,7 @@ export interface AgentModeViewProps {
   readonly textClipboard?: TextClipboardGateway | null;
   readonly railFilterPreference?: AgentRailFilterPreferencePort | null;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
+  readonly threadNotifications?: AgentThreadNotificationCenter | null;
   onOpenSourceControl?(): void;
   onOpenEnvironmentSettings?(): void;
   onOpenUsageSettings?(): void;
@@ -261,6 +264,7 @@ function LocalAgentModeView({
   textClipboard = null,
   railFilterPreference = null,
   newThreadPicker = null,
+  threadNotifications = null,
   viewCommands = null,
   workspaceRoot,
   onSelectedThreadChange,
@@ -342,11 +346,12 @@ function LocalAgentModeView({
     selectedThreadId === null
       ? null
       : (presentationThreads.find((view) => view.thread.threadId === selectedThreadId) ?? null);
-  const pendingInteractions = useAgentPendingInteractions(
+  const pendingObservations = useAgentPendingInteractionObservations(
     questionGateway,
     agents.threads,
     selectedThread?.thread.threadId ?? null,
   );
+  const pendingInteractions = pendingObservations.pending;
   const pendingRemoteIdentity =
     selectedThread === null ? parseRemoteAgentThreadIdentity(selectedThreadId) : null;
   const resolvingRemoteThread =
@@ -1337,6 +1342,20 @@ function LocalAgentModeView({
           thread={surfaceThread}
           threadRootPath={surfaceThreadRootPath}
           workspaceRoot={workspaceRoot}
+        />
+      )}
+      {threadNotifications !== null && (
+        <AgentThreadNotifications
+          center={threadNotifications}
+          onSelectThread={navigation.selectThread}
+          interactions={pendingObservations.observed}
+          projects={projects}
+          views={presentationThreads}
+          visibleThreadId={
+            layout.rightPanel === "open" && layout.rightPanelMaximized
+              ? null
+              : (selectedThread?.thread.threadId ?? null)
+          }
         />
       )}
     </AgentAgentsPanelProvider>

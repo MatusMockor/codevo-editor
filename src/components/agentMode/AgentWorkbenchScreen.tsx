@@ -63,6 +63,10 @@ import {
   type PointerEvent,
 } from "react";
 import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
+import type { AgentThreadNotificationCenterPorts } from "../../application/agentThreadNotificationCenter";
+import { useAgentThreadNotificationCenter } from "../../application/useAgentThreadNotificationCenter";
+import { createDocumentAppFocusPort } from "../../infrastructure/documentAppFocusPort";
+import { TauriAgentAttentionGateway } from "../../infrastructure/tauriAgentAttentionGateway";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
 import {
@@ -119,6 +123,7 @@ type Workbench = ReturnType<typeof useWorkbenchController>;
 export type AgentWorkbenchScreenWorkbench = Pick<
   Workbench,
   | "activePath"
+  | "agentModeActive"
   | "agentWorkbench"
   | "appSettings"
   | "bottomPanelView"
@@ -129,6 +134,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "openPinnedFile"
   | "openProblemNotice"
   | "openWorkspaceRootWithReceipt"
+  | "settingsOpen"
   | "previewFile"
   | "runCommand"
   | "saveWorkbenchSettings"
@@ -203,6 +209,10 @@ const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
 const DEFAULT_RAIL_FILTER_PREFERENCE = new BrowserAgentRailFilterPreference();
 const DEFAULT_SESSION_RESTORE = browserAgentSessionRestorePorts();
+const defaultThreadNotificationPorts = (): AgentThreadNotificationCenterPorts => ({
+  focus: createDocumentAppFocusPort(),
+  system: new TauriAgentAttentionGateway(),
+});
 const SHOW_COMMAND_PALETTE = "commands.show";
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
@@ -238,6 +248,14 @@ export function AgentWorkbenchScreen({
   workbench,
 }: AgentWorkbenchScreenProps) {
   const restoredSession = useAgentSessionRestore(sessionRestore);
+  const threadNotifications = useAgentThreadNotificationCenter(
+    {
+      enabled: workbench.appSettings.agentThreadNotifications !== false,
+      toastsVisible: workbench.settingsOpen !== true,
+      threadViewVisible: workbench.settingsOpen !== true && workbench.agentModeActive !== false,
+    },
+    defaultThreadNotificationPorts,
+  );
   const { navigationSession } = restoredSession;
   const addProjectPending = useRef<AgentPendingProjectOpen | null>(null);
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
@@ -760,6 +778,7 @@ export function AgentWorkbenchScreen({
           railFilterPreference={railFilterPreference}
           newThreadPicker={newThreadPicker}
           viewCommands={workbenchAgentViewCommandBridge}
+          threadNotifications={threadNotifications}
           workspaceRoot={workspaceRoot}
         />
       </AgentTranscriptPositionProvider>

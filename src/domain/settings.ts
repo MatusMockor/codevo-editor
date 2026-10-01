@@ -132,6 +132,7 @@ export interface AppSettings {
   agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
   agentFollowUpBehavior: AgentFollowUpBehavior;
+  agentThreadNotifications?: boolean;
   agentThreadFontSize: number;
   agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   agentModelFavoritesRevision: number;
@@ -473,6 +474,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     agentCliPaths,
     agentCliKind,
     agentFollowUpBehavior: normalizeAgentFollowUpBehavior(value.agentFollowUpBehavior),
+    agentThreadNotifications: normalizeBoolean(value.agentThreadNotifications, true),
     agentThreadFontSize:
       value.agentThreadFontSize === undefined
         ? defaults.agentThreadFontSize

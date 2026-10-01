@@ -49,6 +49,14 @@ project root retains at most 64 threads and 16 MiB of thread data; older eligibl
 evicted before the count limit is reached, and a save can fail when the store is full and no record
 is eligible for eviction.
 
+When a thread you are not looking at finishes, fails, or needs your approval or input, Codevo
+shows a notification naming the thread and its project, with **Open** to jump straight to it,
+including threads in other projects. Its sidebar row keeps the Done, Failed, Approval, or Input
+marker until you open it. While Codevo is in the background, it sends a macOS notification
+instead and the Dock badge counts the threads waiting for you. When you come back, the badge
+clears and the notifications appear in the app. Turn this off under **Settings > Agents >
+Notifications**. Focus modes and macOS notification settings still apply.
+
 ## Composer commands
 
 Type `/` at the start of the prompt to browse Codevo commands. Keep typing to filter by name,

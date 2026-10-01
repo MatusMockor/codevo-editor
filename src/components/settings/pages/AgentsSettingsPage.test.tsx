@@ -120,6 +120,7 @@ describe("AgentsSettingsPage", () => {
       "Providers",
       "New threads",
       "CLI updates",
+      "Notifications",
     ]);
   });
 
@@ -144,6 +145,23 @@ describe("AgentsSettingsPage", () => {
 
     expect(lastCall(onUpdateAppSettings).agentModelFavoriteKeys).toEqual([]);
     expect(byLabel("Favorite Claude Opus 5.5").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("turns thread notifications off and back on", () => {
+    const onUpdateAppSettings = vi.fn();
+    render({ onUpdateAppSettings });
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[data-settings-row="agents.threadNotifications"] [role="switch"]',
+    );
+    expect(toggle).not.toBeNull();
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+
+    act(() => toggle?.click());
+    expect(lastCall(onUpdateAppSettings).agentThreadNotifications).toBe(false);
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+
+    act(() => toggle?.click());
+    expect(lastCall(onUpdateAppSettings).agentThreadNotifications).toBe(true);
   });
 
   it("states that update checks are automatic instead of offering a dead toggle", () => {

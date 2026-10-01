@@ -10,7 +10,9 @@ import type { AgentThreadView } from "./agentThreadPorts";
 import {
   AGENT_PENDING_INTERACTION_POLL_MS,
   MAX_AGENT_PENDING_INTERACTION_THREADS,
+  useAgentPendingInteractionObservations,
   useAgentPendingInteractions,
+  type AgentPendingInteractionObservations,
 } from "./useAgentPendingInteractions";
 
 function runningView(
@@ -100,6 +102,19 @@ function Probe({
   readonly views: ReadonlyArray<AgentThreadView>;
 }) {
   latest = useAgentPendingInteractions(gateway, views, pinned);
+  return null;
+}
+
+let observations: AgentPendingInteractionObservations | null = null;
+
+function ObservationProbe({
+  gateway,
+  views,
+}: {
+  readonly gateway: AgentQuestionGateway;
+  readonly views: ReadonlyArray<AgentThreadView>;
+}) {
+  observations = useAgentPendingInteractionObservations(gateway, views);
   return null;
 }
 
@@ -316,5 +331,28 @@ describe("useAgentPendingInteractions", () => {
     render(<Probe gateway={gateway} views={[settledView("a", "turn-1")]} />);
     await flush();
     expect(gateway.calls).toEqual([]);
+  });
+
+  it("separates threads polled with nothing pending from threads not observed", async () => {
+    const gateway = new FakeGateway();
+    const failing: AgentQuestionGateway & AgentApprovalGateway = {
+      list: async (owner) => {
+        if (owner.taskId === "turn-b") throw new Error("offline");
+        return gateway.list(owner);
+      },
+      answer: gateway.answer,
+      listApprovals: (owner) => gateway.listApprovals(owner),
+      answerApproval: gateway.answerApproval,
+    };
+    render(
+      <ObservationProbe
+        gateway={failing}
+        views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
+      />,
+    );
+    await flush();
+
+    expect(observations?.observed.get("a")).toBeNull();
+    expect(observations?.observed.has("b")).toBe(false);
   });
 });

@@ -71,6 +71,7 @@ export interface AgentAppSettings {
   readonly agentCliPaths: AgentCliPaths;
   readonly agentCliKind: AgentCliKind;
   readonly agentFollowUpBehavior: AgentFollowUpBehavior;
+  readonly agentThreadNotifications?: boolean;
   readonly agentThreadFontSize: number;
   readonly agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   readonly agentModelFavoritesRevision: number;
@@ -90,6 +91,7 @@ export function defaultAgentAppSettings(): AgentAppSettings {
     agentCliPaths: { claudeCode: null, codex: null },
     agentCliKind: DEFAULT_AGENT_CLI_KIND,
     agentFollowUpBehavior: DEFAULT_AGENT_FOLLOW_UP_BEHAVIOR,
+    agentThreadNotifications: true,
     agentThreadFontSize: DEFAULT_AGENT_THREAD_FONT_SIZE,
     agentModelFavoriteKeys: [],
     agentModelFavoritesRevision: 0,

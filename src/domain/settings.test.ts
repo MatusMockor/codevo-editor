@@ -44,6 +44,7 @@ describe("settings defaults", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
+      agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -166,6 +167,16 @@ describe("settings defaults", () => {
 });
 
 describe("normalizeAppSettings", () => {
+  it("keeps thread notifications on unless they were explicitly turned off", () => {
+    expect(normalizeAppSettings({}).agentThreadNotifications).toBe(true);
+    expect(normalizeAppSettings({ agentThreadNotifications: false }).agentThreadNotifications).toBe(
+      false,
+    );
+    expect(normalizeAppSettings({ agentThreadNotifications: "no" }).agentThreadNotifications).toBe(
+      true,
+    );
+  });
+
   it("persists only normalized provider preferences", () => {
     expect(
       normalizeAppSettings({
@@ -304,6 +315,7 @@ describe("normalizeAppSettings", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
+      agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -343,6 +355,7 @@ describe("normalizeAppSettings", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
+      agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -377,6 +390,7 @@ describe("normalizeAppSettings", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
+      agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -457,6 +471,7 @@ describe("normalizeAppSettings", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
+      agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -517,6 +532,7 @@ describe("normalizeAppSettings", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentThreadFontSize: 15,
       agentFollowUpBehavior: "queue",
+      agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),

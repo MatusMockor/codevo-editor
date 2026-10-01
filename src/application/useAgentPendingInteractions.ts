@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  agentPendingInteraction,
+  agentPendingInteractionIdentity,
   type AgentPendingInteraction,
+  type AgentPendingInteractionIdentity,
 } from "../domain/agentPendingInteraction";
 import { runningTurn } from "../domain/agentThread";
 import { isAgentApprovalGateway, type AgentApprovalGateway } from "./agentApprovalPorts";
@@ -20,10 +21,18 @@ export interface AgentPendingInteractionTarget {
 
 interface PendingObservation {
   readonly key: string;
-  readonly pending: AgentPendingInteraction | null;
+  readonly pending: AgentPendingInteractionIdentity | null;
 }
 
-const NONE: ReadonlyMap<string, AgentPendingInteraction> = new Map();
+export interface AgentPendingInteractionObservations {
+  readonly pending: ReadonlyMap<string, AgentPendingInteraction>;
+  readonly observed: ReadonlyMap<string, AgentPendingInteractionIdentity | null>;
+}
+
+const NO_OBSERVATIONS: AgentPendingInteractionObservations = {
+  pending: new Map(),
+  observed: new Map(),
+};
 const TARGET_SEPARATOR = "\u0001";
 const LIST_SEPARATOR = "\u0002";
 const SETTLED: Promise<void> = Promise.resolve();
@@ -61,6 +70,14 @@ export function useAgentPendingInteractions(
   views: ReadonlyArray<AgentThreadView>,
   pinnedThreadId: string | null = null,
 ): ReadonlyMap<string, AgentPendingInteraction> {
+  return useAgentPendingInteractionObservations(gateway, views, pinnedThreadId).pending;
+}
+
+export function useAgentPendingInteractionObservations(
+  gateway: AgentQuestionGateway | null,
+  views: ReadonlyArray<AgentThreadView>,
+  pinnedThreadId: string | null = null,
+): AgentPendingInteractionObservations {
   const targets = useMemo(
     () => agentPendingInteractionTargets(views, pinnedThreadId),
     [pinnedThreadId, views],
@@ -99,7 +116,7 @@ export function useAgentPendingInteractions(
       if (approvalRequests === null) return null;
       const questionRequests = await request(() => gateway.list(target.owner));
       if (questionRequests === null) return null;
-      return agentPendingInteraction(approvalRequests, questionRequests);
+      return agentPendingInteractionIdentity(approvalRequests, questionRequests);
     };
     const poll = async (): Promise<void> => {
       const next = new Map<string, PendingObservation>();
@@ -125,28 +142,32 @@ export function useAgentPendingInteractions(
     };
   }, [gateway, signature]);
 
-  const resultSignature = targets
-    .flatMap((target) => {
+  const resultSignature = JSON.stringify(
+    targets.flatMap((target) => {
       const seen = observed.get(target.threadId);
-      if (seen?.key !== target.key || seen.pending === null) return [];
-      return [`${target.threadId}${TARGET_SEPARATOR}${seen.pending}`];
-    })
-    .join(LIST_SEPARATOR);
-  return useMemo(() => pendingInteractionsFromSignature(resultSignature), [resultSignature]);
+      if (seen?.key !== target.key) return [];
+      return [[target.threadId, seen.pending?.kind ?? null, seen.pending?.id ?? ""]];
+    }),
+  );
+  return useMemo(() => observationsFromSignature(resultSignature), [resultSignature]);
 }
 
-function pendingInteractionsFromSignature(
-  signature: string,
-): ReadonlyMap<string, AgentPendingInteraction> {
-  if (signature === "") return NONE;
-  const result = new Map<string, AgentPendingInteraction>();
-  for (const entry of signature.split(LIST_SEPARATOR)) {
-    const separator = entry.lastIndexOf(TARGET_SEPARATOR);
-    const pending = entry.slice(separator + 1);
-    if (pending === "approval" || pending === "input")
-      result.set(entry.slice(0, separator), pending);
+function observationsFromSignature(signature: string): AgentPendingInteractionObservations {
+  const entries = JSON.parse(signature) as ReadonlyArray<
+    readonly [string, AgentPendingInteraction | null, string]
+  >;
+  if (entries.length === 0) return NO_OBSERVATIONS;
+  const pending = new Map<string, AgentPendingInteraction>();
+  const observed = new Map<string, AgentPendingInteractionIdentity | null>();
+  for (const [threadId, kind, id] of entries) {
+    if (kind === null) {
+      observed.set(threadId, null);
+      continue;
+    }
+    pending.set(threadId, kind);
+    observed.set(threadId, { kind, id });
   }
-  return result;
+  return { pending, observed };
 }
 
 function sameObservations(
@@ -156,7 +177,9 @@ function sameObservations(
   if (left.size !== right.size) return false;
   for (const [threadId, observation] of right) {
     const previous = left.get(threadId);
-    if (previous?.key !== observation.key || previous.pending !== observation.pending) return false;
+    if (previous?.key !== observation.key) return false;
+    if (previous.pending?.kind !== observation.pending?.kind) return false;
+    if (previous.pending?.id !== observation.pending?.id) return false;
   }
   return true;
 }

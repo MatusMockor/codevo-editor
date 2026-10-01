@@ -27,6 +27,7 @@ import { AgentThreadDefaultsRows } from "../AgentThreadDefaultsRows";
 import { SettingsNumberField } from "../primitives/SettingsNumberField";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
+import { SettingsSwitch } from "../primitives/SettingsSwitch";
 import type { SettingsPageProps } from "../settingsPageProps";
 
 const PROVIDER_HEALTH_CLOCK_TICK_MS = 30_000;
@@ -179,6 +180,17 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
 
         <SettingsRow rowId="agents.checkCliUpdates">
           <span className="settings-readout">Automatic for enabled providers</span>
+        </SettingsRow>
+      </SettingsSectionHeading>
+
+      <SettingsSectionHeading title="Notifications">
+        <SettingsRow rowId="agents.threadNotifications">
+          <SettingsSwitch
+            checked={draft.appSettings.agentThreadNotifications !== false}
+            onChange={(agentThreadNotifications) =>
+              writeAppSettings({ ...appSettingsRef.current, agentThreadNotifications })
+            }
+          />
         </SettingsRow>
       </SettingsSectionHeading>
     </>

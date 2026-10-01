@@ -60,11 +60,25 @@ describe("desktop window chrome config", () => {
       "core:window:allow-minimize",
       "core:window:allow-set-always-on-top",
       "core:window:allow-set-background-color",
+      "core:window:allow-set-badge-count",
       "core:window:allow-set-focus",
       "core:window:allow-show",
       "core:window:allow-start-dragging",
       "core:window:allow-toggle-maximize",
       "core:window:allow-unminimize",
+    ]);
+  });
+
+  it("grants thread notifications only permission checks and plain notify", () => {
+    const capability = readJson("src-tauri/capabilities/default.json");
+    const notificationPermissions = capability.permissions
+      .filter((permission: string) => permission.startsWith("notification:"))
+      .sort();
+
+    expect(notificationPermissions).toEqual([
+      "notification:allow-is-permission-granted",
+      "notification:allow-notify",
+      "notification:allow-request-permission",
     ]);
   });
 });
