@@ -7,6 +7,27 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.81] - 2026-10-02
+
+### Added
+
+- The agent sidebar lists every open project as a collapsible group with its threads, like
+  t3code: Pinned, Projects, then Settled and Saved conversations. Each project has a
+  hover button for a new thread and a menu with its actions. The workspace card and the
+  "Show: project" filter are gone.
+- Links in your own messages are clickable and open in your browser.
+
+### Fixed
+
+- Usage counted Claude's running session cost again after every restart, so totals were
+  far too high; costs are now attributed per turn, the turn counts agree, and the
+  breakdown is an aligned table grouped by provider and by project.
+- Replies that arrive in the background keep their activity instead of showing "Some
+  activity from this turn could not be saved".
+- No teal focus ring around message bubbles and other transcript items on click or with
+  the arrow keys.
+- The old app icon is replaced by the new one in the window icon and the update toast.
+
 ## [0.2.0-beta.80] - 2026-10-01
 
 ### Fixed
