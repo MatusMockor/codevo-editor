@@ -20,4 +20,32 @@ describe("isAgentRawOutputNoise", () => {
       isAgentRawOutputNoise("claudeCode", "stderr", "Reading additional input from stdin..."),
     ).toBe(false);
   });
+
+  it("drops informational unsupported Claude frame notices", () => {
+    for (const raw of [
+      "Unsupported Claude stream frame: command_lifecycle",
+      "Unsupported Claude stream frame: brand_new_frame",
+      "Unsupported Claude stream frame: command_lifecycle.deferred",
+      "Further unsupported Claude stream frame types omitted for this turn",
+    ]) {
+      expect(isAgentRawOutputNoise("claudeCode", "stdout", raw)).toBe(true);
+    }
+  });
+
+  it("keeps malformed Claude frames and the same text from other sources", () => {
+    for (const raw of [
+      "Unsupported Claude stream frame: <missing type>",
+      "Unsupported Claude stream frame: <invalid type>",
+      "Unsupported Claude stream frame: ",
+      "Malformed Claude stream frame: command_lifecycle",
+      "Further malformed Claude stream frame types omitted for this turn",
+      "Claude API request failed; retry 1/10 in 500ms",
+      "{not json",
+    ]) {
+      expect(isAgentRawOutputNoise("claudeCode", "stdout", raw)).toBe(false);
+    }
+    const notice = "Unsupported Claude stream frame: command_lifecycle";
+    expect(isAgentRawOutputNoise("claudeCode", "stderr", notice)).toBe(false);
+    expect(isAgentRawOutputNoise("codex", "stdout", notice)).toBe(false);
+  });
 });

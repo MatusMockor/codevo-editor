@@ -1007,6 +1007,46 @@ describe("parseClaudeStreamJsonLine stream fidelity", () => {
     ]);
   });
 
+  it("ignores well-formed command_lifecycle frames as informational", () => {
+    for (const state of ["queued", "started", "completed", "cancelled", "discarded", "refused"]) {
+      expect(
+        parseClaudeStreamJsonLine(
+          line({
+            type: "command_lifecycle",
+            command_uuid: "3b0f6c1e-8f0e-4a8e-9d55-2f7f3f0f6a11",
+            state,
+            uuid: "c4f1e3a2-0b7d-4c7e-8e0a-5d9f2b6a7c11",
+            session_id: SESSION_ID,
+          }),
+        ),
+      ).toEqual({ kind: "ignored" });
+    }
+  });
+
+  it("reports malformed command_lifecycle frames truthfully", () => {
+    for (const frame of [
+      { state: "started" },
+      { command_uuid: "", state: "started" },
+      { command_uuid: "id\n", state: "started" },
+      { command_uuid: "x".repeat(257), state: "started" },
+      { command_uuid: 7, state: "started" },
+      { command_uuid: "cmd-1" },
+      { command_uuid: "cmd-1", state: "Finished\n" },
+      { command_uuid: "cmd-1", state: "s".repeat(33) },
+      { command_uuid: "cmd-1", state: 3 },
+    ]) {
+      expect(events(line({ type: "command_lifecycle", ...frame }))).toEqual([
+        notice("Malformed Claude stream frame: command_lifecycle"),
+      ]);
+    }
+  });
+
+  it("reports an unknown command_lifecycle state as an unsupported frame variant", () => {
+    expect(
+      events(line({ type: "command_lifecycle", command_uuid: "cmd-1", state: "deferred" })),
+    ).toEqual([notice("Unsupported Claude stream frame: command_lifecycle.deferred")]);
+  });
+
   it("clips long tool results to head and tail with an omission marker", () => {
     const output = `head line\n${"x".repeat(5_000)}\nError: tail failure`;
     const [event] = events(

@@ -15,15 +15,34 @@ const FRAME_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/u;
 const FAILED_MCP_STATUS = "failed";
 const RETRY_NOTICE_PREFIX = "Claude API request failed; retry";
 const UNKNOWN_FRAME_NOTICE_PREFIX = "Unsupported Claude stream frame: ";
+const MALFORMED_FRAME_NOTICE_PREFIX = "Malformed Claude stream frame: ";
+const UNKNOWN_FRAME_OVERFLOW_NOTICE =
+  "Further unsupported Claude stream frame types omitted for this turn";
+const MALFORMED_FRAME_OVERFLOW_NOTICE =
+  "Further malformed Claude stream frame types omitted for this turn";
 
 export type ClaudeNoticeClass =
-  { readonly kind: "apiRetry" } | { readonly kind: "unknownFrame"; readonly frameType: string };
+  | { readonly kind: "apiRetry" }
+  | { readonly kind: "unknownFrame"; readonly frameType: string }
+  | { readonly kind: "malformedFrame"; readonly frameType: string };
 
 export function claudeNoticeClass(event: AgentTurnEvent): ClaudeNoticeClass | null {
   if (event.kind !== "unknownLine" || event.stream !== "stdout") return null;
   if (event.raw.startsWith(RETRY_NOTICE_PREFIX)) return { kind: "apiRetry" };
+  if (event.raw.startsWith(MALFORMED_FRAME_NOTICE_PREFIX)) {
+    return {
+      kind: "malformedFrame",
+      frameType: event.raw.slice(MALFORMED_FRAME_NOTICE_PREFIX.length),
+    };
+  }
   if (!event.raw.startsWith(UNKNOWN_FRAME_NOTICE_PREFIX)) return null;
   return { kind: "unknownFrame", frameType: event.raw.slice(UNKNOWN_FRAME_NOTICE_PREFIX.length) };
+}
+
+export function isClaudeInformationalFrameNotice(raw: string): boolean {
+  if (raw === UNKNOWN_FRAME_OVERFLOW_NOTICE) return true;
+  if (!raw.startsWith(UNKNOWN_FRAME_NOTICE_PREFIX)) return false;
+  return validFrameType(raw.slice(UNKNOWN_FRAME_NOTICE_PREFIX.length));
 }
 
 export function claudeNoticeLine(text: string): AgentTurnEvent {
@@ -70,6 +89,18 @@ export function claudeUnknownFrameNotice(type: unknown): AgentTurnEvent {
   return notice(`${UNKNOWN_FRAME_NOTICE_PREFIX}${frameTypeLabel(type)}`);
 }
 
+export function claudeMalformedFrameNotice(type: string): AgentTurnEvent {
+  return notice(`${MALFORMED_FRAME_NOTICE_PREFIX}${frameTypeLabel(type)}`);
+}
+
+export function claudeUnknownFrameOverflowNotice(): AgentTurnEvent {
+  return notice(UNKNOWN_FRAME_OVERFLOW_NOTICE);
+}
+
+export function claudeMalformedFrameOverflowNotice(): AgentTurnEvent {
+  return notice(MALFORMED_FRAME_OVERFLOW_NOTICE);
+}
+
 function failedMcpServerName(value: unknown): string | null {
   const server = objectValue(value);
   if (server === null || server.status !== FAILED_MCP_STATUS) return null;
@@ -95,9 +126,11 @@ function retryDelayLabel(delayMs: number): string {
 
 function frameTypeLabel(type: unknown): string {
   if (typeof type !== "string") return "<missing type>";
-  if (utf8ByteLength(type) > MAX_FRAME_TYPE_BYTES) return "<invalid type>";
-  if (!FRAME_TYPE_PATTERN.test(type)) return "<invalid type>";
-  return type;
+  return validFrameType(type) ? type : "<invalid type>";
+}
+
+function validFrameType(type: string): boolean {
+  return utf8ByteLength(type) <= MAX_FRAME_TYPE_BYTES && FRAME_TYPE_PATTERN.test(type);
 }
 
 function safeName(value: unknown): string | null {

@@ -1,12 +1,26 @@
 import type { AgentTurnEvent } from "../agentThread";
-import { claudeNoticeClass, claudeNoticeLine } from "./claudeStreamNotices";
+import {
+  claudeMalformedFrameOverflowNotice,
+  claudeNoticeClass,
+  claudeNoticeLine,
+  claudeUnknownFrameOverflowNotice,
+  type ClaudeNoticeClass,
+} from "./claudeStreamNotices";
 
 export const MAX_CLAUDE_UNKNOWN_FRAME_TYPES = 16;
+export const MAX_CLAUDE_MALFORMED_FRAME_TYPES = 8;
 export const MAX_CLAUDE_RETRY_NOTICES = 8;
 
+type ClaudeFrameNotice = Exclude<ClaudeNoticeClass, { readonly kind: "apiRetry" }>;
+
+export interface ClaudeFrameNoticeBudget {
+  readonly types: ReadonlySet<string>;
+  readonly overflowReported: boolean;
+}
+
 export interface ClaudeNoticeThrottle {
-  readonly frameTypes: ReadonlySet<string>;
-  readonly frameOverflowReported: boolean;
+  readonly unknownFrames: ClaudeFrameNoticeBudget;
+  readonly malformedFrames: ClaudeFrameNoticeBudget;
   readonly retryNotices: number;
   readonly retryOverflowReported: boolean;
   readonly heldRetry: AgentTurnEvent | null;
@@ -18,9 +32,11 @@ export interface ClaudeNoticeThrottleResult {
   readonly events: ReadonlyArray<AgentTurnEvent>;
 }
 
+const EMPTY_FRAME_BUDGET: ClaudeFrameNoticeBudget = { types: new Set(), overflowReported: false };
+
 export const INITIAL_CLAUDE_NOTICE_THROTTLE: ClaudeNoticeThrottle = {
-  frameTypes: new Set(),
-  frameOverflowReported: false,
+  unknownFrames: EMPTY_FRAME_BUDGET,
+  malformedFrames: EMPTY_FRAME_BUDGET,
   retryNotices: 0,
   retryOverflowReported: false,
   heldRetry: null,
@@ -59,10 +75,10 @@ function throttleEvent(
   const notice = claudeNoticeClass(event);
   if (notice?.kind === "apiRetry") return throttleRetry(state, event);
   const flushed = flushClaudeNotices(state);
-  if (notice?.kind !== "unknownFrame") {
+  if (notice === null) {
     return { state: flushed.state, events: [...flushed.events, event] };
   }
-  const frame = throttleFrame(flushed.state, notice.frameType, event);
+  const frame = throttleFrame(flushed.state, notice, event);
   return { state: frame.state, events: [...flushed.events, ...frame.events] };
 }
 
@@ -92,23 +108,63 @@ function retryOverflow(state: ClaudeNoticeThrottle): ClaudeNoticeThrottleResult 
 
 function throttleFrame(
   state: ClaudeNoticeThrottle,
-  frameType: string,
+  notice: ClaudeFrameNotice,
   event: AgentTurnEvent,
 ): ClaudeNoticeThrottleResult {
-  if (state.frameTypes.has(frameType)) return { state, events: [] };
-  if (state.frameTypes.size < MAX_CLAUDE_UNKNOWN_FRAME_TYPES) {
-    return {
-      state: { ...state, frameTypes: new Set([...state.frameTypes, frameType]) },
-      events: [event],
-    };
+  switch (notice.kind) {
+    case "unknownFrame": {
+      const step = budgetFrame(
+        state.unknownFrames,
+        notice.frameType,
+        MAX_CLAUDE_UNKNOWN_FRAME_TYPES,
+      );
+      return {
+        state: { ...state, unknownFrames: step.budget },
+        events: frameEvents(step.emit, event, claudeUnknownFrameOverflowNotice),
+      };
+    }
+    case "malformedFrame": {
+      const step = budgetFrame(
+        state.malformedFrames,
+        notice.frameType,
+        MAX_CLAUDE_MALFORMED_FRAME_TYPES,
+      );
+      return {
+        state: { ...state, malformedFrames: step.budget },
+        events: frameEvents(step.emit, event, claudeMalformedFrameOverflowNotice),
+      };
+    }
   }
-  if (state.frameOverflowReported) return { state, events: [] };
-  return {
-    state: { ...state, frameOverflowReported: true },
-    events: [
-      claudeNoticeLine("Further unsupported Claude stream frame types omitted for this turn"),
-    ],
-  };
+}
+
+type FrameEmission = "notice" | "overflow" | "none";
+
+function budgetFrame(
+  budget: ClaudeFrameNoticeBudget,
+  frameType: string,
+  limit: number,
+): { readonly budget: ClaudeFrameNoticeBudget; readonly emit: FrameEmission } {
+  if (budget.types.has(frameType)) return { budget, emit: "none" };
+  if (budget.types.size < limit) {
+    return { budget: { ...budget, types: new Set([...budget.types, frameType]) }, emit: "notice" };
+  }
+  if (budget.overflowReported) return { budget, emit: "none" };
+  return { budget: { ...budget, overflowReported: true }, emit: "overflow" };
+}
+
+function frameEvents(
+  emit: FrameEmission,
+  event: AgentTurnEvent,
+  overflowNotice: () => AgentTurnEvent,
+): ReadonlyArray<AgentTurnEvent> {
+  switch (emit) {
+    case "notice":
+      return [event];
+    case "overflow":
+      return [overflowNotice()];
+    case "none":
+      return [];
+  }
 }
 
 function heldRetryNotice(event: AgentTurnEvent, count: number): AgentTurnEvent {

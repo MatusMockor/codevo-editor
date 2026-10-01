@@ -6,7 +6,13 @@ import {
   finishAgentOutput,
   type AgentOutputParserState,
 } from "./agentOutputParser";
-import { MAX_CLAUDE_RETRY_NOTICES, MAX_CLAUDE_UNKNOWN_FRAME_TYPES } from "./claudeNoticeThrottle";
+import {
+  MAX_CLAUDE_MALFORMED_FRAME_TYPES,
+  MAX_CLAUDE_RETRY_NOTICES,
+  MAX_CLAUDE_UNKNOWN_FRAME_TYPES,
+  throttleClaudeNotices,
+} from "./claudeNoticeThrottle";
+import { claudeMalformedFrameNotice } from "./claudeStreamNotices";
 
 function jsonl(values: ReadonlyArray<unknown>): string {
   return values.map((value) => `${JSON.stringify(value)}\n`).join("");
@@ -57,6 +63,52 @@ describe("Claude notice throttling per turn", () => {
     ]);
   });
 
+  it("reports a malformed frame type once per turn without merging it into the unknown type", () => {
+    const malformed = Array.from({ length: 500 }, () => ({
+      type: "command_lifecycle",
+      state: "started",
+    }));
+    const wellFormed = { type: "command_lifecycle", command_uuid: "cmd-1", state: "started" };
+    const { events } = feedAll([jsonl([...malformed, wellFormed, { type: "token_delta" }])]);
+
+    expect(rawLines(events)).toEqual([
+      "Malformed Claude stream frame: command_lifecycle",
+      "Unsupported Claude stream frame: token_delta",
+    ]);
+  });
+
+  it("keeps malformed frames visible after the unknown frame budget is exhausted", () => {
+    const distinct = Array.from({ length: MAX_CLAUDE_UNKNOWN_FRAME_TYPES + 4 }, (_, index) => ({
+      type: `frame_${index}`,
+    }));
+    const { events } = feedAll([jsonl([...distinct, { type: "command_lifecycle" }])]);
+
+    expect(rawLines(events).slice(-2)).toEqual([
+      "Further unsupported Claude stream frame types omitted for this turn",
+      "Malformed Claude stream frame: command_lifecycle",
+    ]);
+  });
+
+  it("bounds distinct malformed frame types with a visible overflow notice", () => {
+    let state = createAgentOutputParserState("claudeCode");
+    const emitted: AgentTurnEvent[] = [];
+    for (let index = 0; index < MAX_CLAUDE_MALFORMED_FRAME_TYPES + 3; index += 1) {
+      const result = throttleClaudeNotices(state.claudeNoticeThrottle, [
+        claudeMalformedFrameNotice(`frame_${index}`),
+      ]);
+      state = { ...state, claudeNoticeThrottle: result.state };
+      emitted.push(...result.events);
+    }
+
+    expect(rawLines(emitted)).toEqual([
+      ...Array.from(
+        { length: MAX_CLAUDE_MALFORMED_FRAME_TYPES },
+        (_, index) => `Malformed Claude stream frame: frame_${index}`,
+      ),
+      "Further malformed Claude stream frame types omitted for this turn",
+    ]);
+  });
+
   it("coalesces a retry storm into the first and the latest retry", () => {
     const storm = Array.from({ length: 50 }, (_, index) => retry(index + 1));
     const { events } = feedAll([
@@ -97,7 +149,7 @@ describe("Claude notice throttling per turn", () => {
 
   it("starts every turn with a fresh throttle", () => {
     const first = feedAll([jsonl([{ type: "token_delta" }])]);
-    expect(first.state.claudeNoticeThrottle?.frameTypes.size).toBe(1);
+    expect(first.state.claudeNoticeThrottle?.unknownFrames.types.size).toBe(1);
 
     const second = feedAll([jsonl([{ type: "token_delta" }])]);
     expect(rawLines(second.events)).toEqual(["Unsupported Claude stream frame: token_delta"]);

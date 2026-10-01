@@ -20,6 +20,7 @@ import type { AgentAccountUsageWindow } from "../agentAccountUsage";
 import {
   claudeApiRetryNotice,
   claudeFailedMcpNotice,
+  claudeMalformedFrameNotice,
   claudePermissionDenialNotice,
   claudeUnknownFrameNotice,
 } from "./claudeStreamNotices";
@@ -44,6 +45,16 @@ const BENIGN_FRAME_TYPES: ReadonlySet<string> = new Set([
   "streamlined_text",
   "streamlined_tool_use_summary",
 ]);
+const COMMAND_LIFECYCLE_FRAME_TYPE = "command_lifecycle";
+const COMMAND_LIFECYCLE_STATE_PATTERN = /^[a-z][a-z0-9_]{0,31}$/u;
+const COMMAND_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  "queued",
+  "started",
+  "completed",
+  "cancelled",
+  "discarded",
+  "refused",
+]);
 
 export function parseClaudeStreamJsonLine(line: string): ParsedAgentLine {
   const value = jsonObject(line);
@@ -53,8 +64,25 @@ export function parseClaudeStreamJsonLine(line: string): ParsedAgentLine {
   if (value.type === "user") return parseUserLine(value);
   if (value.type === "result") return parseResultLine(value);
   if (value.type === "rate_limit_event") return parseRateLimitEvent(value);
+  if (value.type === COMMAND_LIFECYCLE_FRAME_TYPE) return parseCommandLifecycleLine(value);
   if (typeof value.type === "string" && BENIGN_FRAME_TYPES.has(value.type)) return IGNORED;
   return { kind: "events", events: [claudeUnknownFrameNotice(value.type)], sessionId: null };
+}
+
+function parseCommandLifecycleLine(value: Record<string, unknown>): ParsedAgentLine {
+  const commandId = safeIdentifier(value.command_uuid, MAX_AGENT_TOOL_ID_BYTES);
+  const state = value.state;
+  if (
+    commandId === null ||
+    typeof state !== "string" ||
+    !COMMAND_LIFECYCLE_STATE_PATTERN.test(state)
+  ) {
+    const notice = claudeMalformedFrameNotice(COMMAND_LIFECYCLE_FRAME_TYPE);
+    return { kind: "events", events: [notice], sessionId: null };
+  }
+  if (COMMAND_LIFECYCLE_STATES.has(state)) return IGNORED;
+  const notice = claudeUnknownFrameNotice(`${COMMAND_LIFECYCLE_FRAME_TYPE}.${state}`);
+  return { kind: "events", events: [notice], sessionId: null };
 }
 
 function parseRateLimitEvent(value: Record<string, unknown>): ParsedAgentLine {
