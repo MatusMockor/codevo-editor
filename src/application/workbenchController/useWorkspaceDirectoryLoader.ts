@@ -7,6 +7,11 @@ import {
   type SetStateAction,
 } from "react";
 import type { FileEntry, WorkspaceFileGateway } from "../../domain/workspace";
+import {
+  isWorkspaceDirectoryBusyError,
+  WORKSPACE_DIRECTORY_BUSY_MESSAGE,
+  WORKSPACE_DIRECTORY_TIMEOUT_MESSAGE,
+} from "../../domain/workspaceDirectoryReadErrors";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { workspacePathBelongsToRoot } from "./workspacePathPolicy";
 import {
@@ -190,7 +195,7 @@ export function useWorkspaceDirectoryLoader({
           }
           if (isActiveRoot() && isCurrentPresentation()) {
             updateDirectorySet(setFailedDirectories, normalizedPath, true);
-            setMessage("This folder took too long to load. Retry to try again.");
+            setMessage(WORKSPACE_DIRECTORY_TIMEOUT_MESSAGE);
           }
           clearCurrentLoading();
           return;
@@ -240,10 +245,10 @@ export function useWorkspaceDirectoryLoader({
           clearCurrentLoading();
           return;
         }
-        if (message.startsWith("workspace_directory_busy:")) {
+        if (isWorkspaceDirectoryBusyError(error)) {
           updateDirectorySet(setFailedDirectories, normalizedPath, true);
           clearCurrentLoading();
-          setMessage("This folder is busy. Retry in a moment.");
+          setMessage(WORKSPACE_DIRECTORY_BUSY_MESSAGE);
           return;
         }
 

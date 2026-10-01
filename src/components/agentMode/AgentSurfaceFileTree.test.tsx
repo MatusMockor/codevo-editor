@@ -125,6 +125,19 @@ describe("AgentSurfaceFileTree", () => {
     );
   });
 
+  it("offers Retry for a root read error and retries the tree root", () => {
+    const retryDirectory = vi.fn();
+    render({
+      tree: { ...tree(), rootError: "This folder is busy. Retry in a moment.", retryDirectory },
+    });
+    const note = host.querySelector("[data-agent-surface-tree-root-error]");
+    expect(note?.textContent).toContain("This folder is busy. Retry in a moment.");
+    const retry = note?.querySelector<HTMLButtonElement>("button");
+    expect(retry?.textContent).toBe("Retry");
+    act(() => retry?.click());
+    expect(retryDirectory).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
+  });
+
   function render(overrides: Partial<AgentSurfaceFileTreeProps> = {}): void {
     act(() => root.render(<AgentSurfaceFileTree {...defaultProps()} {...overrides} />));
   }

@@ -2,8 +2,16 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../domain/workspace";
+import {
+  WORKSPACE_DIRECTORY_BUSY_MESSAGE,
+  WORKSPACE_DIRECTORY_TIMEOUT_MESSAGE,
+} from "../domain/workspaceDirectoryReadErrors";
+import {
+  AGENT_SURFACE_TREE_READ_TIMEOUT_MS,
+  MAX_AGENT_SURFACE_TREE_CONCURRENT_READS,
+} from "./agentSurfaceTreeReadPolicy";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
@@ -42,13 +50,22 @@ interface Listing {
   readonly truncated: boolean;
 }
 
+type ScriptedRead = Listing | Error | Promise<Listing>;
+
+function busyError(): Error {
+  return new Error("WORKSPACE_DIRECTORY_BUSY: this directory is already being read");
+}
+
 function renderTree(options: {
   readonly listings?: Record<string, Listing | Error>;
+  readonly queued?: Record<string, ScriptedRead[]>;
   readonly target?: AgentSurfaceFileTreeTarget | null;
   readonly bounded?: boolean;
   readonly withChanges?: boolean;
+  readonly random?: () => number;
 }) {
   const listings: Record<string, Listing | Error> = options.listings ?? {};
+  const queued: Record<string, ScriptedRead[]> = options.queued ?? {};
   const readDirectory = vi.fn(async (path: string): Promise<FileEntry[]> => {
     const listing = listings[path];
     if (listing instanceof Error) throw listing;
@@ -56,7 +73,8 @@ function renderTree(options: {
     return listing.entries;
   });
   const readDirectoryBounded = vi.fn(async (path: string, maxEntries: number) => {
-    const listing = listings[path];
+    const scripted = queued[path]?.shift();
+    const listing = scripted === undefined ? listings[path] : await scripted;
     if (listing instanceof Error) throw listing;
     if (listing === undefined) return { entries: [], truncated: false };
     return {
@@ -80,6 +98,7 @@ function renderTree(options: {
       readDirectoryBounded: options.bounded === false ? undefined : readDirectoryBounded,
     },
     fileChanges: options.withChanges === true ? { subscribeFileChanges } : null,
+    random: options.random ?? (() => 0),
   });
 
   const host = document.createElement("div");
@@ -97,6 +116,10 @@ function renderTree(options: {
   return {
     readDirectory,
     readDirectoryBounded,
+    readsOf: (path: string) =>
+      readDirectoryBounded.mock.calls.filter(([read]) => read === path).length,
+    listings,
+    queued,
     listeners,
     unsubscribe,
     hook: () => captured.value as AgentSurfaceFileTreeSurface,
@@ -498,6 +521,424 @@ describe("useAgentSurfaceFileTree", () => {
     expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([]);
     expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(reads);
     harness.unmount();
+  });
+
+  describe("busy directory reads", () => {
+    const FAST_RETRY_WINDOW_MS = 850;
+    const FOLLOW_UP_WINDOW_MS = 2_000;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function advance(ms: number): Promise<void> {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    }
+
+    it("retries a busy root read and shows its listing without an error", async () => {
+      const harness = renderTree({
+        listings: { [WORKTREE]: { entries: [file(`${WORKTREE}/a.ts`)], truncated: false } },
+        queued: { [WORKTREE]: [busyError()] },
+      });
+      await advance(0);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().failedDirectories.has(WORKTREE)).toBe(false);
+      expect(harness.hook().loadingDirectories.has(WORKTREE)).toBe(true);
+
+      await advance(99);
+      expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(1);
+      await advance(1);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([file(`${WORKTREE}/a.ts`)]);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(2);
+      harness.unmount();
+    });
+
+    it("survives a thread to project switch on the same root while the old read holds the folder", async () => {
+      let releaseFirst: (listing: Listing) => void = () => undefined;
+      const first = new Promise<Listing>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const harness = renderTree({
+        target: { kind: "thread", workspaceId: "ws-1", threadId: "agt-1", rootPath: ROOT },
+        listings: { [ROOT]: { entries: [file(`${ROOT}/fresh.ts`)], truncated: false } },
+        queued: { [ROOT]: [first, busyError()] },
+      });
+      await advance(0);
+      harness.setTarget({ kind: "project", ownerId: "owner-1", generation: 1, rootPath: ROOT });
+      await advance(0);
+      expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(2);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().failedDirectories.size).toBe(0);
+
+      await advance(100);
+      expect(harness.hook().entriesByDirectory[ROOT]).toEqual([file(`${ROOT}/fresh.ts`)]);
+      await act(async () =>
+        releaseFirst({ entries: [file(`${ROOT}/stale.ts`)], truncated: false }),
+      );
+      expect(harness.hook().entriesByDirectory[ROOT]).toEqual([file(`${ROOT}/fresh.ts`)]);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(3);
+      harness.unmount();
+    });
+
+    it("keeps the expanded tree when a root change re-read stays busy and Retry reads at once", async () => {
+      const src = `${WORKTREE}/src`;
+      const harness = renderTree({
+        listings: {
+          [WORKTREE]: { entries: [directory(src)], truncated: false },
+          [src]: { entries: [file(`${src}/a.ts`)], truncated: false },
+        },
+        withChanges: true,
+      });
+      await advance(0);
+      act(() => harness.hook().toggleDirectory(src));
+      await advance(0);
+      expect(harness.hook().entriesByDirectory[src]).toEqual([file(`${src}/a.ts`)]);
+      const reads = harness.readsOf(WORKTREE);
+
+      harness.queued[WORKTREE] = [busyError(), busyError(), busyError(), busyError()];
+      harness.emit(change(`${WORKTREE}/new.ts`));
+      await advance(0);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().entriesByDirectory[src]).toEqual([file(`${src}/a.ts`)]);
+
+      await advance(FAST_RETRY_WINDOW_MS);
+      expect(harness.readsOf(WORKTREE)).toBe(reads + 4);
+      expect(harness.hook().rootError).toBe(WORKSPACE_DIRECTORY_BUSY_MESSAGE);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([directory(src)]);
+      expect(harness.hook().entriesByDirectory[src]).toEqual([file(`${src}/a.ts`)]);
+      expect(harness.hook().expandedDirectories.has(src)).toBe(true);
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+
+      harness.listings[WORKTREE] = {
+        entries: [directory(src), file(`${WORKTREE}/new.ts`)],
+        truncated: false,
+      };
+      act(() => harness.hook().retryDirectory(WORKTREE));
+      await advance(0);
+      expect(harness.readsOf(WORKTREE)).toBe(reads + 5);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().failedDirectories.size).toBe(0);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toHaveLength(2);
+      expect(harness.hook().entriesByDirectory[src]).toEqual([file(`${src}/a.ts`)]);
+      await advance(FOLLOW_UP_WINDOW_MS);
+      expect(harness.readsOf(WORKTREE)).toBe(reads + 5);
+      expect(vi.getTimerCount()).toBe(0);
+      harness.unmount();
+    });
+
+    it("recovers a busy root on its own with one slower follow-up read", async () => {
+      const harness = renderTree({
+        listings: { [WORKTREE]: { entries: [file(`${WORKTREE}/a.ts`)], truncated: false } },
+        queued: { [WORKTREE]: [busyError(), busyError(), busyError(), busyError()] },
+      });
+      await advance(FAST_RETRY_WINDOW_MS);
+      expect(harness.readsOf(WORKTREE)).toBe(4);
+      expect(harness.hook().rootError).toBe(WORKSPACE_DIRECTORY_BUSY_MESSAGE);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toBeUndefined();
+
+      await advance(FOLLOW_UP_WINDOW_MS);
+      expect(harness.readsOf(WORKTREE)).toBe(5);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().failedDirectories.size).toBe(0);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([file(`${WORKTREE}/a.ts`)]);
+      expect(vi.getTimerCount()).toBe(0);
+      harness.unmount();
+    });
+
+    it("bounds busy retries and stops retrying after a target change or unmount", async () => {
+      const other = `${ROOT}/.worktrees/agt-2`;
+      const harness = renderTree({
+        listings: { [WORKTREE]: busyError(), [other]: busyError() },
+      });
+      await advance(10_000);
+      expect(harness.readsOf(WORKTREE)).toBe(5);
+      expect(harness.hook().rootError).toBe(WORKSPACE_DIRECTORY_BUSY_MESSAGE);
+      expect(harness.hook().failedDirectories.has(WORKTREE)).toBe(true);
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+
+      act(() => harness.hook().retryDirectory(WORKTREE));
+      await advance(100);
+      expect(harness.readsOf(WORKTREE)).toBe(7);
+      expect(harness.hook().rootError).toBe(WORKSPACE_DIRECTORY_BUSY_MESSAGE);
+
+      harness.setTarget({
+        kind: "thread",
+        workspaceId: "ws-1",
+        threadId: "agt-2",
+        rootPath: other,
+      });
+      await advance(10_000);
+      expect(harness.readsOf(WORKTREE)).toBe(7);
+      expect(harness.readsOf(other)).toBe(5);
+
+      act(() => harness.hook().retryDirectory(other));
+      await advance(0);
+      expect(harness.readsOf(other)).toBe(6);
+      expect(vi.getTimerCount()).toBe(1);
+      harness.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+      await advance(10_000);
+      expect(harness.readsOf(other)).toBe(6);
+    });
+
+    it("keeps a busy nested listing and marks only that folder retryable", async () => {
+      const src = `${WORKTREE}/src`;
+      const harness = renderTree({
+        listings: {
+          [WORKTREE]: { entries: [directory(src)], truncated: false },
+          [src]: { entries: [file(`${src}/a.ts`)], truncated: false },
+        },
+        withChanges: true,
+      });
+      await advance(0);
+      act(() => harness.hook().toggleDirectory(src));
+      await advance(0);
+      harness.listings[src] = busyError();
+      harness.emit(change(`${src}/b.ts`));
+      await advance(FAST_RETRY_WINDOW_MS + FOLLOW_UP_WINDOW_MS);
+      expect(harness.readsOf(src)).toBe(6);
+      expect(harness.hook().failedDirectories.has(src)).toBe(true);
+      expect(harness.hook().entriesByDirectory[src]).toEqual([file(`${src}/a.ts`)]);
+      expect(harness.hook().expandedDirectories.has(src)).toBe(true);
+      expect(harness.hook().rootError).toBeNull();
+      harness.unmount();
+    });
+
+    it("coalesces refresh and rescanRequired arriving during a busy retry wait", async () => {
+      const src = `${WORKTREE}/src`;
+      const docs = `${WORKTREE}/docs`;
+      const harness = renderTree({
+        listings: {
+          [WORKTREE]: { entries: [directory(docs), directory(src)], truncated: false },
+          [src]: { entries: [file(`${src}/a.ts`)], truncated: false },
+          [docs]: { entries: [file(`${docs}/b.md`)], truncated: false },
+        },
+        withChanges: true,
+      });
+      await advance(0);
+      act(() => harness.hook().toggleDirectory(src));
+      await advance(0);
+      harness.queued[docs] = [busyError()];
+      act(() => harness.hook().toggleDirectory(docs));
+      await advance(0);
+      act(() => harness.hook().toggleDirectory(docs));
+      harness.queued[WORKTREE] = [busyError()];
+      harness.emit(change(`${WORKTREE}/new.ts`));
+      await advance(0);
+      expect(harness.readsOf(WORKTREE)).toBe(2);
+
+      harness.emit({ rootPath: ROOT, kind: "rescanRequired", path: ROOT, relativePath: "" });
+      act(() => harness.hook().refresh());
+      await advance(FAST_RETRY_WINDOW_MS + FOLLOW_UP_WINDOW_MS);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().failedDirectories.size).toBe(0);
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toHaveLength(2);
+      expect(harness.hook().entriesByDirectory[src]).toEqual([file(`${src}/a.ts`)]);
+      expect(harness.readsOf(WORKTREE)).toBe(4);
+      expect(harness.readsOf(docs)).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+      harness.unmount();
+    });
+
+    it("reads at most a few folders at once and drops queued reads on a target change", async () => {
+      const children = Array.from({ length: 8 }, (_, index) => `${WORKTREE}/d${index}`);
+      const releases: Array<() => void> = [];
+      const harness = renderTree({
+        listings: { [WORKTREE]: { entries: children.map(directory), truncated: false } },
+      });
+      await advance(0);
+      for (const child of children) {
+        harness.queued[child] = [
+          new Promise<Listing>((resolve) => {
+            releases.push(() => resolve({ entries: [file(`${child}/a.ts`)], truncated: false }));
+          }),
+        ];
+      }
+      const started = () => children.filter((child) => harness.readsOf(child) > 0).length;
+
+      act(() => {
+        for (const child of children) harness.hook().toggleDirectory(child);
+      });
+      await advance(0);
+      expect(started()).toBe(MAX_AGENT_SURFACE_TREE_CONCURRENT_READS);
+      expect(harness.hook().loadingDirectories.size).toBe(children.length);
+
+      await act(async () => releases[0]?.());
+      await advance(0);
+      expect(harness.hook().entriesByDirectory[children[0] ?? ""]).toBeDefined();
+      expect(started()).toBe(MAX_AGENT_SURFACE_TREE_CONCURRENT_READS + 1);
+
+      harness.setTarget({
+        kind: "thread",
+        workspaceId: "ws-1",
+        threadId: "agt-2",
+        rootPath: `${ROOT}/.worktrees/agt-2`,
+      });
+      await act(async () => releases.forEach((release) => release()));
+      await advance(0);
+      expect(started()).toBe(MAX_AGENT_SURFACE_TREE_CONCURRENT_READS + 1);
+      expect(harness.hook().entriesByDirectory[children[0] ?? ""]).toBeUndefined();
+      harness.unmount();
+    });
+
+    it("frees read slots during busy backoff so a queued folder still starts", async () => {
+      const busyChildren = Array.from({ length: 4 }, (_, index) => `${WORKTREE}/d${index}`);
+      const queuedChild = `${WORKTREE}/d4`;
+      const harness = renderTree({
+        listings: {
+          [WORKTREE]: { entries: [...busyChildren, queuedChild].map(directory), truncated: false },
+          [queuedChild]: { entries: [file(`${queuedChild}/a.ts`)], truncated: false },
+        },
+      });
+      await advance(0);
+      for (const child of busyChildren) harness.queued[child] = [busyError()];
+
+      act(() => {
+        for (const child of [...busyChildren, queuedChild]) harness.hook().toggleDirectory(child);
+      });
+      await advance(0);
+      expect(busyChildren.map((child) => harness.readsOf(child))).toEqual([1, 1, 1, 1]);
+      expect(harness.readsOf(queuedChild)).toBe(1);
+      expect(harness.hook().entriesByDirectory[queuedChild]).toEqual([file(`${queuedChild}/a.ts`)]);
+      expect(harness.hook().failedDirectories.size).toBe(0);
+
+      await advance(100);
+      expect(busyChildren.map((child) => harness.readsOf(child))).toEqual([2, 2, 2, 2]);
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      harness.unmount();
+    });
+
+    it("restarts the fast retries and shows loading when Retry wakes the follow-up wait", async () => {
+      const harness = renderTree({
+        listings: { [WORKTREE]: { entries: [file(`${WORKTREE}/a.ts`)], truncated: false } },
+        queued: { [WORKTREE]: [busyError(), busyError(), busyError(), busyError()] },
+      });
+      await advance(FAST_RETRY_WINDOW_MS);
+      expect(harness.readsOf(WORKTREE)).toBe(4);
+      expect(harness.hook().rootError).toBe(WORKSPACE_DIRECTORY_BUSY_MESSAGE);
+      expect(harness.hook().failedDirectories.has(WORKTREE)).toBe(true);
+
+      harness.queued[WORKTREE] = [busyError(), busyError()];
+      act(() => harness.hook().retryDirectory(WORKTREE));
+      await advance(0);
+      expect(harness.readsOf(WORKTREE)).toBe(5);
+      expect(harness.hook().loadingDirectories.has(WORKTREE)).toBe(true);
+      expect(harness.hook().failedDirectories.has(WORKTREE)).toBe(false);
+
+      await advance(100);
+      expect(harness.readsOf(WORKTREE)).toBe(6);
+      await advance(250);
+      expect(harness.readsOf(WORKTREE)).toBe(7);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([file(`${WORKTREE}/a.ts`)]);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      harness.unmount();
+    });
+
+    it("gives up hung reads at the deadline, frees their slots and ignores late listings", async () => {
+      const hungChildren = Array.from({ length: 4 }, (_, index) => `${WORKTREE}/d${index}`);
+      const queuedChild = `${WORKTREE}/d4`;
+      const late: Array<() => void> = [];
+      const harness = renderTree({
+        listings: {
+          [WORKTREE]: { entries: [...hungChildren, queuedChild].map(directory), truncated: false },
+          [queuedChild]: { entries: [file(`${queuedChild}/a.ts`)], truncated: false },
+        },
+      });
+      await advance(0);
+      for (const child of hungChildren) {
+        harness.queued[child] = [
+          new Promise<Listing>((resolve) => {
+            late.push(() => resolve({ entries: [file(`${child}/late.ts`)], truncated: false }));
+          }),
+        ];
+      }
+      act(() => {
+        for (const child of [...hungChildren, queuedChild]) harness.hook().toggleDirectory(child);
+      });
+      await advance(AGENT_SURFACE_TREE_READ_TIMEOUT_MS - 1);
+      expect(harness.readsOf(queuedChild)).toBe(0);
+
+      await advance(1);
+      expect(harness.readsOf(queuedChild)).toBe(1);
+      expect(harness.hook().entriesByDirectory[queuedChild]).toEqual([file(`${queuedChild}/a.ts`)]);
+      for (const child of hungChildren) {
+        expect(harness.hook().failedDirectories.has(child)).toBe(true);
+        expect(harness.hook().expandedDirectories.has(child)).toBe(true);
+      }
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      expect(harness.hook().rootError).toBeNull();
+
+      await act(async () => late.forEach((release) => release()));
+      await advance(0);
+      for (const child of hungChildren) {
+        expect(harness.hook().entriesByDirectory[child]).toBeUndefined();
+        expect(harness.hook().failedDirectories.has(child)).toBe(true);
+      }
+      expect(vi.getTimerCount()).toBe(0);
+      harness.unmount();
+    });
+
+    it("reports a hung root read as a retryable timeout and recovers on Retry", async () => {
+      const harness = renderTree({
+        listings: { [WORKTREE]: { entries: [file(`${WORKTREE}/a.ts`)], truncated: false } },
+        queued: { [WORKTREE]: [new Promise<Listing>(() => undefined)] },
+      });
+      await advance(AGENT_SURFACE_TREE_READ_TIMEOUT_MS);
+      expect(harness.hook().rootError).toBe(WORKSPACE_DIRECTORY_TIMEOUT_MESSAGE);
+      expect(harness.hook().failedDirectories.has(WORKTREE)).toBe(true);
+      expect(harness.hook().loadingDirectories.size).toBe(0);
+      await advance(AGENT_SURFACE_TREE_READ_TIMEOUT_MS);
+      expect(harness.readsOf(WORKTREE)).toBe(1);
+
+      act(() => harness.hook().retryDirectory(WORKTREE));
+      await advance(0);
+      expect(harness.readsOf(WORKTREE)).toBe(2);
+      expect(harness.hook().rootError).toBeNull();
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([file(`${WORKTREE}/a.ts`)]);
+      harness.unmount();
+    });
+
+    it("lets refresh read at once instead of queueing behind hung reads", async () => {
+      const hungChildren = Array.from({ length: 4 }, (_, index) => `${WORKTREE}/d${index}`);
+      const queuedChild = `${WORKTREE}/d4`;
+      const harness = renderTree({
+        listings: {
+          [WORKTREE]: { entries: [...hungChildren, queuedChild].map(directory), truncated: false },
+          [queuedChild]: { entries: [file(`${queuedChild}/a.ts`)], truncated: false },
+        },
+      });
+      await advance(0);
+      for (const child of hungChildren)
+        harness.queued[child] = [new Promise<Listing>(() => undefined)];
+      act(() => {
+        for (const child of [...hungChildren, queuedChild]) harness.hook().toggleDirectory(child);
+      });
+      await advance(0);
+      expect(harness.readsOf(queuedChild)).toBe(0);
+      const rootReads = harness.readsOf(WORKTREE);
+
+      act(() => harness.hook().refresh());
+      await advance(0);
+      expect(harness.readsOf(WORKTREE)).toBe(rootReads + 1);
+      expect(harness.readsOf(queuedChild)).toBe(1);
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toHaveLength(5);
+      expect(harness.hook().entriesByDirectory[queuedChild]).toEqual([file(`${queuedChild}/a.ts`)]);
+      harness.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it("exposes pure helpers for depth and ordering", () => {

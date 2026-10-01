@@ -122,6 +122,30 @@ function UnavailableNote({ unavailable }: { readonly unavailable: AgentSurfaceTr
   );
 }
 
+function RootErrorNote({
+  message,
+  onRetry,
+}: {
+  readonly message: string;
+  readonly onRetry: (() => void) | null;
+}) {
+  return (
+    <p className="agent-note agent-note--bad" data-agent-surface-tree-root-error>
+      {message}
+      {onRetry !== null && (
+        <button
+          aria-label="Retry reading the files"
+          className="agent-linkbutton"
+          onClick={onRetry}
+          type="button"
+        >
+          Retry
+        </button>
+      )}
+    </p>
+  );
+}
+
 export function AgentSurfaceFileTree({
   activePath,
   fileStatusesByPath,
@@ -134,6 +158,8 @@ export function AgentSurfaceFileTree({
 }: AgentSurfaceFileTreeProps) {
   const blocked = unavailable ?? (tree.rootPath === null ? rootGone(source) : null);
   const truncated = tree.truncatedDirectories.size > 0;
+  const treeRoot = tree.rootPath;
+  const retryRoot = treeRoot === null ? null : () => tree.retryDirectory(treeRoot);
 
   return (
     <section
@@ -143,7 +169,7 @@ export function AgentSurfaceFileTree({
       data-agent-surface-tree-source={source}
     >
       {blocked !== null && <UnavailableNote unavailable={blocked} />}
-      {tree.rootError !== null && <p className="agent-note agent-note--bad">{tree.rootError}</p>}
+      {tree.rootError !== null && <RootErrorNote message={tree.rootError} onRetry={retryRoot} />}
       {truncated && (
         <p className="agent-note agent-note--warning">
           Folders show at most {MAX_AGENT_SURFACE_TREE_ENTRIES} entries.

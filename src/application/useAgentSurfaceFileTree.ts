@@ -1,10 +1,28 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { withoutExplorerExcludedEntries } from "../domain/explorerFilesExclude";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
+import {
+  isWorkspaceDirectoryBusyError,
+  WORKSPACE_DIRECTORY_BUSY_MESSAGE,
+  WORKSPACE_DIRECTORY_TIMEOUT_MESSAGE,
+} from "../domain/workspaceDirectoryReadErrors";
 import type {
   WorkspaceFileChangeEvent,
   WorkspaceFileChangeGateway,
 } from "../domain/workspaceFileChange";
+import {
+  AGENT_SURFACE_TREE_BUSY_FOLLOW_UP_DELAY_MS,
+  AGENT_SURFACE_TREE_BUSY_RETRY_DELAYS_MS,
+  AGENT_SURFACE_TREE_READ_TIMEOUT_MS,
+  AgentSurfaceTreeReadSuperseded,
+  AgentSurfaceTreeReadTimedOut,
+  createDirectoryReadSlots,
+  createRetryTimers,
+  jitteredBusyRetryDelay,
+  MAX_AGENT_SURFACE_TREE_CONCURRENT_READS,
+  readInSlot,
+  readRetryingWhileBusy,
+} from "./agentSurfaceTreeReadPolicy";
 
 export const MAX_AGENT_SURFACE_TREE_ENTRIES = 4_000;
 export const MAX_AGENT_SURFACE_TREE_DIRECTORIES = 200;
@@ -34,6 +52,7 @@ export interface AgentSurfaceFileTreeDependencies {
   readonly target: AgentSurfaceFileTreeTarget | null;
   readonly files: Pick<WorkspaceFileGateway, "readDirectory" | "readDirectoryBounded">;
   readonly fileChanges: Pick<WorkspaceFileChangeGateway, "subscribeFileChanges"> | null;
+  readonly random?: () => number;
 }
 
 export interface AgentSurfaceFileTreeSurface {
@@ -47,6 +66,41 @@ export interface AgentSurfaceFileTreeSurface {
   toggleDirectory(path: string): void;
   retryDirectory(path: string): void;
   refresh(): void;
+}
+
+interface DirectoryRequest {
+  dirty: boolean;
+  wake: (() => void) | null;
+}
+
+type DirectoryReadFailure = "busy" | "timedOut" | "failed";
+
+function directoryReadFailure(error: unknown): DirectoryReadFailure {
+  if (error instanceof AgentSurfaceTreeReadTimedOut) return "timedOut";
+  if (isWorkspaceDirectoryBusyError(error)) return "busy";
+  return "failed";
+}
+
+function withFailedDirectory(
+  current: TreeState,
+  root: string,
+  path: string,
+  failure: DirectoryReadFailure,
+  rootErrorMessage: string,
+): TreeState {
+  const marked = {
+    loading: withoutValue(current.loading, path),
+    failed: withValue(current.failed, path),
+  };
+  const rootError = (message: string) => (path === root ? message : current.rootError);
+  switch (failure) {
+    case "busy":
+      return { ...current, ...marked, rootError: rootError(WORKSPACE_DIRECTORY_BUSY_MESSAGE) };
+    case "timedOut":
+      return { ...current, ...marked, rootError: rootError(WORKSPACE_DIRECTORY_TIMEOUT_MESSAGE) };
+    case "failed":
+      return { ...dropDirectory(current, path), ...marked, rootError: rootError(rootErrorMessage) };
+  }
 }
 
 interface TreeState {
@@ -224,7 +278,7 @@ function dropDirectory(state: TreeState, path: string): TreeState {
 export function useAgentSurfaceFileTree(
   dependencies: AgentSurfaceFileTreeDependencies,
 ): AgentSurfaceFileTreeSurface {
-  const { target, files, fileChanges } = dependencies;
+  const { target, files, fileChanges, random = Math.random } = dependencies;
   const targetKey = agentSurfaceTreeTargetKey(target);
   const rootPath = target?.rootPath ?? null;
   const owner = useMemo(() => ({ targetKey }), [targetKey]);
@@ -234,12 +288,16 @@ export function useAgentSurfaceFileTree(
   const generationRef = useRef(0);
   const stateRef = useRef(state);
   const filesRef = useRef(files);
-  const requestsRef = useRef(new Map<string, { dirty: boolean }>());
+  const requestsRef = useRef(new Map<string, DirectoryRequest>());
+  const randomRef = useRef(random);
+  const retryTimersRef = useRef(createRetryTimers());
+  const readSlotsRef = useRef(createDirectoryReadSlots(MAX_AGENT_SURFACE_TREE_CONCURRENT_READS));
 
   useLayoutEffect(() => {
     ownerRef.current = owner;
     stateRef.current = state;
     filesRef.current = files;
+    randomRef.current = random;
   });
 
   const readDirectory = useCallback(
@@ -273,44 +331,72 @@ export function useAgentSurfaceFileTree(
       const pending = requests.get(path);
       if (pending !== undefined) {
         pending.dirty = true;
+        pending.wake?.();
         return;
       }
       if (path !== root && requests.size >= MAX_AGENT_SURFACE_TREE_DIRECTORIES) return;
-      const request = { dirty: false };
+      const request: DirectoryRequest = { dirty: false, wake: null };
       requests.set(path, request);
       const generation = generationRef.current;
+      const timers = retryTimersRef.current;
       const ownsRequest = () =>
         generation === generationRef.current && requests.get(path) === request;
-      setState((current) => ({
-        ...current,
-        loading: withValue(current.loading, path),
-        failed: withoutValue(current.failed, path),
-      }));
+      const publish = (update: (current: TreeState) => TreeState) =>
+        setState((current) => (generation === generationRef.current ? update(current) : current));
+      const markLoading = () =>
+        publish((current) => ({
+          ...current,
+          loading: withValue(current.loading, path),
+          failed: withoutValue(current.failed, path),
+        }));
+      const schedule = (baseDelayMs: number) =>
+        timers.schedule(jitteredBusyRetryDelay(baseDelayMs, randomRef.current));
+      const backoff = async (baseDelayMs: number) =>
+        (await schedule(baseDelayMs).settled) !== "dismissed";
+      let delays = AGENT_SURFACE_TREE_BUSY_RETRY_DELAYS_MS;
+      let followUpUsed = false;
+      markLoading();
       do {
         request.dirty = false;
         try {
-          const result = await readDirectory(path);
+          const result = await readRetryingWhileBusy(
+            () =>
+              readInSlot(
+                readSlotsRef.current,
+                ownsRequest,
+                () => readDirectory(path),
+                timers,
+                AGENT_SURFACE_TREE_READ_TIMEOUT_MS,
+              ),
+            ownsRequest,
+            backoff,
+            delays,
+          );
           if (!ownsRequest()) return;
           if (request.dirty) continue;
-          setState((current) => {
-            if (generation !== generationRef.current) return current;
-            return {
-              ...storeDirectory(current, root, path, result.entries, result.truncated),
-              rootError: path === root ? null : current.rootError,
-            };
-          });
-        } catch {
+          publish((current) => ({
+            ...storeDirectory(current, root, path, result.entries, result.truncated),
+            rootError: path === root ? null : current.rootError,
+          }));
+        } catch (error) {
           if (!ownsRequest()) return;
-          if (request.dirty) continue;
-          setState((current) => {
-            if (generation !== generationRef.current) return current;
-            return {
-              ...dropDirectory(current, path),
-              loading: withoutValue(current.loading, path),
-              failed: withValue(current.failed, path),
-              rootError: path === root ? rootErrorMessage : current.rootError,
-            };
-          });
+          if (request.dirty || error instanceof AgentSurfaceTreeReadSuperseded) {
+            request.dirty = true;
+            continue;
+          }
+          const failure = directoryReadFailure(error);
+          publish((current) => withFailedDirectory(current, root, path, failure, rootErrorMessage));
+          if (failure !== "busy" || followUpUsed) continue;
+          followUpUsed = true;
+          const followUp = schedule(AGENT_SURFACE_TREE_BUSY_FOLLOW_UP_DELAY_MS);
+          request.wake = followUp.wake;
+          const outcome = await followUp.settled;
+          request.wake = null;
+          if (outcome === "dismissed" || !ownsRequest()) return;
+          followUpUsed = outcome === "elapsed";
+          delays = outcome === "woken" ? AGENT_SURFACE_TREE_BUSY_RETRY_DELAYS_MS : [];
+          markLoading();
+          request.dirty = true;
         }
       } while (request.dirty && ownsRequest());
       requests.delete(path);
@@ -321,11 +407,17 @@ export function useAgentSurfaceFileTree(
   useLayoutEffect(() => {
     generationRef.current += 1;
     requestsRef.current = new Map();
+    const readSlots = createDirectoryReadSlots(MAX_AGENT_SURFACE_TREE_CONCURRENT_READS);
+    const retryTimers = createRetryTimers();
+    readSlotsRef.current = readSlots;
+    retryTimersRef.current = retryTimers;
     setState(EMPTY_STATE);
     if (rootPath === null) return;
     void loadDirectory(rootPath, rootPath);
     return () => {
       generationRef.current += 1;
+      readSlots.reset();
+      retryTimers.dismissAll();
     };
   }, [loadDirectory, rootPath, targetKey]);
 
@@ -335,6 +427,7 @@ export function useAgentSurfaceFileTree(
     for (const path of requestsRef.current.keys()) {
       if (path !== rootPath && !current.expanded.has(path)) requestsRef.current.delete(path);
     }
+    readSlotsRef.current.reset();
     setState((previous) => ({
       ...previous,
       cache: new Map(),
