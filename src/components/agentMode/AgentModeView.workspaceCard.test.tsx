@@ -327,7 +327,7 @@ describe("agent sidebar workspace card", () => {
     clickRow("a1");
 
     act(() => card().click());
-    expect(menuButton("New thread in…").textContent).toContain("⇧⌘N");
+    expect(menuButton("New thread in…").textContent).toBe("New thread in…⌘N");
     act(() => menuButton("New thread in…").click());
 
     expect(picker.open).toHaveBeenCalledTimes(1);

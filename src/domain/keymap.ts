@@ -759,13 +759,13 @@ export const keymapCommands = [
   },
   {
     category: "Agent",
-    defaultShortcut: "Cmd+N",
+    defaultShortcut: "Cmd+Shift+N",
     id: "agent.newThread",
     label: "New Thread",
   },
   {
     category: "Agent",
-    defaultShortcut: "Cmd+Shift+N",
+    defaultShortcut: "Cmd+N",
     id: "agent.newThreadIn",
     label: "New Thread in…",
   },
@@ -1078,9 +1078,10 @@ export function normalizeKeymapSettings(
   }
 
   const keymap = { ...defaults };
+  const persisted = withNewThreadPickerBindingMigrated(value);
 
   for (const command of rebindableKeymapCommands) {
-    const shortcut = value[command.id];
+    const shortcut = persisted[command.id];
 
     if (typeof shortcut !== "string") {
       continue;
@@ -1094,6 +1095,15 @@ export function normalizeKeymapSettings(
   }
 
   return keymap;
+}
+
+function withNewThreadPickerBindingMigrated(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  if (value["agent.newThreadIn"] !== undefined) return value;
+  const { "agent.newThread": pickerShortcut, ...rest } = value;
+  if (pickerShortcut === undefined) return value;
+  return { ...rest, "agent.newThreadIn": pickerShortcut };
 }
 
 export function shortcutForCommand(

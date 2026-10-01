@@ -428,7 +428,7 @@ describe("keymap", () => {
 
   it("registers the agent thread commands with their T3 parity defaults", () => {
     const expected = {
-      "agent.newThread": "Cmd+N",
+      "agent.newThread": "Cmd+Shift+N",
       "agent.previousThread": "Cmd+Shift+[",
       "agent.nextThread": "Cmd+Shift+]",
       "agent.jumpToThread.1": "Cmd+1",
@@ -440,7 +440,7 @@ describe("keymap", () => {
 
     expect(defaultKeymapSettings("mac")).toMatchObject(expected);
     expect(defaultKeymapSettings("linux")).toMatchObject({
-      "agent.newThread": "Ctrl+N",
+      "agent.newThread": "Ctrl+Shift+N",
       "agent.searchThreads": "Ctrl+Shift+K",
       "agent.findInThread": "Ctrl+F",
     });

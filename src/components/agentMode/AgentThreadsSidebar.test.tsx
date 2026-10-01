@@ -1209,7 +1209,7 @@ describe("AgentThreadsSidebar", () => {
           card
         </button>
       ),
-      newThreadTitle: "New thread in app (⌘N) · ⇧⌘N: choose project",
+      newThreadTitle: "New thread in app (⇧⌘N) · ⌘N: choose project",
     });
 
     const card = host.querySelector(".cv-sb-ws");
@@ -1221,7 +1221,7 @@ describe("AgentThreadsSidebar", () => {
         (card.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
     ).toBe(true);
     expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
-      "New thread in app (⌘N) · ⇧⌘N: choose project",
+      "New thread in app (⇧⌘N) · ⌘N: choose project",
     );
   });
 
@@ -1255,7 +1255,7 @@ describe("AgentThreadsSidebar", () => {
     render({ groups, onNewThread, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
 
     const button = host.querySelector<HTMLButtonElement>('[aria-label="New thread"]');
-    expect(button?.title).toBe("New thread in api (⌘N) · ⇧⌘N: choose project");
+    expect(button?.title).toBe("New thread in api (⇧⌘N) · ⌘N: choose project");
     click('[aria-label="New thread"]');
     expect(onNewThread).toHaveBeenLastCalledWith(false);
     act(() => {
@@ -1265,7 +1265,7 @@ describe("AgentThreadsSidebar", () => {
 
     render({ groups: [group(OTHER, "api", [])], onNewThread });
     expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
-      "New thread (⌘N)",
+      "New thread (⇧⌘N)",
     );
 
     render({ groups, onNewThread });

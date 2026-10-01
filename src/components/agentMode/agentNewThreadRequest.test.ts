@@ -47,34 +47,34 @@ describe("agentNewThreadTooltip", () => {
   it("names the active project and the picker chord with several projects", () => {
     expect(
       agentNewThreadTooltip({
-        shortcut: "Cmd+N",
-        pickerShortcut: "Cmd+Shift+N",
+        shortcut: "Cmd+Shift+N",
+        pickerShortcut: "Cmd+N",
         projectLabel: "app",
         projectCount: 2,
       }),
-    ).toBe("New thread in app (⌘N) · ⇧⌘N: choose project");
+    ).toBe("New thread in app (⇧⌘N) · ⌘N: choose project");
   });
 
   it("omits the picker chord with a single project", () => {
     expect(
       agentNewThreadTooltip({
-        shortcut: "Cmd+N",
-        pickerShortcut: "Cmd+Shift+N",
+        shortcut: "Cmd+Shift+N",
+        pickerShortcut: "Cmd+N",
         projectLabel: "app",
         projectCount: 1,
       }),
-    ).toBe("New thread in app (⌘N)");
+    ).toBe("New thread in app (⇧⌘N)");
   });
 
   it("falls back to the plain label without an active project", () => {
     expect(
       agentNewThreadTooltip({
-        shortcut: "Cmd+N",
-        pickerShortcut: "Cmd+Shift+N",
+        shortcut: "Cmd+Shift+N",
+        pickerShortcut: "Cmd+N",
         projectLabel: null,
         projectCount: 3,
       }),
-    ).toBe("New thread (⌘N)");
+    ).toBe("New thread (⇧⌘N)");
   });
 
   it("omits unbound chords", () => {

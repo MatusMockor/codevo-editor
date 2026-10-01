@@ -218,7 +218,7 @@ describe("status bar removal inventory", () => {
             bottomPanel: "Cmd+J",
             rightPanel: "Cmd+Alt+R",
             sidebar: "Cmd+B",
-            newThread: "Cmd+N",
+            newThread: "Cmd+Shift+N",
           }}
         />
       </>,

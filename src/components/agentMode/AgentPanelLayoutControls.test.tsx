@@ -14,7 +14,7 @@ const SHORTCUTS = {
   bottomPanel: "Cmd+J",
   rightPanel: "Cmd+Alt+R",
   sidebar: "Cmd+B",
-  newThread: "Cmd+N",
+  newThread: "Cmd+Shift+N",
 };
 
 describe("agentShortcutGlyphs", () => {

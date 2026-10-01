@@ -11,7 +11,8 @@ const SHORTCUTS = {
   bottomPanel: "Cmd+J",
   rightPanel: "Cmd+Alt+R",
   sidebar: "Cmd+B",
-  newThread: "Cmd+N",
+  newThread: "Cmd+Shift+N",
+  newThreadIn: "Cmd+N",
 };
 
 let mounted: MountedUi | null = null;
@@ -38,7 +39,7 @@ describe("AgentSidebarReveal", () => {
     );
     expect(expand?.title).toBe("Expand sidebar (⌘B)");
     expect(expand?.getAttribute("aria-expanded")).toBe("false");
-    expect(newThread?.title).toBe("New thread (⌘N)");
+    expect(newThread?.title).toBe("New thread (⇧⌘N)");
     expect(mounted.host.querySelector(".cv-topbar__separator")).not.toBeNull();
 
     click(expand as HTMLButtonElement);
@@ -63,7 +64,7 @@ describe("AgentSidebarReveal", () => {
     const newThread = mounted.host.querySelector<HTMLButtonElement>(
       'button[aria-label="New thread"]',
     );
-    expect(newThread?.title).toBe("New thread in app (⌘N) · ⇧⌘N: choose project");
+    expect(newThread?.title).toBe("New thread in app (⇧⌘N) · ⌘N: choose project");
     act(() => {
       newThread?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
     });

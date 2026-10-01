@@ -19,7 +19,7 @@ const SHORTCUTS = {
   bottomPanel: "Cmd+J",
   rightPanel: "Cmd+Alt+R",
   sidebar: "Cmd+B",
-  newThread: "Cmd+N",
+  newThread: "Cmd+Shift+N",
 };
 const SESSION_ID = "34fbe185-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 

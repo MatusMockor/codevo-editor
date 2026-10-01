@@ -174,7 +174,8 @@ applicable:
 
 | Action                               | Shortcut                          |
 | ------------------------------------ | --------------------------------- |
-| New thread                           | Cmd+N                             |
+| New thread in... (choose project)    | Cmd+N                             |
+| New thread in the active project     | Cmd+Shift+N                       |
 | Previous / next thread               | Cmd+Shift+[ / Cmd+Shift+]         |
 | Jump to visible thread 1-9           | Cmd+1 through Cmd+9               |
 | Search threads                       | Cmd+Shift+K                       |

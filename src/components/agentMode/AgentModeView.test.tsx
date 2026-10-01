@@ -2275,7 +2275,7 @@ describe("AgentModeView", () => {
 
     expect(activeProjectLabel()).toBe("");
     expect(host.querySelector<HTMLButtonElement>('button[aria-label="New thread"]')?.title).toBe(
-      "New thread (⌘N)",
+      "New thread (⇧⌘N)",
     );
     expect(
       host.querySelector<HTMLButtonElement>('button[aria-label="Filter threads by project"]')
