@@ -104,6 +104,13 @@
   color: var(--cv-fg-strong);
 }
 
+.cv-changes-retry:focus-visible {
+  outline: none;
+  box-shadow: none;
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
 .cv-changes {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

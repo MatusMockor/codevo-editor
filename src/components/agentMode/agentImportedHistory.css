@@ -34,6 +34,6 @@
 }
 
 .agent-imported-history__retry:focus-visible {
-  box-shadow: var(--cv-ring-focus);
+  box-shadow: var(--cv-shadow-card);
   outline: none;
 }

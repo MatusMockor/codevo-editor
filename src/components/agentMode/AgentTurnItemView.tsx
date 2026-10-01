@@ -11,6 +11,7 @@ import {
   type AgentProseContext,
   type AgentProseStream,
 } from "./AgentAssistantText";
+import type { AgentExternalLinkOpener } from "./agentMarkdownLinks";
 import { AgentCompactionBoundary } from "./AgentCompactionActivity";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentThought } from "./AgentThought";
@@ -65,6 +66,7 @@ export function AgentTurnItemView({
           attachmentImages={attachmentImages}
           highlight={highlight}
           item={item}
+          openExternalLink={prose.openExternalLink}
           textClipboard={textClipboard}
         />
       );
@@ -191,11 +193,13 @@ function AgentSteeredMessage({
   attachmentImages,
   highlight,
   item,
+  openExternalLink,
   textClipboard,
 }: {
   readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
   readonly highlight: AgentItemHighlight | null;
   readonly item: Extract<AgentTurnItem, { kind: "userMessage" }>;
+  readonly openExternalLink: AgentExternalLinkOpener;
   readonly textClipboard: TextClipboardGateway | null;
 }) {
   const attachments = useMemo(() => agentTurnAttachmentViews(item.attachments), [item.attachments]);
@@ -206,6 +210,7 @@ function AgentSteeredMessage({
       attachments={attachments}
       current={highlight?.current ?? null}
       eventKey={item.key}
+      openExternalLink={openExternalLink}
       prompt={item.text}
       query={highlight?.query ?? ""}
       role="steer"

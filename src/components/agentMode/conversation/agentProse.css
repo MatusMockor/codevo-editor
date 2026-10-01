@@ -136,6 +136,16 @@
   text-underline-offset: 2px;
 }
 
+.agent-md__link:focus-visible,
+.agent-md__path-link:focus-visible {
+  outline: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 .agent-md__path-link .agent-md__inline-code {
   color: inherit;
 }
@@ -281,8 +291,9 @@
 }
 
 .agent-message-copy:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+  background: var(--cv-tint-2);
 }
 
 .agent-message-copy--copied {

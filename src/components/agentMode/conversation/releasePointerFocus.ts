@@ -18,4 +18,5 @@ function releaseFocus(pressed: HTMLElement): void {
     return;
   }
   transcript.focus({ preventScroll: true });
+  if (pressed.ownerDocument.activeElement === pressed) pressed.blur();
 }

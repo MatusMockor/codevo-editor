@@ -327,6 +327,7 @@ export const AgentTurnView = memo(function AgentTurnView({
             attachmentImages={attachmentImages}
             attachments={attachments}
             current={promptCurrent}
+            openExternalLink={prose.openExternalLink}
             prompt={turn.prompt}
             promptClipped={agentPromptLooksClipped(turn.prompt) && turn.promptRestored !== true}
             query={highlight?.query ?? ""}

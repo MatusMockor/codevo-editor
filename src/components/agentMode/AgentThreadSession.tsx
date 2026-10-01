@@ -159,6 +159,7 @@ export function AgentThreadSession(props: AgentThreadSessionProps) {
       return (
         <AgentPendingThreadStart
           onDismiss={props.onDismissPendingSend ?? ignorePendingSendDismissal}
+          openExternalLink={props.openExternalLink ?? openAgentMarkdownLink}
           send={pendingSend}
           textClipboard={props.textClipboard ?? null}
         />
@@ -583,6 +584,7 @@ function AgentThreadSessionBody({
               {pendingSend !== null && historyPage === null && (
                 <AgentPendingUserMessage
                   onDismiss={onDismissPendingSend ?? ignorePendingSendDismissal}
+                  openExternalLink={openExternalLink}
                   send={pendingSend}
                   textClipboard={textClipboard}
                 />
@@ -603,6 +605,7 @@ function AgentThreadSessionBody({
             listRef={queueRef}
             onEdit={onEditDeferredFollowUp === undefined ? undefined : editQueued}
             onRemove={removeQueued}
+            openExternalLink={openExternalLink}
             onResume={
               onResumeDeferredFollowUps === undefined
                 ? undefined

@@ -3,6 +3,9 @@ import { DEFERRED_NEXT_TURN_NOTICE } from "../../application/agentDeferredFollow
 import type { AgentTurnAttachmentIntent } from "../../application/agentThreadPorts";
 import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
+import type { AgentExternalLinkOpener } from "./agentMarkdownLinks";
+import { AgentPromptText } from "./AgentPromptText";
+import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 
 export type AgentQueuedPromptState = "queued" | "next" | "paused" | "uncertain" | "editing";
 
@@ -10,6 +13,7 @@ export interface AgentQueuedPromptProps {
   readonly displayAttachmentCount?: number;
   readonly attachments?: ReadonlyArray<AgentTurnAttachmentIntent>;
   readonly id: string;
+  readonly openExternalLink?: AgentExternalLinkOpener | null;
   readonly prompt: string;
   readonly state?: AgentQueuedPromptState;
   onEdit?(id: string): void;
@@ -26,6 +30,7 @@ export const AGENT_QUEUED_EDITING_NOTICE =
 
 export function AgentQueuedPrompt({
   id,
+  openExternalLink = null,
   prompt,
   attachments,
   displayAttachmentCount,
@@ -45,8 +50,21 @@ export function AgentQueuedPrompt({
       data-agent-queued={id}
       data-agent-queued-state={state}
     >
-      <div className="agent-prompt__bubble" tabIndex={-1}>
-        {displayText !== "" && <p className="agent-prompt__body">{displayText}</p>}
+      <div
+        className="agent-prompt__bubble"
+        onMouseDown={releaseFocusAfterPointerPress}
+        tabIndex={-1}
+      >
+        {displayText !== "" && (
+          <p className="agent-prompt__body">
+            <AgentPromptText
+              current={null}
+              openExternalLink={openExternalLink}
+              query=""
+              text={displayText}
+            />
+          </p>
+        )}
         <div className="agent-prompt__queue">
           <span className="agent-prompt__queue-status" title={queuedStatusDescription(state)}>
             {state === "paused" ? <Pause aria-hidden="true" /> : <Clock3 aria-hidden="true" />}

@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 import type { Ref } from "react";
 import type { DeferredFollowUp } from "../../../application/agentDeferredFollowUps";
+import type { AgentExternalLinkOpener } from "../agentMarkdownLinks";
 import { AgentQueuedPrompt } from "../AgentQueuedPrompt";
 
 export interface AgentQueuedMessagesProps {
@@ -10,6 +11,7 @@ export interface AgentQueuedMessagesProps {
   readonly onEdit?: (id: string) => void;
   readonly onRemove: (id: string) => void;
   readonly onSendNow?: (id: string) => void;
+  readonly openExternalLink?: AgentExternalLinkOpener | null;
 }
 
 export function AgentQueuedMessages({
@@ -19,6 +21,7 @@ export function AgentQueuedMessages({
   onRemove,
   onResume,
   onSendNow,
+  openExternalLink = null,
 }: AgentQueuedMessagesProps) {
   if (entries.length === 0) return null;
   return (
@@ -52,6 +55,7 @@ export function AgentQueuedMessages({
           onEdit={onEdit}
           onRemove={onRemove}
           onSendNow={onSendNow}
+          openExternalLink={openExternalLink}
           prompt={entry.request.prompt}
           state={entry.editLease === undefined ? entry.state : "editing"}
         />

@@ -50,6 +50,7 @@ describe("AgentPendingUserMessage", () => {
     act(() =>
       root.render(
         <AgentPendingUserMessage
+          openExternalLink={null}
           onDismiss={() => undefined}
           send={pending("sending")}
           textClipboard={null}
@@ -72,6 +73,7 @@ describe("AgentPendingUserMessage", () => {
     act(() =>
       root.render(
         <AgentPendingUserMessage
+          openExternalLink={null}
           onDismiss={dismiss}
           send={pending("failed")}
           textClipboard={null}

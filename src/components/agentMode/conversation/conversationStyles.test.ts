@@ -14,6 +14,17 @@ const TOOL_ROWS = "components/agentMode/agentToolRows.css";
 const PROSE = "components/agentMode/conversation/agentProse.css";
 const LIGHTBOX = "components/agentMode/conversation/agentLightbox.css";
 const CHANGES = "components/agentMode/conversation/agentTurnChangesRow.css";
+const ARTIFACTS = "components/agentMode/agentOutputArtifacts.css";
+const IMPORTED = "components/agentMode/agentImportedHistory.css";
+const TRANSCRIPT_SHEETS: ReadonlyArray<string> = [
+  CONVERSATION,
+  PROSE,
+  ARTIFACTS,
+  WORK_ROWS,
+  CHANGES,
+  IMPORTED,
+];
+const COMPOSER_BANNER_FOCUS = ".cv-banner-action:focus-visible";
 const P3_SHEETS: ReadonlyArray<string> = [
   CONVERSATION,
   WORK_ROWS,
@@ -304,6 +315,81 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(sheet, selector, "text-decoration-thickness")).toBe("2px");
   });
 
+  it.each([
+    [CONVERSATION, ".agent-prompt__bubble:focus-visible"],
+    [CONVERSATION, ".agent-prompt__link:focus-visible"],
+    [CONVERSATION, ".agent-attachments__open:focus-visible"],
+    [CONVERSATION, ".cv-load-earlier:focus-visible"],
+    [CONVERSATION, ".agent-session__scroll .cv-banner-action:focus-visible"],
+    [PROSE, ".agent-message-copy:focus-visible"],
+    [PROSE, ".agent-md__link:focus-visible"],
+    [PROSE, ".agent-md__path-link:focus-visible"],
+    [ARTIFACTS, ".agent-artifacts button:focus-visible"],
+    [CONVERSATION, ".agent-prompt__queue-action:focus-visible"],
+    [CHANGES, ".cv-changes-retry:focus-visible"],
+    [WORK_ROWS, ".cv-live-row__action:focus-visible"],
+  ])("never rings transcript content with keyboard focus on %s %s", (sheet, selector) => {
+    expect(declaredValue(sheet, selector, "outline")).toBe("none");
+    expect(declaredValue(sheet, selector, "box-shadow")).toBe("none");
+  });
+
+  it("marks a focused user bubble only with a slightly lighter background", () => {
+    const bubble = ".agent-prompt__bubble:focus-visible";
+    expect(declaredValue(CONVERSATION, bubble, "background")).toBe("var(--cv-tint-3)");
+    expect(declaredValue(CONVERSATION, ".agent-prompt__bubble", "background")).toBe(
+      "var(--cv-tint-2)",
+    );
+    const queued = ".agent-prompt--queued .agent-prompt__bubble:focus-visible";
+    expect(declaredValue(CONVERSATION, queued, "outline")).toBe("none");
+    expect(declaredValue(CONVERSATION, queued, "box-shadow")).toBe("var(--cv-ring-hair-strong)");
+    expect(declaredValue(CONVERSATION, queued, "background")).toBe("var(--cv-tint-2)");
+  });
+
+  it("keeps the imported-history retry card elevation instead of a focus ring", () => {
+    const retry = ".agent-imported-history__retry:focus-visible";
+    expect(declaredValue(IMPORTED, retry, "outline")).toBe("none");
+    expect(declaredValue(IMPORTED, retry, "box-shadow")).toBe("var(--cv-shadow-card)");
+  });
+
+  it("keeps the floating jump control's elevation instead of a focus ring", () => {
+    const button = ".agent-jump-latest__button:focus-visible";
+    expect(declaredValue(CONVERSATION, button, "outline")).toBe("none");
+    expect(declaredValue(CONVERSATION, button, "box-shadow")).toBe("var(--cv-shadow-pop)");
+    expect(
+      declaredValue(
+        ARTIFACTS,
+        ".agent-artifacts button.agent-artifacts__chip:focus-visible",
+        "box-shadow",
+      ),
+    ).toBe("var(--cv-shadow-card)");
+  });
+
+  it("never paints the accent focus color as a ring or outline anywhere in the transcript", () => {
+    const offenders = parsed.rules
+      .filter((rule) => TRANSCRIPT_SHEETS.includes(rule.sheet))
+      .filter((rule) => selectorParts(rule.selector).some((part) => part.includes(":focus")))
+      .filter((rule) => rule.selector !== COMPOSER_BANNER_FOCUS)
+      .flatMap((rule) =>
+        rule.declarations
+          .filter((declaration) => /^(outline|box-shadow|border)/.test(declaration.property))
+          .filter((declaration) => /--cv-(focus|accent|ring-focus)/.test(declaration.value))
+          .map((declaration) => `${rule.selector} ${declaration.property}`),
+      );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("styles user-message links like path links with an underline only on hover", () => {
+    expect(declaredValue(CONVERSATION, ".agent-prompt__link", "color")).toBe("var(--cv-accent)");
+    expect(declaredValue(CONVERSATION, ".agent-prompt__link", "text-decoration")).toBe("none");
+    expect(declaredValue(CONVERSATION, ".agent-prompt__link:hover", "text-decoration")).toBe(
+      "underline",
+    );
+    expect(
+      declaredValue(CONVERSATION, ".agent-prompt__link:focus-visible", "text-decoration-color"),
+    ).toBe("var(--cv-focus)");
+  });
+
   it("keeps hover distinct from keyboard focus by never underlining on hover", () => {
     expect(declaredValue(WORK_ROWS, ".cv-work-row:hover", "text-decoration")).toBeUndefined();
     expect(
@@ -319,7 +405,7 @@ describe("P3 conversation sheets", () => {
 
   it("never paints an accent box when a transcript row is hovered", () => {
     const offenders = parsed.rules
-      .filter((rule) => [WORK_ROWS, CHANGES, PROSE].includes(rule.sheet))
+      .filter((rule) => [WORK_ROWS, CHANGES, PROSE, CONVERSATION, ARTIFACTS].includes(rule.sheet))
       .filter((rule) => selectorParts(rule.selector).some((part) => part.endsWith(":hover")))
       .flatMap((rule) =>
         rule.declarations

@@ -121,6 +121,7 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
           attachmentImages={attachmentImages}
           attachments={prompt.attachments}
           current={promptHighlight?.current ?? null}
+          openExternalLink={prose.openExternalLink}
           prompt={prompt.text}
           query={promptHighlight?.query ?? ""}
           textClipboard={textClipboard}

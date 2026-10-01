@@ -58,8 +58,30 @@
 }
 
 .agent-prompt__bubble:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+  background: var(--cv-tint-3);
+}
+
+.agent-prompt__link {
+  color: var(--cv-accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.agent-prompt__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent-prompt__link:focus-visible {
+  outline: none;
+  box-shadow: none;
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .agent-prompt__body {
@@ -180,8 +202,12 @@
 }
 
 .agent-attachments__open:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+}
+
+.agent-attachments__open:focus-visible > .agent-attachments__image {
+  opacity: 0.85;
 }
 
 .agent-attachments__image {
@@ -221,6 +247,12 @@
   color: var(--cv-fg);
 }
 
+.agent-prompt--queued .agent-prompt__bubble:focus-visible {
+  outline: none;
+  background: var(--cv-tint-2);
+  box-shadow: var(--cv-ring-hair-strong);
+}
+
 .agent-prompt__queue {
   display: flex;
   flex-wrap: wrap;
@@ -257,6 +289,13 @@
 }
 
 .agent-prompt__queue-action:hover:not(:disabled) {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.agent-prompt__queue-action:focus-visible {
+  outline: none;
+  box-shadow: none;
   background: var(--cv-tint-2);
   color: var(--cv-fg-strong);
 }
@@ -349,13 +388,23 @@
 }
 
 .cv-load-earlier:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
+  color: var(--cv-fg-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .agent-jump-latest__button:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--cv-shadow-pop);
+  color: var(--cv-fg-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--cv-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 
 .agent-jump-latest__icon {
@@ -446,6 +495,13 @@
 .cv-banner-action:focus-visible {
   outline: 2px solid var(--cv-focus);
   outline-offset: 2px;
+}
+
+.agent-session__scroll .cv-banner-action:focus-visible {
+  outline: none;
+  box-shadow: none;
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .cv-empty-hero {

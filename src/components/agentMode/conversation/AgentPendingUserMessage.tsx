@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
 import type { TextClipboardGateway } from "../../../domain/textClipboard";
+import type { AgentExternalLinkOpener } from "../agentMarkdownLinks";
 import type { AgentPendingSend, AgentPendingSendAttachment } from "../agentPendingSend";
 import { AgentTurnPrompt } from "../AgentTurnParts";
 import type { AgentTurnAttachmentImageViewer } from "../AgentTurnAttachments";
@@ -8,9 +9,11 @@ export const AGENT_PENDING_SEND_FAILED_NOTICE = "Not sent. Your message is back 
 
 export const AgentPendingUserMessage = memo(function AgentPendingUserMessage({
   onDismiss,
+  openExternalLink,
   send,
   textClipboard,
 }: {
+  readonly openExternalLink: AgentExternalLinkOpener | null;
   readonly send: AgentPendingSend;
   readonly textClipboard: TextClipboardGateway | null;
   onDismiss(): void;
@@ -23,6 +26,7 @@ export const AgentPendingUserMessage = memo(function AgentPendingUserMessage({
         attachmentImages={images}
         attachments={views}
         current={null}
+        openExternalLink={openExternalLink}
         prompt={send.prompt}
         query=""
         sentAtEpochMs={send.sentAtEpochMs}
@@ -51,9 +55,11 @@ export const AgentPendingUserMessage = memo(function AgentPendingUserMessage({
 
 export function AgentPendingThreadStart({
   onDismiss,
+  openExternalLink,
   send,
   textClipboard,
 }: {
+  readonly openExternalLink: AgentExternalLinkOpener | null;
   readonly send: AgentPendingSend;
   readonly textClipboard: TextClipboardGateway | null;
   onDismiss(): void;
@@ -65,6 +71,7 @@ export function AgentPendingThreadStart({
           <div className="agent-turn-list">
             <AgentPendingUserMessage
               onDismiss={onDismiss}
+              openExternalLink={openExternalLink}
               send={send}
               textClipboard={textClipboard}
             />
