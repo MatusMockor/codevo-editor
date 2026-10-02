@@ -305,6 +305,11 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_task_file_diff,
             crate::remote_runner::remote_runner_get_turn_changes,
             crate::remote_runner::remote_runner_get_turn_file_diff,
+            crate::remote_runner::remote_runner_git,
+            crate::remote_runner::remote_port_list,
+            crate::remote_runner::remote_port_open,
+            crate::remote_runner::remote_port_close,
+            crate::remote_runner::remote_port_release_owner,
             crate::agent_turn_changes_commands::agent_turn_changes_get,
             crate::agent_turn_changes_commands::agent_turn_changes_diff,
             #[cfg(feature = "perf-capture")]

@@ -51,6 +51,10 @@ struct Capabilities {
     instruction_sync: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     interactive_questions: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    git_sync: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    port_preview: Option<bool>,
 }
 
 fn optional_timeout<'de, D: serde::Deserializer<'de>>(
@@ -104,6 +108,8 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.output_artifacts,
         caps.instruction_sync,
         caps.interactive_questions,
+        caps.git_sync,
+        caps.port_preview,
     );
     Ok(descriptor.runner_id)
 }
@@ -132,6 +138,32 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn git_sync_and_port_preview_capabilities_are_optional_strict_booleans() {
+        for cap in ["gitSync", "portPreview"] {
+            let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+            assert!(validate(value.clone()).is_ok());
+            for supported in [true, false] {
+                value["capabilities"][cap] = supported.into();
+                assert!(validate(value.clone()).is_ok());
+            }
+            for invalid in [
+                Value::Null,
+                "true".into(),
+                1.into(),
+                serde_json::json!({}),
+                serde_json::json!([]),
+            ] {
+                value["capabilities"][cap] = invalid;
+                assert!(validate(value.clone()).is_err());
+            }
+        }
+        let mut both = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true,"gitSync":true,"portPreview":true}});
+        assert!(validate(both.clone()).is_ok());
+        both["capabilities"]["gitSyncV2"] = true.into();
+        assert!(validate(both).is_err());
+    }
+
     #[test]
     fn text_attachments_capability_is_optional_and_strict() {
         let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});

@@ -3,7 +3,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -305,6 +305,8 @@ mod tests {
         assert!(tokens.contains(&"projectManagement"));
         assert!(tokens.contains(&"threadManagement"));
         assert!(tokens.contains(&"turnChanges"));
+        assert!(tokens.contains(&"gitSync"));
+        assert!(tokens.contains(&"portPreview"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);

@@ -163,3 +163,30 @@ describe("remote runner text attachments capability", () => {
     ).toThrow("Invalid remote runner getRunner response.");
   });
 });
+
+describe.each(["gitSync", "portPreview"] as const)("remote runner %s capability", (capability) => {
+  it.each([true, false, undefined])("accepts optional boolean %s", (supported) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, [capability]: supported },
+      }),
+    ).not.toThrow();
+  });
+  it.each([null, "true", 1, {}, []])("rejects malformed flag %j", (supported) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, [capability]: supported },
+      }),
+    ).toThrow("Invalid remote runner getRunner response.");
+  });
+  it("keeps the descriptor closed next to the new flag", () => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, [capability]: true, gitSyncV2: true },
+      }),
+    ).toThrow("Invalid remote runner getRunner response.");
+  });
+});

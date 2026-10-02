@@ -58,6 +58,8 @@ export type RemoteRunnerDescriptor = Readonly<{
     outputArtifacts?: boolean;
     instructionSync?: boolean;
     interactiveQuestions?: boolean;
+    gitSync?: boolean;
+    portPreview?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;

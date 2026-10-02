@@ -345,6 +345,8 @@ export const remoteRunnerChecks = {
         outputArtifacts: optional(boolean),
         instructionSync: optional(boolean),
         interactiveQuestions: optional(boolean),
+        gitSync: optional(boolean),
+        portPreview: optional(boolean),
       }),
     }),
   },
