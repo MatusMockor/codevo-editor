@@ -9,7 +9,8 @@ import {
   type AgentThread,
   type AgentTurnStatus,
 } from "../../domain/agentThread";
-import type { RemoteRunnerDescriptor, RemoteRunnerServer } from "../../domain/remoteRunner";
+import type { RemoteRunnerServer } from "../../domain/remoteRunner";
+import { serverLoopbackUnsupportedMessage } from "../../domain/remoteLoopbackLink";
 import type {
   RemoteListeningPort,
   RemotePortCloseRequest,
@@ -20,6 +21,10 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { TauriRemotePortPreviewGateway } from "../../infrastructure/tauriRemotePortPreviewGateway";
 import { RemotePortPreviewMenu } from "./RemotePortPreviewMenu";
 import { REMOTE_PORTS_AGENT_LIFETIME_NOTE } from "./remotePortPreviewPresentation";
+import {
+  createAgentServerLoopbackPort,
+  serverPortsStartingMessage,
+} from "./agentServerLoopbackPort";
 import {
   agentRemotePortOwner,
   useAgentServerPorts,
@@ -110,20 +115,12 @@ function fakeRunnerIpc() {
   return { state, invoke, calls, commands };
 }
 
-function descriptor(portPreview: boolean): RemoteRunnerDescriptor {
-  return {
-    protocolVersion: 1,
-    runnerId: RUNNER_ID,
-    name: "runner",
-    capabilities: { taskExecution: true, eventReplay: true, portPreview },
-  };
-}
-
 const TASK_B = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 
 function serverThread(
   status: AgentTurnStatus = { kind: "running" },
   taskId = TASK_ID,
+  portPreview = true,
 ): AgentThreadView {
   const local = localThread(status);
   return {
@@ -136,6 +133,7 @@ function serverThread(
       conversationId: "conversation-1",
       latestTaskId: taskId,
       resume: null,
+      portPreview,
     },
   };
 }
@@ -210,7 +208,6 @@ describe("server ports chip and server loopback links", () => {
     const clipboard: TextClipboardGateway = { canWriteText: () => true, writeText };
     return {
       wiring: { port: new TauriRemotePortPreviewGateway(ipc.invoke), owner: OWNER },
-      gateway: { getRunner: vi.fn(async () => descriptor(true)) },
       servers: [SERVER],
       thread: serverThread(),
       terminalOpen: false,
@@ -404,7 +401,7 @@ describe("server ports chip and server loopback links", () => {
   });
 
   it("hides the chip and never contacts the server when the runner lacks port preview", async () => {
-    await render({ gateway: { getRunner: vi.fn(async () => descriptor(false)) } });
+    await render({ thread: serverThread({ kind: "running" }, TASK_ID, false) });
 
     expect(chip()).toBeNull();
     await act(async () => latest?.serverLoopback.openLoopback("http://localhost:3000/"));
@@ -511,23 +508,100 @@ describe("server ports chip and server loopback links", () => {
     expect(notices).toEqual([]);
   });
 
-  it("checks the runner again when its capability check failed", async () => {
-    const getRunner = vi
-      .fn<() => Promise<RemoteRunnerDescriptor>>()
-      .mockRejectedValueOnce(new Error("Runner request failed"))
-      .mockResolvedValue(descriptor(true));
-    const gateway = { getRunner };
-    await render({ gateway });
+  it("picks up a runner upgrade from the same runner data as Git sync", async () => {
+    await render({ thread: serverThread({ kind: "running" }, TASK_ID, false) });
     expect(chip()).toBeNull();
+    expect(latest?.serverLoopback.titleFor("http://localhost:3000/")).toBe(
+      serverLoopbackUnsupportedMessage("build-box"),
+    );
+    expect(ipc.calls).toEqual([]);
 
-    await act(async () => latest?.serverLoopback.openLoopback("http://localhost:3000/"));
-    await render({ gateway });
+    await render();
 
-    expect(notices.map((notice) => notice.message)).toEqual([
-      "Could not check build-box for ports. Checking again, try the link in a moment.",
-    ]);
-    expect(getRunner).toHaveBeenCalledTimes(2);
     expect(chip()).not.toBeNull();
+    expect(latest?.serverLoopback.titleFor("http://localhost:3000/")).toBe(
+      "Opens build-box:3000 through the SSH connection",
+    );
+  });
+
+  it("promises the SSH forward in a link title only while forwarding is available", async () => {
+    await render({ servers: [{ ...SERVER, connected: false }] });
+    expect(latest?.serverLoopback.titleFor("http://localhost:3000/")).toBe(
+      "Reconnect to build-box to open its ports.",
+    );
+
+    await render({ wiring: { port: new TauriRemotePortPreviewGateway(ipc.invoke), owner: null } });
+    expect(latest?.serverLoopback.titleFor("http://localhost:3000/")).toBe(
+      "Open a workspace on this computer to forward server ports.",
+    );
+
+    await render({ wiring: null });
+    expect(latest?.serverLoopback.titleFor("http://localhost:3000/")).toBe(
+      "Opening server ports is not available here.",
+    );
+
+    await render();
+    expect(latest?.serverLoopback.titleFor("http://localhost:3000/")).toBe(
+      "Opens build-box:3000 through the SSH connection",
+    );
+    expect(latest?.serverLoopback.titleFor("http://localhost/")).toBeNull();
+  });
+
+  it("explains a link in a conversation without a server task instead of doing nothing", async () => {
+    await render({ thread: serverThread({ kind: "running" }, "") });
+
+    expect(chip()).toBeNull();
+    await act(async () => latest?.serverLoopback.openLoopback("http://localhost:3000/"));
+    expect(notices.map((notice) => notice.message)).toEqual([
+      "This conversation has no task on build-box yet. Open the link after it runs.",
+    ]);
+    expect(ipc.calls).toEqual([]);
+  });
+
+  it("says the ports are still connecting when the forward session is not ready yet", async () => {
+    const reported: AgentTasksNotice[] = [];
+    const loopback = createAgentServerLoopbackPort({
+      title: { kind: "forwarding", server: "build-box" },
+      snapshot: () => ({
+        generation: 1,
+        server: "build-box",
+        ports: { kind: "unlisted" },
+        request: null,
+        port: new TauriRemotePortPreviewGateway(ipc.invoke),
+      }),
+      open: async () => ({ kind: "stale" }),
+      report: (notice) => reported.push(notice),
+    });
+
+    await loopback.openLoopback("http://localhost:3000/");
+
+    expect(reported).toEqual([
+      { kind: "info", message: serverPortsStartingMessage("build-box"), action: null },
+    ]);
+  });
+
+  it("stays silent when a stale open settles after the conversation moved on", async () => {
+    const reported: AgentTasksNotice[] = [];
+    let generation = 1;
+    const loopback = createAgentServerLoopbackPort({
+      title: { kind: "forwarding", server: "build-box" },
+      snapshot: () => ({
+        generation,
+        server: "build-box",
+        ports: { kind: "unlisted" },
+        request: null,
+        port: new TauriRemotePortPreviewGateway(ipc.invoke),
+      }),
+      open: async () => {
+        generation += 1;
+        return { kind: "stale" };
+      },
+      report: (notice) => reported.push(notice),
+    });
+
+    await loopback.openLoopback("http://localhost:3000/");
+
+    expect(reported).toEqual([]);
   });
 
   it("keeps https from the opened link for the browser and the copied local URL", async () => {

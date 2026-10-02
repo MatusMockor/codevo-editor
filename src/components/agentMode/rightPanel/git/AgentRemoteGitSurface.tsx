@@ -6,14 +6,17 @@ import { Button } from "../../../../ui/foundation/Button";
 import { IconButton } from "../../../../ui/foundation/IconButton";
 import { StatusLabel } from "../../../../ui/foundation/StatusLabel";
 import {
-  agentShipFailureLabel,
   agentShipFailureStepLabel,
   agentShipStepLabel,
   compareHostLabel,
 } from "../../agentModePresentation";
 import type { AgentShipActions } from "../../useAgentShipActions";
 import { useAgentRightPanelContext } from "../agentRightPanelContext";
-import { REMOTE_SHIP_LOADING, agentRemoteShipView } from "./agentRemoteShipPresentation";
+import {
+  REMOTE_SHIP_LOADING,
+  agentRemoteShipFailureLabel,
+  agentRemoteShipView,
+} from "./agentRemoteShipPresentation";
 import "./agentGit.css";
 
 export function AgentRemoteGitSurface() {
@@ -92,7 +95,7 @@ function RemoteGitShip({
             </StatusLabel>
           </div>
         )}
-        <ShipFailure actions={actions} thread={thread} />
+        <ShipFailure actions={actions} pushReason={pushReason} thread={thread} />
         {view.changes !== null && <p className="cv-git-remote__fact">{view.changes}</p>}
         {view.published !== null && <p className="cv-git-remote__fact">{view.published}</p>}
         {view.compareUrl !== null && (
@@ -157,9 +160,11 @@ function RemoteGitShip({
 
 function ShipFailure({
   actions,
+  pushReason,
   thread,
 }: {
   readonly actions: AgentShipActions;
+  readonly pushReason: string | null;
   readonly thread: AgentThreadView;
 }) {
   const ship = thread.ship;
@@ -169,11 +174,17 @@ function ShipFailure({
   return (
     <div className="cv-git-banner cv-git-banner--failed" role="alert">
       <p className="cv-git-banner__text">
-        <b>{agentShipFailureStepLabel(ship.failure)}</b> {agentShipFailureLabel(ship.failure)}
+        <b>{agentShipFailureStepLabel(ship.failure)}</b>{" "}
+        {agentRemoteShipFailureLabel(thread, ship.failure)}
       </p>
       <div className="cv-git-banner__actions">
         {retryPush && (
-          <Button onClick={() => void actions.onPush(threadId)} size="sm">
+          <Button
+            disabled={pushReason !== null}
+            onClick={() => void actions.onPush(threadId)}
+            size="sm"
+            title={pushReason ?? undefined}
+          >
             Retry push
           </Button>
         )}

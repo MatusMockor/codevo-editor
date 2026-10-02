@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import wireContract from "../../../../../contracts/remote-git-sync-wire.json";
 import type { AgentThreadView } from "../../../../application/agentThreadPorts";
 import type { AgentShipState } from "../../../../domain/agentShip";
+import type { AgentTaskIsolation } from "../../../../domain/agentTask";
 import {
   remoteThreadShipStatus,
   type RemoteThreadGitStatus,
@@ -14,6 +15,13 @@ import { AGENT_SHIP_BLOCKED_COMMIT_FIRST } from "../../agentModePresentation";
 import { SURFACE_REMOTE_UNAVAILABLE_REASON } from "../../agentSurfacePolicy";
 import type { AgentShipActions } from "../../useAgentShipActions";
 import { AgentRightPanelSurfaceBody } from "../AgentRightPanelSurfaceBody";
+import {
+  REMOTE_SHIP_DIVERGED,
+  REMOTE_SHIP_REJECTED_IN_PLACE,
+  REMOTE_SHIP_REJECTED_IN_PLACE_BEHIND,
+  REMOTE_SHIP_REJECTED_WORKTREE,
+  remoteShipNothingAheadOfBase,
+} from "./agentRemoteShipPresentation";
 import { WithRightPanelContext, rightPanelTestContext } from "../agentRightPanelTestSupport";
 
 type Contract = Readonly<{
@@ -48,11 +56,19 @@ function actions(): AgentShipActions {
   };
 }
 
-function serverThread(ship: AgentShipState, gitShip = true): AgentThreadView {
+function serverThread(
+  ship: AgentShipState,
+  gitShip = true,
+  isolation: AgentTaskIsolation = "worktree",
+): AgentThreadView {
   const base = surfaceThreadView();
   return surfaceThreadView({
     ship,
-    thread: { ...base.thread, threadId: THREAD_ID },
+    thread: {
+      ...base.thread,
+      threadId: THREAD_ID,
+      target: { isolation, worktreePath: null },
+    },
     execution: {
       kind: "remote",
       serverId: "linux",
@@ -206,6 +222,88 @@ describe("server thread Git panel", () => {
     act(() => button(host, "Dismiss")?.click());
     expect(shipActions.onPush).toHaveBeenCalledWith(THREAD_ID);
     expect(shipActions.onDismissFailure).toHaveBeenCalledWith(THREAD_ID);
+  });
+
+  function rejected(status: RemoteThreadGitStatus | null): AgentShipState {
+    return {
+      kind: "failed",
+      status:
+        status === null
+          ? null
+          : remoteThreadShipStatus(status, "7389088c-0000-4000-8000-000000000000", REPOSITORY),
+      resumeFrom: "idle",
+      failure: { step: "push", reason: "rejected", message: "rejected" },
+    };
+  }
+
+  it.each([
+    ["worktree" as const, null, REMOTE_SHIP_REJECTED_WORKTREE],
+    ["in-place" as const, null, REMOTE_SHIP_REJECTED_IN_PLACE],
+    [
+      "in-place" as const,
+      { ref: "origin/main", ahead: 1, behind: 2 },
+      REMOTE_SHIP_REJECTED_IN_PLACE,
+    ],
+    [
+      "in-place" as const,
+      { ref: "origin/main", ahead: 0, behind: 2 },
+      REMOTE_SHIP_REJECTED_IN_PLACE_BEHIND,
+    ],
+  ])(
+    "explains a rejected push on a %s server thread (origin %o) without a local pull",
+    (isolation, published, copy) => {
+      const status = published === null ? null : { ...fixture("inPlace"), published };
+      const host = render(serverThread(rejected(status), true, isolation));
+      const alert = host.querySelector('[role="alert"]')?.textContent ?? "";
+      expect(alert).toContain(copy);
+      expect(alert).not.toContain("Pull them in the Git panel");
+    },
+  );
+
+  it("disables Retry push with the reason while the branch and origin have diverged", () => {
+    const shipActions = actions();
+    const diverged = {
+      ...fixture("worktreeFromOrigin"),
+      published: { ref: "origin/codevo/7389088c", ahead: 1, behind: 2 },
+    };
+    const host = render(serverThread(rejected(diverged)), shipActions);
+    const retry = button(host, "Retry push");
+    expect(retry?.disabled).toBe(true);
+    expect(retry?.title).toBe(REMOTE_SHIP_DIVERGED);
+    act(() => retry?.click());
+    expect(shipActions.onPush).not.toHaveBeenCalled();
+  });
+
+  it("disables push when the branch and origin have diverged", () => {
+    const status = {
+      ...fixture("worktreeFromOrigin"),
+      published: { ref: "origin/codevo/7389088c", ahead: 1, behind: 2 },
+    };
+    const host = render(serverThread(idle(status)));
+    expect(button(host, "Push")?.disabled).toBe(true);
+    expect(button(host, "Push")?.title).toBe(REMOTE_SHIP_DIVERGED);
+  });
+
+  it("disables push for an unpublished branch with nothing ahead of its base", () => {
+    const base = fixture("worktreeFromOrigin");
+    const empty = {
+      ...base,
+      base: { ...base.base!, ahead: 0 },
+      published: null,
+    };
+    let host = render(serverThread(idle(empty)));
+    expect(button(host, "Push")?.disabled).toBe(true);
+    expect(button(host, "Push")?.title).toBe(
+      remoteShipNothingAheadOfBase("codevo/7389088c", "origin/main"),
+    );
+    ui?.unmount();
+    host = render(
+      serverThread(idle({ ...empty, dirty: { tracked: 1, untracked: 0, truncated: false } })),
+    );
+    expect(button(host, "Push")?.title).toBe(AGENT_SHIP_BLOCKED_COMMIT_FIRST);
+    ui?.unmount();
+    host = render(serverThread(idle({ ...base, published: null })));
+    expect(button(host, "Push")?.disabled).toBe(false);
   });
 
   it("stays blocked for a server thread whose runner lacks Git sync", () => {

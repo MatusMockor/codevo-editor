@@ -9,6 +9,7 @@ import {
   verifiedServerLoopbackDecision,
   type ServerLoopbackDecision,
   type ServerLoopbackPorts,
+  type ServerLoopbackTitle,
 } from "../../domain/remoteLoopbackLink";
 import { remotePortErrorMessage, type RemotePortPreviewPort } from "../../domain/remotePortPreview";
 import type { RemotePortListRequest } from "../../domain/remotePortPreviewWire";
@@ -20,17 +21,19 @@ export type AgentServerLoopbackSnapshot = Readonly<{
   ports: ServerLoopbackPorts;
   request: RemotePortListRequest | null;
   port: RemotePortPreviewPort;
-  capabilityFailed: boolean;
 }>;
 
 export type AgentServerLoopbackDeps = Readonly<{
+  title: ServerLoopbackTitle;
   snapshot(): AgentServerLoopbackSnapshot;
   open(port: number, options: RemotePortOpenOptions): Promise<RemotePortOpenResult>;
-  recheckCapability(): void;
   report(notice: AgentTasksNotice): void;
 }>;
 
 const info = (message: string): AgentTasksNotice => ({ kind: "info", message, action: null });
+
+export const serverPortsStartingMessage = (server: string): string =>
+  `Ports on ${server} are still being connected. Try the link again in a moment.`;
 
 async function verified(
   decision: Extract<ServerLoopbackDecision, { kind: "verify" }>,
@@ -51,10 +54,9 @@ export function createAgentServerLoopbackPort(
 ): AgentServerLoopbackPort {
   const current = (generation: number) => deps.snapshot().generation === generation;
   return {
-    titleFor: (url) => serverLoopbackLinkTitle(url, deps.snapshot().server),
+    titleFor: (url) => serverLoopbackLinkTitle(url, deps.title),
     openLoopback: async (url) => {
       const snapshot = deps.snapshot();
-      if (snapshot.capabilityFailed) deps.recheckCapability();
       let decision = serverLoopbackDecision(url, snapshot.ports, snapshot.server);
       if (decision.kind === "verify") decision = await verified(decision, snapshot);
       if (!current(snapshot.generation)) return;
@@ -64,7 +66,9 @@ export function createAgentServerLoopbackPort(
       }
       const { port, scheme, path } = decision.target;
       const result = await deps.open(port, { scheme, path });
-      if (result.kind !== "failed" || !current(snapshot.generation)) return;
+      if (!current(snapshot.generation)) return;
+      if (result.kind === "stale") deps.report(info(serverPortsStartingMessage(snapshot.server)));
+      if (result.kind !== "failed") return;
       deps.report({ kind: "warning", message: result.reason, action: null });
     },
   };

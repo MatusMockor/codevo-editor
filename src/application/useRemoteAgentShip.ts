@@ -171,6 +171,11 @@ export function useRemoteAgentShip(options: RemoteAgentShipOptions): RemoteAgent
     reportError,
   });
 
+  const { retain } = ship;
+  useEffect(() => {
+    retain(views);
+  }, [retain, views]);
+
   const states = ship.states;
   const presented = useRef(new WeakMap<AgentThreadView, PresentedView>());
   const present = useCallback(

@@ -4,6 +4,7 @@ import {
   mayPointToServerLoopback,
   serverLoopbackDecision,
   serverLoopbackLinkTitle,
+  serverLoopbackTitle,
   serverLoopbackUnreachableMessage,
   serverLoopbackUnsupportedMessage,
   serverPortNotRunningMessage,
@@ -33,11 +34,28 @@ describe("server loopback links", () => {
     expect(mayPointToServerLoopback(url)).toBe(expected);
   });
 
-  it("titles forwardable links with the server and port", () => {
-    expect(serverLoopbackLinkTitle("http://localhost:3000/x", "build-box")).toBe(
+  it("titles forwardable links with the server and port only while forwarding works", () => {
+    const forwarding = serverLoopbackTitle(LISTED, "build-box");
+    expect(serverLoopbackTitle({ kind: "unlisted" }, "build-box")).toEqual(forwarding);
+    expect(serverLoopbackLinkTitle("http://localhost:3000/x", forwarding)).toBe(
       "Opens build-box:3000 through the SSH connection",
     );
-    expect(serverLoopbackLinkTitle("http://localhost/", "build-box")).toBeNull();
+    expect(serverLoopbackLinkTitle("http://localhost/", forwarding)).toBeNull();
+  });
+
+  it("titles links with the reason when forwarding is not available", () => {
+    const unsupported = serverLoopbackTitle({ kind: "unsupported" }, "build-box");
+    expect(serverLoopbackLinkTitle("http://localhost:3000/", unsupported)).toBe(
+      serverLoopbackUnsupportedMessage("build-box"),
+    );
+    const unavailable = serverLoopbackTitle(
+      { kind: "unavailable", reason: "Reconnect to build-box to open its ports." },
+      "build-box",
+    );
+    expect(serverLoopbackLinkTitle("http://localhost:3000/", unavailable)).toBe(
+      "Reconnect to build-box to open its ports.",
+    );
+    expect(serverLoopbackLinkTitle("https://example.com:3000/", unavailable)).toBeNull();
   });
 
   it.each([

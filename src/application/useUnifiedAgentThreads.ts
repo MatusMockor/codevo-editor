@@ -36,6 +36,7 @@ import type { RemoteRepositoryIdentityGateway } from "../domain/remoteRepository
 import { REMOTE_START_BASE_INVALID, remoteStartBaseFor } from "../domain/remoteDraftGitBase";
 import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useRemoteAgentShip } from "./useRemoteAgentShip";
+import { RemoteChangeSummaryViews } from "./remoteChangeSummaryViews";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -296,6 +297,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           taskSteeringSupported: snapshot.descriptor.capabilities.taskSteering === true,
           interactiveQuestionsSupported:
             snapshot.descriptor.capabilities.interactiveQuestions === true,
+          portPreviewSupported: snapshot.descriptor.capabilities.portPreview === true,
           attachmentsByTask,
         })) {
           const presented = projectMetadata(view);
@@ -409,6 +411,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         : null;
     },
   });
+  const [summaryViews] = useState(() => new RemoteChangeSummaryViews());
   const remoteTurnChanges = useRemoteAgentTurnChanges({
     gateway,
     owner,
@@ -504,9 +507,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         ...local.threads,
         ...projected.views.map((view) =>
           presentRemote(
-            remoteChanges.summaries.has(view.thread.threadId)
-              ? { ...view, changeSummary: remoteChanges.summaries.get(view.thread.threadId)! }
-              : view,
+            summaryViews.present(view, remoteChanges.summaries.get(view.thread.threadId)),
           ),
         ),
       ].sort(
@@ -514,7 +515,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           Number(b.thread.pinned) - Number(a.thread.pinned) ||
           b.thread.updatedAtEpochMs - a.thread.updatedAtEpochMs,
       ),
-    [local.threads, projected.views, remoteChanges.summaries, presentRemote],
+    [local.threads, projected.views, remoteChanges.summaries, presentRemote, summaryViews],
   );
   const attachmentImages = useRemoteAgentImages(
     local.attachmentImages,

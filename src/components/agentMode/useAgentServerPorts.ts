@@ -9,13 +9,13 @@ import {
   type RemotePortOpenOptions,
   type RemotePortPreviewSurface,
 } from "../../application/useRemotePortPreview";
-import {
-  useRemoteRunnerCapability,
-  type RemoteRunnerCapabilityState,
-} from "../../application/useRemoteRunnerCapability";
 import { runningTurn } from "../../domain/agentThread";
-import type { RemoteRunnerGateway, RemoteRunnerServer } from "../../domain/remoteRunner";
-import type { ServerLoopbackPorts } from "../../domain/remoteLoopbackLink";
+import type { RemoteRunnerServer } from "../../domain/remoteRunner";
+import {
+  serverLoopbackTitle,
+  type ServerLoopbackPorts,
+  type ServerLoopbackTitle,
+} from "../../domain/remoteLoopbackLink";
 import type { RemoteLoopbackScheme, RemotePortPreviewPort } from "../../domain/remotePortPreview";
 import {
   isRemotePortOwnerGeneration,
@@ -48,7 +48,6 @@ export type AgentServerPorts = Readonly<{
 
 export type AgentServerPortsInput = Readonly<{
   wiring: AgentRemotePortPreviewWiring | null;
-  gateway: Pick<RemoteRunnerGateway, "getRunner"> | null;
   servers: readonly RemoteRunnerServer[];
   thread: AgentThreadView | null;
   terminalOpen: boolean;
@@ -76,18 +75,22 @@ const PORTS_NOT_WIRED = "Opening server ports is not available here.";
 const SERVER_DRAFT_REASON =
   "This link points to localhost on the server. Open it after the conversation starts.";
 
-function unavailableReason(
-  server: string,
-  connected: boolean,
-  capability: RemoteRunnerCapabilityState,
-  owner: RemotePortOwner | null,
-): string {
-  if (!connected) return `Reconnect to ${server} to open its ports.`;
-  if (capability === "idle") return PORTS_NOT_WIRED;
-  if (capability === "failed")
-    return `Could not check ${server} for ports. Checking again, try the link in a moment.`;
-  if (capability !== "supported") return `Checking ${server} for ports. Try again in a moment.`;
-  if (owner === null) return "Open a workspace on this computer to forward server ports.";
+const noTaskReason = (server: string) =>
+  `This conversation has no task on ${server} yet. Open the link after it runs.`;
+
+type PortsReadiness = Readonly<{
+  server: string;
+  connected: boolean;
+  wired: boolean;
+  owner: RemotePortOwner | null;
+  target: RemotePortPreviewTarget | null;
+}>;
+
+function unavailableReason(readiness: PortsReadiness): string {
+  if (!readiness.connected) return `Reconnect to ${readiness.server} to open its ports.`;
+  if (!readiness.wired) return PORTS_NOT_WIRED;
+  if (readiness.owner === null) return "Open a workspace on this computer to forward server ports.";
+  if (readiness.target === null) return noTaskReason(readiness.server);
   return PORTS_NOT_WIRED;
 }
 
@@ -114,20 +117,12 @@ export function useAgentServerPorts(input: AgentServerPortsInput): AgentServerPo
   const execution = thread?.execution?.kind === "remote" ? thread.execution : null;
   const serverId = execution?.serverId ?? null;
   const runnerId = execution?.runnerId ?? null;
-  const taskId = execution?.latestTaskId ?? null;
+  const taskId =
+    execution === null || execution.latestTaskId === "" ? null : execution.latestTaskId;
   const server = input.servers.find((entry) => entry.id === serverId) ?? null;
   const serverLabel = server?.name ?? "the server";
   const connected = server?.connected === true;
-  const capabilityTarget = useMemo(
-    () => (serverId === null || runnerId === null ? null : { serverId, runnerId }),
-    [runnerId, serverId],
-  );
-  const capability = useRemoteRunnerCapability(
-    wiring === null ? null : input.gateway,
-    capabilityTarget,
-    connected,
-    "portPreview",
-  );
+  const supported = execution?.portPreview === true;
   const owner = wiring?.owner ?? null;
   const target = useMemo<RemotePortPreviewTarget | null>(
     () =>
@@ -136,7 +131,7 @@ export function useAgentServerPorts(input: AgentServerPortsInput): AgentServerPo
         : { serverId, runnerId, scope: { kind: "task", taskId } },
     [runnerId, serverId, taskId],
   );
-  const ready = wiring !== null && connected && capability.state === "supported" && owner !== null;
+  const ready = wiring !== null && connected && supported && owner !== null && target !== null;
   const turnActive = thread !== null && runningTurn(thread.thread) !== null;
   const port = wiring?.port ?? INERT_PORT;
   const surface = useRemotePortPreview({
@@ -162,16 +157,23 @@ export function useAgentServerPorts(input: AgentServerPortsInput): AgentServerPo
       : loopbackPorts(
           listed,
           ready,
-          connected && capability.state === "unsupported",
-          unavailableReason(serverLabel, connected, capability.state, owner),
+          wiring !== null && connected && !supported,
+          unavailableReason({
+            server: serverLabel,
+            connected,
+            wired: wiring !== null,
+            owner,
+            target,
+          }),
         );
+  const titleKey = JSON.stringify(serverLoopbackTitle(ports, serverLabel));
+  const title = useMemo(() => JSON.parse(titleKey) as ServerLoopbackTitle, [titleKey]);
   const snapshot: AgentServerLoopbackSnapshot = {
     generation,
     server: serverLabel,
     ports,
     request: authority?.request ?? null,
     port,
-    capabilityFailed: capability.state === "failed",
   };
   const latest = useRef(snapshot);
   useLayoutEffect(() => {
@@ -185,7 +187,6 @@ export function useAgentServerPorts(input: AgentServerPortsInput): AgentServerPo
     schemes.current = new Map();
   }
   const { open } = surface;
-  const { recheck } = capability;
   const openRemembering = useCallback(
     (portNumber: number, options: RemotePortOpenOptions) => {
       if (options.scheme !== undefined) schemes.current.set(portNumber, options.scheme);
@@ -200,12 +201,12 @@ export function useAgentServerPorts(input: AgentServerPortsInput): AgentServerPo
   const serverLoopback = useMemo(
     () =>
       createAgentServerLoopbackPort({
+        title,
         snapshot: () => latest.current,
         open: openRemembering,
-        recheckCapability: recheck,
         report: reportNotice,
       }),
-    [openRemembering, recheck, reportNotice],
+    [openRemembering, reportNotice, title],
   );
 
   const menu = useMemo<AgentServerPortsMenu | null>(

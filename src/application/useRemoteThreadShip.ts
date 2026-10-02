@@ -61,12 +61,17 @@ export interface RemoteThreadShipSurface {
   openCompareUrl(threadId: string): Promise<void>;
   resetShip(threadId: string): void;
   clear(threadId: string): void;
+  retain(present: RemoteShipThreadPresence): void;
+}
+
+export interface RemoteShipThreadPresence {
+  has(threadId: string): boolean;
 }
 
 interface Owner {
   readonly target: RemoteShipTarget;
   readonly port: RemoteGitSyncPort;
-  readonly epoch: number;
+  readonly epoch: object;
 }
 
 const STEP_SUCCEEDED: AgentShipStepResult = Object.freeze({ kind: "succeeded" });
@@ -83,7 +88,7 @@ export function useRemoteThreadShip(
   const gitStatusesRef = useRef(gitStatuses);
   const mountedRef = useRef(true);
   const inFlightRef = useRef(new Set<string>());
-  const epochRef = useRef(new Map<string, number>());
+  const epochRef = useRef(new Map<string, object>());
   const refreshRef = useRef(new Map<string, number>());
   const abortsRef = useRef(new Map<string, AbortController>());
 
@@ -119,19 +124,30 @@ export function useRemoteThreadShip(
     [currentState, publish],
   );
 
-  const owner = useCallback((threadId: string): Owner | null => {
-    const deps = dependenciesRef.current;
-    const target = deps.resolve(threadId);
-    if (deps.port === null || target === null) return null;
-    return { target, port: deps.port, epoch: epochRef.current.get(threadId) ?? 0 };
+  const epochOf = useCallback((threadId: string): object => {
+    const known = epochRef.current.get(threadId);
+    if (known !== undefined) return known;
+    const fresh = {};
+    epochRef.current.set(threadId, fresh);
+    return fresh;
   }, []);
+
+  const owner = useCallback(
+    (threadId: string): Owner | null => {
+      const deps = dependenciesRef.current;
+      const target = deps.resolve(threadId);
+      if (deps.port === null || target === null) return null;
+      return { target, port: deps.port, epoch: epochOf(threadId) };
+    },
+    [epochOf],
+  );
 
   const owns = useCallback((captured: Owner): boolean => {
     const deps = dependenciesRef.current;
     return (
       mountedRef.current &&
       deps.port === captured.port &&
-      (epochRef.current.get(captured.target.threadId) ?? 0) === captured.epoch &&
+      epochRef.current.get(captured.target.threadId) === captured.epoch &&
       sameRemoteShipTarget(deps.resolve(captured.target.threadId), captured.target)
     );
   }, []);
@@ -146,24 +162,54 @@ export function useRemoteThreadShip(
     [],
   );
 
-  const clear = useCallback((threadId: string): void => {
-    epochRef.current.set(threadId, (epochRef.current.get(threadId) ?? 0) + 1);
-    refreshRef.current.delete(threadId);
-    abortsRef.current.get(threadId)?.abort();
-    abortsRef.current.delete(threadId);
-    if (statesRef.current.has(threadId)) {
-      const next = new Map(statesRef.current);
-      next.delete(threadId);
-      statesRef.current = next;
-      if (mountedRef.current) setStates(next);
+  const dropEntries = useCallback((threadIds: readonly string[]): void => {
+    const states = new Map(statesRef.current);
+    const statuses = new Map(gitStatusesRef.current);
+    for (const threadId of threadIds) {
+      states.delete(threadId);
+      statuses.delete(threadId);
     }
-    if (gitStatusesRef.current.has(threadId)) {
-      const next = new Map(gitStatusesRef.current);
-      next.delete(threadId);
-      gitStatusesRef.current = next;
-      if (mountedRef.current) setGitStatuses(next);
+    if (states.size !== statesRef.current.size) {
+      statesRef.current = states;
+      if (mountedRef.current) setStates(states);
+    }
+    if (statuses.size !== gitStatusesRef.current.size) {
+      gitStatusesRef.current = statuses;
+      if (mountedRef.current) setGitStatuses(statuses);
     }
   }, []);
+
+  const clear = useCallback(
+    (threadId: string): void => {
+      epochRef.current.set(threadId, {});
+      refreshRef.current.delete(threadId);
+      abortsRef.current.get(threadId)?.abort();
+      abortsRef.current.delete(threadId);
+      dropEntries([threadId]);
+    },
+    [dropEntries],
+  );
+
+  const retain = useCallback(
+    (present: RemoteShipThreadPresence): void => {
+      const known = new Set([
+        ...epochRef.current.keys(),
+        ...refreshRef.current.keys(),
+        ...statesRef.current.keys(),
+        ...gitStatusesRef.current.keys(),
+      ]);
+      const absent = [...known].filter((threadId) => !present.has(threadId));
+      if (absent.length === 0) return;
+      for (const threadId of absent) {
+        epochRef.current.delete(threadId);
+        refreshRef.current.delete(threadId);
+        abortsRef.current.get(threadId)?.abort();
+        abortsRef.current.delete(threadId);
+      }
+      dropEntries(absent);
+    },
+    [dropEntries],
+  );
 
   const refreshShipStatus = useCallback(
     async (threadId: string): Promise<void> => {
@@ -192,8 +238,9 @@ export function useRemoteThreadShip(
   }, []);
 
   const settledWithoutOwner = useCallback(
-    (threadId: string): AgentShipStepResult => {
-      clear(threadId);
+    (captured: Owner): AgentShipStepResult => {
+      const threadId = captured.target.threadId;
+      if (epochRef.current.get(threadId) === captured.epoch) clear(threadId);
       return STEP_SUCCEEDED;
     },
     [clear],
@@ -211,7 +258,7 @@ export function useRemoteThreadShip(
     (captured: Owner, step: "commit" | "push"): AgentShipStepResult => {
       const lost: AgentShipFailure = { step, reason: "authorityLost" };
       const threadId = captured.target.threadId;
-      if ((epochRef.current.get(threadId) ?? 0) !== captured.epoch) {
+      if (epochRef.current.get(threadId) !== captured.epoch) {
         return { kind: "failed", failure: lost };
       }
       return stepFailed(threadId, lost);
@@ -235,9 +282,12 @@ export function useRemoteThreadShip(
       inFlightRef.current.add(threadId);
       let started = false;
       let uncertain = false;
+      const invalidateOwnedRefresh = () => {
+        if (epochRef.current.get(threadId) === captured.epoch) invalidateRefresh(threadId);
+      };
       const begin = () => {
         started = true;
-        invalidateRefresh(threadId);
+        invalidateOwnedRefresh();
       };
       try {
         return await operation(captured, begin);
@@ -248,7 +298,7 @@ export function useRemoteThreadShip(
         return stepFailed(threadId, remoteStepFailure(step, errorMessageOf(error)));
       } finally {
         inFlightRef.current.delete(threadId);
-        if (started) invalidateRefresh(threadId);
+        if (started) invalidateOwnedRefresh();
         if (uncertain) void refreshShipStatus(threadId);
       }
     },
@@ -272,7 +322,7 @@ export function useRemoteThreadShip(
         const admission = await captured.port.commit(remoteShipThreadKey(captured.target), bounded);
         if (!owns(captured)) {
           return admission.kind === "accepted"
-            ? settledWithoutOwner(threadId)
+            ? settledWithoutOwner(captured)
             : authorityLost(captured, "commit");
         }
         if (admission.kind === "refused") {
@@ -322,7 +372,7 @@ export function useRemoteThreadShip(
           });
         const ownerLost = (): AgentShipStepResult =>
           outcome.kind === "succeeded"
-            ? settledWithoutOwner(threadId)
+            ? settledWithoutOwner(captured)
             : authorityLost(captured, "push");
         if (!owns(captured)) return ownerLost();
         const loaded = await attempt(() => captured.port.threadStatus(key));
@@ -402,5 +452,6 @@ export function useRemoteThreadShip(
     openCompareUrl,
     resetShip,
     clear,
+    retain,
   };
 }

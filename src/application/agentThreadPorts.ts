@@ -259,6 +259,7 @@ export interface RemoteAgentThreadExecution {
   readonly pendingMessages?: boolean;
   readonly taskSteering?: boolean;
   readonly gitShip?: boolean;
+  readonly portPreview?: boolean;
   readonly kind: "remote";
   readonly serverId: string;
   readonly runnerId: string;

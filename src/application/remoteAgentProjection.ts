@@ -61,6 +61,7 @@ export interface RemoteAgentProjectionInput {
   readonly interactiveQuestionsSupported?: boolean;
   readonly pendingMessagesSupported?: boolean;
   readonly taskSteeringSupported?: boolean;
+  readonly portPreviewSupported?: boolean;
   readonly serverId: string;
   readonly runnerId: string;
   readonly projects: readonly RemoteRunnerProject[];
@@ -334,6 +335,7 @@ function projectConversation(
       pendingMessages: input.pendingMessagesSupported === true,
       taskSteering: input.taskSteeringSupported === true,
       interactiveQuestions: input.interactiveQuestionsSupported === true,
+      portPreview: input.portPreviewSupported === true,
       serverId: input.serverId,
       runnerId: input.runnerId,
       projectId,

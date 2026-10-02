@@ -749,6 +749,78 @@ describe("server Git sync routing", () => {
     expect(port.push).not.toHaveBeenCalled();
   });
 
+  it("keeps unrelated server rows stable when another thread's ship state changes", async () => {
+    const other = task({ id: "other", sequence: 3, createdAt: "2026-09-14T00:00:00Z" });
+    const otherId = remoteAgentThreadKey(server.id, "runner", "other");
+    const h = await setup(false, (configured) => {
+      configured.getRunner.mockResolvedValue({
+        protocolVersion: 1,
+        runnerId: "runner",
+        name: "Linux",
+        capabilities: {
+          taskExecution: true,
+          instructionSync: true,
+          eventReplay: true,
+          taskContinuation: true,
+          taskLaunchOptions: true,
+          taskFileDiffs: true,
+          gitSync: true,
+          portPreview: true,
+        },
+      });
+      configured.listTasks.mockImplementation(
+        async ({ after, serverId }: { after: number; serverId: string }) => ({
+          items: after === 0 && serverId === server.id ? [task(), child, other] : [],
+          nextCursor: null,
+        }),
+      );
+      Object.assign(configured, {
+        listTaskFiles: vi.fn().mockResolvedValue({
+          files: [{ path: "src/app.ts", status: "modified" }],
+          truncated: false,
+        }),
+      });
+    });
+    const port = gitPort();
+    const identity = { discover: vi.fn().mockResolvedValue("github.com/acme/app") };
+    await h.render({
+      gitSync: port,
+      repositoryIdentity: identity,
+      externalUrlOpener: null,
+      selectedThreadId: remoteId,
+    });
+    const viewOf = (id: string) =>
+      h.current.agents.threads.find((view) => view.thread.threadId === id);
+    expect(viewOf(remoteId)?.execution?.portPreview).toBe(true);
+    await act(async () => h.current.agents.showChanges(remoteId));
+    const summarized = viewOf(remoteId);
+    expect(summarized?.changeSummary?.files.map((file) => file.path)).toEqual(["src/app.ts"]);
+
+    await act(async () => h.current.agents.refreshShipStatus(otherId));
+
+    expect(viewOf(otherId)?.ship).toMatchObject({
+      kind: "idle",
+      status: { worktree: { branch: "codevo/7389088c" } },
+    });
+    expect(viewOf(remoteId)).toBe(summarized);
+  });
+
+  it("evicts a server thread's ship state once the thread is gone", async () => {
+    const { h, port } = await gitSetup(true);
+    await h.render({ selectedThreadId: remoteId });
+    await act(async () => h.current.agents.refreshShipStatus(remoteId));
+    expect(remoteView(h)?.ship.kind).toBe("idle");
+    expect(port.threadStatus).toHaveBeenCalledTimes(1);
+
+    await h.render({ servers: [], selectedThreadId: null });
+    await h.render({ servers: [server], selectedThreadId: remoteId });
+    await act(async () => {
+      for (let round = 0; round < 6; round += 1) await new Promise((done) => setTimeout(done, 0));
+    });
+
+    expect(remoteView(h)?.ship).toEqual({ kind: "idle", status: null, loadingStatus: false });
+  });
+
   it("leaves server threads unchanged when the runner lacks Git sync", async () => {
     const { h, identity, port } = await gitSetup(false);
     await h.render({ selectedThreadId: remoteId, selectedServerId: server.id });

@@ -119,6 +119,85 @@ async function render(port = fakePort()) {
 }
 
 describe("remote thread ship", () => {
+  it("evicts ship and Git status entries for threads that are no longer present", async () => {
+    const h = await render();
+    await act(() => h.current().refreshShipStatus(THREAD));
+    act(() => h.current().retain(new Set([THREAD])));
+    expect(h.state()?.kind).toBe("idle");
+    expect(h.current().gitStatuses.has(THREAD)).toBe(true);
+
+    act(() => h.current().retain(new Set()));
+
+    expect(h.current().states.size).toBe(0);
+    expect(h.current().gitStatuses.size).toBe(0);
+  });
+
+  it("lets a refresh started after eviction settle when an evicted push finishes late", async () => {
+    const port = fakePort();
+    const operation = deferred<Awaited<ReturnType<RemoteGitSyncPort["awaitOperation"]>>>();
+    port.awaitOperation.mockReturnValueOnce(operation.promise);
+    const refreshed = deferred<RemoteThreadGitStatus>();
+    port.threadStatus.mockReturnValueOnce(refreshed.promise);
+    const h = await render(port);
+    let pushed!: Promise<unknown>;
+    act(() => {
+      pushed = h.current().push(THREAD);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(port.awaitOperation).toHaveBeenCalledTimes(1);
+
+    act(() => h.current().retain(new Set()));
+    let refreshing!: Promise<void>;
+    act(() => {
+      refreshing = h.current().refreshShipStatus(THREAD);
+    });
+    await act(async () => {
+      operation.resolve({
+        kind: "succeeded",
+        result: {
+          kind: "push",
+          remoteRef: "refs/heads/codevo/7389088c",
+          pushedSha: status.headSha,
+          created: true,
+        },
+      });
+      await pushed;
+    });
+    expect(h.state()?.kind).toBe("idle");
+    expect(h.current().gitStatuses.has(THREAD)).toBe(false);
+
+    await act(async () => {
+      refreshed.resolve(status);
+      await refreshing;
+    });
+    expect(h.current().gitStatuses.get(THREAD)).toEqual(status);
+    const settled = h.state();
+    expect(settled?.kind === "idle" && settled.status?.worktree.branch).toBe("codevo/7389088c");
+  });
+
+  it("drops a late status for an evicted thread even when the thread comes back", async () => {
+    const port = fakePort();
+    const late = deferred<RemoteThreadGitStatus>();
+    port.threadStatus.mockReturnValueOnce(late.promise);
+    const h = await render(port);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = h.current().refreshShipStatus(THREAD);
+    });
+    act(() => h.current().retain(new Set()));
+    await act(async () => {
+      late.resolve(status);
+      await pending;
+    });
+    expect(h.current().states.size).toBe(0);
+    expect(h.current().gitStatuses.size).toBe(0);
+
+    await act(() => h.current().refreshShipStatus(THREAD));
+    expect(h.current().gitStatuses.get(THREAD)).toEqual(status);
+  });
+
   it("refreshes the server status into the shared ship state", async () => {
     const h = await render();
     await act(() => h.current().refreshShipStatus(THREAD));

@@ -27,11 +27,8 @@ export const mayPointToServerLoopback = (url: string): boolean => {
   return host === null || isLoopbackHost(host);
 };
 
-export const serverLoopbackLinkTitle = (url: string, server: string): string | null => {
-  const target = classifyLoopbackUrl(url);
-  if (target === null) return null;
-  return `Opens ${server}:${target.port} through the SSH connection`;
-};
+export type ServerLoopbackTitle =
+  Readonly<{ kind: "forwarding"; server: string }> | Readonly<{ kind: "blocked"; reason: string }>;
 
 export const SERVER_LINK_REFUSED_MESSAGE = "This link cannot be opened from a server conversation.";
 
@@ -43,6 +40,32 @@ export const serverLoopbackUnsupportedMessage = (server: string): string =>
 
 export const serverLoopbackUnreachableMessage = (server: string): string =>
   `This link points to localhost on ${server} and cannot be opened from this computer.`;
+
+export const serverLoopbackTitle = (
+  ports: ServerLoopbackPorts,
+  server: string,
+): ServerLoopbackTitle => {
+  switch (ports.kind) {
+    case "listed":
+    case "unlisted":
+      return { kind: "forwarding", server };
+    case "unsupported":
+      return { kind: "blocked", reason: serverLoopbackUnsupportedMessage(server) };
+    case "unavailable":
+      return { kind: "blocked", reason: ports.reason };
+    default: {
+      const unreachable: never = ports;
+      return unreachable;
+    }
+  }
+};
+
+export const serverLoopbackLinkTitle = (url: string, title: ServerLoopbackTitle): string | null => {
+  const target = classifyLoopbackUrl(url);
+  if (target === null) return null;
+  if (title.kind === "blocked") return title.reason;
+  return `Opens ${title.server}:${target.port} through the SSH connection`;
+};
 
 const notice = (message: string): ServerLoopbackDecision => ({ kind: "notice", message });
 

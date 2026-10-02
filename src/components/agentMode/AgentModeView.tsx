@@ -548,7 +548,6 @@ function LocalAgentModeView({
     });
   const serverPorts = useAgentServerPorts({
     wiring: remotePortPreview,
-    gateway: remoteContext?.gateway ?? null,
     servers: remoteContext?.servers ?? NO_REMOTE_SERVERS,
     thread: selectedThread,
     terminalOpen: layout.rightPanel === "open" && layout.activeSurface === "terminal",

@@ -1,12 +1,28 @@
 import type { AgentThreadView } from "../../../../application/agentThreadPorts";
-import { agentShipStatus, type AgentShipAvailability } from "../../../../domain/agentShip";
+import {
+  agentShipStatus,
+  type AgentShipAvailability,
+  type AgentShipFailure,
+} from "../../../../domain/agentShip";
 import {
   AGENT_SHIP_BLOCKED_COMMIT_FIRST,
   agentShipAvailability,
+  agentShipFailureLabel,
 } from "../../agentModePresentation";
 
 export const REMOTE_SHIP_NOTHING_TO_PUSH = "Everything is already on origin.";
 export const REMOTE_SHIP_LOADING = "Reading the server branch…";
+export const REMOTE_SHIP_DIVERGED =
+  "This branch and origin have diverged. Ask the agent to merge or rebase the commits from origin on the server, then push.";
+export const REMOTE_SHIP_REJECTED_IN_PLACE =
+  "Origin has newer commits on this branch. Ask the agent to merge or rebase them in the server checkout, then retry.";
+export const REMOTE_SHIP_REJECTED_IN_PLACE_BEHIND =
+  "Origin has newer commits on this branch. Use Update from origin on the server checkout, then retry.";
+export const REMOTE_SHIP_REJECTED_WORKTREE =
+  "Origin has newer commits on this branch, so it has diverged from the server branch. Ask the agent to merge or rebase them on the server, then retry.";
+
+export const remoteShipNothingAheadOfBase = (branch: string, base: string): string =>
+  `${branch} has no commits beyond ${base} to push yet.`;
 
 export interface AgentRemoteShipView {
   readonly branch: string | null;
@@ -18,6 +34,14 @@ export interface AgentRemoteShipView {
   readonly commit: AgentShipAvailability;
   readonly push: AgentShipAvailability;
   readonly compareUrl: string | null;
+}
+
+interface PushFacts {
+  readonly branch: string;
+  readonly base: string | null;
+  readonly aheadOfBase: number;
+  readonly upstream: { readonly ahead: number; readonly behind: number } | null;
+  readonly dirty: boolean;
 }
 
 const AVAILABLE: AgentShipAvailability = Object.freeze({ kind: "available" });
@@ -56,12 +80,31 @@ export function agentRemoteShipView(view: AgentThreadView): AgentRemoteShipView 
           : `${changeCount} uncommitted changes`,
     published: publishedLabel(upstream, status.worktree.branch),
     commit: availability.commit,
-    push: pushAvailability(availability.push, upstream, status.worktree.dirty),
+    push: pushAvailability(availability.push, {
+      branch: status.worktree.branch,
+      base,
+      aheadOfBase: aheadOfPrimary,
+      upstream,
+      dirty: status.worktree.dirty,
+    }),
     compareUrl:
       ship.kind === "pushed"
         ? (ship.receipt.compareUrl ?? status.remote?.compareUrl ?? null)
         : null,
   };
+}
+
+export function agentRemoteShipFailureLabel(
+  view: AgentThreadView,
+  failure: AgentShipFailure,
+): string {
+  if (failure.step !== "push" || failure.reason !== "rejected") {
+    return agentShipFailureLabel(failure);
+  }
+  if (view.thread.target.isolation !== "in-place") return REMOTE_SHIP_REJECTED_WORKTREE;
+  const upstream = agentShipStatus(view.ship)?.remote?.upstream ?? null;
+  const justBehind = upstream !== null && upstream.ahead === 0 && upstream.behind > 0;
+  return justBehind ? REMOTE_SHIP_REJECTED_IN_PLACE_BEHIND : REMOTE_SHIP_REJECTED_IN_PLACE;
 }
 
 function publishedLabel(
@@ -76,14 +119,20 @@ function publishedLabel(
   return `${branch}: ${parts.join(", ")}`;
 }
 
-function pushAvailability(
-  gate: AgentShipAvailability,
-  upstream: { readonly ahead: number; readonly behind: number } | null,
-  dirty: boolean,
-): AgentShipAvailability {
+function pushAvailability(gate: AgentShipAvailability, facts: PushFacts): AgentShipAvailability {
   if (gate.kind === "blocked") return gate;
-  if (upstream === null) return AVAILABLE;
+  const { upstream } = facts;
+  if (upstream === null) return unpublishedPushAvailability(facts);
+  if (upstream.ahead > 0 && upstream.behind > 0) {
+    return { kind: "blocked", reason: REMOTE_SHIP_DIVERGED };
+  }
   if (upstream.ahead > 0) return AVAILABLE;
-  if (dirty) return { kind: "blocked", reason: AGENT_SHIP_BLOCKED_COMMIT_FIRST };
+  if (facts.dirty) return { kind: "blocked", reason: AGENT_SHIP_BLOCKED_COMMIT_FIRST };
   return { kind: "blocked", reason: REMOTE_SHIP_NOTHING_TO_PUSH };
+}
+
+function unpublishedPushAvailability(facts: PushFacts): AgentShipAvailability {
+  if (facts.base === null || facts.aheadOfBase > 0) return AVAILABLE;
+  if (facts.dirty) return { kind: "blocked", reason: AGENT_SHIP_BLOCKED_COMMIT_FIRST };
+  return { kind: "blocked", reason: remoteShipNothingAheadOfBase(facts.branch, facts.base) };
 }
