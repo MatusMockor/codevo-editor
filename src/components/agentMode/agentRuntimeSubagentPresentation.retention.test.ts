@@ -17,6 +17,7 @@ import {
   agentTurnSpawnBatch,
   agentTurnRuntimeSubagents,
 } from "./agentRuntimeSubagentPresentation";
+import { agentAgentsRunningCountLabel } from "./agentAgentsPanelPresentation";
 
 const TASK_TITLES = [
   "Fix subagent view findings",
@@ -299,6 +300,32 @@ describe("nested agents and truncation", () => {
     expect(result.agents[0]?.nestedAgents).toBe(2);
     expect(result.truncated).toBe(false);
     expect(agentRuntimeSubagentMetricsLabel(result.agents[0]!)).toBe("— tok · +2 nested agents");
+  });
+
+  it("counts running agents exactly when a nested spawn has no retained parent", () => {
+    const events = [spawn(0), starting(0), spawn(1), starting(1), spawn(2, "toolu_unknown")];
+    const result = agentTurnRuntimeSubagents({
+      events,
+      status: { kind: "running" },
+      subagentLifecycle: retainAgentSubagentLifecycle(undefined, events),
+    });
+    const working = summarizeAgentRuntimeSubagents(result.agents).counts.working;
+
+    expect(result.truncated).toBe(false);
+    expect(agentAgentsRunningCountLabel(working, result.truncated)).toBe("2 agents running");
+  });
+
+  it("ignores a persisted truncation marker while retained agents stay below capacity", () => {
+    const events = [spawn(0), starting(0), spawn(1), starting(1)];
+    const lifecycle = retainAgentSubagentLifecycle(undefined, events)!;
+    const result = agentTurnRuntimeSubagents({
+      events,
+      status: { kind: "running" },
+      subagentLifecycle: { ...lifecycle, truncated: true },
+    });
+
+    expect(result.agents).toHaveLength(2);
+    expect(result.truncated).toBe(false);
   });
 
   it("never lets truncation change a batch status or lead", () => {

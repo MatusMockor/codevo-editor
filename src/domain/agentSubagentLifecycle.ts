@@ -63,6 +63,13 @@ export function isAgentSubagentSpawnToolName(name: string): boolean {
   return spawn(name);
 }
 
+export function agentSubagentLifecycleCapacityExhausted(
+  lifecycle: AgentSubagentLifecycle | undefined,
+): boolean {
+  if (lifecycle === undefined || !lifecycle.truncated) return false;
+  return lifecycle.entries.length >= MAX_RETAINED_SUBAGENTS;
+}
+
 type AgentToolResultEvent = Extract<AgentTurnEvent, { kind: "toolResult" }>;
 const ASYNC_LAUNCH_ACKNOWLEDGEMENT_PREFIX = "Async agent launched";
 const ASYNC_LAUNCH_ACKNOWLEDGEMENT_SCAN_CHARACTERS = 64;
@@ -171,13 +178,13 @@ function retainNestedSpawn(
   counted: Set<string>,
   event: Extract<AgentTurnEvent, { kind: "toolCall" }>,
   parentToolId: string,
-): "retained" | "truncated" {
-  if (!validId(event.toolId) || !validId(parentToolId)) return "truncated";
+): "retained" | "skipped" | "truncated" {
+  if (!validId(event.toolId) || !validId(parentToolId)) return "skipped";
   const existing = resolveAlias(entries, { toolId: event.toolId });
   if (existing?.parentToolId !== undefined) return "retained";
   if (counted.has(event.toolId)) return "retained";
   const root = nestedRoot(entries, parentToolId);
-  if (root === undefined) return "truncated";
+  if (root === undefined) return "skipped";
   if (existing?.id === root.id) return "retained";
   entries.set(root.id, {
     ...root,
@@ -273,7 +280,6 @@ export function retainAgentSubagentLifecycle(
             ? `thread:${agentThreadId}`
             : null);
     if (key === null) {
-      truncated = true;
       changed = true;
       continue;
     }
@@ -382,7 +388,7 @@ function retainSpawn(
   event: AgentSubagentSpawnEvent,
   openBatchKey: string | undefined,
 ): { readonly openBatchKey: string | undefined; readonly truncated: boolean } {
-  if (!validId(event.callId)) return { openBatchKey, truncated: true };
+  if (!validId(event.callId)) return { openBatchKey, truncated: false };
   const batchKey = openBatchKey ?? spawnBatchKey(event.callId);
   const receivers = event.agentThreadIds.filter(validId);
   const targets: ReadonlyArray<SubagentEventIdentity> =

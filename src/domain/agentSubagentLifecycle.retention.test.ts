@@ -319,9 +319,9 @@ describe("retained nested agents", () => {
     expect(parseAgentSubagentLifecycle(JSON.parse(JSON.stringify(lifecycle)))).toEqual(lifecycle);
   });
 
-  it("reports truncation when a nested spawn has no retained ancestor or no free slot", () => {
+  it("reports truncation only when a nested spawn finds no free slot", () => {
     const orphan = retainAgentSubagentLifecycle(undefined, [spawn("child", "Child", "missing")]);
-    expect(orphan).toEqual({ entries: [], truncated: true });
+    expect(orphan).toEqual({ entries: [], truncated: false });
 
     const full = retainInChunks([
       Array.from({ length: MAX_RETAINED_SUBAGENTS }, (_, index) => spawn(`t${index}`, "Work")),
@@ -330,6 +330,44 @@ describe("retained nested agents", () => {
     expect(full?.entries).toHaveLength(MAX_RETAINED_SUBAGENTS);
     expect(full?.entries[0]?.nestedCount).toBe(1);
     expect(full?.truncated).toBe(true);
+  });
+
+  it("keeps an exact count when nested spawns or events cannot be attributed", () => {
+    const lifecycle = retainInChunks([
+      [spawn("a", "First"), spawn("b", "Second")],
+      [spawn("grandchild", "Deep", "unknown-parent")],
+      [spawn("x".repeat(257), "Invalid nested", "a"), spawn("child", "Child", "x".repeat(257))],
+      [
+        {
+          kind: "subagentActivity",
+          agentThreadId: "",
+          agentPath: "worker",
+          activity: "started",
+        },
+        {
+          kind: "subagentSpawn",
+          callId: "",
+          status: "inProgress",
+          taskTitle: "Invalid call",
+          model: null,
+          reasoningEffort: null,
+          agentThreadIds: [],
+        },
+      ],
+    ]);
+
+    expect(lifecycle?.entries.map((entry) => entry.id)).toEqual(["tool:a", "tool:b"]);
+    expect(lifecycle?.truncated).toBe(false);
+  });
+
+  it("keeps reporting truncation once a top-level spawn is dropped at capacity", () => {
+    const lifecycle = retainInChunks([
+      Array.from({ length: MAX_RETAINED_SUBAGENTS + 1 }, (_, index) => spawn(`t${index}`, "Work")),
+      [spawn("grandchild", "Deep", "unknown-parent")],
+    ]);
+
+    expect(lifecycle?.entries).toHaveLength(MAX_RETAINED_SUBAGENTS);
+    expect(lifecycle?.truncated).toBe(true);
   });
 
   it("counts a redelivered nested spawn once even with no free slot", () => {

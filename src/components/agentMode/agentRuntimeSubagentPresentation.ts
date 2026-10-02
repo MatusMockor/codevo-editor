@@ -12,6 +12,7 @@ import {
 } from "../../domain/agentRuntimeSubagent";
 import {
   MAX_SUBAGENT_NESTED_COUNT,
+  agentSubagentLifecycleCapacityExhausted,
   isAgentSubagentSpawnToolName,
   retainAgentSubagentLifecycle,
 } from "../../domain/agentSubagentLifecycle";
@@ -48,8 +49,8 @@ export function agentTurnRuntimeSubagents(turn: RuntimeSubagentTurn): AgentRunti
   const entries = agentSubagentDisclosureEntries(turn.events, lifecycle, settlement).filter(
     (entry) => entry.parentToolId === undefined,
   );
-  if (entries.length === 0 && lifecycle?.truncated !== true)
-    return projectAgentRuntimeSubagents([], false);
+  const capacityExhausted = agentSubagentLifecycleCapacityExhausted(lifecycle);
+  if (entries.length === 0 && !capacityExhausted) return projectAgentRuntimeSubagents([], false);
   const observations = observeEntries(turn.events, entries);
   const sources = entries.map((entry, index): AgentRuntimeSubagentSource => {
     const observation = observations.get(entry.toolId);
@@ -74,7 +75,7 @@ export function agentTurnRuntimeSubagents(turn: RuntimeSubagentTurn): AgentRunti
       ...present("recentActivity", observation?.recentActivity),
     };
   });
-  return projectAgentRuntimeSubagents(sources, lifecycle?.truncated === true);
+  return projectAgentRuntimeSubagents(sources, capacityExhausted);
 }
 
 export type AgentSpawnBatchOrigin = "spawn" | "legacy" | "codexTurn";

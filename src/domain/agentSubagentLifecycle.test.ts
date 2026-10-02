@@ -152,7 +152,7 @@ describe("retained subagent lifecycle", () => {
       },
       spawn("x".repeat(257)),
     ]);
-    expect(snapshot?.truncated).toBe(true);
+    expect(snapshot?.truncated).toBe(false);
     expect(snapshot?.entries).toHaveLength(1);
     expect(new TextEncoder().encode(snapshot?.entries[0].name)).toHaveLength(128);
     expect(new TextEncoder().encode(snapshot?.entries[0].description)).toHaveLength(512);

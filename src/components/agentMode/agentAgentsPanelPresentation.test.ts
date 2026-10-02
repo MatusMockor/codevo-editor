@@ -61,6 +61,7 @@ describe("agentAgentsPanelModel notice", () => {
 describe("subagent announcements", () => {
   it("bounds the working label truthfully", () => {
     expect(agentAgentsRunningCountLabel(1, false)).toBe("1 agent running");
+    expect(agentAgentsRunningCountLabel(2, false)).toBe("2 agents running");
     expect(agentAgentsRunningCountLabel(32, true)).toBe("at least 32 agents running");
   });
 
