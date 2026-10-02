@@ -173,6 +173,45 @@ describe("UsageSettingsPage", () => {
     );
   });
 
+  it("shows a window that already reset as not measured instead of its old reading", () => {
+    const now = Date.now();
+    render(
+      activity({
+        accountUsage: {
+          claudeCode: {
+            kind: "ready",
+            snapshot: {
+              provider: "claudeCode",
+              fetchedAtEpochMs: now - 40 * HOUR,
+              windows: [
+                limitWindow({ usedPercent: 3, resetsAtEpochMs: now - 36 * HOUR }),
+                limitWindow({
+                  id: "seven_day",
+                  label: "Weekly limit",
+                  usedPercent: 38,
+                  resetsAtEpochMs: now + 90 * HOUR,
+                }),
+              ],
+            },
+          },
+          codex: { kind: "idle" },
+        },
+      }),
+    );
+    const values = [...host.querySelectorAll<HTMLElement>(".cv-usage-limits__value")];
+    expect(values.map((value) => [value.textContent, value.dataset.measured ?? null])).toEqual([
+      ["Not measured", "false"],
+      ["38% used", null],
+    ]);
+    expect(sectionText("Claude Code")).toContain("Reset passed");
+    expect(sectionText("Claude Code")).not.toContain("3% used");
+    const bars = [...host.querySelectorAll<HTMLElement>(".cv-usage-bar")];
+    expect(bars[0]?.querySelector(".cv-usage-bar__fill")).toBeNull();
+    expect(bars[0]?.getAttribute("aria-label")).toBe(
+      "5-hour limit: not measured since the window reset",
+    );
+  });
+
   it("draws a pace line only for windows with a known reset time and no fill at zero usage", () => {
     const now = Date.now();
     render(

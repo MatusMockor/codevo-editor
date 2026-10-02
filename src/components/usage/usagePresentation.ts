@@ -8,7 +8,7 @@ import {
   type CalendarClock,
   type CalendarDateTime,
 } from "../../domain/calendarDateTime";
-import { claudeUsageResetEpochMs } from "../../domain/claudeUsageResetLabel";
+import { agentAccountUsageResetEpochMs } from "../../domain/agentAccountUsageFreshness";
 
 export type UsageProviderKind = AgentUsageProvider["provider"];
 
@@ -17,6 +17,7 @@ export type UsageAccountStates = Readonly<Record<UsageProviderKind, AgentAccount
 export interface UsageLimitBarModel {
   readonly id: string;
   readonly label: string;
+  readonly measured: boolean;
   readonly usedPercent: number;
   readonly usedLabel: string;
   readonly elapsedPercent: number | null;
@@ -44,16 +45,18 @@ export function usageLimitBarModel(
   nowEpochMs: number,
   clock: UsageResetClock = {},
 ): UsageLimitBarModel {
+  const reset = resetText(window, { ...clock, nowEpochMs });
+  if (reset.passed) return unmeasuredBarModel(window, reset.label);
   const usedPercent = clampPercent(window.usedPercent);
   const elapsedPercent = elapsedShare(window, nowEpochMs);
   const usedLabel = `${formatPercent(usedPercent)} used`;
-  const reset = resetText(window, { ...clock, nowEpochMs });
   const resetsLabel = reset.label;
   const elapsedText =
     elapsedPercent === null ? "" : `, ${Math.round(elapsedPercent)}% of the window elapsed`;
   return {
     id: window.id,
     label: window.label,
+    measured: true,
     usedPercent,
     usedLabel,
     elapsedPercent,
@@ -62,6 +65,25 @@ export function usageLimitBarModel(
     hot: usedPercent >= USAGE_HOT_PERCENT,
     aheadOfPace: elapsedPercent !== null && usedPercent > elapsedPercent + PACE_TOLERANCE_PERCENT,
     ariaLabel: `${window.label}: ${usedLabel}${elapsedText}, ${lowerFirst(resetsLabel)}`,
+  };
+}
+
+function unmeasuredBarModel(
+  window: AgentAccountUsageWindow,
+  resetsLabel: string,
+): UsageLimitBarModel {
+  return {
+    id: window.id,
+    label: window.label,
+    measured: false,
+    usedPercent: 0,
+    usedLabel: "Not measured",
+    elapsedPercent: null,
+    resetsLabel,
+    resetsTitle: null,
+    hot: false,
+    aheadOfPace: false,
+    ariaLabel: `${window.label}: not measured since the window reset`,
   };
 }
 
@@ -153,25 +175,26 @@ function clampPercent(value: number): number {
 interface ResetText {
   readonly label: string;
   readonly title: string | null;
+  readonly passed: boolean;
 }
 
 function resetText(window: AgentAccountUsageWindow, clock: CalendarClock): ResetText {
   const label = window.resetsLabel;
-  const epochMs =
-    representableResetEpochMs(window.resetsAtEpochMs) ??
-    (label === null ? null : claudeUsageResetEpochMs(label, clock.nowEpochMs));
+  const epochMs = agentAccountUsageResetEpochMs(window, clock.nowEpochMs);
   const unparsed = {
     label: label === null ? "Reset unavailable" : `Resets ${label}`,
     title: null,
+    passed: false,
   };
   if (epochMs === null) return unparsed;
   const remainingMs = epochMs - clock.nowEpochMs;
-  if (remainingMs <= 0) return { label: "Reset passed", title: null };
+  if (remainingMs <= 0) return { label: "Reset passed", title: null, passed: true };
   const at = calendarDateTime(epochMs, clock);
   if (at === null) return unparsed;
   return {
     label: `Resets ${upcomingDayTime(at)}`,
     title: `${at.title} · in ${countdown(remainingMs)}`,
+    passed: false,
   };
 }
 

@@ -36,6 +36,11 @@
   white-space: nowrap;
 }
 
+.cv-usage-limits__value[data-measured="false"] {
+  color: var(--cv-fg-subtle);
+  font-weight: 400;
+}
+
 .cv-usage-bar {
   position: relative;
   height: 24px;

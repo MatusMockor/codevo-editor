@@ -24,6 +24,8 @@ import {
   type WorkspaceSettings,
 } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
+import type { AgentAccountUsageSnapshot } from "../domain/agentAccountUsage";
+import { BrowserAgentAccountUsageStoreGateway } from "../infrastructure/browserAgentAccountUsageStoreGateway";
 import {
   agentProviderUpdateOperationId,
   useWorkbenchAgents,
@@ -130,6 +132,125 @@ describe("useWorkbenchAgents composition", () => {
       });
       harness.unmount();
     }
+  });
+
+  it("refreshes restored limits whose window already reset instead of presenting them as current", async () => {
+    const restored: AgentAccountUsageSnapshot = {
+      provider: "codex",
+      fetchedAtEpochMs: Date.now() - 40 * 3_600_000,
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour limit",
+          usedPercent: 3,
+          windowDurationMinutes: 300,
+          resetsAtEpochMs: Date.now() - 36 * 3_600_000,
+          resetsLabel: null,
+        },
+      ],
+    };
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerKind: "codex",
+      storedAccountUsage: [restored],
+    });
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "ready", snapshot: restored });
+
+    await waitForReact(() => {
+      expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledWith({
+        provider: "codex",
+        providerGeneration: 1,
+      });
+      expect(harness.hook().accountUsage.codex).toMatchObject({
+        kind: "ready",
+        snapshot: { provider: "codex", windows: [{ id: "primary", usedPercent: 17 }] },
+      });
+    });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledTimes(1);
+    expect(harness.agentProviderGateway.loadAgentAccountUsage()).toMatchObject([
+      { provider: "codex", windows: [{ id: "primary", usedPercent: 17 }] },
+    ]);
+    harness.unmount();
+  });
+
+  it("resolves a restored Claude reset label from when it was fetched and refreshes it once reset", async () => {
+    const resetAt = new Date(Date.now() - 36 * 3_600_000);
+    resetAt.setUTCMinutes(0, 0, 0);
+    const hour = resetAt.getUTCHours();
+    const month = resetAt.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+    const label = `${month} ${resetAt.getUTCDate()} at ${hour % 12 === 0 ? 12 : hour % 12}${
+      hour < 12 ? "am" : "pm"
+    } (UTC)`;
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      storedAccountUsage: [
+        {
+          provider: "claudeCode",
+          fetchedAtEpochMs: resetAt.getTime() - 4 * 3_600_000,
+          windows: [
+            {
+              id: "five_hour",
+              label: "5-hour limit",
+              usedPercent: 3,
+              windowDurationMinutes: 300,
+              resetsAtEpochMs: null,
+              resetsLabel: label,
+            },
+          ],
+        },
+      ],
+    });
+    expect(harness.hook().accountUsage.claudeCode).toMatchObject({
+      kind: "ready",
+      snapshot: { windows: [{ resetsAtEpochMs: resetAt.getTime(), resetsLabel: label }] },
+    });
+
+    await waitForReact(() => {
+      expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledWith({
+        provider: "claudeCode",
+        providerGeneration: 1,
+      });
+      expect(harness.hook().accountUsage.claudeCode).toMatchObject({
+        kind: "ready",
+        snapshot: { provider: "claudeCode", windows: [{ id: "primary", usedPercent: 17 }] },
+      });
+    });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("does not refresh restored limits that are recent and still inside their window", async () => {
+    const restored: AgentAccountUsageSnapshot = {
+      provider: "codex",
+      fetchedAtEpochMs: Date.now() - 60_000,
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour limit",
+          usedPercent: 3,
+          windowDurationMinutes: 300,
+          resetsAtEpochMs: Date.now() + 3_600_000,
+          resetsLabel: null,
+        },
+      ],
+    };
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerKind: "codex",
+      storedAccountUsage: [restored],
+    });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(harness.agentProviderGateway.readAgentProviderUsage).not.toHaveBeenCalled();
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "ready", snapshot: restored });
+    harness.unmount();
   });
 
   it("refreshes a provider's subscription limits on request", async () => {
@@ -1272,6 +1393,7 @@ describe("useWorkbenchAgents composition", () => {
 
 interface HarnessOptions {
   withProjectGateways: boolean;
+  storedAccountUsage?: ReadonlyArray<AgentAccountUsageSnapshot>;
   providerKind?: "claudeCode" | "codex";
   autoDetected?: boolean;
   providerConfigured?: boolean;
@@ -1394,7 +1516,23 @@ function renderWorkbenchAgents(options: HarnessOptions) {
 
   const reportError = vi.fn();
   const revealTerminal = vi.fn();
+  const usageStorage = new Map<string, string>();
+  const usageStore = new BrowserAgentAccountUsageStoreGateway({
+    getItem: (key) => usageStorage.get(key) ?? null,
+    removeItem: (key) => {
+      usageStorage.delete(key);
+    },
+    setItem: (key, value) => {
+      usageStorage.set(key, value);
+    },
+  });
+  for (const snapshot of options.storedAccountUsage ?? []) {
+    usageStore.saveAgentAccountUsage(snapshot);
+  }
   const agentProviderGateway = {
+    loadAgentAccountUsage: () => usageStore.loadAgentAccountUsage(),
+    saveAgentAccountUsage: (snapshot: AgentAccountUsageSnapshot) =>
+      usageStore.saveAgentAccountUsage(snapshot),
     currentAgentProviderPolicy: vi.fn(
       async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
         kind: "unregistered" as const,

@@ -1,3 +1,4 @@
+import { isEarlierAgentAccountUsagePeriod } from "./agentAccountUsageFreshness";
 import type { AgentCliKind } from "./agentTask";
 
 export interface AgentAccountUsageWindow {
@@ -26,7 +27,16 @@ export function mergeAgentAccountUsageObservation(
   observedAtEpochMs: number,
 ): AgentAccountUsageSnapshot {
   const windows = new Map(current?.windows.map((window) => [window.id, window]) ?? []);
-  for (const window of observation.windows) windows.set(window.id, window);
+  for (const window of observation.windows) {
+    const existing = windows.get(window.id);
+    if (
+      existing !== undefined &&
+      isEarlierAgentAccountUsagePeriod(window, existing, observedAtEpochMs)
+    ) {
+      continue;
+    }
+    windows.set(window.id, window);
+  }
   return {
     provider: observation.provider,
     fetchedAtEpochMs: observedAtEpochMs,

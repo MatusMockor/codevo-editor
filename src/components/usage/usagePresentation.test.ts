@@ -109,7 +109,7 @@ describe("usageLimitBarModel", () => {
     {
       name: "reset already passed",
       overrides: { resetsAtEpochMs: NOW - HOUR },
-      elapsed: 100,
+      elapsed: null,
       reset: "Reset passed",
     },
     {
@@ -153,6 +153,28 @@ describe("usageLimitBarModel", () => {
     expect(bar.elapsedPercent).toBe(elapsed);
     expect(bar.resetsLabel).toBe(reset);
     expect(bar.aheadOfPace).toBe(elapsed !== null && bar.usedPercent > elapsed + 5);
+  });
+
+  it.each([
+    { name: "a reset time", overrides: { resetsAtEpochMs: NOW - HOUR } },
+    {
+      name: "a Claude reset label",
+      overrides: { resetsAtEpochMs: null, resetsLabel: "Sep 24 at 1:50pm (Europe/Bratislava)" },
+    },
+  ])("never presents a reading whose window reset with $name as current usage", ({ overrides }) => {
+    const bar = model(window({ usedPercent: 97, ...overrides }));
+    expect(bar.measured).toBe(false);
+    expect(bar.usedPercent).toBe(0);
+    expect(bar.usedLabel).toBe("Not measured");
+    expect(bar.hot).toBe(false);
+    expect(bar.aheadOfPace).toBe(false);
+    expect(bar.elapsedPercent).toBeNull();
+    expect(bar.resetsLabel).toBe("Reset passed");
+    expect(bar.ariaLabel).toBe("5-hour limit: not measured since the window reset");
+  });
+
+  it("presents a reading whose window is still running as measured", () => {
+    expect(model(window({})).measured).toBe(true);
   });
 
   it("describes the bar for assistive technology", () => {

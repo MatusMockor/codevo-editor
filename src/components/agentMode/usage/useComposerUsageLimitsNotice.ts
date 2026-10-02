@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { AgentAccountUsageWindow } from "../../../domain/agentAccountUsage";
+import { isAgentAccountUsageWindowExpired } from "../../../domain/agentAccountUsageFreshness";
 import {
   representableResetEpochMs,
   USAGE_HOT_PERCENT,
@@ -65,7 +66,7 @@ function hotWindowKeys(
   return providers.flatMap(({ provider, windows }) =>
     windows.flatMap((window) => {
       if (window.usedPercent < USAGE_HOT_PERCENT) return [];
-      if (window.resetsAtEpochMs !== null && window.resetsAtEpochMs <= nowEpochMs) return [];
+      if (isAgentAccountUsageWindowExpired(window, nowEpochMs)) return [];
       return [windowResetKey(provider, window)];
     }),
   );

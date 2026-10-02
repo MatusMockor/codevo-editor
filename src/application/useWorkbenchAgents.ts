@@ -8,6 +8,11 @@ import type {
   AgentAccountUsageStoreGateway,
 } from "../domain/agentAccountUsage";
 import { mergeAgentAccountUsageObservation } from "../domain/agentAccountUsage";
+import {
+  mergeAgentAccountUsageRefresh,
+  resolveAgentAccountUsageResets,
+} from "../domain/agentAccountUsageFreshness";
+import { useAgentAccountUsageFreshness } from "./useAgentAccountUsageFreshness";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
@@ -434,8 +439,9 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
         .catch(() => null);
       if (!isCurrent()) return { kind: "superseded" };
       if (snapshot === null || snapshot.provider !== provider) return { kind: "failed" };
+      const current = accountUsageRef.current[provider];
       publishAccountUsageSnapshot(
-        snapshot,
+        mergeAgentAccountUsageRefresh(current.kind === "ready" ? current.snapshot : null, snapshot),
         accountUsageRef,
         setAccountUsage,
         options.agentProviderGateway,
@@ -444,6 +450,17 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     },
     [options.agentProviderGateway],
   );
+  const claudeUsageReady = providerUsageReady(providerManagement, "claudeCode");
+  const codexUsageReady = providerUsageReady(providerManagement, "codex");
+  const usageReadiness = useMemo(
+    () => ({ claudeCode: claudeUsageReady, codex: codexUsageReady }),
+    [claudeUsageReady, codexUsageReady],
+  );
+  useAgentAccountUsageFreshness({
+    accountUsage,
+    readiness: usageReadiness,
+    refresh: refreshAccountUsage,
+  });
   const refreshProviderUsageAfterTurn = useCallback(
     (provider: "claudeCode" | "codex"): void => {
       void refreshAccountUsage(provider);
@@ -580,7 +597,10 @@ function initialAccountUsage(
   };
   try {
     for (const snapshot of gateway?.loadAgentAccountUsage?.() ?? []) {
-      state[snapshot.provider] = { kind: "ready", snapshot };
+      state[snapshot.provider] = {
+        kind: "ready",
+        snapshot: resolveAgentAccountUsageResets(snapshot),
+      };
     }
   } catch {
     // Storage can be unavailable; live provider observations still populate this state.
@@ -602,6 +622,14 @@ function publishAccountUsageSnapshot(
   } catch {
     // A storage failure must not affect the completed provider turn or its live snapshot.
   }
+}
+
+function providerUsageReady(
+  management: AgentProviderManagementSurface,
+  provider: "claudeCode" | "codex",
+): boolean {
+  const authority = management.admissionAuthority(provider);
+  return authority.disposition.kind === "ready" && "providerGeneration" in authority;
 }
 
 function providerCliVersion(

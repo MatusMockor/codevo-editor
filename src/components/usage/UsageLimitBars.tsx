@@ -27,7 +27,12 @@ export function UsageLimitBars({
               <span className="cv-usage-limits__name" title={model.label}>
                 {model.label}
               </span>
-              <span className="cv-usage-limits__value">{model.usedLabel}</span>
+              <span
+                className="cv-usage-limits__value"
+                data-measured={model.measured ? undefined : "false"}
+              >
+                {model.usedLabel}
+              </span>
             </span>
             <div
               aria-label={model.ariaLabel}

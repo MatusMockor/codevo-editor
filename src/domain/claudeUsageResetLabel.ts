@@ -1,6 +1,8 @@
 import { isKnownTimeZone, zonedWallTimeToEpochMs, type WallTime } from "./calendarDateTime";
 
 const MAX_LABEL_LENGTH = 200;
+const LABEL_ROUNDING_TOLERANCE_MS = 2 * 60_000;
+const UPCOMING_RESET_HORIZON_MS = 8 * 86_400_000;
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const RESET_LABEL =
   /^(?:([a-z]{3})[a-z]{0,6}\.? (\d{1,2})(?:, (\d{4}))? at )?(\d{1,2})(?::(\d{2}))? ?(am|pm) \(([A-Za-z0-9_+\-/]{1,64})\)$/iu;
@@ -15,13 +17,31 @@ interface ParsedResetLabel {
 }
 
 export function claudeUsageResetEpochMs(label: string, nowEpochMs: number): number | null {
-  if (!Number.isFinite(nowEpochMs)) return null;
+  const candidates = resetCandidates(label, nowEpochMs);
+  return candidates === null ? null : nearest(candidates, nowEpochMs);
+}
+
+export function claudeUsageUpcomingResetEpochMs(
+  label: string,
+  fetchedAtEpochMs: number,
+): number | null {
+  const candidates = resetCandidates(label, fetchedAtEpochMs);
+  if (candidates === null) return null;
+  const upcoming = candidates.filter(
+    (epochMs) =>
+      epochMs >= fetchedAtEpochMs - LABEL_ROUNDING_TOLERANCE_MS &&
+      epochMs <= fetchedAtEpochMs + UPCOMING_RESET_HORIZON_MS,
+  );
+  return upcoming.length === 0 ? nearest(candidates, fetchedAtEpochMs) : Math.min(...upcoming);
+}
+
+function resetCandidates(label: string, referenceEpochMs: number): number[] | null {
+  if (!Number.isFinite(referenceEpochMs)) return null;
   const parsed = parseResetLabel(label);
   if (parsed === null) return null;
-  const candidates = candidateWallTimes(parsed, nowEpochMs)
+  return candidateWallTimes(parsed, referenceEpochMs)
     .map((wall) => zonedWallTimeToEpochMs(wall, parsed.timeZone))
     .filter((epochMs): epochMs is number => epochMs !== null);
-  return nearest(candidates, nowEpochMs);
 }
 
 function parseResetLabel(label: string): ParsedResetLabel | null {

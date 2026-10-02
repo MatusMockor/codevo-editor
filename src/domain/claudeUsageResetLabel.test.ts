@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claudeUsageResetEpochMs } from "./claudeUsageResetLabel";
+import { claudeUsageResetEpochMs, claudeUsageUpcomingResetEpochMs } from "./claudeUsageResetLabel";
 
 const NOW = Date.UTC(2026, 8, 30, 9, 0);
 
@@ -40,5 +40,31 @@ describe("claudeUsageResetEpochMs", () => {
     "Sep 30 at 4pm (UTC) and more",
   ])("rejects %j", (label) => {
     expect(claudeUsageResetEpochMs(label, NOW)).toBeNull();
+  });
+});
+
+describe("claudeUsageUpcomingResetEpochMs", () => {
+  it("reads a time-only label more than half a day ahead as the next occurrence", () => {
+    const noon = Date.UTC(2026, 9, 5, 10, 0);
+    expect(claudeUsageUpcomingResetEpochMs("8am (Europe/Bratislava)", noon)).toBe(
+      Date.UTC(2026, 9, 6, 6, 0),
+    );
+    expect(claudeUsageResetEpochMs("8am (Europe/Bratislava)", noon)).toBe(
+      Date.UTC(2026, 9, 5, 6, 0),
+    );
+  });
+
+  it("tolerates a label rounded down to the minute just before the fetch", () => {
+    const fetchedAt = Date.UTC(2026, 9, 6, 5, 59, 40);
+    expect(claudeUsageUpcomingResetEpochMs("Oct 6 at 7:59am (Europe/Bratislava)", fetchedAt)).toBe(
+      Date.UTC(2026, 9, 6, 5, 59),
+    );
+  });
+
+  it("keeps a dated label that already passed in its own year instead of a year ahead", () => {
+    const fetchedAt = Date.UTC(2026, 9, 2, 8, 22);
+    expect(claudeUsageUpcomingResetEpochMs("Oct 2 at 4:20am (Europe/Bratislava)", fetchedAt)).toBe(
+      Date.UTC(2026, 9, 2, 2, 20),
+    );
   });
 });
