@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.87] - 2026-10-02
+
+### Added
+
+- Server threads on an updated Codevo runner can start from an origin branch picked in
+  the composer, show ahead/behind and uncommitted state, Update from origin
+  (fast-forward only), and commit, push and open the compare page from the Git tab.
+- Dev servers that a server thread runs appear as a Ports chip in the thread header and
+  open in your browser through the SSH connection; localhost links in server-thread
+  answers go to the server instead of your Mac.
+- The project switcher shows which server a project lives on and can close a project,
+  and sidebar rows show where and with which provider a thread runs.
+- File links in remote threads open in the server Files panel.
+
+### Changed
+
+- Thread notifications appear as cards in a shared toast stack, and thread header
+  actions stay visible instead of appearing on hover.
+
 ## [0.2.0-beta.86] - 2026-10-02
 
 ### Fixed
