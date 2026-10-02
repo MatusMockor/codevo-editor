@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentThreadNotificationEvent } from "../domain/agentNotification";
 import {
   MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS,
-  agentThreadNotificationCopy,
+  agentThreadNotificationView,
   agentThreadSystemNotification,
-  agentThreadUnavailableCopy,
+  agentThreadUnavailableView,
 } from "./agentThreadNotificationPresenter";
 
 function event(
@@ -22,33 +22,44 @@ function event(
   };
 }
 
-describe("agent thread notification copy", () => {
-  it("names the thread, the outcome and the project", () => {
-    expect(agentThreadNotificationCopy(event())).toEqual({
-      message: "Fix parser finished in api",
+describe("agent thread notification view", () => {
+  it("headlines the outcome and keeps the thread and project apart", () => {
+    expect(agentThreadNotificationView(event())).toEqual({
+      title: "Thread finished",
+      description: "Fix parser",
+      project: "api",
       tone: "success",
     });
-    expect(agentThreadNotificationCopy(event({ kind: "failed" }))).toEqual({
-      message: "Fix parser failed in api",
+    expect(agentThreadNotificationView(event({ kind: "failed" }))).toEqual({
+      title: "Thread failed",
+      description: "Fix parser",
+      project: "api",
       tone: "error",
     });
-    expect(agentThreadNotificationCopy(event({ kind: "approval" })).message).toBe(
-      "Fix parser needs your approval in api",
-    );
-    expect(agentThreadNotificationCopy(event({ kind: "input" })).message).toBe(
-      "Fix parser needs your input in api",
-    );
+    expect(agentThreadNotificationView(event({ kind: "approval" }))).toEqual({
+      title: "Approval needed",
+      description: "Fix parser",
+      project: "api",
+      tone: "info",
+    });
+    expect(agentThreadNotificationView(event({ kind: "input" }))).toEqual({
+      title: "Input needed",
+      description: "Fix parser",
+      project: "api",
+      tone: "info",
+    });
+  });
+
+  it("omits the project when its label is blank", () => {
+    expect(agentThreadNotificationView(event({ projectLabel: " \n " })).project).toBeNull();
   });
 
   it("collapses whitespace, bounds long titles and falls back for empty ones", () => {
-    const long = agentThreadNotificationCopy(event({ title: `a\n${"b".repeat(300)}` })).message;
-    expect(long.startsWith("a b")).toBe(true);
-    expect(Array.from(long.split(" finished")[0] ?? "").length).toBe(
-      MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS,
-    );
-    expect(agentThreadNotificationCopy(event({ title: "  ", projectLabel: "" })).message).toBe(
-      "Untitled thread finished",
-    );
+    const long = agentThreadNotificationView(event({ title: `a\n${"b".repeat(300)}` }));
+    expect(long.description.startsWith("a b")).toBe(true);
+    expect(long.description.endsWith("…")).toBe(true);
+    expect(Array.from(long.description)).toHaveLength(MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS);
+    expect(agentThreadNotificationView(event({ title: "  " })).description).toBe("Untitled thread");
   });
 
   it("builds a system notification with a kind title and thread body", () => {
@@ -56,11 +67,17 @@ describe("agent thread notification copy", () => {
       title: "Input needed",
       body: "Fix parser · api",
     });
+    expect(agentThreadSystemNotification(event({ projectLabel: "" }))).toEqual({
+      title: "Thread finished",
+      body: "Fix parser",
+    });
   });
 
   it("explains that a thread can no longer be opened", () => {
-    expect(agentThreadUnavailableCopy(event())).toEqual({
-      message: "Fix parser is no longer available",
+    expect(agentThreadUnavailableView(event({ kind: "failed" }))).toEqual({
+      title: "Thread unavailable",
+      description: "Fix parser",
+      project: "api",
       tone: "info",
     });
   });

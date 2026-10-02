@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { CommandExecutionRunner } from "../application/commandRegistry";
 import type { KeymapSettings } from "../domain/keymap";
 import { appShellClassName } from "./appShellClassName";
@@ -7,6 +7,7 @@ import {
   SecondaryEditorKeymapContext,
   useSecondaryEditorKeymapBinding,
 } from "./secondaryEditorKeymap/secondaryEditorKeymapContext";
+import { ToastStackPortalContext } from "./toastStackPortal";
 
 interface AppShellRootWorkbench {
   readonly agentModeActive: boolean;
@@ -28,6 +29,7 @@ interface AppShellRootProps {
 
 export function AppShellRoot({ children, colorScheme, shellStyle, workbench }: AppShellRootProps) {
   const { agentThreadFontSize, keymap } = workbench.appSettings;
+  const [toastStack, setToastStack] = useState<HTMLDivElement | null>(null);
   const style = useMemo(
     () => appShellTypeScaleStyle(agentThreadFontSize, shellStyle),
     [agentThreadFontSize, shellStyle],
@@ -45,8 +47,11 @@ export function AppShellRoot({ children, colorScheme, shellStyle, workbench }: A
       style={style}
     >
       <SecondaryEditorKeymapContext.Provider value={secondaryEditorKeymap}>
-        {children}
+        <ToastStackPortalContext.Provider value={toastStack}>
+          {children}
+        </ToastStackPortalContext.Provider>
       </SecondaryEditorKeymapContext.Provider>
+      <div className="toast-stack" ref={setToastStack} />
     </main>
   );
 }

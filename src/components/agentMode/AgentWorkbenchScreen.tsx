@@ -805,6 +805,7 @@ export function AgentWorkbenchScreen({
           newThreadPicker={newThreadPicker}
           viewCommands={workbenchAgentViewCommandBridge}
           threadNotifications={threadNotifications}
+          threadNotificationsVisible={workbench.settingsOpen !== true}
           workspaceRoot={workspaceRoot}
         />
       </AgentTranscriptPositionProvider>

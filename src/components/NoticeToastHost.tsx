@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
+import { useToastStackPortalTarget } from "./toastStackPortal";
 
 interface NoticeToastContext {
   dismiss: () => void;
@@ -29,6 +31,7 @@ export function NoticeToastHost({
   notices,
   renderNotice,
 }: NoticeToastHostProps): ReactNode {
+  const target = useToastStackPortalTarget();
   const [dismissedNoticeKeys, setDismissedNoticeKeys] = useState<Set<string>>(new Set());
   const previousGroupNoticeKeys = useRef<Set<string>>(new Set());
 
@@ -120,7 +123,7 @@ export function NoticeToastHost({
     return null;
   }
 
-  return (
+  const region = (
     <div
       className={renderedNotices.length > 1 ? "toast-region toast-region--stacked" : "toast-region"}
     >
@@ -143,4 +146,5 @@ export function NoticeToastHost({
       })}
     </div>
   );
+  return target === null ? region : createPortal(region, target);
 }

@@ -213,6 +213,7 @@ describe("agent thread notifications in agent mode", () => {
       readonly key?: string;
       readonly gateway?: AgentQuestionGateway | null;
       readonly projects?: AgentProjectDescriptor[];
+      readonly notificationsVisible?: boolean;
     } = {},
   ): void {
     act(() =>
@@ -220,13 +221,18 @@ describe("agent thread notifications in agent mode", () => {
         <AgentModeView
           key={options.key ?? "view"}
           {...props(threads, options.gateway ?? null, options.projects)}
+          threadNotificationsVisible={options.notificationsVisible ?? true}
         />,
       ),
     );
   }
 
   function messages(): Array<string | null | undefined> {
-    return toasts().map((toast) => toast.querySelector(".cv-toast__message")?.textContent);
+    return toasts().map((toast) =>
+      [".toast-notification__title", ".toast-notification-message", ".toast-notification__meta"]
+        .map((selector) => toast.querySelector(selector)?.textContent)
+        .join(" | "),
+    );
   }
 
   function clickRow(threadId: string): void {
@@ -241,7 +247,9 @@ describe("agent thread notifications in agent mode", () => {
   }
 
   function toasts(): HTMLElement[] {
-    return [...document.querySelectorAll<HTMLElement>(".cv-toast")];
+    return [
+      ...document.querySelectorAll<HTMLElement>(".toast-region--agent-threads .toast-notification"),
+    ];
   }
 
   function openButton(toast: HTMLElement): HTMLButtonElement {
@@ -259,9 +267,7 @@ describe("agent thread notifications in agent mode", () => {
 
     render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", DONE)]);
 
-    expect(toasts().map((toast) => toast.querySelector(".cv-toast__message")?.textContent)).toEqual(
-      ["Thread b1 finished in api-service"],
-    );
+    expect(messages()).toEqual(["Thread finished | Thread b1 | api-service"]);
     selectWorkspace.mockClear();
     act(() => openButton(toasts()[0] as HTMLElement).click());
 
@@ -270,6 +276,21 @@ describe("agent thread notifications in agent mode", () => {
       expect.objectContaining({ rootKey: API, ownerId: "agent-root:api-service" }),
     );
     expect(toasts()).toEqual([]);
+  });
+
+  it("keeps thread toasts out of the shared stack while they are hidden", () => {
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", RUNNING)]);
+    clickRow("a1");
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", DONE)]);
+    expect(toasts()).toHaveLength(1);
+
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", DONE)], {
+      notificationsVisible: false,
+    });
+    expect(toasts()).toEqual([]);
+
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", DONE)]);
+    expect(messages()).toEqual(["Thread finished | Thread b1 | api-service"]);
   });
 
   it("does not toast the thread the user is looking at", () => {
@@ -351,9 +372,11 @@ describe("agent thread notifications in agent mode", () => {
 
     gateway.approvals.set("b1-turn", "req-1");
     await settle(AGENT_PENDING_INTERACTION_POLL_MS);
-    expect(messages()).toEqual(["Thread b1 needs your approval in api-service"]);
+    expect(messages()).toEqual(["Approval needed | Thread b1 | api-service"]);
     act(() =>
-      toasts()[0]?.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')?.click(),
+      toasts()[0]
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Dismiss notification"]')
+        ?.click(),
     );
     expect(toasts()).toEqual([]);
 
@@ -385,7 +408,7 @@ describe("agent thread notifications in agent mode", () => {
       threadIn("b1", API, "api-service", DONE, { background: true }),
     ]);
 
-    expect(messages()).toEqual(["Thread b1 finished in api-service"]);
+    expect(messages()).toEqual(["Thread finished | Thread b1 | api-service"]);
   });
 
   it("stays silent for an interrupted turn", () => {

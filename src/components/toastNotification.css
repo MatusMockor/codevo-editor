@@ -30,13 +30,31 @@
   --toast-focus-ring: var(--cv-ring-focus);
 }
 
-.toast-region {
+.toast-stack {
   position: fixed;
   top: var(--toast-top);
   right: var(--toast-inset);
-  z-index: 9;
+  z-index: var(--cv-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   width: min(var(--toast-width), calc(100vw - var(--toast-inset) * 2));
   pointer-events: none;
+}
+
+.toast-region {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  pointer-events: none;
+}
+
+.toast-region--stacked {
+  margin-block-end: 16px;
+}
+
+.toast-region--agent-threads {
+  order: 1;
 }
 
 .toast-region__slot--front {
@@ -207,6 +225,14 @@
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.agent-thread-toast .toast-notification-message {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .toast-notification__meta-clip {

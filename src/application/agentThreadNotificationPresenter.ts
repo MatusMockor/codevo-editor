@@ -5,58 +5,57 @@ import type {
 
 export type AgentThreadNotificationTone = "success" | "error" | "info";
 
-export interface AgentThreadNotificationCopy {
-  readonly message: string;
+export interface AgentThreadNotificationView {
+  readonly title: string;
+  readonly description: string;
+  readonly project: string | null;
   readonly tone: AgentThreadNotificationTone;
 }
 
 export const MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS = 80;
 export const MAX_AGENT_THREAD_NOTIFICATION_PROJECT_CHARS = 60;
 
-export function agentThreadNotificationCopy(
+export function agentThreadNotificationView(
   event: AgentThreadNotificationEvent,
-): AgentThreadNotificationCopy {
-  const title = bounded(event.title, MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS, "Untitled thread");
-  const project = bounded(event.projectLabel, MAX_AGENT_THREAD_NOTIFICATION_PROJECT_CHARS, "");
-  const where = project === "" ? "" : ` in ${project}`;
+): AgentThreadNotificationView {
   return {
-    message: `${title} ${outcomePhrase(event.kind)}${where}`,
+    title: systemTitle(event.kind),
+    description: threadTitle(event),
+    project: projectLabel(event),
     tone: notificationTone(event.kind),
   };
 }
 
-export function agentThreadUnavailableCopy(
+export function agentThreadUnavailableView(
   event: AgentThreadNotificationEvent,
-): AgentThreadNotificationCopy {
-  const title = bounded(event.title, MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS, "Untitled thread");
-  return { message: `${title} is no longer available`, tone: "info" };
+): AgentThreadNotificationView {
+  return {
+    title: "Thread unavailable",
+    description: threadTitle(event),
+    project: projectLabel(event),
+    tone: "info",
+  };
 }
 
 export function agentThreadSystemNotification(event: AgentThreadNotificationEvent): {
   readonly title: string;
   readonly body: string;
 } {
-  const title = bounded(event.title, MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS, "Untitled thread");
-  const project = bounded(event.projectLabel, MAX_AGENT_THREAD_NOTIFICATION_PROJECT_CHARS, "");
+  const title = threadTitle(event);
+  const project = projectLabel(event);
   return {
     title: systemTitle(event.kind),
-    body: project === "" ? title : `${title} · ${project}`,
+    body: project === null ? title : `${title} · ${project}`,
   };
 }
 
-function outcomePhrase(kind: AgentThreadNotificationKind): string {
-  switch (kind) {
-    case "completed":
-      return "finished";
-    case "failed":
-      return "failed";
-    case "approval":
-      return "needs your approval";
-    case "input":
-      return "needs your input";
-    default:
-      return unsupportedKind(kind);
-  }
+function threadTitle(event: AgentThreadNotificationEvent): string {
+  return bounded(event.title, MAX_AGENT_THREAD_NOTIFICATION_TITLE_CHARS, "Untitled thread");
+}
+
+function projectLabel(event: AgentThreadNotificationEvent): string | null {
+  const project = bounded(event.projectLabel, MAX_AGENT_THREAD_NOTIFICATION_PROJECT_CHARS, "");
+  return project === "" ? null : project;
 }
 
 function systemTitle(kind: AgentThreadNotificationKind): string {

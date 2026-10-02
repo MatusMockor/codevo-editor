@@ -173,6 +173,7 @@ export interface AgentModeViewProps {
   readonly projectFocusPreference?: AgentRailProjectFocusPreferencePort | null;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly threadNotifications?: AgentThreadNotificationCenter | null;
+  readonly threadNotificationsVisible?: boolean;
   onOpenSourceControl?(): void;
   onOpenEnvironmentSettings?(): void;
   onOpenUsageSettings?(): void;
@@ -276,6 +277,7 @@ function LocalAgentModeView({
   projectFocusPreference = null,
   newThreadPicker = null,
   threadNotifications = null,
+  threadNotificationsVisible = true,
   viewCommands = null,
   workspaceRoot,
   onSelectedThreadChange,
@@ -1378,6 +1380,7 @@ function LocalAgentModeView({
           onSelectThread={navigation.selectThread}
           interactions={pendingObservations.observed}
           projects={projects}
+          toastsVisible={threadNotificationsVisible}
           views={presentationThreads}
           visibleThreadId={
             layout.rightPanel === "open" && layout.rightPanelMaximized
