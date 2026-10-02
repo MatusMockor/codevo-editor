@@ -40,6 +40,16 @@ describe("sidebar styles", () => {
     expect(declaration(".cv-favicon", "width")).toBe("16px");
   });
 
+  it("gives the header buttons a neutral keyboard ring instead of the accent ring", () => {
+    for (const selector of [
+      ".cv-sb-switch:focus-visible",
+      ".cv-sb-actions .cv-icon-button:focus-visible",
+    ]) {
+      expect(declaration(selector, "outline"), selector).toBe("none");
+      expect(declaration(selector, "box-shadow"), selector).toBe("var(--cv-ring-hair-strong)");
+    }
+  });
+
   it("keeps project groups compact and their hover actions out of the way until needed", () => {
     expect(declaration(".cv-sb-project__toggle", "height")).toBe("30px");
     expect(declaration(".cv-card-row.is-grouped", "height")).toBe("56px");

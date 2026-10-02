@@ -236,7 +236,7 @@ describe("agent sidebar project groups and New thread picker", () => {
   function chooseInSwitcher(label: string): void {
     act(() => switcher().click());
     const option = switcherOptions().find(
-      (candidate) => candidate.querySelector(".cv-switch__label")?.textContent === label,
+      (candidate) => candidate.querySelector(".cv-project-switch__label")?.textContent === label,
     );
     expect(option).toBeDefined();
     act(() => option?.click());
@@ -447,7 +447,7 @@ describe("agent sidebar project groups and New thread picker", () => {
     act(() => switcher().click());
     expect(
       switcherOptions().map(
-        (option) => option.querySelector(".cv-switch__label")?.textContent ?? "",
+        (option) => option.querySelector(".cv-project-switch__label")?.textContent ?? "",
       ),
     ).toEqual(["All projects", "app", "api-service", "docs"]);
     expect(switcherOptions()[0]?.getAttribute("aria-selected")).toBe("true");

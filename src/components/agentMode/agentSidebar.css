@@ -6,8 +6,23 @@
 .cv-sb-search {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   padding: 0 8px 8px;
+}
+
+.cv-sb-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.cv-sb-actions .cv-icon-button:focus-visible,
+.cv-sb-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--cv-ring-hair-strong);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .cv-sb-search__field {
@@ -97,11 +112,6 @@
   color: var(--cv-fg-strong);
 }
 
-.cv-sb-switch:focus-visible {
-  outline: 2px solid var(--cv-focus);
-  outline-offset: 2px;
-}
-
 .cv-sb-switch:disabled {
   color: var(--cv-fg-disabled);
   cursor: default;
@@ -150,18 +160,24 @@
   color: var(--cv-sym-interface);
 }
 
+.cv-sb-switch .cv-project-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--cv-r-xs);
+}
+
 .cv-sb-switch[data-focused="true"] .cv-project-badge {
   box-shadow: var(--cv-ring-hair-strong);
 }
 
-.cv-switch {
+.cv-project-switch {
   width: 280px;
   max-width: calc(100vw - 16px);
   padding: 4px;
   border-radius: var(--cv-r-card);
 }
 
-.cv-switch__search {
+.cv-project-switch__search {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -172,12 +188,12 @@
   color: var(--cv-fg-subtle);
 }
 
-.cv-switch__search:focus-within {
+.cv-project-switch__search:focus-within {
   box-shadow: var(--cv-edge-bottom-divider);
   color: var(--cv-fg);
 }
 
-.cv-switch__search input {
+.cv-project-switch__search input {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -188,23 +204,23 @@
   outline: none;
 }
 
-.cv-switch__search input::placeholder {
+.cv-project-switch__search input::placeholder {
   color: var(--cv-fg-subtle);
 }
 
-.cv-switch__rows {
+.cv-project-switch__rows {
   position: relative;
   max-height: 340px;
   overflow-y: auto;
 }
 
-.cv-switch__list {
+.cv-project-switch__list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.cv-switch__option {
+.cv-project-switch__option {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -217,7 +233,7 @@
   font-size: var(--cv-t-md);
 }
 
-.cv-switch__all {
+.cv-project-switch__all {
   display: inline-grid;
   flex: none;
   place-items: center;
@@ -226,18 +242,18 @@
   color: var(--cv-fg-subtle);
 }
 
-.cv-switch__option:hover,
-.cv-switch__option[data-highlighted="true"] {
+.cv-project-switch__option:hover,
+.cv-project-switch__option[data-highlighted="true"] {
   background: var(--cv-tint-3);
   color: var(--cv-fg-strong);
 }
 
-.cv-switch__option[aria-selected="true"],
-.cv-switch__option[data-current="true"] {
+.cv-project-switch__option[aria-selected="true"],
+.cv-project-switch__option[data-current="true"] {
   color: var(--cv-fg-strong);
 }
 
-.cv-switch__label {
+.cv-project-switch__label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -245,23 +261,23 @@
   white-space: nowrap;
 }
 
-.cv-switch__state {
+.cv-project-switch__state {
   flex: none;
   color: var(--cv-fg-subtle);
   font-size: var(--cv-t-xs);
 }
 
-.cv-switch__option .cv-switch__check {
+.cv-project-switch__option .cv-project-switch__check {
   flex: none;
   visibility: hidden;
   color: var(--cv-fg-strong);
 }
 
-.cv-switch__option[aria-selected="true"] .cv-switch__check {
+.cv-project-switch__option[aria-selected="true"] .cv-project-switch__check {
   visibility: visible;
 }
 
-.cv-switch__gears {
+.cv-project-switch__gears {
   position: absolute;
   top: 0;
   right: 4px;
@@ -270,24 +286,24 @@
   pointer-events: none;
 }
 
-.cv-switch__gear-slot {
+.cv-project-switch__gear-slot {
   display: grid;
   place-items: center;
   height: 34px;
 }
 
-.cv-switch__gear {
+.cv-project-switch__gear {
   color: var(--cv-fg-subtle);
   pointer-events: auto;
 }
 
-.cv-switch__gear-slot[data-highlighted="true"] .cv-switch__gear,
-.cv-switch__gear:hover,
-.cv-switch__gear:focus-visible {
+.cv-project-switch__gear-slot[data-highlighted="true"] .cv-project-switch__gear,
+.cv-project-switch__gear:hover,
+.cv-project-switch__gear:focus-visible {
   color: var(--cv-fg-strong);
 }
 
-.cv-switch__none {
+.cv-project-switch__none {
   margin: 0;
   padding: 8px;
   color: var(--cv-fg-subtle);

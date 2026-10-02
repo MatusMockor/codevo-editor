@@ -663,15 +663,15 @@ describe("AgentWorkbenchScreen", () => {
     }
 
     function switcherLabels(): ReadonlyArray<string> {
-      return [...document.querySelectorAll<HTMLElement>('[role="option"] .cv-switch__label')].map(
-        (label) => label.textContent ?? "",
-      );
+      return [
+        ...document.querySelectorAll<HTMLElement>('[role="option"] .cv-project-switch__label'),
+      ].map((label) => label.textContent ?? "");
     }
 
     function chooseProject(label: string): void {
       click(".agent-rail .cv-sb-switch");
       const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-        (candidate) => candidate.querySelector(".cv-switch__label")?.textContent === label,
+        (candidate) => candidate.querySelector(".cv-project-switch__label")?.textContent === label,
       );
       expect(option, `Missing project ${label}`).toBeDefined();
       act(() => option?.click());

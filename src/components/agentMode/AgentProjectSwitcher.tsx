@@ -115,13 +115,13 @@ export function AgentProjectSwitcher({
       </button>
       <Popover
         anchorRef={triggerRef}
-        className="cv-switch"
+        className="cv-project-switch"
         label={SWITCHER_LABEL}
         onClose={close}
         open={open}
         placement="bottom-end"
       >
-        <label className="cv-switch__search">
+        <label className="cv-project-switch__search">
           <Search aria-hidden="true" size={14} />
           <input
             aria-activedescendant={active < 0 ? undefined : `${listId}-${active}`}
@@ -143,8 +143,8 @@ export function AgentProjectSwitcher({
             value={query}
           />
         </label>
-        <div className="cv-switch__rows">
-          <ul aria-label="Projects" className="cv-switch__list" id={listId} role="listbox">
+        <div className="cv-project-switch__rows">
+          <ul aria-label="Projects" className="cv-project-switch__list" id={listId} role="listbox">
             {options.map((option, index) => (
               <SwitcherOptionRow
                 active={index === active}
@@ -161,7 +161,7 @@ export function AgentProjectSwitcher({
               />
             ))}
           </ul>
-          <div aria-label="Project settings" className="cv-switch__gears" role="group">
+          <div aria-label="Project settings" className="cv-project-switch__gears" role="group">
             {options.map((option, index) => (
               <SwitcherGearSlot
                 active={index === active}
@@ -173,7 +173,7 @@ export function AgentProjectSwitcher({
             ))}
           </div>
         </div>
-        {options.length === 0 && <p className="cv-switch__none">No matching projects.</p>}
+        {options.length === 0 && <p className="cv-project-switch__none">No matching projects.</p>}
       </Popover>
       <Menu
         anchorRef={triggerRef}
@@ -222,7 +222,7 @@ function SwitcherOptionRow({
     <li
       aria-current={current ? "true" : undefined}
       aria-selected={selected}
-      className="cv-switch__option"
+      className="cv-project-switch__option"
       data-current={current ? "true" : undefined}
       data-highlighted={active ? "true" : undefined}
       data-value={option.key}
@@ -232,18 +232,18 @@ function SwitcherOptionRow({
       role="option"
     >
       {entry === null ? (
-        <span aria-hidden="true" className="cv-switch__all">
+        <span aria-hidden="true" className="cv-project-switch__all">
           <Folder size={16} />
         </span>
       ) : (
         <AgentProjectBadge label={option.label} />
       )}
-      <span className="cv-switch__label" title={entry?.rootPath ?? option.label}>
+      <span className="cv-project-switch__label" title={entry?.rootPath ?? option.label}>
         {option.label}
       </span>
-      {current && <span className="cv-switch__state">Current</span>}
-      {!current && state !== null && <span className="cv-switch__state">{state}</span>}
-      <Check aria-hidden="true" className="cv-switch__check" size={14} />
+      {current && <span className="cv-project-switch__state">Current</span>}
+      {!current && state !== null && <span className="cv-project-switch__state">{state}</span>}
+      <Check aria-hidden="true" className="cv-project-switch__check" size={14} />
     </li>
   );
 }
@@ -257,15 +257,15 @@ interface SwitcherGearSlotProps {
 
 function SwitcherGearSlot({ active, onHighlight, onOpenActions, option }: SwitcherGearSlotProps) {
   const entry = option.entry;
-  if (entry === null) return <span aria-hidden="true" className="cv-switch__gear-slot" />;
+  if (entry === null) return <span aria-hidden="true" className="cv-project-switch__gear-slot" />;
   return (
     <span
-      className="cv-switch__gear-slot"
+      className="cv-project-switch__gear-slot"
       data-highlighted={active ? "true" : undefined}
       onMouseMove={onHighlight}
     >
       <IconButton
-        className="cv-switch__gear"
+        className="cv-project-switch__gear"
         icon={<Settings size={14} />}
         label={`Project settings for ${option.label}`}
         onClick={() => onOpenActions(entry)}

@@ -121,27 +121,29 @@ export function AgentRailHeader({
             />
           )}
         </label>
-        <AgentProjectSwitcher
-          activeEntry={activeEntry}
-          entries={scopeEntries}
-          focus={projectFocus}
-          onProjectCommand={onProjectCommand}
-          onSelectAll={onShowAllProjects}
-          onSelectProject={onSwitchProject}
-        />
-        <IconButton
-          disabled={!addProjectAvailable}
-          icon={<FolderPlus size={16} />}
-          label="Add project"
-          onClick={onAddProject}
-        />
-        <IconButton
-          disabled={newThreadTarget === null}
-          icon={<SquarePen size={16} />}
-          label="New thread"
-          onClick={(event: MouseEvent<HTMLButtonElement>) => onNewThread(event.shiftKey)}
-          title={newThreadTitle ?? fallbackNewThreadTitle}
-        />
+        <div className="cv-sb-actions">
+          <AgentProjectSwitcher
+            activeEntry={activeEntry}
+            entries={scopeEntries}
+            focus={projectFocus}
+            onProjectCommand={onProjectCommand}
+            onSelectAll={onShowAllProjects}
+            onSelectProject={onSwitchProject}
+          />
+          <IconButton
+            disabled={!addProjectAvailable}
+            icon={<FolderPlus size={16} />}
+            label="Add project"
+            onClick={onAddProject}
+          />
+          <IconButton
+            disabled={newThreadTarget === null}
+            icon={<SquarePen size={16} />}
+            label="New thread"
+            onClick={(event: MouseEvent<HTMLButtonElement>) => onNewThread(event.shiftKey)}
+            title={newThreadTitle ?? fallbackNewThreadTitle}
+          />
+        </div>
       </div>
       {orphanCount > 0 && <p className="cv-sb-note">{orphanLabel(orphanCount)}</p>}
       {detachedCount > 0 && <p className="cv-sb-note">{detachedLabel(detachedCount)}</p>}
