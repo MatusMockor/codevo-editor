@@ -391,3 +391,46 @@ describe("remote subagent lifecycle wire compatibility", () => {
     });
   });
 });
+
+describe("remote turn retention provenance", () => {
+  const replay = new Map([
+    [
+      "root",
+      [
+        {
+          taskId: "root",
+          sequence: 1,
+          type: "task.output" as const,
+          channel: "stdout" as const,
+          text: "plain\n",
+          createdAt: "2026-09-13T00:00:00Z",
+        },
+      ],
+    ],
+  ]);
+  const turnOf = (projection: RemoteAgentProjection, extra: Partial<RemoteAgentProjectionInput>) =>
+    projection.project({ ...input([root]), replays: replay, ...extra })[0]!.thread.turns[0]!;
+  it("keeps provenance unknown when the input does not report server eviction", () => {
+    const turn = turnOf(new RemoteAgentProjection(), { replayTruncated: new Set(["root"]) });
+    expect(turn.eventsTruncated).toBe(true);
+    expect(turn.eventsRetention).toBeUndefined();
+  });
+  it("omits provenance for a complete turn", () => {
+    const turn = turnOf(new RemoteAgentProjection(), { replayDiscarded: new Set() });
+    expect(turn.eventsTruncated).toBe(false);
+    expect("eventsRetention" in turn).toBe(false);
+  });
+  it("distinguishes client retention from a server gap and upgrades a cached turn", () => {
+    const projection = new RemoteAgentProjection();
+    const client = turnOf(projection, {
+      replayTruncated: new Set(["root"]),
+      replayDiscarded: new Set(),
+    });
+    expect(client.eventsRetention).toBe("clientWindow");
+    const server = turnOf(projection, {
+      replayTruncated: new Set(["root"]),
+      replayDiscarded: new Set(["root"]),
+    });
+    expect(server.eventsRetention).toBe("serverGap");
+  });
+});

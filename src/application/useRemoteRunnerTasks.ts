@@ -57,6 +57,8 @@ interface Options {
   readonly workspaceOwner: string | null;
 }
 class RemoteReplayError extends Error {}
+export const REMOTE_TASK_OUTPUT_DISCARDED_ERROR =
+  "The server discarded earlier output for this task.";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "The remote task operation failed.";
 
@@ -222,6 +224,8 @@ export function useRemoteRunnerTasks({
     let after = 0;
     let retained: readonly RemoteRunnerEvent[] = [];
     let caughtUp = false;
+    let serverDiscarded = false;
+    let missingOutput = false;
     let replayError: string | null = null;
     const valid = () => !disposed && isCurrent(captured) && selected === selection.current;
     const poll = async () => {
@@ -251,11 +255,14 @@ export function useRemoteRunnerTasks({
               throw new RemoteReplayError(
                 "The runner returned an invalid event page; displayed output is incomplete.",
               );
+            const removed = page.outputTruncatedBeforeSequence ?? 0;
+            serverDiscarded ||= removed > 0;
+            missingOutput ||= removed > after;
             after = nextAfter;
             const window = retainRemoteReplayWindow([...retained, ...incoming], 3_000_000);
             retained = window.events;
-            if (window.truncated || page.outputTruncatedBeforeSequence !== undefined)
-              replayError = "Showing recent server output; earlier output is incomplete.";
+            missingOutput ||= window.truncated;
+            if (serverDiscarded && missingOutput) replayError = REMOTE_TASK_OUTPUT_DISCARDED_ERROR;
             caughtUp = page.nextCursor === null;
             if (caughtUp) break;
           }

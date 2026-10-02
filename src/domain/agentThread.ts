@@ -99,6 +99,8 @@ export type AgentThreadAttention = "running" | "attention" | "settled" | "archiv
 
 export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" };
 
+export type AgentTurnEventsRetention = "serverGap" | "clientWindow";
+
 export interface AgentAppServerTokenBreakdown {
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
@@ -252,6 +254,7 @@ export interface AgentTurn {
   readonly endedAtEpochMs: number | null;
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly eventsTruncated: boolean;
+  readonly eventsRetention?: AgentTurnEventsRetention;
   readonly lastStatusSequence: number;
   readonly lastOutputSequence: number;
   /** Runtime-only delivery cursor; independent of the retained output window. */

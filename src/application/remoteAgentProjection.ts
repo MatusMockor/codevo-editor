@@ -6,6 +6,7 @@ import {
   isTerminalAgentTurnStatus,
   MAX_AGENT_TURNS_PER_THREAD,
   type AgentThread,
+  type AgentTurnEventsRetention,
   type AgentTurnStatus,
 } from "../domain/agentThread";
 import { agentThreadAutoTitle } from "../domain/agentThreadAutoTitle";
@@ -70,6 +71,7 @@ export interface RemoteAgentProjectionInput {
   readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete?: ReadonlySet<string>;
   readonly replayTruncated?: ReadonlySet<string>;
+  readonly replayDiscarded?: ReadonlySet<string>;
   readonly attachmentsByTask?: ReadonlyMap<string, readonly AgentAttachment[]>;
 }
 
@@ -164,15 +166,18 @@ export class RemoteAgentProjection {
         previousSequence = event.sequence;
       }
       const incoming = replay.filter((event) => event.sequence > transcript.lastRunnerSequence);
+      const retention = replayRetention(input, task.id);
       if (
         incoming.length > 0 ||
         (!transcript.finished && input.replayComplete?.has(task.id) && isTerminal(task)) ||
-        (!transcript.eventsTruncated && input.replayTruncated?.has(task.id))
+        (!transcript.eventsTruncated && input.replayTruncated?.has(task.id)) ||
+        (retention === "serverGap" && transcript.eventsRetention !== "serverGap")
       )
         transcript = appendRemoteAgentTranscript(transcript, incoming, {
           complete: input.replayComplete?.has(task.id) === true,
           terminal: isTerminal(task),
           truncated: input.replayTruncated?.has(task.id),
+          retention,
           gap: input.replayGaps?.get(task.id),
         });
       this.transcripts.set(task.id, transcript);
@@ -275,6 +280,9 @@ function projectConversation(
             }),
         subagentLifecycle: input.subagentLifecycles?.get(task.id) ?? transcript.subagentLifecycle,
         eventsTruncated: transcript.eventsTruncated,
+        ...(transcript.eventsRetention === undefined
+          ? {}
+          : { eventsRetention: transcript.eventsRetention }),
         lastStatusSequence: transcript.lastRunnerSequence,
         lastOutputSequence: transcript.outputOrdinal,
         streamMetrics: {
@@ -357,6 +365,14 @@ export function presentRemoteAgentThread(
     attention: agentThreadAttention(thread, unread),
     unread,
   };
+}
+
+function replayRetention(
+  input: RemoteAgentProjectionInput,
+  taskId: string,
+): AgentTurnEventsRetention | undefined {
+  if (input.replayDiscarded === undefined) return undefined;
+  return input.replayDiscarded.has(taskId) ? "serverGap" : "clientWindow";
 }
 
 function latestActivityAt(

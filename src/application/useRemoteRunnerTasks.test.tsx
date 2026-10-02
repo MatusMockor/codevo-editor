@@ -4,7 +4,11 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
-import { useRemoteRunnerTasks, type RemoteRunnerTasksSurface } from "./useRemoteRunnerTasks";
+import {
+  REMOTE_TASK_OUTPUT_DISCARDED_ERROR,
+  useRemoteRunnerTasks,
+  type RemoteRunnerTasksSurface,
+} from "./useRemoteRunnerTasks";
 
 const task = (id = "task-1", sequence = 1): RemoteRunnerTask => ({
   id,
@@ -330,7 +334,72 @@ describe("useRemoteRunnerTasks", () => {
     expect(view.current().diff).toEqual(patch);
     expect(view.current().events).toHaveLength(1100);
     expect(view.current().events[1099]?.sequence).toBe(1101);
-    expect(view.current().error).toContain("earlier output is incomplete");
+    expect(view.current().error).toBeNull();
+  });
+  it("ignores a server eviction of output already read and retained", async () => {
+    const gw = gateway();
+    gw.listTasks.mockResolvedValue({ items: [task()], nextCursor: null });
+    const output = (sequence: number) => ({
+      sequence,
+      taskId: "task-1",
+      type: "task.output" as const,
+      text: `line ${sequence}`,
+      createdAt: "2026-09-13T00:00:00Z",
+    });
+    gw.listEvents
+      .mockResolvedValueOnce({ items: [output(1), output(2), output(3)], nextCursor: 3 })
+      .mockResolvedValueOnce({
+        items: [output(4)],
+        nextCursor: null,
+        outputTruncatedBeforeSequence: 2,
+      });
+    const view = await render(gw);
+    expect(view.current().events.map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
+    expect(view.current().error).toBeNull();
+  });
+  it("reports a server eviction after the display window already dropped output", async () => {
+    const gw = gateway();
+    gw.listTasks.mockResolvedValue({ items: [task()], nextCursor: null });
+    const output = (sequence: number) => ({
+      sequence,
+      taskId: "task-1",
+      type: "task.output" as const,
+      text: "line",
+      createdAt: "2026-09-13T00:00:00Z",
+    });
+    gw.listEvents
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 1101 }, (_, index) => output(index + 1)),
+        nextCursor: 1101,
+      })
+      .mockResolvedValueOnce({
+        items: [output(1102)],
+        nextCursor: null,
+        outputTruncatedBeforeSequence: 1,
+      });
+    const view = await render(gw);
+    expect(view.current().events[0]?.sequence).toBe(3);
+    expect(view.current().error).toBe(REMOTE_TASK_OUTPUT_DISCARDED_ERROR);
+  });
+  it("reports output the server discarded before it could be read", async () => {
+    const gw = gateway();
+    gw.listTasks.mockResolvedValue({ items: [task()], nextCursor: null });
+    gw.listEvents.mockResolvedValue({
+      items: [
+        {
+          sequence: 5,
+          taskId: "task-1",
+          type: "task.output",
+          text: "tail",
+          createdAt: "2026-09-13T00:00:00Z",
+        },
+      ],
+      nextCursor: null,
+      outputTruncatedBeforeSequence: 4,
+    });
+    const view = await render(gw);
+    expect(view.current().events.map((event) => event.sequence)).toEqual([5]);
+    expect(view.current().error).toBe(REMOTE_TASK_OUTPUT_DISCARDED_ERROR);
   });
 
   it("does not let a refresh started before submission erase the new task", async () => {

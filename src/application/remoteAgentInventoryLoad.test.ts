@@ -6,6 +6,7 @@ import {
   RemoteInventoryRevoked,
 } from "./remoteAgentInventoryLoad";
 import { RemoteAgentProjection, remoteAgentThreadKey } from "./remoteAgentProjection";
+import { REMOTE_OUTPUT_DISCARDED_ERROR } from "./remoteAgentReplayWindow";
 const task = (id = "root", sequence = 1): RemoteRunnerTask => ({
   id,
   sequence,
@@ -168,7 +169,7 @@ describe("remote inventory loading", () => {
     expect(gw.listTasks).toHaveBeenCalledWith({ serverId: "server", after: 1 });
     expect(result.tasks.map((t) => t.id)).toEqual(["published", "middle"]);
   });
-  it("marks evicted output incomplete while independently finishing the fetch cursor", async () => {
+  it("marks client-evicted output truncated without claiming the server lost it", async () => {
     const gw = fixture();
     gw.listEvents.mockResolvedValue({
       items: [{ taskId: "root", sequence: 1, text: "x".repeat(1_500_001) }],
@@ -177,7 +178,149 @@ describe("remote inventory loading", () => {
     const result = await load(gw);
     expect(result.replayTruncated.has("root")).toBe(true);
     expect(result.replayComplete.has("root")).toBe(true);
-    expect(result.error).toContain("incomplete");
+    expect(result.replayDiscarded?.has("root")).toBe(false);
+    expect(result.error).toBeNull();
+    const turn = new RemoteAgentProjection().project({ ...result, runnerId: "runner" })[0]!.thread
+      .turns[0]!;
+    expect(turn.eventsTruncated).toBe(true);
+    expect(turn.eventsRetention).toBe("clientWindow");
+  });
+  it("keeps a sticky client eviction from becoming a server loss on later polls", async () => {
+    const gw = fixture();
+    gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "running" }], nextCursor: null });
+    gw.getTask.mockResolvedValue({ ...task(), status: "running" });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [{ taskId: "root", sequence: 1, type: "task.output", text: "x".repeat(1_500_001) }],
+      nextCursor: null,
+    });
+    const first = await load(gw);
+    expect(first.replayTruncated.has("root")).toBe(true);
+    expect(first.error).toBeNull();
+    gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [{ taskId: "root", sequence: 2, type: "task.output", text: "tail\n" }],
+      nextCursor: null,
+    });
+    const second = await load(gw, first);
+    expect(second.replayTruncated.has("root")).toBe(true);
+    expect(second.replayDiscarded?.has("root")).toBe(false);
+    expect(second.error).toBeNull();
+  });
+  it("ignores a server eviction of output the client already holds", async () => {
+    const gw = fixture();
+    gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "running" }], nextCursor: null });
+    gw.getTask.mockResolvedValue({ ...task(), status: "running" });
+    const output = (sequence: number) => ({
+      taskId: "root",
+      sequence,
+      type: "task.output",
+      text: `line ${sequence}\n`,
+    });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [output(1), output(2), output(3)],
+      nextCursor: null,
+    });
+    const first = await load(gw);
+    gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [output(4)],
+      nextCursor: null,
+      outputTruncatedBeforeSequence: 2,
+      outputStartsAtLineBoundary: true,
+    });
+    const second = await load(gw, first);
+    expect(second.replays.get("root")?.map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
+    expect(second.replayTruncated.has("root")).toBe(false);
+    expect(second.replayDiscarded?.has("root")).toBe(false);
+    expect(second.error).toBeNull();
+    const turn = new RemoteAgentProjection().project({ ...second, runnerId: "runner" })[0]!.thread
+      .turns[0]!;
+    expect(turn.eventsTruncated).toBe(false);
+    expect(turn.eventsRetention).toBeUndefined();
+  });
+  it("reports a server eviction overlapping output the client already dropped", async () => {
+    const gw = fixture();
+    gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "running" }], nextCursor: null });
+    gw.getTask.mockResolvedValue({ ...task(), status: "running" });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [{ taskId: "root", sequence: 1, type: "task.output", text: "x".repeat(1_500_001) }],
+      nextCursor: null,
+    });
+    const first = await load(gw);
+    expect(first.error).toBeNull();
+    gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [{ taskId: "root", sequence: 2, type: "task.output", text: "tail\n" }],
+      nextCursor: null,
+      outputTruncatedBeforeSequence: 1,
+      outputStartsAtLineBoundary: true,
+    });
+    const second = await load(gw, first);
+    expect(second.replayDiscarded?.has("root")).toBe(true);
+    expect(second.error).toBe(REMOTE_OUTPUT_DISCARDED_ERROR);
+  });
+  it("remembers a server eviction and reports loss once the client window drops those events", async () => {
+    const gw = fixture();
+    gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "running" }], nextCursor: null });
+    gw.getTask.mockResolvedValue({ ...task(), status: "running" });
+    const output = (sequence: number, text: string) => ({
+      taskId: "root",
+      sequence,
+      type: "task.output",
+      text,
+    });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [output(1, "first\n"), output(2, "second\n")],
+      nextCursor: null,
+    });
+    const first = await load(gw);
+    gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [output(3, "third\n")],
+      nextCursor: null,
+      outputTruncatedBeforeSequence: 2,
+      outputStartsAtLineBoundary: true,
+    });
+    const reported = await load(gw, first);
+    expect(reported.replays.get("root")?.map((event) => event.sequence)).toEqual([1, 2, 3]);
+    expect(reported.replayServerEvictions?.get("root")).toBe(2);
+    expect(reported.replayDiscarded?.has("root")).toBe(false);
+    expect(reported.error).toBeNull();
+    gw.listEvents.mockResolvedValueOnce({
+      items: [output(4, "x".repeat(1_500_000))],
+      nextCursor: null,
+    });
+    const dropped = await load(gw, reported);
+    expect(dropped.replays.get("root")?.map((event) => event.sequence)).toEqual([4]);
+    expect(dropped.replayServerEvictions?.get("root")).toBe(2);
+    expect(dropped.replayDiscarded?.has("root")).toBe(true);
+    expect(dropped.error).toBe(REMOTE_OUTPUT_DISCARDED_ERROR);
+    const turn = new RemoteAgentProjection().project({ ...dropped, runnerId: "runner" })[0]!.thread
+      .turns[0]!;
+    expect(turn.eventsTruncated).toBe(true);
+    expect(turn.eventsRetention).toBe("serverGap");
+  });
+  it("reports server-discarded output and keeps reporting it on later polls", async () => {
+    const gw = fixture();
+    gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "running" }], nextCursor: null });
+    gw.getTask.mockResolvedValue({ ...task(), status: "running" });
+    gw.listEvents.mockResolvedValueOnce({
+      items: [{ taskId: "root", sequence: 5, type: "task.output", text: "tail\n" }],
+      nextCursor: null,
+      outputTruncatedBeforeSequence: 4,
+      outputStartsAtLineBoundary: true,
+    });
+    const first = await load(gw);
+    expect(first.replayTruncated.has("root")).toBe(true);
+    expect(first.replayDiscarded?.has("root")).toBe(true);
+    expect(first.error).toBe(REMOTE_OUTPUT_DISCARDED_ERROR);
+    const turn = new RemoteAgentProjection().project({ ...first, runnerId: "runner" })[0]!.thread
+      .turns[0]!;
+    expect(turn.eventsRetention).toBe("serverGap");
+    gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+    const second = await load(gw, first);
+    expect(second.replayDiscarded?.has("root")).toBe(true);
+    expect(second.error).toBe(REMOTE_OUTPUT_DISCARDED_ERROR);
   });
   it("uses completed cached replay without reading output again", async () => {
     const gw = fixture();
@@ -274,6 +417,7 @@ it("keeps fetching across display and page limits and shows the final result on 
   expect(first.replayComplete.size).toBe(0);
   expect(first.replayCursors?.get("root")).toBe(96);
   expect(first.replayTruncated.size).toBe(2);
+  expect(first.error).toBeNull();
   gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
   const second = await load(gw, first);
   expect(second.replayComplete.size).toBe(2);
@@ -288,6 +432,7 @@ it("keeps fetching across display and page limits and shows the final result on 
       expect.objectContaining({ kind: "result", text: "Final visible" }),
     );
     expect(turn.eventsTruncated).toBe(true);
+    expect(turn.eventsRetention).toBe("clientWindow");
   }
 });
 
@@ -323,6 +468,8 @@ it("propagates the runner's gap while retaining lifecycle rows preceding it", as
     .turns[0]!;
   expect(turn.events).toEqual([{ kind: "assistantText", text: "Recovered" }]);
   expect(turn.eventsTruncated).toBe(true);
+  expect(turn.eventsRetention).toBe("serverGap");
+  expect(snapshot.error).toBe(REMOTE_OUTPUT_DISCARDED_ERROR);
 });
 it("retains the authoritative lifecycle snapshot across completed replay refreshes", async () => {
   const gw = fixture();

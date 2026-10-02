@@ -865,6 +865,144 @@ describe("useAgentComposerAttachments ownership", () => {
   });
 });
 
+describe("useAgentComposerAttachments owner loss", () => {
+  const PASTED_IMAGE = {
+    kind: "bytes" as const,
+    name: "shot.png",
+    mime: "image/png",
+    bytes: new ArrayBuffer(12),
+  };
+
+  it.each([
+    ["is temporarily unresolved", (env: Environment) => env.owners.delete(ROOT_A)],
+    ["changes generation", (env: Environment) => env.owners.set(ROOT_A, ownerA(2))],
+  ])("does not report a discard after a sent attachment when the owner %s", async (_, change) => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    await act(async () => harness.hook().markSent(prepared?.draftIds ?? []));
+
+    change(env);
+    harness.rerender();
+
+    expect(harness.hook().refusal).toBeNull();
+    expect(harness.hook().drafts).toEqual([]);
+    expect(harness.hook().projectRootKey).toBeNull();
+    harness.unmount();
+  });
+
+  it("stays silent when an emptied composer loses its owner", async () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    const draftId = harness.hook().drafts[0]?.draftId ?? "";
+    await act(async () => harness.hook().remove(draftId));
+
+    env.owners.delete(ROOT_A);
+    harness.rerender();
+
+    expect(harness.hook().refusal).toBeNull();
+    expect(harness.hook().drafts).toEqual([]);
+    harness.unmount();
+  });
+
+  it("keeps a composer refusal instead of reporting a discard of nothing", () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    expect(harness.hook().captureIntake?.(ROOT_A)).toBeTypeOf("function");
+    act(() => harness.hook().refuse("The file picker could not be opened."));
+
+    env.owners.set(ROOT_A, ownerA(2));
+    harness.rerender();
+
+    expect(harness.hook().refusal).toBe("The file picker could not be opened.");
+    harness.unmount();
+  });
+
+  it.each([
+    ["changes generation", (env: Environment) => env.owners.set(ROOT_A, ownerA(2))],
+    ["becomes unresolved", (env: Environment) => env.owners.delete(ROOT_A)],
+  ])("discards composer drafts and says so when the owner %s", async (_, change) => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    expect(harness.hook().drafts[0]?.state).toBe("ready");
+
+    change(env);
+    harness.rerender();
+
+    expect(harness.hook().drafts).toEqual([]);
+    expect(harness.released).toEqual([IMAGE_ID]);
+    expect(harness.hook().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    harness.unmount();
+  });
+
+  it("replaces a visible refusal with the discard notice when drafts are discarded", async () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    act(() => harness.hook().refuse("The file picker could not be opened."));
+
+    env.owners.set(ROOT_A, ownerA(2));
+    harness.rerender();
+
+    expect(harness.hook().drafts).toEqual([]);
+    expect(harness.hook().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    harness.unmount();
+  });
+
+  it("drops an intake captured before a send once the owner generation cycles", async () => {
+    const env = environment({ extensionMime: null });
+    const harness = renderAttachments(env);
+    const inspect = harness.gateway.inspectAgentAttachmentCandidate;
+    let releaseInspect: () => void = () => undefined;
+    harness.gateway.inspectAgentAttachmentCandidate = vi.fn(
+      () =>
+        new Promise<{ bytes: number; isRegularFile: boolean; extensionMime: null }>((resolve) => {
+          releaseInspect = () =>
+            resolve({ bytes: 4_096, isRegularFile: true, extensionMime: null });
+        }),
+    );
+    let staleAdd: Promise<void> = Promise.resolve();
+    act(() => {
+      staleAdd = harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/stale.mp4" }]);
+    });
+    harness.gateway.inspectAgentAttachmentCandidate = inspect;
+
+    await act(async () => harness.hook().markSent([]));
+    env.owners.set(ROOT_A, ownerA(2));
+    harness.rerender();
+    env.owners.set(ROOT_A, ownerA(1));
+    harness.rerender();
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/fresh.mp4" }]));
+    await act(async () => {
+      releaseInspect();
+      await staleAdd;
+    });
+
+    expect(harness.hook().drafts.map((draft) => draft.name)).toEqual(["fresh.mp4"]);
+    expect(harness.hook().refusal).toBeNull();
+    harness.unmount();
+  });
+
+  it("discards drafts left after a partial send when the owner changes", async () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE, PASTED_IMAGE]));
+    const [sent, kept] = harness.hook().drafts.map((draft) => draft.draftId);
+    await act(async () => harness.hook().markSent([sent ?? ""]));
+    expect(harness.hook().drafts.map((draft) => draft.draftId)).toEqual([kept]);
+
+    env.owners.set(ROOT_A, ownerA(2));
+    harness.rerender();
+
+    expect(harness.hook().drafts).toEqual([]);
+    expect(harness.hook().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    harness.unmount();
+  });
+});
+
 describe("useAgentComposerAttachments previews", () => {
   const PASTED_IMAGE = {
     kind: "bytes" as const,

@@ -4,11 +4,21 @@ import {
 } from "../../application/agentTurnLogStatusStore";
 import { agentTurnWindowDisplay } from "../../domain/agentTurnContentLoss";
 import type { AgentTurnLogLoss } from "../../domain/agentTurnLog";
+import type { AgentTurnEventsRetention } from "../../domain/agentThread";
 
 export const AGENT_TURN_WINDOW_NOTICE = "Some activity from this turn is not shown.";
+export const AGENT_TURN_REMOTE_WINDOW_NOTICE =
+  "Some activity from this turn is still on the server and not shown here.";
+export const AGENT_TURN_REMOTE_DISCARDED_NOTICE =
+  "Some activity from this turn was discarded by the server and is not shown.";
 export const AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE =
   "Earlier activity of this turn is saved but not shown here yet.";
 export const AGENT_TURN_LOG_UNSAVED_PREFIX = "Activity is not being saved to disk";
+
+export interface AgentTurnWindowOptions {
+  readonly readerAvailable?: boolean;
+  readonly retention?: AgentTurnEventsRetention;
+}
 
 export interface AgentTurnLogNoticeModel {
   readonly loss: string | null;
@@ -18,10 +28,10 @@ export interface AgentTurnLogNoticeModel {
 export function agentTurnLogNoticeModel(
   facts: AgentTurnLogFacts | null,
   eventsTruncated: boolean,
-  readerAvailable = false,
+  options: AgentTurnWindowOptions = {},
 ): AgentTurnLogNoticeModel {
   return {
-    loss: agentTurnLossNotice(facts, eventsTruncated, readerAvailable),
+    loss: agentTurnLossNotice(facts, eventsTruncated, options),
     unsaved: agentTurnUnsavedNotice(facts),
   };
 }
@@ -29,17 +39,29 @@ export function agentTurnLogNoticeModel(
 export function agentTurnLossNotice(
   facts: AgentTurnLogFacts | null,
   eventsTruncated: boolean,
-  readerAvailable = false,
+  { readerAvailable = false, retention }: AgentTurnWindowOptions = {},
 ): string | null {
   const evidence = agentTurnLogEvidence(facts);
-  if (evidence === null) return eventsTruncated ? AGENT_TURN_WINDOW_NOTICE : null;
+  const windowNotice = eventsTruncated ? agentTurnWindowNotice(retention) : null;
+  if (evidence === null) return windowNotice;
   const display = agentTurnWindowDisplay(eventsTruncated, evidence);
   if (display === "complete") return null;
   if (display === "savedNotShown")
     return readerAvailable ? null : AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE;
-  return (
-    agentTurnLogLossNotice(evidence.loss) ?? (eventsTruncated ? AGENT_TURN_WINDOW_NOTICE : null)
-  );
+  return agentTurnLogLossNotice(evidence.loss) ?? windowNotice;
+}
+
+function agentTurnWindowNotice(retention: AgentTurnEventsRetention | undefined): string {
+  switch (retention) {
+    case undefined:
+      return AGENT_TURN_WINDOW_NOTICE;
+    case "clientWindow":
+      return AGENT_TURN_REMOTE_WINDOW_NOTICE;
+    case "serverGap":
+      return AGENT_TURN_REMOTE_DISCARDED_NOTICE;
+    default:
+      return unsupportedAgentTurnRetention(retention);
+  }
 }
 
 export function agentTurnLogLossNotice(loss: AgentTurnLogLoss): string | null {
@@ -65,6 +87,10 @@ export function agentTurnUnsavedNotice(facts: AgentTurnLogFacts | null): string 
   if (facts === null) return null;
   if (facts.health.kind !== "degraded") return null;
   return `${AGENT_TURN_LOG_UNSAVED_PREFIX}: ${facts.health.reason}.`;
+}
+
+function unsupportedAgentTurnRetention(retention: never): never {
+  throw new TypeError(`Unsupported agent turn retention: ${JSON.stringify(retention)}.`);
 }
 
 function unsupportedAgentTurnLogLoss(loss: never): never {

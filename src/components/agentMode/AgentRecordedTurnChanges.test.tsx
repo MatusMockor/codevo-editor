@@ -116,6 +116,7 @@ it.each([
   "No snapshot is available for this turn.",
   "No snapshot was recorded before this turn.",
   "No completed snapshot is available for this turn.",
+  "A complete snapshot of this turn is unavailable.",
 ])("renders nothing inline when the turn simply has no snapshot: %s", async (reason) => {
   const getTurnChanges = vi.fn(async (_: string, turnId: string) => ({
     turnId,

@@ -252,3 +252,60 @@ it("rejects a server exceeding its accepted-input contract instead of silently o
     }),
   ).toThrow("accepted message limit");
 });
+
+describe("remote transcript retention provenance", () => {
+  const start = () => createRemoteAgentTranscript("task", "claude");
+  it("leaves provenance unknown when the caller does not report it", () => {
+    const state = appendRemoteAgentTranscript(start(), [event(1, line)], {
+      complete: false,
+      terminal: false,
+      truncated: true,
+    });
+    expect(state.eventsTruncated).toBe(true);
+    expect(state.eventsRetention).toBeUndefined();
+  });
+  it("records provenance only for a truncated transcript", () => {
+    const state = appendRemoteAgentTranscript(start(), [event(1, line)], {
+      complete: false,
+      terminal: false,
+      retention: "serverGap",
+    });
+    expect(state.eventsTruncated).toBe(false);
+    expect(state.eventsRetention).toBeUndefined();
+  });
+  it("attributes the parsed-event cap to the client window", () => {
+    const noise = Array.from({ length: MAX_AGENT_EVENTS_PER_TURN + 8 }, (_, i) =>
+      event(i + 1, `output ${i}\n`),
+    );
+    const state = appendRemoteAgentTranscript(start(), noise, {
+      complete: false,
+      terminal: false,
+      retention: "clientWindow",
+    });
+    expect(state.eventsTruncated).toBe(true);
+    expect(state.eventsRetention).toBe("clientWindow");
+  });
+  it("upgrades a client window to a server gap and never downgrades it", () => {
+    const client = appendRemoteAgentTranscript(start(), [event(1, line)], {
+      complete: false,
+      terminal: false,
+      truncated: true,
+      retention: "clientWindow",
+    });
+    expect(client.eventsRetention).toBe("clientWindow");
+    const server = appendRemoteAgentTranscript(client, [event(2, line)], {
+      complete: false,
+      terminal: false,
+      truncated: true,
+      retention: "serverGap",
+    });
+    expect(server.eventsRetention).toBe("serverGap");
+    const later = appendRemoteAgentTranscript(server, [event(3, line)], {
+      complete: false,
+      terminal: false,
+      truncated: true,
+      retention: "clientWindow",
+    });
+    expect(later.eventsRetention).toBe("serverGap");
+  });
+});

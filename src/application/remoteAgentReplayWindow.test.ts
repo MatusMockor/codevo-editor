@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { RemoteRunnerEvent } from "../domain/remoteRunner";
-import { retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
+import { droppedServerEvictedOutput, retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
 const event = (
   sequence: number,
   text: string,
@@ -26,7 +26,16 @@ it("keeps array identity below the cap and tracks a full eviction independently 
     events: [],
     truncated: true,
     gap: { throughSequence: 1, startsAtLineBoundary: true },
+    droppedOutputFrom: 1,
   });
+});
+it("reports the earliest dropped output so a server eviction overlap is detectable", () => {
+  const events = [event(4, "a\n"), event(5, "b\n"), event(6, "c\n")];
+  const window = retainRemoteReplayWindow(events, 4);
+  expect(window.droppedOutputFrom).toBe(4);
+  expect(droppedServerEvictedOutput(window, 3)).toBe(false);
+  expect(droppedServerEvictedOutput(window, 4)).toBe(true);
+  expect(retainRemoteReplayWindow(events, 100).droppedOutputFrom).toBeUndefined();
 });
 it("retains accepted input independently of evicted output with a 32 message bound", () => {
   const inputs: RemoteRunnerEvent[] = Array.from({ length: 33 }, (_, i) => ({

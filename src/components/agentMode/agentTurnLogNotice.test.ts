@@ -3,6 +3,8 @@ import type { AgentTurnLogFacts } from "../../application/agentTurnLogStatusStor
 import type { AgentTurnLogLoss } from "../../domain/agentTurnLog";
 import {
   AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE,
+  AGENT_TURN_REMOTE_DISCARDED_NOTICE,
+  AGENT_TURN_REMOTE_WINDOW_NOTICE,
   AGENT_TURN_WINDOW_NOTICE,
   agentTurnLogNoticeModel,
   agentTurnLossNotice,
@@ -45,7 +47,7 @@ describe("agent turn log notices", () => {
   it("leaves the saved-but-not-shown case to the load control when a reader exists", () => {
     const partial = facts({ hydration: "partial" });
     expect(agentTurnLossNotice(partial, true)).toBe(AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE);
-    expect(agentTurnLossNotice(partial, true, true)).toBeNull();
+    expect(agentTurnLossNotice(partial, true, { readerAvailable: true })).toBeNull();
   });
 
   it("tells the JSON truth when an unsealed log of a turn that is not live cannot vouch", () => {
@@ -119,5 +121,29 @@ describe("agent turn log notices", () => {
       loss: "This turn reached its recording limit, so later activity was not saved.",
       unsaved: "Activity is not being saved to disk: the log could not be written.",
     });
+  });
+
+  it("tells a remote client window apart from output the server discarded", () => {
+    expect(agentTurnLossNotice(null, true, { retention: "clientWindow" })).toBe(
+      AGENT_TURN_REMOTE_WINDOW_NOTICE,
+    );
+    expect(AGENT_TURN_REMOTE_WINDOW_NOTICE).toBe(
+      "Some activity from this turn is still on the server and not shown here.",
+    );
+    expect(agentTurnLossNotice(null, true, { retention: "serverGap" })).toBe(
+      AGENT_TURN_REMOTE_DISCARDED_NOTICE,
+    );
+    expect(AGENT_TURN_REMOTE_DISCARDED_NOTICE).toBe(
+      "Some activity from this turn was discarded by the server and is not shown.",
+    );
+    expect(agentTurnLossNotice(null, false, { retention: "serverGap" })).toBeNull();
+    expect(agentTurnLogNoticeModel(null, true, { retention: "clientWindow" }).loss).toBe(
+      AGENT_TURN_REMOTE_WINDOW_NOTICE,
+    );
+  });
+
+  it("keeps the local wording when no remote provenance is given", () => {
+    expect(agentTurnLossNotice(null, true, {})).toBe(AGENT_TURN_WINDOW_NOTICE);
+    expect(AGENT_TURN_WINDOW_NOTICE).toBe("Some activity from this turn is not shown.");
   });
 });

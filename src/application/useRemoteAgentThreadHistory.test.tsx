@@ -157,6 +157,95 @@ it("marks a bounded unfinished event replay as truncated", async () => {
   await act(async () => h.surface().older(h.threadId));
   expect(h.listEvents).toHaveBeenCalledTimes(32 * 24);
   expect(h.surface().page?.turns.every((turn) => turn.eventsTruncated)).toBe(true);
+  expect(h.surface().page?.turns.every((turn) => turn.eventsRetention === "clientWindow")).toBe(
+    true,
+  );
+});
+it("ignores a runner eviction of ancestor output already read", async () => {
+  const h = harness();
+  await h.render();
+  h.listEvents.mockImplementation(
+    async ({ taskId, after }) =>
+      ({
+        items: [
+          {
+            taskId,
+            sequence: after + 1,
+            type: "task.output",
+            text: `line ${after + 1}\n`,
+            createdAt: "2026-09-13T00:00:00Z",
+          },
+        ],
+        nextCursor: after === 0 ? 1 : null,
+        ...(after === 1
+          ? { outputTruncatedBeforeSequence: 1, outputStartsAtLineBoundary: true }
+          : {}),
+      }) as unknown as Awaited<ReturnType<typeof h.listEvents>>,
+  );
+  await act(async () => h.surface().older(h.threadId));
+  const turn = h.surface().page?.turns.find((item) => item.turnId === "task-69");
+  expect(turn?.eventsTruncated).toBe(false);
+  expect(turn?.eventsRetention).toBeUndefined();
+});
+it("reports loss when a later page drops ancestor output the runner already evicted", async () => {
+  const h = harness();
+  await h.render();
+  h.listEvents.mockImplementation(
+    async ({ taskId, after }) =>
+      ({
+        items: [
+          {
+            taskId,
+            sequence: after + 1,
+            type: "task.output",
+            text: after === 0 ? "first\n" : "x".repeat(1_000_000),
+            createdAt: "2026-09-13T00:00:00Z",
+          },
+        ],
+        nextCursor: after === 0 ? 1 : null,
+        ...(taskId === "task-69" && after === 1
+          ? { outputTruncatedBeforeSequence: 1, outputStartsAtLineBoundary: true }
+          : {}),
+      }) as unknown as Awaited<ReturnType<typeof h.listEvents>>,
+  );
+  await act(async () => h.surface().older(h.threadId));
+  const turns = h.surface().page?.turns ?? [];
+  const evicted = turns.find((turn) => turn.turnId === "task-69");
+  expect(evicted?.eventsTruncated).toBe(true);
+  expect(evicted?.eventsRetention).toBe("serverGap");
+  const intact = turns.find((turn) => turn.turnId === "task-68");
+  expect(intact?.eventsTruncated).toBe(true);
+  expect(intact?.eventsRetention).toBe("clientWindow");
+});
+it("attributes runner-evicted ancestor output to the server", async () => {
+  const h = harness();
+  await h.render();
+  h.listEvents.mockImplementation(
+    async ({ taskId }) =>
+      ({
+        items: [
+          {
+            taskId,
+            sequence: 5,
+            type: "task.output",
+            text: "tail\n",
+            createdAt: "2026-09-13T00:00:00Z",
+          },
+        ],
+        nextCursor: null,
+        ...(taskId === "task-69"
+          ? { outputTruncatedBeforeSequence: 4, outputStartsAtLineBoundary: true }
+          : {}),
+      }) as unknown as Awaited<ReturnType<typeof h.listEvents>>,
+  );
+  await act(async () => h.surface().older(h.threadId));
+  const turns = h.surface().page?.turns ?? [];
+  const evicted = turns.find((turn) => turn.turnId === "task-69");
+  expect(evicted?.eventsTruncated).toBe(true);
+  expect(evicted?.eventsRetention).toBe("serverGap");
+  const intact = turns.find((turn) => turn.turnId === "task-68");
+  expect(intact?.eventsTruncated).toBe(false);
+  expect(intact?.eventsRetention).toBeUndefined();
 });
 
 it.each(["latest", "disconnect", "replace"] as const)(

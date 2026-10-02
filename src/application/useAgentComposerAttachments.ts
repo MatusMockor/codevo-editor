@@ -395,8 +395,9 @@ function createDraftScope(
         })
       ) {
         const previousRefusal = refusal;
+        const discarded = store.drafts.size > 0;
         clear();
-        setRefusal(previousRefusal ?? AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+        setRefusal(discarded ? AGENT_ATTACHMENTS_DISCARDED_NOTICE : previousRefusal);
         lastGateway = deps().gateway;
       }
     },

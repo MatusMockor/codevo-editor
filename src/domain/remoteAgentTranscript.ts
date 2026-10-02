@@ -8,7 +8,7 @@ import {
   retainAgentSubagentLifecycle,
   type AgentSubagentLifecycle,
 } from "./agentSubagentLifecycle";
-import { mergeTurnEvents, type AgentTurnEvent } from "./agentThread";
+import { mergeTurnEvents, type AgentTurnEvent, type AgentTurnEventsRetention } from "./agentThread";
 import type { RemoteRunnerEvent, RemoteRunnerProvider } from "./remoteRunner";
 
 export interface RemoteAgentTranscript {
@@ -20,6 +20,7 @@ export interface RemoteAgentTranscript {
   readonly outputOrdinal: number;
   readonly receivedUtf8Bytes: number;
   readonly eventsTruncated: boolean;
+  readonly eventsRetention?: AgentTurnEventsRetention;
   readonly finished: boolean;
   readonly endedAtEpochMs: number | null;
   readonly error: string | null;
@@ -57,6 +58,7 @@ export function appendRemoteAgentTranscript(
     readonly complete: boolean;
     readonly terminal: boolean;
     readonly truncated?: boolean;
+    readonly retention?: AgentTurnEventsRetention;
     readonly gap?: { readonly throughSequence: number; readonly startsAtLineBoundary: boolean };
   },
 ): RemoteAgentTranscript {
@@ -144,6 +146,10 @@ export function appendRemoteAgentTranscript(
     parser = result.state;
     append(result.events);
   }
+  const eventsTruncated = truncated || options.truncated === true;
+  const eventsRetention = eventsTruncated
+    ? transcriptRetention(previous.eventsRetention, options.retention)
+    : undefined;
   return {
     taskId: previous.taskId,
     discardStdoutUntilNewline,
@@ -155,11 +161,20 @@ export function appendRemoteAgentTranscript(
     lastRunnerSequence: sequence,
     outputOrdinal: ordinal,
     receivedUtf8Bytes: bytes,
-    eventsTruncated: truncated || options.truncated === true,
+    eventsTruncated,
+    ...(eventsRetention === undefined ? {} : { eventsRetention }),
     finished,
     endedAtEpochMs: ended !== null && Number.isFinite(ended) ? ended : null,
     error,
   };
+}
+
+function transcriptRetention(
+  previous: AgentTurnEventsRetention | undefined,
+  reported: AgentTurnEventsRetention | undefined,
+): AgentTurnEventsRetention | undefined {
+  if (previous === "serverGap" || reported === "serverGap") return "serverGap";
+  return reported ?? previous;
 }
 
 /** Accepted inputs retain 32 × (48,000 text bytes + 30 separator bytes), outside output. */

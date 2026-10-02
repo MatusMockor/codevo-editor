@@ -9,10 +9,12 @@ import {
   type AgentTurnLogFactsStore,
 } from "../../application/agentTurnLogStatusStore";
 import type { AgentTurnLogSlotStatus } from "../../application/agentTurnLogPorts";
-import type { AgentTurn, AgentTurnEvent } from "../../domain/agentThread";
+import type { AgentTurn, AgentTurnEvent, AgentTurnEventsRetention } from "../../domain/agentThread";
 import { AgentThreadSession } from "./AgentThreadSession";
 import {
   AGENT_TURN_LOG_SAVED_NOT_SHOWN_NOTICE,
+  AGENT_TURN_REMOTE_DISCARDED_NOTICE,
+  AGENT_TURN_REMOTE_WINDOW_NOTICE,
   AGENT_TURN_WINDOW_NOTICE,
 } from "./agentTurnLogNotice";
 
@@ -61,6 +63,7 @@ describe("thread session turn log notices", () => {
     turnLog: AgentTurnLogFactsStore | null,
     live = false,
     history?: AgentThreadHistorySurface,
+    retention?: AgentTurnEventsRetention,
   ) {
     const turn: AgentTurn = {
       turnId: TURN_ID,
@@ -70,6 +73,7 @@ describe("thread session turn log notices", () => {
       startedAtEpochMs: 0,
       endedAtEpochMs: live ? null : 1,
       eventsTruncated,
+      ...(retention === undefined ? {} : { eventsRetention: retention }),
       lastStatusSequence: 0,
       lastOutputSequence: 0,
       launch: null,
@@ -120,6 +124,19 @@ describe("thread session turn log notices", () => {
   it("shows the JSON truth when no log fact exists for the turn", () => {
     render(true, null);
     expect(host.textContent).toContain(AGENT_TURN_WINDOW_NOTICE);
+  });
+
+  it("says remote activity outside the window is still on the server", () => {
+    render(true, null, false, undefined, "clientWindow");
+    expect(host.textContent).toContain(AGENT_TURN_REMOTE_WINDOW_NOTICE);
+    expect(host.textContent).not.toContain(AGENT_TURN_WINDOW_NOTICE);
+    expect(host.textContent).not.toContain(AGENT_TURN_REMOTE_DISCARDED_NOTICE);
+  });
+
+  it("says when the server discarded remote activity", () => {
+    render(true, null, false, undefined, "serverGap");
+    expect(host.textContent).toContain(AGENT_TURN_REMOTE_DISCARDED_NOTICE);
+    expect(host.textContent).not.toContain(AGENT_TURN_REMOTE_WINDOW_NOTICE);
   });
 
   it("hides every loss notice once the window was rebuilt from the whole log", () => {

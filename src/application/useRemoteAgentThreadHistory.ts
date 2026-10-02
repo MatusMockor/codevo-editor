@@ -11,7 +11,7 @@ import type {
 } from "./useAgentThreadHistory";
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import { RemoteAgentProjection, type RemoteAgentProjectionInput } from "./remoteAgentProjection";
-import { retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
+import { droppedServerEvictedOutput, retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
 
 interface Dependencies {
   readonly gateway: RemoteRunnerGateway | null;
@@ -134,6 +134,7 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
         const replays = new Map(input.replays);
         const complete = new Set<string>();
         const truncated = new Set<string>();
+        const discarded = new Set<string>();
         const gaps = new Map(input.replayGaps);
         const lifecycles = new Map(input.subagentLifecycles);
         for (const task of tasks) {
@@ -141,6 +142,7 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
           let cursor = 0;
           let exhausted = false;
           let gap = gaps.get(task.id);
+          let evictedThrough = 0;
           for (let number = 0; number < 24; number++) {
             const result = await captured.gateway.listEvents({
               serverId: resolved.snapshot.serverId,
@@ -157,12 +159,12 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
             }
             if (result.nextCursor !== null && (result.nextCursor !== next || next === cursor))
               throw new Error("Invalid remote history cursor.");
-            if (
-              result.outputTruncatedBeforeSequence !== undefined &&
-              result.outputTruncatedBeforeSequence > (gap?.throughSequence ?? 0)
-            ) {
+            const removed = result.outputTruncatedBeforeSequence ?? 0;
+            const lost = removed > cursor || (truncated.has(task.id) && removed > 0);
+            evictedThrough = Math.max(evictedThrough, removed);
+            if (lost && removed > (gap?.throughSequence ?? 0)) {
               gap = {
-                throughSequence: result.outputTruncatedBeforeSequence,
+                throughSequence: removed,
                 startsAtLineBoundary: result.outputStartsAtLineBoundary === true,
               };
               truncated.add(task.id);
@@ -175,6 +177,12 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
             events = retained.events;
             gap = retained.gap;
             if (retained.truncated) truncated.add(task.id);
+            if (
+              lost ||
+              (truncated.has(task.id) && removed > 0) ||
+              droppedServerEvictedOutput(retained, evictedThrough)
+            )
+              discarded.add(task.id);
             if (result.subagentLifecycle) lifecycles.set(task.id, result.subagentLifecycle);
             cursor = next;
             if (result.nextCursor === null) {
@@ -194,6 +202,7 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
             replays,
             replayComplete: complete,
             replayTruncated: truncated,
+            replayDiscarded: discarded,
             replayGaps: gaps,
             subagentLifecycles: lifecycles,
           })[0]?.thread.turns ?? [];

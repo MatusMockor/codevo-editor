@@ -1,7 +1,12 @@
 import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import { loadRemoteThreadMetadata } from "./remoteThreadMetadataInventory";
 import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
-import { retainRemoteReplayWindow, type RemoteReplayGap } from "./remoteAgentReplayWindow";
+import {
+  droppedServerEvictedOutput,
+  REMOTE_OUTPUT_DISCARDED_ERROR,
+  retainRemoteReplayWindow,
+  type RemoteReplayGap,
+} from "./remoteAgentReplayWindow";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import type {
   RemoteRunnerDescriptor,
@@ -35,6 +40,8 @@ export interface RemoteAgentInventorySnapshot {
   readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete: ReadonlySet<string>;
   readonly replayTruncated: ReadonlySet<string>;
+  readonly replayDiscarded?: ReadonlySet<string>;
+  readonly replayServerEvictions?: ReadonlyMap<string, number>;
   readonly threadMetadata?: ReadonlyMap<string, RemoteThreadMetadata>;
   readonly pendingMessages?: ReadonlyMap<string, readonly RemoteRunnerPendingMessage[]>;
   readonly error: string | null;
@@ -53,6 +60,8 @@ export const emptyRemoteInventory = (
   resumes: new Map(),
   replayComplete: new Set(),
   replayTruncated: new Set(),
+  replayDiscarded: new Set(),
+  replayServerEvictions: new Map(),
   error: null,
 });
 const threadId = (serverId: string, task: RemoteRunnerTask) =>
@@ -178,6 +187,8 @@ export async function loadRemoteAgentInventory(
   const resumes = new Map<string, RemoteRunnerTaskResume>();
   const replayComplete = new Set<string>();
   const replayTruncated = new Set<string>();
+  const replayDiscarded = new Set<string>();
+  const replayServerEvictions = new Map<string, number>();
   const latestSelected = selected.reduce<RemoteRunnerTask | undefined>(
     (latest, task) => (!latest || task.sequence > latest.sequence ? task : latest),
     undefined,
@@ -199,6 +210,8 @@ export async function loadRemoteAgentInventory(
     let cursor = previous.replayCursors?.get(task.id) ?? events[events.length - 1]?.sequence ?? 0;
     let gap = previous.replayGaps?.get(task.id);
     let truncated = previous.replayTruncated.has(task.id);
+    let discarded = previous.replayDiscarded?.has(task.id) === true;
+    let evictedThrough = previous.replayServerEvictions?.get(task.id) ?? 0;
     let complete = isRemoteTaskTerminal(task) && previous.replayComplete.has(task.id);
     if (!complete) {
       for (let pageNumber = 0; pageNumber < 24; pageNumber++) {
@@ -213,8 +226,10 @@ export async function loadRemoteAgentInventory(
         }
         if (page.nextCursor !== null && (page.nextCursor !== next || next === cursor))
           throw new Error("The runner returned an invalid event page cursor.");
-        const removed = page.outputTruncatedBeforeSequence;
-        if (removed !== undefined && removed > (gap?.throughSequence ?? 0)) {
+        const removed = page.outputTruncatedBeforeSequence ?? 0;
+        const lost = removed > cursor || (truncated && removed > 0);
+        evictedThrough = Math.max(evictedThrough, removed);
+        if (lost && removed > (gap?.throughSequence ?? 0)) {
           gap = {
             throughSequence: removed,
             startsAtLineBoundary: page.outputStartsAtLineBoundary === true,
@@ -225,6 +240,10 @@ export async function loadRemoteAgentInventory(
         events = retained.events;
         gap = retained.gap;
         truncated ||= retained.truncated;
+        discarded ||=
+          lost ||
+          (truncated && removed > 0) ||
+          droppedServerEvictedOutput(retained, evictedThrough);
         cursor = next;
         if (page.nextCursor === null) {
           complete = isRemoteTaskTerminal(task);
@@ -236,14 +255,15 @@ export async function loadRemoteAgentInventory(
     events = retained.events;
     gap = retained.gap;
     truncated ||= retained.truncated;
+    discarded ||= droppedServerEvictedOutput(retained, evictedThrough);
     replayCursors.set(task.id, cursor);
+    if (evictedThrough > 0) replayServerEvictions.set(task.id, evictedThrough);
     if (gap) replayGaps.set(task.id, gap);
     replays.set(task.id, events);
     if (complete) replayComplete.add(task.id);
-    if (truncated) {
-      replayTruncated.add(task.id);
-      error = "Showing recent server output; earlier output is incomplete.";
-    }
+    if (truncated) replayTruncated.add(task.id);
+    if (discarded) replayDiscarded.add(task.id);
+    if (truncated && discarded) error = REMOTE_OUTPUT_DISCARDED_ERROR;
     // Only the latest turn owns continuation. Older output remains fully replayed;
     // querying its resume status adds no display information or launch authority.
     if (!catchingUp && descriptor.capabilities.taskContinuation && task === latestSelected) {
@@ -291,6 +311,8 @@ export async function loadRemoteAgentInventory(
     replayGaps,
     subagentLifecycles,
     replayTruncated,
+    replayDiscarded,
+    replayServerEvictions,
     error,
   };
 }

@@ -105,6 +105,7 @@ const MISSING_SNAPSHOT_REASONS: ReadonlySet<string> = new Set([
   "No snapshot is available for this turn.",
   "No snapshot was recorded before this turn.",
   "No completed snapshot is available for this turn.",
+  "A complete snapshot of this turn is unavailable.",
 ]);
 
 export function isMissingAgentTurnSnapshot(summary: AgentTurnChangeSummary): boolean {

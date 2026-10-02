@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isAgentTurnChangePath,
+  isMissingAgentTurnSnapshot,
   MAX_TURN_DIFF_BYTES,
   parseAgentTurnChangeSummary,
   parseAgentTurnFileDiff,
@@ -104,6 +105,35 @@ describe("historical turn changes boundary", () => {
       { ...summary, state: "skipped", files: [] },
     ])
       expect(() => parseAgentTurnChangeSummary(invalid)).toThrow();
+  });
+
+  it("treats only the exact local and remote runner missing-snapshot reasons as missing", () => {
+    const unavailable = (reason: string | null) =>
+      parseAgentTurnChangeSummary({ ...summary, state: "unavailable", files: [], reason });
+    for (const reason of [
+      "No snapshot is available for this turn.",
+      "No snapshot was recorded before this turn.",
+      "No completed snapshot is available for this turn.",
+      "A complete snapshot of this turn is unavailable.",
+    ])
+      expect(isMissingAgentTurnSnapshot(unavailable(reason))).toBe(true);
+    for (const reason of [
+      null,
+      "Snapshot Git command failed.",
+      "Saved turn changes could not be read.",
+      "A complete snapshot of this turn is unavailable",
+      "a complete snapshot of this turn is unavailable.",
+      " A complete snapshot of this turn is unavailable.",
+    ])
+      expect(isMissingAgentTurnSnapshot(unavailable(reason))).toBe(false);
+    expect(
+      isMissingAgentTurnSnapshot(
+        parseAgentTurnChangeSummary({
+          ...summary,
+          reason: "A complete snapshot of this turn is unavailable.",
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("bounds both diff sides by UTF-8 bytes and rejects unknown states", () => {
