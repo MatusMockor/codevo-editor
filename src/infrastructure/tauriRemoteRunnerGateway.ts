@@ -174,7 +174,7 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   createTask(request: R.RemoteRunnerCreateTaskRequest) {
     return this.call("createTask", request);
   }
-  startTask(request: R.RemoteRunnerTaskRequest & Readonly<{ projectId: string }>) {
+  startTask(request: Parameters<R.RemoteRunnerGateway["startTask"]>[0]) {
     return this.call("startTask", request);
   }
   getTask(request: R.RemoteRunnerTaskRequest) {

@@ -204,28 +204,6 @@ fn timestamps_follow_the_strict_iso_grammar() {
 }
 
 #[test]
-fn stub_command_validates_then_reports_unavailable() {
-    let request: RemoteGitRequest = serde_json::from_value(json!({
-        "operation": "projectStatus", "serverId": "linux", "runnerId": "linux-runner",
-        "projectId": "storefront"
-    }))
-    .unwrap();
-    assert_eq!(
-        super::super::git_sync::unavailable(&request).unwrap_err(),
-        GIT_SYNC_UNAVAILABLE
-    );
-    let invalid: RemoteGitRequest = serde_json::from_value(json!({
-        "operation": "projectStatus", "serverId": "linux runner", "runnerId": "linux-runner",
-        "projectId": "storefront"
-    }))
-    .unwrap();
-    assert_ne!(
-        super::super::git_sync::unavailable(&invalid).unwrap_err(),
-        GIT_SYNC_UNAVAILABLE
-    );
-}
-
-#[test]
 fn push_target_is_a_closed_enum() {
     for (wire, target) in [
         ("thread-branch", PushTarget::ThreadBranch),

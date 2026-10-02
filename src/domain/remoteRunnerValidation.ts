@@ -24,6 +24,7 @@ import {
 import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
+import { isRemoteStartBase } from "./remoteGitSyncWire";
 import type * as R from "./remoteRunner";
 
 type Check = (value: unknown) => boolean;
@@ -452,7 +453,10 @@ export const remoteRunnerChecks = {
       })(v) && launchProviderMatches(v),
     response: object({ task, created: boolean }),
   },
-  startTask: { request: object({ ...taskRequest, projectId: identifier }), response: task },
+  startTask: {
+    request: object({ ...taskRequest, projectId: identifier, base: optional(isRemoteStartBase) }),
+    response: task,
+  },
   getTask: { request: object(taskRequest), response: task },
   getTaskResume: {
     request: object(taskRequest),

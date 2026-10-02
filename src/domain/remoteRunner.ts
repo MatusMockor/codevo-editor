@@ -18,6 +18,7 @@ import type {
   RemoteRunnerInstructionSnapshot,
 } from "./remoteRunnerInstructions";
 import type { AgentLaunchOptions } from "./agentLaunch";
+import type { RemoteStartBase } from "./remoteGitSyncWire";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
 export type RemoteRunnerIsolation = "in-place" | "worktree";
@@ -310,7 +311,7 @@ export interface RemoteRunnerGateway {
     request: RemoteRunnerCreateTaskRequest,
   ): Promise<Readonly<{ task: RemoteRunnerTask; created: boolean }>>;
   startTask(
-    request: RemoteRunnerTaskRequest & Readonly<{ projectId: string }>,
+    request: RemoteRunnerTaskRequest & Readonly<{ projectId: string; base?: RemoteStartBase }>,
   ): Promise<RemoteRunnerTask>;
   getTask(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerTask>;
   getTaskResume(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerTaskResume>;

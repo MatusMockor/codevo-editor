@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-
 use super::{
     canonical_wire::canonical,
     project_clone::branch_name,
@@ -16,14 +14,17 @@ const MAX_RUNNER_ID_BYTES: usize = 128;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const PUBLISHED_REF_PREFIX: &str = "refs/heads/";
 const INVALID: &str = "Invalid runner Git sync response";
-pub(super) const GIT_SYNC_UNAVAILABLE: &str =
-    "Git sync with the server is not available in this editor version yet.";
+const REFUSAL_PREFIX: &str = "Runner refused the Git operation: ";
+pub(super) const GIT_OPERATION_UNKNOWN: &str =
+    "The runner no longer knows this Git operation. Refresh the Git status.";
 
 fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
     Option::deserialize(d)
 }
 
-fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+pub(super) fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
 }
 
@@ -380,6 +381,12 @@ pub struct GitErrorBody {
     pub(super) error: GitErrorCode,
 }
 
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum OperationLost {
+    Unknown,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum RemoteGitResponse {
@@ -388,6 +395,49 @@ pub enum RemoteGitResponse {
     ThreadStatus(ThreadGitStatus),
     Commit(CommitResult),
     Operation(GitOperation),
+    Refused(GitErrorBody),
+    Lost(OperationLost),
+}
+
+impl GitOperation {
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(super) fn kind(&self) -> GitOperationKind {
+        self.kind
+    }
+}
+
+pub(super) fn refusable_route(path: &str) -> bool {
+    let project = path
+        .strip_prefix("/v1/projects/")
+        .and_then(|rest| rest.split_once("/git/"))
+        .is_some_and(|(project, action)| {
+            id(project).is_ok() && matches!(action, "fetch" | "update")
+        });
+    let task = path
+        .strip_prefix("/v1/tasks/")
+        .and_then(|rest| rest.split_once("/git/"))
+        .is_some_and(|(task, action)| uuid(task).is_ok() && matches!(action, "commit" | "push"));
+    project || task
+}
+
+pub(super) fn operation_route(path: &str) -> bool {
+    path.strip_prefix("/v1/git-operations/")
+        .is_some_and(|operation| uuid(operation).is_ok())
+}
+
+pub(super) fn refusal_error(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let refusal = parse_error_body(value).ok()?;
+    let code = serde_json::to_value(refusal.error).ok()?;
+    Some(format!("{REFUSAL_PREFIX}{}", code.as_str()?))
+}
+
+pub(super) fn refused(error: &str) -> Option<GitErrorCode> {
+    let code = error.strip_prefix(REFUSAL_PREFIX)?;
+    serde_json::from_value(Value::String(code.into())).ok()
 }
 
 impl Tracking {
@@ -593,6 +643,28 @@ fn connection(server_id: &str, runner: &str) -> Result<(), String> {
 }
 
 impl RemoteGitRequest {
+    pub(super) fn server_id(&self) -> &str {
+        match self {
+            Self::ProjectBranches(r) | Self::ProjectStatus(r) => &r.server_id,
+            Self::ProjectFetch(r) | Self::ProjectUpdate(r) => &r.server_id,
+            Self::ThreadStatus(r) => &r.server_id,
+            Self::ThreadCommit(r) => &r.server_id,
+            Self::ThreadPush(r) => &r.server_id,
+            Self::Operation(r) => &r.server_id,
+        }
+    }
+
+    pub(super) fn runner_id(&self) -> &str {
+        match self {
+            Self::ProjectBranches(r) | Self::ProjectStatus(r) => &r.runner_id,
+            Self::ProjectFetch(r) | Self::ProjectUpdate(r) => &r.runner_id,
+            Self::ThreadStatus(r) => &r.runner_id,
+            Self::ThreadCommit(r) => &r.runner_id,
+            Self::ThreadPush(r) => &r.runner_id,
+            Self::Operation(r) => &r.runner_id,
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), String> {
         match self {
             Self::ProjectBranches(r) | Self::ProjectStatus(r) => {

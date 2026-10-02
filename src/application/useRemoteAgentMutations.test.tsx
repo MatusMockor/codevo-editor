@@ -7,6 +7,8 @@ import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import {
   REMOTE_CONVERSATION_BUSY_NOTICE,
+  REMOTE_ORIGIN_BASE_NEEDS_WORKTREE,
+  REMOTE_ORIGIN_BASE_UNSUPPORTED,
   REMOTE_STOP_UNAPPLIED_NOTICE,
   useRemoteAgentMutations,
 } from "./useRemoteAgentMutations";
@@ -626,6 +628,115 @@ describe("per-conversation remote run control", () => {
     await act(async () => {
       created.resolve({ task: task({ status: "draft", projectId: undefined }), created: true });
       await starting;
+    });
+  });
+});
+
+describe("remote agent start base", () => {
+  const withGitSync = (gitSync: boolean | undefined) => {
+    const gw = gateway();
+    gw.getRunner.mockResolvedValue({
+      runnerId: "r",
+      capabilities: { instructionSync: true, taskIsolation: true, gitSync },
+    });
+    return gw;
+  };
+
+  it("sends the origin base only when the runner announces gitSync", async () => {
+    const h = await render(withGitSync(true));
+    await act(async () => {
+      await h
+        .current()
+        .start(request, target, undefined, { kind: "origin-branch", branch: "feature/x" });
+    });
+    expect(h.gw.startTask).toHaveBeenCalledWith({
+      serverId: "s",
+      taskId: "t",
+      projectId: "p",
+      base: { kind: "origin-branch", branch: "feature/x" },
+    });
+    expect(h.report).not.toHaveBeenCalled();
+  });
+
+  it("keeps the legacy start body when no base is chosen", async () => {
+    const h = await render(withGitSync(true));
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(h.gw.startTask).toHaveBeenCalledWith({ serverId: "s", taskId: "t", projectId: "p" });
+  });
+
+  it("omits the checkout-head base for a runner without gitSync", async () => {
+    const h = await render(withGitSync(undefined));
+    await act(async () => {
+      await h.current().start(request, target, undefined, { kind: "checkout-head" });
+    });
+    expect(h.gw.startTask).toHaveBeenCalledWith({ serverId: "s", taskId: "t", projectId: "p" });
+  });
+
+  it("refuses an origin base on a runner without gitSync before creating a task", async () => {
+    const h = await render(withGitSync(false));
+    await act(async () => {
+      expect(
+        await h
+          .current()
+          .start(request, target, undefined, { kind: "origin-branch", branch: "main" }),
+      ).toBeNull();
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledWith(REMOTE_ORIGIN_BASE_UNSUPPORTED);
+  });
+
+  it("refuses an origin base for the server checkout", async () => {
+    const h = await render(withGitSync(true));
+    await act(async () => {
+      await h.current().start({ ...request, isolation: "in-place" }, target, undefined, {
+        kind: "origin-branch",
+        branch: "main",
+      });
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledWith(REMOTE_ORIGIN_BASE_NEEDS_WORKTREE);
+  });
+
+  it("rejects a malformed base before any runner call", async () => {
+    const h = await render(withGitSync(true));
+    await act(async () => {
+      await h
+        .current()
+        .start(request, target, undefined, { kind: "origin-branch", branch: "+refs/heads/main" });
+    });
+    expect(h.gw.getRunner).not.toHaveBeenCalled();
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+  });
+
+  it("retries an unconfirmed start with the original base only", async () => {
+    const h = await render(withGitSync(true));
+    h.gw.startTask.mockRejectedValueOnce(new Error("disconnected"));
+    const base = { kind: "origin-branch", branch: "main" } as const;
+    await act(async () => {
+      expect(await h.current().start(request, target, undefined, base)).toBeNull();
+    });
+    await act(async () => {
+      expect(
+        await h
+          .current()
+          .start(request, target, undefined, { kind: "origin-branch", branch: "other" }),
+      ).toBeNull();
+    });
+    expect(h.gw.startTask).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      expect(
+        await h
+          .current()
+          .start(request, target, undefined, { branch: "main", kind: "origin-branch" }),
+      ).toEqual(task());
+    });
+    expect(h.gw.startTask).toHaveBeenLastCalledWith({
+      serverId: "s",
+      taskId: "t",
+      projectId: "p",
+      base,
     });
   });
 });

@@ -1,3 +1,4 @@
+use super::git_sync_wire::StartBase;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -58,6 +59,8 @@ pub struct StartRequest {
     pub server_id: String,
     pub task_id: String,
     pub project_id: String,
+    #[serde(default, deserialize_with = "super::git_sync_wire::present")]
+    pub base: Option<StartBase>,
 }
 
 #[derive(Deserialize, Serialize)]

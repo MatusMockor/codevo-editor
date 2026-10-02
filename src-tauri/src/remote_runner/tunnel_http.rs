@@ -1,6 +1,9 @@
 use super::MAX_INPUT;
+use crate::remote_runner::git_sync_wire;
 use base64::Engine;
 use serde_json::{json, Value};
+
+const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
     "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview";
@@ -82,6 +85,16 @@ pub(super) fn prepare(
         headers: parsed,
     })
 }
+async fn bounded_error_body(response: &mut reqwest::Response) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > ERROR_BODY_LIMIT.saturating_sub(body.len()) {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Some(body)
+}
 async fn execute(
     client: &reqwest::Client,
     token: &str,
@@ -150,6 +163,18 @@ async fn execute(
             if value.as_ref() != Some(&json!({"error":"conflict"})) {
                 return Err("Runner steering delivery was not confirmed.".into());
             }
+        }
+        if status == 409 && git_sync_wire::refusable_route(&prepared.path) {
+            if let Some(refusal) = bounded_error_body(&mut response)
+                .await
+                .as_deref()
+                .and_then(git_sync_wire::refusal_error)
+            {
+                return Err(refusal);
+            }
+        }
+        if status == 404 && git_sync_wire::operation_route(&prepared.path) {
+            return Err(git_sync_wire::GIT_OPERATION_UNKNOWN.into());
         }
         return Err(format!("Runner request failed (HTTP {status})."));
     }
@@ -509,6 +534,83 @@ mod tests {
                 .await
             });
             assert_eq!(result.unwrap_err(), expected);
+            server.join().unwrap();
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn git_refusals_and_forgotten_operations_map_only_on_their_routes() {
+        let update = "/v1/projects/storefront/git/update";
+        let status = "/v1/projects/storefront/git/status";
+        let poll = "/v1/git-operations/5f0c1d2e-3a4b-4c5d-9e6f-7a8b9c0d1e2f";
+        let refusal = git_sync_wire::refusal_error(b"{\"error\":\"git_dirty\"}").unwrap();
+        let oversized = format!("{{\"error\":\"git_dirty\",\"x\":\"{}\"}}", "x".repeat(1024));
+        for (method, path, status_code, body, expected) in [
+            (
+                "POST",
+                update,
+                409,
+                "{\"error\":\"git_dirty\"}",
+                refusal.as_str(),
+            ),
+            (
+                "POST",
+                update,
+                409,
+                "{\"error\":\"invalid_input\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "POST",
+                update,
+                409,
+                oversized.as_str(),
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                status,
+                409,
+                "{\"error\":\"git_dirty\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            ("GET", poll, 404, "{}", git_sync_wire::GIT_OPERATION_UNKNOWN),
+            (
+                "GET",
+                status,
+                404,
+                "{}",
+                "Runner request failed (HTTP 404).",
+            ),
+            (
+                "POST",
+                "/v1/tasks",
+                409,
+                "{\"error\":\"busy\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+        ] {
+            let (socket, server) = test_server(vec![(status_code, body)]);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(socket)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare(method, path, None, vec![]).unwrap(),
+                    4096,
+                )
+                .await
+            });
+            assert_eq!(
+                result.unwrap_err(),
+                expected,
+                "{method} {path} {status_code}"
+            );
             server.join().unwrap();
         }
     }

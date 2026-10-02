@@ -1,5 +1,5 @@
-use super::{service::RemoteRunnerState, types::*};
-use serde_json::{json, Value};
+use super::{git_sync_wire::StartBody, service::RemoteRunnerState, types::*};
+use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static OPERATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -132,12 +132,17 @@ pub async fn remote_runner_start_task(
 ) -> Result<Value, String> {
     let state = state.inner().clone();
     blocking(move || {
-        id(&request.project_id)?;
+        let body = StartBody {
+            project_id: request.project_id,
+            base: request.base,
+        };
+        body.validate()?;
+        let body = serde_json::to_value(&body).map_err(|_| "Invalid start request")?;
         state.call(
             &request.server_id,
             "POST",
             &task_path(&request.task_id, "/start")?,
-            Some(json!({"projectId":request.project_id})),
+            Some(body),
             vec![],
         )
     })

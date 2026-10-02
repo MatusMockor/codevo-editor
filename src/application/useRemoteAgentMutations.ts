@@ -17,6 +17,7 @@ import {
   remoteRunnerErrorMessage,
 } from "../domain/remoteRunnerErrors";
 import { agentLaunchWithoutBrowser, type AgentLaunchOptions } from "../domain/agentLaunch";
+import { isRemoteStartBase, type RemoteStartBase } from "../domain/remoteGitSyncWire";
 
 export interface RemoteAgentMutationTarget {
   readonly serverId: string;
@@ -48,6 +49,10 @@ export const REMOTE_STOP_UNAPPLIED_NOTICE =
   "Stop could not be applied because the message was not confirmed. Refresh the conversation and stop it if it is running.";
 export const REMOTE_MUTATIONS_FULL_NOTICE =
   "Too many remote actions are in progress. Wait for one to finish.";
+export const REMOTE_ORIGIN_BASE_UNSUPPORTED =
+  "Update the server runner to start a conversation from an origin branch.";
+export const REMOTE_ORIGIN_BASE_NEEDS_WORKTREE =
+  "Starting from an origin branch needs a new worktree on the server.";
 function sameLaunch(task: RemoteRunnerTask, expected: AgentLaunchOptions): boolean {
   const actual = task.launch;
   if (!actual) return false;
@@ -74,8 +79,13 @@ type Pending = {
   readonly parentTaskId?: string;
   readonly isolation: "worktree" | "in-place";
   readonly sendIsolation: boolean;
+  readonly base?: RemoteStartBase;
   draftId?: string;
 };
+function startBaseSignature(base: RemoteStartBase | undefined): readonly unknown[] | null {
+  if (base === undefined) return null;
+  return base.kind === "origin-branch" ? [base.kind, base.branch] : [base.kind];
+}
 function key(target: RemoteAgentMutationTarget): string {
   return JSON.stringify([
     target.serverId,
@@ -132,6 +142,7 @@ export function useRemoteAgentMutations(options: Options) {
     target: RemoteAgentMutationTarget,
     continuation: boolean,
     dispatchKey: string,
+    base?: RemoteStartBase,
   ): Promise<RemoteRunnerTask | null> {
     const gateway = options.gateway;
     if (!gateway || !valid()) return null;
@@ -150,7 +161,7 @@ export function useRemoteAgentMutations(options: Options) {
     publishActivity();
     let task: RemoteRunnerTask | null;
     try {
-      task = await executeOwned(gateway, request, target, continuation, targetKey);
+      task = await executeOwned(gateway, request, target, continuation, targetKey, base);
     } finally {
       executions.current.delete(targetKey);
       executionKeys.current.delete(targetKey);
@@ -175,11 +186,13 @@ export function useRemoteAgentMutations(options: Options) {
     target: RemoteAgentMutationTarget,
     continuation: boolean,
     targetKey: string,
+    requestedBase: RemoteStartBase | undefined,
   ): Promise<RemoteRunnerTask | null> {
     const launch = agentLaunchWithoutBrowser(request.launch);
     const signature = JSON.stringify([
       continuation,
       "isolation" in request ? request.isolation : null,
+      continuation ? null : startBaseSignature(requestedBase),
       request.prompt,
       launch,
       request.attachments ?? [],
@@ -206,6 +219,9 @@ export function useRemoteAgentMutations(options: Options) {
         let isolation: "worktree" | "in-place" =
           "isolation" in request ? request.isolation : "worktree";
         let sendIsolation = false;
+        let base: RemoteStartBase | undefined;
+        if (requestedBase !== undefined && (continuation || !isRemoteStartBase(requestedBase)))
+          throw new Error("Choose a valid starting point for the server conversation.");
         if (!continuation) {
           const descriptor = await gateway.getRunner({ serverId: target.serverId });
           if (!valid()) return null;
@@ -214,6 +230,12 @@ export function useRemoteAgentMutations(options: Options) {
           sendIsolation = descriptor.capabilities.taskIsolation === true;
           if (isolation === "in-place" && !sendIsolation)
             throw new Error("Update the server runner to use the server checkout.");
+          const gitSync = descriptor.capabilities.gitSync === true;
+          if (requestedBase?.kind === "origin-branch") {
+            if (!gitSync) throw new Error(REMOTE_ORIGIN_BASE_UNSUPPORTED);
+            if (isolation !== "worktree") throw new Error(REMOTE_ORIGIN_BASE_NEEDS_WORKTREE);
+          }
+          base = gitSync ? requestedBase : undefined;
         }
         if (continuation) {
           if (!target.latestTaskId || !target.conversationId)
@@ -261,6 +283,7 @@ export function useRemoteAgentMutations(options: Options) {
           instructions,
           isolation,
           sendIsolation,
+          ...(base ? { base } : {}),
           signature,
           parentTaskId: continuation ? target.latestTaskId : undefined,
           idempotencyKey: crypto.randomUUID(),
@@ -321,6 +344,7 @@ export function useRemoteAgentMutations(options: Options) {
             serverId: target.serverId,
             taskId: task.id,
             projectId: target.projectId,
+            ...(command.base ? { base: command.base } : {}),
           });
           if (!valid()) return null;
         }
@@ -426,7 +450,8 @@ export function useRemoteAgentMutations(options: Options) {
       request: AgentThreadStartRequest,
       target: RemoteAgentMutationTarget,
       dispatchKey: string = key(target),
-    ) => execute(request, target, false, dispatchKey),
+      base?: RemoteStartBase,
+    ) => execute(request, target, false, dispatchKey, base),
     followUp: (
       request: AgentFollowUpRequest,
       target: RemoteAgentMutationTarget,
