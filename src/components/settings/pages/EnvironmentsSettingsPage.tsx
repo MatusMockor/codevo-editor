@@ -3,7 +3,7 @@ import { RemoteProjectLinksSettings } from "../../remoteRunner/RemoteProjectLink
 import { RemoteInstructionSettings } from "../../remoteRunner/RemoteInstructionSettings";
 import { RemoteRunnerExecutionPolicy } from "../../remoteRunner/RemoteRunnerExecutionPolicy";
 import { useState, type FormEvent } from "react";
-import { Check, Monitor, Plus, Server } from "lucide-react";
+import { Check, Monitor, Plus, Server, Trash2 } from "lucide-react";
 import { useRemoteRunnerContext } from "../../remoteRunner/remoteRunnerContext";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsRow } from "../primitives/SettingsRow";
@@ -222,6 +222,7 @@ export function EnvironmentsSettingsPage({
                     void remote.remove(server.id);
                   }}
                 >
+                  <Trash2 aria-hidden="true" />
                   Remove
                 </SettingsButton>
               </div>

@@ -582,7 +582,12 @@
 
 .cv-sb-item:hover:has(.cv-card-row__act) .cv-card-row__slot,
 .cv-sb-item:has(.cv-card-row__act:focus-visible) .cv-card-row__slot {
-  opacity: 0;
+  display: none;
+}
+
+.cv-sb-item:hover:has(.cv-card-row__act) :is(.cv-card-row__l1, .cv-card-row__head),
+.cv-sb-item:has(.cv-card-row__act:focus-visible) :is(.cv-card-row__l1, .cv-card-row__head) {
+  padding-right: 62px;
 }
 
 .cv-sb-item[data-menu-open="true"] .cv-card-row {
@@ -595,7 +600,11 @@
 }
 
 .cv-sb-item[data-menu-open="true"] .cv-card-row__slot {
-  opacity: 1;
+  display: inline-flex;
+}
+
+.cv-sb-item[data-menu-open="true"] :is(.cv-card-row__l1, .cv-card-row__head) {
+  padding-right: 0;
 }
 
 .cv-snooze__input {

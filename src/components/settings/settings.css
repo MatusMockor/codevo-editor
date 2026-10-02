@@ -203,12 +203,12 @@ code.settings-readout,
 }
 
 .settings-btn--danger {
-  background: color-mix(in srgb, var(--cv-danger) 12%, transparent);
-  color: var(--cv-fg-strong);
+  background: color-mix(in srgb, var(--cv-danger) 16%, transparent);
+  color: var(--cv-danger);
 }
 
 .settings-btn--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--cv-danger) 20%, transparent);
+  background: color-mix(in srgb, var(--cv-danger) 26%, transparent);
 }
 
 .settings-btn--ghost {
