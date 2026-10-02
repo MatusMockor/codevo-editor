@@ -47,25 +47,28 @@ export type RemotePortListing = Readonly<{
   truncated: boolean;
   scannedAt: string;
 }>;
-export type RemotePortOwnerRequest = Readonly<{
-  serverId: string;
-  runnerId: string;
-  ownerId: string;
-  scope: RemotePortScope;
-}>;
+export type RemotePortOwner = Readonly<{ ownerId: string; ownerGeneration: number }>;
+export type RemotePortOwnerRequest = RemotePortOwner &
+  Readonly<{
+    serverId: string;
+    runnerId: string;
+    scope: RemotePortScope;
+  }>;
 export type RemotePortListRequest = RemotePortOwnerRequest;
 export type RemotePortOpenRequest = RemotePortOwnerRequest &
   Readonly<{ port: number; scheme: "http" | "https"; path: string }>;
-export type RemotePortCloseRequest = Readonly<{
-  serverId: string;
-  ownerId: string;
-  scope: RemotePortScope;
-  port: number;
-}>;
-export type RemotePortReleaseOwnerRequest = Readonly<{ ownerId: string }>;
+export type RemotePortCloseRequest = RemotePortOwner &
+  Readonly<{
+    serverId: string;
+    scope: RemotePortScope;
+    port: number;
+  }>;
+export type RemotePortReleaseOwnerRequest = RemotePortOwner;
 export type RemotePortOpenResponse = Readonly<{ localPort: number }>;
 
 const port = integerIn(REMOTE_PORT_LIMITS.minPort, REMOTE_PORT_LIMITS.maxPort);
+
+export const isRemotePortOwnerGeneration: WireCheck = integerIn(1);
 
 const isProcessName: WireCheck = (value) =>
   typeof value === "string" &&
@@ -147,10 +150,12 @@ export const isRemotePortScope: WireCheck = (value) =>
   exactObject({ kind: oneOf("task"), taskId: isWireUuid })(value) ||
   exactObject({ kind: oneOf("project"), projectId: isRunnerIdentifier })(value);
 
+const owner = { ownerId: isRemotePortOwnerId, ownerGeneration: isRemotePortOwnerGeneration };
+
 const ownerRequest = {
   serverId: isRunnerIdentifier,
   runnerId: isRunnerId,
-  ownerId: isRemotePortOwnerId,
+  ...owner,
   scope: isRemotePortScope,
 };
 
@@ -165,12 +170,12 @@ export const isRemotePortOpenRequest = exactObject({
 
 export const isRemotePortCloseRequest = exactObject({
   serverId: isRunnerIdentifier,
-  ownerId: isRemotePortOwnerId,
+  ...owner,
   scope: isRemotePortScope,
   port,
 });
 
-export const isRemotePortReleaseOwnerRequest = exactObject({ ownerId: isRemotePortOwnerId });
+export const isRemotePortReleaseOwnerRequest = exactObject(owner);
 
 export const isRemotePortOpenResponse = exactObject({ localPort: port });
 

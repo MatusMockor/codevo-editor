@@ -4,6 +4,7 @@ use pending_connection::PendingConnection;
 #[path = "connection_lease.rs"]
 mod connection_lease;
 use super::{
+    port_forward::PortForwardRegistry,
     repository::{FileServerRepository, ServerRepository},
     transport,
     types::*,
@@ -220,6 +221,7 @@ struct Inner {
     persistence: Mutex<()>,
     shutdown: Mutex<()>,
     repository: Box<dyn ServerRepository>,
+    ports: Arc<PortForwardRegistry>,
 }
 
 impl Drop for Inner {
@@ -256,6 +258,7 @@ impl RemoteRunnerState {
             persistence: Mutex::new(()),
             shutdown: Mutex::new(()),
             repository,
+            ports: Arc::default(),
         })))
     }
 
@@ -284,6 +287,18 @@ impl RemoteRunnerState {
         for lease in connections {
             lease.revoke();
         }
+    }
+
+    pub(super) fn port_forwards(&self) -> Arc<PortForwardRegistry> {
+        Arc::clone(&self.0.ports)
+    }
+
+    pub(crate) fn release_retired_port_owner(
+        &self,
+        workspaces: &crate::workspace_registry::WorkspaceRegistry,
+        owner_id: &str,
+    ) {
+        super::port_forward::release_retired_owner(&self.0.ports, workspaces, owner_id);
     }
 
     pub(super) fn list(&self) -> Result<Vec<Server>, String> {

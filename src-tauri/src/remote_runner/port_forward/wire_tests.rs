@@ -1,6 +1,5 @@
 use super::super::canonical_wire::{canonical, Canonical};
 use super::wire::*;
-use super::{unavailable, PORT_PREVIEW_UNAVAILABLE};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -109,34 +108,11 @@ fn contract_rejects_every_rejected_case() {
 }
 
 #[test]
-fn stubs_validate_then_report_unavailable() {
-    let open: PortOpenRequest = serde_json::from_value(json!({
-        "serverId": "linux", "runnerId": "linux-runner", "ownerId": "workspace-1",
-        "scope": {"kind": "task", "taskId": "7389088c-29b8-4cec-9a15-e825e1fb2f66"},
-        "port": 3000, "scheme": "http", "path": "/"
-    }))
-    .unwrap();
-    assert_eq!(
-        unavailable::<PortOpenResponse>(open.validate()).unwrap_err(),
-        PORT_PREVIEW_UNAVAILABLE
-    );
-    let invalid: PortOpenRequest = serde_json::from_value(json!({
-        "serverId": "linux", "runnerId": "linux-runner", "ownerId": "workspace-1",
-        "scope": {"kind": "task", "taskId": "7389088c-29b8-4cec-9a15-e825e1fb2f66"},
-        "port": 80, "scheme": "http", "path": "/"
-    }))
-    .unwrap();
-    assert_ne!(
-        unavailable::<PortOpenResponse>(invalid.validate()).unwrap_err(),
-        PORT_PREVIEW_UNAVAILABLE
-    );
-}
-
-#[test]
 fn open_scheme_is_a_closed_enum() {
     for (wire, scheme) in [("http", PortScheme::Http), ("https", PortScheme::Https)] {
         let open: PortOpenRequest = serde_json::from_value(json!({
             "serverId": "linux", "runnerId": "linux-runner", "ownerId": "workspace-1",
+            "ownerGeneration": 1,
             "scope": {"kind": "project", "projectId": "storefront"},
             "port": 3000, "scheme": wire, "path": "/"
         }))

@@ -81,20 +81,40 @@ pub(crate) async fn close_workspace_owner(
     validate_admission_token(admission_token)?;
     let ticket = owner_disposal_ticket(&app, &workspace_id)?;
     run_blocking_command(move || {
-        let state = WorkspaceLifecycleState::from_app(&app);
-        let registry = app.state::<WorkspaceFileChangeWatchRegistry>().inner();
         let close = WorkspaceOwnerClose {
             workspace_id: &workspace_id,
             scope,
             expected_canonical_root: expected_canonical_root.as_deref(),
         };
-        let Some(ticket) = ticket else {
-            return close_workspace_owner_blocking(&app, state, close, registry);
-        };
-        let guard = registry.adopt_disposal(ticket);
-        close_workspace_owner_blocking(&app, state, close, &guard)
+        let outcome = close_with_disposal_ticket(&app, close, ticket);
+        release_retired_port_forwards(&app, &workspace_id);
+        outcome
     })
     .await
+}
+
+fn close_with_disposal_ticket(
+    app: &AppHandle,
+    close: WorkspaceOwnerClose<'_>,
+    ticket: Option<WorkspaceWatchDisposalTicket>,
+) -> Result<WorkspaceOwnerCloseResult, String> {
+    let state = WorkspaceLifecycleState::from_app(app);
+    let registry = app.state::<WorkspaceFileChangeWatchRegistry>().inner();
+    let Some(ticket) = ticket else {
+        return close_workspace_owner_blocking(app, state, close, registry);
+    };
+    let guard = registry.adopt_disposal(ticket);
+    close_workspace_owner_blocking(app, state, close, &guard)
+}
+
+fn release_retired_port_forwards(app: &AppHandle, workspace_id: &WorkspaceId) {
+    let (Some(remote), Some(workspaces)) = (
+        app.try_state::<crate::remote_runner::RemoteRunnerState>(),
+        app.try_state::<WorkspaceRegistry>(),
+    ) else {
+        return;
+    };
+    remote.release_retired_port_owner(workspaces.inner(), workspace_id.as_str());
 }
 
 #[tauri::command]

@@ -1,3 +1,4 @@
+use super::super::port_forward::{ForwardDestination, ForwardSet};
 use super::super::types::Server;
 use super::{
     response_limit, validate_destination, RequestPermit, ACTIVE_REQUESTS, MAX_INPUT, TIMEOUT,
@@ -19,6 +20,7 @@ pub(in crate::remote_runner) struct Session {
     closed: AtomicBool,
     client: reqwest::Client,
     token: String,
+    forwards: ForwardSet,
 }
 
 impl Session {
@@ -31,6 +33,7 @@ impl Session {
             closed: AtomicBool::new(false),
             client,
             token: "test-only".into(),
+            forwards: ForwardSet::new(ForwardDestination::new("fixture", "localhost", "test", 22)),
         }
     }
     #[cfg(test)]
@@ -54,11 +57,18 @@ impl Session {
             closed: AtomicBool::new(false),
             client,
             token,
+            forwards: ForwardSet::new(ForwardDestination::new(
+                &server.id,
+                &server.host,
+                &server.username,
+                server.port,
+            )),
         })
     }
 
     pub(in crate::remote_runner) fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.forwards.close();
         // Only process ownership is locked; no network work is performed under it.
         let process = self
             .process
@@ -66,6 +76,10 @@ impl Session {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         drop(process);
+    }
+
+    pub(in crate::remote_runner) fn forwards(&self) -> &ForwardSet {
+        &self.forwards
     }
 
     pub(in crate::remote_runner) fn is_alive(&self) -> bool {

@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-
 use super::super::{
     canonical_wire::canonical,
     git_sync_wire::{blank, runner_id, timestamp},
@@ -13,9 +11,8 @@ const MAX_PORTS: usize = 32;
 const MAX_PROCESS_BYTES: usize = 15;
 const MAX_OWNER_ID_BYTES: usize = 1024;
 const MAX_PATH_BYTES: usize = 2048;
+const MAX_OWNER_GENERATION: u64 = (1 << 53) - 1;
 const INVALID: &str = "Invalid runner port listing";
-pub(super) const PORT_PREVIEW_UNAVAILABLE: &str =
-    "Opening server ports is not available in this editor version yet.";
 
 fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
     Option::deserialize(d)
@@ -34,6 +31,14 @@ fn process_name(value: &str) -> bool {
 pub(super) fn owner_id(value: &str) -> Result<(), String> {
     if blank(value) || value.len() > MAX_OWNER_ID_BYTES || value.chars().any(char::is_control) {
         return Err("Invalid port forward owner".into());
+    }
+    Ok(())
+}
+
+pub(super) fn owner(value: &str, generation: u64) -> Result<(), String> {
+    owner_id(value)?;
+    if !(1..=MAX_OWNER_GENERATION).contains(&generation) {
+        return Err("Invalid port forward owner generation".into());
     }
     Ok(())
 }
@@ -164,13 +169,14 @@ pub struct PortListRequest {
     pub(super) server_id: String,
     pub(super) runner_id: String,
     pub(super) owner_id: String,
+    pub(super) owner_generation: u64,
     pub(super) scope: PortScope,
 }
 
 impl PortListRequest {
     pub(super) fn validate(&self) -> Result<(), String> {
         connection(&self.server_id, &self.runner_id)?;
-        owner_id(&self.owner_id)?;
+        owner(&self.owner_id, self.owner_generation)?;
         self.scope.validate()
     }
 }
@@ -181,6 +187,7 @@ pub struct PortOpenRequest {
     pub(super) server_id: String,
     pub(super) runner_id: String,
     pub(super) owner_id: String,
+    pub(super) owner_generation: u64,
     pub(super) scope: PortScope,
     pub(super) port: u16,
     pub(super) scheme: PortScheme,
@@ -190,7 +197,7 @@ pub struct PortOpenRequest {
 impl PortOpenRequest {
     pub(super) fn validate(&self) -> Result<(), String> {
         connection(&self.server_id, &self.runner_id)?;
-        owner_id(&self.owner_id)?;
+        owner(&self.owner_id, self.owner_generation)?;
         self.scope.validate()?;
         listed_port(self.port)?;
         url_path(&self.path)
@@ -202,6 +209,7 @@ impl PortOpenRequest {
 pub struct PortCloseRequest {
     pub(super) server_id: String,
     pub(super) owner_id: String,
+    pub(super) owner_generation: u64,
     pub(super) scope: PortScope,
     pub(super) port: u16,
 }
@@ -209,7 +217,7 @@ pub struct PortCloseRequest {
 impl PortCloseRequest {
     pub(super) fn validate(&self) -> Result<(), String> {
         id(&self.server_id)?;
-        owner_id(&self.owner_id)?;
+        owner(&self.owner_id, self.owner_generation)?;
         self.scope.validate()?;
         listed_port(self.port)
     }
@@ -219,11 +227,12 @@ impl PortCloseRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PortReleaseOwnerRequest {
     pub(super) owner_id: String,
+    pub(super) owner_generation: u64,
 }
 
 impl PortReleaseOwnerRequest {
     pub(super) fn validate(&self) -> Result<(), String> {
-        owner_id(&self.owner_id)
+        owner(&self.owner_id, self.owner_generation)
     }
 }
 
