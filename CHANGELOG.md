@@ -7,6 +7,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.83] - 2026-10-02
+
+### Fixed
+
+- Choosing a project in the sidebar switcher, or clicking its name, switches the editor
+  to that project's tab like clicking the tab itself; the switcher lists every open
+  project with a coloured badge and a gear for its actions, like t3code.
+- Usage limits refresh after startup instead of keeping an old reading, and readings
+  older than 15 minutes show "As of <time>".
+
 ## [0.2.0-beta.82] - 2026-10-02
 
 ### Fixed
