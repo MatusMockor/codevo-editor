@@ -25,6 +25,7 @@ import {
   agentSurfaceActivationNotice,
   agentSurfaceLocalAvailable,
   isRemoteAgentSurfaceThread,
+  isRemoteGitShipThread,
   SURFACE_REMOTE_UNAVAILABLE_REASON,
   SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
   type AgentSurfaceScope,
@@ -151,7 +152,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     remoteActiveAvailable ||
     (remote &&
       (layout.activeSurface === null ||
-        (layout.activeSurface === "diff" && thread !== null))) ? null : (
+        (layout.activeSurface === "diff" && thread !== null) ||
+        (layout.activeSurface === "git" && isRemoteGitShipThread(thread)))) ? null : (
       <div className="agent-note" role="status">
         {remote
           ? thread === null && layout.activeSurface === "diff"

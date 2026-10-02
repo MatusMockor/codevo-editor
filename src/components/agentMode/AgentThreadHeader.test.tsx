@@ -398,6 +398,20 @@ describe("AgentThreadHeader", () => {
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
+  it("shows the server ports slot next to Commit for a thread and drops it without one", () => {
+    const ports = <button aria-label="Ports" type="button" />;
+    render({ thread: { ...threadView({}), execution: remoteExecution() }, serverPorts: ports });
+
+    const trailing = host.querySelector(".cv-topbar__trailing");
+    expect(trailing?.contains(button("Ports"))).toBe(true);
+    expect(button("Ports").compareDocumentPosition(button("Commit"))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    render({ thread: null, serverPorts: ports });
+    expect(host.querySelector('[aria-label="Ports"]')).toBeNull();
+  });
+
   it("renders the empty state with the project crumb and only the toggles", () => {
     const onToggleBottomPanel = vi.fn();
     const onToggleRightPanel = vi.fn();

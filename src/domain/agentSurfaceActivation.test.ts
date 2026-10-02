@@ -38,6 +38,14 @@ describe("remoteSurfaceCapabilityOpen", () => {
 });
 
 describe("agentSurfaceServes", () => {
+  it("serves the Git surface for a server thread only with runner Git sync", () => {
+    const thread = { ...REMOTE_WITH_PROJECT, threadPresent: true };
+    expect(agentSurfaceServes(thread, "git")).toBe(false);
+    expect(agentSurfaceServes({ ...thread, remoteGit: true }, "git")).toBe(true);
+    expect(agentSurfaceServes({ ...REMOTE_NO_PROJECT, remoteGit: true }, "git")).toBe(false);
+    expect(agentSurfaceServes({ ...thread, remoteGit: true }, "pullRequest")).toBe(false);
+  });
+
   it("serves every surface locally", () => {
     for (const kind of ["files", "diff", "terminal", "history"] as const)
       expect(agentSurfaceServes(LOCAL_AGENT_SURFACE_ACTIVATION, kind)).toBe(true);

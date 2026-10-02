@@ -208,4 +208,41 @@ describe("agentComposerThreadBranch", () => {
     expect(agentComposerThreadBranch(remote)).toEqual({ kind: "none" });
     expect(agentComposerThreadBranch(null)).toEqual({ kind: "none" });
   });
+
+  it("shows a server thread branch from its origin base once Git sync is available", () => {
+    const execution = {
+      kind: "remote",
+      serverId: "linux",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: "c-1",
+      latestTaskId: "task-1",
+      resume: null,
+      gitShip: true,
+    } as const;
+    const status: GitShipStatus = {
+      ...shipStatus(2, "origin/main"),
+      worktree: { branch: "codevo/7389088c", head: "abc", dirty: false, changeCount: 0 },
+    };
+    const worktree = surfaceThreadView({
+      execution,
+      ship: { kind: "idle", status, loadingStatus: false },
+    });
+    expect(agentComposerThreadBranch(worktree)).toEqual({
+      kind: "worktree",
+      branch: "codevo/7389088c",
+      detail: "from origin/main",
+    });
+    expect(agentComposerThreadBranch({ ...worktree, ship: surfaceThreadView().ship })).toEqual({
+      kind: "none",
+    });
+    const checkout = surfaceThreadView({
+      execution,
+      thread: {
+        ...surfaceThreadView().thread,
+        target: { isolation: "in-place", worktreePath: null },
+      },
+    });
+    expect(agentComposerThreadBranch(checkout)).toEqual({ kind: "serverCheckout" });
+  });
 });

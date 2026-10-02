@@ -92,7 +92,7 @@ const LOOPBACK_NAME = /^(?:[a-z0-9-]+\.)*localhost\.?$/u;
 const LOOPBACK_IPV4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/u;
 const LOOPBACK_MAPPED_IPV6 = /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/u;
 
-const isLoopbackHost = (hostname: string): boolean =>
+export const isLoopbackHost = (hostname: string): boolean =>
   LOOPBACK_HOSTS.has(hostname) ||
   LOOPBACK_NAME.test(hostname) ||
   LOOPBACK_IPV4.test(hostname) ||

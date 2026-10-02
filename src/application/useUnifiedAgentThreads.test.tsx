@@ -18,6 +18,8 @@ import {
 import { remoteAgentProjectKey, remoteAgentThreadKey } from "./remoteAgentProjection";
 import { useUnifiedAgentThreads, type UnifiedAgentThreadsOptions } from "./useUnifiedAgentThreads";
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
+import type { RemoteGitSyncPort } from "../domain/remoteGitSync";
+import { REMOTE_START_BASE_INVALID } from "../domain/remoteDraftGitBase";
 
 const server: RemoteRunnerServer = {
   id: "server",
@@ -147,6 +149,9 @@ async function setup(
     workspaceOwner: "A",
     selectedThreadId: null,
     localProjects: [projectFixture()],
+    gitSync: null,
+    repositoryIdentity: null,
+    externalUrlOpener: null,
   };
   let current!: ReturnType<typeof useUnifiedAgentThreads>;
   const root = createRoot(document.createElement("div"));
@@ -574,5 +579,195 @@ describe("unified conversation history routing", () => {
     expect(h.current.agents.history!.page).toBeNull();
     await h.render({ workspaceOwner: "A" });
     expect(h.current.agents.history!.page).toBeNull();
+  });
+});
+
+describe("server Git sync routing", () => {
+  const threadStatus = {
+    mode: "worktree",
+    branch: "codevo/7389088c",
+    headSha: "3f786850e387550fdab836ed7e6dc881de23001b",
+    base: {
+      branch: "main",
+      sha: "89e6c98d92887913cadf06b2adb97f26cde4849b",
+      fetchedAt: "2026-10-02T09:15:00.000Z",
+      ahead: 2,
+      behind: 0,
+    },
+    published: null,
+    dirty: { tracked: 2, untracked: 1, truncated: false },
+    active: false,
+  } as const;
+  const pushOperation = {
+    id: "5f0c1d2e-3a4b-4c5d-9e6f-7a8b9c0d1e2f",
+    kind: "push",
+    status: "running",
+    error: null,
+    result: null,
+  } as const;
+
+  function gitPort() {
+    return {
+      branches: vi.fn(),
+      projectStatus: vi.fn(),
+      fetch: vi.fn(),
+      update: vi.fn(),
+      threadStatus: vi.fn().mockResolvedValue(threadStatus),
+      commit: vi.fn().mockResolvedValue({
+        kind: "accepted",
+        value: {
+          commitSha: "3f786850e387550fdab836ed7e6dc881de23001b",
+          status: { ...threadStatus, dirty: { tracked: 0, untracked: 0, truncated: false } },
+        },
+      }),
+      push: vi.fn().mockResolvedValue({ kind: "accepted", value: pushOperation }),
+      pollOperation: vi.fn(),
+      awaitOperation: vi.fn().mockResolvedValue({
+        kind: "succeeded",
+        result: {
+          kind: "push",
+          remoteRef: "refs/heads/codevo/7389088c",
+          pushedSha: "3f786850e387550fdab836ed7e6dc881de23001b",
+          created: true,
+        },
+      }),
+    } satisfies RemoteGitSyncPort;
+  }
+
+  async function gitSetup(gitSync: boolean) {
+    const h = await setup(false, (configured) => {
+      configured.getRunner.mockResolvedValue({
+        protocolVersion: 1,
+        runnerId: "runner",
+        name: "Linux",
+        capabilities: {
+          taskExecution: true,
+          instructionSync: true,
+          eventReplay: true,
+          taskContinuation: true,
+          taskLaunchOptions: true,
+          ...(gitSync ? { gitSync: true } : {}),
+        },
+      });
+    });
+    const port = gitPort();
+    const identity = { discover: vi.fn().mockResolvedValue("github.com/acme/app") };
+    const opener = { openExternal: vi.fn().mockResolvedValue(undefined) };
+    await h.render({ gitSync: port, repositoryIdentity: identity, externalUrlOpener: opener });
+    return { h, port, identity, opener };
+  }
+
+  const remoteView = (h: Awaited<ReturnType<typeof setup>>) =>
+    h.current.agents.threads.find((view) => view.thread.threadId === remoteId);
+
+  it("starts a server worktree from the chosen origin branch", async () => {
+    const { h } = await gitSetup(true);
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    expect(h.current.agents.remoteGit?.project(projectKey)).toEqual({
+      serverId: server.id,
+      runnerId: "runner",
+      projectId: "project",
+    });
+    await act(async () => {
+      await h.current.agents.startThread({
+        ...start,
+        worktreeBase: { kind: "ref", ref: "refs/remotes/origin/main" },
+      });
+    });
+    expect(h.gw.startTask).toHaveBeenCalledWith(
+      expect.objectContaining({ base: { kind: "origin-branch", branch: "main" } }),
+    );
+  });
+
+  it("refuses a starting point that is not on origin", async () => {
+    const { h } = await gitSetup(true);
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    let started: unknown;
+    await act(async () => {
+      started = await h.current.agents.startThread({
+        ...start,
+        worktreeBase: { kind: "ref", ref: "refs/heads/main" },
+      });
+    });
+    expect(started).toBeNull();
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.current.agents.notice?.message).toBe(REMOTE_START_BASE_INVALID);
+  });
+
+  it("commits, pushes and opens the compare page through runner Git sync", async () => {
+    const { h, opener, port } = await gitSetup(true);
+    await h.render({ selectedThreadId: remoteId });
+    expect(remoteView(h)?.execution?.gitShip).toBe(true);
+    await act(async () => h.current.agents.refreshShipStatus(remoteId));
+    expect(port.threadStatus).toHaveBeenCalledWith({
+      serverId: server.id,
+      runnerId: "runner",
+      taskId: "root",
+    });
+    expect(remoteView(h)?.ship).toMatchObject({
+      kind: "idle",
+      status: { worktree: { branch: "codevo/7389088c", changeCount: 3 } },
+    });
+    let committed: unknown;
+    await act(async () => {
+      committed = await h.current.agents.commitThreadChanges(remoteId, "Ship it");
+    });
+    expect(committed).toEqual({ kind: "succeeded" });
+    expect(port.commit).toHaveBeenCalledWith(
+      { serverId: server.id, runnerId: "runner", taskId: "root" },
+      "Ship it",
+    );
+    port.threadStatus.mockResolvedValue({
+      ...threadStatus,
+      dirty: { tracked: 0, untracked: 0, truncated: false },
+      published: { ref: "origin/codevo/7389088c", ahead: 0, behind: 0 },
+    });
+    await act(async () => {
+      expect(await h.current.agents.pushThreadBranch(remoteId)).toEqual({ kind: "succeeded" });
+    });
+    expect(port.push).toHaveBeenCalledWith(
+      { serverId: server.id, runnerId: "runner", taskId: "root" },
+      expect.any(String),
+      "thread-branch",
+    );
+    expect(remoteView(h)?.ship.kind).toBe("pushed");
+    await act(async () => h.current.agents.openThreadCompareUrl(remoteId));
+    expect(opener.openExternal).toHaveBeenCalledWith(
+      "https://github.com/acme/app/compare/main...codevo/7389088c?expand=1",
+    );
+  });
+
+  it("keeps integrate and worktree removal unavailable for server threads", async () => {
+    const { h, port } = await gitSetup(true);
+    await h.render({ selectedThreadId: remoteId });
+    await act(async () => h.current.agents.integrateThreadBranch(remoteId, "merge"));
+    expect(h.current.agents.notice?.message).toBe(
+      "This action is not available for a server conversation yet.",
+    );
+    await act(async () => h.current.agents.removeThreadWorktree(remoteId, { deleteBranch: false }));
+    expect(port.commit).not.toHaveBeenCalled();
+    expect(port.push).not.toHaveBeenCalled();
+  });
+
+  it("leaves server threads unchanged when the runner lacks Git sync", async () => {
+    const { h, identity, port } = await gitSetup(false);
+    await h.render({ selectedThreadId: remoteId, selectedServerId: server.id });
+    expect(h.current.agents.remoteGit).toBeUndefined();
+    expect(remoteView(h)?.execution?.gitShip).toBeUndefined();
+    let committed: unknown;
+    await act(async () => {
+      committed = await h.current.agents.commitThreadChanges(remoteId, "Ship it");
+    });
+    expect(committed).toEqual({
+      kind: "notRun",
+      message: "This action is not available for a server conversation yet.",
+    });
+    expect(port.commit).not.toHaveBeenCalled();
+    expect(identity.discover).not.toHaveBeenCalled();
+    await act(async () => {
+      await h.current.agents.startThread(start);
+    });
+    const calls = h.gw.startTask.mock.calls;
+    expect(calls[calls.length - 1]?.[0]).not.toHaveProperty("base");
   });
 });

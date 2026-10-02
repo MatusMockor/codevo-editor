@@ -19,6 +19,8 @@ import { TauriAgentQuestionGateway } from "../../infrastructure/tauriAgentQuesti
 import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
 import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
 import { TauriAgentArtifactFileGateway } from "../../infrastructure/tauriAgentArtifactFileGateway";
+import { TauriRemotePortPreviewGateway } from "../../infrastructure/tauriRemotePortPreviewGateway";
+import { agentRemotePortOwner } from "./useAgentServerPorts";
 import { reportAgentArtifactFailure } from "../../infrastructure/agentArtifactFailureReporter";
 import {
   createAgentArtifactFilePort,
@@ -211,6 +213,7 @@ const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
 const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
 const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
+const DEFAULT_REMOTE_PORT_PREVIEW = new TauriRemotePortPreviewGateway();
 const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
 const DEFAULT_PROJECT_COLLAPSE_PREFERENCE = new BrowserAgentRailProjectCollapsePreference();
 const DEFAULT_PROJECT_FOCUS_PREFERENCE = new BrowserAgentRailProjectFocusPreference();
@@ -356,6 +359,14 @@ export function AgentWorkbenchScreen({
   const { saveWorkbenchSettings } = workbench;
   const { bottomPanelView, bottomPanelVisible, hideBottomPanel, showBottomPanelView } = workbench;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
+  const admissionToken = workbench.workspaceIdentityDescriptor?.admissionToken ?? null;
+  const remotePortPreview = useMemo(
+    () => ({
+      port: DEFAULT_REMOTE_PORT_PREVIEW,
+      owner: agentRemotePortOwner(workspaceId, admissionToken),
+    }),
+    [admissionToken, workspaceId],
+  );
   const appSettingsRef = useRef(appSettings);
   const workspaceSettingsRef = useRef(workbench.workspaceSettings);
   const workspaceTrustRef = useRef(workbench.workspaceTrust);
@@ -806,6 +817,7 @@ export function AgentWorkbenchScreen({
           viewCommands={workbenchAgentViewCommandBridge}
           threadNotifications={threadNotifications}
           threadNotificationsVisible={workbench.settingsOpen !== true}
+          remotePortPreview={remotePortPreview}
           workspaceRoot={workspaceRoot}
         />
       </AgentTranscriptPositionProvider>

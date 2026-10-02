@@ -49,6 +49,7 @@ export interface AgentThreadHeaderProps {
   readonly gitSurfaceActive?: boolean;
   readonly leading?: ReactNode;
   readonly trailingExtras?: ReactNode;
+  readonly serverPorts?: ReactNode;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onRenameThread(threadId: string, title: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -157,6 +158,7 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
             onOpenScriptsView={props.onOpenScriptsView}
             scripts={props.scripts}
           />
+          {props.serverPorts ?? null}
           <Button
             aria-label="Commit"
             aria-pressed={props.gitSurfaceActive === true}

@@ -14,6 +14,7 @@ export interface AgentSurfaceActivation {
   readonly remote: boolean;
   readonly threadPresent: boolean;
   readonly remoteCapabilities: RemoteSurfaceCapabilities | null;
+  readonly remoteGit?: boolean;
   readonly unavailable: boolean;
   readonly hidden: boolean;
 }
@@ -43,6 +44,7 @@ export function agentSurfaceServes(
   if (kind === "editor") return !activation.remote;
   if (!activation.remote) return true;
   if (kind === "diff" || kind === "agents") return activation.threadPresent;
+  if (kind === "git") return activation.threadPresent && activation.remoteGit === true;
   if (!isAgentRemoteSurfaceKind(kind)) return false;
   return remoteSurfaceCapabilityOpen(activation.remoteCapabilities, kind);
 }

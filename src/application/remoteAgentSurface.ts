@@ -1,10 +1,20 @@
 import type { AgentShipStepResult } from "../domain/agentShip";
+import type { AgentCommitSelection } from "../domain/gitCommitSelection";
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import { settleAgentThreadMutation } from "./agentThreadMutationOutcome";
 import type { AgentThreadsSurface, AgentThreadView, AgentTasksNotice } from "./agentThreadPorts";
 import type { RemoteAgentMetadata } from "./remoteAgentMetadata";
 
 const REMOTE_ACTION_UNAVAILABLE = "This action is not available for a server conversation yet.";
+
+export interface RemoteShipRoute {
+  supports(threadId: string): boolean;
+  refreshShipStatus(threadId: string): Promise<void>;
+  commit(threadId: string, message: string): Promise<AgentShipStepResult>;
+  push(threadId: string): Promise<AgentShipStepResult>;
+  openCompareUrl(threadId: string): Promise<void>;
+  resetShip(threadId: string): void;
+}
 
 export const isRemoteAgentIdentity = (value: string) =>
   value.startsWith("remote:") || value.startsWith("remote-thread:");
@@ -25,6 +35,7 @@ interface Options {
     placement: "before" | "after",
     destination?: AgentThreadDropSection,
   ) => void;
+  readonly ship?: RemoteShipRoute;
 }
 
 /** Routes presentation actions; remote identities can never fall through to local tools. */
@@ -36,6 +47,7 @@ export function remoteAgentThreadActions({
   stop,
   reorder,
   batch,
+  ship,
 }: Options) {
   const byId = new Map(threads.map((view) => [view.thread.threadId, view]));
   const remote = (id: string) => isRemoteAgentIdentity(id) || byId.get(id)?.execution !== undefined;
@@ -58,6 +70,8 @@ export function remoteAgentThreadActions({
       unsupported(id);
       return { kind: "notRun", message: REMOTE_ACTION_UNAVAILABLE };
     };
+  const shipRoute = (id: string): RemoteShipRoute | null =>
+    ship !== undefined && remote(id) && ship.supports(id) ? ship : null;
   const syncAction =
     <A extends readonly unknown[]>(action: (id: string, ...args: A) => void) =>
     (id: string, ...args: A) => {
@@ -177,13 +191,32 @@ export function remoteAgentThreadActions({
     showFileDiff: asyncAction(local.showFileDiff),
     hideFileDiff: syncAction(local.hideFileDiff),
     removeWorktree: asyncAction(local.removeWorktree),
-    refreshShipStatus: asyncAction(local.refreshShipStatus),
-    commitThreadChanges: stepAction(local.commitThreadChanges),
-    pushThreadBranch: stepAction(local.pushThreadBranch),
-    openThreadCompareUrl: asyncAction(local.openThreadCompareUrl),
+    refreshShipStatus: async (id: string) => {
+      const route = shipRoute(id);
+      if (route === null) return asyncAction(local.refreshShipStatus)(id);
+      await route.refreshShipStatus(id);
+    },
+    commitThreadChanges: (
+      id: string,
+      message: string,
+      selection?: AgentCommitSelection,
+    ): Promise<AgentShipStepResult> =>
+      shipRoute(id)?.commit(id, message) ??
+      stepAction(local.commitThreadChanges)(id, message, selection),
+    pushThreadBranch: (id: string): Promise<AgentShipStepResult> =>
+      shipRoute(id)?.push(id) ?? stepAction(local.pushThreadBranch)(id),
+    openThreadCompareUrl: async (id: string) => {
+      const route = shipRoute(id);
+      if (route === null) return asyncAction(local.openThreadCompareUrl)(id);
+      await route.openCompareUrl(id);
+    },
     integrateThreadBranch: asyncAction(local.integrateThreadBranch),
     removeThreadWorktree: asyncAction(local.removeThreadWorktree),
-    resetThreadShip: syncAction(local.resetThreadShip),
+    resetThreadShip: (id: string) => {
+      const route = shipRoute(id);
+      if (route === null) return syncAction(local.resetThreadShip)(id);
+      route.resetShip(id);
+    },
     openChangedFile: asyncAction(local.openChangedFile),
     openChangedFileDiff: asyncAction(local.openChangedFileDiff),
   };

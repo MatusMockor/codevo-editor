@@ -1,3 +1,4 @@
+import { useRemoteComposerGit } from "../../application/useRemoteDraftGitBase";
 import {
   carryAgentDraftIntoRecovery,
   useAgentComposerRecovery,
@@ -110,6 +111,7 @@ export type AgentComposerSurface = Pick<
   | "liveTaskCount"
   | "maxConcurrentAgentTasks"
   | "refreshIsolationStatus"
+  | "remoteGit"
   | "sendFollowUp"
   | "startThread"
   | "steer"
@@ -691,6 +693,7 @@ export function useAgentComposerControllerState({
     [composerRoot],
   );
 
+  const remoteGit = useRemoteComposerGit(agents.remoteGit, composerProjectRootKey, selectedThread);
   const composerProps: AgentComposerControllerProps = {
     recovery,
     attachments,
@@ -733,6 +736,7 @@ export function useAgentComposerControllerState({
     worktreeOnly,
     worktreeOnlyReason,
     worktreeBase,
+    remoteGit,
   };
 
   return {

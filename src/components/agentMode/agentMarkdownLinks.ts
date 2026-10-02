@@ -17,6 +17,7 @@ import {
   type AgentLocalFileLocation,
   type AgentMarkdownLink,
 } from "../../domain/agentMarkdown/agentMarkdownLink";
+import { mayPointToServerLoopback } from "../../domain/remoteLoopbackLink";
 import { agentRevealRootForPath } from "./agentThreadHeaderPresentation";
 import { attemptRemoteFileLink, type AgentRemoteFileLinkScope } from "./agentRemoteFileLinks";
 
@@ -24,6 +25,50 @@ export type AgentMarkdownLinkEvent =
   MouseEvent<HTMLAnchorElement> | KeyboardEvent<HTMLAnchorElement>;
 
 export type AgentExternalLinkOpener = (url: string) => Promise<void>;
+
+export type AgentLinkTitle = (url: string) => string | null;
+
+export interface AgentServerLoopbackPort {
+  openLoopback(url: string): Promise<void>;
+  titleFor(url: string): string | null;
+}
+
+export interface AgentThreadLinks {
+  readonly openExternal: AgentExternalLinkOpener;
+  readonly linkTitle: AgentLinkTitle | null;
+}
+
+const REFUSED_SERVER_LOOPBACK: AgentServerLoopbackPort = {
+  openLoopback: async () => undefined,
+  titleFor: () => null,
+};
+
+export function agentThreadLinks(
+  openExternal: AgentExternalLinkOpener,
+  serverLoopback: AgentServerLoopbackPort | null,
+  runsOnServer: boolean,
+): AgentThreadLinks {
+  if (!runsOnServer) return { openExternal, linkTitle: null };
+  const server = serverLoopback ?? REFUSED_SERVER_LOOPBACK;
+  return {
+    openExternal: agentServerLinkOpener(openExternal, server),
+    linkTitle: agentServerLinkTitle(server),
+  };
+}
+
+export function agentServerLinkTitle(serverLoopback: AgentServerLoopbackPort): AgentLinkTitle {
+  return (url) => (mayPointToServerLoopback(url) ? serverLoopback.titleFor(url) : null);
+}
+
+export function agentServerLinkOpener(
+  openExternal: AgentExternalLinkOpener,
+  serverLoopback: AgentServerLoopbackPort,
+): AgentExternalLinkOpener {
+  return (url) => {
+    if (mayPointToServerLoopback(url)) return serverLoopback.openLoopback(url);
+    return openExternal(url);
+  };
+}
 
 export interface AgentLocalFileOpenRequest {
   readonly location: AgentLocalFileLocation;

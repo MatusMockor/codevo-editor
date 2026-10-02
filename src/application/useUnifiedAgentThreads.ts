@@ -31,6 +31,11 @@ import { unsupportedAgentTurnChanges } from "../domain/agentTurnChanges";
 import { useRemoteAgentChanges } from "./useRemoteAgentChanges";
 import { useRemoteAgentImages } from "./useRemoteAgentImages";
 import { useRemoteAgentThreadHistory } from "./useRemoteAgentThreadHistory";
+import type { RemoteGitSyncPort } from "../domain/remoteGitSync";
+import type { RemoteRepositoryIdentityGateway } from "../domain/remoteRepositoryIdentity";
+import { REMOTE_START_BASE_INVALID, remoteStartBaseFor } from "../domain/remoteDraftGitBase";
+import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
+import { useRemoteAgentShip } from "./useRemoteAgentShip";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -43,6 +48,9 @@ export interface UnifiedAgentThreadsOptions {
   readonly localProjects: readonly AgentProjectDescriptor[];
   readonly metadataRepository?: RemoteAgentMetadataRepository;
   readonly imageSurface?: AgentImageSurfacePort | null;
+  readonly gitSync: RemoteGitSyncPort | null;
+  readonly repositoryIdentity: RemoteRepositoryIdentityGateway | null;
+  readonly externalUrlOpener: ExternalUrlOpenerPort | null;
 }
 
 /** Keeps one original editor surface; connection identities choose execution adapters only. */
@@ -311,6 +319,18 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     () => new Map(projected.views.map((view) => [view.thread.threadId, view])),
     [projected.views],
   );
+  const remoteShip = useRemoteAgentShip({
+    port: gateway === null ? null : options.gitSync,
+    identity: gateway === null ? null : options.repositoryIdentity,
+    externalUrlOpener: options.externalUrlOpener,
+    snapshots: inventory.snapshots,
+    servers,
+    views: remoteById,
+    selectedThreadId,
+    report,
+    reportError,
+  });
+  const presentRemote = remoteShip.present;
   const remoteHistory = useRemoteAgentThreadHistory({
     gateway,
     snapshots: inventory.snapshots,
@@ -407,6 +427,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     update: metadata.update,
     reorder: metadata.reorder,
     batch: metadata.batch,
+    ship: {
+      supports: remoteShip.supports,
+      refreshShipStatus: remoteShip.ship.refreshShipStatus,
+      commit: remoteShip.ship.commit,
+      push: (id) => remoteShip.ship.push(id),
+      openCompareUrl: remoteShip.ship.openCompareUrl,
+      resetShip: remoteShip.ship.resetShip,
+    },
     stop: async (id) => {
       const target = targetForThread(id);
       if (target) await mutations.stop(target);
@@ -475,16 +503,18 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       [
         ...local.threads,
         ...projected.views.map((view) =>
-          remoteChanges.summaries.has(view.thread.threadId)
-            ? { ...view, changeSummary: remoteChanges.summaries.get(view.thread.threadId)! }
-            : view,
+          presentRemote(
+            remoteChanges.summaries.has(view.thread.threadId)
+              ? { ...view, changeSummary: remoteChanges.summaries.get(view.thread.threadId)! }
+              : view,
+          ),
         ),
       ].sort(
         (a, b) =>
           Number(b.thread.pinned) - Number(a.thread.pinned) ||
           b.thread.updatedAtEpochMs - a.thread.updatedAtEpochMs,
       ),
-    [local.threads, projected.views, remoteChanges.summaries],
+    [local.threads, projected.views, remoteChanges.summaries, presentRemote],
   );
   const attachmentImages = useRemoteAgentImages(
     local.attachmentImages,
@@ -503,6 +533,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   });
   const agents: AgentThreadsSurface = {
     ...local,
+    remoteGit: remoteShip.access,
     historySearch,
     ...actions,
     turnChangesRevision,
@@ -663,10 +694,16 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         report("Update this server's runner to support the selected model settings.");
         return null;
       }
+      const base = remoteStartBaseFor(request.isolation, request.worktreeBase);
+      if (base.kind === "invalid") {
+        report(REMOTE_START_BASE_INVALID);
+        return null;
+      }
       const task = await mutations.start(
         request,
         target,
         agentDraftDispatchKey(request.projectRootKey),
+        base.base,
       );
       return task === null
         ? null

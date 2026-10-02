@@ -5,16 +5,22 @@ import type { AgentSurfaceHistoryProps } from "../AgentSurfaceHistory";
 import type { AgentSurfaceFileTreeProps } from "../AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "../AgentSurfaceTerminal";
 import { EditorSurfaceSlot } from "../../editorPanel/EditorSurfaceSlot";
-import { agentSurfaceBlockedReason, type AgentSurfaceScope } from "../agentSurfacePolicy";
+import {
+  agentSurfaceBlockedReason,
+  isRemoteGitShipThread,
+  type AgentSurfaceScope,
+} from "../agentSurfacePolicy";
 import { AgentDiffSurfaceContainer } from "./diff/AgentDiffSurfaceContainer";
 import { AgentFilesSurface } from "./files/AgentFilesSurface";
 import { AgentGitSurfaceContainer } from "./git/AgentGitSurfaceContainer";
+import { AgentRemoteGitSurface } from "./git/AgentRemoteGitSurface";
 import { AgentPullRequestSurfaceContainer } from "./pullRequest/AgentPullRequestSurfaceContainer";
 import { AgentScriptsSurfaceContainer } from "./scripts/AgentScriptsSurfaceContainer";
 
 const FilesSurface = memo(AgentFilesSurface);
 const DiffSurface = memo(AgentDiffSurfaceContainer);
 const GitSurface = memo(AgentGitSurfaceContainer);
+const RemoteGitSurface = memo(AgentRemoteGitSurface);
 const ScriptsSurface = memo(AgentScriptsSurfaceContainer);
 const PullRequestSurface = memo(AgentPullRequestSurfaceContainer);
 
@@ -76,6 +82,7 @@ export function AgentRightPanelSurfaceBody(props: AgentRightPanelSurfaceBodyProp
         ),
       );
     case "git":
+      if (isRemoteGitShipThread(props.thread)) return <RemoteGitSurface />;
       return blockedOr(props, <GitSurface />);
     case "scripts":
       return blockedOr(props, <ScriptsSurface />);

@@ -159,6 +159,7 @@ function agentComposerControllerPropsEqual(
     leftProps.onIsolationChange === rightProps.onIsolationChange &&
     leftProps.onWorktreeBaseChange === rightProps.onWorktreeBaseChange &&
     sameWorktreeBase(leftProps.worktreeBase, rightProps.worktreeBase) &&
+    (leftProps.remoteGit ?? null) === (rightProps.remoteGit ?? null) &&
     leftProps.onRefreshIsolation === rightProps.onRefreshIsolation &&
     leftProps.onLaunchChange === rightProps.onLaunchChange &&
     leftProps.onNewThread === rightProps.onNewThread &&

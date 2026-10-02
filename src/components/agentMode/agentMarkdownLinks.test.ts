@@ -10,6 +10,8 @@ import {
   activateAgentMarkdownLink,
   agentLocalFileLinkNotice,
   agentLocalFileLinkScope,
+  agentServerLinkOpener,
+  agentThreadLinks,
   type AgentLocalFileLinkMemory,
   type AgentLocalFileLinkPort,
   type AgentMarkdownLinkPorts,
@@ -521,5 +523,75 @@ describe("activateAgentMarkdownLink", () => {
     activateAgentMarkdownLink(event, parseAgentMarkdownLink("docs/design/page.html"), ports(null));
 
     expect(clicked).not.toHaveBeenCalled();
+  });
+});
+
+describe("server thread link opener", () => {
+  function opener() {
+    const openExternal = vi.fn(async () => undefined);
+    const openLoopback = vi.fn(async () => undefined);
+    return {
+      openExternal,
+      openLoopback,
+      open: agentServerLinkOpener(openExternal, { openLoopback, titleFor: () => null }),
+    };
+  }
+
+  it.each([
+    "http://localhost:3000/",
+    "http://127.0.0.1:5173/app",
+    "http://[::1]:3000/",
+    "http://0.0.0.0:8080/",
+    "http://localhost/",
+  ])("routes %s to the server and never to this computer", async (url) => {
+    const { open, openExternal, openLoopback } = opener();
+    const link = turn(url, null);
+    const { event, preventDefault } = click(link);
+
+    activateAgentMarkdownLink(event, parseAgentMarkdownLink(url), {
+      openExternal: open,
+      localFiles: null,
+    });
+    await settle();
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(openLoopback).toHaveBeenCalledExactlyOnceWith(url);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("refuses links it cannot parse instead of opening them on this computer", async () => {
+    const { open, openExternal, openLoopback } = opener();
+    const longUrl = `https://example.com/${"a".repeat(5000)}`;
+    await open("http://[bad");
+    await open(longUrl);
+
+    expect(openLoopback.mock.calls).toEqual([["http://[bad"], [longUrl]]);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("titles only server links and leaves local threads untouched", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    const openLoopback = vi.fn(async () => undefined);
+    const server = { openLoopback, titleFor: (url: string) => `server ${url}` };
+
+    const local = agentThreadLinks(openExternal, server, false);
+    expect(local).toEqual({ openExternal, linkTitle: null });
+
+    const remote = agentThreadLinks(openExternal, server, true);
+    expect(remote.linkTitle?.("http://localhost:3000/")).toBe("server http://localhost:3000/");
+    expect(remote.linkTitle?.("https://example.com/")).toBeNull();
+
+    const unwired = agentThreadLinks(openExternal, null, true);
+    await unwired.openExternal("http://localhost:3000/");
+    expect(unwired.linkTitle?.("http://localhost:3000/")).toBeNull();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("opens other web links unchanged", async () => {
+    const { open, openExternal, openLoopback } = opener();
+    await open("https://example.com:3000/docs");
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://example.com:3000/docs");
+    expect(openLoopback).not.toHaveBeenCalled();
   });
 });

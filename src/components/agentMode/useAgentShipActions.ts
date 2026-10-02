@@ -2,8 +2,9 @@ import { useEffect, useMemo } from "react";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentShipIntegrationMode, AgentShipStepResult } from "../../domain/agentShip";
 import type { AgentCommitSelection } from "../../domain/gitCommitSelection";
-import { isRemoteAgentSurfaceThread } from "./agentSurfacePolicy";
+import { isRemoteAgentSurfaceThread, isRemoteGitShipThread } from "./agentSurfacePolicy";
 import { agentShipStatusUnread } from "./agentModePresentation";
+import { useAgentLatestCallback } from "./useAgentThreadPresentationViews";
 
 export type AgentShipSurface = Pick<
   AgentThreadsSurface,
@@ -65,34 +66,48 @@ export function useAgentShipActions({
     void refreshShipStatus(unreadShipThreadId);
   }, [refreshShipStatus, unreadShipThreadId]);
 
+  const remoteShipThreadId = isRemoteGitShipThread(selectedThread)
+    ? (selectedThread?.thread.threadId ?? null)
+    : null;
+  const remoteLatestTaskId =
+    remoteShipThreadId === null ? null : selectedThread?.execution?.latestTaskId;
+  const remoteSettled = remoteShipThreadId !== null && selectedThread?.lifecycle === "settled";
+  const refreshRemoteShip = useAgentLatestCallback(refreshShipStatus);
+  useEffect(() => {
+    if (remoteShipThreadId === null || !remoteSettled) return;
+    void refreshRemoteShip(remoteShipThreadId);
+  }, [refreshRemoteShip, remoteLatestTaskId, remoteSettled, remoteShipThreadId]);
+
   const blockedThreadId = isRemoteAgentSurfaceThread(selectedThread)
     ? selectedThread?.thread.threadId
     : null;
   return useMemo<AgentShipActions>(() => {
     const allowed = (threadId: string) =>
       threadId !== blockedThreadId && !threadId.startsWith("remote:");
+    const shippable = (threadId: string) => allowed(threadId) || threadId === remoteShipThreadId;
     return {
-      onRefreshShipStatus: (threadId) => allowed(threadId) && void refreshShipStatus(threadId),
+      onRefreshShipStatus: (threadId) => shippable(threadId) && void refreshShipStatus(threadId),
       onCommit: async (threadId, message, selection) => {
-        if (!allowed(threadId)) return SHIP_ACTION_UNAVAILABLE;
+        if (!shippable(threadId)) return SHIP_ACTION_UNAVAILABLE;
         return commitThreadChanges(threadId, message, selection);
       },
       onPush: async (threadId) => {
-        if (!allowed(threadId)) return SHIP_ACTION_UNAVAILABLE;
+        if (!shippable(threadId)) return SHIP_ACTION_UNAVAILABLE;
         return pushThreadBranch(threadId);
       },
-      onOpenCompareUrl: (threadId) => allowed(threadId) && void openThreadCompareUrl(threadId),
+      onOpenCompareUrl: (threadId) => shippable(threadId) && void openThreadCompareUrl(threadId),
       onIntegrate: (threadId, mode) =>
         allowed(threadId) && void integrateThreadBranch(threadId, mode),
       onRemoveWorktree: (threadId, options) =>
         allowed(threadId) && void removeThreadWorktree(threadId, options),
       onDiscardWorktree: (threadId) => allowed(threadId) && void removeWorktree(threadId),
       onDismissFailure: (threadId) => {
-        if (allowed(threadId)) resetThreadShip(threadId);
+        if (shippable(threadId)) resetThreadShip(threadId);
       },
     };
   }, [
     blockedThreadId,
+    remoteShipThreadId,
     commitThreadChanges,
     integrateThreadBranch,
     openThreadCompareUrl,

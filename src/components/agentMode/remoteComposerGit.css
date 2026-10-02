@@ -1,0 +1,97 @@
+.remote-git-picker__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cv-space-4);
+  min-height: 28px;
+  padding: var(--cv-space-2) var(--cv-space-3) 0 10px;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
+.remote-git-picker__fetched {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-git-picker__label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-branch-picker__note.remote-git-picker__error,
+.remote-git-checkout__line.remote-git-picker__error {
+  color: var(--cv-danger);
+  overflow-wrap: anywhere;
+}
+
+.remote-git-sync {
+  flex: none;
+  color: var(--cv-fg-muted);
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.remote-git-dirty {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--cv-warn);
+}
+
+.remote-git-checkout {
+  display: flex;
+  width: 280px;
+  flex-direction: column;
+  gap: var(--cv-space-2);
+  padding: var(--cv-space-3) 0 var(--cv-space-4);
+}
+
+.remote-git-checkout__head {
+  display: flex;
+  align-items: center;
+  gap: var(--cv-space-3);
+  padding: 0 var(--cv-space-3) var(--cv-space-2) var(--cv-space-5);
+  color: var(--cv-fg-subtle);
+}
+
+.remote-git-checkout__branch {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--cv-fg-strong);
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-git-checkout__line {
+  margin: 0;
+  padding: 0 var(--cv-space-5);
+  color: var(--cv-fg);
+  font-size: var(--cv-t-xs);
+  line-height: var(--cv-lh-sm);
+  overflow-wrap: anywhere;
+}
+
+.remote-git-checkout__quiet,
+.remote-git-checkout__reason {
+  color: var(--cv-fg-subtle);
+}
+
+.remote-git-checkout__warning {
+  color: var(--cv-warn);
+}
+
+.remote-git-checkout__actions {
+  display: flex;
+  padding: var(--cv-space-3) var(--cv-space-5) 0;
+}

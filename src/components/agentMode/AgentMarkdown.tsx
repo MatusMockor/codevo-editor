@@ -19,6 +19,7 @@ import { AgentMarkdownCodeBody } from "./AgentMarkdownCodeBody";
 import { agentLocalFileLinkFailureMessage } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
 import {
   agentLocalFileLinkKey,
+  type AgentLinkTitle,
   type AgentMarkdownLinkEvent,
   type AgentUnavailableLinks,
 } from "./agentMarkdownLinks";
@@ -44,6 +45,7 @@ interface BlockRenderContext {
   readonly textClipboard: TextClipboardGateway | null;
   readonly pathLinks: AgentMarkdownPathLinks | null;
   readonly unavailableLinks: AgentUnavailableLinks | null;
+  readonly linkTitle: AgentLinkTitle | null;
   nextHitIndex: number;
   pathLinkBudget: number;
   pathScanBudget: number;
@@ -54,6 +56,7 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
   block,
   current,
   hitOffset,
+  linkTitle = null,
   onActivateLink,
   pathLinks = null,
   query,
@@ -63,6 +66,7 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
   readonly block: AgentMarkdownBlock;
   readonly current: number | null;
   readonly hitOffset: number;
+  readonly linkTitle?: AgentLinkTitle | null;
   readonly onActivateLink: AgentMarkdownLinkActivation;
   readonly pathLinks?: AgentMarkdownPathLinks | null;
   readonly query: string;
@@ -76,6 +80,7 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
     textClipboard,
     pathLinks,
     unavailableLinks,
+    linkTitle,
     nextHitIndex: hitOffset,
     pathLinkBudget: MAX_AGENT_PATH_LINKS_PER_BLOCK,
     pathScanBudget: MAX_AGENT_PATH_SCAN_CHARS_PER_BLOCK,
@@ -417,7 +422,7 @@ function renderLink(
       rel="noopener"
       role={scripted ? "link" : undefined}
       tabIndex={scripted ? 0 : undefined}
-      title={unavailable ?? undefined}
+      title={unavailable ?? externalLinkTitle(link, context.linkTitle) ?? undefined}
     >
       {children}
     </a>
@@ -431,6 +436,11 @@ function unavailableLinkMessage(
   if (link.kind !== "localFile" || unavailableLinks === null) return null;
   const failure = unavailableLinks.get(agentLocalFileLinkKey(link));
   return failure === undefined ? null : agentLocalFileLinkFailureMessage(failure);
+}
+
+function externalLinkTitle(link: AgentMarkdownLink, linkTitle: AgentLinkTitle | null) {
+  if (link.kind !== "external" || linkTitle === null) return null;
+  return linkTitle(link.url);
 }
 
 function agentMarkdownLinkHref(link: AgentMarkdownLink): string | undefined {

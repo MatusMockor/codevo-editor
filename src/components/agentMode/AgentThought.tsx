@@ -121,6 +121,7 @@ function AgentThoughtBody({
             current={null}
             hitOffset={presentation.hitOffsets[index] ?? 0}
             key={block.key}
+            linkTitle={prose.linkTitle ?? null}
             onActivateLink={activateLink}
             query=""
             textClipboard={textClipboard}

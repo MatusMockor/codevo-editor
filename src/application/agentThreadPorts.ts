@@ -1,4 +1,5 @@
 import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
+import type { RemoteGitProjectKey, RemoteGitSyncPort } from "../domain/remoteGitSync";
 import type { AgentSessionBackground } from "../domain/agentSessionBackground";
 import type { AgentBackgroundTaskStopOutcome } from "../domain/agentThreadSession";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
@@ -257,6 +258,7 @@ export interface RemoteAgentThreadExecution {
   readonly interactiveQuestions?: boolean;
   readonly pendingMessages?: boolean;
   readonly taskSteering?: boolean;
+  readonly gitShip?: boolean;
   readonly kind: "remote";
   readonly serverId: string;
   readonly runnerId: string;
@@ -376,7 +378,13 @@ export type AgentSessionBackgroundInspection = "live" | "none" | "unknown";
 export type AgentSessionTaskStopResult =
   AgentBackgroundTaskStopOutcome | { readonly kind: "stale" };
 
+export interface RemoteAgentGitAccess {
+  readonly port: RemoteGitSyncPort;
+  project(projectRootKey: string): RemoteGitProjectKey | null;
+}
+
 export interface AgentThreadsSurface {
+  readonly remoteGit?: RemoteAgentGitAccess;
   readonly history?: AgentThreadHistorySurface;
   readonly catalog?: AgentHistoryCatalogSurface;
   readonly historySearch?: AgentHistorySearchPort;

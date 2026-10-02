@@ -5,6 +5,8 @@ import type { MonacoAppTheme } from "../../domain/settings";
 import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
 import { TauriRemoteRepositoryIdentityGateway } from "../../infrastructure/tauriRemoteRepositoryIdentityGateway";
+import { TauriRemoteGitSyncGateway } from "../../infrastructure/tauriRemoteGitSyncGateway";
+import { TauriCompareUrlOpener } from "../../infrastructure/tauriGitIntegrationGateway";
 import { useAgentProjectCreation } from "./useAgentProjectCreation";
 import {
   agentConversationEscapeAction,
@@ -91,6 +93,8 @@ import {
 } from "./agentThreadActivityPresentation";
 import { useSidebarFocusHandoff } from "./useSidebarFocusHandoff";
 import { AgentThreadHeader } from "./AgentThreadHeader";
+import { RemotePortPreviewMenu } from "./RemotePortPreviewMenu";
+import { useAgentServerPorts, type AgentRemotePortPreviewWiring } from "./useAgentServerPorts";
 import { AgentThreadErrorBanner } from "./AgentThreadErrorBanner";
 import { AgentAgentsPanelProvider } from "./agents/agentAgentsPanelContext";
 import { AgentAgentsPanelSurface } from "./agents/AgentAgentsPanelSurface";
@@ -175,6 +179,7 @@ export interface AgentModeViewProps {
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly threadNotifications?: AgentThreadNotificationCenter | null;
   readonly threadNotificationsVisible?: boolean;
+  readonly remotePortPreview?: AgentRemotePortPreviewWiring | null;
   onOpenSourceControl?(): void;
   onOpenEnvironmentSettings?(): void;
   onOpenUsageSettings?(): void;
@@ -189,6 +194,8 @@ const NO_DIFF_TURNS: ReadonlyArray<AgentDiffTurn> = [];
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const PROJECT_IDENTITY_GATEWAY = new TauriRepositoryIdentityGateway();
 const REMOTE_PROJECT_IDENTITY_GATEWAY = new TauriRemoteRepositoryIdentityGateway();
+const REMOTE_GIT_SYNC_GATEWAY = new TauriRemoteGitSyncGateway();
+const REMOTE_COMPARE_URL_OPENER = new TauriCompareUrlOpener();
 const NOOP_CLOSE_PROJECT = () => undefined;
 const NOOP_SELECTED_PROJECT = () => undefined;
 const NO_REMOTE_SERVERS: readonly import("../../domain/remoteRunner").RemoteRunnerServer[] = [];
@@ -234,6 +241,9 @@ export function AgentModeView(props: AgentModeViewProps) {
     localProjects: props.projects,
     metadataRepository: remote?.metadataRepository,
     imageSurface: props.imageSurface ?? null,
+    gitSync: REMOTE_GIT_SYNC_GATEWAY,
+    repositoryIdentity: REMOTE_PROJECT_IDENTITY_GATEWAY,
+    externalUrlOpener: REMOTE_COMPARE_URL_OPENER,
   });
   return (
     <LocalAgentModeView
@@ -279,6 +289,7 @@ function LocalAgentModeView({
   newThreadPicker = null,
   threadNotifications = null,
   threadNotificationsVisible = true,
+  remotePortPreview = null,
   viewCommands = null,
   workspaceRoot,
   onSelectedThreadChange,
@@ -535,6 +546,19 @@ function LocalAgentModeView({
       toggleRail,
       toggleRightPanel,
     });
+  const serverPorts = useAgentServerPorts({
+    wiring: remotePortPreview,
+    gateway: remoteContext?.gateway ?? null,
+    servers: remoteContext?.servers ?? NO_REMOTE_SERVERS,
+    thread: selectedThread,
+    terminalOpen: layout.rightPanel === "open" && layout.activeSurface === "terminal",
+    clipboard: textClipboard,
+    reportNotice: setLocalNotice,
+  });
+  const serverPortsMenu = useMemo(
+    () => (serverPorts.menu === null ? null : <RemotePortPreviewMenu menu={serverPorts.menu} />),
+    [serverPorts.menu],
+  );
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scriptsTarget = useMemo(
     () =>
@@ -1067,6 +1091,7 @@ function LocalAgentModeView({
                 onToggleRightPanel={toggleRightPanelCommand}
                 project={headerProject}
                 scripts={headerScripts}
+                serverPorts={serverPortsMenu}
                 shortcuts={chrome.shortcuts}
                 thread={selectedThread}
                 trailingExtras={AGENTS_TOGGLE_BUTTON}
@@ -1174,6 +1199,7 @@ function LocalAgentModeView({
                   artifactPreview={artifactPreview}
                   localFileLinks={localFileLinks}
                   remoteFileLinks={remoteFileLinks.port}
+                  serverLoopback={serverPorts.serverLoopback}
                   attachmentImages={agents.attachmentImages}
                   onRevealAttachment={revealAttachment}
                   findBar={

@@ -43,9 +43,11 @@ import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
 import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
 import type { AgentProseContext } from "./AgentAssistantText";
 import {
+  agentThreadLinks,
   openAgentMarkdownLink,
   type AgentExternalLinkOpener,
   type AgentLocalFileLinkPort,
+  type AgentServerLoopbackPort,
 } from "./agentMarkdownLinks";
 import type { AgentRemoteFileLinkPort } from "./agentRemoteFileLinks";
 import { useAgentThreadFileLinkScope } from "./useAgentThreadFileLinkScope";
@@ -128,6 +130,7 @@ export interface AgentThreadSessionProps {
   readonly openExternalLink?: AgentExternalLinkOpener;
   readonly localFileLinks?: AgentLocalFileLinkPort | null;
   readonly remoteFileLinks?: AgentRemoteFileLinkPort | null;
+  readonly serverLoopback?: AgentServerLoopbackPort | null;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly attachmentImages?: AgentAttachmentImagesSurface | null;
   readonly onRevealAttachment?: (threadId: string, attachmentId: string) => void;
@@ -155,13 +158,21 @@ export interface AgentThreadSessionProps {
 
 export function AgentThreadSession(props: AgentThreadSessionProps) {
   const thread = props.thread;
+  const pendingSend = props.pendingSend ?? null;
+  const pendingOnServer =
+    pendingSend?.target.kind === "new" && pendingSend.target.projectRootKey.startsWith("remote:");
+  const openLink = props.openExternalLink ?? openAgentMarkdownLink;
+  const serverLoopback = props.serverLoopback ?? null;
+  const pendingLinks = useMemo(
+    () => agentThreadLinks(openLink, serverLoopback, pendingOnServer),
+    [openLink, pendingOnServer, serverLoopback],
+  );
   if (thread === null) {
-    const pendingSend = props.pendingSend ?? null;
     if (pendingSend !== null)
       return (
         <AgentPendingThreadStart
           onDismiss={props.onDismissPendingSend ?? ignorePendingSendDismissal}
-          openExternalLink={props.openExternalLink ?? openAgentMarkdownLink}
+          openExternalLink={pendingLinks.openExternal}
           send={pendingSend}
           textClipboard={props.textClipboard ?? null}
         />
@@ -213,9 +224,10 @@ function AgentThreadSessionBody({
   textClipboard = null,
   markdownRenderer,
   markdownViewport,
-  openExternalLink = openAgentMarkdownLink,
+  openExternalLink: openLinkOnThisComputer = openAgentMarkdownLink,
   localFileLinks = null,
   remoteFileLinks = null,
+  serverLoopback = null,
   externalHistoryState,
   onRetryExternalHistory,
   thread,
@@ -303,10 +315,21 @@ function AgentThreadSessionBody({
     [codeColorizer, monacoTheme],
   );
   const remoteExecution = thread.execution?.kind === "remote";
+  const { openExternal: openExternalLink, linkTitle } = useMemo(
+    () => agentThreadLinks(openLinkOnThisComputer, serverLoopback, remoteExecution),
+    [openLinkOnThisComputer, remoteExecution, serverLoopback],
+  );
   const localFiles = useAgentThreadFileLinkScope(localFileLinks, remoteFileLinks, thread);
   const prose = useMemo<AgentProseContext>(
-    () => ({ markdown, openExternalLink, localFiles, viewport, onParsed: followLatest }),
-    [followLatest, localFiles, markdown, openExternalLink, viewport],
+    () => ({
+      markdown,
+      openExternalLink,
+      localFiles,
+      linkTitle,
+      viewport,
+      onParsed: followLatest,
+    }),
+    [followLatest, linkTitle, localFiles, markdown, openExternalLink, viewport],
   );
 
   const ownsViewport = markdownViewport === undefined;

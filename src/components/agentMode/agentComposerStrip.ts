@@ -48,9 +48,13 @@ export type AgentComposerThreadBranch =
       readonly repositoryRoot: string;
       readonly running: boolean;
     }
-  | { readonly kind: "worktree"; readonly branch: string | null; readonly detail: string | null };
+  | { readonly kind: "worktree"; readonly branch: string | null; readonly detail: string | null }
+  | { readonly kind: "serverCheckout" };
 
 const NO_THREAD_BRANCH: AgentComposerThreadBranch = Object.freeze({ kind: "none" });
+const SERVER_CHECKOUT_BRANCH: AgentComposerThreadBranch = Object.freeze({
+  kind: "serverCheckout",
+});
 
 export function agentComposerStrip(input: AgentComposerStripInput): AgentComposerStrip {
   switch (input.kind) {
@@ -62,7 +66,8 @@ export function agentComposerStrip(input: AgentComposerStripInput): AgentCompose
 }
 
 export function agentComposerThreadBranch(view: AgentThreadView | null): AgentComposerThreadBranch {
-  if (view === null || view.execution?.kind === "remote") return NO_THREAD_BRANCH;
+  if (view === null) return NO_THREAD_BRANCH;
+  if (view.execution?.kind === "remote") return remoteThreadBranch(view);
   const { thread } = view;
   if (thread.target.isolation === "in-place" && thread.target.worktreePath === null) {
     return {
@@ -122,6 +127,19 @@ function fallbackMachine(serverName: string | null): AgentMachine {
 function fallbackCheckout(isolation: AgentTaskIsolation, machine: AgentMachine): AgentCheckoutKind {
   if (isolation === "worktree") return "worktree";
   return machine.kind === "server" ? "serverCheckout" : "localCheckout";
+}
+
+function remoteThreadBranch(view: AgentThreadView): AgentComposerThreadBranch {
+  if (view.execution?.gitShip !== true) return NO_THREAD_BRANCH;
+  if (view.thread.target.isolation === "in-place") return SERVER_CHECKOUT_BRANCH;
+  const status = agentShipStatus(view.ship);
+  if (status === null) return NO_THREAD_BRANCH;
+  const base = status.primary.branch;
+  return {
+    kind: "worktree",
+    branch: status.worktree.branch,
+    detail: base === null ? null : `from ${base}`,
+  };
 }
 
 function aheadDetail(view: AgentThreadView): string | null {

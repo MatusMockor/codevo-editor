@@ -112,6 +112,7 @@ function useStableThreadBranch(thread: AgentThreadView | null): AgentComposerThr
   const detail = next.kind === "worktree" ? next.detail : null;
   return useMemo<AgentComposerThreadBranch>(() => {
     if (kind === "worktree") return { kind, branch: worktreeBranch, detail };
+    if (kind === "serverCheckout") return { kind };
     if (
       kind === "none" ||
       threadId === null ||

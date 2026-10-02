@@ -89,6 +89,42 @@ const withMarker = (
   return next.set(port, marker);
 };
 
+type ListedPort = RemotePortListing["ports"][number];
+
+const samePort = (left: ListedPort, right: ListedPort | undefined): boolean =>
+  right !== undefined &&
+  left.port === right.port &&
+  left.address === right.address &&
+  left.source === right.source &&
+  left.process === right.process &&
+  left.forward?.localPort === right.forward?.localPort &&
+  left.forward?.state === right.forward?.state;
+
+const sameListing = (current: RemotePortListing | null, next: RemotePortListing): boolean =>
+  current !== null &&
+  current.truncated === next.truncated &&
+  current.ports.length === next.ports.length &&
+  current.ports.every((entry, index) => samePort(entry, next.ports[index]));
+
+const sameMarkers = (
+  left: ReadonlyMap<number, RemotePortLocalMarker>,
+  right: ReadonlyMap<number, RemotePortLocalMarker>,
+): boolean =>
+  left.size === right.size && [...left].every(([port, marker]) => right.get(port) === marker);
+
+const listedState = (
+  state: RemotePortPreviewState,
+  listing: RemotePortListing,
+): RemotePortPreviewState => {
+  const markers = retainListedMarkers(state.markers, listing);
+  const unchanged =
+    state.status === "ready" &&
+    sameListing(state.listing, listing) &&
+    sameMarkers(state.markers, markers);
+  if (unchanged) return state;
+  return { ...state, status: "ready", listing, error: null, markers };
+};
+
 export const remotePortPreviewReducer = (
   state: RemotePortPreviewState,
   action: RemotePortPreviewAction,
@@ -103,14 +139,9 @@ export const remotePortPreviewReducer = (
   if (action.key !== state.key) return state;
   switch (action.type) {
     case "listed":
-      return {
-        ...state,
-        status: "ready",
-        listing: action.listing,
-        error: null,
-        markers: retainListedMarkers(state.markers, action.listing),
-      };
+      return listedState(state, action.listing);
     case "listFailed":
+      if (state.status === "error" && state.error === action.error) return state;
       return { ...state, status: "error", error: action.error };
     case "mark":
       return { ...state, markers: withMarker(state.markers, action.port, action.marker) };

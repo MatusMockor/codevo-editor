@@ -27,6 +27,10 @@ export const SURFACE_REMOTE_NO_PROJECT_DESCRIPTION =
 export const SURFACE_REMOTE_NO_THREAD_DESCRIPTION =
   "Select a server conversation to review its changes.";
 
+export function isRemoteGitShipThread(thread: AgentThreadView | null): boolean {
+  return thread?.execution?.kind === "remote" && thread.execution.gitShip === true;
+}
+
 export function isRemoteAgentSurfaceThread(thread: AgentThreadView | null): boolean {
   return (
     thread !== null &&
@@ -236,7 +240,9 @@ export function agentSurfaceBlockedReason(
   if (kind === "editor")
     return isRemoteAgentSurfaceThread(thread) ? SURFACE_REMOTE_UNAVAILABLE_REASON : null;
   if (isRemoteAgentSurfaceThread(thread))
-    return kind === "diff" ? null : SURFACE_REMOTE_UNAVAILABLE_REASON;
+    return kind === "diff" || (kind === "git" && isRemoteGitShipThread(thread))
+      ? null
+      : SURFACE_REMOTE_UNAVAILABLE_REASON;
   if (kind === "files" || kind === "history") return filesSurfaceBlockedReason(thread);
   if (thread === null) {
     if (scope.kind !== "repository" || scope.rootPath !== workspaceRoot) {

@@ -1,3 +1,4 @@
+import type { RemoteComposerGit } from "../../application/useRemoteDraftGitBase";
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
 import { codexUnavailableModelNotice } from "./codexLaunchPresentation";
@@ -158,6 +159,7 @@ export interface AgentComposerProps {
   onSelectRepository(repositoryRoot: string): void;
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
+  readonly remoteGit?: RemoteComposerGit | null;
   readonly worktreeBase?: AgentWorktreeBase;
   onWorktreeBaseChange?(base: AgentWorktreeBase): void;
   onRefreshIsolation?(): void;
@@ -205,6 +207,7 @@ export function AgentComposer({
   mode,
   onIsolationChange,
   worktreeBase = HEAD_WORKTREE_BASE,
+  remoteGit = null,
   onWorktreeBaseChange = ignoreWorktreeBase,
   onRefreshIsolation,
   onLaunchChange,
@@ -484,9 +487,11 @@ export function AgentComposer({
       remote: executionServerId !== null,
       worktreeBase,
       previousWorktree: selectedPreviousWorktree,
+      remoteGit,
       onWorktreeBaseChange,
     }),
     [
+      remoteGit,
       target,
       isolation,
       followUp,

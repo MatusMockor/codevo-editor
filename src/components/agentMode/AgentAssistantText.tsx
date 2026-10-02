@@ -11,7 +11,11 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentMarkdownBlockView } from "./AgentMarkdown";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { agentTextParagraphs } from "./agentModePresentation";
-import type { AgentExternalLinkOpener, AgentLocalFileLinkScope } from "./agentMarkdownLinks";
+import type {
+  AgentExternalLinkOpener,
+  AgentLinkTitle,
+  AgentLocalFileLinkScope,
+} from "./agentMarkdownLinks";
 import { agentMarkdownPathLinks } from "./agentMarkdownPathLinks";
 import { HighlightRun } from "./agentThreadHighlight";
 import { useAgentMarkdownLinkActivation } from "./useAgentMarkdownLinkActivation";
@@ -27,6 +31,7 @@ export interface AgentProseContext {
   readonly markdown: AgentMarkdownRendererState;
   readonly openExternalLink: AgentExternalLinkOpener;
   readonly localFiles: AgentLocalFileLinkScope | null;
+  readonly linkTitle?: AgentLinkTitle | null;
   readonly viewport: AgentMarkdownViewport | null;
   readonly onParsed: () => void;
 }
@@ -134,6 +139,7 @@ export const AgentAssistantText = memo(function AgentAssistantText({
           current={current}
           hitOffset={presentation.hitOffsets[index] ?? 0}
           key={block.key}
+          linkTitle={prose.linkTitle ?? null}
           onActivateLink={activateLink}
           pathLinks={pathLinks}
           query={query}

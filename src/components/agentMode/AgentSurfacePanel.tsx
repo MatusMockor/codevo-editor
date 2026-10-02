@@ -32,7 +32,11 @@ import { useAgentPanelKeyboardResize } from "./agentSurfaceResize";
 import type { AgentSurfaceDiffProps } from "./AgentSurfaceDiff";
 import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
 import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
-import { isRemoteAgentSurfaceThread, type AgentSurfaceScope } from "./agentSurfacePolicy";
+import {
+  isRemoteAgentSurfaceThread,
+  isRemoteGitShipThread,
+  type AgentSurfaceScope,
+} from "./agentSurfacePolicy";
 import {
   agentSurfaceEditorSlot,
   agentSurfaceServes,
@@ -143,6 +147,7 @@ export function AgentSurfacePanel({
     remote: server,
     threadPresent: thread !== null,
     remoteCapabilities: remoteSurfaceCapabilities(remoteSurface),
+    remoteGit: isRemoteGitShipThread(thread),
     unavailable: unavailable !== null,
     hidden,
   };

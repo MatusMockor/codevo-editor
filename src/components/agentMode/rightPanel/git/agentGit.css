@@ -395,3 +395,46 @@
   box-shadow: var(--cv-ring-focus);
   border-radius: var(--cv-r-control);
 }
+
+.cv-git-remote__branch {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--cv-space-3);
+  padding: 0 var(--cv-space-3);
+  color: var(--cv-fg-subtle);
+}
+
+.cv-git-remote__name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+  color: var(--cv-fg-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-git-remote__base {
+  flex: none;
+  font-size: var(--cv-t-xs);
+  color: var(--cv-fg-subtle);
+  white-space: nowrap;
+}
+
+.cv-git-remote__fact {
+  margin: 0;
+  padding: var(--cv-space-2) var(--cv-space-2);
+  font-size: var(--cv-t-xs);
+  color: var(--cv-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.cv-git-remote__hint {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--cv-t-2xs);
+  color: var(--cv-fg-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

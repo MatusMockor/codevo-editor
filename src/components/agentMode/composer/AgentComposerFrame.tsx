@@ -1,3 +1,4 @@
+import type { RemoteComposerGit } from "../../../application/useRemoteDraftGitBase";
 import type { ReactNode } from "react";
 import type { AgentTaskIsolation } from "../../../domain/agentTask";
 import type { AgentWorktreeBase } from "../../../domain/agentWorktreeBase";
@@ -14,6 +15,7 @@ export interface AgentComposerDrawerContext {
   readonly remote: boolean;
   readonly worktreeBase: AgentWorktreeBase;
   readonly previousWorktree?: AgentComposerPreviousWorktree | null;
+  readonly remoteGit?: RemoteComposerGit | null;
   onWorktreeBaseChange(base: AgentWorktreeBase): void;
 }
 
