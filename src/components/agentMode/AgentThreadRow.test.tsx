@@ -233,26 +233,97 @@ describe("AgentThreadRow", () => {
     return element as HTMLElement;
   };
 
-  it("adds only a server indicator to the existing thread row", () => {
+  const remoteExecution = {
+    kind: "remote",
+    serverId: "server-1",
+    runnerId: "runner-1",
+    projectId: "project-1",
+    conversationId: "conversation-1",
+    latestTaskId: "task-1",
+    resume: null,
+  } as const;
+
+  const runtimeBadge = (): HTMLElement => {
+    const badge = host.querySelector<HTMLElement>(".cv-card-row__runtime");
+    expect(badge).not.toBeNull();
+    return badge as HTMLElement;
+  };
+
+  it("shows a local Claude runtime pair on line one, outside the status slot", () => {
+    render(pinnedDone());
+    const badge = runtimeBadge();
+    expect(badge.parentElement).toBe(line1());
+    expect(badge.closest(".cv-card-row__slot")).toBeNull();
+    expect(badge.nextElementSibling?.classList.contains("cv-card-row__slot")).toBe(true);
+    expect(badge.getAttribute("role")).toBe("img");
+    expect(badge.getAttribute("aria-label")).toBe("Claude Code, local");
+    expect(badge.getAttribute("title")).toBe("Claude Code, local");
+    const place = badge.querySelector(".cv-card-row__runtime-place");
+    expect(place?.getAttribute("data-place")).toBe("local");
+    expect(place?.getAttribute("aria-hidden")).toBe("true");
+    expect(place?.querySelector("svg.lucide-laptop")).not.toBeNull();
+    const provider = badge.querySelector(".agent-row__provider");
+    expect(provider?.classList.contains("agent-row__provider--claude")).toBe(true);
+    expect(provider?.getAttribute("aria-hidden")).toBe("true");
+    expect(badge.querySelectorAll('[role="img"]')).toHaveLength(0);
+  });
+
+  it("shows a remote Codex runtime pair naming the server and drops the title server icon", () => {
     const local = pinnedDone();
-    render(local);
-    const title = host.querySelector(".cv-card-row__title")?.textContent;
-    expect(host.querySelector('[aria-label="Runs on server"]')).toBeNull();
-    render({
+    const view: AgentThreadView = {
       ...local,
-      execution: {
-        kind: "remote",
-        serverId: "server-1",
-        runnerId: "runner-1",
-        projectId: "project-1",
-        conversationId: "conversation-1",
-        latestTaskId: "task-1",
-        resume: null,
-      },
-    });
-    expect(host.querySelector('[role="img"][aria-label="Runs on server"]')).not.toBeNull();
-    expect(host.querySelector(".cv-card-row__title")?.textContent).toBe(title);
+      thread: { ...local.thread, provider: { kind: "codex", sessionId: null } },
+      execution: remoteExecution,
+    };
+    renderLocated(view, { servers: [{ id: "server-1", name: "build-box" }] });
+    const badge = runtimeBadge();
+    expect(badge.parentElement).toBe(line1());
+    expect(badge.getAttribute("aria-label")).toBe("Codex, on build-box");
+    expect(badge.getAttribute("title")).toBe("Codex, on build-box");
+    const place = badge.querySelector(".cv-card-row__runtime-place");
+    expect(place?.getAttribute("data-place")).toBe("server");
+    expect(place?.querySelector("svg.lucide-server")).not.toBeNull();
+    expect(badge.querySelector(".agent-row__provider--codex")).not.toBeNull();
+    const title = host.querySelector(".cv-card-row__title");
+    expect(title?.textContent).toBe(local.thread.title);
+    expect(title?.querySelector("svg")).toBeNull();
+    expect(host.querySelector('[aria-label="Runs on server"]')).toBeNull();
     expect(line1().querySelector('.cv-card-row__status[data-tone="ok"]')).not.toBeNull();
+
+    renderLocated(view);
+    expect(runtimeBadge().getAttribute("aria-label")).toBe("Codex, on server");
+  });
+
+  it("renders the runtime pair in the grouped head before the slot", () => {
+    act(() => {
+      root.render(
+        <AgentClockProvider>
+          <ul role="listbox">
+            <AgentThreadRow
+              focused={false}
+              grouped
+              jumpLabel={null}
+              on={false}
+              onMenuCommand={() => undefined}
+              onSelect={() => undefined}
+              pending={null}
+              projectLabel="app"
+              selected={false}
+              view={pinnedDone()}
+            />
+          </ul>
+        </AgentClockProvider>,
+      );
+    });
+    const head = host.querySelector(".cv-card-row__head");
+    expect(head).not.toBeNull();
+    expect(host.querySelector(".cv-card-row__l1")).toBeNull();
+    const badge = runtimeBadge();
+    expect(badge.parentElement).toBe(head);
+    expect(badge.closest(".cv-card-row__slot")).toBeNull();
+    expect(badge.nextElementSibling?.classList.contains("cv-card-row__slot")).toBe(true);
+    expect(badge.previousElementSibling?.classList.contains("cv-card-row__pin")).toBe(true);
+    expect(badge.getAttribute("aria-label")).toBe("Claude Code, local");
   });
 
   it("keeps background monitoring stoppable and unarchivable until the process exits", () => {
@@ -339,7 +410,8 @@ describe("AgentThreadRow", () => {
     const line3 = host.querySelector<HTMLElement>(".cv-card-row__l3");
     expect(line3?.firstElementChild?.classList.contains("cv-card-row__glyph")).toBe(true);
     expect(line3?.children[1]?.classList.contains("cv-card-row__branch")).toBe(true);
-    expect(line3?.querySelector('[aria-label="Claude Code"]')).toBeNull();
+    expect(line3?.querySelector(".agent-row__provider")).toBeNull();
+    expect(line3?.querySelector(".cv-card-row__runtime")).toBeNull();
   });
 
   const renderLocated = (
@@ -460,9 +532,7 @@ describe("AgentThreadRow", () => {
     renderLocated(view, { servers: [{ id: "server-1", name: "build-box" }] });
     expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("build-box · app");
     expect(token()).toEqual({ glyph: "server", label: "Server checkout" });
-    expect(
-      host.querySelector('[role="img"][aria-label="Runs on server"]')?.getAttribute("title"),
-    ).toBe("Runs on build-box");
+    expect(runtimeBadge().getAttribute("title")).toBe("Claude Code, on build-box");
 
     renderLocated(view);
     expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("Server · app");

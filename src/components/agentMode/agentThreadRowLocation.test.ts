@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentShipState } from "../../domain/agentShip";
+import type { AgentCliKind } from "../../domain/agentTask";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
   agentThreadRowLocation,
   agentThreadRowProjectLine,
+  agentThreadRowRuntime,
   agentThreadRowServerName,
 } from "./agentThreadRowLocation";
 
@@ -128,5 +130,38 @@ describe("agentThreadRowProjectLine", () => {
   it("prefixes the server name for a remote thread", () => {
     expect(agentThreadRowProjectLine("orders-api", "build-box")).toBe("build-box · orders-api");
     expect(agentThreadRowProjectLine("app", null)).toBe("app");
+  });
+});
+
+describe("agentThreadRowRuntime", () => {
+  function withProvider(view: AgentThreadView, kind: AgentCliKind): AgentThreadView {
+    return { ...view, thread: { ...view.thread, provider: { kind, sessionId: null } } };
+  }
+  const codex = (view: AgentThreadView): AgentThreadView => withProvider(view, "codex");
+
+  it("labels a local thread by its provider", () => {
+    expect(agentThreadRowRuntime(withProvider(inPlace(), "claudeCode"), null)).toEqual({
+      place: "local",
+      provider: "claudeCode",
+      label: "Claude Code, local",
+    });
+    expect(agentThreadRowRuntime(codex(inPlace()), "ignored")).toEqual({
+      place: "local",
+      provider: "codex",
+      label: "Codex, local",
+    });
+  });
+
+  it("names the connected server of a remote thread", () => {
+    expect(agentThreadRowRuntime(codex(remote(inPlace())), "build-box")).toEqual({
+      place: "server",
+      provider: "codex",
+      label: "Codex, on build-box",
+    });
+  });
+
+  it("falls back to a generic server when the name is unknown or blank", () => {
+    expect(agentThreadRowRuntime(codex(remote(inPlace())), null).label).toBe("Codex, on server");
+    expect(agentThreadRowRuntime(codex(remote(inPlace())), "  ").label).toBe("Codex, on server");
   });
 });

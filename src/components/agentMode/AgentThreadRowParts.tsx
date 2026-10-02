@@ -4,12 +4,15 @@ import {
   CircleAlert,
   CircleDashed,
   CircleStop,
+  Laptop,
   MessageCircleQuestionMark,
   Server,
   ShieldQuestionMark,
   type LucideProps,
 } from "lucide-react";
+import { AgentProviderGlyph } from "./AgentProviderGlyph";
 import { AgentCompactRelativeTime, AgentRowElapsed } from "./agentClock";
+import type { AgentThreadRowRuntime, AgentThreadRowRuntimePlace } from "./agentThreadRowLocation";
 import {
   agentRowStatusLabel,
   agentRowStatusTitle,
@@ -124,7 +127,7 @@ export function RemoteThreadIndicator({ serverId }: { readonly serverId?: string
   return <RemoteServerIndicator name={name} />;
 }
 
-export function RemoteServerIndicator({ name }: { readonly name: string | null }) {
+function RemoteServerIndicator({ name }: { readonly name: string | null }) {
   return (
     <span
       aria-label="Runs on server"
@@ -134,6 +137,34 @@ export function RemoteServerIndicator({ name }: { readonly name: string | null }
       title={name === null ? "Runs on server" : `Runs on ${name}`}
     >
       <Server aria-hidden="true" size={13} />
+    </span>
+  );
+}
+
+const RUNTIME_PLACE_ICONS: Readonly<
+  Record<AgentThreadRowRuntimePlace, ComponentType<LucideProps>>
+> = {
+  local: Laptop,
+  server: Server,
+};
+
+export function AgentThreadRowRuntimeBadge({
+  runtime,
+}: {
+  readonly runtime: AgentThreadRowRuntime;
+}) {
+  const PlaceIcon = RUNTIME_PLACE_ICONS[runtime.place];
+  return (
+    <span
+      aria-label={runtime.label}
+      className="cv-card-row__runtime"
+      role="img"
+      title={runtime.label}
+    >
+      <span aria-hidden="true" className="cv-card-row__runtime-place" data-place={runtime.place}>
+        <PlaceIcon size={12} />
+      </span>
+      <AgentProviderGlyph decorative kind={runtime.provider} />
     </span>
   );
 }

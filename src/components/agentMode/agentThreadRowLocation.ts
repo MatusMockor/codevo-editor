@@ -5,7 +5,9 @@ import {
   agentThreadLocation,
   type AgentWorkspaceLocation,
 } from "../../domain/agentWorkspaceLocation";
+import type { AgentCliKind } from "../../domain/agentTask";
 import { agentShipBranchLabel } from "./agentModePresentation";
+import { agentProviderLabel } from "./agentSidebarPresentation";
 
 export type AgentThreadRowGlyph = "localCheckout" | "worktree" | "server";
 
@@ -63,6 +65,28 @@ export function agentThreadRowGroupedContext(
     (part): part is string => part !== null && part !== "",
   );
   return parts.length === 0 ? null : parts.join(SEPARATOR);
+}
+
+export type AgentThreadRowRuntimePlace = "local" | "server";
+
+export interface AgentThreadRowRuntime {
+  readonly place: AgentThreadRowRuntimePlace;
+  readonly provider: AgentCliKind;
+  readonly label: string;
+}
+
+export function agentThreadRowRuntime(
+  view: AgentThreadView,
+  connectedServerName: string | null,
+): AgentThreadRowRuntime {
+  const provider = view.thread.provider.kind;
+  const providerLabel = agentProviderLabel(provider);
+  if (view.execution?.kind !== "remote") {
+    return { place: "local", provider, label: `${providerLabel}, local` };
+  }
+  const name = connectedServerName?.trim() ?? "";
+  const where = name === "" ? "server" : name;
+  return { place: "server", provider, label: `${providerLabel}, on ${where}` };
 }
 
 function knownBranch(view: AgentThreadView, input: AgentThreadRowLocationInput): string | null {

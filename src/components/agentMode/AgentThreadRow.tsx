@@ -16,8 +16,8 @@ import {
 } from "../../domain/agentTurnContentLoss";
 import type { ListSelectionModifiers } from "../../domain/listSelection";
 import {
+  AgentThreadRowRuntimeBadge,
   AgentThreadRowStatusSlot,
-  RemoteServerIndicator,
   RenameInput,
 } from "./AgentThreadRowParts";
 import { agentShipBranchLabel } from "./agentModePresentation";
@@ -34,6 +34,7 @@ import { useAgentThreadRowPlace } from "./agentThreadBranchMemoryContext";
 import {
   agentThreadRowGroupedContext,
   agentThreadRowProjectLine,
+  agentThreadRowRuntime,
   type AgentThreadRowGlyph,
 } from "./agentThreadRowLocation";
 import { useAgentRowBackgroundActivity } from "./useAgentRowBackgroundActivity";
@@ -154,6 +155,9 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       <Pin aria-hidden="true" size={12} />
     </span>
   );
+  const runtimeNode = (
+    <AgentThreadRowRuntimeBadge runtime={agentThreadRowRuntime(view, place.connectedServerName)} />
+  );
   const slotNode = (
     <span className="cv-card-row__slot">
       <AgentThreadRowStatusSlot status={status} updatedAtEpochMs={thread.updatedAtEpochMs} />
@@ -166,12 +170,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       onCommit={commitRename}
     />
   ) : (
-    <span className="cv-card-row__title">
-      {view.execution?.kind === "remote" && (
-        <RemoteServerIndicator name={place.connectedServerName} />
-      )}
-      {model.title}
-    </span>
+    <span className="cv-card-row__title">{model.title}</span>
   );
   return (
     <li className="cv-sb-item" data-menu-open={menu.open ? "true" : undefined} role="none">
@@ -193,6 +192,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           <span className="cv-card-row__head">
             {titleNode}
             {pinNode}
+            {runtimeNode}
             {slotNode}
           </span>
         ) : (
@@ -205,6 +205,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
                 {agentThreadRowProjectLine(model.project, place.serverName)}
               </span>
               {pinNode}
+              {runtimeNode}
               {slotNode}
             </span>
             {titleNode}
