@@ -7,10 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.0-beta.83] - 2026-10-02
+## [0.2.0-beta.84] - 2026-10-02
 
 ### Fixed
 
+- Modal dialogs are centered in the window.
+- The composer no longer shows a "clean repository" caption.
 - Choosing a project in the sidebar switcher, or clicking its name, switches the editor
   to that project's tab like clicking the tab itself; the switcher lists every open
   project with a coloured badge and a gear for its actions, like t3code.
