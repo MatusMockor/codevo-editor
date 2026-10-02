@@ -48,6 +48,7 @@ function defaults(): AgentThreadListProps {
     currentProjectRootKey: null,
     projectActions: {
       onToggleCollapsed: () => undefined,
+      onActivate: () => undefined,
       onToggleShowingAll: () => undefined,
       onNewThread: () => undefined,
       onProjectCommand: () => undefined,

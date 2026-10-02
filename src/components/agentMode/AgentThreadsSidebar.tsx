@@ -42,7 +42,9 @@ import type { AgentTurnLogEvidenceLookup } from "../../domain/agentTurnContentLo
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
+import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import {
+  agentRailFocusedEntries,
   agentRailOwnedViews,
   agentRailProjectSections,
   agentRailVisibleThreadOrder,
@@ -119,6 +121,10 @@ export interface AgentThreadsSidebarProps {
   readonly footerActivity?: ReactNode;
   readonly newThreadTitle?: string;
   readonly projectDisclosure: AgentRailProjectDisclosure;
+  readonly projectFocus: AgentRailProjectFocus;
+  onShowAllProjects(): void;
+  onSwitchProject(projectRootKey: string): void;
+  onFocusProject(projectRootKey: string): void;
   onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -154,12 +160,16 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onOpenSourceControl,
   onOpenUsage,
   onSelectThread,
+  onShowAllProjects,
+  onSwitchProject,
+  onFocusProject,
   onThreadBulkCommand,
   onThreadMenuCommand,
   onTogglePin,
   overflowRootPaths,
   pendingInteractions,
   projectDisclosure,
+  projectFocus,
   scope,
   scopeEntries,
   search,
@@ -187,6 +197,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const menuCommand = useStableCallback(onThreadMenuCommand);
   const newThreadInProject = useStableCallback(onNewThreadInProject);
   const projectCommand = useStableCallback(onProjectCommand);
+  const switchProject = useStableCallback(onSwitchProject);
+  const focusProject = useStableCallback(onFocusProject);
 
   const serverNames = useAgentRowServerNames();
   const views = useMemo(() => agentRailViews(groups), [groups]);
@@ -210,15 +222,26 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     );
     return () => clearTimeout(timer);
   }, [views, organizationNow]);
-  const ownedViews = useMemo(() => agentRailOwnedViews(views, scopeEntries), [scopeEntries, views]);
+  const currentProjectRootKey =
+    scope === null
+      ? null
+      : (agentRailScopeEntryFor(scopeEntries, scope.projectRootKey)?.projectRootKey ?? null);
+  const visibleEntries = useMemo(
+    () => agentRailFocusedEntries(scopeEntries, projectFocus, currentProjectRootKey),
+    [currentProjectRootKey, projectFocus, scopeEntries],
+  );
+  const ownedViews = useMemo(
+    () => agentRailOwnedViews(views, visibleEntries),
+    [visibleEntries, views],
+  );
   const sections = useMemo(
     () => agentRailSections(ownedViews, Math.max(organizationNow, Date.now())),
     [ownedViews, organizationNow],
   );
   const disclosureState = projectDisclosure.state;
   const projects = useMemo(
-    () => agentRailProjectSections(sections, scopeEntries, disclosureState, selectedThreadId),
-    [disclosureState, scopeEntries, sections, selectedThreadId],
+    () => agentRailProjectSections(sections, visibleEntries, disclosureState, selectedThreadId),
+    [disclosureState, visibleEntries, sections, selectedThreadId],
   );
   const shelvedViews = useMemo(
     () => [
@@ -254,13 +277,10 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     () => [...threadOrder, ...shelvedViews.map((view) => view.thread.threadId)],
     [shelvedViews, threadOrder],
   );
-  const currentProjectRootKey =
-    scope === null
-      ? null
-      : (agentRailScopeEntryFor(scopeEntries, scope.projectRootKey)?.projectRootKey ?? null);
   const projectActions = useMemo<AgentRailProjectGroupActions>(
     () => ({
       onToggleCollapsed: projectDisclosure.toggleCollapsed,
+      onActivate: switchProject,
       onToggleShowingAll: projectDisclosure.toggleShowingAll,
       onNewThread: newThreadInProject,
       onProjectCommand: projectCommand,
@@ -270,6 +290,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       projectCommand,
       projectDisclosure.toggleCollapsed,
       projectDisclosure.toggleShowingAll,
+      switchProject,
     ],
   );
   const focusedThreadId = rovingThreadId(focusRequest, selectedThreadId, visibleThreadIds);
@@ -452,7 +473,10 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         groups={groups}
         onAddProject={onAddProject}
         onNewThread={onNewThread}
+        onShowAllProjects={onShowAllProjects}
+        onSwitchProject={focusProject}
         overflowRootPaths={overflowRootPaths}
+        projectFocus={projectFocus}
         scope={scope}
         scopeEntries={scopeEntries}
         onSearchKeyDown={handleSearchKeyDown}

@@ -1298,7 +1298,7 @@ describe("AgentThreadsSidebar", () => {
     ).not.toBeNull();
   });
 
-  it("keeps Search, Add project and New thread in one row with the given New thread title", () => {
+  it("keeps Search, the project switcher, Add project and New thread in one row", () => {
     render({ newThreadTitle: "New thread in app (⇧⌘N) · ⌘N: choose project" });
 
     const row = host.querySelector(".cv-sb-search");
@@ -1306,7 +1306,10 @@ describe("AgentThreadsSidebar", () => {
       [...(row?.querySelectorAll<HTMLElement>("[aria-label]") ?? [])].map((node) =>
         node.getAttribute("aria-label"),
       ),
-    ).toEqual(["Search threads", "Add project", "New thread"]);
+    ).toEqual(["Search threads", "Switch project: app", "Add project", "New thread"]);
+    const switcher = row?.querySelector<HTMLButtonElement>(".cv-sb-switch");
+    expect(switcher?.textContent).toBe("AP");
+    expect(switcher?.title).toBe("app");
     expect(host.querySelector(".cv-sb-ws")).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.title).toBe(
       "New thread in app (⇧⌘N) · ⌘N: choose project",
@@ -1878,6 +1881,10 @@ describe("AgentThreadsSidebar", () => {
       onAddProject: vi.fn(),
       onProjectCommand: vi.fn(),
       onNewThreadInProject: vi.fn(),
+      onSwitchProject: vi.fn(),
+      onFocusProject: vi.fn(),
+      onShowAllProjects: vi.fn(),
+      projectFocus: "all",
       collapseShortcut: "Cmd+B",
       ...overrides,
     };

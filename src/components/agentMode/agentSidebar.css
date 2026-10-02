@@ -77,6 +77,153 @@
   line-height: 1;
 }
 
+.cv-sb-switch {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-control);
+  background: transparent;
+  color: var(--cv-fg-subtle);
+  cursor: pointer;
+}
+
+.cv-sb-switch:hover:not(:disabled),
+.cv-sb-switch[data-open="true"] {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.cv-sb-switch:focus-visible {
+  outline: 2px solid var(--cv-focus);
+  outline-offset: 2px;
+}
+
+.cv-sb-switch:disabled {
+  color: var(--cv-fg-disabled);
+  cursor: default;
+}
+
+.cv-sb-switch__badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 3px;
+  border-radius: var(--cv-r-xs);
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.cv-sb-switch[data-focused="true"] .cv-sb-switch__badge {
+  box-shadow: var(--cv-ring-hair-strong);
+}
+
+.cv-switch {
+  min-width: 240px;
+  max-width: 320px;
+  padding: 4px;
+}
+
+.cv-switch__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin: -4px -4px 4px;
+  padding: 0 12px;
+  box-shadow: var(--cv-edge-bottom-hair);
+  color: var(--cv-fg-subtle);
+}
+
+.cv-switch__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cv-fg-strong);
+  font: inherit;
+  font-size: var(--cv-t-md);
+  outline: none;
+}
+
+.cv-switch__search input::placeholder {
+  color: var(--cv-fg-subtle);
+}
+
+.cv-switch__list {
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.cv-switch__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--cv-r-sm);
+  color: var(--cv-fg);
+  cursor: pointer;
+  font-size: var(--cv-t-md);
+}
+
+.cv-switch__option > svg {
+  flex: none;
+  color: var(--cv-fg-subtle);
+}
+
+.cv-switch__option:hover,
+.cv-switch__option[data-highlighted="true"] {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+.cv-switch__option[aria-selected="true"] {
+  color: var(--cv-fg-strong);
+}
+
+.cv-switch__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-switch__state {
+  flex: none;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
+.cv-switch__option .cv-switch__check {
+  visibility: hidden;
+  color: var(--cv-fg-strong);
+}
+
+.cv-switch__option[aria-selected="true"] .cv-switch__check {
+  visibility: visible;
+}
+
+.cv-switch__none {
+  margin: 0;
+  padding: 8px;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+}
+
 .cv-sb-note {
   margin: 0;
   padding: 0 18px 6px;
@@ -497,16 +644,36 @@
   position: relative;
   display: flex;
   align-items: center;
+  border-radius: var(--cv-r-control);
+}
+
+.cv-sb-project__head:hover,
+.cv-sb-project__head[data-menu-open="true"] {
+  background: var(--cv-row-hover);
 }
 
 .cv-sb-project__toggle {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 30px;
+  padding: 0 0 0 4px;
+  border: 0;
+  border-radius: var(--cv-r-control);
+  background: transparent;
+  color: var(--cv-fg);
+  cursor: pointer;
+}
+
+.cv-sb-project__select {
   display: flex;
   flex: 1;
   align-items: center;
   gap: 6px;
   min-width: 0;
   height: 30px;
-  padding: 0 60px 0 6px;
+  padding: 0 60px 0 2px;
   border: 0;
   border-radius: var(--cv-r-control);
   background: transparent;
@@ -517,14 +684,14 @@
   text-align: left;
 }
 
-.cv-sb-project__toggle:hover,
-.cv-sb-project__head[data-menu-open="true"] .cv-sb-project__toggle {
-  background: var(--cv-row-hover);
-}
-
-.cv-sb-project__toggle:focus-visible {
+.cv-sb-project__toggle:focus-visible,
+.cv-sb-project__select:focus-visible {
   box-shadow: var(--cv-ring-focus);
   outline: none;
+}
+
+.cv-sb-project__toggle:hover .cv-sb-project__chevron {
+  color: var(--cv-fg-strong);
 }
 
 .cv-sb-project__chevron {

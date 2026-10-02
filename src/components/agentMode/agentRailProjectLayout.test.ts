@@ -5,6 +5,7 @@ import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
   AGENT_RAIL_PROJECT_PREVIEW_COUNT,
   ALL_PROJECTS_EXPANDED,
+  agentRailFocusedEntries,
   agentRailOwnedViews,
   agentRailProjectSections,
   agentRailThreadOrder,
@@ -176,5 +177,29 @@ describe("agent rail project layout", () => {
     ];
 
     expect(agentRailThreadOrder(views, entries, disclosure(), null, NOW)).toEqual(["live"]);
+  });
+});
+
+describe("agentRailFocusedEntries", () => {
+  const entries = [entry(APP, "app"), entry(API, "api", [REMOTE_API])];
+
+  it("keeps every project for all projects or without an active project", () => {
+    expect(agentRailFocusedEntries(entries, "all", APP)).toBe(entries);
+    expect(agentRailFocusedEntries(entries, "active", null)).toBe(entries);
+  });
+
+  it("narrows to the active project, including a linked member", () => {
+    expect(agentRailFocusedEntries(entries, "active", APP)).toEqual([entries[0]]);
+    expect(agentRailFocusedEntries(entries, "active", REMOTE_API)).toEqual([entries[1]]);
+  });
+
+  it("falls back to every project when the active project is gone", () => {
+    expect(agentRailFocusedEntries(entries, "active", "/workspace/gone")).toBe(entries);
+  });
+
+  it("orders keyboard navigation over the focused project only", () => {
+    const views = [thread("a1", APP), thread("b1", API)];
+    const focused = agentRailFocusedEntries(entries, "active", API);
+    expect(agentRailThreadOrder(views, focused, ALL_PROJECTS_EXPANDED, null, NOW)).toEqual(["b1"]);
   });
 });

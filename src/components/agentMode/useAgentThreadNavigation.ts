@@ -24,8 +24,10 @@ import { terminalTurnKey } from "./agentComposerLaunch";
 import type { ComposerScope } from "./agentComposerTarget";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { adjacentThreadId } from "./agentModeNavigation";
+import { ALL_PROJECTS_FOCUS, type AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import {
   ALL_PROJECTS_EXPANDED,
+  agentRailFocusedEntries,
   agentRailOwnedViews,
   agentRailThreadOrder,
   type AgentRailProjectDisclosureState,
@@ -78,6 +80,7 @@ export interface AgentThreadNavigationOptions {
   readonly session?: AgentNavigationSession;
   readonly authoritativeRemoteProjectKeys?: ReadonlySet<string>;
   readonly projectDisclosure?: AgentRailProjectDisclosureState;
+  readonly projectFocus?: AgentRailProjectFocus;
   revealProject?(projectRootKey: string): void;
 }
 
@@ -166,6 +169,7 @@ export function useAgentThreadNavigation({
   session,
   authoritativeRemoteProjectKeys,
   projectDisclosure = ALL_PROJECTS_EXPANDED,
+  projectFocus = ALL_PROJECTS_FOCUS,
   revealProject,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
   const projectSelections = useRef<AgentProjectSelectionMemory>(
@@ -583,8 +587,20 @@ export function useAgentThreadNavigation({
 
   const orderedThreadIds = useMemo(
     () =>
-      agentRailThreadOrder(presentationThreads, scopeEntries, projectDisclosure, selectedThreadId),
-    [presentationThreads, projectDisclosure, scopeEntries, selectedThreadId],
+      agentRailThreadOrder(
+        presentationThreads,
+        agentRailFocusedEntries(scopeEntries, projectFocus, railScope?.projectRootKey ?? null),
+        projectDisclosure,
+        selectedThreadId,
+      ),
+    [
+      presentationThreads,
+      projectDisclosure,
+      projectFocus,
+      railScope,
+      scopeEntries,
+      selectedThreadId,
+    ],
   );
   const openFind = find.openBar;
   const commands = useMemo<AgentNavigationCommandHandlers>(

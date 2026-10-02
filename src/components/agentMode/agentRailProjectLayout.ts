@@ -1,5 +1,7 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import {
+  agentRailScopeEntryFor,
   agentRailSections,
   type AgentRailScopeEntry,
   type AgentRailSections,
@@ -44,6 +46,16 @@ export function agentRailOwnerIndex(
     }
   }
   return index;
+}
+
+export function agentRailFocusedEntries(
+  entries: ReadonlyArray<AgentRailScopeEntry>,
+  focus: AgentRailProjectFocus,
+  activeProjectRootKey: string | null,
+): ReadonlyArray<AgentRailScopeEntry> {
+  if (focus === "all" || activeProjectRootKey === null) return entries;
+  const active = agentRailScopeEntryFor(entries, activeProjectRootKey);
+  return active === null ? entries : [active];
 }
 
 export function agentRailOwnedViews(

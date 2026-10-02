@@ -2,6 +2,8 @@ import type { RemoteAddProjectSession } from "../../application/useRemoteAddProj
 import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
 import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
+import { BrowserAgentRailProjectFocusPreference } from "../../infrastructure/browserAgentRailProjectFocusPreference";
+import type { AgentRailProjectFocusPreferencePort } from "../../application/agentRailProjectFocusPreferencePort";
 import {
   commandPaletteNewThreadPicker,
   type AgentNewThreadPicker,
@@ -183,6 +185,7 @@ export interface AgentWorkbenchScreenProps {
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
+  readonly projectFocusPreference?: AgentRailProjectFocusPreferencePort | null;
   readonly sessionRestore?: AgentSessionRestorePorts;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly revealPathGateway?: RevealPathGateway;
@@ -208,6 +211,7 @@ const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
 const DEFAULT_PROJECT_COLLAPSE_PREFERENCE = new BrowserAgentRailProjectCollapsePreference();
+const DEFAULT_PROJECT_FOCUS_PREFERENCE = new BrowserAgentRailProjectFocusPreference();
 const DEFAULT_SESSION_RESTORE = browserAgentSessionRestorePorts();
 const defaultThreadNotificationPorts = (): AgentThreadNotificationCenterPorts => ({
   focus: createDocumentAppFocusPort(),
@@ -243,6 +247,7 @@ export function AgentWorkbenchScreen({
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
   projectCollapsePreference = DEFAULT_PROJECT_COLLAPSE_PREFERENCE,
+  projectFocusPreference = DEFAULT_PROJECT_FOCUS_PREFERENCE,
   sessionRestore = DEFAULT_SESSION_RESTORE,
   newThreadPicker: injectedNewThreadPicker,
   workbench,
@@ -776,6 +781,7 @@ export function AgentWorkbenchScreen({
           projectsLoaded={projects.projectsLoaded}
           textClipboard={textClipboard}
           projectCollapsePreference={projectCollapsePreference}
+          projectFocusPreference={projectFocusPreference}
           newThreadPicker={newThreadPicker}
           viewCommands={workbenchAgentViewCommandBridge}
           threadNotifications={threadNotifications}

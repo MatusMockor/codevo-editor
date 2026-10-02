@@ -19,6 +19,7 @@ import type { AgentRailProjectSection } from "./agentRailProjectLayout";
 
 export interface AgentRailProjectGroupActions {
   onToggleCollapsed(projectRootKey: string): void;
+  onActivate(projectRootKey: string): void;
   onToggleShowingAll(projectRootKey: string): void;
   onNewThread(projectRootKey: string): void;
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
@@ -67,13 +68,22 @@ export function AgentRailProjectGroup({
       >
         <button
           aria-expanded={!collapsed}
+          aria-label={`${collapsed ? "Expand" : "Collapse"} ${label}`}
           className="cv-sb-project__toggle"
           onClick={() => actions.onToggleCollapsed(key)}
+          onContextMenu={openMenu}
+          type="button"
+        >
+          <ChevronRight aria-hidden="true" className="cv-sb-project__chevron" size={12} />
+        </button>
+        <button
+          aria-current={current ? "true" : undefined}
+          className="cv-sb-project__select"
+          onClick={() => actions.onActivate(key)}
           onContextMenu={openMenu}
           title={entry.rootPath ?? label}
           type="button"
         >
-          <ChevronRight aria-hidden="true" className="cv-sb-project__chevron" size={12} />
           <span aria-hidden="true" className="cv-favicon">
             {agentProjectMonogram(label)}
           </span>

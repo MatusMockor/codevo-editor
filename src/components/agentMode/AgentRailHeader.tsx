@@ -4,7 +4,9 @@ import type { AgentThreadSearchSurface } from "../../application/agentThreadPort
 import { MAX_THREAD_SEARCH_QUERY_CHARS } from "../../domain/agentThreadSearch";
 import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
 import { IconButton } from "../../ui/foundation/IconButton";
+import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import type { AgentProjectGroup } from "./agentModePresentation";
+import { AgentProjectSwitcher } from "./AgentProjectSwitcher";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import {
@@ -26,6 +28,9 @@ export interface AgentRailHeaderProps {
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly searchActiveDescendant: string | null;
   readonly newThreadTitle?: string;
+  readonly projectFocus: AgentRailProjectFocus;
+  onShowAllProjects(): void;
+  onSwitchProject(projectRootKey: string): void;
   onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void;
   onNewThread(shiftKey: boolean): void;
   onAddProject(): void;
@@ -38,7 +43,10 @@ export function AgentRailHeader({
   onAddProject,
   onNewThread,
   onSearchKeyDown,
+  onShowAllProjects,
+  onSwitchProject,
   overflowRootPaths,
+  projectFocus,
   scope,
   scopeEntries,
   search,
@@ -49,13 +57,12 @@ export function AgentRailHeader({
   const orphanCount = agentRailOrphanCount(groups);
   const detachedCount = agentRailDetachedThreadCount(groups);
   const defaultShortcuts = defaultAgentPanelLayoutShortcuts();
+  const activeEntry =
+    scope === null ? null : agentRailScopeEntryFor(scopeEntries, scope.projectRootKey);
   const fallbackNewThreadTitle = agentNewThreadTooltip({
     shortcut: defaultShortcuts.newThread,
     pickerShortcut: defaultShortcuts.newThreadIn ?? "",
-    projectLabel:
-      scope === null
-        ? null
-        : (agentRailScopeEntryFor(scopeEntries, scope.projectRootKey)?.label ?? null),
+    projectLabel: activeEntry?.label ?? null,
     projectCount: scopeEntries.length,
   });
 
@@ -108,6 +115,13 @@ export function AgentRailHeader({
             />
           )}
         </label>
+        <AgentProjectSwitcher
+          activeEntry={activeEntry}
+          entries={scopeEntries}
+          focus={projectFocus}
+          onSelectAll={onShowAllProjects}
+          onSelectProject={onSwitchProject}
+        />
         <IconButton
           disabled={!addProjectAvailable}
           icon={<FolderPlus size={16} />}

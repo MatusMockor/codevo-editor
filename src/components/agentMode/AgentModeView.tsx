@@ -49,10 +49,12 @@ import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage"
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { AgentNewThreadPicker } from "../../application/agentNewThreadPicker";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
+import type { AgentRailProjectFocusPreferencePort } from "../../application/agentRailProjectFocusPreferencePort";
 import { useAgentThreadBranchMemory } from "../../application/useAgentThreadBranchMemory";
 import { useAgentThreadBranchRecorder } from "../../application/useAgentThreadBranchRecorder";
 import { AgentThreadBranchMemoryContext } from "./agentThreadBranchMemoryContext";
 import { useAgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
+import { useAgentRailProjectFocus } from "./useAgentRailProjectFocus";
 import { useAgentProjectThreadCommands } from "./useAgentProjectThreadCommands";
 import { useAgentResumeCompactionOffer } from "../../application/useAgentResumeCompactionOffer";
 import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
@@ -106,6 +108,7 @@ import { agentProjectGroups } from "./agentModePresentation";
 import {
   agentProjectTerminalSessionsTarget,
   agentRailScopeEntries,
+  agentRailScopeEntryFor,
 } from "./agentSidebarPresentation";
 import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import {
@@ -166,6 +169,7 @@ export interface AgentModeViewProps {
   readonly chrome: AgentWorkbenchChrome;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
+  readonly projectFocusPreference?: AgentRailProjectFocusPreferencePort | null;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly threadNotifications?: AgentThreadNotificationCenter | null;
   onOpenSourceControl?(): void;
@@ -262,6 +266,7 @@ function LocalAgentModeView({
   artifactPreview = null,
   textClipboard = null,
   projectCollapsePreference = null,
+  projectFocusPreference = null,
   newThreadPicker = null,
   threadNotifications = null,
   viewCommands = null,
@@ -314,6 +319,7 @@ function LocalAgentModeView({
   );
   const railScopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
   const projectDisclosure = useAgentRailProjectDisclosure(projectCollapsePreference);
+  const projectFocus = useAgentRailProjectFocus(projectFocusPreference);
   const threadBranchMemory = useAgentThreadBranchMemory(chrome.threadBranchMemory ?? null);
   const navigation = useAgentThreadNavigation({
     agents,
@@ -325,6 +331,7 @@ function LocalAgentModeView({
     session: navigationSession,
     authoritativeRemoteProjectKeys,
     projectDisclosure: projectDisclosure.state,
+    projectFocus: projectFocus.focus,
     revealProject: projectDisclosure.expand,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
@@ -650,6 +657,24 @@ function LocalAgentModeView({
   const newThreadInProject = useAgentLatestCallback((projectRootKey: string) => {
     projectThreads.newThreadInProject(projectRootKey);
   });
+  const activateRailProject = (projectRootKey: string): boolean => {
+    const scope = navigation.railScope;
+    const current =
+      scope !== null &&
+      agentRailScopeEntryFor(navigation.scopeEntries, scope.projectRootKey)?.projectRootKey ===
+        projectRootKey;
+    if (!current && !projectThreads.switchProject(projectRootKey)) return false;
+    projectDisclosure.expand(projectRootKey);
+    return true;
+  };
+  const switchRailProject = useAgentLatestCallback((projectRootKey: string) => {
+    activateRailProject(projectRootKey);
+  });
+  const focusRailProject = useAgentLatestCallback((projectRootKey: string) => {
+    if (!activateRailProject(projectRootKey)) return;
+    projectFocus.setFocus("active");
+  });
+  const showAllRailProjects = useAgentLatestCallback(() => projectFocus.setFocus("all"));
   const sectionRef = useRef<HTMLElement | null>(null);
   useSidebarFocusHandoff(layout.rail, sectionRef);
   const { attention, attentionExplanation, capacity, live } = useMemo(
@@ -952,7 +977,11 @@ function LocalAgentModeView({
                   onNewThread={requestNewThread}
                   newThreadTitle={newThreadTitle}
                   onNewThreadInProject={newThreadInProject}
+                  onFocusProject={focusRailProject}
+                  onShowAllProjects={showAllRailProjects}
+                  onSwitchProject={switchRailProject}
                   projectDisclosure={projectDisclosure}
+                  projectFocus={projectFocus.focus}
                   onOpenProviderSettings={agents.configureAgentCli}
                   onOpenSourceControl={onOpenSourceControl}
                   onOpenUsage={onOpenUsageSettings}

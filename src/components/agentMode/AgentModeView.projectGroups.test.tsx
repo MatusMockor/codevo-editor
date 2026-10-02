@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentNewThreadPicker } from "../../application/agentNewThreadPicker";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
+import type { AgentRailProjectFocusPreferencePort } from "../../application/agentRailProjectFocusPreferencePort";
+import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -25,6 +27,7 @@ import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
 
 const APP = "/workspace/app";
 const API = "/workspace/api-service";
+const DOCS = "/workspace/docs";
 
 function project(rootKey: string, label: string): AgentProjectDescriptor {
   return projectFixture({
@@ -61,6 +64,20 @@ class MemoryCollapsePreference implements AgentRailProjectCollapsePreferencePort
   save(collapsed: ReadonlyArray<string>): void {
     this.stored = collapsed;
     this.saved.push(collapsed);
+  }
+}
+
+class MemoryFocusPreference implements AgentRailProjectFocusPreferencePort {
+  readonly saved: AgentRailProjectFocus[] = [];
+  constructor(private stored: AgentRailProjectFocus = "all") {}
+
+  load(): AgentRailProjectFocus {
+    return this.stored;
+  }
+
+  save(focus: AgentRailProjectFocus): void {
+    this.stored = focus;
+    this.saved.push(focus);
   }
 }
 
@@ -182,6 +199,58 @@ describe("agent sidebar project groups and New thread picker", () => {
 
   function selectedWorkspaceRoots(): ReadonlyArray<string | null> {
     return selectWorkspace.mock.calls.map(([selected]) => selected?.rootKey ?? null);
+  }
+
+  function lastSelectedWorkspaceRoot(): string | null | undefined {
+    const roots = selectedWorkspaceRoots();
+    return roots[roots.length - 1];
+  }
+
+  function threeProjects(overrides: Partial<AgentModeViewProps> = {}): AgentModeViewProps {
+    return props({
+      projects: [project(APP, "app"), project(API, "api-service"), project(DOCS, "docs")],
+      ...overrides,
+    });
+  }
+
+  function projectNames(): ReadonlyArray<string> {
+    return [...host.querySelectorAll(".agent-rail .cv-sb-project__name")].map(
+      (node) => node.textContent ?? "",
+    );
+  }
+
+  function switcher(): HTMLButtonElement {
+    const button = host.querySelector<HTMLButtonElement>(".agent-rail .cv-sb-switch");
+    expect(button).not.toBeNull();
+    return button as HTMLButtonElement;
+  }
+
+  function switcherOptions(): ReadonlyArray<HTMLElement> {
+    return [
+      ...document.querySelectorAll<HTMLElement>(
+        '[role="dialog"][aria-label="Switch project"] [role="option"]',
+      ),
+    ];
+  }
+
+  function chooseInSwitcher(label: string): void {
+    act(() => switcher().click());
+    const option = switcherOptions().find(
+      (candidate) => candidate.querySelector(".cv-switch__label")?.textContent === label,
+    );
+    expect(option).toBeDefined();
+    act(() => option?.click());
+  }
+
+  function projectNameButton(label: string): HTMLButtonElement {
+    const button = projectGroup(label).querySelector<HTMLButtonElement>(".cv-sb-project__select");
+    expect(button).not.toBeNull();
+    return button as HTMLButtonElement;
+  }
+
+  function activeProjectLabel(): string {
+    const palette = workbenchAgentPaletteProvider.current();
+    return palette?.projects.find((candidate) => candidate.current)?.label ?? "";
   }
 
   it("shows every open project as a group without a filter or a workspace card", () => {
@@ -366,5 +435,150 @@ describe("agent sidebar project groups and New thread picker", () => {
     expect(picker.open).not.toHaveBeenCalled();
     expect(selectedSession()).toBeNull();
     expect(host.querySelector('[aria-label="New thread in api-service"]')).not.toBeNull();
+  });
+  it("switches to a project without threads from the top-bar switcher and focuses on it", () => {
+    const focusPreference = new MemoryFocusPreference();
+    render(<AgentModeView {...threeProjects({ projectFocusPreference: focusPreference })} />);
+    clickRow("a1");
+    expect(switcher().textContent).toBe("AP");
+    expect(switcher().title).toBe("app");
+    selectWorkspace.mockClear();
+
+    act(() => switcher().click());
+    expect(
+      switcherOptions().map(
+        (option) => option.querySelector(".cv-switch__label")?.textContent ?? "",
+      ),
+    ).toEqual(["All projects", "app", "api-service", "docs"]);
+    expect(switcherOptions()[0]?.getAttribute("aria-selected")).toBe("true");
+    const docs = switcherOptions().find((option) => option.dataset.value === DOCS);
+    act(() => docs?.click());
+
+    expect(selectedSession()).toBeNull();
+    expect(lastSelectedWorkspaceRoot()).toBe(DOCS);
+    expect(activeProjectLabel()).toBe("docs");
+    expect(projectNames()).toEqual(["docs"]);
+    expect(railThreadIds()).toEqual([]);
+    expect(projectGroup("docs").dataset.current).toBe("true");
+    expect(switcher().textContent).toBe("DS");
+    expect(switcher().getAttribute("aria-label")).toBe("Switch project: docs");
+    expect(focusPreference.saved).toEqual(["active"]);
+  });
+
+  it("shows every project again from All projects without switching the workspace", () => {
+    const focusPreference = new MemoryFocusPreference();
+    render(<AgentModeView {...threeProjects({ projectFocusPreference: focusPreference })} />);
+    chooseInSwitcher("api-service");
+    expect(projectNames()).toEqual(["api-service"]);
+    expect(lastSelectedWorkspaceRoot()).toBe(API);
+    selectWorkspace.mockClear();
+
+    chooseInSwitcher("All projects");
+
+    expect(projectNames()).toEqual(["app", "api-service", "docs"]);
+    expect(railThreadIds()).toEqual(["a1", "b1"]);
+    expect(activeProjectLabel()).toBe("api-service");
+    expect(selectedWorkspaceRoots().every((root) => root === API)).toBe(true);
+    expect(focusPreference.saved).toEqual(["active", "all"]);
+  });
+
+  it("restores the focus mode on the active project after a remount", () => {
+    const focusPreference = new MemoryFocusPreference();
+    render(<AgentModeView {...threeProjects({ projectFocusPreference: focusPreference })} />);
+    chooseInSwitcher("docs");
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    render(<AgentModeView {...threeProjects({ projectFocusPreference: focusPreference })} />);
+
+    expect(projectNames()).toHaveLength(1);
+    expect(projectNames()).toEqual([activeProjectLabel()]);
+    expect(focusPreference.load()).toBe("active");
+  });
+
+  it("picks a project from the switcher with the keyboard", () => {
+    render(<AgentModeView {...threeProjects()} />);
+    clickRow("a1");
+    act(() => switcher().click());
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "do");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(switcherOptions().map((option) => option.dataset.value)).toEqual([DOCS]);
+
+    act(() => {
+      input?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+
+    expect(switcherOptions()).toEqual([]);
+    expect(lastSelectedWorkspaceRoot()).toBe(DOCS);
+    expect(activeProjectLabel()).toBe("docs");
+    expect(document.activeElement).toBe(switcher());
+  });
+
+  it("activates a project from its name while the chevron only collapses it", () => {
+    render(<AgentModeView {...threeProjects()} />);
+    clickRow("a1");
+    selectWorkspace.mockClear();
+
+    act(() => projectNameButton("docs").click());
+
+    expect(selectedSession()).toBeNull();
+    expect(lastSelectedWorkspaceRoot()).toBe(DOCS);
+    expect(activeProjectLabel()).toBe("docs");
+    expect(projectGroup("docs").dataset.current).toBe("true");
+    expect(projectNames()).toEqual(["app", "api-service", "docs"]);
+
+    selectWorkspace.mockClear();
+    act(() => projectToggle("api-service").click());
+
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("false");
+    expect(projectThreadIds("api-service")).toEqual([]);
+    expect(activeProjectLabel()).toBe("docs");
+    expect(selectedWorkspaceRoots()).not.toContain(API);
+    expect(projectGroup("api-service").dataset.current).toBeUndefined();
+  });
+
+  it("keeps each project's own selection when switching A to B and back to A by name", () => {
+    render(<AgentModeView {...props()} />);
+    clickRow("a1");
+    selectWorkspace.mockClear();
+
+    act(() => projectNameButton("api-service").click());
+    expect(selectedSession()).toBeNull();
+    expect(lastSelectedWorkspaceRoot()).toBe(API);
+    expect(activeProjectLabel()).toBe("api-service");
+
+    act(() => projectNameButton("app").click());
+    expect(selectedSession()).toBe("a1");
+    expect(lastSelectedWorkspaceRoot()).toBe(APP);
+    expect(activeProjectLabel()).toBe("app");
+    expect(selectServer).not.toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("leaves the open thread alone when the current project's name is clicked", () => {
+    render(<AgentModeView {...props()} />);
+    clickRow("b1");
+
+    act(() => projectNameButton("api-service").click());
+
+    expect(selectedSession()).toBe("b1");
+    expect(activeProjectLabel()).toBe("api-service");
+  });
+
+  it("expands a collapsed project when its name activates it", () => {
+    const preference = new MemoryCollapsePreference([API]);
+    render(<AgentModeView {...props({ projectCollapsePreference: preference })} />);
+    clickRow("a1");
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("false");
+
+    act(() => projectNameButton("api-service").click());
+
+    expect(lastSelectedWorkspaceRoot()).toBe(API);
+    expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("true");
+    expect(projectThreadIds("api-service")).toEqual(["b1"]);
   });
 });
