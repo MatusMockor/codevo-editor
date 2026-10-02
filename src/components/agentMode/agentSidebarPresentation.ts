@@ -29,6 +29,10 @@ import { providerUpdateResultPresentation } from "../settings/agentProviderUpdat
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { agentProjectUsable } from "./agentProjectMenuPresentation";
 import {
+  agentProjectServerPresence,
+  type AgentProjectServerPresence,
+} from "./agentProjectServerPresence";
+import {
   NO_ROW_SIGNALS,
   agentRowIsLive,
   agentRowStatus,
@@ -57,6 +61,7 @@ export interface AgentRailScopeEntry {
   readonly origin: AgentProjectOrigin;
   readonly rootPath: string | null;
   readonly repositoryCount: number;
+  readonly serverPresence: AgentProjectServerPresence;
 }
 
 export interface AgentRailSections {
@@ -163,6 +168,7 @@ export function agentRailScopeEntries(
       origin: group.origin,
       rootPath: group.rootPath,
       repositoryCount: group.repos.length,
+      serverPresence: agentProjectServerPresence(group),
     });
   }
 

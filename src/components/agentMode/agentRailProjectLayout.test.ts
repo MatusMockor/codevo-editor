@@ -29,6 +29,7 @@ function entry(projectRootKey: string, label: string, members?: string[]): Agent
     origin: "active-tab",
     rootPath: projectRootKey,
     repositoryCount: 1,
+    serverPresence: { local: true, remoteServerIds: [] },
   };
 }
 

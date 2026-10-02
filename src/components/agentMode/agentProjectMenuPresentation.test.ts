@@ -21,6 +21,7 @@ const trusted: AgentRailScopeEntry = {
   origin: "active-tab",
   rootPath: ROOT,
   repositoryCount: 1,
+  serverPresence: { local: true, remoteServerIds: [] },
 };
 const untrusted: AgentRailScopeEntry = { ...trusted, trust: "untrusted" };
 const closed: AgentRailScopeEntry = { ...trusted, origin: "closed-tab-live-tasks" };

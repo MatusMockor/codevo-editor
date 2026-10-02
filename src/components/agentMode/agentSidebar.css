@@ -267,6 +267,13 @@
   font-size: var(--cv-t-xs);
 }
 
+.cv-project-switch__server {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--cv-fg-subtle);
+}
+
 .cv-project-switch__option .cv-project-switch__check {
   flex: none;
   visibility: hidden;

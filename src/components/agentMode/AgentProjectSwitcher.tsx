@@ -1,4 +1,4 @@
-import { Check, Folder, Search, Settings, X } from "lucide-react";
+import { Check, Folder, Search, Server, Settings, X } from "lucide-react";
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { IconButton } from "../../ui/foundation/IconButton";
 import { Menu } from "../../ui/foundation/Menu";
@@ -15,6 +15,8 @@ import {
   type AgentProjectMenuCommand,
   type AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
+import { agentProjectServerBadgeLabel } from "./agentProjectServerPresence";
+import { useAgentRowServerNames, type AgentRowServerNames } from "./agentRowServerNamesContext";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 const MAX_PROJECT_QUERY_CHARS = 160;
@@ -53,6 +55,7 @@ export function AgentProjectSwitcher({
   const [highlight, setHighlight] = useState(0);
   const [actionsFor, setActionsFor] = useState<AgentRailScopeEntry | null>(null);
   const options = useMemo(() => switcherOptions(entries, query), [entries, query]);
+  const serverNames = useAgentRowServerNames();
   const focused = focus === "active" && activeEntry !== null;
   const selectedKey = focused ? activeEntry.projectRootKey : ALL_PROJECTS_KEY;
   const active = options.length === 0 ? -1 : Math.min(highlight, options.length - 1);
@@ -171,6 +174,7 @@ export function AgentProjectSwitcher({
                 onHighlight={() => setHighlight(index)}
                 option={option}
                 selected={option.key === selectedKey}
+                serverNames={serverNames}
               />
             ))}
           </ul>
@@ -217,6 +221,7 @@ interface SwitcherOptionRowProps {
   readonly active: boolean;
   readonly current: boolean;
   readonly selected: boolean;
+  readonly serverNames: AgentRowServerNames;
   onChoose(): void;
   onHighlight(): void;
 }
@@ -229,9 +234,12 @@ function SwitcherOptionRow({
   onHighlight,
   option,
   selected,
+  serverNames,
 }: SwitcherOptionRowProps) {
   const entry = option.entry;
   const state = entry === null ? null : agentRailProjectState(entry);
+  const serverLabel =
+    entry === null ? null : agentProjectServerBadgeLabel(entry.serverPresence, serverNames);
   return (
     <li
       aria-current={current ? "true" : undefined}
@@ -255,6 +263,12 @@ function SwitcherOptionRow({
       <span className="cv-project-switch__label" title={entry?.rootPath ?? option.label}>
         {option.label}
       </span>
+      {serverLabel !== null && (
+        <span className="cv-project-switch__server" title={serverLabel}>
+          <Server aria-hidden="true" size={13} />
+          <span className="agent-visually-hidden">{serverLabel}</span>
+        </span>
+      )}
       {current && <span className="cv-project-switch__state">Current</span>}
       {!current && state !== null && <span className="cv-project-switch__state">{state}</span>}
       <Check aria-hidden="true" className="cv-project-switch__check" size={14} />

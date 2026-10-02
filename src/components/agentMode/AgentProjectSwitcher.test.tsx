@@ -1,20 +1,35 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RemoteRunnerServer } from "../../domain/remoteRunner";
+import { TauriRemoteRunnerGateway } from "../../infrastructure/tauriRemoteRunnerGateway";
 import { parseAllStyleSheets } from "../cssContractTestSupport";
+import { RemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { AgentProjectSwitcher } from "./AgentProjectSwitcher";
 import type {
   AgentProjectMenuCommand,
   AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
+import type { AgentProjectServerPresence } from "./agentProjectServerPresence";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 const SIDEBAR_SHEET = "components/agentMode/agentSidebar.css";
 const SHARED_CLASS = /^(cv-popover|cv-icon-button(--[\w-]+|__[\w-]+)?|lucide(-[\w-]+)?)$/;
 
-function entry(label: string): AgentRailScopeEntry {
+const LOCAL_ONLY: AgentProjectServerPresence = { local: true, remoteServerIds: [] };
+
+const LINUX: RemoteRunnerServer = {
+  id: "srv-7f3a",
+  name: "Linux box",
+  host: "linux.internal",
+  username: "dev",
+  port: 22,
+  connected: true,
+};
+
+function entry(label: string, serverPresence = LOCAL_ONLY): AgentRailScopeEntry {
   const root = `/work/${label}`;
   return {
     value: root,
@@ -25,6 +40,7 @@ function entry(label: string): AgentRailScopeEntry {
     origin: "active-tab",
     rootPath: root,
     repositoryCount: 1,
+    serverPresence,
   };
 }
 
@@ -108,6 +124,121 @@ describe("AgentProjectSwitcher", () => {
     for (const name of new Set(names)) {
       expect(sheetsStyling(name), name).toEqual([SIDEBAR_SHEET]);
     }
+  });
+
+  describe("server badge", () => {
+    const linked = entry("editor", { local: true, remoteServerIds: [LINUX.id] });
+    const serverOnly = entry("gpu-jobs", { local: false, remoteServerIds: [LINUX.id] });
+    const localOnly = entry("docs-site");
+
+    function withServers(
+      servers: ReadonlyArray<RemoteRunnerServer> | null,
+      node: ReactNode,
+    ): ReactNode {
+      if (servers === null) return node;
+      return (
+        <RemoteRunnerContext.Provider
+          value={{
+            gateway: new TauriRemoteRunnerGateway(vi.fn()),
+            servers,
+            status: "ready",
+            error: null,
+            selectedServerId: null,
+            selectServer: vi.fn(),
+            refresh: vi.fn(),
+            connect: vi.fn(),
+            disconnect: vi.fn(),
+            remove: vi.fn(),
+          }}
+        >
+          {node}
+        </RemoteRunnerContext.Provider>
+      );
+    }
+
+    async function openWith(
+      servers: ReadonlyArray<RemoteRunnerServer> | null,
+    ): Promise<HTMLElement> {
+      await act(async () =>
+        root.render(
+          withServers(
+            servers,
+            <AgentProjectSwitcher
+              activeEntry={linked}
+              entries={[linked, serverOnly, localOnly]}
+              focus="active"
+              onProjectCommand={() => undefined}
+              onSelectAll={() => undefined}
+              onSelectProject={() => undefined}
+            />,
+          ),
+        ),
+      );
+      const trigger = host.querySelector<HTMLButtonElement>(".cv-sb-switch");
+      await act(async () => trigger?.click());
+      const surface = document.querySelector<HTMLElement>(
+        '[role="dialog"][aria-label="Switch project"]',
+      );
+      expect(surface).not.toBeNull();
+      return surface as HTMLElement;
+    }
+
+    function optionFor(surface: HTMLElement, label: string): HTMLElement {
+      const option = [...surface.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (candidate) => candidate.querySelector(".cv-project-switch__label")?.textContent === label,
+      );
+      expect(option, label).toBeDefined();
+      return option as HTMLElement;
+    }
+
+    function rowLeaks(row: HTMLElement, value: string): boolean {
+      return [row, ...row.querySelectorAll<HTMLElement>("*")].some(
+        (element) =>
+          [...element.attributes].some((attribute) => attribute.value.includes(value)) ||
+          (element.textContent ?? "").includes(value),
+      );
+    }
+
+    it("names the server a project also runs on, and says On for a server-only project", async () => {
+      const surface = await openWith([LINUX]);
+      const linkedRow = optionFor(surface, "editor");
+      const serverOnlyRow = optionFor(surface, "gpu-jobs");
+      const localRow = optionFor(surface, "docs-site");
+
+      expect(linkedRow.textContent).toContain("Also on Linux box");
+      expect(linkedRow.querySelector(".cv-project-switch__server")?.getAttribute("title")).toBe(
+        "Also on Linux box",
+      );
+      expect(serverOnlyRow.textContent).toContain("On Linux box");
+      expect(serverOnlyRow.textContent).not.toContain("Also on");
+      expect(localRow.querySelector(".cv-project-switch__server")).toBeNull();
+      expect(localRow.textContent).not.toContain("Linux box");
+      for (const row of [linkedRow, serverOnlyRow]) {
+        expect(rowLeaks(row, LINUX.id)).toBe(false);
+        expect(rowLeaks(row, LINUX.host)).toBe(false);
+      }
+      expect(sheetsStyling("cv-project-switch__server")).toEqual([SIDEBAR_SHEET]);
+    });
+
+    it("keeps the Current label and gear column for a project with a badge", async () => {
+      const surface = await openWith([LINUX]);
+      const option = optionFor(surface, "editor");
+
+      expect(option.querySelector(".cv-project-switch__state")?.textContent).toBe("Current");
+      expect(surface.querySelectorAll(".cv-project-switch__gear-slot")).toHaveLength(
+        surface.querySelectorAll('[role="option"]').length,
+      );
+    });
+
+    it("renders no badge when no remote servers are configured", async () => {
+      const withoutContext = await openWith(null);
+      expect(withoutContext.querySelector(".cv-project-switch__server")).toBeNull();
+
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      const emptyServers = await openWith([]);
+      expect(emptyServers.querySelector(".cv-project-switch__server")).toBeNull();
+    });
   });
 
   it("closes a project straight from its row without leaving the switcher", () => {
