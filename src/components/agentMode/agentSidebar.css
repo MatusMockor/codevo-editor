@@ -226,7 +226,7 @@
   gap: 10px;
   width: 100%;
   height: 34px;
-  padding: 0 36px 0 8px;
+  padding: 0 62px 0 8px;
   border-radius: var(--cv-r-control);
   color: var(--cv-fg);
   cursor: pointer;
@@ -287,20 +287,30 @@
 }
 
 .cv-project-switch__gear-slot {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 50px;
   height: 34px;
 }
 
-.cv-project-switch__gear {
+.cv-project-switch__gear,
+.cv-project-switch__close {
   color: var(--cv-fg-subtle);
   pointer-events: auto;
 }
 
 .cv-project-switch__gear-slot[data-highlighted="true"] .cv-project-switch__gear,
+.cv-project-switch__gear-slot[data-highlighted="true"] .cv-project-switch__close,
 .cv-project-switch__gear:hover,
 .cv-project-switch__gear:focus-visible {
   color: var(--cv-fg-strong);
+}
+
+.cv-project-switch__close:hover,
+.cv-project-switch__close:focus-visible {
+  color: var(--cv-danger);
 }
 
 .cv-project-switch__none {

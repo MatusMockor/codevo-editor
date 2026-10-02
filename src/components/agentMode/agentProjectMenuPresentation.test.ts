@@ -78,6 +78,10 @@ describe("project menu", () => {
     expect(agentProjectClosable(trusted)).toBe(true);
     expect(agentProjectClosable(closed)).toBe(false);
     expect(agentProjectClosable(detached)).toBe(false);
+    const remoteKey = "remote:linux:runner:app";
+    expect(
+      agentProjectClosable({ ...trusted, projectRootKey: remoteKey, rootPath: remoteKey }),
+    ).toBe(false);
     expect(agentProjectCloseLabel(trusted)).toBe("Close project app");
   });
 

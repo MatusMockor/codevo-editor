@@ -5,6 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseAllStyleSheets } from "../cssContractTestSupport";
 import { AgentProjectSwitcher } from "./AgentProjectSwitcher";
+import type {
+  AgentProjectMenuCommand,
+  AgentProjectMenuTarget,
+} from "./agentProjectMenuPresentation";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 const SIDEBAR_SHEET = "components/agentMode/agentSidebar.css";
@@ -52,17 +56,23 @@ describe("AgentProjectSwitcher", () => {
     host.remove();
   });
 
-  function openSwitcher(): HTMLElement {
-    const editor = entry("editor");
+  function openSwitcher(
+    entries: ReadonlyArray<AgentRailScopeEntry> = [entry("editor"), entry("docs-site")],
+    onProjectCommand: (
+      target: AgentProjectMenuTarget,
+      command: AgentProjectMenuCommand,
+    ) => void = () => undefined,
+    onSelectProject: (projectRootKey: string) => void = () => undefined,
+  ): HTMLElement {
     act(() =>
       root.render(
         <AgentProjectSwitcher
-          activeEntry={editor}
-          entries={[editor, entry("docs-site")]}
+          activeEntry={entries[0] ?? null}
+          entries={entries}
           focus="active"
-          onProjectCommand={() => undefined}
+          onProjectCommand={onProjectCommand}
           onSelectAll={() => undefined}
-          onSelectProject={() => undefined}
+          onSelectProject={onSelectProject}
         />,
       ),
     );
@@ -98,5 +108,67 @@ describe("AgentProjectSwitcher", () => {
     for (const name of new Set(names)) {
       expect(sheetsStyling(name), name).toEqual([SIDEBAR_SHEET]);
     }
+  });
+
+  it("closes a project straight from its row without leaving the switcher", () => {
+    const commands: Array<[AgentProjectMenuTarget, AgentProjectMenuCommand]> = [];
+    const selected: string[] = [];
+    const surface = openSwitcher(
+      undefined,
+      (target, command) => commands.push([target, command]),
+      (projectRootKey) => selected.push(projectRootKey),
+    );
+    const close = surface.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close project docs-site"]',
+    );
+    expect(close).not.toBeNull();
+
+    act(() => close?.click());
+
+    expect(commands).toEqual([
+      [
+        {
+          projectRootKey: "/work/docs-site",
+          repositoryRoot: "/work/docs-site",
+          rootPath: "/work/docs-site",
+        },
+        "close",
+      ],
+    ]);
+    expect(selected).toEqual([]);
+    expect(document.querySelector('[role="dialog"][aria-label="Switch project"]')).toBe(surface);
+    expect(surface.querySelector('input[aria-label="Search projects"]')).toBe(
+      document.activeElement,
+    );
+  });
+
+  it("offers a close button only for projects that can be closed", () => {
+    const released: AgentRailScopeEntry = { ...entry("legacy"), origin: "closed-tab-live-tasks" };
+    const remoteKey = "remote:linux:runner:orders";
+    const remote: AgentRailScopeEntry = {
+      ...entry("orders"),
+      value: remoteKey,
+      projectRootKey: remoteKey,
+      rootPath: remoteKey,
+    };
+    const surface = openSwitcher([entry("editor"), released, remote]);
+    const labels = [
+      ...surface.querySelectorAll<HTMLButtonElement>(".cv-project-switch__close"),
+    ].map((button) => button.getAttribute("aria-label"));
+
+    expect(labels).toEqual(["Close project editor"]);
+  });
+
+  it("dismisses the switcher when the last project is closed from it", () => {
+    const only = entry("editor");
+    const surface = openSwitcher([only]);
+    const close = surface.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close project editor"]',
+    );
+
+    act(() => close?.click());
+
+    expect(document.querySelector('[role="dialog"][aria-label="Switch project"]')).toBeNull();
+    expect(host.querySelector(".cv-sb-switch")).toBe(document.activeElement);
   });
 });

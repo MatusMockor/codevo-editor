@@ -47,6 +47,7 @@ export function agentProjectMenuTarget(entry: AgentRailScopeEntry): AgentProject
 }
 
 export function agentProjectClosable(entry: AgentRailScopeEntry): boolean {
+  if (entry.projectRootKey.startsWith("remote:")) return false;
   return entry.origin !== "closed-tab-live-tasks" && entry.rootPath !== null;
 }
 
