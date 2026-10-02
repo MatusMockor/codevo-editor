@@ -67,7 +67,11 @@ export function AgentQueuedPrompt({
         )}
         <div className="agent-prompt__queue">
           <span className="agent-prompt__queue-status" title={queuedStatusDescription(state)}>
-            {state === "paused" ? <Pause aria-hidden="true" /> : <Clock3 aria-hidden="true" />}
+            {state === "paused" ? (
+              <Pause aria-hidden="true" size={12} />
+            ) : (
+              <Clock3 aria-hidden="true" size={12} />
+            )}
             {queuedStatusLabel(state)}
           </span>
           {state === "uncertain" && (
@@ -78,7 +82,7 @@ export function AgentQueuedPrompt({
               className="agent-prompt__queue-attachments"
               title={queuedAttachments.map((attachment) => attachment.name).join(", ") || undefined}
             >
-              <Paperclip aria-hidden="true" />
+              <Paperclip aria-hidden="true" size={12} />
               {boundedAttachmentCount}
               {attachmentCount > MAX_AGENT_TURN_ATTACHMENTS ? "+" : ""}{" "}
               {attachmentCount === 1 ? "attachment" : "attachments"}
@@ -95,7 +99,7 @@ export function AgentQueuedPrompt({
               onClick={() => onEdit(id)}
               type="button"
             >
-              <Pencil aria-hidden="true" />
+              <Pencil aria-hidden="true" size={13} />
             </button>
           )}
           {(state === "queued" || state === "next") && onSendNow !== undefined && (
@@ -106,7 +110,7 @@ export function AgentQueuedPrompt({
               onClick={() => onSendNow(id)}
               type="button"
             >
-              <ArrowUp aria-hidden="true" />
+              <ArrowUp aria-hidden="true" size={13} />
             </button>
           )}
           <button
@@ -116,7 +120,7 @@ export function AgentQueuedPrompt({
             onClick={() => onRemove(id)}
             type="button"
           >
-            <X aria-hidden="true" />
+            <X aria-hidden="true" size={13} />
           </button>
         </div>
       </div>

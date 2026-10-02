@@ -32,8 +32,6 @@ import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { remoteSurfaceSupports, type AgentRemoteSurface } from "./agentRemoteSurface";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 import { EditorPanelDocumentsContext } from "../editorPanel/EditorPanelDocumentsContext";
-import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
-import { agentSurfaceLocation } from "./agentSurfaceLocation";
 import type { AgentComposerPreviousWorktree } from "./agentComposerPreviousWorktree";
 
 export type AgentSurfaceHostAgents = Pick<
@@ -84,8 +82,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   agentsPanel = null,
   chooserAutoFocus,
   diffScope,
-  draftIsolation = "in-place",
-  draftPreviousWorktree = null,
   onDiffScopeChange = ignoreDiffScope,
   shipActions = null,
   scripts = null,
@@ -170,44 +166,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         )}
       </div>
     );
-  const remoteServers = useRemoteRunnerContext()?.servers;
-  const remoteServerId = remoteContext?.scope.serverId ?? null;
-  const remoteServerName =
-    remoteServerId === null
-      ? null
-      : (remoteServers?.find((server) => server.id === remoteServerId)?.name ?? null);
-  const liveCheckoutBranches = chrome.liveCheckoutBranches;
-  const location = useMemo(
-    () =>
-      agentSurfaceLocation({
-        thread,
-        threadRootPath,
-        scope,
-        workspaceRoot,
-        activation: activation?.state,
-        projects,
-        liveBranches: liveCheckoutBranches,
-        draftIsolation,
-        draftPreviousWorktree,
-        remote: remote
-          ? { scope: remoteContext?.scope ?? null, serverName: remoteServerName }
-          : null,
-      }),
-    [
-      activation?.state,
-      draftIsolation,
-      draftPreviousWorktree,
-      liveCheckoutBranches,
-      projects,
-      remote,
-      remoteContext?.scope,
-      remoteServerName,
-      scope,
-      thread,
-      threadRootPath,
-      workspaceRoot,
-    ],
-  );
   const stableThread = useStableAgentRightPanelThread(thread);
   const fileTree = useAgentSurfaceScopeTree({
     chrome,
@@ -374,7 +332,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
           layout={layout}
           layoutControls={layoutControls}
           leadingControls={leadingControls}
-          location={location}
           onActivateSurface={onActivateSurface}
           onCloseSurfaceTab={onCloseSurfaceTab}
           onOpenSurface={onOpenSurface}
