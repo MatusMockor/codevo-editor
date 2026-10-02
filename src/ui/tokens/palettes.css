@@ -25,6 +25,7 @@
   --cv-danger: #F48A80;
   --cv-warn: #EDBB4E;
   --cv-warn-soft: rgba(237, 187, 78, 0.12);
+  --cv-work: #00BCFF;
   --cv-add-bg: rgba(143, 211, 131, 0.09);
   --cv-add-gutter: rgba(143, 211, 131, 0.17);
   --cv-del-bg: rgba(244, 138, 128, 0.09);
@@ -62,6 +63,7 @@
   --cv-danger: #BC3328;
   --cv-warn: #8A5F00;
   --cv-warn-soft: rgba(138, 95, 0, 0.1);
+  --cv-work: #0069A8;
   --cv-add-bg: rgba(38, 112, 47, 0.08);
   --cv-add-gutter: rgba(38, 112, 47, 0.16);
   --cv-del-bg: rgba(188, 51, 40, 0.08);
@@ -98,6 +100,7 @@
   --cv-danger: #FF8A8F;
   --cv-warn: #F2C04F;
   --cv-warn-soft: rgba(242, 192, 79, 0.12);
+  --cv-work: #00BCFF;
   --cv-add-bg: rgba(114, 214, 155, 0.09);
   --cv-add-gutter: rgba(114, 214, 155, 0.17);
   --cv-del-bg: rgba(255, 138, 143, 0.09);
@@ -134,6 +137,7 @@
   --cv-danger: #BA2A38;
   --cv-warn: #8A6000;
   --cv-warn-soft: rgba(138, 96, 0, 0.1);
+  --cv-work: #0069A8;
   --cv-add-bg: rgba(24, 112, 63, 0.08);
   --cv-add-gutter: rgba(24, 112, 63, 0.16);
   --cv-del-bg: rgba(186, 42, 56, 0.08);
@@ -170,6 +174,7 @@
   --cv-danger: #FF7A8E;
   --cv-warn: #F9CB3E;
   --cv-warn-soft: rgba(249, 203, 62, 0.12);
+  --cv-work: #00BCFF;
   --cv-add-bg: rgba(110, 227, 162, 0.09);
   --cv-add-gutter: rgba(110, 227, 162, 0.17);
   --cv-del-bg: rgba(255, 122, 142, 0.09);
@@ -206,6 +211,7 @@
   --cv-danger: #BE123C;
   --cv-warn: #8A5A00;
   --cv-warn-soft: rgba(138, 90, 0, 0.1);
+  --cv-work: #0069A8;
   --cv-add-bg: rgba(19, 114, 54, 0.08);
   --cv-add-gutter: rgba(19, 114, 54, 0.16);
   --cv-del-bg: rgba(190, 18, 60, 0.08);
@@ -242,6 +248,7 @@
   --cv-danger: #FF8E96;
   --cv-warn: #F6C453;
   --cv-warn-soft: rgba(246, 196, 83, 0.12);
+  --cv-work: #00BCFF;
   --cv-add-bg: rgba(139, 219, 133, 0.09);
   --cv-add-gutter: rgba(139, 219, 133, 0.17);
   --cv-del-bg: rgba(255, 142, 150, 0.09);
@@ -278,6 +285,7 @@
   --cv-danger: #B92C3B;
   --cv-warn: #8A6000;
   --cv-warn-soft: rgba(138, 96, 0, 0.1);
+  --cv-work: #0069A8;
   --cv-add-bg: rgba(29, 116, 55, 0.08);
   --cv-add-gutter: rgba(29, 116, 55, 0.16);
   --cv-del-bg: rgba(185, 44, 59, 0.08);
@@ -314,6 +322,7 @@
   --cv-danger: #FF6F8A;
   --cv-warn: #F2D049;
   --cv-warn-soft: rgba(242, 208, 73, 0.12);
+  --cv-work: #00BCFF;
   --cv-add-bg: rgba(111, 214, 150, 0.09);
   --cv-add-gutter: rgba(111, 214, 150, 0.17);
   --cv-del-bg: rgba(255, 111, 138, 0.09);
@@ -350,6 +359,7 @@
   --cv-danger: #C41E4E;
   --cv-warn: #8A5F00;
   --cv-warn-soft: rgba(138, 95, 0, 0.1);
+  --cv-work: #0069A8;
   --cv-add-bg: rgba(24, 112, 63, 0.08);
   --cv-add-gutter: rgba(24, 112, 63, 0.16);
   --cv-del-bg: rgba(196, 30, 78, 0.08);
@@ -386,6 +396,7 @@
   --cv-danger: #FF7B7B;
   --cv-warn: #FFB547;
   --cv-warn-soft: rgba(255, 181, 71, 0.12);
+  --cv-work: #00BCFF;
   --cv-add-bg: rgba(67, 214, 142, 0.09);
   --cv-add-gutter: rgba(67, 214, 142, 0.17);
   --cv-del-bg: rgba(255, 123, 123, 0.09);
@@ -422,6 +433,7 @@
   --cv-danger: #C42B2B;
   --cv-warn: #8A5F00;
   --cv-warn-soft: rgba(138, 95, 0, 0.1);
+  --cv-work: #0069A8;
   --cv-add-bg: rgba(10, 110, 65, 0.08);
   --cv-add-gutter: rgba(10, 110, 65, 0.16);
   --cv-del-bg: rgba(196, 43, 43, 0.08);

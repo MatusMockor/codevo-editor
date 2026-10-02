@@ -495,11 +495,13 @@ describe("AgentThreadRow", () => {
     expect(host.querySelector(".cv-card-row__status")?.textContent).toContain("Input");
   });
 
-  it("ticks the working time as m:ss", () => {
+  it("ticks the working time as a coarse t3code duration", () => {
     render(runningWith([]));
-    expect(host.querySelector(".cv-card-row__tick")?.textContent).toBe("10:00");
+    expect(host.querySelector(".cv-card-row__tick")?.textContent).toBe("10m");
+    act(() => vi.advanceTimersByTime(59_000));
+    expect(host.querySelector(".cv-card-row__tick")?.textContent).toBe("10m");
     act(() => vi.advanceTimersByTime(1_000));
-    expect(host.querySelector(".cv-card-row__tick")?.textContent).toBe("10:01");
+    expect(host.querySelector(".cv-card-row__tick")?.textContent).toBe("11m");
   });
 
   it("counts the running subagents of the running turn", () => {
@@ -528,7 +530,7 @@ describe("AgentThreadRow", () => {
     expect(status?.querySelector(".cv-card-row__status-label")?.textContent).toBe(
       "2 agents running",
     );
-    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("10:00");
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("10m");
     expect(status?.getAttribute("title")).toBe("Working with 2 agents");
   });
 
@@ -555,10 +557,10 @@ describe("AgentThreadRow", () => {
     expect(status?.querySelector(".cv-card-row__status-label")?.textContent).toBe(
       "1 agent running",
     );
-    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("1:30");
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("1m");
     expect(status?.getAttribute("title")).toBe("Waiting for 1 agent");
-    act(() => vi.advanceTimersByTime(1_000));
-    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("1:31");
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("2m");
     render(settled);
     expect(host.querySelector(".cv-card-row__tick")).toBeNull();
   });

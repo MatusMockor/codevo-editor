@@ -63,6 +63,72 @@ describe("sidebar styles", () => {
     expect(declaration(".cv-card-row__act", "top")).toBe("10px");
   });
 
+  it("paints Working in the --cv-work blue and fades unfocused working rows until hovered", () => {
+    expect(declaration('.cv-card-row__status[data-tone="work"]', "color")).toBe("var(--cv-work)");
+    expect(
+      declaration('.cv-card-row__status[data-tone="work"] .cv-card-row__tick', "font-weight"),
+    ).toBe("500");
+    expect(declaration('.cv-sb-project__signal[data-tone="working"]', "background")).toBe(
+      "var(--cv-work)",
+    );
+    expect(declaration(".cv-card-row.is-fade", "opacity")).toBe("0.7");
+    expect(declaration(".cv-card-row.is-fade:hover", "opacity")).toBe("1");
+    expect(declaration(".cv-card-row.is-fade:focus-visible", "opacity")).toBe("1");
+    expect(declaration(".cv-card-row.is-fade:has(.cv-card-row__rename)", "opacity")).toBe("1");
+    expect(declaration(".cv-card-row", "transition")).toBe(
+      "opacity var(--cv-motion-base) var(--cv-ease)",
+    );
+    expect(declaration('.cv-sb-item[data-menu-open="true"] .cv-card-row.is-fade', "opacity")).toBe(
+      "1",
+    );
+  });
+
+  it("marks an unseen completion with a green dot, bold label, bold title and a faint tint", () => {
+    const unseen =
+      '.cv-sb-item:not([data-menu-open="true"]) > .cv-card-row.is-unread-done:not(.is-current):not(.is-marked)';
+    expect(declaration('.cv-card-row__status[data-tone="ok"]', "color")).toBe("var(--cv-ok)");
+    expect(declaration('.cv-card-row__status[data-tone="ok"]', "font-weight")).toBe("700");
+    expect(declaration(".cv-card-row__done-dot", "width")).toBe("8px");
+    expect(declaration(".cv-card-row__done-dot", "border-radius")).toBe("50%");
+    expect(declaration(".cv-card-row__done-dot", "background")).toBe("var(--cv-ok)");
+    expect(declaration(".cv-card-row__done-dot::before", "inset")).toBe("-3px");
+    expect(declaration(".cv-card-row__done-dot::before", "background")).toBe(
+      "color-mix(in srgb, var(--cv-ok) 18%, transparent)",
+    );
+    expect(declaration(unseen, "background")).toBe(
+      "color-mix(in srgb, var(--cv-ok) 7%, transparent)",
+    );
+    expect(declaration(`${unseen}:hover`, "background")).toBe(
+      "color-mix(in srgb, var(--cv-ok) 10%, transparent)",
+    );
+    expect(declaration(".cv-card-row.is-unread-done .cv-card-row__title", "font-weight")).toBe(
+      "600",
+    );
+    expect(declaration(".cv-card-row.is-unread-done .cv-card-row__title", "color")).toBe(
+      "var(--cv-fg-strong)",
+    );
+  });
+
+  it("lets a seen completion calm down to the receded time-only row", () => {
+    expect(declaration(".cv-card-row.is-recede .cv-card-row__title", "color")).toBe(
+      "var(--cv-fg-muted)",
+    );
+    expect(declaration(".cv-card-row.is-recede .cv-card-row__title", "font-weight")).toBe("400");
+    expect(declaration(".cv-card-row__when", "font-variant-numeric")).toBe("tabular-nums");
+  });
+
+  it("adds no focus ring for the new working and done row states", () => {
+    for (const rule of parsed.rules) {
+      if (!/is-fade|is-unread-done|done-dot/.test(rule.selector)) continue;
+      for (const entry of rule.declarations) {
+        expect(`${rule.selector} ${entry.property}`).not.toMatch(/ outline$/);
+        expect(entry.value, rule.selector).not.toContain("--cv-ring-focus");
+        expect(entry.value, rule.selector).not.toContain("--cv-focus");
+        expect(entry.value, rule.selector).not.toContain("--cv-accent");
+      }
+    }
+  });
+
   it("keeps the shelves and search results on the mockup geometry", () => {
     expect(declaration(".cv-sb-shelf", "height")).toBe("36px");
     expect(declaration(".cv-sr", "min-height")).toBe("36px");

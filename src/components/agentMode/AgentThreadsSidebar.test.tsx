@@ -658,8 +658,9 @@ describe("AgentThreadsSidebar", () => {
 
     const status = row("agt-1").querySelector('.cv-card-row__status[data-tone="work"]');
     expect(status?.textContent).toContain("Working");
-    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("10:00");
+    expect(status?.querySelector(".cv-card-row__tick")?.textContent).toBe("10m");
     expect(row("agt-1").classList.contains("is-live")).toBe(true);
+    expect(row("agt-1").classList.contains("is-fade")).toBe(true);
   });
 
   it("labels failed, stopped and unread done threads and keeps read ones quiet", () => {
@@ -684,9 +685,28 @@ describe("AgentThreadsSidebar", () => {
       "Done",
     );
     expect(row("agt-d").classList.contains("is-unread")).toBe(true);
+    expect(row("agt-d").classList.contains("is-unread-done")).toBe(true);
+    expect(
+      row("agt-d").querySelector(".cv-card-row__status .cv-card-row__done-dot"),
+    ).not.toBeNull();
+    expect(row("agt-d").querySelector(".cv-card-row__status svg")).toBeNull();
     expect(row("agt-r").querySelector(".cv-card-row__status")).toBeNull();
+    expect(row("agt-r").querySelector(".cv-card-row__when")).not.toBeNull();
+    expect(row("agt-r").classList.contains("is-unread-done")).toBe(false);
     expect(row("agt-r").classList.contains("is-recede")).toBe(true);
     expect(row("agt-f").classList.contains("is-recede")).toBe(false);
+    expect(row("agt-f").classList.contains("is-unread-done")).toBe(false);
+    expect(row("agt-f").classList.contains("is-fade")).toBe(false);
+  });
+
+  it("keeps the open working card at full strength", () => {
+    render({
+      groups: [group(ROOT, "app", [running("agt-1", "Busy")])],
+      selectedThreadId: "agt-1",
+    });
+
+    expect(row("agt-1").classList.contains("is-current")).toBe(true);
+    expect(row("agt-1").classList.contains("is-fade")).toBe(false);
   });
 
   it("marks the selected card as on and never receded", () => {

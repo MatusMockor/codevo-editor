@@ -252,6 +252,54 @@ describe("agent row status", () => {
     ).toBe("cv-card-row is-live");
   });
 
+  it("fades and recedes a working row only while it is neither open nor marked", () => {
+    const working = { kind: "working", startedAtEpochMs: 0 } as const;
+    const agents = { kind: "agents", count: 2, lead: "working", startedAtEpochMs: 0 } as const;
+    const base = { on: false, marked: false, recede: false, unread: true } as const;
+
+    expect(agentRowClassName({ ...base, status: working })).toBe(
+      "cv-card-row is-recede is-fade is-live is-unread",
+    );
+    expect(agentRowClassName({ ...base, status: agents })).toBe(
+      "cv-card-row is-recede is-fade is-live is-unread",
+    );
+    expect(agentRowClassName({ ...base, on: true, status: working })).toBe(
+      "cv-card-row is-current is-live is-unread",
+    );
+    expect(agentRowClassName({ ...base, marked: true, status: working })).toBe(
+      "cv-card-row is-marked is-live is-unread",
+    );
+    for (const status of [
+      { kind: "approval" },
+      { kind: "input" },
+      { kind: "failed" },
+      { kind: "done" },
+      { kind: "none" },
+    ] as const)
+      expect(agentRowClassName({ ...base, status }), status.kind).not.toContain("is-fade");
+  });
+
+  it("emphasises an unseen completion until the thread is opened", () => {
+    expect(
+      agentRowClassName({
+        on: false,
+        marked: false,
+        recede: false,
+        status: { kind: "done" },
+        unread: true,
+      }),
+    ).toBe("cv-card-row is-unread is-unread-done");
+    expect(
+      agentRowClassName({
+        on: false,
+        marked: false,
+        recede: true,
+        status: { kind: "none" },
+        unread: false,
+      }),
+    ).toBe("cv-card-row is-recede");
+  });
+
   it("keeps the open row marked when it is part of the selection", () => {
     expect(
       agentRowClassName({

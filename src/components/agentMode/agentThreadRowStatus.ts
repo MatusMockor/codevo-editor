@@ -155,12 +155,12 @@ export function agentRowStatusTone(status: AgentRowStatus): AgentRowStatusTone {
   }
 }
 
-export function agentRowElapsedLabel(startedAtEpochMs: number, now: number): string {
-  const total = Math.max(0, Math.floor((now - startedAtEpochMs) / 1_000));
-  const seconds = String(total % 60).padStart(2, "0");
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${minutes}:${seconds}`;
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${seconds}`;
+export function agentRowWorkingDurationLabel(elapsedMs: number): string {
+  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1_000)) : 0;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 function agentCountLabel(count: number): string {

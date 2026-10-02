@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { agentThreadTimeLabel } from "./agentModePresentation";
 import { agentCompactTimeLabel, agentWorkingDurationLabel } from "./agentSidebarPresentation";
-import { agentRowElapsedLabel } from "./agentThreadRowStatus";
+import { agentRowWorkingDurationLabel } from "./agentThreadRowStatus";
 
 export const DEFAULT_AGENT_NOW_TICK_MS = 30_000;
 export const WORKING_DURATION_TICK_MS = 1_000;
@@ -59,5 +59,5 @@ export function AgentRowElapsed({ startedAtEpochMs }: { readonly startedAtEpochM
     return () => clearInterval(timer);
   }, []);
 
-  return <>{agentRowElapsedLabel(startedAtEpochMs, now)}</>;
+  return <>{agentRowWorkingDurationLabel(now - startedAtEpochMs)}</>;
 }

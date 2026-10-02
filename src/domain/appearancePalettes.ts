@@ -26,6 +26,7 @@ export interface PaletteTokens {
   readonly danger: string;
   readonly warn: string;
   readonly warnSoft: string;
+  readonly work: string;
   readonly addBg: string;
   readonly addGutter: string;
   readonly delBg: string;
@@ -68,6 +69,7 @@ export const PALETTE_TOKEN_NAMES: readonly PaletteTokenName[] = [
   "danger",
   "warn",
   "warnSoft",
+  "work",
   "addBg",
   "addGutter",
   "delBg",

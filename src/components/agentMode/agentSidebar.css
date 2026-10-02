@@ -328,6 +328,7 @@
   color: var(--cv-fg);
   cursor: pointer;
   outline: none;
+  transition: opacity var(--cv-motion-base) var(--cv-ease);
 }
 
 .cv-card-row:hover {
@@ -341,6 +342,27 @@
 .cv-card-row.is-current,
 .cv-card-row.is-marked {
   background: var(--cv-row-active);
+}
+
+.cv-card-row.is-fade {
+  opacity: 0.7;
+}
+
+.cv-card-row.is-fade:hover,
+.cv-card-row.is-fade:focus-visible,
+.cv-card-row.is-fade:has(.cv-card-row__rename),
+.cv-sb-item[data-menu-open="true"] .cv-card-row.is-fade {
+  opacity: 1;
+}
+
+.cv-sb-item:not([data-menu-open="true"])
+  > .cv-card-row.is-unread-done:not(.is-current):not(.is-marked) {
+  background: color-mix(in srgb, var(--cv-ok) 7%, transparent);
+}
+
+.cv-sb-item:not([data-menu-open="true"])
+  > .cv-card-row.is-unread-done:not(.is-current):not(.is-marked):hover {
+  background: color-mix(in srgb, var(--cv-ok) 10%, transparent);
 }
 
 .cv-card-row__l1,
@@ -406,7 +428,11 @@
 }
 
 .cv-card-row__status[data-tone="work"] {
-  color: var(--cv-accent);
+  color: var(--cv-work);
+}
+
+.cv-card-row__status[data-tone="work"] .cv-card-row__tick {
+  font-weight: 500;
 }
 
 .cv-card-row__status[data-tone="warn"] {
@@ -414,7 +440,28 @@
 }
 
 .cv-card-row__status[data-tone="ok"] {
+  gap: 6px;
   color: var(--cv-ok);
+  font-weight: 700;
+}
+
+.cv-card-row__done-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--cv-ok);
+}
+
+.cv-card-row__done-dot::before {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--cv-ok) 18%, transparent);
+  content: "";
 }
 
 .cv-card-row__status[data-tone="fail"] {
@@ -448,6 +495,11 @@
 
 .cv-card-row.is-recede .cv-card-row__title {
   color: var(--cv-fg-muted);
+}
+
+.cv-card-row.is-unread-done .cv-card-row__title {
+  color: var(--cv-fg-strong);
+  font-weight: 600;
 }
 
 .cv-card-row__rename {
@@ -808,7 +860,7 @@
 }
 
 .cv-sb-project__signal[data-tone="working"] {
-  background: var(--cv-accent);
+  background: var(--cv-work);
 }
 
 .cv-sb-project__signal[data-tone="unread"] {

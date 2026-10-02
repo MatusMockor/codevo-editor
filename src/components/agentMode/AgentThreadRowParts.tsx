@@ -2,7 +2,6 @@ import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useState, type ComponentType, type KeyboardEvent } from "react";
 import {
   CircleAlert,
-  CircleCheck,
   CircleDashed,
   CircleStop,
   MessageCircleQuestionMark,
@@ -18,21 +17,19 @@ import {
   type AgentRowStatus,
 } from "./agentThreadRowStatus";
 
-type AgentRowStatusKind = AgentRowStatus["kind"];
+type AgentRowGlyphKind = Exclude<AgentRowStatus["kind"], "none" | "done">;
 
-const STATUS_ICONS: Readonly<
-  Record<Exclude<AgentRowStatusKind, "none">, ComponentType<LucideProps>>
-> = {
+const STATUS_ICONS: Readonly<Record<AgentRowGlyphKind, ComponentType<LucideProps>>> = {
   working: CircleDashed,
   agents: CircleDashed,
   approval: ShieldQuestionMark,
   input: MessageCircleQuestionMark,
-  done: CircleCheck,
   failed: CircleAlert,
   stopped: CircleStop,
 };
 
 export const AGENT_ROW_STATUS_ICON_SIZE = 13;
+export const AGENT_ROW_WORKING_ICON_SIZE = 16;
 
 export function AgentThreadRowStatusSlot({
   status,
@@ -49,22 +46,39 @@ export function AgentThreadRowStatusSlot({
       </span>
     );
   }
-  const Icon = STATUS_ICONS[status.kind];
   return (
     <span
       className="cv-card-row__status"
       data-tone={agentRowStatusTone(status)}
       title={agentRowStatusTitle(status) ?? undefined}
     >
-      <Icon aria-hidden="true" size={AGENT_ROW_STATUS_ICON_SIZE} />
+      <AgentRowStatusGlyph status={status} />
       <span className="cv-card-row__status-label">{label}</span>
-      {(status.kind === "working" || status.kind === "agents") && (
+      {isWorkingStatus(status) && (
         <span aria-hidden="true" className="cv-card-row__tick">
           <AgentRowElapsed startedAtEpochMs={status.startedAtEpochMs} />
         </span>
       )}
     </span>
   );
+}
+
+function AgentRowStatusGlyph({ status }: { readonly status: AgentRowStatus }) {
+  if (status.kind === "none") return null;
+  if (status.kind === "done") return <span aria-hidden="true" className="cv-card-row__done-dot" />;
+  const Icon = STATUS_ICONS[status.kind];
+  return (
+    <Icon
+      aria-hidden="true"
+      size={isWorkingStatus(status) ? AGENT_ROW_WORKING_ICON_SIZE : AGENT_ROW_STATUS_ICON_SIZE}
+    />
+  );
+}
+
+function isWorkingStatus(
+  status: AgentRowStatus,
+): status is Extract<AgentRowStatus, { readonly kind: "working" | "agents" }> {
+  return status.kind === "working" || status.kind === "agents";
 }
 
 export function RenameInput({

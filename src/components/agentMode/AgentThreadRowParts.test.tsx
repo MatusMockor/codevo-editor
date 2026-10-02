@@ -4,7 +4,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentClockProvider } from "./agentClock";
-import { AGENT_ROW_STATUS_ICON_SIZE, AgentThreadRowStatusSlot } from "./AgentThreadRowParts";
+import {
+  AGENT_ROW_STATUS_ICON_SIZE,
+  AGENT_ROW_WORKING_ICON_SIZE,
+  AgentThreadRowStatusSlot,
+} from "./AgentThreadRowParts";
 import type { AgentRowStatus } from "./agentThreadRowStatus";
 
 const NOW = 1_700_000_600_000;
@@ -53,18 +57,31 @@ describe("AgentThreadRowStatusSlot", () => {
     expect(host.querySelector(".cv-card-row__when")?.textContent).toBe("5m");
   });
 
-  it("renders a check glyph before the Done label for a settled unread thread", () => {
+  it("renders a filled dot before the Done label for a settled unread thread", () => {
     render({ kind: "done" });
 
     const status = slot();
     expect(status.getAttribute("data-tone")).toBe("ok");
     expect(status.textContent).toBe("Done");
-    expect(status.firstElementChild?.tagName.toLowerCase()).toBe("svg");
-    expect(status.firstElementChild?.getAttribute("width")).toBe(
-      String(AGENT_ROW_STATUS_ICON_SIZE),
-    );
+    expect(status.firstElementChild?.className).toBe("cv-card-row__done-dot");
+    expect(status.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+    expect(status.querySelector("svg")).toBeNull();
     expect(status.querySelector(".cv-card-row__status-label")?.textContent).toBe("Done");
     expect(host.querySelector(".cv-card-row__when")).toBeNull();
+  });
+
+  it("keeps the compact glyph size for approval, input, failed and stopped", () => {
+    for (const status of [
+      { kind: "approval" },
+      { kind: "input" },
+      { kind: "failed" },
+      { kind: "stopped" },
+    ] as const) {
+      render(status);
+      expect(slot().querySelector("svg")?.getAttribute("width"), status.kind).toBe(
+        String(AGENT_ROW_STATUS_ICON_SIZE),
+      );
+    }
   });
 
   it("renders a glyph, label and tone for failed and stopped threads", () => {
@@ -103,9 +120,14 @@ describe("AgentThreadRowStatusSlot", () => {
     expect(slot().querySelector(".cv-card-row__status-label")?.textContent).toBe(
       "3 agents running",
     );
-    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("0:25");
+    expect(slot().querySelector("svg")?.getAttribute("width")).toBe(
+      String(AGENT_ROW_WORKING_ICON_SIZE),
+    );
+    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("25s");
     act(() => vi.advanceTimersByTime(5_000));
-    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("0:30");
+    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("30s");
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("1m");
     render({ kind: "agents", count: 1, lead: "working", startedAtEpochMs: NOW - 25_000 });
     expect(slot().querySelector(".cv-card-row__status-label")?.textContent).toBe("1 agent running");
     expect(slot().title).toBe("Working with 1 agent");
@@ -118,15 +140,19 @@ describe("AgentThreadRowStatusSlot", () => {
     render({ kind: "working", activity, startedAtEpochMs: NOW - 90_000 });
     expect(slot().querySelector(".cv-card-row__status-label")?.textContent).toBe(label);
     expect(slot().querySelector("svg")).not.toBeNull();
-    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("1:30");
+    expect(slot().querySelector(".cv-card-row__tick")?.textContent).toBe("1m");
   });
 
-  it("keeps the live elapsed time after the working glyph and label", () => {
-    render({ kind: "working", startedAtEpochMs: NOW - 90_000 });
+  it("shows Working with a 16px dashed glyph and a coarse duration", () => {
+    render({ kind: "working", startedAtEpochMs: NOW - 65 * 60_000 });
 
     const status = slot();
-    expect(status.querySelector("svg")).not.toBeNull();
+    expect(status.getAttribute("data-tone")).toBe("work");
+    expect(status.querySelector("svg")?.getAttribute("width")).toBe(
+      String(AGENT_ROW_WORKING_ICON_SIZE),
+    );
+    expect(status.querySelector("svg")?.getAttribute("class")).toContain("circle-dashed");
     expect(status.querySelector(".cv-card-row__status-label")?.textContent).toBe("Working");
-    expect(status.querySelector(".cv-card-row__tick")?.textContent).toBe("1:30");
+    expect(status.querySelector(".cv-card-row__tick")?.textContent).toBe("1h 5m");
   });
 });

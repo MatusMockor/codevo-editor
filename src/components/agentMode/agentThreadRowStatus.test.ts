@@ -5,13 +5,13 @@ import type { AgentTurn } from "../../domain/agentThread";
 import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
-  agentRowElapsedLabel,
   agentRowIsLive,
   agentRowStatus,
   agentRowStatusLabel,
   agentRowStatusTitle,
   agentRowStatusTone,
   agentRowWorkingAgents,
+  agentRowWorkingDurationLabel,
   type AgentRowStatus,
 } from "./agentThreadRowStatus";
 
@@ -260,10 +260,21 @@ describe("row status", () => {
     expect(agentRowStatusTone({ kind: "working", startedAtEpochMs: 0 })).toBe("work");
   });
 
-  it("formats elapsed time as m:ss and h:mm:ss", () => {
-    expect(agentRowElapsedLabel(0, 5_000)).toBe("0:05");
-    expect(agentRowElapsedLabel(0, 161_000)).toBe("2:41");
-    expect(agentRowElapsedLabel(0, 3_725_000)).toBe("1:02:05");
-    expect(agentRowElapsedLabel(10_000, 0)).toBe("0:00");
+  it("formats the working duration coarsely as seconds, minutes, then hours and minutes", () => {
+    expect(agentRowWorkingDurationLabel(0)).toBe("0s");
+    expect(agentRowWorkingDurationLabel(42_999)).toBe("42s");
+    expect(agentRowWorkingDurationLabel(59_999)).toBe("59s");
+    expect(agentRowWorkingDurationLabel(60_000)).toBe("1m");
+    expect(agentRowWorkingDurationLabel(4 * 60_000 + 59_000)).toBe("4m");
+    expect(agentRowWorkingDurationLabel(59 * 60_000 + 59_000)).toBe("59m");
+    expect(agentRowWorkingDurationLabel(60 * 60_000)).toBe("1h 0m");
+    expect(agentRowWorkingDurationLabel(65 * 60_000)).toBe("1h 5m");
+    expect(agentRowWorkingDurationLabel(26 * 60 * 60_000 + 7 * 60_000)).toBe("26h 7m");
+  });
+
+  it("clamps negative and non-finite working durations to zero seconds", () => {
+    expect(agentRowWorkingDurationLabel(-5_000)).toBe("0s");
+    expect(agentRowWorkingDurationLabel(Number.NaN)).toBe("0s");
+    expect(agentRowWorkingDurationLabel(Number.POSITIVE_INFINITY)).toBe("0s");
   });
 });

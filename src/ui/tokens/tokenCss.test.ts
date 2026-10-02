@@ -100,6 +100,20 @@ describe("palette token stylesheet", () => {
     expect(paletteTokens("ink-mint", "light").hair).toBe("rgba(14, 20, 48, 0.085)");
   });
 
+  it("declares the t3code sky Working blue in every dark palette and a darker AA blue in light", () => {
+    for (const palette of PALETTE_IDS) {
+      expect(paletteTokens(palette, "dark").work, palette).toBe("#00BCFF");
+      expect(paletteTokens(palette, "light").work, palette).toBe("#0069A8");
+      for (const scheme of RESOLVED_COLOR_SCHEMES)
+        expect(
+          declaredValues(rulesFor(PALETTE_SHEET, paletteSelector(palette, scheme)), "--cv-")[
+            "--cv-work"
+          ],
+          `${palette} ${scheme}`,
+        ).toBe(paletteTokens(palette, scheme).work);
+    }
+  });
+
   it("derives kebab-case custom property names", () => {
     expect(cssTokenName("accentFill")).toBe("--cv-accent-fill");
     expect(cssTokenName("popBg")).toBe("--cv-pop-bg");

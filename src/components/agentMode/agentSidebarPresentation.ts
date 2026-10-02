@@ -32,6 +32,7 @@ import {
   NO_ROW_SIGNALS,
   agentRowIsLive,
   agentRowStatus,
+  agentRowStatusTone,
   type AgentRowSignals,
   type AgentRowStatus,
 } from "./agentThreadRowStatus";
@@ -441,10 +442,18 @@ export function agentRowClassName(model: AgentRowClassNameModel): string {
   if (model.grouped === true) classes.push("is-grouped");
   if (model.on) classes.push("is-current");
   if (model.marked) classes.push("is-marked");
-  if (model.recede) classes.push("is-recede");
+  const fade = agentRowFades(model);
+  if (model.recede || fade) classes.push("is-recede");
+  if (fade) classes.push("is-fade");
   if (agentRowIsLive(model.status)) classes.push("is-live");
   if (model.unread) classes.push("is-unread");
+  if (model.status.kind === "done") classes.push("is-unread-done");
   return classes.join(" ");
+}
+
+function agentRowFades(model: AgentRowClassNameModel): boolean {
+  if (model.on || model.marked) return false;
+  return agentRowStatusTone(model.status) === "work";
 }
 
 export const AGENT_IMPORTED_BADGE_LABEL = "Imported";

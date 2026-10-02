@@ -18,6 +18,7 @@ const TEXT_TOKENS: readonly PaletteTokenName[] = [
   "ok",
   "danger",
   "warn",
+  "work",
 ];
 const TEXT_SURFACES: readonly PaletteTokenName[] = ["s0", "s1", "s2", "s3", "popBg"];
 const SYNTAX_TOKENS: readonly PaletteTokenName[] = ["synKw", "synStr", "synNum", "synCom"];
