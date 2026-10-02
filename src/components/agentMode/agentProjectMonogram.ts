@@ -20,3 +20,14 @@ export function agentProjectBadgeMonogram(label: string): string {
     first;
   return [...`${first}${second}`.toLocaleUpperCase()].slice(0, 2).join("");
 }
+
+export const AGENT_PROJECT_BADGE_TONES = 7;
+
+export function agentProjectBadgeTone(label: string): number {
+  const seed = label.normalize("NFKC").trim().toLocaleLowerCase("en-US") || "project";
+  let index = 0;
+  for (const glyph of seed) {
+    index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % AGENT_PROJECT_BADGE_TONES;
+  }
+  return index;
+}

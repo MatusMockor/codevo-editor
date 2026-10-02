@@ -55,6 +55,7 @@ import { useAgentThreadBranchRecorder } from "../../application/useAgentThreadBr
 import { AgentThreadBranchMemoryContext } from "./agentThreadBranchMemoryContext";
 import { useAgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
 import { useAgentRailProjectFocus } from "./useAgentRailProjectFocus";
+import { agentProjectWorkspaceTabRoot } from "./agentProjectWorkspaceTab";
 import { useAgentProjectThreadCommands } from "./useAgentProjectThreadCommands";
 import { useAgentResumeCompactionOffer } from "../../application/useAgentResumeCompactionOffer";
 import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
@@ -177,6 +178,7 @@ export interface AgentModeViewProps {
   onOpenUsageSettings?(): void;
   onTrustProject(projectRootKey: string, origin?: WorkspaceTrustOrigin): void;
   onCloseProject?(rootPath: string): void;
+  onActivateWorkspaceTab?(rootPath: string): Promise<boolean>;
   onReleaseProject(projectRootKey: string): void;
 }
 
@@ -189,6 +191,10 @@ const NOOP_CLOSE_PROJECT = () => undefined;
 const NOOP_SELECTED_PROJECT = () => undefined;
 const NO_REMOTE_SERVERS: readonly import("../../domain/remoteRunner").RemoteRunnerServer[] = [];
 const REMOTE_PROVIDERS_ENABLED = { claudeCode: true, codex: true } as const;
+
+function workspaceTabSwitchFailedNotice(label: string): AgentTasksNotice {
+  return { kind: "warning", message: `Could not switch to ${label}.`, action: null };
+}
 
 const TERMINAL_SESSIONS_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   kind: "warning",
@@ -255,6 +261,7 @@ function LocalAgentModeView({
   onOpenEnvironmentSettings,
   onOpenUsageSettings,
   onCloseProject = NOOP_CLOSE_PROJECT,
+  onActivateWorkspaceTab,
   onReleaseProject,
   onTrustProject,
   overflowRootPaths,
@@ -657,7 +664,19 @@ function LocalAgentModeView({
   const newThreadInProject = useAgentLatestCallback((projectRootKey: string) => {
     projectThreads.newThreadInProject(projectRootKey);
   });
-  const activateRailProject = (projectRootKey: string): boolean => {
+  const activateRailProject = (projectRootKey: string): boolean | Promise<boolean> => {
+    const entry = agentRailScopeEntryFor(navigation.scopeEntries, projectRootKey);
+    const tabRoot =
+      onActivateWorkspaceTab === undefined
+        ? null
+        : agentProjectWorkspaceTabRoot(projects, projectRootKey, entry?.memberProjectRootKeys);
+    if (tabRoot !== null && onActivateWorkspaceTab !== undefined) {
+      projectDisclosure.expand(projectRootKey);
+      return onActivateWorkspaceTab(tabRoot).then((switched) => {
+        if (!switched) setLocalNotice(workspaceTabSwitchFailedNotice(entry?.label ?? tabRoot));
+        return switched;
+      });
+    }
     const scope = navigation.railScope;
     const current =
       scope !== null &&
@@ -668,11 +687,17 @@ function LocalAgentModeView({
     return true;
   };
   const switchRailProject = useAgentLatestCallback((projectRootKey: string) => {
-    activateRailProject(projectRootKey);
+    void activateRailProject(projectRootKey);
   });
   const focusRailProject = useAgentLatestCallback((projectRootKey: string) => {
-    if (!activateRailProject(projectRootKey)) return;
+    const previous = projectFocus.focus;
+    const activated = activateRailProject(projectRootKey);
+    if (activated === false) return;
     projectFocus.setFocus("active");
+    if (activated === true) return;
+    void activated.then((switched) => {
+      if (!switched) projectFocus.setFocus(previous);
+    });
   });
   const showAllRailProjects = useAgentLatestCallback(() => projectFocus.setFocus("all"));
   const sectionRef = useRef<HTMLElement | null>(null);

@@ -581,4 +581,62 @@ describe("agent sidebar project groups and New thread picker", () => {
     expect(projectToggle("api-service").getAttribute("aria-expanded")).toBe("true");
     expect(projectThreadIds("api-service")).toEqual(["b1"]);
   });
+
+  it("opens a project's existing actions from its gear in the switcher", () => {
+    const revealed: string[] = [];
+    const chrome = chromeFixture({
+      workspaceActivation: {
+        select: selectWorkspace,
+        state: { kind: "none", rootPath: null },
+        retry: () => undefined,
+      },
+      revealPath: async (path: string) => {
+        revealed.push(path);
+      },
+    });
+    render(<AgentModeView {...threeProjects({ chrome })} />);
+    act(() => switcher().click());
+    expect(
+      document.querySelector(
+        '[role="dialog"] button[aria-label="Project settings for All projects"]',
+      ),
+    ).toBeNull();
+    const gear = document.querySelector<HTMLButtonElement>(
+      '[role="dialog"] button[aria-label="Project settings for docs"]',
+    );
+    expect(gear).not.toBeNull();
+
+    act(() => gear?.click());
+
+    expect(switcherOptions()).toEqual([]);
+    const menu = document.querySelector('[role="menu"][aria-label="Project actions for docs"]');
+    expect(menu).not.toBeNull();
+    expect(
+      [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])].map((item) => item.textContent),
+    ).toEqual(["Close project", "Terminal sessions…", "Reveal in Finder", "Copy path"]);
+    const reveal = [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].find(
+      (item) => item.textContent === "Reveal in Finder",
+    );
+    act(() => reveal?.click());
+    expect(revealed).toEqual([DOCS]);
+  });
+
+  it("shows each project as a stable coloured monogram badge in the switcher", () => {
+    render(<AgentModeView {...threeProjects()} />);
+    act(() => switcher().click());
+    const badges = switcherOptions().map((option) => {
+      const badge = option.querySelector<HTMLElement>(".cv-project-badge");
+      return badge === null ? null : `${badge.textContent}:${badge.dataset.tone}`;
+    });
+    act(() => switcher().click());
+    act(() => switcher().click());
+
+    expect(badges[0]).toBeNull();
+    expect(badges.slice(1).every((badge) => badge !== null)).toBe(true);
+    expect(
+      switcherOptions().map(
+        (option) => option.querySelector<HTMLElement>(".cv-project-badge")?.dataset.tone ?? null,
+      ),
+    ).toEqual(badges.map((badge) => (badge === null ? null : (badge.split(":")[1] ?? null))));
+  });
 });

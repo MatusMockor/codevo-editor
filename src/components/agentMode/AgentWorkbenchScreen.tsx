@@ -1,4 +1,5 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
+import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
 import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
@@ -150,6 +151,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
     Pick<
       Workbench,
       | "openDocuments"
+      | "activateWorkspaceTab"
       | "openSettingsSection"
       | "gitStatus"
       | "gitRepositoryStatuses"
@@ -294,6 +296,23 @@ export function AgentWorkbenchScreen({
   const openEnvironmentSettings = useCallback(() => {
     openSettingsSection?.("environments");
   }, [openSettingsSection]);
+  const activateWorkbenchTab = workbench.activateWorkspaceTab;
+  const latestWorkspaceRoot = useRef(workspaceRoot);
+  latestWorkspaceRoot.current = workspaceRoot;
+  const activateWorkspaceTab = useMemo(
+    () =>
+      activateWorkbenchTab === undefined
+        ? undefined
+        : async (rootPath: string) => {
+            try {
+              await activateWorkbenchTab(rootPath);
+            } catch {
+              return false;
+            }
+            return workspaceRootKeysEqual(latestWorkspaceRoot.current, rootPath);
+          },
+    [activateWorkbenchTab],
+  );
   const openUsageSettings = useCallback(() => {
     openSettingsSection?.("usage");
   }, [openSettingsSection]);
@@ -768,6 +787,7 @@ export function AgentWorkbenchScreen({
           }
           onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
           onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
+          onActivateWorkspaceTab={activateWorkspaceTab}
           onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
           onTrustProject={(projectRootKey, origin) =>
             void (projects.grantProjectTrust ?? projects.trustProject)(

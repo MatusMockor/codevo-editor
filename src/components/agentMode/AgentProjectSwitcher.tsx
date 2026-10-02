@@ -1,9 +1,18 @@
-import { Check, Folder, Search } from "lucide-react";
+import { Check, Folder, Search, Settings } from "lucide-react";
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { IconButton } from "../../ui/foundation/IconButton";
+import { Menu } from "../../ui/foundation/Menu";
+import { MenuItem } from "../../ui/foundation/MenuItem";
 import { Popover } from "../../ui/foundation/Popover";
 import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
-import { agentRailScopeState } from "./agentProjectMenuPresentation";
-import { agentProjectBadgeMonogram, agentProjectMonogram } from "./agentProjectMonogram";
+import { AgentProjectBadge } from "./AgentProjectBadge";
+import {
+  agentProjectMenuEntries,
+  agentProjectMenuTarget,
+  agentRailProjectState,
+  type AgentProjectMenuCommand,
+  type AgentProjectMenuTarget,
+} from "./agentProjectMenuPresentation";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 const MAX_PROJECT_QUERY_CHARS = 160;
@@ -23,12 +32,14 @@ export interface AgentProjectSwitcherProps {
   readonly focus: AgentRailProjectFocus;
   onSelectAll(): void;
   onSelectProject(projectRootKey: string): void;
+  onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
 export function AgentProjectSwitcher({
   activeEntry,
   entries,
   focus,
+  onProjectCommand,
   onSelectAll,
   onSelectProject,
 }: AgentProjectSwitcherProps) {
@@ -37,6 +48,7 @@ export function AgentProjectSwitcher({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
+  const [actionsFor, setActionsFor] = useState<AgentRailScopeEntry | null>(null);
   const options = useMemo(() => switcherOptions(entries, query), [entries, query]);
   const focused = focus === "active" && activeEntry !== null;
   const selectedKey = focused ? activeEntry.projectRootKey : ALL_PROJECTS_KEY;
@@ -57,6 +69,11 @@ export function AgentProjectSwitcher({
       return;
     }
     onSelectProject(option.entry.projectRootKey);
+  };
+
+  const openActions = (entry: AgentRailScopeEntry): void => {
+    close();
+    setActionsFor(entry);
   };
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -93,9 +110,7 @@ export function AgentProjectSwitcher({
         {activeEntry === null ? (
           <Folder aria-hidden="true" size={16} />
         ) : (
-          <span aria-hidden="true" className="cv-sb-switch__badge">
-            {agentProjectBadgeMonogram(activeEntry.label)}
-          </span>
+          <AgentProjectBadge label={activeEntry.label} />
         )}
       </button>
       <Popover
@@ -128,24 +143,56 @@ export function AgentProjectSwitcher({
             value={query}
           />
         </label>
-        <ul aria-label="Projects" className="cv-switch__list" id={listId} role="listbox">
-          {options.map((option, index) => (
-            <SwitcherOptionRow
-              active={index === active}
-              current={
-                option.entry !== null && option.entry.projectRootKey === activeEntry?.projectRootKey
-              }
-              id={`${listId}-${index}`}
-              key={option.key}
-              onChoose={() => choose(option)}
-              onHighlight={() => setHighlight(index)}
-              option={option}
-              selected={option.key === selectedKey}
-            />
-          ))}
-        </ul>
+        <div className="cv-switch__rows">
+          <ul aria-label="Projects" className="cv-switch__list" id={listId} role="listbox">
+            {options.map((option, index) => (
+              <SwitcherOptionRow
+                active={index === active}
+                current={
+                  option.entry !== null &&
+                  option.entry.projectRootKey === activeEntry?.projectRootKey
+                }
+                id={`${listId}-${index}`}
+                key={option.key}
+                onChoose={() => choose(option)}
+                onHighlight={() => setHighlight(index)}
+                option={option}
+                selected={option.key === selectedKey}
+              />
+            ))}
+          </ul>
+          <div aria-label="Project settings" className="cv-switch__gears" role="group">
+            {options.map((option, index) => (
+              <SwitcherGearSlot
+                active={index === active}
+                key={option.key}
+                onHighlight={() => setHighlight(index)}
+                onOpenActions={openActions}
+                option={option}
+              />
+            ))}
+          </div>
+        </div>
         {options.length === 0 && <p className="cv-switch__none">No matching projects.</p>}
       </Popover>
+      <Menu
+        anchorRef={triggerRef}
+        label={actionsFor === null ? "Project actions" : `Project actions for ${actionsFor.label}`}
+        onClose={() => setActionsFor(null)}
+        open={actionsFor !== null}
+        placement="bottom-end"
+      >
+        {actionsFor !== null &&
+          agentProjectMenuEntries(actionsFor).map((item) => (
+            <MenuItem
+              disabled={item.disabled}
+              key={item.id}
+              onSelect={() => onProjectCommand(agentProjectMenuTarget(actionsFor), item.command)}
+            >
+              {item.label}
+            </MenuItem>
+          ))}
+      </Menu>
     </>
   );
 }
@@ -170,9 +217,10 @@ function SwitcherOptionRow({
   selected,
 }: SwitcherOptionRowProps) {
   const entry = option.entry;
-  const state = entry === null ? null : (agentRailScopeState(entry)?.label ?? null);
+  const state = entry === null ? null : agentRailProjectState(entry);
   return (
     <li
+      aria-current={current ? "true" : undefined}
       aria-selected={selected}
       className="cv-switch__option"
       data-current={current ? "true" : undefined}
@@ -184,19 +232,46 @@ function SwitcherOptionRow({
       role="option"
     >
       {entry === null ? (
-        <Folder aria-hidden="true" size={16} />
-      ) : (
-        <span aria-hidden="true" className="cv-favicon">
-          {agentProjectMonogram(option.label)}
+        <span aria-hidden="true" className="cv-switch__all">
+          <Folder size={16} />
         </span>
+      ) : (
+        <AgentProjectBadge label={option.label} />
       )}
       <span className="cv-switch__label" title={entry?.rootPath ?? option.label}>
         {option.label}
       </span>
-      {state !== null && <span className="cv-switch__state">{state}</span>}
-      {state === null && current && <span className="cv-switch__state">Current</span>}
+      {current && <span className="cv-switch__state">Current</span>}
+      {!current && state !== null && <span className="cv-switch__state">{state}</span>}
       <Check aria-hidden="true" className="cv-switch__check" size={14} />
     </li>
+  );
+}
+
+interface SwitcherGearSlotProps {
+  readonly option: SwitcherOption;
+  readonly active: boolean;
+  onHighlight(): void;
+  onOpenActions(entry: AgentRailScopeEntry): void;
+}
+
+function SwitcherGearSlot({ active, onHighlight, onOpenActions, option }: SwitcherGearSlotProps) {
+  const entry = option.entry;
+  if (entry === null) return <span aria-hidden="true" className="cv-switch__gear-slot" />;
+  return (
+    <span
+      className="cv-switch__gear-slot"
+      data-highlighted={active ? "true" : undefined}
+      onMouseMove={onHighlight}
+    >
+      <IconButton
+        className="cv-switch__gear"
+        icon={<Settings size={14} />}
+        label={`Project settings for ${option.label}`}
+        onClick={() => onOpenActions(entry)}
+        size="xs"
+      />
+    </span>
   );
 }
 

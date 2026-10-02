@@ -23,7 +23,7 @@ import { useAgentWorkbenchLayout } from "../../application/useAgentWorkbenchLayo
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { agentWorkbenchHydration } from "../../application/useWorkbenchControllerAgents";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { agentRootOwnerId, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import {
   defaultAgentProviderPreferences,
@@ -604,6 +604,166 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(reveals).toEqual([]);
     expect(host.textContent).toContain("Unable to reveal that path in the file manager.");
+  });
+
+  describe("project switcher with background workspace tabs", () => {
+    const EDITOR = "/Users/dev/Developer/editor";
+    const CRM = "/Users/dev/Developer/ebox-crm";
+    const PLAYABLE = "/Users/dev/Developer/playablemaker";
+
+    function identitySetup(
+      active: string,
+      admitted: ReadonlySet<string>,
+      openWorkspaceRootWithReceipt: MockedWorkbench["openWorkspaceRootWithReceipt"],
+    ): MockedWorkbench {
+      const workbench = createWorkbench(active, { openWorkspaceRootWithReceipt });
+      const labels = new Map([
+        [EDITOR, "editor"],
+        [CRM, "ebox-crm"],
+        [PLAYABLE, "playablemaker"],
+      ]);
+      const ownerId = (root: string) =>
+        admitted.has(root) ? `workspace-${labels.get(root)}` : agentRootOwnerId(root);
+      const base = threadView(EDITOR, null);
+      const ownedThread = (threadId: string, root: string): AgentThreadView => ({
+        ...base,
+        thread: {
+          ...base.thread,
+          threadId,
+          title: `Thread in ${labels.get(root)}`,
+          owner: { rootKey: root, ownerId: `workspace-${labels.get(root)}`, repositoryRoot: root },
+        },
+      });
+      return {
+        ...workbench,
+        agents: {
+          ...workbench.agents,
+          threads: [
+            ownedThread("agt-editor", EDITOR),
+            ownedThread("agt-crm", CRM),
+            ownedThread("agt-playable", PLAYABLE),
+          ],
+          agentProjects: {
+            ...workbench.agents.agentProjects,
+            projects: [EDITOR, CRM, PLAYABLE].map((root) => ({
+              ...project(root),
+              ownerId: ownerId(root),
+              label: labels.get(root) ?? "",
+              origin: root === active ? ("active-tab" as const) : ("background-tab" as const),
+            })),
+          },
+        },
+      } as MockedWorkbench;
+    }
+
+    function railProjectNames(): ReadonlyArray<string> {
+      return [...host.querySelectorAll(".agent-rail .cv-sb-project__name")].map(
+        (node) => node.textContent ?? "",
+      );
+    }
+
+    function switcherLabels(): ReadonlyArray<string> {
+      return [...document.querySelectorAll<HTMLElement>('[role="option"] .cv-switch__label')].map(
+        (label) => label.textContent ?? "",
+      );
+    }
+
+    function chooseProject(label: string): void {
+      click(".agent-rail .cv-sb-switch");
+      const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (candidate) => candidate.querySelector(".cv-switch__label")?.textContent === label,
+      );
+      expect(option, `Missing project ${label}`).toBeDefined();
+      act(() => option?.click());
+    }
+
+    function tabHarness(setup: (active: string, admitted: ReadonlySet<string>) => MockedWorkbench) {
+      const tabs: string[] = [];
+      const pending: Array<() => void> = [];
+      const admitted = new Set([EDITOR]);
+      const show = (active: string) => {
+        const workbench = setup(active, new Set(admitted));
+        workbench.activateWorkspaceTab = vi.fn((path: string) => {
+          tabs.push(path);
+          return new Promise<void>((resolve) => pending.push(resolve));
+        }) as MockedWorkbench["activateWorkspaceTab"];
+        render(workbench);
+        return workbench;
+      };
+      const settle = async () => {
+        await act(async () => pending.shift()?.());
+      };
+      const follow = async (path: string) => {
+        show(path);
+        await settle();
+        admitted.add(path);
+        show(path);
+        await act(async () => {});
+      };
+      return { tabs, show, settle, follow };
+    }
+
+    it("switches the editor tab like clicking it when a background project is picked", async () => {
+      const opening = vi.fn() as unknown as MockedWorkbench["openWorkspaceRootWithReceipt"];
+      const harness = tabHarness((active, admitted) => identitySetup(active, admitted, opening));
+      harness.show(EDITOR);
+      await act(async () => {});
+      click('[data-thread-id="agt-editor"]');
+      await act(async () => {});
+
+      click(".agent-rail .cv-sb-switch");
+      expect(switcherLabels()).toEqual(["All projects", "editor", "ebox-crm", "playablemaker"]);
+      click(".agent-rail .cv-sb-switch");
+
+      chooseProject("playablemaker");
+      expect(harness.tabs).toEqual([PLAYABLE]);
+      await harness.follow(PLAYABLE);
+      expect(currentPaletteProjectLabel()).toBe("playablemaker");
+      expect(railProjectNames()).toEqual(["playablemaker"]);
+
+      chooseProject("ebox-crm");
+      expect(harness.tabs).toEqual([PLAYABLE, CRM]);
+      await harness.follow(CRM);
+      expect(currentPaletteProjectLabel()).toBe("ebox-crm");
+
+      chooseProject("editor");
+      expect(harness.tabs).toEqual([PLAYABLE, CRM, EDITOR]);
+      await harness.follow(EDITOR);
+      expect(currentPaletteProjectLabel()).toBe("editor");
+      expect(host.querySelector('section[aria-label="Agent thread agt-editor"]')).not.toBeNull();
+    });
+
+    it("keeps all projects and reports it when the editor tab does not switch", async () => {
+      const opening = vi.fn() as unknown as MockedWorkbench["openWorkspaceRootWithReceipt"];
+      const harness = tabHarness((active, admitted) => identitySetup(active, admitted, opening));
+      harness.show(EDITOR);
+      await act(async () => {});
+
+      chooseProject("playablemaker");
+      expect(harness.tabs).toEqual([PLAYABLE]);
+      await harness.settle();
+
+      expect(host.textContent).toContain("Could not switch to playablemaker.");
+      expect(railProjectNames()).toEqual(["editor", "ebox-crm", "playablemaker"]);
+      expect(currentPaletteProjectLabel()).toBe("editor");
+    });
+
+    it("switches the editor tab from a project name in the tree", async () => {
+      const opening = vi.fn() as unknown as MockedWorkbench["openWorkspaceRootWithReceipt"];
+      const harness = tabHarness((active, admitted) => identitySetup(active, admitted, opening));
+      harness.show(EDITOR);
+      await act(async () => {});
+
+      const name = [...host.querySelectorAll<HTMLButtonElement>(".cv-sb-project__select")].find(
+        (button) => button.querySelector(".cv-sb-project__name")?.textContent === "ebox-crm",
+      );
+      expect(name).toBeDefined();
+      act(() => name?.click());
+
+      expect(harness.tabs).toEqual([CRM]);
+      await harness.follow(CRM);
+      expect(currentPaletteProjectLabel()).toBe("ebox-crm");
+    });
   });
 
   it("opens the browsed directory through the workspace open flow", async () => {

@@ -473,6 +473,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         groups={groups}
         onAddProject={onAddProject}
         onNewThread={onNewThread}
+        onProjectCommand={projectCommand}
         onShowAllProjects={onShowAllProjects}
         onSwitchProject={focusProject}
         overflowRootPaths={overflowRootPaths}

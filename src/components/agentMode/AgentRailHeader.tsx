@@ -6,6 +6,10 @@ import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
 import { IconButton } from "../../ui/foundation/IconButton";
 import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import type { AgentProjectGroup } from "./agentModePresentation";
+import type {
+  AgentProjectMenuCommand,
+  AgentProjectMenuTarget,
+} from "./agentProjectMenuPresentation";
 import { AgentProjectSwitcher } from "./AgentProjectSwitcher";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
@@ -31,6 +35,7 @@ export interface AgentRailHeaderProps {
   readonly projectFocus: AgentRailProjectFocus;
   onShowAllProjects(): void;
   onSwitchProject(projectRootKey: string): void;
+  onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
   onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void;
   onNewThread(shiftKey: boolean): void;
   onAddProject(): void;
@@ -43,6 +48,7 @@ export function AgentRailHeader({
   onAddProject,
   onNewThread,
   onSearchKeyDown,
+  onProjectCommand,
   onShowAllProjects,
   onSwitchProject,
   overflowRootPaths,
@@ -119,6 +125,7 @@ export function AgentRailHeader({
           activeEntry={activeEntry}
           entries={scopeEntries}
           focus={projectFocus}
+          onProjectCommand={onProjectCommand}
           onSelectAll={onShowAllProjects}
           onSelectProject={onSwitchProject}
         />
