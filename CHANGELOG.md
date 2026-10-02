@@ -7,7 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.0-beta.85] - 2026-10-02
+## [0.2.0-beta.86] - 2026-10-02
+
+### Fixed
+
+- Clicking the project badge next to Search opens the project switcher instead of
+  scrolling the window; the header buttons are spaced like t3code and show no teal ring.
 
 ### Changed
 
