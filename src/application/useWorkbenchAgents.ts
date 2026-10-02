@@ -628,6 +628,7 @@ function providerUsageReady(
   management: AgentProviderManagementSurface,
   provider: "claudeCode" | "codex",
 ): boolean {
+  if (management.providers[provider].health.kind === "checking") return false;
   const authority = management.admissionAuthority(provider);
   return authority.disposition.kind === "ready" && "providerGeneration" in authority;
 }

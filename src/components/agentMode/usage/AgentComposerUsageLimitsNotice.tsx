@@ -53,6 +53,7 @@ function VisibleUsageLimitsNotice({ notice }: { readonly notice: ComposerUsageLi
               compact
               maxVisible={MAX_NOTICE_WINDOWS}
               nowEpochMs={nowEpochMs}
+              observedAtEpochMs={entry.observedAtEpochMs}
               windows={entry.windows}
             />
           </span>

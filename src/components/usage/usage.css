@@ -36,9 +36,16 @@
   white-space: nowrap;
 }
 
-.cv-usage-limits__value[data-measured="false"] {
+.cv-usage-limits__value[data-reading="asOf"],
+.cv-usage-limits__value[data-reading="notMeasured"] {
   color: var(--cv-fg-subtle);
   font-weight: 400;
+}
+
+.cv-usage-limits__as-of {
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  grid-column: 1 / -1;
 }
 
 .cv-usage-bar {

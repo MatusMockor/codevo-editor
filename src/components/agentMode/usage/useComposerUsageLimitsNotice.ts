@@ -13,6 +13,7 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 
 export interface ComposerUsageLimitsEntry {
   readonly provider: UsageProviderKind;
+  readonly observedAtEpochMs: number;
   readonly windows: ReadonlyArray<AgentAccountUsageWindow>;
 }
 
@@ -55,7 +56,13 @@ function readyProviders(
   return PROVIDERS.flatMap((provider) => {
     const state = accountUsage[provider];
     if (state.kind !== "ready" || state.snapshot.windows.length === 0) return [];
-    return [{ provider, windows: state.snapshot.windows }];
+    return [
+      {
+        provider,
+        observedAtEpochMs: state.snapshot.fetchedAtEpochMs,
+        windows: state.snapshot.windows,
+      },
+    ];
   });
 }
 

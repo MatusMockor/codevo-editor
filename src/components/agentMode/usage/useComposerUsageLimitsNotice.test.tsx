@@ -211,4 +211,20 @@ describe("useComposerUsageLimitsNotice", () => {
     act(() => dismiss?.click());
     expect(host.textContent).toBe("");
   });
+
+  it("marks hot limits from an old reading with when they were measured", () => {
+    function NoticeHarness({ accountUsage }: { accountUsage: Usage }) {
+      notice = useComposerUsageLimitsNotice(accountUsage, Date.now);
+      return <AgentComposerUsageLimitsNotice notice={notice} />;
+    }
+    const fresh = Date.now() - 60_000;
+    act(() => root.render(<NoticeHarness accountUsage={usage(96, fresh)} />));
+    expect(host.querySelector(".cv-usage-limits__as-of")).toBeNull();
+
+    act(() => root.render(<NoticeHarness accountUsage={usage(96, fresh - 2 * HOUR)} />));
+    expect(host.querySelector(".cv-usage-limits__as-of")?.textContent).toMatch(/^As of /u);
+    expect(host.querySelector<HTMLElement>(".cv-usage-limits__value")?.dataset.reading).toBe(
+      "asOf",
+    );
+  });
 });

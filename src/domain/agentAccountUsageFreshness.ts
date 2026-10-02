@@ -1,7 +1,7 @@
 import type { AgentAccountUsageSnapshot, AgentAccountUsageWindow } from "./agentAccountUsage";
 import { claudeUsageResetEpochMs, claudeUsageUpcomingResetEpochMs } from "./claudeUsageResetLabel";
 
-export const RESTORED_USAGE_STALE_AFTER_MS = 15 * 60_000;
+export const USAGE_READING_STALE_AFTER_MS = 15 * 60_000;
 export const RESET_REFRESH_GRACE_MS = 90_000;
 const EARLIER_PERIOD_TOLERANCE_MS = 30 * 60_000;
 const MAX_DATE_EPOCH_MS = 8.64e15;
@@ -117,7 +117,7 @@ export function agentAccountUsageStaleness(
   }
   if (expired.length > 0) return { kind: "stale", key: `reset:${expired.sort().join(",")}` };
   if (restored) {
-    const staleAtEpochMs = snapshot.fetchedAtEpochMs + RESTORED_USAGE_STALE_AFTER_MS;
+    const staleAtEpochMs = snapshot.fetchedAtEpochMs + USAGE_READING_STALE_AFTER_MS;
     if (staleAtEpochMs <= nowEpochMs) {
       return { kind: "stale", key: `restored:${snapshot.fetchedAtEpochMs}` };
     }

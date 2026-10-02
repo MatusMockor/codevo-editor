@@ -10,7 +10,7 @@ import {
   mergeAgentAccountUsageRefresh,
   RESET_REFRESH_GRACE_MS,
   resolveAgentAccountUsageResets,
-  RESTORED_USAGE_STALE_AFTER_MS,
+  USAGE_READING_STALE_AFTER_MS,
 } from "./agentAccountUsageFreshness";
 
 const MINUTE = 60_000;
@@ -113,7 +113,7 @@ describe("agentAccountUsageStaleness", () => {
   });
 
   it("refreshes a restored snapshot that is old even when no window reset", () => {
-    const fetchedAt = OCT_2_10_21 - RESTORED_USAGE_STALE_AFTER_MS;
+    const fetchedAt = OCT_2_10_21 - USAGE_READING_STALE_AFTER_MS;
     const snapshot: AgentAccountUsageSnapshot = {
       provider: "claudeCode",
       fetchedAtEpochMs: fetchedAt,
@@ -140,7 +140,7 @@ describe("agentAccountUsageStaleness", () => {
     };
     expect(agentAccountUsageStaleness(snapshot, OCT_2_10_21 + MINUTE, true)).toEqual({
       kind: "fresh",
-      recheckAtEpochMs: OCT_2_10_21 + RESTORED_USAGE_STALE_AFTER_MS,
+      recheckAtEpochMs: OCT_2_10_21 + USAGE_READING_STALE_AFTER_MS,
     });
     expect(agentAccountUsageStaleness(snapshot, OCT_2_15_20, false)).toEqual({
       kind: "fresh",

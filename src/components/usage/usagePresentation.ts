@@ -8,7 +8,10 @@ import {
   type CalendarClock,
   type CalendarDateTime,
 } from "../../domain/calendarDateTime";
-import { agentAccountUsageResetEpochMs } from "../../domain/agentAccountUsageFreshness";
+import {
+  agentAccountUsageResetEpochMs,
+  USAGE_READING_STALE_AFTER_MS,
+} from "../../domain/agentAccountUsageFreshness";
 
 export type UsageProviderKind = AgentUsageProvider["provider"];
 
@@ -17,7 +20,7 @@ export type UsageAccountStates = Readonly<Record<UsageProviderKind, AgentAccount
 export interface UsageLimitBarModel {
   readonly id: string;
   readonly label: string;
-  readonly measured: boolean;
+  readonly reading: UsageReading;
   readonly usedPercent: number;
   readonly usedLabel: string;
   readonly elapsedPercent: number | null;
@@ -26,6 +29,14 @@ export interface UsageLimitBarModel {
   readonly hot: boolean;
   readonly aheadOfPace: boolean;
   readonly ariaLabel: string;
+}
+
+export type UsageReading = "current" | "asOf" | "notMeasured";
+
+export interface UsageReadingAsOf {
+  readonly label: string;
+  readonly title: string;
+  readonly when: string;
 }
 
 export interface VisibleUsageWindows {
@@ -44,6 +55,7 @@ export function usageLimitBarModel(
   window: AgentAccountUsageWindow,
   nowEpochMs: number,
   clock: UsageResetClock = {},
+  asOf: UsageReadingAsOf | null = null,
 ): UsageLimitBarModel {
   const reset = resetText(window, { ...clock, nowEpochMs });
   if (reset.passed) return unmeasuredBarModel(window, reset.label);
@@ -53,10 +65,11 @@ export function usageLimitBarModel(
   const resetsLabel = reset.label;
   const elapsedText =
     elapsedPercent === null ? "" : `, ${Math.round(elapsedPercent)}% of the window elapsed`;
+  const asOfText = asOf === null ? "" : `, last measured ${asOf.when}`;
   return {
     id: window.id,
     label: window.label,
-    measured: true,
+    reading: asOf === null ? "current" : "asOf",
     usedPercent,
     usedLabel,
     elapsedPercent,
@@ -64,8 +77,20 @@ export function usageLimitBarModel(
     resetsTitle: reset.title,
     hot: usedPercent >= USAGE_HOT_PERCENT,
     aheadOfPace: elapsedPercent !== null && usedPercent > elapsedPercent + PACE_TOLERANCE_PERCENT,
-    ariaLabel: `${window.label}: ${usedLabel}${elapsedText}, ${lowerFirst(resetsLabel)}`,
+    ariaLabel: `${window.label}: ${usedLabel}${elapsedText}, ${lowerFirst(resetsLabel)}${asOfText}`,
   };
+}
+
+export function usageReadingAsOf(
+  observedAtEpochMs: number,
+  nowEpochMs: number,
+  clock: UsageResetClock = {},
+): UsageReadingAsOf | null {
+  if (nowEpochMs - observedAtEpochMs < USAGE_READING_STALE_AFTER_MS) return null;
+  const at = calendarDateTime(observedAtEpochMs, { ...clock, nowEpochMs });
+  if (at === null) return null;
+  const when = dayTime(at);
+  return { label: `As of ${when}`, title: `Last measured ${at.title}`, when };
 }
 
 function unmeasuredBarModel(
@@ -75,7 +100,7 @@ function unmeasuredBarModel(
   return {
     id: window.id,
     label: window.label,
-    measured: false,
+    reading: "notMeasured",
     usedPercent: 0,
     usedLabel: "Not measured",
     elapsedPercent: null,
@@ -192,13 +217,13 @@ function resetText(window: AgentAccountUsageWindow, clock: CalendarClock): Reset
   const at = calendarDateTime(epochMs, clock);
   if (at === null) return unparsed;
   return {
-    label: `Resets ${upcomingDayTime(at)}`,
+    label: `Resets ${dayTime(at)}`,
     title: `${at.title} · in ${countdown(remainingMs)}`,
     passed: false,
   };
 }
 
-function upcomingDayTime(at: CalendarDateTime): string {
+function dayTime(at: CalendarDateTime): string {
   switch (at.relation) {
     case "today":
     case "yesterday":

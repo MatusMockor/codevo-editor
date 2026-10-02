@@ -219,6 +219,85 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
+  it("waits for the startup health probe before refreshing restored limits with an auto-detected CLI", async () => {
+    const restored: AgentAccountUsageSnapshot = {
+      provider: "claudeCode",
+      fetchedAtEpochMs: Date.now() - 40 * 3_600_000,
+      windows: [
+        {
+          id: "seven_day",
+          label: "Weekly limit",
+          usedPercent: 38,
+          windowDurationMinutes: 10_080,
+          resetsAtEpochMs: Date.now() + 90 * 3_600_000,
+          resetsLabel: null,
+        },
+      ],
+    };
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      autoDetected: true,
+      providerConfigured: false,
+      holdHealthProbes: true,
+      storedAccountUsage: [restored],
+    });
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.probeAgentProviderHealth).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claudeCode" }),
+      ),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).not.toHaveBeenCalled();
+
+    await harness.releaseHealthProbes();
+
+    await waitForReact(() => {
+      expect(harness.hook().accountUsage.claudeCode).toMatchObject({
+        kind: "ready",
+        snapshot: { provider: "claudeCode", windows: [{ id: "primary", usedPercent: 17 }] },
+      });
+    });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("still refreshes restored limits when the startup health probe failed", async () => {
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      autoDetected: true,
+      providerConfigured: false,
+      failHealthProbes: true,
+      storedAccountUsage: [
+        {
+          provider: "claudeCode",
+          fetchedAtEpochMs: Date.now() - 40 * 3_600_000,
+          windows: [
+            {
+              id: "seven_day",
+              label: "Weekly limit",
+              usedPercent: 38,
+              windowDurationMinutes: 10_080,
+              resetsAtEpochMs: Date.now() + 90 * 3_600_000,
+              resetsLabel: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    await waitForReact(() => {
+      expect(harness.hook().providerManagement.providers.claudeCode.health.kind).toBe("failed");
+      expect(harness.hook().accountUsage.claudeCode).toMatchObject({
+        kind: "ready",
+        snapshot: { provider: "claudeCode", windows: [{ id: "primary", usedPercent: 17 }] },
+      });
+    });
+    expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
   it("does not refresh restored limits that are recent and still inside their window", async () => {
     const restored: AgentAccountUsageSnapshot = {
       provider: "codex",
@@ -1394,6 +1473,8 @@ describe("useWorkbenchAgents composition", () => {
 interface HarnessOptions {
   withProjectGateways: boolean;
   storedAccountUsage?: ReadonlyArray<AgentAccountUsageSnapshot>;
+  holdHealthProbes?: boolean;
+  failHealthProbes?: boolean;
   providerKind?: "claudeCode" | "codex";
   autoDetected?: boolean;
   providerConfigured?: boolean;
@@ -1516,6 +1597,8 @@ function renderWorkbenchAgents(options: HarnessOptions) {
 
   const reportError = vi.fn();
   const revealTerminal = vi.fn();
+  const healthLeases = new Set<"claudeCode" | "codex">();
+  const heldHealthProbes = createDeferred<void>();
   const usageStorage = new Map<string, string>();
   const usageStore = new BrowserAgentAccountUsageStoreGateway({
     getItem: (key) => usageStorage.get(key) ?? null,
@@ -1550,32 +1633,44 @@ function renderWorkbenchAgents(options: HarnessOptions) {
       update: { kind: "checksDisabled" as const },
       checkedAtEpochMs: 0,
     }),
-    probeAgentProviderHealth: vi.fn(async () => ({
-      installedVersion: "1.0.0",
-      auth: { kind: "unknown" as const },
-      update: { kind: "checksDisabled" as const },
-      checkedAtEpochMs: 1,
-    })),
+    probeAgentProviderHealth: vi.fn(async ({ provider }: { provider: "claudeCode" | "codex" }) => {
+      healthLeases.add(provider);
+      try {
+        if (options.holdHealthProbes) await heldHealthProbes.promise;
+        if (options.failHealthProbes) throw new Error("Agent provider health probe failed.");
+        return {
+          installedVersion: "1.0.0",
+          auth: { kind: "unknown" as const },
+          update: { kind: "checksDisabled" as const },
+          checkedAtEpochMs: 1,
+        };
+      } finally {
+        healthLeases.delete(provider);
+      }
+    }),
     updateAgentProvider: vi.fn(async () => ({
       kind: "failed" as const,
       reason: "authorityChanged" as const,
       outputTail: "",
       outputTruncated: false,
     })),
-    readAgentProviderUsage: vi.fn(async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
-      provider,
-      fetchedAtEpochMs: 1_700_000_000_000,
-      windows: [
-        {
-          id: "primary",
-          label: "Weekly limit",
-          usedPercent: 17,
-          windowDurationMinutes: 10_080,
-          resetsAtEpochMs: null,
-          resetsLabel: null,
-        },
-      ],
-    })),
+    readAgentProviderUsage: vi.fn(async ({ provider }: { provider: "claudeCode" | "codex" }) => {
+      if (healthLeases.has(provider)) throw new Error("Agent provider is busy.");
+      return {
+        provider,
+        fetchedAtEpochMs: 1_700_000_000_000,
+        windows: [
+          {
+            id: "primary",
+            label: "Weekly limit",
+            usedPercent: 17,
+            windowDurationMinutes: 10_080,
+            resetsAtEpochMs: null,
+            resetsLabel: null,
+          },
+        ],
+      };
+    }),
   };
   let activeWorkspaceId = ACTIVE_ID;
   let activeWorkspaceTrust = options.workspaceTrust ?? null;
@@ -1685,6 +1780,12 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     startedRequests,
     trust,
     worktree,
+    async releaseHealthProbes() {
+      await act(async () => {
+        heldHealthProbes.resolve();
+        await heldHealthProbes.promise;
+      });
+    },
     emitStatus(event: AgentTaskStatusEvent) {
       expect(statusHandler).not.toBeNull();
       statusHandler?.(event);

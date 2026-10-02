@@ -199,16 +199,40 @@ describe("UsageSettingsPage", () => {
       }),
     );
     const values = [...host.querySelectorAll<HTMLElement>(".cv-usage-limits__value")];
-    expect(values.map((value) => [value.textContent, value.dataset.measured ?? null])).toEqual([
-      ["Not measured", "false"],
-      ["38% used", null],
+    expect(values.map((value) => [value.textContent, value.dataset.reading ?? null])).toEqual([
+      ["Not measured", "notMeasured"],
+      ["38% used", "asOf"],
     ]);
+    expect(host.querySelector(".cv-usage-limits__as-of")?.textContent).toMatch(/^As of /u);
     expect(sectionText("Claude Code")).toContain("Reset passed");
     expect(sectionText("Claude Code")).not.toContain("3% used");
     const bars = [...host.querySelectorAll<HTMLElement>(".cv-usage-bar")];
     expect(bars[0]?.querySelector(".cv-usage-bar__fill")).toBeNull();
     expect(bars[0]?.getAttribute("aria-label")).toBe(
       "5-hour limit: not measured since the window reset",
+    );
+  });
+
+  it("does not mark a fresh reading as old", () => {
+    const now = Date.now();
+    render(
+      activity({
+        accountUsage: {
+          claudeCode: {
+            kind: "ready",
+            snapshot: {
+              provider: "claudeCode",
+              fetchedAtEpochMs: now - 60_000,
+              windows: [limitWindow({ resetsAtEpochMs: now + HOUR })],
+            },
+          },
+          codex: { kind: "idle" },
+        },
+      }),
+    );
+    expect(host.querySelector(".cv-usage-limits__as-of")).toBeNull();
+    expect(host.querySelector<HTMLElement>(".cv-usage-limits__value")?.dataset.reading).toBe(
+      undefined,
     );
   });
 

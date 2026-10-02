@@ -206,7 +206,11 @@ function ProviderLimits({
           <AgentProviderGlyph decorative kind={provider} />
         </span>
         {state.kind === "ready" && notice === null ? (
-          <UsageLimitBars nowEpochMs={nowEpochMs} windows={state.snapshot.windows} />
+          <UsageLimitBars
+            nowEpochMs={nowEpochMs}
+            observedAtEpochMs={state.snapshot.fetchedAtEpochMs}
+            windows={state.snapshot.windows}
+          />
         ) : (
           <p className="settings-row__description">{notice}</p>
         )}

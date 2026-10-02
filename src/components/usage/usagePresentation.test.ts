@@ -5,6 +5,7 @@ import {
   updatedLabel,
   usageLimitBarModel,
   usageProviderLimitsNotice,
+  usageReadingAsOf,
   visibleUsageWindows,
 } from "./usagePresentation";
 
@@ -163,7 +164,7 @@ describe("usageLimitBarModel", () => {
     },
   ])("never presents a reading whose window reset with $name as current usage", ({ overrides }) => {
     const bar = model(window({ usedPercent: 97, ...overrides }));
-    expect(bar.measured).toBe(false);
+    expect(bar.reading).toBe("notMeasured");
     expect(bar.usedPercent).toBe(0);
     expect(bar.usedLabel).toBe("Not measured");
     expect(bar.hot).toBe(false);
@@ -173,14 +174,56 @@ describe("usageLimitBarModel", () => {
     expect(bar.ariaLabel).toBe("5-hour limit: not measured since the window reset");
   });
 
-  it("presents a reading whose window is still running as measured", () => {
-    expect(model(window({})).measured).toBe(true);
+  it("presents a reading whose window is still running as current", () => {
+    expect(model(window({})).reading).toBe("current");
+    expect(
+      usageLimitBarModel(window({}), NOW, CLOCK, usageReadingAsOf(NOW - 5 * 60_000, NOW, CLOCK))
+        .reading,
+    ).toBe("current");
+  });
+
+  it("marks a reading older than the freshness threshold with when it was measured", () => {
+    const bar = usageLimitBarModel(
+      window({}),
+      NOW,
+      CLOCK,
+      usageReadingAsOf(NOW - 20 * 60_000, NOW, CLOCK),
+    );
+    expect(bar.reading).toBe("asOf");
+    expect(bar.usedLabel).toBe("38% used");
+    expect(bar.ariaLabel).toBe(
+      "5-hour limit: 38% used, 60% of the window elapsed, resets today at 16:00, last measured today at 13:40",
+    );
+  });
+
+  it("keeps a reset window unmeasured even when the snapshot is old", () => {
+    const bar = usageLimitBarModel(
+      window({ resetsAtEpochMs: NOW - HOUR }),
+      NOW,
+      CLOCK,
+      usageReadingAsOf(NOW - 40 * HOUR, NOW, CLOCK),
+    );
+    expect(bar.reading).toBe("notMeasured");
   });
 
   it("describes the bar for assistive technology", () => {
     expect(model(window({})).ariaLabel).toBe(
       "5-hour limit: 38% used, 60% of the window elapsed, resets today at 16:00",
     );
+  });
+});
+
+describe("usageReadingAsOf", () => {
+  it("stays silent while the reading is fresh", () => {
+    expect(usageReadingAsOf(NOW - 14 * 60_000, NOW, CLOCK)).toBeNull();
+  });
+
+  it.each([
+    { observedAt: NOW - 20 * 60_000, label: "As of today at 13:40" },
+    { observedAt: NOW - 22 * HOUR, label: "As of yesterday at 16:00" },
+    { observedAt: Date.UTC(2026, 8, 20, 15, 12), label: "As of Sun 20 Sept 17:12" },
+  ])("names when an old reading was measured ($label)", ({ observedAt, label }) => {
+    expect(usageReadingAsOf(observedAt, NOW, CLOCK)?.label).toBe(label);
   });
 });
 
