@@ -1,4 +1,8 @@
-import type { RemoteFileContent, RemoteSurfaceScope } from "../domain/remoteRunnerSurfaces";
+import {
+  remoteSurfaceScopeKey,
+  type RemoteFileContent,
+  type RemoteSurfaceScope,
+} from "../domain/remoteRunnerSurfaces";
 
 export type RemoteFileDraft = Readonly<{
   path: string;
@@ -17,8 +21,7 @@ export function createRemoteFileDraftStore() {
   const writes = new Map<string, SaveTicket>();
   const listeners = new Map<string, Set<(event: SavedEvent) => void>>();
   const drafts = new Map<string, RemoteFileDraft>();
-  const prefix = (scope: RemoteSurfaceScope) =>
-    JSON.stringify([scope.serverId, scope.runnerId, scope.projectId, scope.taskId ?? null]);
+  const prefix = remoteSurfaceScopeKey;
   const key = (scope: RemoteSurfaceScope, path: string) => `${prefix(scope)}:${path}`;
   return {
     subscribe(scope: RemoteSurfaceScope, callback: (event: SavedEvent) => void) {
@@ -61,6 +64,10 @@ export function createRemoteFileDraftStore() {
     get: (scope: RemoteSurfaceScope, path: string) => drafts.get(key(scope, path)),
     first: (scope: RemoteSurfaceScope) =>
       [...drafts.entries()].find(([id]) => id.startsWith(`${prefix(scope)}:`))?.[1],
+    hasDraftOutside: (scope: RemoteSurfaceScope, path: string) =>
+      [...drafts.keys()].some(
+        (id) => id.startsWith(`${prefix(scope)}:`) && id !== key(scope, path),
+      ),
     put(scope: RemoteSurfaceScope, draft: RemoteFileDraft) {
       const id = key(scope, draft.path);
       if (!drafts.has(id) && drafts.size >= MAX_DRAFTS) return false;

@@ -3,6 +3,7 @@ import {
   type AgentLocalFileLink,
 } from "../../domain/agentMarkdown/agentMarkdownLink";
 import type { AgentLocalFileLinkScope } from "./agentMarkdownLinks";
+import { agentRemotePathLinkAccepted } from "./agentRemoteFileLinks";
 import { agentRevealRootForPath } from "./agentThreadHeaderPresentation";
 
 export const MAX_AGENT_PATH_LINKS_PER_BLOCK = 24;
@@ -15,7 +16,10 @@ export interface AgentMarkdownPathLinks {
 export function agentMarkdownPathLinks(
   scope: AgentLocalFileLinkScope | null,
 ): AgentMarkdownPathLinks | null {
-  if (scope === null || scope.kind !== "local" || scope.base === null) return null;
+  if (scope === null) return null;
+  if (scope.kind === "remote")
+    return { accepts: (link) => agentRemotePathLinkAccepted(link, scope) };
+  if (scope.base === null) return null;
   const { base, roots } = scope;
   return {
     accepts(link) {

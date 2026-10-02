@@ -56,7 +56,6 @@ it("reports each failure as a calm, specific, dismissible notice", () => {
   act(() => view.port?.report(agentLocalFileLinkFailure("notFound", "src/env.ts", EDITOR)));
   act(() => view.port?.report(agentLocalFileLinkFailure("outsideProject", "/etc/hosts", EDITOR)));
   act(() => view.port?.report(agentLocalFileLinkFailure("unreadable", "src/key.pem", EDITOR)));
-  act(() => view.port?.report(agentLocalFileLinkFailure("remoteThread", "src/a.ts", null)));
 
   expect(notices).toEqual([
     { kind: "info", message: "src/env.ts isn't in this project (editor).", action: null },
@@ -66,7 +65,6 @@ it("reports each failure as a calm, specific, dismissible notice", () => {
       action: null,
     },
     { kind: "info", message: "src/key.pem exists but couldn't be read.", action: null },
-    { kind: "info", message: "File links are not available for remote threads.", action: null },
   ]);
   view.unmount();
 });

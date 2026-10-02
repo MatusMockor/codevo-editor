@@ -119,6 +119,7 @@ import {
 } from "./agentSurfacePolicy";
 import { useScopedAgentNotice } from "./useScopedAgentNotice";
 import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
+import { useAgentRemoteFileLinks } from "./useAgentRemoteFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
@@ -627,6 +628,11 @@ function LocalAgentModeView({
   }, [groups, terminalSessionsTarget]);
 
   const localFileLinks = useAgentLocalFileLinks(chrome.openFileLocation, setLocalNotice);
+  const remoteFileLinks = useAgentRemoteFileLinks({
+    surface: remoteSurface,
+    openFiles: () => openSurface("files"),
+    reportNotice: setLocalNotice,
+  });
   const menu = useAgentThreadMenuCommands({
     agents,
     groups,
@@ -1167,6 +1173,7 @@ function LocalAgentModeView({
                   artifactLoader={artifactLoader}
                   artifactPreview={artifactPreview}
                   localFileLinks={localFileLinks}
+                  remoteFileLinks={remoteFileLinks.port}
                   attachmentImages={agents.attachmentImages}
                   onRevealAttachment={revealAttachment}
                   findBar={
@@ -1351,6 +1358,7 @@ function LocalAgentModeView({
           onDiffScopeChange={diffScopes.setScope}
           remoteDraft={surfaceThread === null && selectedServerId !== null}
           remoteSurface={remoteSurface}
+          remoteFileReveal={remoteFileLinks.reveal}
           shipActions={shipActions}
           scripts={scripts}
           chooserAutoFocus={surface.chooserRequested}

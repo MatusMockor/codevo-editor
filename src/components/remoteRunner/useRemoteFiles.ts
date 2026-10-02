@@ -1,19 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  RemoteDirectory,
-  RemoteFileContent,
-  RemoteRunnerSurfacesGateway,
-  RemoteSurfaceScope,
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  remoteSurfaceScopeKey,
+  type RemoteDirectory,
+  type RemoteFileContent,
+  type RemoteRunnerSurfacesGateway,
+  type RemoteSurfaceScope,
 } from "../../domain/remoteRunnerSurfaces";
+import {
+  remoteFileContentOutcome,
+  remoteFileParentPath,
+  remoteFileReadFailureOutcome,
+  type RemoteFileRevealTarget,
+} from "../../domain/remoteFileReveal";
 import { remoteFileDrafts } from "../../application/remoteFileDrafts";
+import type { RemoteFileRevealRequest } from "../../application/remoteFileRevealRequest";
 import { useRemoteSurfaceLease } from "./useRemoteSurfaceLease";
+
+export type RemoteFileRevealPosition = RemoteFileRevealTarget & Readonly<{ id: number }>;
 
 export type RemoteFilesGateway = Pick<
   RemoteRunnerSurfacesGateway,
   "listDirectory" | "readFile" | "writeFile"
 >;
 
-export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGateway) {
+export function useRemoteFiles(
+  scope: RemoteSurfaceScope,
+  gateway: RemoteFilesGateway,
+  reveal: RemoteFileRevealRequest | null = null,
+) {
   const { serverId, runnerId, projectId, taskId } = scope;
   const stableScope = useMemo(
     () => ({ serverId, runnerId, projectId, ...(taskId === undefined ? {} : { taskId }) }),
@@ -24,6 +38,8 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
   const saving = useRef(false);
   const activeFile = useRef<RemoteFileContent | null>(null);
   const loadingFile = useRef(false);
+  const shownDirectory = useRef<string | null>(null);
+  const revealRun = useRef<{ readonly id: number; readonly sequenceId: number } | null>(null);
   const [directory, setDirectory] = useState<RemoteDirectory | null>(null);
   const [path, setPath] = useState("");
   const [offset, setOffset] = useState(0);
@@ -32,6 +48,7 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [revealAt, setRevealAt] = useState<RemoteFileRevealPosition | null>(null);
   const dirty = file !== null && file.text !== text;
   const fail = (reason: unknown) =>
     setError(
@@ -66,9 +83,11 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
       if (!lease.isCurrent() || request !== sequence.current) return;
       setDirectory(result);
       setPath(nextPath);
+      shownDirectory.current = nextPath;
       setOffset(nextOffset);
       activeFile.current = null;
       setFile(null);
+      setRevealAt(null);
       setComparison(null);
     } catch (reason) {
       if (lease.isCurrent() && request === sequence.current) fail(reason);
@@ -83,6 +102,7 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
     const request = ++sequence.current;
     const draft = remoteFileDrafts.first(stableScope);
     setDirectory(null);
+    shownDirectory.current = null;
     const restoredFile: RemoteFileContent | null = draft
       ? {
           path: draft.path,
@@ -98,11 +118,14 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
     setOffset(0);
     setError(null);
     setComparison(null);
+    setRevealAt(null);
     setBusy(true);
     void gateway
       .listDirectory({ ...stableScope, path: "", offset: 0 })
       .then((result) => {
-        if (lease.isCurrent() && request === sequence.current) setDirectory(result);
+        if (!lease.isCurrent() || request !== sequence.current) return;
+        setDirectory(result);
+        shownDirectory.current = "";
       })
       .catch((reason) => {
         if (lease.isCurrent() && request === sequence.current) fail(reason);
@@ -129,6 +152,7 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
       activeFile.current = opened;
       setFile(opened);
       setComparison(null);
+      setRevealAt(null);
       setText(draft?.text ?? result.text);
     } catch (reason) {
       if (lease.isCurrent() && request === sequence.current) fail(reason);
@@ -139,6 +163,87 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
       }
     }
   }
+  async function revealFile(request: RemoteFileRevealRequest) {
+    if (!lease.isCurrent() || remoteSurfaceScopeKey(request.scope) !== lease.key) {
+      request.settle("superseded");
+      return;
+    }
+    request.accept();
+    const target = request.target;
+    const shown = activeFile.current?.path === target.path;
+    if (saving.current && !shown) {
+      request.settle("saveInProgress");
+      return;
+    }
+    if (remoteFileDrafts.hasDraftOutside(scope, target.path)) {
+      request.settle("unsavedChanges");
+      return;
+    }
+    if (shown && (saving.current || remoteFileDrafts.get(scope, target.path) !== undefined)) {
+      setRevealAt({ ...target, id: request.id });
+      request.settle("opened");
+      return;
+    }
+    const sequenceId = ++sequence.current;
+    revealRun.current = { id: request.id, sequenceId };
+    const owned = () => lease.isCurrent() && sequenceId === sequence.current;
+    const superseded = () => {
+      const run = revealRun.current;
+      if (run !== null && run.id === request.id && run.sequenceId !== sequenceId) return;
+      request.settle("superseded");
+    };
+    let read = false;
+    loadingFile.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await gateway.readFile({ ...scope, path: target.path });
+      if (!owned()) return superseded();
+      const draft = remoteFileDrafts.get(scope, target.path);
+      const opened = draft ? { ...result, text: draft.original, version: draft.version } : result;
+      activeFile.current = opened;
+      setFile(opened);
+      setComparison(null);
+      setText(draft?.text ?? result.text);
+      setRevealAt(result.unavailableReason === null ? { ...target, id: request.id } : null);
+      read = true;
+      request.settle(remoteFileContentOutcome(result));
+    } catch (reason) {
+      if (!owned()) return superseded();
+      fail(reason);
+      request.settle(remoteFileReadFailureOutcome(reason));
+    } finally {
+      if (owned()) {
+        loadingFile.current = false;
+        setBusy(false);
+      }
+    }
+    if (!owned()) return;
+    const candidates = revealDirectoryCandidates(
+      read ? remoteFileParentPath(target.path) : null,
+      shownDirectory.current,
+    );
+    for (const candidate of candidates) {
+      const directory = await gateway
+        .listDirectory({ ...scope, path: candidate, offset: 0 })
+        .catch(() => null);
+      if (!owned()) return;
+      if (directory === null) continue;
+      setDirectory(directory);
+      setPath(candidate);
+      setOffset(0);
+      shownDirectory.current = candidate;
+      return;
+    }
+  }
+  const latestReveal = useRef(revealFile);
+  useLayoutEffect(() => {
+    latestReveal.current = revealFile;
+  });
+  useEffect(() => {
+    if (reveal === null) return;
+    void latestReveal.current(reveal);
+  }, [reveal]);
   async function save() {
     if (
       !lease.isCurrent() ||
@@ -243,6 +348,7 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
     error,
     dirty,
     comparison,
+    revealAt,
     compare,
     resolveComparison,
     canEdit: !busy || saving.current,
@@ -282,4 +388,14 @@ export function useRemoteFiles(scope: RemoteSurfaceScope, gateway: RemoteFilesGa
       }
     },
   };
+}
+
+function revealDirectoryCandidates(
+  parent: string | null,
+  shown: string | null,
+): ReadonlyArray<string> {
+  if (parent === null) return shown === null ? [""] : [];
+  if (parent === shown) return [];
+  if (shown === null && parent !== "") return [parent, ""];
+  return [parent];
 }

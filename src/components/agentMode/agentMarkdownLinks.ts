@@ -5,6 +5,7 @@ import {
   agentLocalFileLinkDisplayPath,
   agentLocalFileLinkFailure,
   agentLocalFileLinkFailureMessage,
+  agentLocalFileLinkFailureRemembered,
   agentLocalFileLinkPlace,
   type AgentLocalFileLinkFailure,
   type AgentLocalFileLinkPlace,
@@ -17,6 +18,7 @@ import {
   type AgentMarkdownLink,
 } from "../../domain/agentMarkdown/agentMarkdownLink";
 import { agentRevealRootForPath } from "./agentThreadHeaderPresentation";
+import { attemptRemoteFileLink, type AgentRemoteFileLinkScope } from "./agentRemoteFileLinks";
 
 export type AgentMarkdownLinkEvent =
   MouseEvent<HTMLAnchorElement> | KeyboardEvent<HTMLAnchorElement>;
@@ -33,15 +35,15 @@ export interface AgentLocalFileLinkPort {
   report(failure: AgentLocalFileLinkFailure): void;
 }
 
-export type AgentLocalFileLinkScope =
-  | {
-      readonly kind: "local";
-      readonly port: AgentLocalFileLinkPort;
-      readonly base: string | null;
-      readonly roots: ReadonlyArray<string>;
-      readonly repositoryRoot: string;
-    }
-  | { readonly kind: "remote"; readonly port: AgentLocalFileLinkPort };
+export interface AgentLocalFileLinkLocalScope {
+  readonly kind: "local";
+  readonly port: AgentLocalFileLinkPort;
+  readonly base: string | null;
+  readonly roots: ReadonlyArray<string>;
+  readonly repositoryRoot: string;
+}
+
+export type AgentLocalFileLinkScope = AgentLocalFileLinkLocalScope | AgentRemoteFileLinkScope;
 
 export interface AgentLocalFileLinkMemory {
   failureFor(link: AgentLocalFileLink): AgentLocalFileLinkFailure | null;
@@ -57,7 +59,6 @@ export interface AgentMarkdownLinkPorts {
 }
 
 export interface AgentLocalFileLinkThread {
-  readonly remote: boolean;
   readonly repositoryRoot: string;
   readonly worktreePath: string | null;
 }
@@ -73,9 +74,8 @@ export function agentLocalFileLinkKey(link: AgentLocalFileLink): string {
 export function agentLocalFileLinkScope(
   port: AgentLocalFileLinkPort | null,
   thread: AgentLocalFileLinkThread,
-): AgentLocalFileLinkScope | null {
+): AgentLocalFileLinkLocalScope | null {
   if (port === null) return null;
-  if (thread.remote) return { kind: "remote", port };
   const roots = [thread.worktreePath, thread.repositoryRoot].filter(
     (root): root is string => root !== null && root !== "",
   );
@@ -119,19 +119,30 @@ function openLocalFileLink(
   if (link.anchor === "relative" && revealAgentArtifactForLink(anchor, link.location.path)) return;
   if (scope === null) return;
   const known = memory?.failureFor(link) ?? null;
-  void attemptLocalFileLink(link, scope).then((failure) => {
+  void attemptFileLink(link, scope).then((failure) => {
+    if (failure !== null && !agentLocalFileLinkFailureRemembered(failure.kind)) {
+      scope.port.report(failure);
+      return;
+    }
     memory?.remember(link, failure);
     if (failure === null || known?.kind === failure.kind) return;
     scope.port.report(failure);
   });
 }
 
-async function attemptLocalFileLink(
+function attemptFileLink(
   link: AgentLocalFileLink,
   scope: AgentLocalFileLinkScope,
 ): Promise<AgentLocalFileLinkFailure | null> {
+  if (scope.kind === "remote") return attemptRemoteFileLink(link, scope);
+  return attemptLocalFileLink(link, scope);
+}
+
+async function attemptLocalFileLink(
+  link: AgentLocalFileLink,
+  scope: AgentLocalFileLinkLocalScope,
+): Promise<AgentLocalFileLinkFailure | null> {
   const written = link.location.path;
-  if (scope.kind === "remote") return agentLocalFileLinkFailure("remoteThread", written, null);
   const path = resolveAgentLocalFilePath(link, scope.base);
   const root = path === null ? null : agentRevealRootForPath(path, scope.roots);
   if (path === null || root === null) {

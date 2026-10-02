@@ -132,6 +132,9 @@ const response: Record<keyof RemoteSurfaceRequests, Check> = {
   writeTerminal: object({ accepted: choice(true) }),
   closeTerminal: object({ closed: choice(true) }),
 };
+export function isRemoteSurfacePath(value: unknown): value is string {
+  return path(value);
+}
 export function validateRemoteSurface(
   operation: keyof RemoteSurfaceRequests,
   direction: "request" | "response",

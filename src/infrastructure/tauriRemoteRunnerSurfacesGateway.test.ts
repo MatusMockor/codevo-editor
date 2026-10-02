@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  RemoteSurfaceNotFoundError,
+  RemoteSurfaceNotRegularFileError,
+} from "../domain/remoteRunnerSurfaces";
 import { TauriRemoteRunnerSurfacesGateway } from "./tauriRemoteRunnerSurfacesGateway";
 const scope = {
   serverId: "linux",
@@ -19,9 +23,22 @@ describe("remote surface boundary", () => {
     ).rejects.toThrow(
       "The file or workspace changed on the server. Your edits are preserved. Compare with server before saving again.",
     );
-    await expect(gateway.readFile({ ...scope, path: "notes.txt" })).rejects.toThrow(
+    const read = gateway.readFile({ ...scope, path: "notes.txt" });
+    await expect(read).rejects.toBeInstanceOf(RemoteSurfaceNotRegularFileError);
+    await expect(read).rejects.toThrow("This path isn't a regular text file on the server.");
+    await expect(gateway.listDirectory({ ...scope, path: "src", offset: 0 })).rejects.toThrow(
       "Runner request failed (HTTP 409).",
     );
+  });
+  it("types a missing server file read as not found and leaves other 404s generic", async () => {
+    const invoke = vi.fn().mockRejectedValue("Runner request failed (HTTP 404).");
+    const gateway = new TauriRemoteRunnerSurfacesGateway(invoke);
+    const read = gateway.readFile({ ...scope, path: "src/gone.ts" });
+    await expect(read).rejects.toBeInstanceOf(RemoteSurfaceNotFoundError);
+    await expect(read).rejects.toThrow("This file isn't on the server.");
+    const listing = gateway.listDirectory({ ...scope, path: "src", offset: 0 });
+    await expect(listing).rejects.not.toBeInstanceOf(RemoteSurfaceNotFoundError);
+    await expect(listing).rejects.toThrow("Runner request failed (HTTP 404).");
   });
   it("normalizes native string errors and bounds unknown failures", async () => {
     const invoke = vi.fn().mockRejectedValue("Server disconnected.");

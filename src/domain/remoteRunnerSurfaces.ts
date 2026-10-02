@@ -6,6 +6,11 @@ export type RemoteSurfaceScope = Readonly<{
   projectId: string;
   taskId?: string;
 }>;
+export class RemoteSurfaceNotFoundError extends Error {}
+export class RemoteSurfaceNotRegularFileError extends Error {}
+export function remoteSurfaceScopeKey(scope: RemoteSurfaceScope): string {
+  return JSON.stringify([scope.serverId, scope.runnerId, scope.projectId, scope.taskId ?? null]);
+}
 export type RemoteSurfaceCapabilities = Readonly<{
   files: boolean;
   history: boolean;

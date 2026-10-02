@@ -40,7 +40,7 @@ function Probe({ scope }: { readonly scope: AgentLocalFileLinkScope | null }) {
 }
 
 function scopeFor(port: AgentLocalFileLinkPort): AgentLocalFileLinkScope | null {
-  return agentLocalFileLinkScope(port, { remote: false, repositoryRoot: ROOT, worktreePath: null });
+  return agentLocalFileLinkScope(port, { repositoryRoot: ROOT, worktreePath: null });
 }
 
 function click(href: string): void {

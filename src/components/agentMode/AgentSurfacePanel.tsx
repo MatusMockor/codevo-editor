@@ -1,6 +1,7 @@
 import type { AgentSurfaceHistoryProps } from "./AgentSurfaceHistory";
 import { Suspense, lazy, useRef, type PointerEvent, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { RemoteFileRevealRequest } from "../../application/remoteFileRevealRequest";
 import {
   DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   MIN_AGENT_RIGHT_PANEL_WIDTH,
@@ -71,6 +72,7 @@ export interface AgentSurfacePanelProps {
   readonly unavailable?: ReactNode;
   readonly remote?: boolean;
   readonly remoteSurface?: AgentRemoteSurface | null;
+  readonly remoteFileReveal?: RemoteFileRevealRequest | null;
   readonly remoteTerminalTheme?: AgentSurfaceTerminalPanelProps["terminalTheme"];
   readonly layout: AgentSurfacePanelLayout;
   readonly thread: AgentThreadView | null;
@@ -101,6 +103,7 @@ export function AgentSurfacePanel({
   unavailable = null,
   remote = false,
   remoteSurface = null,
+  remoteFileReveal = null,
   remoteTerminalTheme,
   chooserAutoFocus,
   remoteMonacoTheme,
@@ -243,6 +246,7 @@ export function AgentSurfacePanel({
                     key={JSON.stringify(remoteSurface.scope)}
                     kind={kind}
                     surface={remoteSurface}
+                    fileReveal={remoteFileReveal}
                     active={!hidden && activeSurface === kind}
                     terminalTheme={remoteTerminalTheme}
                     monacoTheme={remoteMonacoTheme}
@@ -309,12 +313,14 @@ function agentSurfaceMask(surface: AgentSurfaceKind): number {
 function RemoteSurfaceBody({
   kind,
   surface,
+  fileReveal,
   active,
   terminalTheme,
   monacoTheme,
 }: {
   readonly kind: AgentRemoteSurfaceKind;
   readonly surface: AgentRemoteSurface;
+  readonly fileReveal: RemoteFileRevealRequest | null;
   readonly active: boolean;
   readonly terminalTheme: AgentSurfaceTerminalPanelProps["terminalTheme"] | undefined;
   readonly monacoTheme: AgentSurfaceDiffPanelProps["monacoTheme"] | undefined;
@@ -322,7 +328,12 @@ function RemoteSurfaceBody({
   if (surface.gateway === null) return null;
   if (kind === "files")
     return (
-      <RemoteFilesPanel scope={surface.scope} gateway={surface.gateway} monacoTheme={monacoTheme} />
+      <RemoteFilesPanel
+        scope={surface.scope}
+        gateway={surface.gateway}
+        monacoTheme={monacoTheme}
+        reveal={fileReveal}
+      />
     );
   if (kind === "history")
     return active ? (

@@ -1,6 +1,7 @@
 import { Suspense, lazy } from "react";
 import { File, Folder, RefreshCw, ArrowUp } from "lucide-react";
 import type { RemoteSurfaceScope } from "../../domain/remoteRunnerSurfaces";
+import type { RemoteFileRevealRequest } from "../../application/remoteFileRevealRequest";
 import type { MonacoAppTheme } from "../../domain/settings";
 import { initializeMonacoRuntime } from "../monacoRuntimeLoader";
 import { useRemoteFiles, type RemoteFilesGateway } from "./useRemoteFiles";
@@ -8,7 +9,7 @@ import "./remoteSurfacePanels.css";
 
 const RemoteEditor = lazy(async () => {
   await initializeMonacoRuntime();
-  return import("@monaco-editor/react");
+  return import("./RemoteFileEditor");
 });
 const RemoteComparison = lazy(async () => {
   await initializeMonacoRuntime();
@@ -18,12 +19,18 @@ export interface RemoteFilesPanelProps {
   readonly scope: RemoteSurfaceScope;
   readonly gateway: RemoteFilesGateway;
   readonly monacoTheme?: MonacoAppTheme;
+  readonly reveal?: RemoteFileRevealRequest | null;
 }
 export function RemoteFilesPanel(props: RemoteFilesPanelProps) {
   return <RemoteFilesContent key={JSON.stringify(props.scope)} {...props} />;
 }
-function RemoteFilesContent({ scope, gateway, monacoTheme = "calm-dark" }: RemoteFilesPanelProps) {
-  const state = useRemoteFiles(scope, gateway);
+function RemoteFilesContent({
+  scope,
+  gateway,
+  monacoTheme = "calm-dark",
+  reveal = null,
+}: RemoteFilesPanelProps) {
+  const state = useRemoteFiles(scope, gateway, reveal);
   const parent = state.path.split("/").slice(0, -1).join("/");
   return (
     <section className="remote-surface-panel" aria-label="Server files">
@@ -177,6 +184,7 @@ function RemoteFilesContent({ scope, gateway, monacoTheme = "calm-dark" }: Remot
                   path={`remote-file:///${encodeURIComponent(JSON.stringify(scope))}/${encodeURIComponent(state.file.path)}`}
                   value={state.text}
                   onChange={(value) => state.edit(value ?? "")}
+                  reveal={state.revealAt?.path === state.file.path ? state.revealAt : null}
                   options={{
                     readOnly: state.file.version === null || !state.canEdit,
                     automaticLayout: true,

@@ -43,11 +43,12 @@ import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
 import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
 import type { AgentProseContext } from "./AgentAssistantText";
 import {
-  agentLocalFileLinkScope,
   openAgentMarkdownLink,
   type AgentExternalLinkOpener,
   type AgentLocalFileLinkPort,
 } from "./agentMarkdownLinks";
+import type { AgentRemoteFileLinkPort } from "./agentRemoteFileLinks";
+import { useAgentThreadFileLinkScope } from "./useAgentThreadFileLinkScope";
 import { useViewportWidth } from "../useViewportWidth";
 import { AgentThreadMinimap, MIN_AGENT_MINIMAP_ENTRIES } from "./AgentThreadMinimap";
 import {
@@ -126,6 +127,7 @@ export interface AgentThreadSessionProps {
   readonly markdownViewport?: AgentMarkdownViewport | null;
   readonly openExternalLink?: AgentExternalLinkOpener;
   readonly localFileLinks?: AgentLocalFileLinkPort | null;
+  readonly remoteFileLinks?: AgentRemoteFileLinkPort | null;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly attachmentImages?: AgentAttachmentImagesSurface | null;
   readonly onRevealAttachment?: (threadId: string, attachmentId: string) => void;
@@ -213,6 +215,7 @@ function AgentThreadSessionBody({
   markdownViewport,
   openExternalLink = openAgentMarkdownLink,
   localFileLinks = null,
+  remoteFileLinks = null,
   externalHistoryState,
   onRetryExternalHistory,
   thread,
@@ -300,15 +303,7 @@ function AgentThreadSessionBody({
     [codeColorizer, monacoTheme],
   );
   const remoteExecution = thread.execution?.kind === "remote";
-  const localFiles = useMemo(
-    () =>
-      agentLocalFileLinkScope(localFileLinks, {
-        remote: remoteExecution,
-        repositoryRoot: record.owner.repositoryRoot,
-        worktreePath: record.target.worktreePath,
-      }),
-    [localFileLinks, record.owner.repositoryRoot, record.target.worktreePath, remoteExecution],
-  );
+  const localFiles = useAgentThreadFileLinkScope(localFileLinks, remoteFileLinks, thread);
   const prose = useMemo<AgentProseContext>(
     () => ({ markdown, openExternalLink, localFiles, viewport, onParsed: followLatest }),
     [followLatest, localFiles, markdown, openExternalLink, viewport],

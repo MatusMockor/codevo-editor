@@ -14,6 +14,11 @@ import {
   type AgentLocalFileLinkPort,
   type AgentMarkdownLinkPorts,
 } from "./agentMarkdownLinks";
+import {
+  agentRemoteFileLinkScope,
+  type AgentRemoteFileLinkPort,
+  type AgentRemoteFileOpenOutcome,
+} from "./agentRemoteFileLinks";
 
 const ROOT = "/workspace/app";
 
@@ -69,6 +74,44 @@ function memory(): AgentLocalFileLinkMemory & {
   };
 }
 
+const REMOTE_SCOPE = { serverId: "linux", runnerId: "runner", projectId: "app", taskId: "task-2" };
+
+function remotePort(outcome: AgentRemoteFileOpenOutcome = "opened") {
+  const open = vi.fn<AgentRemoteFileLinkPort["open"]>(async () => outcome);
+  const report = vi.fn<AgentRemoteFileLinkPort["report"]>();
+  return { open, report, port: { open, report } };
+}
+
+function remoteScope(
+  port: AgentRemoteFileLinkPort,
+  isolation: "worktree" | "in-place" = "worktree",
+  repositoryLabel = "Server app",
+) {
+  return agentRemoteFileLinkScope(port, {
+    execution: {
+      serverId: "linux",
+      runnerId: "runner",
+      projectId: "app",
+      conversationId: "conv-1",
+      latestTaskId: "task-2",
+    },
+    isolation,
+    repositoryLabel,
+  });
+}
+
+function activateRemote(
+  href: string,
+  port: AgentRemoteFileLinkPort,
+  scope: ReturnType<typeof remoteScope> = remoteScope(port),
+) {
+  const { event } = click(turn(href, null));
+  activateAgentMarkdownLink(event, parseAgentMarkdownLink(href), {
+    openExternal: vi.fn(),
+    localFiles: scope,
+  });
+}
+
 function ports(
   port: AgentLocalFileLinkPort | null,
   openExternal = vi.fn().mockResolvedValue(undefined),
@@ -76,7 +119,6 @@ function ports(
   return {
     openExternal,
     localFiles: agentLocalFileLinkScope(port, {
-      remote: false,
       repositoryRoot: ROOT,
       worktreePath: null,
     }),
@@ -122,7 +164,6 @@ describe("activateAgentMarkdownLink", () => {
   it("resolves a relative local file against the worktree before the repository", () => {
     const local = localPort();
     const scope = agentLocalFileLinkScope(local.port, {
-      remote: false,
       repositoryRoot: ROOT,
       worktreePath: `${ROOT}/.worktrees/agt-1`,
     });
@@ -184,7 +225,6 @@ describe("activateAgentMarkdownLink", () => {
   it("names the worktree, not the repository, when the link resolved inside a worktree", async () => {
     const local = localPort("notFound");
     const scope = agentLocalFileLinkScope(local.port, {
-      remote: false,
       repositoryRoot: ROOT,
       worktreePath: `${ROOT}/.worktrees/agt-1`,
     });
@@ -242,28 +282,147 @@ describe("activateAgentMarkdownLink", () => {
     expect(local.report).toHaveBeenCalledOnce();
   });
 
-  it.each([`${ROOT}/a.ts`, "src/a.ts", "/etc/passwd"])(
-    "rejects local link %s of a remote thread with the remote reason",
-    async (href) => {
-      const local = localPort();
-      const scope = agentLocalFileLinkScope(local.port, {
-        remote: true,
-        repositoryRoot: ROOT,
-        worktreePath: null,
-      });
-      const { event } = click(turn(href, null));
-      activateAgentMarkdownLink(event, parseAgentMarkdownLink(href), {
+  it("opens an absolute link inside the thread's runner worktree relative to that worktree", async () => {
+    const remote = remotePort();
+    activateRemote("/var/lib/runner/workspaces/conv-1/src/server.ts:8", remote.port);
+    await settle();
+    expect(remote.open).toHaveBeenCalledExactlyOnceWith({
+      scope: REMOTE_SCOPE,
+      target: { path: "src/server.ts", line: 8, column: null },
+    });
+    expect(remote.report).not.toHaveBeenCalled();
+  });
+
+  it("reports a link to the worktree root itself without contacting the server", async () => {
+    const remote = remotePort();
+    activateRemote("/var/lib/runner/workspaces/conv-1", remote.port);
+    await settle();
+    expect(remote.open).not.toHaveBeenCalled();
+    expect(agentLocalFileLinkNotice(remote.report.mock.calls[0]![0]).message).toBe(
+      "/var/lib/runner/workspaces/conv-1 is the folder of this worktree (Server app), not a file.",
+    );
+  });
+
+  it("anchors in-place threads at a project folder named by the runner", async () => {
+    const remote = remotePort();
+    const scope = remoteScope(remote.port, "in-place", "app");
+    activateRemote("/home/me/code/app/src/a.ts:3", remote.port, scope);
+    activateRemote("/etc/hosts", remote.port, scope);
+    await settle();
+    expect(remote.open).toHaveBeenCalledExactlyOnceWith({
+      scope: REMOTE_SCOPE,
+      target: { path: "src/a.ts", line: 3, column: null },
+    });
+    expect(agentLocalFileLinkNotice(remote.report.mock.calls[0]![0]).message).toBe(
+      "Server threads can only open files inside this project (app), so /etc/hosts wasn't opened.",
+    );
+  });
+
+  it("never maps a source-checkout path into a worktree thread's copy", async () => {
+    const remote = remotePort();
+    activateRemote(
+      "/home/me/code/app/src/a.ts",
+      remote.port,
+      remoteScope(remote.port, "worktree", "app"),
+    );
+    await settle();
+    expect(remote.open).not.toHaveBeenCalled();
+    expect(remote.report.mock.calls.map(([failure]) => failure.kind)).toEqual([
+      "serverAbsolutePath",
+    ]);
+  });
+
+  it("opens a relative link of a server thread in its exact remote checkout at the line", async () => {
+    const remote = remotePort();
+    activateRemote("./src/server.ts:12:3", remote.port);
+    await settle();
+    expect(remote.open).toHaveBeenCalledExactlyOnceWith({
+      scope: REMOTE_SCOPE,
+      target: { path: "src/server.ts", line: 12, column: 3 },
+    });
+    expect(remote.report).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "/srv/app/src/a.ts",
+      "serverAbsolutePath",
+      "Server threads can only open files inside this worktree (Server app), so /srv/app/src/a.ts wasn't opened.",
+    ],
+    [
+      `file://${ROOT}/a.ts`,
+      "serverAbsolutePath",
+      `Server threads can only open files inside this worktree (Server app), so ${ROOT}/a.ts wasn't opened.`,
+    ],
+    [
+      "src/.git/config",
+      "outsideProject",
+      "src/.git/config is outside this worktree (Server app), so it wasn't opened.",
+    ],
+    [
+      "src/a:b.ts",
+      "outsideProject",
+      "src/a:b.ts is outside this worktree (Server app), so it wasn't opened.",
+    ],
+  ])("refuses server link %s before contacting the server", async (href, kind, message) => {
+    const remote = remotePort();
+    activateRemote(href, remote.port);
+    await settle();
+    expect(remote.open).not.toHaveBeenCalled();
+    expect(remote.report.mock.calls.map(([failure]) => failure.kind)).toEqual([kind]);
+    expect(agentLocalFileLinkNotice(remote.report.mock.calls[0]![0]).message).toBe(message);
+  });
+
+  it.each([
+    ["notFound", "src/gone.ts isn't in this worktree (Server app)."],
+    ["notRegularFile", "src/gone.ts isn't a regular text file on the server."],
+    ["unreadable", "src/gone.ts exists but couldn't be read."],
+    ["saveInProgress", "Wait for the server file save to finish before opening src/gone.ts."],
+    ["failed", "src/gone.ts couldn't be opened."],
+    [
+      "unsavedChanges",
+      "Save or discard your unsaved server file edits before opening src/gone.ts.",
+    ],
+    [
+      "filesUnavailable",
+      "Server files aren't available for this thread right now, so src/gone.ts wasn't opened.",
+    ],
+  ] as const)("reports the server outcome %s truthfully", async (outcome, message) => {
+    const remote = remotePort(outcome);
+    activateRemote("src/gone.ts", remote.port);
+    await settle();
+    expect(remote.report).toHaveBeenCalledOnce();
+    expect(agentLocalFileLinkNotice(remote.report.mock.calls[0]![0]).message).toBe(message);
+  });
+
+  it("stays silent for a superseded server open and for a rejected port", async () => {
+    const superseded = remotePort("superseded");
+    activateRemote("src/a.ts", superseded.port);
+    await settle();
+    expect(superseded.report).not.toHaveBeenCalled();
+    const broken = remotePort();
+    broken.open.mockRejectedValueOnce(new Error("boom"));
+    activateRemote("src/a.ts", broken.port);
+    await settle();
+    expect(broken.report.mock.calls.map(([failure]) => failure.kind)).toEqual(["failed"]);
+  });
+
+  it("reports transient server refusals on every click without marking the link", async () => {
+    const remote = remotePort("unsavedChanges");
+    const remembered = memory();
+    const scope = remoteScope(remote.port);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { event } = click(turn("src/a.ts", null));
+      activateAgentMarkdownLink(event, parseAgentMarkdownLink("src/a.ts"), {
         openExternal: vi.fn(),
         localFiles: scope,
+        memory: remembered,
       });
       await settle();
-      expect(local.open).not.toHaveBeenCalled();
-      expect(local.report.mock.calls.map(([failure]) => failure.kind)).toEqual(["remoteThread"]);
-      expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toBe(
-        "File links are not available for remote threads.",
-      );
-    },
-  );
+    }
+    expect(remote.report).toHaveBeenCalledTimes(2);
+    expect(remembered.failures.size).toBe(0);
+  });
 
   it("opens a local file from an Enter key activation", () => {
     const local = localPort();

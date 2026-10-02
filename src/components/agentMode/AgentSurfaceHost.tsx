@@ -6,6 +6,7 @@ import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { agentHistoryRepositories } from "./agentHistoryRepositories";
 import { memo, useContext, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
+import type { RemoteFileRevealRequest } from "../../application/remoteFileRevealRequest";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { isAgentRemoteSurfaceKind } from "../../domain/agentSurfaceActivation";
 import type { AgentDiffScope } from "../../domain/diffView/agentDiffScope";
@@ -56,6 +57,7 @@ export interface AgentSurfaceHostProps {
   readonly draftIsolation?: AgentTaskIsolation;
   readonly draftPreviousWorktree?: AgentComposerPreviousWorktree | null;
   readonly remoteSurface?: AgentRemoteSurface | null;
+  readonly remoteFileReveal?: RemoteFileRevealRequest | null;
   readonly threadRootPath: string | null;
   readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
@@ -98,6 +100,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   onTrustScope,
   projects = [],
   remoteDraft = false,
+  remoteFileReveal = null,
   remoteSurface = null,
   scope,
   thread,
@@ -315,6 +318,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
           unavailable={unavailable}
           remote={remote}
           remoteSurface={remoteContext}
+          remoteFileReveal={remoteContext === null ? null : remoteFileReveal}
           remoteTerminalTheme={chrome.terminal?.terminalTheme}
           history={{
             scope: historyScope,

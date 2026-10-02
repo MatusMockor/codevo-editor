@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  RemoteRunnerSurfacesGateway,
-  RemoteSurfaceRequests,
-  RemoteSurfaceResponses,
+import {
+  RemoteSurfaceNotFoundError,
+  RemoteSurfaceNotRegularFileError,
+  type RemoteRunnerSurfacesGateway,
+  type RemoteSurfaceRequests,
+  type RemoteSurfaceResponses,
 } from "../domain/remoteRunnerSurfaces";
 import { validateRemoteSurface } from "../domain/remoteRunnerSurfaceValidation";
 import type { InvokeRemoteRunnerCommand } from "./tauriRemoteRunnerGateway";
@@ -24,6 +26,14 @@ export class TauriRemoteRunnerSurfacesGateway implements RemoteRunnerSurfacesGat
       if (operation === "writeFile" && message === "Runner request failed (HTTP 409).") {
         throw new Error(
           "The file or workspace changed on the server. Your edits are preserved. Compare with server before saving again.",
+        );
+      }
+      if (operation === "readFile" && message === "Runner request failed (HTTP 404).") {
+        throw new RemoteSurfaceNotFoundError("This file isn't on the server.");
+      }
+      if (operation === "readFile" && message === "Runner request failed (HTTP 409).") {
+        throw new RemoteSurfaceNotRegularFileError(
+          "This path isn't a regular text file on the server.",
         );
       }
       throw new Error(
