@@ -367,7 +367,7 @@ describe("AgentThreadHeader", () => {
     expect(button("Toggle right panel").getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("shows the project favicon, keeps Run script and Commit visible and hides Open and Terminal sessions until hover", () => {
+  it("shows the project favicon, keeps Open and Terminal sessions in the actions slot beside Run script and Commit", () => {
     render({});
 
     expect(host.querySelector(".agent-crumbs__project .cv-favicon")?.textContent).toBe("A");

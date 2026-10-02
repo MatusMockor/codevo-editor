@@ -48,23 +48,6 @@
   gap: var(--cv-space-2);
 }
 
-.cv-topbar__actions {
-  opacity: 0;
-  transition: opacity var(--cv-motion-fast) var(--cv-ease);
-}
-
-.cv-topbar:hover .cv-topbar__actions,
-.cv-topbar:focus-within .cv-topbar__actions,
-.cv-topbar__actions:has([aria-expanded="true"]) {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .cv-topbar__actions {
-    opacity: 1;
-  }
-}
-
 .cv-topbar__separator {
   flex: none;
   width: 1px;

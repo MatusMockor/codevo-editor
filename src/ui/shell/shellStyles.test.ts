@@ -85,11 +85,14 @@ describe("shell stylesheet", () => {
     ).toBe(
       "max(var(--shell-topbar-pad),calc(var(--shell-window-inset,0px)-var(--shell-sidebar-track,0px)))",
     );
-    expect(declaration(shellRules, ".cv-topbar__actions", "opacity")).toBe("0");
-    const reveal = shellRules.find((rule) =>
-      selectorParts(rule.selector).includes(".cv-topbar:focus-within .cv-topbar__actions"),
+    const hidesActions = shellRules.filter(
+      (rule) =>
+        selectorParts(rule.selector).some((part) => part.includes(".cv-topbar__actions")) &&
+        rule.declarations.some(
+          (entry) => entry.property === "opacity" || entry.property === "visibility",
+        ),
     );
-    expect(reveal?.declarations.find((entry) => entry.property === "opacity")?.value).toBe("1");
+    expect(hidesActions).toEqual([]);
   });
 
   it("feeds the window inset and the sidebar track from the app shell and the agent frame", () => {
