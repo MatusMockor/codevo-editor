@@ -7,6 +7,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.82] - 2026-10-02
+
+### Fixed
+
+- You can switch projects from the agent sidebar again: a badge next to Search shows the
+  active project's monogram, like t3code, and opens a searchable list of projects;
+  clicking a project's name in the tree also switches to it.
+- Usage limits no longer show an old reading as current after a restart; a limit whose
+  window has reset reads "Not measured".
+
 ## [0.2.0-beta.81] - 2026-10-02
 
 ### Added
