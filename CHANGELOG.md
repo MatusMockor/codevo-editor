@@ -7,6 +7,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.85] - 2026-10-02
+
+### Changed
+
+- Working threads in the sidebar show t3code's blue with a static dashed circle and a
+  coarse duration, and fade slightly until hovered; other working indicators use the same
+  blue.
+- A thread that finished while you were away shows a green dot, a bold "Done" and a faint
+  green row tint until you open it.
+
 ## [0.2.0-beta.84] - 2026-10-02
 
 ### Fixed
