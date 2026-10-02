@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentAttachmentGateway } from "../../application/agentAttachmentPorts";
+import { MAX_AGENT_ATTACHMENT_CONCURRENT_READS } from "../../application/agentAttachmentReadLimiter";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES,
@@ -115,13 +116,18 @@ describe("attachment image cache under a rendered thread", () => {
       ),
     );
     act(() => root.render(<Harness gateway={gateway} thread={threadView(turns)} />));
-    expect(read).toHaveBeenCalledTimes(24);
+    expect(read).toHaveBeenCalledTimes(MAX_AGENT_ATTACHMENT_CONCURRENT_READS);
     const other = threadView([turn("other-turn", [image(100)])]);
     const next = { ...other, thread: { ...other.thread, threadId: "agt-other" } };
     act(() => root.render(<Harness gateway={gateway} thread={next} />));
+    expect(read).toHaveBeenCalledTimes(MAX_AGENT_ATTACHMENT_CONCURRENT_READS);
+    while (read.mock.calls.length < 24) {
+      const batch = pending.splice(0);
+      expect(batch.length).toBeGreaterThan(0);
+      await act(async () => batch.forEach((settle) => settle()));
+    }
     expect(read).toHaveBeenCalledTimes(24);
-    const oldBatch = pending.splice(0);
-    await act(async () => oldBatch.forEach((settle) => settle()));
+    await act(async () => pending.splice(0).forEach((settle) => settle()));
     expect(read).toHaveBeenCalledTimes(25);
     await act(async () => pending.splice(0).forEach((settle) => settle()));
     await waitForReact(() =>
@@ -129,7 +135,7 @@ describe("attachment image cache under a rendered thread", () => {
     );
     expect(host.querySelectorAll(".agent-attachments__pending")).toHaveLength(0);
     expect(host.querySelectorAll('[data-agent-attachment="unavailable"]')).toHaveLength(0);
-    expect(peak).toBeLessThanOrEqual(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+    expect(peak).toBeLessThanOrEqual(MAX_AGENT_ATTACHMENT_CONCURRENT_READS);
   });
 
   it("reads every image once when the visible set fits in the cache", async () => {

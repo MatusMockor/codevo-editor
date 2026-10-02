@@ -3,6 +3,7 @@ import type { AgentAttachment } from "../domain/agentAttachment";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { RemoteRunnerGateway, RemoteRunnerServer } from "../domain/remoteRunner";
+import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import type { AgentThreadsSurface, AgentThreadView } from "./agentThreadPorts";
 import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
 import {
@@ -112,7 +113,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   );
   const reportError = useCallback(
     (_source: string, error: unknown) =>
-      report(error instanceof Error ? error.message : "The server operation failed."),
+      report(remoteRunnerErrorMessage(error, "The server operation failed.")),
     [report],
   );
   const inventory = useRemoteAgentInventory({ gateway, servers, workspaceOwner, selectedThreadId });

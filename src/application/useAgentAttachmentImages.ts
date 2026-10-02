@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentImageMime } from "../domain/agentAttachment";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
-import { AGENT_TASKS_SOURCE, attempt } from "./agentProjectAuthority";
+import {
+  createAgentAttachmentReadLimiter,
+  type AgentAttachmentReadLimiter,
+} from "./agentAttachmentReadLimiter";
+import { AGENT_TASKS_SOURCE, type Attempt } from "./agentProjectAuthority";
 
 export const MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES = 24;
 export const MAX_AGENT_ATTACHMENT_IMAGE_CACHE_BYTES = 64 * 1_024 * 1_024;
@@ -84,6 +88,7 @@ export function useAgentAttachmentImages(
   const cacheRef = useRef<ImageCache>({ entries: new Map(), holds: new Map(), queued: new Map() });
   const dependenciesRef = useRef(dependencies);
   const mountedRef = useRef(true);
+  const limiterRef = useRef<AgentAttachmentReadLimiter<ArrayBuffer> | null>(null);
 
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -94,6 +99,8 @@ export function useAgentAttachmentImages(
     const entries = cacheRef.current.entries;
     return () => {
       mountedRef.current = false;
+      limiterRef.current?.dispose();
+      limiterRef.current = null;
       for (const key of [...entries.keys()]) revokeEntry(dependenciesRef.current, entries, key);
     };
   }, []);
@@ -151,7 +158,18 @@ export function useAgentAttachmentImages(
         }
         publish();
       };
-      void loadImage(gateway, request, key, pending, cache, settle, mountedRef, dependenciesRef);
+      limiterRef.current ??= createAgentAttachmentReadLimiter(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+      limiterRef.current.schedule({
+        read: () =>
+          gateway.readAgentAttachment({
+            workspaceId: request.workspaceId,
+            threadId: request.threadId,
+            attachmentId: request.attachmentId,
+          }),
+        isCurrent: () => cache.entries.get(key) === pending,
+        settle: (read) =>
+          settleImage(read, request, key, pending, cache, settle, mountedRef, dependenciesRef),
+      });
     },
     [publish],
   );
@@ -198,6 +216,7 @@ export function useAgentAttachmentImages(
         revokeEntry(dependenciesRef.current, entries, key);
         released = true;
       }
+      limiterRef.current?.prune();
       if (released) publish();
     },
     [publish],
@@ -212,8 +231,8 @@ export function useAgentAttachmentImages(
   };
 }
 
-async function loadImage(
-  gateway: AgentAttachmentGateway,
+function settleImage(
+  read: Attempt<ArrayBuffer>,
   request: AgentAttachmentImageRequest,
   key: string,
   pending: CacheEntry,
@@ -221,14 +240,7 @@ async function loadImage(
   publish: () => void,
   mountedRef: { readonly current: boolean },
   dependenciesRef: { readonly current: AgentAttachmentImagesDependencies },
-): Promise<void> {
-  const read = await attempt(() =>
-    gateway.readAgentAttachment({
-      workspaceId: request.workspaceId,
-      threadId: request.threadId,
-      attachmentId: request.attachmentId,
-    }),
-  );
+): void {
   if (!mountedRef.current) return;
   const entries = cache.entries;
   if (entries.get(key) !== pending) return;
