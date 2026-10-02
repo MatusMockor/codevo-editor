@@ -166,7 +166,7 @@ button.cv-spawn-member__head {
 }
 
 .cv-spawn-member[data-status="working"] .cv-spawn-member__meta {
-  color: var(--cv-accent);
+  color: var(--cv-work);
 }
 
 .cv-spawn-member[data-status="failed"] .cv-spawn-member__meta {
@@ -326,7 +326,7 @@ button.cv-spawn-member__head {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--cv-accent);
+  background: var(--cv-work);
 }
 
 .cv-agents-row[data-status="completed"] .cv-agents-row__dot {
@@ -558,7 +558,7 @@ button.cv-spawn-member__head {
 }
 
 .cv-agents__working {
-  color: var(--cv-accent);
+  color: var(--cv-work);
 }
 
 .cv-agents__notice,

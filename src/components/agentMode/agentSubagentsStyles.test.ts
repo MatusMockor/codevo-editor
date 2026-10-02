@@ -65,7 +65,7 @@ describe("agent subagent styles", () => {
     expect(animated.map((rule) => rule.selector)).toEqual([
       '.cv-spawn[data-live="true"] .cv-spawn__lead',
     ]);
-    expect(declaration(".cv-agents-row__dot", "background")).toBe("var(--cv-accent)");
+    expect(declaration(".cv-agents-row__dot", "background")).toBe("var(--cv-work)");
     expect(
       declaration('.cv-agents-row[data-status="failed"] .cv-agents-row__dot', "background"),
     ).toBe("var(--cv-danger)");

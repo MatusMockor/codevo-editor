@@ -166,7 +166,7 @@ describe("agent thread Airy style contract", () => {
       ),
     ).toBe("var(--cv-fg-strong)");
     expect(winningDeclaration(".agent-minimap__dash--live::after", "background")).toBe(
-      "var(--cv-accent)",
+      "var(--cv-work)",
     );
     expect(winningDeclaration(".agent-minimap__list--rail", "overflow-y")).toBe("auto");
     expect(declarations(".agent-minimap__list--rail", "justify-content")).toEqual([]);

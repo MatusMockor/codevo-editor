@@ -508,7 +508,7 @@
   flex: none;
   border-radius: var(--cv-r-control);
   animation: agent-minimap-breathe 1.6s ease-in-out infinite;
-  background: var(--cv-accent);
+  background: var(--cv-work);
   content: "";
 }
 

@@ -32,7 +32,7 @@
 }
 
 .cv-status--work {
-  color: var(--cv-accent);
+  color: var(--cv-work);
 }
 
 .cv-status--warn {
@@ -86,7 +86,7 @@
 }
 
 .cv-composer-banner--working .cv-spinner {
-  color: var(--cv-accent);
+  color: var(--cv-work);
 }
 
 .cv-composer-banner__message {
