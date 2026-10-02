@@ -50,6 +50,7 @@ import { HEAD_WORKTREE_BASE, type AgentWorktreeBase } from "../../domain/agentWo
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
+  type AgentIsolationDefault,
   type AgentTaskIsolation,
 } from "../../domain/agentTask";
 import type {
@@ -761,9 +762,7 @@ function isolationStatusCaption(
 ): string | null {
   if (preview === null) return null;
   if (preview.repositoryStatus === undefined) {
-    return preview.recommended.kind === isolation
-      ? agentIsolationReasonLabel(preview.recommended)
-      : null;
+    return recommendedIsolationCaption(preview.recommended, isolation);
   }
   switch (preview.repositoryStatus.kind) {
     case "checking":
@@ -774,10 +773,17 @@ function isolationStatusCaption(
     case "notRepository":
       return worktreeOnly ? NOT_REPOSITORY_WORKTREE_ONLY_CAPTION : NOT_REPOSITORY_COMPOSER_CAPTION;
     case "ready":
-      return preview.recommended.kind === isolation
-        ? agentIsolationReasonLabel(preview.recommended)
-        : null;
+      return recommendedIsolationCaption(preview.recommended, isolation);
   }
+}
+
+function recommendedIsolationCaption(
+  recommended: AgentIsolationDefault,
+  isolation: AgentTaskIsolation,
+): string | null {
+  if (recommended.kind !== isolation) return null;
+  if (recommended.kind === "in-place") return null;
+  return agentIsolationReasonLabel(recommended);
 }
 
 function composerProviderKind(
