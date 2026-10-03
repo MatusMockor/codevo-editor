@@ -73,6 +73,15 @@ describe("sidebar styles", () => {
     expect(declaration(".cv-card-row__act", "top")).toBe("10px");
   });
 
+  it("hides the runtime badge without reflow while a row shows its jump hint", () => {
+    const selector = ".cv-card-row:has(.cv-card-row__jump) .cv-card-row__runtime";
+    expect(declaration(selector, "visibility")).toBe("hidden");
+    expect(declaration(selector, "display")).toBeUndefined();
+    expect(
+      declaration(".cv-card-row:has(.cv-card-row__jump) .cv-card-row__l3", "padding-right"),
+    ).toBeUndefined();
+  });
+
   it("paints Working in the --cv-work blue and fades unfocused working rows until hovered", () => {
     expect(declaration('.cv-card-row__status[data-tone="work"]', "color")).toBe("var(--cv-work)");
     expect(

@@ -5,7 +5,6 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
   agentThreadRowLocation,
-  agentThreadRowProjectLine,
   agentThreadRowRuntime,
   agentThreadRowServerName,
 } from "./agentThreadRowLocation";
@@ -55,60 +54,59 @@ function remote(view: AgentThreadView, serverId = "linux"): AgentThreadView {
 }
 
 describe("agentThreadRowLocation", () => {
-  it("shows the remembered branch of an in-place local thread with the folder glyph", () => {
+  it("shows the remembered branch of an in-place local thread without a glyph", () => {
     expect(
       agentThreadRowLocation(inPlace(), { serverName: null, rememberedBranch: "feature/x" }),
     ).toEqual({
-      glyph: "localCheckout",
-      label: "feature/x",
-      title: "Local checkout · feature/x",
+      branch: { kind: "checkout", name: "feature/x" },
+      title: "This computer · Local checkout · feature/x",
     });
   });
 
-  it("falls back to Local checkout when no branch is remembered", () => {
+  it("shows no branch when an in-place thread has none remembered", () => {
     expect(agentThreadRowLocation(inPlace(), NO_MEMORY)).toEqual({
-      glyph: "localCheckout",
-      label: "Local checkout",
-      title: "Local checkout",
+      branch: { kind: "unknown" },
+      title: "This computer · Local checkout",
     });
   });
 
   it("shows the worktree branch of a worktree thread and ignores the branch memory", () => {
     const view = { ...surfaceThreadView(), ship: shipOn("agent/agt-1") };
     expect(agentThreadRowLocation(view, { serverName: null, rememberedBranch: "main" })).toEqual({
-      glyph: "worktree",
-      label: "agent/agt-1",
-      title: "Worktree · agent/agt-1",
+      branch: { kind: "worktree", name: "agent/agt-1" },
+      title: "This computer · Worktree · agent/agt-1",
     });
   });
 
-  it("says Worktree or New worktree while the branch is not known", () => {
-    expect(agentThreadRowLocation(surfaceThreadView(), NO_MEMORY).label).toBe("Worktree");
+  it("shows no branch while the worktree branch is not known", () => {
+    expect(agentThreadRowLocation(surfaceThreadView(), NO_MEMORY)).toEqual({
+      branch: { kind: "unknown" },
+      title: "This computer · Worktree",
+    });
     expect(agentThreadRowLocation(pendingWorktree(), NO_MEMORY)).toEqual({
-      glyph: "worktree",
-      label: "New worktree",
-      title: "New worktree",
+      branch: { kind: "unknown" },
+      title: "This computer · New worktree",
     });
   });
 
-  it("names the server checkout of a remote thread and never shows a branch", () => {
+  it("names the server only in the title of a remote thread and never shows a branch", () => {
     expect(
       agentThreadRowLocation(remote(inPlace()), {
         serverName: "build-box",
         rememberedBranch: "main",
       }),
-    ).toEqual({ glyph: "server", label: "Server checkout", title: "build-box · Server checkout" });
+    ).toEqual({ branch: { kind: "unknown" }, title: "build-box · Server checkout" });
     const worktree = { ...remote(surfaceThreadView()), ship: shipOn("agent/agt-1") };
     expect(
       agentThreadRowLocation(worktree, { serverName: "build-box", rememberedBranch: null }),
-    ).toEqual({ glyph: "server", label: "Worktree", title: "build-box · Worktree" });
+    ).toEqual({ branch: { kind: "unknown" }, title: "build-box · Worktree" });
   });
 
   it("never says in place", () => {
-    const labels = [inPlace(), surfaceThreadView(), remote(inPlace())].map(
-      (view) => agentThreadRowLocation(view, { serverName: "s", rememberedBranch: null }).label,
+    const titles = [inPlace(), surfaceThreadView(), remote(inPlace())].map(
+      (view) => agentThreadRowLocation(view, { serverName: "s", rememberedBranch: null }).title,
     );
-    expect(labels.join(" ").toLowerCase()).not.toContain("in place");
+    expect(titles.join(" ").toLowerCase()).not.toContain("in place");
   });
 });
 
@@ -123,13 +121,6 @@ describe("agentThreadRowServerName", () => {
     expect(agentThreadRowServerName(remote(inPlace()), servers)).toBe("Linux server");
     expect(agentThreadRowServerName(remote(inPlace(), "gone"), servers)).toBe("Server");
     expect(agentThreadRowServerName(remote(inPlace()), new Map())).toBe("Server");
-  });
-});
-
-describe("agentThreadRowProjectLine", () => {
-  it("prefixes the server name for a remote thread", () => {
-    expect(agentThreadRowProjectLine("orders-api", "build-box")).toBe("build-box · orders-api");
-    expect(agentThreadRowProjectLine("app", null)).toBe("app");
   });
 });
 

@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { Check, Folder, GitBranch, Pin, Server, type LucideIcon } from "lucide-react";
+import { Check, GitBranch, Pin } from "lucide-react";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
@@ -31,12 +31,7 @@ import {
 } from "./agentSidebarPresentation";
 import { agentRowIsLive, agentRowWorkingAgents } from "./agentThreadRowStatus";
 import { useAgentThreadRowPlace } from "./agentThreadBranchMemoryContext";
-import {
-  agentThreadRowGroupedContext,
-  agentThreadRowProjectLine,
-  agentThreadRowRuntime,
-  type AgentThreadRowGlyph,
-} from "./agentThreadRowLocation";
+import { agentThreadRowRuntime, type AgentThreadRowBranch } from "./agentThreadRowLocation";
 import { useAgentRowBackgroundActivity } from "./useAgentRowBackgroundActivity";
 import { useAgentThreadRowMenu } from "./useAgentThreadRowMenu";
 
@@ -147,16 +142,12 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   const menuNode = menu.overlays;
 
   const canSettle = !agentRowIsLive(status) && thread.settledAt == null && !renaming;
-  const groupedContext = grouped
-    ? agentThreadRowGroupedContext(props.repositoryLabel ?? null, place.serverName)
-    : null;
+  const repositoryLabel = props.repositoryLabel ?? "";
+  const groupedContext = grouped && repositoryLabel !== "" ? repositoryLabel : null;
   const pinNode = thread.pinned && (
     <span aria-label="Pinned" className="cv-card-row__pin" role="img" title="Pinned">
       <Pin aria-hidden="true" size={12} />
     </span>
-  );
-  const runtimeNode = (
-    <AgentThreadRowRuntimeBadge runtime={agentThreadRowRuntime(view, place.connectedServerName)} />
   );
   const slotNode = (
     <span className="cv-card-row__slot">
@@ -192,7 +183,6 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           <span className="cv-card-row__head">
             {titleNode}
             {pinNode}
-            {runtimeNode}
             {slotNode}
           </span>
         ) : (
@@ -201,26 +191,26 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
               <span aria-hidden="true" className="cv-favicon">
                 {agentProjectMonogram(model.project)}
               </span>
-              <span className="cv-card-row__project">
-                {agentThreadRowProjectLine(model.project, place.serverName)}
-              </span>
+              <span className="cv-card-row__project">{model.project}</span>
               {pinNode}
-              {runtimeNode}
               {slotNode}
             </span>
             {titleNode}
           </>
         )}
         <span className="cv-card-row__l3" title={place.location.title}>
+          <span className="agent-visually-hidden">{place.location.title}</span>
           {groupedContext !== null && (
             <span className="cv-card-row__context">{groupedContext}</span>
           )}
-          <RowGlyph glyph={place.location.glyph} />
-          <span className="cv-card-row__branch">{place.location.label}</span>
+          <RowBranch branch={place.location.branch} />
           {model.filesLabel !== null && (
             <span className="cv-card-row__files">{model.filesLabel}</span>
           )}
           {importedLabel !== null && <ImportedBadge label={importedLabel} />}
+          <AgentThreadRowRuntimeBadge
+            runtime={agentThreadRowRuntime(view, place.connectedServerName)}
+          />
         </span>
         {jumpLabel !== null && (
           <span aria-hidden="true" className="cv-card-row__jump">
@@ -249,19 +239,22 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   );
 });
 
-const ROW_GLYPHS: Readonly<Record<AgentThreadRowGlyph, LucideIcon>> = {
-  localCheckout: Folder,
-  worktree: GitBranch,
-  server: Server,
-};
-
-function RowGlyph({ glyph }: { readonly glyph: AgentThreadRowGlyph }) {
-  const Icon = ROW_GLYPHS[glyph];
-  return (
-    <span aria-hidden="true" className="cv-card-row__glyph" data-glyph={glyph}>
-      <Icon size={12} />
-    </span>
-  );
+function RowBranch({ branch }: { readonly branch: AgentThreadRowBranch }) {
+  switch (branch.kind) {
+    case "unknown":
+      return null;
+    case "checkout":
+      return <span className="cv-card-row__branch">{branch.name}</span>;
+    case "worktree":
+      return (
+        <>
+          <span aria-hidden="true" className="cv-card-row__glyph">
+            <GitBranch size={12} />
+          </span>
+          <span className="cv-card-row__branch">{branch.name}</span>
+        </>
+      );
+  }
 }
 
 function ImportedBadge({ label }: { readonly label: string }) {

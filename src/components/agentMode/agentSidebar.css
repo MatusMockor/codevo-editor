@@ -424,10 +424,6 @@
 .cv-card-row__glyph {
   display: inline-flex;
   flex: none;
-  color: var(--cv-fg-subtle);
-}
-
-.cv-card-row__glyph[data-glyph="worktree"] {
   color: var(--cv-accent);
 }
 
@@ -555,6 +551,10 @@
 
 .cv-card-row__rename::selection {
   background: var(--cv-selection);
+}
+
+.cv-card-row:has(.cv-card-row__jump) .cv-card-row__runtime {
+  visibility: hidden;
 }
 
 .cv-card-row__jump {

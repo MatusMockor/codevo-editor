@@ -249,19 +249,34 @@ describe("AgentThreadRow", () => {
     return badge as HTMLElement;
   };
 
-  it("shows a local Claude runtime pair on line one, outside the status slot", () => {
+  const line3 = (): HTMLElement => {
+    const element = host.querySelector<HTMLElement>(".cv-card-row__l3");
+    expect(element).not.toBeNull();
+    return element as HTMLElement;
+  };
+
+  const visibleText = (element: Element): string => {
+    const clone = element.cloneNode(true) as Element;
+    clone.querySelectorAll(".agent-visually-hidden").forEach((hidden) => hidden.remove());
+    return clone.textContent ?? "";
+  };
+
+  const spokenLocation = (): string | null =>
+    line3().querySelector(".agent-visually-hidden")?.textContent ?? null;
+
+  it("ends line three with a local Claude provider glyph and no machine icon", () => {
     render(pinnedDone());
     const badge = runtimeBadge();
-    expect(badge.parentElement).toBe(line1());
-    expect(badge.closest(".cv-card-row__slot")).toBeNull();
-    expect(badge.nextElementSibling?.classList.contains("cv-card-row__slot")).toBe(true);
+    expect(badge.parentElement).toBe(line3());
+    expect(line3().lastElementChild).toBe(badge);
+    expect(line1().querySelector(".cv-card-row__runtime")).toBeNull();
     expect(badge.getAttribute("role")).toBe("img");
     expect(badge.getAttribute("aria-label")).toBe("Claude Code, local");
     expect(badge.getAttribute("title")).toBe("Claude Code, local");
-    const place = badge.querySelector(".cv-card-row__runtime-place");
-    expect(place?.getAttribute("data-place")).toBe("local");
-    expect(place?.getAttribute("aria-hidden")).toBe("true");
-    expect(place?.querySelector("svg.lucide-laptop")).not.toBeNull();
+    expect(badge.querySelector(".cv-card-row__runtime-place")).toBeNull();
+    expect(
+      host.querySelector("svg.lucide-laptop, svg.lucide-server, svg.lucide-folder"),
+    ).toBeNull();
     const provider = badge.querySelector(".agent-row__provider");
     expect(provider?.classList.contains("agent-row__provider--claude")).toBe(true);
     expect(provider?.getAttribute("aria-hidden")).toBe("true");
@@ -277,13 +292,18 @@ describe("AgentThreadRow", () => {
     };
     renderLocated(view, { servers: [{ id: "server-1", name: "build-box" }] });
     const badge = runtimeBadge();
-    expect(badge.parentElement).toBe(line1());
+    expect(badge.parentElement).toBe(line3());
+    expect(line3().lastElementChild).toBe(badge);
     expect(badge.getAttribute("aria-label")).toBe("Codex, on build-box");
     expect(badge.getAttribute("title")).toBe("Codex, on build-box");
     const place = badge.querySelector(".cv-card-row__runtime-place");
-    expect(place?.getAttribute("data-place")).toBe("server");
-    expect(place?.querySelector("svg.lucide-server")).not.toBeNull();
-    expect(badge.querySelector(".agent-row__provider--codex")).not.toBeNull();
+    expect(place?.getAttribute("aria-hidden")).toBe("true");
+    const serverIcon = place?.querySelector("svg.lucide-server");
+    expect(serverIcon?.getAttribute("width")).toBe("14");
+    const provider = badge.querySelector(".agent-row__provider--codex");
+    expect(provider).not.toBeNull();
+    expect(place?.nextElementSibling).toBe(provider);
+    expect(host.querySelectorAll("svg.lucide-server")).toHaveLength(1);
     const title = host.querySelector(".cv-card-row__title");
     expect(title?.textContent).toBe(local.thread.title);
     expect(title?.querySelector("svg")).toBeNull();
@@ -292,9 +312,12 @@ describe("AgentThreadRow", () => {
 
     renderLocated(view);
     expect(runtimeBadge().getAttribute("aria-label")).toBe("Codex, on server");
+    expect(
+      runtimeBadge().querySelector(".cv-card-row__runtime-place svg.lucide-server"),
+    ).not.toBeNull();
   });
 
-  it("renders the runtime pair in the grouped head before the slot", () => {
+  it("keeps the grouped head to title, pin and slot and ends line three with the runtime", () => {
     act(() => {
       root.render(
         <AgentClockProvider>
@@ -318,11 +341,13 @@ describe("AgentThreadRow", () => {
     const head = host.querySelector(".cv-card-row__head");
     expect(head).not.toBeNull();
     expect(host.querySelector(".cv-card-row__l1")).toBeNull();
+    expect(head?.querySelector(".cv-card-row__runtime")).toBeNull();
+    expect(head?.querySelector(".cv-card-row__pin")?.nextElementSibling?.classList).toContain(
+      "cv-card-row__slot",
+    );
     const badge = runtimeBadge();
-    expect(badge.parentElement).toBe(head);
-    expect(badge.closest(".cv-card-row__slot")).toBeNull();
-    expect(badge.nextElementSibling?.classList.contains("cv-card-row__slot")).toBe(true);
-    expect(badge.previousElementSibling?.classList.contains("cv-card-row__pin")).toBe(true);
+    expect(badge.parentElement).toBe(line3());
+    expect(line3().lastElementChild).toBe(badge);
     expect(badge.getAttribute("aria-label")).toBe("Claude Code, local");
   });
 
@@ -394,8 +419,7 @@ describe("AgentThreadRow", () => {
     expect(host.querySelector(".agent-microlabel")).toBeNull();
 
     render(importedView({ archived: false }));
-    const line3 = host.querySelector<HTMLElement>(".cv-card-row__l3");
-    const badge = line3?.querySelector<HTMLElement>(".agent-microlabel") ?? null;
+    const badge = line3().querySelector<HTMLElement>(".agent-microlabel");
     expect(badge?.textContent).toBe("Imported");
     expect(badge?.title).toBe("Imported terminal session");
 
@@ -404,14 +428,17 @@ describe("AgentThreadRow", () => {
     expect(host.querySelector(".cv-card-row__l3 .agent-microlabel")?.textContent).toBe("Imported");
   });
 
-  it("leads line three with the checkout glyph and then the branch, without a provider glyph", () => {
+  it("leads line three with the runtime alone while the worktree branch is unknown", () => {
     render(pinnedDone());
 
-    const line3 = host.querySelector<HTMLElement>(".cv-card-row__l3");
-    expect(line3?.firstElementChild?.classList.contains("cv-card-row__glyph")).toBe(true);
-    expect(line3?.children[1]?.classList.contains("cv-card-row__branch")).toBe(true);
-    expect(line3?.querySelector(".agent-row__provider")).toBeNull();
-    expect(line3?.querySelector(".cv-card-row__runtime")).toBeNull();
+    expect(line3().querySelector(".cv-card-row__glyph")).toBeNull();
+    expect(line3().querySelector(".cv-card-row__branch")).toBeNull();
+    const visible = [...line3().children].filter(
+      (child) => !child.classList.contains("agent-visually-hidden"),
+    );
+    expect(visible).toEqual([runtimeBadge()]);
+    expect(visibleText(line3())).toBe("");
+    expect(spokenLocation()).toBe("This computer · Worktree");
   });
 
   const renderLocated = (
@@ -458,22 +485,23 @@ describe("AgentThreadRow", () => {
     });
   };
 
-  const token = (): { readonly glyph: string | null; readonly label: string | null } => {
-    const line3 = host.querySelector<HTMLElement>(".cv-card-row__l3");
-    return {
-      glyph: line3?.querySelector(".cv-card-row__glyph")?.getAttribute("data-glyph") ?? null,
-      label: line3?.querySelector(".cv-card-row__branch")?.textContent ?? null,
-    };
-  };
+  const token = (): { readonly glyph: boolean; readonly label: string | null } => ({
+    glyph: line3().querySelector(".cv-card-row__glyph svg.lucide-git-branch") !== null,
+    label: line3().querySelector(".cv-card-row__branch")?.textContent ?? null,
+  });
 
-  it("labels an in-place thread by its remembered branch, else Local checkout", () => {
+  it("labels an in-place thread by its remembered branch without a glyph, else nothing", () => {
     const base = viewedDone();
     const view: AgentThreadView = {
       ...base,
       thread: { ...base.thread, target: { isolation: "in-place", worktreePath: null } },
     };
     renderLocated(view);
-    expect(token()).toEqual({ glyph: "localCheckout", label: "Local checkout" });
+    expect(token()).toEqual({ glyph: false, label: null });
+    expect(line3().getAttribute("title")).toBe("This computer · Local checkout");
+    expect(spokenLocation()).toBe("This computer · Local checkout");
+    expect(line3().textContent).toContain("This computer · Local checkout");
+    expect(visibleText(host)).not.toContain("Local checkout");
 
     const memory = rememberAgentThreadBranch(
       EMPTY_AGENT_THREAD_BRANCH_MEMORY,
@@ -481,10 +509,9 @@ describe("AgentThreadRow", () => {
       "feature/invoices",
     );
     renderLocated(view, { memory });
-    expect(token()).toEqual({ glyph: "localCheckout", label: "feature/invoices" });
-    expect(host.querySelector(".cv-card-row__l3")?.getAttribute("title")).toBe(
-      "Local checkout · feature/invoices",
-    );
+    expect(token()).toEqual({ glyph: false, label: "feature/invoices" });
+    expect(line3().getAttribute("title")).toBe("This computer · Local checkout · feature/invoices");
+    expect(spokenLocation()).toBe("This computer · Local checkout · feature/invoices");
 
     const foreignOwner = rememberAgentThreadBranch(
       EMPTY_AGENT_THREAD_BRANCH_MEMORY,
@@ -492,12 +519,13 @@ describe("AgentThreadRow", () => {
       "feature/other",
     );
     renderLocated(view, { memory: foreignOwner });
-    expect(token()).toEqual({ glyph: "localCheckout", label: "Local checkout" });
+    expect(token()).toEqual({ glyph: false, label: null });
   });
 
-  it("labels a worktree thread by its worktree branch, else Worktree", () => {
+  it("labels a worktree thread by its worktree branch with the branch glyph, else nothing", () => {
     renderLocated(viewedDone());
-    expect(token()).toEqual({ glyph: "worktree", label: "Worktree" });
+    expect(token()).toEqual({ glyph: false, label: null });
+    expect(line3().getAttribute("title")).toBe("This computer · Worktree");
     renderLocated({
       ...viewedDone(),
       ship: {
@@ -511,10 +539,11 @@ describe("AgentThreadRow", () => {
         },
       },
     });
-    expect(token()).toEqual({ glyph: "worktree", label: "agent/agt-1" });
+    expect(token()).toEqual({ glyph: true, label: "agent/agt-1" });
+    expect(line3().getAttribute("title")).toBe("This computer · Worktree · agent/agt-1");
   });
 
-  it("names the server on line one and the server checkout on line three of a remote thread", () => {
+  it("names the server of a remote thread only in the tooltip and the runtime label", () => {
     const base = viewedDone();
     const view: AgentThreadView = {
       ...base,
@@ -530,12 +559,18 @@ describe("AgentThreadRow", () => {
       },
     };
     renderLocated(view, { servers: [{ id: "server-1", name: "build-box" }] });
-    expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("build-box · app");
-    expect(token()).toEqual({ glyph: "server", label: "Server checkout" });
+    expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("app");
+    expect(token()).toEqual({ glyph: false, label: null });
+    expect(line3().getAttribute("title")).toBe("build-box · Server checkout");
     expect(runtimeBadge().getAttribute("title")).toBe("Claude Code, on build-box");
+    expect(spokenLocation()).toBe("build-box · Server checkout");
+    expect(line3().textContent).toContain("build-box · Server checkout");
+    expect(visibleText(host)).not.toContain("build-box");
+    expect(visibleText(host)).not.toContain("Server checkout");
 
     renderLocated(view);
-    expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("Server · app");
+    expect(line1().querySelector(".cv-card-row__project")?.textContent).toBe("app");
+    expect(line3().getAttribute("title")).toBe("Server · Server checkout");
     expect(host.textContent?.toLowerCase()).not.toContain("in place");
   });
 
@@ -548,7 +583,7 @@ describe("AgentThreadRow", () => {
     expect(row?.querySelector(".cv-card-row__title")?.textContent).toBe(
       "Extract the invoice totals",
     );
-    expect(row?.querySelector(".cv-card-row__branch")?.textContent).toBe("Worktree");
+    expect(row?.querySelector(".cv-card-row__branch")).toBeNull();
     const settle = host.querySelector<HTMLButtonElement>('button[aria-label="Settle thread"]');
     expect(settle).not.toBeNull();
     act(() => settle?.click());

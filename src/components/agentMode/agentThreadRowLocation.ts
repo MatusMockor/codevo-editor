@@ -1,7 +1,7 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
-  agentCheckoutLabel,
   agentLocationTokenText,
+  agentMachineLabel,
   agentThreadLocation,
   type AgentWorkspaceLocation,
 } from "../../domain/agentWorkspaceLocation";
@@ -9,11 +9,13 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import { agentShipBranchLabel } from "./agentModePresentation";
 import { agentProviderLabel } from "./agentSidebarPresentation";
 
-export type AgentThreadRowGlyph = "localCheckout" | "worktree" | "server";
+export type AgentThreadRowBranch =
+  | { readonly kind: "unknown" }
+  | { readonly kind: "checkout"; readonly name: string }
+  | { readonly kind: "worktree"; readonly name: string };
 
 export interface AgentThreadRowLocation {
-  readonly glyph: AgentThreadRowGlyph;
-  readonly label: string;
+  readonly branch: AgentThreadRowBranch;
   readonly title: string;
 }
 
@@ -24,6 +26,7 @@ export interface AgentThreadRowLocationInput {
 
 const FALLBACK_SERVER_NAME = "Server";
 const SEPARATOR = " · ";
+const UNKNOWN_BRANCH: AgentThreadRowBranch = Object.freeze({ kind: "unknown" });
 
 export function agentThreadRowLocation(
   view: AgentThreadView,
@@ -37,11 +40,7 @@ export function agentThreadRowLocation(
     serverName: input.serverName,
     branch: knownBranch(view, input),
   });
-  return {
-    glyph: rowGlyph(location),
-    label: location.branch ?? agentCheckoutLabel(location.checkout),
-    title: agentLocationTokenText(location),
-  };
+  return { branch: rowBranch(location), title: rowTitle(location) };
 }
 
 export function agentThreadRowServerName(
@@ -51,20 +50,6 @@ export function agentThreadRowServerName(
   const execution = view.execution;
   if (execution?.kind !== "remote") return null;
   return serverNames.get(execution.serverId) ?? FALLBACK_SERVER_NAME;
-}
-
-export function agentThreadRowProjectLine(projectLabel: string, serverName: string | null): string {
-  return serverName === null ? projectLabel : `${serverName}${SEPARATOR}${projectLabel}`;
-}
-
-export function agentThreadRowGroupedContext(
-  repositoryLabel: string | null,
-  serverName: string | null,
-): string | null {
-  const parts = [serverName, repositoryLabel].filter(
-    (part): part is string => part !== null && part !== "",
-  );
-  return parts.length === 0 ? null : parts.join(SEPARATOR);
 }
 
 export type AgentThreadRowRuntimePlace = "local" | "server";
@@ -95,15 +80,22 @@ function knownBranch(view: AgentThreadView, input: AgentThreadRowLocationInput):
   return input.rememberedBranch;
 }
 
-function rowGlyph(location: AgentWorkspaceLocation): AgentThreadRowGlyph {
-  if (location.machine.kind === "server") return "server";
+function rowBranch(location: AgentWorkspaceLocation): AgentThreadRowBranch {
+  const name = location.branch;
+  if (name === null) return UNKNOWN_BRANCH;
   switch (location.checkout) {
     case "localCheckout":
     case "serverCheckout":
-      return "localCheckout";
+      return { kind: "checkout", name };
     case "newWorktree":
     case "worktree":
     case "previousWorktree":
-      return "worktree";
+      return { kind: "worktree", name };
   }
+}
+
+function rowTitle(location: AgentWorkspaceLocation): string {
+  const text = agentLocationTokenText(location);
+  if (location.machine.kind === "server") return text;
+  return `${agentMachineLabel(location.machine)}${SEPARATOR}${text}`;
 }

@@ -606,13 +606,23 @@ describe("AgentThreadsSidebar", () => {
         ),
       );
 
+    const line3 = (): HTMLElement | null => row("agt-remote").querySelector(".cv-card-row__l3");
     renderWith(null);
-    expect(row("agt-remote").querySelector(".cv-card-row__context")?.textContent).toBe("build-box");
+    expect(row("agt-remote").querySelector(".cv-card-row__context")).toBeNull();
+    expect(line3()?.getAttribute("title")).toBe("build-box · Worktree");
     renderWith("linux");
-    expect(row("agt-remote").querySelector(".cv-card-row__context")?.textContent).toBe("build-box");
-    expect(row("agt-remote").querySelector(".cv-card-row__glyph")?.getAttribute("data-glyph")).toBe(
-      "server",
+    expect(row("agt-remote").querySelector(".cv-card-row__context")).toBeNull();
+    expect(line3()?.getAttribute("title")).toBe("build-box · Worktree");
+    expect(line3()?.querySelector(".agent-visually-hidden")?.textContent).toBe(
+      "build-box · Worktree",
     );
+    const visible = row("agt-remote").cloneNode(true) as HTMLElement;
+    visible.querySelectorAll(".agent-visually-hidden").forEach((hidden) => hidden.remove());
+    expect(visible.textContent).not.toContain("build-box");
+    expect(row("agt-remote").querySelector(".cv-card-row__glyph")).toBeNull();
+    const badge = line3()?.querySelector(".cv-card-row__runtime");
+    expect(badge?.getAttribute("aria-label")).toBe("Claude Code, on build-box");
+    expect(badge?.querySelector(".cv-card-row__runtime-place svg.lucide-server")).not.toBeNull();
   });
 
   it("names the repository on project rows only for multi-repository projects", () => {
@@ -621,7 +631,7 @@ describe("AgentThreadsSidebar", () => {
     });
 
     expect(row("agt-1").querySelector(".cv-card-row__context")?.textContent).toBe("app");
-    expect(row("agt-1").querySelector(".cv-card-row__branch")?.textContent).toBe("Worktree");
+    expect(row("agt-1").querySelector(".cv-card-row__branch")).toBeNull();
   });
 
   it("labels every row of a nested-checkout project, including the scoped repository", () => {

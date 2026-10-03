@@ -17,7 +17,6 @@ export const AgentThreadBranchMemoryContext = createContext<AgentThreadBranchMem
 );
 
 export interface AgentThreadRowPlace {
-  readonly serverName: string | null;
   readonly connectedServerName: string | null;
   readonly location: AgentThreadRowLocation;
 }
@@ -36,7 +35,6 @@ export function useAgentThreadRowPlace(view: AgentThreadView): AgentThreadRowPla
     ownerId: owner.ownerId,
   });
   return {
-    serverName,
     connectedServerName,
     location: agentThreadRowLocation(view, { serverName, rememberedBranch }),
   };
