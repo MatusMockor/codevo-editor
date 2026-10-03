@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.88] - 2026-10-03
+
+### Changed
+
+- Sidebar rows mark only threads that run on a server, with a server icon next to the
+  provider; threads on this Mac carry no machine icon. The misleading "Local checkout"
+  text is gone, the bottom line shows the known branch, and the machine name is in the
+  row tooltip.
+
 ## [0.2.0-beta.87] - 2026-10-02
 
 ### Added
