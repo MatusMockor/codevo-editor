@@ -68,6 +68,20 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     selectedProjectRootKey = null,
   } = options;
   const configuration = JSON.stringify(servers);
+  // Server projects survive navigation between local workspace tabs. Only a
+  // replacement of the remote connection authority revokes their attachments.
+  const attachmentAuthority = useRef({ gateway, configuration, generation: 1 });
+  if (
+    attachmentAuthority.current.gateway !== gateway ||
+    attachmentAuthority.current.configuration !== configuration
+  ) {
+    attachmentAuthority.current = {
+      gateway,
+      configuration,
+      generation: attachmentAuthority.current.generation + 1,
+    };
+  }
+  const attachmentGeneration = attachmentAuthority.current.generation;
   const authority = useRef({
     gateway,
     workspaceOwner,
@@ -126,7 +140,12 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       report(remoteRunnerErrorMessage(error, "The server operation failed.")),
     [report],
   );
-  const inventory = useRemoteAgentInventory({ gateway, servers, workspaceOwner, selectedThreadId });
+  const inventory = useRemoteAgentInventory({
+    gateway,
+    servers,
+    workspaceOwner: null,
+    selectedThreadId,
+  });
   const metadata = useServerThreadMetadata({
     gateway,
     snapshots: inventory.snapshots,
@@ -167,9 +186,9 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
             projectRootKey,
             ownerId: projectRootKey,
             workspaceId: projectRootKey,
-            generation: owner.generation,
+            generation: attachmentGeneration,
           },
-    [projectTargets, owner.generation],
+    [projectTargets, attachmentGeneration],
   );
   const resolveOwner = useCallback(
     (projectRootKey: string): AgentAttachmentOwner | null =>
@@ -419,7 +438,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
                 rootPath: rootKey,
                 ownerId: rootKey,
                 label: project.name,
-                generation: owner.generation,
+                generation: attachmentGeneration,
                 trust: "trusted",
                 origin: snapshot.serverId === selectedServerId ? "active-tab" : "background-tab",
                 repositories: [
@@ -437,7 +456,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
             }),
       ),
     ],
-    [localProjects, inventory.snapshots, selectedServerId, owner],
+    [localProjects, inventory.snapshots, selectedServerId, attachmentGeneration],
   );
   const threads = useMemo(
     () =>

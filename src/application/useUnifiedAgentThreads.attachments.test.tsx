@@ -283,6 +283,49 @@ async function setup(
 }
 
 describe("server thread images across inventory connectivity", () => {
+  it("retains a new server draft image across local workspace A B A and thread navigation", async () => {
+    const h = await setup(null);
+    await h.render({
+      imageSurface: {
+        decode: async () => ({ width: 1, height: 1 }),
+        encodeMime: async () => "image/png",
+        encode: async () => new ArrayBuffer(4),
+        release: () => undefined,
+      },
+    });
+    const draftKey = `new:${projectKey}`;
+    const draft = () => h.current.agents.attachments.forDraft!(draftKey);
+    await act(async () => {
+      await draft().add(projectKey, [
+        { kind: "bytes", name: "draft.png", mime: "image/png", bytes: new ArrayBuffer(4) },
+      ]);
+    });
+    expect(draft().drafts).toHaveLength(1);
+    const saved = draft().drafts[0];
+    const generation = h.current.projects.find(
+      (project) => project.rootKey === projectKey,
+    )!.generation;
+
+    await h.render({
+      workspaceOwner: "B",
+      selectedThreadId: "local-thread",
+      selectedServerId: null,
+    });
+    await h.render({ workspaceOwner: "A", selectedThreadId: null, selectedServerId: server.id });
+    expect(draft().drafts).toEqual([saved]);
+    expect(h.current.projects.find((project) => project.rootKey === projectKey)!.generation).toBe(
+      generation,
+    );
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(saved!.previewUrl);
+    await act(async () => {
+      expect(await draft().prepareTurn(projectKey)).toMatchObject({ draftIds: [saved!.draftId] });
+    });
+
+    await h.render({ servers: [{ ...server, host: "replacement" }] });
+    expect(draft().drafts).toEqual([]);
+    expect(revokeObjectURL).toHaveBeenCalledWith(saved!.previewUrl);
+  });
+
   it("keeps a sent image viewable when one inventory refresh fails and the next succeeds", async () => {
     const h = await setup(remoteId);
     await h.settle(() => expect(h.shown()).toEqual(["blob:remote-1"]));
@@ -495,7 +538,12 @@ describe("server thread images across inventory connectivity", () => {
 
     const nextThread = remoteAgentThreadKey(server.id, "runner-2", "root");
     const nextProject = remoteAgentProjectKey(server.id, "runner-2", "project");
-    await h.render({ workspaceOwner: "B", selectedThreadId: nextThread }, nextProject);
+    // A local tab switch no longer resets server identity. Replacing the remote
+    // gateway explicitly establishes a new remote connection authority.
+    await h.render(
+      { gateway: { ...h.gw }, workspaceOwner: "B", selectedThreadId: nextThread },
+      nextProject,
+    );
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:remote-1");
     expect(h.current.agents.attachmentImages.images.get(imageKey)).toBeUndefined();
     await h.settle(() => expect(h.shown()).toEqual(["blob:remote-2"]));

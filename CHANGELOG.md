@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.90] - 2026-10-04
+
+### Fixed
+
+- Images in a new server conversation draft stay attached when you visit a thread
+  in another workspace and return to the draft. Attachments remain isolated to
+  their original server and project.
+
 ## [0.2.0-beta.89] - 2026-10-04
 
 ### Added
