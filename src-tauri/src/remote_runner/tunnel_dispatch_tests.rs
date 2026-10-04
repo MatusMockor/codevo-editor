@@ -113,15 +113,20 @@ fn sixteen_pending_reads_do_not_reject_actions_or_block_another_server() {
 fn close_cancels_pending_http_without_waiting_for_deadline_or_replaying() {
     let session = Arc::new(Session::fixture());
     let listener = listener(&session);
+    let pid = session.pid().unwrap();
     let (ready, received) = mpsc::channel();
+    let (settled, cancellation_proven) = mpsc::channel();
     let fixture = std::thread::spawn(move || {
         let mut socket = accept(&listener);
         read_request(&mut socket);
         ready.send(()).unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(2)))
+        // The fixture socket belongs to this thread, not the tunnel process.
+        // Reqwest may retain its background HTTP connection after cancellation;
+        // peer EOF therefore is not evidence of request-task settlement.
+        // Withhold the response until the caller has proven prompt cancellation.
+        cancellation_proven
+            .recv_timeout(Duration::from_secs(5))
             .unwrap();
-        assert_eq!(socket.read(&mut [0]).unwrap(), 0);
         assert!(
             matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
         );
@@ -135,8 +140,16 @@ fn close_cancels_pending_http_without_waiting_for_deadline_or_replaying() {
     session.close();
     assert!(pending.join().unwrap().unwrap_err().contains("changed"));
     assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(session.pid(), None);
+    assert!(!session.is_alive());
+    assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
     assert!(session
         .request(&fixture_server(), "POST", "/v1/tasks", None, vec![])
         .is_err());
+    settled.send(()).unwrap();
     fixture.join().unwrap();
 }
