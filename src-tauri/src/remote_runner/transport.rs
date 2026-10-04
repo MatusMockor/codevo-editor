@@ -9,7 +9,6 @@ mod tunnel_session;
 use std::io::{Read, Write};
 #[cfg(test)]
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 #[cfg(test)]
 use std::time::Instant;
@@ -19,27 +18,6 @@ const MAX_INPUT: usize = 16 * 1024 * 1024;
 const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 const MAX_IMAGE_OUTPUT: usize = (8 * 1024 * 1024_usize).div_ceil(3) * 4 + 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
-static ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
-
-struct RequestPermit<'a>(&'a AtomicUsize);
-
-impl<'a> RequestPermit<'a> {
-    fn acquire(counter: &'a AtomicUsize) -> Result<Self, String> {
-        counter
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < 8).then_some(active + 1)
-            })
-            .map(|_| Self(counter))
-            .map_err(|_| "Too many runner requests. Try again shortly.".into())
-    }
-}
-
-impl Drop for RequestPermit<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 fn response_limit(method: &str, path: &str) -> usize {
     let attachment = path
         .strip_prefix("/v1/attachments/")
@@ -360,22 +338,6 @@ print('verified')
             .unwrap(),
             b"verified\n"
         );
-    }
-
-    #[test]
-    fn request_permit_caps_concurrency_and_releases_on_unwind() {
-        let counter = AtomicUsize::new(0);
-        let permits: Vec<_> = (0..8)
-            .map(|_| RequestPermit::acquire(&counter).unwrap())
-            .collect();
-        assert!(RequestPermit::acquire(&counter).is_err());
-        drop(permits);
-        let _ = std::panic::catch_unwind(|| {
-            let _permit = RequestPermit::acquire(&counter).unwrap();
-            panic!("exercise permit cleanup");
-        });
-        assert_eq!(counter.load(Ordering::Acquire), 0);
-        assert!(RequestPermit::acquire(&counter).is_ok());
     }
 
     #[cfg(unix)]

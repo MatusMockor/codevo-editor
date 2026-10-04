@@ -7,6 +7,17 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.91] - 2026-10-04
+
+### Fixed
+
+- The Agents panel opens for server conversations without showing a misleading
+  connection or runner-version warning.
+- Server requests no longer share an eight-request limit across conversations and
+  connections. Each connection dispatches its own requests concurrently, so pending
+  background reads do not reject a new message or another action. Disconnecting
+  cancels queued and active requests; expired requests are not sent.
+
 ## [0.2.0-beta.90] - 2026-10-04
 
 ### Fixed

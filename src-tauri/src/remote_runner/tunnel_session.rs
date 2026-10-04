@@ -1,14 +1,14 @@
 use super::super::port_forward::{ForwardDestination, ForwardSet};
 use super::super::types::Server;
-use super::{
-    response_limit, validate_destination, RequestPermit, ACTIVE_REQUESTS, MAX_INPUT, TIMEOUT,
-};
+use super::{response_limit, validate_destination, MAX_INPUT, TIMEOUT};
 use serde_json::Value;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
 };
 
+#[path = "tunnel_dispatch.rs"]
+mod tunnel_dispatch;
 #[path = "tunnel_http.rs"]
 mod tunnel_http;
 #[path = "tunnel_process.rs"]
@@ -18,7 +18,7 @@ mod tunnel_process;
 pub(in crate::remote_runner) struct Session {
     process: Mutex<Option<tunnel_process::TunnelProcess>>,
     closed: AtomicBool,
-    client: reqwest::Client,
+    dispatch: tunnel_dispatch::Dispatch,
     token: String,
     forwards: ForwardSet,
 }
@@ -31,7 +31,7 @@ impl Session {
         Self {
             process: Mutex::new(Some(process)),
             closed: AtomicBool::new(false),
-            client,
+            dispatch: tunnel_dispatch::Dispatch::new(client, "test-only".into()),
             token: "test-only".into(),
             forwards: ForwardSet::new(ForwardDestination::new("fixture", "localhost", "test", 22)),
         }
@@ -49,13 +49,12 @@ impl Session {
         canceled: impl Fn() -> bool,
     ) -> Result<Self, String> {
         validate_destination(&server.host, &server.username)?;
-        let _permit = RequestPermit::acquire(&ACTIVE_REQUESTS)?;
         let (process, token) = tunnel_process::TunnelProcess::start(server, canceled)?;
         let client = process.client()?;
         Ok(Self {
             process: Mutex::new(Some(process)),
             closed: AtomicBool::new(false),
-            client,
+            dispatch: tunnel_dispatch::Dispatch::new(client, token.clone()),
             token,
             forwards: ForwardSet::new(ForwardDestination::new(
                 &server.id,
@@ -68,6 +67,7 @@ impl Session {
 
     pub(in crate::remote_runner) fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.dispatch.close();
         self.forwards.close();
         // Only process ownership is locked; no network work is performed under it.
         let process = self
@@ -196,29 +196,20 @@ impl Session {
         body: Option<Value>,
         headers: Vec<(String, String)>,
     ) -> Result<Value, String> {
-        let _permit = RequestPermit::acquire(&ACTIVE_REQUESTS)?;
         if !self.is_alive() {
             return Err("Runner connection is closed. Reconnect the server.".into());
         }
         let request = tunnel_http::prepare(method, path, body, headers)?;
-        let result = tauri::async_runtime::block_on(async {
-            tokio::time::timeout(
-                if path.ends_with("/steer") {
-                    std::time::Duration::from_secs(60)
-                } else {
-                    TIMEOUT
-                },
-                tunnel_http::request(
-                    &self.client,
-                    &self.token,
-                    server.runner_id.as_deref(),
-                    request,
-                    response_limit(method, path),
-                ),
-            )
-            .await
-            .map_err(|_| "Runner request timed out. Its outcome may be unknown.".to_string())?
-        });
+        let result = self.dispatch.request(
+            request,
+            server.runner_id.clone(),
+            response_limit(method, path),
+            if path.ends_with("/steer") {
+                std::time::Duration::from_secs(60)
+            } else {
+                TIMEOUT
+            },
+        );
         if result
             .as_ref()
             .err()
@@ -241,7 +232,7 @@ impl Drop for Session {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    fn fixture_server() -> Server {
+    pub(super) fn fixture_server() -> Server {
         Server {
             id: "fixture".into(),
             name: "Fixture".into(),
@@ -367,3 +358,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "tunnel_dispatch_tests.rs"]
+mod dispatch_tests;

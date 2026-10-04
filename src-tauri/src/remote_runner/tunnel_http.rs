@@ -196,6 +196,7 @@ async fn execute(
     }
     Ok((output, media))
 }
+#[cfg(test)]
 pub(super) async fn request(
     client: &reqwest::Client,
     token: &str,
@@ -203,6 +204,18 @@ pub(super) async fn request(
     prepared: Prepared,
     limit: usize,
 ) -> Result<Value, String> {
+    request_with_authority(client, token, expected, prepared, limit, || Ok(())).await
+}
+
+pub(super) async fn request_with_authority(
+    client: &reqwest::Client,
+    token: &str,
+    expected: Option<&str>,
+    prepared: Prepared,
+    limit: usize,
+    authority: impl Fn() -> Result<(), String>,
+) -> Result<Value, String> {
+    authority()?;
     if expected.is_some() && prepared.path != "/v1/runner" {
         let identity = execute(
             client,
@@ -220,6 +233,7 @@ pub(super) async fn request(
             return Err("Runner identity changed. Reconnect the server before continuing.".into());
         }
     }
+    authority()?;
     let artifact = super::super::super::artifacts::is_content_path(&prepared.path);
     let image = prepared.method == reqwest::Method::GET && limit > super::super::MAX_OUTPUT;
     let (output, media) = execute(
@@ -230,6 +244,7 @@ pub(super) async fn request(
         if image { 8 * 1024 * 1024 } else { limit },
     )
     .await?;
+    authority()?;
     if image {
         let media = media
             .filter(|m| {
@@ -458,6 +473,46 @@ mod tests {
             }
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn lost_authority_after_identity_preflight_prevents_mutation() {
+        let (path, server) = test_server(vec![(
+            200,
+            "{\"protocolVersion\":1,\"runnerId\":\"expected\"}",
+        )]);
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let result = tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder()
+                .unix_socket(path)
+                .no_proxy()
+                .build()
+                .unwrap();
+            request_with_authority(
+                &client,
+                "private-token",
+                Some("expected"),
+                prepare("POST", "/v1/tasks", None, vec![]).unwrap(),
+                4096,
+                || {
+                    if checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+                        Ok(())
+                    } else {
+                        Err("Runner connection changed during request.".into())
+                    }
+                },
+            )
+            .await
+        });
+        assert_eq!(
+            result.unwrap_err(),
+            "Runner connection changed during request."
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /v1/runner "));
+        assert_eq!(checks.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
     #[cfg(unix)]
     #[test]
     fn operational_conflict_is_not_reported_as_identity_replacement() {
