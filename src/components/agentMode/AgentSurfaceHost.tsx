@@ -153,6 +153,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     (remote &&
       (layout.activeSurface === null ||
         (layout.activeSurface === "diff" && thread !== null) ||
+        (layout.activeSurface === "agents" && thread !== null) ||
         (layout.activeSurface === "git" && isRemoteGitShipThread(thread)))) ? null : (
       <div className="agent-note" role="status">
         {remote

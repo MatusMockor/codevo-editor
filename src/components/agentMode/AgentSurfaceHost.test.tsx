@@ -163,6 +163,31 @@ describe("AgentSurfaceHost", () => {
     }
   });
 
+  it.each(["remote:server:task", "remote-thread:server:conversation"])(
+    "renders Agents for %s without server panel capabilities",
+    (threadId) => {
+      const local = surfaceThreadView();
+      render({
+        thread: { ...local, thread: { ...local.thread, threadId } },
+        agentsPanel: <div data-test-agents>Thread agents</div>,
+        layout: { openSurfaces: ["agents"], activeSurface: "agents" },
+      });
+      expect(host.querySelector("[data-test-agents]")).not.toBeNull();
+      expect(host.textContent).not.toContain("This server panel is unavailable.");
+    },
+  );
+
+  it("keeps Agents unavailable for a remote draft without a thread", () => {
+    render({
+      thread: null,
+      remoteDraft: true,
+      agentsPanel: <div data-test-agents>Thread agents</div>,
+      layout: { openSurfaces: ["agents"], activeSurface: "agents" },
+    });
+    expect(host.querySelector("[data-test-agents]")).toBeNull();
+    expect(host.textContent).toContain("This server panel is unavailable.");
+  });
+
   it("uses the original changes surface with remote facade callbacks", async () => {
     const local = surfaceThreadView();
     const thread = {
