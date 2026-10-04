@@ -42,9 +42,15 @@ export interface AgentAttachmentImagesSurface {
   releaseWorkspace(workspaceId: string): void;
 }
 
+export interface AgentAttachmentImageCache extends AgentAttachmentImagesSurface {
+  retry(request: AgentAttachmentImageRequest): void;
+  releaseAll(): void;
+}
+
 export interface AgentAttachmentImagesDependencies {
   readonly gateway: AgentAttachmentGateway | null;
   readonly reportError: (source: string, error: unknown) => void;
+  readonly presentError?: (error: unknown) => unknown;
   readonly createObjectUrl?: (blob: Blob) => string;
   readonly revokeObjectUrl?: (url: string) => void;
 }
@@ -81,7 +87,7 @@ export function agentAttachmentUnavailableReason(error: unknown): string {
 
 export function useAgentAttachmentImages(
   dependencies: AgentAttachmentImagesDependencies,
-): AgentAttachmentImagesSurface {
+): AgentAttachmentImageCache {
   const [images, setImages] = useState<ReadonlyMap<string, AgentAttachmentImageState>>(
     () => new Map(),
   );
@@ -222,12 +228,41 @@ export function useAgentAttachmentImages(
     [publish],
   );
 
+  const retry = useCallback(
+    (request: AgentAttachmentImageRequest): void => {
+      const entries = cacheRef.current.entries;
+      const key = agentAttachmentImageKey(
+        request.workspaceId,
+        request.threadId,
+        request.attachmentId,
+      );
+      if (entries.get(key)?.state.kind !== "unavailable") return;
+      entries.delete(key);
+      ensure(request);
+      if (!entries.has(key)) publish();
+    },
+    [ensure, publish],
+  );
+
+  const releaseAll = useCallback((): void => {
+    const cache = cacheRef.current;
+    const released = cache.entries.size > 0;
+    cache.queued.clear();
+    for (const key of [...cache.entries.keys()]) {
+      revokeEntry(dependenciesRef.current, cache.entries, key);
+    }
+    limiterRef.current?.prune();
+    if (released) publish();
+  }, [publish]);
+
   return {
     images,
     capacityReached: images.size >= MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES,
     ensure,
     holdThread,
     releaseWorkspace,
+    retry,
+    releaseAll,
   };
 }
 
@@ -245,9 +280,10 @@ function settleImage(
   const entries = cache.entries;
   if (entries.get(key) !== pending) return;
   if (!read.ok) {
-    dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, read.error);
+    const error = dependenciesRef.current.presentError?.(read.error) ?? read.error;
+    dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
     entries.set(key, {
-      state: { kind: "unavailable", reason: agentAttachmentUnavailableReason(read.error) },
+      state: { kind: "unavailable", reason: agentAttachmentUnavailableReason(error) },
       bytes: 0,
     });
     publish();

@@ -4,10 +4,22 @@ import type {
   RemoteRunnerGateway,
   RemoteRunnerTask,
 } from "../domain/remoteRunner";
+import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import {
   loadRemoteTaskAttachments,
+  MAX_REMOTE_ATTACHMENT_ENTRIES,
+  presentRemoteAttachmentError,
   readRemoteAttachment,
+  remoteAttachmentBlocker,
+  remoteAttachmentErrorRecovery,
+  remoteAttachmentImageMime,
+  remoteAttachmentLoadRetriesQuietly,
+  remoteAttachmentRecovery,
+  reviseRemoteAttachments,
+  remoteAttachmentUnavailableMessage,
+  RemoteAttachmentUnavailableError,
   type RemoteAttachmentRegistry,
+  type RemoteAttachmentUnavailableReason,
 } from "./remoteAttachmentHistory";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
@@ -42,7 +54,10 @@ function fixture() {
     generation: 1,
   };
   const registry: RemoteAttachmentRegistry = new Map();
-  const getAttachment = vi.fn(async () => metadata);
+  const getAttachment = vi.fn(
+    async (_request: { readonly attachmentId: string }): Promise<RemoteRunnerAttachment> =>
+      metadata,
+  );
   const readAttachment = vi.fn(async () => ({
     mediaType: "image/png" as const,
     base64: "iVBORw==",
@@ -62,6 +77,7 @@ function fixture() {
     ownerIsCurrent,
     resolveServer: () => "server",
     isGatewayCurrent: () => true,
+    isWorkspaceConnected: () => true,
   };
   return {
     registry,
@@ -70,16 +86,12 @@ function fixture() {
     readAttachment,
     request,
     dependencies,
-    load: (value = task) =>
-      loadRemoteTaskAttachments(
-        registry,
-        value,
-        "server",
-        currentOwner,
-        gateway,
-        ownerIsCurrent,
-        dependencies.isGatewayCurrent,
-      ),
+    ownerIsCurrent,
+    load: async (value = task) =>
+      (await loadRemoteTaskAttachments(registry, value, "server", currentOwner, dependencies))
+        .attachments,
+    loadResult: (value = task) =>
+      loadRemoteTaskAttachments(registry, value, "server", currentOwner, dependencies),
     replace: (change: Partial<AgentAttachmentOwner>) => {
       currentOwner = { ...currentOwner, ...change };
     },
@@ -200,20 +212,24 @@ describe("remote attachment history", () => {
       readRemoteAttachment(f.registry, f.request, f.dependencies),
     ).resolves.toBeInstanceOf(ArrayBuffer);
   });
-  it("rejects foreign runner metadata without registering it", async () => {
+  it("never projects or reads foreign runner metadata", async () => {
     const f = fixture();
     f.getAttachment.mockResolvedValueOnce({ ...metadata, runnerId: "foreign" });
-    await expect(f.load()).rejects.toThrow();
-    expect(f.registry.size).toBe(0);
+    expect(await f.load()).toEqual([]);
+    expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBe("loadFailed");
+    await expect(readRemoteAttachment(f.registry, f.request, f.dependencies)).rejects.toThrow();
+    expect(f.readAttachment).not.toHaveBeenCalled();
   });
-  it("rejects oversized turns and malformed attachment IDs before fetching", async () => {
+  it("rejects oversized turns and never requests malformed attachment IDs", async () => {
     const f = fixture();
     await expect(
       f.load({ ...task, parts: Array.from({ length: 9 }, () => task.parts[0]!) }),
     ).rejects.toThrow();
-    await expect(
-      f.load({ ...task, parts: [{ type: "attachment", attachmentId: "../../local" }] }),
-    ).rejects.toThrow();
+    const malformed = await f.loadResult({
+      ...task,
+      parts: [{ type: "attachment", attachmentId: "../../local" }],
+    });
+    expect(malformed).toEqual({ attachments: [], discovered: ["loadFailed"] });
     expect(f.getAttachment).not.toHaveBeenCalled();
   });
   it("rejects mismatched media type and byte length", async () => {
@@ -265,9 +281,7 @@ describe("remote attachment history", () => {
       task,
       "server",
       { projectRootKey: "project", workspaceId: "workspace", ownerId: "lease", generation: 1 },
-      f.gateway,
-      f.dependencies.ownerIsCurrent,
-      () => current,
+      { ...f.dependencies, isGatewayCurrent: () => current },
     );
     current = false;
     finish(metadata);
@@ -290,11 +304,27 @@ describe("remote attachment history", () => {
     const pending = ids.map((attachmentId) =>
       f.load({ ...task, parts: [{ type: "attachment", attachmentId }] }),
     );
-    const settled = Promise.allSettled(pending);
     finishes.forEach((finish, index) => finish({ ...metadata, id: ids[index]! }));
-    const outcomes = await settled;
-    expect(f.registry.size).toBe(512);
-    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    const outcomes = await Promise.all(pending);
+    expect(outcomes.map((attachments) => attachments.length).sort()).toEqual([0, 1]);
+    const blockers = ids.map((attachmentId) =>
+      remoteAttachmentBlocker(
+        f.registry,
+        { ...f.request, attachmentId: attachmentId.replace(/-/g, "") },
+        f.dependencies,
+      ),
+    );
+    expect(blockers.sort()).toEqual(["limit", null]);
+    const stored = [...f.registry.values()].filter((entry) => entry.kind === "stored");
+    expect(stored).toHaveLength(MAX_REMOTE_ATTACHMENT_ENTRIES);
+    f.getAttachment.mockClear();
+    const again = await Promise.all(
+      ids.map((attachmentId) =>
+        f.loadResult({ ...task, parts: [{ type: "attachment", attachmentId }] }),
+      ),
+    );
+    expect(again.flatMap((result) => result.discovered)).toEqual([]);
+    expect(f.getAttachment).not.toHaveBeenCalled();
   });
   it("preserves both conversation authorizations when equivalent metadata loads settle concurrently", async () => {
     const f = fixture();
@@ -319,5 +349,528 @@ describe("remote attachment history", () => {
         f.dependencies,
       ),
     ).resolves.toBeInstanceOf(ArrayBuffer);
+  });
+});
+
+const reasons: readonly RemoteAttachmentUnavailableReason[] = [
+  "notConnected",
+  "notLoaded",
+  "foreign",
+  "notStored",
+  "loadFailed",
+  "readFailed",
+  "busy",
+  "unsupported",
+  "limit",
+];
+const retention = (connected: boolean) => ({
+  ownerIsRetained: () => true,
+  ownerIsCurrent: () => connected,
+});
+const notFound = () => new RemoteRunnerRequestRejectedError("Runner request failed (HTTP 404).");
+async function reasonOf(
+  operation: Promise<unknown>,
+): Promise<RemoteAttachmentUnavailableReason | null> {
+  const failure: unknown = await operation.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  return failure instanceof RemoteAttachmentUnavailableError ? failure.reason : null;
+}
+
+describe("remote attachment availability reasons", () => {
+  it("gives every closed reason short plain copy without backend detail", () => {
+    const messages = reasons.map(remoteAttachmentUnavailableMessage);
+    expect(new Set(messages).size).toBe(reasons.length);
+    for (const message of messages) {
+      expect(message.length).toBeLessThanOrEqual(160);
+      expect(message).not.toMatch(/HTTP|[0-9a-f]{8}-|\//);
+    }
+    expect(reasons.map(remoteAttachmentRecovery)).toEqual([
+      "whenReady",
+      "whenReady",
+      "never",
+      "afterReconnect",
+      "afterReconnect",
+      "afterReconnect",
+      "afterReconnect",
+      "never",
+      "afterReconnect",
+    ]);
+    expect(remoteAttachmentErrorRecovery(new RemoteAttachmentUnavailableError("foreign"))).toBe(
+      "never",
+    );
+    expect(remoteAttachmentErrorRecovery(new Error("Runner request failed (HTTP 503)."))).toBe(
+      "afterReconnect",
+    );
+  });
+  it("reports missing image details as retryable before any metadata is registered", async () => {
+    const f = fixture();
+    expect(await reasonOf(readRemoteAttachment(f.registry, f.request, f.dependencies))).toBe(
+      "notLoaded",
+    );
+    expect(
+      remoteAttachmentBlocker(f.registry, f.request, {
+        ...f.dependencies,
+        isWorkspaceConnected: () => false,
+      }),
+    ).toBe("notConnected");
+    expect(f.readAttachment).not.toHaveBeenCalled();
+  });
+  it("fails closed while the server is not connected and serves the retained entry afterwards", async () => {
+    const f = fixture();
+    await f.load();
+    const disconnected = { ...f.dependencies, ownerIsCurrent: () => false };
+    expect(remoteAttachmentBlocker(f.registry, f.request, disconnected)).toBe("notConnected");
+    expect(await reasonOf(readRemoteAttachment(f.registry, f.request, disconnected))).toBe(
+      "notConnected",
+    );
+    expect(
+      await reasonOf(
+        readRemoteAttachment(f.registry, f.request, { ...f.dependencies, gateway: null }),
+      ),
+    ).toBe("notConnected");
+    expect(
+      await reasonOf(
+        readRemoteAttachment(f.registry, f.request, {
+          ...f.dependencies,
+          isGatewayCurrent: () => false,
+        }),
+      ),
+    ).toBe("notConnected");
+    expect(f.readAttachment).not.toHaveBeenCalled();
+    expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBeNull();
+    await expect(
+      readRemoteAttachment(f.registry, f.request, f.dependencies),
+    ).resolves.toBeInstanceOf(ArrayBuffer);
+    expect(f.getAttachment).toHaveBeenCalledTimes(1);
+  });
+  it("does not load metadata while the owner is not connected", async () => {
+    const f = fixture();
+    const disconnected = { ...f.dependencies, ownerIsCurrent: () => false };
+    expect(
+      await reasonOf(
+        loadRemoteTaskAttachments(
+          f.registry,
+          task,
+          "server",
+          { projectRootKey: "project", workspaceId: "workspace", ownerId: "lease", generation: 1 },
+          disconnected,
+        ),
+      ),
+    ).toBe("notConnected");
+    expect(f.getAttachment).not.toHaveBeenCalled();
+    expect(f.registry.size).toBe(0);
+  });
+  it("reports another thread or another server as not belonging to the conversation", async () => {
+    const f = fixture();
+    await f.load();
+    expect(
+      await reasonOf(
+        readRemoteAttachment(
+          f.registry,
+          { ...f.request, threadId: remoteAgentThreadKey("server", "runner", "other") },
+          f.dependencies,
+        ),
+      ),
+    ).toBe("foreign");
+    expect(
+      await reasonOf(
+        readRemoteAttachment(f.registry, f.request, {
+          ...f.dependencies,
+          resolveServer: () => "replacement",
+        }),
+      ),
+    ).toBe("foreign");
+    expect(f.readAttachment).not.toHaveBeenCalled();
+  });
+  it("reports content the runner answers 404 for as no longer stored", async () => {
+    const f = fixture();
+    await f.load();
+    f.readAttachment.mockRejectedValueOnce(notFound());
+    expect(await reasonOf(readRemoteAttachment(f.registry, f.request, f.dependencies))).toBe(
+      "notStored",
+    );
+  });
+  it("remembers metadata the runner answers 404 for and still loads sibling images", async () => {
+    const f = fixture();
+    const sibling = "33333333-3333-4333-8333-333333333333";
+    f.getAttachment.mockRejectedValueOnce(notFound());
+    f.getAttachment.mockResolvedValueOnce({ ...metadata, id: sibling });
+    const turn = {
+      ...task,
+      parts: [
+        { type: "attachment" as const, attachmentId: id },
+        { type: "attachment" as const, attachmentId: sibling },
+      ],
+    };
+    const first = await f.loadResult(turn);
+    expect(first.discovered).toEqual(["notStored"]);
+    expect(first.attachments.map((attachment) => attachment.name)).toEqual(["shot.png"]);
+    expect(first.attachments[0]).toMatchObject({ remote: { attachmentId: sibling } });
+    const second = await f.loadResult(turn);
+    expect(second.discovered).toEqual([]);
+    expect(second.attachments).toHaveLength(1);
+    expect(f.getAttachment).toHaveBeenCalledTimes(2);
+    expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBe("notStored");
+    expect(await reasonOf(readRemoteAttachment(f.registry, f.request, f.dependencies))).toBe(
+      "notStored",
+    );
+    expect(f.readAttachment).not.toHaveBeenCalled();
+  });
+  it("does not treat an untyped failure as a missing image", async () => {
+    const f = fixture();
+    f.getAttachment.mockRejectedValueOnce(new Error("Runner request failed (HTTP 404)."));
+    expect((await f.loadResult()).discovered).toEqual(["loadFailed"]);
+  });
+  it.each([
+    [
+      "a server error",
+      (f: ReturnType<typeof fixture>) =>
+        f.getAttachment.mockRejectedValue(new Error("ssh: connect to host 10.0.0.7 refused")),
+    ],
+    [
+      "invalid metadata",
+      (f: ReturnType<typeof fixture>) =>
+        f.getAttachment.mockResolvedValue({ ...metadata, bytes: 0 }),
+    ],
+    [
+      "malformed metadata",
+      (f: ReturnType<typeof fixture>) =>
+        f.getAttachment.mockResolvedValue({ id } as unknown as RemoteRunnerAttachment),
+    ],
+  ] as const)(
+    "settles %s as a failed load that is reported once and not requested again",
+    async (_name, fail) => {
+      const f = fixture();
+      fail(f);
+      expect(await f.loadResult()).toEqual({ attachments: [], discovered: ["loadFailed"] });
+      expect(await f.loadResult()).toEqual({ attachments: [], discovered: [] });
+      expect(f.getAttachment).toHaveBeenCalledTimes(1);
+      expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBe("loadFailed");
+      expect(await reasonOf(readRemoteAttachment(f.registry, f.request, f.dependencies))).toBe(
+        "loadFailed",
+      );
+      expect(f.readAttachment).not.toHaveBeenCalled();
+    },
+  );
+  it("settles a server without image metadata support as unsupported without a request", async () => {
+    const f = fixture();
+    const unsupported = {
+      ...f.dependencies,
+      gateway: { readAttachment: f.readAttachment } as unknown as RemoteRunnerGateway,
+    };
+    const owner = {
+      projectRootKey: "project",
+      workspaceId: "workspace",
+      ownerId: "lease",
+      generation: 1,
+    };
+    const first = await loadRemoteTaskAttachments(f.registry, task, "server", owner, unsupported);
+    const second = await loadRemoteTaskAttachments(f.registry, task, "server", owner, unsupported);
+    expect(first).toEqual({ attachments: [], discovered: ["unsupported"] });
+    expect(second.discovered).toEqual([]);
+    expect(remoteAttachmentBlocker(f.registry, f.request, unsupported)).toBe("unsupported");
+  });
+  it("keeps a settled failure until an outage has been observed and has ended", async () => {
+    for (const rejection of [notFound(), new Error("Runner request failed (HTTP 500).")]) {
+      const f = fixture();
+      f.getAttachment.mockRejectedValueOnce(rejection);
+      const [reason] = (await f.loadResult()).discovered;
+      expect(reviseRemoteAttachments(f.registry, retention(true)).size).toBe(0);
+      expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBe(reason);
+      reviseRemoteAttachments(f.registry, retention(false));
+      expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBe(reason);
+      expect((await f.loadResult()).discovered).toEqual([]);
+      expect(f.getAttachment).toHaveBeenCalledTimes(1);
+      expect(reviseRemoteAttachments(f.registry, retention(true)).size).toBe(0);
+      expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBe("notLoaded");
+      expect(await f.load()).toHaveLength(1);
+      expect(f.getAttachment).toHaveBeenCalledTimes(2);
+      await expect(
+        readRemoteAttachment(f.registry, f.request, f.dependencies),
+      ).resolves.toBeInstanceOf(ArrayBuffer);
+    }
+  });
+  it("retries busy metadata quietly instead of settling it as a failure", async () => {
+    const f = fixture();
+    f.getAttachment.mockRejectedValueOnce(new Error("Runner request failed (HTTP 503)."));
+    const failure: unknown = await f.loadResult().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({ reason: "busy" });
+    expect(remoteAttachmentLoadRetriesQuietly(failure)).toBe(true);
+    expect(
+      remoteAttachmentLoadRetriesQuietly(new RemoteAttachmentUnavailableError("notConnected")),
+    ).toBe(true);
+    expect(remoteAttachmentLoadRetriesQuietly(new RemoteAttachmentUnavailableError("limit"))).toBe(
+      false,
+    );
+    expect(remoteAttachmentLoadRetriesQuietly(new Error("Too many server images."))).toBe(false);
+    expect(f.registry.size).toBe(0);
+    expect(await f.load()).toHaveLength(1);
+  });
+  it("does not let a concurrent failed load replace registered metadata", async () => {
+    const f = fixture();
+    const finishes: ((value: RemoteRunnerAttachment) => void)[] = [];
+    const rejects: ((error: unknown) => void)[] = [];
+    f.getAttachment.mockImplementation(
+      () =>
+        new Promise((resolve, reject) => {
+          finishes.push(resolve);
+          rejects.push(reject);
+        }),
+    );
+    const pending = [f.loadResult(), f.loadResult()];
+    finishes[0]!(metadata);
+    rejects[1]!(new Error("Runner request failed (HTTP 500)."));
+    const [stored, failed] = await Promise.all(pending);
+    expect(stored?.attachments).toHaveLength(1);
+    expect(failed).toMatchObject({ discovered: [] });
+    expect(failed?.attachments).toHaveLength(1);
+    expect(remoteAttachmentBlocker(f.registry, f.request, f.dependencies)).toBeNull();
+  });
+  it("names the image type of registered images only", async () => {
+    const f = fixture();
+    expect(remoteAttachmentImageMime(f.registry, f.request)).toBeNull();
+    await f.load();
+    expect(remoteAttachmentImageMime(f.registry, f.request)).toBe("image/png");
+  });
+  it("presents an exhausted busy read with fixed copy", () => {
+    const presented = presentRemoteAttachmentError(new Error("Runner request failed (HTTP 503)."));
+    expect(presented).toMatchObject({
+      reason: "busy",
+      message: remoteAttachmentUnavailableMessage("busy"),
+    });
+    const other = new Error("Invalid server image content.");
+    expect(presentRemoteAttachmentError(other)).toBe(other);
+  });
+  it("hides other read failures behind a closed reason and keeps runner-busy retries intact", async () => {
+    const f = fixture();
+    await f.load();
+    f.readAttachment.mockRejectedValueOnce(new Error("ssh: connect to host 10.0.0.7 refused"));
+    const failure: unknown = await readRemoteAttachment(f.registry, f.request, f.dependencies).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(RemoteAttachmentUnavailableError);
+    expect(failure).toMatchObject({
+      reason: "readFailed",
+      message: remoteAttachmentUnavailableMessage("readFailed"),
+    });
+    f.readAttachment.mockRejectedValueOnce(new Error("Runner request failed (HTTP 503)."));
+    await expect(readRemoteAttachment(f.registry, f.request, f.dependencies)).rejects.toThrow(
+      "Runner request failed (HTTP 503).",
+    );
+  });
+  it("reports bytes that arrive after connectivity dropped as not connected", async () => {
+    const f = fixture();
+    await f.load();
+    let connected = true;
+    let finish!: (value: { mediaType: "image/png"; base64: string }) => void;
+    f.readAttachment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const reading = reasonOf(
+      readRemoteAttachment(f.registry, f.request, {
+        ...f.dependencies,
+        ownerIsCurrent: (owner) => connected && f.ownerIsCurrent(owner),
+      }),
+    );
+    connected = false;
+    finish({ mediaType: "image/png", base64: "iVBORw==" });
+    expect(await reading).toBe("notConnected");
+  });
+  it("prunes only owners that are no longer retained and names their workspaces", async () => {
+    const f = fixture();
+    await f.load();
+    expect(reviseRemoteAttachments(f.registry, retention(false)).size).toBe(0);
+    expect(f.registry.size).toBe(1);
+    const owned = { ownerIsRetained: f.ownerIsCurrent, ownerIsCurrent: f.ownerIsCurrent };
+    expect([...reviseRemoteAttachments(f.registry, owned)]).toEqual([]);
+    f.replace({ generation: 2 });
+    expect([...reviseRemoteAttachments(f.registry, owned)]).toEqual(["workspace"]);
+    expect(f.registry.size).toBe(0);
+    expect(await reasonOf(readRemoteAttachment(f.registry, f.request, f.dependencies))).toBe(
+      "notLoaded",
+    );
+  });
+});
+
+const numbered = (index: number): string =>
+  `${index.toString(16).padStart(8, "0")}-1111-4111-8111-111111111111`;
+const turnOf = (indexes: readonly number[], conversationId?: string): RemoteRunnerTask => ({
+  ...task,
+  ...(conversationId === undefined ? {} : { conversationId }),
+  parts: indexes.map((index) => ({ type: "attachment", attachmentId: numbered(index) })),
+});
+const range = (start: number, count: number): readonly number[] =>
+  Array.from({ length: count }, (_, offset) => start + offset);
+async function fill(
+  f: ReturnType<typeof fixture>,
+  start: number,
+  count: number,
+  conversationId?: string,
+) {
+  const discovered: string[] = [];
+  for (let offset = 0; offset < count; offset += 8) {
+    const indexes = range(start + offset, Math.min(8, count - offset));
+    discovered.push(...(await f.loadResult(turnOf(indexes, conversationId))).discovered);
+  }
+  return discovered;
+}
+function saturating() {
+  const f = fixture();
+  f.getAttachment.mockImplementation(async ({ attachmentId }) => ({
+    ...metadata,
+    id: attachmentId,
+  }));
+  const onEvicted = vi.fn();
+  const dependencies = { ...f.dependencies, onEvicted };
+  const owner = {
+    projectRootKey: "project",
+    workspaceId: "workspace",
+    ownerId: "lease",
+    generation: 1,
+  };
+  const requestFor = (index: number, conversationId: string = task.id) => ({
+    workspaceId: "workspace",
+    attachmentId: numbered(index).replace(/-/g, ""),
+    threadId: remoteAgentThreadKey("server", "runner", conversationId),
+  });
+  return {
+    ...f,
+    onEvicted,
+    requestFor,
+    loadEvicting: (value: RemoteRunnerTask) =>
+      loadRemoteTaskAttachments(f.registry, value, "server", owner, dependencies),
+  };
+}
+
+describe("remote attachment registry saturation", () => {
+  it("evicts the oldest images of other conversations to make room and says so", async () => {
+    const f = saturating();
+    await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES, "other");
+    expect(f.registry.size).toBe(MAX_REMOTE_ATTACHMENT_ENTRIES);
+    const loaded = await f.loadEvicting(turnOf([9001, 9002]));
+    expect(loaded.attachments).toHaveLength(2);
+    expect(loaded.discovered).toEqual([]);
+    expect(f.onEvicted).toHaveBeenCalledTimes(1);
+    expect(f.registry.size).toBe(MAX_REMOTE_ATTACHMENT_ENTRIES);
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(1, "other"), f.dependencies)).toBe(
+      "notLoaded",
+    );
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(2, "other"), f.dependencies)).toBe(
+      "notLoaded",
+    );
+    expect(
+      remoteAttachmentBlocker(f.registry, f.requestFor(3, "other"), f.dependencies),
+    ).toBeNull();
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(9001), f.dependencies)).toBeNull();
+
+    f.getAttachment.mockClear();
+    const again = await f.loadEvicting(turnOf([1], "other"));
+    expect(again.attachments).toHaveLength(1);
+    expect(f.getAttachment).toHaveBeenCalledTimes(1);
+    expect(f.onEvicted).toHaveBeenCalledTimes(2);
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(9001), f.dependencies)).toBe(
+      "notLoaded",
+    );
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(9002), f.dependencies)).toBeNull();
+    expect(
+      remoteAttachmentBlocker(f.registry, f.requestFor(3, "other"), f.dependencies),
+    ).toBeNull();
+  });
+  it("never evicts images of the conversation being loaded and settles the overflow as a limit", async () => {
+    const f = saturating();
+    await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES);
+    f.getAttachment.mockClear();
+    const overflow = await f.loadEvicting(turnOf([9001]));
+    expect(overflow).toEqual({ attachments: [], discovered: ["limit"] });
+    expect((await f.loadEvicting(turnOf([9001]))).discovered).toEqual([]);
+    expect(f.onEvicted).not.toHaveBeenCalled();
+    expect(f.getAttachment).not.toHaveBeenCalled();
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(9001), f.dependencies)).toBe("limit");
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(1), f.dependencies)).toBeNull();
+  });
+  it("keeps reporting a limit without throwing once every budget belongs to the conversation", async () => {
+    const f = saturating();
+    const discovered = await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES + 128);
+    expect(discovered.filter((reason) => reason === "limit").length).toBeGreaterThan(0);
+    expect(f.getAttachment).toHaveBeenCalledTimes(MAX_REMOTE_ATTACHMENT_ENTRIES);
+    const size = f.registry.size;
+    const first = await f.loadEvicting(turnOf([9001]));
+    const second = await f.loadEvicting(turnOf([9001]));
+    expect(first).toEqual({ attachments: [], discovered: ["limit"] });
+    expect(second).toEqual({ attachments: [], discovered: ["limit"] });
+    expect(f.registry.size).toBe(size);
+    expect(f.onEvicted).not.toHaveBeenCalled();
+  });
+  it("loads a limited image again once room has been freed", async () => {
+    const f = saturating();
+    await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES);
+    expect((await f.loadEvicting(turnOf([9001]))).discovered).toEqual(["limit"]);
+    const [oldest] = f.registry.keys();
+    f.registry.delete(oldest!);
+    f.registry.delete([...f.registry.keys()][0]!);
+    const freed = await f.loadEvicting(turnOf([9001]));
+    expect(freed.attachments).toHaveLength(1);
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(9001), f.dependencies)).toBeNull();
+  });
+  it("announces evictions once even when the load is rejected part way", async () => {
+    const f = saturating();
+    await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES, "other");
+    let connected = true;
+    const loading = loadRemoteTaskAttachments(
+      f.registry,
+      turnOf([9001, 9002, 9003]),
+      "server",
+      { projectRootKey: "project", workspaceId: "workspace", ownerId: "lease", generation: 1 },
+      {
+        ...f.dependencies,
+        onEvicted: f.onEvicted,
+        ownerIsCurrent: (owner) => connected && f.ownerIsCurrent(owner),
+      },
+    );
+    f.getAttachment.mockImplementationOnce(async ({ attachmentId }) => {
+      connected = false;
+      return { ...metadata, id: attachmentId };
+    });
+    expect(await reasonOf(loading)).toBe("notConnected");
+    expect(f.onEvicted).toHaveBeenCalledTimes(1);
+    expect(f.registry.size).toBe(MAX_REMOTE_ATTACHMENT_ENTRIES);
+  });
+  it("does not evict anything for a load that settles as a failure", async () => {
+    const f = saturating();
+    await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES, "other");
+    f.getAttachment.mockRejectedValueOnce(notFound());
+    f.getAttachment.mockRejectedValueOnce(new Error("Runner request failed (HTTP 500)."));
+    const failed = await f.loadEvicting(turnOf([9001, 9002]));
+    expect(failed).toEqual({ attachments: [], discovered: ["notStored", "loadFailed"] });
+    expect(f.onEvicted).not.toHaveBeenCalled();
+    expect(f.registry.size).toBe(MAX_REMOTE_ATTACHMENT_ENTRIES + 2);
+    expect(
+      remoteAttachmentBlocker(f.registry, f.requestFor(1, "other"), f.dependencies),
+    ).toBeNull();
+  });
+  it("remembers a real failure that replaces a stale limit instead of asking again", async () => {
+    const f = saturating();
+    await fill(f, 1, MAX_REMOTE_ATTACHMENT_ENTRIES);
+    expect((await f.loadEvicting(turnOf([9001]))).discovered).toEqual(["limit"]);
+    f.registry.delete([...f.registry.keys()][0]!);
+    f.registry.delete([...f.registry.keys()][0]!);
+    f.getAttachment.mockClear();
+    f.getAttachment.mockRejectedValueOnce(new Error("Runner request failed (HTTP 500)."));
+    expect((await f.loadEvicting(turnOf([9001]))).discovered).toEqual(["loadFailed"]);
+    expect(remoteAttachmentBlocker(f.registry, f.requestFor(9001), f.dependencies)).toBe(
+      "loadFailed",
+    );
+    expect((await f.loadEvicting(turnOf([9001]))).discovered).toEqual([]);
+    expect((await f.loadEvicting(turnOf([9001]))).discovered).toEqual([]);
+    expect(f.getAttachment).toHaveBeenCalledTimes(1);
   });
 });

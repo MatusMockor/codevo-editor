@@ -18,6 +18,7 @@ import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 import { agentDraftDispatchKey, agentThreadDispatchKey } from "./agentDispatchKeys";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
+import { useRemoteAttachmentHistory } from "./useRemoteAttachmentHistory";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
 import { useServerThreadMetadata } from "./useServerThreadMetadata";
 import {
@@ -158,19 +159,24 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     }
     return result;
   }, [inventory.snapshots, servers]);
-  const resolveOwner = useCallback(
-    (projectRootKey: string): AgentAttachmentOwner | null => {
-      const target = projectTargets.get(projectRootKey);
-      return !target?.connected
+  const resolveRetainedOwner = useCallback(
+    (projectRootKey: string): AgentAttachmentOwner | null =>
+      !projectTargets.has(projectRootKey)
         ? null
         : {
             projectRootKey,
             ownerId: projectRootKey,
             workspaceId: projectRootKey,
             generation: owner.generation,
-          };
-    },
-    [projectTargets, owner],
+          },
+    [projectTargets, owner.generation],
+  );
+  const resolveOwner = useCallback(
+    (projectRootKey: string): AgentAttachmentOwner | null =>
+      projectTargets.get(projectRootKey)?.connected === true
+        ? resolveRetainedOwner(projectRootKey)
+        : null,
+    [projectTargets, resolveRetainedOwner],
   );
   const taskServers = useMemo(() => {
     const result = new Map<string, string>();
@@ -191,88 +197,20 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     gateway,
     imageSurface: options.imageSurface ?? null,
     resolveOwner,
+    resolveRetainedOwner,
     resolveServer,
     reportError,
   });
-  const attachmentPort = useRef(remoteAttachments);
-  attachmentPort.current = remoteAttachments;
-  const [attachmentState, setAttachmentState] = useState<{
-    owner: object;
-    values: ReadonlyMap<string, readonly AgentAttachment[]>;
-  }>({ owner, values: new Map() });
-  const attachmentValues = useMemo(
-    () =>
-      attachmentState.owner === owner
-        ? attachmentState.values
-        : new Map<string, readonly AgentAttachment[]>(),
-    [attachmentState, owner],
-  );
-  useEffect(() => {
-    let disposed = false;
-    const load = async () => {
-      for (const snapshot of inventory.snapshots)
-        for (const task of snapshot.tasks) {
-          const inputParts = (snapshot.replays.get(task.id) ?? [])
-            .filter((event) => event.type === "task.input")
-            .flatMap((event) => event.parts ?? []);
-          const allParts = [...task.parts, ...inputParts];
-          if (
-            remoteAgentThreadKey(
-              snapshot.serverId,
-              task.runnerId,
-              task.conversationId ?? task.id,
-            ) !== selectedThreadId ||
-            task.projectId === undefined ||
-            !allParts.some((part) => part.type === "attachment")
-          )
-            continue;
-          const key = `${snapshot.serverId}\u0000${task.id}`;
-          const existing = attachmentValues.get(key) ?? [];
-          const missing = allParts.filter(
-            (part) =>
-              part.type === "attachment" &&
-              !existing.some(
-                (attachment) =>
-                  attachment.kind === "image" &&
-                  attachment.attachmentId === part.attachmentId.replace(/-/g, ""),
-              ),
-          );
-          if (!missing.length) continue;
-          const attachmentOwner = resolveOwner(
-            remoteAgentProjectKey(snapshot.serverId, task.runnerId, task.projectId),
-          );
-          if (attachmentOwner === null) continue;
-          try {
-            const attachments = await attachmentPort.current.loadTaskAttachments(
-              { ...task, parts: missing.slice(0, 8) },
-              snapshot.serverId,
-              attachmentOwner,
-            );
-            if (disposed || !valid(owner)) return;
-            setAttachmentState((previous) => {
-              const values = new Map(previous.owner === owner ? previous.values : []);
-              values.set(key, [...existing, ...attachments]);
-              while (values.size > 512) values.delete(values.keys().next().value!);
-              return { owner, values };
-            });
-          } catch (error) {
-            if (!disposed && valid(owner)) reportError("remote-attachments", error);
-          }
-        }
-    };
-    void load();
-    return () => {
-      disposed = true;
-    };
-  }, [
-    inventory.snapshots,
+  const attachmentValues = useRemoteAttachmentHistory({
+    snapshots: inventory.snapshots,
     selectedThreadId,
     owner,
-    resolveOwner,
+    epoch: remoteAttachments.epoch,
     valid,
+    resolveOwner,
+    loadTaskAttachments: remoteAttachments.loadTaskAttachments,
     reportError,
-    attachmentValues,
-  ]);
+  });
   const projections = useRef(new Map<string, RemoteAgentProjection>());
   const projectMetadata = metadata.project;
   const projected = useMemo(() => {
