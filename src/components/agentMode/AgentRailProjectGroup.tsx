@@ -16,6 +16,7 @@ import {
 } from "./agentProjectMenuPresentation";
 import { agentRailProjectSignal, type AgentRailProjectSignal } from "./agentRailProjectSignal";
 import type { AgentRailProjectSection } from "./agentRailProjectLayout";
+import { agentRailProjectEmptyLabel } from "./agentRailWorkingSection";
 
 export interface AgentRailProjectGroupActions {
   onToggleCollapsed(projectRootKey: string): void;
@@ -47,7 +48,9 @@ export function AgentRailProjectGroup({
   const [menuOpen, setMenuOpen] = useState(false);
   const state = agentRailProjectState(entry);
   const repositories = agentProjectRepositoryCountLabel(entry);
-  const signal = collapsed ? agentRailProjectSignal(project.threads, pendingInteractions) : null;
+  const signal = collapsed
+    ? agentRailProjectSignal(project.threads, pendingInteractions, project.working)
+    : null;
   const usable = agentProjectUsable(entry);
   const openMenu = (event: MouseEvent): void => {
     event.preventDefault();
@@ -132,7 +135,7 @@ export function AgentRailProjectGroup({
           {children}
           {!collapsed && project.threads.length === 0 && (
             <li className="cv-sb-project__empty" role="none">
-              {project.shelved > 0 ? "No active threads" : "No threads yet"}
+              {agentRailProjectEmptyLabel(project.working, project.shelved)}
             </li>
           )}
           {!collapsed && overflow.kind !== "none" && (

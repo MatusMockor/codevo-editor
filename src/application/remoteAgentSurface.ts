@@ -2,7 +2,12 @@ import type { AgentShipStepResult } from "../domain/agentShip";
 import type { AgentCommitSelection } from "../domain/gitCommitSelection";
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import { settleAgentThreadMutation } from "./agentThreadMutationOutcome";
-import type { AgentThreadsSurface, AgentThreadView, AgentTasksNotice } from "./agentThreadPorts";
+import type {
+  AgentThreadMutationResult,
+  AgentThreadsSurface,
+  AgentThreadView,
+  AgentTasksNotice,
+} from "./agentThreadPorts";
 import type { RemoteAgentMetadata } from "./remoteAgentMetadata";
 
 const REMOTE_ACTION_UNAVAILABLE = "This action is not available for a server conversation yet.";
@@ -103,14 +108,13 @@ export function remoteAgentThreadActions({
         readonly settledAt?: number | null;
         readonly sortOrder?: number | null;
       },
-    ) {
-      if (remote(id)) {
-        if (change.settledAt != null && byId.get(id)?.lifecycle === "running") {
-          report("Stop the agent before marking this conversation as settled.");
-          return;
-        }
-        void update(id, change);
-      } else local.updateThreadOrganization?.(id, change);
+    ): AgentThreadMutationResult | void {
+      if (!remote(id)) return local.updateThreadOrganization?.(id, change);
+      if (change.settledAt != null && byId.get(id)?.lifecycle === "running") {
+        report("Stop the agent before marking this conversation as settled.");
+        return false;
+      }
+      return settleAgentThreadMutation(update(id, change));
     },
     reorderThread(
       id: string,
@@ -126,9 +130,9 @@ export function remoteAgentThreadActions({
         reorder(id, targetId, placement, destination);
       } else if (!remote(targetId)) local.reorderThread?.(id, targetId, placement, destination);
     },
-    togglePin(id: string) {
-      if (remote(id)) void update(id, { pinned: !byId.get(id)?.thread.pinned });
-      else local.togglePin(id);
+    togglePin(id: string): AgentThreadMutationResult | void {
+      if (!remote(id)) return local.togglePin(id);
+      return settleAgentThreadMutation(update(id, { pinned: !byId.get(id)?.thread.pinned }));
     },
     archive(id: string): Promise<boolean> {
       if (!remote(id)) return settleAgentThreadMutation(local.archive(id));

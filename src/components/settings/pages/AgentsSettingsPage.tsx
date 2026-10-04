@@ -23,6 +23,7 @@ import {
   withProviderReset,
   withToggledModelFavorite,
 } from "../agentProviderSettingsPersistence";
+import { AgentSidebarSettingsRows } from "../AgentSidebarSettingsRows";
 import { AgentThreadDefaultsRows } from "../AgentThreadDefaultsRows";
 import { SettingsNumberField } from "../primitives/SettingsNumberField";
 import { SettingsRow } from "../primitives/SettingsRow";
@@ -193,6 +194,10 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
           />
         </SettingsRow>
       </SettingsSectionHeading>
+
+      <AgentSidebarSettingsRows
+        workingSectionPreference={env.agentRailWorkingSectionPreference ?? null}
+      />
     </>
   );
 }

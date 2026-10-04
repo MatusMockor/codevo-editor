@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { AgentShipState } from "../domain/agentShip";
 import type { RemoteGitProjectKey, RemoteGitSyncPort } from "../domain/remoteGitSync";
 import type { RemoteRepositoryIdentityGateway } from "../domain/remoteRepositoryIdentity";
@@ -6,15 +6,21 @@ import type { RemoteRunnerServer } from "../domain/remoteRunner";
 import type { AgentTasksNotice, AgentThreadView, RemoteAgentGitAccess } from "./agentThreadPorts";
 import { remoteAgentProjectKey } from "./remoteAgentProjection";
 import type { RemoteShipTarget } from "./remoteThreadShip";
+import {
+  SYSTEM_REPOSITORY_IDENTITY_TIMERS,
+  type RepositoryIdentityTimers,
+} from "./repositoryIdentityRetry";
 import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import type { RemoteAgentInventorySnapshot } from "./useRemoteAgentInventory";
+import { useRemoteShipIdentities } from "./useRemoteShipIdentities";
 import { useRemoteThreadShip, type RemoteThreadShipSurface } from "./useRemoteThreadShip";
 
-export const MAX_REMOTE_SHIP_IDENTITIES = 64;
+export { MAX_REMOTE_SHIP_IDENTITIES } from "./useRemoteShipIdentities";
 
 export interface RemoteAgentShipOptions {
   readonly port: RemoteGitSyncPort | null;
   readonly identity: RemoteRepositoryIdentityGateway | null;
+  readonly identityTimers?: RepositoryIdentityTimers;
   readonly externalUrlOpener: ExternalUrlOpenerPort | null;
   readonly snapshots: readonly RemoteAgentInventorySnapshot[];
   readonly servers: readonly RemoteRunnerServer[];
@@ -36,11 +42,6 @@ type GitSyncProjects = ReadonlyMap<string, RemoteGitProjectKey>;
 interface PresentedView {
   readonly ship: AgentShipState;
   readonly view: AgentThreadView;
-}
-
-interface IdentityState {
-  readonly gateway: RemoteRepositoryIdentityGateway | null;
-  readonly values: ReadonlyMap<string, string | null>;
 }
 
 const runnerKey = (serverId: string, runnerId: string) => JSON.stringify([serverId, runnerId]);
@@ -85,6 +86,7 @@ function remoteProjectOf(view: AgentThreadView | undefined): RemoteGitProjectKey
 
 export function useRemoteAgentShip(options: RemoteAgentShipOptions): RemoteAgentShip {
   const { identity, port, report, reportError, selectedThreadId, views } = options;
+  const identityTimers = options.identityTimers ?? SYSTEM_REPOSITORY_IDENTITY_TIMERS;
   const signature = gitSyncProjectSignature(options.snapshots, options.servers);
   const projects = useMemo<GitSyncProjects>(
     () => new Map(JSON.parse(signature) as [string, RemoteGitProjectKey][]),
@@ -97,12 +99,6 @@ export function useRemoteAgentShip(options: RemoteAgentShipOptions): RemoteAgent
       ),
     [projects],
   );
-  const [identityState, setIdentityState] = useState<IdentityState>({
-    gateway: identity,
-    values: new Map(),
-  });
-  const identities = identityState.gateway === identity ? identityState.values : null;
-
   const shipProject = useCallback(
     (view: AgentThreadView | undefined): RemoteGitProjectKey | null => {
       const project = remoteProjectOf(view);
@@ -115,42 +111,25 @@ export function useRemoteAgentShip(options: RemoteAgentShipOptions): RemoteAgent
   const wanted =
     selectedThreadId === null ? null : shipProject(views.get(selectedThreadId) ?? undefined);
   const wantedKey = wanted === null ? null : projectIdentityKey(wanted);
-  const wantedSettled = wantedKey !== null && identities?.has(wantedKey) === true;
-  useEffect(() => {
-    if (wantedKey === null || wantedSettled) return;
-    const [serverId, runnerId, projectId] = JSON.parse(wantedKey) as [string, string, string];
-    let disposed = false;
-    const settle = (value: string | null) => {
-      if (disposed) return;
-      setIdentityState((current) => {
-        const values = new Map(current.gateway === identity ? current.values : []);
-        values.set(wantedKey, value);
-        while (values.size > MAX_REMOTE_SHIP_IDENTITIES) values.delete(values.keys().next().value!);
-        return { gateway: identity, values };
-      });
-    };
-    if (identity === null) {
-      settle(null);
-      return;
-    }
-    identity.discover({ serverId, runnerId, projectId }).then(settle, () => settle(null));
-    return () => {
-      disposed = true;
-    };
-  }, [identity, wantedKey, wantedSettled]);
+  const identities = useRemoteShipIdentities({
+    identity,
+    timers: identityTimers,
+    wantedKey,
+    report,
+  });
 
   const resolveView = useCallback(
     (view: AgentThreadView | undefined): RemoteShipTarget | null => {
       const project = shipProject(view);
       if (view === undefined || project === null || identities === null) return null;
-      const key = projectIdentityKey(project);
-      if (!identities.has(key)) return null;
+      const known = identities.get(projectIdentityKey(project));
+      if (known === undefined) return null;
       return {
         threadId: view.thread.threadId,
         serverId: project.serverId,
         runnerId: project.runnerId,
         conversationId: view.execution!.conversationId,
-        repositoryKey: identities.get(key) ?? null,
+        repositoryKey: known.kind === "read" ? known.repositoryKey : null,
         running: view.lifecycle === "running",
       };
     },

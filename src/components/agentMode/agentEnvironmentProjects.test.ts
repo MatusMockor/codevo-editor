@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_AGENT_PROJECT_GROUPING_SETTINGS,
+  type AgentProjectGroupingMode,
+  type AgentProjectGroupingSettings,
+} from "../../domain/agentProjectGrouping";
 import { agentProjectGroups } from "./agentModePresentation";
 import { agentRailOwnedViews } from "./agentRailProjectLayout";
 import { agentRailScopeEntries, agentRailSections } from "./agentSidebarPresentation";
@@ -155,5 +160,193 @@ describe("project display across environments", () => {
       environmentComposerScope({ ...explicit, generation: 99 }, groups, inventory, "linux")?.kind,
     ).toBe("missing");
     expect(environmentComposerScope(explicit, groups, inventory, "other")?.kind).toBe("missing");
+  });
+});
+
+describe("project grouping modes", () => {
+  const identity = "github.com/acme/editor";
+  const otherKey = "remote:linux:runner:other";
+  const other = { ...remote, rootKey: otherKey, rootPath: otherKey, ownerId: otherKey };
+  const inventory = [local, remote, other];
+  const inventorySource = agentProjectGroups(inventory, views, []);
+  const identities = new Map(inventory.map((project) => [project.rootKey, identity]));
+  const none = new Map<string, string>();
+  const grouping = (
+    mode: AgentProjectGroupingMode,
+    overrides: ReadonlyArray<readonly [string, AgentProjectGroupingMode]> = [],
+  ): AgentProjectGroupingSettings => ({ mode, overrides: new Map(overrides) });
+  const membersOf = (groups: ReturnType<typeof groupedEnvironmentProjects>) =>
+    groups.map((group) => group.memberProjectRootKeys ?? [group.projectRootKey]);
+
+  it("makes explicit repository settings equal the default for every existing fixture", () => {
+    const fixtures = [
+      { links, identities: undefined },
+      { links: none, identities: undefined },
+      { links: new Map([[remoteKey, "/gone"]]), identities: undefined },
+      { links: none, identities: new Map(projects.map((project) => [project.rootKey, identity])) },
+      {
+        links: none,
+        identities: new Map([
+          [local.rootKey, identity],
+          [remoteKey, "gitlab.com/acme/editor"],
+        ]),
+      },
+      { links: none, identities: new Map([[remoteKey, identity]]) },
+      {
+        links,
+        identities: new Map([
+          [local.rootKey, identity],
+          [remoteKey, "github.com/me/editor"],
+        ]),
+      },
+    ];
+    for (const fixture of fixtures) {
+      const today = groupedEnvironmentProjects(source, projects, fixture.links, fixture.identities);
+      for (const settings of [DEFAULT_AGENT_PROJECT_GROUPING_SETTINGS, grouping("repository")]) {
+        const next = groupedEnvironmentProjects(
+          source,
+          projects,
+          fixture.links,
+          fixture.identities,
+          settings,
+        );
+        expect(next).toEqual(today);
+        expect(next.map((group) => source.indexOf(group))).toEqual(
+          today.map((group) => source.indexOf(group)),
+        );
+      }
+    }
+    expect(groupedEnvironmentProjects(source, projects, links, undefined, undefined)).toEqual(
+      groupedEnvironmentProjects(source, projects, links),
+    );
+  });
+
+  it("splits identity groups into unchanged physical projects when kept separate", () => {
+    const groups = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("separate"),
+    );
+    expect(groups).toHaveLength(3);
+    expect(groups.map((group, index) => group === inventorySource[index])).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(groups.every((group) => group.memberProjectRootKeys === undefined)).toBe(true);
+  });
+
+  it("keeps an explicit connection together when projects are kept separate", () => {
+    const groups = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      links,
+      identities,
+      grouping("separate"),
+    );
+    expect(membersOf(groups)).toEqual([[local.rootKey, remoteKey], [otherKey]]);
+    expect(groups[0]?.label).toBe(local.label);
+    expect(groups[0]?.repos).toEqual([...inventorySource[0]!.repos, ...inventorySource[1]!.repos]);
+    expect(groups[0]?.liveCount).toBe(
+      inventorySource[0]!.liveCount + inventorySource[1]!.liveCount,
+    );
+    expect(groups[1]).toBe(inventorySource[2]);
+    const overridden = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      links,
+      identities,
+      grouping("repository", [
+        [local.rootKey, "separate"],
+        [remoteKey, "separate"],
+      ]),
+    );
+    expect(membersOf(overridden)).toEqual([[local.rootKey, remoteKey], [otherKey]]);
+  });
+
+  it("lets a linked member follow its local project even when it is overridden to separate", () => {
+    const groups = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      links,
+      identities,
+      grouping("repository", [[remoteKey, "separate"]]),
+    );
+    expect(membersOf(groups)).toEqual([[local.rootKey, remoteKey, otherKey]]);
+    expect(groups[0]?.label).toBe(local.label);
+    const unlinked = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("repository", [[remoteKey, "separate"]]),
+    );
+    expect(membersOf(unlinked)).toEqual([[local.rootKey, otherKey], [remoteKey]]);
+  });
+
+  it("removes only the overridden member from its identity group", () => {
+    const groups = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("repository", [[remoteKey, "separate"]]),
+    );
+    expect(membersOf(groups)).toEqual([[local.rootKey, otherKey], [remoteKey]]);
+    expect(groups[1]).toBe(inventorySource[1]);
+    expect(groups[0]?.repos).toEqual([...inventorySource[0]!.repos, ...inventorySource[2]!.repos]);
+  });
+
+  it("groups only the overridden members when the default keeps projects separate", () => {
+    const groups = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("separate", [
+        [local.rootKey, "repository"],
+        [otherKey, "repository"],
+      ]),
+    );
+    expect(membersOf(groups)).toEqual([[local.rootKey, otherKey], [remoteKey]]);
+  });
+
+  it("routes the composer to exact members under every grouping mode", () => {
+    const separate = groupedEnvironmentProjects(
+      source,
+      projects,
+      none,
+      identities,
+      grouping("separate"),
+    );
+    expect(environmentComposerScope(scope, separate, projects, null)).toBe(scope);
+    expect(environmentComposerScope(scope, separate, projects, "linux")?.kind).toBe("missing");
+    const linked = groupedEnvironmentProjects(
+      source,
+      projects,
+      links,
+      identities,
+      grouping("separate"),
+    );
+    expect(environmentComposerScope(scope, linked, projects, "linux")).toMatchObject({
+      kind: "project",
+      projectRootKey: remoteKey,
+      ownerId: remoteKey,
+    });
+    const overridden = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("repository", [[remoteKey, "separate"]]),
+    );
+    expect(environmentComposerScope(scope, overridden, inventory, "linux")).toMatchObject({
+      kind: "project",
+      projectRootKey: otherKey,
+      ownerId: otherKey,
+    });
+    expect(remoteView.thread.owner.rootKey).toBe(remoteKey);
   });
 });

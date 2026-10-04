@@ -1,7 +1,7 @@
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 export type AgentProjectMenuCommand =
-  "trust" | "close" | "release" | "reveal" | "copyPath" | "terminalSessions";
+  "trust" | "close" | "release" | "rename" | "reveal" | "copyPath" | "terminalSessions";
 
 export interface AgentProjectMenuTarget {
   readonly projectRootKey: string;
@@ -68,6 +68,7 @@ export function agentProjectMenuEntries(
   if (agentProjectClosable(entry)) {
     entries.push(projectMenuEntry("close", "Close project", "close", false));
   }
+  entries.push(projectMenuEntry("rename", "Rename project…", "rename", false));
   entries.push(
     projectMenuEntry(
       "terminal-sessions",

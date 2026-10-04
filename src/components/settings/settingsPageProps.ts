@@ -1,4 +1,5 @@
 import type { AgentAccountUsageRefreshOutcome } from "../../application/agentAccountUsageRefresh";
+import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
@@ -43,6 +44,7 @@ export interface SettingsAgentActivity {
 export interface SettingsEnvironment {
   readonly agentActivity?: SettingsAgentActivity | null;
   readonly agentProjects?: readonly AgentProjectDescriptor[];
+  readonly agentRailWorkingSectionPreference?: AgentRailWorkingSectionPreferencePort | null;
   readonly appUpdater: AppUpdaterSurface | null;
   readonly gitDetectedRepositoryMappings: ReadonlyArray<string>;
   readonly hasWorkspace: boolean;

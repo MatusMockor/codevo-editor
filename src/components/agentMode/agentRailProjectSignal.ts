@@ -11,10 +11,11 @@ export interface AgentRailProjectSignal {
 export function agentRailProjectSignal(
   threads: ReadonlyArray<AgentThreadView>,
   pendingInteractions: ReadonlyMap<string, AgentPendingInteraction>,
+  working: number = 0,
 ): AgentRailProjectSignal | null {
   const waiting = threads.filter((view) => pendingInteractions.has(view.thread.threadId)).length;
   if (waiting > 0) return { tone: "attention", label: `${countLabel(waiting)} waiting for you` };
-  const running = threads.filter((view) => view.lifecycle === "running").length;
+  const running = threads.filter((view) => view.lifecycle === "running").length + working;
   if (running > 0) return { tone: "working", label: `${countLabel(running)} working` };
   const unread = threads.filter((view) => view.unread).length;
   if (unread > 0) return { tone: "unread", label: `${countLabel(unread)} unread` };

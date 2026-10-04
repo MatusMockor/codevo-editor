@@ -60,12 +60,14 @@ describe("project menu", () => {
   it("offers the project actions that match the project state without a filter entry", () => {
     expect(agentProjectMenuEntries(trusted).map((entry) => entry.label)).toEqual([
       "Close project",
+      "Rename project…",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
     expect(agentProjectMenuEntries(closed)[0]?.command).toBe("release");
     expect(agentProjectMenuEntries(detached).map((entry) => entry.command)).toEqual([
+      "rename",
       "terminalSessions",
     ]);
     for (const entry of [trusted, untrusted, closed, detached]) {

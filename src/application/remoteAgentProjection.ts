@@ -32,7 +32,12 @@ export function remoteAgentProjectKey(
 ): string {
   return `remote:${encodeURIComponent(serverId)}:${encodeURIComponent(runnerId)}:${encodeURIComponent(projectId)}`;
 }
-export function remoteAgentProjectServerId(projectKey: string): string | null {
+export interface RemoteAgentProjectKeyParts {
+  readonly serverId: string;
+  readonly runnerId: string;
+  readonly projectId: string;
+}
+export function remoteAgentProjectKeyParts(projectKey: string): RemoteAgentProjectKeyParts | null {
   const parts = projectKey.split(":");
   if (parts.length !== 4) return null;
   const decoded = decodedKeyParts(parts.slice(1));
@@ -40,7 +45,11 @@ export function remoteAgentProjectServerId(projectKey: string): string | null {
   const [serverId, runnerId, projectId] = decoded;
   if (serverId === undefined || runnerId === undefined || projectId === undefined) return null;
   if (serverId === "") return null;
-  return remoteAgentProjectKey(serverId, runnerId, projectId) === projectKey ? serverId : null;
+  if (remoteAgentProjectKey(serverId, runnerId, projectId) !== projectKey) return null;
+  return { serverId, runnerId, projectId };
+}
+export function remoteAgentProjectServerId(projectKey: string): string | null {
+  return remoteAgentProjectKeyParts(projectKey)?.serverId ?? null;
 }
 function decodedKeyParts(parts: ReadonlyArray<string>): ReadonlyArray<string> | null {
   try {

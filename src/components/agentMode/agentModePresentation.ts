@@ -90,6 +90,7 @@ export interface AgentProjectGroup {
   readonly projectRootKey: string;
   readonly kind: AgentProjectGroupKind;
   readonly label: string;
+  readonly defaultLabel?: string;
   readonly rootPath: string | null;
   readonly trust: AgentProjectTrust;
   readonly origin: AgentProjectOrigin;

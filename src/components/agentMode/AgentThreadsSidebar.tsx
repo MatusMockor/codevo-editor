@@ -51,6 +51,16 @@ import {
 } from "./agentRailProjectLayout";
 import type { AgentRailProjectGroupActions } from "./AgentRailProjectGroup";
 import type { AgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
+import {
+  agentRailStatusLookup,
+  agentRailWorkingSections,
+  agentRailWorkingShelf,
+} from "./agentRailWorkingSection";
+import {
+  AGENT_RAIL_WORKING_RAIL_OFF,
+  useAgentRailOrganizationClock,
+  type AgentRailWorkingRail,
+} from "./useAgentRailWorkingRail";
 import { AgentThreadList } from "./AgentThreadList";
 import {
   focusRow,
@@ -93,6 +103,7 @@ const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_SEARCH_ROWS: ReadonlyMap<string, AgentThreadSearchResultRow> = new Map();
 const NO_BULK_COMMAND: (command: AgentThreadBulkCommand) => void = () => undefined;
+const NO_PENDING_INTERACTIONS: ReadonlyMap<string, AgentPendingInteraction> = new Map();
 const MAX_AGENT_RAIL_FACTS_REQUESTS = 8;
 const RAIL_SELECTION_OWNER = "rail";
 export interface AgentThreadsSidebarProps {
@@ -122,6 +133,7 @@ export interface AgentThreadsSidebarProps {
   readonly newThreadTitle?: string;
   readonly projectDisclosure: AgentRailProjectDisclosure;
   readonly projectFocus: AgentRailProjectFocus;
+  readonly workingRail?: AgentRailWorkingRail;
   onShowAllProjects(): void;
   onSwitchProject(projectRootKey: string): void;
   onFocusProject(projectRootKey: string): void;
@@ -175,6 +187,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   search,
   selectedThreadId,
   turnLog = null,
+  workingRail = AGENT_RAIL_WORKING_RAIL_OFF,
 }: AgentThreadsSidebarProps) {
   const [settledExpanded, setSettledExpanded] = useState(false);
   const [snoozedExpanded, setSnoozedExpanded] = useState(false);
@@ -234,14 +247,28 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     () => agentRailOwnedViews(views, visibleEntries),
     [visibleEntries, views],
   );
+  const organized = useMemo(() => {
+    const now = Math.max(organizationNow, Date.now());
+    return { now, sections: agentRailSections(ownedViews, now) };
+  }, [ownedViews, organizationNow]);
+  useAgentRailOrganizationClock(workingRail, organized.now);
+  const workingPending =
+    workingRail.workingSection === "off"
+      ? NO_PENDING_INTERACTIONS
+      : (pendingInteractions ?? NO_PENDING_INTERACTIONS);
+  const workingStatusOf = useMemo(() => agentRailStatusLookup(workingPending), [workingPending]);
   const sections = useMemo(
-    () => agentRailSections(ownedViews, Math.max(organizationNow, Date.now())),
-    [ownedViews, organizationNow],
+    () => agentRailWorkingSections(organized.sections, workingStatusOf, workingRail.workingSection),
+    [organized.sections, workingRail.workingSection, workingStatusOf],
   );
   const disclosureState = projectDisclosure.state;
   const projects = useMemo(
     () => agentRailProjectSections(sections, visibleEntries, disclosureState, selectedThreadId),
     [disclosureState, visibleEntries, sections, selectedThreadId],
+  );
+  const workingShelf = useMemo(
+    () => agentRailWorkingShelf(sections.working, workingRail.disclosure, selectedThreadId),
+    [sections.working, selectedThreadId, workingRail.disclosure],
   );
   const shelvedViews = useMemo(
     () => [
@@ -255,6 +282,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     const visible = [
       ...sections.pinned,
       ...projects.flatMap((project) => project.rows),
+      ...workingShelf.rows,
       ...shelvedViews,
     ];
     for (const view of visible.slice(0, MAX_AGENT_RAIL_FACTS_REQUESTS)) {
@@ -263,11 +291,11 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         view.thread.turns.map((turn) => turn.turnId),
       );
     }
-  }, [projects, sections, shelvedViews, turnLog]);
+  }, [projects, sections, shelvedViews, turnLog, workingShelf]);
   const empty = useMemo(() => agentRailEmptyState(scopeEntries), [scopeEntries]);
   const threadOrder = useMemo(
-    () => agentRailVisibleThreadOrder(sections.pinned, projects),
-    [projects, sections],
+    () => agentRailVisibleThreadOrder(sections.pinned, projects, workingShelf.rows),
+    [projects, sections, workingShelf],
   );
   const jumpLabels = useMemo(
     () => (jumpHints.shown ? jumpLabelsFor(threadOrder, jumpHints.glyph) : EMPTY_JUMP_LABELS),
@@ -532,6 +560,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
               snoozedExpanded={snoozedExpanded}
               onToggleSettled={toggleSettled}
               onToggleSnoozed={toggleSnoozed}
+              onToggleWorking={workingRail.toggleDisclosure}
               empty={empty}
               evidenceOf={evidenceOf}
               focusedThreadId={focusedThreadId}
@@ -543,6 +572,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
               projectLabels={projectLabels}
               sections={sections}
               selectedThreadId={selectedThreadId}
+              working={workingShelf}
             />
           </AgentRowServerNamesContext.Provider>
         )}

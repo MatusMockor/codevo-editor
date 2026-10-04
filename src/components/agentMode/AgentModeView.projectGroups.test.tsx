@@ -613,7 +613,13 @@ describe("agent sidebar project groups and New thread picker", () => {
     expect(menu).not.toBeNull();
     expect(
       [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])].map((item) => item.textContent),
-    ).toEqual(["Close project", "Terminal sessions…", "Reveal in Finder", "Copy path"]);
+    ).toEqual([
+      "Close project",
+      "Rename project…",
+      "Terminal sessions…",
+      "Reveal in Finder",
+      "Copy path",
+    ]);
     const reveal = [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].find(
       (item) => item.textContent === "Reveal in Finder",
     );

@@ -417,7 +417,10 @@ export interface AgentThreadsSurface {
   markThreadViewed(threadId: string): void;
   markThreadUnread(threadId: string): void;
   renameThread(threadId: string, title: string): void;
-  updateThreadOrganization?(threadId: string, patch: AgentThreadOrganizationPatch): void;
+  updateThreadOrganization?(
+    threadId: string,
+    patch: AgentThreadOrganizationPatch,
+  ): AgentThreadMutationResult | void;
   reorderThread?(
     threadId: string,
     targetThreadId: string,
@@ -463,7 +466,7 @@ export interface AgentThreadsSurface {
     threadId: string,
     launch: AgentLaunchOptions,
   ): Promise<AgentSessionRestartVerdict>;
-  togglePin(threadId: string): void;
+  togglePin(threadId: string): AgentThreadMutationResult | void;
   archive(threadId: string): AgentThreadMutationResult | void;
   unarchive?(threadId: string): AgentThreadMutationResult | void;
   remove(threadId: string): AgentThreadMutationResult | void;

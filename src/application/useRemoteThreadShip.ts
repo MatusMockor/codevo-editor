@@ -152,14 +152,22 @@ export function useRemoteThreadShip(
     );
   }, []);
 
+  const settledTarget = useCallback((captured: Owner): RemoteShipTarget => {
+    const current = dependenciesRef.current.resolve(captured.target.threadId);
+    return {
+      ...captured.target,
+      repositoryKey: current?.repositoryKey ?? captured.target.repositoryKey,
+    };
+  }, []);
+
   const rememberGit = useCallback(
     (captured: Owner, status: RemoteThreadGitStatus): GitShipStatus => {
       const threadId = captured.target.threadId;
       gitStatusesRef.current = new Map(gitStatusesRef.current).set(threadId, status);
       if (mountedRef.current) setGitStatuses(gitStatusesRef.current);
-      return remoteShipStatus(captured.target, status);
+      return remoteShipStatus(settledTarget(captured), status);
     },
-    [],
+    [settledTarget],
   );
 
   const dropEntries = useCallback((threadIds: readonly string[]): void => {
@@ -381,7 +389,7 @@ export function useRemoteThreadShip(
         const shipStatus = loaded.ok
           ? rememberGit(captured, loaded.value)
           : agentShipStatus(currentState(threadId));
-        const settlement = remotePushSettlement(outcome, captured.target, git, pushTarget);
+        const settlement = remotePushSettlement(outcome, settledTarget(captured), git, pushTarget);
         if (settlement.kind === "failed") {
           apply(threadId, { kind: "stepFailed", failure: settlement.failure });
           if (shipStatus !== null) {
@@ -408,6 +416,7 @@ export function useRemoteThreadShip(
       publish,
       rememberGit,
       runStep,
+      settledTarget,
       settledWithoutOwner,
       stepFailed,
     ],

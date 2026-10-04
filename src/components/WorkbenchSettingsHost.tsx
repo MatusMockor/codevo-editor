@@ -4,6 +4,7 @@ import { workbenchAgentThreadOpener } from "../application/agentThreadOpener";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { SystemFontGateway } from "../domain/systemFonts";
+import { SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE } from "./agentMode/sharedAgentRailWorkingSectionPreference";
 import { settingsEnvironment } from "./settings/settingsEnvironment";
 import type { SettingsSaveInput } from "./settings/settingsPageProps";
 import { WorkbenchSettingsScreen } from "./settings/WorkbenchSettingsScreen";
@@ -29,6 +30,7 @@ export function WorkbenchSettingsHost({
   const env = useMemo(
     () =>
       settingsEnvironment({
+        agentRailWorkingSectionPreference: SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE,
         agentThreadOpener: workbenchAgentThreadOpener,
         appUpdater,
         providerManagement,

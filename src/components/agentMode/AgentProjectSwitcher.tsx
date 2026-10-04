@@ -326,8 +326,13 @@ function switcherOptions(
 ): ReadonlyArray<SwitcherOption> {
   const needle = query.trim().toLocaleLowerCase();
   const projects = entries
-    .filter((entry) => needle === "" || entry.label.toLocaleLowerCase().includes(needle))
+    .filter((entry) => needle === "" || switcherEntryMatches(entry, needle))
     .map((entry) => ({ key: entry.projectRootKey, label: entry.label, entry }));
   if (needle !== "") return projects;
   return [{ key: ALL_PROJECTS_KEY, label: ALL_PROJECTS_LABEL, entry: null }, ...projects];
+}
+
+function switcherEntryMatches(entry: AgentRailScopeEntry, needle: string): boolean {
+  if (entry.label.toLocaleLowerCase().includes(needle)) return true;
+  return entry.defaultLabel?.toLocaleLowerCase().includes(needle) === true;
 }

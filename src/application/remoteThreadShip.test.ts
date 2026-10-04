@@ -36,13 +36,17 @@ const pushed = (remoteRef: string) =>
   }) as const;
 
 describe("remote thread ship policy", () => {
-  it("identifies the exact owner but ignores the running flag", () => {
+  it("identifies the exact owner but ignores the running flag and the compare key", () => {
     expect(sameRemoteShipTarget({ ...target, running: true }, target)).toBe(true);
+    expect(sameRemoteShipTarget({ ...target, repositoryKey: null }, target)).toBe(true);
+    expect(
+      sameRemoteShipTarget({ ...target, repositoryKey: "github.com/acme/other" }, target),
+    ).toBe(true);
     for (const change of [
+      { threadId: "remote-thread:linux:linux-runner:other" },
       { serverId: "other" },
       { runnerId: "other" },
       { conversationId: "00000000-0000-4000-8000-000000000001" },
-      { repositoryKey: null },
     ]) {
       expect(sameRemoteShipTarget({ ...target, ...change }, target)).toBe(false);
     }

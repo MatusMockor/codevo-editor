@@ -9,6 +9,7 @@ import type { AgentThreadDropSection } from "../../domain/agentThreadOrganizatio
 import { AgentThreadRow } from "./AgentThreadRow";
 import { AgentRailProjectGroup, type AgentRailProjectGroupActions } from "./AgentRailProjectGroup";
 import type { AgentRailProjectSection } from "./agentRailProjectLayout";
+import { NO_AGENT_RAIL_WORKING_SHELF, type AgentRailWorkingShelf } from "./agentRailWorkingSection";
 import {
   agentRowProjectLabel,
   type AgentRailEmptyState,
@@ -19,6 +20,8 @@ import {
 const NO_PENDING_INTERACTIONS: ReadonlyMap<string, AgentPendingInteraction> = new Map();
 const NO_REPOSITORY_LABELS: ReadonlyMap<string, string> = new Map();
 const PINNED_HEADING_ID = "agent-rail-pinned-heading";
+const NO_REORDER_NEIGHBORS: ReadonlyArray<AgentThreadView> = [];
+const NO_WORKING_TOGGLE = (): void => undefined;
 
 export interface AgentThreadListProps {
   readonly sections: AgentRailSections;
@@ -36,6 +39,8 @@ export interface AgentThreadListProps {
   readonly empty: AgentRailEmptyState;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly pendingInteractions?: ReadonlyMap<string, AgentPendingInteraction>;
+  readonly working?: AgentRailWorkingShelf;
+  onToggleWorking?(): void;
   onToggleSettled(): void;
   onToggleSnoozed(): void;
   onSelectThread(threadId: string, modifiers: ListSelectionModifiers): void;
@@ -53,6 +58,7 @@ export const AgentThreadList = memo(function AgentThreadList({
   onThreadMenuCommand,
   onToggleSettled,
   onToggleSnoozed,
+  onToggleWorking = NO_WORKING_TOGGLE,
   pendingInteractions = NO_PENDING_INTERACTIONS,
   projectActions,
   projectLabels,
@@ -62,8 +68,9 @@ export const AgentThreadList = memo(function AgentThreadList({
   selectedThreadId,
   settledExpanded,
   snoozedExpanded,
+  working = NO_AGENT_RAIL_WORKING_SHELF,
 }: AgentThreadListProps) {
-  const drag = useAgentThreadDrag(sections, onThreadMenuCommand);
+  const drag = useAgentThreadDrag(sections, onThreadMenuCommand, working.threads);
   const renderRows = (
     rows: ReadonlyArray<AgentThreadView>,
     grouped = false,
@@ -134,6 +141,15 @@ export const AgentThreadList = memo(function AgentThreadList({
           {renderRows(project.rows, true, project.threads)}
         </AgentRailProjectGroup>
       ))}
+      {working.threads.length > 0 && (
+        <Shelf
+          count={working.threads.length}
+          expanded={working.disclosure === "expanded"}
+          label="Working"
+          onToggle={onToggleWorking}
+        />
+      )}
+      {renderRows(working.rows, false, NO_REORDER_NEIGHBORS)}
       {(sections.snoozed?.length ?? 0) > 0 && (
         <Shelf
           count={sections.snoozed?.length ?? 0}

@@ -3,8 +3,9 @@ import type { AgentDiffTurn } from "../../domain/diffView/agentDiffScope";
 import { useAgentDiffScopeSelection } from "./useAgentDiffScopeSelection";
 import type { MonacoAppTheme } from "../../domain/settings";
 import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
+import { repositoryIdentityCandidates } from "../../application/repositoryIdentityCandidates";
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
-import { TauriRemoteRepositoryIdentityGateway } from "../../infrastructure/tauriRemoteRepositoryIdentityGateway";
+import { SHARED_REMOTE_REPOSITORY_IDENTITY } from "../remoteRunner/sharedRemoteRepositoryIdentity";
 import { TauriRemoteGitSyncGateway } from "../../infrastructure/tauriRemoteGitSyncGateway";
 import { TauriCompareUrlOpener } from "../../infrastructure/tauriGitIntegrationGateway";
 import { useAgentProjectCreation } from "./useAgentProjectCreation";
@@ -30,6 +31,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useRemoteProjectLinks } from "../../application/useRemoteProjectLinks";
+import { useAgentProjectGrouping } from "../../application/useAgentProjectGrouping";
 import { groupedEnvironmentProjects, environmentComposerScope } from "./agentEnvironmentProjects";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
 import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
@@ -52,11 +54,16 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { AgentNewThreadPicker } from "../../application/agentNewThreadPicker";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
 import type { AgentRailProjectFocusPreferencePort } from "../../application/agentRailProjectFocusPreferencePort";
+import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import { useAgentThreadBranchMemory } from "../../application/useAgentThreadBranchMemory";
 import { useAgentThreadBranchRecorder } from "../../application/useAgentThreadBranchRecorder";
 import { AgentThreadBranchMemoryContext } from "./agentThreadBranchMemoryContext";
 import { useAgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
 import { useAgentRailProjectFocus } from "./useAgentRailProjectFocus";
+import {
+  useAgentRailWorkingPendingInteractions,
+  useAgentRailWorkingRail,
+} from "./useAgentRailWorkingRail";
 import { agentProjectWorkspaceTabRoot } from "./agentProjectWorkspaceTab";
 import { useAgentProjectThreadCommands } from "./useAgentProjectThreadCommands";
 import { useAgentResumeCompactionOffer } from "../../application/useAgentResumeCompactionOffer";
@@ -136,7 +143,12 @@ import {
 } from "./useAgentQueuedEditImagePreviews";
 import { useAgentShipActions } from "./useAgentShipActions";
 import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
+import { AgentProjectRenameDialog } from "./AgentProjectRenameDialog";
+import { useAgentProjectRename } from "./useAgentProjectRename";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
+import { useAgentThreadUndo } from "../../application/useAgentThreadUndo";
+import { AgentThreadUndoNotice } from "./AgentThreadUndoNotice";
+import { useAgentThreadUndoShortcut } from "./useAgentThreadUndoShortcut";
 import { useAgentThreadNavigation, type AgentNavigationSession } from "./useAgentThreadNavigation";
 import { useAgentViewCommands } from "./useAgentViewCommands";
 import { useAgentCommandPaletteProvider } from "./useAgentCommandPaletteProvider";
@@ -176,6 +188,7 @@ export interface AgentModeViewProps {
   readonly textClipboard?: TextClipboardGateway | null;
   readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
   readonly projectFocusPreference?: AgentRailProjectFocusPreferencePort | null;
+  readonly workingSectionPreference?: AgentRailWorkingSectionPreferencePort | null;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly threadNotifications?: AgentThreadNotificationCenter | null;
   readonly threadNotificationsVisible?: boolean;
@@ -193,7 +206,7 @@ const DEFAULT_NOW_TICK_MS = 30_000;
 const NO_DIFF_TURNS: ReadonlyArray<AgentDiffTurn> = [];
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const PROJECT_IDENTITY_GATEWAY = new TauriRepositoryIdentityGateway();
-const REMOTE_PROJECT_IDENTITY_GATEWAY = new TauriRemoteRepositoryIdentityGateway();
+const REMOTE_PROJECT_IDENTITY_GATEWAY = SHARED_REMOTE_REPOSITORY_IDENTITY;
 const REMOTE_GIT_SYNC_GATEWAY = new TauriRemoteGitSyncGateway();
 const REMOTE_COMPARE_URL_OPENER = new TauriCompareUrlOpener();
 const NOOP_CLOSE_PROJECT = () => undefined;
@@ -286,6 +299,7 @@ function LocalAgentModeView({
   textClipboard = null,
   projectCollapsePreference = null,
   projectFocusPreference = null,
+  workingSectionPreference = null,
   newThreadPicker = null,
   threadNotifications = null,
   threadNotificationsVisible = true,
@@ -319,20 +333,36 @@ function LocalAgentModeView({
 
   const presentationThreads = useAgentThreadPresentationViews(agents.threads);
   const projectLinks = useRemoteProjectLinks();
+  const projectGrouping = useAgentProjectGrouping();
   const executionGroups = useMemo(
     () => agentProjectGroups(projects, presentationThreads, agents.orphanedWorktrees),
     [projects, agents.orphanedWorktrees, presentationThreads],
   );
 
   const repositoryIdentities = useProjectRepositoryIdentities(
-    projects,
+    repositoryIdentityCandidates(projects, projectLinks),
     PROJECT_IDENTITY_GATEWAY,
     REMOTE_PROJECT_IDENTITY_GATEWAY,
   );
-  const groups = useMemo(
-    () => groupedEnvironmentProjects(executionGroups, projects, projectLinks, repositoryIdentities),
-    [executionGroups, projects, projectLinks, repositoryIdentities],
+  const environmentGroups = useMemo(
+    () =>
+      groupedEnvironmentProjects(
+        executionGroups,
+        projects,
+        projectLinks,
+        repositoryIdentities,
+        projectGrouping,
+      ),
+    [executionGroups, projects, projectLinks, repositoryIdentities, projectGrouping],
   );
+  const projectRename = useAgentProjectRename({
+    groups: environmentGroups,
+    executionGroups,
+    projects,
+    catalog: agents.catalog,
+  });
+  const groups = projectRename.groups;
+  const displayProjects = projectRename.projects;
   const externalSessions = agents.externalSessions ?? null;
   const turnEvidenceOf = useCallback<AgentTurnLogEvidenceLookup>(
     (turnId) => agentTurnLogEvidence(agents.turnLog?.factsOf(turnId) ?? null),
@@ -341,6 +371,7 @@ function LocalAgentModeView({
   const railScopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
   const projectDisclosure = useAgentRailProjectDisclosure(projectCollapsePreference);
   const projectFocus = useAgentRailProjectFocus(projectFocusPreference);
+  const workingRail = useAgentRailWorkingRail(workingSectionPreference);
   const threadBranchMemory = useAgentThreadBranchMemory(chrome.threadBranchMemory ?? null);
   const navigation = useAgentThreadNavigation({
     agents,
@@ -353,6 +384,7 @@ function LocalAgentModeView({
     authoritativeRemoteProjectKeys,
     projectDisclosure: projectDisclosure.state,
     projectFocus: projectFocus.focus,
+    workingSplit: workingRail.latestSplit,
     revealProject: projectDisclosure.expand,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
@@ -375,6 +407,7 @@ function LocalAgentModeView({
     selectedThread?.thread.threadId ?? null,
   );
   const pendingInteractions = pendingObservations.pending;
+  useAgentRailWorkingPendingInteractions(workingRail, pendingInteractions);
   const pendingRemoteIdentity =
     selectedThread === null ? parseRemoteAgentThreadIdentity(selectedThreadId) : null;
   const resolvingRemoteThread =
@@ -445,18 +478,18 @@ function LocalAgentModeView({
     selectWorkspace(valid ? selectedProject : null);
   }, [composerScope, selectedProject, selectedThread, selectWorkspace, workspaceRoot]);
   const surfaceScope = useMemo(
-    () => agentSurfaceScopeFor(composerScope, projects, workspaceRoot),
-    [composerScope, projects, workspaceRoot],
+    () => agentSurfaceScopeFor(composerScope, displayProjects, workspaceRoot),
+    [composerScope, displayProjects, workspaceRoot],
   );
 
   const composerProjects = useMemo(() => {
-    if (selectedThread !== null) return projects;
+    if (selectedThread !== null) return displayProjects;
     const prefix =
       selectedServerId === null ? null : `remote:${encodeURIComponent(selectedServerId)}:`;
-    return projects.filter((project) =>
+    return displayProjects.filter((project) =>
       prefix === null ? !project.rootKey.startsWith("remote:") : project.rootKey.startsWith(prefix),
     );
-  }, [projects, selectedServerId, selectedThread]);
+  }, [displayProjects, selectedServerId, selectedThread]);
   const queuedEdit = useAgentQueuedFollowUpEdit(agents, selectedThreadId);
   const previewedQueuedEdit = useAgentQueuedEditImagePreviews(
     queuedEdit.edit,
@@ -473,7 +506,7 @@ function LocalAgentModeView({
   const composer = useAgentComposerControllerState({
     agents,
     sessionStop: sessionBackground.sessionStop,
-    groups: executionGroups,
+    groups: projectRename.executionGroups,
     queuedEdit: previewedQueuedEdit,
     projects: composerProjects,
     providerEnabled: effectiveProviderEnabled,
@@ -656,6 +689,14 @@ function LocalAgentModeView({
     openFiles: () => openSurface("files"),
     reportNotice: setLocalNotice,
   });
+  const threadUndo = useAgentThreadUndo({
+    ownerKey: workspaceRoot,
+    threads: agents.threads,
+    ports: agents,
+    selectedThreadId,
+    selectThread,
+    reportNotice: setLocalNotice,
+  });
   const menu = useAgentThreadMenuCommands({
     agents,
     groups,
@@ -663,13 +704,17 @@ function LocalAgentModeView({
     reportNotice: setLocalNotice,
     onTrustProject: trustProject,
     onReleaseProject: releaseProject,
+    onRenameProject: projectRename.request,
     onCloseProject,
     onThreadRemoved: navigation.forgetThread,
     onOpenTerminalSessions: openTerminalSessions,
     startNewThread,
+    undo: threadUndo.recorder,
   });
   const renameThread = useAgentLatestCallback(agents.renameThread);
-  const togglePin = useAgentLatestCallback(agents.togglePin);
+  const togglePin = useAgentLatestCallback((threadId: string) =>
+    menu.handleThreadMenuCommand(threadId, { kind: "togglePin" }),
+  );
   const threadMenuCommand = useAgentLatestCallback(menu.handleThreadMenuCommand);
   useLayoutEffect(() => {
     requestEndSessionRef.current = (threadId) =>
@@ -733,6 +778,7 @@ function LocalAgentModeView({
   const showAllRailProjects = useAgentLatestCallback(() => projectFocus.setFocus("all"));
   const sectionRef = useRef<HTMLElement | null>(null);
   useSidebarFocusHandoff(layout.rail, sectionRef);
+  useAgentThreadUndoShortcut(sectionRef, threadUndo.notification === null ? null : threadUndo.undo);
   const { attention, attentionExplanation, capacity, live } = useMemo(
     () =>
       agentThreadActivitySummary(
@@ -819,7 +865,7 @@ function LocalAgentModeView({
   useAgentViewCommands(viewCommands, commandHandlers);
   useAgentCommandPaletteProvider({
     threads: presentationThreads,
-    projects,
+    projects: displayProjects,
     selectedThreadId,
     activeProjectKey: navigation.railScope?.projectRootKey ?? null,
     scripts,
@@ -1018,7 +1064,7 @@ function LocalAgentModeView({
             {layout.rail === "collapsed" ? null : (
               <AgentThreadBranchMemoryContext.Provider value={threadBranchMemory.memory}>
                 <AgentThreadsSidebar
-                  catalog={agents.catalog}
+                  catalog={projectRename.catalog}
                   collapseShortcut={chrome.shortcuts?.sidebar ?? null}
                   footerActivity={footerActivity}
                   addProjectAvailable={chrome.addProject !== null}
@@ -1038,6 +1084,7 @@ function LocalAgentModeView({
                   onSwitchProject={switchRailProject}
                   projectDisclosure={projectDisclosure}
                   projectFocus={projectFocus.focus}
+                  workingRail={workingRail.rail}
                   onOpenProviderSettings={agents.configureAgentCli}
                   onOpenSourceControl={onOpenSourceControl}
                   onOpenUsage={onOpenUsageSettings}
@@ -1288,6 +1335,12 @@ function LocalAgentModeView({
                   />
                 )}
               <AgentEndSessionConfirmationBanner confirmation={menu.endSessionConfirmation} />
+              <AgentThreadUndoNotice
+                notification={threadUndo.notification}
+                onDismiss={threadUndo.dismiss}
+                onPausedChange={threadUndo.setPaused}
+                onUndo={threadUndo.undo}
+              />
               {notice && (
                 <div className="agent-thread-notice">
                   <AgentNoticeBar
@@ -1400,19 +1453,24 @@ function LocalAgentModeView({
           onOpenSurface={openSurfaceCommand}
           onSwitchScope={chrome.addProject === null ? null : addProject.addProject}
           onTrustScope={trustProject}
-          projects={projects}
+          projects={displayProjects}
           scope={surfaceScope}
           thread={surfaceThread}
           threadRootPath={surfaceThreadRootPath}
           workspaceRoot={workspaceRoot}
         />
       )}
+      <AgentProjectRenameDialog
+        onCancel={projectRename.cancel}
+        onSubmit={projectRename.submit}
+        target={projectRename.target}
+      />
       {threadNotifications !== null && (
         <AgentThreadNotifications
           center={threadNotifications}
           onSelectThread={navigation.selectThread}
           interactions={pendingObservations.observed}
-          projects={projects}
+          projects={displayProjects}
           toastsVisible={threadNotificationsVisible}
           views={presentationThreads}
           visibleThreadId={

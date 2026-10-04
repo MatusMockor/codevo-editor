@@ -582,7 +582,7 @@ describe("agent rail scope", () => {
       drainingEntry === undefined
         ? []
         : agentProjectMenuEntries(drainingEntry).map((item) => item.command),
-    ).toEqual(["release", "terminalSessions", "reveal", "copyPath"]);
+    ).toEqual(["release", "rename", "terminalSessions", "reveal", "copyPath"]);
     expect(agentRailNewThreadTarget({ projectRootKey: OTHER, repositoryRoot: OTHER }, entries)) //
       .toBeNull();
     expect(agentRailDetachedThreadCount([group(ROOT, "app", []), draining, detached])).toBe(1);

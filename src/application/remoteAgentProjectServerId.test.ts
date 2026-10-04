@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { remoteAgentProjectKey, remoteAgentProjectServerId } from "./remoteAgentProjection";
+import {
+  remoteAgentProjectKey,
+  remoteAgentProjectKeyParts,
+  remoteAgentProjectServerId,
+} from "./remoteAgentProjection";
 
 describe("remoteAgentProjectServerId", () => {
   it("reads the server back from a canonical project key", () => {
@@ -20,5 +24,19 @@ describe("remoteAgentProjectServerId", () => {
     ["a malformed escape", "remote:%E0%A4%A:runner:project"],
   ])("rejects %s", (_label, key) => {
     expect(remoteAgentProjectServerId(key)).toBeNull();
+    expect(remoteAgentProjectKeyParts(key)).toBeNull();
+  });
+
+  it("reads every decoded part back from an encoded project key", () => {
+    expect(remoteAgentProjectKeyParts("remote:build%20box%3A1:run%2Fner:api%2Fv2")).toEqual({
+      serverId: "build box:1",
+      runnerId: "run/ner",
+      projectId: "api/v2",
+    });
+    expect(remoteAgentProjectKeyParts(remoteAgentProjectKey("linux", "", ""))).toEqual({
+      serverId: "linux",
+      runnerId: "",
+      projectId: "",
+    });
   });
 });

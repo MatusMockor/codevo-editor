@@ -11,6 +11,7 @@ import "./agentThreadOrganization.css";
 export function useAgentThreadDrag(
   sections: AgentRailSections,
   command: (id: string, command: AgentThreadMenuCommand) => void,
+  working: ReadonlyArray<AgentThreadView> = [],
 ) {
   const source = useRef<AgentThreadView | null>(null);
   const indicator = useRef<HTMLElement | null>(null);
@@ -18,6 +19,7 @@ export function useAgentThreadDrag(
   const rows = [
     ...sections.pinned,
     ...sections.active,
+    ...working,
     ...(sections.snoozed ?? []),
     ...(sections.settled ?? []),
   ];
@@ -25,6 +27,8 @@ export function useAgentThreadDrag(
     indicator.current?.removeAttribute("data-drop-placement");
     indicator.current = null;
   };
+  const draggingWorkingRow = () =>
+    working.some((view) => view.thread.threadId === source.current?.thread.threadId);
   const finish = () => {
     source.current = null;
     clearIndicator();
@@ -54,6 +58,7 @@ export function useAgentThreadDrag(
             : null);
     if (destination !== "pinned" && destination !== "active" && destination !== "settled")
       return null;
+    if (working.includes(current) && destination !== "pinned") return null;
     if (
       destination === "settled" &&
       (current.lifecycle === "running" || runningTurn(current.thread))
@@ -114,7 +119,10 @@ export function useAgentThreadDrag(
       onDragOver(event: DragEvent<HTMLUListElement>) {
         clearIndicator();
         const drop = resolve(event);
-        if (!drop) return;
+        if (!drop) {
+          if (draggingWorkingRow()) event.dataTransfer.dropEffect = "none";
+          return;
+        }
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
         indicator.current = drop.element;

@@ -42,6 +42,9 @@ const pushedPublished: RemoteThreadGitStatus = {
   published: { ref: "origin/codevo/7389088c", ahead: 0, behind: 0 },
 };
 
+const LATE_REPOSITORY = "github.com/acme/late";
+const LATE_COMPARE_URL = "https://github.com/acme/late/compare/main...codevo/7389088c?expand=1";
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -349,6 +352,70 @@ describe("remote thread ship", () => {
       kind: "failed",
       failure: { step: "commit", reason: "authorityLost" },
     });
+  });
+
+  it("settles a commit as succeeded when the compare key arrives while it is in flight", async () => {
+    const port = fakePort();
+    const pending = deferred<{ kind: "accepted"; value: RemoteGitCommitResult }>();
+    port.commit.mockReturnValue(pending.promise);
+    const h = await render(port);
+    h.retarget({ repositoryKey: null });
+    let result: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      result = h.current().commit(THREAD, "msg");
+    });
+    h.retarget({ repositoryKey: LATE_REPOSITORY });
+    await act(async () => {
+      pending.resolve({ kind: "accepted", value: { ...committed, status: pushedPublished } });
+      await result;
+    });
+    expect(await result).toEqual({ kind: "succeeded" });
+    expect(h.state()?.kind).toBe("committed");
+    expect(JSON.stringify(h.state())).toContain(LATE_COMPARE_URL);
+    expect(h.current().gitStatuses.get(THREAD)).toEqual(pushedPublished);
+  });
+
+  it("settles a push with the late compare key when it arrives during the push", async () => {
+    const port = fakePort();
+    port.threadStatus.mockResolvedValue(pushedPublished);
+    const admission = deferred<{ kind: "accepted"; value: RemoteGitOperation }>();
+    port.push.mockReturnValue(admission.promise);
+    const h = await render(port);
+    h.retarget({ repositoryKey: null });
+    let result: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      result = h.current().push(THREAD);
+    });
+    h.retarget({ repositoryKey: LATE_REPOSITORY });
+    await act(async () => {
+      admission.resolve({ kind: "accepted", value: runningPush });
+      await result;
+    });
+    expect(await result).toEqual({ kind: "succeeded" });
+    const state = h.state();
+    expect(state?.kind).toBe("pushed");
+    expect(state?.kind === "pushed" && state.receipt.compareUrl).toBe(LATE_COMPARE_URL);
+    await act(() => h.current().openCompareUrl(THREAD));
+    expect(h.opener.openExternal).toHaveBeenCalledWith(LATE_COMPARE_URL);
+  });
+
+  it("keeps a status that was loading when the compare key arrived", async () => {
+    const port = fakePort();
+    const loading = deferred<RemoteThreadGitStatus>();
+    port.threadStatus.mockReturnValueOnce(loading.promise);
+    const h = await render(port);
+    h.retarget({ repositoryKey: null });
+    let refresh: Promise<void> = Promise.resolve();
+    await act(async () => {
+      refresh = h.current().refreshShipStatus(THREAD);
+    });
+    h.retarget({ repositoryKey: LATE_REPOSITORY });
+    await act(async () => {
+      loading.resolve(pushedPublished);
+      await refresh;
+    });
+    expect(h.current().gitStatuses.get(THREAD)).toEqual(pushedPublished);
+    expect(JSON.stringify(h.state())).toContain(LATE_COMPARE_URL);
   });
 
   it("drops a stale status after the thread was cleared and reopened", async () => {

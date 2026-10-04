@@ -5,6 +5,8 @@ import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
 import { BrowserAgentRailProjectFocusPreference } from "../../infrastructure/browserAgentRailProjectFocusPreference";
 import type { AgentRailProjectFocusPreferencePort } from "../../application/agentRailProjectFocusPreferencePort";
+import { SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE } from "./sharedAgentRailWorkingSectionPreference";
+import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import {
   commandPaletteNewThreadPicker,
   type AgentNewThreadPicker,
@@ -190,6 +192,7 @@ export interface AgentWorkbenchScreenProps {
   readonly textClipboard?: TextClipboardGateway | null;
   readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
   readonly projectFocusPreference?: AgentRailProjectFocusPreferencePort | null;
+  readonly workingSectionPreference?: AgentRailWorkingSectionPreferencePort | null;
   readonly sessionRestore?: AgentSessionRestorePorts;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly revealPathGateway?: RevealPathGateway;
@@ -253,6 +256,7 @@ export function AgentWorkbenchScreen({
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
   projectCollapsePreference = DEFAULT_PROJECT_COLLAPSE_PREFERENCE,
   projectFocusPreference = DEFAULT_PROJECT_FOCUS_PREFERENCE,
+  workingSectionPreference = SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE,
   sessionRestore = DEFAULT_SESSION_RESTORE,
   newThreadPicker: injectedNewThreadPicker,
   workbench,
@@ -813,6 +817,7 @@ export function AgentWorkbenchScreen({
           textClipboard={textClipboard}
           projectCollapsePreference={projectCollapsePreference}
           projectFocusPreference={projectFocusPreference}
+          workingSectionPreference={workingSectionPreference}
           newThreadPicker={newThreadPicker}
           viewCommands={workbenchAgentViewCommandBridge}
           threadNotifications={threadNotifications}

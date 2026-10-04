@@ -5,6 +5,7 @@ import { RemoteRunnerExecutionPolicy } from "../../remoteRunner/RemoteRunnerExec
 import { useState, type FormEvent } from "react";
 import { Check, Monitor, Plus, Server, Trash2 } from "lucide-react";
 import { useRemoteRunnerContext } from "../../remoteRunner/remoteRunnerContext";
+import { ProjectGroupingSettings } from "../ProjectGroupingSettings";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
@@ -228,6 +229,7 @@ export function EnvironmentsSettingsPage({
               </div>
             </div>
           ))}
+          <ProjectGroupingSettings projects={projects} remote={remote} />
         </div>
       </SettingsRow>
     </SettingsSectionHeading>

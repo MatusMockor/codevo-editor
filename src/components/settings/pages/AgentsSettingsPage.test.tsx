@@ -121,6 +121,7 @@ describe("AgentsSettingsPage", () => {
       "New threads",
       "CLI updates",
       "Notifications",
+      "Sidebar",
     ]);
   });
 

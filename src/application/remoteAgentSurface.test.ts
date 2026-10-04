@@ -97,6 +97,36 @@ describe("remote conversation action routing", () => {
     expect(running.update).not.toHaveBeenCalled();
     expect(running.report).toHaveBeenCalled();
   });
+  it("returns the settled server result for pin and organization changes", async () => {
+    const saved = setup();
+    saved.update.mockResolvedValue(true);
+    await expect(saved.actions.togglePin(saved.id)).resolves.toBe(true);
+    await expect(
+      saved.actions.updateThreadOrganization(saved.id, { snoozedUntil: 5000 }),
+    ).resolves.toBe(true);
+
+    const refused = setup();
+    refused.update.mockResolvedValue(false);
+    await expect(refused.actions.togglePin(refused.id)).resolves.toBe(false);
+    await expect(
+      refused.actions.updateThreadOrganization(refused.id, { snoozedUntil: 5000 }),
+    ).resolves.toBe(false);
+
+    const rejected = setup();
+    rejected.update.mockRejectedValue(new Error("offline"));
+    await expect(rejected.actions.togglePin(rejected.id)).resolves.toBe(false);
+
+    const running = setup(true);
+    expect(running.actions.updateThreadOrganization(running.id, { settledAt: 4000 })).toBe(false);
+    expect(running.update).not.toHaveBeenCalled();
+  });
+  it("passes local pin and organization changes through without inventing a result", () => {
+    const h = setup();
+    expect(h.actions.togglePin("local")).toBeUndefined();
+    expect(h.actions.updateThreadOrganization("local", { settledAt: 4000 })).toBeUndefined();
+    expect(h.local.togglePin).toHaveBeenCalledWith("local");
+    expect(h.update).not.toHaveBeenCalled();
+  });
   it("marks viewed with the server activity time, not the local clock", () => {
     const h = setup();
     const now = vi.spyOn(Date, "now").mockReturnValue(9_999_999_999_999);

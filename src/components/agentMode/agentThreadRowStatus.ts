@@ -155,6 +155,25 @@ export function agentRowStatusTone(status: AgentRowStatus): AgentRowStatusTone {
   }
 }
 
+export function agentRowBelongsInWorkingSection(
+  status: AgentRowStatus,
+): status is Extract<AgentRowStatus, { readonly kind: "working" | "agents" }> {
+  switch (status.kind) {
+    case "working":
+    case "agents":
+      return true;
+    case "approval":
+    case "input":
+    case "failed":
+    case "stopped":
+    case "done":
+    case "none":
+      return false;
+    default:
+      return unsupportedRowStatus(status);
+  }
+}
+
 export function agentRowWorkingDurationLabel(elapsedMs: number): string {
   const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1_000)) : 0;
   if (seconds < 60) return `${seconds}s`;

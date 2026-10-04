@@ -1,6 +1,15 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
 import {
+  NO_AGENT_RAIL_WORKING_SPLIT,
+  agentRailWorkingCountByProject,
+  agentRailWorkingSections,
+  agentRailWorkingThreads,
+  agentRailWorkingVisibleRows,
+  type AgentRailWorkingSections,
+  type AgentRailWorkingSplit,
+} from "./agentRailWorkingSection";
+import {
   agentRailScopeEntryFor,
   agentRailSections,
   type AgentRailScopeEntry,
@@ -31,9 +40,11 @@ export interface AgentRailProjectSection {
   readonly rows: ReadonlyArray<AgentThreadView>;
   readonly overflow: AgentRailProjectOverflow;
   readonly shelved: number;
+  readonly working: number;
 }
 
 const NO_OVERFLOW: AgentRailProjectOverflow = Object.freeze({ kind: "none" });
+const NO_WORKING_ROWS: ReadonlyArray<AgentThreadView> = Object.freeze([]);
 
 export function agentRailOwnerIndex(
   entries: ReadonlyArray<AgentRailScopeEntry>,
@@ -67,7 +78,7 @@ export function agentRailOwnedViews(
 }
 
 export function agentRailProjectSections(
-  sections: AgentRailSections,
+  sections: AgentRailSections | AgentRailWorkingSections,
   entries: ReadonlyArray<AgentRailScopeEntry>,
   disclosure: AgentRailProjectDisclosureState,
   selectedThreadId: string | null,
@@ -78,6 +89,7 @@ export function agentRailProjectSections(
     [...sections.pinned, ...(sections.snoozed ?? []), ...(sections.settled ?? [])],
     owners,
   );
+  const working = agentRailWorkingCountByProject(agentRailWorkingThreads(sections), owners);
   return entries.map((entry) => ({
     ...projectSection(
       entry,
@@ -86,14 +98,16 @@ export function agentRailProjectSections(
       selectedThreadId,
     ),
     shelved: shelved.get(entry.projectRootKey)?.length ?? 0,
+    working: working.get(entry.projectRootKey) ?? 0,
   }));
 }
 
 export function agentRailVisibleThreadOrder(
   pinned: ReadonlyArray<AgentThreadView>,
   projects: ReadonlyArray<AgentRailProjectSection>,
+  workingRows: ReadonlyArray<AgentThreadView> = NO_WORKING_ROWS,
 ): ReadonlyArray<string> {
-  return [...pinned, ...projects.flatMap((project) => project.rows)].map(
+  return [...pinned, ...projects.flatMap((project) => project.rows), ...workingRows].map(
     (view) => view.thread.threadId,
   );
 }
@@ -104,10 +118,19 @@ export function agentRailThreadOrder(
   disclosure: AgentRailProjectDisclosureState,
   selectedThreadId: string | null,
   now: number = Date.now(),
+  working: AgentRailWorkingSplit = NO_AGENT_RAIL_WORKING_SPLIT,
 ): ReadonlyArray<string> {
-  const sections = agentRailSections(agentRailOwnedViews(views, entries), now);
+  const sections = agentRailWorkingSections(
+    agentRailSections(agentRailOwnedViews(views, entries), now),
+    working.statusOf,
+    working.workingSection,
+  );
   const projects = agentRailProjectSections(sections, entries, disclosure, selectedThreadId);
-  return agentRailVisibleThreadOrder(sections.pinned, projects);
+  return agentRailVisibleThreadOrder(
+    sections.pinned,
+    projects,
+    agentRailWorkingVisibleRows(sections.working, working.disclosure, selectedThreadId),
+  );
 }
 
 function groupByProject(
@@ -130,7 +153,7 @@ function projectSection(
   threads: ReadonlyArray<AgentThreadView>,
   disclosure: AgentRailProjectDisclosureState,
   selectedThreadId: string | null,
-): Omit<AgentRailProjectSection, "shelved"> {
+): Omit<AgentRailProjectSection, "shelved" | "working"> {
   const key = entry.projectRootKey;
   if (disclosure.collapsed.has(key)) {
     const selected = threads.filter((view) => view.thread.threadId === selectedThreadId);

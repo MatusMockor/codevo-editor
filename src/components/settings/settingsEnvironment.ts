@@ -1,3 +1,4 @@
+import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import type { AgentThreadOpenerSource } from "../../application/agentThreadOpener";
 import { settleAgentThreadMutation } from "../../application/agentThreadMutationOutcome";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
@@ -8,6 +9,7 @@ import type { SettingsAgentActivity, SettingsEnvironment } from "./settingsPageP
 import type { WorkbenchSettingsModel } from "./workbenchSettingsModel";
 
 export interface SettingsEnvironmentInput {
+  readonly agentRailWorkingSectionPreference?: AgentRailWorkingSectionPreferencePort | null;
   readonly agentThreadOpener?: AgentThreadOpenerSource | null;
   readonly appUpdater: AppUpdaterSurface | null;
   readonly providerManagement: AgentProviderManagementSurface | null;
@@ -16,6 +18,7 @@ export interface SettingsEnvironmentInput {
 }
 
 export function settingsEnvironment({
+  agentRailWorkingSectionPreference = null,
   agentThreadOpener = null,
   appUpdater,
   providerManagement,
@@ -25,6 +28,7 @@ export function settingsEnvironment({
   return {
     agentActivity: settingsAgentActivity(workbench, agentThreadOpener),
     agentProjects: workbench.agents?.agentProjects?.projects ?? [],
+    agentRailWorkingSectionPreference,
     appUpdater,
     gitDetectedRepositoryMappings: workbench.gitRepositoryMappings
       .map((mapping) => mapping.rootRelativePath)

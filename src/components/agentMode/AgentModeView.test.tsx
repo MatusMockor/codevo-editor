@@ -2143,6 +2143,7 @@ describe("AgentModeView", () => {
     expect(projectMenuLabels()).toEqual([
       "Trust project…",
       "Close project",
+      "Rename project…",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
@@ -2189,6 +2190,7 @@ describe("AgentModeView", () => {
 
     expect(projectMenuLabels()).toEqual([
       "Close project",
+      "Rename project…",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",

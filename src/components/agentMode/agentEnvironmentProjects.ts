@@ -1,4 +1,11 @@
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import {
+  DEFAULT_AGENT_PROJECT_GROUPING_SETTINGS,
+  resolveGroupingMode,
+  unsupportedAgentProjectGroupingMode,
+  type AgentProjectGroupingMode,
+  type AgentProjectGroupingSettings,
+} from "../../domain/agentProjectGrouping";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import type { ComposerScope } from "./agentComposerTarget";
 
@@ -8,6 +15,7 @@ export function groupedEnvironmentProjects(
   projects: readonly AgentProjectDescriptor[],
   links: ReadonlyMap<string, string>,
   repositoryIdentities: ReadonlyMap<string, string> = new Map(),
+  grouping: AgentProjectGroupingSettings = DEFAULT_AGENT_PROJECT_GROUPING_SETTINGS,
 ): readonly AgentProjectGroup[] {
   // Explicit connections override automatic identity for their remote member. This
   // preserves an intentional association even if that checkout uses a fork remote.
@@ -32,8 +40,7 @@ export function groupedEnvironmentProjects(
   const buckets = new Map<string, AgentProjectGroup[]>();
   for (const group of groups) {
     const root = explicit.get(group.projectRootKey) ?? group.projectRootKey;
-    const identity = identities.get(root);
-    const key = identity ? `repository:${identity}` : `physical:${root}`;
+    const key = bucketKey(root, identities.get(root), resolveGroupingMode(root, grouping));
     const members = buckets.get(key) ?? [];
     members.push(group);
     buckets.set(key, members);
@@ -50,6 +57,21 @@ export function groupedEnvironmentProjects(
       liveCount: members.reduce((sum, member) => sum + member.liveCount, 0),
     };
   });
+}
+
+function bucketKey(
+  root: string,
+  identity: string | undefined,
+  mode: AgentProjectGroupingMode,
+): string {
+  switch (mode) {
+    case "repository":
+      return identity ? `repository:${identity}` : `physical:${root}`;
+    case "separate":
+      return `physical:${root}`;
+    default:
+      return unsupportedAgentProjectGroupingMode(mode);
+  }
 }
 
 /** Resolve an exact member of the displayed project, never an arbitrary project on a server. */

@@ -91,4 +91,21 @@ describe("searchSettingsRows", () => {
     }
     expect(SETTINGS_ROWS.some((row) => row.title === "Update track")).toBe(false);
   });
+
+  it("finds project grouping and project connections in the environments servers row", () => {
+    for (const query of [
+      "project grouping",
+      "grouping",
+      "repository",
+      "checkout",
+      "separate",
+      "project connections",
+      "connections",
+    ]) {
+      const hits = searchSettingsRows(query, SETTINGS_ROWS, false);
+      const hit = hits.find((candidate) => candidate.row.id === "environments.servers");
+      expect(hit?.row.section).toBe("environments");
+      expect(hit?.matchedIn).toBe("keywords");
+    }
+  });
 });

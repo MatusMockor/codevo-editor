@@ -3,9 +3,11 @@ import { mapWithBoundedConcurrency } from "../../application/boundedConcurrency"
 import { settleAgentThreadMutation } from "../../application/agentThreadMutationOutcome";
 import type {
   AgentTasksNotice,
+  AgentThreadMutationResult,
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
+import type { AgentThreadUndoRecorder } from "../../application/useAgentThreadUndo";
 import {
   AGENT_THREAD_BULK_CONCURRENCY,
   agentThreadBulkOwnerKey,
@@ -20,6 +22,10 @@ import {
   agentThreadSectionMoves,
   type AgentThreadSectionMove,
 } from "../../domain/agentThreadOrganization";
+import {
+  agentThreadSectionUndoAction,
+  type AgentThreadUndoAction,
+} from "../../domain/agentThreadUndo";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import type { AgentThreadCopyDetail, AgentThreadMenuCommand } from "./agentSidebarPresentation";
 import {
@@ -81,9 +87,11 @@ export interface AgentThreadMenuCommandOptions {
   onTrustProject(projectRootKey: string): void;
   onCloseProject(rootPath: string): void;
   onReleaseProject(projectRootKey: string): void;
+  onRenameProject(projectRootKey: string): void;
   onThreadRemoved(threadId: string): void;
   onOpenTerminalSessions(projectRootKey: string, repositoryRoot: string): void;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
+  readonly undo?: AgentThreadUndoRecorder;
 }
 
 export interface AgentThreadMenuCommands {
@@ -99,11 +107,13 @@ export function useAgentThreadMenuCommands({
   onCloseProject,
   onOpenTerminalSessions,
   onReleaseProject,
+  onRenameProject,
   onThreadRemoved,
   onTrustProject,
   reportNotice,
   revealPath,
   startNewThread,
+  undo,
 }: AgentThreadMenuCommandOptions): AgentThreadMenuCommands {
   const threadViews = agents.threads;
   const endSession = useAgentEndSessionCommand(agents, reportNotice);
@@ -165,7 +175,11 @@ export function useAgentThreadMenuCommands({
 
   const handleProjectCommand = useCallback(
     (target: AgentProjectMenuTarget, command: AgentProjectMenuCommand) => {
-      if (target.projectRootKey.startsWith("remote:") && command !== "copyPath") {
+      if (
+        target.projectRootKey.startsWith("remote:") &&
+        command !== "copyPath" &&
+        command !== "rename"
+      ) {
         reportNotice({
           kind: "info",
           message: "This project action is not available on the server yet.",
@@ -182,6 +196,9 @@ export function useAgentThreadMenuCommands({
           return;
         case "close":
           if (target.rootPath !== null) onCloseProject(target.rootPath);
+          return;
+        case "rename":
+          onRenameProject(target.projectRootKey);
           return;
         case "reveal":
           if (target.rootPath === null) return;
@@ -203,29 +220,59 @@ export function useAgentThreadMenuCommands({
       onCloseProject,
       onOpenTerminalSessions,
       onReleaseProject,
+      onRenameProject,
       onTrustProject,
       reportNotice,
       revealPath,
     ],
   );
 
+  const undoable = useCallback(
+    (
+      threadId: string,
+      action: AgentThreadUndoAction | null,
+      run: () => AgentThreadMutationResult | void,
+    ) => {
+      if (undo === undefined || action === null) {
+        void run();
+        return;
+      }
+      const captured = undo.capture([threadId]);
+      const result = run();
+      if (result === false) return;
+      if (result === undefined || result === true) {
+        undo.offer(action, captured);
+        return;
+      }
+      void settleAgentThreadMutation(result).then((applied) => {
+        if (!applied || !mounted.current) return;
+        undo.offer(action, captured);
+      });
+    },
+    [undo],
+  );
+
   const handleThreadMenuCommand = useCallback(
     (threadId: string, command: AgentThreadMenuCommand) => {
       switch (command.kind) {
         case "snooze":
-          agents.updateThreadOrganization?.(threadId, {
-            snoozedUntil: command.until,
-            settledAt: null,
-          });
+          undoable(threadId, { kind: "snooze", until: command.until }, () =>
+            agents.updateThreadOrganization?.(threadId, {
+              snoozedUntil: command.until,
+              settledAt: null,
+            }),
+          );
           return;
         case "unsnooze":
           agents.updateThreadOrganization?.(threadId, { snoozedUntil: null });
           return;
         case "settle":
-          agents.updateThreadOrganization?.(threadId, {
-            settledAt: Date.now(),
-            snoozedUntil: null,
-          });
+          undoable(threadId, { kind: "settle" }, () =>
+            agents.updateThreadOrganization?.(threadId, {
+              settledAt: Date.now(),
+              snoozedUntil: null,
+            }),
+          );
           return;
         case "restore":
           agents.updateThreadOrganization?.(threadId, { settledAt: null, snoozedUntil: null });
@@ -233,9 +280,10 @@ export function useAgentThreadMenuCommands({
         case "moveToSection": {
           const view = threadViews.find((candidate) => candidate.thread.threadId === threadId);
           if (view === undefined) return;
-          for (const move of agentThreadSectionMoves(view.thread, command.section, Date.now())) {
-            applySectionMove(agents, threadId, move);
-          }
+          const moves = agentThreadSectionMoves(view.thread, command.section, Date.now());
+          undoable(threadId, agentThreadSectionUndoAction(moves), () =>
+            applySectionMoves(agents, threadId, moves),
+          );
           return;
         }
         case "moveBefore":
@@ -248,7 +296,7 @@ export function useAgentThreadMenuCommands({
           );
           return;
         case "togglePin":
-          agents.togglePin(threadId);
+          undoable(threadId, { kind: "unpin" }, () => agents.togglePin(threadId));
           return;
         case "stop":
           void agents.stop(threadId);
@@ -257,7 +305,7 @@ export function useAgentThreadMenuCommands({
           requestEndSession(threadId);
           return;
         case "archive":
-          void agents.archive(threadId);
+          undoable(threadId, { kind: "archive" }, () => agents.archive(threadId));
           return;
         case "unarchive":
           void agents.unarchive?.(threadId);
@@ -286,7 +334,16 @@ export function useAgentThreadMenuCommands({
           return unsupportedThreadMenuCommand(command);
       }
     },
-    [agents, copyThreadDetail, groups, remove, requestEndSession, startNewThread, threadViews],
+    [
+      agents,
+      copyThreadDetail,
+      groups,
+      remove,
+      requestEndSession,
+      startNewThread,
+      threadViews,
+      undoable,
+    ],
   );
 
   const handleThreadBulkCommand = useCallback(
@@ -296,6 +353,8 @@ export function useAgentThreadMenuCommands({
         return;
       }
       const plan = agentThreadBulkPlan(command.request, agentThreadBulkCandidates(threadViews));
+      const undoAction = bulkUndoAction(plan.action);
+      const captured = undoAction === null ? null : (undo?.capture(plan.applyIds) ?? null);
       const run = () =>
         mapWithBoundedConcurrency(
           plan.applyIds,
@@ -308,6 +367,12 @@ export function useAgentThreadMenuCommands({
       void (agents.batchThreadMutations?.(run) ?? run()).then((outcomes) => {
         if (!mounted.current) return;
         const failed = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.threadId);
+        const applied = outcomes.filter((outcome) => outcome.ok).map((outcome) => outcome.threadId);
+        const undoOffered =
+          undoAction !== null &&
+          captured !== null &&
+          (undo?.offer(undoAction, captured, applied) ?? false);
+        if (undoOffered && failed.length === 0 && plan.skipped.length === 0) return;
         reportNotice({
           kind: failed.length === 0 ? "info" : "warning",
           message: agentThreadBulkReport(plan, failed),
@@ -315,7 +380,7 @@ export function useAgentThreadMenuCommands({
         });
       });
     },
-    [agents, applyBulkAction, reportNotice, threadViews],
+    [agents, applyBulkAction, reportNotice, threadViews, undo],
   );
 
   return {
@@ -373,6 +438,17 @@ function bulkPastTense(action: AgentThreadBulkAction): string {
   }
 }
 
+function bulkUndoAction(action: AgentThreadBulkAction): AgentThreadUndoAction | null {
+  switch (action) {
+    case "archive":
+      return { kind: "archive" };
+    case "delete":
+      return null;
+    default:
+      return unsupportedBulkAction(action);
+  }
+}
+
 function unsupportedBulkAction(action: never): never {
   throw new TypeError(`Unsupported agent thread bulk action: ${String(action)}.`);
 }
@@ -385,24 +461,33 @@ function unsupportedThreadMenuCommand(command: never): never {
   throw new TypeError(`Unsupported agent thread menu command: ${JSON.stringify(command)}.`);
 }
 
+function applySectionMoves(
+  agents: AgentMenuCommandSurface,
+  threadId: string,
+  moves: ReadonlyArray<AgentThreadSectionMove>,
+): AgentThreadMutationResult | void {
+  const results = moves.map((move) => applySectionMove(agents, threadId, move));
+  if (results.length !== 1) return undefined;
+  return results[0];
+}
+
 function applySectionMove(
   agents: AgentMenuCommandSurface,
   threadId: string,
   move: AgentThreadSectionMove,
-): void {
+): AgentThreadMutationResult | void {
   switch (move) {
     case "togglePin":
-      agents.togglePin(threadId);
-      return;
+      return agents.togglePin(threadId);
     case "settle":
-      agents.updateThreadOrganization?.(threadId, { settledAt: Date.now(), snoozedUntil: null });
-      return;
+      return agents.updateThreadOrganization?.(threadId, {
+        settledAt: Date.now(),
+        snoozedUntil: null,
+      });
     case "restore":
-      agents.updateThreadOrganization?.(threadId, { settledAt: null, snoozedUntil: null });
-      return;
+      return agents.updateThreadOrganization?.(threadId, { settledAt: null, snoozedUntil: null });
     case "unsnooze":
-      agents.updateThreadOrganization?.(threadId, { snoozedUntil: null });
-      return;
+      return agents.updateThreadOrganization?.(threadId, { snoozedUntil: null });
     default:
       return unsupportedSectionMove(move);
   }

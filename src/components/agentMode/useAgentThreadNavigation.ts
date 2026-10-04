@@ -25,6 +25,7 @@ import type { ComposerScope } from "./agentComposerTarget";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { adjacentThreadId } from "./agentModeNavigation";
 import { ALL_PROJECTS_FOCUS, type AgentRailProjectFocus } from "../../domain/agentRailProjectFocus";
+import { NO_AGENT_RAIL_WORKING_SPLIT, type AgentRailWorkingSplit } from "./agentRailWorkingSection";
 import {
   ALL_PROJECTS_EXPANDED,
   agentRailFocusedEntries,
@@ -81,6 +82,7 @@ export interface AgentThreadNavigationOptions {
   readonly authoritativeRemoteProjectKeys?: ReadonlySet<string>;
   readonly projectDisclosure?: AgentRailProjectDisclosureState;
   readonly projectFocus?: AgentRailProjectFocus;
+  readonly workingSplit?: AgentRailWorkingSplit;
   revealProject?(projectRootKey: string): void;
 }
 
@@ -170,6 +172,7 @@ export function useAgentThreadNavigation({
   authoritativeRemoteProjectKeys,
   projectDisclosure = ALL_PROJECTS_EXPANDED,
   projectFocus = ALL_PROJECTS_FOCUS,
+  workingSplit = NO_AGENT_RAIL_WORKING_SPLIT,
   revealProject,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
   const projectSelections = useRef<AgentProjectSelectionMemory>(
@@ -585,13 +588,15 @@ export function useAgentThreadNavigation({
     centerRef.current?.querySelector<HTMLElement>(".agent-session__scroll")?.focus();
   }, [closeFind]);
 
-  const orderedThreadIds = useMemo(
+  const threadOrder = useCallback(
     () =>
       agentRailThreadOrder(
         presentationThreads,
         agentRailFocusedEntries(scopeEntries, projectFocus, railScope?.projectRootKey ?? null),
         projectDisclosure,
         selectedThreadId,
+        workingSplit.now(),
+        workingSplit,
       ),
     [
       presentationThreads,
@@ -600,21 +605,22 @@ export function useAgentThreadNavigation({
       railScope,
       scopeEntries,
       selectedThreadId,
+      workingSplit,
     ],
   );
   const openFind = find.openBar;
   const commands = useMemo<AgentNavigationCommandHandlers>(
     () => ({
       previousThread: () => {
-        const next = adjacentThreadId(orderedThreadIds, selectedThreadId, -1);
+        const next = adjacentThreadId(threadOrder(), selectedThreadId, -1);
         if (next !== null) selectThread(next);
       },
       nextThread: () => {
-        const next = adjacentThreadId(orderedThreadIds, selectedThreadId, 1);
+        const next = adjacentThreadId(threadOrder(), selectedThreadId, 1);
         if (next !== null) selectThread(next);
       },
       jumpToThread: (slot: AgentJumpSlot) => {
-        const next = orderedThreadIds[slot - 1];
+        const next = threadOrder()[slot - 1];
         if (next !== undefined) selectThread(next);
       },
       searchThreads: () => setPaletteOpen(true),
@@ -634,7 +640,7 @@ export function useAgentThreadNavigation({
       },
       threadSelected: () => selectedThreadId !== null,
     }),
-    [openFind, orderedThreadIds, selectThread, selectedThreadId],
+    [openFind, selectThread, selectedThreadId, threadOrder],
   );
 
   const newThreadTarget = useCallback(

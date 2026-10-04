@@ -165,6 +165,24 @@ describe("useAgentThreadMenuCommands", () => {
     expect(notices).toEqual([]);
   });
 
+  it("routes rename to the exact local or server project without a server notice", () => {
+    const onRenameProject = vi.fn();
+    const onCloseProject = vi.fn();
+    render({ onRenameProject, onCloseProject });
+    const remote = { ...PROJECT_TARGET, projectRootKey: "remote:server:runner:project" };
+
+    act(() => current().handleProjectCommand(PROJECT_TARGET, "rename"));
+    act(() => current().handleProjectCommand(remote, "rename"));
+
+    expect(onRenameProject.mock.calls).toEqual([
+      [SURFACE_FIXTURE_ROOT],
+      ["remote:server:runner:project"],
+    ]);
+    expect(onCloseProject).not.toHaveBeenCalled();
+    expect(terminalSessions).toEqual([]);
+    expect(notices).toEqual([]);
+  });
+
   it("reports a notice when reveal fails or the project has no path", async () => {
     render({ revealPath: async () => Promise.reject(new Error("denied")) });
 
@@ -725,6 +743,7 @@ describe("useAgentThreadMenuCommands", () => {
       onTrustProject: () => undefined,
       onCloseProject: () => undefined,
       onReleaseProject: () => undefined,
+      onRenameProject: () => undefined,
       onThreadRemoved: (threadId) => removed.push(threadId),
       onOpenTerminalSessions: (projectRootKey, repositoryRoot) =>
         terminalSessions.push([projectRootKey, repositoryRoot]),

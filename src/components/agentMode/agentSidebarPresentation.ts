@@ -55,6 +55,7 @@ export interface AgentRailScopeEntry {
   readonly memberProjectRootKeys?: ReadonlyArray<string>;
   readonly value: string;
   readonly label: string;
+  readonly defaultLabel?: string;
   readonly projectRootKey: string;
   readonly repositoryRoot: string;
   readonly trust: AgentProjectTrust;
@@ -162,6 +163,7 @@ export function agentRailScopeEntries(
       memberProjectRootKeys: group.memberProjectRootKeys,
       value: agentRailScopeValue(group.projectRootKey),
       label: group.label,
+      defaultLabel: group.defaultLabel,
       projectRootKey: group.projectRootKey,
       repositoryRoot,
       trust: group.trust,

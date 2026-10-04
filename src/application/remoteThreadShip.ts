@@ -52,8 +52,7 @@ export function sameRemoteShipTarget(
     left.threadId === right.threadId &&
     left.serverId === right.serverId &&
     left.runnerId === right.runnerId &&
-    left.conversationId === right.conversationId &&
-    left.repositoryKey === right.repositoryKey
+    left.conversationId === right.conversationId
   );
 }
 
