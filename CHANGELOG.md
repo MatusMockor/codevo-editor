@@ -7,6 +7,36 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.89] - 2026-10-04
+
+### Added
+
+- Rename a project once for all of its checkouts from the project menu. The name is
+  shown everywhere in agent mode, also applies to checkouts that are not connected
+  right now, and never changes the folder or the server project.
+- Project grouping in Settings > Environments: group checkouts of one repository or
+  keep them separate, with per-project overrides.
+- Undo for unpin, settle, snooze and archive. A notice with Undo stays for five
+  seconds and pauses while you hover or focus it; Cmd+Z works when you are not typing
+  in a field.
+- Working section (beta, off by default) in Settings > Agents > Sidebar: threads that
+  are working move into a collapsed shelf and come back when they finish, fail, or
+  need an approval or an answer.
+
+### Changed
+
+- Commit and push on a server thread no longer wait for the repository to be
+  identified; only the compare link does.
+
+### Fixed
+
+- A project on this Mac and the same repository on a server now reliably show as one
+  project. Reading the repository identity is retried after a failure, and Project
+  connections says when it could not be read.
+- Images sent to a server thread stay viewable after a short connection problem or a
+  runner restart. When an image really cannot be shown, the reason is specific instead
+  of "The server image is unavailable for this thread."
+
 ## [0.2.0-beta.88] - 2026-10-03
 
 ### Changed
