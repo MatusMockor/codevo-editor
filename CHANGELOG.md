@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.95] - 2026-10-05
+
+### Fixed
+
+- The confirmation shown when you end a session that still has background tasks
+  now sits inside the composer like the stop confirmation. It no longer stretches
+  across the whole thread and overlaps the composer, and long task names wrap.
+  After you choose, the cursor returns to the message field.
+
 ## [0.2.0-beta.94] - 2026-10-05
 
 ### Fixed
