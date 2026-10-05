@@ -16,7 +16,11 @@ import {
   isRemoteRunnerRequestRejectedError,
   remoteRunnerErrorMessage,
 } from "../domain/remoteRunnerErrors";
-import { agentLaunchWithoutBrowser, type AgentLaunchOptions } from "../domain/agentLaunch";
+import {
+  agentLaunchWithoutBrowser,
+  serializeAgentLaunchOptions,
+  type AgentLaunchOptions,
+} from "../domain/agentLaunch";
 import { isRemoteStartBase, type RemoteStartBase } from "../domain/remoteGitSyncWire";
 
 export interface RemoteAgentMutationTarget {
@@ -62,6 +66,8 @@ function sameLaunch(task: RemoteRunnerTask, expected: AgentLaunchOptions): boole
     actual.mode !== expected.mode
   )
     return false;
+  if (actual.provider === "codex" && expected.provider === "codex")
+    return (actual.effort ?? "default") === (expected.effort ?? "default");
   return (
     actual.provider !== "claudeCode" ||
     expected.provider !== "claudeCode" ||
@@ -194,7 +200,7 @@ export function useRemoteAgentMutations(options: Options) {
       "isolation" in request ? request.isolation : null,
       continuation ? null : startBaseSignature(requestedBase),
       request.prompt,
-      launch,
+      serializeAgentLaunchOptions(launch),
       request.attachments ?? [],
       request.attachmentOwner ?? null,
     ]);
@@ -372,10 +378,14 @@ export function useRemoteAgentMutations(options: Options) {
       if (valid()) {
         if (dispatched && isRemoteRunnerRequestRejectedError(error) && !command?.draftId)
           pending.current.delete(targetKey);
+        const message = remoteRunnerErrorMessage(error, "Remote execution failed.");
+        const uncertain = `Remote execution was not confirmed. ${message} Retry the same message to recover it safely.`;
         options.report(
           pending.current.has(targetKey)
-            ? "Remote execution was not confirmed. Retry the same message to recover it safely."
-            : remoteRunnerErrorMessage(error, "Remote execution failed."),
+            ? uncertain.length <= 1000
+              ? uncertain
+              : "Remote execution was not confirmed. Retry the same message to recover it safely."
+            : message,
         );
       }
       return null;

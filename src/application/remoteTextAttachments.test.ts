@@ -36,6 +36,7 @@ function fixture(supported = true) {
     resolveOwner: () => owner,
     ownerIsCurrent: () => current,
     ownerIsRetained: () => true,
+    encoder: { encode: async (bytes) => btoa(String.fromCharCode(...bytes)) },
   });
   const stage = (bytes = new TextEncoder().encode("text").buffer) =>
     store.stageAgentAttachmentBytes({

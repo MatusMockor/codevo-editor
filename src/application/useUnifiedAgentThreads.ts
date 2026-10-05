@@ -6,6 +6,7 @@ import type { RemoteRunnerGateway, RemoteRunnerServer } from "../domain/remoteRu
 import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import type { AgentThreadsSurface, AgentThreadView } from "./agentThreadPorts";
 import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
+import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 import {
   RemoteAgentProjection,
   remoteAgentProjectKey,
@@ -51,6 +52,7 @@ export interface UnifiedAgentThreadsOptions {
   readonly localProjects: readonly AgentProjectDescriptor[];
   readonly metadataRepository?: RemoteAgentMetadataRepository;
   readonly imageSurface?: AgentImageSurfacePort | null;
+  readonly attachmentEncoder?: AgentAttachmentEncoderPort | null;
   readonly gitSync: RemoteGitSyncPort | null;
   readonly repositoryIdentity: RemoteRepositoryIdentityGateway | null;
   readonly externalUrlOpener: ExternalUrlOpenerPort | null;
@@ -232,6 +234,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const remoteAttachments = useRemoteAgentAttachments({
     gateway,
     imageSurface: options.imageSurface ?? null,
+    attachmentEncoder: options.attachmentEncoder ?? null,
     resolveOwner,
     resolveRetainedOwner,
     resolveServer,

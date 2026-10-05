@@ -11,7 +11,10 @@ import type {
   AgentThreadView,
 } from "../../application/agentThreadPorts";
 import type { AgentAttachmentGateway } from "../../application/agentAttachmentPorts";
-import { useAgentComposerAttachments } from "../../application/useAgentComposerAttachments";
+import {
+  useAgentComposerAttachments,
+  type AgentComposerAttachmentsSurface,
+} from "../../application/useAgentComposerAttachments";
 import { defaultAgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentTurn } from "../../domain/agentThread";
 import { agentProjectGroups } from "./agentModePresentation";
@@ -90,6 +93,9 @@ describe("composer optimistic send", () => {
   let captured: Captured | null;
   let released: string[];
   let revoked: string[];
+  let prepareGate: Deferred<boolean> | null;
+  let prepareThrows: boolean;
+  let clearAfterPreparationCheck: boolean;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -99,6 +105,9 @@ describe("composer optimistic send", () => {
     captured = null;
     released = [];
     revoked = [];
+    prepareGate = null;
+    prepareThrows = false;
+    clearAfterPreparationCheck = false;
   });
 
   afterEach(() => {
@@ -127,7 +136,27 @@ describe("composer optimistic send", () => {
       createObjectUrl: () => "blob:preview-1",
       revokeObjectUrl: (url) => revoked.push(url),
     });
-    const surface = useMemo(() => ({ ...agents, attachments }), [agents, attachments]);
+    const surface = useMemo(() => {
+      const wrap = (scope: AgentComposerAttachmentsSurface): AgentComposerAttachmentsSurface => ({
+        ...scope,
+        forDraft: scope.forDraft === undefined ? undefined : (key) => wrap(scope.forDraft!(key)),
+        sendHoldIsCurrent: (drafts) => {
+          if (clearAfterPreparationCheck) {
+            clearAfterPreparationCheck = false;
+            queueMicrotask(() => scope.clear());
+          }
+          return scope.sendHoldIsCurrent?.(drafts) ?? false;
+        },
+        prepareTurn: async (target: string) => {
+          const gate = prepareGate;
+          const prepared = await scope.prepareTurn(target);
+          if (gate !== null && !(await gate.promise)) return null;
+          if (prepareThrows) throw new Error("attachment preparation failed");
+          return prepared;
+        },
+      });
+      return { ...agents, attachments: wrap(attachments) };
+    }, [agents, attachments]);
     const projects = useMemo(() => [projectFixture()], []);
     const groups = useMemo(
       () => agentProjectGroups(projects, surface.threads, surface.orphanedWorktrees),
@@ -150,7 +179,14 @@ describe("composer optimistic send", () => {
       onThreadStarted: navigation.selectStartedThread,
     });
     captured = { composer, navigation };
-    return null;
+    return (
+      <>
+        <textarea value={composer.composerProps.prompt} readOnly />
+        {composer.composerProps.attachments?.drafts.map((draft) => (
+          <img key={draft.draftId} src={draft.previewUrl ?? undefined} alt={draft.name} />
+        ))}
+      </>
+    );
   }
 
   function render(agents: AgentThreadsSurface): void {
@@ -186,6 +222,164 @@ describe("composer optimistic send", () => {
   ): AgentThreadsSurface {
     return threadsSurfaceFixture({ threads, sendFollowUp, ...extra });
   }
+
+  it.each(["new", "followUp"] as const)(
+    "clears long text and the photo in the same Send commit before slow preparation in %s",
+    async (kind) => {
+      const preparation = deferred<boolean>();
+      prepareGate = preparation;
+      const send = deferred<boolean>();
+      const startThread = vi.fn(async () =>
+        (await send.promise) ? { threadId: "agt-new" } : null,
+      );
+      const sendFollowUp = vi.fn(() => send.promise);
+      render(followUpSurface([surfaceThreadView()], sendFollowUp, { startThread }));
+      if (kind === "followUp") act(() => current().navigation.selectThread("agt-1"));
+      await attachImage();
+      const prompt = "Long photo description. ".repeat(512);
+      act(() => current().composer.composerProps.onPromptChange(prompt));
+      const retainedSubmit = current().composer.composerProps.onSubmit;
+
+      act(() => {
+        retainedSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        });
+        retainedSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        });
+      });
+
+      expect(host.querySelector("textarea")?.value).toBe("");
+      expect(host.querySelectorAll("img")).toHaveLength(0);
+      expect(startThread).not.toHaveBeenCalled();
+      expect(sendFollowUp).not.toHaveBeenCalled();
+      expect(revoked).toEqual([]);
+
+      await act(async () => preparation.resolve(true));
+      expect(current().composer.pendingSend).toMatchObject({
+        prompt,
+        attachments: [{ previewUrl: "blob:preview-1" }],
+      });
+      expect(kind === "new" ? startThread : sendFollowUp).toHaveBeenCalledOnce();
+      await act(async () => send.resolve(true));
+      expect(host.querySelectorAll("img")).toHaveLength(0);
+      expect(revoked).toEqual(["blob:preview-1"]);
+    },
+  );
+
+  it.each(["refused", "throws"] as const)(
+    "restores the exact photo and merges new text when preparation %s",
+    async (failure) => {
+      const preparation = deferred<boolean>();
+      prepareGate = preparation;
+      prepareThrows = failure === "throws";
+      const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+      render(threadsSurfaceFixture({ startThread }));
+      await attachImage();
+      act(() => current().composer.composerProps.onPromptChange("Original photo description"));
+      act(() =>
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        }),
+      );
+      expect(host.querySelectorAll("img")).toHaveLength(0);
+      act(() => current().composer.composerProps.onPromptChange("Next draft"));
+
+      await act(async () => preparation.resolve(failure === "throws"));
+
+      expect(startThread).not.toHaveBeenCalled();
+      expect(host.querySelector("textarea")?.value).toBe(
+        "Next draft\n\nOriginal photo description",
+      );
+      expect(current().composer.composerProps.attachments?.drafts).toMatchObject([
+        { draftId: "draft-1", previewUrl: "blob:preview-1" },
+      ]);
+      expect(revoked).toEqual([]);
+      expect(released).toEqual([]);
+    },
+  );
+
+  it("rejects preparation after navigating A → B → A and restores the original photo", async () => {
+    const preparation = deferred<boolean>();
+    prepareGate = preparation;
+    const sendFollowUp = vi.fn(async () => true);
+    const a = surfaceThreadView();
+    const b = surfaceThreadView({ thread: { ...a.thread, threadId: "agt-2" } });
+    render(followUpSurface([a, b], sendFollowUp));
+    act(() => current().navigation.selectThread("agt-1"));
+    await attachImage();
+    act(() => current().composer.composerProps.onPromptChange("Original"));
+    act(() =>
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-2"));
+    act(() => current().navigation.selectThread("agt-1"));
+
+    await act(async () => preparation.resolve(true));
+
+    expect(sendFollowUp).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.attachments?.drafts).toHaveLength(1);
+    expect(revoked).toEqual([]);
+  });
+
+  it.each(["remove", "clear"] as const)(
+    "does not dispatch or resurrect the photo when %s cancels a pending preparation",
+    async (operation) => {
+      const preparation = deferred<boolean>();
+      prepareGate = preparation;
+      const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+      render(threadsSurfaceFixture({ startThread }));
+      await attachImage();
+      const attachments = current().composer.composerProps.attachments;
+      act(() => current().composer.composerProps.onPromptChange("Original photo description"));
+      act(() =>
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        }),
+      );
+      await act(async () => {
+        if (operation === "clear") attachments?.clear();
+        else attachments?.remove("draft-1");
+      });
+      await act(async () => preparation.resolve(true));
+
+      expect(startThread).not.toHaveBeenCalled();
+      expect(current().composer.composerProps.prompt).toBe("Original photo description");
+      expect(current().composer.composerProps.attachments?.drafts).toEqual([]);
+      expect(revoked).toEqual(["blob:preview-1"]);
+      expect(released).toEqual([IMAGE_ID]);
+    },
+  );
+
+  it("revalidates a held photo after preparation settles but before dispatch resumes", async () => {
+    const preparation = deferred<boolean>();
+    prepareGate = preparation;
+    clearAfterPreparationCheck = true;
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render(threadsSurfaceFixture({ startThread }));
+    await attachImage();
+    act(() => current().composer.composerProps.onPromptChange("Original"));
+    act(() =>
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      }),
+    );
+    await act(async () => preparation.resolve(true));
+
+    expect(startThread).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.prompt).toBe("Original");
+    expect(current().composer.composerProps.attachments?.drafts).toEqual([]);
+    expect(released).toEqual([IMAGE_ID]);
+    expect(revoked).toEqual(["blob:preview-1"]);
+  });
 
   it("clears the composer at once and shows the message with its local preview while sending", async () => {
     const send = deferred<boolean>();

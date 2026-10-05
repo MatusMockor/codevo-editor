@@ -20,6 +20,7 @@ import { useUnifiedAgentThreads, type UnifiedAgentThreadsOptions } from "./useUn
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { RemoteGitSyncPort } from "../domain/remoteGitSync";
 import { REMOTE_START_BASE_INVALID } from "../domain/remoteDraftGitBase";
+import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 
 const server: RemoteRunnerServer = {
   id: "server",
@@ -342,6 +343,31 @@ describe("unified original agent surface", () => {
     expect(h.current.agents.notice).toBeNull();
     expect(h.local.sendFollowUp).not.toHaveBeenCalled();
   });
+  it.each(["start", "continuation"])(
+    "shows authoritative HTTP 400 rejection details for a remote %s",
+    async (stage) => {
+      const h = await setup();
+      const message = "Runner request failed (HTTP 400): Unsupported Codex effort ultra.";
+      const failure = new RemoteRunnerRequestRejectedError(message);
+      if (stage === "start") {
+        await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+        h.gw.createTask.mockRejectedValueOnce(failure);
+      } else {
+        await h.render({ selectedThreadId: remoteId });
+        h.gw.continueTask.mockRejectedValueOnce(failure);
+      }
+      await act(async () => {
+        if (stage === "start") expect(await h.current.agents.startThread(start)).toBeNull();
+        else
+          expect(
+            await h.current.agents.sendFollowUp({ threadId: remoteId, prompt: "Continue", launch }),
+          ).toBe(false);
+      });
+      expect(h.current.agents.notice?.message).toBe(message);
+      expect(h.local.startThread).not.toHaveBeenCalled();
+      expect(h.local.sendFollowUp).not.toHaveBeenCalled();
+    },
+  );
   it("owns pre-thread errors by project generation and never revives them after A to B to A", async () => {
     const h = await setup();
     await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });

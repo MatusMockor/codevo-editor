@@ -70,7 +70,7 @@ function imageSurface(environment: Environment): AgentImageSurfacePort {
   };
 }
 
-function renderAttachments(environment: Environment) {
+function renderAttachments(environment: Environment, createDraftId?: () => string) {
   const released: string[] = [];
   let draftSequence = 0;
   const gateway: AgentAttachmentGateway = {
@@ -112,7 +112,7 @@ function renderAttachments(environment: Environment) {
       imageSurface: imageSurface(environment),
       resolveOwner: (projectRootKey) => environment.owners.get(projectRootKey) ?? null,
       reportError: (_source, error) => errors.push(error),
-      createDraftId: () => `draft-${(draftSequence += 1)}`,
+      createDraftId: createDraftId ?? (() => `draft-${(draftSequence += 1)}`),
       createObjectUrl: (blob) => {
         const url = `blob:preview-${issued.length + 1}`;
         issued.push({ url, bytes: blob.size, mime: blob.type });
@@ -907,9 +907,14 @@ describe("useAgentComposerAttachments ownership", () => {
     );
     const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
     expect(prepared?.draftIds).toHaveLength(2);
+    const submitted = harness.hook();
+    let held: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+    act(() => {
+      held = submitted.holdForSend?.(prepared?.draftIds ?? []) ?? [];
+    });
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/c.mp4" }]));
 
-    await act(async () => harness.hook().markSent(prepared?.draftIds ?? []));
+    await act(async () => submitted.settleSendHold?.(held, true));
 
     expect(harness.hook().drafts.map((draft) => draft.name)).toEqual(["c.mp4"]);
     expect(harness.hook().projectRootKey).toBe(ROOT_A);
@@ -948,6 +953,110 @@ describe("useAgentComposerAttachments ownership", () => {
     expect(harness.hook().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
     harness.unmount();
   });
+
+  it.each(["remove", "clear"] as const)(
+    "refuses a held photo removed by %s while a reference is being prepared",
+    async (operation) => {
+      const env = environment();
+      const harness = renderAttachments(env);
+      await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+      env.extensionMime = null;
+      await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/clip.mp4" }]));
+      let finish: () => void = () => undefined;
+      harness.gateway.inspectAgentAttachmentCandidate = vi.fn<
+        AgentAttachmentGateway["inspectAgentAttachmentCandidate"]
+      >(
+        () =>
+          new Promise((resolve) => {
+            finish = () =>
+              resolve({
+                bytes: 4_096,
+                isRegularFile: true,
+                isDirectory: false,
+                extensionMime: null,
+              });
+          }),
+      );
+      const draftIds = harness.hook().drafts.map((draft) => draft.draftId);
+      const submittedScope = harness.hook();
+      let held: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+      let preparation: ReturnType<AgentComposerAttachmentsSurface["prepareTurn"]> =
+        Promise.resolve(null);
+      act(() => {
+        preparation = harness.hook().prepareTurn(ROOT_A);
+        held = submittedScope.holdForSend?.(draftIds) ?? [];
+      });
+      await act(async () => {
+        if (operation === "clear") harness.hook().clear();
+        else await harness.hook().remove(draftIds[0]!);
+      });
+      await act(async () => finish());
+
+      expect(await preparation).toBeNull();
+      act(() => submittedScope.settleSendHold?.(held, false));
+      expect(harness.hook().drafts.every((draft) => draft.kind !== "image")).toBe(true);
+      expect(harness.hook().drafts).toHaveLength(operation === "remove" ? 1 : 0);
+      expect(harness.released).toEqual([IMAGE_ID]);
+      expect(harness.revoked).toEqual(["blob:preview-1"]);
+      harness.unmount();
+    },
+  );
+
+  it.each([true, false])(
+    "keeps new drafts intact when an older cleared send settles with delivered=%s",
+    async (delivered) => {
+      const harness = renderAttachments(environment());
+      await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/old.png" }]));
+      const submitted = harness.hook();
+      const draftIds = submitted.drafts.map((draft) => draft.draftId);
+      let held: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+      act(() => {
+        held = submitted.holdForSend?.(draftIds) ?? [];
+      });
+      await act(async () => harness.hook().clear());
+      await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/new.png" }]));
+      const newDraft = harness.hook().drafts[0];
+
+      act(() => submitted.settleSendHold?.(held, delivered));
+
+      expect(harness.hook().drafts).toEqual([newDraft]);
+      expect(harness.revoked).toEqual(["blob:preview-1"]);
+      expect(harness.released).toEqual([IMAGE_ID]);
+      harness.unmount();
+    },
+  );
+
+  it.each([true, false])(
+    "releases a removed hold before its draft ID is reused and old settlement delivered=%s",
+    async (delivered) => {
+      const harness = renderAttachments(environment(), () => "reused-draft");
+      await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/old.png" }]));
+      const oldScope = harness.hook();
+      let oldHeld: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+      act(() => {
+        oldHeld = oldScope.holdForSend?.(["reused-draft"]) ?? [];
+      });
+      await act(async () => harness.hook().remove("reused-draft"));
+      await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/new.png" }]));
+      const newScope = harness.hook();
+      const newDraft = newScope.drafts[0];
+      let newHeld: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+      act(() => {
+        newHeld = newScope.holdForSend?.(["reused-draft"]) ?? [];
+      });
+
+      expect(newHeld).toEqual([newDraft]);
+      expect(newScope.sendHoldIsCurrent?.(newHeld)).toBe(true);
+      act(() => oldScope.settleSendHold?.(oldHeld, delivered));
+      expect(newScope.sendHoldIsCurrent?.(newHeld)).toBe(true);
+      expect(harness.hook().drafts).toEqual([]);
+      act(() => newScope.settleSendHold?.(newHeld, false));
+      expect(harness.hook().drafts).toEqual([newDraft]);
+      expect(harness.revoked).toEqual(["blob:preview-1"]);
+      expect(harness.released).toEqual([IMAGE_ID]);
+      harness.unmount();
+    },
+  );
 
   it("surfaces a refusal handed in by the composer", () => {
     const harness = renderAttachments(environment());

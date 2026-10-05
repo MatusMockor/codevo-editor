@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RemoteAttachmentStore } from "./remoteAttachmentStore";
 import type { RemoteRunnerGateway, RemoteRunnerUploadRequest } from "../domain/remoteRunner";
 import type { StageAgentAttachmentBytesRequest } from "./agentAttachmentPorts";
+import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 
 const owner = {
   projectRootKey: "remote:server:runner:project",
@@ -18,7 +19,7 @@ const input = (): StageAgentAttachmentBytesRequest => ({
   height: 1,
   bytes: new Uint8Array([137, 80, 78, 71]).buffer,
 });
-function fixture() {
+function fixture(customEncoder?: AgentAttachmentEncoderPort | null) {
   let current = true;
   let generation = 1;
   const uploadAttachment = vi.fn(async (request: RemoteRunnerUploadRequest) => ({
@@ -36,6 +37,9 @@ function fixture() {
     },
   }));
   const gateway = { uploadAttachment } as unknown as RemoteRunnerGateway;
+  const encode = vi.fn(async (bytes: Uint8Array<ArrayBuffer>) =>
+    btoa(String.fromCharCode(...bytes)),
+  );
   const store = new RemoteAttachmentStore({
     getGateway: () => gateway,
     resolveOwner: () => ({ ...owner, generation }),
@@ -43,10 +47,13 @@ function fixture() {
       current && candidate.generation === generation && candidate.ownerId === "lease",
     ownerIsRetained: (candidate) =>
       candidate.generation === generation && candidate.ownerId === "lease",
+    encoder: customEncoder === undefined ? { encode } : customEncoder,
   });
   return {
     store,
     uploadAttachment,
+    encode,
+    currentOwner: () => ({ ...owner, generation }),
     replaceOwner: () => {
       generation++;
     },
@@ -74,6 +81,27 @@ describe("RemoteAttachmentStore", () => {
     expect(await store.resolve(turn, "server")).toEqual(a);
     expect(uploadAttachment).toHaveBeenCalledTimes(1);
     expect(uploadAttachment.mock.calls[0]![0].base64).toBe("iVBORw==");
+  });
+  it("settles shared failed uploads and shares one subsequent retry with the same ID", async () => {
+    const { store, uploadAttachment, encode } = fixture();
+    const turn = await request(store);
+    uploadAttachment.mockRejectedValueOnce(new Error("Disconnected"));
+    const failed = await Promise.allSettled([
+      store.resolve(turn, "server"),
+      store.resolve(turn, "server"),
+    ]);
+    expect(failed.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(uploadAttachment).toHaveBeenCalledOnce();
+    const completed = await Promise.all([
+      store.resolve(turn, "server"),
+      store.resolve(turn, "server"),
+    ]);
+    expect(completed[0]).toEqual(completed[1]);
+    expect(uploadAttachment).toHaveBeenCalledTimes(2);
+    expect(encode).toHaveBeenCalledTimes(2);
+    expect(uploadAttachment.mock.calls[0]![0].attachmentId).toBe(
+      uploadAttachment.mock.calls[1]![0].attachmentId,
+    );
   });
   it("rejects foreign ownership and metadata before uploading", async () => {
     const { store, uploadAttachment } = fixture();
@@ -134,6 +162,7 @@ describe("RemoteAttachmentStore", () => {
       return original(r);
     });
     const pending = store.resolve(await request(store), "server");
+    await vi.waitFor(() => expect(uploadAttachment).toHaveBeenCalledOnce());
     expire();
     finish();
     await expect(pending).rejects.toThrow("owner changed");
@@ -150,6 +179,7 @@ describe("RemoteAttachmentStore", () => {
       return original(r);
     });
     const pending = store.resolve(await request(store), "server");
+    await vi.waitFor(() => expect(uploadAttachment).toHaveBeenCalledOnce());
     store.clear();
     finish();
     await expect(pending).rejects.toThrow("owner changed");
@@ -207,5 +237,96 @@ describe("RemoteAttachmentStore", () => {
     await expect(store.resolve(turn, "server")).resolves.toHaveLength(1);
     await store.releaseAgentAttachment({ workspaceId: owner.workspaceId, attachmentId });
     await expect(store.resolve(turn, "server")).rejects.toThrow("no longer matches");
+  });
+
+  it("shares asynchronous encoding and never dispatches while encoding is pending", async () => {
+    let finish!: (encoded: string) => void;
+    const encode = vi.fn(() => new Promise<string>((resolve) => (finish = resolve)));
+    const { store, uploadAttachment } = fixture({ encode });
+    const turn = await request(store);
+    const first = store.resolve(turn, "server");
+    const second = store.resolve(turn, "server");
+    expect(encode).toHaveBeenCalledOnce();
+    expect(uploadAttachment).not.toHaveBeenCalled();
+    finish("iVBORw==");
+    expect(await first).toEqual(await second);
+    expect(uploadAttachment).toHaveBeenCalledOnce();
+  });
+
+  it.each(["replace", "clear", "release"] as const)(
+    "rejects encoding settlement after %s without uploading",
+    async (change) => {
+      let finish!: (encoded: string) => void;
+      let signal!: AbortSignal;
+      const encode = vi.fn((_bytes: Uint8Array<ArrayBuffer>, capturedSignal: AbortSignal) => {
+        signal = capturedSignal;
+        return new Promise<string>((resolve) => (finish = resolve));
+      });
+      const { store, uploadAttachment, replaceOwner } = fixture({ encode });
+      const turn = await request(store);
+      const pending = store.resolve(turn, "server");
+      if (change === "replace") replaceOwner();
+      if (change === "clear") store.clear();
+      if (change === "release")
+        await store.releaseAgentAttachment({
+          workspaceId: owner.workspaceId,
+          attachmentId: turn.attachments[0]!.attachmentId,
+        });
+      expect(signal.aborted).toBe(change !== "replace");
+      finish("iVBORw==");
+      await expect(pending).rejects.toThrow("owner changed");
+      expect(uploadAttachment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retries encoding failure with the same upload ID and retained bytes", async () => {
+    const encode = vi
+      .fn<AgentAttachmentEncoderPort["encode"]>()
+      .mockRejectedValueOnce(new Error("Encoding failed"))
+      .mockResolvedValue("iVBORw==");
+    const { store, uploadAttachment } = fixture({ encode });
+    const turn = await request(store);
+    await expect(store.resolve(turn, "server")).rejects.toThrow("Encoding failed");
+    expect(uploadAttachment).not.toHaveBeenCalled();
+    await store.resolve(turn, "server");
+    expect(encode).toHaveBeenCalledTimes(2);
+    expect(encode.mock.calls[0]![0]).toEqual(encode.mock.calls[1]![0]);
+    uploadAttachment.mockRejectedValueOnce(new Error("Disconnected"));
+    const next = await request(store);
+    await expect(store.resolve(next, "server")).rejects.toThrow("Disconnected");
+    await store.resolve(next, "server");
+    expect(uploadAttachment.mock.calls[1]![0].attachmentId).toBe(
+      uploadAttachment.mock.calls[2]![0].attachmentId,
+    );
+  });
+
+  it("rejects an A B A encoding lease while allowing the replacement owner's own image", async () => {
+    let finishOld!: (encoded: string) => void;
+    const encode = vi
+      .fn<AgentAttachmentEncoderPort["encode"]>()
+      .mockImplementationOnce(() => new Promise<string>((resolve) => (finishOld = resolve)))
+      .mockResolvedValue("iVBORw==");
+    const { store, uploadAttachment, replaceOwner, currentOwner } = fixture({ encode });
+    const old = store.resolve(await request(store), "server");
+    replaceOwner();
+    replaceOwner();
+    const staged = await store.stageAgentAttachmentBytes(input());
+    const replacement = await store.resolve(
+      { attachmentOwner: currentOwner(), attachments: [{ kind: "staged", ...staged }] },
+      "server",
+    );
+    expect(replacement).toHaveLength(1);
+    finishOld("iVBORw==");
+    await expect(old).rejects.toThrow("owner changed");
+    expect(uploadAttachment).toHaveBeenCalledOnce();
+    expect(encode).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed when the asynchronous encoder is unavailable", async () => {
+    const { store, uploadAttachment } = fixture(null);
+    await expect(store.resolve(await request(store), "server")).rejects.toThrow(
+      "encoding is unavailable",
+    );
+    expect(uploadAttachment).not.toHaveBeenCalled();
   });
 });

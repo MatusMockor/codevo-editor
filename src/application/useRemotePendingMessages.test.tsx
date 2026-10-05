@@ -189,6 +189,37 @@ describe("server-owned pending message orchestration", () => {
     });
     expect(h.options.report).not.toHaveBeenCalled();
   });
+  it("rejects a queued Codex message whose effort differs from the request", async () => {
+    const h = setup();
+    h.gateway.enqueueMessage.mockResolvedValueOnce({
+      pending: pending({ launch: { ...launch, effort: "low" } }),
+      created: true,
+    });
+    await act(async () => {
+      expect(await h.result.enqueue({ ...request, launch: { ...launch, effort: "high" } })).toBe(
+        false,
+      );
+    });
+    expect(h.options.publish).not.toHaveBeenCalled();
+    expect(h.result.hasUnconfirmed(request.threadId)).toBe(true);
+  });
+  it.each([undefined, "default"] as const)(
+    "accepts equivalent default Codex effort when the request uses %s",
+    async (effort) => {
+      const h = setup();
+      h.gateway.enqueueMessage.mockResolvedValueOnce({
+        pending: pending({
+          launch: { ...launch, ...(effort === undefined ? { effort: "default" as const } : {}) },
+        }),
+        created: true,
+      });
+      await act(async () => {
+        expect(await h.result.enqueue({ ...request, launch: { ...launch, effort } })).toBe(true);
+      });
+      expect(h.options.publish).toHaveBeenCalledOnce();
+      expect(h.options.report).not.toHaveBeenCalled();
+    },
+  );
   it("accepts runner-normalized Claude context and optional flags", async () => {
     const h = setup();
     const view = h.options.views.get(request.threadId)!;
@@ -289,6 +320,43 @@ describe("server-owned pending message orchestration", () => {
     ).toEqual(
       vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
         .calls[0],
+    );
+  });
+  it("pins Codex effort across uncertain queue delivery", async () => {
+    const h = setup();
+    const original = { ...request, launch: { ...launch, effort: "high" as const } };
+    h.gateway.enqueueMessage.mockRejectedValueOnce(new Error("Connection lost"));
+    h.gateway.enqueueMessage.mockResolvedValue({
+      pending: pending({ launch: original.launch }),
+      created: true,
+    });
+    await act(async () => {
+      expect(await h.result.enqueue(original)).toBe(false);
+    });
+    await act(async () => {
+      expect(await h.result.enqueue({ ...request, launch: { ...launch, effort: "low" } })).toBe(
+        false,
+      );
+    });
+    expect(h.gateway.enqueueMessage).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      expect(await h.result.enqueue(original)).toBe(true);
+    });
+    expect(h.gateway.enqueueMessage.mock.calls[1]).toEqual(h.gateway.enqueueMessage.mock.calls[0]);
+  });
+  it("retries the same semantic default Codex effort with the original idempotency key", async () => {
+    const h = setup();
+    h.gateway.enqueueMessage.mockRejectedValueOnce(new Error("Connection lost"));
+    await act(async () => {
+      expect(await h.result.enqueue(request)).toBe(false);
+    });
+    await act(async () => {
+      expect(await h.result.enqueue({ ...request, launch: { ...launch, effort: "default" } })).toBe(
+        true,
+      );
+    });
+    expect(h.gateway.enqueueMessage.mock.calls[1]![0].idempotencyKey).toBe(
+      h.gateway.enqueueMessage.mock.calls[0]![0].idempotencyKey,
     );
   });
   it("applies a late enqueue acknowledgement to the latest inventory without resurrecting old items", async () => {

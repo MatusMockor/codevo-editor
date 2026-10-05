@@ -9,6 +9,7 @@ import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
 import type { RemoteRunnerGateway, RemoteRunnerPart } from "../domain/remoteRunner";
 import { remoteAgentProjectKeyParts } from "./remoteAgentProjection";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
+import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_RETAINED_BYTES = 40 * 1024 * 1024;
@@ -23,12 +24,14 @@ interface Entry {
   readonly metadata: StagedAgentAttachment;
   readonly bytes: Uint8Array;
   readonly uploads: Map<string, Upload>;
+  readonly encodings: Set<AbortController>;
 }
 export interface RemoteAttachmentStoreOptions {
   readonly getGateway: () => RemoteRunnerGateway | null;
   readonly resolveOwner: (workspaceId: string) => AgentAttachmentOwner | null;
   readonly ownerIsCurrent: (owner: AgentAttachmentOwner) => boolean;
   readonly ownerIsRetained: (owner: AgentAttachmentOwner) => boolean;
+  readonly encoder: AgentAttachmentEncoderPort | null;
 }
 
 /** Private attachment bytes never become local paths or executable session capabilities. */
@@ -111,6 +114,7 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       metadata,
       bytes: ownedBytes,
       uploads: new Map(),
+      encodings: new Set(),
     });
     this.retainedBytes += size;
     return metadata;
@@ -119,10 +123,13 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
   async releaseAgentAttachment(request: AgentAttachmentReferenceRequest): Promise<void> {
     const entry = this.entries.get(request.attachmentId);
     if (!entry || entry.workspaceId !== request.workspaceId) return;
+    for (const encoding of entry.encodings) encoding.abort();
     this.entries.delete(request.attachmentId);
     this.retainedBytes -= entry.bytes.byteLength;
   }
   clear(): void {
+    for (const entry of this.entries.values())
+      for (const encoding of entry.encodings) encoding.abort();
     this.entries.clear();
     this.retainedBytes = 0;
   }
@@ -198,10 +205,11 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       if (!upload.complete) {
         if (!upload.promise)
           upload.promise = this.upload(gateway, serverId, entry, upload, assertCurrent);
+        const uploading = upload.promise;
         try {
-          await upload.promise;
+          await uploading;
         } finally {
-          upload.promise = undefined;
+          if (upload.promise === uploading) upload.promise = undefined;
         }
         assertCurrent();
       }
@@ -218,9 +226,20 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
     upload: Upload,
     assertCurrent: () => void,
   ): Promise<void> {
-    let binary = "";
-    for (let offset = 0; offset < entry.bytes.length; offset += 8192)
-      binary += String.fromCharCode(...entry.bytes.subarray(offset, offset + 8192));
+    const encoder = this.options.encoder;
+    if (encoder === null) throw new Error("Attachment encoding is unavailable.");
+    const encoding = new AbortController();
+    entry.encodings.add(encoding);
+    let base64: string;
+    try {
+      base64 = await encoder.encode(entry.bytes, encoding.signal);
+    } catch (error) {
+      assertCurrent();
+      throw error;
+    } finally {
+      entry.encodings.delete(encoding);
+    }
+    assertCurrent();
     const mediaType = entry.metadata.mime;
     if (mediaType !== null && mediaType !== "image/png" && mediaType !== "image/jpeg")
       throw new Error("Unsupported staged attachment media type.");
@@ -229,7 +248,7 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       attachmentId: upload.id,
       name: entry.metadata.name,
       mediaType: mediaType ?? "text/plain",
-      base64: btoa(binary),
+      base64,
     });
     assertCurrent();
     validateRemoteRunnerValue("uploadAttachment", "response", response);

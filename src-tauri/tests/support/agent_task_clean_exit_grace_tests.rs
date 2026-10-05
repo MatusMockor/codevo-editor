@@ -450,9 +450,12 @@ fn clean_exit_kills_a_descendant_that_ignores_sigterm_after_the_grace() {
 
 #[test]
 fn untracked_nohup_child_survives_a_clean_exit_only_for_the_grace_window() {
+    // The leader must not exit until nohup has exec'd the child shell and that
+    // shell has installed its TERM handler. Otherwise cleanup may legitimately
+    // terminate it before the fixture's ignore-TERM behavior is ready.
     let (cwd, sink, _registry, _) = start_shell(
         "agt-grace-nohup",
-        "nohup /bin/sh -c 'trap \"\" TERM; while :; do sleep 0.05; done' </dev/null >/dev/null 2>&1 & echo $! > descendant.pid; : > leader.exited; exit 0",
+        "nohup /bin/sh -c 'trap \"\" TERM; : > descendant.ready; while :; do sleep 0.05; done' </dev/null >/dev/null 2>&1 & echo $! > descendant.pid; attempts=0; while [ ! -f descendant.ready ]; do attempts=$((attempts + 1)); if [ $attempts -ge 100 ]; then exit 1; fi; sleep 0.05; done; : > leader.exited; exit 0",
     );
     assert!(wait_until(Duration::from_secs(10), || cwd
         .join("leader.exited")

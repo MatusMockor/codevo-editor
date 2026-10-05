@@ -44,7 +44,8 @@ export function useAgentComposerAutosize(
 function resizeComposer(textarea: HTMLTextAreaElement): void {
   const scrollTop = textarea.scrollTop;
   textarea.style.height = "0px";
-  textarea.style.height = `${textarea.scrollHeight}px`;
-  textarea.style.overflowY = textarea.scrollHeight > textarea.clientHeight ? "auto" : "hidden";
+  const contentHeight = textarea.scrollHeight;
+  textarea.style.height = `${contentHeight}px`;
+  textarea.style.overflowY = contentHeight > textarea.clientHeight ? "auto" : "hidden";
   textarea.scrollTop = scrollTop;
 }
