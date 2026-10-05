@@ -917,9 +917,16 @@ export function useAgentComposerPromptState(
     (prompt.trim() === "" && readyAttachments === 0) || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
   const submitBlocked =
     controller.submissionBlocked || promptInvalid || (attachments?.blocked ?? false);
+  const submissionOwner = promptOwnerRef.current;
+  const submissionRevision = promptRevisionRef.current;
   const submit = useCallback(
     (submission: AgentComposerSubmission) => {
-      if (submitBlocked) return;
+      if (
+        submitBlocked ||
+        promptOwnerRef.current !== submissionOwner ||
+        promptRevisionRef.current !== submissionRevision
+      )
+        return;
       const submittedPrompt = prompt;
       const submittedOwner = promptOwnerRef.current;
       const submittedDraftKey = draft.key;
@@ -948,7 +955,7 @@ export function useAgentComposerPromptState(
         if (!submitted) restore();
       }, restore);
     },
-    [controller, draft.key, drafts, prompt, submitBlocked],
+    [controller, draft.key, drafts, prompt, submissionOwner, submissionRevision, submitBlocked],
   );
   const recoveryRevision = promptRevisionRef.current;
   const recoveryOwner = promptOwnerRef.current;

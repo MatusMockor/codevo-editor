@@ -41,7 +41,7 @@ function launchIdentity(
         launch.fastMode ?? false,
         launch.thinkingMode ?? false,
       ]
-    : [launch.provider, launch.model, launch.mode];
+    : [launch.provider, launch.model, launch.mode, launch.effort ?? "default"];
 }
 function sameLaunch(
   left: RemoteRunnerPendingMessage["launch"],

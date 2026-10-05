@@ -87,6 +87,29 @@ describe("composer content sizing", () => {
     expect(textarea.style.overflowY).toBe("hidden");
   });
 
+  it("measures content once per resize while respecting the cap, scroll position and clearing", () => {
+    const contentReads = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get");
+    const viewportReads = vi.spyOn(HTMLElement.prototype, "clientHeight", "get");
+    const textarea = render("draft");
+    textarea.scrollTop = 30;
+
+    const resize = (prompt: string, height: number, overflow: string): void => {
+      contentHeight = height;
+      contentReads.mockClear();
+      viewportReads.mockClear();
+      render(prompt);
+      expect(contentReads).toHaveBeenCalledTimes(1);
+      expect(viewportReads).toHaveBeenCalledTimes(1);
+      expect(textarea.style.height).toBe(`${height}px`);
+      expect(textarea.style.overflowY).toBe(overflow);
+      expect(textarea.scrollTop).toBe(30);
+    };
+
+    resize("long multiline draft", 700, "auto");
+    resize("short draft", 100, "hidden");
+    resize("", 64, "hidden");
+  });
+
   it("remeasures wrapping after width changes and scroll limits after viewport changes", () => {
     const textarea = render("draft");
     width = 400;

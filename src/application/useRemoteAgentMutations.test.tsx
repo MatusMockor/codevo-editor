@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import {
   REMOTE_CONVERSATION_BUSY_NOTICE,
   REMOTE_ORIGIN_BASE_NEEDS_WORKTREE,
@@ -13,13 +14,14 @@ import {
   useRemoteAgentMutations,
 } from "./useRemoteAgentMutations";
 const target = { serverId: "s", runnerId: "r", projectId: "p" };
+const codexLaunch = { provider: "codex", model: "default", mode: "default" } as const;
 const request: AgentThreadStartRequest = {
   projectRootKey: "",
   repositoryRoot: "",
   prompt: "hello",
   isolation: "worktree",
   unsafeInPlaceConfirmationKey: null,
-  launch: { provider: "codex", model: "default", mode: "default" },
+  launch: codexLaunch,
 };
 const task = (overrides: Partial<RemoteRunnerTask> = {}): RemoteRunnerTask => ({
   id: "t",
@@ -186,6 +188,85 @@ describe("remote agent mutations", () => {
     expect(h.gw.startTask).toHaveBeenCalledTimes(1);
     expect(h.publish).toHaveBeenCalledOnce();
   });
+  it.each(["create", "start", "continuation"])(
+    "retries uncertain %s delivery when default Codex effort changes representation",
+    async (stage) => {
+      for (const explicitFirst of [false, true]) {
+        const h = await render();
+        h.gw[
+          stage === "create" ? "createTask" : stage === "start" ? "startTask" : "continueTask"
+        ].mockRejectedValueOnce(new Error("disconnected"));
+        const omitted = codexLaunch;
+        const explicit = { ...codexLaunch, effort: "default" } as const;
+        const first = explicitFirst ? explicit : omitted;
+        const second = explicitFirst ? omitted : explicit;
+        const send = (launch: AgentLaunchOptions) =>
+          stage === "continuation"
+            ? h
+                .current()
+                .followUp(
+                  { prompt: request.prompt, launch, threadId: "display" },
+                  { ...target, conversationId: "t", latestTaskId: "t" },
+                )
+            : h.current().start({ ...request, launch }, target);
+        await act(async () => {
+          expect(await send(first)).toBeNull();
+        });
+        await act(async () => {
+          expect(await send(second)).not.toBeNull();
+        });
+        const calls =
+          stage === "continuation"
+            ? h.gw.continueTask.mock.calls
+            : vi.mocked<RemoteRunnerGateway["createTask"]>(h.gw.createTask).mock.calls;
+        expect(calls).toHaveLength(2);
+        expect(calls[1]![0].idempotencyKey).toBe(calls[0]![0].idempotencyKey);
+        expect(h.publish).toHaveBeenCalledOnce();
+      }
+    },
+  );
+  it.each(["create", "start", "continuation"])(
+    "blocks a changed Codex effort while %s delivery is uncertain",
+    async (stage) => {
+      const h = await render();
+      const original = { ...codexLaunch, effort: "high" } as const;
+      h.gw.createTask.mockResolvedValue({
+        task: task({ status: "draft", launch: original }),
+        created: true,
+      });
+      h.gw.startTask.mockResolvedValue(task({ launch: original }));
+      h.gw.continueTask.mockResolvedValue({
+        task: task({ id: "child", parentTaskId: "t", conversationId: "t", launch: original }),
+        created: true,
+      });
+      h.gw[
+        stage === "create" ? "createTask" : stage === "start" ? "startTask" : "continueTask"
+      ].mockRejectedValueOnce(new Error("disconnected"));
+      const send = (launch: AgentLaunchOptions) =>
+        stage === "continuation"
+          ? h
+              .current()
+              .followUp(
+                { prompt: request.prompt, launch, threadId: "display" },
+                { ...target, conversationId: "t", latestTaskId: "t" },
+              )
+          : h.current().start({ ...request, launch }, target);
+      await act(async () => {
+        expect(await send(original)).toBeNull();
+      });
+      await act(async () => {
+        expect(await send({ ...original, effort: "low" })).toBeNull();
+      });
+      const mutation = stage === "continuation" ? h.gw.continueTask : h.gw.createTask;
+      expect(mutation).toHaveBeenCalledTimes(1);
+      expect(h.publish).not.toHaveBeenCalled();
+      await act(async () => {
+        expect(await send(original)).not.toBeNull();
+      });
+      expect(mutation).toHaveBeenCalledTimes(2);
+      expect(h.publish).toHaveBeenCalledOnce();
+    },
+  );
   it("retries uncertain continuation without invalidating it through newer-turn preflight", async () => {
     const h = await render();
     h.gw.continueTask.mockRejectedValueOnce(new Error("disconnected"));
@@ -279,6 +360,154 @@ describe("remote agent mutations", () => {
     });
     expect(h.gw.startTask).not.toHaveBeenCalled();
     expect(h.publish).not.toHaveBeenCalled();
+  });
+  it.each(["draft", "start", "continuation"])(
+    "rejects a Codex effort mismatch from %s",
+    async (stage) => {
+      const h = await render();
+      const launch: AgentLaunchOptions = { ...codexLaunch, effort: "high" };
+      const otherLaunch: AgentLaunchOptions = { ...codexLaunch, effort: "low" };
+      if (stage === "draft") {
+        h.gw.createTask.mockResolvedValueOnce({
+          task: task({ status: "draft", launch: otherLaunch }),
+          created: true,
+        });
+      } else if (stage === "start") {
+        h.gw.createTask.mockResolvedValueOnce({
+          task: task({ status: "draft", launch }),
+          created: true,
+        });
+        h.gw.startTask.mockResolvedValueOnce(task({ launch: otherLaunch }));
+      } else {
+        h.gw.continueTask.mockResolvedValueOnce({
+          task: task({
+            id: "child",
+            sequence: 2,
+            parentTaskId: "t",
+            conversationId: "t",
+            launch: otherLaunch,
+          }),
+          created: true,
+        });
+      }
+      await act(async () => {
+        const result =
+          stage === "continuation"
+            ? await h
+                .current()
+                .followUp(
+                  { ...request, launch, threadId: "display" },
+                  { ...target, conversationId: "t", latestTaskId: "t" },
+                )
+            : await h.current().start({ ...request, launch }, target);
+        expect(result).toBeNull();
+      });
+      if (stage === "draft") expect(h.gw.startTask).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
+      expect(h.report).toHaveBeenCalledWith(expect.stringContaining("different"));
+    },
+  );
+  it.each([undefined, "default"] as const)(
+    "accepts the semantic Codex default effort when the request uses %s",
+    async (effort) => {
+      const h = await render();
+      const launch: AgentLaunchOptions = { ...codexLaunch, effort };
+      const echo: AgentLaunchOptions = {
+        ...codexLaunch,
+        ...(effort === undefined ? { effort: "default" as const } : {}),
+      };
+      h.gw.createTask.mockResolvedValueOnce({
+        task: task({ status: "draft", launch: echo }),
+        created: true,
+      });
+      h.gw.startTask.mockResolvedValueOnce(task({ launch: echo }));
+      h.gw.continueTask.mockResolvedValueOnce({
+        task: task({ id: "child", parentTaskId: "t", conversationId: "t", launch: echo }),
+        created: true,
+      });
+      await act(async () => {
+        expect(await h.current().start({ ...request, launch }, target)).not.toBeNull();
+      });
+      await act(async () => {
+        expect(
+          await h
+            .current()
+            .followUp(
+              { ...request, launch, threadId: "display" },
+              { ...target, conversationId: "t", latestTaskId: "t" },
+            ),
+        ).not.toBeNull();
+      });
+      expect(h.report).not.toHaveBeenCalled();
+      expect(h.publish).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("preserves authoritative rejection details and permits corrected intent", async () => {
+    const h = await render();
+    const rejection = "Runner request failed (HTTP 400): Unsupported Codex effort ultra.";
+    h.gw.createTask.mockRejectedValueOnce(new RemoteRunnerRequestRejectedError(rejection));
+    await act(async () => {
+      expect(
+        await h
+          .current()
+          .start({ ...request, launch: { ...codexLaunch, effort: "ultra" } }, target),
+      ).toBeNull();
+    });
+    expect(h.report).toHaveBeenLastCalledWith(rejection);
+    await act(async () => {
+      expect(await h.current().start({ ...request, launch: request.launch }, target)).toEqual(
+        task(),
+      );
+    });
+    expect(h.gw.createTask).toHaveBeenCalledTimes(2);
+  });
+  it.each(["create", "start", "continuation"])(
+    "preserves the actual failure detail when %s delivery is uncertain",
+    async (stage) => {
+      const h = await render();
+      h.gw[
+        stage === "create" ? "createTask" : stage === "start" ? "startTask" : "continueTask"
+      ].mockRejectedValueOnce(new Error("Server disconnected before confirmation."));
+      await act(async () => {
+        if (stage === "continuation")
+          await h
+            .current()
+            .followUp(
+              { ...request, threadId: "display" },
+              { ...target, conversationId: "t", latestTaskId: "t" },
+            );
+        else await h.current().start(request, target);
+      });
+      expect(h.report).toHaveBeenLastCalledWith(
+        expect.stringContaining("Server disconnected before confirmation."),
+      );
+      expect(h.report).toHaveBeenLastCalledWith(
+        expect.stringContaining("Retry the same message to recover it safely."),
+      );
+    },
+  );
+  it.each(["x".repeat(1001), { detail: "private" }])(
+    "uses a safe fallback for an unbounded or unknown uncertain failure",
+    async (failure) => {
+      const h = await render();
+      h.gw.createTask.mockRejectedValueOnce(failure);
+      await act(async () => {
+        await h.current().start(request, target);
+      });
+      expect(h.report).toHaveBeenLastCalledWith(
+        "Remote execution was not confirmed. Remote execution failed. Retry the same message to recover it safely.",
+      );
+    },
+  );
+  it("bounds the complete uncertain notice including its retry guidance", async () => {
+    const h = await render();
+    h.gw.createTask.mockRejectedValueOnce(new Error("x".repeat(1000)));
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(h.report).toHaveBeenLastCalledWith(
+      "Remote execution was not confirmed. Retry the same message to recover it safely.",
+    );
   });
   it("rejects foreign cancellation lineage", async () => {
     const h = await render();
