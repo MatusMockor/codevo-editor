@@ -37,6 +37,11 @@ describe("defaultAgentAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: {
+        source: "defaults",
+        claudeCode: { model: "default", effort: "high" },
+        codex: { model: "default", effort: "default" },
+      },
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
     });
@@ -44,6 +49,9 @@ describe("defaultAgentAppSettings", () => {
 
   it("returns a fresh object on every call", () => {
     expect(defaultAgentAppSettings()).not.toBe(defaultAgentAppSettings());
+    expect(defaultAgentAppSettings().agentNewThreadDefaults).not.toBe(
+      defaultAgentAppSettings().agentNewThreadDefaults,
+    );
   });
 
   it("exposes the pinned default constants", () => {

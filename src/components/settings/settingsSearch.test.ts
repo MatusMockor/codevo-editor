@@ -92,6 +92,32 @@ describe("searchSettingsRows", () => {
     expect(SETTINGS_ROWS.some((row) => row.title === "Update track")).toBe(false);
   });
 
+  it("finds the new thread start block by provider, model, effort and its title", () => {
+    for (const query of ["default provider", "provider", "model", "effort", "new thread"]) {
+      const ids = searchSettingsRows(query, SETTINGS_ROWS, false).map((hit) => hit.row.id);
+
+      expect(ids).toContain("agents.defaultProvider");
+    }
+
+    const [first] = searchSettingsRows("start new threads", SETTINGS_ROWS, false);
+
+    expect(first?.row.id).toBe("agents.defaultProvider");
+    expect(first?.matchedIn).toBe("title");
+  });
+
+  it("finds the launch source row by last used, remember and project", () => {
+    for (const query of ["last used", "remember", "project", "default", "used before"]) {
+      const ids = searchSettingsRows(query, SETTINGS_ROWS, false).map((hit) => hit.row.id);
+
+      expect(ids).toContain("agents.newThreadLaunchSource");
+    }
+
+    const [first] = searchSettingsRows("in projects you have", SETTINGS_ROWS, false);
+
+    expect(first?.row.id).toBe("agents.newThreadLaunchSource");
+    expect(first?.matchedIn).toBe("title");
+  });
+
   it("finds project grouping and project connections in the environments servers row", () => {
     for (const query of [
       "project grouping",

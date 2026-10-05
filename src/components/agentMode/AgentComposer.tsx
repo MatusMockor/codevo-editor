@@ -58,7 +58,8 @@ import {
 import { useAgentTextPaste } from "./useAgentTextPaste";
 import { useAgentAttachmentIntake } from "./useAgentAttachmentIntake";
 import { useAgentComposerDragDrop } from "./useAgentComposerDragDrop";
-import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
+import { newThreadComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
+import { useAgentNewThreadDefaults } from "./useAgentNewThreadDefaults";
 import { AgentComposerCommands } from "./AgentComposerCommands";
 import { useAgentComposerCommands } from "./useAgentComposerCommands";
 import type { AgentComposerCommandId } from "../../domain/agentComposerCommand";
@@ -298,12 +299,16 @@ export function AgentComposer({
   useLayoutEffect(() => {
     setUnavailableAttachmentNotice(null);
   }, [promptOwnerKey, executionServerId, attachmentTargetKey]);
+  const executionTarget: AgentExecutionTarget = executionServerId === null ? "local" : "server";
+  const newThreadDefaults = useAgentNewThreadDefaults(executionTarget);
   const normalizedLaunch = useMemo(
     () =>
       normalizeAgentComposerLaunch(
-        launch.provider === launchProvider ? launch : defaultAgentComposerLaunch(launchProvider),
+        launch.provider === launchProvider
+          ? launch
+          : newThreadComposerLaunch(launchProvider, newThreadDefaults),
       ),
-    [launch, launchProvider],
+    [launch, launchProvider, newThreadDefaults],
   );
   const discovery =
     executionServerId === null
@@ -311,7 +316,6 @@ export function AgentComposer({
       : undefined;
   const configuredModel =
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
-  const executionTarget: AgentExecutionTarget = executionServerId === null ? "local" : "server";
   const effectiveLaunch = useMemo(() => {
     const dispatched = agentLaunchForDispatch(
       normalizedLaunch,

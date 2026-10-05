@@ -14,7 +14,12 @@ import {
   type AgentModelChoice,
 } from "./agentLaunchPresentation";
 import { AgentModelPicker } from "./AgentModelPicker";
-import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
+import {
+  newThreadComposerLaunch,
+  normalizeAgentComposerLaunch,
+  providerSwitchComposerLaunch,
+} from "./agentComposerLaunch";
+import { useAgentNewThreadDefaults } from "./useAgentNewThreadDefaults";
 import { AgentAccessMenu } from "./AgentAccessMenu";
 import { AgentTraitsPicker } from "./AgentTraitsPicker";
 import { useComposerPaletteBinding } from "./useComposerPaletteBinding";
@@ -56,27 +61,24 @@ export function AgentLaunchControls({
 }: AgentLaunchControlsProps) {
   const catalog = useAgentClaudeModelCatalog();
   const codexCatalog = useAgentCodexModelCatalog();
+  const newThreadDefaults = useAgentNewThreadDefaults(executionTarget);
   const effectiveLaunch = normalizeAgentComposerLaunch(launch);
   const configuredModelFor = (provider: AgentCliKind): string | null => {
     const discovered = providerManagement?.cliDiscovery[provider];
     return discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
   };
   const configuredModel = configuredModelFor(effectiveLaunch.provider);
+  const withModel = (base: AgentLaunchOptions, model: AgentModelChoice) =>
+    agentLaunchWithModel(base, model, configuredModelFor(base.provider), catalog, codexCatalog);
+  const launchWithModel = (model: AgentModelChoice, provider: AgentCliKind) => {
+    if (provider === effectiveLaunch.provider) return withModel(effectiveLaunch, model);
+    const configured = newThreadComposerLaunch(provider, newThreadDefaults);
+    return providerSwitchComposerLaunch(configured, withModel(configured, model));
+  };
   const selectModel = (
     model: AgentModelChoice,
     provider: AgentCliKind = effectiveLaunch.provider,
-  ) =>
-    onLaunchChange(
-      agentLaunchWithModel(
-        provider === effectiveLaunch.provider
-          ? effectiveLaunch
-          : defaultAgentComposerLaunch(provider),
-        model,
-        configuredModelFor(provider),
-        catalog,
-        codexCatalog,
-      ),
-    );
+  ) => onLaunchChange(launchWithModel(model, provider));
   useComposerPaletteBinding({
     launch: effectiveLaunch,
     catalog,

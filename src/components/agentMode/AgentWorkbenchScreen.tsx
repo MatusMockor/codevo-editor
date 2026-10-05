@@ -107,6 +107,8 @@ import {
   type RevealPathGateway,
 } from "../../infrastructure/tauriRevealPathGateway";
 import { AgentModeView } from "./AgentModeView";
+import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider";
+import { configuredProviderVersion } from "./agentModelProviderState";
 import {
   AGENT_REVEAL_BLOCKED_REASON,
   agentRevealRootForPath,
@@ -784,47 +786,55 @@ export function AgentWorkbenchScreen({
   return (
     <AgentArtifactSupportProvider value={artifactSupport}>
       <AgentTranscriptPositionProvider value={restoredSession.transcriptPositions}>
-        <AgentModeView
-          monacoTheme={monacoTheme}
-          followUpBehavior={appSettings.agentFollowUpBehavior}
-          questionGateway={DEFAULT_QUESTION_GATEWAY}
-          artifactLoader={DEFAULT_ARTIFACT_LOADER}
-          artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
-          imageSurface={DEFAULT_IMAGE_SURFACE}
-          agents={agents}
-          chrome={chrome}
-          key={navigationBoundary.key}
-          navigationSession={navigationSession}
-          modelFavoritesPersistence={modelFavoritesPersistence}
-          onOpenSourceControl={openSourceControl}
-          onOpenEnvironmentSettings={
-            openSettingsSection === undefined ? undefined : openEnvironmentSettings
-          }
-          onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
-          onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
-          onActivateWorkspaceTab={activateWorkspaceTab}
-          onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
-          onTrustProject={(projectRootKey, origin) =>
-            void (projects.grantProjectTrust ?? projects.trustProject)(
-              projectRootKey,
-              origin ?? null,
-            )
-          }
-          overflowRootPaths={projects.overflowRootPaths}
-          providerEnabled={providerEnabled}
-          projects={projects.projects}
-          projectsLoaded={projects.projectsLoaded}
-          textClipboard={textClipboard}
-          projectCollapsePreference={projectCollapsePreference}
-          projectFocusPreference={projectFocusPreference}
-          workingSectionPreference={workingSectionPreference}
-          newThreadPicker={newThreadPicker}
-          viewCommands={workbenchAgentViewCommandBridge}
-          threadNotifications={threadNotifications}
-          threadNotificationsVisible={workbench.settingsOpen !== true}
-          remotePortPreview={remotePortPreview}
-          workspaceRoot={workspaceRoot}
-        />
+        <AgentNewThreadDefaultsProvider
+          settings={appSettings.agentNewThreadDefaults}
+          localClaudeCliVersion={configuredProviderVersion(
+            workbench.agents.providerManagement,
+            "claudeCode",
+          )}
+        >
+          <AgentModeView
+            monacoTheme={monacoTheme}
+            followUpBehavior={appSettings.agentFollowUpBehavior}
+            questionGateway={DEFAULT_QUESTION_GATEWAY}
+            artifactLoader={DEFAULT_ARTIFACT_LOADER}
+            artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
+            imageSurface={DEFAULT_IMAGE_SURFACE}
+            agents={agents}
+            chrome={chrome}
+            key={navigationBoundary.key}
+            navigationSession={navigationSession}
+            modelFavoritesPersistence={modelFavoritesPersistence}
+            onOpenSourceControl={openSourceControl}
+            onOpenEnvironmentSettings={
+              openSettingsSection === undefined ? undefined : openEnvironmentSettings
+            }
+            onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
+            onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
+            onActivateWorkspaceTab={activateWorkspaceTab}
+            onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
+            onTrustProject={(projectRootKey, origin) =>
+              void (projects.grantProjectTrust ?? projects.trustProject)(
+                projectRootKey,
+                origin ?? null,
+              )
+            }
+            overflowRootPaths={projects.overflowRootPaths}
+            providerEnabled={providerEnabled}
+            projects={projects.projects}
+            projectsLoaded={projects.projectsLoaded}
+            textClipboard={textClipboard}
+            projectCollapsePreference={projectCollapsePreference}
+            projectFocusPreference={projectFocusPreference}
+            workingSectionPreference={workingSectionPreference}
+            newThreadPicker={newThreadPicker}
+            viewCommands={workbenchAgentViewCommandBridge}
+            threadNotifications={threadNotifications}
+            threadNotificationsVisible={workbench.settingsOpen !== true}
+            remotePortPreview={remotePortPreview}
+            workspaceRoot={workspaceRoot}
+          />
+        </AgentNewThreadDefaultsProvider>
       </AgentTranscriptPositionProvider>
     </AgentArtifactSupportProvider>
   );

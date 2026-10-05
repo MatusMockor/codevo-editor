@@ -26,6 +26,11 @@ import { workbenchAgentCommands } from "../../application/workbenchAgentCommands
 import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
 import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
+import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider";
+import {
+  defaultAgentNewThreadDefaults,
+  type AgentNewThreadDefaults,
+} from "../../domain/agentNewThreadDefaults";
 import { WorkbenchFrameResponsiveContext } from "../workbenchFrameResponsiveContext";
 import type { ResponsivePanelRestore } from "../../domain/agentWorkbenchResponsiveLayout";
 import {
@@ -2291,7 +2296,7 @@ describe("AgentModeView", () => {
   });
 
   it("seeds the composer launch from the last used launch of the target project", () => {
-    render({
+    renderWithLastUsedSource({
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === ROOT
@@ -2304,6 +2309,58 @@ describe("AgentModeView", () => {
     expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
   });
 
+  it("starts new threads from the configured defaults instead of a newer last used launch", () => {
+    const agents = surface({
+      lastUsedLaunch: () => ({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort: "default",
+      }),
+    });
+    const configured: AgentNewThreadDefaults = {
+      source: "defaults",
+      claudeCode: { model: "claude-fable-5-1", effort: "max" },
+      codex: { model: "gpt-6-astra", effort: "xhigh" },
+    };
+    render({ agents }, "none", configured);
+
+    expect(launchSelect("agent-launch-model").value).toBe("claude-fable-5-1");
+    expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
+
+    render({ agents }, "none", { ...configured, source: "lastUsed" });
+
+    expect(launchSelect("agent-launch-model").value).toBe("opus");
+    expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
+  });
+
+  it("applies changed defaults to an untouched project and keeps a model picked in another", () => {
+    const projects = [activeProject(), backgroundProject()];
+    const configured: AgentNewThreadDefaults = {
+      source: "defaults",
+      claudeCode: { model: "claude-fable-5-1", effort: "max" },
+      codex: { model: "gpt-6-astra", effort: "xhigh" },
+    };
+    const reconfigured: AgentNewThreadDefaults = {
+      ...configured,
+      claudeCode: { model: "claude-sonnet-5-5", effort: "low" },
+    };
+    render({ projects }, "none", configured);
+    chooseLaunch("agent-launch-model", "claude-opus-5");
+
+    render({ projects }, "none", reconfigured);
+
+    expect(launchSelect("agent-launch-model").value).toBe("claude-opus-5");
+
+    chooseScope(OTHER_ROOT);
+
+    expect(launchSelect("agent-launch-model").value).toBe("claude-sonnet-5-5");
+
+    chooseScope(ROOT);
+
+    expect(launchSelect("agent-launch-model").value).toBe("claude-opus-5");
+  });
+
   it("falls back to the provider default when the root has no remembered launch", () => {
     render({ agents: surface({ agentCliKind: "codex" }) });
 
@@ -2313,7 +2370,7 @@ describe("AgentModeView", () => {
   });
 
   it("drops a launch chosen for another project when the composer target changes", () => {
-    render({
+    renderWithLastUsedSource({
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === OTHER_ROOT
@@ -2334,7 +2391,7 @@ describe("AgentModeView", () => {
   });
 
   it("ignores a remembered launch that belongs to another provider", () => {
-    render({
+    renderWithLastUsedSource({
       agents: surface({
         agentCliKind: "codex",
         lastUsedLaunch: () => ({
@@ -2440,7 +2497,7 @@ describe("AgentModeView", () => {
   });
 
   it("clears the old thread and uses the selected project launch when changing projects", () => {
-    render({
+    renderWithLastUsedSource({
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === OTHER_ROOT
@@ -2463,7 +2520,7 @@ describe("AgentModeView", () => {
   });
 
   it("seeds a follow-up launch from the thread's last turn before the remembered launch", () => {
-    render({
+    renderWithLastUsedSource({
       agents: surface({
         lastUsedLaunch: () => ({
           provider: "claudeCode",
@@ -2559,7 +2616,7 @@ describe("AgentModeView", () => {
   });
 
   it("keeps remembered full access when the composer project changes", () => {
-    render({
+    renderWithLastUsedSource({
       agents: surface({
         lastUsedLaunch: () => ({
           provider: "claudeCode",
@@ -3757,14 +3814,21 @@ describe("AgentModeView", () => {
   function render(
     overrides: Partial<AgentModeViewProps> = {},
     responsiveRestore: ResponsivePanelRestore = "none",
+    newThreadDefaults: AgentNewThreadDefaults = defaultAgentNewThreadDefaults(),
   ): void {
     act(() =>
       root.render(
         <WorkbenchFrameResponsiveContext.Provider value={responsiveRestore}>
-          <AgentModeView {...defaultProps()} {...overrides} />
+          <AgentNewThreadDefaultsProvider settings={newThreadDefaults}>
+            <AgentModeView {...defaultProps()} {...overrides} />
+          </AgentNewThreadDefaultsProvider>
         </WorkbenchFrameResponsiveContext.Provider>,
       ),
     );
+  }
+
+  function renderWithLastUsedSource(overrides: Partial<AgentModeViewProps>): void {
+    render(overrides, "none", { ...defaultAgentNewThreadDefaults(), source: "lastUsed" });
   }
 
   function resetColumnRenders(): void {

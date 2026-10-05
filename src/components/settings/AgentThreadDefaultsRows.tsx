@@ -1,4 +1,9 @@
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
+import {
+  defaultAgentNewThreadDefaults,
+  type AgentNewThreadDefaults,
+} from "../../domain/agentNewThreadDefaults";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import {
   DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
@@ -6,12 +11,24 @@ import {
   type AgentIsolationPolicy,
 } from "../../domain/agentSettings";
 import type { AppSettings, WorkspaceSettings } from "../../domain/settings";
+import { useAgentClaudeModelCatalog } from "../agentMode/useAgentClaudeModelCatalog";
+import { useAgentCodexModelCatalog } from "../agentMode/useAgentCodexModelCatalog";
+import {
+  agentProviderEnablement,
+  NEW_THREAD_LAUNCH_SOURCE_OPTIONS,
+  newThreadLaunchSourceDescription,
+  newThreadModelContext,
+  newThreadPreview,
+  newThreadProviderSelection,
+  withNewThreadLaunchSource,
+} from "./agentNewThreadDefaultsPresentation";
+import { AgentNewThreadPreview } from "./AgentNewThreadPreview";
+import { AgentNewThreadStartTiles } from "./AgentNewThreadStartTiles";
 import { SettingsButton } from "./primitives/SettingsButton";
 import { SettingsRow } from "./primitives/SettingsRow";
 import { SettingsSectionHeading } from "./primitives/SettingsSectionHeading";
-import { SettingsSelect, type SettingsSelectOption } from "./primitives/SettingsSelect";
-import { providerLabel } from "./agentProviderCardPresentation";
-import { AGENT_PROVIDERS } from "./agentProviderSettingsPersistence";
+import { SettingsSegmented } from "./primitives/SettingsSegmented";
+import { SettingsSelect } from "./primitives/SettingsSelect";
 
 interface IsolationOption {
   readonly label: string;
@@ -27,58 +44,72 @@ const ISOLATION_OPTIONS: ReadonlyArray<IsolationOption> = [
 export interface AgentThreadDefaultsRowsProps {
   readonly appSettings: AppSettings;
   readonly hasWorkspace: boolean;
+  readonly management: AgentProviderManagementSurface;
   readonly workspaceSettings: WorkspaceSettings;
   onChangeFollowUpBehavior(behavior: AgentFollowUpBehavior): void;
   onChangeDefaultProvider(provider: AgentCliKind): void;
   onChangeIsolationPolicy(policy: AgentIsolationPolicy): void;
+  onChangeNewThreadDefaults(defaults: AgentNewThreadDefaults): void;
   onClearFavorites(): void;
 }
 
 export function AgentThreadDefaultsRows({
   appSettings,
   hasWorkspace,
+  management,
   onChangeDefaultProvider,
   onChangeFollowUpBehavior,
   onChangeIsolationPolicy,
+  onChangeNewThreadDefaults,
   onClearFavorites,
   workspaceSettings,
 }: AgentThreadDefaultsRowsProps) {
+  const claudeCatalog = useAgentClaudeModelCatalog();
+  const codexCatalog = useAgentCodexModelCatalog();
   const preferences = appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
-  const enabledProviders = AGENT_PROVIDERS.filter((provider) => preferences[provider].enabled);
-  const selectedEnabled = enabledProviders.includes(appSettings.agentCliKind);
+  const enabled = agentProviderEnablement(preferences);
+  const selection = newThreadProviderSelection(appSettings.agentCliKind, enabled);
+  const defaults = appSettings.agentNewThreadDefaults ?? defaultAgentNewThreadDefaults();
+  const modelContext = newThreadModelContext(management, claudeCatalog, codexCatalog);
   const favoriteCount = appSettings.agentModelFavoriteKeys.length;
-  const providerOptions: ReadonlyArray<SettingsSelectOption> = [
-    ...(selectedEnabled
-      ? []
-      : [
-          {
-            disabled: true,
-            label:
-              enabledProviders.length === 0
-                ? "No enabled providers"
-                : "Selected provider is disabled",
-            value: "",
-          },
-        ]),
-    ...enabledProviders.map((provider) => ({ label: providerLabel(provider), value: provider })),
-  ];
 
   return (
     <SettingsSectionHeading title="New threads">
-      <SettingsRow rowId="agents.defaultProvider">
-        <SettingsSelect
-          disabled={enabledProviders.length === 0}
+      <AgentNewThreadStartTiles
+        defaults={defaults}
+        enabled={enabled}
+        modelContext={modelContext}
+        onChangeDefaults={onChangeNewThreadDefaults}
+        onSelectProvider={(provider) => {
+          if (!preferences[provider].enabled) return;
+
+          onChangeDefaultProvider(provider);
+        }}
+        preview={
+          selection.kind === "selected" ? (
+            <AgentNewThreadPreview
+              preview={newThreadPreview(selection.provider, defaults, modelContext)}
+            />
+          ) : null
+        }
+        selection={selection}
+        views={management.providers}
+      />
+
+      <SettingsRow
+        description={newThreadLaunchSourceDescription(defaults.source)}
+        rowId="agents.newThreadLaunchSource"
+      >
+        <SettingsSegmented
           onChange={(value) => {
-            const provider = AGENT_PROVIDERS.find((candidate) => candidate === value);
+            const next = withNewThreadLaunchSource(defaults, value);
 
-            if (provider === undefined) return;
-            if (!preferences[provider].enabled) return;
+            if (next === null) return;
 
-            onChangeDefaultProvider(provider);
+            onChangeNewThreadDefaults(next);
           }}
-          options={providerOptions}
-          value={selectedEnabled ? appSettings.agentCliKind : ""}
-          width="md"
+          options={NEW_THREAD_LAUNCH_SOURCE_OPTIONS}
+          value={defaults.source}
         />
       </SettingsRow>
 

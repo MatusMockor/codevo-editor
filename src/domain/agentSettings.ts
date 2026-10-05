@@ -8,6 +8,10 @@ import {
   type ClaudeModelChoice,
   type CodexModelChoice,
 } from "./agentLaunch";
+import {
+  defaultAgentNewThreadDefaults,
+  type AgentNewThreadDefaults,
+} from "./agentNewThreadDefaults";
 import type { AgentCliKind, AgentIsolationPolicy } from "./agentTask";
 import {
   defaultAgentProviderPreferences,
@@ -75,6 +79,7 @@ export interface AgentAppSettings {
   readonly agentThreadFontSize: number;
   readonly agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   readonly agentModelFavoritesRevision: number;
+  readonly agentNewThreadDefaults?: AgentNewThreadDefaults;
   readonly agentProviderPreferences: AgentProviderPreferences;
   readonly maxConcurrentAgentTasks: number;
 }
@@ -95,6 +100,7 @@ export function defaultAgentAppSettings(): AgentAppSettings {
     agentThreadFontSize: DEFAULT_AGENT_THREAD_FONT_SIZE,
     agentModelFavoriteKeys: [],
     agentModelFavoritesRevision: 0,
+    agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
     agentProviderPreferences: defaultAgentProviderPreferences(),
     maxConcurrentAgentTasks: DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
   };

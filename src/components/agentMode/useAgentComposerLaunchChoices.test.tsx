@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useAgentComposerLaunchChoices } from "./useAgentComposerLaunchChoices";
 import { resolveComposerLaunch, type LaunchScope } from "./agentComposerLaunch";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import { defaultAgentNewThreadDefaults } from "../../domain/agentNewThreadDefaults";
 
 const codex: AgentLaunchOptions = {
   provider: "codex",
@@ -59,6 +60,73 @@ describe("composer model choices across execution environments", () => {
     act(() => root.render(<Harness scope={serverScope} displayedDefault={codex} />));
     expect(current.choice?.launch).toEqual({ ...claude, model: "sonnet" });
   });
+  it("keeps an explicit choice while the displayed default of its scope changes", () => {
+    const scope = { rootKey: "/local", key: "root:/local", seed: null };
+    act(() => root.render(<Harness scope={scope} displayedDefault={claude} />));
+    act(() => current.change(codex));
+    act(() =>
+      root.render(<Harness scope={scope} displayedDefault={{ ...claude, model: "sonnet" }} />),
+    );
+    expect(current.choice?.launch).toEqual(codex);
+    act(() => root.render(<Harness scope={scope} />));
+    expect(current.choice?.launch).toEqual(codex);
+  });
+  it("stops carrying a displayed default once the caller no longer displays one", () => {
+    const localScope = { rootKey: "/local", key: "root:/local", seed: null };
+    act(() => root.render(<Harness scope={localScope} displayedDefault={claude} />));
+    render("remote:a:runner:project");
+    expect(current.choice).toBeNull();
+    render("/local");
+    act(() => current.change(codex));
+    render("remote:b:runner:project");
+    expect(current.choice?.launch).toEqual(codex);
+  });
+  it("stops treating a carried displayed default as a choice of a visited server", () => {
+    const localScope = { rootKey: "/local", key: "root:/local", seed: null };
+    const serverScope = {
+      rootKey: "remote:a:runner:project",
+      key: "root:remote:a:runner:project",
+      seed: null,
+    };
+    act(() => root.render(<Harness scope={localScope} displayedDefault={claude} />));
+    act(() => root.render(<Harness scope={serverScope} displayedDefault={codex} />));
+    expect(current.choice?.launch).toEqual(claude);
+    act(() => root.render(<Harness scope={serverScope} />));
+    expect(current.choice).toBeNull();
+    act(() => root.render(<Harness scope={serverScope} displayedDefault={codex} />));
+    expect(current.choice?.launch).toEqual(claude);
+  });
+  it("keeps a launch the user chose on a visited server once no default is displayed", () => {
+    const localScope = { rootKey: "/local", key: "root:/local", seed: null };
+    const serverScope = {
+      rootKey: "remote:a:runner:project",
+      key: "root:remote:a:runner:project",
+      seed: null,
+    };
+    act(() => root.render(<Harness scope={localScope} displayedDefault={claude} />));
+    act(() => root.render(<Harness scope={serverScope} displayedDefault={codex} />));
+    act(() => current.change(codex));
+    act(() => root.render(<Harness scope={serverScope} />));
+    expect(current.choice?.launch).toEqual(codex);
+  });
+  it("replaces a carried displayed default of a visited server with a later explicit draft choice", () => {
+    const localScope = { rootKey: "/local", key: "root:/local", seed: null };
+    const serverScope = {
+      rootKey: "remote:a:runner:project",
+      key: "root:remote:a:runner:project",
+      seed: null,
+    };
+    act(() => root.render(<Harness scope={localScope} displayedDefault={claude} />));
+    act(() => root.render(<Harness scope={serverScope} displayedDefault={codex} />));
+    act(() => root.render(<Harness scope={localScope} />));
+    act(() => current.change(codex));
+    act(() => root.render(<Harness scope={serverScope} />));
+    expect(current.choice?.launch).toEqual(codex);
+    act(() => root.render(<Harness scope={localScope} />));
+    act(() => current.change(claude));
+    act(() => root.render(<Harness scope={serverScope} />));
+    expect(current.choice?.launch).toEqual(codex);
+  });
   it("carries the draft model onto an unvisited server and restores explicit A/B choices", () => {
     render("/local");
     act(() => current.change(codex));
@@ -106,10 +174,13 @@ describe("composer model choices across execution environments", () => {
     render("/local");
     act(() => current.change(codex));
     const scope = render("remote:a:runner:project");
-    expect(resolveComposerLaunch(current.choice, scope, "claudeCode", () => null).provider).toBe(
-      "claudeCode",
+    const defaults = defaultAgentNewThreadDefaults();
+    expect(
+      resolveComposerLaunch(current.choice, scope, "claudeCode", () => null, defaults).provider,
+    ).toBe("claudeCode");
+    expect(resolveComposerLaunch(current.choice, scope, "codex", () => null, defaults)).toEqual(
+      codex,
     );
-    expect(resolveComposerLaunch(current.choice, scope, "codex", () => null)).toEqual(codex);
   });
   it("bounds retained choices and evicts oldest scope without transferring thread models", () => {
     for (let index = 0; index < 65; index += 1) {

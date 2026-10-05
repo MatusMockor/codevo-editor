@@ -5,6 +5,7 @@ import {
   type AgentComposerRecovery,
 } from "./useAgentComposerRecovery";
 import { useAgentComposerLaunchChoices } from "./useAgentComposerLaunchChoices";
+import { useAgentNewThreadDefaults } from "./useAgentNewThreadDefaults";
 import {
   useAgentSessionRestartDismissal,
   useAgentSessionRestartGate,
@@ -72,6 +73,7 @@ import type {
   AgentComposerSubmitSource,
 } from "./AgentComposer";
 import {
+  launchScopeExecutionTarget,
   resolveComposerLaunch,
   resolveLaunchScope,
   type IsolationChoice,
@@ -373,19 +375,34 @@ export function useAgentComposerControllerState({
     () => resolveLaunchScope(selectedThread, launchProjectRootKey),
     [selectedThread, launchProjectRootKey],
   );
-  const defaultLaunch = useMemo(
+  const newThreadDefaults = useAgentNewThreadDefaults(
+    selectedThread?.execution?.kind === "remote"
+      ? "server"
+      : launchScopeExecutionTarget(launchScope),
+  );
+  const carriedDraftLaunch = useMemo(
     () =>
-      resolveComposerLaunch(
-        null,
-        launchScope,
-        composerProviderKind(selectedThread, agents.agentCliKind, providerEnabled),
-        agents.lastUsedLaunch,
-      ),
-    [launchScope, selectedThread, agents.agentCliKind, agents.lastUsedLaunch, providerEnabled],
+      newThreadDefaults.source === "lastUsed"
+        ? resolveComposerLaunch(
+            null,
+            launchScope,
+            composerProviderKind(selectedThread, agents.agentCliKind, providerEnabled),
+            agents.lastUsedLaunch,
+            newThreadDefaults,
+          )
+        : null,
+    [
+      launchScope,
+      selectedThread,
+      agents.agentCliKind,
+      agents.lastUsedLaunch,
+      providerEnabled,
+      newThreadDefaults,
+    ],
   );
   const { choice: launchChoice, change: changeLaunch } = useAgentComposerLaunchChoices(
     launchScope,
-    defaultLaunch,
+    carriedDraftLaunch,
   );
   const selectedLaunchProvider =
     launchChoice !== null && launchChoice.key === launchScope?.key
@@ -417,8 +434,9 @@ export function useAgentComposerControllerState({
         launchScope,
         agentCliKind,
         lastUsedLaunch,
+        newThreadDefaults,
       ),
-    [agentCliKind, lastUsedLaunch, launchChoice, launchScope, steerThreadId],
+    [agentCliKind, lastUsedLaunch, launchChoice, launchScope, newThreadDefaults, steerThreadId],
   );
   const restart = useAgentSessionRestartGate(
     agents,

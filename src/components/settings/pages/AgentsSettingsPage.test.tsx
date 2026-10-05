@@ -117,8 +117,8 @@ describe("AgentsSettingsPage", () => {
 
     expect(rendered).toEqual(settingsRowsForSection("agents").map((row) => row.id));
     expect([...host.querySelectorAll("h2")].map((heading) => heading.textContent)).toEqual([
-      "Providers",
       "New threads",
+      "Providers",
       "CLI updates",
       "Notifications",
       "Sidebar",
@@ -459,7 +459,22 @@ describe("AgentsSettingsPage", () => {
     expect(host.textContent).toContain("Version 0.149.1");
   });
 
-  it("excludes disabled providers from the default provider picker", () => {
+  it("renders the new thread defaults above the provider cards", () => {
+    render();
+
+    const startBlock = host.querySelector('[data-settings-row="agents.defaultProvider"]');
+    const firstCard = host.querySelector('[data-settings-row="agents.providerClaudeCode"]');
+
+    expect(startBlock).not.toBeNull();
+    expect(firstCard).not.toBeNull();
+    expect(
+      (startBlock?.compareDocumentPosition(firstCard ?? host) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(startBlock?.querySelector("h3")?.textContent).toBe("Start new threads with");
+  });
+
+  it("marks a disabled provider tile as unavailable and keeps the enabled one checked", () => {
     const preferences = defaultAgentProviderPreferences();
 
     render({
@@ -472,13 +487,13 @@ describe("AgentsSettingsPage", () => {
       },
     });
 
-    const picker = defaultProviderPicker();
-
-    expect([...picker.options].map((option) => option.value)).toEqual(["claudeCode"]);
-    expect(picker.value).toBe("claudeCode");
+    expect(providerTile("codex").getAttribute("aria-disabled")).toBe("true");
+    expect(providerTile("codex").getAttribute("aria-checked")).toBe("false");
+    expect(providerTile("claudeCode").hasAttribute("aria-disabled")).toBe(false);
+    expect(providerTile("claudeCode").getAttribute("aria-checked")).toBe("true");
   });
 
-  it("rejects a disabled provider value even when injected into the picker", () => {
+  it("rejects a disabled provider even when its tile is clicked", () => {
     const onPublishAppSettings = vi.fn();
     const onUpdateAppSettings = vi.fn();
     const preferences = defaultAgentProviderPreferences();
@@ -495,10 +510,7 @@ describe("AgentsSettingsPage", () => {
       onUpdateAppSettings,
     });
 
-    const picker = defaultProviderPicker();
-
-    picker.append(new Option("Codex", "codex"));
-    setSelect(picker, "codex");
+    act(() => providerTile("codex").click());
 
     expect(onPublishAppSettings).not.toHaveBeenCalled();
     expect(onUpdateAppSettings).not.toHaveBeenCalled();
@@ -518,14 +530,13 @@ describe("AgentsSettingsPage", () => {
       },
     });
 
-    const picker = defaultProviderPicker();
-
-    expect(picker.value).toBe("");
-    expect([...picker.options].map((option) => option.value)).toEqual(["", "claudeCode"]);
-    expect(picker.options[0]?.textContent).toBe("Selected provider is disabled");
+    expect(providerTile("claudeCode").getAttribute("aria-checked")).toBe("false");
+    expect(providerTile("codex").getAttribute("aria-checked")).toBe("false");
+    expect(startBlock().textContent).toContain("Codex is the default provider but it is disabled.");
+    expect(startBlock().textContent).not.toContain("A new thread opens like this");
   });
 
-  it("shows a disabled truthful placeholder when no provider is enabled", () => {
+  it("states truthfully that no provider is enabled", () => {
     const preferences = defaultAgentProviderPreferences();
 
     render({
@@ -539,11 +550,10 @@ describe("AgentsSettingsPage", () => {
       },
     });
 
-    const picker = defaultProviderPicker();
-
-    expect(picker.disabled).toBe(true);
-    expect([...picker.options].map((option) => option.value)).toEqual([""]);
-    expect(picker.textContent).toBe("No enabled providers");
+    expect(providerTile("claudeCode").getAttribute("aria-disabled")).toBe("true");
+    expect(providerTile("codex").getAttribute("aria-disabled")).toBe("true");
+    expect(startBlock().textContent).toContain("No provider is enabled.");
+    expect(startBlock().textContent).not.toContain("A new thread opens like this");
   });
 
   it("selects an enabled provider as the new thread default", () => {
@@ -551,10 +561,95 @@ describe("AgentsSettingsPage", () => {
     const onUpdateAppSettings = vi.fn();
 
     render({ onPublishAppSettings, onUpdateAppSettings });
-    setSelect(defaultProviderPicker(), "codex");
+    act(() => providerTile("codex").click());
 
     expect(lastCall(onPublishAppSettings).agentCliKind).toBe("codex");
     expect(onUpdateAppSettings).not.toHaveBeenCalled();
+    expect(providerTile("codex").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("stores a new thread model and effort without dropping any other setting", () => {
+    const onPublishAppSettings = vi.fn();
+    const onUpdateAppSettings = vi.fn();
+    const appSettings: AppSettings = {
+      ...defaultAppSettings(),
+      agentCliKind: "codex",
+      agentFollowUpBehavior: "steer",
+      agentModelFavoriteKeys: ["claudeCode/opus"],
+      agentModelFavoritesRevision: 4,
+      agentThreadNotifications: false,
+    };
+
+    render({ appSettings, onPublishAppSettings, onUpdateAppSettings });
+
+    setSelect(newThreadSelect("Claude Code model"), "claude-opus-5-5");
+
+    expect(onUpdateAppSettings).toHaveBeenLastCalledWith({
+      ...appSettings,
+      agentNewThreadDefaults: {
+        source: "defaults",
+        claudeCode: { model: "claude-opus-5-5", effort: "high" },
+        codex: { model: "default", effort: "default" },
+      },
+    });
+
+    setSelect(newThreadSelect("Claude Code effort"), "ultracode");
+    setSelect(newThreadSelect("Claude Code model"), "claude-sonnet-5");
+
+    expect(onUpdateAppSettings).toHaveBeenLastCalledWith({
+      ...appSettings,
+      agentNewThreadDefaults: {
+        source: "defaults",
+        claudeCode: { model: "claude-sonnet-5", effort: "default" },
+        codex: { model: "default", effort: "default" },
+      },
+    });
+    expect(onPublishAppSettings).not.toHaveBeenCalled();
+  });
+
+  it("stores defaults for settings saved before new thread defaults existed", () => {
+    const onUpdateAppSettings = vi.fn();
+    const { agentNewThreadDefaults: _dropped, ...legacy } = defaultAppSettings();
+
+    render({ appSettings: legacy, onUpdateAppSettings });
+
+    expect(newThreadSelect("Claude Code effort").value).toBe("high");
+
+    setSelect(newThreadSelect("Codex effort"), "high");
+
+    expect(onUpdateAppSettings).toHaveBeenLastCalledWith({
+      ...legacy,
+      agentNewThreadDefaults: {
+        source: "defaults",
+        claudeCode: { model: "default", effort: "high" },
+        codex: { model: "default", effort: "high" },
+      },
+    });
+  });
+
+  it("stores whether previously used projects continue with the last used launch", () => {
+    const onUpdateAppSettings = vi.fn();
+    const appSettings: AppSettings = { ...defaultAppSettings(), agentFollowUpBehavior: "steer" };
+
+    render({ appSettings, onUpdateAppSettings });
+
+    const row = host.querySelector('[data-settings-row="agents.newThreadLaunchSource"]');
+
+    expect(row?.textContent).toContain("Every new thread starts from the defaults above.");
+
+    act(() => byText("Continue with last used").click());
+
+    expect(onUpdateAppSettings).toHaveBeenLastCalledWith({
+      ...appSettings,
+      agentNewThreadDefaults: {
+        source: "lastUsed",
+        claudeCode: { model: "default", effort: "high" },
+        codex: { model: "default", effort: "default" },
+      },
+    });
+    expect(row?.textContent).toContain(
+      "A new thread reuses the model and effort of the last thread in that project.",
+    );
   });
 
   it("explains shared parallel threads without an editable limit and persists workspace isolation", () => {
@@ -759,18 +854,38 @@ describe("AgentsSettingsPage", () => {
     return element ?? document.createElement("input");
   }
 
-  function defaultProviderPicker(): HTMLSelectElement {
-    return selectAt(0);
+  function startBlock(): HTMLElement {
+    const element = host.querySelector<HTMLElement>('[data-settings-row="agents.defaultProvider"]');
+
+    expect(element).not.toBeNull();
+
+    return element ?? document.createElement("div");
+  }
+
+  function providerTile(provider: "claudeCode" | "codex"): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(
+      `[role="radio"][data-provider="${provider}"]`,
+    );
+
+    expect(element).not.toBeNull();
+
+    return element ?? document.createElement("button");
+  }
+
+  function newThreadSelect(label: string): HTMLSelectElement {
+    const element = host.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
+
+    expect(element).not.toBeNull();
+
+    return element ?? document.createElement("select");
   }
 
   function isolationPicker(): HTMLSelectElement {
-    return selectAt(2);
-  }
+    const element = host.querySelector<HTMLSelectElement>(
+      '[data-settings-row="agents.isolationPolicy"] select',
+    );
 
-  function selectAt(index: number): HTMLSelectElement {
-    const element = [...host.querySelectorAll("select")][index];
-
-    expect(element).toBeDefined();
+    expect(element).not.toBeNull();
 
     return element ?? document.createElement("select");
   }

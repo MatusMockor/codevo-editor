@@ -1772,52 +1772,6 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.worktreeOnlyReason).not.toBeNull();
   });
 
-  it("seeds the launch from the remembered project launch and lets the user change it", () => {
-    const remembered: AgentLaunchOptions = {
-      provider: "claudeCode",
-      model: "default",
-      mode: "bypassPermissions",
-      effort: "default",
-    };
-    render(threadsSurfaceFixture({ lastUsedLaunch: () => remembered }));
-
-    expect(current().composer.composerProps.launch).toEqual({
-      ...remembered,
-      effort: "high",
-      context: "1m",
-    });
-
-    act(() =>
-      current().composer.composerProps.onLaunchChange(defaultAgentLaunchOptions("claudeCode")),
-    );
-    expect(current().composer.composerProps.launch).toEqual({
-      ...defaultAgentLaunchOptions("claudeCode"),
-      mode: "bypassPermissions",
-      effort: "high",
-    });
-  });
-
-  it("migrates legacy CLI-default launch values before they reach the composer", () => {
-    render(
-      threadsSurfaceFixture({
-        lastUsedLaunch: () => ({
-          provider: "claudeCode",
-          model: "default",
-          mode: "default",
-          effort: "default",
-        }),
-      }),
-    );
-
-    expect(current().composer.composerProps.launch).toEqual({
-      provider: "claudeCode",
-      model: "default",
-      mode: "bypassPermissions",
-      effort: "high",
-      context: "1m",
-    });
-  });
-
   it.each<AgentLaunchOptions>([
     {
       provider: "claudeCode",

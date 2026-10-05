@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { BrowserSettingsGateway, type KeyValueStorage } from "./browserSettingsGateway";
+import {
+  defaultAgentNewThreadDefaults,
+  type AgentNewThreadDefaults,
+} from "../domain/agentNewThreadDefaults";
 import { defaultKeymapSettings } from "../domain/keymap";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -94,6 +98,63 @@ describe("BrowserSettingsGateway", () => {
     });
     await expect(new BrowserSettingsGateway(storage).loadAppSettings()).resolves.toMatchObject({
       agentProviderPreferences: expected,
+    });
+  });
+
+  it("round trips new thread defaults across save and reload", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    const agentNewThreadDefaults: AgentNewThreadDefaults = {
+      source: "lastUsed",
+      claudeCode: { model: "claude-opus-4-8", effort: "max" },
+      codex: { model: "gpt-5.5", effort: "xhigh" },
+    };
+    expect((await gateway.loadAppSettings()).agentNewThreadDefaults).toEqual(
+      defaultAgentNewThreadDefaults(),
+    );
+
+    await gateway.saveAppSettings({ ...defaultAppSettings(), agentNewThreadDefaults });
+
+    expect(JSON.parse(storage.getItem("editor.settings.app") ?? "{}")).toMatchObject({
+      agentNewThreadDefaults,
+    });
+    expect(
+      (await new BrowserSettingsGateway(storage).loadAppSettings()).agentNewThreadDefaults,
+    ).toEqual(agentNewThreadDefaults);
+  });
+
+  it("restores new thread defaults when a saved settings literal omits them", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    const { agentNewThreadDefaults: _omitted, ...legacySettings } = defaultAppSettings();
+
+    await gateway.saveAppSettings(legacySettings);
+
+    expect(storage.getItem("editor.settings.app")).not.toContain("agentNewThreadDefaults");
+    expect((await gateway.loadAppSettings()).agentNewThreadDefaults).toEqual(
+      defaultAgentNewThreadDefaults(),
+    );
+  });
+
+  it("recovers only the stale part of persisted new thread defaults on reload", async () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "editor.settings.app",
+      JSON.stringify({
+        agentNewThreadDefaults: {
+          source: "lastUsed",
+          claudeCode: { model: "opus", effort: "medium" },
+          codex: { model: "GPT 5", effort: "high" },
+        },
+      }),
+    );
+
+    expect(
+      (await new BrowserSettingsGateway(storage).loadAppSettings()).agentNewThreadDefaults,
+    ).toEqual({
+      source: "lastUsed",
+      claudeCode: { model: "opus", effort: "medium" },
+      codex: { model: "default", effort: "default" },
     });
   });
 
@@ -534,6 +595,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -632,6 +694,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       agentCliKind: "claudeCode",
       maxConcurrentAgentTasks: 64,
@@ -739,6 +802,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "Fira Code, monospace",
@@ -895,6 +959,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",

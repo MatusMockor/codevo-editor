@@ -26,6 +26,7 @@ import {
   MAX_AGENT_THREAD_FONT_SIZE,
   MIN_AGENT_THREAD_FONT_SIZE,
 } from "./agentSettings";
+import { defaultAgentNewThreadDefaults } from "./agentNewThreadDefaults";
 import { defaultAgentProviderPreferences } from "./agentProviderSettings";
 import { defaultKeymapSettings } from "./keymap";
 import {
@@ -47,6 +48,7 @@ describe("settings defaults", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -175,6 +177,69 @@ describe("normalizeAppSettings", () => {
     expect(normalizeAppSettings({ agentThreadNotifications: "no" }).agentThreadNotifications).toBe(
       true,
     );
+  });
+
+  it("defaults new thread launches to the built-in model and effort per provider", () => {
+    const expected = {
+      source: "defaults",
+      claudeCode: { model: "default", effort: "high" },
+      codex: { model: "default", effort: "default" },
+    };
+
+    expect(defaultAppSettings().agentNewThreadDefaults).toEqual(expected);
+    expect(normalizeAppSettings({}).agentNewThreadDefaults).toEqual(expected);
+    expect(normalizeAppSettings(null).agentNewThreadDefaults).toEqual(expected);
+  });
+
+  it("round-trips persisted new thread defaults through serialization", () => {
+    const agentNewThreadDefaults = {
+      source: "lastUsed",
+      claudeCode: { model: "claude-opus-4-8", effort: "xhigh" },
+      codex: { model: "gpt-5.5", effort: "medium" },
+    };
+    const normalized = normalizeAppSettings({ agentNewThreadDefaults });
+
+    expect(normalized.agentNewThreadDefaults).toEqual(agentNewThreadDefaults);
+    expect(normalized.agentNewThreadDefaults).not.toBe(agentNewThreadDefaults);
+    expect(
+      normalizeAppSettings(JSON.parse(JSON.stringify(normalized))).agentNewThreadDefaults,
+    ).toEqual(agentNewThreadDefaults);
+  });
+
+  it("fails malformed new thread defaults closed without touching other settings", () => {
+    const normalized = normalizeAppSettings({
+      agentFollowUpBehavior: "steer",
+      agentNewThreadDefaults: {
+        source: "lastUsed",
+        claudeCode: { model: "claude-opus-4-8", effort: "xhigh" },
+        codex: { model: "gpt-5.5", effort: "medium" },
+        cursor: { model: "default", effort: "default" },
+      },
+    });
+
+    expect(normalized.agentNewThreadDefaults).toEqual(defaultAgentNewThreadDefaults());
+    expect(normalized.agentFollowUpBehavior).toBe("steer");
+    for (const malformed of [null, "lastUsed", 1, [], { source: "lastUsed" }]) {
+      expect(
+        normalizeAppSettings({ agentNewThreadDefaults: malformed }).agentNewThreadDefaults,
+      ).toEqual(defaultAgentNewThreadDefaults());
+    }
+  });
+
+  it("keeps the valid provider default when the other provider default is stale", () => {
+    expect(
+      normalizeAppSettings({
+        agentNewThreadDefaults: {
+          source: "lastUsed",
+          claudeCode: { model: "opus", effort: "medium" },
+          codex: { model: "GPT 5", effort: "high" },
+        },
+      }).agentNewThreadDefaults,
+    ).toEqual({
+      source: "lastUsed",
+      claudeCode: { model: "opus", effort: "medium" },
+      codex: { model: "default", effort: "default" },
+    });
   });
 
   it("persists only normalized provider preferences", () => {
@@ -318,6 +383,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -358,6 +424,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "Fira Code, monospace",
@@ -393,6 +460,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -474,6 +542,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -535,6 +604,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
