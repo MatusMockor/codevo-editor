@@ -330,6 +330,7 @@ describe("server thread images across inventory connectivity", () => {
     const h = await setup(null);
     await h.render({
       selectedProjectRootKey: projectKey,
+      attachmentEncoder: { encode: async (bytes) => btoa(String.fromCharCode(...bytes)) },
       imageSurface: {
         decode: async () => ({ width: 1, height: 1 }),
         encodeMime: async () => "image/png",

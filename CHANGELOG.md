@@ -7,6 +7,22 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.99] - 2026-10-06
+
+### Fixed
+
+- The composer uses one primary action: stop while a task runs with an empty draft,
+  or send and queue when text or attachments are ready.
+- Screenshots for server conversations stay available during a temporary connection
+  failure and can be sent after reconnecting to the same server and project.
+- Marking a server conversation as viewed retries confirmed revision conflicts
+  without overwriting newer conversation changes. Save failures show a specific
+  reason, and stale updates cannot cross server connection changes.
+- Recorded server changes offer a retry after a temporary connection failure.
+  Updated Codevo Runner stores new turn baselines as Git checkpoints, avoiding the
+  previous whole-project snapshot text limit. Previously unavailable baselines
+  remain unavailable.
+
 ## [0.2.0-beta.98] - 2026-10-05
 
 ### Added
