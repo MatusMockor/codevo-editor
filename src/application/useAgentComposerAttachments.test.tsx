@@ -39,6 +39,7 @@ interface PreviewBlob {
 interface Environment {
   owners: Map<string, AgentAttachmentOwner>;
   isRegularFile: boolean;
+  isDirectory: boolean;
   candidateBytes: number;
   extensionMime: string | null;
   stageError: Error | null;
@@ -89,6 +90,7 @@ function renderAttachments(environment: Environment) {
     inspectAgentAttachmentCandidate: vi.fn(async () => ({
       bytes: environment.candidateBytes,
       isRegularFile: environment.isRegularFile,
+      isDirectory: environment.isDirectory,
       extensionMime: environment.extensionMime,
     })),
     readAgentAttachmentCandidate: vi.fn(async () => new ArrayBuffer(environment.candidateBytes)),
@@ -144,6 +146,7 @@ function environment(overrides: Partial<Environment> = {}): Environment {
   return {
     owners: new Map([[ROOT_A, ownerA()]]),
     isRegularFile: true,
+    isDirectory: false,
     candidateBytes: 4_096,
     extensionMime: "image/png",
     stageError: null,
@@ -426,6 +429,80 @@ describe("useAgentComposerAttachments staging", () => {
     harness.unmount();
   });
 
+  it("attaches a directory ending in an image extension as a path and keeps it available at send", async () => {
+    const harness = renderAttachments(
+      environment({ isRegularFile: false, isDirectory: true, extensionMime: null }),
+    );
+    await act(() =>
+      harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/invoices.png/" }]),
+    );
+    expect(harness.hook().drafts[0]).toMatchObject({
+      state: "ready",
+      kind: "reference",
+      name: "invoices.png",
+      bytes: 0,
+      path: "/Users/dev/invoices.png/",
+      missing: false,
+      notice: "Folder path",
+    });
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    expect(prepared?.intents).toEqual([
+      { kind: "reference", name: "invoices.png", path: "/Users/dev/invoices.png/", bytes: 0 },
+    ]);
+    expect(harness.hook().drafts[0]?.missing).toBe(false);
+    expect(harness.gateway.readAgentAttachmentCandidate).not.toHaveBeenCalled();
+    expect(harness.gateway.stageAgentAttachmentBytes).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("resolves a shell-escaped directory path and detects a subsequent decoded duplicate", async () => {
+    const harness = renderAttachments(
+      environment({ isRegularFile: false, isDirectory: true, extensionMime: null }),
+    );
+    const escaped = "/Users/dev/codevo\\ s.r.o./výdavky/September";
+    const decoded = "/Users/dev/codevo s.r.o./výdavky/September";
+    harness.gateway.inspectAgentAttachmentCandidate = vi.fn(async ({ path }) => {
+      if (path === escaped) return null;
+      return { bytes: 0, isRegularFile: false, isDirectory: true, extensionMime: null };
+    });
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: escaped }]));
+    expect(harness.hook().drafts[0]).toMatchObject({
+      state: "ready",
+      path: decoded,
+      name: "September",
+      bytes: 0,
+    });
+    expect(harness.errors).toEqual([]);
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: decoded }]));
+    expect(harness.hook().drafts).toHaveLength(1);
+    expect(harness.hook().refusal).toBe(agentAttachmentDuplicateRefusal("September"));
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: escaped }]));
+    expect(harness.hook().drafts).toHaveLength(1);
+    expect(harness.hook().refusal).toBe(agentAttachmentDuplicateRefusal("September"));
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    expect(prepared?.intents).toEqual([
+      { kind: "reference", path: decoded, name: "September", bytes: 0 },
+    ]);
+    harness.unmount();
+  });
+
+  it("marks a removed directory reference missing at send time", async () => {
+    const harness = renderAttachments(
+      environment({ isRegularFile: false, isDirectory: true, extensionMime: null }),
+    );
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/September" }]));
+    harness.gateway.inspectAgentAttachmentCandidate = vi.fn(async () => null);
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    expect(prepared?.intents).toEqual([
+      { kind: "reference", name: "September", path: "/Users/dev/September", bytes: 0 },
+    ]);
+    expect(harness.hook().drafts[0]).toMatchObject({
+      missing: true,
+      notice: AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE,
+    });
+    harness.unmount();
+  });
+
   it("refuses a non-regular drop target with a definite message", async () => {
     const harness = renderAttachments(environment({ isRegularFile: false }));
 
@@ -536,11 +613,21 @@ describe("useAgentComposerAttachments conversation drafts", () => {
   it("invalidates pending intake when all drafts are cleared", async () => {
     const harness = renderAttachments(environment());
     let complete:
-      | ((value: { bytes: number; isRegularFile: boolean; extensionMime: string }) => void)
+      | ((value: {
+          bytes: number;
+          isRegularFile: boolean;
+          isDirectory: boolean;
+          extensionMime: string;
+        }) => void)
       | undefined;
     harness.gateway.inspectAgentAttachmentCandidate = vi.fn(
       () =>
-        new Promise<{ bytes: number; isRegularFile: boolean; extensionMime: string }>((resolve) => {
+        new Promise<{
+          bytes: number;
+          isRegularFile: boolean;
+          isDirectory: boolean;
+          extensionMime: string;
+        }>((resolve) => {
           complete = resolve;
         }),
     );
@@ -552,7 +639,12 @@ describe("useAgentComposerAttachments conversation drafts", () => {
     });
     act(() => harness.hook().clearAll!());
     await act(async () => {
-      complete!({ bytes: 100, isRegularFile: true, extensionMime: "image/png" });
+      complete!({
+        bytes: 100,
+        isRegularFile: true,
+        isDirectory: false,
+        extensionMime: "image/png",
+      });
       await pending;
     });
     expect(harness.hook().forDraft!("a").drafts).toEqual([]);
@@ -563,11 +655,21 @@ describe("useAgentComposerAttachments conversation drafts", () => {
     const env = environment();
     const harness = renderAttachments(env);
     let complete:
-      | ((value: { bytes: number; isRegularFile: boolean; extensionMime: string }) => void)
+      | ((value: {
+          bytes: number;
+          isRegularFile: boolean;
+          isDirectory: boolean;
+          extensionMime: string;
+        }) => void)
       | undefined;
     harness.gateway.inspectAgentAttachmentCandidate = vi.fn(
       () =>
-        new Promise<{ bytes: number; isRegularFile: boolean; extensionMime: string }>((resolve) => {
+        new Promise<{
+          bytes: number;
+          isRegularFile: boolean;
+          isDirectory: boolean;
+          extensionMime: string;
+        }>((resolve) => {
           complete = resolve;
         }),
     );
@@ -582,7 +684,12 @@ describe("useAgentComposerAttachments conversation drafts", () => {
     env.owners.set(ROOT_A, ownerA(1));
     harness.rerender();
     await act(async () => {
-      complete!({ bytes: 100, isRegularFile: true, extensionMime: "image/png" });
+      complete!({
+        bytes: 100,
+        isRegularFile: true,
+        isDirectory: false,
+        extensionMime: "image/png",
+      });
       await pending;
     });
     expect(harness.hook().forDraft!("pending").drafts).toEqual([]);
@@ -832,7 +939,7 @@ describe("useAgentComposerAttachments ownership", () => {
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/clip.mp4" }]));
     harness.gateway.inspectAgentAttachmentCandidate = vi.fn(async () => {
       env.owners.set(ROOT_A, ownerA(2));
-      return { bytes: 4_096, isRegularFile: true, extensionMime: null };
+      return { bytes: 4_096, isRegularFile: true, isDirectory: false, extensionMime: null };
     });
 
     expect(await act(() => harness.hook().prepareTurn(ROOT_A))).toBeNull();
@@ -959,9 +1066,14 @@ describe("useAgentComposerAttachments owner loss", () => {
     let releaseInspect: () => void = () => undefined;
     harness.gateway.inspectAgentAttachmentCandidate = vi.fn(
       () =>
-        new Promise<{ bytes: number; isRegularFile: boolean; extensionMime: null }>((resolve) => {
+        new Promise<{
+          bytes: number;
+          isRegularFile: boolean;
+          isDirectory: boolean;
+          extensionMime: null;
+        }>((resolve) => {
           releaseInspect = () =>
-            resolve({ bytes: 4_096, isRegularFile: true, extensionMime: null });
+            resolve({ bytes: 4_096, isRegularFile: true, isDirectory: false, extensionMime: null });
         }),
     );
     let staleAdd: Promise<void> = Promise.resolve();

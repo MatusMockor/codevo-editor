@@ -20,6 +20,7 @@ export interface AgentAttachmentCandidateRequest extends AgentAttachmentWorkspac
 export interface AgentAttachmentCandidateInspection {
   readonly bytes: number;
   readonly isRegularFile: boolean;
+  readonly isDirectory: boolean;
   readonly extensionMime: string | null;
 }
 
@@ -59,7 +60,7 @@ export interface AgentAttachmentGateway {
   ): Promise<StagedAgentAttachment>;
   inspectAgentAttachmentCandidate(
     request: AgentAttachmentCandidateRequest,
-  ): Promise<AgentAttachmentCandidateInspection>;
+  ): Promise<AgentAttachmentCandidateInspection | null>;
   readAgentAttachmentCandidate(request: AgentAttachmentCandidateRequest): Promise<ArrayBuffer>;
   claimAgentAttachments(
     request: ClaimAgentAttachmentsRequest,

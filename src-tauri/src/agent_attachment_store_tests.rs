@@ -1023,12 +1023,191 @@ fn candidate_inspection_reports_size_regularity_and_the_extension_mime() {
     let candidate = fixture
         .store
         .inspect_candidate(source.to_str().expect("utf-8"))
-        .expect("inspect candidate");
+        .expect("inspect candidate")
+        .expect("candidate exists");
 
     assert_eq!(candidate.bytes, jpeg_bytes(1, 1).len() as u64);
     assert!(candidate.is_regular_file);
+    assert!(!candidate.is_directory);
     assert_eq!(candidate.extension_mime, Some(AgentImageMime::Jpeg));
     assert!(fixture.store.inspect_candidate("relative/path").is_err());
+}
+
+#[test]
+fn candidate_inspection_reports_directories_without_file_size_or_image_mime() {
+    let fixture = TemporaryStore::create("inspect-directory");
+    let directory = fixture.root.join("September.png");
+    fs::create_dir(&directory).expect("create directory");
+    fs::write(directory.join("invoice.txt"), b"invoice").expect("write contained file");
+
+    let candidate = fixture
+        .store
+        .inspect_candidate(directory.to_str().expect("utf-8"))
+        .expect("inspect directory")
+        .expect("directory exists");
+
+    assert_eq!(candidate.bytes, 0);
+    assert!(!candidate.is_regular_file);
+    assert!(candidate.is_directory);
+    assert_eq!(candidate.extension_mime, None);
+    assert_eq!(
+        serde_json::to_value(&candidate).expect("serialize directory inspection"),
+        serde_json::json!({
+            "bytes": 0,
+            "isRegularFile": false,
+            "isDirectory": true,
+            "extensionMime": null,
+        })
+    );
+    assert_eq!(
+        fixture
+            .store
+            .read_candidate(directory.to_str().expect("utf-8"))
+            .expect_err("directories cannot be read as file attachments"),
+        AGENT_ATTACHMENT_NOT_REGULAR_FILE_ERROR
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_inspection_does_not_follow_file_or_directory_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TemporaryStore::create("inspect-symlinks");
+    let file = fixture.root.join("source.png");
+    let directory = fixture.root.join("September");
+    fs::write(&file, png_bytes(1, 1)).expect("write file");
+    fs::create_dir(&directory).expect("create directory");
+
+    for (index, target) in [file, directory].iter().enumerate() {
+        let alias = fixture.root.join(format!("alias-{index}.png"));
+        symlink(target, &alias).expect("create symlink");
+        let candidate = fixture
+            .store
+            .inspect_candidate(alias.to_str().expect("utf-8"))
+            .expect("inspect symlink")
+            .expect("symlink exists");
+
+        assert!(!candidate.is_regular_file);
+        assert!(!candidate.is_directory);
+        assert_eq!(candidate.extension_mime, None);
+        assert_eq!(
+            fixture
+                .store
+                .read_candidate(alias.to_str().expect("utf-8"))
+                .expect_err("symlinks must remain unreadable"),
+            AGENT_ATTACHMENT_SYMLINK_ERROR
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_inspection_does_not_follow_directory_symlinks_with_redundant_suffixes() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TemporaryStore::create("inspect-directory-symlink-suffixes");
+    let directory = fixture.root.join("September");
+    let alias = fixture.root.join("alias.png");
+    fs::create_dir(&directory).expect("create directory");
+    symlink(&directory, &alias).expect("create directory symlink");
+
+    for suffix in ["", "/", "///", "/."] {
+        let path = format!("{}{suffix}", alias.display());
+        let candidate = fixture
+            .store
+            .inspect_candidate(&path)
+            .expect("inspect symlink with redundant suffix")
+            .expect("symlink exists");
+
+        assert!(!candidate.is_regular_file, "must reject {path}");
+        assert!(!candidate.is_directory, "must reject {path}");
+        assert_eq!(candidate.extension_mime, None, "must reject {path}");
+    }
+}
+
+#[test]
+fn candidate_inspection_preserves_valid_directory_suffixes() {
+    let fixture = TemporaryStore::create("inspect-directory-suffixes");
+    let directory = fixture.root.join("September.png");
+    fs::create_dir(&directory).expect("create directory");
+
+    for suffix in ["/", "///", "/."] {
+        let path = format!("{}{suffix}", directory.display());
+        let candidate = fixture
+            .store
+            .inspect_candidate(&path)
+            .expect("inspect directory alias")
+            .expect("directory exists");
+
+        assert!(!candidate.is_regular_file, "directory alias {path}");
+        assert!(candidate.is_directory, "directory alias {path}");
+        assert_eq!(candidate.bytes, 0);
+        assert_eq!(candidate.extension_mime, None);
+    }
+}
+
+#[test]
+fn candidate_inspection_does_not_accept_directory_suffixes_on_regular_files() {
+    let fixture = TemporaryStore::create("inspect-file-suffixes");
+    let file = fixture.root.join("invoice.txt");
+    fs::write(&file, b"invoice").expect("write file");
+
+    for suffix in ["/", "///", "/."] {
+        let path = format!("{}{suffix}", file.display());
+        assert!(
+            fs::symlink_metadata(&path).is_err(),
+            "invalid source {path}"
+        );
+        assert!(
+            fixture.store.inspect_candidate(&path).is_err(),
+            "must preserve the original path error for {path}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_inspection_does_not_report_dangling_symlink_suffixes_as_missing() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TemporaryStore::create("inspect-dangling-symlink-suffixes");
+    let alias = fixture.root.join("alias.png");
+    symlink(fixture.root.join("missing-directory"), &alias).expect("create dangling symlink");
+
+    for suffix in ["", "/", "///", "/."] {
+        let path = format!("{}{suffix}", alias.display());
+        let candidate = fixture
+            .store
+            .inspect_candidate(&path)
+            .expect("inspect dangling symlink")
+            .expect("a symlink is an unsupported candidate, not a missing one");
+
+        assert!(!candidate.is_regular_file, "must reject {path}");
+        assert!(!candidate.is_directory, "must reject {path}");
+        assert_eq!(candidate.extension_mime, None, "must reject {path}");
+    }
+}
+
+#[test]
+fn candidate_inspection_reports_missing_paths_without_masking_other_errors() {
+    let fixture = TemporaryStore::create("inspect-missing");
+    let missing = fixture.root.join("not-present.png");
+    assert_eq!(
+        fixture
+            .store
+            .inspect_candidate(missing.to_str().expect("utf-8"))
+            .expect("missing path is not an inspection error"),
+        None
+    );
+
+    let file = fixture.root.join("file.txt");
+    fs::write(&file, b"file").expect("write file");
+    let impossible_child = file.join("child");
+    assert!(fixture
+        .store
+        .inspect_candidate(impossible_child.to_str().expect("utf-8"))
+        .is_err());
 }
 
 #[test]

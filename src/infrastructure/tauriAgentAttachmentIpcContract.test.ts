@@ -217,15 +217,79 @@ describe("claim_agent_attachments", () => {
 });
 
 describe("inspect, read, release and reveal", () => {
+  it("preserves a missing candidate as null", async () => {
+    const invokeCommand = vi.fn(async () => null);
+
+    await expect(
+      invokeInspectAgentAttachmentCandidateIpc(invokeCommand, {
+        workspaceId: "ws-1",
+        path: "/Users/dev/not-present.png",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it.each([undefined, false, [], "missing"])(
+    "rejects a malformed candidate result instead of treating it as missing: %j",
+    async (result) => {
+      const invokeCommand = vi.fn(async () => result);
+
+      await expect(
+        invokeInspectAgentAttachmentCandidateIpc(invokeCommand, {
+          workspaceId: "ws-1",
+          path: "/Users/dev/not-present.png",
+        }),
+      ).rejects.toThrow(/Invalid agent attachment value/);
+    },
+  );
+
   it("parses a bounded candidate inspection", async () => {
-    const invokeCommand = vi.fn(async () => ({ bytes: 64, isRegularFile: true }));
+    const invokeCommand = vi.fn(async () => ({
+      bytes: 64,
+      isRegularFile: true,
+      isDirectory: false,
+      extensionMime: null,
+    }));
 
     expect(
       await invokeInspectAgentAttachmentCandidateIpc(invokeCommand, {
         workspaceId: "ws-1",
         path: "/Users/dev/clip.mp4",
       }),
-    ).toEqual({ bytes: 64, isRegularFile: true, extensionMime: null });
+    ).toEqual({ bytes: 64, isRegularFile: true, isDirectory: false, extensionMime: null });
+  });
+
+  it.each([
+    { bytes: 0, isRegularFile: false, isDirectory: true, extensionMime: null },
+    { bytes: 12, isRegularFile: false, isDirectory: false, extensionMime: null },
+  ])("preserves directory and unsupported candidate types: %j", async (inspection) => {
+    const invokeCommand = vi.fn(async () => inspection);
+
+    await expect(
+      invokeInspectAgentAttachmentCandidateIpc(invokeCommand, {
+        workspaceId: "ws-1",
+        path: "/Users/dev/folder.png",
+      }),
+    ).resolves.toEqual(inspection);
+  });
+
+  it.each([
+    { bytes: 0, isRegularFile: false, extensionMime: null },
+    { bytes: 0, isRegularFile: false, isDirectory: true },
+    { bytes: 0, isRegularFile: false, isDirectory: true, extensionMime: undefined },
+    { bytes: 0, isRegularFile: false, isDirectory: "true", extensionMime: null },
+    { bytes: 0, isRegularFile: true, isDirectory: true, extensionMime: null },
+    { bytes: 1, isRegularFile: false, isDirectory: true, extensionMime: null },
+    { bytes: 0, isRegularFile: false, isDirectory: true, extensionMime: "image/png" },
+    { bytes: 0, isRegularFile: false, isDirectory: true, extensionMime: null, unknown: true },
+  ])("rejects malformed or contradictory candidate inspection: %j", async (inspection) => {
+    const invokeCommand = vi.fn(async () => inspection);
+
+    await expect(
+      invokeInspectAgentAttachmentCandidateIpc(invokeCommand, {
+        workspaceId: "ws-1",
+        path: "/Users/dev/folder.png",
+      }),
+    ).rejects.toThrow(/Invalid agent attachment value/);
   });
 
   it("normalises attachment bytes to an ArrayBuffer", async () => {

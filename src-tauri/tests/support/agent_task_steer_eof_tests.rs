@@ -94,8 +94,13 @@ else:
 assert sys.stdin.read() == ''
 os.close(gate)
 "#;
-    let python = probe_binary(&["/usr/bin/python3", "/opt/homebrew/bin/python3"])
-        .expect("Python 3 for EOF-sensitive real-process fixture");
+    // Avoid macOS's Xcode Python shim when spawning with a cleared environment.
+    let python = probe_binary(&[
+        "/opt/homebrew/bin/python3",
+        "/usr/local/bin/python3",
+        "/usr/bin/python3",
+    ])
+    .expect("Python 3 for EOF-sensitive real-process fixture");
     let plan = AgentTaskSpawnPlan::for_tests(
         python,
         vec![

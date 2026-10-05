@@ -291,7 +291,7 @@ pub(crate) async fn stage_agent_attachment_from_path(
 pub(crate) async fn inspect_agent_attachment_candidate(
     app: AppHandle,
     request: AgentAttachmentCandidateRequest,
-) -> Result<AgentAttachmentCandidate, String> {
+) -> Result<Option<AgentAttachmentCandidate>, String> {
     let store = attachment_store(&app);
     run_blocking_command(move || {
         resolve_agent_attachment_owner(&app, &request.workspace_id)?;

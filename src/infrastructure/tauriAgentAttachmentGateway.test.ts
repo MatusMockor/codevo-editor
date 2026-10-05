@@ -17,7 +17,7 @@ function gateway(available: boolean) {
       return [{ attachmentId: ATTACHMENT_ID, storedPath: STORED_PATH, promptLine: "[Attached]" }];
     }
     if (command === "inspect_agent_attachment_candidate") {
-      return { bytes: 10, isRegularFile: true, extensionMime: "image/png" };
+      return { bytes: 10, isRegularFile: true, isDirectory: false, extensionMime: "image/png" };
     }
     if (command === "read_agent_attachment" || command === "read_agent_attachment_candidate") {
       return new Uint8Array([1, 2]).buffer;

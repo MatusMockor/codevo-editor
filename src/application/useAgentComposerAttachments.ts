@@ -10,9 +10,7 @@ import {
   admitAgentAttachmentToTurn,
   agentAttachmentPromptLine,
   agentPasteClaim,
-  isAttachableAgentReferencePath,
   planAgentAttachmentIntake,
-  sanitizeAgentAttachmentName,
   type AgentAttachmentCandidate,
   type AgentPasteClaim,
 } from "../domain/agentAttachmentIntake";
@@ -24,13 +22,14 @@ import {
   type AgentImageSurfacePort,
 } from "../domain/agentImageShrink";
 import type { AgentAttachmentGateway, StagedAgentAttachment } from "./agentAttachmentPorts";
+import { describeAgentAttachmentSource } from "./agentAttachmentPathIntake";
 import { AGENT_TASKS_SOURCE, attempt, errorMessageOf } from "./agentProjectAuthority";
 import type { AgentTurnAttachmentIntent } from "./agentThreadPorts";
 import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 
 export const AGENT_ATTACHMENT_UNREADABLE_REFUSAL = "The image could not be read.";
 export const AGENT_ATTACHMENT_STAGE_FAILURE_PREFIX = "Unable to save the attachment: ";
-export const AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE = "This file is no longer at that path";
+export const AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE = "This path is no longer available";
 
 export function agentAttachmentDuplicateRefusal(name: string): string {
   return `${name} is already attached.`;
@@ -432,7 +431,7 @@ type IntakeOutcome = "settled" | "refused-count";
 async function intakeAgentAttachmentSource(
   context: DraftCoordinator,
   owner: AgentAttachmentOwner,
-  source: AgentAttachmentSource,
+  rawSource: AgentAttachmentSource,
 ): Promise<IntakeOutcome> {
   if (context.retainedDrafts().length >= MAX_RETAINED_DRAFTS) {
     context.setRefusal(DRAFT_STORAGE_FULL);
@@ -443,16 +442,28 @@ async function intakeAgentAttachmentSource(
     context.setRefusal(admission.reason);
     return "refused-count";
   }
-  const duplicate = duplicatePathDraft(context, source);
+  const duplicate = duplicatePathDraft(context, rawSource);
   if (duplicate !== null) {
     context.setRefusal(agentAttachmentDuplicateRefusal(duplicate.name));
     return "settled";
   }
   const draftId = (context.deps().createDraftId ?? defaultDraftId)();
-  const candidate = await describeCandidate(context, owner, source);
+  const described = await describeAgentAttachmentSource(
+    context.gateway,
+    owner.workspaceId,
+    rawSource,
+    () => context.ownerIsCurrent(owner),
+    (error) => context.deps().reportError(AGENT_TASKS_SOURCE, error),
+  );
   if (!context.ownerIsCurrent(owner)) return "settled";
-  if (candidate === null) {
+  if (described === null) {
     appendDraft(context, failedDraft(draftId, owner, AGENT_ATTACHMENT_PATH_REFUSAL));
+    return "settled";
+  }
+  const { source, candidate } = described;
+  const resolvedDuplicate = duplicatePathDraft(context, source);
+  if (resolvedDuplicate !== null) {
+    context.setRefusal(agentAttachmentDuplicateRefusal(resolvedDuplicate.name));
     return "settled";
   }
   const plan = planAgentAttachmentIntake(candidate);
@@ -471,7 +482,7 @@ async function intakeAgentAttachmentSource(
         blankDraft(draftId, owner, "reference", candidate.name),
         candidate.bytes,
         source.path,
-        plan.notice,
+        candidate.mime === "inode/directory" ? "Folder path" : plan.notice,
       ),
     );
     return "settled";
@@ -597,7 +608,13 @@ async function prepareAgentTurnAttachments(
       }),
     );
     if (!context.ownerIsCurrent(owner)) return discardStaleDrafts(context);
-    markReferenceMissing(context, draft.draftId, !inspected.ok || !inspected.value.isRegularFile);
+    markReferenceMissing(
+      context,
+      draft.draftId,
+      !inspected.ok ||
+        inspected.value === null ||
+        (!inspected.value.isRegularFile && !inspected.value.isDirectory),
+    );
   }
   if (!context.ownerIsCurrent(owner)) return discardStaleDrafts(context);
   return {
@@ -614,39 +631,6 @@ function discardStaleDrafts(context: DraftCoordinator): null {
   context.setRefusal(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
   context.publish();
   return null;
-}
-
-async function describeCandidate(
-  context: DraftCoordinator,
-  owner: AgentAttachmentOwner,
-  source: AgentAttachmentSource,
-): Promise<AgentAttachmentCandidate | null> {
-  if (source.kind === "bytes") {
-    return {
-      name: sanitizeAgentAttachmentName(source.name),
-      mime: source.mime,
-      hasPath: false,
-      bytes: source.bytes.byteLength,
-    };
-  }
-  if (!isAttachableAgentReferencePath(source.path)) return null;
-  const inspected = await attempt(() =>
-    context.gateway.inspectAgentAttachmentCandidate({
-      workspaceId: owner.workspaceId,
-      path: source.path,
-    }),
-  );
-  if (!inspected.ok) {
-    context.deps().reportError(AGENT_TASKS_SOURCE, inspected.error);
-    return null;
-  }
-  if (!inspected.value.isRegularFile) return null;
-  return {
-    name: sanitizeAgentAttachmentName(source.path),
-    mime: inspected.value.extensionMime ?? "",
-    hasPath: true,
-    bytes: inspected.value.bytes,
-  };
 }
 
 async function readImageBytes(

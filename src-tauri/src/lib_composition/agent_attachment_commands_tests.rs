@@ -103,6 +103,7 @@ fn every_attachment_result_shape_reaches_the_webview_in_camel_case() {
     let candidate = serde_json::to_string(&AgentAttachmentCandidate {
         bytes: 12,
         is_regular_file: true,
+        is_directory: false,
         extension_mime: Some(AgentImageMime::Jpeg),
     })
     .expect("serialize candidate");
@@ -121,7 +122,7 @@ fn every_attachment_result_shape_reaches_the_webview_in_camel_case() {
     );
     assert_eq!(
         candidate,
-        r#"{"bytes":12,"isRegularFile":true,"extensionMime":"image/jpeg"}"#
+        r#"{"bytes":12,"isRegularFile":true,"isDirectory":false,"extensionMime":"image/jpeg"}"#
     );
 }
 

@@ -371,10 +371,12 @@ impl FakeCli {
     pub(crate) fn new(label: &str) -> Self {
         let dir = unique_path(label);
         fs::create_dir_all(&dir).expect("fake cli directory");
+        // macOS's system Python can be an Xcode shim requiring a licensed developer setup.
+        // Prefer standalone interpreters because child fixtures intentionally clear the environment.
         let python = probe_binary(&[
-            "/usr/bin/python3",
             "/opt/homebrew/bin/python3",
             "/usr/local/bin/python3",
+            "/usr/bin/python3",
         ])
         .expect("python3 for the fake Claude CLI");
         Self { dir, python }

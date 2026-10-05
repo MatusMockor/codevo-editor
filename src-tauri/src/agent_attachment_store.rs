@@ -115,7 +115,7 @@ pub struct ClaimedAgentAttachment {
 pub struct AgentAttachmentCandidate {
     pub bytes: u64,
     pub is_regular_file: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_directory: bool,
     pub extension_mime: Option<AgentImageMime>,
 }
 
@@ -203,20 +203,48 @@ impl AgentAttachmentStore {
         })
     }
 
-    pub fn inspect_candidate(&self, path: &str) -> Result<AgentAttachmentCandidate, String> {
+    pub fn inspect_candidate(
+        &self,
+        path: &str,
+    ) -> Result<Option<AgentAttachmentCandidate>, String> {
         ensure_candidate_path(path)?;
-        let metadata = fs::symlink_metadata(path)
-            .map_err(|error| format!("The attachment could not be read: {error}"))?;
-        Ok(AgentAttachmentCandidate {
-            bytes: metadata.len(),
-            is_regular_file: metadata.file_type().is_file(),
-            extension_mime: Path::new(path)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref()
-                .and_then(agent_image_mime_for_extension),
-        })
+        // Trailing separators and `/.` make symlink_metadata follow a directory
+        // symlink on some platforms. Strip only lexical redundancy; retain `..`.
+        let inspected_path: PathBuf = Path::new(path).components().collect();
+        let metadata = match fs::symlink_metadata(&inspected_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("The attachment could not be read: {error}")),
+        };
+        // Keep the original filesystem spelling authoritative for non-symlinks:
+        // `file/` and `file/.` must fail rather than become valid file references.
+        // Classify symlinks first so a dangling `link/` cannot look merely missing.
+        if !metadata.file_type().is_symlink()
+            && inspected_path.as_os_str() != Path::new(path).as_os_str()
+        {
+            match fs::symlink_metadata(path) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(format!("The attachment could not be read: {error}")),
+            }
+        }
+        let is_regular_file = metadata.file_type().is_file();
+        let is_directory = metadata.file_type().is_dir();
+        Ok(Some(AgentAttachmentCandidate {
+            bytes: if is_directory { 0 } else { metadata.len() },
+            is_regular_file,
+            is_directory,
+            extension_mime: if is_regular_file {
+                inspected_path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref()
+                    .and_then(agent_image_mime_for_extension)
+            } else {
+                None
+            },
+        }))
     }
 
     pub fn read_candidate(&self, path: &str) -> Result<Vec<u8>, String> {

@@ -83,16 +83,33 @@ export async function invokeStageAgentAttachmentBytesIpc(
 export async function invokeInspectAgentAttachmentCandidateIpc(
   invokeCommand: InvokeAgentAttachmentCommand,
   request: AgentAttachmentCandidateRequest,
-): Promise<AgentAttachmentCandidateInspection> {
+): Promise<AgentAttachmentCandidateInspection | null> {
   const value = await invokeCommand(INSPECT_AGENT_ATTACHMENT_CANDIDATE_IPC_COMMAND, {
     request: candidateRequest(request),
   });
+  if (value === null) return null;
   const result = record(value, "result");
-  exactKeys(result, ["bytes", "isRegularFile", "extensionMime"], "result");
+  const fields = ["bytes", "isRegularFile", "isDirectory", "extensionMime"];
+  exactKeys(result, fields, "result");
+  if (fields.some((field) => !Object.prototype.hasOwnProperty.call(result, field))) {
+    invalid("result", `all the fields ${fields.join(", ")}`);
+  }
+  if (result.extensionMime === undefined) {
+    invalid("result.extensionMime", "null or a bounded mime string");
+  }
+  const bytes = boundedBytes(result.bytes, "result.bytes", Number.MAX_SAFE_INTEGER);
+  const isRegularFile = booleanFlag(result.isRegularFile, "result.isRegularFile");
+  const isDirectory = booleanFlag(result.isDirectory, "result.isDirectory");
+  const extensionMime = optionalMimeText(result.extensionMime, "result.extensionMime");
+  if (isRegularFile && isDirectory) invalid("result", "a file or directory, never both");
+  if (isDirectory && (bytes !== 0 || extensionMime !== null)) {
+    invalid("result", "zero bytes and no extension mime for a directory");
+  }
   return {
-    bytes: boundedBytes(result.bytes, "result.bytes", Number.MAX_SAFE_INTEGER),
-    isRegularFile: booleanFlag(result.isRegularFile, "result.isRegularFile"),
-    extensionMime: optionalMimeText(result.extensionMime, "result.extensionMime"),
+    bytes,
+    isRegularFile,
+    isDirectory,
+    extensionMime,
   };
 }
 

@@ -49,7 +49,7 @@ export class TauriAgentAttachmentGateway implements AgentAttachmentGateway {
 
   async inspectAgentAttachmentCandidate(
     request: AgentAttachmentCandidateRequest,
-  ): Promise<AgentAttachmentCandidateInspection> {
+  ): Promise<AgentAttachmentCandidateInspection | null> {
     this.requireRuntime();
     return invokeInspectAgentAttachmentCandidateIpc(this.invokeCommand, request);
   }
