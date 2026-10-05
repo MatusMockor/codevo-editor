@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.96] - 2026-10-05
+
+### Fixed
+
+- Dismissed usage-limit notices stay closed when you switch workspaces or restart
+  the editor. New limit windows can still show a notice, and `/usage` reopens it
+  whenever you want to check your limits.
+- Agent attachments accept directories and shell-escaped paths.
+
 ## [0.2.0-beta.95] - 2026-10-05
 
 ### Fixed

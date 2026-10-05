@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import type { AgentAccountUsageWindow } from "../../../domain/agentAccountUsage";
 import { isAgentAccountUsageWindowExpired } from "../../../domain/agentAccountUsageFreshness";
 import {
@@ -8,8 +8,14 @@ import {
   type UsageProviderKind,
 } from "../../usage/usagePresentation";
 
+import {
+  dismissComposerUsageWindows,
+  loadComposerUsageDismissals,
+  parseComposerUsageDismissals,
+  subscribeComposerUsageDismissals,
+} from "../../../infrastructure/browserComposerUsageDismissals";
+
 const PROVIDERS: ReadonlyArray<UsageProviderKind> = ["claudeCode", "codex"];
-const NO_KEYS: ReadonlySet<string> = new Set();
 
 export interface ComposerUsageLimitsEntry {
   readonly provider: UsageProviderKind;
@@ -31,7 +37,15 @@ export function useComposerUsageLimitsNotice(
   const providers = useMemo(() => readyProviders(accountUsage), [accountUsage]);
   const snapshotKey = useMemo(() => snapshotKeyOf(accountUsage), [accountUsage]);
   const hotKeys = useMemo(() => hotWindowKeys(providers, now()), [providers, now]);
-  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(NO_KEYS);
+  const dismissedSnapshot = useSyncExternalStore(
+    subscribeComposerUsageDismissals,
+    loadComposerUsageDismissals,
+    loadComposerUsageDismissals,
+  );
+  const dismissedKeys = useMemo(
+    () => parseComposerUsageDismissals(dismissedSnapshot),
+    [dismissedSnapshot],
+  );
   const [requestedKey, setRequestedKey] = useState<string | null>(null);
   const requested = requestedKey === snapshotKey;
   const undismissedHot = hotKeys.some((key) => !dismissedKeys.has(key));
@@ -40,7 +54,7 @@ export function useComposerUsageLimitsNotice(
     setRequestedKey(snapshotKey);
   }, [snapshotKey]);
   const dismiss = useCallback(() => {
-    setDismissedKeys(new Set(hotKeys));
+    dismissComposerUsageWindows(hotKeys);
     setRequestedKey(null);
   }, [hotKeys]);
   return useMemo(

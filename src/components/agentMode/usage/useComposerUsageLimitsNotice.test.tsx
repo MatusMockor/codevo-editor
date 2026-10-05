@@ -54,6 +54,7 @@ describe("useComposerUsageLimitsNotice", () => {
     document.body.append(host);
     root = createRoot(host);
     notice = null;
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -109,6 +110,61 @@ describe("useComposerUsageLimitsNotice", () => {
         />,
       ),
     );
+    expect(notice?.visible).toBe(false);
+  });
+
+  it("keeps dismissal across workspace A → B → A remounts and permits /usage", () => {
+    act(() => root.render(<Harness key="A" accountUsage={usage(95, 1)} />));
+    act(() => notice?.dismiss());
+    act(() => root.render(<Harness key="B" accountUsage={usage(96, 2)} />));
+    expect(notice?.visible).toBe(false);
+    act(() => notice?.show());
+    expect(notice?.visible).toBe(true);
+    act(() => root.render(<Harness key="A-again" accountUsage={usage(97, 3)} />));
+    expect(notice?.visible).toBe(false);
+  });
+
+  it("synchronizes dismissal between mounted composers", () => {
+    const notices: Array<ReturnType<typeof useComposerUsageLimitsNotice>> = [];
+    function Composer({ index }: { index: number }) {
+      notices[index] = useComposerUsageLimitsNotice(usage(95, 1), () => NOW);
+      return null;
+    }
+    act(() =>
+      root.render(
+        <>
+          <Composer index={0} />
+          <Composer index={1} />
+        </>,
+      ),
+    );
+    expect(notices[1].visible).toBe(true);
+    act(() => notices[0].dismiss());
+    expect(notices[1].visible).toBe(false);
+  });
+
+  it("retains earlier dismissals when another window is dismissed", () => {
+    act(() => root.render(<Harness accountUsage={usage(95, 1)} />));
+    act(() => notice?.dismiss());
+    const other = usageWith(2, [{ id: "five_hour", usedPercent: 96 }]);
+    act(() => root.render(<Harness accountUsage={other} />));
+    act(() => notice?.dismiss());
+    act(() => root.render(<Harness key="new-workspace" accountUsage={usage(97, 3)} />));
+    expect(notice?.visible).toBe(false);
+  });
+
+  it("persists reset identities containing escaped control characters", () => {
+    const accountUsage = usageWith(1, [
+      {
+        id: "\u0001".repeat(160),
+        usedPercent: 95,
+        resetsLabel: "\u0002".repeat(200),
+      },
+    ]);
+    act(() => root.render(<Harness accountUsage={accountUsage} />));
+    act(() => notice?.dismiss());
+    expect(notice?.visible).toBe(false);
+    act(() => root.render(<Harness key="another-workspace" accountUsage={accountUsage} />));
     expect(notice?.visible).toBe(false);
   });
 
