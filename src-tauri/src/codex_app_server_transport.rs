@@ -631,7 +631,7 @@ impl CodexAppServerTransport {
         let id = self
             .shared
             .next_id
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |id| id.checked_add(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |id| id.checked_add(1))
             .map_err(|_| CodexRpcFailure::HostFailed {
                 reason: "Codex app-server request identifier limit reached.".to_string(),
             })?;

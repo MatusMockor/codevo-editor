@@ -427,7 +427,7 @@ impl PhpLanguageServerRegistry {
         }
         let generation = self
             .next_restart_token
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
                 |current| current.checked_add(1),
@@ -790,7 +790,7 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         }
         let generation = self
             .next_restart_token
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
                 |current| current.checked_add(1),

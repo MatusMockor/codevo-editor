@@ -17,7 +17,7 @@ struct CollectionPermit;
 impl CollectionPermit {
     fn acquire() -> Result<Self, String> {
         ACTIVE_COLLECTIONS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 2).then_some(count + 1)
             })
             .map(|_| Self)

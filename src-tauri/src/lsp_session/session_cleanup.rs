@@ -25,7 +25,7 @@ struct SessionOwnershipAdmission {
 impl SessionOwnershipAdmission {
     fn reserve(&'static self) -> Result<SessionOwnershipPermit, String> {
         self.retained
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 (current < self.capacity).then_some(current + 1)
             })
             .map(|_| SessionOwnershipPermit { admission: self })

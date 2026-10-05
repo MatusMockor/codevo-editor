@@ -404,7 +404,7 @@ impl WorkspaceFileChangeWatchRegistry {
 
     pub fn allocate_generation(&self) -> Result<u64, String> {
         self.next_generation
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |generation| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |generation| {
                 (generation < MAX_SAFE_JAVASCRIPT_WATCH_GENERATION).then_some(generation + 1)
             })
             .map_err(|_| "Workspace watch generation space is exhausted.".to_string())

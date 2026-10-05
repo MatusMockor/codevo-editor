@@ -40,7 +40,7 @@ struct PortOperationPermit;
 impl PortOperationPermit {
     fn acquire() -> Result<Self, String> {
         PORT_OPERATIONS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < MAX_PORT_OPERATIONS).then_some(count + 1)
             })
             .map_err(|_| "Server port forwarding is busy; retry shortly")?;

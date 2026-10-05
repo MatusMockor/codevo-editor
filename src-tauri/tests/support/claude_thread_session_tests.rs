@@ -61,7 +61,7 @@ impl ClaudeSessionOwner for RecordingOwner {
         ));
         let refused = self
             .refuse_levels
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .is_ok();

@@ -355,7 +355,7 @@ impl SemanticDocumentHostEpochs {
 
     fn issue(&self) -> Result<u64, String> {
         self.next
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current <= MAX_SAFE_INTEGER).then(|| current + 1)
             })
             .map_err(|_| "Semantic document host epoch is exhausted.".to_string())

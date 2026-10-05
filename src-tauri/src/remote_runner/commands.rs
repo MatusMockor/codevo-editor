@@ -7,7 +7,7 @@ struct OperationPermit;
 impl OperationPermit {
     fn acquire() -> Result<Self, String> {
         OPERATIONS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 8).then_some(count + 1)
             })
             .map_err(|_| "Runner is busy; retry shortly")?;

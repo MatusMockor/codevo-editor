@@ -25,7 +25,7 @@ impl PublisherCapacity {
 
     fn reserve(self: &Arc<Self>) -> Result<PublisherPermit, String> {
         self.active
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |active| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |active| {
                 (active < self.limit).then_some(active + 1)
             })
             .map(|_| PublisherPermit {

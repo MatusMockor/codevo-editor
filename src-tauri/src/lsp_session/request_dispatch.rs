@@ -426,7 +426,7 @@ impl CancellationTransport {
         }
         if self
             .outstanding
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |outstanding| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |outstanding| {
                 (outstanding < MAX_QUEUED_CANCELLATIONS_PER_SESSION).then_some(outstanding + 1)
             })
             .is_err()
@@ -588,7 +588,7 @@ impl ExactSessionNotificationTransport {
         }
         if self
             .outstanding
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |outstanding| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |outstanding| {
                 (outstanding < MAX_QUEUED_NOTIFICATIONS_PER_SESSION).then_some(outstanding + 1)
             })
             .is_err()
