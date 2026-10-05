@@ -25,6 +25,8 @@ import {
 } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentAccountUsageSnapshot } from "../domain/agentAccountUsage";
+import type { AgentAccountUsageSourcesPort } from "../domain/agentAccountUsageSources";
+import { createAgentAccountUsageSources } from "./agentAccountUsageSources";
 import { BrowserAgentAccountUsageStoreGateway } from "../infrastructure/browserAgentAccountUsageStoreGateway";
 import {
   agentProviderUpdateOperationId,
@@ -37,6 +39,108 @@ const ACTIVE_ROOT = "/ws/active";
 const ACTIVE_ID = "workspace-active";
 const BACKGROUND_ROOT = "/ws/api";
 const CLI_PATH = "/usr/local/bin/claude";
+
+describe("shared local account usage authority", () => {
+  const identity = `account:v1:sha256:${"a".repeat(64)}`;
+  const snapshot = (percent: number): AgentAccountUsageSnapshot => ({
+    provider: "codex",
+    accountIdentity: identity,
+    fetchedAtEpochMs: Date.now(),
+    windows: [
+      {
+        id: "weekly",
+        label: "Weekly limit",
+        usedPercent: percent,
+        windowDurationMinutes: null,
+        resetsAtEpochMs: null,
+        resetsLabel: null,
+      },
+    ],
+  });
+  it("rejects a local poll overtaken by a matching server observation, but allows unrelated peers", async () => {
+    const sources = createAgentAccountUsageSources();
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerKind: "codex",
+      storedAccountUsage: [snapshot(10)],
+      accountUsageSources: sources,
+    });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.codex.health.kind).toBe("ready"),
+    );
+    const deferred = createDeferred<AgentAccountUsageSnapshot>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => deferred.promise,
+    );
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = harness.hook().refreshAccountUsage?.("codex");
+    });
+    act(() => sources.observe("server", snapshot(40)));
+    await act(async () => {
+      deferred.resolve(snapshot(20));
+      expect(await pending).toEqual({ kind: "superseded" });
+    });
+    expect(harness.hook().accountUsage.codex).toMatchObject({
+      kind: "ready",
+      snapshot: { windows: [{ usedPercent: 40 }] },
+    });
+    const second = createDeferred<AgentAccountUsageSnapshot>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => second.promise,
+    );
+    act(() => {
+      pending = harness.hook().refreshAccountUsage?.("codex");
+    });
+    act(() =>
+      sources.observe("foreign", {
+        ...snapshot(99),
+        accountIdentity: `account:v1:sha256:${"b".repeat(64)}`,
+      }),
+    );
+    await act(async () => {
+      second.resolve(snapshot(50));
+      expect(await pending).toEqual({ kind: "refreshed" });
+    });
+    expect(harness.hook().accountUsage.codex).toMatchObject({
+      kind: "ready",
+      snapshot: { windows: [{ usedPercent: 50 }] },
+    });
+    harness.unmount();
+  });
+  it("never mutates shared account state after the polling workspace unmounts", async () => {
+    const sources = createAgentAccountUsageSources();
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerKind: "codex",
+      storedAccountUsage: [snapshot(10)],
+      accountUsageSources: sources,
+    });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.codex.health.kind).toBe("ready"),
+    );
+    const deferred = createDeferred<AgentAccountUsageSnapshot>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => deferred.promise,
+    );
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = harness.hook().refreshAccountUsage?.("codex");
+    });
+    const listener = vi.fn();
+    const release = sources.subscribe(listener);
+    const revision = sources.revision();
+    harness.unmount();
+    await act(async () => {
+      deferred.resolve(snapshot(99));
+      expect(await pending).toEqual({ kind: "superseded" });
+    });
+    expect(sources.revision()).toBe(revision);
+    expect(listener).not.toHaveBeenCalled();
+    expect(sources.read("local", "codex")?.windows[0].usedPercent).toBe(10);
+    release();
+  });
+});
 
 describe("agentProviderUpdateOperationId", () => {
   it.each([
@@ -379,6 +483,85 @@ describe("useWorkbenchAgents composition", () => {
 
     expect(outcome).toEqual({ kind: "failed" });
     expect(harness.hook().accountUsage.codex).toEqual({ kind: "idle" });
+    harness.unmount();
+  });
+
+  it("rejects a usage poll overtaken by another workspace's shared observation", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+    const pending = createDeferred<AgentAccountUsageSnapshot>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => pending.promise,
+    );
+    let refresh: Promise<unknown> | undefined;
+    act(() => {
+      refresh = harness.hook().refreshAccountUsage?.("codex");
+    });
+    const shared: AgentAccountUsageSnapshot = {
+      provider: "codex",
+      fetchedAtEpochMs: Date.now(),
+      windows: [
+        {
+          id: "weekly",
+          label: "Weekly limit",
+          usedPercent: 40,
+          windowDurationMinutes: null,
+          resetsAtEpochMs: null,
+          resetsLabel: null,
+        },
+      ],
+    };
+    act(() => harness.agentProviderGateway.saveAgentAccountUsage(shared));
+    let outcome: unknown;
+    await act(async () => {
+      pending.resolve({ ...shared, fetchedAtEpochMs: shared.fetchedAtEpochMs + 1 });
+      outcome = await refresh;
+    });
+    expect(outcome).toEqual({ kind: "superseded" });
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "ready", snapshot: shared });
+    harness.unmount();
+  });
+
+  it("rejects an earlier usage request when two reads settle in reverse order", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.admissionAuthority("codex").disposition.kind).toBe(
+        "ready",
+      ),
+    );
+    const first = createDeferred<AgentAccountUsageSnapshot>();
+    const second = createDeferred<AgentAccountUsageSnapshot>();
+    harness.agentProviderGateway.readAgentProviderUsage
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    let a: Promise<unknown> | undefined;
+    let b: Promise<unknown> | undefined;
+    act(() => {
+      a = harness.hook().refreshAccountUsage?.("codex");
+      b = harness.hook().refreshAccountUsage?.("codex");
+    });
+    const latest: AgentAccountUsageSnapshot = {
+      provider: "codex",
+      fetchedAtEpochMs: Date.now(),
+      windows: [],
+    };
+    let firstOutcome: unknown;
+    let secondOutcome: unknown;
+    await act(async () => {
+      second.resolve(latest);
+      secondOutcome = await b;
+    });
+    await act(async () => {
+      first.resolve({ ...latest, fetchedAtEpochMs: latest.fetchedAtEpochMs + 1 });
+      firstOutcome = await a;
+    });
+    expect(firstOutcome).toEqual({ kind: "superseded" });
+    expect(secondOutcome).toEqual({ kind: "refreshed" });
+    expect(harness.hook().accountUsage.codex).toEqual({ kind: "ready", snapshot: latest });
     harness.unmount();
   });
 
@@ -789,6 +972,45 @@ describe("useWorkbenchAgents composition", () => {
     expect(harness.hook().providerSignIn.states.claudeCode).toMatchObject({
       kind: "settled",
       healthRefresh: "complete",
+    });
+    harness.unmount();
+  });
+
+  it("invalidates pre-login usage polls and reloads limits after sign-in with the same CLI generation", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.claudeCode.health.kind).toBe("ready"),
+    );
+    const pending = createDeferred<AgentAccountUsageSnapshot>();
+    harness.agentProviderGateway.readAgentProviderUsage.mockImplementationOnce(
+      () => pending.promise,
+    );
+    let beforeLogin: Promise<unknown> | undefined;
+    act(() => {
+      beforeLogin = harness.hook().refreshAccountUsage?.("claudeCode");
+    });
+    act(() => expect(harness.hook().providerSignIn.request("claudeCode")).toBe(true));
+    const intent = harness.hook().providerSignIn.terminalIntents.claudeCode!;
+    await act(async () => {
+      await harness.hook().providerSignIn.start(intent, { cols: 80, rows: 24 });
+    });
+    await act(async () => harness.hook().providerSignIn.settle(intent, 77, 0));
+    await waitForReact(() =>
+      expect(harness.hook().accountUsage.claudeCode).toMatchObject({
+        kind: "ready",
+        snapshot: { windows: [{ usedPercent: 17 }] },
+      }),
+    );
+    let outcome: unknown;
+    await act(async () => {
+      pending.resolve({ provider: "claudeCode", fetchedAtEpochMs: Date.now() + 1, windows: [] });
+      outcome = await beforeLogin;
+    });
+    expect(intent.providerGeneration).toBe(1);
+    expect(outcome).toEqual({ kind: "superseded" });
+    expect(harness.hook().accountUsage.claudeCode).toMatchObject({
+      kind: "ready",
+      snapshot: { windows: [{ usedPercent: 17 }] },
     });
     harness.unmount();
   });
@@ -1473,6 +1695,7 @@ describe("useWorkbenchAgents composition", () => {
 interface HarnessOptions {
   withProjectGateways: boolean;
   storedAccountUsage?: ReadonlyArray<AgentAccountUsageSnapshot>;
+  accountUsageSources?: AgentAccountUsageSourcesPort;
   holdHealthProbes?: boolean;
   failHealthProbes?: boolean;
   providerKind?: "claudeCode" | "codex";
@@ -1613,9 +1836,13 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     usageStore.saveAgentAccountUsage(snapshot);
   }
   const agentProviderGateway = {
+    accountUsageSources: options.accountUsageSources,
     loadAgentAccountUsage: () => usageStore.loadAgentAccountUsage(),
     saveAgentAccountUsage: (snapshot: AgentAccountUsageSnapshot) =>
       usageStore.saveAgentAccountUsage(snapshot),
+    invalidateAgentAccountUsage: (provider: "claudeCode" | "codex") =>
+      usageStore.invalidateAgentAccountUsage(provider),
+    subscribeAgentAccountUsage: usageStore.subscribeAgentAccountUsage.bind(usageStore),
     currentAgentProviderPolicy: vi.fn(
       async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
         kind: "unregistered" as const,
@@ -1654,23 +1881,29 @@ function renderWorkbenchAgents(options: HarnessOptions) {
       outputTail: "",
       outputTruncated: false,
     })),
-    readAgentProviderUsage: vi.fn(async ({ provider }: { provider: "claudeCode" | "codex" }) => {
-      if (healthLeases.has(provider)) throw new Error("Agent provider is busy.");
-      return {
+    readAgentProviderUsage: vi.fn(
+      async ({
         provider,
-        fetchedAtEpochMs: 1_700_000_000_000,
-        windows: [
-          {
-            id: "primary",
-            label: "Weekly limit",
-            usedPercent: 17,
-            windowDurationMinutes: 10_080,
-            resetsAtEpochMs: null,
-            resetsLabel: null,
-          },
-        ],
-      };
-    }),
+      }: {
+        provider: "claudeCode" | "codex";
+      }): Promise<AgentAccountUsageSnapshot> => {
+        if (healthLeases.has(provider)) throw new Error("Agent provider is busy.");
+        return {
+          provider,
+          fetchedAtEpochMs: Date.now(),
+          windows: [
+            {
+              id: "primary",
+              label: "Weekly limit",
+              usedPercent: 17,
+              windowDurationMinutes: 10_080,
+              resetsAtEpochMs: null,
+              resetsLabel: null,
+            },
+          ],
+        };
+      },
+    ),
   };
   let activeWorkspaceId = ACTIVE_ID;
   let activeWorkspaceTrust = options.workspaceTrust ?? null;

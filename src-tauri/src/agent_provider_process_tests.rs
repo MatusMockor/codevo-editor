@@ -777,7 +777,7 @@ fn completion_marker_waits_for_the_whole_response_line() {
     );
     let plan = provider_plan(
         &cli,
-        AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec),
+        AgentProviderProcessIntent::ModelCatalog(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
     let started = Instant::now();
@@ -821,5 +821,98 @@ fn codex_model_catalog_plan_is_a_bounded_app_server_model_list_request() {
         AgentProviderProcessIntent::ModelCatalog(AgentCliInvocation::ClaudeCode),
     )
     .is_err());
+    fs::remove_file(cli).expect("cleanup");
+}
+
+#[test]
+fn codex_usage_reads_account_before_and_after_limits_in_one_owned_process() {
+    let cli = executable(
+        r#"
+read -r request
+printf '{ "id": 0, "result": {} }\n'
+read -r notification
+read -r request
+case "$request" in *'"id":2'*) ;; *) exit 2;; esac
+printf '{"id":2,"result":{"account":{"type":"chatgpt","email":"a@b.c"}}}\n'
+read -r request
+case "$request" in *'"id":1'*) ;; *) exit 3;; esac
+printf '{"id":1,"result":{"accountId":"account-1","rateLimits":{}}}\n'
+read -r request
+case "$request" in *'"id":3'*) ;; *) exit 4;; esac
+printf '{"id":3,"result":{"account":{"type":"chatgpt","email":"a@b.c"}}'
+sleep 0.2
+printf '}\n'
+sleep 30
+"#,
+    );
+    let plan = provider_plan(
+        &cli,
+        AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec),
+    )
+    .expect("usage plan");
+    assert!(plan.stdout_completion_marker.is_none());
+    for _ in 0..2 {
+        let started = Instant::now();
+        let output = execute_agent_provider_plan(&plan).expect("complete sequential usage probe");
+        assert!(started.elapsed() < Duration::from_secs(4));
+        let replies: Vec<serde_json::Value> = output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("response"))
+            .collect();
+        assert_eq!(
+            replies
+                .iter()
+                .map(|value| value["id"].as_u64().expect("id"))
+                .collect::<Vec<_>>(),
+            vec![0, 2, 1, 3]
+        );
+    }
+    fs::remove_file(cli).expect("cleanup");
+}
+
+#[test]
+fn claude_usage_disables_customizations_and_tools() {
+    let cli = executable("exit 0");
+    let plan = provider_plan(
+        &cli,
+        AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::ClaudeCode),
+    )
+    .expect("usage plan");
+    assert_eq!(
+        plan.args(),
+        [
+            "--safe-mode",
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--setting-sources",
+            "",
+            "-p",
+            "/usage",
+            "--output-format",
+            "json",
+            "--permission-mode",
+            "dontAsk",
+            "--no-session-persistence"
+        ]
+    );
+    assert!(plan.timeout <= AGENT_PROVIDER_PROBE_TIMEOUT);
+    assert!(plan.output_limit <= MAX_AGENT_PROVIDER_OUTPUT_BYTES);
+    fs::remove_file(cli).expect("cleanup");
+}
+
+#[test]
+fn codex_usage_rejects_premature_transcript_even_when_process_exits_successfully() {
+    let cli = executable(
+        r#"printf '%s\n' '{"id":0,"result":{}}' '{"id":2,"result":{"account":{"type":"chatgpt","email":"a@b.c"}}}' '{"id":1,"result":{"accountId":"account-1"}}' '{"id":3,"result":{"account":{"type":"chatgpt","email":"a@b.c"}}}'"#,
+    );
+    let plan = provider_plan(
+        &cli,
+        AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec),
+    )
+    .expect("usage plan");
+    assert!(execute_agent_provider_plan(&plan).is_err());
     fs::remove_file(cli).expect("cleanup");
 }

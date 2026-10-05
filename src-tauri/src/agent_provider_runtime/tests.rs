@@ -729,3 +729,65 @@ fn shutdown_closes_registration_and_waits_for_health_settlement() {
         AGENT_PROVIDER_STALE_ERROR
     );
 }
+
+#[test]
+fn health_authority_does_not_survive_same_generation_sign_in_aba() {
+    let identity = executable_identity_fixture();
+    let resolver = Arc::new(FakeResolver::new(identity, "/detected/bin:/usr/bin"));
+    let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+    let receipt = registry
+        .register_policy(AgentCliInvocation::ClaudeCode, 1, None, auto_policy())
+        .expect("policy");
+    let health = registry
+        .acquire_health_for_generation(AgentCliInvocation::ClaudeCode, receipt.provider_generation)
+        .expect("health lease");
+    registry
+        .revalidate_health(&health)
+        .expect("current health authority");
+    let sign_in = registry
+        .acquire_sign_in(AgentCliInvocation::ClaudeCode, receipt.provider_generation)
+        .expect("sign-in invalidates pending health");
+    assert_eq!(
+        registry.revalidate_health(&health),
+        Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+    );
+    assert!(
+        matches!(registry.acquire_health_for_generation(AgentCliInvocation::ClaudeCode, receipt.provider_generation), Err(error) if error == AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR)
+    );
+    drop(sign_in);
+    assert_eq!(
+        registry.revalidate_health(&health),
+        Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+    );
+    assert_eq!(
+        registry.cache_candidate(&health, None),
+        Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+    );
+    drop(health);
+    let current = registry
+        .acquire_health_for_generation(AgentCliInvocation::ClaudeCode, receipt.provider_generation)
+        .expect("new account health");
+    registry
+        .revalidate_health(&current)
+        .expect("new authority valid");
+}
+
+#[test]
+fn health_acquisition_is_denied_through_the_sign_in_lifetime() {
+    let identity = executable_identity_fixture();
+    let resolver = Arc::new(FakeResolver::new(identity, "/detected/bin:/usr/bin"));
+    let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+    let receipt = registry
+        .register_policy(AgentCliInvocation::CodexExec, 1, None, auto_policy())
+        .expect("policy");
+    let sign_in = registry
+        .acquire_sign_in(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("sign-in");
+    assert!(
+        matches!(registry.acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation), Err(error) if error == AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR)
+    );
+    drop(sign_in);
+    assert!(registry
+        .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .is_ok());
+}

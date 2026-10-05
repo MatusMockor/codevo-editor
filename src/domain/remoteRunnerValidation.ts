@@ -1,3 +1,4 @@
+import { parseAgentAccountUsageSnapshot } from "./agentAccountUsage";
 import {
   parseAgentTurnChangeSummary,
   parseAgentTurnFileDiff,
@@ -310,6 +311,17 @@ const page = (item: Check) =>
 const voidResponse: Check = (v) => v === null || v === undefined;
 
 export const remoteRunnerChecks = {
+  getAccountUsage: {
+    request: object({
+      ...serverRequest,
+      runnerId: (value: unknown) =>
+        text(128)(value) &&
+        typeof value === "string" &&
+        !/[\u0000-\u001f\u007f-\u009f]/u.test(value),
+      provider: choice("claude", "codex"),
+    }),
+    response: accepts(parseAgentAccountUsageSnapshot),
+  },
   collectInstructions: {
     request: object({ rootPath: optional(text(4096)) }),
     response: isRemoteRunnerInstructionSnapshot,
@@ -326,6 +338,7 @@ export const remoteRunnerChecks = {
       name: text(256),
       executionTimeoutMs: optional(integer(60_000, 604_800_000)),
       capabilities: object({
+        accountUsage: optional(boolean),
         taskExecution: boolean,
         eventReplay: boolean,
         taskDrafts: optional(boolean),

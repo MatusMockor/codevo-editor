@@ -8,6 +8,7 @@ import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentTaskStatusEvent } from "../domain/agentTask";
 import {
   AGENT_THREAD_STORE_FULL_ERROR,
+  MAX_AGENT_THREADS_PER_ROOT,
   type AgentThread,
   type AgentTurn,
 } from "../domain/agentThread";
@@ -193,6 +194,165 @@ function renderStore(overrides: Partial<Environment> = {}) {
 }
 
 describe("useAgentThreadStore loading", () => {
+  it("keeps saved-only deletion blocked through load settlement microtasks", async () => {
+    const pending = deferred<AgentThreadStoreSnapshot>();
+    const harness = renderStore({ agentModeActive: false });
+    harness.loadResults.push(pending.promise);
+    harness.set({ agentModeActive: true });
+    const saved = thread();
+    let deletion: Promise<unknown> | undefined;
+    void pending.promise.then(() => {
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          deletion = harness.hook().deleteSavedThread!(saved).catch((error: unknown) => error);
+        });
+      });
+    });
+    await act(async () => {
+      pending.resolve({ threads: [saved], unreadable: [], evicted: 0 });
+      await pending.promise;
+    });
+    expect(await deletion).toEqual(
+      new Error("Saved threads are still loading for this project; try again in a moment."),
+    );
+    expect(harness.gateway.deleteAgentThread).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("rejects a load after its bounded removal journal overflows", async () => {
+    const pending = deferred<AgentThreadStoreSnapshot>();
+    const harness = renderStore({ agentModeActive: false });
+    harness.loadResults.push(pending.promise);
+    harness.set({ agentModeActive: true });
+    act(() => {
+      for (let index = 0; index <= MAX_AGENT_THREADS_PER_ROOT; index += 1) {
+        const draft = thread({ threadId: `agt-${index + 2}-0a1b` });
+        harness.hook().dispatchAction({ kind: "threadCreated", thread: draft });
+        harness.hook().remove(draft.threadId);
+      }
+    });
+    await act(async () => {
+      pending.resolve({ threads: [thread()], unreadable: [], evicted: 0 });
+      await pending.promise;
+    });
+    expect(harness.hook().state.threads.size).toBe(0);
+    expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(false);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Agents",
+      new Error(
+        "Saved agent history changed too often during loading; reopen the project to reload it.",
+      ),
+    );
+    harness.unmount();
+  });
+
+  it("does not resurrect a draft created and deleted after the pending load began", async () => {
+    const pending = deferred<AgentThreadStoreSnapshot>();
+    const harness = renderStore({ agentModeActive: false });
+    Object.assign(harness.gateway, { readAgentHistoryTurns: vi.fn() });
+    harness.gateway.saveAgentThread.mockImplementation(async (request) => {
+      harness.saved.push(request);
+      request.onRevision?.(1);
+    });
+    harness.loadResults.push(pending.promise);
+    harness.set({ agentModeActive: true });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    await waitForReact(() => expect(harness.saved).toHaveLength(1));
+    const stored = { ...harness.saved[0]!.thread, historyRevision: 1 };
+    void pending.promise.then(() => {
+      queueMicrotask(() => {
+        queueMicrotask(() => harness.hook().remove(stored.threadId));
+      });
+    });
+    await act(async () => {
+      pending.resolve({ threads: [stored], unreadable: [], evicted: 0 });
+      await pending.promise;
+    });
+    expect(harness.hook().state.threads.has(stored.threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("retains a newly saved local draft when an older empty load settles", async () => {
+    const pending = deferred<AgentThreadStoreSnapshot>();
+    const harness = renderStore({ agentModeActive: false });
+    Object.assign(harness.gateway, { readAgentHistoryTurns: vi.fn() });
+    harness.gateway.saveAgentThread.mockImplementation(async (request) => {
+      harness.saved.push(request);
+      request.onRevision?.((request.thread.historyRevision ?? 0) + 1);
+    });
+    harness.loadResults.push(pending.promise);
+    harness.set({ agentModeActive: true });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    await waitForReact(() => {
+      expect(harness.hook().state.threads.get("agt-1-0a1b")?.historyRevision).toBe(1);
+    });
+    await act(async () => {
+      pending.resolve(emptySnapshot());
+      await pending.promise;
+    });
+    expect(harness.hook().state.threads.get("agt-1-0a1b")?.historyRevision).toBe(1);
+    act(() => harness.hook().rename("agt-1-0a1b", "Updated draft"));
+    await waitForReact(() => expect(harness.saved).toHaveLength(2));
+    expect(harness.saved[1]?.thread.historyRevision).toBe(1);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("never replaces an acknowledged save with the stale snapshot read before it", async () => {
+    const harness = renderStore({ agentModeActive: false });
+    const persisted = thread({ historyRevision: 4 });
+    harness.snapshots.set(ROOT_KEY, { threads: [persisted], unreadable: [], evicted: 0 });
+    Object.assign(harness.gateway, { readAgentHistoryTurns: vi.fn() });
+    let revision = 4;
+    harness.gateway.saveAgentThread.mockImplementation(async (request) => {
+      harness.saved.push(request);
+      if (request.thread.historyRevision !== revision)
+        throw new Error("The saved thread update is stale; reload its current revision.");
+      revision += 1;
+      request.onRevision?.(revision);
+    });
+    harness.set({ agentModeActive: true });
+    await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
+    const pending = deferred<AgentThreadStoreSnapshot>();
+    harness.loadResults.push(pending.promise);
+    harness.set({ projects: [project({ generation: 2 })] });
+    act(() => harness.hook().rename(persisted.threadId, "Saved while loading"));
+    await waitForReact(() => {
+      expect(harness.hook().state.threads.get(persisted.threadId)?.historyRevision).toBe(5);
+    });
+    await act(async () => {
+      pending.resolve({ threads: [persisted], unreadable: [], evicted: 0 });
+      await pending.promise;
+    });
+    expect(harness.hook().state.threads.get(persisted.threadId)).toMatchObject({
+      title: "Saved while loading",
+      historyRevision: 5,
+    });
+    act(() => harness.hook().rename(persisted.threadId, "Next edit"));
+    await waitForReact(() => expect(harness.saved).toHaveLength(2));
+    expect(harness.saved[1]?.thread.historyRevision).toBe(5);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not resurrect a local thread deleted while a load was pending", async () => {
+    const harness = renderStore({ agentModeActive: false });
+    const persisted = thread({ historyRevision: 4 });
+    harness.snapshots.set(ROOT_KEY, { threads: [persisted], unreadable: [], evicted: 0 });
+    harness.set({ agentModeActive: true });
+    await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
+    const pending = deferred<AgentThreadStoreSnapshot>();
+    harness.loadResults.push(pending.promise);
+    harness.set({ projects: [project({ generation: 2 })] });
+    act(() => harness.hook().remove(persisted.threadId));
+    await act(async () => {
+      pending.resolve({ threads: [persisted], unreadable: [], evicted: 0 });
+      await pending.promise;
+    });
+    expect(harness.hook().state.threads.has(persisted.threadId)).toBe(false);
+    harness.unmount();
+  });
+
   it("loads the admitted project once agent mode is active", async () => {
     const persisted = thread();
     const harness = renderStore({ agentModeActive: false });

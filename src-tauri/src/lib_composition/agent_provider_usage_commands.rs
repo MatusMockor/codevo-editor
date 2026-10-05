@@ -1,6 +1,7 @@
 use crate::agent_task_spawner::agent_provider::agent_cli_version::now_epoch_ms;
 use crate::agent_task_spawner::agent_provider::process::{
-    execute_agent_provider_plan_cancellable, AgentProviderProcessIntent, AgentProviderProcessPlan,
+    execute_agent_provider_plan_cancellable, parse_provider_probe_json, AgentProviderProcessIntent,
+    AgentProviderProcessPlan,
 };
 use crate::agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry;
 use crate::agent_task_spawner::AgentCliInvocation;
@@ -9,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use tauri::State;
+
+#[path = "agent_usage_account_identity.rs"]
+mod account_identity;
 
 const MAX_USAGE_WINDOWS: usize = 12;
 
@@ -23,6 +27,7 @@ pub(crate) struct AgentProviderUsageRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentProviderUsageSnapshot {
     provider: AgentCliInvocation,
+    account_identity: Option<String>,
     fetched_at_epoch_ms: u64,
     windows: Vec<AgentProviderUsageWindow>,
 }
@@ -48,6 +53,24 @@ pub(crate) async fn read_agent_provider_usage(
         let lease = provider_registry
             .acquire_health_for_generation(request.provider, request.provider_generation)?;
         provider_registry.revalidate_health(&lease)?;
+        let read_claude_identity = || -> Result<Option<String>, String> {
+            provider_registry.revalidate_health(&lease)?;
+            let auth_plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
+                lease.cli_identity.clone(),
+                AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::ClaudeCode),
+                &lease.effective_path,
+            )?;
+            let output = execute_agent_provider_plan_cancellable(&auth_plan, || false);
+            provider_registry.revalidate_health(&lease)?;
+            Ok(output
+                .ok()
+                .and_then(|output| account_identity::claude_identity(&output.stdout)))
+        };
+        let before = match request.provider {
+            AgentCliInvocation::ClaudeCode => read_claude_identity()?,
+            AgentCliInvocation::CodexExec => None,
+        };
+        provider_registry.revalidate_health(&lease)?;
         let plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
             lease.cli_identity.clone(),
             AgentProviderProcessIntent::AccountUsage(request.provider),
@@ -56,12 +79,20 @@ pub(crate) async fn read_agent_provider_usage(
         let output = execute_agent_provider_plan_cancellable(&plan, || false)
             .map_err(|_| "Provider account usage could not be read.".to_string())?;
         provider_registry.revalidate_health(&lease)?;
+        let identity = match request.provider {
+            AgentCliInvocation::ClaudeCode => {
+                account_identity::stable_identity(before, read_claude_identity()?)
+            }
+            AgentCliInvocation::CodexExec => account_identity::codex_identity(&output.stdout),
+        };
+        provider_registry.revalidate_health(&lease)?;
         let windows = match request.provider {
             AgentCliInvocation::ClaudeCode => parse_claude_usage(&output.stdout)?,
             AgentCliInvocation::CodexExec => parse_codex_usage(&output.stdout)?,
         };
         Ok(AgentProviderUsageSnapshot {
             provider: request.provider,
+            account_identity: identity,
             fetched_at_epoch_ms: now_epoch_ms(),
             windows,
         })
@@ -70,8 +101,8 @@ pub(crate) async fn read_agent_provider_usage(
 }
 
 fn parse_claude_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, String> {
-    let envelope: Value = serde_json::from_slice(stdout)
-        .map_err(|_| "Claude usage returned an invalid response.".to_string())?;
+    let envelope = parse_provider_probe_json(stdout)
+        .ok_or_else(|| "Claude usage returned an invalid response.".to_string())?;
     let result = envelope
         .get("result")
         .and_then(Value::as_str)
@@ -102,15 +133,13 @@ fn parse_claude_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, St
             used_percent,
             window_duration_minutes: duration,
             resets_at_epoch_ms: None,
-            resets_label: Some(reset.trim().chars().take(160).collect()),
+            resets_label: Some(reset.trim().to_string()),
         });
-        if windows.len() == MAX_USAGE_WINDOWS {
-            break;
-        }
     }
     if windows.is_empty() {
         return Err("Claude usage did not include account limit windows.".to_string());
     }
+    validate_usage_windows(&windows)?;
     Ok(windows)
 }
 
@@ -128,7 +157,7 @@ fn claude_usage_window_identity(label: &str) -> Option<(&str, &str, Option<u64>)
 fn parse_codex_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, String> {
     let response = stdout
         .split(|byte| *byte == b'\n')
-        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .filter_map(parse_provider_probe_json)
         .find(|value| value.get("id") == Some(&Value::from(1)))
         .ok_or_else(|| "Codex usage was unavailable.".to_string())?;
     let result = response
@@ -137,22 +166,23 @@ fn parse_codex_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, Str
     let mut windows = Vec::new();
     if let Some(buckets) = result.get("rateLimitsByLimitId").and_then(Value::as_object) {
         for (bucket_id, bucket) in buckets {
-            append_codex_bucket(&mut windows, bucket_id, bucket);
-            if windows.len() >= MAX_USAGE_WINDOWS {
-                break;
-            }
+            append_codex_bucket(&mut windows, bucket_id, bucket)?;
         }
     } else if let Some(bucket) = result.get("rateLimits") {
-        append_codex_bucket(&mut windows, "codex", bucket);
+        append_codex_bucket(&mut windows, "codex", bucket)?;
     }
     if windows.is_empty() {
         return Err("Codex usage did not include account limit windows.".to_string());
     }
-    windows.truncate(MAX_USAGE_WINDOWS);
+    validate_usage_windows(&windows)?;
     Ok(windows)
 }
 
-fn append_codex_bucket(windows: &mut Vec<AgentProviderUsageWindow>, id: &str, bucket: &Value) {
+fn append_codex_bucket(
+    windows: &mut Vec<AgentProviderUsageWindow>,
+    id: &str,
+    bucket: &Value,
+) -> Result<(), String> {
     let name = bucket
         .get("limitName")
         .and_then(Value::as_str)
@@ -165,6 +195,9 @@ fn append_codex_bucket(windows: &mut Vec<AgentProviderUsageWindow>, id: &str, bu
         let Some(used_percent) = window.get("usedPercent").and_then(Value::as_f64) else {
             continue;
         };
+        if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) {
+            return Err("Codex usage returned an invalid limit window.".to_string());
+        }
         let duration = window.get("windowDurationMins").and_then(Value::as_u64);
         let resets_at_epoch_ms = window
             .get("resetsAt")
@@ -173,12 +206,41 @@ fn append_codex_bucket(windows: &mut Vec<AgentProviderUsageWindow>, id: &str, bu
         windows.push(AgentProviderUsageWindow {
             id: format!("{id}-{suffix}"),
             label: format!("{name} · {}", duration.map(window_label).unwrap_or("Limit")),
-            used_percent: used_percent.clamp(0.0, 100.0),
+            used_percent,
             window_duration_minutes: duration,
             resets_at_epoch_ms,
             resets_label: None,
         });
     }
+    Ok(())
+}
+
+fn validate_usage_windows(windows: &[AgentProviderUsageWindow]) -> Result<(), String> {
+    let text = |value: &str, limit| {
+        !value.trim().is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
+    };
+    let mut ids = std::collections::HashSet::new();
+    if windows.is_empty()
+        || windows.len() > MAX_USAGE_WINDOWS
+        || windows.iter().any(|window| {
+            !text(&window.id, 160)
+                || !text(&window.label, 160)
+                || !ids.insert(&window.id)
+                || window
+                    .resets_label
+                    .as_ref()
+                    .is_some_and(|value| !text(value, 200))
+                || window
+                    .window_duration_minutes
+                    .is_some_and(|value| value > 9_007_199_254_740_991)
+                || window
+                    .resets_at_epoch_ms
+                    .is_some_and(|value| value > 9_007_199_254_740_991)
+        })
+    {
+        return Err("Provider usage returned invalid or excessive limit windows.".to_string());
+    }
+    Ok(())
 }
 
 fn window_label(minutes: u64) -> &'static str {
@@ -193,6 +255,29 @@ fn window_label(minutes: u64) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn rejects_duplicate_and_control_bearing_claude_limit_windows() {
+        for result in ["Current session: 1% used · resets tomorrow\nCurrent session: 2% used · resets tomorrow", "Current session: 1% used · resets to\u{007f}morrow"] {
+            let output = serde_json::json!({"result":result}).to_string();
+            assert!(parse_claude_usage(output.as_bytes()).is_err());
+        }
+    }
+    #[test]
+    fn rejects_codex_out_of_range_and_excessive_limit_windows() {
+        let bad = br#"{"id":1,"result":{"rateLimits":{"primary":{"usedPercent":101}}}}"#;
+        assert!(parse_codex_usage(bad).is_err());
+        let buckets: serde_json::Map<String, Value> = (0..13)
+            .map(|index| {
+                (
+                    index.to_string(),
+                    serde_json::json!({"primary":{"usedPercent":1}}),
+                )
+            })
+            .collect();
+        let output =
+            serde_json::json!({"id":1,"result":{"rateLimitsByLimitId":buckets}}).to_string();
+        assert!(parse_codex_usage(output.as_bytes()).is_err());
+    }
     #[test]
     fn parses_claude_session_and_weekly_windows() {
         let input = r#"{"result":"Current session: 6% used · resets Sep 2 at 10:40pm (Europe/Bratislava)\nCurrent week (all models): 5% used · resets Sep 8 at 8am (Europe/Bratislava)\nCurrent week (Fable): 15% used · resets Sep 8 at 8am (Europe/Bratislava)"}"#;

@@ -25,6 +25,7 @@ interface Options {
   readonly owner: object;
   readonly valid: (owner: object) => boolean;
   readonly report: (message: string) => void;
+  readonly reportThread?: (threadId: string, message: string) => void;
   readonly refresh: () => Promise<void>;
   readonly repository?: RemoteAgentMetadataRepository;
 }
@@ -37,6 +38,7 @@ export function useServerThreadMetadata({
   owner,
   valid,
   report,
+  reportThread,
   refresh,
   repository,
 }: Options) {
@@ -93,12 +95,19 @@ export function useServerThreadMetadata({
     () => lease.current === captured && valid(owner),
     [captured, owner, valid],
   );
+  const reportForThread = useCallback(
+    (threadId: string, message: string) => {
+      if (reportThread) reportThread(threadId, message);
+      else report(message);
+    },
+    [reportThread, report],
+  );
   const eligible = useCallback(
     (threadId: string, quiet = false) => {
       const target = committed.current.targets.get(threadId);
       if (!live()) return null;
       if (!gateway || !target?.snapshot.connected) {
-        if (!quiet) report("Connect to the server to change this conversation.");
+        if (!quiet) reportForThread(threadId, "Connect to the server to change this conversation.");
         return null;
       }
       if (
@@ -107,12 +116,13 @@ export function useServerThreadMetadata({
         !gateway.updateThreadMetadata ||
         !gateway.reorderThread
       ) {
-        if (!quiet) report("Update the server to manage conversations across devices.");
+        if (!quiet)
+          reportForThread(threadId, "Update the server to manage conversations across devices.");
         return null;
       }
       return target;
     },
-    [live, gateway, report],
+    [live, gateway, reportForThread],
   );
   const legacyChange = useCallback(
     (threadId: string): Change => {
@@ -147,7 +157,7 @@ export function useServerThreadMetadata({
         return false;
       }
       if (captured.busy.has(threadId)) {
-        report("Conversation changes are still being saved. Try again shortly.");
+        reportForThread(threadId, "Conversation changes are still being saved. Try again shortly.");
         return false;
       }
       if (change.title !== undefined && change.title !== null) {
@@ -158,14 +168,17 @@ export function useServerThreadMetadata({
       const deadline = Date.now() + MAX_METADATA_SLOT_WAIT_MS;
       while (captured.busy.size >= MAX_METADATA_SAVES_IN_FLIGHT) {
         if (Date.now() >= deadline) {
-          report("Conversation changes are still being saved. Try again shortly.");
+          reportForThread(
+            threadId,
+            "Conversation changes are still being saved. Try again shortly.",
+          );
           return false;
         }
         await nextMetadataSlotWake(captured);
         if (!active()) return false;
       }
       if (captured.busy.has(threadId)) {
-        report("Conversation changes are still being saved. Try again shortly.");
+        reportForThread(threadId, "Conversation changes are still being saved. Try again shortly.");
         return false;
       }
       captured.busy.add(threadId);
@@ -196,7 +209,8 @@ export function useServerThreadMetadata({
         return true;
       } catch {
         if (active()) {
-          report(
+          reportForThread(
+            threadId,
             "The conversation change could not be saved on the server. Refresh and try again.",
           );
           await refreshAfterSave();
@@ -208,7 +222,7 @@ export function useServerThreadMetadata({
           void save(pendingId, { viewedAtEpochMs: pendingViewed });
       }
     },
-    [eligible, gateway, captured, report, live, legacyChange, refreshAfterSave],
+    [eligible, gateway, captured, reportForThread, live, legacyChange, refreshAfterSave],
   );
   const batch = useCallback(
     async <T>(work: () => Promise<T>): Promise<T> => {
@@ -341,7 +355,8 @@ export function useServerThreadMetadata({
           });
           if (!canMove()) {
             if (active()) {
-              report(
+              reportForThread(
+                threadId,
                 "The conversation section was saved, but its order changed before the move finished. Refreshing server state.",
               );
               if (active()) await refresh().catch(() => undefined);
@@ -360,7 +375,7 @@ export function useServerThreadMetadata({
         await refresh();
       } catch {
         if (active()) {
-          report("The conversation order could not be saved on the server.");
+          reportForThread(threadId, "The conversation order could not be saved on the server.");
           await refresh().catch(() => undefined);
         }
       } finally {
@@ -368,7 +383,7 @@ export function useServerThreadMetadata({
         releaseMetadataSlot(captured, targetThreadId);
       }
     },
-    [eligible, gateway, captured, live, refresh, report],
+    [eligible, gateway, captured, live, refresh, reportForThread],
   );
   useEffect(() => {
     let disposed = false;

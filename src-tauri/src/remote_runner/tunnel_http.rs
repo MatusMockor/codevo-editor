@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -347,6 +347,7 @@ mod tests {
         assert!(tokens.contains(&"turnChanges"));
         assert!(tokens.contains(&"gitSync"));
         assert!(tokens.contains(&"portPreview"));
+        assert!(tokens.contains(&"accountUsage"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);
@@ -720,6 +721,29 @@ mod tests {
                 None,
                 prepare("GET", "/v1/tasks", None, vec![]).unwrap(),
                 4,
+            )
+            .await
+        });
+        assert!(result.unwrap_err().contains("output limit"));
+        server.join().unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn account_usage_response_has_its_own_small_transport_budget() {
+        let body = format!("{{\"padding\":\"{}\"}}", "x".repeat(16 * 1024));
+        let (path, server) = test_server(vec![(200, body.as_str())]);
+        let result = tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder()
+                .unix_socket(path)
+                .no_proxy()
+                .build()
+                .unwrap();
+            request(
+                &client,
+                "private-token",
+                None,
+                prepare("GET", "/v1/account-usage/codex", None, vec![]).unwrap(),
+                super::super::super::response_limit("GET", "/v1/account-usage/codex"),
             )
             .await
         });

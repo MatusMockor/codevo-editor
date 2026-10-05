@@ -177,6 +177,58 @@ async function setup(
   };
 }
 describe("unified original agent surface", () => {
+  it("uses a selected conversation's server account and restores local usage for This computer", async () => {
+    const read = vi
+      .fn()
+      .mockImplementation(async ({ provider }: { provider: "claude" | "codex" }) => ({
+        provider: provider === "claude" ? "claudeCode" : "codex",
+        fetchedAtEpochMs: Date.now(),
+        windows: [
+          {
+            id: "weekly",
+            label: "Weekly limit",
+            usedPercent: 45,
+            windowDurationMinutes: null,
+            resetsAtEpochMs: null,
+            resetsLabel: null,
+          },
+        ],
+      }));
+    const h = await setup(false, (gw) => {
+      Object.assign(gw, { getAccountUsage: read });
+      const capabilities = {
+        taskExecution: true,
+        instructionSync: true,
+        eventReplay: true,
+        taskContinuation: true,
+        taskLaunchOptions: true,
+        accountUsage: true,
+      };
+      gw.getRunner.mockResolvedValue({
+        protocolVersion: 1,
+        runnerId: "runner",
+        name: "Linux",
+        capabilities,
+      });
+    });
+    const accountUsage = {
+      codex: { kind: "idle" as const },
+      claudeCode: { kind: "idle" as const },
+    };
+    const local = { ...h.local, accountUsage };
+    await h.render({ local, selectedThreadId: remoteId, selectedServerId: null });
+    expect(h.current.agents.accountUsage?.codex).toMatchObject({
+      kind: "ready",
+      snapshot: { windows: [{ usedPercent: 45 }] },
+    });
+    expect(read).toHaveBeenCalledWith({
+      serverId: server.id,
+      runnerId: "runner",
+      provider: "codex",
+    });
+    await h.render({ selectedThreadId: null, selectedServerId: null });
+    expect(h.current.agents.accountUsage).toBe(accountUsage);
+  });
   it.each([false, true])(
     "derives server checkout support from capability %s without local probes",
     async (supported) => {
@@ -209,6 +261,86 @@ describe("unified original agent surface", () => {
     expect(h.current.agents.notice).toBeNull();
     await h.render({ selectedThreadId: remoteId, selectedServerId: null });
     expect(h.current.agents.notice).toBeNull();
+  });
+  it.each([null, "agt-1"])(
+    "keeps an offline server callback out of This computer context %s",
+    async (selectedThreadId) => {
+      const h = await setup();
+      await h.render({ selectedThreadId: remoteId, servers: [{ ...server, connected: false }] });
+      const togglePin = h.current.agents.togglePin;
+      await act(async () => {
+        expect(await togglePin(remoteId)).toBe(false);
+      });
+      expect(h.current.agents.notice?.message).toBe(
+        "Connect to the server to change this conversation.",
+      );
+      const localNotice = { kind: "warning" as const, message: "Local warning", action: null };
+      const local = {
+        ...h.local,
+        notice: localNotice,
+        togglePin: vi.fn().mockReturnValue(true),
+        dismissNotice: vi.fn(),
+      };
+      await h.render({ selectedThreadId, selectedServerId: null, local });
+      expect(h.current.agents.notice).toBe(localNotice);
+      await act(async () => {
+        expect(await togglePin(remoteId)).toBe(false);
+        expect(await togglePin("agt-1")).toBe(true);
+      });
+      expect(local.togglePin).toHaveBeenCalledExactlyOnceWith("agt-1");
+      expect(h.current.agents.notice).toBe(localNotice);
+      const localStart = {
+        ...start,
+        projectRootKey: projectFixture().rootKey,
+        repositoryRoot: projectFixture().rootPath,
+      };
+      await act(async () => {
+        expect(await h.current.agents.startThread(localStart)).toEqual({ threadId: "local-new" });
+      });
+      expect(h.local.startThread).toHaveBeenCalledWith(localStart);
+      expect(h.gw.createTask).not.toHaveBeenCalled();
+      expect(local.dismissNotice).not.toHaveBeenCalled();
+      await h.render({ selectedThreadId: remoteId });
+      expect(h.current.agents.notice?.message).not.toBe(
+        "Connect to the server to change this conversation.",
+      );
+    },
+  );
+  it("keeps another server thread's connection notice out of the selected conversation", async () => {
+    const h = await setup();
+    await h.render({
+      selectedThreadId: remoteAgentThreadKey(server.id, "runner", "other"),
+      servers: [{ ...server, connected: false }],
+    });
+    await act(async () => {
+      expect(await h.current.agents.togglePin(remoteId)).toBe(false);
+    });
+    expect(h.current.agents.notice).toBeNull();
+  });
+  it("drops a pending server continuation failure after selecting a new This computer draft", async () => {
+    const h = await setup();
+    await h.render({ selectedThreadId: remoteId });
+    let reject!: (failure: Error) => void;
+    h.gw.continueTask.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = h.current.agents.sendFollowUp({ threadId: remoteId, prompt: "Continue", launch });
+    });
+    await h.render({ selectedThreadId: "agt-1", selectedServerId: null });
+    await h.render({ selectedThreadId: null });
+    await act(async () => {
+      reject(new Error("Server disconnected"));
+      expect(await pending).toBe(false);
+    });
+    expect(h.current.agents.notice).toBeNull();
+    await h.render({ selectedThreadId: remoteId });
+    expect(h.current.agents.notice).toBeNull();
+    expect(h.local.sendFollowUp).not.toHaveBeenCalled();
   });
   it("owns pre-thread errors by project generation and never revives them after A to B to A", async () => {
     const h = await setup();

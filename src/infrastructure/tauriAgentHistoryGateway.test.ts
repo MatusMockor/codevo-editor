@@ -169,6 +169,34 @@ it("preserves one workspace revision when another workspace loads", async () => 
   expect(invoke.mock.calls[2][1]).toMatchObject({ request: { expectedRevision: 1 } });
 });
 
+it("keeps its acknowledged revision when an earlier load settles after the save", async () => {
+  const original = request();
+  let release!: (snapshot: unknown) => void;
+  const invoke = vi
+    .fn<InvokeAgentThreadStoreCommand>()
+    .mockImplementation(async (command, args) => {
+      if (command === "load_agent_history")
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      return { revision: (args.request as { expectedRevision: number }).expectedRevision + 1 };
+    });
+  const gateway = new TauriAgentHistoryGateway(invoke, () => true);
+  const loading = gateway.loadAgentThreads(original);
+  await gateway.saveAgentThread(original);
+  release({
+    threads: [serializeAgentHistoryThread(original.thread)],
+    unreadable: [],
+    evicted: 0,
+    revisions: { [original.thread.threadId]: 0 },
+  });
+  await loading;
+  await gateway.saveAgentThread(original);
+  expect(invoke.mock.calls[2]?.[1]).toMatchObject({
+    request: { expectedRevision: 1, thread: { turns: [] } },
+  });
+});
+
 it("publishes every acknowledged revision without putting internal authority on the wire", async () => {
   const invoke = vi
     .fn<InvokeAgentThreadStoreCommand>()

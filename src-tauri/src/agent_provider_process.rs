@@ -33,10 +33,16 @@ const CODEX_APP_SERVER_HANDSHAKE: &str = concat!(
     "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"}}}\n",
     "{\"method\":\"initialized\",\"params\":{}}\n",
 );
-const CODEX_ACCOUNT_USAGE_REQUEST: &str = "{\"method\":\"account/rateLimits/read\",\"id\":1}\n";
+#[path = "agent_provider_usage_probe.rs"]
+mod usage_probe;
+use usage_probe::CodexUsageProbe;
 const CODEX_MODEL_LIST_REQUEST: &str =
     "{\"method\":\"model/list\",\"id\":1,\"params\":{\"includeHidden\":true,\"limit\":128}}\n";
 const CODEX_APP_SERVER_RESPONSE_MARKER: &[u8] = b"\"id\":1,\"result\"";
+pub(crate) fn parse_provider_probe_json(output: &[u8]) -> Option<serde_json::Value> {
+    super::bounded_json(output)
+}
+
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const READER_GRACE: Duration = Duration::from_millis(250);
 const UPDATE_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -304,6 +310,7 @@ pub struct AgentProviderProcessPlan {
     output_limit: usize,
     stdin_payload: Option<Box<[u8]>>,
     stdout_completion_marker: Option<Box<[u8]>>,
+    usage_probe: Option<CodexUsageProbe>,
     requires_update_authorization: bool,
 }
 
@@ -394,6 +401,12 @@ impl AgentProviderProcessPlan {
                 vec!["login", "status"]
             }
             AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::ClaudeCode) => vec![
+                "--safe-mode",
+                "--tools",
+                "",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "",
                 "-p",
                 "/usage",
                 "--output-format",
@@ -431,7 +444,11 @@ impl AgentProviderProcessPlan {
             requires_update_authorization,
         );
         let request = match intent {
-            AgentProviderProcessIntent::AccountUsage(_) => CODEX_ACCOUNT_USAGE_REQUEST,
+            AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec) => {
+                plan.stdin_payload = Some(usage_probe::INITIAL_REQUEST.as_bytes().into());
+                plan.usage_probe = Some(CodexUsageProbe::default());
+                return Ok(plan);
+            }
             AgentProviderProcessIntent::ModelCatalog(_) => CODEX_MODEL_LIST_REQUEST,
             _ => return Ok(plan),
         };
@@ -575,6 +592,7 @@ impl AgentProviderProcessPlan {
             timeout,
             output_limit,
             stdin_payload: None,
+            usage_probe: None,
             stdout_completion_marker: None,
             requires_update_authorization,
         }
@@ -1169,14 +1187,18 @@ fn execute_agent_provider_plan_cancellable_inner(
         }
         retained_stdin = Some(stdin);
     }
-    OwnedProviderChild::new(
+    let mut owned = OwnedProviderChild::new(
         child,
         retained_stdin,
         deadline,
         plan.output_limit,
         plan.stdout_completion_marker.clone(),
-    )
-    .settle(cancelled, output_sink)
+    );
+    owned.usage_probe = plan
+        .usage_probe
+        .as_ref()
+        .map(|_| CodexUsageProbe::default());
+    owned.settle(cancelled, output_sink)
 }
 
 struct OwnedProviderChild {
@@ -1186,6 +1208,7 @@ struct OwnedProviderChild {
     deadline: Instant,
     output_limit: usize,
     stdout_completion_marker: Option<Box<[u8]>>,
+    usage_probe: Option<CodexUsageProbe>,
     settled: bool,
 }
 
@@ -1204,6 +1227,7 @@ impl OwnedProviderChild {
             deadline,
             output_limit,
             stdout_completion_marker,
+            usage_probe: None,
             settled: false,
         }
     }
@@ -1228,6 +1252,7 @@ impl OwnedProviderChild {
                     stream: AgentProviderProcessOutputStream::Stdout,
                     output_sink: Arc::clone(&output_sink),
                     completion_marker: self.stdout_completion_marker.clone(),
+                    usage_probe: self.usage_probe.clone(),
                     completion_observed: Arc::clone(&completion_observed),
                 },
             )
@@ -1243,6 +1268,7 @@ impl OwnedProviderChild {
                     stream: AgentProviderProcessOutputStream::Stderr,
                     output_sink: Arc::clone(&output_sink),
                     completion_marker: None,
+                    usage_probe: None,
                     completion_observed: Arc::clone(&completion_observed),
                 },
             )
@@ -1262,6 +1288,19 @@ impl OwnedProviderChild {
             if completion_observed.load(Ordering::Acquire) {
                 completed_by_marker = true;
                 break None;
+            }
+            if let Some(probe) = &self.usage_probe {
+                match probe.advance_input(self.stdin.as_mut()) {
+                    Ok(true) => {
+                        completed_by_marker = true;
+                        break None;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.terminate();
+                        return Err(AgentProviderProcessFailure::Uncertain(error));
+                    }
+                }
             }
             match self.child.try_wait() {
                 Ok(Some(status)) => break Some(status),
@@ -1297,8 +1336,20 @@ impl OwnedProviderChild {
         if exceeded {
             return Err(AgentProviderProcessFailure::OutputLimitExceeded { stdout, stderr });
         }
+        if self
+            .usage_probe
+            .as_ref()
+            .is_some_and(CodexUsageProbe::is_complete)
+        {
+            completed_by_marker = true;
+        }
         if completed_by_marker {
             return Ok(AgentProviderProcessOutput { stdout, stderr });
+        }
+        if self.usage_probe.is_some() && status.is_some() {
+            return Err(AgentProviderProcessFailure::Uncertain(
+                "Provider usage protocol did not complete.".to_string(),
+            ));
         }
         let Some(status) = status else {
             return Err(AgentProviderProcessFailure::TimedOut { stdout, stderr });
@@ -1334,6 +1385,7 @@ struct ProviderReaderContext {
     stream: AgentProviderProcessOutputStream,
     output_sink: Arc<dyn AgentProviderProcessOutputSink>,
     completion_marker: Option<Box<[u8]>>,
+    usage_probe: Option<CodexUsageProbe>,
     completion_observed: Arc<AtomicBool>,
 }
 
@@ -1350,9 +1402,11 @@ fn spawn_reader<R: Read + Send + 'static>(
             stream,
             output_sink,
             completion_marker,
+            usage_probe,
             completion_observed,
         } = context;
         let mut output = Vec::new();
+        let mut usage_reader = usage_probe.as_ref().map(CodexUsageProbe::reader);
         let mut buffer = [0_u8; 4096];
         loop {
             let count = match reader.read(&mut buffer) {
@@ -1394,6 +1448,9 @@ fn spawn_reader<R: Read + Send + 'static>(
                 ) {
                     Ok(_) => {
                         output.extend_from_slice(&buffer[..accepted]);
+                        if let Some(reader) = &mut usage_reader {
+                            reader.observe(&buffer[..accepted]);
+                        }
                         if completion_marker
                             .as_deref()
                             .is_some_and(|marker| completed_marker_line(&output, marker))

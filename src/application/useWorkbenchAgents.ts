@@ -1,18 +1,17 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentAccountUsageRefreshOutcome } from "./agentAccountUsageRefresh";
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type {
   AgentAccountUsageGateway,
   AgentAccountUsageLoadState,
-  AgentAccountUsageSnapshot,
   AgentAccountUsageStoreGateway,
 } from "../domain/agentAccountUsage";
-import { mergeAgentAccountUsageObservation } from "../domain/agentAccountUsage";
-import {
-  mergeAgentAccountUsageRefresh,
-  resolveAgentAccountUsageResets,
-} from "../domain/agentAccountUsageFreshness";
+import { useAgentAccountUsage } from "./useAgentAccountUsage";
 import { useAgentAccountUsageFreshness } from "./useAgentAccountUsageFreshness";
+import { useAgentAccountUsageSourceProjection } from "./useAgentAccountUsageSourceProjection";
+import { useAgentAccountUsagePolling } from "./useAgentAccountUsagePolling";
+import { useAgentAccountUsageSharedObservations } from "./useAgentAccountUsageSharedObservations";
+import type { AgentAccountUsageSourcesPort } from "../domain/agentAccountUsageSources";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
@@ -100,7 +99,9 @@ export interface WorkbenchAgentsOptions {
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway &
     Partial<AgentAccountUsageGateway> &
-    Partial<AgentAccountUsageStoreGateway>;
+    Partial<AgentAccountUsageStoreGateway> & {
+      readonly accountUsageSources?: AgentAccountUsageSourcesPort;
+    };
   readonly agentCliDiscoveryGateway: AgentCliDiscoveryGateway;
   readonly agentProviderSignInGateway?: AgentProviderSignInGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
@@ -173,10 +174,44 @@ const unwiredAgentProviderSignInGateway: AgentProviderSignInGateway = {
 };
 
 export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAgentsSurface {
-  const [accountUsage, setAccountUsage] = useState<
-    Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>
-  >(() => initialAccountUsage(options.agentProviderGateway));
-  const accountUsageRef = useRef(accountUsage);
+  const usageAuthority = useRef({
+    gateway: options.agentProviderGateway,
+    active: false,
+    generation: 0,
+  });
+  if (usageAuthority.current.gateway !== options.agentProviderGateway)
+    usageAuthority.current = {
+      gateway: options.agentProviderGateway,
+      active: false,
+      generation: 0,
+    };
+  const usageLease = usageAuthority.current;
+  useLayoutEffect(() => {
+    usageLease.active = true;
+    usageLease.generation++;
+    return () => {
+      usageLease.active = false;
+      usageLease.generation++;
+    };
+  }, [usageLease]);
+  const {
+    accountUsage: localAccountUsage,
+    recordAccountUsage: recordLocalAccountUsage,
+    captureUsage,
+    publishRefresh,
+    invalidateAccountUsage,
+  } = useAgentAccountUsage(options.agentProviderGateway);
+  const accountUsageSources = options.agentProviderGateway.accountUsageSources;
+  const accountUsage = useAgentAccountUsageSourceProjection(localAccountUsage, accountUsageSources);
+  const recordAccountUsage = useAgentAccountUsageSharedObservations(
+    recordLocalAccountUsage,
+    captureUsage,
+    accountUsageSources,
+  );
+  const usageRequestSequenceRef = useRef({ claudeCode: 0, codex: 0 });
+  const refreshAccountUsageRef = useRef<
+    (provider: "claudeCode" | "codex") => Promise<AgentAccountUsageRefreshOutcome>
+  >(() => Promise.resolve({ kind: "unavailable" }));
   const {
     gitRepositoryMappings,
     gitRepositoryStatuses,
@@ -340,6 +375,9 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       if (management === null || !providerAuthorityMatches(management, authority)) {
         return { kind: "stale" };
       }
+      // Login can replace the CLI account without changing the executable generation.
+      invalidateAccountUsage(provider);
+      usageRequestSequenceRef.current[provider] += 1;
       const preSignInProbeWasPending = management.providers[provider].health.kind === "checking";
       const refresh = management.refreshWithOutcome;
       if (refresh === undefined) return { kind: "failed" };
@@ -362,11 +400,13 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
         if (fresh.authority.providerGeneration !== authority.providerGeneration) {
           return { kind: "stale" };
         }
+        void refreshAccountUsageRef.current(provider);
         return fresh;
       }
+      void refreshAccountUsageRef.current(provider);
       return refreshed;
     },
-    [],
+    [invalidateAccountUsage],
   );
   const providerSignIn = useAgentProviderSignIn({
     gateway: options.agentProviderSignInGateway ?? unwiredAgentProviderSignInGateway,
@@ -394,25 +434,6 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     workspaceGeneration: providerWorkspaceOwnerRef.current.generation,
   });
 
-  const recordAccountUsage = useCallback(
-    (observation: Parameters<typeof mergeAgentAccountUsageObservation>[1]): void => {
-      const observedAtEpochMs = Date.now();
-      const current = accountUsageRef.current[observation.provider];
-      const snapshot = mergeAgentAccountUsageObservation(
-        current.kind === "ready" ? current.snapshot : null,
-        observation,
-        observedAtEpochMs,
-      );
-      publishAccountUsageSnapshot(
-        snapshot,
-        accountUsageRef,
-        setAccountUsage,
-        options.agentProviderGateway,
-      );
-    },
-    [options.agentProviderGateway],
-  );
-
   const refreshAccountUsage = useCallback(
     async (provider: "claudeCode" | "codex"): Promise<AgentAccountUsageRefreshOutcome> => {
       const readUsage = options.agentProviderGateway.readAgentProviderUsage;
@@ -423,8 +444,19 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
         return { kind: "unavailable" };
       }
       const providerGeneration = authority.providerGeneration;
+      const expectedUsage = captureUsage(provider);
+      const usageGeneration = usageLease.generation;
+      const queryRevision = accountUsageSources?.revision();
+      const requestSequence = ++usageRequestSequenceRef.current[provider];
       const workspaceGeneration = providerWorkspaceOwnerRef.current.generation;
       const isCurrent = (): boolean => {
+        if (
+          !usageLease.active ||
+          usageAuthority.current !== usageLease ||
+          usageLease.generation !== usageGeneration
+        )
+          return false;
+        if (usageRequestSequenceRef.current[provider] !== requestSequence) return false;
         if (providerWorkspaceOwnerRef.current.generation !== workspaceGeneration) return false;
         const current = providerManagementRef.current?.admissionAuthority(provider);
         return (
@@ -439,16 +471,13 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
         .catch(() => null);
       if (!isCurrent()) return { kind: "superseded" };
       if (snapshot === null || snapshot.provider !== provider) return { kind: "failed" };
-      const current = accountUsageRef.current[provider];
-      publishAccountUsageSnapshot(
-        mergeAgentAccountUsageRefresh(current.kind === "ready" ? current.snapshot : null, snapshot),
-        accountUsageRef,
-        setAccountUsage,
-        options.agentProviderGateway,
-      );
+      if (captureUsage(provider) !== expectedUsage) return { kind: "superseded" };
+      if (accountUsageSources && !accountUsageSources.observe("local", snapshot, queryRevision))
+        return { kind: "superseded" };
+      if (!publishRefresh(snapshot, expectedUsage)) return { kind: "superseded" };
       return { kind: "refreshed" };
     },
-    [options.agentProviderGateway],
+    [accountUsageSources, captureUsage, options.agentProviderGateway, publishRefresh, usageLease],
   );
   const claudeUsageReady = providerUsageReady(providerManagement, "claudeCode");
   const codexUsageReady = providerUsageReady(providerManagement, "codex");
@@ -461,6 +490,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     readiness: usageReadiness,
     refresh: refreshAccountUsage,
   });
+  useAgentAccountUsagePolling(usageReadiness, refreshAccountUsage);
   const refreshProviderUsageAfterTurn = useCallback(
     (provider: "claudeCode" | "codex"): void => {
       void refreshAccountUsage(provider);
@@ -566,12 +596,14 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   useLayoutEffect(() => {
     threadsSurfaceRef.current = threadsWithRepositoryPreflight;
     providerManagementRef.current = providerManagement;
+    refreshAccountUsageRef.current = refreshAccountUsage;
   });
 
   return useMemo(
     () => ({
       ...threadsWithRepositoryPreflight,
       accountUsage,
+      accountUsageSources,
       agentProjects,
       providerManagement,
       providerSignIn,
@@ -579,6 +611,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     }),
     [
       accountUsage,
+      accountUsageSources,
       agentProjects,
       providerManagement,
       providerSignIn,
@@ -586,42 +619,6 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       threadsWithRepositoryPreflight,
     ],
   );
-}
-
-function initialAccountUsage(
-  gateway: Partial<AgentAccountUsageStoreGateway> | undefined,
-): Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>> {
-  const state: Record<"claudeCode" | "codex", AgentAccountUsageLoadState> = {
-    claudeCode: { kind: "idle" },
-    codex: { kind: "idle" },
-  };
-  try {
-    for (const snapshot of gateway?.loadAgentAccountUsage?.() ?? []) {
-      state[snapshot.provider] = {
-        kind: "ready",
-        snapshot: resolveAgentAccountUsageResets(snapshot),
-      };
-    }
-  } catch {
-    // Storage can be unavailable; live provider observations still populate this state.
-  }
-  return state;
-}
-
-function publishAccountUsageSnapshot(
-  snapshot: AgentAccountUsageSnapshot,
-  stateRef: { current: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>> },
-  publish: (state: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>) => void,
-  gateway: Partial<AgentAccountUsageStoreGateway> | undefined,
-): void {
-  const next = { ...stateRef.current, [snapshot.provider]: { kind: "ready" as const, snapshot } };
-  stateRef.current = next;
-  publish(next);
-  try {
-    gateway?.saveAgentAccountUsage?.(snapshot);
-  } catch {
-    // A storage failure must not affect the completed provider turn or its live snapshot.
-  }
 }
 
 function providerUsageReady(

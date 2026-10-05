@@ -17,6 +17,8 @@ struct Descriptor {
 struct Capabilities {
     task_execution: bool,
     #[serde(default, deserialize_with = "optional_bool")]
+    account_usage: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     project_management: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     thread_management: Option<bool>,
@@ -89,6 +91,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
     let caps = descriptor.capabilities;
     let _ = (
         caps.task_execution,
+        caps.account_usage,
         caps.project_management,
         caps.thread_management,
         caps.turn_changes,
@@ -119,7 +122,12 @@ mod tests {
     use super::*;
     #[test]
     fn management_capabilities_are_optional_strict_booleans() {
-        for cap in ["projectManagement", "threadManagement", "turnChanges"] {
+        for cap in [
+            "projectManagement",
+            "threadManagement",
+            "turnChanges",
+            "accountUsage",
+        ] {
             let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
             assert!(validate(value.clone()).is_ok());
             for supported in [true, false] {

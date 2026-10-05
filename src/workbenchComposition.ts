@@ -10,6 +10,7 @@ import { WorkspaceNettePresentersGateway } from "./application/workspaceNettePre
 import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesGateway";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import { BrowserAgentAccountUsageStoreGateway } from "./infrastructure/browserAgentAccountUsageStoreGateway";
+import { createAgentAccountUsageSources } from "./application/agentAccountUsageSources";
 import { BrowserDirtyTextSearchGateway } from "./infrastructure/browserDirtyTextSearchGateway";
 import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -120,10 +121,17 @@ export function createWorkbenchComposition() {
   const settingsGateway = new BrowserSettingsGateway();
   const agentAccountUsageStoreGateway = new BrowserAgentAccountUsageStoreGateway();
   const agentProviderGateway = Object.assign(new TauriAgentProviderGateway(), {
+    accountUsageSources: createAgentAccountUsageSources(),
     loadAgentAccountUsage: () => agentAccountUsageStoreGateway.loadAgentAccountUsage(),
     saveAgentAccountUsage: (
       snapshot: Parameters<typeof agentAccountUsageStoreGateway.saveAgentAccountUsage>[0],
     ) => agentAccountUsageStoreGateway.saveAgentAccountUsage(snapshot),
+    invalidateAgentAccountUsage: (
+      provider: Parameters<typeof agentAccountUsageStoreGateway.invalidateAgentAccountUsage>[0],
+    ) => agentAccountUsageStoreGateway.invalidateAgentAccountUsage(provider),
+    subscribeAgentAccountUsage: (
+      listener: Parameters<typeof agentAccountUsageStoreGateway.subscribeAgentAccountUsage>[0],
+    ) => agentAccountUsageStoreGateway.subscribeAgentAccountUsage(listener),
   });
 
   const agentControllerGateways = {

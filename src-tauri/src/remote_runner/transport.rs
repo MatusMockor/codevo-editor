@@ -19,6 +19,9 @@ const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 const MAX_IMAGE_OUTPUT: usize = (8 * 1024 * 1024_usize).div_ceil(3) * 4 + 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
 fn response_limit(method: &str, path: &str) -> usize {
+    if method == "GET" && matches!(path, "/v1/account-usage/claude" | "/v1/account-usage/codex") {
+        return 16 * 1024;
+    }
     let attachment = path
         .strip_prefix("/v1/attachments/")
         .and_then(|value| value.strip_suffix("/content"));
@@ -206,6 +209,8 @@ mod tests {
             MAX_OUTPUT
         );
         assert_eq!(response_limit("GET", "/v1/tasks"), MAX_OUTPUT);
+        assert_eq!(response_limit("GET", "/v1/account-usage/claude"), 16 * 1024);
+        assert_eq!(response_limit("GET", "/v1/account-usage/codex"), 16 * 1024);
         let artifact = "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/artifacts/7389088c-29b8-4cec-9a15-e825e1fb2f66/content";
         assert_eq!(response_limit("GET", artifact), MAX_IMAGE_OUTPUT);
         assert_eq!(response_limit("POST", artifact), MAX_OUTPUT);

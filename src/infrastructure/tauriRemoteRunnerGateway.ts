@@ -20,6 +20,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   disconnectServer: "remote_runner_disconnect_server",
   removeServer: "remote_runner_remove_server",
   getRunner: "remote_runner_get_runner",
+  getAccountUsage: "remote_runner_get_account_usage",
   listProjects: "remote_runner_list_projects",
   listRepositoryHosts: "remote_runner_repository_hosts",
   lookupRepository: "remote_runner_lookup_repository",
@@ -111,6 +112,14 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   removeServer(request: R.RemoteRunnerServerRequest) {
     return this.call("removeServer", request);
+  }
+  async getAccountUsage(request: R.RemoteRunnerAccountUsageRequest) {
+    const expectedProvider = request.provider === "claude" ? "claudeCode" : "codex";
+    const snapshot = await this.call("getAccountUsage", request);
+    if (snapshot.provider !== expectedProvider) {
+      throw new TypeError("Invalid remote runner account usage provider.");
+    }
+    return snapshot;
   }
   getRunner(request: R.RemoteRunnerServerRequest) {
     return this.call("getRunner", request);

@@ -136,6 +136,19 @@ it.each([
   expect(h.gateway.getThreadMetadata).not.toHaveBeenCalled();
   expect(h.report).toHaveBeenCalledTimes(1);
 });
+it("reports the exact conversation source for disconnected metadata changes", async () => {
+  const reportThread = vi.fn();
+  const h = await harness({ snapshots: [snapshot(record(), false)], reportThread });
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { pinned: true })).toBe(false);
+  });
+  expect(reportThread).toHaveBeenCalledExactlyOnceWith(
+    view.thread.threadId,
+    "Connect to the server to change this conversation.",
+  );
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.gateway.getThreadMetadata).not.toHaveBeenCalled();
+});
 it("fetches the latest revision and only refreshes after successful persistence", async () => {
   const h = await harness();
   h.gateway.getThreadMetadata.mockResolvedValue(record({ revision: 7 }));

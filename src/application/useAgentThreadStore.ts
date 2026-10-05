@@ -1,5 +1,7 @@
 import { interruptedTurnLogLosses } from "./agentTurnLogRestartRecovery";
 import { persistentAgentThreadSaveRequest } from "./agentThreadSaveRequest";
+import { AgentThreadLoadJournal } from "./agentThreadLoadJournal";
+import { reconcileAgentThreadLoad } from "../domain/agentThreadLoadReconciliation";
 import { agentTurnArtifactReferences } from "../domain/agentTurnArtifactReferences";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
 import { useAgentTurnLogHydration } from "./useAgentTurnLogHydration";
@@ -146,6 +148,7 @@ export function useAgentThreadStore(
   const dirtyRef = useRef<Map<string, PersistUrgency>>(new Map());
   const deleteQueueRef = useRef<ThreadRemoval[]>([]);
   const loadingRootsRef = useRef<Map<string, number>>(new Map());
+  const loadJournalRef = useRef(new AgentThreadLoadJournal());
   const persistFailureNoticeShownRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
@@ -155,8 +158,12 @@ export function useAgentThreadStore(
   useEffect(() => {
     mountedRef.current = true;
     const slots = slotsRef.current;
+    const loadJournal = loadJournalRef.current;
+    const loadKeys = loadKeysRef.current;
     return () => {
       mountedRef.current = false;
+      loadJournal.clear();
+      loadKeys.clear();
       for (const slot of slots.values()) {
         if (slot.timer === null) continue;
         clearTimeout(slot.timer);
@@ -391,6 +398,11 @@ export function useAgentThreadStore(
         return;
     }
     const next = agentThreadsReducer(current, action);
+    if (action.kind === "deleted" || action.kind === "historyThreadEvicted") {
+      const removed = current.threads.get(action.threadId);
+      if (removed !== undefined && !next.threads.has(action.threadId))
+        loadJournalRef.current.recordRemoval(removed.owner.rootKey, action.threadId);
+    }
     const intent = persistIntent(current, next, action);
     stateRef.current = next;
     const turnLog = dependenciesRef.current.turnLog;
@@ -546,30 +558,60 @@ export function useAgentThreadStore(
 
       const loading = loadingRootsRef.current;
       loading.set(authority.rootKey, (loading.get(authority.rootKey) ?? 0) + 1);
-      const loaded = await attempt(() =>
-        dependenciesRef.current.agentThreadStoreGateway.loadAgentThreads({
-          rootKey: authority.rootKey,
-          ownerId: agentRootOwnerId(authority.rootKey),
-        }),
-      ).finally(() => releaseLoading(loading, authority.rootKey));
-      if (!mountedRef.current) return;
-      if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
-      if (loadKeysRef.current.get(authority.rootKey) !== key) return;
-      if (!loaded.ok) {
-        loadKeysRef.current.delete(authority.rootKey);
-        dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, loaded.error);
-        return;
-      }
+      const beforeLoad = stateRef.current;
+      const loadLease = loadJournalRef.current.begin(authority.rootKey);
+      try {
+        const loaded = await attempt(() =>
+          dependenciesRef.current.agentThreadStoreGateway.loadAgentThreads({
+            rootKey: authority.rootKey,
+            ownerId: agentRootOwnerId(authority.rootKey),
+          }),
+        );
+        if (!mountedRef.current) return;
+        if (loadLease.abandoned) return;
+        if (!ownsProjectRoot(dependenciesRef.current.projects, authority)) return;
+        if (loadKeysRef.current.get(authority.rootKey) !== key) return;
+        if (loadLease.overflowed) {
+          loadKeysRef.current.delete(authority.rootKey);
+          dependenciesRef.current.reportError(
+            AGENT_TASKS_SOURCE,
+            new Error(
+              "Saved agent history changed too often during loading; reopen the project to reload it.",
+            ),
+          );
+          return;
+        }
+        if (!loaded.ok) {
+          loadKeysRef.current.delete(authority.rootKey);
+          dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, loaded.error);
+          return;
+        }
 
-      dispatchAction({
-        kind: "loaded",
-        owner: { rootKey: authority.rootKey, ownerId: authority.ownerId },
-        threads: loaded.value.threads.map((thread) => withRuntimeOwner(thread, authority.ownerId)),
-      });
-      setLoadedRootKeys((current) => withRoot(current, authority.rootKey));
-      void loadTurnLogSummaries(authority, loaded.value.threads);
-      if (loaded.value.unreadable.length === 0) return;
-      dependenciesRef.current.setNotice(warning(unreadableNotice(loaded.value.unreadable.length)));
+        const reconciled = reconcileAgentThreadLoad(
+          beforeLoad,
+          stateRef.current,
+          authority,
+          loaded.value.threads,
+          loadLease.removedThreadIds,
+        );
+        dispatchAction({
+          kind: "loaded",
+          owner: { rootKey: authority.rootKey, ownerId: authority.ownerId },
+          ...reconciled,
+        });
+        setLoadedRootKeys((current) => withRoot(current, authority.rootKey));
+        void loadTurnLogSummaries(
+          authority,
+          reconciled.threads.filter((thread) => !reconciled.retainedThreadIds.has(thread.threadId)),
+        );
+        if (loaded.value.unreadable.length === 0) return;
+        dependenciesRef.current.setNotice(
+          warning(unreadableNotice(loaded.value.unreadable.length)),
+        );
+      } finally {
+        releaseLoading(loading, authority.rootKey);
+        loadJournalRef.current.settle(loadLease);
+      }
     },
     [dispatchAction, loadTurnLogSummaries],
   );
@@ -585,6 +627,7 @@ export function useAgentThreadStore(
     for (const rootKey of [...loadKeysRef.current.keys()]) {
       if (present.has(rootKey)) continue;
       loadKeysRef.current.delete(rootKey);
+      loadJournalRef.current.discard(rootKey);
       clearedLegacyPinRootsRef.current.delete(rootKey);
     }
     setLoadedRootKeys((current) => retainRoots(current, present));
@@ -1156,11 +1199,6 @@ function boundedPersistFailureReason(raw: string): string | null {
   const points = [...collapsed];
   if (points.length <= MAX_PERSIST_FAILURE_REASON_CHARS) return collapsed;
   return `${points.slice(0, MAX_PERSIST_FAILURE_REASON_CHARS).join("")}…`;
-}
-
-function withRuntimeOwner(thread: AgentThread, ownerId: string): AgentThread {
-  if (thread.owner.ownerId === ownerId) return thread;
-  return { ...thread, owner: { ...thread.owner, ownerId } };
 }
 
 function threadByLiveTurnId(state: AgentThreadsState, turnId: string): AgentThread | null {

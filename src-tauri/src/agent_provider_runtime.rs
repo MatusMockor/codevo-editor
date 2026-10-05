@@ -104,6 +104,7 @@ struct ProviderConfiguration {
     update_check_count: usize,
     updating: bool,
     signing_in: bool,
+    auth_epoch: u64,
     candidate: Option<AgentProviderUpdateCandidate>,
     update_observation: Option<update_check::ProviderUpdateObservation>,
     update_observation_revision: u64,
@@ -121,6 +122,7 @@ impl ProviderConfiguration {
             update_check_count: 0,
             updating: false,
             signing_in: false,
+            auth_epoch: 0,
             candidate: None,
             update_observation: None,
             update_observation_revision: 0,
@@ -346,15 +348,20 @@ impl AgentProviderRuntimeRegistry {
         if !configuration.policy.enabled {
             return Err(AGENT_PROVIDER_DISABLED_ERROR.to_string());
         }
+        if configuration.signing_in {
+            return Err(AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR.to_string());
+        }
         if configuration.updating || configuration.health_count > 0 {
             return Err(AGENT_PROVIDER_UPDATING_ERROR.to_string());
         }
         configuration.update_observation_revision =
             configuration.update_observation_revision.wrapping_add(1);
         configuration.health_count += 1;
+        let auth_epoch = configuration.auth_epoch;
         let policy = configuration.policy.clone();
         state.health_count += 1;
         Ok(ProviderHealthLease {
+            auth_epoch,
             registry: Arc::clone(self),
             provider,
             generation,
@@ -425,6 +432,8 @@ impl AgentProviderRuntimeRegistry {
             .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
         if configuration.generation != lease.generation
             || configuration.policy != lease.policy
+            || configuration.auth_epoch != lease.auth_epoch
+            || configuration.signing_in
             || configuration.updating
         {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
@@ -440,7 +449,11 @@ impl AgentProviderRuntimeRegistry {
     ) -> Option<ClaudeAuthStatusCapability> {
         let state = self.state();
         let configuration = configuration(&state, lease.provider)?;
-        if configuration.generation != lease.generation || configuration.policy != lease.policy {
+        if configuration.generation != lease.generation
+            || configuration.policy != lease.policy
+            || configuration.auth_epoch != lease.auth_epoch
+            || configuration.signing_in
+        {
             return None;
         }
         let cached = configuration.claude_auth_capability.as_ref()?;
@@ -459,6 +472,8 @@ impl AgentProviderRuntimeRegistry {
         if lease.provider != AgentCliInvocation::ClaudeCode
             || configuration.generation != lease.generation
             || configuration.policy != lease.policy
+            || configuration.auth_epoch != lease.auth_epoch
+            || configuration.signing_in
             || configuration.health_count == 0
         {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
@@ -553,6 +568,10 @@ impl AgentProviderRuntimeRegistry {
         if configuration.signing_in {
             return Err(AGENT_PROVIDER_ALREADY_SIGNING_IN_ERROR.to_string());
         }
+        configuration.auth_epoch = configuration
+            .auth_epoch
+            .checked_add(1)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
         configuration.signing_in = true;
         Ok(ProviderSignInLease {
             registry: Arc::clone(self),
@@ -731,6 +750,8 @@ impl AgentProviderRuntimeRegistry {
         if state.starts_closed
             || configuration.generation != lease.generation
             || configuration.policy != lease.policy
+            || configuration.auth_epoch != lease.auth_epoch
+            || configuration.signing_in
             || configuration.health_count == 0
             || configuration.updating
         {
@@ -1050,6 +1071,7 @@ impl Drop for ProviderTurnLease {
 }
 
 pub struct ProviderHealthLease {
+    auth_epoch: u64,
     registry: Arc<AgentProviderRuntimeRegistry>,
     pub provider: AgentCliInvocation,
     pub generation: u64,

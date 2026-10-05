@@ -38,6 +38,7 @@ import { REMOTE_START_BASE_INVALID, remoteStartBaseFor } from "../domain/remoteD
 import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useRemoteAgentShip } from "./useRemoteAgentShip";
 import { RemoteChangeSummaryViews } from "./remoteChangeSummaryViews";
+import { useRemoteAgentAccountUsage } from "./useRemoteAgentAccountUsage";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -127,8 +128,16 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     (captured: object) => mounted.current && authority.current === captured,
     [],
   );
-  const [noticeState, setNotice] = useState<{ owner: object; message: string } | null>(null);
-  const notice = noticeState?.owner === owner ? noticeState.message : null;
+  const [noticeState, setNotice] = useState<{
+    owner: object;
+    message: string;
+    threadId?: string;
+  } | null>(null);
+  const notice =
+    noticeState?.owner === owner &&
+    (noticeState.threadId === undefined || noticeState.threadId === selectedThreadId)
+      ? noticeState.message
+      : null;
   const report = useCallback(
     (message: string) => {
       if (valid(owner)) setNotice({ owner, message });
@@ -139,6 +148,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     (_source: string, error: unknown) =>
       report(remoteRunnerErrorMessage(error, "The server operation failed.")),
     [report],
+  );
+  const reportThread = useCallback(
+    (threadId: string, message: string) => {
+      if (valid(owner) && owner.selectedThreadId === threadId)
+        setNotice({ owner, threadId, message });
+    },
+    [owner, valid],
   );
   const inventory = useRemoteAgentInventory({
     gateway,
@@ -152,6 +168,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     owner,
     valid,
     report,
+    reportThread,
     refresh: inventory.refresh,
     repository: options.metadataRepository,
   });
@@ -412,6 +429,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const remoteMode =
     selectedThreadId === null ? selectedServerId !== null : isRemoteAgentIdentity(selectedThreadId);
   const effectiveServerId = selectedRemote?.execution?.serverId ?? selectedServerId;
+  const remoteAccountUsage = useRemoteAgentAccountUsage({
+    gateway,
+    servers,
+    snapshots: inventory.snapshots,
+    selectedServerId: remoteMode ? effectiveServerId : null,
+    workspaceOwner,
+    sources: local.accountUsageSources,
+  });
   const serverReady =
     servers.some((server) => server.id === effectiveServerId && server.connected) &&
     inventory.snapshots.some(
@@ -491,6 +516,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   });
   const agents: AgentThreadsSurface = {
     ...local,
+    ...(remoteMode ? remoteAccountUsage : {}),
     remoteGit: remoteShip.access,
     historySearch,
     ...actions,
@@ -556,14 +582,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         else await local.externalHistory?.load(id);
       },
     },
-    notice:
-      notice !== null
+    notice: remoteMode
+      ? notice !== null
         ? remoteAgentNotice(notice)
-        : remoteMode
-          ? remoteError !== null
-            ? remoteAgentNotice(remoteError)
-            : null
-          : local.notice,
+        : remoteError !== null
+          ? remoteAgentNotice(remoteError)
+          : null
+      : local.notice,
     deferredFollowUps,
     removeDeferredFollowUp: (threadId, id) => {
       if (isRemoteAgentIdentity(threadId)) void pendingMessages.remove(threadId, id);

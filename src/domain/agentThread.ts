@@ -346,6 +346,7 @@ export type AgentThreadsAction =
       readonly kind: "loaded";
       readonly owner: AgentThreadLoadOwner;
       readonly threads: ReadonlyArray<AgentThread>;
+      readonly retainedThreadIds?: ReadonlySet<string>;
     }
   | { readonly kind: "threadCreated"; readonly thread: AgentThread }
   | { readonly kind: "historyThreadEvicted"; readonly threadId: string }
@@ -599,7 +600,7 @@ export function agentThreadsReducer(
 ): AgentThreadsState {
   switch (action.kind) {
     case "loaded":
-      return loadThreads(state, action.owner, action.threads);
+      return loadThreads(state, action.owner, action.threads, action.retainedThreadIds);
     case "threadCreated":
       return createThread(state, action.thread);
     case "historyThreadOpened":
@@ -697,6 +698,7 @@ function loadThreads(
   state: AgentThreadsState,
   owner: AgentThreadLoadOwner,
   loaded: ReadonlyArray<AgentThread>,
+  retainedThreadIds?: ReadonlySet<string>,
 ): AgentThreadsState {
   const threads = new Map<string, AgentThread>();
   for (const [threadId, thread] of state.threads) {
@@ -704,7 +706,8 @@ function loadThreads(
       threads.set(threadId, thread);
       continue;
     }
-    if (runningTurn(thread) !== null) threads.set(threadId, thread);
+    if (runningTurn(thread) !== null || retainedThreadIds?.has(threadId))
+      threads.set(threadId, thread);
   }
   for (const thread of loaded) {
     if (thread.owner.rootKey !== owner.rootKey) continue;

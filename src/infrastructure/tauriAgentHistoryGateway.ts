@@ -53,6 +53,7 @@ export class TauriAgentHistoryGateway implements AgentThreadStoreGateway {
     const snapshot = await loadAgentHistory(this.invokeCommand, request);
     for (const thread of snapshot.threads) {
       const key = JSON.stringify([request.rootKey, request.ownerId, thread.threadId]);
+      if ((this.revisions.get(key) ?? 0) > (thread.historyRevision ?? 0)) continue;
       this.acknowledged.delete(key);
       const pending = this.pending.get(key);
       if (pending && (thread.historyRevision ?? 0) > pending.write.expectedRevision)

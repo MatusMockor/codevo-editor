@@ -1,4 +1,7 @@
 import type { AgentWorktreeBase } from "../domain/agentWorktreeBase";
+import type { AgentAccountUsageLoadState } from "../domain/agentAccountUsage";
+import type { AgentAccountUsageSourcesPort } from "../domain/agentAccountUsageSources";
+import type { AgentAccountUsageRefreshOutcome } from "./agentAccountUsageRefresh";
 import type { RemoteGitProjectKey, RemoteGitSyncPort } from "../domain/remoteGitSync";
 import type { AgentSessionBackground } from "../domain/agentSessionBackground";
 import type { AgentBackgroundTaskStopOutcome } from "../domain/agentThreadSession";
@@ -385,6 +388,11 @@ export interface RemoteAgentGitAccess {
 }
 
 export interface AgentThreadsSurface {
+  readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
+  readonly accountUsageSources?: AgentAccountUsageSourcesPort;
+  readonly refreshAccountUsage?: (
+    provider: "claudeCode" | "codex",
+  ) => Promise<AgentAccountUsageRefreshOutcome>;
   readonly remoteGit?: RemoteAgentGitAccess;
   readonly history?: AgentThreadHistorySurface;
   readonly catalog?: AgentHistoryCatalogSurface;

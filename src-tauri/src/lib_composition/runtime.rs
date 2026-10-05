@@ -265,6 +265,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_disconnect_server,
             crate::remote_runner::remote_runner_remove_server,
             crate::remote_runner::remote_runner_get_runner,
+            crate::remote_runner::remote_runner_get_account_usage,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,
             crate::remote_runner::remote_runner_repository_hosts,

@@ -12,6 +12,7 @@ export interface AgentAccountUsageWindow {
 
 export interface AgentAccountUsageSnapshot {
   readonly provider: AgentCliKind;
+  readonly accountIdentity?: string | null;
   readonly fetchedAtEpochMs: number;
   readonly windows: ReadonlyArray<AgentAccountUsageWindow>;
 }
@@ -26,7 +27,8 @@ export function mergeAgentAccountUsageObservation(
   observation: AgentAccountUsageObservation,
   observedAtEpochMs: number,
 ): AgentAccountUsageSnapshot {
-  const windows = new Map(current?.windows.map((window) => [window.id, window]) ?? []);
+  const matchingCurrent = current?.provider === observation.provider ? current : null;
+  const windows = new Map(matchingCurrent?.windows.map((window) => [window.id, window]) ?? []);
   for (const window of observation.windows) {
     const existing = windows.get(window.id);
     if (
@@ -39,6 +41,9 @@ export function mergeAgentAccountUsageObservation(
   }
   return {
     provider: observation.provider,
+    ...(matchingCurrent?.accountIdentity === undefined
+      ? {}
+      : { accountIdentity: matchingCurrent.accountIdentity }),
     fetchedAtEpochMs: observedAtEpochMs,
     windows: [...windows.values()],
   };
@@ -54,7 +59,13 @@ export interface AgentAccountUsageGateway {
 export interface AgentAccountUsageStoreGateway {
   loadAgentAccountUsage(): ReadonlyArray<AgentAccountUsageSnapshot>;
   saveAgentAccountUsage(snapshot: AgentAccountUsageSnapshot): void;
+  invalidateAgentAccountUsage(provider: AgentCliKind): void;
+  subscribeAgentAccountUsage(listener: (change: AgentAccountUsageStoreChange) => void): () => void;
 }
+
+export type AgentAccountUsageStoreChange =
+  | { readonly kind: "snapshot"; readonly snapshot: AgentAccountUsageSnapshot }
+  | { readonly kind: "invalidated"; readonly provider: AgentCliKind };
 
 export type AgentAccountUsageLoadState =
   | { readonly kind: "idle" | "loading" }
@@ -63,14 +74,25 @@ export type AgentAccountUsageLoadState =
 
 export function parseAgentAccountUsageSnapshot(value: unknown): AgentAccountUsageSnapshot {
   const result = object(value, "result");
-  exactKeys(result, ["provider", "fetchedAtEpochMs", "windows"], "result");
+  exactKeys(result, ["provider", "fetchedAtEpochMs", "windows"], "result", ["accountIdentity"]);
   const provider = parseProvider(result.provider);
   const windows = array(result.windows, "result.windows");
-  if (windows.length > 12) throw new TypeError("Invalid account usage: too many windows.");
+  if (windows.length < 1 || windows.length > 12) {
+    throw new TypeError("Invalid account usage: expected 1 to 12 windows.");
+  }
+  const parsedWindows = windows.map((window, index) =>
+    parseWindow(window, `result.windows[${index}]`),
+  );
+  if (new Set(parsedWindows.map((window) => window.id)).size !== parsedWindows.length) {
+    throw new TypeError("Invalid account usage: duplicate windows.");
+  }
   return {
     provider,
+    ...(result.accountIdentity === undefined
+      ? {}
+      : { accountIdentity: parseAccountIdentity(result.accountIdentity) }),
     fetchedAtEpochMs: unsignedInteger(result.fetchedAtEpochMs, "result.fetchedAtEpochMs"),
-    windows: windows.map((window, index) => parseWindow(window, `result.windows[${index}]`)),
+    windows: parsedWindows,
   };
 }
 
@@ -122,17 +144,25 @@ function exactKeys(
   value: Record<string, unknown>,
   keys: ReadonlyArray<string>,
   path: string,
+  optionalKeys: ReadonlyArray<string> = [],
 ): void {
-  const expected = new Set(keys);
+  const expected = new Set([...keys, ...optionalKeys]);
   if (Object.keys(value).some((key) => !expected.has(key)) || keys.some((key) => !(key in value))) {
     throw new TypeError(`Invalid account usage fields at ${path}.`);
   }
 }
 
+function parseAccountIdentity(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value === "string" && /^account:v1:sha256:[0-9a-f]{64}$/.test(value)) return value;
+  throw new TypeError("Invalid account usage identity.");
+}
+
 function boundedString(value: unknown, max: number, path: string): string {
   if (
     typeof value !== "string" ||
-    value.length === 0 ||
+    value.trim().length === 0 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(value) ||
     new TextEncoder().encode(value).length > max
   ) {
     throw new TypeError(`Invalid account usage at ${path}.`);
