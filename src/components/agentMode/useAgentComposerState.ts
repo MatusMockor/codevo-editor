@@ -21,6 +21,7 @@ import {
   agentPendingSendSelection,
   holdComposerAttachments,
   pendingSendOutcome,
+  prepareComposerAttachmentSend,
   useAgentPendingSends,
 } from "./useAgentPendingSends";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -59,7 +60,6 @@ import type {
   AgentSteerOutcome,
   AgentThreadsSurface,
   AgentThreadView,
-  AgentTurnAttachmentRequest,
   AgentThreadStartResult,
 } from "../../application/agentThreadPorts";
 import type {
@@ -509,7 +509,15 @@ export function useAgentComposerControllerState({
     steerThreadId !== null,
   );
   const submissionAuthorityRef = useRef(submissionAuthority);
-  submissionAuthorityRef.current = submissionAuthority;
+  if (
+    submissionAuthorityRef.current === null
+      ? submissionAuthority !== null
+      : submissionAuthority === null ||
+        !composerSubmissionAuthorityEqual(submissionAuthorityRef.current, submissionAuthority)
+  ) {
+    submissionAuthorityRef.current = submissionAuthority;
+  }
+  const submissionLease = submissionAuthorityRef.current;
   const threadQueuedEdit =
     queuedEdit !== null && selectedThread?.thread.threadId === queuedEdit.threadId
       ? queuedEdit
@@ -533,21 +541,26 @@ export function useAgentComposerControllerState({
       source: AgentComposerSubmitSource = "draft",
     ) => {
       if (submissionBlocked) return false;
-      const authority = submissionAuthority;
+      const authority = submissionLease;
       if (authority === null) return false;
-      const isCurrent = () =>
-        composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority);
+      const isCurrent = () => mountedRef.current && submissionAuthorityRef.current === authority;
+      if (!isCurrent()) return false;
       const pendingAttachments = source === "draft" && composerHasAttachments(attachments);
-      const prepared = pendingAttachments
-        ? await prepareComposerAttachments(attachments, attachmentTargetKey)
-        : NO_PREPARED_ATTACHMENTS;
+      const attachmentSend =
+        pendingAttachments && attachments !== null
+          ? prepareComposerAttachmentSend(attachments, attachmentTargetKey, isCurrent)
+          : null;
+      const prepared = attachmentSend === null ? {} : await attachmentSend.prepared;
       if (prepared === null) return false;
-      if (pendingAttachments && !isCurrent()) return false;
-      const hold = holdComposerAttachments(attachments, prepared.draftIds);
+      const hold = attachmentSend?.hold ?? holdComposerAttachments(null, []);
+      if (!isCurrent() || !hold.isCurrent()) {
+        hold.settle(false);
+        return false;
+      }
       if (authority.kind === "followUp" && threadQueuedEdit?.threadId === authority.threadId) {
         let committed = false;
         try {
-          committed = await threadQueuedEdit.commit(prompt, prepared.request);
+          committed = await threadQueuedEdit.commit(prompt, prepared);
           return committed;
         } finally {
           hold.settle(committed);
@@ -562,7 +575,7 @@ export function useAgentComposerControllerState({
             try {
               const outcome = await steerThread({
                 delivery: submission.delivery ?? "queued",
-                ...prepared.request,
+                ...prepared,
                 threadId: authority.threadId,
                 prompt,
                 dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
@@ -583,7 +596,7 @@ export function useAgentComposerControllerState({
           try {
             sent = await sendFollowUp(
               {
-                ...prepared.request,
+                ...prepared,
                 threadId: authority.threadId,
                 prompt,
                 launch: submission.launch,
@@ -618,7 +631,7 @@ export function useAgentComposerControllerState({
           let started: AgentThreadStartResult | null = null;
           try {
             started = await startThread({
-              ...prepared.request,
+              ...prepared,
               projectRootKey: authority.projectRootKey,
               repositoryRoot: authority.repositoryRoot,
               prompt,
@@ -656,7 +669,7 @@ export function useAgentComposerControllerState({
       startThread,
       steerThread,
       submissionBlocked,
-      submissionAuthority,
+      submissionLease,
       threadQueuedEdit,
     ],
   );
@@ -842,27 +855,6 @@ function composerHasAttachments(attachments: AgentComposerAttachmentsSurface | n
   if (attachments === null) return false;
   return attachments.drafts.some((draft) => draft.state === "ready");
 }
-
-interface PreparedComposerAttachments {
-  readonly request: AgentTurnAttachmentRequest;
-  readonly draftIds: ReadonlyArray<string>;
-}
-
-async function prepareComposerAttachments(
-  attachments: AgentComposerAttachmentsSurface | null,
-  projectRootKey: string | null,
-): Promise<PreparedComposerAttachments | null> {
-  if (attachments === null || projectRootKey === null) return null;
-  const prepared = await attachments.prepareTurn(projectRootKey);
-  if (prepared === null) return null;
-  if (prepared.intents.length === 0) return NO_PREPARED_ATTACHMENTS;
-  return {
-    request: { attachments: prepared.intents, attachmentOwner: prepared.owner },
-    draftIds: prepared.draftIds,
-  };
-}
-
-const NO_PREPARED_ATTACHMENTS: PreparedComposerAttachments = { request: {}, draftIds: [] };
 
 const PROMPT_ATTACHMENT_SEPARATOR_BYTES = 2;
 

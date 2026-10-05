@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import type { AgentTurnAttachmentRequest } from "../../application/agentThreadPorts";
 import type {
   AgentComposerAttachmentDraft,
   AgentComposerAttachmentsSurface,
@@ -73,6 +74,7 @@ export function useAgentPendingSends(
 
 export interface AgentComposerSendHold {
   readonly drafts: ReadonlyArray<AgentComposerAttachmentDraft>;
+  isCurrent(): boolean;
   settle(delivered: boolean): void;
 }
 
@@ -85,9 +87,16 @@ export function holdComposerAttachments(
   let settled = false;
   return {
     drafts,
+    isCurrent: () =>
+      attachments.sendHoldIsCurrent === undefined ||
+      (drafts.length === draftIds.length && attachments.sendHoldIsCurrent(drafts)),
     settle: (delivered) => {
       if (settled) return;
       settled = true;
+      if (attachments.settleSendHold !== undefined) {
+        attachments.settleSendHold(drafts, delivered);
+        return;
+      }
       if (delivered) {
         attachments.markSent(draftIds);
         return;
@@ -97,7 +106,49 @@ export function holdComposerAttachments(
   };
 }
 
-const NO_SEND_HOLD: AgentComposerSendHold = { drafts: [], settle: () => undefined };
+const NO_SEND_HOLD: AgentComposerSendHold = {
+  drafts: [],
+  isCurrent: () => true,
+  settle: () => undefined,
+};
+
+export function prepareComposerAttachmentSend(
+  attachments: AgentComposerAttachmentsSurface,
+  projectRootKey: string | null,
+  isCurrent: () => boolean,
+): {
+  readonly hold: AgentComposerSendHold;
+  readonly prepared: Promise<AgentTurnAttachmentRequest | null>;
+} {
+  const draftIds = attachments.drafts
+    .filter((draft) => draft.state === "ready")
+    .map((draft) => draft.draftId);
+  // Preparation captures its drafts synchronously, before holding removes them from the composer.
+  const preparation =
+    projectRootKey === null ? Promise.resolve(null) : attachments.prepareTurn(projectRootKey);
+  const hold = holdComposerAttachments(attachments, draftIds);
+  const prepared = (async (): Promise<AgentTurnAttachmentRequest | null> => {
+    try {
+      const result = await preparation;
+      if (
+        result === null ||
+        !isCurrent() ||
+        !hold.isCurrent() ||
+        result.draftIds.length !== draftIds.length ||
+        result.draftIds.some((id, index) => id !== draftIds[index]) ||
+        result.intents.length === 0
+      ) {
+        hold.settle(false);
+        return null;
+      }
+      return { attachments: result.intents, attachmentOwner: result.owner };
+    } catch (error: unknown) {
+      hold.settle(false);
+      throw error;
+    }
+  })();
+  return { hold, prepared };
+}
 
 export function pendingSendOutcome(
   delivered: boolean,

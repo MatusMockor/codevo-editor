@@ -11,6 +11,7 @@ import type { AgentImageOutputPolicy, AgentImageSurfacePort } from "../domain/ag
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentAttachmentGateway, StoredAgentAttachmentRequest } from "./agentAttachmentPorts";
 import { RemoteAttachmentStore } from "./remoteAttachmentStore";
+import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
 import {
   useAgentComposerAttachments,
@@ -44,6 +45,7 @@ import {
 export interface RemoteAgentAttachmentsDependencies {
   readonly gateway: RemoteRunnerGateway | null;
   readonly imageSurface: AgentImageSurfacePort | null;
+  readonly attachmentEncoder?: AgentAttachmentEncoderPort | null;
   readonly resolveOwner: (projectRootKey: string) => AgentAttachmentOwner | null;
   readonly resolveRetainedOwner: (projectRootKey: string) => AgentAttachmentOwner | null;
   readonly resolveServer: (threadId: string) => string | null;
@@ -145,6 +147,13 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
         getGateway: () => current.current.gateway,
         resolveOwner: (workspaceId) => current.current.resolveOwner(workspaceId),
         ownerIsCurrent,
+        encoder: {
+          encode: (bytes, signal) => {
+            const encoder = current.current.attachmentEncoder;
+            if (!encoder) return Promise.reject(new Error("Attachment encoding is unavailable."));
+            return encoder.encode(bytes, signal);
+          },
+        },
       }),
     [ownerIsCurrent],
   );

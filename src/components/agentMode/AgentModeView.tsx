@@ -8,6 +8,7 @@ import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriReposi
 import { SHARED_REMOTE_REPOSITORY_IDENTITY } from "../remoteRunner/sharedRemoteRepositoryIdentity";
 import { TauriRemoteGitSyncGateway } from "../../infrastructure/tauriRemoteGitSyncGateway";
 import { TauriCompareUrlOpener } from "../../infrastructure/tauriGitIntegrationGateway";
+import { BrowserAgentAttachmentEncoder } from "../../infrastructure/browserAgentAttachmentEncoder";
 import { useAgentProjectCreation } from "./useAgentProjectCreation";
 import {
   agentConversationEscapeAction,
@@ -208,6 +209,7 @@ const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const PROJECT_IDENTITY_GATEWAY = new TauriRepositoryIdentityGateway();
 const REMOTE_PROJECT_IDENTITY_GATEWAY = SHARED_REMOTE_REPOSITORY_IDENTITY;
 const REMOTE_GIT_SYNC_GATEWAY = new TauriRemoteGitSyncGateway();
+const REMOTE_ATTACHMENT_ENCODER = new BrowserAgentAttachmentEncoder();
 const REMOTE_COMPARE_URL_OPENER = new TauriCompareUrlOpener();
 const NOOP_CLOSE_PROJECT = () => undefined;
 const NOOP_SELECTED_PROJECT = () => undefined;
@@ -254,6 +256,7 @@ export function AgentModeView(props: AgentModeViewProps) {
     localProjects: props.projects,
     metadataRepository: remote?.metadataRepository,
     imageSurface: props.imageSurface ?? null,
+    attachmentEncoder: REMOTE_ATTACHMENT_ENCODER,
     gitSync: REMOTE_GIT_SYNC_GATEWAY,
     repositoryIdentity: REMOTE_PROJECT_IDENTITY_GATEWAY,
     externalUrlOpener: REMOTE_COMPARE_URL_OPENER,
