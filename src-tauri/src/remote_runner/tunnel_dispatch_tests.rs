@@ -20,7 +20,10 @@ fn accept(listener: &std::os::unix::net::UnixListener) -> std::os::unix::net::Un
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match listener.accept() {
-            Ok((socket, _)) => return socket,
+            Ok((socket, _)) => {
+                socket.set_nonblocking(false).unwrap();
+                return socket;
+            }
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
