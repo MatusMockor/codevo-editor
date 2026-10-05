@@ -1,4 +1,9 @@
-use super::{commands::blocking, service::RemoteRunnerState, types::id};
+use super::{
+    commands::blocking,
+    service::RemoteRunnerState,
+    transport::Session,
+    types::{id, Server},
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -50,27 +55,29 @@ pub async fn remote_runner_repository_identity(
         if !lease.is_current() {
             return Err("Server connection changed during request".into());
         }
-        let result = session.request(
-            lease.server(),
-            "GET",
-            &path,
-            None,
-            vec![("x-codevo-runner-id".into(), request.runner_id)],
-        );
+        let result = fetch_identity(&session, lease.server(), &path);
         if !lease.is_current() {
             return Err("Server connection changed during request".into());
         }
-        let result = match result {
-            Err(error) if error == "Runner request failed (HTTP 404)." => {
-                return Ok(RepositoryIdentityResponse {
-                    repository_key: None,
-                });
-            }
-            result => result?,
-        };
-        parse_response(result)
+        result
     })
     .await
+}
+
+fn fetch_identity(
+    session: &Session,
+    server: &Server,
+    path: &str,
+) -> Result<RepositoryIdentityResponse, String> {
+    let result = match session.request(server, "GET", path, None, vec![]) {
+        Err(error) if error == "Runner request failed (HTTP 404)." => {
+            return Ok(RepositoryIdentityResponse {
+                repository_key: None,
+            });
+        }
+        result => result?,
+    };
+    parse_response(result)
 }
 
 fn parse_response(result: serde_json::Value) -> Result<RepositoryIdentityResponse, String> {
@@ -140,5 +147,141 @@ mod tests {
             "repositoryKey":null, "url":"secret"
         }))
         .is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod transport_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::{Duration, Instant};
+
+    const RUNNER_REQUEST: &str = "GET /v1/runner ";
+    const IDENTITY_REQUEST: &str = "GET /v1/projects/project/repository-identity ";
+
+    fn server() -> Server {
+        Server {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            host: "localhost".into(),
+            username: "test".into(),
+            port: 22,
+            connected: true,
+            runner_id: Some("runner".into()),
+        }
+    }
+
+    fn take_request(buffer: &mut Vec<u8>) -> Option<String> {
+        let end = buffer.windows(4).position(|bytes| bytes == b"\r\n\r\n")? + 4;
+        let request: Vec<u8> = buffer.drain(..end).collect();
+        Some(String::from_utf8_lossy(&request).into_owned())
+    }
+
+    fn response(request: &str, identity: (u16, &'static str)) -> (u16, &'static str) {
+        if request.starts_with(RUNNER_REQUEST) {
+            return (200, r#"{"protocolVersion":1,"runnerId":"runner"}"#);
+        }
+        if request.starts_with(IDENTITY_REQUEST) {
+            return identity;
+        }
+        (500, "{}")
+    }
+
+    fn fake_runner(
+        listener: UnixListener,
+        identity: (u16, &'static str),
+        stop: Arc<AtomicBool>,
+    ) -> std::thread::JoinHandle<Vec<String>> {
+        listener.set_nonblocking(true).unwrap();
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut connections: Vec<(UnixStream, Vec<u8>)> = Vec::new();
+            let mut requests = Vec::new();
+            while !stop.load(Ordering::Acquire) && Instant::now() < deadline {
+                if let Ok((socket, _)) = listener.accept() {
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_millis(10)))
+                        .unwrap();
+                    connections.push((socket, Vec::new()));
+                }
+                for (socket, buffer) in &mut connections {
+                    let mut chunk = [0; 1024];
+                    let read = socket.read(&mut chunk).unwrap_or(0);
+                    buffer.extend_from_slice(&chunk[..read]);
+                    while let Some(request) = take_request(buffer) {
+                        let (status, body) = response(&request, identity);
+                        write!(
+                            socket,
+                            "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .unwrap();
+                        let served = request.starts_with(IDENTITY_REQUEST);
+                        requests.push(request);
+                        if served {
+                            return requests;
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            requests
+        })
+    }
+
+    fn header_values<'a>(request: &'a str, name: &str) -> Vec<&'a str> {
+        request
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(header, _)| header.trim().eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.trim())
+            .collect()
+    }
+
+    #[test]
+    fn identity_lookup_reaches_runner_with_one_transport_owned_runner_header() {
+        let path = RepositoryIdentityRequest {
+            server_id: "fixture".into(),
+            runner_id: "runner".into(),
+            project_id: "project".into(),
+        }
+        .path()
+        .unwrap();
+        for (status, body, expected) in [
+            (
+                200,
+                r#"{"repositoryKey":"github.com/org/repo"}"#,
+                Some("github.com/org/repo"),
+            ),
+            (404, r#"{"error":"not_found"}"#, None),
+        ] {
+            let session = Session::fixture();
+            let listener = UnixListener::bind(session.socket_path()).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let runner = fake_runner(listener, (status, body), stop.clone());
+            let result = fetch_identity(&session, &server(), &path);
+            stop.store(true, Ordering::Release);
+            let requests = runner.join().unwrap();
+            assert_eq!(
+                result.map(|response| response.repository_key),
+                Ok(expected.map(str::to_owned)),
+                "HTTP {status}"
+            );
+            assert_eq!(requests.len(), 2, "HTTP {status}");
+            assert!(requests[0].starts_with(RUNNER_REQUEST));
+            assert!(requests[1].starts_with(IDENTITY_REQUEST));
+            assert_eq!(
+                header_values(&requests[1], "x-codevo-runner-id"),
+                ["runner"],
+                "HTTP {status}"
+            );
+        }
     }
 }

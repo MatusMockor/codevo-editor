@@ -36,6 +36,10 @@ impl Session {
             forwards: ForwardSet::new(ForwardDestination::new("fixture", "localhost", "test", 22)),
         }
     }
+    #[cfg(all(test, unix))]
+    pub(in crate::remote_runner) fn socket_path(&self) -> std::path::PathBuf {
+        self.process.lock().unwrap().as_ref().unwrap().socket_path()
+    }
     #[cfg(test)]
     pub(in crate::remote_runner) fn pid(&self) -> Option<u32> {
         self.process.lock().unwrap().as_ref().map(|p| p.pid())
