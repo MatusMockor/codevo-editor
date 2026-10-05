@@ -7,6 +7,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.98] - 2026-10-05
+
+### Added
+
+- Choose the default provider, model and effort for new conversations in Settings >
+  Agents, separately for this computer and servers. New conversations use these
+  defaults; choose Continue with last used to keep the previous project choice.
+
+### Fixed
+
+- Server sends treat default Codex effort consistently, including retries and queued
+  messages. Sending an explicit Codex effort requires an updated Codevo Runner.
+- Failed server starts and follow-ups show the reported reason alongside the
+  restored message, making rejected settings and connection failures easier to
+  identify.
+- Rapid repeated sends and stale send callbacks cannot resend an already submitted
+  composer draft or send it into a different conversation.
+- Sending clears the text and captured ready images from the composer without
+  waiting for attachment preparation to finish. If the send fails, the original
+  images are restored alongside any newer draft edits.
+- Uploading images to a server uses asynchronous browser encoding instead of building
+  large binary strings on the editor's UI thread.
+- The composer avoids a redundant height measurement when its contents change.
+
 ## [0.2.0-beta.97] - 2026-10-05
 
 ### Fixed
