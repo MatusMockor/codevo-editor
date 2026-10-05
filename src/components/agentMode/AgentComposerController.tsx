@@ -11,6 +11,7 @@ import type { AgentContextCompactionOffer } from "../../domain/agentContextCompa
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
 import { agentWorkspaceLocationEqual } from "./agentComposerThreadLocation";
+import type { AgentEndSessionConfirmationView } from "./useAgentEndSessionCommand";
 import type { AgentComposerDrawerContext } from "./composer/AgentComposerFrame";
 import {
   AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
@@ -44,6 +45,7 @@ export interface AgentComposerControllerProps {
   onOpenEnvironmentSettings?(): void;
   onShowUsageLimits?(): void;
   readonly banners?: ReactNode;
+  readonly endSessionConfirmation?: AgentEndSessionConfirmationView | null;
   readonly renderDrawerEnd?: (context: AgentComposerDrawerContext) => ReactNode;
   readonly interactions?: AgentComposerInteractionsInput;
 }
@@ -62,6 +64,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   submissionBlocked,
   submit,
   banners,
+  endSessionConfirmation = null,
   renderDrawerEnd,
   interactions,
 }: AgentComposerControllerProps) {
@@ -108,6 +111,7 @@ export const AgentComposerController = memo(function AgentComposerController({
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
         banners={banners}
+        endSessionConfirmation={endSessionConfirmation}
         renderDrawerEnd={renderDrawerEnd}
       />
     </>
@@ -122,6 +126,7 @@ function agentComposerControllerPropsEqual(
   const rightProps = right.composerProps;
   return (
     left.banners === right.banners &&
+    (left.endSessionConfirmation ?? null) === (right.endSessionConfirmation ?? null) &&
     left.renderDrawerEnd === right.renderDrawerEnd &&
     sameInteractions(left.interactions, right.interactions) &&
     left.followUpBehavior === right.followUpBehavior &&

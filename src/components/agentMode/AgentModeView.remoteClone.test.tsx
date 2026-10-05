@@ -11,8 +11,10 @@ import type { RepositoryLookupGateway } from "../../application/repositoryLookup
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
+import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
+import { AGENT_END_SESSION_STOP_TEXT } from "./AgentEndSessionConfirmationBanner";
 import { AgentModeView } from "./AgentModeView";
-import { SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
+import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
 
@@ -112,17 +114,15 @@ describe("agent workbench remote clone adoption", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the project picked in the draft chooser when a background clone finishes", async () => {
-    const { gateway, finishClone } = gatewayFixture();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  async function renderView(
+    gateway: RemoteRunnerGateway,
+    agents: AgentThreadsSurface = threadsSurfaceFixture(),
+  ): Promise<void> {
     await act(async () =>
       root.render(
         <RemoteRunnerProvider gateway={gateway} repositoryLookup={lookupGatewayFixture()}>
           <AgentModeView
-            agents={{
-              ...threadsSurfaceFixture(),
-              providerManagement: unconfiguredAgentProviderManagement(),
-            }}
+            agents={{ ...agents, providerManagement: unconfiguredAgentProviderManagement() }}
             projects={[projectFixture()]}
             workspaceRoot={SURFACE_FIXTURE_ROOT}
             overflowRootPaths={[]}
@@ -135,7 +135,11 @@ describe("agent workbench remote clone adoption", () => {
         </RemoteRunnerProvider>,
       ),
     );
+  }
 
+  async function startServerClone(
+    gateway: ReturnType<typeof gatewayFixture>["gateway"],
+  ): Promise<void> {
     click(host.querySelector('[aria-label="Run on: This computer"]')!);
     await waitForReact(() =>
       expect(document.querySelector('[role="menuitemradio"]')?.textContent).toContain(
@@ -179,6 +183,19 @@ describe("agent workbench remote clone adoption", () => {
     await waitForReact(() =>
       expect(host.querySelector('[aria-label="Repository clone"]')).not.toBeNull(),
     );
+  }
+
+  function endSessionConfirmations(): ReadonlyArray<HTMLElement> {
+    return [...host.querySelectorAll<HTMLElement>(".cv-composer-banner")].filter((banner) =>
+      (banner.textContent ?? "").includes(AGENT_END_SESSION_STOP_TEXT),
+    );
+  }
+
+  it("keeps the project picked in the draft chooser when a background clone finishes", async () => {
+    const { gateway, finishClone } = gatewayFixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await renderView(gateway);
+    await startServerClone(gateway);
 
     const draft = host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea");
     expect(draft).not.toBeNull();
@@ -220,6 +237,45 @@ describe("agent workbench remote clone adoption", () => {
     click(cloneRow!.querySelector("button")!);
     expect(host.querySelector<HTMLTextAreaElement>(".agent-clone-composer textarea")?.value).toBe(
       "Draft kept while I visit the other project",
+    );
+  });
+
+  it("carries a pending End Claude session confirmation into the clone draft's composer", async () => {
+    const { gateway } = gatewayFixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await renderView(
+      gateway,
+      threadsSurfaceFixture({
+        threads: [surfaceThreadView()],
+        endSession: vi.fn(async () => "ended" as const),
+        inspectSessionBackground: async () => "live" as const,
+      }),
+    );
+    const row = host.querySelector<HTMLElement>('[data-thread-id="agt-1"]');
+    expect(row).not.toBeNull();
+    act(() => {
+      row?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 8 }),
+      );
+    });
+    const endSession = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "End Claude session",
+    );
+    expect(endSession).toBeDefined();
+    click(endSession!);
+    await waitForReact(() => expect(endSessionConfirmations()).toHaveLength(1));
+    expect(endSessionConfirmations()[0]?.parentElement).toBe(
+      host.querySelector(".cv-composer__banners"),
+    );
+
+    await startServerClone(gateway);
+
+    const stack = host.querySelector(".agent-clone-composer .cv-composer > .cv-composer__banners");
+    expect(stack).not.toBeNull();
+    expect(endSessionConfirmations()).toHaveLength(1);
+    expect(endSessionConfirmations()[0]?.parentElement).toBe(stack);
+    expect(endSessionConfirmations()[0]?.textContent).toContain(
+      'End Claude\'s session for "Refactor the parser"?',
     );
   });
 

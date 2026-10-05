@@ -294,6 +294,34 @@ describe("normal composer for a cloning project", () => {
     expect(host.querySelector('[aria-label="Clone app"]')).toBeNull();
   });
 
+  it("hosts a pending End Claude session confirmation in its own banner stack", async () => {
+    const onCancel = vi.fn();
+    props = {
+      ...props,
+      endSessionConfirmation: {
+        threadId: "agt-2",
+        title: "Nightly build",
+        background: "live",
+        onConfirm: vi.fn(),
+        onCancel,
+      },
+    };
+    await render();
+    const stack = host.querySelector(".agent-clone-composer .cv-composer > .cv-composer__banners");
+    const banner = [...host.querySelectorAll<HTMLElement>(".cv-composer-banner")].find(
+      (candidate) =>
+        (candidate.textContent ?? "").includes('End Claude\'s session for "Nightly build"?'),
+    );
+    expect(stack).not.toBeNull();
+    expect(banner?.parentElement).toBe(stack);
+    expect(stack?.firstElementChild?.textContent).toContain("Cloning app");
+    const keep = [...(banner?.querySelectorAll("button") ?? [])].find(
+      (candidate) => candidate.textContent === "Keep running",
+    );
+    await act(async () => keep?.click());
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it("shows typed failure copy with Retry and Remove project", async () => {
     props = {
       ...props,

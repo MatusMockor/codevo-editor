@@ -252,6 +252,76 @@ describe("AgentComposer stop confirmation", () => {
   });
 });
 
+describe("AgentComposer end session confirmation", () => {
+  function banner(text: string): HTMLElement | undefined {
+    return [...host.querySelectorAll<HTMLElement>(".cv-composer-banner")].find((candidate) =>
+      (candidate.textContent ?? "").includes(text),
+    );
+  }
+
+  function action(name: string): HTMLButtonElement {
+    const match = [...(banner("End Claude's session")?.querySelectorAll("button") ?? [])].find(
+      (candidate) => candidate.textContent === name,
+    );
+    expect(match).toBeInstanceOf(HTMLButtonElement);
+    return match as HTMLButtonElement;
+  }
+
+  it("renders in the composer's banner stack right below a pending stop confirmation", () => {
+    render({
+      onStopNow: vi.fn(),
+      stopConfirmation: { kind: "confirmBackground", liveTaskCount: 1, onCancel: vi.fn() },
+      endSessionConfirmation: {
+        threadId: "agt-2",
+        title: "Nightly build",
+        background: "live",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+      },
+    });
+
+    const stack = host.querySelector(".cv-composer > .cv-composer__banners");
+    const stop = banner("Press Stop or Esc again");
+    const end = banner('End Claude\'s session for "Nightly build"?');
+    expect(stack).not.toBeNull();
+    expect(stop?.parentElement).toBe(stack);
+    expect(end?.parentElement).toBe(stack);
+    expect(stop?.nextElementSibling).toBe(end);
+  });
+
+  it("leaves the banner stack empty without a pending confirmation", () => {
+    render({ endSessionConfirmation: null });
+
+    expect(host.querySelector(".cv-composer__banners")?.childElementCount).toBe(0);
+  });
+
+  it("returns focus to the prompt after End session or Keep running", () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render({
+      endSessionConfirmation: {
+        threadId: "agt-1",
+        title: "Refactor the parser",
+        background: "live",
+        onConfirm,
+        onCancel,
+      },
+    });
+
+    const end = action("End session");
+    end.focus();
+    act(() => end.click());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(textarea());
+
+    const keep = action("Keep running");
+    keep.focus();
+    act(() => keep.click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(textarea());
+  });
+});
+
 describe("AgentComposer session restart consent", () => {
   function restartButton(name: string): HTMLButtonElement {
     const match = [...host.querySelectorAll("button")].find(

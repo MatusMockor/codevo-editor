@@ -77,6 +77,8 @@ import {
   type AgentStopConfirmationView,
 } from "./AgentStopConfirmationBanner";
 import { AgentComposerDrawerStart } from "./AgentComposerDrawerStart";
+import { AgentEndSessionConfirmationBanner } from "./AgentEndSessionConfirmationBanner";
+import type { AgentEndSessionConfirmationView } from "./useAgentEndSessionCommand";
 import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
 import { AgentSessionRestartBanner } from "./AgentSessionRestartBanner";
 import type { AgentSessionRestartConfirmation } from "./useAgentSessionRestartConsent";
@@ -171,6 +173,7 @@ export interface AgentComposerProps {
   onStop?(): void;
   onStopNow?(): void;
   readonly stopConfirmation?: AgentStopConfirmationView | null;
+  readonly endSessionConfirmation?: AgentEndSessionConfirmationView | null;
   readonly sessionRestartConfirmation?: AgentSessionRestartConfirmation | null;
   onRecoverDraft?(): AgentComposerRecoveryOutcome;
   readonly recoveryReason?: AgentComposerRecoveryReason;
@@ -220,6 +223,7 @@ export function AgentComposer({
   onStop,
   onStopNow,
   stopConfirmation = null,
+  endSessionConfirmation = null,
   sessionRestartConfirmation = null,
   onRecoverDraft,
   recoveryReason = "sessionUnavailable",
@@ -834,6 +838,10 @@ export function AgentComposer({
           <AgentStopConfirmationBanner
             confirmation={stopConfirmation}
             onConfirm={onStopNow}
+            onFocusReturn={focusPrompt}
+          />
+          <AgentEndSessionConfirmationBanner
+            confirmation={endSessionConfirmation}
             onFocusReturn={focusPrompt}
           />
           <AgentSessionRestartBanner

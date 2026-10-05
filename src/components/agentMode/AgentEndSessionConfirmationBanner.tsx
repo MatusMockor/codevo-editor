@@ -11,24 +11,30 @@ export const AGENT_END_SESSION_STOP_TEXT =
 
 export function AgentEndSessionConfirmationBanner({
   confirmation,
+  onFocusReturn,
 }: {
   readonly confirmation: AgentEndSessionConfirmationView | null;
+  readonly onFocusReturn?: () => void;
 }) {
   if (confirmation === null) return null;
+  const choose = (action: () => void) => (): void => {
+    action();
+    onFocusReturn?.();
+  };
   return (
     <ComposerBanner
       actions={
         <>
           <button
             className="cv-banner-action"
-            onClick={() => confirmation.onConfirm()}
+            onClick={choose(() => confirmation.onConfirm())}
             type="button"
           >
             End session
           </button>
           <button
             className="cv-banner-action"
-            onClick={() => confirmation.onCancel()}
+            onClick={choose(() => confirmation.onCancel())}
             type="button"
           >
             Keep running
@@ -40,6 +46,21 @@ export function AgentEndSessionConfirmationBanner({
     >
       {agentEndSessionText(confirmation)}
     </ComposerBanner>
+  );
+}
+
+export function AgentEndSessionStandaloneBanner({
+  confirmation,
+}: {
+  readonly confirmation: AgentEndSessionConfirmationView | null;
+}) {
+  if (confirmation === null) return null;
+  return (
+    <div className="cv-session-dock cv-conversation-column">
+      <div className="cv-session-dock__banners">
+        <AgentEndSessionConfirmationBanner confirmation={confirmation} />
+      </div>
+    </div>
   );
 }
 

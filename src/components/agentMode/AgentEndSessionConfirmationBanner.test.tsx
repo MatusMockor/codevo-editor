@@ -11,6 +11,7 @@ import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTest
 import {
   AGENT_END_SESSION_STOP_TEXT,
   AgentEndSessionConfirmationBanner,
+  AgentEndSessionStandaloneBanner,
 } from "./AgentEndSessionConfirmationBanner";
 
 let mounted: { readonly root: Root; readonly host: HTMLElement } | null = null;
@@ -70,6 +71,58 @@ describe("AgentEndSessionConfirmationBanner", () => {
     act(() => button(host, "Keep running").click());
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands focus back after either answer", () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    const onFocusReturn = vi.fn();
+    const host = render(
+      <AgentEndSessionConfirmationBanner
+        confirmation={{
+          threadId: "agt-2",
+          title: "Nightly build",
+          background: "live",
+          onConfirm,
+          onCancel,
+        }}
+        onFocusReturn={onFocusReturn}
+      />,
+    );
+    act(() => button(host, "End session").click());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onFocusReturn).toHaveBeenCalledTimes(1);
+    act(() => button(host, "Keep running").click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onFocusReturn).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps composer width without a tuck when no composer can host it", () => {
+    const onCancel = vi.fn();
+    const host = render(
+      <AgentEndSessionStandaloneBanner
+        confirmation={{
+          threadId: "agt-2",
+          title: "Nightly build",
+          background: "live",
+          onConfirm: vi.fn(),
+          onCancel,
+        }}
+      />,
+    );
+    const column = host.querySelector(".cv-session-dock.cv-conversation-column");
+    const banner = host.querySelector(".cv-composer-banner");
+    expect(column).not.toBeNull();
+    expect(banner?.parentElement?.className).toBe("cv-session-dock__banners");
+    expect(banner?.parentElement?.parentElement).toBe(column);
+    expect(banner?.textContent).toContain('End Claude\'s session for "Nightly build"?');
+    act(() => button(host, "Keep running").click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders no standalone container without a pending confirmation", () => {
+    const host = render(<AgentEndSessionStandaloneBanner confirmation={null} />);
+    expect(host.childElementCount).toBe(0);
   });
 
   it("words an unanswered background check truthfully", () => {

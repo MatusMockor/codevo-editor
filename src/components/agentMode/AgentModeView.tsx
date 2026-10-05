@@ -90,7 +90,7 @@ import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { remoteAddProjectCloneActive } from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
-import { AgentEndSessionConfirmationBanner } from "./AgentEndSessionConfirmationBanner";
+import { AgentEndSessionStandaloneBanner } from "./AgentEndSessionConfirmationBanner";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
 import { AgentSidebarReveal } from "./AgentSidebarReveal";
 import { AgentThreadActivity } from "./AgentThreadActivity";
@@ -1174,6 +1174,7 @@ function LocalAgentModeView({
                   }
                   providerManagement={agents.providerManagement}
                   modelFavoritesPersistence={modelFavoritesPersistence}
+                  endSessionConfirmation={menu.endSessionConfirmation}
                   onThreadStarted={navigation.selectStartedThread}
                   onOpenProviderSettings={agents.configureAgentCli}
                   onOpenEnvironmentSettings={onOpenEnvironmentSettings}
@@ -1334,7 +1335,9 @@ function LocalAgentModeView({
                     }
                   />
                 )}
-              <AgentEndSessionConfirmationBanner confirmation={menu.endSessionConfirmation} />
+              {creation.visible && !cloneComposerVisible && (
+                <AgentEndSessionStandaloneBanner confirmation={menu.endSessionConfirmation} />
+              )}
               <AgentThreadUndoNotice
                 notification={threadUndo.notification}
                 onDismiss={threadUndo.dismiss}
@@ -1382,6 +1385,7 @@ function LocalAgentModeView({
                     submit={submitComposer}
                     interactions={{ gateway: questionGateway, thread: sessionThread }}
                     banners={composerExtras.banners}
+                    endSessionConfirmation={menu.endSessionConfirmation}
                     onShowUsageLimits={composerExtras.onShowUsageLimits}
                     renderDrawerEnd={composerExtras.renderDrawerEnd}
                   />

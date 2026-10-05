@@ -92,6 +92,7 @@
 .cv-composer-banner__message {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cv-composer-banner__actions {

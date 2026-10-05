@@ -23,6 +23,7 @@ import {
   type AgentComposerSurface,
 } from "./useAgentComposerState";
 import type { useAgentProjectCreation } from "./useAgentProjectCreation";
+import type { AgentEndSessionConfirmationView } from "./useAgentEndSessionCommand";
 
 interface Props {
   readonly creation: Pick<
@@ -51,6 +52,7 @@ interface Props {
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly providerManagement: AgentProviderManagementSurface;
   readonly modelFavoritesPersistence: AgentModelFavoritesPersistence | null;
+  readonly endSessionConfirmation?: AgentEndSessionConfirmationView | null;
   onThreadStarted(threadId: string): void;
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
@@ -66,6 +68,7 @@ export function AgentCloneComposer({
   providerEnabled,
   providerManagement,
   modelFavoritesPersistence,
+  endSessionConfirmation = null,
   onThreadStarted,
   onOpenProviderSettings,
   onOpenEnvironmentSettings,
@@ -218,6 +221,7 @@ export function AgentCloneComposer({
             />
           )
         }
+        endSessionConfirmation={endSessionConfirmation}
         placeholder={clonePlaceholder(bannerModel)}
         mode={{ kind: "new" }}
         executionServerId={pending.environment}
