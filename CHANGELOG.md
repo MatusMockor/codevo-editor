@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.93] - 2026-10-05
+
+### Fixed
+
+- A project that exists both on this computer and on a server is now shown as one
+  project automatically when both checkouts point to the same repository. The
+  editor could not read the repository of server projects, so they always appeared
+  as separate projects unless you connected them by hand in Settings > Environments.
+
 ## [0.2.0-beta.92] - 2026-10-05
 
 ### Fixed
