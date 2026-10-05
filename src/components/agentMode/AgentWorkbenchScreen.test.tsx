@@ -319,6 +319,65 @@ describe("AgentWorkbenchScreen", () => {
     expect(prompt().disabled).toBe(false);
   });
 
+  it("starts the composer from the new-thread defaults of the app settings and follows a change", () => {
+    const agents = surface(ROOT_A);
+    const settings = {
+      ...defaultAppSettings(),
+      agentNewThreadDefaults: {
+        source: "defaults",
+        claudeCode: { model: "claude-opus-5", effort: "max" },
+        codex: { model: "gpt-6-astra", effort: "xhigh" },
+      },
+    } as const;
+
+    render(createWorkbench(ROOT_A, { agents, appSettings: settings }));
+
+    expect(modelPicker().dataset.value).toBe("claude-opus-5");
+
+    render(
+      createWorkbench(ROOT_A, {
+        agents,
+        appSettings: {
+          ...settings,
+          agentNewThreadDefaults: {
+            ...settings.agentNewThreadDefaults,
+            claudeCode: { model: "claude-fable-5-1", effort: "low" },
+          },
+        },
+      }),
+    );
+
+    expect(modelPicker().dataset.value).toBe("claude-fable-5-1");
+  });
+
+  it("falls back to the automatic Claude model while the detected Claude CLI is too old for the default", () => {
+    const appSettings = {
+      ...defaultAppSettings(),
+      agentNewThreadDefaults: {
+        source: "defaults",
+        claudeCode: { model: "claude-sonnet-5-5", effort: "max" },
+        codex: { model: "default", effort: "default" },
+      },
+    } as const;
+    const withClaudeCli = (version: string) => ({
+      ...surface(ROOT_A),
+      providerManagement: providerManagement({
+        cliDiscovery: {
+          ...defaultAgentCliDiscoveryResult(),
+          claudeCode: { kind: "detected", path: "/usr/local/bin/claude", version },
+        },
+      }),
+    });
+
+    render(createWorkbench(ROOT_A, { agents: withClaudeCli("2.1.283"), appSettings }));
+
+    expect(modelPicker().dataset.value).toBe("claude-sonnet-5");
+
+    render(createWorkbench(ROOT_A, { agents: withClaudeCli("2.1.284"), appSettings }));
+
+    expect(modelPicker().dataset.value).toBe("claude-sonnet-5-5");
+  });
+
   it("toggles the bottom panel through the controller authority only", () => {
     const layout = recordedLayoutState();
     const hidden = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false });

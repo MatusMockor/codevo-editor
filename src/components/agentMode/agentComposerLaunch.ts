@@ -1,9 +1,15 @@
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
+import type {
+  AgentNewThreadDefaults,
+  AgentNewThreadLaunchSource,
+} from "../../domain/agentNewThreadDefaults";
 import { normalizeStoredAgentLaunch } from "../../domain/agentStoredLaunch";
 import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentThread";
 import { latestPromptedAgentLaunch } from "../../domain/agentTurnOrigin";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
+import type { ClaudeModelManifest } from "../../domain/claudeModelCatalog";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import { agentClaudeModelChoiceForVersion } from "./agentLaunchPresentation";
 import { lastAgentTurn } from "./agentModePresentation";
 
 export interface IsolationChoice {
@@ -37,6 +43,46 @@ export function defaultAgentComposerLaunch(provider: AgentCliKind): AgentLaunchO
   return { provider: "codex", model: "default", mode: "dangerFullAccess" };
 }
 
+export function newThreadComposerLaunch(
+  provider: AgentCliKind,
+  defaults: AgentNewThreadDefaults,
+): AgentLaunchOptions {
+  const base = defaultAgentComposerLaunch(provider);
+  if (base.provider === "claudeCode") {
+    const { model, effort } = defaults.claudeCode;
+    return normalizeStoredAgentLaunch({ ...base, model, effort });
+  }
+  const { model, effort } = defaults.codex;
+  if (effort === "default") return normalizeStoredAgentLaunch({ ...base, model });
+  return normalizeStoredAgentLaunch({ ...base, model, effort });
+}
+
+export function availableNewThreadDefaults(
+  defaults: AgentNewThreadDefaults,
+  claudeCatalog: ClaudeModelManifest,
+  claudeCliVersion: string | null = null,
+): AgentNewThreadDefaults {
+  const { model, effort } = defaults.claudeCode;
+  if (model === "default") return defaults;
+  const offered =
+    agentClaudeModelChoiceForVersion(model, claudeCliVersion, claudeCatalog) ?? "default";
+  if (offered === model) return defaults;
+  return { ...defaults, claudeCode: { model: offered, effort } };
+}
+
+export function launchScopeExecutionTarget(scope: LaunchScope): AgentExecutionTarget {
+  if (scope.rootKey?.startsWith("remote:") === true) return "server";
+  return "local";
+}
+
+export function providerSwitchComposerLaunch(
+  configured: AgentLaunchOptions,
+  picked: AgentLaunchOptions,
+): AgentLaunchOptions {
+  if (picked.model === configured.model) return configured;
+  return picked;
+}
+
 export function normalizeAgentComposerLaunch(launch: AgentLaunchOptions): AgentLaunchOptions {
   return normalizeStoredAgentLaunch(launch);
 }
@@ -62,19 +108,32 @@ export function resolveComposerLaunch(
   scope: LaunchScope | null,
   provider: AgentCliKind,
   lastUsedLaunch: (projectRootKey: string) => AgentLaunchOptions | null,
+  defaults: AgentNewThreadDefaults,
 ): AgentLaunchOptions {
-  if (scope === null) return defaultAgentComposerLaunch(provider);
+  if (scope === null) return newThreadComposerLaunch(provider, defaults);
   if (choice !== null && choice.key === scope.key && choice.launch.provider === provider) {
     return normalizeAgentComposerLaunch(choice.launch);
   }
   if (scope.seed !== null && scope.seed.provider === provider) {
     return normalizeAgentComposerLaunch(scope.seed);
   }
-  const remembered = scope.rootKey === null ? null : lastUsedLaunch(scope.rootKey);
-  if (remembered !== null && remembered.provider === provider) {
-    return normalizeAgentComposerLaunch(remembered);
-  }
-  return defaultAgentComposerLaunch(provider);
+  const remembered = rememberedProjectLaunch(scope, provider, lastUsedLaunch, defaults.source);
+  if (remembered !== null) return normalizeAgentComposerLaunch(remembered);
+  return newThreadComposerLaunch(provider, defaults);
+}
+
+function rememberedProjectLaunch(
+  scope: LaunchScope,
+  provider: AgentCliKind,
+  lastUsedLaunch: (projectRootKey: string) => AgentLaunchOptions | null,
+  source: AgentNewThreadLaunchSource,
+): AgentLaunchOptions | null {
+  if (source !== "lastUsed") return null;
+  if (scope.rootKey === null) return null;
+  const remembered = lastUsedLaunch(scope.rootKey);
+  if (remembered === null) return null;
+  if (remembered.provider !== provider) return null;
+  return remembered;
 }
 
 export function agentLaunchKey(launch: AgentLaunchOptions): string {

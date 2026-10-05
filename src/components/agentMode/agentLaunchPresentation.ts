@@ -256,6 +256,17 @@ export function agentModelRows(
   );
 }
 
+export function agentClaudeModelChoiceForVersion(
+  model: ClaudeModelChoice,
+  providerVersion: string | null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+): ClaudeModelChoice | null {
+  const entry = manifestClaudeModel(model, null, catalog);
+  if (entry === null) return null;
+  if (!versionSupports(entry.minVersion, entry.maxVersionExclusive, providerVersion)) return null;
+  return entry.choice;
+}
+
 export function agentLegacyModelsSummary(rows: ReadonlyArray<AgentModelRow>): string {
   const names = rows.map((row) => row.label.replace(/^Claude /u, ""));
   if (names.length <= 2) return names.join(", ");

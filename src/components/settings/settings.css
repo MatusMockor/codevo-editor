@@ -1179,6 +1179,276 @@ code.settings-readout,
   letter-spacing: 0.04em;
 }
 
+.settings-thread-start {
+  display: flex;
+  flex-direction: column;
+  padding: var(--cv-space-5) var(--cv-space-6) var(--cv-space-6);
+  border-radius: var(--cv-r-group) var(--cv-r-group) 0 0;
+  gap: var(--cv-space-5);
+  outline: none;
+}
+
+.settings-thread-start[data-target] {
+  animation: settings-target-pulse var(--cv-motion-slow) var(--cv-ease) 2;
+}
+
+.settings-thread-start__tiles {
+  display: grid;
+  gap: var(--cv-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 264px), 1fr));
+}
+
+.settings-thread-start__note {
+  margin: 0;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  line-height: 1.45;
+}
+
+.settings-thread-tile {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: var(--cv-space-5);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-tint-1);
+  box-shadow: var(--cv-ring-hair-strong);
+  gap: var(--cv-space-5);
+  transition:
+    background var(--cv-motion-fast) var(--cv-ease),
+    box-shadow var(--cv-motion-fast) var(--cv-ease);
+}
+
+.settings-thread-tile[data-state="available"]:hover {
+  background: var(--cv-tint-2);
+}
+
+.settings-thread-tile[data-state="checked"] {
+  background: var(--cv-accent-soft);
+  box-shadow: var(--cv-ring-selected);
+}
+
+.settings-thread-tile[data-state="disabled"] {
+  background: none;
+  box-shadow: var(--cv-ring-hair);
+}
+
+.settings-screen .settings-thread-tile:has(.settings-thread-tile__radio:focus-visible) {
+  box-shadow: var(--cv-ring-focus);
+}
+
+.settings-screen
+  .settings-thread-tile[data-state="checked"]:has(.settings-thread-tile__radio:focus-visible) {
+  box-shadow: var(--cv-ring-selected), var(--cv-ring-focus);
+}
+
+.settings-thread-tile__radio {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  gap: var(--cv-space-4);
+  outline: none;
+  text-align: left;
+}
+
+.settings-screen .settings-thread-tile__radio[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.settings-thread-tile__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cv-space-1);
+}
+
+.settings-thread-tile__name {
+  overflow: hidden;
+  color: var(--cv-fg-strong);
+  font-size: var(--cv-t-sm);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  line-height: var(--cv-lh-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-thread-tile[data-state="disabled"] .settings-thread-tile__name {
+  color: var(--cv-fg-muted);
+}
+
+.settings-thread-tile__status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  gap: var(--cv-space-3);
+  line-height: var(--cv-lh-xs);
+}
+
+.settings-thread-tile__status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-thread-tile__indicator {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: var(--cv-ring-hair-strong);
+  place-items: center;
+  transition: box-shadow var(--cv-motion-fast) var(--cv-ease);
+}
+
+.settings-thread-tile__indicator::after {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cv-accent);
+  content: "";
+  opacity: 0;
+  transition: opacity var(--cv-motion-fast) var(--cv-ease);
+}
+
+.settings-thread-tile__radio[aria-checked="true"] .settings-thread-tile__indicator {
+  box-shadow: var(--cv-ring-selected);
+}
+
+.settings-thread-tile__radio[aria-checked="true"] .settings-thread-tile__indicator::after {
+  opacity: 1;
+}
+
+.settings-thread-tile__radio[aria-disabled="true"] .settings-thread-tile__indicator {
+  box-shadow: var(--cv-ring-hair);
+}
+
+.settings-thread-tile__fields {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--cv-space-2);
+}
+
+.settings-thread-tile__label {
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  line-height: var(--cv-lh-xs);
+}
+
+.settings-thread-tile__pair {
+  display: grid;
+  gap: var(--cv-space-4);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 124px);
+}
+
+.settings-thread-tile__pair .settings-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-thread-tile__foot {
+  min-height: var(--cv-lh-xs);
+  margin: 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  line-height: var(--cv-lh-xs);
+}
+
+.settings-thread-tile[data-state="checked"] .settings-thread-tile__foot {
+  color: var(--cv-accent);
+}
+
+.settings-thread-preview {
+  display: flex;
+  flex-direction: column;
+  padding: var(--cv-space-5);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-canvas);
+  box-shadow: var(--cv-ring-hair);
+  gap: var(--cv-space-4);
+}
+
+.settings-thread-preview__caption {
+  margin: 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-xs);
+  line-height: var(--cv-lh-xs);
+}
+
+.settings-thread-preview__composer {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 10px var(--cv-space-5);
+  border-radius: var(--cv-r-card);
+  background: var(--cv-raised);
+  box-shadow: var(--cv-ring-hair-strong);
+  gap: var(--cv-space-5);
+  user-select: none;
+}
+
+.settings-thread-preview__placeholder {
+  overflow: hidden;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-thread-preview__chips {
+  display: flex;
+  min-height: 24px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cv-space-3);
+}
+
+.settings-thread-preview__chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  align-items: center;
+  padding: 0 var(--cv-space-4);
+  border-radius: var(--cv-r-sm);
+  background: var(--cv-tint-2);
+  color: var(--cv-fg);
+  font-size: var(--cv-t-xs);
+  gap: var(--cv-space-3);
+}
+
+.settings-thread-preview__chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-thread-preview__send {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--cv-accent-fill);
+  color: var(--cv-on-accent);
+  place-items: center;
+}
+
 .settings-update__notes,
 .settings-update__notes-span {
   padding: var(--cv-space-5) var(--cv-space-6);
@@ -1497,6 +1767,8 @@ code.settings-readout,
 
 .settings-screen .settings-row:focus-visible,
 .settings-screen .settings-provider:focus-visible,
+.settings-screen .settings-thread-start:focus-visible,
+.settings-screen .settings-thread-tile__radio:focus-visible,
 .settings-screen .settings-screen__page:focus-visible,
 .settings-screen .settings-search__input:focus-visible,
 .settings-screen .settings-select__input:focus-visible,
@@ -1543,6 +1815,7 @@ code.settings-readout,
   .settings-spin,
   .settings-row[data-target],
   .settings-provider[data-target],
+  .settings-thread-start[data-target],
   .settings-provider__update svg,
   .settings-btn--micro[aria-busy="true"] svg,
   .settings-btn--xsq[aria-busy="true"] svg {
@@ -1562,6 +1835,9 @@ code.settings-readout,
   .settings-chip,
   .settings-palette-card,
   .settings-provider,
+  .settings-thread-tile,
+  .settings-thread-tile__indicator,
+  .settings-thread-tile__indicator::after,
   .settings-kb__edit,
   .settings-kb__controls .settings-btn[aria-expanded] {
     transition: none;

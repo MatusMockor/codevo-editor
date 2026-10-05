@@ -101,6 +101,43 @@ describe("settings registry", () => {
     expect(() => settingsRowsForSection("php").length).not.toThrow();
   });
 
+  it("lists the new thread rows before the provider cards on the agents page", () => {
+    expect(settingsRowsForSection("agents").map((row) => row.id)).toEqual([
+      "agents.defaultProvider",
+      "agents.newThreadLaunchSource",
+      "agents.followUpBehavior",
+      "agents.favoriteModels",
+      "agents.maxConcurrentTasks",
+      "agents.isolationPolicy",
+      "agents.providerClaudeCode",
+      "agents.providerCodex",
+      "agents.healthCheckInterval",
+      "agents.checkCliUpdates",
+      "agents.threadNotifications",
+      "agents.workingSection",
+    ]);
+  });
+
+  it("describes the new thread start block and the launch source row", () => {
+    const start = settingsRowDescriptor("agents.defaultProvider");
+    const source = settingsRowDescriptor("agents.newThreadLaunchSource");
+
+    expect(start.title).toBe("Start new threads with");
+    expect(start.description).toBe(
+      "Choose the provider for new threads, and the model and effort each provider starts with.",
+    );
+    expect(start.keywords).toEqual(
+      expect.arrayContaining(["default", "provider", "model", "effort", "new thread"]),
+    );
+    expect(start.availability).toBe("always");
+    expect(source.title).toBe("In projects you have used before");
+    expect(source.section).toBe("agents");
+    expect(source.keywords).toEqual(
+      expect.arrayContaining(["last used", "remember", "project", "default"]),
+    );
+    expect(source.availability).toBe("always");
+  });
+
   it("marks workspace-scoped rows as workspace availability", () => {
     expect(settingsRowDescriptor("general.formatOnSave").availability).toBe("workspace");
     expect(settingsRowDescriptor("appearance.palette").availability).toBe("always");

@@ -87,6 +87,35 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
 
   return (
     <>
+      <AgentThreadDefaultsRows
+        appSettings={draft.appSettings}
+        hasWorkspace={env.hasWorkspace}
+        management={management}
+        onChangeDefaultProvider={(agentCliKind) =>
+          writeAppSettings({ ...appSettingsRef.current, agentCliKind })
+        }
+        onChangeFollowUpBehavior={(agentFollowUpBehavior) =>
+          writeAppSettings({ ...appSettingsRef.current, agentFollowUpBehavior })
+        }
+        onChangeIsolationPolicy={(agentIsolationPolicy) =>
+          actions.updateWorkspaceSettings({
+            ...draft.workspaceSettings,
+            agentIsolationPolicy,
+          })
+        }
+        onChangeNewThreadDefaults={(agentNewThreadDefaults) =>
+          writeAppSettings({ ...appSettingsRef.current, agentNewThreadDefaults })
+        }
+        onClearFavorites={() => {
+          const next = withClearedModelFavorites(appSettingsRef.current);
+
+          if (next === null) return;
+
+          writeAppSettings(next);
+        }}
+        workspaceSettings={draft.workspaceSettings}
+      />
+
       <SettingsSectionHeading
         actions={
           <span className="settings-section__note">
@@ -131,31 +160,6 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
           />
         ))}
       </SettingsSectionHeading>
-
-      <AgentThreadDefaultsRows
-        appSettings={draft.appSettings}
-        hasWorkspace={env.hasWorkspace}
-        onChangeDefaultProvider={(agentCliKind) =>
-          writeAppSettings({ ...appSettingsRef.current, agentCliKind })
-        }
-        onChangeFollowUpBehavior={(agentFollowUpBehavior) =>
-          writeAppSettings({ ...appSettingsRef.current, agentFollowUpBehavior })
-        }
-        onChangeIsolationPolicy={(agentIsolationPolicy) =>
-          actions.updateWorkspaceSettings({
-            ...draft.workspaceSettings,
-            agentIsolationPolicy,
-          })
-        }
-        onClearFavorites={() => {
-          const next = withClearedModelFavorites(appSettingsRef.current);
-
-          if (next === null) return;
-
-          writeAppSettings(next);
-        }}
-        workspaceSettings={draft.workspaceSettings}
-      />
 
       <SettingsSectionHeading title="CLI updates">
         <SettingsRow

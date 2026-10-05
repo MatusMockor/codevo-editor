@@ -28,6 +28,10 @@ import {
   type AgentModelFavoriteKey,
 } from "./agentSettings";
 import {
+  normalizeAgentNewThreadDefaults,
+  type AgentNewThreadDefaults,
+} from "./agentNewThreadDefaults";
+import {
   normalizeAgentProviderPreferences,
   type AgentProviderPreferences,
 } from "./agentProviderSettings";
@@ -136,6 +140,7 @@ export interface AppSettings {
   agentThreadFontSize: number;
   agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   agentModelFavoritesRevision: number;
+  agentNewThreadDefaults?: AgentNewThreadDefaults;
   agentProviderPreferences: AgentProviderPreferences;
   maxConcurrentAgentTasks: number;
   editorFontFamily: string;
@@ -481,6 +486,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         : normalizeAgentThreadFontSize(value.agentThreadFontSize),
     agentModelFavoriteKeys: agentModelFavorites.keys,
     agentModelFavoritesRevision: agentModelFavorites.revision,
+    agentNewThreadDefaults: normalizeAgentNewThreadDefaults(value.agentNewThreadDefaults),
     agentProviderPreferences: normalizeAgentProviderPreferences(value.agentProviderPreferences),
     maxConcurrentAgentTasks: normalizeMaxConcurrentAgentTasks(value.maxConcurrentAgentTasks),
     editorFontFamily,
