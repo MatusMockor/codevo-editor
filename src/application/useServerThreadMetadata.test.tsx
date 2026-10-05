@@ -590,3 +590,144 @@ it("makes a save wait for a free slot instead of failing when the budget is exha
   expect(await Promise.all(saves)).toEqual([true, true, true, true, true]);
   expect(h.report).not.toHaveBeenCalled();
 });
+
+it("rebases an automatic read marker on the latest server revision after a conflict", async () => {
+  const h = await harness();
+  h.gateway.getThreadMetadata
+    .mockResolvedValueOnce(record({ revision: 7 }))
+    .mockResolvedValueOnce(record({ revision: 8, pinned: true, title: "Other device" }));
+  h.gateway.updateThreadMetadata.mockRejectedValueOnce("Runner request failed (HTTP 409).");
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 })).toBe(true);
+  });
+  expect(h.gateway.updateThreadMetadata.mock.calls.map(([request]) => request.patch)).toEqual([
+    { expectedRevision: 7, viewedAtEpochMs: 40 },
+    { expectedRevision: 8, viewedAtEpochMs: 40 },
+  ]);
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+
+it("accepts a newer read marker saved by another device without replaying the write", async () => {
+  const h = await harness();
+  h.gateway.getThreadMetadata
+    .mockResolvedValueOnce(record({ revision: 7 }))
+    .mockResolvedValueOnce(record({ revision: 8, viewedAtEpochMs: 50 }));
+  h.gateway.updateThreadMetadata.mockRejectedValueOnce(
+    new Error("Runner request failed (HTTP 409)."),
+  );
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 })).toBe(true);
+  });
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+
+it("bounds read-marker retries and reports a read-status failure instead of a message failure", async () => {
+  const h = await harness();
+  h.gateway.updateThreadMetadata.mockRejectedValue("Runner request failed (HTTP 409).");
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 })).toBe(false);
+  });
+  expect(h.gateway.getThreadMetadata).toHaveBeenCalledTimes(3);
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(3);
+  expect(h.report).toHaveBeenCalledExactlyOnceWith(
+    "The conversation read status changed on another device before it could be saved. Refresh and try again.",
+  );
+});
+
+it.each([{ archived: true }, { viewedAtEpochMs: null }])(
+  "does not replay an explicit preference after a revision conflict: %j",
+  async (change) => {
+    const h = await harness();
+    h.gateway.updateThreadMetadata.mockRejectedValue("Runner request failed (HTTP 409).");
+    await act(async () => {
+      expect(await h.current().update(view.thread.threadId, change)).toBe(false);
+    });
+    expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(
+      "This conversation changed on another device before it could be saved. Refresh and try again.",
+    );
+  },
+);
+
+it("does not replay a read marker when the network write outcome is unknown", async () => {
+  const h = await harness();
+  h.gateway.updateThreadMetadata.mockRejectedValue(
+    "Runner connection failed. The request outcome may be unknown.",
+  );
+  await act(async () => h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 }));
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+  expect(h.report).toHaveBeenCalledWith(expect.stringContaining("conversation read status"));
+});
+
+it("drops queued read marks across an endpoint A-B-A replacement", async () => {
+  const h = await harness();
+  let reject!: (error: string) => void;
+  h.gateway.updateThreadMetadata.mockImplementationOnce(
+    () =>
+      new Promise((_, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  let first!: Promise<boolean>;
+  await act(async () => {
+    first = h.current().update(view.thread.threadId, { viewedAtEpochMs: 10 });
+  });
+  await h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 });
+  await h.snapshots([snapshot(record(), false)]);
+  await h.snapshots([snapshot()]);
+  await act(async () => {
+    reject("Runner request failed (HTTP 409).");
+    expect(await first).toBe(false);
+  });
+  await act(async () => h.current().update(view.thread.threadId, { pinned: true }));
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(2);
+  expect(h.gateway.updateThreadMetadata.mock.calls[1]?.[0].patch).toEqual({
+    pinned: true,
+    expectedRevision: 0,
+  });
+  expect(h.report).not.toHaveBeenCalled();
+});
+
+it("revokes read-marker retry after an owner replacement during the rejected write", async () => {
+  const h = await harness();
+  let reject!: (error: string) => void;
+  h.gateway.updateThreadMetadata.mockImplementationOnce(
+    () =>
+      new Promise((_, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  let first!: Promise<boolean>;
+  await act(async () => {
+    first = h.current().update(view.thread.threadId, { viewedAtEpochMs: 10 });
+  });
+  await h.replaceOwner();
+  await h.replaceOwner();
+  await act(async () => {
+    reject("Runner request failed (HTTP 409).");
+    expect(await first).toBe(false);
+  });
+  expect(h.gateway.getThreadMetadata).toHaveBeenCalledTimes(1);
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+
+it("updates a continuation through its conversation root", async () => {
+  const h = await harness({
+    snapshots: [{ ...snapshot(), tasks: [{ ...task, id: "continuation", conversationId: "t" }] }],
+  });
+  await act(async () => h.current().update(view.thread.threadId, { viewedAtEpochMs: 10 }));
+  expect(h.gateway.getThreadMetadata).toHaveBeenCalledExactlyOnceWith({
+    serverId: "s",
+    taskId: "t",
+  });
+  expect(h.gateway.updateThreadMetadata).toHaveBeenCalledWith({
+    serverId: "s",
+    taskId: "t",
+    patch: { expectedRevision: 0, viewedAtEpochMs: 10 },
+  });
+});

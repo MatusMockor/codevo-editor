@@ -35,6 +35,7 @@ function fixture(supported = true) {
     getGateway: () => gateway,
     resolveOwner: () => owner,
     ownerIsCurrent: () => current,
+    ownerIsRetained: () => true,
   });
   const stage = (bytes = new TextEncoder().encode("text").buffer) =>
     store.stageAgentAttachmentBytes({
@@ -73,6 +74,13 @@ describe("remote pasted text files", () => {
   it("refuses old runners before uploading and retains draft bytes", async () => {
     const f = fixture(false);
     await expect(f.stage()).rejects.toThrow("Update this server");
+    expect(f.uploadAttachment).not.toHaveBeenCalled();
+  });
+  it("requests no text capability while only local draft authority survives", async () => {
+    const f = fixture();
+    f.expire();
+    await expect(f.stage()).rejects.toThrow("owner changed");
+    expect(f.getRunner).not.toHaveBeenCalled();
     expect(f.uploadAttachment).not.toHaveBeenCalled();
   });
   it("rejects stale ownership after capability check", async () => {

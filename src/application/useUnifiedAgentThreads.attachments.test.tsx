@@ -326,6 +326,101 @@ describe("server thread images across inventory connectivity", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith(saved!.previewUrl);
   });
 
+  it("keeps screenshot intake local during a failed inventory refresh, then uploads with Codex High", async () => {
+    const h = await setup(null);
+    await h.render({
+      selectedProjectRootKey: projectKey,
+      imageSurface: {
+        decode: async () => ({ width: 1, height: 1 }),
+        encodeMime: async () => "image/png",
+        encode: async () => new ArrayBuffer(4),
+        release: () => undefined,
+      },
+    });
+    const draft = () => h.current.agents.attachments.forDraft!(`new:${projectKey}`);
+    await act(async () => {
+      await draft().add(projectKey, [
+        { kind: "bytes", name: "first.png", mime: "image/png", bytes: new ArrayBuffer(4) },
+      ]);
+    });
+    const first = draft().drafts[0]!;
+    h.gw.listTasks.mockRejectedValueOnce(new Error("Temporary history failure"));
+    await h.refresh();
+    expect(draft().drafts).toEqual([first]);
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(first.previewUrl);
+    const intake = draft().captureIntake!(projectKey);
+    expect(intake).toBeTypeOf("function");
+    await act(async () => {
+      await intake!([
+        { kind: "bytes", name: "second.png", mime: "image/png", bytes: new ArrayBuffer(4) },
+      ]);
+    });
+    expect(draft().drafts).toHaveLength(2);
+    expect(
+      draft().drafts.every((image) => image.state === "ready" && image.previewUrl !== null),
+    ).toBe(true);
+    expect(h.gw.uploadAttachment).not.toHaveBeenCalled();
+    await h.refresh();
+    const launch = {
+      provider: "codex",
+      model: "gpt-5.4",
+      mode: "default",
+      effort: "high",
+    } as const;
+    h.gw.uploadAttachment.mockImplementation(async (request) => ({
+      created: true,
+      attachment: { ...metadata, id: request.attachmentId, name: request.name },
+    }));
+    let created!: RemoteRunnerTask;
+    h.gw.createTask.mockImplementation(async (request) => {
+      created = {
+        ...turn,
+        id: "screenshot-turn",
+        parts: request.parts,
+        launch,
+        status: "draft",
+        projectId: undefined,
+      };
+      return { created: true, task: created };
+    });
+    h.gw.startTask.mockImplementation(async () => ({
+      ...created,
+      status: "running",
+      projectId: "project",
+    }));
+    await act(async () => {
+      const prepared = await draft().prepareTurn(projectKey);
+      expect(prepared).not.toBeNull();
+      expect(
+        await h.current.agents.startThread({
+          projectRootKey: projectKey,
+          repositoryRoot: projectKey,
+          prompt: "Review these screenshots",
+          unsafeInPlaceConfirmationKey: null,
+          launch,
+          isolation: "worktree",
+          attachments: prepared!.intents,
+          attachmentOwner: prepared!.owner,
+        }),
+      ).toEqual({ threadId: remoteAgentThreadKey("server", "runner", "screenshot-turn") });
+    });
+    expect(h.gw.uploadAttachment).toHaveBeenCalledTimes(2);
+    expect(h.gw.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "server",
+        provider: "codex",
+        launch,
+        parts: [
+          { type: "text", text: "Review these screenshots" },
+          ...h.gw.uploadAttachment.mock.calls.map(([request]) => ({
+            type: "attachment",
+            attachmentId: request.attachmentId,
+          })),
+        ],
+      }),
+    );
+  });
+
   it("keeps a sent image viewable when one inventory refresh fails and the next succeeds", async () => {
     const h = await setup(remoteId);
     await h.settle(() => expect(h.shown()).toEqual(["blob:remote-1"]));

@@ -65,6 +65,18 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : typeof error === "string" ? error : "";
 }
 const READ_FAILED = "Recorded changes could not be loaded.";
+const SERVER_READ_FAILED =
+  "Server changes could not be loaded. Check the connection and try again.";
+const SERVER_IDENTITY_CHANGED = "The server identity changed. Reconnect to load recorded changes.";
+const SERVER_READ_ERRORS: ReadonlySet<string> = new Set([
+  "Runner connection unavailable.",
+  "Runner connection was superseded.",
+  "Server connection changed during request",
+  "Runner connection changed during request.",
+  "Runner connection failed. The request outcome may be unknown.",
+  "Unable to read runner response.",
+  ...[408, 429, 500, 502, 503, 504].map((status) => `Runner request failed (HTTP ${status}).`),
+]);
 const INVALID_RESPONSE = "The saved changes response is invalid and cannot be displayed.";
 export type TurnChangesReadFailure =
   | { readonly kind: "notApplicable" }
@@ -80,6 +92,7 @@ export const TRANSIENT_BACKEND_READ_ERRORS = [
 const RETRYABLE_REASONS: ReadonlySet<string> = new Set([
   ...TRANSIENT_BACKEND_READ_ERRORS,
   QUEUE_FULL,
+  SERVER_READ_FAILED,
 ]);
 const NOT_APPLICABLE_REASONS: ReadonlySet<string> = new Set([
   TURN_READ_CANCELLED,
@@ -90,6 +103,8 @@ const FINAL_REASONS: ReadonlySet<string> = new Set([
   "Saved turn changes are invalid.",
 ]);
 const INVALID_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
+  "Invalid runner turn changes",
+  "Runner returned an invalid response.",
   "Invalid turn changes response.",
   "Invalid turn changes fields.",
   "Invalid turn changes summary.",
@@ -103,6 +118,9 @@ const INVALID_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
 /** Only fixed known diagnostics may cross into the UI; never display raw backend details. */
 export function classifyTurnChangesReadFailure(error: unknown): TurnChangesReadFailure {
   const message = errorText(error);
+  if (SERVER_READ_ERRORS.has(message)) return { kind: "retryable", reason: SERVER_READ_FAILED };
+  if (message === "Runner identity changed. Reconnect the server before continuing.")
+    return { kind: "final", reason: SERVER_IDENTITY_CHANGED };
   if (NOT_APPLICABLE_REASONS.has(message)) return { kind: "notApplicable" };
   if (RETRYABLE_REASONS.has(message)) return { kind: "retryable", reason: message };
   if (FINAL_REASONS.has(message)) return { kind: "final", reason: message };
