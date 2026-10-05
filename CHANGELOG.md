@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.97] - 2026-10-05
+
+### Fixed
+
+- Server conversation errors no longer appear in a local conversation or a new
+  draft on this computer.
+- Loading saved history no longer overwrites newer local changes or brings back
+  deleted conversations, preventing stale revision errors on the next save.
+- Usage limits stay synchronized across workspaces and windows. Limits refresh
+  every minute, including while tasks run on a server. This computer and a server
+  share the latest reading only when they use the same verified account;
+  different or unknown accounts remain separate. Server readings require an
+  updated Codevo Runner.
+
 ## [0.2.0-beta.96] - 2026-10-05
 
 ### Fixed

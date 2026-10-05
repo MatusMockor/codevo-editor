@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "codevo-editor"
-version = "0.2.0-beta.96"
+version = "0.2.0-beta.97"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
