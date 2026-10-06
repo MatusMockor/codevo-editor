@@ -1135,9 +1135,10 @@ fn assistant_text_is_clipped_to_the_event_text_budget() {
 fn the_event_text_budget_matches_the_typescript_contract() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
+        .join("packages")
+        .join("agent-events")
         .join("src")
-        .join("domain")
-        .join("agentThreadLimits.ts");
+        .join("agentTurnEventLimits.ts");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{} must be readable: {error}", path.display()));
 
@@ -1419,12 +1420,14 @@ fn session_events_obey_shared_session_id_grammar() {
         assert!(projection.root_thread_id().is_none());
     }
     let domain = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/domain/agentTask.ts"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../packages/agent-events/src/agentProvider.ts"),
     )
     .unwrap();
     assert!(domain.contains("/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/"));
     let domain = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/domain/agentThread.ts"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../packages/agent-events/src/agentTurnEventLimits.ts"),
     )
     .unwrap();
     assert!(domain.contains("export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;"));
