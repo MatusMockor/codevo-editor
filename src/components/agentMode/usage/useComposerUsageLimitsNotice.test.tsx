@@ -113,6 +113,50 @@ describe("useComposerUsageLimitsNotice", () => {
     expect(notice?.visible).toBe(false);
   });
 
+  it("keeps dismissal when Claude live and polled resets use different precision", () => {
+    const polledReset = NOW + 2 * HOUR;
+    const liveReset = polledReset + 27_000;
+    act(() =>
+      root.render(
+        <Harness accountUsage={usageWith(1, [{ usedPercent: 100, resetsAtEpochMs: liveReset }])} />,
+      ),
+    );
+    act(() => notice?.dismiss());
+    act(() =>
+      root.render(
+        <Harness
+          accountUsage={usageWith(2, [{ usedPercent: 100, resetsAtEpochMs: polledReset }])}
+        />,
+      ),
+    );
+    expect(notice?.visible).toBe(false);
+    act(() =>
+      root.render(
+        <Harness
+          key="remounted"
+          accountUsage={usageWith(3, [{ usedPercent: 100, resetsAtEpochMs: liveReset }])}
+        />,
+      ),
+    );
+    expect(notice?.visible).toBe(false);
+  });
+
+  it("keeps earlier precise reset dismissals after adopting minute identities", () => {
+    const polledReset = NOW + 2 * HOUR;
+    localStorage.setItem(
+      "editor.agentComposer.usageDismissals.v1",
+      JSON.stringify([JSON.stringify(["claudeCode", "seven_day", `at:${polledReset + 27_000}`])]),
+    );
+    act(() =>
+      root.render(
+        <Harness
+          accountUsage={usageWith(1, [{ usedPercent: 100, resetsAtEpochMs: polledReset }])}
+        />,
+      ),
+    );
+    expect(notice?.visible).toBe(false);
+  });
+
   it("keeps dismissal across workspace A → B → A remounts and permits /usage", () => {
     act(() => root.render(<Harness key="A" accountUsage={usage(95, 1)} />));
     act(() => notice?.dismiss());

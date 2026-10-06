@@ -33,7 +33,11 @@ import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useRemoteProjectLinks } from "../../application/useRemoteProjectLinks";
 import { useAgentProjectGrouping } from "../../application/useAgentProjectGrouping";
-import { groupedEnvironmentProjects, environmentComposerScope } from "./agentEnvironmentProjects";
+import {
+  groupedEnvironmentProjects,
+  environmentComposerScope,
+  newThreadEnvironmentProjectRootKey,
+} from "./agentEnvironmentProjects";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
 import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
 import { deferredFollowUpsForThread } from "../../application/agentDeferredFollowUps";
@@ -522,7 +526,26 @@ function LocalAgentModeView({
   const submitComposer = useAgentLatestCallback(composer.submit);
   const changeIsolation = useAgentLatestCallback(composer.composerProps.onIsolationChange);
   const changeLaunch = useAgentLatestCallback(composer.composerProps.onLaunchChange);
-  const clearComposer = useAgentLatestCallback(composer.composerProps.onNewThread);
+  const resetDraftLaunch = useAgentLatestCallback((projectRootKey: string | null) => {
+    composer.resetDraftLaunch(
+      newThreadEnvironmentProjectRootKey(
+        projectRootKey,
+        groups,
+        projects,
+        selectedServerId,
+        navigation.composerScope,
+      ),
+    );
+  });
+  const resetProjectDraftLaunch = useAgentLatestCallback((projectRootKey: string) => {
+    composer.resetDraftLaunch(
+      newThreadEnvironmentProjectRootKey(projectRootKey, groups, projects, selectedServerId),
+    );
+  });
+  const clearComposer = useAgentLatestCallback(() => {
+    resetDraftLaunch(navigation.newThreadTarget()?.projectRootKey ?? null);
+    composer.clearSelection();
+  });
   const selectComposerRepository = useAgentLatestCallback((repositoryRoot: string) => {
     chrome.addProject?.cancelSelection?.();
     setProjectSelectionIntent((current) => current + 1);
@@ -730,7 +753,12 @@ function LocalAgentModeView({
   const projectThreads = useAgentProjectThreadCommands({
     navigation,
     groups,
-    composer,
+    composer: {
+      clearSelection: composer.clearSelection,
+      clearDraftTarget: composer.clearDraftTarget,
+      resetDraftLaunch,
+      resetProjectDraftLaunch,
+    },
     picker: newThreadPicker,
     activeProjectRootKey: () => activeProjectRootKeyRef.current,
     onBeforeProjectChange: () => {
