@@ -15,21 +15,27 @@ import "./agentHistoryCatalog.css";
 export function AgentHistoryCatalog({
   catalog,
   onSelect,
+  shownInRailThreadIds = NO_THREAD_IDS,
 }: {
   readonly catalog: AgentHistoryCatalogSurface;
   readonly onSelect: (threadId: string) => void;
+  readonly shownInRailThreadIds?: ReadonlySet<string>;
 }) {
+  const rows = useMemo(
+    () => catalog.rows.filter((row) => !shownInRailThreadIds.has(row.threadId)),
+    [catalog.rows, shownInRailThreadIds],
+  );
   const mounted = useRef(true);
   const listRef = useRef<HTMLUListElement | null>(null);
   const focusAfterDelete = useRef<PendingDeleteFocus | null>(null);
   useLayoutEffect(() => {
     const pending = focusAfterDelete.current;
     if (pending === null || catalog.page?.deletingThreadId != null) return;
-    if (catalog.rows.some((row) => row.threadId === pending.threadId)) return;
+    if (rows.some((row) => row.threadId === pending.threadId)) return;
     focusAfterDelete.current = null;
-    const rows = rowElements(listRef.current);
-    rows[Math.min(pending.index, rows.length - 1)]?.focus();
-  }, [catalog.page?.deletingThreadId, catalog.rows]);
+    const elements = rowElements(listRef.current);
+    elements[Math.min(pending.index, elements.length - 1)]?.focus();
+  }, [catalog.page?.deletingThreadId, rows]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -47,7 +53,7 @@ export function AgentHistoryCatalog({
       setArchived: (threadId, archived) => void catalog.setArchived(threadId, archived),
       remove: (threadId) => {
         const index = Math.max(
-          catalog.rows.findIndex((row) => row.threadId === threadId),
+          rows.findIndex((row) => row.threadId === threadId),
           0,
         );
         focusAfterDelete.current = { threadId, index };
@@ -57,13 +63,17 @@ export function AgentHistoryCatalog({
         });
       },
     }),
-    [catalog, onSelect],
+    [catalog, onSelect, rows],
   );
   const page = catalog.page;
   if (catalog.projects.length === 0) return null;
   const project = catalog.projects.find((candidate) => candidate.rootKey === page?.rootKey);
   const busy = page !== null && (page.loading || page.deletingThreadId !== null);
   const deleting = catalog.rows.find((row) => row.threadId === page?.deletingThreadId);
+  const empty =
+    page === null || busy || page.error || page.notice
+      ? null
+      : emptyMessage(rows.length, catalog.rows.length, page.hasEarlier);
   return (
     <section aria-label="Saved conversations" className="agent-history-catalog">
       <button
@@ -113,14 +123,14 @@ export function AgentHistoryCatalog({
           )}
           {page.notice && <p role="status">{page.notice}</p>}
           {page.error && <p role="alert">{page.error}</p>}
-          {catalog.rows.length > 0 && (
+          {rows.length > 0 && (
             <ul
               aria-label={`Saved conversations in ${project?.label ?? "this project"}`}
               className="agent-history-catalog__list"
               onKeyDown={moveRowFocus}
               ref={listRef}
             >
-              {catalog.rows.map((row) => (
+              {rows.map((row) => (
                 <AgentHistoryCatalogRow
                   actions={actions}
                   busy={busy}
@@ -130,9 +140,7 @@ export function AgentHistoryCatalog({
               ))}
             </ul>
           )}
-          {!busy && !page.error && !page.notice && catalog.rows.length === 0 && (
-            <p className="agent-history-catalog__empty">No saved conversations.</p>
-          )}
+          {empty && <p className="agent-history-catalog__empty">{empty}</p>}
           <footer className="agent-history-catalog__paging">
             <Button
               disabled={busy || !page.hasEarlier}
@@ -157,7 +165,17 @@ interface PendingDeleteFocus {
   readonly index: number;
 }
 
+const NO_THREAD_IDS: ReadonlySet<string> = new Set();
 const ROW_NAVIGATION_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+const NO_SAVED_CONVERSATIONS = "No saved conversations.";
+const SAVED_CONVERSATIONS_ALREADY_OPEN = "Conversations on this page are already open.";
+
+function emptyMessage(listed: number, onPage: number, hasEarlier: boolean): string | null {
+  if (listed > 0) return null;
+  if (onPage > 0) return SAVED_CONVERSATIONS_ALREADY_OPEN;
+  if (hasEarlier) return null;
+  return NO_SAVED_CONVERSATIONS;
+}
 
 function rowElements(list: HTMLUListElement | null): ReadonlyArray<HTMLButtonElement> {
   if (list === null) return [];

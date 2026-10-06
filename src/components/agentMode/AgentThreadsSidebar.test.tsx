@@ -6,6 +6,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSearchSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type {
+  AgentHistoryCatalogRow,
+  AgentHistoryCatalogSurface,
+} from "../../application/useAgentHistoryCatalog";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
@@ -783,6 +787,72 @@ describe("AgentThreadsSidebar", () => {
     act(() => row("agt-1").focus());
     key(row("agt-1"), "End");
     expect(document.activeElement).toBe(row("agt-1"));
+  });
+
+  it("lists a saved conversation only while the rail does not already show it", () => {
+    const groups = [
+      group(ROOT, "app", [settled("agt-1", "App thread")]),
+      group(OTHER, "api", [
+        settled("api-1", "Api thread", { repositoryRoot: OTHER }),
+        settled("api-arc", "Api archived", { repositoryRoot: OTHER, archived: true }),
+      ]),
+    ];
+    const catalog = savedCatalog(OTHER, [
+      savedRow("api-1", "Api thread"),
+      savedRow("api-arc", "Api archived", true),
+      savedRow("api-saved", "Api saved"),
+    ]);
+
+    render({ groups, catalog, projectFocus: "all" });
+    expect(rowIds()).toEqual(["agt-1", "api-1"]);
+    expect(savedTitles()).toEqual(["Api archived", "Api saved"]);
+
+    render({ groups, catalog, projectFocus: "active" });
+    expect(rowIds()).toEqual(["agt-1"]);
+    expect(savedTitles()).toEqual(["Api thread", "Api archived", "Api saved"]);
+  });
+
+  it("counts collapsed Settled and Snoozed rail rows as already open", () => {
+    const [live, done, later] = threeThreads();
+    const sleeping = { ...later!, thread: { ...later!.thread, snoozedUntil: NOW + 60_000 } };
+    const groups = [
+      group(ROOT, "app", [
+        live!,
+        { ...done!, thread: { ...done!.thread, settledAt: NOW - 1_000 } },
+        sleeping,
+      ]),
+    ];
+    const catalog = savedCatalog(ROOT, [
+      savedRow("agt-1", "One"),
+      savedRow("agt-2", "Two"),
+      savedRow("agt-3", "Three"),
+    ]);
+
+    render({ groups, catalog });
+    expect(rowIds()).toEqual(["agt-1"]);
+    expect(settledShelf()?.textContent).toContain("Settled (1)");
+    expect(host.querySelector('.cv-sb-shelf[data-shelf="snoozed"]')?.textContent).toContain(
+      "Snoozed (1)",
+    );
+    expect(savedTitles()).toEqual([]);
+    expect(host.querySelector(".agent-history-catalog__empty")?.textContent).toBe(
+      "Conversations on this page are already open.",
+    );
+  });
+
+  it("lists a saved conversation whose id the rail shows under another project root", () => {
+    const groups = [group(ROOT, "app", [settled("agt-1", "App thread")]), group(OTHER, "api", [])];
+
+    render({ groups, catalog: savedCatalog(OTHER, [savedRow("agt-1", "Api saved")]) });
+    expect(rowIds()).toEqual(["agt-1"]);
+    expect(savedTitles()).toEqual(["Api saved"]);
+
+    render({ groups, catalog: savedCatalog(ROOT, [savedRow("agt-1", "App thread")]) });
+    expect(savedTitles()).toEqual([]);
+
+    render({ groups, catalog: { ...savedCatalog(ROOT, []), page: null } });
+    expect(savedTitles()).toEqual([]);
+    expect(host.querySelector(".agent-history-catalog__empty")).toBeNull();
   });
 
   it("shows the empty state when a project holds only archived threads", () => {
@@ -1942,6 +2012,12 @@ describe("AgentThreadsSidebar", () => {
     return element as HTMLButtonElement;
   }
 
+  function savedTitles(): ReadonlyArray<string> {
+    return [...host.querySelectorAll<HTMLElement>("[data-saved-conversation-row]")].map(
+      (element) => element.getAttribute("title") ?? "",
+    );
+  }
+
   function settledShelf(): HTMLButtonElement | undefined {
     return [...host.querySelectorAll<HTMLButtonElement>("button.cv-sb-shelf")].find((button) =>
       button.textContent?.startsWith("Settled"),
@@ -2145,6 +2221,49 @@ function searchSurface(query: string, result: AgentThreadSearchResult | null = n
     clear: vi.fn(),
   };
   return surface;
+}
+
+function savedRow(threadId: string, title: string, archived = false): AgentHistoryCatalogRow {
+  return {
+    threadId,
+    title,
+    archived,
+    running: false,
+    provider: "claudeCode",
+    worktree: true,
+    updatedAtEpochMs: NOW - 2 * 60_000,
+  };
+}
+
+function savedCatalog(
+  rootKey: string,
+  rows: ReadonlyArray<AgentHistoryCatalogRow>,
+): AgentHistoryCatalogSurface {
+  return {
+    projects: [
+      { rootKey: ROOT, label: "app" },
+      { rootKey: OTHER, label: "api" },
+    ],
+    page: {
+      rootKey,
+      threads: [],
+      beforeThreadId: null,
+      hasEarlier: false,
+      loading: false,
+      deletingThreadId: null,
+      error: null,
+      notice: null,
+    },
+    rows,
+    choose: vi.fn().mockResolvedValue(undefined),
+    older: vi.fn().mockResolvedValue(undefined),
+    latest: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(),
+    open: vi.fn().mockResolvedValue(true),
+    rename: vi.fn().mockResolvedValue(true),
+    setArchived: vi.fn().mockResolvedValue(true),
+    remove: vi.fn().mockResolvedValue(true),
+  };
 }
 
 function scopedTo(projectRootKey: string, view: AgentThreadView): AgentThreadView {
