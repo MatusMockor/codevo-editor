@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.104] - 2026-10-06
+
+### Added
+
+- Choose which microphone dictation records from in Settings > Providers > Dictation.
+  If the chosen microphone is not connected, dictation uses the system default and
+  says so while recording.
+
+### Changed
+
+- The dictation button is shown only while a connected server offers speech
+  transcription.
+
+### Fixed
+
+- Dictation that ends without inserting text now explains why: no speech was
+  detected, the transcript was empty, or the prompt field was not available.
+- A dictation interrupted by a server disconnect keeps its message until dismissed.
+
 ## [0.2.0-beta.103] - 2026-10-06
 
 ### Fixed
