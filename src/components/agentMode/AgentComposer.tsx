@@ -814,6 +814,7 @@ export function AgentComposer({
             )}
             <AgentComposerSubmitControls
               running={running}
+              hasDraft={prompt.trim().length > 0 || (attachments?.drafts.length ?? 0) > 0}
               steering={steering}
               editingQueued={editingQueued}
               dispatching={dispatching}

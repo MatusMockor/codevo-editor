@@ -425,8 +425,9 @@ function catalogRows(
   state: AgentThreadsState,
 ): ReadonlyArray<AgentHistoryCatalogRow> {
   return page.threads.map((saved) => {
-    const live = state.threads.get(saved.threadId);
-    const thread = live !== undefined && live.owner.rootKey === page.rootKey ? live : saved;
+    const candidate = state.threads.get(saved.threadId);
+    const live = candidate?.owner.rootKey === page.rootKey ? candidate : undefined;
+    const thread = live ?? saved;
     return {
       threadId: thread.threadId,
       title: thread.title,

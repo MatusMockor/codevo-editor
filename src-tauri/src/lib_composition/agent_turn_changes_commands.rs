@@ -21,7 +21,7 @@ struct ReadPermit<'a>(&'a AtomicUsize);
 impl<'a> ReadPermit<'a> {
     fn acquire(active: &'a AtomicUsize) -> Result<Self, String> {
         active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < MAX_READS).then_some(count + 1)
             })
             .map(|_| Self(active))

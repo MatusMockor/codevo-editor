@@ -145,8 +145,9 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     () =>
       new RemoteAttachmentStore({
         getGateway: () => current.current.gateway,
-        resolveOwner: (workspaceId) => current.current.resolveOwner(workspaceId),
+        resolveOwner: (workspaceId) => current.current.resolveRetainedOwner(workspaceId),
         ownerIsCurrent,
+        ownerIsRetained: retention.ownerIsRetained,
         encoder: {
           encode: (bytes, signal) => {
             const encoder = current.current.attachmentEncoder;
@@ -155,7 +156,7 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
           },
         },
       }),
-    [ownerIsCurrent],
+    [ownerIsCurrent, retention],
   );
   useEffect(() => {
     const ownedRegistry = registry.current;
@@ -198,6 +199,8 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
   const attachments = useAgentComposerAttachments({
     ...dependencies,
     gateway: store,
+    // Draft bytes and previews are local. Inventory readiness gates upload, not intake.
+    resolveOwner: dependencies.resolveRetainedOwner,
     imageOutputPolicy: REMOTE_IMAGE_OUTPUT_POLICY,
     sentAttachmentDisposition: "release",
   });

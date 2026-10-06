@@ -528,3 +528,42 @@ it("caches backend unsupported workspaces so a non-git root is probed once per t
   await expect(reader.getTurnFileDiff("t", "old", "src/a.ts")).rejects.toThrow();
   expect(isRetryableTurnChangesReason("notGitRepository")).toBe(false);
 });
+
+it("offers a safe retry for known transient server read failures", () => {
+  for (const error of [
+    "Runner connection failed. The request outcome may be unknown.",
+    "Runner connection unavailable.",
+    "Runner connection was superseded.",
+    "Server connection changed during request",
+    "Unable to read runner response.",
+    "Runner request failed (HTTP 429).",
+    "Runner request failed (HTTP 503).",
+  ]) {
+    const failure = classifyTurnChangesReadFailure(error);
+    expect(failure.kind).toBe("retryable");
+    if (failure.kind !== "notApplicable") {
+      expect(failure.reason).toBe(
+        "Server changes could not be loaded. Check the connection and try again.",
+      );
+      expect(isRetryableTurnChangesReason(failure.reason)).toBe(true);
+    }
+  }
+  expect(classifyTurnChangesReadFailure("Runner request failed (HTTP 404).").kind).toBe("final");
+  expect(
+    classifyTurnChangesReadFailure("Runner request failed (HTTP 503). /private/secret").kind,
+  ).toBe("final");
+});
+it("keeps invalid server responses final and explains changed server identity", () => {
+  expect(classifyTurnChangesReadFailure("Invalid runner turn changes")).toEqual({
+    kind: "final",
+    reason: "The saved changes response is invalid and cannot be displayed.",
+  });
+  expect(
+    classifyTurnChangesReadFailure(
+      "Runner identity changed. Reconnect the server before continuing.",
+    ),
+  ).toEqual({
+    kind: "final",
+    reason: "The server identity changed. Reconnect to load recorded changes.",
+  });
+});

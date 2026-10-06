@@ -16,7 +16,7 @@ struct ReadPermit;
 impl ReadPermit {
     fn acquire() -> Result<Self, String> {
         ACTIVE_READS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |value| {
                 (value < 2).then_some(value + 1)
             })
             .map(|_| Self)

@@ -7,6 +7,7 @@ import type {
 import type { AgentTurnAttachmentRequest } from "./agentThreadPorts";
 import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
 import type { RemoteRunnerGateway, RemoteRunnerPart } from "../domain/remoteRunner";
+import { remoteAgentProjectKeyParts } from "./remoteAgentProjection";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
 import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 
@@ -29,6 +30,7 @@ export interface RemoteAttachmentStoreOptions {
   readonly getGateway: () => RemoteRunnerGateway | null;
   readonly resolveOwner: (workspaceId: string) => AgentAttachmentOwner | null;
   readonly ownerIsCurrent: (owner: AgentAttachmentOwner) => boolean;
+  readonly ownerIsRetained: (owner: AgentAttachmentOwner) => boolean;
   readonly encoder: AgentAttachmentEncoderPort | null;
 }
 
@@ -43,7 +45,7 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
   ): Promise<StagedAgentAttachment> {
     const resolvedOwner = this.options.resolveOwner(request.workspaceId);
     const owner = resolvedOwner && { ...resolvedOwner };
-    if (!owner || owner.workspaceId !== request.workspaceId || !this.options.ownerIsCurrent(owner))
+    if (!owner || owner.workspaceId !== request.workspaceId || !this.options.ownerIsRetained(owner))
       throw new Error("Remote attachment ownership is unavailable.");
     const size = request.bytes.byteLength;
     const isText =
@@ -78,6 +80,8 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       if (text.includes("\0")) throw new Error("Text attachments cannot contain NUL bytes.");
     }
     if (isText) {
+      if (!this.options.ownerIsCurrent(owner))
+        throw new Error("Remote attachment owner changed. Attach the file again.");
       const gateway = this.options.getGateway();
       const segments = owner.projectRootKey.split(":");
       if (!gateway || segments.length !== 4 || segments[0] !== "remote")
@@ -102,7 +106,7 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       height: request.height,
       promptLineBytesMax: 0,
     });
-    if (!this.options.ownerIsCurrent(owner))
+    if (!this.options.ownerIsRetained(owner))
       throw new Error("Remote attachment owner changed. Attach the image again.");
     this.entries.set(metadata.attachmentId, {
       owner,
@@ -145,6 +149,9 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
       intents.length > 8
     )
       throw new Error("Remote attachment ownership is unavailable.");
+    const target = remoteAgentProjectKeyParts(owner.projectRootKey);
+    if (target === null || target.serverId !== serverId)
+      throw new Error("Remote attachment belongs to another server.");
     const seen = new Set<string>();
     const selected = intents.map((intent) => {
       if (intent.kind !== "staged" || seen.has(intent.attachmentId))
@@ -247,6 +254,7 @@ export class RemoteAttachmentStore implements AgentAttachmentGateway {
     validateRemoteRunnerValue("uploadAttachment", "response", response);
     const remote = response.attachment;
     if (
+      remote.runnerId !== remoteAgentProjectKeyParts(entry.owner.projectRootKey)?.runnerId ||
       remote.id !== upload.id ||
       remote.name !== entry.metadata.name ||
       remote.mediaType !== (entry.metadata.mime ?? "text/plain") ||

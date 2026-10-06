@@ -5,7 +5,7 @@ import type { StageAgentAttachmentBytesRequest } from "./agentAttachmentPorts";
 import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 
 const owner = {
-  projectRootKey: "project",
+  projectRootKey: "remote:server:runner:project",
   workspaceId: "workspace",
   ownerId: "lease",
   generation: 1,
@@ -45,6 +45,8 @@ function fixture(customEncoder?: AgentAttachmentEncoderPort | null) {
     resolveOwner: () => ({ ...owner, generation }),
     ownerIsCurrent: (candidate) =>
       current && candidate.generation === generation && candidate.ownerId === "lease",
+    ownerIsRetained: (candidate) =>
+      candidate.generation === generation && candidate.ownerId === "lease",
     encoder: customEncoder === undefined ? { encode } : customEncoder,
   });
   return {
@@ -117,6 +119,27 @@ describe("RemoteAttachmentStore", () => {
       store.resolve({ ...turn, attachmentOwner: { ...owner, workspaceId: "other" } }, "server"),
     ).rejects.toThrow("no longer matches");
     expect(uploadAttachment).not.toHaveBeenCalled();
+  });
+  it("rejects another server before uploading an image", async () => {
+    const { store, uploadAttachment } = fixture();
+    await expect(store.resolve(await request(store), "other")).rejects.toThrow("another server");
+    expect(uploadAttachment).not.toHaveBeenCalled();
+  });
+  it("retains local image bytes while disconnected and refuses uploads until authority returns", async () => {
+    const { store, uploadAttachment, expire } = fixture();
+    expire();
+    const turn = await request(store);
+    await expect(store.resolve(turn, "server")).rejects.toThrow("owner changed");
+    expect(uploadAttachment).not.toHaveBeenCalled();
+  });
+  it("rejects a foreign runner's attachment metadata", async () => {
+    const { store, uploadAttachment } = fixture();
+    const original = uploadAttachment.getMockImplementation()!;
+    uploadAttachment.mockImplementation(async (request) => {
+      const response = await original(request);
+      return { ...response, attachment: { ...response.attachment, runnerId: "other-runner" } };
+    });
+    await expect(store.resolve(await request(store), "server")).rejects.toThrow("does not match");
   });
   it("refuses a prior generation's stage even when its replacement is current", async () => {
     const { store, uploadAttachment, replaceOwner } = fixture();

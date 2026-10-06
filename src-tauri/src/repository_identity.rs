@@ -143,7 +143,7 @@ pub(crate) async fn get_repository_identity(
         .clone_root(&descriptor.workspace_id)
         .map_err(|_| "Project is unavailable.")?;
     if ACTIVE
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
             (n < 4).then_some(n + 1)
         })
         .is_err()

@@ -309,7 +309,7 @@ impl JavaScriptTypeScriptWorkspaceWatchRegistry {
 
         let generation = self
             .next_generation
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |generation| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |generation| {
                 generation.checked_add(1)
             })
             .map_err(|_| "JavaScript/TypeScript watch generation overflowed".to_string())?
@@ -1324,7 +1324,7 @@ mod tests {
             self.attempts.fetch_add(1, Ordering::AcqRel);
             if self
                 .failures_remaining
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()

@@ -355,7 +355,7 @@ impl WindowTransitionCounters {
 #[cfg(target_os = "macos")]
 fn increment_transition(counter: &AtomicU64, overflow: &AtomicBool) {
     if counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |value| {
             (value < MAX_SAFE_TRANSITIONS).then_some(value + 1)
         })
         .is_err()

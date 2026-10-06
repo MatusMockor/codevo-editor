@@ -61,16 +61,36 @@ afterEach(() => {
   host = null;
 });
 
-function render(catalog: AgentHistoryCatalogSurface, select = vi.fn()) {
+function render(
+  catalog: AgentHistoryCatalogSurface,
+  select = vi.fn(),
+  shownInRailThreadIds?: ReadonlySet<string>,
+) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root?.render(<AgentHistoryCatalog catalog={catalog} onSelect={select} />));
+  act(() =>
+    root?.render(
+      <AgentHistoryCatalog
+        catalog={catalog}
+        onSelect={select}
+        shownInRailThreadIds={shownInRailThreadIds}
+      />,
+    ),
+  );
   return select;
 }
 
-function rerender(catalog: AgentHistoryCatalogSurface) {
-  act(() => root?.render(<AgentHistoryCatalog catalog={catalog} onSelect={vi.fn()} />));
+function rerender(catalog: AgentHistoryCatalogSurface, shownInRailThreadIds?: ReadonlySet<string>) {
+  act(() =>
+    root?.render(
+      <AgentHistoryCatalog
+        catalog={catalog}
+        onSelect={vi.fn()}
+        shownInRailThreadIds={shownInRailThreadIds}
+      />,
+    ),
+  );
 }
 
 const buttons = () => Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
@@ -82,6 +102,10 @@ const menuItem = (text: string) =>
     item.textContent?.includes(text),
   );
 const dialog = () => document.querySelector('[role="dialog"]');
+const rowTitles = () => rowButtons().map((item) => item.getAttribute("title"));
+const emptyText = () =>
+  document.querySelector(".agent-history-catalog__empty")?.textContent ?? null;
+const ALREADY_OPEN = "Conversations on this page are already open.";
 function openMenu(label: string) {
   act(() =>
     buttons()
@@ -280,6 +304,121 @@ describe("saved conversations UI", () => {
       "Deleted, but attachments could not be removed",
     );
     expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("does not claim there are no saved conversations while earlier pages exist", () => {
+    const catalog = surface([]);
+    render(catalog);
+    expect(catalog.page?.hasEarlier).toBe(true);
+    expect(rowButtons()).toEqual([]);
+    expect(emptyText()).toBeNull();
+    expect(button("Older conversations").disabled).toBe(false);
+  });
+
+  it("says there are no saved conversations when nothing is listed and nothing is earlier", () => {
+    const catalog = surface([]);
+    render({ ...catalog, page: { ...catalog.page!, hasEarlier: false } });
+    expect(emptyText()).toBe("No saved conversations.");
+    expect(button("Older conversations").disabled).toBe(true);
+  });
+
+  it("hides a row the rail already shows and lists the ones it does not", () => {
+    const catalog = surface([
+      row({ title: "In rail" }),
+      row({ threadId: "agt-2-0a1b", title: "Live but not in rail", running: true }),
+      row({ threadId: "agt-3-0a1b", title: "Archived", archived: true }),
+    ]);
+    render(catalog, vi.fn(), new Set([catalogThread().threadId]));
+    expect(rowTitles()).toEqual(["Live but not in rail", "Archived"]);
+    expect(emptyText()).toBeNull();
+    rerender(catalog, new Set());
+    expect(rowTitles()).toEqual(["In rail", "Live but not in rail", "Archived"]);
+  });
+
+  it("lists every row when no rail thread ids are given", () => {
+    render(surface([row(), row({ threadId: "agt-2-0a1b", title: "Second" })]));
+    expect(rowTitles()).toEqual([catalogThread().title, "Second"]);
+  });
+
+  it("says the page is already open when the rail shows all of its rows", () => {
+    const catalog = surface([row(), row({ threadId: "agt-2-0a1b", title: "Second" })]);
+    const shown = new Set([catalogThread().threadId, "agt-2-0a1b"]);
+    render(catalog, vi.fn(), shown);
+    expect(rowButtons()).toEqual([]);
+    expect(emptyText()).toBe(ALREADY_OPEN);
+    expect(button("Older conversations").disabled).toBe(false);
+    rerender({ ...catalog, page: { ...catalog.page!, hasEarlier: false } }, shown);
+    expect(emptyText()).toBe(ALREADY_OPEN);
+    expect(button("Older conversations").disabled).toBe(true);
+  });
+
+  it("keeps the empty texts out of the way of loading, errors and notices", () => {
+    const catalog = surface([row()]);
+    const shown = new Set([catalogThread().threadId]);
+    render({ ...catalog, page: { ...catalog.page!, loading: true } }, vi.fn(), shown);
+    expect(emptyText()).toBeNull();
+    rerender({ ...catalog, page: { ...catalog.page!, error: "Could not load" } }, shown);
+    expect(emptyText()).toBeNull();
+    rerender({ ...catalog, page: { ...catalog.page!, notice: "Deleted" } }, shown);
+    expect(emptyText()).toBeNull();
+  });
+
+  it("still names the conversation being deleted when the rail shows it", () => {
+    const catalog = surface([row({ title: "Telekom phone" })]);
+    render(
+      { ...catalog, page: { ...catalog.page!, deletingThreadId: catalogThread().threadId } },
+      vi.fn(),
+      new Set([catalogThread().threadId]),
+    );
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(
+      "Deleting “Telekom phone”…",
+    );
+    expect(rowButtons()).toEqual([]);
+    expect(emptyText()).toBeNull();
+  });
+
+  it("skips rows hidden by the rail when moving focus with the arrow keys", () => {
+    const catalog = surface([
+      row({ title: "First" }),
+      row({ threadId: "agt-2-0a1b", title: "Hidden" }),
+      row({ threadId: "agt-3-0a1b", title: "Third" }),
+    ]);
+    render(catalog, vi.fn(), new Set(["agt-2-0a1b"]));
+    const [first, third] = rowButtons();
+    act(() => first!.focus());
+    key(first!, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(third);
+    expect(third?.getAttribute("title")).toBe("Third");
+  });
+
+  it("moves focus to the next listed row after a delete when a hidden row sits before it", async () => {
+    const hidden = row({ threadId: "agt-9-0a1b", title: "Hidden" });
+    const first = row({ title: "First" });
+    const second = row({ threadId: "agt-2-0a1b", title: "Second" });
+    const third = row({ threadId: "agt-3-0a1b", title: "Third" });
+    const shown = new Set([hidden.threadId]);
+    const catalog = surface([hidden, first, second, third]);
+    render(catalog, vi.fn(), shown);
+    expect(rowTitles()).toEqual(["First", "Second", "Third"]);
+    key(rowButtons()[0]!, { key: "Delete" });
+    await act(async () => button("Delete thread").click());
+    expect(catalog.remove).toHaveBeenCalledWith(first.threadId);
+    rerender({ ...catalog, rows: [hidden, second, third] }, shown);
+    expect(rowTitles()).toEqual(["Second", "Third"]);
+    expect(document.activeElement).toBe(rowButtons()[0]);
+  });
+
+  it("keeps focus where it is when a row leaves the shelf without a delete", () => {
+    const second = row({ threadId: "agt-2-0a1b", title: "Second" });
+    const catalog = surface([row(), second]);
+    render(catalog);
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    act(() => outside.focus());
+    rerender({ ...catalog, rows: [second] });
+    expect(document.activeElement).toBe(outside);
+    expect(rowButtons().map((item) => item.getAttribute("title"))).toEqual(["Second"]);
+    outside.remove();
   });
 
   it("moves focus to the next row after a confirmed delete", async () => {

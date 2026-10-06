@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import { normalizeAgentThreadTitle } from "../domain/agentThread";
-import type { RemoteThreadMetadataPatch } from "../domain/remoteThreadMetadata";
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import type { AgentThreadView } from "./agentThreadPorts";
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
 import { presentRemoteAgentThread, remoteAgentThreadKey } from "./remoteAgentProjection";
+import {
+  saveServerThreadMetadata,
+  serverThreadMetadataSaveError,
+  type ServerThreadMetadataChange as Change,
+} from "./serverThreadMetadataSave";
 import {
   MAX_METADATA_SAVES_IN_FLIGHT,
   MAX_METADATA_SLOT_WAIT_MS,
@@ -18,7 +22,6 @@ import {
   viewedOnlyChange,
 } from "./serverThreadMetadataLease";
 
-type Change = Omit<RemoteThreadMetadataPatch, "expectedRevision">;
 interface Options {
   readonly gateway: RemoteRunnerGateway | null;
   readonly snapshots: readonly RemoteAgentInventorySnapshot[];
@@ -82,6 +85,7 @@ export function useServerThreadMetadata({
   );
   const committed = useRef({ key: connectionKey, epoch: {}, targets });
   useLayoutEffect(() => {
+    if (committed.current.key !== connectionKey) lease.current.pendingViewed.clear();
     committed.current = {
       key: connectionKey,
       epoch: committed.current.key === connectionKey ? committed.current.epoch : {},
@@ -183,43 +187,32 @@ export function useServerThreadMetadata({
       }
       captured.busy.add(threadId);
       try {
-        const current = await gateway.getThreadMetadata({
-          serverId: target.snapshot.serverId,
-          taskId: target.taskId,
-        });
-        if (!active()) return false;
-        if (
-          viewed !== null &&
-          current.revision > 0 &&
-          current.viewedAtEpochMs !== null &&
-          current.viewedAtEpochMs >= viewed
-        )
-          return true;
-        await gateway.updateThreadMetadata({
-          serverId: target.snapshot.serverId,
-          taskId: target.taskId,
-          patch: {
-            ...(current.revision === 0 ? legacyChange(threadId) : {}),
-            ...change,
-            expectedRevision: current.revision,
+        const saved = await saveServerThreadMetadata({
+          gateway: {
+            getThreadMetadata: gateway.getThreadMetadata.bind(gateway),
+            updateThreadMetadata: gateway.updateThreadMetadata.bind(gateway),
           },
+          serverId: target.snapshot.serverId,
+          taskId: target.taskId,
+          change,
+          legacyChange: () => legacyChange(threadId),
+          active,
         });
         if (!active()) return false;
+        if (saved !== "saved") return saved === "current";
         await refreshAfterSave();
-        return true;
-      } catch {
+        return active();
+      } catch (error) {
         if (active()) {
-          reportForThread(
-            threadId,
-            "The conversation change could not be saved on the server. Refresh and try again.",
-          );
+          reportForThread(threadId, serverThreadMetadataSaveError(error, viewed !== null));
           await refreshAfterSave();
         }
         return false;
       } finally {
         releaseMetadataSlot(captured, threadId);
-        for (const [pendingId, pendingViewed] of takeRunnableViewed(captured))
-          void save(pendingId, { viewedAtEpochMs: pendingViewed });
+        if (active())
+          for (const [pendingId, pendingViewed] of takeRunnableViewed(captured))
+            void save(pendingId, { viewedAtEpochMs: pendingViewed });
       }
     },
     [eligible, gateway, captured, reportForThread, live, legacyChange, refreshAfterSave],

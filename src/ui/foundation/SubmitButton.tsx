@@ -1,3 +1,4 @@
+import type { MouseEventHandler } from "react";
 import { cx } from "./classNames";
 import { Spinner } from "./Spinner";
 import "./buttons.css";
@@ -12,7 +13,7 @@ export interface SubmitButtonProps {
   readonly busy?: boolean;
   readonly keyShortcuts?: string;
   readonly className?: string;
-  onClick?(): void;
+  readonly onClick?: MouseEventHandler<HTMLButtonElement>;
 }
 
 const LABELS: Readonly<Record<SubmitButtonMode, string>> = {

@@ -103,6 +103,29 @@ describe("one thought row per thinking phase", () => {
     expect(host.querySelectorAll(".cv-live-row")).toHaveLength(1);
   });
 
+  it("shows a single Thinking row when a follow-up message lands in the thinking turn", () => {
+    render(
+      [
+        ...FIRST_THIRTEEN_SECONDS,
+        { kind: "userMessage", text: "a pozri aj Codex" },
+        { kind: "reasoning", text: "The follow-up widens the scope to Codex." },
+      ],
+      { kind: "running" },
+    );
+
+    expect(workRowsSaying("Thinking")).toHaveLength(1);
+    expect(host.querySelector(".cv-live-row")).toBeNull();
+  });
+
+  it("keeps the live Working row after a follow-up message that has no thought yet", () => {
+    render([...FIRST_THIRTEEN_SECONDS, { kind: "userMessage", text: "a pozri aj Codex" }], {
+      kind: "running",
+    });
+
+    expect(workRowsSaying("Thinking")).toHaveLength(0);
+    expect(workRowsSaying("Working…")).toHaveLength(1);
+  });
+
   it("drops the live row and says Thought once the turn settles", () => {
     render([...FIRST_THIRTEEN_SECONDS, ...SETTLED_TAIL], { kind: "exited", exitCode: 0 });
 

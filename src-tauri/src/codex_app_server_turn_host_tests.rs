@@ -114,7 +114,7 @@ impl CodexHostProcessSpawner for Spawner {
                     "thread/backgroundTerminals/list" => {
                         let busy = control
                             .remaining_terminal_polls
-                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                             .is_ok();
                         json!({"data": if busy { vec![json!({"processId":"owned-process"})] } else {vec![]}, "nextCursor":null})
                     }

@@ -802,7 +802,7 @@ fn reserve_transaction_recovery_capacity(
         .checked_mul(4)
         .ok_or_else(|| "Workspace edit recovery reservation overflowed.".to_string())?;
     PROCESS_TRANSACTION_RECOVERY_BYTE_RESERVATIONS
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current
                 .checked_add(bytes)
                 .filter(|next| *next <= MAX_PROCESS_TRANSACTION_RECOVERY_BYTES)
@@ -812,7 +812,7 @@ fn reserve_transaction_recovery_capacity(
                 .to_string()
         })?;
     if PROCESS_TRANSACTION_RECOVERY_RESERVATIONS
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current
                 .checked_add(reservation)
                 .filter(|next| *next <= MAX_PROCESS_TRANSACTION_RECOVERY_ENTRIES)

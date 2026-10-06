@@ -250,3 +250,17 @@ it("offers retry only for transient read failures", async () => {
   await vi.waitFor(() => expect(host.textContent).toContain("1 changed file"));
   expect(getTurnChanges).toHaveBeenCalledTimes(2);
 });
+
+it("retries a server transport read failure without displaying raw backend details", async () => {
+  const getTurnChanges = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Runner request failed (HTTP 503)."))
+    .mockResolvedValue(summary("t1"));
+  await render({ getTurnChanges });
+  await vi.waitFor(() => expect(host.textContent).toContain("Retry recorded changes"));
+  expect(host.textContent).toContain("Check the connection");
+  expect(host.textContent).not.toContain("HTTP 503");
+  await act(async () => click("Retry recorded changes"));
+  await vi.waitFor(() => expect(host.textContent).toContain("1 changed file"));
+  expect(getTurnChanges).toHaveBeenCalledTimes(2);
+});

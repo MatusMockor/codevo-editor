@@ -802,7 +802,7 @@ export function AgentWorkbenchScreen({
             imageSurface={DEFAULT_IMAGE_SURFACE}
             agents={agents}
             chrome={chrome}
-            key={navigationBoundary.key}
+            navigationKey={navigationBoundary.key}
             navigationSession={navigationSession}
             modelFavoritesPersistence={modelFavoritesPersistence}
             onOpenSourceControl={openSourceControl}

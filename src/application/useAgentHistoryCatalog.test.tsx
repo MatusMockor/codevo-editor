@@ -477,4 +477,61 @@ describe("saved conversation actions", () => {
     });
     expect(h.surface.page?.error).toContain("Could not rename this conversation");
   });
+
+  it("lists a conversation that is live for the page root with its live state", async () => {
+    const h = setup();
+    h.loaded.set(catalogThread().threadId, {
+      ...catalogThread(),
+      title: "Live title",
+      turns: [runningTurnFixture],
+    });
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    expect(h.surface.rows).toEqual([
+      expect.objectContaining({
+        threadId: catalogThread().threadId,
+        title: "Live title",
+        archived: false,
+        running: true,
+      }),
+    ]);
+  });
+
+  it("keeps a live archived conversation listed with its live title", async () => {
+    const h = setup();
+    h.loaded.set(catalogThread().threadId, {
+      ...catalogThread(),
+      archived: true,
+      title: "Live title",
+    });
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    expect(h.surface.rows).toEqual([
+      expect.objectContaining({
+        threadId: catalogThread().threadId,
+        title: "Live title",
+        archived: true,
+        running: false,
+      }),
+    ]);
+  });
+
+  it("does not mark a row running for a same-id thread that runs under another root", async () => {
+    const h = setup();
+    const foreign = catalogThread();
+    h.loaded.set(foreign.threadId, {
+      ...foreign,
+      title: "Foreign title",
+      archived: true,
+      turns: [runningTurnFixture],
+      owner: { ...foreign.owner, rootKey: "/workspace/other" },
+    });
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    expect(h.surface.rows).toEqual([
+      expect.objectContaining({
+        threadId: foreign.threadId,
+        title: foreign.title,
+        archived: false,
+        running: false,
+      }),
+    ]);
+  });
 });

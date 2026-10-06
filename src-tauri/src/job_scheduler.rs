@@ -350,7 +350,7 @@ impl WorkspaceIndexLifecycle {
         let generation = self
             .state
             .global_generation
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 Some(current.saturating_add(1))
             })
             .expect("global lifecycle generation update")

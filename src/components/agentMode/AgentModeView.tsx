@@ -176,6 +176,7 @@ export interface AgentModeViewProps {
   readonly artifactPreview?: AgentArtifactPreviewPort | null;
   readonly imageSurface?: AgentImageSurfacePort | null;
   readonly navigationSession?: AgentNavigationSession;
+  readonly navigationKey?: string;
   readonly agents: AgentThreadsSurface & {
     readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
     readonly providerManagement: AgentProviderManagementSurface;
@@ -230,12 +231,55 @@ const TERMINAL_SESSIONS_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   action: null,
 };
 
+interface AgentModeSelection {
+  readonly navigationKey: string;
+  readonly threadId: string | null;
+  readonly projectRootKey: string | null;
+}
+
+function freshAgentModeSelection(
+  navigationKey: string,
+  session: AgentNavigationSession | undefined,
+): AgentModeSelection {
+  return {
+    navigationKey,
+    threadId: session?.current.selectedThreadId ?? null,
+    projectRootKey: null,
+  };
+}
+
+function currentAgentModeSelection(
+  stored: AgentModeSelection,
+  navigationKey: string,
+  session: AgentNavigationSession | undefined,
+): AgentModeSelection {
+  if (stored.navigationKey === navigationKey) return stored;
+  return freshAgentModeSelection(navigationKey, session);
+}
+
 export function AgentModeView(props: AgentModeViewProps) {
   const remote = useRemoteRunnerContext();
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    props.navigationSession?.current.selectedThreadId ?? null,
+  const navigationKey = props.navigationKey ?? "";
+  const session = props.navigationSession;
+  const [stored, setStored] = useState(() => freshAgentModeSelection(navigationKey, session));
+  const { threadId: selectedThreadId, projectRootKey: selectedProjectRootKey } =
+    currentAgentModeSelection(stored, navigationKey, session);
+  const setSelectedThreadId = useCallback(
+    (threadId: string | null) =>
+      setStored((previous) => ({
+        ...currentAgentModeSelection(previous, navigationKey, session),
+        threadId,
+      })),
+    [navigationKey, session],
   );
-  const [selectedProjectRootKey, setSelectedProjectRootKey] = useState<string | null>(null);
+  const setSelectedProjectRootKey = useCallback(
+    (projectRootKey: string | null) =>
+      setStored((previous) => ({
+        ...currentAgentModeSelection(previous, navigationKey, session),
+        projectRootKey,
+      })),
+    [navigationKey, session],
+  );
   const selectProjectEnvironment = useCallback(
     (rootKey: string) => {
       if (!rootKey.startsWith("remote:")) {
@@ -268,6 +312,7 @@ export function AgentModeView(props: AgentModeViewProps) {
   return (
     <LocalAgentModeView
       {...props}
+      key={navigationKey}
       agents={remote === null ? props.agents : { ...props.agents, ...unified.agents }}
       projects={remote === null ? props.projects : unified.projects}
       onSelectedThreadChange={setSelectedThreadId}

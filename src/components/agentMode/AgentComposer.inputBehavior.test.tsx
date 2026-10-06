@@ -61,6 +61,7 @@ describe("AgentComposer send button", () => {
     readonly behavior: AgentFollowUpBehavior;
     readonly button: string;
     readonly delivery: AgentComposerSubmission["delivery"];
+    readonly modifier?: "ctrl" | "meta";
   }>([
     {
       name: "idle new thread",
@@ -91,8 +92,9 @@ describe("AgentComposer send button", () => {
       mode: { kind: "steer", threadId: "agt-1" },
       running: true,
       behavior: "queue",
-      button: "Send now",
+      button: "Queue message",
       delivery: "immediate",
+      modifier: "ctrl",
     },
     {
       name: "running turn, steer behaviour",
@@ -107,12 +109,13 @@ describe("AgentComposer send button", () => {
       mode: { kind: "steer", threadId: "agt-1" },
       running: true,
       behavior: "steer",
-      button: "Queue message",
+      button: "Send now",
       delivery: "queued",
+      modifier: "meta",
     },
   ])(
     "submits exactly once on a single click right after typing and keeps the prompt focused ($name)",
-    ({ mode, running, behavior, button, delivery }) => {
+    ({ mode, running, behavior, button, delivery, modifier }) => {
       const submit = vi.fn<AgentComposerControllerProps["submit"]>(async () => true);
       renderController({ mode, running, behavior, submit });
 
@@ -121,7 +124,7 @@ describe("AgentComposer send button", () => {
       typeInto(prompt, COMMAND);
       expect(sendButton(button).disabled).toBe(false);
 
-      clickLikeAPointer(sendButton(button), prompt);
+      clickLikeAPointer(sendButton(button), prompt, modifier);
 
       expect(submit).toHaveBeenCalledTimes(1);
       const [submitted, submission] = submit.mock.calls[0] ?? [];
@@ -215,7 +218,11 @@ function typeInto(field: HTMLTextAreaElement, text: string): void {
   }
 }
 
-function clickLikeAPointer(button: HTMLButtonElement, focused: HTMLTextAreaElement): void {
+function clickLikeAPointer(
+  button: HTMLButtonElement,
+  focused: HTMLTextAreaElement,
+  modifier?: "ctrl" | "meta",
+): void {
   const pointer = { bubbles: true, cancelable: true, button: 0 };
   const mouseDown = new MouseEvent("mousedown", pointer);
   act(() => {
@@ -227,5 +234,13 @@ function clickLikeAPointer(button: HTMLButtonElement, focused: HTMLTextAreaEleme
     button.dispatchEvent(new PointerEvent("pointerup", pointer));
     button.dispatchEvent(new MouseEvent("mouseup", pointer));
   });
-  act(() => button.click());
+  act(() =>
+    button.dispatchEvent(
+      new MouseEvent("click", {
+        ...pointer,
+        ctrlKey: modifier === "ctrl",
+        metaKey: modifier === "meta",
+      }),
+    ),
+  );
 }

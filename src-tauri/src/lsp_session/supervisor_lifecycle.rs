@@ -409,7 +409,7 @@ impl LanguageServerSupervisor {
     ) -> Result<LanguageServerRuntimeStatus, String> {
         let session_id = self
             .next_session_id
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| "Language server session id capacity was exhausted.".to_string())?;
@@ -913,7 +913,7 @@ impl LanguageServerSupervisor {
     /// Record one completed request into the bounded recent-requests ring buffer.
     pub(super) fn allocate_wire_request_id(&self) -> Result<u64, LanguageServerRequestError> {
         self.next_request_id
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| {

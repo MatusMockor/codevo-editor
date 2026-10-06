@@ -288,8 +288,7 @@ export const AgentTurnView = memo(function AgentTurnView({
   const toolDisclosure = useAgentTurnToolDisclosure();
   const foldThinking =
     activityWindow === null &&
-    workFold !== null &&
-    agentActivityEndsThinking(workFold.workItems, stream === "streaming" ? "live" : "settled");
+    agentActivityEndsThinking(projection.items, stream === "streaming" ? "live" : "settled");
   const liveStatus =
     compacting || backgroundOnly || liveActivity === null || empty ? null : (
       <AgentTurnLiveStatus

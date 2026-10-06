@@ -1172,7 +1172,7 @@ describe("AgentComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("keeps Send now and Queue available alongside Stop while a turn runs", () => {
+  it("shows only Stop while a turn runs with an empty draft", () => {
     const onStop = vi.fn();
     const onSubmit = vi.fn();
     render({ mode: STEER_MODE, running: true, onStop, onSubmit });
@@ -1182,7 +1182,8 @@ describe("AgentComposer", () => {
     expect(stop.getAttribute("title")).toBe("Stop (Esc)");
     expect(stop.type).toBe("button");
     expect(stop.disabled).toBe(false);
-    expect(host.querySelector(".agent-composer__send")).not.toBeNull();
+    expect(host.querySelector(".agent-composer__send")).toBeNull();
+    expect(host.querySelector(".agent-composer__alternate")).toBeNull();
     expect(promptField().placeholder).toBe("Queue a follow-up");
     expect(host.querySelector("form")?.getAttribute("aria-label")).toBe(
       "Follow up on agent thread",
@@ -1212,11 +1213,18 @@ describe("AgentComposer", () => {
         pressEnter();
         pressEnter({ metaKey: true });
         pressEnter({ ctrlKey: true });
-        act(() => host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!.click());
+        act(() => {
+          submitButton().dispatchEvent(
+            new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }),
+          );
+          submitButton().dispatchEvent(
+            new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }),
+          );
+        });
         expect(onSubmit.mock.calls.map(([request]) => request.delivery)).toEqual(
           followUpBehavior === "queue"
-            ? ["queued", "immediate", "immediate", "immediate"]
-            : ["immediate", "queued", "queued", "queued"],
+            ? ["queued", "immediate", "immediate", "immediate", "immediate"]
+            : ["immediate", "queued", "queued", "queued", "queued"],
         );
         expect(submitButton().getAttribute("aria-label")).toBe(
           followUpBehavior === "queue" ? "Queue message" : "Send now",
@@ -1225,7 +1233,7 @@ describe("AgentComposer", () => {
     },
   );
 
-  it("does not consume attachments while choosing Send now and blocks both actions during staging", () => {
+  it("does not consume attachments on a modifier click and blocks submission during staging", () => {
     const onSubmit = vi.fn();
     const markSent = vi.fn();
     const prepareTurn = vi.fn(async () => null);
@@ -1235,7 +1243,11 @@ describe("AgentComposer", () => {
       prepareTurn,
     });
     render({ mode: STEER_MODE, running: true, prompt: "Review image", attachments, onSubmit });
-    act(() => host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!.click());
+    act(() =>
+      submitButton().dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }),
+      ),
+    );
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ delivery: "immediate" }));
     expect(markSent).not.toHaveBeenCalled();
     expect(prepareTurn).not.toHaveBeenCalled();
@@ -1248,9 +1260,8 @@ describe("AgentComposer", () => {
       submitBlocked: true,
     });
     expect(submitButton().disabled).toBe(true);
-    expect(host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!.disabled).toBe(
-      true,
-    );
+    expect(host.querySelector(".agent-composer__alternate")).toBeNull();
+    expect(host.querySelector(".agent-composer__stop")).toBeNull();
     pressEnter({ metaKey: true });
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
@@ -1266,13 +1277,27 @@ describe("AgentComposer", () => {
       onSubmit,
     });
     expect(submitButton().getAttribute("aria-label")).toBe("Queue message");
-    const alternate = host.querySelector<HTMLButtonElement>(".agent-composer__alternate")!;
-    expect(alternate.disabled).toBe(true);
-    expect(alternate.title).toBe("Update the server to send now.");
+    expect(host.querySelector(".agent-composer__alternate")).toBeNull();
+    act(() =>
+      submitButton().dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }),
+      ),
+    );
     pressEnter({ metaKey: true });
     expect(onSubmit).not.toHaveBeenCalled();
     pressEnter();
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ delivery: "queued" }));
+  });
+
+  it("shows only Send for an attachment-only draft while running", () => {
+    render({
+      mode: STEER_MODE,
+      running: true,
+      attachments: attachmentsSurface({ drafts: [readyAttachmentDraft()] }),
+    });
+    expect(host.querySelector(".agent-composer__stop")).toBeNull();
+    expect(submitButton().getAttribute("aria-label")).toBe("Queue message");
+    expect(submitButton().disabled).toBe(false);
   });
 
   it("shows pending steering on desktop while keeping Stop usable", () => {
@@ -1427,13 +1452,14 @@ describe("AgentComposer", () => {
     expect(submitButton().getAttribute("aria-label")).toBe("Send follow-up");
   });
 
-  it("keeps both Stop and Send on a touch-width layout", () => {
+  it("shows only Send for a draft on a touch-width layout", () => {
     stubMatchMedia(true);
     const onStop = vi.fn();
     const onSubmit = vi.fn();
     render({ mode: STEER_MODE, prompt: "also run the tests", running: true, onStop, onSubmit });
 
-    expect(host.querySelector(".agent-composer__stop")).not.toBeNull();
+    expect(host.querySelector(".agent-composer__stop")).toBeNull();
+    expect(host.querySelector(".agent-composer__alternate")).toBeNull();
     const send = submitButton();
     expect(send.getAttribute("aria-label")).toBe("Queue message");
     expect(send.disabled).toBe(false);

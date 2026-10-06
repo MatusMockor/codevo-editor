@@ -776,7 +776,7 @@ describe("AgentModeView", () => {
     );
   });
 
-  it("blocks a follow-up while a nonqueueable thread is running but keeps Stop usable", () => {
+  it("blocks a follow-up while a nonqueueable thread is running and keeps Escape usable", () => {
     const sendFollowUp = vi.fn(async () => true);
     const stop = vi.fn(async () => undefined);
     render({
@@ -791,15 +791,16 @@ describe("AgentModeView", () => {
     typePrompt("Also update the tests");
 
     expect(host.textContent).toContain("This thread is still running");
-    expect(host.querySelector('.agent-composer button[type="submit"]')).toBeNull();
+    expect(submitButton().disabled).toBe(true);
     expect(promptField().disabled).toBe(false);
     submitForm();
     expect(sendFollowUp).not.toHaveBeenCalled();
     expect(promptField().value).toBe("Also update the tests");
-    const stopButton = host.querySelector<HTMLButtonElement>('button[aria-label="Stop agent"]');
-    expect(stopButton).not.toBeNull();
-    expect(stopButton?.disabled).toBe(false);
-    act(() => stopButton?.click());
+    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector('button[aria-label="Stop agent"]')).toBeNull();
+    act(() =>
+      promptField().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
     expect(stop).toHaveBeenCalledWith("agt-1");
   });
 
@@ -1174,14 +1175,14 @@ describe("AgentModeView", () => {
     };
     render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
     clickText("Refactor the parser");
-    expect(host.querySelector('button[aria-label="Send now"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Stop agent"]')).not.toBeNull();
     click('button[aria-label="Edit queued message"]');
     render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
 
     expect(submitButton().getAttribute("aria-label")).toBe("Save queued message");
     expect(host.querySelector('button[aria-label="Send now"]')).toBeNull();
     expect(host.querySelector('button[aria-label="Queue message"]')).toBeNull();
-    expect(host.querySelector('button[aria-label="Stop agent"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Stop agent"]')).toBeNull();
 
     typePrompt("edited");
     await act(async () => {

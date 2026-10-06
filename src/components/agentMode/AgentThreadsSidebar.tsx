@@ -86,6 +86,7 @@ import {
   agentRailSections,
   agentRailViews,
   agentThreadRevealForMatch,
+  type AgentRailSections,
   type AgentRailScope,
   type AgentRailScopeEntry,
   type AgentThreadMenuCommand,
@@ -252,6 +253,11 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     return { now, sections: agentRailSections(ownedViews, now) };
   }, [ownedViews, organizationNow]);
   useAgentRailOrganizationClock(workingRail, organized.now);
+  const catalogRootKey = catalog?.page?.rootKey ?? null;
+  const shownInRailThreadIds = useMemo(
+    () => railThreadIds(organized.sections, catalogRootKey),
+    [catalogRootKey, organized.sections],
+  );
   const workingPending =
     workingRail.workingSection === "off"
       ? NO_PENDING_INTERACTIONS
@@ -577,7 +583,11 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
           </AgentRowServerNamesContext.Provider>
         )}
         {catalog !== undefined && (
-          <AgentHistoryCatalog catalog={catalog} onSelect={onSelectThread} />
+          <AgentHistoryCatalog
+            catalog={catalog}
+            onSelect={onSelectThread}
+            shownInRailThreadIds={shownInRailThreadIds}
+          />
         )}
       </div>
       <AgentProviderRailFooter
@@ -591,6 +601,18 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     </aside>
   );
 });
+
+function railThreadIds(sections: AgentRailSections, rootKey: string | null): ReadonlySet<string> {
+  const ids = new Set<string>();
+  if (rootKey === null) return ids;
+  const shown = [sections.pinned, sections.active, sections.snoozed ?? [], sections.settled ?? []];
+  for (const views of shown) {
+    for (const view of views) {
+      if (view.thread.owner.rootKey === rootKey) ids.add(view.thread.threadId);
+    }
+  }
+  return ids;
+}
 
 function focusExpandSidebar(): void {
   const expand = document.querySelector<HTMLButtonElement>('button[aria-label="Expand sidebar"]');
