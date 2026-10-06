@@ -7,6 +7,7 @@ import {
 } from "./agentTurnChangesReader";
 import {
   classifyTurnChangesReadFailure,
+  isAutoRetryableTurnChangesReason,
   isRetryableTurnChangesReason,
   TRANSIENT_BACKEND_READ_ERRORS,
   turnChangesReadFailureReason,
@@ -445,7 +446,7 @@ it("classifies transient, final and not-applicable read failures for the view", 
     true,
     false,
     false,
-    false,
+    true,
   ]);
 });
 it("pins the transient backend read errors shared with the Rust read_errors module", () => {
@@ -462,7 +463,7 @@ it("pins the transient backend read errors shared with the Rust read_errors modu
       reason: message,
     });
 });
-it("treats permanent backend validation errors and unknown failures as final", () => {
+it("keeps the fixed text for unrecognized failures and offers only a manual retry", () => {
   for (const message of [
     "Saved turn changes contain invalid checkpoint data.",
     "Saved turn changes do not match their checkpoints.",
@@ -475,15 +476,36 @@ it("treats permanent backend validation errors and unknown failures as final", (
     "",
   ]) {
     const failure = classifyTurnChangesReadFailure(new Error(message));
-    expect(failure).toEqual({ kind: "final", reason: "Recorded changes could not be loaded." });
-    expect(isRetryableTurnChangesReason(turnChangesReadFailureReason(new Error(message)))).toBe(
-      false,
-    );
+    expect(failure).toEqual({
+      kind: "retryable",
+      reason: "Recorded changes could not be loaded.",
+    });
+    const reason = turnChangesReadFailureReason(new Error(message));
+    expect(isRetryableTurnChangesReason(reason)).toBe(true);
+    expect(isAutoRetryableTurnChangesReason(reason)).toBe(false);
   }
   expect(classifyTurnChangesReadFailure("not an error")).toEqual({
-    kind: "final",
+    kind: "retryable",
     reason: "Recorded changes could not be loaded.",
   });
+});
+it("keeps size and invalid saved changes failures final", () => {
+  for (const [message, reason] of [
+    [
+      "Saved turn changes exceed the supported size.",
+      "Saved turn changes exceed the supported size.",
+    ],
+    ["Runner response exceeds output limit.", "Saved turn changes exceed the supported size."],
+    ["Saved turn changes are invalid.", "Saved turn changes are invalid."],
+    [
+      "Runner returned an invalid response.",
+      "The saved changes response is invalid and cannot be displayed.",
+    ],
+  ]) {
+    expect(classifyTurnChangesReadFailure(message)).toEqual({ kind: "final", reason });
+    expect(isRetryableTurnChangesReason(reason)).toBe(false);
+    expect(isAutoRetryableTurnChangesReason(reason)).toBe(false);
+  }
 });
 it("offers retry when backend read admission stays busy", async () => {
   const getSummary = vi.fn(async (): Promise<AgentTurnChangeSummary> => {
@@ -538,6 +560,9 @@ it("offers a safe retry for known transient server read failures", () => {
     "Unable to read runner response.",
     "Runner request failed (HTTP 429).",
     "Runner request failed (HTTP 503).",
+    "Server is not connected",
+    "Runner connection is closed. Reconnect the server.",
+    "Runner request timed out. Its outcome may be unknown.",
   ]) {
     const failure = classifyTurnChangesReadFailure(error);
     expect(failure.kind).toBe("retryable");
@@ -546,12 +571,20 @@ it("offers a safe retry for known transient server read failures", () => {
         "Server changes could not be loaded. Check the connection and try again.",
       );
       expect(isRetryableTurnChangesReason(failure.reason)).toBe(true);
+      expect(isAutoRetryableTurnChangesReason(failure.reason)).toBe(true);
     }
   }
-  expect(classifyTurnChangesReadFailure("Runner request failed (HTTP 404).").kind).toBe("final");
-  expect(
-    classifyTurnChangesReadFailure("Runner request failed (HTTP 503). /private/secret").kind,
-  ).toBe("final");
+  for (const error of [
+    "Runner request failed (HTTP 404).",
+    "Runner request failed (HTTP 503). /private/secret",
+    "Server is not connected /private/secret",
+  ])
+    expect(classifyTurnChangesReadFailure(error)).toEqual({
+      kind: "retryable",
+      reason: "Recorded changes could not be loaded.",
+    });
+  for (const reason of [null, "Saved turn changes could not be read.", "notGitRepository"])
+    expect(isAutoRetryableTurnChangesReason(reason)).toBe(false);
 });
 it("keeps invalid server responses final and explains changed server identity", () => {
   expect(classifyTurnChangesReadFailure("Invalid runner turn changes")).toEqual({

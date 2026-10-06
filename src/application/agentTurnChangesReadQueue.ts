@@ -69,6 +69,9 @@ const SERVER_READ_FAILED =
   "Server changes could not be loaded. Check the connection and try again.";
 const SERVER_IDENTITY_CHANGED = "The server identity changed. Reconnect to load recorded changes.";
 const SERVER_READ_ERRORS: ReadonlySet<string> = new Set([
+  "Server is not connected",
+  "Runner connection is closed. Reconnect the server.",
+  "Runner request timed out. Its outcome may be unknown.",
   "Runner connection unavailable.",
   "Runner connection was superseded.",
   "Server connection changed during request",
@@ -93,13 +96,15 @@ const RETRYABLE_REASONS: ReadonlySet<string> = new Set([
   ...TRANSIENT_BACKEND_READ_ERRORS,
   QUEUE_FULL,
   SERVER_READ_FAILED,
+  READ_FAILED,
 ]);
 const NOT_APPLICABLE_REASONS: ReadonlySet<string> = new Set([
   TURN_READ_CANCELLED,
   "Viewing turn changes requires a trusted workspace.",
 ]);
+const SIZE_EXCEEDED = "Saved turn changes exceed the supported size.";
 const FINAL_REASONS: ReadonlySet<string> = new Set([
-  "Saved turn changes exceed the supported size.",
+  SIZE_EXCEEDED,
   "Saved turn changes are invalid.",
 ]);
 const INVALID_RESPONSE_MESSAGES: ReadonlySet<string> = new Set([
@@ -125,7 +130,9 @@ export function classifyTurnChangesReadFailure(error: unknown): TurnChangesReadF
   if (RETRYABLE_REASONS.has(message)) return { kind: "retryable", reason: message };
   if (FINAL_REASONS.has(message)) return { kind: "final", reason: message };
   if (INVALID_RESPONSE_MESSAGES.has(message)) return { kind: "final", reason: INVALID_RESPONSE };
-  return { kind: "final", reason: READ_FAILED };
+  if (message === "Runner response exceeds output limit.")
+    return { kind: "final", reason: SIZE_EXCEEDED };
+  return { kind: "retryable", reason: READ_FAILED };
 }
 export function turnChangesReadFailureReason(error: unknown): string {
   const failure = classifyTurnChangesReadFailure(error);
@@ -134,4 +141,7 @@ export function turnChangesReadFailureReason(error: unknown): string {
 }
 export function isRetryableTurnChangesReason(reason: string | null): boolean {
   return reason !== null && RETRYABLE_REASONS.has(reason);
+}
+export function isAutoRetryableTurnChangesReason(reason: string | null): boolean {
+  return reason === SERVER_READ_FAILED;
 }

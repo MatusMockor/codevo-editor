@@ -1,5 +1,6 @@
 import {
   classifyTurnChangesReadFailure,
+  isAutoRetryableTurnChangesReason,
   isRetryableTurnChangesReason,
 } from "../../application/agentTurnChangesReadQueue";
 import { useEffect, useMemo, useState } from "react";
@@ -10,6 +11,8 @@ import {
   type AgentTurnChangeSummary,
 } from "../../domain/agentTurnChanges";
 import { AgentTurnChangesRow } from "./conversation/AgentTurnChangesRow";
+
+const AUTO_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000];
 
 export interface AgentRecordedTurnChangesProps {
   readonly active?: boolean;
@@ -22,29 +25,43 @@ export interface AgentRecordedTurnChangesProps {
 
 export function AgentRecordedTurnChanges(props: AgentRecordedTurnChangesProps) {
   const { threadId, turnId, getTurnChanges, revision } = props;
-  const [retry, setRetry] = useState(0);
   const identity = useMemo(
-    () => ({ threadId, turnId, getTurnChanges, revision, retry }),
-    [threadId, turnId, getTurnChanges, revision, retry],
+    () => ({ threadId, turnId, getTurnChanges, revision }),
+    [threadId, turnId, getTurnChanges, revision],
   );
+  const [manualRetry, setManualRetry] = useState<{ readonly identity: object } | null>(null);
+  const request = manualRetry?.identity === identity ? manualRetry : identity;
   const [result, setResult] = useState<{
     identity: object;
+    request: object;
     summary: AgentTurnChangeSummary;
   } | null>(null);
   useEffect(() => {
     let active = true;
-    void getTurnChanges(threadId, turnId)
-      .then((summary) => {
-        if (active && summary.turnId === turnId) setResult({ identity, summary });
-      })
-      .catch((error: unknown) => {
-        if (active) setResult({ identity, summary: readFailureSummary(turnId, error) });
-      });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = (attempt: number) => {
+      void getTurnChanges(threadId, turnId)
+        .catch((error: unknown) => readFailureSummary(turnId, error))
+        .then((summary) => {
+          if (!active || summary.turnId !== turnId) return;
+          if (
+            attempt >= AUTO_RETRY_DELAYS_MS.length ||
+            !isAutoRetryableTurnChangesReason(summary.reason)
+          ) {
+            setResult({ identity, request, summary });
+            return;
+          }
+          timer = setTimeout(() => read(attempt + 1), AUTO_RETRY_DELAYS_MS[attempt]);
+        });
+    };
+    read(request === identity ? 0 : AUTO_RETRY_DELAYS_MS.length);
     return () => {
       active = false;
+      clearTimeout(timer);
     };
-  }, [identity, getTurnChanges, threadId, turnId]);
+  }, [identity, request, getTurnChanges, threadId, turnId]);
   if (result?.identity !== identity) return null;
+  const retrying = result.request !== request;
   if (result.summary.state === "unsupported") return null;
   if (isMissingAgentTurnSnapshot(result.summary)) return null;
   return (
@@ -60,9 +77,10 @@ export function AgentRecordedTurnChanges(props: AgentRecordedTurnChangesProps) {
           <button
             className="cv-changes-retry agent-turn-changes-retry"
             type="button"
-            onClick={() => setRetry((value) => value + 1)}
+            disabled={retrying}
+            onClick={() => setManualRetry({ identity })}
           >
-            Retry recorded changes
+            {retrying ? "Retrying…" : "Retry recorded changes"}
           </button>
         )}
     </>

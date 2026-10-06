@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentRecordedTurnChanges,
   type AgentRecordedTurnChangesProps,
@@ -209,37 +209,39 @@ it("keeps the summary across unrelated parent updates", async () => {
   expect(getTurnChanges).toHaveBeenCalledTimes(1);
 });
 
-it("shows safe known read failures without exposing unknown backend details", async () => {
-  await render({
-    getTurnChanges: async () => {
-      throw new Error("Saved turn changes exceed the supported size.");
-    },
-  });
-  expect(host.textContent).toContain("exceed the supported size");
-  expect(host.textContent).not.toContain("Retry recorded changes");
-  await render({
-    getTurnChanges: async () => {
-      throw new Error("/private/source.ts contains secret content");
-    },
-  });
+it("shows safe known read failures as final without Retry", async () => {
+  for (const [message, shown] of [
+    ["Saved turn changes exceed the supported size.", "exceed the supported size"],
+    ["Runner response exceeds output limit.", "exceed the supported size"],
+    ["Runner returned an invalid response.", "response is invalid"],
+  ]) {
+    await render({
+      revision: {},
+      getTurnChanges: async () => {
+        throw new Error(message);
+      },
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain(shown));
+    expect(host.textContent).not.toContain("Retry recorded changes");
+  }
+});
+
+it("offers manual Retry for an unknown failure without exposing backend details", async () => {
+  const getTurnChanges = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("/private/source.ts contains secret content"))
+    .mockResolvedValue(summary("t1"));
+  await render({ getTurnChanges });
   await vi.waitFor(() =>
     expect(host.textContent).toContain("Recorded changes could not be loaded"),
   );
   expect(host.textContent).not.toContain("private");
-  expect(host.textContent).not.toContain("Retry recorded changes");
+  await act(async () => click("Retry recorded changes"));
+  await vi.waitFor(() => expect(host.textContent).toContain("1 changed file"));
+  expect(getTurnChanges).toHaveBeenCalledTimes(2);
 });
 
-it("offers retry only for transient read failures", async () => {
-  await render({
-    getTurnChanges: async () => {
-      throw new Error("Saved turn changes contain invalid checkpoint data.");
-    },
-  });
-  await vi.waitFor(() =>
-    expect(host.textContent).toContain("Recorded changes could not be loaded"),
-  );
-  expect(host.textContent).not.toContain("invalid checkpoint data");
-  expect(host.textContent).not.toContain("Retry recorded changes");
+it("offers retry for a transient local read failure", async () => {
   const getTurnChanges = vi
     .fn()
     .mockRejectedValueOnce(new Error("Too many turn changes reads. Try again shortly."))
@@ -251,16 +253,241 @@ it("offers retry only for transient read failures", async () => {
   expect(getTurnChanges).toHaveBeenCalledTimes(2);
 });
 
-it("retries a server transport read failure without displaying raw backend details", async () => {
-  const getTurnChanges = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("Runner request failed (HTTP 503)."))
-    .mockResolvedValue(summary("t1"));
-  await render({ getTurnChanges });
-  await vi.waitFor(() => expect(host.textContent).toContain("Retry recorded changes"));
-  expect(host.textContent).toContain("Check the connection");
-  expect(host.textContent).not.toContain("HTTP 503");
-  await act(async () => click("Retry recorded changes"));
-  await vi.waitFor(() => expect(host.textContent).toContain("1 changed file"));
-  expect(getTurnChanges).toHaveBeenCalledTimes(2);
+describe("automatic retry of transient server read failures", () => {
+  const SERVER_READ_FAILED =
+    "Server changes could not be loaded. Check the connection and try again.";
+  const serverFailure = (turnId: string): AgentTurnChangeSummary => ({
+    turnId,
+    state: "unavailable",
+    files: [],
+    truncated: false,
+    reason: SERVER_READ_FAILED,
+  });
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("recovers from a brief disconnect without ever rendering a failure row", async () => {
+    const getTurnChanges = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Server is not connected"))
+      .mockResolvedValueOnce(serverFailure("t1"))
+      .mockResolvedValue(summary("t1"));
+    await render({ getTurnChanges });
+    expect(host.innerHTML).toBe("");
+    await advance(999);
+    expect(getTurnChanges).toHaveBeenCalledTimes(1);
+    await advance(1);
+    expect(getTurnChanges).toHaveBeenCalledTimes(2);
+    expect(host.innerHTML).toBe("");
+    await advance(1_999);
+    expect(getTurnChanges).toHaveBeenCalledTimes(2);
+    expect(host.innerHTML).toBe("");
+    await advance(1);
+    expect(getTurnChanges).toHaveBeenCalledTimes(3);
+    expect(host.textContent).toContain("1 changed file");
+    expect(host.textContent).not.toContain("Retry recorded changes");
+    await advance(60_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(3);
+  });
+
+  it("renders nothing when the retried read reports a turn without a snapshot", async () => {
+    const getTurnChanges = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Server is not connected"))
+      .mockResolvedValue({
+        ...serverFailure("t1"),
+        reason: "A complete snapshot of this turn is unavailable.",
+      });
+    await render({ getTurnChanges });
+    await advance(1_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(2);
+    expect(host.innerHTML).toBe("");
+  });
+
+  it("shows the row with Retry once the bounded automatic retries are exhausted", async () => {
+    const getTurnChanges = vi
+      .fn()
+      .mockRejectedValue(new Error("Runner request failed (HTTP 503)."));
+    await render({ getTurnChanges });
+    await advance(1_000);
+    await advance(2_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(3);
+    expect(host.innerHTML).toBe("");
+    await advance(4_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(4);
+    expect(host.textContent).toContain(SERVER_READ_FAILED);
+    expect(host.textContent).not.toContain("HTTP 503");
+    expect(host.textContent).toContain("Retry recorded changes");
+    await advance(60_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(4);
+    getTurnChanges.mockResolvedValue(summary("t1"));
+    await act(async () => click("Retry recorded changes"));
+    expect(getTurnChanges).toHaveBeenCalledTimes(5);
+    expect(host.textContent).toContain("1 changed file");
+    expect(host.textContent).not.toContain("Retry recorded changes");
+  });
+
+  const retryButton = () => host.querySelector<HTMLButtonElement>(".agent-turn-changes-retry");
+  const deferredSummary = () => {
+    let settle!: (value: AgentTurnChangeSummary) => void;
+    const promise = new Promise<AgentTurnChangeSummary>((resolve) => {
+      settle = resolve;
+    });
+    return { promise, settle: (value: AgentTurnChangeSummary) => act(async () => settle(value)) };
+  };
+
+  it("keeps the failure row with a disabled Retrying… button during one manual read", async () => {
+    const pending = deferredSummary();
+    const getTurnChanges = vi
+      .fn()
+      .mockResolvedValueOnce(serverFailure("t1"))
+      .mockResolvedValueOnce(serverFailure("t1"))
+      .mockResolvedValueOnce(serverFailure("t1"))
+      .mockResolvedValueOnce(serverFailure("t1"))
+      .mockReturnValueOnce(pending.promise);
+    await render({ getTurnChanges });
+    await advance(7_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(4);
+    await act(async () => click("Retry recorded changes"));
+    expect(getTurnChanges).toHaveBeenCalledTimes(5);
+    expect(host.textContent).toContain(SERVER_READ_FAILED);
+    expect(retryButton()?.textContent).toBe("Retrying…");
+    expect(retryButton()?.disabled).toBe(true);
+    await advance(60_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(5);
+    expect(host.textContent).toContain(SERVER_READ_FAILED);
+    await pending.settle(serverFailure("t1"));
+    expect(host.textContent).toContain(SERVER_READ_FAILED);
+    expect(retryButton()?.textContent).toBe("Retry recorded changes");
+    expect(retryButton()?.disabled).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    await advance(60_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(5);
+  });
+
+  it("replaces or removes the row when a manual retry settles without a failure", async () => {
+    const settled = [
+      [summary("t1"), "1 changed file"],
+      [
+        { ...serverFailure("t1"), reason: "A complete snapshot of this turn is unavailable." },
+        null,
+      ],
+    ] as const;
+    for (const [value, count] of settled) {
+      const pending = deferredSummary();
+      const getTurnChanges = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("/private/source.ts contains secret content"))
+        .mockReturnValueOnce(pending.promise);
+      await render({ getTurnChanges, revision: {} });
+      await act(async () => click("Retry recorded changes"));
+      expect(host.textContent).toContain("Recorded changes could not be loaded.");
+      expect(retryButton()?.disabled).toBe(true);
+      await pending.settle(value);
+      expect(host.querySelector(".cv-changes-row__count")?.textContent ?? null).toBe(count);
+      expect(host.textContent).not.toContain("Recorded changes could not be loaded.");
+      expect(retryButton()).toBeNull();
+      expect(getTurnChanges).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("hides the old row and drops the late result when the identity changes during a manual retry", async () => {
+    const pending = deferredSummary();
+    const next = deferredSummary();
+    const getTurnChanges = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("/private/source.ts contains secret content"))
+      .mockReturnValueOnce(pending.promise)
+      .mockReturnValueOnce(next.promise)
+      .mockResolvedValue(serverFailure("t2"));
+    const props = await render({ getTurnChanges });
+    await act(async () => click("Retry recorded changes"));
+    expect(retryButton()?.disabled).toBe(true);
+    await render({ ...props, threadId: "other", turnId: "t2" });
+    expect(host.innerHTML).toBe("");
+    await pending.settle(serverFailure("t1"));
+    expect(host.innerHTML).toBe("");
+    expect(vi.getTimerCount()).toBe(0);
+    await next.settle(serverFailure("t2"));
+    expect(host.innerHTML).toBe("");
+    await advance(7_000);
+    expect(getTurnChanges.mock.calls.map(([, id]) => id)).toEqual([
+      "t1",
+      "t1",
+      "t2",
+      "t2",
+      "t2",
+      "t2",
+    ]);
+    expect(host.textContent).toContain(SERVER_READ_FAILED);
+    expect(retryButton()?.textContent).toBe("Retry recorded changes");
+    expect(retryButton()?.disabled).toBe(false);
+  });
+
+  it("does not automatically retry unknown or local transient failures", async () => {
+    for (const message of [
+      "/private/source.ts contains secret content",
+      "Saved turn changes could not be read.",
+    ]) {
+      const getTurnChanges = vi.fn().mockRejectedValue(new Error(message));
+      await render({ getTurnChanges, revision: {} });
+      expect(host.textContent).toContain("Retry recorded changes");
+      await advance(60_000);
+      expect(getTurnChanges).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("cancels the pending automatic retry on unmount", async () => {
+    const getTurnChanges = vi.fn().mockResolvedValue(serverFailure("t1"));
+    await render({ getTurnChanges });
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => root.unmount());
+    expect(vi.getTimerCount()).toBe(0);
+    await advance(60_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the pending automatic retry when the identity changes", async () => {
+    const getTurnChanges = vi.fn(async (_: string, id: string) =>
+      id === "t1" ? serverFailure(id) : summary(id, "b.ts"),
+    );
+    const props = await render({ getTurnChanges });
+    expect(vi.getTimerCount()).toBe(1);
+    await render({ ...props, threadId: "other", turnId: "t2" });
+    expect(vi.getTimerCount()).toBe(0);
+    await advance(60_000);
+    expect(getTurnChanges.mock.calls.map(([, id]) => id)).toEqual(["t1", "t2"]);
+    expect(host.textContent).toContain("1 changed file");
+  });
+
+  it("drops a retried read that settles after the identity changed", async () => {
+    let settle!: (value: AgentTurnChangeSummary) => void;
+    const getTurnChanges = vi
+      .fn()
+      .mockResolvedValueOnce(serverFailure("t1"))
+      .mockReturnValueOnce(
+        new Promise<AgentTurnChangeSummary>((resolve) => {
+          settle = resolve;
+        }),
+      )
+      .mockResolvedValue(unsupportedAgentTurnChanges("t1", "notApplicable"));
+    const props = await render({ getTurnChanges });
+    await advance(1_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(2);
+    await render({ ...props, revision: {} });
+    expect(getTurnChanges).toHaveBeenCalledTimes(3);
+    await act(async () => settle(serverFailure("t1")));
+    expect(vi.getTimerCount()).toBe(0);
+    await advance(60_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(3);
+    expect(host.innerHTML).toBe("");
+  });
 });
