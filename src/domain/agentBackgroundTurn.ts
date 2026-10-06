@@ -2,8 +2,8 @@ import {
   createAgentOutputParserState,
   feedAgentOutput,
   finishAgentOutput,
-} from "./agentOutput/agentOutputParser";
-import { retainAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+  retainAgentSubagentLifecycle,
+} from "@codevo/agent-events";
 import { mergeTurnEvents, type AgentTurn, type AgentTurnEvent } from "./agentThread";
 import { agentBackgroundTurnLabel, type AgentBackgroundTurnCause } from "./agentTurnOrigin";
 

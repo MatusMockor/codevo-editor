@@ -1,5 +1,5 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentContextWindow } from "../domain/agentContextWindow";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,

@@ -8,7 +8,8 @@ import {
   type AgentImageMime,
 } from "./agentAttachment";
 import { MAX_AGENT_TASK_PATH_BYTES, type AgentCliKind } from "./agentTask";
-import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
+import { MAX_AGENT_EVENT_TEXT_BYTES } from "@codevo/agent-events";
+import { MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
 export const MAX_EXTERNAL_SESSION_ENTRIES = 200;
 export const MAX_PREVIEW_EXCHANGES = 40;

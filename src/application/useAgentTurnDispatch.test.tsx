@@ -28,7 +28,7 @@ import {
   feedAgentOutput,
   finishAgentOutput,
   type AgentOutputParserState,
-} from "../domain/agentOutput/agentOutputParser";
+} from "@codevo/agent-events";
 import {
   agentThreadsReducer,
   MAX_AGENT_EVENTS_PER_TURN,

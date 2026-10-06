@@ -8,8 +8,6 @@ import {
 } from "../test/agentTurnEventStreams";
 import { projectAgentBackgroundActivity } from "./agentBackgroundActivity";
 import { agentContextWindow } from "./agentContextWindow";
-import { parseClaudeStreamJsonLine } from "./agentOutput/claudeStreamJson";
-import { retainAgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import {
   MAX_AGENT_EVENT_BYTES_PER_TURN,
   MAX_AGENT_EVENTS_PER_TURN,
@@ -22,16 +20,16 @@ import {
   type AgentTurnEvent,
 } from "./agentThread";
 import {
+  parseClaudeStreamJsonLine,
+  retainAgentSubagentLifecycle,
   capAgentTurnEvents,
   retainAgentTurnEvents,
   type AgentTurnEventRetentionPolicy,
   type AgentTurnEventRetentionResult,
-} from "./agentTurnEventRetention";
-import {
   agentTurnEventSupersession,
   isAgentTurnSnapshotEvent,
   mergeSupersededAgentTurnEvent,
-} from "./agentTurnEventSupersession";
+} from "@codevo/agent-events";
 
 const TURN_POLICY: AgentTurnEventRetentionPolicy = {
   maxEvents: MAX_AGENT_EVENTS_PER_TURN,

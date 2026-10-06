@@ -1,24 +1,13 @@
+import type { AgentAccountUsageObservation, AgentAccountUsageWindow } from "@codevo/agent-events";
 import { isEarlierAgentAccountUsagePeriod } from "./agentAccountUsageFreshness";
 import type { AgentCliKind } from "./agentTask";
 
-export interface AgentAccountUsageWindow {
-  readonly id: string;
-  readonly label: string;
-  readonly usedPercent: number;
-  readonly windowDurationMinutes: number | null;
-  readonly resetsAtEpochMs: number | null;
-  readonly resetsLabel: string | null;
-}
+export type { AgentAccountUsageObservation, AgentAccountUsageWindow } from "@codevo/agent-events";
 
 export interface AgentAccountUsageSnapshot {
   readonly provider: AgentCliKind;
   readonly accountIdentity?: string | null;
   readonly fetchedAtEpochMs: number;
-  readonly windows: ReadonlyArray<AgentAccountUsageWindow>;
-}
-
-export interface AgentAccountUsageObservation {
-  readonly provider: AgentCliKind;
   readonly windows: ReadonlyArray<AgentAccountUsageWindow>;
 }
 

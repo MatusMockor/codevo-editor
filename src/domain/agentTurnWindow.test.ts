@@ -12,10 +12,7 @@ import {
   type AgentTurnEvent,
 } from "./agentThread";
 import { emptyAgentTurnDigest } from "./agentTurnDigest";
-import {
-  retainAgentTurnEvents,
-  type AgentTurnEventRetentionPolicy,
-} from "./agentTurnEventRetention";
+import { retainAgentTurnEvents, type AgentTurnEventRetentionPolicy } from "@codevo/agent-events";
 import { AGENT_TURN_LOG_FIRST_SEQ } from "./agentTurnLog";
 import { agentTurnLogOpBytes, agentTurnLogOpsBytes } from "./agentTurnLogWire";
 import {

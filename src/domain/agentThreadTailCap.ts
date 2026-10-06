@@ -4,7 +4,7 @@ import {
   clipUtf8Text,
   utf8ByteLength,
 } from "./agentPromptClipping";
-import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import { compactPersistedAgentSubagentLifecycle } from "./agentLifecyclePersistence";
 import { agentTurnTailFits, selectAgentTurnTail } from "./agentTurnTailSelection";
 import {

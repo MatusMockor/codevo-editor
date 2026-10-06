@@ -1,4 +1,4 @@
-import { boundedUtf8Text } from "../domain/agentOutput/utf8Text";
+import { boundedUtf8Text } from "@codevo/agent-events";
 import {
   MAX_AGENT_SHIP_FAILURE_BYTES,
   agentShipReducer,

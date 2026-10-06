@@ -1,4 +1,4 @@
-import type { AgentSubagentLifecycle } from "../../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentTurnEvent } from "../../domain/agentThread";
 import { appServerGroups } from "./agentAppServerGroups";
 import { agentTurnSubagentSummary, type AgentSubagentEntry } from "./agentModePresentation";

@@ -7,7 +7,7 @@ import {
   agentTurnEventSupersession,
   type AgentTurnBarrierTarget,
   type AgentTurnSnapshotTarget,
-} from "./agentTurnEventSupersession";
+} from "@codevo/agent-events";
 
 export const MAX_CARRIED_AGENT_TURN_STEERS = 64;
 export const MAX_CARRIED_AGENT_TURN_SNAPSHOTS = 64;

@@ -1,7 +1,4 @@
-import {
-  readAgentSubagentLifecycle,
-  type AgentSubagentLifecycle,
-} from "../domain/agentSubagentLifecycle";
+import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "@codevo/agent-events";
 import {
   agentTurnEventUtf8Bytes,
   coalesceAgentTextEvents,

@@ -1,4 +1,9 @@
 import {
+  isAgentSessionId,
+  type AgentCliKind,
+  type AgentTaskOutputStream,
+} from "@codevo/agent-events";
+import {
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,
   MAX_AGENT_TURN_ATTACHMENTS,
@@ -12,21 +17,25 @@ import {
   type AgentLaunchOptions,
 } from "./agentLaunch";
 
+export {
+  isAgentSessionId,
+  AGENT_SESSION_ID_PATTERN,
+  MAX_AGENT_SESSION_ID_BYTES,
+  type AgentCliKind,
+  type AgentTaskOutputStream,
+} from "@codevo/agent-events";
+
 export const MAX_AGENT_TASK_ID_BYTES = 64;
 export const MAX_AGENT_TASK_WORKSPACE_ID_BYTES = 1_024;
 export const MAX_AGENT_TASK_PATH_BYTES = 4_096;
 export const MAX_AGENT_TASK_PROMPT_BYTES = 32 * 1_024;
 export const MAX_AGENT_TASK_OUTPUT_CHUNK_BYTES = 8 * 1_024;
 export const MAX_AGENT_TASK_FAILURE_BYTES = 4_096;
-export const MAX_AGENT_SESSION_ID_BYTES = 128;
 export const MAX_AGENT_STEERS_PER_TURN = 32;
 
 export const AGENT_TASK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
-export const AGENT_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
 
 export type AgentTaskIsolation = "worktree" | "in-place";
-export type AgentCliKind = "claudeCode" | "codex";
-export type AgentTaskOutputStream = "stdout" | "stderr";
 
 export interface AgentTaskOwner {
   readonly taskId: string;
@@ -399,14 +408,6 @@ function agentAttachmentAbsolutePath(value: unknown, path: string): string {
   const candidate = boundedText(value, path, MAX_AGENT_ATTACHMENT_PATH_BYTES, false, true);
   if (!isAgentAttachmentPath(candidate)) invalid(path, "an absolute attachment path");
   return candidate;
-}
-
-export function isAgentSessionId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    UTF8_ENCODER.encode(value).byteLength <= MAX_AGENT_SESSION_ID_BYTES &&
-    AGENT_SESSION_ID_PATTERN.test(value)
-  );
 }
 
 export function validateAgentTaskReferenceRequest(value: unknown): AgentTaskReferenceRequest {

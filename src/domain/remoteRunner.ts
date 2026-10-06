@@ -1,3 +1,14 @@
+import type {
+  RemoteRunnerProvider,
+  RemoteRunnerPart,
+  RemoteRunnerEvent,
+  AgentSubagentLifecycle,
+} from "@codevo/agent-events";
+export type {
+  RemoteRunnerProvider,
+  RemoteRunnerPart,
+  RemoteRunnerEvent,
+} from "@codevo/agent-events";
 import type { AgentAccountUsageSnapshot } from "./agentAccountUsage";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
 import type {
@@ -13,7 +24,6 @@ import type {
   RemoteThreadMetadataPage,
 } from "./remoteThreadMetadata";
 import type { RemoteProjectDirectories } from "./remoteProjectManagement";
-import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import type {
   RemoteRunnerCollectInstructionsRequest,
   RemoteRunnerInstructionSnapshot,
@@ -23,7 +33,6 @@ import type { RemoteStartBase } from "./remoteGitSyncWire";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
 export type RemoteRunnerIsolation = "in-place" | "worktree";
-export type RemoteRunnerProvider = "claude" | "codex";
 export type RemoteRunnerServerInput = Readonly<{
   id: string;
   name: string;
@@ -81,8 +90,6 @@ export type RemoteRunnerCloneJob = Readonly<{
   project: RemoteRunnerProject | null;
   error: string | null;
 }>;
-export type RemoteRunnerPart =
-  Readonly<{ type: "text"; text: string }> | Readonly<{ type: "attachment"; attachmentId: string }>;
 export type RemoteRunnerTaskStatus =
   "draft" | "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
 export type RemoteRunnerTask = Readonly<{
@@ -135,27 +142,6 @@ export type RemoteRunnerPendingMessages = Readonly<{
 }>;
 export type RemoteRunnerCancelPendingRequest = RemoteRunnerTaskRequest &
   Readonly<{ pendingId: string }>;
-export type RemoteRunnerEvent = Readonly<{
-  sequence: number;
-  taskId: string;
-  type:
-    | "task.created"
-    | "task.queued"
-    | "task.running"
-    | "task.succeeded"
-    | "task.failed"
-    | "task.interrupted"
-    | "task.cancelled"
-    | "task.output"
-    | "task.input";
-  createdAt: string;
-  channel?: "stdout" | "stderr";
-  text?: string;
-  messageId?: string;
-  parts?: readonly RemoteRunnerPart[];
-  exitCode?: number | null;
-  error?: string;
-}>;
 export type RemoteRunnerPage<T> = Readonly<{ items: readonly T[]; nextCursor: number | null }>;
 export type RemoteRunnerEventPage = RemoteRunnerPage<RemoteRunnerEvent> &
   Readonly<{

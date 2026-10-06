@@ -6,3 +6,6 @@ tmp
 
 # Generated and machine-owned files.
 package-lock.json
+
+packages/*/dist
+*.tsbuildinfo

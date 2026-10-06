@@ -1,9 +1,6 @@
 import lifecycleWire from "../../contracts/agent-subagent-lifecycle-wire.json";
 import { agentRootOwnerId } from "../domain/agentProject";
-import {
-  parseAgentSubagentLifecycle,
-  retainAgentSubagentLifecycle,
-} from "../domain/agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle, retainAgentSubagentLifecycle } from "@codevo/agent-events";
 import {
   mergeTurnEvents,
   type AgentThread,
