@@ -1,4 +1,5 @@
 import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
+import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "../../application/agentTurnAttachments";
 import { DISABLED_AGENT_SESSION_RESTORE } from "./useAgentSessionRestore";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
 import type { RemoteRunnerCloneJob, RemoteRunnerGateway } from "../../domain/remoteRunner";
@@ -75,6 +76,14 @@ const resolveTauriWorkspaceHome = vi.hoisted(() =>
   vi.fn(async () => ({ path: "/Users/dev", pathCase: "insensitive" as const })),
 );
 vi.mock("../../infrastructure/tauriHomeDirectory", () => ({ resolveTauriWorkspaceHome }));
+vi.mock("../../infrastructure/webviewAgentImageSurface", () => ({
+  WebviewAgentImageSurface: class {
+    decode = async () => ({ width: 64, height: 64 });
+    encodeMime = async () => "image/jpeg" as const;
+    encode = async () => new ArrayBuffer(16);
+    release = () => undefined;
+  },
+}));
 
 const ROOT_A = "/workspace/app";
 const ORDERS_ENTRY = { name: "orders.ts", path: `${ROOT_A}/orders.ts`, kind: "file" as const };
@@ -116,6 +125,7 @@ describe("AgentWorkbenchScreen", () => {
     act(() => root.unmount());
     host.remove();
     agentComposerDraftStore.reset();
+    vi.unstubAllGlobals();
   });
 
   it("isolates a reused thread ID in another workspace and restores the original project selection", async () => {
@@ -1027,6 +1037,47 @@ describe("AgentWorkbenchScreen", () => {
     },
   );
 
+  it("retains a server new-thread image draft with its text across a real keyed workspace remount", async () => {
+    const { gateway } = gatewayFixture();
+    gateway.getRunner.mockResolvedValue(LAUNCHABLE_RUNNER);
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = () => "blob:server-draft";
+        static revokeObjectURL = revokeObjectURL;
+      },
+    );
+    const show = async (path: string) => {
+      const workbench = createWorkbench(path);
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway}>
+            <AgentWorkbenchScreen {...defaultProps(workbench)} />
+          </RemoteRunnerProvider>,
+        ),
+      );
+    };
+    await show(ROOT_A);
+    await chooseServerProject();
+    typeInto(prompt(), "Look at this screenshot");
+    pasteImage(prompt());
+    await waitForReact(() =>
+      expect(host.querySelector('[data-agent-attachment-state="ready"]')).not.toBeNull(),
+    );
+
+    await show(ROOT_B);
+    expect(host.querySelector("[data-agent-attachment-state]")).toBeNull();
+    await show(ROOT_A);
+    await chooseServerProject();
+    await waitForReact(() => expect(prompt().value).toBe("Look at this screenshot"));
+    expect(host.querySelector('[data-agent-attachment-state="ready"]')).not.toBeNull();
+    expect(host.textContent).not.toContain(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    expect(revokeObjectURL).not.toHaveBeenCalledWith("blob:server-draft");
+    expect(gateway.uploadAttachment).not.toHaveBeenCalled();
+    expect(gateway.createTask).not.toHaveBeenCalled();
+  });
+
   it("keeps a running clone and its draft across A to B to A navigation", async () => {
     agentComposerDraftStore.reset();
     let finish = false;
@@ -1533,6 +1584,51 @@ describe("AgentWorkbenchScreen", () => {
     expect(item, `Missing menu item ${label}`).not.toBeUndefined();
     act(() => item?.click());
   }
+
+  async function chooseServerProject(): Promise<void> {
+    const local = host.querySelector<HTMLElement>('[aria-label="Run on: This computer"]');
+    if (local !== null) {
+      act(() => local.click());
+      const option = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
+        (entry) => entry.textContent?.includes("Linux server"),
+      );
+      expect(option, "Missing Linux server option").toBeDefined();
+      act(() => option?.click());
+    }
+    const projectSelect = () =>
+      host.querySelector<HTMLSelectElement>('[aria-label="Choose server project"] select');
+    await waitForReact(() =>
+      expect(projectSelect() !== null || prompt().disabled === false).toBe(true),
+    );
+    const select = projectSelect();
+    if (select !== null) {
+      act(() => {
+        select.value = "remote:linux:runner:project";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    await waitForReact(() => expect(prompt().disabled).toBe(false));
+  }
+
+  function typeInto(element: HTMLTextAreaElement, value: string): void {
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        element,
+        value,
+      );
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function pasteImage(element: HTMLTextAreaElement): void {
+    const file = new File([new Uint8Array(16)], "clipboard.png", { type: "image/png" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(16) });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: { files: [file], getData: () => "" },
+    });
+    act(() => element.dispatchEvent(event));
+  }
 });
 
 const CLONE_SUBMIT = '.cv-clone-form button[type="submit"]';
@@ -1915,6 +2011,18 @@ function threadView(root: string, worktreePath: string | null): AgentThreadView 
 }
 
 const CLONE_URL = "git@github.com:acme/storefront-api.git";
+const LAUNCHABLE_RUNNER = {
+  protocolVersion: 1 as const,
+  runnerId: "runner",
+  name: "Linux server",
+  capabilities: {
+    taskExecution: true,
+    instructionSync: true,
+    eventReplay: true,
+    taskContinuation: true,
+    taskLaunchOptions: true,
+  },
+};
 
 const runningClone: RemoteRunnerCloneJob = {
   id: "clone-1",

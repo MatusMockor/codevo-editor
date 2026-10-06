@@ -214,7 +214,7 @@ export function useAgentComposerAttachments(
   );
   const clearAll = useMemo(
     () => () => {
-      for (const scope of scopes.current.values()) scope.clear();
+      for (const scope of scopes.current.values()) scope.discard();
     },
     [],
   );
@@ -410,10 +410,17 @@ function createDraftScope(
       prepareTurn,
     };
   };
+  const discard = (): void => {
+    const previousRefusal = refusal;
+    const discarded = store.drafts.size > 0;
+    clear();
+    setRefusal(discarded ? AGENT_ATTACHMENTS_DISCARDED_NOTICE : previousRefusal);
+  };
   return {
     snapshot,
     retained: (): ReadonlyArray<AgentComposerAttachmentDraft> => [...store.drafts.values()],
     clear,
+    discard,
     prune: () => {
       const currentOwner =
         intakeOwner === null ? null : deps().resolveOwner(intakeOwner.projectRootKey);
@@ -426,10 +433,7 @@ function createDraftScope(
           return owner === null || !sameOwner(owner, draft.owner) || deps().gateway !== lastGateway;
         })
       ) {
-        const previousRefusal = refusal;
-        const discarded = store.drafts.size > 0;
-        clear();
-        setRefusal(discarded ? AGENT_ATTACHMENTS_DISCARDED_NOTICE : previousRefusal);
+        discard();
         lastGateway = deps().gateway;
       }
     },

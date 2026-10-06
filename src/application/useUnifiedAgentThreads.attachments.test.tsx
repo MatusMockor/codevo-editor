@@ -24,6 +24,7 @@ import { useAgentTurnAttachmentImagePort } from "../components/agentMode/useAgen
 import type { AgentThreadsSurface } from "./agentThreadPorts";
 import { remoteAgentProjectKey, remoteAgentThreadKey } from "./remoteAgentProjection";
 import { remoteAttachmentUnavailableMessage } from "./remoteAttachmentHistory";
+import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 import { REMOTE_ATTACHMENTS_TRUNCATED_NOTICE } from "./useRemoteAttachmentHistory";
 import { agentAttachmentImageKey } from "./useAgentAttachmentImages";
 import { useUnifiedAgentThreads, type UnifiedAgentThreadsOptions } from "./useUnifiedAgentThreads";
@@ -282,6 +283,28 @@ async function setup(
   };
 }
 
+async function stageServerDraft(h: Awaited<ReturnType<typeof setup>>) {
+  await h.render({
+    imageSurface: {
+      decode: async () => ({ width: 1, height: 1 }),
+      encodeMime: async () => "image/png",
+      encode: async () => new ArrayBuffer(4),
+      release: () => undefined,
+    },
+  });
+  const key = `new:${projectKey}`;
+  const draft = () => h.current.agents.attachments.forDraft!(key);
+  await act(async () => {
+    await draft().add(projectKey, [
+      { kind: "bytes", name: "draft.png", mime: "image/png", bytes: new ArrayBuffer(4) },
+    ]);
+  });
+  expect(draft().drafts).toHaveLength(1);
+  const saved = draft().drafts[0]!;
+  expect(saved.state).toBe("ready");
+  return Object.assign(draft, { saved, key });
+}
+
 describe("server thread images across inventory connectivity", () => {
   it("retains a new server draft image across local workspace A B A and thread navigation", async () => {
     const h = await setup(null);
@@ -323,7 +346,65 @@ describe("server thread images across inventory connectivity", () => {
 
     await h.render({ servers: [{ ...server, host: "replacement" }] });
     expect(draft().drafts).toEqual([]);
+    expect(draft().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
     expect(revokeObjectURL).toHaveBeenCalledWith(saved!.previewUrl);
+  });
+
+  it("discards a retained server draft with the notice when its server is replaced while another workspace is active", async () => {
+    const h = await setup(null);
+    const draft = await stageServerDraft(h);
+    await h.render({
+      workspaceOwner: "B",
+      selectedThreadId: "local-thread",
+      selectedServerId: null,
+    });
+    await h.render({ servers: [{ ...server, host: "replacement" }] });
+    await h.render({ workspaceOwner: "A", selectedThreadId: null, selectedServerId: server.id });
+    expect(draft().drafts).toEqual([]);
+    expect(draft().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    expect(revokeObjectURL).toHaveBeenCalledWith(draft.saved.previewUrl);
+  });
+
+  it("discards a retained server draft with the notice when the server is removed", async () => {
+    const h = await setup(null);
+    const draft = await stageServerDraft(h);
+    await h.render({ servers: [], selectedServerId: null });
+    await h.render({ servers: [server], selectedServerId: server.id });
+    expect(draft().drafts).toEqual([]);
+    expect(draft().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    expect(revokeObjectURL).toHaveBeenCalledWith(draft.saved.previewUrl);
+  });
+
+  it("discards a retained server draft with the notice when the runner no longer lists its project", async () => {
+    const h = await setup(null);
+    const draft = await stageServerDraft(h);
+    h.gw.listProjects.mockResolvedValue({ items: [] });
+    await h.refresh();
+    expect(draft().drafts).toEqual([]);
+    expect(draft().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    expect(revokeObjectURL).toHaveBeenCalledWith(draft.saved.previewUrl);
+  });
+
+  it("discards a retained server draft with the notice when the remote gateway is replaced", async () => {
+    const h = await setup(null);
+    const draft = await stageServerDraft(h);
+    await h.render({ gateway: { ...h.gw } });
+    expect(draft().drafts).toEqual([]);
+    expect(draft().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    expect(revokeObjectURL).toHaveBeenCalledWith(draft.saved.previewUrl);
+  });
+
+  it("never surfaces a retained server draft under another project key or the local surface", async () => {
+    const h = await setup(null);
+    const draft = await stageServerDraft(h);
+    const otherKey = `new:${remoteAgentProjectKey(server.id, "runner", "other")}`;
+    expect(h.current.agents.attachments.forDraft!(otherKey).drafts).toEqual([]);
+    await h.render({ selectedServerId: null });
+    const local = h.current.agents.attachments;
+    expect((local.forDraft?.(draft.key) ?? local).drafts).toEqual([]);
+    await h.render({ selectedServerId: server.id });
+    expect(draft().drafts).toEqual([draft.saved]);
+    expect(draft().refusal).toBeNull();
   });
 
   it("keeps screenshot intake local during a failed inventory refresh, then uploads with Codex High", async () => {
